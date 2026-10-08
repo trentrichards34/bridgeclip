@@ -241,6 +241,10 @@ class CaptionPreset:
     HEADLINE = "headline"
     PAPER = "paper"
     SUBTLE = "subtle"
+    BEAST = "beast"
+    BUBBLE = "bubble"
+    RETRO = "retro"
+    LIME = "lime"
 
 
 DEFAULT_CAPTION_PRESET = CaptionPreset.POP
@@ -262,6 +266,10 @@ def get_caption_preset(preset_id: str) -> CaptionStyle:
         CaptionPreset.HEADLINE: _create_headline_style,
         CaptionPreset.PAPER: _create_paper_style,
         CaptionPreset.SUBTLE: _create_subtle_style,
+        CaptionPreset.BEAST: _create_beast_style,
+        CaptionPreset.BUBBLE: _create_bubble_style,
+        CaptionPreset.RETRO: _create_retro_style,
+        CaptionPreset.LIME: _create_lime_style,
     }
 
     builder = builders.get(preset_id)
@@ -352,6 +360,30 @@ def get_available_presets() -> list[dict]:
             "name": "Subtle",
             "description": "Light sentence case, no stroke, upcoming words dimmed - interviews & vlogs",
             "preview_colors": {"primary": "#FFFFFF", "highlight": "#C4F1FF"},
+        },
+        {
+            "id": CaptionPreset.BEAST,
+            "name": "Beast",
+            "description": "Comic-book Bangers type, thick stroke, yellow active word, two words at a time - challenge & reaction",
+            "preview_colors": {"primary": "#FFFFFF", "highlight": "#FFE600"},
+        },
+        {
+            "id": CaptionPreset.BUBBLE,
+            "name": "Bubble",
+            "description": "Rounded Lilita One type with a pink active word - friendly, lifestyle & food",
+            "preview_colors": {"primary": "#FFFFFF", "highlight": "#FF6FB5"},
+        },
+        {
+            "id": CaptionPreset.RETRO,
+            "name": "Retro",
+            "description": "Chunky Bowlby One in cream with a hard orange drop shadow - storytime & nostalgia",
+            "preview_colors": {"primary": "#FFF4DC", "highlight": "#FF7A1A"},
+        },
+        {
+            "id": CaptionPreset.LIME,
+            "name": "Lime",
+            "description": "Archivo Black with the spoken word on a lime pill - business & finance",
+            "preview_colors": {"primary": "#FFFFFF", "highlight": "#0B0B0B"},
         },
     ]
 
@@ -932,3 +964,62 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
+
+
+def _create_beast_style() -> CaptionStyle:
+    """Beast: comic Bangers, two words, thick stroke, yellow active word, big pop."""
+    s = CaptionStyle()
+    s.font_name = "Bangers"
+    s.font_size = 118
+    s.letter_spacing = 2
+    s.max_words_per_line = 2
+    s.highlight_color = "#FFE600"
+    s.outline_width = 9
+    s.shadow_opacity = 0.9
+    s.shadow_blur = 2
+    s.shadow_offset = 8
+    s.emphasis_color = "#FF3B3B"
+    return s
+
+
+def _create_bubble_style() -> CaptionStyle:
+    """Bubble: rounded Lilita One, soft stroke, pink active word."""
+    s = CaptionStyle()
+    s.font_name = "Lilita One"
+    s.font_size = 96
+    s.highlight_color = "#FF6FB5"
+    s.outline_width = 7
+    s.shadow_opacity = 0.5
+    s.emphasis_color = "#FFE234"
+    return s
+
+
+def _create_retro_style() -> CaptionStyle:
+    """Retro: cream Bowlby One with a hard orange-brown drop shadow, revealed as spoken."""
+    s = CaptionStyle()
+    s.font_name = "Bowlby One"
+    s.font_size = 80
+    s.primary_color = "#FFF4DC"
+    s.highlight_color = "#FF7A1A"
+    s.outline_color = "#2B1300"
+    s.outline_width = 6
+    s.shadow_color = "#7A2E00"
+    s.shadow_opacity = 1.0
+    s.shadow_blur = 0
+    s.shadow_offset = 10
+    s.future_words = "hide"
+    s.emphasis_color = "#FFD23F"
+    return s
+
+
+def _create_lime_style() -> CaptionStyle:
+    """Lime: Archivo Black, spoken word in dark type on a lime pill."""
+    s = CaptionStyle()
+    s.font_name = "Archivo Black"
+    s.font_size = 78
+    s.highlight_color = "#0B0B0B"
+    s.outline_width = 5
+    s.highlight_box_color = "#C6FF3D"
+    s.highlight_box_padding = 16
+    s.emphasis_color = "#C6FF3D"
+    return s
