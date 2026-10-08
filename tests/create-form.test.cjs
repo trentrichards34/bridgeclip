@@ -106,9 +106,12 @@ test('B-roll and a background video are sent only for Automatic jobs, never toge
     request = buildJobRequest(useDraftStore.getState(), trim)
     assert.equal(request.broll, 'after-hook')
     assert.equal(request.backgroundVideo, undefined)
+    original.update({ hookPreview: true })
+    assert.equal(buildJobRequest(useDraftStore.getState(), trim).hookPreview, true)
     original.update({ workflow: 'review' })
     request = buildJobRequest(useDraftStore.getState(), trim)
     assert.equal(request.broll, undefined)
+    assert.equal(request.hookPreview, undefined)
     assert.equal(request.backgroundVideo, undefined)
   } finally { useDraftStore.setState(original) }
 })

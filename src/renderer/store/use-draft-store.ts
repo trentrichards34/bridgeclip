@@ -42,6 +42,8 @@ export interface ClipDraft {
   backgroundVideo: string | null
   /** B-roll mode (Automatic): Pexels footage after the hook, for the whole clip, or off. */
   broll: 'off' | 'after-hook' | 'full'
+  /** Hook preview (Automatic): open with the clip's strongest line. */
+  hookPreview: boolean
   trimOpen: boolean
   trimStart: string
   trimEnd: string
@@ -79,6 +81,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   includeTitle: true,
   backgroundVideo: null,
   broll: 'off',
+  hookPreview: false,
   trimOpen: false,
   trimStart: '',
   trimEnd: '',

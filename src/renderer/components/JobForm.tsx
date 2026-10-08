@@ -87,6 +87,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     includeTitle: draft.includeTitle,
     ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo && draft.broll === 'off' ? { backgroundVideo: draft.backgroundVideo } : {}),
     ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
+    ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
     startTimeSeconds: trim.start,
     endTimeSeconds: trim.end,
     bannerPlatform: null,
@@ -479,6 +480,13 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
         />
         <p id="clip-request-help" className="mt-2 text-2xs text-ink-subtle">Only matching moments are clipped, so you may get fewer clips, or none. Leave blank for the best moments.</p>
       </Group>
+      {draft.workflow !== 'review' && (
+        <SettingRow
+          title="Hook preview"
+          description="Open each clip with its strongest line, then play it from the start. Adds a few seconds; clips under 12 s are left as they are."
+          control={<Switch label="Open each clip with its strongest line" checked={draft.hookPreview} onChange={(hookPreview) => update({ hookPreview })} />}
+        />
+      )}
       <Group label="Clipping mode">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Clipping mode">
           {([
@@ -618,6 +626,7 @@ function ReviewStep({ draft, trim, onEdit }: {
     { step: 'clips', label: 'Mode', value: draft.clippingMode === 'advanced' ? 'Advanced · custom models' : draft.clippingMode === 'economy' ? 'Economy · lower cost' : 'Quality · higher accuracy' },
     { step: 'clips', label: 'Clips', value: `${lengths}${(draft.videoSpeed ?? 1) > 1 && draft.durations.length > 0 ? ' of source footage' : ''} · ${draft.autoClipCount ? 'AI decides how many' : `Up to ${draft.maxClips}`}` },
     { step: 'clips', label: 'What to clip', value: draft.clipRequest?.trim() || 'The best moments' },
+    ...(draft.workflow !== 'review' && draft.hookPreview ? [{ step: 'clips' as const, label: 'Hook preview', value: 'Opens with the strongest line' }] : []),
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
   if (draft.workflow !== 'review' && draft.broll !== 'off') rows.splice(3, 0, { step: 'format', label: 'B-roll', value: BROLL_OPTIONS.find((o) => o.id === draft.broll)?.summary ?? 'On' })

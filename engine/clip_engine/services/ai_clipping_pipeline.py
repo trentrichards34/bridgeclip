@@ -27,6 +27,7 @@ from typing import Any, Callable, Optional
 from clip_engine.config import CaptionStyle, LayoutStyle, get_settings, is_longform, resolve_clip_duration_bounds
 from clip_engine.services.video_speed import validate_video_speed
 from clip_engine.services.broll_service import prepare_broll
+from clip_engine.services.hook_preview import pick_teaser
 from clip_engine.error_policy import NoClipCandidatesError, NoRequestedMomentsError, safe_failure_code, safe_processing_error
 from clip_engine.services.source_context import SourceContextService, context_for_prompt, transcription_terms
 from clip_engine.services.editorial_evidence import discovery_feedback, overlaps
@@ -124,6 +125,8 @@ class ClippingJobRequest:
     # on screen for the opening hook.
     broll_enabled: bool = False
     broll_keep_hook: bool = True
+    # Hook preview: open each clip with its strongest line, then play it.
+    hook_preview: bool = False
     debug_capture: bool = False
     # "tight" cuts dead air and filler words; "natural" keeps original timing.
     pacing: str = "tight"
@@ -688,6 +691,11 @@ class AIClippingPipeline:
                     )
 
                     render_result = await self.rendering_service.render_clip(render_request)
+                    if request.hook_preview and not longform:
+                        render_progress(i, 'Adding the hook preview', None)
+                        teaser = await pick_teaser(clip_transcript, segment.start_time_ms, segment.end_time_ms)
+                        if teaser:
+                            render_result = await self.rendering_service.prepend_teaser(render_request, render_result, *teaser)
                     if getattr(render_result, "framing_trace_path", None):
                         clip_trace_paths[i] = render_result.framing_trace_path
                     segment.layout_type = render_result.layout_type
@@ -990,6 +998,7 @@ class AIClippingPipeline:
                     "include_title": request.include_title,
                     "background_video": os.path.basename(request.background_video_path) if request.background_video_path else None,
                     "broll": {"enabled": request.broll_enabled, "keep_hook": request.broll_keep_hook},
+                    "hook_preview": request.hook_preview,
                     "clip_request": request.clip_request,
                 },
                 "transcription_status": transcription_status,

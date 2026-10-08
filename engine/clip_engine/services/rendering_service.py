@@ -1019,6 +1019,58 @@ class RenderingService:
             logger.warning(f"Loudness measurement failed; using single-pass normalization: {e}")
             return None
 
+    async def prepend_teaser(
+        self, request: RenderRequest, result: RenderResult, teaser_start_ms: int, teaser_end_ms: int,
+    ) -> RenderResult:
+        """Open the rendered clip with a teaser of its strongest line (hook preview).
+
+        The teaser is rendered with the clip's own framing, captions, title
+        and background, then joined in front of the clip. Any failure keeps
+        the clip as it was.
+        """
+        base, ext = os.path.splitext(result.output_path)
+        teaser_path, joined_path = f"{base}.teaser{ext}", f"{base}.joined{ext}"
+        teaser_request = replace(
+            request, output_path=teaser_path, start_time_ms=teaser_start_ms, end_time_ms=teaser_end_ms,
+            apply_padding=False, pacing=Pacing.NATURAL, broll_shots=[], longform=False, skip_ranges_ms=[],
+            chapters=[], progress_callback=None, manual_plan=None, manual_ranges_ms=None,
+            editorial_context=None, editorial_service=None, coherence_reviewer=None, debug_capture=False,
+        )
+        try:
+            teaser = await self.render_clip(teaser_request)
+            with_audio = await self._has_audio(result.output_path) and await self._has_audio(teaser.output_path)
+            streams = "[0:v][0:a][1:v][1:a]" if with_audio else "[0:v][1:v]"
+            graph = f"{streams}concat=n=2:v=1:a={1 if with_audio else 0}[v]" + ("[a]" if with_audio else "")
+            fps = await self._probe_fps(result.output_path)
+            cmd = [
+                "ffmpeg", "-nostdin", "-nostats", "-y",
+                "-protocol_whitelist", "file", "-i", teaser.output_path,
+                "-protocol_whitelist", "file", "-i", result.output_path,
+                "-filter_complex", graph, "-map", "[v]",
+                *self._video_codec_args(result.output_width or 1080, result.output_height or 1920, fps),
+                "-pix_fmt", "yuv420p", "-r", fps, "-movflags", "+faststart",
+            ]
+            cmd += ["-map", "[a]", "-c:a", "aac", "-b:a", "192k"] if with_audio else ["-an"]
+            cmd.append(joined_path)
+            await self._run_cmd(cmd)
+            os.replace(joined_path, result.output_path)
+            return replace(
+                result,
+                duration_ms=result.duration_ms + teaser.duration_ms,
+                file_size_bytes=os.path.getsize(result.output_path),
+                # Chapters and subtitles start after the teaser.
+                chapters=[(ms + teaser.duration_ms, title) for ms, title in result.chapters],
+            )
+        except Exception as exc:
+            logger.warning(f"Hook preview failed; keeping the clip without it: {exc}")
+            return result
+        finally:
+            for path in (teaser_path, joined_path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
     async def _has_audio(self, video_path: str) -> bool:
         """Whether the source has an audio stream (the graph maps [0:a] only if so)."""
         cmd = [

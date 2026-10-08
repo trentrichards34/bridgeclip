@@ -487,6 +487,7 @@ export function startClipJob(
     include_title: config.includeTitle ?? true,
     ...(backgroundPath ? { background_video_path: backgroundPath } : {}),
     ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook' } : {}),
+    ...(config.hookPreview ? { hook_preview: true } : {}),
     keyterms: vocabularyTerms(settings.customVocabulary),
     start_time_seconds: config.startTimeSeconds,
     end_time_seconds: config.endTimeSeconds,

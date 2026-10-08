@@ -274,6 +274,7 @@ async def run(config: dict) -> bool:
         background_video_path=config.get("background_video_path"),
         broll_enabled=config.get("broll_enabled", False),
         broll_keep_hook=config.get("broll_keep_hook", True),
+        hook_preview=config.get("hook_preview", False),
         debug_capture=config.get("debug_capture", False),
         pacing=config.get("pacing") or "tight",
         video_speed=config.get("video_speed", 1.0),
@@ -351,7 +352,7 @@ def validate_config(config: object) -> dict:
     output = config.get("output_dir")
     if output is not None and (not isinstance(output, str) or not os.path.isabs(output) or "\0" in output):
         raise ValueError("Output directory must be an absolute path")
-    for field in ("include_captions", "include_title", "auto_clip_count", "layout_vision_enabled", "debug_capture", "broll_enabled", "broll_keep_hook"):
+    for field in ("include_captions", "include_title", "auto_clip_count", "layout_vision_enabled", "debug_capture", "broll_enabled", "broll_keep_hook", "hook_preview"):
         if field in config and not isinstance(config[field], bool):
             raise ValueError(f"{field} must be a boolean")
     if config.get('workflow', 'automatic') not in ('automatic', 'review'):
