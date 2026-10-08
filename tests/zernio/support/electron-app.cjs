@@ -1,5 +1,5 @@
 'use strict'
-// Builds BridgeClip into a scratch folder and launches it as an isolated
+// Builds CreatorClips into a scratch folder and launches it as an isolated
 // Electron instance for end-to-end tests. The instance gets its own userData
 // (and single-instance lock), talks to a mock Zernio, uses a scripted browser
 // instead of the real one, a mock keychain, and a hidden window. It never
@@ -53,9 +53,9 @@ async function launchApp({ appDir, userDataDir, mock, apiUrl, env = {} }) {
     throw new Error('This build predates full userData isolation; rebuild before launching it.')
   }
   // Settings for a fresh run, with no keys and an output folder inside the
-  // isolated dir (the app's default is the real ~/BridgeClip).
+  // isolated dir (the app's default is the real ~/CreatorClips).
   const settingsFile = path.join(userDataDir, 'settings.json')
-  const outputDirectory = path.join(userDataDir, 'BridgeClip')
+  const outputDirectory = path.join(userDataDir, 'CreatorClips')
   if (!fs.existsSync(settingsFile)) {
     fs.mkdirSync(userDataDir, { recursive: true })
     fs.writeFileSync(settingsFile, JSON.stringify({ version: 6, openrouterApiKey: '', zernioApiKey: '', outputDirectory, pythonPath: 'python3',  }), { mode: 0o600 })

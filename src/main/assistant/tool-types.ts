@@ -1,4 +1,4 @@
-// A BridgeClip capability the assistant can call. Tools run in the main
+// A CreatorClips capability the assistant can call. Tools run in the main
 // process with the same functions the renderer's IPC handlers use.
 
 import type { AssistantProviderId } from '../../shared/assistant'

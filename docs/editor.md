@@ -6,7 +6,7 @@ Choose candidates, refine cuts and framing, and export when you are ready.
 
 ## Open a project
 
-Choose **Review & edit** on Create’s first step to find candidates without rendering them. BridgeClip transcribes the source (researching it first if web research is on), proposes moments and suggests framing. It opens a saved editor project when discovery finishes. The automatic workflow remains available.
+Choose **Review & edit** on Create’s first step to find candidates without rendering them. CreatorClips transcribes the source (researching it first if web research is on), proposes moments and suggests framing. It opens a saved editor project when discovery finishes. The automatic workflow remains available.
 
 Reopening a Library item goes straight to the editor when it has unfinished candidates and no baked clips. Once there are baked clips, it opens their list with a prominent **Continue editing** button and a count of clips left to finish. When every candidate is baked or discarded, the list keeps a quieter **Open editor** button. The editor starts on an unfinished candidate, falling back to a baked one before any discarded candidates.
 
@@ -60,7 +60,7 @@ Click a pencil in **Transcript** to correct a line while reviewing. Corrections 
 
 ## Suppress captions in selected sections
 
-In **Captions**, use **Suppress captions here** for footage with baked-in source captions. **Add another section** creates additional ranges, even when the playhead is inside an existing one. Adjust each caption-free section’s start/end time or set them from the playhead. Amber timeline bars mark these sections. Suppression autosaves per candidate, supports undo/redo, and follows the source through trims, removed sections and speed changes. It hides only BridgeClip’s captions; source captions and audio remain. Remove a range to restore our captions there.
+In **Captions**, use **Suppress captions here** for footage with baked-in source captions. **Add another section** creates additional ranges, even when the playhead is inside an existing one. Adjust each caption-free section’s start/end time or set them from the playhead. Amber timeline bars mark these sections. Suppression autosaves per candidate, supports undo/redo, and follows the source through trims, removed sections and speed changes. It hides only CreatorClips’s captions; source captions and audio remain. Remove a range to restore our captions there.
 
 ## Review your edits again
 

@@ -103,6 +103,31 @@ class BridgeTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 bridge.validate_config(value)
 
+    def test_background_video_must_be_an_existing_absolute_video_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            video = os.path.join(folder, "gameplay.mp4")
+            text = os.path.join(folder, "notes.txt")
+            for path in (video, text):
+                with open(path, "w") as handle:
+                    handle.write("x")
+            bridge.validate_config(self.config(background_video_path=video))
+            for bad in (text, os.path.join(folder, "missing.mp4"), "gameplay.mp4", 5, video + "\0"):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    bridge.validate_config(self.config(background_video_path=bad))
+
+    def test_broll_options_are_booleans_and_exclude_a_background(self):
+        bridge.validate_config(self.config(broll_enabled=True, broll_keep_hook=False))
+        bridge.validate_config(self.config(hook_preview=True))
+        for bad in ({"broll_enabled": "yes"}, {"broll_keep_hook": 1}, {"hook_preview": "on"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bridge.validate_config(self.config(**bad))
+        with tempfile.TemporaryDirectory() as folder:
+            video = os.path.join(folder, "gameplay.mp4")
+            with open(video, "w") as handle:
+                handle.write("x")
+            with self.assertRaises(ValueError):
+                bridge.validate_config(self.config(background_video_path=video, broll_enabled=True))
+
     def test_output_and_local_mode_are_set_before_settings_load(self):
         observed = []
         def get_settings():
@@ -243,7 +268,7 @@ class BridgeTests(unittest.TestCase):
             self.assertLessEqual(len(failure['hint']), 300)
             self.assertNotRegex(failure['hint'], r'https?://|[\\/]')
         empty = bridge.describe_failure("No clip-worthy moments found (the video may have no speech, or the selected time range is too short for the chosen clip length)")
-        self.assertEqual(empty["message"], "BridgeClip couldn't find any clips in this video.")
+        self.assertEqual(empty["message"], "CreatorClips couldn't find any clips in this video.")
         no_candidates = bridge.describe_failure('The planner returned no clip candidates ' + secret)
         self.assertEqual(no_candidates['message'], 'The planner returned no clip candidates.')
         self.assertIn('planner response', no_candidates['hint'])

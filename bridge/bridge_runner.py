@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-BridgeClip Bridge Runner
+CreatorClips Bridge Runner
 
-Thin bridge between Electron and BridgeClip clipping engine.
+Thin bridge between Electron and CreatorClips clipping engine.
 Accepts a JSON config on stdin, runs the pipeline in LOCAL_MODE,
 and streams structured JSON-line progress to stdout for Electron to consume.
 
@@ -30,6 +30,7 @@ logger = logging.getLogger("bridge_runner")
 _protocol = None
 
 # Mirrors DURATION_OPTIONS in src/shared/job-contract.ts.
+BACKGROUND_VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".webm")
 DURATION_RANGE_IDS = ("xshort", "short", "medium", "long", "xlong", "extended", "feature")
 
 # Known failure classes -> (message, hint). Raw engine errors can contain
@@ -79,10 +80,10 @@ FAILURES = (
      "OpenRouter returned an unusable transcription response.",
      "Retry the run. If it persists, report this run so the provider response can be investigated."),
     (("audio extraction failed", "audio duration could not be determined", "transcription audio preparation failed"),
-     "BridgeClip could not prepare this video's audio for transcription.",
+     "CreatorClips could not prepare this video's audio for transcription.",
      "Run Settings → System check. If the tools are ready, report this run with its failure code."),
     (("transcription audio chunk exceeded the size limit",),
-     "The transcription audio exceeded BridgeClip's size limit.",
+     "The transcription audio exceeded CreatorClips's size limit.",
      "Set a shorter start and end time, or report this run so the chunk size can be adjusted."),
     (("transcription failed",),
      "Audio transcription failed.",
@@ -92,12 +93,12 @@ FAILURES = (
      "Run Settings → System check. If all tools are ready, report this run so the render can be diagnosed."),
     (("http error 403", "sign in to confirm", "blocking this request"),
      "The video service refused the download.",
-     "Update BridgeClip and retry. If it keeps happening, download the video yourself and clip it as a local file."),
+     "Update CreatorClips and retry. If it keeps happening, download the video yourself and clip it as a local file."),
     (("video unavailable", "private video", "members-only", "has been removed", "not available in your country"),
      "This video is private, removed or unavailable in your region.",
      "Check the link opens in a signed-out browser window, or clip a local file instead."),
     (("exceeds maximum allowed duration",),
-     "This video is longer than BridgeClip can process.",
+     "This video is longer than CreatorClips can process.",
      "Choose a shorter source video, or trim a downloaded file before adding it."),
     (("insufficient credits for jev review",),
      "OpenRouter ran out of credits during Jev review; no clips were exported.",
@@ -124,7 +125,7 @@ FAILURES = (
      "This video is live or not yet available.",
      "Wait until the stream has ended and the saved video is ready, then retry."),
     (("no clip-worthy moments",),
-     "BridgeClip couldn't find any clips in this video.",
+     "CreatorClips couldn't find any clips in this video.",
      "No clear spoken or visual moment met the selected clip length. If you set a start and end time, widen it or pick a shorter clip length."),
     (("out of credits", "quota exceeded"),
      "Your OpenRouter key is out of credits.",
@@ -186,11 +187,11 @@ def progress_callback(progress) -> None:
 async def run(config: dict) -> bool:
     """Run the clipping pipeline with the given config."""
     config = validate_config(config)
-    # Configure before BridgeClip imports: settings are cached by the engine.
+    # Configure before CreatorClips imports: settings are cached by the engine.
     os.environ["LOCAL_MODE"] = "true"
     if config.get("output_dir"):
         os.environ["LOCAL_OUTPUT_DIR"] = config["output_dir"]
-    # Downloads use the user's own connection. A developer's BridgeClip .env can
+    # Downloads use the user's own connection. A developer's CreatorClips .env can
     # hold the server's proxy pool, and environment variables beat .env values.
     os.environ["YTDLP_PROXIES"] = ""
     os.environ["YTDLP_PROXY"] = ""
@@ -224,7 +225,7 @@ async def run(config: dict) -> bool:
 
     from clip_engine.bridge_contract import BRIDGE_CONTRACT_VERSION
     if config["contract_version"] != BRIDGE_CONTRACT_VERSION:
-        emit({"type": "error", "message": "The bundled clipping engine is incompatible with this BridgeClip version."})
+        emit({"type": "error", "message": "The bundled clipping engine is incompatible with this CreatorClips version."})
         return False
 
     from clip_engine.config import get_settings, get_caption_preset
@@ -270,6 +271,10 @@ async def run(config: dict) -> bool:
         duration_ranges=duration_ranges,
         aspect_ratio=config.get("aspect_ratio", "9:16"),
         layout_style=config.get("layout_style") or "auto",
+        background_video_path=config.get("background_video_path"),
+        broll_enabled=config.get("broll_enabled", False),
+        broll_keep_hook=config.get("broll_keep_hook", True),
+        hook_preview=config.get("hook_preview", False),
         debug_capture=config.get("debug_capture", False),
         pacing=config.get("pacing") or "tight",
         video_speed=config.get("video_speed", 1.0),
@@ -347,7 +352,7 @@ def validate_config(config: object) -> dict:
     output = config.get("output_dir")
     if output is not None and (not isinstance(output, str) or not os.path.isabs(output) or "\0" in output):
         raise ValueError("Output directory must be an absolute path")
-    for field in ("include_captions", "include_title", "auto_clip_count", "layout_vision_enabled", "debug_capture"):
+    for field in ("include_captions", "include_title", "auto_clip_count", "layout_vision_enabled", "debug_capture", "broll_enabled", "broll_keep_hook", "hook_preview"):
         if field in config and not isinstance(config[field], bool):
             raise ValueError(f"{field} must be a boolean")
     if config.get('workflow', 'automatic') not in ('automatic', 'review'):
@@ -359,6 +364,14 @@ def validate_config(config: object) -> dict:
         raise ValueError("Invalid aspect ratio")
     if config.get("layout_style", "auto") not in ("auto", "fill", "fit"):
         raise ValueError("Invalid layout style")
+    background = config.get("background_video_path")
+    if background is not None and (
+        not isinstance(background, str) or "\0" in background or not os.path.isabs(background)
+        or os.path.splitext(background)[1].lower() not in BACKGROUND_VIDEO_EXTENSIONS or not os.path.isfile(background)
+    ):
+        raise ValueError("Background video must be an existing .mp4, .mov, .m4v or .webm file")
+    if background is not None and config.get("broll_enabled"):
+        raise ValueError("Choose either a background video or B-roll, not both")
     if config.get("pacing", "tight") not in ("tight", "natural"):
         raise ValueError("Invalid pacing")
     speed = config.get("video_speed", 1.0)

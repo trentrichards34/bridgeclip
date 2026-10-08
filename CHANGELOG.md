@@ -1,6 +1,6 @@
 # Changelog
 
-What's new in each version of BridgeClip, newest first. You can also read this in the app under **Settings → About → Changelog** or **Help → Changelog**. Downloads for every version are on [GitHub Releases](https://github.com/bridge-mind/bridgeclip/releases).
+What's new in each version of CreatorClips, newest first. You can also read this in the app under **Settings → About → Changelog** or **Help → Changelog**. Downloads for every version are on [GitHub Releases](https://github.com/trentrichards34/bridgeclip/releases).
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Maintainers: see [Changelog](CONTRIBUTING.md#changelog) in the contributing guide before editing.
 
@@ -18,9 +18,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Mai
 - Automations have **Submitted** and **Needs attention** sections, drag to reorder, **View in Library**, reviewable title and caption drafts, **Refresh post status** and **Return to queue**.
 - **TypeSafe Jev review** and **Research the source before clipping**, both in beta and off by default. Turn them on in Settings. Both use extra OpenRouter credit.
 - **Free editor media** removes an editor project's source copy and preview once you're done with it.
-- BridgeClip asks whether to save or discard unsaved edits before quitting, and offers **Reload project** when a project was changed elsewhere.
+- CreatorClips asks whether to save or discard unsaved edits before quitting, and offers **Reload project** when a project was changed elsewhere.
 - This changelog, in Settings → About and the Help menu.
-- **Chat**: run BridgeClip in plain words. It uses your Claude (Pro or Max, through Claude Code) or ChatGPT (through Codex) subscription, or any OpenRouter model with your OpenRouter key; connect them in **Settings → Assistant**. The assistant can start clipping jobs, manage the Library and automations, and post or schedule clips. Anything that publishes, deletes or spends OpenRouter credit on clipping asks you first.
+- **Chat**: run CreatorClips in plain words. It uses your Claude (Pro or Max, through Claude Code) or ChatGPT (through Codex) subscription, or any OpenRouter model with your OpenRouter key; connect them in **Settings → Assistant**. The assistant can start clipping jobs, manage the Library and automations, and post or schedule clips. Anything that publishes, deletes or spends OpenRouter credit on clipping asks you first.
 - Chat's model menu has a tab each for Claude, OpenAI and OpenRouter (search every OpenRouter model that can use tools, with prices), and each reply shows the logo and model that wrote it. Recent chats are listed beside the conversation, with search.
 - Chat can find YouTube videos by channel or search, so "clip the latest BridgeMind video" works without a link, and can search the web and read web pages.
 
@@ -58,7 +58,7 @@ One release for macOS, Windows and Linux.
 
 - An automation keeps posting the rest of its queue when one clip's details can't be verified.
 - Generated post captions that quote the video are accepted when the speaker stutters, and captions can no longer contain web links.
-- Hardened how BridgeClip handles captions, file paths, titles, downloads and its bundled Python, so unusual input can't change video processing commands or load unexpected code.
+- Hardened how CreatorClips handles captions, file paths, titles, downloads and its bundled Python, so unusual input can't change video processing commands or load unexpected code.
 
 ## [0.1.18] - 2026-09-25
 
@@ -73,7 +73,7 @@ The first version with downloadable installers, starting with macOS.
 ### Added
 
 - macOS apps for Apple silicon and Intel, signed with BridgeMind's Developer ID and notarized by Apple.
-- Automatic updates. BridgeClip checks shortly after launch and every four hours, downloads in the background, and installs when you choose **Restart to update** or the next time you quit. Settings → About shows the status and has **Check for updates**.
+- Automatic updates. CreatorClips checks shortly after launch and every four hours, downloads in the background, and installs when you choose **Restart to update** or the next time you quit. Settings → About shows the status and has **Check for updates**.
 - Clip public, finished Twitch VODs by pasting their link.
 - **Video speed** in Create → Format speeds up every clip in a job, from 1.1× to 2×. Voices keep their pitch and captions stay in sync.
 - TikTok accounts in automations. Each clip gets a review of its caption, audience, interactions and disclosures before it can post.
@@ -106,9 +106,9 @@ The first version with downloadable installers, starting with macOS.
 
 ### Added
 
-- BridgeClip's source code is public under the MIT license. Installers start with 0.1.17.
+- CreatorClips's source code is public under the MIT license. Installers start with 0.1.17.
 
-[Unreleased]: https://github.com/bridge-mind/bridgeclip/compare/v0.1.19...HEAD
+[Unreleased]: https://github.com/trentrichards34/bridgeclip/compare/v0.1.19...HEAD
 [0.1.19]: https://github.com/bridge-mind/bridgeclip/releases/tag/v0.1.19
 [0.1.18]: https://github.com/bridge-mind/bridgeclip/releases/tag/v0.1.18
 [0.1.17]: https://github.com/bridge-mind/bridgeclip/releases/tag/v0.1.17

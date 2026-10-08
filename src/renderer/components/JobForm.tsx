@@ -1,5 +1,5 @@
 import { normalizeVideoSource, twitchSourceError } from '../../shared/video-source'
-import { useEffect, useMemo, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, type ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, ListVideo, Minus, Plus, Sparkles } from 'lucide-react'
 import { cn, MOD_KEY, parseTimecode, sourceLabel } from '../lib/utils'
 import { useDraftStore, type ClipDraft, type WizardStep } from '../store/use-draft-store'
@@ -21,6 +21,7 @@ import { useModelStore } from '../store/use-model-store'
 import { useSettingsStore } from '../store/use-settings-store'
 import { ModelPicker } from './ModelPicker'
 import { WorkflowPicker } from './WorkflowPicker'
+import { BackgroundPicker } from './BackgroundPicker'
 
 const DURATIONS = DURATION_OPTIONS
 
@@ -33,6 +34,12 @@ const LAYOUT_STYLES = [
   { id: 'auto', label: 'Smart', hint: 'Auto frames each shot' },
   { id: 'fill', label: 'Full frame', hint: 'Follows the speaker' },
   { id: 'fit', label: 'Classic', hint: 'Whole frame, blurred' }
+] as const
+
+const BROLL_OPTIONS = [
+  { id: 'off', label: 'Off', hint: 'Just the speaker', summary: 'Off' },
+  { id: 'after-hook', label: 'After the hook', hint: 'Speaker for 3 s first', summary: 'Pexels footage after a 3 s speaker hook' },
+  { id: 'full', label: 'Whole clip', hint: 'Footage from the start', summary: 'Pexels footage for the whole clip' }
 ] as const
 
 const MAX_CLIPS = 100
@@ -78,6 +85,9 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     includeCaptions: draft.includeCaptions,
     captionPreset: draft.captionPreset,
     includeTitle: draft.includeTitle,
+    ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo && draft.broll === 'off' ? { backgroundVideo: draft.backgroundVideo } : {}),
+    ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
+    ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
     startTimeSeconds: trim.start,
     endTimeSeconds: trim.end,
     bannerPlatform: null,
@@ -296,6 +306,8 @@ function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; u
 
 /** Format, framing and pacing. Exported for the keyboard-navigation test. */
 export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
+  const setBackground = useCallback((backgroundVideo: string | null) => update(backgroundVideo ? { backgroundVideo, broll: 'off' } : { backgroundVideo }), [update])
+  const pexelsConfigured = useSettingsStore((s) => s.pexelsConfigured)
   return (
     <div className="space-y-4">
       <Group label="Format">
@@ -376,6 +388,47 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
         </Group>
       )}
 
+      {draft.workflow !== 'review' && (
+        <Group label="B-roll" aside="Stock footage from Pexels">
+          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="B-roll">
+            {BROLL_OPTIONS.map((option) => {
+              const selected = draft.broll === option.id
+              const disabled = option.id !== 'off' && !pexelsConfigured
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  disabled={disabled}
+                  tabIndex={selected ? 0 : -1}
+                  onKeyDown={onRadioKeyDown}
+                  onClick={() => update(option.id === 'off' ? { broll: 'off' } : { broll: option.id, backgroundVideo: null })}
+                  className={cn(
+                    'glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left disabled:cursor-not-allowed disabled:opacity-50',
+                    selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink'
+                  )}
+                >
+                  <span className="block text-xs font-medium">{option.label}</span>
+                  <span className={cn('block truncate text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{option.hint}</span>
+                </button>
+              )
+            })}
+          </div>
+          <p className="mt-2 text-2xs text-ink-subtle">
+            {pexelsConfigured
+              ? 'AI picks footage for each beat of what’s said. The speaker’s audio, captions and title stay.'
+              : 'Add a free Pexels API key in Settings → API keys to turn on B-roll.'}
+          </p>
+        </Group>
+      )}
+
+      {draft.aspectRatio === '9:16' && draft.workflow !== 'review' && draft.broll === 'off' && (
+        <Group label="Background video" aside="Gameplay split">
+          <BackgroundPicker value={draft.backgroundVideo} onChange={setBackground} />
+        </Group>
+      )}
+
       <Group label="Pacing">
         <SettingRow
           title="Cut dead air"
@@ -427,6 +480,13 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
         />
         <p id="clip-request-help" className="mt-2 text-2xs text-ink-subtle">Only matching moments are clipped, so you may get fewer clips, or none. Leave blank for the best moments.</p>
       </Group>
+      {draft.workflow !== 'review' && (
+        <SettingRow
+          title="Hook preview"
+          description="Open each clip with its strongest line, then play it from the start. Adds a few seconds; clips under 12 s are left as they are."
+          control={<Switch label="Open each clip with its strongest line" checked={draft.hookPreview} onChange={(hookPreview) => update({ hookPreview })} />}
+        />
+      )}
       <Group label="Clipping mode">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Clipping mode">
           {([
@@ -566,8 +626,11 @@ function ReviewStep({ draft, trim, onEdit }: {
     { step: 'clips', label: 'Mode', value: draft.clippingMode === 'advanced' ? 'Advanced · custom models' : draft.clippingMode === 'economy' ? 'Economy · lower cost' : 'Quality · higher accuracy' },
     { step: 'clips', label: 'Clips', value: `${lengths}${(draft.videoSpeed ?? 1) > 1 && draft.durations.length > 0 ? ' of source footage' : ''} · ${draft.autoClipCount ? 'AI decides how many' : `Up to ${draft.maxClips}`}` },
     { step: 'clips', label: 'What to clip', value: draft.clipRequest?.trim() || 'The best moments' },
+    ...(draft.workflow !== 'review' && draft.hookPreview ? [{ step: 'clips' as const, label: 'Hook preview', value: 'Opens with the strongest line' }] : []),
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
+  if (draft.workflow !== 'review' && draft.broll !== 'off') rows.splice(3, 0, { step: 'format', label: 'B-roll', value: BROLL_OPTIONS.find((o) => o.id === draft.broll)?.summary ?? 'On' })
+  else if (draft.workflow !== 'review' && draft.aspectRatio === '9:16' && draft.backgroundVideo) rows.splice(3, 0, { step: 'format', label: 'Background', value: `${draft.backgroundVideo} · under the speaker` })
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? 'Shown at the top' : 'Off' })
   if (draft.clippingMode === 'advanced') rows.splice(5, 0,
     { step: 'clips', label: 'Transcribe', value: draft.transcriptionModel || 'Choose a model' },
@@ -612,7 +675,7 @@ function StartedPanel({ className, onViewJob }: { className?: string; onViewJob?
       <p className="mt-1 max-w-md text-xs text-ink-subtle">
         {started.queued
           ? `Up to ${MAX_PARALLEL_JOBS} jobs run at once. This one starts as soon as a slot frees up.`
-          : 'It keeps running while you queue more videos or use the rest of BridgeClip.'}
+          : 'It keeps running while you queue more videos or use the rest of CreatorClips.'}
       </p>
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
         <Button variant="primary" icon={<Plus className="h-3.5 w-3.5" />} onClick={startAnother}>

@@ -56,7 +56,8 @@ function startRunner({ child, env = process.env, onSpawn = () => {} }) {
     '../shared/job-progress': loadShared('job-progress.ts'),
     './run-history': runHistory,
     '../shared/job-contract': jobContract,
-    './tools': { resolveBinary: () => '/staged/engine-bin/ffmpeg' }
+    './tools': { resolveBinary: () => '/staged/engine-bin/ffmpeg' },
+    './backgrounds': { resolveBackground: (name) => '/library/' + name }
   }, {
     process: { ...process, platform: 'darwin', env, kill: (pid, signal) => { signals.push({ pid, signal }) } }
   })

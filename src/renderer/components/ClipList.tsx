@@ -127,7 +127,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
   const exportingRef = useRef(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  // Older BridgeClip engine runs do not record output format; use the first thumbnail for those.
+  // Older CreatorClips engine runs do not record output format; use the first thumbnail for those.
   const [aspect, setAspect] = useState<number | null>(null)
   const settings = output.metrics?.requested_settings
   const requestedAspect = settings && typeof settings === 'object' && !Array.isArray(settings)
@@ -218,7 +218,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
     if (deletingRef.current || exportingRef.current) return
     deletingRef.current = true; setDeleting(true); setDeleteError(null)
     try {
-      if (typeof getApi().history.deleteClips !== 'function') throw new Error('Restart BridgeClip to enable deleting selected clips.')
+      if (typeof getApi().history.deleteClips !== 'function') throw new Error('Restart CreatorClips to enable deleting selected clips.')
       const fresh = await getApi().history.deleteClips(outputDir, indices)
       onOutputChanged(fresh)
       setSelected(new Set()); setStatusRetry((value) => value + 1)
@@ -299,7 +299,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
               onDelete={outputDir ? () => confirmDelete([clip.clip_index]) : undefined}
               actionsDisabled={deleting || exporting}
               onSetPosted={outputDir ? async (posted) => {
-                if (!getApi().history.setPosted) throw new Error('Restart BridgeClip to enable manual posted marks.')
+                if (!getApi().history.setPosted) throw new Error('Restart CreatorClips to enable manual posted marks.')
                 await getApi().history.setPosted(outputDir, clip.clip_index, posted)
                 setStatusRetry((value) => value + 1)
                 if (posted) setPostedExpanded(true)

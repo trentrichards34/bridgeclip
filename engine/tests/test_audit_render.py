@@ -137,7 +137,7 @@ def filter_options(args: str) -> list[tuple[str | None, str]]:
 
 @pytest.mark.parametrize("path", [
     "/tmp/plain/clip.ass",
-    "/Users/Matt O'Brien/Library/Application Support/BridgeClip/work/clip.ass",
+    "/Users/Matt O'Brien/Library/Application Support/CreatorClips/work/clip.ass",
     "/out/" + HOSTILE_DIR + "/clip-0-6000.ass",
     "/out/x'\\''y/[a],b;c=d:e/clip.ass",
     "C:/Users/me/clip.ass",

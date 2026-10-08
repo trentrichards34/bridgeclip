@@ -64,7 +64,7 @@ export async function startClipJobRequest(request: unknown): Promise<StartJobRes
     const pythonValidation = await validatePython(pythonPath, enginePath)
     if (!pythonValidation.ok) {
       lastEngineCheck = null
-      return { error: 'The clipping engine is incomplete or incompatible. Open Settings → System check, then repair the BridgeClip installation before starting.' }
+      return { error: 'The clipping engine is incomplete or incompatible. Open Settings → System check, then repair the CreatorClips installation before starting.' }
     }
     lastEngineCheck = { key: engineKey, at: Date.now() }
   }

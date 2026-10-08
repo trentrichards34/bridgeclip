@@ -40,6 +40,7 @@ import type {
 export interface ClipSettings extends JevThresholdSettings {
   openrouterConfigured: boolean
   zernioConfigured: boolean
+  pexelsConfigured: boolean
   jevEnabled: string
   jevVisualContext: string
   sourceContextWebResearch: string
@@ -161,7 +162,7 @@ export interface BridgeClipAPI {
     /** Pass true to count again instead of reusing a result from the last few seconds. */
     storageUsage: (fresh?: boolean) => Promise<OutputStorageUsage>
     save: (settings: ClipSettings) => Promise<ClipSettings>
-    replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey', value: string) => Promise<ClipSettings>
+    replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey' | 'pexelsApiKey', value: string) => Promise<ClipSettings>
     selectOutputDir: () => Promise<string | null>
   }
   zernio: {
@@ -238,6 +239,12 @@ export interface BridgeClipAPI {
   dialog: {
     selectVideo: () => Promise<string | null>
   }
+  /** Gameplay background library (file names only). */
+  backgrounds: {
+    list: () => Promise<string[]>
+    add: () => Promise<string[]>
+    remove: (name: string) => Promise<string[]>
+  }
   clips: {
     bulkExport: (clips: { path: string; name: string }[]) => Promise<{ success: boolean; count: number; failedCount: number; destDir?: string }>
   }
@@ -257,7 +264,7 @@ export interface BridgeClipAPI {
     onShow: (cb: () => void) => () => void
     /** Check now; resolves with the state once the check finishes. */
     check: () => Promise<UpdateState>
-    /** Quit and install the downloaded update, then reopen BridgeClip. */
+    /** Quit and install the downloaded update, then reopen CreatorClips. */
     install: () => Promise<boolean>
     /** macOS: move the app out of the disk image or Downloads so it can update. */
     moveToApplications: () => Promise<boolean>
@@ -406,6 +413,11 @@ const api: BridgeClipAPI = {
   },
   dialog: {
     selectVideo: () => ipcRenderer.invoke('dialog:selectVideo')
+  },
+  backgrounds: {
+    list: () => ipcRenderer.invoke('backgrounds:list'),
+    add: () => ipcRenderer.invoke('backgrounds:add'),
+    remove: (name) => ipcRenderer.invoke('backgrounds:remove', name)
   },
   clips: {
     bulkExport: (clips) => ipcRenderer.invoke('clips:bulkExport', clips)

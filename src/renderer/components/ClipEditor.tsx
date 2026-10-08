@@ -360,7 +360,7 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
       if (saved) { await load(); setUndo([]); setRedo([]) }
       const message = errorMessage(e)
       setError(action === 'scan-cameras' && message.includes('Invalid editor operation')
-        ? 'Restart BridgeClip to load camera scanning. Your edits are saved.'
+        ? 'Restart CreatorClips to load camera scanning. Your edits are saved.'
         : message)
       if (message.includes(EDITOR_REVISION_CONFLICT)) setConflict(true)
     } finally { active = false; window.clearInterval(polling); setBusy(null); setBatch(undefined); setProgress(undefined) }
@@ -368,7 +368,7 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
   const chooseReplacement = async (): Promise<void> => {
     video.current?.pause(); setEditingCaption(null)
     try {
-      if (typeof getApi().editor.replaceSource !== 'function') throw new Error('Restart BridgeClip to enable source replacement. Your edits will be saved when you leave the editor.')
+      if (typeof getApi().editor.replaceSource !== 'function') throw new Error('Restart CreatorClips to enable source replacement. Your edits will be saved when you leave the editor.')
       setReplacement(await getApi().dialog.selectVideo())
     } catch (e) { setError(errorMessage(e)) }
   }

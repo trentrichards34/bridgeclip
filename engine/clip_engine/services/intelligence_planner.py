@@ -99,6 +99,8 @@ DEFAULT_PRICING = {"input": 2.00e-6, "output": 12.0e-6}
 # The five rubric dimensions the model scores each clip on (0-10 each).
 # virality_score is computed from these rather than trusting model arithmetic.
 RUBRIC_DIMENSIONS = ("hook", "standalone", "arc", "quotability", "ending")
+# Hook and payoff decide whether a short works; they carry 60% of the rank.
+RUBRIC_WEIGHTS = {"hook": 0.35, "standalone": 0.15, "arc": 0.1, "quotability": 0.15, "ending": 0.25}
 
 MOMENT_SCHEMA = {'type': 'object', 'properties': {
     'topic': {'type': 'string', 'description': 'One specific topic of this moment, not a summary of the whole video.'},
@@ -405,8 +407,8 @@ class IntelligencePlannerService:
                 timeout=httpx.Timeout(600.0, connect=30.0),
                 headers={
                     "Authorization": f"Bearer {self.settings.openrouter_api_key}",
-                    "HTTP-Referer": "https://github.com/bridge-mind/bridgeclip",
-                    "X-Title": "BridgeClip AI Clipping Agent",
+                    "HTTP-Referer": "https://github.com/trentrichards34/bridgeclip",
+                    "X-Title": "CreatorClips AI Clipping Agent",
                 },
             )
         return self._http_client
@@ -804,7 +806,9 @@ class IntelligencePlannerService:
                 "- NO OVERLAP: No two clips should share more than 5 seconds of content. "
                 "If two great moments are adjacent, pick the stronger one."
             )
-            title_rules = """- Use curiosity gaps: "Why Most Developers Get This Wrong", "The Truth About AI Coding"
+            title_rules = """- The title is the HOOK TEXT burned in at the top of the clip. It tells the viewer exactly what they are about to get: "The Ad That Made Me $1M", "How I Got 5,400 Sales From One Ad".
+- The clip MUST deliver what the title promises. If the payoff is not inside the clip, change the title or the clip; never promise what the clip does not show.
+- Use curiosity gaps only when the clip closes them: "Why Most Developers Get This Wrong", "The Truth About AI Coding"
 - Use power words when appropriate: "brutal", "insane", "secret", "truth", "nobody", "actual"
 - Match the speaker's energy — if they are calm and analytical, do NOT use hyperbolic clickbait
 - NEVER use generic titles: "Great Advice", "Important Point", "Good Tip", "Interesting Thought"
@@ -857,7 +861,7 @@ Each transcript line is `[start - end] (speaker) text (audio events)`, with time
 
 Score every clip you return on these 5 dimensions (each 0-10) in its "scores" object, using the keys hook, standalone, arc, quotability and ending. Be calibrated: reserve 8-10 for genuinely exceptional moments.
 
-1. HOOK STRENGTH (0-10): Does the clip open with something that stops the scroll within the first 3 seconds? A clip that starts with dead air, "um", or a continuation scores 0-2. A clip that opens with a bold claim, shocking stat, or direct question scores 8-10.
+1. HOOK STRENGTH (0-10): Is the FIRST sentence of the clip a hook that stops the scroll within 3 seconds? A clip that starts with dead air, "um", setup, or a continuation scores 0-2, however good the hook that comes later. A clip whose first words are a bold claim, a specific result, a shocking stat, or a direct question scores 8-10.
 
 2. STANDALONE CLARITY (0-10): Can a viewer understand this clip with ZERO context from the rest of the video? If the clip references "what I said earlier" or assumes knowledge from a previous segment, it scores 0-3. If it is a fully self-contained idea, it scores 8-10.
 
@@ -865,7 +869,7 @@ Score every clip you return on these 5 dimensions (each 0-10) in its "scores" ob
 
 4. QUOTABILITY (0-10): Does the clip contain a memorable, shareable statement — something a viewer would repeat, screenshot, or put in their bio? Generic advice scores 0-3. A punchy one-liner or hot take scores 8-10.
 
-5. ENDING QUALITY (0-10): Does the clip end on a strong beat — a completed thought, a mic-drop moment, or a natural pause? Ending mid-sentence scores 0-2. Ending right after a powerful statement scores 8-10.
+5. PAYOFF (0-10, key "ending"): Does the clip deliver what its hook promised, then end on that beat? Cutting off before the promise is delivered (the number is never shown, the "how" never explained, the story never resolved) scores 0-2. Ending mid-sentence scores 0-2. Delivering the proof or answer and ending right after it scores 8-10.
 
 ## HOOK TYPES TO LOOK FOR
 
@@ -877,10 +881,21 @@ Prioritize clips whose opening matches one of these proven hook patterns:
 - Story opener: "So last week something crazy happened..." / "Let me tell you about the time..."
 - Direct address: "If you're a developer, you need to hear this." / "Stop doing this right now."
 
+## THE FORMAT THAT WORKS: HOOK → PROMISE → PAYOFF
+
+Short-form clips win on two things only: the hook, and delivering on it. Build every clip to this shape:
+
+1. HOOK (first sentence): Start the clip exactly where the speaker says the strongest line of the moment — the claim, the result, the number. Never start on the setup that comes before it. If the hook line comes after a sentence or two of setup, start at the hook line and check the clip still makes sense.
+2. PROMISE (title at the top): The title states what the viewer is about to get, in the speaker's own terms. Example: "The One Ad That Made Me $1M".
+3. PAYOFF (the rest of the clip): The speaker delivers it — shows the numbers, explains the how, finishes the story. End right after the payoff lands. Do not end before it, and do not run on into the next topic.
+
+Prefer moments where the payoff is concrete and visible: real numbers, results, a demonstration, a screen being shown. A moment with a great hook but no payoff in range is not a clip; skip it.
+
 ## ANTI-PATTERNS — NEVER SELECT CLIPS THAT:
 
 - Start mid-sentence or mid-thought. Always begin at the start of a sentence or idea.
 - End mid-sentence without resolution. Always end on a completed thought or natural pause.
+- Promise something in the hook or title and cut off before delivering it.
 - Contain long pauses, "um"s, "uh"s, throat clearing, or stammering as the primary content.
 - Require context from earlier in the video to make sense ("as I mentioned earlier", "going back to what we said").
 - Are just transitions or filler ("okay so moving on...", "anyway let's talk about...", "so yeah").
@@ -1709,20 +1724,26 @@ Do not overlap clips by more than 5 seconds."""
 
     @staticmethod
     def _score_clip(clip: dict) -> float:
-        """Virality score in [0, 1]: mean of the rubric scores / 10.
+        """Virality score in [0, 1]: weighted mean of the rubric scores / 10.
 
-        Falls back to a model-supplied `virality_score`, then 0.5.
+        Hook and payoff ("ending") carry most of the weight: a clip that
+        doesn't open on its hook or deliver on it doesn't work, however
+        quotable it is. Falls back to a model-supplied `virality_score`,
+        then 0.5.
         """
         scores = clip.get("scores")
         if isinstance(scores, dict):
-            values = []
+            total = weight_sum = 0.0
             for dim in RUBRIC_DIMENSIONS:
                 try:
-                    values.append(min(10.0, max(0.0, float(scores[dim]))))
+                    value = min(10.0, max(0.0, float(scores[dim])))
                 except (KeyError, TypeError, ValueError):
                     continue
-            if values:
-                return round(sum(values) / len(values) / 10.0, 3)
+                weight = RUBRIC_WEIGHTS[dim]
+                total += value * weight
+                weight_sum += weight
+            if weight_sum:
+                return round(total / weight_sum / 10.0, 3)
         try:
             return min(1.0, max(0.0, float(clip.get("virality_score", 0.5))))
         except (TypeError, ValueError):

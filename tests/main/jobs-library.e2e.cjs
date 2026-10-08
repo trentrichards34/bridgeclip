@@ -8,7 +8,7 @@ const editorFixture = require('../fixtures/editor/project.json')
 
 test('Jobs actions inspect runs and open completed jobs in the shared Library view', { timeout: 90000 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-jobs-library-'))
-  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'BridgeClip')
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips')
   const completedId = '11111111-1111-4111-8111-111111111111'
   const failedId = '22222222-2222-4222-8222-222222222222'
   const liveId = '33333333-3333-4333-8333-333333333333'
@@ -152,7 +152,7 @@ test('Jobs actions inspect runs and open completed jobs in the shared Library vi
 
 test('Jobs marks review runs as Editing until every candidate is baked or discarded', { timeout: 90000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-jobs-editing-'))
-  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'BridgeClip')
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips')
   const runs = [
     { title: 'Unbaked review', statuses: ['refining', 'ready'], clips: 0, review: true },
     { title: 'Earlier exports with new edits', statuses: ['refining', 'baked'], clips: 1, review: true },

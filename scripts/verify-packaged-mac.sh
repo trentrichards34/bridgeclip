@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-app_path="${1:?Pass the packaged BridgeClip.app path}"
+app_path="${1:?Pass the packaged CreatorClips.app path}"
 target_arch="${2:?Pass arm64 or x64}"
 case "$target_arch" in
   arm64) mach_arch="arm64" ;;

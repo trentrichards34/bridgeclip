@@ -13,7 +13,7 @@ test('review editor refines candidates, restores discards, edits captions and ba
   if (!tools) return
   const ffmpeg = tools.ffmpeg
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-editor-e2e-'))
-  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'BridgeClip'), run = path.join(library, 'review-run')
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips'), run = path.join(library, 'review-run')
   fs.mkdirSync(run, { recursive: true })
   execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30',
     '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '45', ...tools.encoder,
@@ -688,7 +688,7 @@ test('closing with unsaved edits asks first: Cancel keeps the window, Save write
   const tools = editorTools(t)
   if (!tools) return
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-editor-close-'))
-  const userDataDir = path.join(root, 'user-data'), run = path.join(userDataDir, 'BridgeClip', 'close-run')
+  const userDataDir = path.join(root, 'user-data'), run = path.join(userDataDir, 'CreatorClips', 'close-run')
   fs.mkdirSync(run, { recursive: true })
   execFileSync(tools.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=30:duration=12', ...tools.encoder, '-pix_fmt', 'yuv420p', path.join(run, 'editor-source.mp4')])
   fs.copyFileSync(path.join(run, 'editor-source.mp4'), path.join(run, 'editor-preview.mp4'))

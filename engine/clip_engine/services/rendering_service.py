@@ -51,6 +51,7 @@ from clip_engine.services.layout_renderer import (
     banner_y,
     build_layout_graph,
     caption_anchor,
+    even,
     face_zones,
     measured_loudness_filter,
     per_shot_expr,
@@ -72,6 +73,10 @@ LANDSCAPE_TITLE_SHOW_S = (0.4, 5.5)
 LANDSCAPE_TITLE_FADE_S = 0.4
 # Output frame rates a landscape render keeps from its source (higher is capped).
 MAX_OUTPUT_FPS = 60
+# Gameplay split: the speaker's share of the 9:16 frame (the rest is background).
+BACKGROUND_SPLIT = 0.5
+# B-roll beats shorter than this on the output clock (after cuts) are skipped.
+BROLL_MIN_VISIBLE_MS = 600
 # Bound raster allocation even when a model ignores the requested title length.
 MAX_TITLE_CHARS = 120
 # Landscape H.264 bitrates (Mbps) by output height at 30 fps, after
@@ -117,6 +122,12 @@ class RenderRequest:
     aspect_ratio: str = "9:16"
     # Framing for 9:16 output: auto (smart per-shot), fill or fit.
     layout_style: str = LayoutStyle.AUTO
+    # Gameplay / "satisfying" split (9:16 only): the framed speaker fills the
+    # top half and this video loops, muted, under it. None renders normally.
+    background_video_path: Optional[str] = None
+    # B-roll mode: (source start ms, source end ms, footage path) shots laid
+    # full-frame over the speaker's picture; audio, captions and title stay.
+    broll_shots: list[tuple[int, int, str]] = field(default_factory=list)
     # tight: cut dead air and filler words; natural: original timing.
     pacing: str = Pacing.TIGHT
     video_speed: float = 1.0
@@ -218,7 +229,7 @@ class RenderingService:
         logger.info("FFmpeg available")
 
     def _video_codec_args(self, out_w: int = 1080, out_h: int = 1920, fps: str = "30") -> list[str]:
-        """Use the bundled LGPL encoders in BridgeClip; retain server encoding.
+        """Use the bundled LGPL encoders in CreatorClips; retain server encoding.
 
         Keyframes every 2 s keep long clips seekable. Landscape bitrates scale
         with resolution and frame rate (VideoToolbox is bitrate-driven).
@@ -551,11 +562,22 @@ class RenderingService:
     ) -> None:
         """Build the graph, captions and overlays for one edit and run FFmpeg."""
         has_audio = request.include_audio and await self._has_audio(request.video_path)
+        background = self._background_video(request, is_landscape)
+        speaker_h = even(target_height * BACKGROUND_SPLIT) if background else target_height
         graph = build_layout_graph(
-            plan, target_width, target_height, time_map.keeps, has_audio, landscape=is_landscape,
+            plan, target_width, speaker_h, time_map.keeps, has_audio, landscape=is_landscape,
             fps=fps, loudness_filter=loudness_filter,
             video_speed=request.video_speed,
         )
+        looped_inputs: list[str] = []
+        if background:
+            graph = self._stack_background(graph, target_width, target_height - speaker_h, fps)
+            looped_inputs = [background]
+        else:
+            broll = self._broll_windows(request, time_map, window_start_ms)
+            if broll:
+                graph = self._overlay_broll(graph, broll, target_width, target_height, fps)
+                looped_inputs = [path for path, _, _ in broll]
         out_plan = remap_plan(plan, time_map)
         caption_path = await self._generate_captions(
             request, target_width, target_height, window_start_ms, time_map, out_plan, is_landscape, plan,
@@ -566,6 +588,7 @@ class RenderingService:
         # then speed up the entire composited picture to match the tempo audio.
         filter_complex, extra_inputs = self._compose_overlays(
             graph, overlays, speed_video_filter(request.video_speed, fps),
+            first_index=1 + len(looped_inputs),
         )
 
         try:
@@ -577,6 +600,7 @@ class RenderingService:
                 filter_complex=filter_complex,
                 audio_label="[aout]" if has_audio else None,
                 extra_inputs=extra_inputs if extra_inputs else None,
+                looped_inputs=looped_inputs,
                 fps=fps,
                 output_size=(target_width, target_height),
                 output_duration_ms=scaled_duration_ms(time_map.output_ms, request.video_speed),
@@ -740,19 +764,83 @@ class RenderingService:
         return "null"
 
     @staticmethod
-    def _compose_overlays(graph: str, overlays: list[Overlay], video_filter: str = "null") -> tuple[str, list[str]]:
+    def _background_video(request: RenderRequest, is_landscape: bool) -> Optional[str]:
+        """The gameplay background to stack under the speaker, if this render uses one."""
+        path = request.background_video_path
+        if not path or is_landscape:
+            return None
+        if not os.path.isfile(path):
+            raise RenderingError("The background video is missing. Choose it again in Format.")
+        return path
+
+    @staticmethod
+    def _broll_windows(
+        request: RenderRequest, time_map: TimeMap, window_start_ms: int,
+    ) -> list[tuple[str, float, float]]:
+        """B-roll shots on the output clock: (path, start s, end s), cut beats dropped."""
+        if request.broll_shots and request.background_video_path:
+            raise RenderingError("Choose either a background video or B-roll, not both.")
+        windows: list[tuple[str, float, float]] = []
+        for start_ms, end_ms, path in request.broll_shots:
+            if not os.path.isfile(path):
+                logger.warning("A B-roll file is missing; that beat shows the speaker")
+                continue
+            a = time_map.to_output_clamped(start_ms - window_start_ms)
+            b = time_map.to_output_clamped(end_ms - window_start_ms)
+            if b - a >= BROLL_MIN_VISIBLE_MS:
+                windows.append((path, a / 1000, b / 1000))
+        return windows
+
+    @staticmethod
+    def _overlay_broll(
+        graph: str, windows: list[tuple[str, float, float]], width: int, height: int, fps: str,
+    ) -> str:
+        """Lay each B-roll input (1..n) full-frame over [base] during its window; output stays [base]."""
+        assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
+        parts = [graph.replace("[base]", "[speaker]")]
+        current = "speaker"
+        for k, (_, a, b) in enumerate(windows):
+            label = "base" if k == len(windows) - 1 else f"bro{k}"
+            parts.append(
+                f"[{k + 1}:v]trim=duration={b - a:.3f},setpts=PTS-STARTPTS+{a:.3f}/TB,fps={fps},"
+                f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={width}:{height},setsar=1,format=yuv420p[br{k}]"
+            )
+            parts.append(
+                f"[{current}][br{k}]overlay=0:0:eof_action=pass:enable='between(t,{a:.3f},{b:.3f})'[{label}]"
+            )
+            current = label
+        return ";".join(parts)
+
+    @staticmethod
+    def _stack_background(graph: str, width: int, panel_h: int, fps: str) -> str:
+        """Stack the looping background (input 1) under the speaker panel; output stays [base]."""
+        assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
+        graph = graph.replace("[base]", "[speaker]")
+        return (
+            f"{graph};"
+            f"[1:v]fps={fps},scale={width}:{panel_h}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={width}:{panel_h},setsar=1[background];"
+            f"[speaker][background]vstack=inputs=2:shortest=1,setsar=1[base]"
+        )
+
+    @staticmethod
+    def _compose_overlays(
+        graph: str, overlays: list[Overlay], video_filter: str = "null", first_index: int = 1,
+    ) -> tuple[str, list[str]]:
         """Append image overlays to a graph ending in [captioned]; output is [out].
 
         Returns the full filter_complex and the extra input paths, in input
-        order (the video is input 0, overlays follow).
+        order (the video is input 0; a background video, when present, is
+        input 1 and overlays start at `first_index`).
         """
         if not overlays:
             return f"{graph};[captioned]{video_filter}[out]", []
         parts = [graph]
         current = "captioned"
-        for index, overlay in enumerate(overlays, start=1):
+        for index, overlay in enumerate(overlays, start=first_index):
             _, x_expr, y_expr = overlay[:3]
-            label = "composited" if index == len(overlays) else f"ov{index}"
+            label = "composited" if index == first_index + len(overlays) - 1 else f"ov{index}"
             image, enable = f"[{index}:v]", ""
             if len(overlay) == 5:
                 enable_expr, image_filter = overlay[3], overlay[4]
@@ -816,6 +904,9 @@ class RenderingService:
             if type(request.caption_y) not in (int, float) or not .1 <= request.caption_y <= .9:
                 raise ValueError('Invalid caption position')
             anchors = [(10**9, 5, round(target_height * request.caption_y))]
+        elif self._background_video(request, is_landscape):
+            # Gameplay split: captions ride the seam between speaker and background.
+            anchors = [(10**9, 5, even(target_height * BACKGROUND_SPLIT))]
         elif anchors and plan is not None:
             zones = face_zones(plan, time_map, target_width, target_height)
             if zones:
@@ -928,6 +1019,58 @@ class RenderingService:
             logger.warning(f"Loudness measurement failed; using single-pass normalization: {e}")
             return None
 
+    async def prepend_teaser(
+        self, request: RenderRequest, result: RenderResult, teaser_start_ms: int, teaser_end_ms: int,
+    ) -> RenderResult:
+        """Open the rendered clip with a teaser of its strongest line (hook preview).
+
+        The teaser is rendered with the clip's own framing, captions, title
+        and background, then joined in front of the clip. Any failure keeps
+        the clip as it was.
+        """
+        base, ext = os.path.splitext(result.output_path)
+        teaser_path, joined_path = f"{base}.teaser{ext}", f"{base}.joined{ext}"
+        teaser_request = replace(
+            request, output_path=teaser_path, start_time_ms=teaser_start_ms, end_time_ms=teaser_end_ms,
+            apply_padding=False, pacing=Pacing.NATURAL, broll_shots=[], longform=False, skip_ranges_ms=[],
+            chapters=[], progress_callback=None, manual_plan=None, manual_ranges_ms=None,
+            editorial_context=None, editorial_service=None, coherence_reviewer=None, debug_capture=False,
+        )
+        try:
+            teaser = await self.render_clip(teaser_request)
+            with_audio = await self._has_audio(result.output_path) and await self._has_audio(teaser.output_path)
+            streams = "[0:v][0:a][1:v][1:a]" if with_audio else "[0:v][1:v]"
+            graph = f"{streams}concat=n=2:v=1:a={1 if with_audio else 0}[v]" + ("[a]" if with_audio else "")
+            fps = await self._probe_fps(result.output_path)
+            cmd = [
+                "ffmpeg", "-nostdin", "-nostats", "-y",
+                "-protocol_whitelist", "file", "-i", teaser.output_path,
+                "-protocol_whitelist", "file", "-i", result.output_path,
+                "-filter_complex", graph, "-map", "[v]",
+                *self._video_codec_args(result.output_width or 1080, result.output_height or 1920, fps),
+                "-pix_fmt", "yuv420p", "-r", fps, "-movflags", "+faststart",
+            ]
+            cmd += ["-map", "[a]", "-c:a", "aac", "-b:a", "192k"] if with_audio else ["-an"]
+            cmd.append(joined_path)
+            await self._run_cmd(cmd)
+            os.replace(joined_path, result.output_path)
+            return replace(
+                result,
+                duration_ms=result.duration_ms + teaser.duration_ms,
+                file_size_bytes=os.path.getsize(result.output_path),
+                # Chapters and subtitles start after the teaser.
+                chapters=[(ms + teaser.duration_ms, title) for ms, title in result.chapters],
+            )
+        except Exception as exc:
+            logger.warning(f"Hook preview failed; keeping the clip without it: {exc}")
+            return result
+        finally:
+            for path in (teaser_path, joined_path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
     async def _has_audio(self, video_path: str) -> bool:
         """Whether the source has an audio stream (the graph maps [0:a] only if so)."""
         cmd = [
@@ -1023,7 +1166,7 @@ class RenderingService:
         """Render the channel URL banner as a transparent PNG.
 
         Drawn with Pillow rather than FFmpeg's drawtext: the static FFmpeg
-        builds BridgeClip ships (6.1+) omit drawtext, which made any render with
+        builds CreatorClips ships (6.1+) omit drawtext, which made any render with
         a banner fail.
 
         Returns (path, width, height) or None when no banner is configured.
@@ -1085,6 +1228,7 @@ class RenderingService:
         filter_complex: str,
         audio_label: Optional[str] = None,
         extra_inputs: Optional[list[str]] = None,
+        looped_inputs: Optional[list[str]] = None,
         fps: str = "30",
         output_size: tuple[int, int] = (1080, 1920),
         output_duration_ms: Optional[int] = None,
@@ -1110,6 +1254,15 @@ class RenderingService:
             "-i", input_path,
         ]
 
+        for looped in (looped_inputs or []):
+            # Inputs 1..n: background / B-roll videos, looped forever and muted.
+            # The graph trims or stacks them so the speaker sets the length.
+            cmd.extend([
+                "-stream_loop", "-1", "-an",
+                "-protocol_whitelist", "file,pipe,fd", "-format_whitelist", "mov,matroska,webm,avi,flv,mpegts",
+                "-i", looped,
+            ])
+
         for extra in (extra_inputs or []):
             cmd.extend(["-loop", "1", "-protocol_whitelist", "file,pipe,fd", "-i", extra])
 
@@ -1130,7 +1283,7 @@ class RenderingService:
         else:
             cmd.append("-an")
 
-        if extra_inputs:
+        if extra_inputs or looped_inputs:
             cmd.append("-shortest")
 
         cmd.append(output_path)

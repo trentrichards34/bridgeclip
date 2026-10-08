@@ -1,5 +1,5 @@
 'use strict'
-// End-to-end: the real BridgeClip app (production build, isolated userData,
+// End-to-end: the real CreatorClips app (production build, isolated userData,
 // hidden window) against the mock Zernio and its scripted browser.
 //
 //   npm run test:e2e

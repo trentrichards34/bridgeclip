@@ -1,7 +1,7 @@
-// The BridgeClip assistant runs on the user's own AI account. Either BridgeClip
+// The CreatorClips assistant runs on the user's own AI account. Either CreatorClips
 // starts their Claude Code or Codex CLI, signed in with their Claude or ChatGPT
-// subscription, headless for each turn and gives it BridgeClip's tools through
-// a loopback MCP server (BridgeClip never sees those credentials), or it calls
+// subscription, headless for each turn and gives it CreatorClips's tools through
+// a loopback MCP server (CreatorClips never sees those credentials), or it calls
 // a model on OpenRouter with the user's OpenRouter key and runs the tools itself.
 
 import { isModelId } from './openrouter-models'
@@ -22,13 +22,13 @@ export function isAssistantCliProvider(value: unknown): value is AssistantCliPro
 
 export interface AssistantProviderInfo {
   id: AssistantProviderId
-  /** What BridgeClip runs or calls. */
+  /** What CreatorClips runs or calls. */
   name: string
   /** Whose models it runs; shown beside the provider's logo. */
   brand: string
   /** What pays for the chat. */
   subscription: string
-  /** Installer the provider documents; shown for copying, never run by BridgeClip. Null without a CLI. */
+  /** Installer the provider documents; shown for copying, never run by CreatorClips. Null without a CLI. */
   installCommand: string | null
   /** What to run in a terminal to sign in. Null without a CLI. */
   signInCommand: string | null
@@ -107,7 +107,7 @@ export const ASSISTANT_MODELS: Record<AssistantProviderId, readonly AssistantMod
   openrouter: []
 }
 
-/** Shown first in the OpenRouter list when the catalog has them: the models BridgeClip's clipping presets use. */
+/** Shown first in the OpenRouter list when the catalog has them: the models CreatorClips's clipping presets use. */
 export const OPENROUTER_ASSISTANT_SUGGESTIONS = ['anthropic/claude-opus-5.5', 'openai/gpt-6-sol', 'google/gemini-3.8-flash'] as const
 
 /** '' is the CLI's default, or for OpenRouter "not chosen yet". */
@@ -146,7 +146,7 @@ export type AssistantToolStatus = 'running' | 'awaiting-approval' | 'done' | 'er
 
 export interface AssistantToolCall {
   id: string
-  /** BridgeClip tool name without the MCP prefix. */
+  /** CreatorClips tool name without the MCP prefix. */
   name: string
   title: string
   input: unknown
@@ -213,7 +213,7 @@ export type AssistantEvent =
 
 export const ASSISTANT_PROMPT_MAX_CHARS = 20000
 
-/** A sign-in BridgeClip started with the provider's own CLI (`claude auth login`, `codex login`). */
+/** A sign-in CreatorClips started with the provider's own CLI (`claude auth login`, `codex login`). */
 export interface AssistantSignInState {
   provider: AssistantCliProviderId
   status: 'idle' | 'waiting' | 'succeeded' | 'failed'

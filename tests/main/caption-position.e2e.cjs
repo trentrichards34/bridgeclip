@@ -12,7 +12,7 @@ test('static subtitle guide supports dragging and undo, and persists across reop
   const tools = editorTools(t)
   if (!tools) return
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-caption-position-'))
-  const userDataDir = path.join(root, 'user-data'), run = path.join(userDataDir, 'BridgeClip', 'captions')
+  const userDataDir = path.join(root, 'user-data'), run = path.join(userDataDir, 'CreatorClips', 'captions')
   fs.mkdirSync(run, { recursive: true })
   execFileSync(tools.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30:duration=12', ...tools.encoder, '-pix_fmt', 'yuv420p', path.join(run, 'editor-source.mp4')])
   fs.copyFileSync(path.join(run, 'editor-source.mp4'), path.join(run, 'editor-preview.mp4'))

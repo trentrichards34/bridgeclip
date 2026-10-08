@@ -7,11 +7,14 @@ const vm = require('node:vm')
 const ts = require('typescript')
 const { fileLinksAvailable, directoryLinkType } = require('../support/symlinks.cjs')
 
+// The gameplay background library, for modules that only pass names through.
+const BACKGROUNDS_STUB = { resolveBackground: (name) => '/library/' + name, listBackgrounds: async () => [], addBackgrounds: async () => [], removeBackground: async () => [] }
+
 function loadSource(file, mocks = {}, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../src/main', file), 'utf8')
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const module = { exports: {} }
-  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? (id.startsWith('../shared/') ? loadShared(id.slice('../shared/'.length) + '.ts') : require(id)), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, __dirname: path.join(__dirname, '../../src/main'), ...globals })
+  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? (id === './backgrounds' ? BACKGROUNDS_STUB : null) ?? (id.startsWith('../shared/') ? loadShared(id.slice('../shared/'.length) + '.ts') : require(id)), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, __dirname: path.join(__dirname, '../../src/main'), ...globals })
   return module.exports
 }
 function loadShared(file) {
@@ -188,6 +191,7 @@ test('the native picker authorizes media and shell opening rejects aliased appli
       './pipeline-runner': {},
       './job-manager': { initJobManager() {} },
       './job-start': {},
+    './backgrounds': {},
       './logger': {},
       './security': security,
       './network-policy': {},
@@ -238,9 +242,9 @@ test('external URLs reject executable schemes and embedded credentials', () => {
   for (const url of ['file:///tmp/run', 'javascript:alert(1)', 'https://user:pass@example.com', null]) assert.equal(security.isWebUrl(url), false)
   assert.equal(security.isWebUrl('https://example.com/video'), true)
   assert.equal(security.isTrustedExternalUrl('https://example.com/video'), false)
-  assert.equal(security.isTrustedExternalUrl('https://github.com/bridge-mind/bridgeclip'), true)
-  assert.equal(security.isTrustedExternalUrl('https://github.com/bridge-mind/bridgeclip/releases'), true)
-  assert.equal(security.isTrustedExternalUrl('https://github.com/bridge-mind/bridgeclip/releases/download/v0.1.19/evil.exe'), false)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/bridgeclip'), true)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/bridgeclip/releases'), true)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/bridgeclip/releases/download/v0.1.19/evil.exe'), false)
 })
 
 test('source video links normalize supported YouTube forms and allow only canonical browser URLs', () => {
@@ -262,6 +266,20 @@ test('job validation rejects malformed options and invalid trim intervals', () =
   assert.equal(validateJobConfig(job).videoSpeed, 1)
   assert.equal(validateJobConfig(job).includeTitle, true)
   assert.equal(validateJobConfig({ ...job, includeTitle: false }).includeTitle, false)
+  assert.equal(validateJobConfig({ ...job, backgroundVideo: 'Minecraft parkour (2).mp4' }).backgroundVideo, 'Minecraft parkour (2).mp4')
+  assert.equal(validateJobConfig(job).backgroundVideo, undefined)
+  for (const backgroundVideo of ['../secret.mp4', '/etc/passwd', 'a/b.mp4', '.hidden.mp4', 'notes.txt', 'x..mp4', 'clip', '', 5, null]) {
+    assert.throws(() => validateJobConfig({ ...job, backgroundVideo }), /Background videos/)
+  }
+  assert.throws(() => validateJobConfig({ ...job, aspectRatio: '16:9', backgroundVideo: 'gameplay.mp4' }), /9:16/)
+  assert.equal(validateJobConfig({ ...job, broll: 'after-hook' }).broll, 'after-hook')
+  assert.equal(validateJobConfig({ ...job, aspectRatio: '16:9', broll: 'full' }).broll, 'full')
+  for (const broll of ['on', true, null, '']) assert.throws(() => validateJobConfig({ ...job, broll }), /B-roll/)
+  assert.throws(() => validateJobConfig({ ...job, broll: 'full', backgroundVideo: 'gameplay.mp4' }), /not both/)
+  assert.throws(() => validateJobConfig({ ...job, workflow: 'review', broll: 'full' }), /Automatic/)
+  assert.equal(validateJobConfig({ ...job, hookPreview: true }).hookPreview, true)
+  for (const hookPreview of ['yes', 1, null]) assert.throws(() => validateJobConfig({ ...job, hookPreview }), /hook preview/)
+  assert.throws(() => validateJobConfig({ ...job, workflow: 'review', hookPreview: true }), /Automatic/)
   assert.equal(validateJobConfig(job).clipRequest, undefined)
   assert.equal(validateJobConfig({ ...job, clipRequest: '  the pricing debate \n' }).clipRequest, 'the pricing debate')
   assert.equal(validateJobConfig({ ...job, clipRequest: '   ' }).clipRequest, undefined)
@@ -409,7 +427,7 @@ test('engine checks distinguish missing modules, models, contracts and timeouts 
   result = { status: 'dependency', module: 'private/secret' }
   assert.doesNotMatch((await check()).error, /private/)
   result = { status: 'dependency', module: 'clip_engine' }
-  assert.match((await check()).hint, /same BridgeClip version/)
+  assert.match((await check()).hint, /same CreatorClips version/)
   result = { status: 'model' }
   const model = await check()
   assert.match(model.hint, /face_detection_yunet_2023mar.onnx/)
@@ -428,7 +446,7 @@ test('engine checks distinguish missing modules, models, contracts and timeouts 
   rejection = null
   result = { status: 'dependency', module: 'cv2' }
   const packaged = await check()
-  assert.match(packaged.hint, /Reinstall BridgeClip/)
+  assert.match(packaged.hint, /Reinstall CreatorClips/)
   assert.equal(packaged.repairCommand, null)
   assert.doesNotMatch(JSON.stringify(packaged), /private traceback/)
 })
@@ -437,9 +455,9 @@ test('Windows resolves the saved legacy Python default without replacing an inst
   const winProcess = Object.create(process)
   Object.defineProperty(winProcess, 'platform', { value: 'win32' })
   Object.defineProperty(winProcess, 'env', { value: { PATH: 'C:\\Python;C:\\Windows' } })
-  Object.defineProperty(winProcess, 'resourcesPath', { value: 'C:\\BridgeClip\\resources' })
-  const userData = 'C:\\Users\\Test\\BridgeClip'
-  const engine = 'C:\\BridgeClip\\engine'
+  Object.defineProperty(winProcess, 'resourcesPath', { value: 'C:\\CreatorClips\\resources' })
+  const userData = 'C:\\Users\\Test\\CreatorClips'
+  const engine = 'C:\\CreatorClips\\engine'
   const present = new Set()
   let python3Runnable = false
   let saved = null

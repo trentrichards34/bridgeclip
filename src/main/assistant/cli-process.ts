@@ -255,7 +255,7 @@ export function spawnCli(cli: ResolvedCli, args: string[], options: { cwd: strin
   return run
 }
 
-/** Kill every running assistant CLI; called when BridgeClip quits. */
+/** Kill every running assistant CLI; called when CreatorClips quits. */
 export function stopAllCliRuns(): void {
   for (const run of liveRuns) {
     signalTree(run.child, 'SIGKILL')
