@@ -26,6 +26,8 @@ export interface ClipJobRequest {
   captionPreset: string
   /** Title card at the top of Automatic clips. Older requests default to shown. */
   includeTitle?: boolean
+  /** Gameplay split (9:16): a background-library file looped under the speaker. */
+  backgroundVideo?: string
   startTimeSeconds: number | null
   endTimeSeconds: number | null
   bannerPlatform: string | null

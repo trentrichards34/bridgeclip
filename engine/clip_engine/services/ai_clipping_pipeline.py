@@ -117,6 +117,8 @@ class ClippingJobRequest:
     # The user's description of the moments to clip; None picks the best moments.
     clip_request: Optional[str] = None
     layout_style: str = LayoutStyle.AUTO
+    # Gameplay split (9:16): looping background video under the speaker.
+    background_video_path: Optional[str] = None
     debug_capture: bool = False
     # "tight" cuts dead air and filler words; "natural" keeps original timing.
     pacing: str = "tight"
@@ -649,6 +651,7 @@ class AIClippingPipeline:
                         banner_channel_url=request.banner_channel_url,
                         aspect_ratio=request.aspect_ratio,
                         layout_style=request.layout_style,
+                        background_video_path=request.background_video_path,
                         debug_capture=request.debug_capture,
                         pacing=request.pacing,
                         video_speed=request.video_speed,
@@ -964,6 +967,7 @@ class AIClippingPipeline:
                     "pacing": request.pacing,
                     "video_speed": request.video_speed,
                     "include_title": request.include_title,
+                    "background_video": os.path.basename(request.background_video_path) if request.background_video_path else None,
                     "clip_request": request.clip_request,
                 },
                 "transcription_status": transcription_status,

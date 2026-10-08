@@ -1,5 +1,5 @@
 import { normalizeVideoSource, twitchSourceError } from '../../shared/video-source'
-import { useEffect, useMemo, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, type ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, ListVideo, Minus, Plus, Sparkles } from 'lucide-react'
 import { cn, MOD_KEY, parseTimecode, sourceLabel } from '../lib/utils'
 import { useDraftStore, type ClipDraft, type WizardStep } from '../store/use-draft-store'
@@ -21,6 +21,7 @@ import { useModelStore } from '../store/use-model-store'
 import { useSettingsStore } from '../store/use-settings-store'
 import { ModelPicker } from './ModelPicker'
 import { WorkflowPicker } from './WorkflowPicker'
+import { BackgroundPicker } from './BackgroundPicker'
 
 const DURATIONS = DURATION_OPTIONS
 
@@ -78,6 +79,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     includeCaptions: draft.includeCaptions,
     captionPreset: draft.captionPreset,
     includeTitle: draft.includeTitle,
+    ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo ? { backgroundVideo: draft.backgroundVideo } : {}),
     startTimeSeconds: trim.start,
     endTimeSeconds: trim.end,
     bannerPlatform: null,
@@ -296,6 +298,7 @@ function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; u
 
 /** Format, framing and pacing. Exported for the keyboard-navigation test. */
 export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
+  const setBackground = useCallback((backgroundVideo: string | null) => update({ backgroundVideo }), [update])
   return (
     <div className="space-y-4">
       <Group label="Format">
@@ -373,6 +376,12 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
               control={<Switch label="AI vision for smart framing" checked={draft.layoutVision} onChange={(layoutVision) => update({ layoutVision })} />}
             />
           )}
+        </Group>
+      )}
+
+      {draft.aspectRatio === '9:16' && draft.workflow !== 'review' && (
+        <Group label="Background video" aside="Gameplay split">
+          <BackgroundPicker value={draft.backgroundVideo} onChange={setBackground} />
         </Group>
       )}
 
@@ -568,6 +577,7 @@ function ReviewStep({ draft, trim, onEdit }: {
     { step: 'clips', label: 'What to clip', value: draft.clipRequest?.trim() || 'The best moments' },
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
+  if (draft.workflow !== 'review' && draft.aspectRatio === '9:16' && draft.backgroundVideo) rows.splice(3, 0, { step: 'format', label: 'Background', value: `${draft.backgroundVideo} · under the speaker` })
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? 'Shown at the top' : 'Off' })
   if (draft.clippingMode === 'advanced') rows.splice(5, 0,
     { step: 'clips', label: 'Transcribe', value: draft.transcriptionModel || 'Choose a model' },

@@ -103,6 +103,18 @@ class BridgeTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 bridge.validate_config(value)
 
+    def test_background_video_must_be_an_existing_absolute_video_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            video = os.path.join(folder, "gameplay.mp4")
+            text = os.path.join(folder, "notes.txt")
+            for path in (video, text):
+                with open(path, "w") as handle:
+                    handle.write("x")
+            bridge.validate_config(self.config(background_video_path=video))
+            for bad in (text, os.path.join(folder, "missing.mp4"), "gameplay.mp4", 5, video + "\0"):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    bridge.validate_config(self.config(background_video_path=bad))
+
     def test_output_and_local_mode_are_set_before_settings_load(self):
         observed = []
         def get_settings():

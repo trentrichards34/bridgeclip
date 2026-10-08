@@ -30,6 +30,7 @@ logger = logging.getLogger("bridge_runner")
 _protocol = None
 
 # Mirrors DURATION_OPTIONS in src/shared/job-contract.ts.
+BACKGROUND_VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".webm")
 DURATION_RANGE_IDS = ("xshort", "short", "medium", "long", "xlong", "extended", "feature")
 
 # Known failure classes -> (message, hint). Raw engine errors can contain
@@ -270,6 +271,7 @@ async def run(config: dict) -> bool:
         duration_ranges=duration_ranges,
         aspect_ratio=config.get("aspect_ratio", "9:16"),
         layout_style=config.get("layout_style") or "auto",
+        background_video_path=config.get("background_video_path"),
         debug_capture=config.get("debug_capture", False),
         pacing=config.get("pacing") or "tight",
         video_speed=config.get("video_speed", 1.0),
@@ -359,6 +361,12 @@ def validate_config(config: object) -> dict:
         raise ValueError("Invalid aspect ratio")
     if config.get("layout_style", "auto") not in ("auto", "fill", "fit"):
         raise ValueError("Invalid layout style")
+    background = config.get("background_video_path")
+    if background is not None and (
+        not isinstance(background, str) or "\0" in background or not os.path.isabs(background)
+        or os.path.splitext(background)[1].lower() not in BACKGROUND_VIDEO_EXTENSIONS or not os.path.isfile(background)
+    ):
+        raise ValueError("Background video must be an existing .mp4, .mov, .m4v or .webm file")
     if config.get("pacing", "tight") not in ("tight", "natural"):
         raise ValueError("Invalid pacing")
     speed = config.get("video_speed", 1.0)

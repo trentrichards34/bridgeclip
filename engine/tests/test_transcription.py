@@ -70,10 +70,10 @@ class TestParseTranscriptionResponse:
 
 class TestNormalizeKeyterms:
     def test_enforces_provider_limits(self):
-        terms = ["  CreatorClips  ", "bridgeclip", "one two three four five six", "bad<chars>", "x" * 80, "", None]
+        terms = ["  CreatorClips  ", "creatorclips", "one two three four five six", "bad<chars>", "x" * 80, "", None]
         cleaned = normalize_keyterms(terms)
         assert cleaned[0] == "CreatorClips"
-        assert "bridgeclip" not in cleaned
+        assert "creatorclips" not in cleaned  # duplicates are dropped case-insensitively
         assert not any("six" in t or "<" in t for t in cleaned)
         assert all(len(t) < 50 for t in cleaned)
         assert len(cleaned) == 2

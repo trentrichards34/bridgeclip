@@ -51,6 +51,7 @@ from clip_engine.services.layout_renderer import (
     banner_y,
     build_layout_graph,
     caption_anchor,
+    even,
     face_zones,
     measured_loudness_filter,
     per_shot_expr,
@@ -72,6 +73,8 @@ LANDSCAPE_TITLE_SHOW_S = (0.4, 5.5)
 LANDSCAPE_TITLE_FADE_S = 0.4
 # Output frame rates a landscape render keeps from its source (higher is capped).
 MAX_OUTPUT_FPS = 60
+# Gameplay split: the speaker's share of the 9:16 frame (the rest is background).
+BACKGROUND_SPLIT = 0.5
 # Bound raster allocation even when a model ignores the requested title length.
 MAX_TITLE_CHARS = 120
 # Landscape H.264 bitrates (Mbps) by output height at 30 fps, after
@@ -117,6 +120,9 @@ class RenderRequest:
     aspect_ratio: str = "9:16"
     # Framing for 9:16 output: auto (smart per-shot), fill or fit.
     layout_style: str = LayoutStyle.AUTO
+    # Gameplay / "satisfying" split (9:16 only): the framed speaker fills the
+    # top half and this video loops, muted, under it. None renders normally.
+    background_video_path: Optional[str] = None
     # tight: cut dead air and filler words; natural: original timing.
     pacing: str = Pacing.TIGHT
     video_speed: float = 1.0
@@ -551,11 +557,15 @@ class RenderingService:
     ) -> None:
         """Build the graph, captions and overlays for one edit and run FFmpeg."""
         has_audio = request.include_audio and await self._has_audio(request.video_path)
+        background = self._background_video(request, is_landscape)
+        speaker_h = even(target_height * BACKGROUND_SPLIT) if background else target_height
         graph = build_layout_graph(
-            plan, target_width, target_height, time_map.keeps, has_audio, landscape=is_landscape,
+            plan, target_width, speaker_h, time_map.keeps, has_audio, landscape=is_landscape,
             fps=fps, loudness_filter=loudness_filter,
             video_speed=request.video_speed,
         )
+        if background:
+            graph = self._stack_background(graph, target_width, target_height - speaker_h, fps)
         out_plan = remap_plan(plan, time_map)
         caption_path = await self._generate_captions(
             request, target_width, target_height, window_start_ms, time_map, out_plan, is_landscape, plan,
@@ -566,6 +576,7 @@ class RenderingService:
         # then speed up the entire composited picture to match the tempo audio.
         filter_complex, extra_inputs = self._compose_overlays(
             graph, overlays, speed_video_filter(request.video_speed, fps),
+            first_index=2 if background else 1,
         )
 
         try:
@@ -577,6 +588,7 @@ class RenderingService:
                 filter_complex=filter_complex,
                 audio_label="[aout]" if has_audio else None,
                 extra_inputs=extra_inputs if extra_inputs else None,
+                background_input=background,
                 fps=fps,
                 output_size=(target_width, target_height),
                 output_duration_ms=scaled_duration_ms(time_map.output_ms, request.video_speed),
@@ -740,19 +752,44 @@ class RenderingService:
         return "null"
 
     @staticmethod
-    def _compose_overlays(graph: str, overlays: list[Overlay], video_filter: str = "null") -> tuple[str, list[str]]:
+    def _background_video(request: RenderRequest, is_landscape: bool) -> Optional[str]:
+        """The gameplay background to stack under the speaker, if this render uses one."""
+        path = request.background_video_path
+        if not path or is_landscape:
+            return None
+        if not os.path.isfile(path):
+            raise RenderingError("The background video is missing. Choose it again in Format.")
+        return path
+
+    @staticmethod
+    def _stack_background(graph: str, width: int, panel_h: int, fps: str) -> str:
+        """Stack the looping background (input 1) under the speaker panel; output stays [base]."""
+        assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
+        graph = graph.replace("[base]", "[speaker]")
+        return (
+            f"{graph};"
+            f"[1:v]fps={fps},scale={width}:{panel_h}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={width}:{panel_h},setsar=1[background];"
+            f"[speaker][background]vstack=inputs=2:shortest=1,setsar=1[base]"
+        )
+
+    @staticmethod
+    def _compose_overlays(
+        graph: str, overlays: list[Overlay], video_filter: str = "null", first_index: int = 1,
+    ) -> tuple[str, list[str]]:
         """Append image overlays to a graph ending in [captioned]; output is [out].
 
         Returns the full filter_complex and the extra input paths, in input
-        order (the video is input 0, overlays follow).
+        order (the video is input 0; a background video, when present, is
+        input 1 and overlays start at `first_index`).
         """
         if not overlays:
             return f"{graph};[captioned]{video_filter}[out]", []
         parts = [graph]
         current = "captioned"
-        for index, overlay in enumerate(overlays, start=1):
+        for index, overlay in enumerate(overlays, start=first_index):
             _, x_expr, y_expr = overlay[:3]
-            label = "composited" if index == len(overlays) else f"ov{index}"
+            label = "composited" if index == first_index + len(overlays) - 1 else f"ov{index}"
             image, enable = f"[{index}:v]", ""
             if len(overlay) == 5:
                 enable_expr, image_filter = overlay[3], overlay[4]
@@ -816,6 +853,9 @@ class RenderingService:
             if type(request.caption_y) not in (int, float) or not .1 <= request.caption_y <= .9:
                 raise ValueError('Invalid caption position')
             anchors = [(10**9, 5, round(target_height * request.caption_y))]
+        elif self._background_video(request, is_landscape):
+            # Gameplay split: captions ride the seam between speaker and background.
+            anchors = [(10**9, 5, even(target_height * BACKGROUND_SPLIT))]
         elif anchors and plan is not None:
             zones = face_zones(plan, time_map, target_width, target_height)
             if zones:
@@ -1085,6 +1125,7 @@ class RenderingService:
         filter_complex: str,
         audio_label: Optional[str] = None,
         extra_inputs: Optional[list[str]] = None,
+        background_input: Optional[str] = None,
         fps: str = "30",
         output_size: tuple[int, int] = (1080, 1920),
         output_duration_ms: Optional[int] = None,
@@ -1110,6 +1151,14 @@ class RenderingService:
             "-i", input_path,
         ]
 
+        if background_input:
+            # Input 1: looped forever; the vstack ends with the speaker panel.
+            cmd.extend([
+                "-stream_loop", "-1", "-an",
+                "-protocol_whitelist", "file,pipe,fd", "-format_whitelist", "mov,matroska,webm,avi,flv,mpegts",
+                "-i", background_input,
+            ])
+
         for extra in (extra_inputs or []):
             cmd.extend(["-loop", "1", "-protocol_whitelist", "file,pipe,fd", "-i", extra])
 
@@ -1130,7 +1179,7 @@ class RenderingService:
         else:
             cmd.append("-an")
 
-        if extra_inputs:
+        if extra_inputs or background_input:
             cmd.append("-shortest")
 
         cmd.append(output_path)

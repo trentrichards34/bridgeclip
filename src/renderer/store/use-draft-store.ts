@@ -38,6 +38,8 @@ export interface ClipDraft {
   captionPreset: string
   /** Automatic clips: the title card at the top of each clip. */
   includeTitle: boolean
+  /** Gameplay split (9:16, Automatic): background-library file under the speaker. */
+  backgroundVideo: string | null
   trimOpen: boolean
   trimStart: string
   trimEnd: string
@@ -73,6 +75,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   includeCaptions: true,
   captionPreset: 'pop',
   includeTitle: true,
+  backgroundVideo: null,
   trimOpen: false,
   trimStart: '',
   trimEnd: '',

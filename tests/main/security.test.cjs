@@ -7,11 +7,14 @@ const vm = require('node:vm')
 const ts = require('typescript')
 const { fileLinksAvailable, directoryLinkType } = require('../support/symlinks.cjs')
 
+// The gameplay background library, for modules that only pass names through.
+const BACKGROUNDS_STUB = { resolveBackground: (name) => '/library/' + name, listBackgrounds: async () => [], addBackgrounds: async () => [], removeBackground: async () => [] }
+
 function loadSource(file, mocks = {}, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../src/main', file), 'utf8')
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const module = { exports: {} }
-  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? (id.startsWith('../shared/') ? loadShared(id.slice('../shared/'.length) + '.ts') : require(id)), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, __dirname: path.join(__dirname, '../../src/main'), ...globals })
+  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? (id === './backgrounds' ? BACKGROUNDS_STUB : null) ?? (id.startsWith('../shared/') ? loadShared(id.slice('../shared/'.length) + '.ts') : require(id)), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, __dirname: path.join(__dirname, '../../src/main'), ...globals })
   return module.exports
 }
 function loadShared(file) {
@@ -188,6 +191,7 @@ test('the native picker authorizes media and shell opening rejects aliased appli
       './pipeline-runner': {},
       './job-manager': { initJobManager() {} },
       './job-start': {},
+    './backgrounds': {},
       './logger': {},
       './security': security,
       './network-policy': {},
@@ -262,6 +266,12 @@ test('job validation rejects malformed options and invalid trim intervals', () =
   assert.equal(validateJobConfig(job).videoSpeed, 1)
   assert.equal(validateJobConfig(job).includeTitle, true)
   assert.equal(validateJobConfig({ ...job, includeTitle: false }).includeTitle, false)
+  assert.equal(validateJobConfig({ ...job, backgroundVideo: 'Minecraft parkour (2).mp4' }).backgroundVideo, 'Minecraft parkour (2).mp4')
+  assert.equal(validateJobConfig(job).backgroundVideo, undefined)
+  for (const backgroundVideo of ['../secret.mp4', '/etc/passwd', 'a/b.mp4', '.hidden.mp4', 'notes.txt', 'x..mp4', 'clip', '', 5, null]) {
+    assert.throws(() => validateJobConfig({ ...job, backgroundVideo }), /Background videos/)
+  }
+  assert.throws(() => validateJobConfig({ ...job, aspectRatio: '16:9', backgroundVideo: 'gameplay.mp4' }), /9:16/)
   assert.equal(validateJobConfig(job).clipRequest, undefined)
   assert.equal(validateJobConfig({ ...job, clipRequest: '  the pricing debate \n' }).clipRequest, 'the pricing debate')
   assert.equal(validateJobConfig({ ...job, clipRequest: '   ' }).clipRequest, undefined)

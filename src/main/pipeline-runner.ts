@@ -16,6 +16,7 @@ import type { ClipJobRequest } from '../shared/jobs'
 import type { OpenRouterModel } from '../shared/openrouter-models'
 import { finishRunRecord, type StoredRunStatus } from './run-history'
 import { resolveBinary } from './tools'
+import { resolveBackground } from './backgrounds'
 
 export type ClipJobConfig = ClipJobRequest & { plannerCapabilities?: OpenRouterModel }
 
@@ -443,6 +444,16 @@ export function startClipJob(
     return
   }
 
+  let backgroundPath: string | null = null
+  if (config.backgroundVideo) {
+    try { backgroundPath = resolveBackground(config.backgroundVideo) }
+    catch (error) {
+      reportError({ jobId, message: error instanceof Error ? error.message : 'The background video is unavailable.' })
+      exitWithoutProcess()
+      return
+    }
+  }
+
   const jobConfig = JSON.stringify({
     contract_version: BRIDGE_CONTRACT_VERSION,
     job_id: jobId,
@@ -469,6 +480,7 @@ export function startClipJob(
     include_captions: config.includeCaptions,
     caption_preset: config.captionPreset,
     include_title: config.includeTitle ?? true,
+    ...(backgroundPath ? { background_video_path: backgroundPath } : {}),
     keyterms: vocabularyTerms(settings.customVocabulary),
     start_time_seconds: config.startTimeSeconds,
     end_time_seconds: config.endTimeSeconds,

@@ -238,6 +238,12 @@ export interface BridgeClipAPI {
   dialog: {
     selectVideo: () => Promise<string | null>
   }
+  /** Gameplay background library (file names only). */
+  backgrounds: {
+    list: () => Promise<string[]>
+    add: () => Promise<string[]>
+    remove: (name: string) => Promise<string[]>
+  }
   clips: {
     bulkExport: (clips: { path: string; name: string }[]) => Promise<{ success: boolean; count: number; failedCount: number; destDir?: string }>
   }
@@ -406,6 +412,11 @@ const api: BridgeClipAPI = {
   },
   dialog: {
     selectVideo: () => ipcRenderer.invoke('dialog:selectVideo')
+  },
+  backgrounds: {
+    list: () => ipcRenderer.invoke('backgrounds:list'),
+    add: () => ipcRenderer.invoke('backgrounds:add'),
+    remove: (name) => ipcRenderer.invoke('backgrounds:remove', name)
   },
   clips: {
     bulkExport: (clips) => ipcRenderer.invoke('clips:bulkExport', clips)
