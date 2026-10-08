@@ -97,8 +97,8 @@ function tomlString(value: string): string {
 export const CLAUDE_WEB_TOOLS = ['WebSearch', 'WebFetch'] as const
 
 /**
- * Claude Code runs as a BridgeClip assistant, not a coding agent: of its
- * built-in tools only web search and fetch, plus BridgeClip's MCP server; no
+ * Claude Code runs as a CreatorClips assistant, not a coding agent: of its
+ * built-in tools only web search and fetch, plus CreatorClips's MCP server; no
  * project settings, hooks or other MCP servers, and anything that would prompt
  * is denied. The bearer token reaches the MCP config through the child's
  * environment, never argv.
@@ -140,7 +140,7 @@ export function claudeTurnEnv(cli: ResolvedCli, token: string): Record<string, s
 
 /**
  * Codex runs read-only with approvals off, ignoring the user's config.toml so
- * their own MCP servers and profiles don't join a BridgeClip conversation.
+ * their own MCP servers and profiles don't join a CreatorClips conversation.
  * Live web search is on: it's a hosted tool, outside the read-only sandbox.
  * The system prompt goes in developer_instructions on every turn.
  */

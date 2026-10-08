@@ -999,7 +999,7 @@ test('a post missing from Zernio unlinks the held clip; returning it still needs
     const workspace = main.workspaceId(KEY)
     const file = path.join(dir, 'userData', `automations-${workspace}.json`)
     const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
-    Object.assign(saved.automations[0].content[0], { status: 'needs_review', postId, error: 'BridgeClip closed while posting.' })
+    Object.assign(saved.automations[0].content[0], { status: 'needs_review', postId, error: 'CreatorClips closed while posting.' })
     fs.writeFileSync(file, JSON.stringify(saved))
     const stamp = new Date().toISOString()
     new main.PostsStore(path.join(dir, 'userData', 'zernio-posts.json'), workspace).save({ id: postId, clipPath: clip, clipTitle: 'Held', targets: [{ accountId, platform: 'youtube', handle: null, status: 'pending', error: null, url: null, inbox: false }], scheduledFor: null, timezone: null, status: 'publishing', error: null, createdAt: stamp, uploadedAt: stamp, refreshedAt: null })

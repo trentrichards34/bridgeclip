@@ -178,7 +178,7 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
     setBusy('group-sources'); setError(null); setSourceGroups(null)
     try {
       const groups = await getApi().automations.enhancementGroups(selected.id)
-      if (groups.some((group) => !group.sourceType)) throw new Error('Restart BridgeClip to use source enhancement prompts.')
+      if (groups.some((group) => !group.sourceType)) throw new Error('Restart CreatorClips to use source enhancement prompts.')
       setSourceGroups(groups); setSourceGroupKey(groups[0]?.key ?? '')
     } catch (cause) { setError(errorMessage(cause, 'Could not group clips by source.')) }
     finally { setBusy(null) }
@@ -623,7 +623,7 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
                   <Row
                     label="Schedule"
                     labelId="automation-schedule"
-                    hint="One clip at each time, daily. Keep BridgeClip open."
+                    hint="One clip at each time, daily. Keep CreatorClips open."
                   >
                     <div role="group" aria-labelledby="automation-schedule" className="flex flex-wrap items-center gap-1">
                       {draft.times.map((time) => (

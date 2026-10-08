@@ -1,9 +1,9 @@
 'use strict'
 // Stands in for `claude -p --output-format stream-json` and `codex exec --json`
-// in the assistant tests. It talks to BridgeClip's MCP server exactly as the
+// in the assistant tests. It talks to CreatorClips's MCP server exactly as the
 // real CLIs do (HTTP JSON-RPC with the bearer token from the environment) and
 // prints each CLI's event format. Prompts drive it:
-//   CALL <tool> <json args>   call a BridgeClip tool, then report its result
+//   CALL <tool> <json args>   call a CreatorClips tool, then report its result
 //   FAIL_AUTH                 exit like a signed-out CLI
 //   HANG                      never answer (for stop and watchdog tests)
 //   anything else             reply with a short echo

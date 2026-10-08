@@ -1,14 +1,14 @@
-# Using BridgeClip
+# Using CreatorClips
 
 [Overview](../README.md) · [Editor](editor.md) · [AI and privacy](ai-and-privacy.md)
 
-Install BridgeClip, create clips, follow jobs, and manage your Library and publishing queues. These instructions describe the current source; check the [release notes](https://github.com/bridge-mind/bridgeclip/releases) for the features in your installed version.
+Install CreatorClips, create clips, follow jobs, and manage your Library and publishing queues. These instructions describe the current source; check the [release notes](https://github.com/trentrichards34/bridgeclip/releases) for the features in your installed version.
 
 ## Install and update
 
-Choose your platform on [bridgeclip.ai](https://www.bridgeclip.ai) or [GitHub Releases](https://github.com/bridge-mind/bridgeclip/releases). Packages include Python, FFmpeg and yt-dlp.
+Choose your platform on [bridgeclip.ai](https://www.bridgeclip.ai) or [GitHub Releases](https://github.com/trentrichards34/bridgeclip/releases). Packages include Python, FFmpeg and yt-dlp.
 
-- **macOS (Apple silicon or Intel):** open the matching DMG and drag BridgeClip to Applications. Official builds are Developer ID signed and notarized by Apple.
+- **macOS (Apple silicon or Intel):** open the matching DMG and drag CreatorClips to Applications. Official builds are Developer ID signed and notarized by Apple.
 - **Windows x64:** run the signed EXE installer.
 - **Linux x64:** install the DEB with your package manager, or make the AppImage executable before opening it. An unlocked desktop secret service is required to save API keys.
 
@@ -16,9 +16,9 @@ See [release verification](RELEASING.md#verify-a-download) for signatures and ch
 
 ### Automatic updates
 
-BridgeClip keeps itself up to date. It checks [Releases](https://github.com/bridge-mind/bridgeclip/releases) shortly after launch and every four hours, downloads a new version in the background, and installs it when you choose **Restart to update** (in the sidebar or **Settings → About**) or the next time you quit. macOS only installs an update signed by the same developer, and every download is checked against the SHA-512 published with the release.
+CreatorClips keeps itself up to date. It checks [Releases](https://github.com/trentrichards34/bridgeclip/releases) shortly after launch and every four hours, downloads a new version in the background, and installs it when you choose **Restart to update** (in the sidebar or **Settings → About**) or the next time you quit. macOS only installs an update signed by the same developer, and every download is checked against the SHA-512 published with the release.
 
-Copies run from source, local package builds and apps opened straight from the disk image don't update themselves; **Settings → About** says why. To turn updates off, start BridgeClip with `BRIDGECLIP_DISABLE_AUTO_UPDATE=1`.
+Copies run from source, local package builds and apps opened straight from the disk image don't update themselves; **Settings → About** says why. To turn updates off, start CreatorClips with `BRIDGECLIP_DISABLE_AUTO_UPDATE=1`.
 
 ## Create your first clips
 
@@ -26,9 +26,9 @@ Copies run from source, local package builds and apps opened straight from the d
 2. Open **Create** and use the file picker for a local video, or paste a public YouTube or completed Twitch VOD link. Dropping a local file opens the picker so you can grant access.
 3. Choose **Automatic** for finished exports, or **Review & edit** to adjust candidates in the [editor](editor.md).
 4. Choose format, framing, clip lengths, models and caption style, then generate.
-5. Follow progress in **Jobs**. Finished clips appear in **Library** and your output folder (by default, `~/BridgeClip`).
+5. Follow progress in **Jobs**. Finished clips appear in **Library** and your output folder (by default, `~/CreatorClips`).
 
-Keys are encrypted with your operating system's secure storage. If secure storage is unavailable, BridgeClip asks you to configure or unlock it before saving keys.
+Keys are encrypted with your operating system's secure storage. If secure storage is unavailable, CreatorClips asks you to configure or unlock it before saving keys.
 
 Only download or clip material you have permission to use. Remote sites may limit downloads or change access rules.
 
@@ -56,9 +56,9 @@ See [video speed](video-speed.md) for timing and export details.
 
 ### Clip a Twitch VOD
 
-Paste a public, completed Twitch video link such as `https://www.twitch.tv/videos/1234567890` into Create, then choose your clip settings and generate. BridgeClip downloads the saved video and uses the same transcription, AI moment selection and rendering flow as other sources. Links on `twitch.tv`, `www.twitch.tv`, `m.twitch.tv` and `go.twitch.tv` are accepted and normalized to the canonical video URL.
+Paste a public, completed Twitch video link such as `https://www.twitch.tv/videos/1234567890` into Create, then choose your clip settings and generate. CreatorClips downloads the saved video and uses the same transcription, AI moment selection and rendering flow as other sources. Links on `twitch.tv`, `www.twitch.tv`, `m.twitch.tv` and `go.twitch.tv` are accepted and normalized to the canonical video URL.
 
-Live channels, Twitch clips, collections, subscriber-only videos and deleted or expired VODs are not supported. No Twitch login or cookies are used. The original source must be at most six hours and 20 GB. BridgeClip downloads the full source before applying the optional start and end times; a link's timestamp or tracking parameters are ignored. For a longer source, trim a downloaded file before adding it. Downloads also stop after four hours or when less than 1 GB of free space would remain.
+Live channels, Twitch clips, collections, subscriber-only videos and deleted or expired VODs are not supported. No Twitch login or cookies are used. The original source must be at most six hours and 20 GB. CreatorClips downloads the full source before applying the optional start and end times; a link's timestamp or tracking parameters are ignored. For a longer source, trim a downloaded file before adding it. Downloads also stop after four hours or when less than 1 GB of free space would remain.
 
 ## Follow jobs
 
@@ -96,7 +96,7 @@ The trash action asks for confirmation before permanently deleting the run folde
 
 ## Publish and automate
 
-Connect social accounts with your own Zernio account and API key to post or schedule clips. Metadata enhancement uses your OpenRouter key. For platform-specific drafts, scheduling consent and required TikTok reviews, see [publishing and metadata](automation-metadata.md). **BridgeClip must be open for daily automations to run.**
+Connect social accounts with your own Zernio account and API key to post or schedule clips. Metadata enhancement uses your OpenRouter key. For platform-specific drafts, scheduling consent and required TikTok reviews, see [publishing and metadata](automation-metadata.md). **CreatorClips must be open for daily automations to run.**
 
 ### Organize the content bank
 
@@ -129,4 +129,4 @@ Recovery also works when local post history was removed or aged out, provided Ze
 - Open a job’s **Details** to inspect its saved transcript and edit trace, including failed runs. Inspecting saved results makes no provider calls. See [saved reviews and diagnostics](ai-and-privacy.md#inspect-saved-reviews).
 - Logs omit raw provider responses and private source details, but review logs and run files before sharing them. See [local storage and cleanup](ai-and-privacy.md#local-storage-and-cleanup).
 
-For help, use [GitHub Issues](https://github.com/bridge-mind/bridgeclip/issues) or [Discord](https://www.bridgemind.ai/discord). Report security issues using [SECURITY.md](../SECURITY.md).
+For help, use [GitHub Issues](https://github.com/trentrichards34/bridgeclip/issues) or [Discord](https://www.bridgemind.ai/discord). Report security issues using [SECURITY.md](../SECURITY.md).

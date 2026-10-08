@@ -238,9 +238,9 @@ test('external URLs reject executable schemes and embedded credentials', () => {
   for (const url of ['file:///tmp/run', 'javascript:alert(1)', 'https://user:pass@example.com', null]) assert.equal(security.isWebUrl(url), false)
   assert.equal(security.isWebUrl('https://example.com/video'), true)
   assert.equal(security.isTrustedExternalUrl('https://example.com/video'), false)
-  assert.equal(security.isTrustedExternalUrl('https://github.com/bridge-mind/bridgeclip'), true)
-  assert.equal(security.isTrustedExternalUrl('https://github.com/bridge-mind/bridgeclip/releases'), true)
-  assert.equal(security.isTrustedExternalUrl('https://github.com/bridge-mind/bridgeclip/releases/download/v0.1.19/evil.exe'), false)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/bridgeclip'), true)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/bridgeclip/releases'), true)
+  assert.equal(security.isTrustedExternalUrl('https://github.com/trentrichards34/bridgeclip/releases/download/v0.1.19/evil.exe'), false)
 })
 
 test('source video links normalize supported YouTube forms and allow only canonical browser URLs', () => {
@@ -409,7 +409,7 @@ test('engine checks distinguish missing modules, models, contracts and timeouts 
   result = { status: 'dependency', module: 'private/secret' }
   assert.doesNotMatch((await check()).error, /private/)
   result = { status: 'dependency', module: 'clip_engine' }
-  assert.match((await check()).hint, /same BridgeClip version/)
+  assert.match((await check()).hint, /same CreatorClips version/)
   result = { status: 'model' }
   const model = await check()
   assert.match(model.hint, /face_detection_yunet_2023mar.onnx/)
@@ -428,7 +428,7 @@ test('engine checks distinguish missing modules, models, contracts and timeouts 
   rejection = null
   result = { status: 'dependency', module: 'cv2' }
   const packaged = await check()
-  assert.match(packaged.hint, /Reinstall BridgeClip/)
+  assert.match(packaged.hint, /Reinstall CreatorClips/)
   assert.equal(packaged.repairCommand, null)
   assert.doesNotMatch(JSON.stringify(packaged), /private traceback/)
 })
@@ -437,9 +437,9 @@ test('Windows resolves the saved legacy Python default without replacing an inst
   const winProcess = Object.create(process)
   Object.defineProperty(winProcess, 'platform', { value: 'win32' })
   Object.defineProperty(winProcess, 'env', { value: { PATH: 'C:\\Python;C:\\Windows' } })
-  Object.defineProperty(winProcess, 'resourcesPath', { value: 'C:\\BridgeClip\\resources' })
-  const userData = 'C:\\Users\\Test\\BridgeClip'
-  const engine = 'C:\\BridgeClip\\engine'
+  Object.defineProperty(winProcess, 'resourcesPath', { value: 'C:\\CreatorClips\\resources' })
+  const userData = 'C:\\Users\\Test\\CreatorClips'
+  const engine = 'C:\\CreatorClips\\engine'
   const present = new Set()
   let python3Runnable = false
   let saved = null

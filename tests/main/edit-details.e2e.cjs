@@ -25,7 +25,7 @@ async function readJson(container, label) {
 
 test('Details keeps navigation visible and makes nested JSON readable without changing saved evidence', { timeout: 90000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-details-'))
-  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'BridgeClip')
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips')
   const id = '11111111-1111-4111-8111-111111111111', run = path.join(library, id)
   fs.mkdirSync(run, { recursive: true })
   const audit = structuredClone(fixture)

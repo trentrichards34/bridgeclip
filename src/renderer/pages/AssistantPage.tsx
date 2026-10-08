@@ -27,7 +27,7 @@ const STARTERS = [
 /** The reading column shared by messages and the composer. */
 const COLUMN = 'mx-auto w-full max-w-[760px] px-4 sm:px-6'
 
-/** Chat with BridgeClip through the user's own Claude Code or Codex. */
+/** Chat with CreatorClips through the user's own Claude Code or Codex. */
 export function AssistantPage({ onOpenSettings }: { onOpenSettings: (section?: 'assistant' | 'keys') => void }): React.JSX.Element {
   const store = useAssistantStore()
   const { conversation, activeId, running, approvals, statuses, preferences, draft, sending, error, conversations } = store
@@ -74,7 +74,7 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings: (section?: '
   }
   const confirmDelete = (chat: Pick<AssistantConversationSummary, 'id' | 'title'>): void => setConfirm({
     title: 'Delete this chat?',
-    body: <>“{chat.title}” is removed from BridgeClip. Anything the assistant already did (clips, posts, automations) stays.</>,
+    body: <>“{chat.title}” is removed from CreatorClips. Anything the assistant already did (clips, posts, automations) stays.</>,
     confirmLabel: 'Delete chat',
     onConfirm: () => void store.remove(chat.id)
   })
@@ -99,7 +99,7 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings: (section?: '
         !checked ? 'Checking your assistants…'
           : !connected.length ? 'Connect Claude, OpenAI or OpenRouter to chat'
             : needsRouterModel ? 'Choose an OpenRouter model below to start'
-              : conversation ? 'Reply to BridgeClip…' : 'Ask BridgeClip to clip, post or organize…'
+              : conversation ? 'Reply to CreatorClips…' : 'Ask CreatorClips to clip, post or organize…'
       }
       picker={(
         <ModelMenu
@@ -273,7 +273,7 @@ function Composer({ inputRef, draft, onDraft, onSubmit, onStop, busy, sending, c
       <textarea
         ref={inputRef}
         autoFocus
-        aria-label="Message BridgeClip"
+        aria-label="Message CreatorClips"
         rows={1}
         maxLength={ASSISTANT_PROMPT_MAX_CHARS}
         value={draft}

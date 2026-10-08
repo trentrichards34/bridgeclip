@@ -1,6 +1,6 @@
 # Third-party notices
 
-The [MIT license](LICENSE) covers BridgeClip-owned clipping engine source. The following bundled files have separate terms. Keep their license files when redistributing the engine or an app that includes it.
+The [MIT license](LICENSE) covers CreatorClips clipping engine source (based on the BridgeClip engine by BridgeMind). The following bundled files have separate terms. Keep their license files when redistributing the engine or an app that includes it.
 
 | Component | Included files | Source and terms |
 | --- | --- | --- |
@@ -15,6 +15,6 @@ The [MIT license](LICENSE) covers BridgeClip-owned clipping engine source. The f
 | Bowlby One | `assets/fonts/BowlbyOne-Regular.ttf` | [Google Fonts Bowlby One](https://github.com/google/fonts/tree/main/ofl/bowlbyone), SIL Open Font License 1.1; text in `assets/fonts/BowlbyOne-OFL.txt`. |
 | YuNet face detector | `assets/models/face_detection_yunet_2023mar.onnx` | [OpenCV Zoo YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet), MIT; text in `assets/models/YuNet-LICENSE`. The model file was checked byte for byte against the upstream copy during this review. |
 
-Python dependencies are pinned with hashes in `requirements.lock`. Their individual licenses are determined by the package distributions and are not replaced by the BridgeClip MIT license. The desktop release also includes Python, yt-dlp, FFmpeg and their notices; see the root `THIRD_PARTY_NOTICES.md` and `docs/RELEASING.md`.
+Python dependencies are pinned with hashes in `requirements.lock`. Their individual licenses are determined by the package distributions and are not replaced by the CreatorClips MIT license. The desktop release also includes Python, yt-dlp, FFmpeg and their notices; see the root `THIRD_PARTY_NOTICES.md` and `docs/RELEASING.md`.
 
 No third-party platform logos are bundled. Names and trademarks remain with their owners. Before a public binary release, review the actual built package, dependency license inventory and ownership of original source and artwork.

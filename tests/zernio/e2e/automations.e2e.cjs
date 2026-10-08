@@ -24,7 +24,7 @@ test('add library clips, review TikTok, and run a mixed-platform automation', { 
   execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=green:s=360x640:d=4:r=15',
     '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4', '-shortest', '-c:v', 'mpeg4', '-q:v', '8',
     '-c:a', 'aac', '-movflags', '+faststart', clip])
-  const run = path.join(work, 'userData', 'BridgeClip', 'automation-library-run')
+  const run = path.join(work, 'userData', 'CreatorClips', 'automation-library-run')
   fs.mkdirSync(run, { recursive: true })
   const clips = ['first.mp4', 'second.mp4'].map((name) => {
     const target = path.join(run, name)

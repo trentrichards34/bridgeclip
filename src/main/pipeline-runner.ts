@@ -250,7 +250,7 @@ export async function validatePython(
     return {
       ok: false, python: pythonPath, error,
       hint: app.isPackaged
-        ? 'Reinstall BridgeClip from the official download, reopen the app, then select Re-check. If this continues, report it using Report an issue in About.'
+        ? 'Reinstall CreatorClips from the official download, reopen the app, then select Re-check. If this continues, report it using Report an issue in About.'
         : hint,
       repairCommand: !app.isPackaged && installDependencies
         ? `${process.platform === 'win32' ? '& ' : ''}${quote(pythonPath)} -m pip install --require-hashes -r ${quote(join(enginePath, 'requirements.lock'))}`
@@ -287,10 +287,10 @@ print(json.dumps(result))
     const result = JSON.parse(stdout.trim()) as { status?: string; module?: string }
     if (result.status === 'ok') return { ok: true, python: pythonPath, error: null, hint: null, repairCommand: null }
     if (result.status === 'contract' || (result.status === 'dependency' && result.module?.startsWith('clip_engine'))) {
-      return failure('The clipping engine is missing or incompatible with this app.', 'Restore the engine folder from the same BridgeClip version as the app, restart npm run dev, then select Re-check.')
+      return failure('The clipping engine is missing or incompatible with this app.', 'Restore the engine folder from the same CreatorClips version as the app, restart npm run dev, then select Re-check.')
     }
     if (result.status === 'model') {
-      return failure('The smart framing face detection model is unavailable.', 'Restore engine/assets/models/face_detection_yunet_2023mar.onnx from the BridgeClip repository, then select Re-check.')
+      return failure('The smart framing face detection model is unavailable.', 'Restore engine/assets/models/face_detection_yunet_2023mar.onnx from the CreatorClips repository, then select Re-check.')
     }
     if (result.status === 'dependency') {
       const moduleName = typeof result.module === 'string' && /^[a-zA-Z_][a-zA-Z0-9_.]{0,79}$/.test(result.module) ? ` (${result.module})` : ''
@@ -330,29 +330,29 @@ export function preflightCheck(paths: {
 }): PreflightResult {
   if (app.isPackaged) {
     const missing = (['ffmpeg', 'ffprobe', 'yt-dlp'] as const).find((name) => !existsSync(resolveBinary(name)))
-    if (missing) return { ok: false, error: `Bundled ${missing} is missing.`, hint: 'Reinstall BridgeClip to repair the clipping tools.' }
+    if (missing) return { ok: false, error: `Bundled ${missing} is missing.`, hint: 'Reinstall CreatorClips to repair the clipping tools.' }
   }
   if (!existsSync(paths.bridgePath)) {
     return {
       ok: false,
       error: `Bridge runner script not found at: ${paths.bridgePath}`,
       hint: app.isPackaged
-        ? 'This is a BridgeClip packaging bug — bridge_runner.py is missing from the app bundle. Please reinstall or report this issue.'
+        ? 'This is a CreatorClips packaging bug — bridge_runner.py is missing from the app bundle. Please reinstall or report this issue.'
         : 'Expected to find bridge/bridge_runner.py in the repo. Did you delete it?'
     }
   }
   if (!paths.enginePath || !existsSync(paths.enginePath)) {
     return {
       ok: false,
-      error: `BridgeClip clipping engine not found at: ${paths.enginePath}`,
-      hint: 'Reinstall BridgeClip or restore the engine/ directory in your source checkout.'
+      error: `CreatorClips clipping engine not found at: ${paths.enginePath}`,
+      hint: 'Reinstall CreatorClips or restore the engine/ directory in your source checkout.'
     }
   }
   if (!existsSync(join(paths.enginePath, 'clip_engine', 'bridge_contract.py'))) {
     return {
       ok: false,
-      error: `BridgeClip clipping engine is incomplete at: ${paths.enginePath}`,
-      hint: 'Reinstall BridgeClip or restore engine/clip_engine/bridge_contract.py in your source checkout.'
+      error: `CreatorClips clipping engine is incomplete at: ${paths.enginePath}`,
+      hint: 'Reinstall CreatorClips or restore engine/clip_engine/bridge_contract.py in your source checkout.'
     }
   }
   // For absolute python paths, verify existence up-front. For bare commands
@@ -480,7 +480,7 @@ export function startClipJob(
   let jobWorkRoot: string
   try { jobWorkRoot = workRoot() }
   catch {
-    reportError({ jobId, message: 'BridgeClip could not create a private temporary work folder.' })
+    reportError({ jobId, message: 'CreatorClips could not create a private temporary work folder.' })
     exitWithoutProcess()
     return
   }

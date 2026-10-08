@@ -21,7 +21,7 @@ function loadTools(t) {
   return { mod, tools, host, dir }
 }
 
-test('every BridgeClip tool has a strict schema, and anything that publishes, deletes or spends asks first', (t) => {
+test('every CreatorClips tool has a strict schema, and anything that publishes, deletes or spends asks first', (t) => {
   const { tools } = loadTools(t)
   const names = tools.map((tool) => tool.name)
   assert.equal(new Set(names).size, names.length, 'names are unique')

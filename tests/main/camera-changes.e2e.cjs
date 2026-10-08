@@ -12,7 +12,7 @@ test('camera scanning, exact frame edits, dismissals and Space playback survive 
   const tools = editorTools(t, { python: true })
   if (!tools) return
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-camera-e2e-'))
-  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'BridgeClip'), run = path.join(library, 'camera-run')
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips'), run = path.join(library, 'camera-run')
   fs.mkdirSync(run, { recursive: true })
   execFileSync(tools.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', "color=red:s=320x180:r=24000/1001:d=5,drawbox=x=0:y=0:w=iw:h=ih:color=blue:t=fill:enable='gte(n,37)',drawbox=x=0:y=0:w=iw:h=ih:color=green:t=fill:enable='gte(n,73)'",
     ...tools.encoder, '-pix_fmt', 'yuv420p', path.join(run, 'editor-source.mp4')])
@@ -282,7 +282,7 @@ test('timeline seeking preserves playback and frame controls recover from edges'
   const tools = editorTools(t)
   if (!tools) return
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-frame-edges-'))
-  const userDataDir = path.join(root, 'user-data'), run = path.join(userDataDir, 'BridgeClip', 'edge-run')
+  const userDataDir = path.join(root, 'user-data'), run = path.join(userDataDir, 'CreatorClips', 'edge-run')
   fs.mkdirSync(run, { recursive: true })
   execFileSync(tools.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=30:duration=5', ...tools.encoder, '-pix_fmt', 'yuv420p', path.join(run, 'editor-source.mp4')])
   fs.copyFileSync(path.join(run, 'editor-source.mp4'), path.join(run, 'editor-preview.mp4'))

@@ -206,7 +206,7 @@ async function createMockZernio(options = {}) {
     return state.accounts.find((a) => a.platform === platform && a.profileId._id === profileId)
   }
 
-  // ---- Built-in API routes (subset of Zernio v1 used by BridgeClip) ----------
+  // ---- Built-in API routes (subset of Zernio v1 used by CreatorClips) ----------
   const builtins = [
     { method: 'GET', path: '/api/v1/profiles', handler: (ctx) => ctx.json(200, { profiles: state.profiles }) },
     {

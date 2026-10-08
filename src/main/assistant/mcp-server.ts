@@ -167,7 +167,7 @@ export class LoopbackMcpServer {
         return ok({
           protocolVersion: requested,
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: SERVER_NAME, title: 'BridgeClip', version: this.version },
+          serverInfo: { name: SERVER_NAME, title: 'CreatorClips', version: this.version },
           instructions: session.handler.instructions
         })
       }

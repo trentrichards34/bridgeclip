@@ -609,7 +609,7 @@ class Settings(BaseSettings):
     # ============================================================
 
     # Application
-    app_name: str = "BridgeClip"
+    app_name: str = "CreatorClips"
     debug: bool = False
     log_level: str = "INFO"
 

@@ -5,7 +5,7 @@ import { isAbsolute, join } from 'path'
 import { randomUUID } from 'crypto'
 
 /**
- * BridgeClip is bring-your-own-key: every provider call is made from this
+ * CreatorClips is bring-your-own-key: every provider call is made from this
  * machine with the user's own keys. Keys are encrypted with the OS keychain
  * (safeStorage) when it is available.
  */
@@ -39,7 +39,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   ...JEV_FEATURE_DEFAULTS,
   openrouterApiKey: '',
   zernioApiKey: '',
-  outputDirectory: join(app.getPath('home'), 'BridgeClip'),
+  outputDirectory: join(app.getPath('home'), 'CreatorClips'),
   pythonPath: process.platform === 'win32' ? 'python' : 'python3',
   customVocabulary: ''
 }

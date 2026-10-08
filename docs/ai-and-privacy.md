@@ -2,7 +2,7 @@
 
 [Overview](../README.md) · [User guide](usage.md) · [Editor](editor.md)
 
-BridgeClip renders on your computer and calls providers directly with your keys. It has no BridgeMind account or backend. AI transcription, planning and optional review use paid OpenRouter services; social publishing uses Zernio. Provider accounts, charges, retention and data policies are governed by those services.
+CreatorClips renders on your computer and calls providers directly with your keys. It has no BridgeMind account or backend. AI transcription, planning and optional review use paid OpenRouter services; social publishing uses Zernio. Provider accounts, charges, retention and data policies are governed by those services.
 
 ## What leaves your computer
 
@@ -16,9 +16,9 @@ BridgeClip renders on your computer and calls providers directly with your keys.
 
 For a link, the app downloads the source using your network connection. Audio for MAI Transcribe 2 (Quality), Whisper Turbo (Economy), or your selected transcription model (Advanced) goes to OpenRouter. Quality and Economy retry temporary transcription failures and use fallback models when needed; Economy tries Whisper Large V3 before MAI. Advanced retries only your chosen model. Transcript text for clip planning also goes to OpenRouter.
 
-If the video has no audio or no speech, BridgeClip samples video frames and sends those images to OpenRouter for visual-only planning. In Advanced, the selected planner must support image input for this fallback.
+If the video has no audio or no speech, CreatorClips samples video frames and sends those images to OpenRouter for visual-only planning. In Advanced, the selected planner must support image input for this fallback.
 
-Clips made through that fallback have no speech captions. Economy skips optional AI layout checks. If you connect social accounts, BridgeClip sends your Zernio API key to Zernio and receives account/profile metadata; platform sign-in occurs in your browser. When you choose **Post** or **Schedule**, BridgeClip uploads that clip to Zernio's media storage and sends its caption, selected accounts and publishing options to Zernio. Zernio then publishes to those platforms. Provider accounts, charges, retention and data policies are governed by those services.
+Clips made through that fallback have no speech captions. Economy skips optional AI layout checks. If you connect social accounts, CreatorClips sends your Zernio API key to Zernio and receives account/profile metadata; platform sign-in occurs in your browser. When you choose **Post** or **Schedule**, CreatorClips uploads that clip to Zernio's media storage and sends its caption, selected accounts and publishing options to Zernio. Zernio then publishes to those platforms. Provider accounts, charges, retention and data policies are governed by those services.
 
 ## Jev editorial review
 
@@ -67,7 +67,7 @@ OpenRouter billing is authoritative. In-app totals can be partial when providers
 
 ### Output and working files
 
-Downloads and intermediate media are held in a private `work/` directory under BridgeClip’s per-user application data folder. BridgeClip removes job work on completion, failure, and cancellation, and clears stale work when it next starts after a forced shutdown. A local video you selected stays where it was. Rendered clips, the transcript, plan and `job_output.json` remain in a run folder under your chosen **Output folder** (by default, `~/BridgeClip`). That JSON includes the source URL or local path and video title.
+Downloads and intermediate media are held in a private `work/` directory under CreatorClips’s per-user application data folder. CreatorClips removes job work on completion, failure, and cancellation, and clears stale work when it next starts after a forced shutdown. A local video you selected stays where it was. Rendered clips, the transcript, plan and `job_output.json` remain in a run folder under your chosen **Output folder** (by default, `~/CreatorClips`). That JSON includes the source URL or local path and video title.
 
 New runs also save `source_context.json` (the source metadata, including its description, plus any research brief and citations) and `edit_audit.json` (the full transcript, planner and repair prompts and responses, and Jev judgments, probabilities and usage). **Review & edit** runs keep a copy of the source video, a playback preview and the project file there too. Review these files before sharing a run folder, and delete the run folder to remove those local outputs.
 
@@ -79,7 +79,7 @@ Returning to the same key restores its saved post history; a newly rotated key h
 
 Remove provider keys in Settings to clear their encrypted saved copies, and review logs before sharing them in an issue.
 
-Keys are encrypted with your operating system's secure storage. If secure storage is unavailable, BridgeClip asks you to configure or unlock it before saving keys.
+Keys are encrypted with your operating system's secure storage. If secure storage is unavailable, CreatorClips asks you to configure or unlock it before saving keys.
 
 ## Inspect saved reviews
 

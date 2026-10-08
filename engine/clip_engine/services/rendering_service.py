@@ -218,7 +218,7 @@ class RenderingService:
         logger.info("FFmpeg available")
 
     def _video_codec_args(self, out_w: int = 1080, out_h: int = 1920, fps: str = "30") -> list[str]:
-        """Use the bundled LGPL encoders in BridgeClip; retain server encoding.
+        """Use the bundled LGPL encoders in CreatorClips; retain server encoding.
 
         Keyframes every 2 s keep long clips seekable. Landscape bitrates scale
         with resolution and frame rate (VideoToolbox is bitrate-driven).
@@ -1023,7 +1023,7 @@ class RenderingService:
         """Render the channel URL banner as a transparent PNG.
 
         Drawn with Pillow rather than FFmpeg's drawtext: the static FFmpeg
-        builds BridgeClip ships (6.1+) omit drawtext, which made any render with
+        builds CreatorClips ships (6.1+) omit drawtext, which made any render with
         a banner fail.
 
         Returns (path, width, height) or None when no banner is configured.

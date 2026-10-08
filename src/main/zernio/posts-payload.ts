@@ -302,7 +302,7 @@ const POST_URL_HOSTS: Record<ZernioPlatform, readonly string[]> = {
   threads: ['threads.net', 'threads.com']
 }
 
-/** True for an https link on the platform's own site; the only links BridgeClip opens. */
+/** True for an https link on the platform's own site; the only links CreatorClips opens. */
 export function isPostUrl(value: unknown, platform: string): value is string {
   if (typeof value !== 'string' || value.length > 2048 || !isZernioPlatform(platform)) return false
   try {

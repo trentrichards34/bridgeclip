@@ -1,8 +1,8 @@
-# Contributing to BridgeClip
+# Contributing to CreatorClips
 
 **Bug reports and focused bug-fix pull requests are welcome. Feature and other change pull requests require an explicit maintainer greenlight before implementation.** Unapproved feature or change PRs will be closed.
 
-BridgeClip is open source and maintained by [@matthewmiller2925](https://github.com/matthewmiller2925), who reviews and merges every change and publishes official builds. Anyone can open a pull request from a fork.
+CreatorClips is open source and maintained by [@matthewmiller2925](https://github.com/matthewmiller2925), who reviews and merges every change and publishes official builds. Anyone can open a pull request from a fork.
 
 ## What we accept
 
@@ -16,7 +16,7 @@ A bug fix restores documented or clearly intended behavior. A preference for dif
 
 ## Propose a change first
 
-Open or find a relevant [issue](https://github.com/bridge-mind/bridgeclip/issues) and describe the problem, the proposed behavior and the scope of the change. Wait for an explicit comment from a primary maintainer approving that scope before starting implementation.
+Open or find a relevant [issue](https://github.com/trentrichards34/bridgeclip/issues) and describe the problem, the proposed behavior and the scope of the change. Wait for an explicit comment from a primary maintainer approving that scope before starting implementation.
 
 An open issue, a reaction or a discussion without a clear approval does not count as a greenlight. Link the approval in your PR. If the scope grows or the approach changes materially, get approval for the revised proposal first.
 
@@ -24,7 +24,7 @@ Approval means we are willing to consider the agreed change; it does not guarant
 
 ## Report a bug
 
-Search existing issues first. Include your BridgeClip version, operating system, steps to reproduce, and expected versus actual behavior. Add relevant logs or screenshots after removing keys and private source details. Report security vulnerabilities through [SECURITY.md](SECURITY.md).
+Search existing issues first. Include your CreatorClips version, operating system, steps to reproduce, and expected versus actual behavior. Add relevant logs or screenshots after removing keys and private source details. Report security vulnerabilities through [SECURITY.md](SECURITY.md).
 
 ## Set up
 
@@ -43,7 +43,7 @@ Use imperative, scoped commit messages and pull request titles, such as `fix(cli
 
 ## Documentation changes
 
-Keep the README focused on what BridgeClip does, installation, a first successful run, and links to help. Describe features by what users can do, with short bullets grouped by task. Add detailed controls and troubleshooting to the [user guide](docs/usage.md) or [editor guide](docs/editor.md), provider and storage details to [AI and privacy](docs/ai-and-privacy.md), and build instructions to [Development](docs/development.md).
+Keep the README focused on what CreatorClips does, installation, a first successful run, and links to help. Describe features by what users can do, with short bullets grouped by task. Add detailed controls and troubleshooting to the [user guide](docs/usage.md) or [editor guide](docs/editor.md), provider and storage details to [AI and privacy](docs/ai-and-privacy.md), and build instructions to [Development](docs/development.md).
 
 Keep essential account, cost and data-sharing requirements visible in the README. Use relative links for repository files and release-page links for downloads. When behavior changes, update the relevant guide instead of appending a release summary to the README. Check that links, screenshots, defaults and platform claims match the current source; distinguish unreleased behavior from published builds.
 
@@ -52,7 +52,7 @@ Keep essential account, cost and data-sharing requirements visible in the README
 [CHANGELOG.md](CHANGELOG.md) is bundled into the app and shown under **Settings → About → Changelog** and **Help → Changelog**, so write it for users.
 
 - **Every user-visible change:** add a bullet under `## [Unreleased]` in the matching group: `### Added`, `### Changed`, `### Fixed` or `### Removed` (`Deprecated` and `Security` also work). Say what people can now do or what works better, and name the screen or setting. Leave out tests, CI, refactors and other internal changes. The app shows **bold** and `code`; links show as plain text.
-- **Each release:** in the PR that bumps `package.json` and `package-lock.json` to `X.Y.Z`, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` and add an empty `## [Unreleased]` above it. At the bottom, point `[Unreleased]` at `compare/vX.Y.Z...HEAD` and add `[X.Y.Z]: https://github.com/bridge-mind/bridgeclip/releases/tag/vX.Y.Z`. Tag `vX.Y.Z` after the PR merges, and reuse the section as the GitHub Release notes.
+- **Each release:** in the PR that bumps `package.json` and `package-lock.json` to `X.Y.Z`, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` and add an empty `## [Unreleased]` above it. At the bottom, point `[Unreleased]` at `compare/vX.Y.Z...HEAD` and add `[X.Y.Z]: https://github.com/trentrichards34/bridgeclip/releases/tag/vX.Y.Z`. Tag `vX.Y.Z` after the PR merges, and reuse the section as the GitHub Release notes.
 
 `npm run test:release` fails when the `package.json` version has no dated section, versions are out of order, or a group isn't one of those types.
 

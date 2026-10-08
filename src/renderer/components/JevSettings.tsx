@@ -54,7 +54,7 @@ export function JevSettings(): React.JSX.Element {
       <div className="jev-intro">
         <div><h2 id="jev-heading">Jev<span aria-hidden="true">.</span></h2><p className="jev-tagline">Editorial checks for automatic clipping.</p></div>
       </div>
-      <p className="jev-description">Jev checks whether clips make sense on their own and preserve the source’s meaning. It also checks titles, sponsorship, and proposed cuts. These advanced settings control the probability thresholds BridgeClip uses to accept edits, request repairs, restore removed material, or skip clips. Jev is a beta feature and uses extra OpenRouter credit.</p>
+      <p className="jev-description">Jev checks whether clips make sense on their own and preserve the source’s meaning. It also checks titles, sponsorship, and proposed cuts. These advanced settings control the probability thresholds CreatorClips uses to accept edits, request repairs, restore removed material, or skip clips. Jev is a beta feature and uses extra OpenRouter credit.</p>
       <button className="jev-docs" onClick={() => { void getApi().shell.openPath(JEV_DOCS_URL).catch(err => setError(errorMessage(err, 'Could not open the documentation'))) }}>Explore the TypeSafe docs</button>
     </header>
     <div className="jev-body">
@@ -63,7 +63,7 @@ export function JevSettings(): React.JSX.Element {
         <button className="jev-switch" role="switch" aria-labelledby="jev-enable-label" aria-describedby="jev-enable-description" aria-checked={enabled} disabled={busy} onClick={() => { void save({ jevEnabled: enabled ? 'off' : 'on' }) }}><span /></button>
       </div>
       {!enabled && <p className="jev-off" role="status">Jev is off for automatic clipping, which uses the planner’s proposed clips and cuts without Jev checks or repairs. Review &amp; edit still uses Jev with the thresholds below.</p>}
-      <div className="jev-controls-heading"><div><span className="jev-kicker">Approval thresholds</span><h3>Set the bar for every decision.</h3></div><span className="jev-customized">{customized ? `${customized} customized` : 'BridgeClip defaults'}</span></div>
+      <div className="jev-controls-heading"><div><span className="jev-kicker">Approval thresholds</span><h3>Set the bar for every decision.</h3></div><span className="jev-customized">{customized ? `${customized} customized` : 'CreatorClips defaults'}</span></div>
       <p className="jev-explainer">Higher values demand stronger evidence and may approve fewer clips or cuts. Lower values allow more uncertainty. Every applicable check must pass.</p>
       <fieldset disabled={busy} className="jev-controls"><legend className="sr-only">Jev approval thresholds</legend>
         {controls.map(({ key, label, description }, i) => <div className={`jev-control ${key === 'jevCutThreshold' ? 'jev-control-cut' : ''}`} key={key}>

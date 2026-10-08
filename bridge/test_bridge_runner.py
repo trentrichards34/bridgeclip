@@ -243,7 +243,7 @@ class BridgeTests(unittest.TestCase):
             self.assertLessEqual(len(failure['hint']), 300)
             self.assertNotRegex(failure['hint'], r'https?://|[\\/]')
         empty = bridge.describe_failure("No clip-worthy moments found (the video may have no speech, or the selected time range is too short for the chosen clip length)")
-        self.assertEqual(empty["message"], "BridgeClip couldn't find any clips in this video.")
+        self.assertEqual(empty["message"], "CreatorClips couldn't find any clips in this video.")
         no_candidates = bridge.describe_failure('The planner returned no clip candidates ' + secret)
         self.assertEqual(no_candidates['message'], 'The planner returned no clip candidates.')
         self.assertIn('planner response', no_candidates['hint'])

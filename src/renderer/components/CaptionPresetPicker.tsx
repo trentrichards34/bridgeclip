@@ -6,7 +6,7 @@ import { Button } from './ui/Button'
 /**
  * Mirrors the caption presets in engine/clip_engine/config.py closely
  * enough to preview them: typeface, colours, stroke, shadow, glow, pill,
- * plate and karaoke sweep. BridgeClip engine renders with its bundled fonts; the preview
+ * plate and karaoke sweep. CreatorClips engine renders with its bundled fonts; the preview
  * uses the same bundled faces, with a system fallback while they load.
  */
 interface CaptionPreset {

@@ -1,19 +1,19 @@
 {
-  "name": "bridgeclip",
+  "name": "creatorclips",
   "private": true,
-  "productName": "BridgeClip",
+  "productName": "CreatorClips",
   "version": "0.1.19",
-  "description": "BridgeClip: open-source AI video clipping by BridgeMind. Turn long videos into captioned short-form clips, locally, with your own API keys.",
+  "description": "CreatorClips: open-source AI video clipping by BridgeMind. Turn long videos into captioned short-form clips, locally, with your own API keys.",
   "main": "./out/main/index.js",
   "author": "BridgeMind",
   "license": "MIT",
-  "homepage": "https://github.com/bridge-mind/bridgeclip",
+  "homepage": "https://github.com/trentrichards34/bridgeclip",
   "repository": {
     "type": "git",
-    "url": "https://github.com/bridge-mind/bridgeclip.git"
+    "url": "https://github.com/trentrichards34/bridgeclip.git"
   },
   "bugs": {
-    "url": "https://github.com/bridge-mind/bridgeclip/issues"
+    "url": "https://github.com/trentrichards34/bridgeclip/issues"
   },
   "scripts": {
     "dev": "install-electron && electron-vite dev",
@@ -30,7 +30,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "icons": "bash scripts/icon/build-icons.sh",
+    "icons": "python3 scripts/icon/build-creatorclips-brand.py",
     "test:bridge": "node scripts/run-bridge-tests.cjs",
     "test:release": "node --test scripts/*.test.cjs",
     "test:renderer": "node --test tests/renderer-state.test.cjs tests/create-form.test.cjs tests/opus-clip.test.cjs tests/audit-renderer.test.cjs",

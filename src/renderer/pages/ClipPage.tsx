@@ -63,7 +63,7 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
       <PageHeader
         eyebrow="Studio"
         title="Create clips"
-        description="Pick a long video and a few options. BridgeClip finds the strongest moments and cuts them into captioned clips."
+        description="Pick a long video and a few options. CreatorClips finds the strongest moments and cuts them into captioned clips."
       />
 
       <SetupCard className="mt-4" onOpenSettings={() => onNavigate('settings')} />
