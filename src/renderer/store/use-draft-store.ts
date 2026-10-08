@@ -40,6 +40,8 @@ export interface ClipDraft {
   includeTitle: boolean
   /** Gameplay split (9:16, Automatic): background-library file under the speaker. */
   backgroundVideo: string | null
+  /** B-roll mode (Automatic): Pexels footage after the hook, for the whole clip, or off. */
+  broll: 'off' | 'after-hook' | 'full'
   trimOpen: boolean
   trimStart: string
   trimEnd: string
@@ -76,6 +78,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   captionPreset: 'pop',
   includeTitle: true,
   backgroundVideo: null,
+  broll: 'off',
   trimOpen: false,
   trimStart: '',
   trimEnd: '',

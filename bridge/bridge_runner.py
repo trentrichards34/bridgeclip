@@ -272,6 +272,8 @@ async def run(config: dict) -> bool:
         aspect_ratio=config.get("aspect_ratio", "9:16"),
         layout_style=config.get("layout_style") or "auto",
         background_video_path=config.get("background_video_path"),
+        broll_enabled=config.get("broll_enabled", False),
+        broll_keep_hook=config.get("broll_keep_hook", True),
         debug_capture=config.get("debug_capture", False),
         pacing=config.get("pacing") or "tight",
         video_speed=config.get("video_speed", 1.0),
@@ -349,7 +351,7 @@ def validate_config(config: object) -> dict:
     output = config.get("output_dir")
     if output is not None and (not isinstance(output, str) or not os.path.isabs(output) or "\0" in output):
         raise ValueError("Output directory must be an absolute path")
-    for field in ("include_captions", "include_title", "auto_clip_count", "layout_vision_enabled", "debug_capture"):
+    for field in ("include_captions", "include_title", "auto_clip_count", "layout_vision_enabled", "debug_capture", "broll_enabled", "broll_keep_hook"):
         if field in config and not isinstance(config[field], bool):
             raise ValueError(f"{field} must be a boolean")
     if config.get('workflow', 'automatic') not in ('automatic', 'review'):
@@ -367,6 +369,8 @@ def validate_config(config: object) -> dict:
         or os.path.splitext(background)[1].lower() not in BACKGROUND_VIDEO_EXTENSIONS or not os.path.isfile(background)
     ):
         raise ValueError("Background video must be an existing .mp4, .mov, .m4v or .webm file")
+    if background is not None and config.get("broll_enabled"):
+        raise ValueError("Choose either a background video or B-roll, not both")
     if config.get("pacing", "tight") not in ("tight", "natural"):
         raise ValueError("Invalid pacing")
     speed = config.get("video_speed", 1.0)

@@ -75,6 +75,8 @@ LANDSCAPE_TITLE_FADE_S = 0.4
 MAX_OUTPUT_FPS = 60
 # Gameplay split: the speaker's share of the 9:16 frame (the rest is background).
 BACKGROUND_SPLIT = 0.5
+# B-roll beats shorter than this on the output clock (after cuts) are skipped.
+BROLL_MIN_VISIBLE_MS = 600
 # Bound raster allocation even when a model ignores the requested title length.
 MAX_TITLE_CHARS = 120
 # Landscape H.264 bitrates (Mbps) by output height at 30 fps, after
@@ -123,6 +125,9 @@ class RenderRequest:
     # Gameplay / "satisfying" split (9:16 only): the framed speaker fills the
     # top half and this video loops, muted, under it. None renders normally.
     background_video_path: Optional[str] = None
+    # B-roll mode: (source start ms, source end ms, footage path) shots laid
+    # full-frame over the speaker's picture; audio, captions and title stay.
+    broll_shots: list[tuple[int, int, str]] = field(default_factory=list)
     # tight: cut dead air and filler words; natural: original timing.
     pacing: str = Pacing.TIGHT
     video_speed: float = 1.0
@@ -564,8 +569,15 @@ class RenderingService:
             fps=fps, loudness_filter=loudness_filter,
             video_speed=request.video_speed,
         )
+        looped_inputs: list[str] = []
         if background:
             graph = self._stack_background(graph, target_width, target_height - speaker_h, fps)
+            looped_inputs = [background]
+        else:
+            broll = self._broll_windows(request, time_map, window_start_ms)
+            if broll:
+                graph = self._overlay_broll(graph, broll, target_width, target_height, fps)
+                looped_inputs = [path for path, _, _ in broll]
         out_plan = remap_plan(plan, time_map)
         caption_path = await self._generate_captions(
             request, target_width, target_height, window_start_ms, time_map, out_plan, is_landscape, plan,
@@ -576,7 +588,7 @@ class RenderingService:
         # then speed up the entire composited picture to match the tempo audio.
         filter_complex, extra_inputs = self._compose_overlays(
             graph, overlays, speed_video_filter(request.video_speed, fps),
-            first_index=2 if background else 1,
+            first_index=1 + len(looped_inputs),
         )
 
         try:
@@ -588,7 +600,7 @@ class RenderingService:
                 filter_complex=filter_complex,
                 audio_label="[aout]" if has_audio else None,
                 extra_inputs=extra_inputs if extra_inputs else None,
-                background_input=background,
+                looped_inputs=looped_inputs,
                 fps=fps,
                 output_size=(target_width, target_height),
                 output_duration_ms=scaled_duration_ms(time_map.output_ms, request.video_speed),
@@ -760,6 +772,45 @@ class RenderingService:
         if not os.path.isfile(path):
             raise RenderingError("The background video is missing. Choose it again in Format.")
         return path
+
+    @staticmethod
+    def _broll_windows(
+        request: RenderRequest, time_map: TimeMap, window_start_ms: int,
+    ) -> list[tuple[str, float, float]]:
+        """B-roll shots on the output clock: (path, start s, end s), cut beats dropped."""
+        if request.broll_shots and request.background_video_path:
+            raise RenderingError("Choose either a background video or B-roll, not both.")
+        windows: list[tuple[str, float, float]] = []
+        for start_ms, end_ms, path in request.broll_shots:
+            if not os.path.isfile(path):
+                logger.warning("A B-roll file is missing; that beat shows the speaker")
+                continue
+            a = time_map.to_output_clamped(start_ms - window_start_ms)
+            b = time_map.to_output_clamped(end_ms - window_start_ms)
+            if b - a >= BROLL_MIN_VISIBLE_MS:
+                windows.append((path, a / 1000, b / 1000))
+        return windows
+
+    @staticmethod
+    def _overlay_broll(
+        graph: str, windows: list[tuple[str, float, float]], width: int, height: int, fps: str,
+    ) -> str:
+        """Lay each B-roll input (1..n) full-frame over [base] during its window; output stays [base]."""
+        assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
+        parts = [graph.replace("[base]", "[speaker]")]
+        current = "speaker"
+        for k, (_, a, b) in enumerate(windows):
+            label = "base" if k == len(windows) - 1 else f"bro{k}"
+            parts.append(
+                f"[{k + 1}:v]trim=duration={b - a:.3f},setpts=PTS-STARTPTS+{a:.3f}/TB,fps={fps},"
+                f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={width}:{height},setsar=1,format=yuv420p[br{k}]"
+            )
+            parts.append(
+                f"[{current}][br{k}]overlay=0:0:eof_action=pass:enable='between(t,{a:.3f},{b:.3f})'[{label}]"
+            )
+            current = label
+        return ";".join(parts)
 
     @staticmethod
     def _stack_background(graph: str, width: int, panel_h: int, fps: str) -> str:
@@ -1125,7 +1176,7 @@ class RenderingService:
         filter_complex: str,
         audio_label: Optional[str] = None,
         extra_inputs: Optional[list[str]] = None,
-        background_input: Optional[str] = None,
+        looped_inputs: Optional[list[str]] = None,
         fps: str = "30",
         output_size: tuple[int, int] = (1080, 1920),
         output_duration_ms: Optional[int] = None,
@@ -1151,12 +1202,13 @@ class RenderingService:
             "-i", input_path,
         ]
 
-        if background_input:
-            # Input 1: looped forever; the vstack ends with the speaker panel.
+        for looped in (looped_inputs or []):
+            # Inputs 1..n: background / B-roll videos, looped forever and muted.
+            # The graph trims or stacks them so the speaker sets the length.
             cmd.extend([
                 "-stream_loop", "-1", "-an",
                 "-protocol_whitelist", "file,pipe,fd", "-format_whitelist", "mov,matroska,webm,avi,flv,mpegts",
-                "-i", background_input,
+                "-i", looped,
             ])
 
         for extra in (extra_inputs or []):
@@ -1179,7 +1231,7 @@ class RenderingService:
         else:
             cmd.append("-an")
 
-        if extra_inputs or background_input:
+        if extra_inputs or looped_inputs:
             cmd.append("-shortest")
 
         cmd.append(output_path)

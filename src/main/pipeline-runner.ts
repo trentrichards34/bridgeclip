@@ -444,6 +444,11 @@ export function startClipJob(
     return
   }
 
+  if (config.broll && !settings.pexelsApiKey) {
+    reportError({ jobId, message: 'B-roll needs a free Pexels API key. Add it in Settings → API keys, then run the job again.' })
+    exitWithoutProcess()
+    return
+  }
   let backgroundPath: string | null = null
   if (config.backgroundVideo) {
     try { backgroundPath = resolveBackground(config.backgroundVideo) }
@@ -481,6 +486,7 @@ export function startClipJob(
     caption_preset: config.captionPreset,
     include_title: config.includeTitle ?? true,
     ...(backgroundPath ? { background_video_path: backgroundPath } : {}),
+    ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook' } : {}),
     keyterms: vocabularyTerms(settings.customVocabulary),
     start_time_seconds: config.startTimeSeconds,
     end_time_seconds: config.endTimeSeconds,

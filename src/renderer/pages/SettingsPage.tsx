@@ -29,7 +29,7 @@ type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
 export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): React.JSX.Element {
-  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, sourceContextWebResearch, saving, save, toolStatus, toolError, checkTools, checkingTools } =
+  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, pexelsConfigured, sourceContextWebResearch, saving, save, toolStatus, toolError, checkTools, checkingTools } =
     useSettingsStore()
   const keys = useApiKeyDrafts()
   const [isPackaged, setIsPackaged] = useState(true)
@@ -188,6 +188,19 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                   placeholder="sk_…"
                   description="Connects your social accounts so you can post and schedule clips. Manage them under Accounts."
                   getKeyUrl={PROVIDER_LINKS.zernio}
+                />
+              </KeyRow>
+              <KeyRow>
+                <ApiKeyInput
+                  label="Pexels (optional)"
+                  value={keys.drafts.pexelsApiKey}
+                  configured={pexelsConfigured}
+                  onChange={(v) => keys.setDraft('pexelsApiKey', v)}
+                  onRemove={() => void keys.remove('pexelsApiKey')}
+                  onBlur={() => void keys.persist()}
+                  placeholder="Your Pexels API key"
+                  description="Free stock video for B-roll mode. CreatorClips searches Pexels for footage that matches each beat of a clip."
+                  getKeyUrl={PROVIDER_LINKS.pexels}
                 />
               </KeyRow>
             </div>

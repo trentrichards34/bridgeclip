@@ -36,6 +36,12 @@ const LAYOUT_STYLES = [
   { id: 'fit', label: 'Classic', hint: 'Whole frame, blurred' }
 ] as const
 
+const BROLL_OPTIONS = [
+  { id: 'off', label: 'Off', hint: 'Just the speaker', summary: 'Off' },
+  { id: 'after-hook', label: 'After the hook', hint: 'Speaker for 3 s first', summary: 'Pexels footage after a 3 s speaker hook' },
+  { id: 'full', label: 'Whole clip', hint: 'Footage from the start', summary: 'Pexels footage for the whole clip' }
+] as const
+
 const MAX_CLIPS = 100
 
 export const WIZARD_STEPS: { id: WizardStep; label: string; title: string; description: string }[] = [
@@ -79,7 +85,8 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     includeCaptions: draft.includeCaptions,
     captionPreset: draft.captionPreset,
     includeTitle: draft.includeTitle,
-    ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo ? { backgroundVideo: draft.backgroundVideo } : {}),
+    ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo && draft.broll === 'off' ? { backgroundVideo: draft.backgroundVideo } : {}),
+    ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
     startTimeSeconds: trim.start,
     endTimeSeconds: trim.end,
     bannerPlatform: null,
@@ -298,7 +305,8 @@ function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; u
 
 /** Format, framing and pacing. Exported for the keyboard-navigation test. */
 export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
-  const setBackground = useCallback((backgroundVideo: string | null) => update({ backgroundVideo }), [update])
+  const setBackground = useCallback((backgroundVideo: string | null) => update(backgroundVideo ? { backgroundVideo, broll: 'off' } : { backgroundVideo }), [update])
+  const pexelsConfigured = useSettingsStore((s) => s.pexelsConfigured)
   return (
     <div className="space-y-4">
       <Group label="Format">
@@ -379,7 +387,42 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
         </Group>
       )}
 
-      {draft.aspectRatio === '9:16' && draft.workflow !== 'review' && (
+      {draft.workflow !== 'review' && (
+        <Group label="B-roll" aside="Stock footage from Pexels">
+          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="B-roll">
+            {BROLL_OPTIONS.map((option) => {
+              const selected = draft.broll === option.id
+              const disabled = option.id !== 'off' && !pexelsConfigured
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  disabled={disabled}
+                  tabIndex={selected ? 0 : -1}
+                  onKeyDown={onRadioKeyDown}
+                  onClick={() => update(option.id === 'off' ? { broll: 'off' } : { broll: option.id, backgroundVideo: null })}
+                  className={cn(
+                    'glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left disabled:cursor-not-allowed disabled:opacity-50',
+                    selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink'
+                  )}
+                >
+                  <span className="block text-xs font-medium">{option.label}</span>
+                  <span className={cn('block truncate text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{option.hint}</span>
+                </button>
+              )
+            })}
+          </div>
+          <p className="mt-2 text-2xs text-ink-subtle">
+            {pexelsConfigured
+              ? 'AI picks footage for each beat of what’s said. The speaker’s audio, captions and title stay.'
+              : 'Add a free Pexels API key in Settings → API keys to turn on B-roll.'}
+          </p>
+        </Group>
+      )}
+
+      {draft.aspectRatio === '9:16' && draft.workflow !== 'review' && draft.broll === 'off' && (
         <Group label="Background video" aside="Gameplay split">
           <BackgroundPicker value={draft.backgroundVideo} onChange={setBackground} />
         </Group>
@@ -577,7 +620,8 @@ function ReviewStep({ draft, trim, onEdit }: {
     { step: 'clips', label: 'What to clip', value: draft.clipRequest?.trim() || 'The best moments' },
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
-  if (draft.workflow !== 'review' && draft.aspectRatio === '9:16' && draft.backgroundVideo) rows.splice(3, 0, { step: 'format', label: 'Background', value: `${draft.backgroundVideo} · under the speaker` })
+  if (draft.workflow !== 'review' && draft.broll !== 'off') rows.splice(3, 0, { step: 'format', label: 'B-roll', value: BROLL_OPTIONS.find((o) => o.id === draft.broll)?.summary ?? 'On' })
+  else if (draft.workflow !== 'review' && draft.aspectRatio === '9:16' && draft.backgroundVideo) rows.splice(3, 0, { step: 'format', label: 'Background', value: `${draft.backgroundVideo} · under the speaker` })
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? 'Shown at the top' : 'Off' })
   if (draft.clippingMode === 'advanced') rows.splice(5, 0,
     { step: 'clips', label: 'Transcribe', value: draft.transcriptionModel || 'Choose a model' },

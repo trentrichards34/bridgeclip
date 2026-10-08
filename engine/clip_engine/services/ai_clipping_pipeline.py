@@ -26,6 +26,7 @@ from typing import Any, Callable, Optional
 
 from clip_engine.config import CaptionStyle, LayoutStyle, get_settings, is_longform, resolve_clip_duration_bounds
 from clip_engine.services.video_speed import validate_video_speed
+from clip_engine.services.broll_service import prepare_broll
 from clip_engine.error_policy import NoClipCandidatesError, NoRequestedMomentsError, safe_failure_code, safe_processing_error
 from clip_engine.services.source_context import SourceContextService, context_for_prompt, transcription_terms
 from clip_engine.services.editorial_evidence import discovery_feedback, overlaps
@@ -119,6 +120,10 @@ class ClippingJobRequest:
     layout_style: str = LayoutStyle.AUTO
     # Gameplay split (9:16): looping background video under the speaker.
     background_video_path: Optional[str] = None
+    # B-roll mode: stock footage (Pexels) over the speaker; keep the speaker
+    # on screen for the opening hook.
+    broll_enabled: bool = False
+    broll_keep_hook: bool = True
     debug_capture: bool = False
     # "tight" cuts dead air and filler words; "natural" keeps original timing.
     pacing: str = "tight"
@@ -632,6 +637,21 @@ class AIClippingPipeline:
                         segment.end_time_ms,
                     )
 
+                    broll_shots: list[tuple[int, int, str]] = []
+                    if request.broll_enabled and not request.background_video_path:
+                        render_progress(i, 'Finding B-roll', None)
+                        try:
+                            shots = await prepare_broll(
+                                clip_transcript, segment.start_time_ms, segment.end_time_ms,
+                                os.path.join(os.path.dirname(download_result.video_path), 'broll'),
+                                portrait=request.aspect_ratio == '9:16', keep_hook=request.broll_keep_hook,
+                            )
+                            broll_shots = [(shot.start_ms, shot.end_ms, shot.path) for shot in shots if shot.path]
+                        except PermissionError:
+                            raise
+                        except Exception as exc:
+                            logger.warning(f"B-roll unavailable for clip {i + 1}; rendering the speaker only: {exc}")
+
                     render_request = RenderRequest(
                         progress_callback=lambda detail, percent=None: render_progress(i, detail, percent),
                         video_path=download_result.video_path,
@@ -652,6 +672,7 @@ class AIClippingPipeline:
                         aspect_ratio=request.aspect_ratio,
                         layout_style=request.layout_style,
                         background_video_path=request.background_video_path,
+                        broll_shots=broll_shots,
                         debug_capture=request.debug_capture,
                         pacing=request.pacing,
                         video_speed=request.video_speed,
@@ -968,6 +989,7 @@ class AIClippingPipeline:
                     "video_speed": request.video_speed,
                     "include_title": request.include_title,
                     "background_video": os.path.basename(request.background_video_path) if request.background_video_path else None,
+                    "broll": {"enabled": request.broll_enabled, "keep_hook": request.broll_keep_hook},
                     "clip_request": request.clip_request,
                 },
                 "transcription_status": transcription_status,

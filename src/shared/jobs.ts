@@ -28,6 +28,8 @@ export interface ClipJobRequest {
   includeTitle?: boolean
   /** Gameplay split (9:16): a background-library file looped under the speaker. */
   backgroundVideo?: string
+  /** B-roll mode: Pexels stock footage over the speaker, after the hook or for the whole clip. */
+  broll?: 'after-hook' | 'full'
   startTimeSeconds: number | null
   endTimeSeconds: number | null
   bannerPlatform: string | null

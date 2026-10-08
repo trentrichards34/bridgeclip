@@ -153,12 +153,12 @@ test('the renderer settings state never retains raw API keys, even if the main p
 })
 
 test('the settings page shows a configured key as a masked, empty field rather than the stored value', () => {
-  useSettingsStore.setState({ openrouterConfigured: true, zernioConfigured: true, loaded: true, outputDirectory: '/clips' })
+  useSettingsStore.setState({ openrouterConfigured: true, zernioConfigured: true, pexelsConfigured: true, loaded: true, outputDirectory: '/clips' })
   const html = render(React.createElement(SettingsPage))
   assert.match(html, /Saved securely\. Paste a new key to replace\./)
   assert.doesNotMatch(html, /sk-or-|sk_SECRET|SECRET/)
   const inputs = [...html.matchAll(/<input[^>]*>/g)].map((match) => match[0]).filter((input) => /type="password"/.test(input))
-  assert.equal(inputs.length, 2, 'both key inputs are password fields until the user reveals their own draft')
+  assert.equal(inputs.length, 3, 'every key input (OpenRouter, Zernio, Pexels) is a password field until the user reveals their own draft')
   for (const input of inputs) assert.match(input, /value=""/)
   assertEscaped(html)
 })

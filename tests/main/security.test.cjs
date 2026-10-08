@@ -272,6 +272,11 @@ test('job validation rejects malformed options and invalid trim intervals', () =
     assert.throws(() => validateJobConfig({ ...job, backgroundVideo }), /Background videos/)
   }
   assert.throws(() => validateJobConfig({ ...job, aspectRatio: '16:9', backgroundVideo: 'gameplay.mp4' }), /9:16/)
+  assert.equal(validateJobConfig({ ...job, broll: 'after-hook' }).broll, 'after-hook')
+  assert.equal(validateJobConfig({ ...job, aspectRatio: '16:9', broll: 'full' }).broll, 'full')
+  for (const broll of ['on', true, null, '']) assert.throws(() => validateJobConfig({ ...job, broll }), /B-roll/)
+  assert.throws(() => validateJobConfig({ ...job, broll: 'full', backgroundVideo: 'gameplay.mp4' }), /not both/)
+  assert.throws(() => validateJobConfig({ ...job, workflow: 'review', broll: 'full' }), /Automatic/)
   assert.equal(validateJobConfig(job).clipRequest, undefined)
   assert.equal(validateJobConfig({ ...job, clipRequest: '  the pricing debate \n' }).clipRequest, 'the pricing debate')
   assert.equal(validateJobConfig({ ...job, clipRequest: '   ' }).clipRequest, undefined)

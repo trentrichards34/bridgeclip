@@ -23,6 +23,9 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   if (typeof v.layoutVision !== 'boolean') throw new Error('Invalid vision option')
   if (v.includeTitle !== undefined && typeof v.includeTitle !== 'boolean') throw new Error('Invalid title option')
   if (v.backgroundVideo !== undefined && (!isBackgroundVideoName(v.backgroundVideo) || v.aspectRatio !== '9:16')) throw new Error('Background videos work with 9:16 clips only')
+  if (v.broll !== undefined && v.broll !== 'after-hook' && v.broll !== 'full') throw new Error('Invalid B-roll option')
+  if (v.broll !== undefined && v.backgroundVideo !== undefined) throw new Error('Choose either a background video or B-roll, not both')
+  if (v.broll !== undefined && v.workflow === 'review') throw new Error('B-roll works with the Automatic workflow')
   if (v.clipRequest !== undefined && (typeof v.clipRequest !== 'string' || v.clipRequest.includes('\0') || trimClipRequest(v.clipRequest).length > CLIP_REQUEST_MAX_CHARS)) throw new Error(`Describe what to clip in ${CLIP_REQUEST_MAX_CHARS} characters or fewer`)
   if (v.videoSpeed !== undefined && !isVideoSpeed(v.videoSpeed)) throw new Error('Video speed must be between 1× and 2×')
   if (v.workflow !== undefined && !['automatic', 'review'].includes(v.workflow)) throw new Error('Invalid workflow')
@@ -51,5 +54,5 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
   'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'backgroundVideo', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'includeTitle', 'backgroundVideo', 'broll', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

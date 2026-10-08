@@ -40,6 +40,7 @@ import type {
 export interface ClipSettings extends JevThresholdSettings {
   openrouterConfigured: boolean
   zernioConfigured: boolean
+  pexelsConfigured: boolean
   jevEnabled: string
   jevVisualContext: string
   sourceContextWebResearch: string
@@ -161,7 +162,7 @@ export interface BridgeClipAPI {
     /** Pass true to count again instead of reusing a result from the last few seconds. */
     storageUsage: (fresh?: boolean) => Promise<OutputStorageUsage>
     save: (settings: ClipSettings) => Promise<ClipSettings>
-    replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey', value: string) => Promise<ClipSettings>
+    replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey' | 'pexelsApiKey', value: string) => Promise<ClipSettings>
     selectOutputDir: () => Promise<string | null>
   }
   zernio: {

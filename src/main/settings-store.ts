@@ -13,6 +13,7 @@ export interface AppSettings extends JevThresholdSettings {
   openrouterApiKey: string
   /** Optional: connects social accounts for posting. Used only by the main process, never sent to the engine. */
   zernioApiKey: string
+  pexelsApiKey: string
   /** Opt-in beta: Jev review of automatic clips via the existing OpenRouter key. Review & edit always uses Jev. */
   jevEnabled: string
   /** Additional OpenRouter frame observations, explicitly opt-in. */
@@ -25,13 +26,14 @@ export interface AppSettings extends JevThresholdSettings {
   customVocabulary: string
 }
 
-export type ApiKeyName = 'openrouterApiKey' | 'zernioApiKey'
+export type ApiKeyName = 'openrouterApiKey' | 'zernioApiKey' | 'pexelsApiKey'
 export type PublicSettings = Pick<AppSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'jevEnabled' | 'jevVisualContext' | 'sourceContextWebResearch' | keyof JevThresholdSettings> & {
   openrouterConfigured: boolean
   zernioConfigured: boolean
+  pexelsConfigured: boolean
 }
 
-const SECRET_KEYS = ['openrouterApiKey', 'zernioApiKey'] as const
+const SECRET_KEYS = ['openrouterApiKey', 'zernioApiKey', 'pexelsApiKey'] as const
 type SecretKey = (typeof SECRET_KEYS)[number]
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -39,6 +41,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   ...JEV_FEATURE_DEFAULTS,
   openrouterApiKey: '',
   zernioApiKey: '',
+  pexelsApiKey: '',
   outputDirectory: join(app.getPath('home'), 'CreatorClips'),
   pythonPath: process.platform === 'win32' ? 'python' : 'python3',
   customVocabulary: ''
@@ -59,6 +62,7 @@ interface PersistedSettings extends JevThresholdSettings {
   version: number
   openrouterApiKey: PersistedSecret
   zernioApiKey: PersistedSecret
+  pexelsApiKey: PersistedSecret
   jevEnabled: string
   jevVisualContext: string
   sourceContextWebResearch: string
@@ -94,6 +98,7 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
 
     openrouterApiKey: (settings.openrouterApiKey ?? DEFAULT_SETTINGS.openrouterApiKey).trim(),
     zernioApiKey: (settings.zernioApiKey ?? DEFAULT_SETTINGS.zernioApiKey).trim(),
+    pexelsApiKey: (settings.pexelsApiKey ?? DEFAULT_SETTINGS.pexelsApiKey).trim(),
     jevEnabled: settings.jevEnabled ?? DEFAULT_SETTINGS.jevEnabled,
     jevVisualContext: settings.jevVisualContext ?? DEFAULT_SETTINGS.jevVisualContext,
     sourceContextWebResearch: settings.sourceContextWebResearch ?? DEFAULT_SETTINGS.sourceContextWebResearch,
@@ -232,6 +237,7 @@ function writeSettings(settings: AppSettings): void {
 
     openrouterApiKey: encodeSecret(settings.openrouterApiKey),
     zernioApiKey: encodeSecret(settings.zernioApiKey),
+    pexelsApiKey: encodeSecret(settings.pexelsApiKey),
     jevEnabled: settings.jevEnabled,
     jevVisualContext: settings.jevVisualContext,
     sourceContextWebResearch: settings.sourceContextWebResearch,
@@ -275,6 +281,7 @@ export function publicSettings(settings: AppSettings): PublicSettings {
     customVocabulary: settings.customVocabulary,
     openrouterConfigured: Boolean(settings.openrouterApiKey),
     zernioConfigured: Boolean(settings.zernioApiKey),
+    pexelsConfigured: Boolean(settings.pexelsApiKey),
     jevEnabled: settings.jevEnabled,
     jevVisualContext: settings.jevVisualContext,
     sourceContextWebResearch: settings.sourceContextWebResearch
@@ -330,6 +337,7 @@ export function replaceApiKey(key: ApiKeyName, value: string): PublicSettings {
 export function getSettingsForBridge(settings: AppSettings): Record<string, string> {
   return {
     OPENROUTER_API_KEY: settings.openrouterApiKey,
+    ...(settings.pexelsApiKey ? { PEXELS_API_KEY: settings.pexelsApiKey } : {}),
     SOURCE_CONTEXT_WEB_RESEARCH: settings.sourceContextWebResearch !== 'off' ? 'true' : 'false',
     JEV_THRESHOLD: settings.jevThreshold,
     JEV_SELF_CONTAINED_THRESHOLD: settings.jevSelfContainedThreshold,

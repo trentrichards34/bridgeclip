@@ -115,6 +115,18 @@ class BridgeTests(unittest.TestCase):
                 with self.subTest(bad=bad), self.assertRaises(ValueError):
                     bridge.validate_config(self.config(background_video_path=bad))
 
+    def test_broll_options_are_booleans_and_exclude_a_background(self):
+        bridge.validate_config(self.config(broll_enabled=True, broll_keep_hook=False))
+        for bad in ({"broll_enabled": "yes"}, {"broll_keep_hook": 1}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bridge.validate_config(self.config(**bad))
+        with tempfile.TemporaryDirectory() as folder:
+            video = os.path.join(folder, "gameplay.mp4")
+            with open(video, "w") as handle:
+                handle.write("x")
+            with self.assertRaises(ValueError):
+                bridge.validate_config(self.config(background_video_path=video, broll_enabled=True))
+
     def test_output_and_local_mode_are_set_before_settings_load(self):
         observed = []
         def get_settings():

@@ -621,6 +621,8 @@ class Settings(BaseSettings):
 
     # API Keys (required)
     openrouter_api_key: Optional[str] = None
+    # Pexels (free stock video) for B-roll mode; optional.
+    pexels_api_key: Optional[str] = None
     jev_threshold: float = Field(default=0.75, ge=0, le=1, allow_inf_nan=False)
     jev_self_contained_threshold: float = Field(default=0.70, ge=0, le=1, allow_inf_nan=False)
     jev_faithful_to_source_threshold: float = Field(default=0.65, ge=0, le=1, allow_inf_nan=False)
@@ -705,6 +707,9 @@ class Settings(BaseSettings):
     layout_vision_enabled: bool = True
     layout_vision_model: str = "google/gemini-3.8-flash"
     layout_vision_fallback_models: str = "anthropic/claude-opus-5.5"
+    # B-roll: a fast model picks a stock-footage search for each beat.
+    broll_model: str = "google/gemini-3.8-flash"
+    broll_fallback_models: str = "anthropic/claude-opus-5.5"
     layout_vision_reasoning_effort: str = "low"
 
     # Selected by the desktop bridge per process before settings are loaded.
@@ -734,6 +739,9 @@ class Settings(BaseSettings):
         if self.clipping_mode == "advanced":
             return []
         return self._split_models(self.planner_fallback_models, self.planner_model)
+
+    def get_broll_fallback_models(self) -> List[str]:
+        return self._split_models(self.broll_fallback_models, self.broll_model)
 
     def get_layout_vision_fallback_models(self) -> List[str]:
         """Fallback layout-vision models, excluding blanks and the primary."""
