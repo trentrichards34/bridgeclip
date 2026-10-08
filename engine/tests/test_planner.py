@@ -156,6 +156,8 @@ class TestScoring:
         assert "HOOK → PROMISE → PAYOFF" in prompt
         assert "FIRST sentence" in prompt
         assert "The clip MUST deliver what the title promises" in prompt
+        assert "TRIPLE HOOK" in prompt and "END ON THE PAYOFF, NOT A PITCH" in prompt
+        assert "Never invent, round up or exaggerate a number" in prompt
 
     def test_scores_are_clamped(self):
         assert IntelligencePlannerService._score_clip(clip(0, 30, (15, 15, 15, 15, 15))) == 1.0

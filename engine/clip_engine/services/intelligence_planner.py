@@ -808,6 +808,8 @@ class IntelligencePlannerService:
             )
             title_rules = """- The title is the HOOK TEXT burned in at the top of the clip. It tells the viewer exactly what they are about to get: "The Ad That Made Me $1M", "How I Got 5,400 Sales From One Ad".
 - The clip MUST deliver what the title promises. If the payoff is not inside the clip, change the title or the clip; never promise what the clip does not show.
+- Lead with the OUTCOME the viewer wants, not the product, tool or category name: "Stop Dreading Tax Season", not "Our Bookkeeping Platform".
+- Use the speaker's real numbers exactly as said. Never invent, round up or exaggerate a number.
 - Use curiosity gaps only when the clip closes them: "Why Most Developers Get This Wrong", "The Truth About AI Coding"
 - Use power words when appropriate: "brutal", "insane", "secret", "truth", "nobody", "actual"
 - Match the speaker's energy — if they are calm and analytical, do NOT use hyperbolic clickbait
@@ -890,6 +892,15 @@ Short-form clips win on two things only: the hook, and delivering on it. Build e
 3. PAYOFF (the rest of the clip): The speaker delivers it — shows the numbers, explains the how, finishes the story. End right after the payoff lands. Do not end before it, and do not run on into the next topic.
 
 Prefer moments where the payoff is concrete and visible: real numbers, results, a demonstration, a screen being shown. A moment with a great hook but no payoff in range is not a clip; skip it.
+
+## WHAT MAKES A STRONG CLIP
+
+1. TRIPLE HOOK: The strongest openings stack three things in the first sentences. PREMISE: a bold, specific, credible claim, ideally with a real number ("my business is making over $7,000 a day"). STAKES: why it matters to the viewer ("you're not going to believe this"). TWIST: a pattern interrupt that breaks a common false belief ("and virtually nobody knows who I am"). An opening with two or three of these scores 9-10 on hook.
+2. A COMPLETE MINI STORY: Inside the clip, prefer the arc Hook → Background → Conflict → Resolution: how they got here, what went wrong or was hard, and what solved it. A clip with the whole arc beats a clip of loose tips.
+3. STORY MOMENTS TRAVEL: Favor moments that are one of these stories: origin (rock bottom to breakthrough), results with limited resources, "getting fired was the best thing", a regret ("if I could tell my 25-year-old self"), before vs. after, overcoming a failure, a student or client result, something learned from someone big, a contrarian stance ("everyone says X, they're wrong").
+4. SPECIFIC BEATS VAGUE: "5,400 sales from one ad" beats "a lot of sales". Prefer moments with real numbers, names of results, and proof shown on screen.
+5. A STANCE: Prefer moments where the speaker takes a clear position not everybody shares over neutral, hedged advice.
+6. END ON THE PAYOFF, NOT A PITCH: These clips reach new people. End on the resolution or the result. Do not run on into "link in bio", "comment below" or a sales pitch unless that line is the payoff itself.
 
 ## ANTI-PATTERNS — NEVER SELECT CLIPS THAT:
 
