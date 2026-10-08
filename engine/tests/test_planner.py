@@ -142,8 +142,20 @@ class TestTranscriptFormatting:
 
 
 class TestScoring:
-    def test_scores_are_averaged(self):
-        assert IntelligencePlannerService._score_clip(clip(0, 30, (10, 8, 6, 4, 2))) == 0.6
+    def test_scores_are_weighted_toward_hook_and_payoff(self):
+        # hook .35, standalone .15, arc .10, quotability .15, payoff .25
+        assert IntelligencePlannerService._score_clip(clip(0, 30, (10, 8, 6, 4, 2))) == 0.64
+
+    def test_hook_and_payoff_outrank_a_quotable_clip_that_never_delivers(self):
+        delivers = IntelligencePlannerService._score_clip(clip(0, 30, (9, 6, 6, 5, 9)))
+        no_payoff = IntelligencePlannerService._score_clip(clip(0, 30, (6, 9, 9, 10, 3)))
+        assert delivers > no_payoff
+
+    def test_prompt_builds_clips_hook_promise_payoff(self):
+        prompt = IntelligencePlannerService()._build_system_prompt(clip_count=5, min_duration=20, max_duration=60)
+        assert "HOOK → PROMISE → PAYOFF" in prompt
+        assert "FIRST sentence" in prompt
+        assert "The clip MUST deliver what the title promises" in prompt
 
     def test_scores_are_clamped(self):
         assert IntelligencePlannerService._score_clip(clip(0, 30, (15, 15, 15, 15, 15))) == 1.0
