@@ -17,6 +17,7 @@ the speaker for that beat.
 from __future__ import annotations
 
 import hashlib
+import uuid
 import json
 import logging
 import os
@@ -47,6 +48,10 @@ PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
 PEXELS_MEDIA_HOSTS = ("pexels.com",)
 MAX_BROLL_BYTES = 150 * 1024 * 1024
 SAFE_QUERY = re.compile(r"[^A-Za-z0-9 '&-]+")
+
+
+class PexelsKeyRejected(Exception):
+    """Pexels refused the API key; every B-roll beat would fail the same way."""
 
 
 @dataclass
@@ -295,7 +300,7 @@ class PexelsClient:
                 headers={"Authorization": self.api_key},
             )
             if response.status_code in (401, 403):
-                raise PermissionError("Pexels rejected the API key. Check it in Settings.")
+                raise PexelsKeyRejected("Pexels rejected the API key. Check it in Settings.")
             if response.status_code != 200:
                 logger.warning(f"Pexels search failed ({response.status_code}) for a B-roll beat")
                 self._searches[key] = []
@@ -311,7 +316,19 @@ class PexelsClient:
         path = os.path.join(self.cache_dir, name)
         if os.path.isfile(path) and os.path.getsize(path) > 0:
             return path
-        partial = path + ".part"
+        partial = f"{path}.{uuid.uuid4().hex}.part"
+        try:
+            await self._stream_to(link, partial)
+        except BaseException:
+            try:
+                os.remove(partial)
+            except OSError:
+                pass
+            raise
+        os.replace(partial, path)
+        return path
+
+    async def _stream_to(self, link: str, partial: str) -> None:
         size = 0
         async with self._client.stream("GET", link) as response:
             if response.status_code != 200:
@@ -322,8 +339,6 @@ class PexelsClient:
                     if size > MAX_BROLL_BYTES:
                         raise ValueError("B-roll file is too large")
                     handle.write(chunk)
-        os.replace(partial, path)
-        return path
 
     async def fill(self, shots: list[BrollShot], portrait: bool) -> list[BrollShot]:
         """Attach footage to each shot; shots without a match are dropped."""
@@ -332,7 +347,7 @@ class PexelsClient:
         for shot in shots:
             try:
                 videos = await self.search(shot.query, portrait)
-            except PermissionError:
+            except PexelsKeyRejected:
                 raise
             except (httpx.HTTPError, ValueError) as exc:
                 logger.warning(f"B-roll search failed; showing the speaker for that beat: {exc}")

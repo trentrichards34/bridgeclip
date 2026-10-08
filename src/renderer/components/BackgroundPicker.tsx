@@ -17,19 +17,20 @@ interface BackgroundPickerProps {
  */
 export function BackgroundPicker({ value, onChange }: BackgroundPickerProps): React.JSX.Element {
   const [names, setNames] = useState<string[]>([])
+  const [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
-    getApi().backgrounds.list().then((list) => { if (live) setNames(list) }).catch(() => { if (live) setError('Could not load your background videos.') })
+    getApi().backgrounds.list().then((list) => { if (live) { setNames(list); setLoaded(true) } }).catch(() => { if (live) setError('Could not load your background videos.') })
     return () => { live = false }
   }, [])
 
   // A selected video removed elsewhere falls back to no background.
   useEffect(() => {
-    if (value && names.length > 0 && !names.includes(value)) onChange(null)
-  }, [names, value, onChange])
+    if (value && loaded && !names.includes(value)) onChange(null)
+  }, [loaded, names, value, onChange])
 
   const run = async (action: () => Promise<string[]>, select?: (before: string[], after: string[]) => string | null): Promise<void> => {
     setBusy(true)
@@ -38,6 +39,7 @@ export function BackgroundPicker({ value, onChange }: BackgroundPickerProps): Re
       const before = names
       const after = await action()
       setNames(after)
+      setLoaded(true)
       if (select) {
         const picked = select(before, after)
         if (picked) onChange(picked)

@@ -37,6 +37,9 @@ DURATION_RANGE_IDS = ("xshort", "short", "medium", "long", "xlong", "extended", 
 # request URLs, proxy credentials and local paths, so only these fixed strings
 # reach the UI. First match wins.
 FAILURES = (
+    (("pexels rejected the api key",),
+     "Pexels rejected your API key, so B-roll could not be added.",
+     "Check the Pexels key in Settings → API keys, or turn B-roll off in Format, then retry."),
     (("selected planner requires a video with speech",),
      "The selected planning model cannot analyze a video without speech.",
      "Choose a planning model that supports silent-video planning in Advanced mode, or use Quality or Economy."),
@@ -83,7 +86,7 @@ FAILURES = (
      "CreatorClips could not prepare this video's audio for transcription.",
      "Run Settings → System check. If the tools are ready, report this run with its failure code."),
     (("transcription audio chunk exceeded the size limit",),
-     "The transcription audio exceeded CreatorClips's size limit.",
+     "The transcription audio exceeded CreatorClips' size limit.",
      "Set a shorter start and end time, or report this run so the chunk size can be adjusted."),
     (("transcription failed",),
      "Audio transcription failed.",

@@ -131,7 +131,7 @@ def test_a_rejected_pexels_key_stops_with_a_clear_message(tmp_path):
         async with broll.PexelsClient("BAD", str(tmp_path), client) as pexels:
             await pexels.fill([broll.BrollShot(0, 3000, "ocean")], portrait=True)
 
-    with pytest.raises(PermissionError, match="Pexels rejected the API key"):
+    with pytest.raises(broll.PexelsKeyRejected, match="Pexels rejected the API key"):
         asyncio.run(run())
 
 

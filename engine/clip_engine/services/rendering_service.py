@@ -1058,8 +1058,10 @@ class RenderingService:
                 result,
                 duration_ms=result.duration_ms + teaser.duration_ms,
                 file_size_bytes=os.path.getsize(result.output_path),
-                # Chapters and subtitles start after the teaser.
+                # Chapters start after the teaser (longform clips, which carry
+                # subtitles, never get a teaser).
                 chapters=[(ms + teaser.duration_ms, title) for ms, title in result.chapters],
+                layout_cost_usd=result.layout_cost_usd + teaser.layout_cost_usd,
             )
         except Exception as exc:
             logger.warning(f"Hook preview failed; keeping the clip without it: {exc}")

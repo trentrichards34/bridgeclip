@@ -3,7 +3,7 @@
   "private": true,
   "productName": "CreatorClips",
   "version": "0.1.19",
-  "description": "CreatorClips: open-source AI video clipping by BridgeMind. Turn long videos into captioned short-form clips, locally, with your own API keys.",
+  "description": "CreatorClips: AI video clipping, built on BridgeClip by BridgeMind. Turn long videos into captioned short-form clips, locally, with your own API keys.",
   "main": "./out/main/index.js",
   "author": "BridgeMind",
   "license": "MIT",

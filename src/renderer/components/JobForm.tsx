@@ -629,12 +629,13 @@ function ReviewStep({ draft, trim, onEdit }: {
     ...(draft.workflow !== 'review' && draft.hookPreview ? [{ step: 'clips' as const, label: 'Hook preview', value: 'Opens with the strongest line' }] : []),
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
-  if (draft.workflow !== 'review' && draft.broll !== 'off') rows.splice(3, 0, { step: 'format', label: 'B-roll', value: BROLL_OPTIONS.find((o) => o.id === draft.broll)?.summary ?? 'On' })
-  else if (draft.workflow !== 'review' && draft.aspectRatio === '9:16' && draft.backgroundVideo) rows.splice(3, 0, { step: 'format', label: 'Background', value: `${draft.backgroundVideo} · under the speaker` })
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? 'Shown at the top' : 'Off' })
   if (draft.clippingMode === 'advanced') rows.splice(5, 0,
     { step: 'clips', label: 'Transcribe', value: draft.transcriptionModel || 'Choose a model' },
     { step: 'clips', label: 'Plan', value: draft.plannerModel || 'Choose a model' })
+  const afterFormat = rows.findIndex((row) => row.label === 'Format') + 1
+  if (draft.workflow !== 'review' && draft.broll !== 'off') rows.splice(afterFormat, 0, { step: 'format', label: 'B-roll', value: BROLL_OPTIONS.find((o) => o.id === draft.broll)?.summary ?? 'On' })
+  else if (draft.workflow !== 'review' && draft.aspectRatio === '9:16' && draft.backgroundVideo) rows.splice(afterFormat, 0, { step: 'format', label: 'Background', value: `${draft.backgroundVideo} · under the speaker` })
 
   return (
     <div className="space-y-3">

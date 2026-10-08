@@ -128,6 +128,11 @@ class BridgeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bridge.validate_config(self.config(background_video_path=video, broll_enabled=True))
 
+    def test_a_rejected_pexels_key_gets_a_clear_message(self):
+        failure = bridge.describe_failure(Exception("Pexels rejected the API key. Check it in Settings."))
+        self.assertIn("Pexels rejected your API key", failure["message"])
+        self.assertIn("Settings", failure["hint"])
+
     def test_output_and_local_mode_are_set_before_settings_load(self):
         observed = []
         def get_settings():

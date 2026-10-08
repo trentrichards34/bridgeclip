@@ -26,7 +26,7 @@ from typing import Any, Callable, Optional
 
 from clip_engine.config import CaptionStyle, LayoutStyle, get_settings, is_longform, resolve_clip_duration_bounds
 from clip_engine.services.video_speed import validate_video_speed
-from clip_engine.services.broll_service import prepare_broll
+from clip_engine.services.broll_service import PexelsKeyRejected, prepare_broll
 from clip_engine.services.hook_preview import pick_teaser
 from clip_engine.error_policy import NoClipCandidatesError, NoRequestedMomentsError, safe_failure_code, safe_processing_error
 from clip_engine.services.source_context import SourceContextService, context_for_prompt, transcription_terms
@@ -646,11 +646,13 @@ class AIClippingPipeline:
                         try:
                             shots = await prepare_broll(
                                 clip_transcript, segment.start_time_ms, segment.end_time_ms,
-                                os.path.join(os.path.dirname(download_result.video_path), 'broll'),
+                                # The job's private work folder: cleaned up with the job, never
+                                # next to a local source video (local files are used in place).
+                                os.path.join(work_dir, 'broll'),
                                 portrait=request.aspect_ratio == '9:16', keep_hook=request.broll_keep_hook,
                             )
                             broll_shots = [(shot.start_ms, shot.end_ms, shot.path) for shot in shots if shot.path]
-                        except PermissionError:
+                        except PexelsKeyRejected:
                             raise
                         except Exception as exc:
                             logger.warning(f"B-roll unavailable for clip {i + 1}; rendering the speaker only: {exc}")

@@ -106,7 +106,7 @@ The first version with downloadable installers, starting with macOS.
 
 ### Added
 
-- CreatorClips's source code is public under the MIT license. Installers start with 0.1.17.
+- CreatorClips' source code is public under the MIT license. Installers start with 0.1.17.
 
 [Unreleased]: https://github.com/trentrichards34/bridgeclip/compare/v0.1.19...HEAD
 [0.1.19]: https://github.com/bridge-mind/bridgeclip/releases/tag/v0.1.19

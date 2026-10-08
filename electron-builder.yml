@@ -66,7 +66,8 @@ mac:
   category: public.app-category.video
   hardenedRuntime: true
   gatekeeperAssess: false
-  identity: "BRIDGEMIND LLC (9CBJCDR3J2)"
+  # Set to your Apple Developer ID ("Name (TEAMID)") to sign; null builds an unsigned local app.
+  identity: null
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   # Each native CI job stages one architecture's Python and media binaries.
@@ -76,7 +77,8 @@ mac:
     - dmg
     - zip
   # Credentials and APPLE_TEAM_ID are supplied by the protected release job.
-  notarize: true
+  # Notarizing needs a Developer ID identity above; turn on once one is set.
+  notarize: false
 
 dmg:
   sign: false
@@ -119,7 +121,7 @@ linux:
       arch: [x64]
     - target: deb
       arch: [x64]
-  maintainer: BridgeMind LLC <support@bridgemind.ai>
+  maintainer: Wealthery <trent@wealthery.com>
 
 deb:
   depends:
