@@ -348,7 +348,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     // made the check report them missing even when installed.
     const check = async (cmd: string, flag = '--version'): Promise<boolean> => {
       try {
-        await execFileAsync(cmd, [flag], { timeout: 5000 })
+        await execFileAsync(cmd, [flag], { timeout: 15000 })
         return true
       } catch {
         return false
