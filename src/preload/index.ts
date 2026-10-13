@@ -254,6 +254,8 @@ export interface BridgeClipAPI {
     cloneVoice: (id: string, consent: boolean) => Promise<AvatarSummary[] | null>
     writeScript: (request: { topic: string; niche: string; seconds: number; style: 'talking' | 'cinematic' }) => Promise<AvatarScript>
     render: (request: unknown) => Promise<AvatarRenderStatus>
+    /** Restage a video the user picked with dialog.selectVideo using an avatar. */
+    recreate: (request: unknown) => Promise<AvatarRenderStatus>
     cancelRender: () => Promise<boolean>
     renderStatus: () => Promise<AvatarRenderStatus | null>
     onStatus: (callback: (status: AvatarRenderStatus) => void) => () => void
@@ -443,6 +445,7 @@ const api: BridgeClipAPI = {
     cloneVoice: (id, consent) => ipcRenderer.invoke('avatars:cloneVoice', id, consent),
     writeScript: (request) => ipcRenderer.invoke('avatars:writeScript', request),
     render: (request) => ipcRenderer.invoke('avatars:render', request),
+    recreate: (request) => ipcRenderer.invoke('avatars:recreate', request),
     cancelRender: () => ipcRenderer.invoke('avatars:cancelRender'),
     renderStatus: () => ipcRenderer.invoke('avatars:renderStatus'),
     onStatus: (callback) => subscribe('avatars:status', callback)

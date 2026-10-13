@@ -126,7 +126,11 @@ export const FAL_MODELS = {
   voiceClone: 'fal-ai/minimax/voice-clone',
   fabric: 'veed/fabric-1.0',
   omnihuman: 'fal-ai/bytedance/omnihuman/v1.5',
-  imageToVideo: 'fal-ai/kling-video/v3/pro/image-to-video'
+  imageToVideo: 'fal-ai/kling-video/v3/pro/image-to-video',
+  /** Puts the avatar into the source video, keeping its scene, lighting and camera. */
+  recreateReplace: 'fal-ai/wan/v2.2-14b/animate/replace',
+  /** Drives the avatar's own photo with the source video's motion. */
+  recreateMove: 'fal-ai/wan-motion'
 } as const
 
 /** USD list prices used for estimates. */
@@ -136,7 +140,11 @@ export const PRICES = {
   voiceClone: 1.5,
   fabricPerSecond: 0.15,
   omnihumanPerSecond: 0.16,
-  imageToVideoPerSecond: 0.112
+  imageToVideoPerSecond: 0.112,
+  /** Wan Animate bills per 16 frames: $0.08 per 16 frames at 720p. */
+  replacePer16Frames: 0.08,
+  /** Wan Motion bills $0.06 per second at 24 fps. */
+  movePerSecond: 0.06
 } as const
 
 /** Lip-sync models accept up to a minute of audio. */
@@ -270,4 +278,53 @@ export function renderFolderName(title: string, date: Date): string {
   const stamp = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
   const safe = title.replace(/[^A-Za-z0-9 _-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 50)
   return safe ? `${stamp} ${safe}` : stamp
+}
+
+// ---------------------------------------------------------------------------
+// Recreate: restage an existing video with the avatar (motion transfer)
+// ---------------------------------------------------------------------------
+
+export type RecreateMode = 'replace' | 'move'
+export const RECREATE_MIN_SECONDS = 3
+export const RECREATE_MAX_SECONDS = 30
+/** Source footage is resampled to this rate: smooth motion without paying for 60 fps. */
+export const RECREATE_FPS = 24
+
+export interface AvatarRecreateRequest {
+  avatarId: string
+  /** A video the user picked (authorized in main) or a file in the output folder. */
+  sourcePath: string
+  startSeconds: number
+  endSeconds: number
+  mode: RecreateMode
+  /** Keep the source's audio track (needed for captions). */
+  keepAudio: boolean
+  title: string
+  captionPreset: string
+  includeCaptions: boolean
+  includeTitle: boolean
+  /** The user confirmed they own the source video or have permission to use it. */
+  rightsConfirmed: boolean
+}
+
+export function recreateSeconds(request: Pick<AvatarRecreateRequest, 'startSeconds' | 'endSeconds'>): number {
+  return Math.max(0, request.endSeconds - request.startSeconds)
+}
+
+export function estimateRecreateCost(request: Pick<AvatarRecreateRequest, 'startSeconds' | 'endSeconds' | 'mode'>): number {
+  const seconds = recreateSeconds(request)
+  const cost = request.mode === 'replace'
+    ? Math.ceil((seconds * RECREATE_FPS) / 16) * PRICES.replacePer16Frames
+    : seconds * PRICES.movePerSecond
+  return round(cost)
+}
+
+export function validateRecreateWindow(startSeconds: unknown, endSeconds: unknown, sourceSeconds: number): { startSeconds: number; endSeconds: number } {
+  const start = typeof startSeconds === 'number' && Number.isFinite(startSeconds) ? Math.max(0, startSeconds) : NaN
+  const end = typeof endSeconds === 'number' && Number.isFinite(endSeconds) ? Math.min(endSeconds, sourceSeconds) : NaN
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) throw new Error('Choose a start and end time inside the video.')
+  const length = end - start
+  if (length < RECREATE_MIN_SECONDS) throw new Error(`Choose at least ${RECREATE_MIN_SECONDS} seconds of video.`)
+  if (length > RECREATE_MAX_SECONDS + 0.05) throw new Error(`Choose at most ${RECREATE_MAX_SECONDS} seconds of video.`)
+  return { startSeconds: Math.round(start * 100) / 100, endSeconds: Math.round(end * 100) / 100 }
 }

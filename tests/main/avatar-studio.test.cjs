@@ -370,3 +370,64 @@ test('a cloned voice survives switching to a preset and back', async () => {
   ;[avatar] = plain(await lib.updateAvatar(created.id, { voice: { provider: 'minimax-clone', voiceId: 'my_clone', clonedAt: 'forged' } }))
   assert.deepEqual(avatar.voice, { provider: 'minimax-clone', voiceId: 'my_clone', clonedAt: 'x' })
 })
+
+// ---------------------------------------------------------------------------
+// Recreate a video with the avatar
+// ---------------------------------------------------------------------------
+
+test('recreate windows are 3-30 seconds inside the source; costs follow fal billing', () => {
+  assert.deepEqual(plain(shared.validateRecreateWindow(1.234, 12.5, 60)), { startSeconds: 1.23, endSeconds: 12.5 })
+  assert.deepEqual(plain(shared.validateRecreateWindow(0, 99, 20)), { startSeconds: 0, endSeconds: 20 })
+  assert.throws(() => shared.validateRecreateWindow(5, 6, 60), /at least 3 seconds/)
+  assert.throws(() => shared.validateRecreateWindow(0, 31, 60), /at most 30 seconds/)
+  assert.throws(() => shared.validateRecreateWindow(10, 5, 60), /start and end/)
+  assert.throws(() => shared.validateRecreateWindow('0', 5, 60), /start and end/)
+  // 10s at 24 fps = 240 frames = 15 billed chunks of 16 frames at $0.08.
+  assert.equal(shared.estimateRecreateCost({ startSeconds: 0, endSeconds: 10, mode: 'replace' }), 1.2)
+  assert.equal(shared.estimateRecreateCost({ startSeconds: 0, endSeconds: 10, mode: 'move' }), 0.6)
+})
+
+test('source frames are scaled to even sizes within 1280px', () => {
+  const studio = loadStudio()
+  assert.deepEqual(plain(studio.fitWithin(1920, 1080)), { width: 1280, height: 720 })
+  assert.deepEqual(plain(studio.fitWithin(1080, 1920)), { width: 720, height: 1280 })
+  assert.deepEqual(plain(studio.fitWithin(641, 359)), { width: 642, height: 360 })
+})
+
+test('a recreate run cuts the window, sends it with the portrait and puts the original audio back', { skip: !hasFfmpeg && 'ffmpeg not installed' }, async () => {
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-recreate-'))
+  const source = path.join(output, 'dance.mp4')
+  execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=60', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '12', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', source])
+  const calls = []
+  const statuses = []
+  const settings = { ...SETTINGS, outputDirectory: output, openrouterApiKey: '' }
+  const studio = loadStudio({
+    './settings-store': { loadSettings: () => settings },
+    './security': { assertMediaPath: (p) => { if (!String(p).startsWith(output)) throw new Error('nope') } },
+    './avatars': { portraitInput: async () => 'data:image/jpeg;base64,AA==', readAvatar: () => ({ name: 'Maya' }) },
+    './fal': {
+      falInputUrl: async (bytes, type) => { calls.push(['upload', type, bytes.length]); return 'https://v3.fal.media/source.mp4' },
+      falRun: async (model, input) => { calls.push(['run', model, input]); return { video: { url: 'https://v3.fal.media/out.mp4' } } },
+      falFileUrl: (outputJson) => outputJson.video.url,
+      // The "recreated" video is the prepared source clip itself.
+      downloadFalFile: async (_url, destination) => fs.copyFileSync(path.join(path.dirname(destination), 'source.mp4'), destination)
+    }
+  })
+  studio.onAvatarRenderStatus((status) => statuses.push(status))
+  const request = { avatarId: 'abcdef1234567890', sourcePath: source, startSeconds: 2, endSeconds: 7, mode: 'replace', keepAudio: true, title: '', captionPreset: 'pop', includeCaptions: false, includeTitle: false, rightsConfirmed: true }
+  await assert.rejects(studio.startAvatarRecreate({ ...request, rightsConfirmed: false }), /own this video/)
+  await assert.rejects(studio.startAvatarRecreate({ ...request, sourcePath: '/etc/passwd.mp4' }), /Choose the source video again/)
+  await assert.rejects(studio.startAvatarRecreate({ ...request, endSeconds: 3.5 }), /at least 3 seconds/)
+  await studio.startAvatarRecreate(request)
+  for (let i = 0; i < 200 && !['done', 'failed'].includes(statuses.at(-1)?.phase); i++) await new Promise((r) => setTimeout(r, 100))
+  const last = statuses.at(-1)
+  assert.equal(last.phase, 'done', last.error)
+  const run = calls.find((c) => c[0] === 'run')
+  assert.equal(run[1], 'fal-ai/wan/v2.2-14b/animate/replace')
+  assert.deepEqual(plain(run[2]), { video_url: 'https://v3.fal.media/source.mp4', image_url: 'data:image/jpeg;base64,AA==', resolution: '720p', video_quality: 'high' })
+  const info = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height,r_frame_rate:format=duration', '-of', 'json', last.outputPath], { encoding: 'utf8' }))
+  const v = info.streams.find((s) => s.codec_type === 'video')
+  assert.equal(v.width, 1280); assert.equal(v.height, 720); assert.equal(v.r_frame_rate, '24/1')
+  assert.ok(info.streams.some((s) => s.codec_type === 'audio'), 'original audio kept')
+  assert.ok(Math.abs(Number(info.format.duration) - 5) < 0.15, info.format.duration)
+})

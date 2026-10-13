@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { create } from 'zustand'
-import { AudioLines, Clapperboard, FolderOpen, Mic, Plus, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
+import { AudioLines, Clapperboard, Film, FolderOpen, Mic, Plus, Repeat2, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
 import {
-  estimateRenderCost, estimateSpokenSeconds, MAX_SCENES, MAX_SPOKEN_SECONDS, PRESET_VOICES, scriptText, SCRIPT_LENGTHS,
+  estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, MAX_SCENES, RECREATE_MAX_SECONDS, RECREATE_MIN_SECONDS, type RecreateMode, MAX_SPOKEN_SECONDS, PRESET_VOICES, scriptText, SCRIPT_LENGTHS,
   type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarSummary, type AvatarVideoStyle, type AvatarVoice, type LipSyncModel, type ScriptLength
 } from '../../shared/avatars'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
@@ -30,9 +30,22 @@ import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { useSettingsStore } from '../store/use-settings-store'
 
 /** The video draft survives navigating away (e.g. to Settings to add a key). */
+type StudioStyle = AvatarVideoStyle | 'recreate'
+
+interface RecreateDraft {
+  sourcePath: string | null
+  sourceSeconds: number
+  startSeconds: number
+  endSeconds: number
+  mode: RecreateMode
+  keepAudio: boolean
+  rightsConfirmed: boolean
+}
+
 interface StudioDraft {
   avatarId: string | null
-  style: AvatarVideoStyle
+  style: StudioStyle
+  recreate: RecreateDraft
   topic: string
   niche: string
   seconds: ScriptLength
@@ -48,7 +61,9 @@ interface StudioDraft {
 const EMPTY_SCRIPT: AvatarScript = { title: '', scenes: [{ narration: '', visual: '', featuresAvatar: true }] }
 
 const useStudioDraft = create<StudioDraft>((set) => ({
-  avatarId: null, style: 'talking', topic: '', niche: '', seconds: 30, script: EMPTY_SCRIPT, lipSync: 'fabric',
+  avatarId: null, style: 'talking',
+  recreate: { sourcePath: null, sourceSeconds: 0, startSeconds: 0, endSeconds: 0, mode: 'replace', keepAudio: true, rightsConfirmed: false },
+  topic: '', niche: '', seconds: 30, script: EMPTY_SCRIPT, lipSync: 'fabric',
   captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, includeTitle: true, backgroundVideo: null,
   update: (patch) => set(patch)
 }))
@@ -84,9 +99,17 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
   const busy = status !== null && !['done', 'failed', 'cancelled'].includes(status.phase)
   const text = scriptText(draft.script)
   const seconds = estimateSpokenSeconds(text)
-  const cost = useMemo(() => text ? estimateRenderCost({ style: draft.style, lipSync: draft.lipSync, script: draft.script }) : 0, [draft.style, draft.lipSync, draft.script, text])
+  const recreate = draft.recreate
+  const recreateLength = Math.max(0, recreate.endSeconds - recreate.startSeconds)
+  const recreateReady = Boolean(recreate.sourcePath) && recreate.rightsConfirmed && recreateLength >= RECREATE_MIN_SECONDS && recreateLength <= RECREATE_MAX_SECONDS
+  const cost = useMemo(() => draft.style === 'recreate'
+    ? (recreate.sourcePath ? estimateRecreateCost({ ...recreate, mode: recreate.mode }) : 0)
+    : text ? estimateRenderCost({ style: draft.style, lipSync: draft.lipSync, script: draft.script }) : 0,
+  [draft.style, draft.lipSync, draft.script, text, recreate])
+  const updateRecreate = (patch: Partial<RecreateDraft>): void => draft.update({ recreate: { ...draft.recreate, ...patch } })
 
-  const setStyle = (style: AvatarVideoStyle): void => {
+  const setStyle = (style: StudioStyle): void => {
+    if (style === 'recreate') { draft.update({ style, backgroundVideo: null }); return }
     const narration = scriptText(draft.script)
     draft.update({
       style, backgroundVideo: style === 'talking' ? draft.backgroundVideo : null,
@@ -97,6 +120,7 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
   const writeScript = async (): Promise<void> => {
     setWriting(true); setError(null)
     try {
+      if (draft.style === 'recreate') return
       const script = await getApi().avatars.writeScript({ topic: draft.topic, niche: draft.niche, seconds: draft.seconds, style: draft.style })
       draft.update({ script })
     } catch (err) { setError(errorMessage(err, 'The script could not be written.')) }
@@ -107,10 +131,16 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
     if (!selected) return
     setError(null)
     try {
-      const started = await getApi().avatars.render({
-        avatarId: selected.id, style: draft.style, script: draft.script, lipSync: draft.lipSync, captionPreset: draft.captionPreset,
-        includeCaptions: draft.includeCaptions, includeTitle: draft.includeTitle, backgroundVideo: draft.style === 'talking' ? draft.backgroundVideo : null
-      })
+      const started = draft.style === 'recreate'
+        ? await getApi().avatars.recreate({
+          avatarId: selected.id, sourcePath: recreate.sourcePath, startSeconds: recreate.startSeconds, endSeconds: recreate.endSeconds, mode: recreate.mode,
+          keepAudio: recreate.keepAudio, title: draft.script.title, captionPreset: draft.captionPreset, includeCaptions: draft.includeCaptions && recreate.keepAudio,
+          includeTitle: draft.includeTitle, rightsConfirmed: recreate.rightsConfirmed
+        })
+        : await getApi().avatars.render({
+          avatarId: selected.id, style: draft.style, script: draft.script, lipSync: draft.lipSync, captionPreset: draft.captionPreset,
+          includeCaptions: draft.includeCaptions, includeTitle: draft.includeTitle, backgroundVideo: draft.style === 'talking' ? draft.backgroundVideo : null
+        })
       // A status event for this render may already have arrived; keep the newer one.
       setStatus((previous) => previous?.id === started.id ? previous : started)
     } catch (err) { setError(errorMessage(err, 'The video could not be started.')) }
@@ -162,17 +192,25 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
 
         <div className="space-y-5">
           <Panel>
-            <PanelHeader title="1 · Script" description="Hook, promise, payoff. Write your own or let AI draft it from a topic." />
+            <PanelHeader title={draft.style === 'recreate' ? '1 · Source video' : '1 · Script'}
+              description={draft.style === 'recreate' ? 'Pick a video; your avatar takes over the person in it, with the same moves and timing.' : 'Hook, promise, payoff. Write your own or let AI draft it from a topic.'} />
             <div className="mt-4 space-y-4">
               <Segmented label="Video style" value={draft.style} onChange={setStyle} options={[
                 { value: 'talking', label: <span className="inline-flex items-center gap-1.5"><UserRound className="h-3.5 w-3.5" />Talking head</span> },
-                { value: 'cinematic', label: <span className="inline-flex items-center gap-1.5"><Clapperboard className="h-3.5 w-3.5" />Cinematic</span> }
+                { value: 'cinematic', label: <span className="inline-flex items-center gap-1.5"><Clapperboard className="h-3.5 w-3.5" />Cinematic</span> },
+                { value: 'recreate', label: <span className="inline-flex items-center gap-1.5"><Repeat2 className="h-3.5 w-3.5" />Recreate a video</span> }
               ]} />
               <p className="text-2xs text-ink-subtle">
                 {draft.style === 'talking'
                   ? 'Your avatar speaks to camera. Reliable and the cheapest option. Pairs well with a gameplay split.'
-                  : 'Narrated scenes: your avatar in different settings plus faceless shots. More cinematic, and it costs more.'}
+                  : draft.style === 'cinematic'
+                    ? 'Narrated scenes: your avatar in different settings plus faceless shots. More cinematic, and it costs more.'
+                    : `Restage a ${RECREATE_MIN_SECONDS}-${RECREATE_MAX_SECONDS} second clip with your avatar: same motion, timing and camera work, with the original audio.`}
               </p>
+              {draft.style === 'recreate' ? (
+                <RecreateSource recreate={recreate} title={draft.script.title} disabled={busy} onChange={updateRecreate}
+                  onTitle={(title) => draft.update({ script: { ...draft.script, title } })} onError={setError} />
+              ) : (<>
               <div className="grid gap-3 sm:grid-cols-[1fr_200px]">
                 <Field label="Topic">
                   <TextInput value={draft.topic} maxLength={500} placeholder="e.g. 3 money habits that keep people broke" onChange={(e) => draft.update({ topic: e.target.value })} />
@@ -231,6 +269,7 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
                   About {seconds}s of speech{seconds > MAX_SPOKEN_SECONDS ? ` · keep it under ${MAX_SPOKEN_SECONDS}s` : ''}
                 </p>
               )}
+              </>)}
             </div>
           </Panel>
 
@@ -245,8 +284,9 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
                   ]} />
                 </Field>
               )}
-              <SettingRow title="Captions" description="Word-by-word captions in the style below."
-                control={<Switch label="Captions" checked={draft.includeCaptions} onChange={(includeCaptions) => draft.update({ includeCaptions })} />} />
+              <SettingRow title="Captions"
+                description={draft.style === 'recreate' ? (recreate.keepAudio ? 'Transcribed from the original audio (uses your OpenRouter key).' : 'Keep the original audio to add captions.') : 'Word-by-word captions in the style below.'}
+                control={<Switch label="Captions" disabled={draft.style === 'recreate' && !recreate.keepAudio} checked={draft.includeCaptions && (draft.style !== 'recreate' || recreate.keepAudio)} onChange={(includeCaptions) => draft.update({ includeCaptions })} />} />
               <SettingRow title="Hook text at the top" description="The hook text card, like Create's clips."
                 control={<Switch label="Hook text" checked={draft.includeTitle} onChange={(includeTitle) => draft.update({ includeTitle })} />} />
               {draft.includeCaptions && <CaptionPresetPicker value={draft.captionPreset} onChange={(captionPreset) => draft.update({ captionPreset })} />}
@@ -260,21 +300,23 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
           </Panel>
 
           <Panel>
-            <PanelHeader title="3 · Generate" description={text ? `Estimated cost about $${cost.toFixed(2)} on fal.ai · ${seconds}s video` : 'Write a script to see the estimated cost.'} />
+            <PanelHeader title="3 · Generate" description={draft.style === 'recreate'
+              ? (recreate.sourcePath ? `Estimated cost about $${cost.toFixed(2)} on fal.ai · ${recreateLength.toFixed(1)}s video` : 'Choose a video to see the estimated cost.')
+              : text ? `Estimated cost about $${cost.toFixed(2)} on fal.ai · ${seconds}s video` : 'Write a script to see the estimated cost.'} />
             <div className="mt-4 space-y-3">
               {status && <RenderProgress status={status} />}
               <div className="flex flex-wrap gap-2">
                 {busy ? (
                   <Button variant="secondary" onClick={() => void getApi().avatars.cancelRender()}>Cancel</Button>
                 ) : (
-                  <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} disabled={!falConfigured || !selected || !text || seconds > MAX_SPOKEN_SECONDS}
-                    tooltip={!selected ? 'Create an avatar first' : !text ? 'Write a script first' : undefined} onClick={() => void generate()}>
+                  <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} disabled={!falConfigured || !selected || (draft.style === 'recreate' ? !recreateReady : !text || seconds > MAX_SPOKEN_SECONDS)}
+                    tooltip={!selected ? 'Create an avatar first' : draft.style === 'recreate' ? (recreateReady ? undefined : 'Choose a video, a 3-30 second range, and confirm your rights') : !text ? 'Write a script first' : undefined} onClick={() => void generate()}>
                     Generate video
                   </Button>
                 )}
               </div>
               <p className="text-2xs text-ink-subtle">
-                Talking-head videos take a few minutes; cinematic ones up to 10-15. You can leave this page while it works.
+                Talking-head videos take a few minutes; cinematic and recreated ones up to 10-20. You can leave this page while it works.
                 {busy && ' Cancelling stops what hasn’t started; a step already running on fal.ai may still be charged.'}
               </p>
             </div>
@@ -286,6 +328,69 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
         setAvatars(list); setCreating(false); if (list[0]) draft.update({ avatarId: list[0].id })
       }} />}
     </Page>
+  )
+}
+
+function RecreateSource({ recreate, title, disabled, onChange, onTitle, onError }: {
+  recreate: RecreateDraft; title: string; disabled: boolean; onChange: (patch: Partial<RecreateDraft>) => void; onTitle: (title: string) => void; onError: (message: string | null) => void
+}): React.JSX.Element {
+  const video = useRef<HTMLVideoElement>(null)
+  const choose = async (): Promise<void> => {
+    onError(null)
+    try {
+      const path = await getApi().dialog.selectVideo()
+      if (path) onChange({ sourcePath: path, sourceSeconds: 0, startSeconds: 0, endSeconds: 0 })
+    } catch (err) { onError(errorMessage(err, 'That video could not be opened.')) }
+  }
+  const seconds = (value: string): number => Math.max(0, Math.round(Number(value) * 10) / 10)
+  const here = (): number => Math.round((video.current?.currentTime ?? 0) * 10) / 10
+  const length = recreate.endSeconds - recreate.startSeconds
+  return (
+    <div className="space-y-4">
+      {recreate.sourcePath ? (
+        <video ref={video} key={recreate.sourcePath} src={localFileUrl(recreate.sourcePath)} controls className="mx-auto max-h-[360px] rounded-2xl bg-black"
+          onLoadedMetadata={(event) => {
+            const duration = event.currentTarget.duration
+            if (Number.isFinite(duration) && recreate.sourceSeconds !== duration) {
+              onChange({ sourceSeconds: duration, ...(recreate.endSeconds <= recreate.startSeconds ? { startSeconds: 0, endSeconds: Math.min(duration, 15) } : {}) })
+            }
+          }} />
+      ) : (
+        <EmptyState icon={<Film />} title="No video chosen" description="A short clip with one clearly visible person works best: dances, reactions, talking to camera, skits." />
+      )}
+      <div><Button variant="secondary" icon={<Film className="h-4 w-4" />} disabled={disabled} onClick={() => void choose()}>{recreate.sourcePath ? 'Choose another video' : 'Choose video'}</Button></div>
+      {recreate.sourcePath && (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Start (seconds)" aside={<button type="button" className="text-2xs text-accent" onClick={() => onChange({ startSeconds: here() })}>Use current</button>}>
+              <TextInput type="number" min={0} step={0.1} value={recreate.startSeconds} onChange={(e) => onChange({ startSeconds: seconds(e.target.value) })} />
+            </Field>
+            <Field label="End (seconds)" aside={<button type="button" className="text-2xs text-accent" onClick={() => onChange({ endSeconds: here() })}>Use current</button>}>
+              <TextInput type="number" min={0} step={0.1} value={recreate.endSeconds} onChange={(e) => onChange({ endSeconds: seconds(e.target.value) })} />
+            </Field>
+          </div>
+          <p className={cn('text-2xs', length < RECREATE_MIN_SECONDS || length > RECREATE_MAX_SECONDS ? 'text-danger' : 'text-ink-subtle')}>
+            {length.toFixed(1)}s selected · keep it between {RECREATE_MIN_SECONDS} and {RECREATE_MAX_SECONDS} seconds
+          </p>
+        </>
+      )}
+      <Segmented label="Recreate mode" value={recreate.mode} onChange={(mode) => onChange({ mode })} options={[
+        { value: 'replace', label: 'Swap into the scene' },
+        { value: 'move', label: 'Animate my avatar' }
+      ]} />
+      <p className="text-2xs text-ink-subtle">
+        {recreate.mode === 'replace'
+          ? 'Your avatar replaces the person; the original background, lighting and camera stay.'
+          : 'Your avatar\'s own photo is animated with the video\'s moves; the background comes from your avatar.'}
+      </p>
+      <SettingRow title="Keep the original audio" description="Needed for captions. Turn off to add your own sound later."
+        control={<Switch label="Keep the original audio" checked={recreate.keepAudio} onChange={(keepAudio) => onChange({ keepAudio })} />} />
+      <Field label="Hook text (optional)" hint="Shown at the top of the video.">
+        <TextInput value={title} maxLength={80} placeholder="e.g. POV: you finally get it" onChange={(e) => onTitle(e.target.value)} />
+      </Field>
+      <LabeledCheckbox checked={recreate.rightsConfirmed} onChange={(rightsConfirmed) => onChange({ rightsConfirmed })}
+        label="I own this video or have permission to use it, and I won't use the result to impersonate anyone." />
+    </div>
   )
 }
 

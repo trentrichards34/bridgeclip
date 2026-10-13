@@ -34,6 +34,15 @@ class AvatarRunnerTests(unittest.TestCase):
         self.assertTrue(all(len(s.words) <= 18 for s in segments))
         self.assertEqual(sum(len(s.words) for s in segments), 40)
 
+    def test_without_transcription_the_estimate_is_used(self):
+        import asyncio
+        words = [{'word': 'Hi.', 'start_ms': 0, 'end_ms': 400}]
+        segments, timing = asyncio.run(avatar_runner.transcript_segments({'words': words, 'transcribe': False}, '/missing.mp4', 1000))
+        self.assertEqual(timing, 'estimated')
+        self.assertEqual(segments[0].text, 'Hi.')
+        segments, timing = asyncio.run(avatar_runner.transcript_segments({'words': [], 'transcribe': False}, '/missing.mp4', 1000))
+        self.assertEqual((segments, timing), ([], 'none'))
+
 
 if __name__ == '__main__':
     unittest.main()

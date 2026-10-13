@@ -11,7 +11,7 @@ import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds } fr
 import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { cloneVoice, createAvatar, draftFromPhoto, draftsFromDescription, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
-import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRender, writeAvatarScript } from './avatar-studio'
+import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
 import { getModelCatalog } from './openrouter-models'
@@ -194,6 +194,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   handle('avatars:writeScript', (_event, request: unknown) => writeAvatarScript(request))
   handle('avatars:render', (_event, request: unknown) => startAvatarRender(request))
+  handle('avatars:recreate', (_event, request: unknown) => startAvatarRecreate(request))
   handle('avatars:cancelRender', () => cancelAvatarRender())
   handle('avatars:renderStatus', () => avatarRenderStatus())
   onAvatarRenderStatus((status) => {

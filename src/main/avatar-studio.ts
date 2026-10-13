@@ -1,19 +1,20 @@
 import { app } from 'electron'
 import { execFile, spawn, type ChildProcess } from 'child_process'
 import { randomBytes } from 'crypto'
-import { access, constants as fsConstants, copyFile, mkdir, writeFile } from 'fs/promises'
+import { access, constants as fsConstants, copyFile, mkdir, readFile, writeFile } from 'fs/promises'
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
 import {
-  estimateRenderCost, estimateWordTimings, FAL_MODELS, isAvatarId, MAX_SPOKEN_SECONDS, parseAvatarScript, renderFolderName,
+  estimateRecreateCost, estimateRenderCost, estimateWordTimings, FAL_MODELS, RECREATE_FPS, recreateSeconds, validateRecreateWindow, isAvatarId, MAX_SPOKEN_SECONDS, parseAvatarScript, renderFolderName,
   sceneDurations, SCRIPT_LENGTHS, scriptText, wordCount, WORDS_PER_SECOND,
-  type AvatarRenderPhase, type AvatarRenderRequest, type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarScriptRequest, type AvatarVoice
+  type AvatarRecreateRequest, type AvatarRenderPhase, type AvatarRenderRequest, type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarScriptRequest, type AvatarVoice
 } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
 import { isBackgroundVideoName } from '../shared/backgrounds'
 import { portraitInput, readAvatar } from './avatars'
 import { resolveBackground } from './backgrounds'
-import { downloadFalFile, falFileUrl, falRun } from './fal'
+import { assertMediaPath } from './security'
+import { downloadFalFile, falFileUrl, falInputUrl, falRun } from './fal'
 import { readResponseText } from './http-response'
 import { logger } from './logger'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
@@ -228,17 +229,28 @@ export function narrationShares(scenes: readonly AvatarScene[], seconds: number)
   return words.map((count) => (count / total) * seconds)
 }
 
-function runFinisher(render: ActiveRender, request: Record<string, unknown>): Promise<void> {
+interface FinishResult { captions: 'transcribed' | 'estimated' | 'none' }
+
+/**
+ * Burn captions, hook title and optional gameplay split with the engine.
+ * Only the OpenRouter key is passed, and only for speech recognition (exact
+ * caption timing); vision layout calls are always off.
+ */
+function runFinisher(render: ActiveRender, request: Record<string, unknown>): Promise<FinishResult> {
   const settings = loadSettings(), engine = getEnginePath()
-  // No provider keys and no vision: finishing generated 9:16 footage is local work only.
-  const env: Record<string, string | undefined> = { ...runtimeEnvironment(), LAYOUT_VISION_ENABLED: 'false', LOCAL_MODE: 'true', PYTHONPATH: engine, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1' }
+  const transcribe = Boolean(request.include_captions && settings.openrouterApiKey)
+  const env: Record<string, string | undefined> = {
+    ...runtimeEnvironment(), LAYOUT_VISION_ENABLED: 'false', LOCAL_MODE: 'true', PYTHONPATH: engine, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1',
+    ...(transcribe ? { OPENROUTER_API_KEY: settings.openrouterApiKey } : {})
+  }
+  request = { ...request, transcribe }
   const ffmpegPath = resolveBinary('ffmpeg')
   if (ffmpegPath !== 'ffmpeg') env.PATH = `${dirname(ffmpegPath)}${delimiter}${env.PATH ?? ''}`
   const python = resolvePythonPath(engine, settings.pythonPath)
   return new Promise((resolve, reject) => {
     const child = spawn(python, [join(dirname(getBridgeRunnerPath()), 'avatar_runner.py')], { cwd: engine, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true })
     render.child = child
-    let buffer = '', stderr = '', result: { ok?: boolean } | null = null
+    let buffer = '', stderr = '', result: { ok?: boolean; captions?: unknown } | null = null
     const timer = setTimeout(() => kill(child, true), 20 * 60_000)
     child.stdout.on('data', (chunk) => {
       buffer += String(chunk)
@@ -246,7 +258,7 @@ function runFinisher(render: ActiveRender, request: Record<string, unknown>): Pr
       while ((end = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, end); buffer = buffer.slice(end + 1)
         try {
-          const message = JSON.parse(line) as { type?: string; percent?: unknown; ok?: boolean }
+          const message = JSON.parse(line) as { type?: string; percent?: unknown; ok?: boolean; captions?: unknown }
           if (message.type === 'progress' && typeof message.percent === 'number') update(render, 'finish', 'Adding captions and title', 85 + Math.min(100, Math.max(0, message.percent)) * 0.14)
           else if (typeof message.ok === 'boolean') result = message
         } catch { /* ignore non-protocol output */ }
@@ -257,7 +269,7 @@ function runFinisher(render: ActiveRender, request: Record<string, unknown>): Pr
     child.on('close', () => {
       clearTimeout(timer); render.child = undefined
       if (render.abort.signal.aborted) reject(new DOMException('Aborted', 'AbortError'))
-      else if (result?.ok) resolve()
+      else if (result?.ok) resolve({ captions: result.captions === 'transcribed' || result.captions === 'estimated' ? result.captions : 'none' })
       else { logger.warn('avatar.finish.failed', { stderr: stderr.slice(-1500) }); reject(new FinishError()) }
     })
     child.stdin.end(JSON.stringify(request))
@@ -316,25 +328,19 @@ export function renderErrorMessage(error: unknown): string {
   return candidate.message
 }
 
-export async function startAvatarRender(value: unknown): Promise<AvatarRenderStatus> {
-  if (active || starting) throw new Error('A video is already being generated. Wait for it to finish or cancel it.')
-  const request = parseRenderRequest(value)
-  const settings = loadSettings()
-  if (!settings.falApiKey) throw new Error('Add your fal.ai API key in Settings → API keys to use Avatar Studio.')
-  const avatar = readAvatar(request.avatarId)
-  const background = request.backgroundVideo ? resolveBackground(request.backgroundVideo) : null
-  const folder = join(settings.outputDirectory, 'Avatar Studio', renderFolderName(request.script.title || avatar.name, new Date()))
+async function launch(avatarId: string, folder: string, estimatedCostUsd: number, first: { phase: AvatarRenderPhase; detail: string },
+  job: (render: ActiveRender) => Promise<void>): Promise<AvatarRenderStatus> {
   starting = true
   try { await preflight(folder) } finally { starting = false }
   if (active) throw new Error('A video is already being generated. Wait for it to finish or cancel it.')
   const render: ActiveRender = {
     abort: new AbortController(), cancelled: false,
-    status: { id: randomBytes(8).toString('hex'), avatarId: request.avatarId, phase: 'voice', detail: 'Recording the voiceover', percent: 1, outputPath: null, error: null, warning: null,
-      estimatedCostUsd: estimateRenderCost(request), startedAt: new Date().toISOString() }
+    status: { id: randomBytes(8).toString('hex'), avatarId, phase: first.phase, detail: first.detail, percent: 1, outputPath: null, error: null, warning: null,
+      estimatedCostUsd, startedAt: new Date().toISOString() }
   }
   active = render
   notify(render.status)
-  void runRender(render, request, avatar.voice, settings.falApiKey, folder, background).then(() => {
+  void job(render).then(() => {
     render.status = { ...render.status, phase: 'done', detail: 'Ready', percent: 100 }
   }).catch((error: unknown) => {
     const cancelled = render.cancelled
@@ -348,6 +354,27 @@ export async function startAvatarRender(value: unknown): Promise<AvatarRenderSta
     notify(render.status)
   })
   return render.status
+}
+
+function assertIdle(): void {
+  if (active || starting) throw new Error('A video is already being generated. Wait for it to finish or cancel it.')
+}
+
+function requireFalKey(): string {
+  const key = loadSettings().falApiKey
+  if (!key) throw new Error('Add your fal.ai API key in Settings → API keys to use Avatar Studio.')
+  return key
+}
+
+export async function startAvatarRender(value: unknown): Promise<AvatarRenderStatus> {
+  assertIdle()
+  const request = parseRenderRequest(value)
+  const key = requireFalKey()
+  const avatar = readAvatar(request.avatarId)
+  const background = request.backgroundVideo ? resolveBackground(request.backgroundVideo) : null
+  const folder = join(loadSettings().outputDirectory, 'Avatar Studio', renderFolderName(request.script.title || avatar.name, new Date()))
+  return launch(request.avatarId, folder, estimateRenderCost(request), { phase: 'voice', detail: 'Recording the voiceover' },
+    (render) => runRender(render, request, avatar.voice, key, folder, background))
 }
 
 async function runRender(render: ActiveRender, request: AvatarRenderRequest, voice: AvatarVoice, key: string, folder: string, background: string | null): Promise<void> {
@@ -451,4 +478,119 @@ export function parseSpeechBounds(log: string, totalMs: number): { startMs: numb
   if (lastStart !== undefined && lastStart > startMs && (ends.length < starts.length || (ends.at(-1) ?? 0) >= totalMs - 50)) endMs = lastStart
   if (endMs - startMs < 500) return { startMs: 0, endMs: totalMs }
   return { startMs, endMs }
+}
+
+// ---------------------------------------------------------------------------
+// Recreate: restage an existing video with the avatar
+// ---------------------------------------------------------------------------
+
+interface MediaInfo { width: number; height: number; seconds: number; hasAudio: boolean }
+
+export async function probeMedia(path: string): Promise<MediaInfo> {
+  const { stdout } = await execFileAsync(resolveBinary('ffprobe'), ['-v', 'error', '-show_entries', 'stream=codec_type,width,height:format=duration', '-of', 'json', path], { timeout: 30_000, maxBuffer: 1024 * 1024 })
+  const info = JSON.parse(stdout) as { streams?: { codec_type?: string; width?: number; height?: number }[]; format?: { duration?: string } }
+  const video = info.streams?.find((stream) => stream.codec_type === 'video')
+  const seconds = Number(info.format?.duration)
+  if (!video?.width || !video.height || !Number.isFinite(seconds) || seconds <= 0) throw new Error('That file has no readable video. Choose an MP4 or MOV.')
+  return { width: video.width, height: video.height, seconds, hasAudio: Boolean(info.streams?.some((stream) => stream.codec_type === 'audio')) }
+}
+
+/** Even dimensions with the long side at most `max`, keeping the aspect ratio. */
+export function fitWithin(width: number, height: number, max = 1280): { width: number; height: number } {
+  const scale = Math.min(1, max / Math.max(width, height))
+  const even = (value: number): number => Math.max(2, Math.round((value * scale) / 2) * 2)
+  return { width: even(width), height: even(height) }
+}
+
+export async function parseRecreateRequest(value: unknown, outputDirectory: string): Promise<{ request: AvatarRecreateRequest; source: MediaInfo }> {
+  const raw = (value ?? {}) as Record<string, unknown>
+  if (!isAvatarId(raw.avatarId)) throw new Error('Choose an avatar.')
+  if (raw.rightsConfirmed !== true) throw new Error('Confirm you own this video or have permission to use it.')
+  if (raw.mode !== 'replace' && raw.mode !== 'move') throw new Error('Choose how to recreate the video.')
+  if (!isCaptionPresetId(raw.captionPreset)) throw new Error('Choose a caption style.')
+  try { assertMediaPath(raw.sourcePath, outputDirectory) } catch { throw new Error('Choose the source video again.') }
+  const sourcePath = raw.sourcePath as string
+  const source = await probeMedia(sourcePath)
+  const window = validateRecreateWindow(raw.startSeconds, raw.endSeconds, source.seconds)
+  const title = typeof raw.title === 'string' ? raw.title.replace(/\s+/g, ' ').trim() : ''
+  if (title.length > 80) throw new Error('Keep the hook text under 80 characters.')
+  const keepAudio = raw.keepAudio !== false && source.hasAudio
+  return {
+    source,
+    request: {
+      avatarId: raw.avatarId, sourcePath, ...window, mode: raw.mode, keepAudio, title, captionPreset: raw.captionPreset,
+      includeCaptions: raw.includeCaptions !== false && keepAudio, includeTitle: raw.includeTitle !== false && Boolean(title), rightsConfirmed: true
+    }
+  }
+}
+
+export async function startAvatarRecreate(value: unknown): Promise<AvatarRenderStatus> {
+  assertIdle()
+  const settings = loadSettings()
+  const key = requireFalKey()
+  const { request, source } = await parseRecreateRequest(value, settings.outputDirectory)
+  const avatar = readAvatar(request.avatarId)
+  const folder = join(settings.outputDirectory, 'Avatar Studio', renderFolderName(request.title || `${avatar.name} recreate`, new Date()))
+  return launch(request.avatarId, folder, estimateRecreateCost(request), { phase: 'scenes', detail: 'Preparing the source video' },
+    (render) => runRecreate(render, request, source, key, folder))
+}
+
+async function runRecreate(render: ActiveRender, request: AvatarRecreateRequest, source: MediaInfo, key: string, folder: string): Promise<void> {
+  const signal = render.abort.signal
+  const parts = join(folder, 'parts')
+  await mkdir(parts, { recursive: true })
+  const window = ['-ss', request.startSeconds.toFixed(2), '-t', recreateSeconds(request).toFixed(2)]
+
+  // 1. A compact, constant-rate copy of the chosen window (fal bills per frame).
+  const size = fitWithin(source.width, source.height)
+  const clip = join(parts, 'source.mp4')
+  await ffmpeg([...window, '-i', request.sourcePath, '-an', '-vf', `fps=${RECREATE_FPS},scale=${size.width}:${size.height},setsar=1`,
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-maxrate', '2500k', '-bufsize', '5000k', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', clip], signal)
+  const audio = request.keepAudio ? join(parts, 'source-audio.m4a') : null
+  if (audio) await ffmpeg([...window, '-i', request.sourcePath, '-vn', '-c:a', 'aac', '-b:a', '160k', audio], signal)
+  update(render, 'scenes', 'Uploading the source video', 8)
+
+  // 2. Restage it with the avatar.
+  const [videoUrl, imageUrl] = await Promise.all([
+    falInputUrl(await readFile(clip), 'video/mp4', 'source.mp4', { key, signal }),
+    portraitInput(request.avatarId, key, signal)
+  ])
+  const model = request.mode === 'replace' ? FAL_MODELS.recreateReplace : FAL_MODELS.recreateMove
+  const input = request.mode === 'replace'
+    ? { video_url: videoUrl, image_url: imageUrl, resolution: '720p', video_quality: 'high' }
+    : { video_url: videoUrl, image_url: imageUrl, adapt_motion: true }
+  const output = await falRun(model, input, { key, signal, timeoutMs: 40 * 60_000, onStatus: (status) => update(render, 'animate', `Recreating with your avatar · ${status}`, 15) })
+  update(render, 'animate', 'Downloading the video', 75)
+  const recreated = join(parts, 'recreated.mp4')
+  await downloadFalFile(falFileUrl(output, 'video'), recreated, { signal })
+
+  // 3. Original audio back on, then captions and title.
+  const assembled = join(parts, 'assembled.mp4')
+  update(render, 'assemble', 'Adding the original audio', 80)
+  if (audio) await ffmpeg(['-i', recreated, '-i', audio, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', assembled], signal)
+  else await copyFile(recreated, assembled)
+  const final = join(folder, 'final.mp4')
+  if (!request.includeCaptions && !request.includeTitle) {
+    await copyFile(assembled, final)
+    render.status = { ...render.status, outputPath: final }
+    return
+  }
+  const recreatedInfo = await probeMedia(assembled)
+  update(render, 'finish', request.includeCaptions ? 'Transcribing and adding captions' : 'Adding the title', 85)
+  try {
+    const result = await runFinisher(render, {
+      video: assembled, output: final, duration_ms: Math.round(recreatedInfo.seconds * 1000), caption_preset: request.captionPreset,
+      include_captions: request.includeCaptions, title: request.title, include_title: request.includeTitle, background_video: null, words: [],
+      layout: Math.abs(recreatedInfo.width / recreatedInfo.height - 9 / 16) < 0.02 ? 'fill' : 'auto'
+    })
+    const warning = request.includeCaptions && result.captions === 'none'
+      ? (loadSettings().openrouterApiKey ? 'No speech was found to caption, so this video has no captions.' : 'Captions need your OpenRouter key (Settings → API keys) to transcribe the audio.')
+      : null
+    render.status = { ...render.status, outputPath: final, warning }
+  } catch (error) {
+    if (!(error instanceof FinishError)) throw error
+    const plain = join(folder, 'final-no-captions.mp4')
+    await copyFile(assembled, plain)
+    render.status = { ...render.status, outputPath: plain, warning: 'Captions could not be added, so this is the video without them. Run Settings → System check, then try again if you need captions.' }
+  }
 }

@@ -1,9 +1,10 @@
 """Avatar Studio finisher: captions, hook title and optional gameplay split.
 
-Main writes one JSON request to stdin with the assembled avatar video (already
-narrated), the narration's word timings and the look to apply. The clip engine
-renders it like any other clip, so Avatar Studio videos match Create's presets.
-The engine runs offline here: nothing in this step needs the network.
+Main writes one JSON request to stdin with the assembled avatar video, the
+narration's estimated word timings and the look to apply. When `transcribe`
+is set (and main passed an OpenRouter key), the audio is transcribed for exact
+word timing, falling back to the estimate. The clip engine then renders it
+like any other clip, so Avatar Studio videos match Create's presets.
 """
 import asyncio
 import json
@@ -43,6 +44,24 @@ def build_segments(words, duration_ms):
     ]
 
 
+async def transcript_segments(config, video, duration_ms):
+    """Exact word timing from speech recognition, or the estimate from main."""
+    estimated = build_segments(config.get('words') or [], duration_ms)
+    if not config.get('transcribe'):
+        return estimated, 'estimated' if estimated else 'none'
+    import tempfile
+    from clip_engine.services.transcription_service import TranscriptionService
+    try:
+        with tempfile.TemporaryDirectory(prefix='avatar-asr-') as work_dir:
+            result = await TranscriptionService().transcribe(video, work_dir)
+        segments = [s for s in result.segments if s.words and s.start_time_ms < duration_ms]
+        if segments:
+            return segments, 'transcribed'
+    except Exception as error:  # noqa: BLE001 - fall back to the estimate
+        print(f'Transcription failed, using estimated timing: {type(error).__name__}', file=sys.stderr)
+    return estimated, 'estimated' if estimated else 'none'
+
+
 async def finish(config):
     from clip_engine.config import LayoutStyle, get_caption_preset
     from clip_engine.services.clip_editor import Pacing
@@ -63,18 +82,20 @@ async def finish(config):
     title = str(config.get('title') or '').strip()[:80] or None
     service = RenderingService()
     width, height = await service._get_video_dimensions(video)
+    segments, timing = await transcript_segments(config, video, duration_ms) if config.get('include_captions', True) else ([], 'none')
+    layout = LayoutStyle.AUTO if config.get('layout') == 'auto' else LayoutStyle.FILL
     request = RenderRequest(
         video_path=video, output_path=output, start_time_ms=0, end_time_ms=duration_ms,
         source_width=width or 1080, source_height=height or 1920,
-        transcript_segments=build_segments(config.get('words') or [], duration_ms),
-        include_captions=bool(config.get('include_captions', True)), caption_style=style,
+        transcript_segments=segments or None,
+        include_captions=bool(config.get('include_captions', True)) and bool(segments), caption_style=style,
         title_text=title, include_title=bool(config.get('include_title', True)) and title is not None,
-        apply_padding=False, aspect_ratio='9:16', layout_style=LayoutStyle.FILL,
+        apply_padding=False, aspect_ratio='9:16', layout_style=layout,
         background_video_path=background, pacing=Pacing.NATURAL,
         progress_callback=lambda phase, percent: emit({'type': 'progress', 'phase': str(phase)[:40], 'percent': percent}),
     )
     result = await service.render_clip(request)
-    return {'output': result.output_path, 'duration_ms': result.duration_ms}
+    return {'output': result.output_path, 'duration_ms': result.duration_ms, 'captions': timing}
 
 
 def main():
