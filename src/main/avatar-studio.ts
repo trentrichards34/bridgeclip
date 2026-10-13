@@ -5,7 +5,7 @@ import { access, constants as fsConstants, copyFile, mkdir, readFile, writeFile 
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
 import {
-  estimateRecreateCost, estimateRenderCost, estimateWordTimings, FAL_MODELS, RECREATE_FPS, recreateSeconds, validateRecreateWindow, isAvatarId, MAX_SPOKEN_SECONDS, parseAvatarScript, renderFolderName,
+  estimateRecreateCost, estimateRenderCost, estimateWordTimings, FAL_MODELS, MAX_SCENE_SECONDS, overlongScenes, RECREATE_FPS, recreateSeconds, validateRecreateWindow, isAvatarId, MAX_SPOKEN_SECONDS, parseAvatarScript, renderFolderName,
   sceneDurations, SCRIPT_LENGTHS, scriptText, wordCount, WORDS_PER_SECOND,
   type AvatarRecreateRequest, type AvatarRenderPhase, type AvatarRenderRequest, type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarScriptRequest, type AvatarVoice
 } from '../shared/avatars'
@@ -149,13 +149,18 @@ export function parseRenderRequest(value: unknown): AvatarRenderRequest {
   const raw = (value ?? {}) as Record<string, unknown>
   if (!isAvatarId(raw.avatarId)) throw new Error('Choose an avatar.')
   if (raw.style !== 'talking' && raw.style !== 'cinematic') throw new Error('Choose a video style.')
-  const lipSync = raw.lipSync === 'omnihuman' ? 'omnihuman' : 'fabric'
+  const lipSync = raw.lipSync === 'omnihuman' || raw.lipSync === 'economy' ? raw.lipSync : 'fabric'
+  const sceneQuality = raw.sceneQuality === 'pro' ? 'pro' : 'standard'
   if (!isCaptionPresetId(raw.captionPreset)) throw new Error('Choose a caption style.')
   const backgroundVideo = raw.backgroundVideo === null || raw.backgroundVideo === undefined ? null : raw.backgroundVideo
   if (backgroundVideo !== null && (!isBackgroundVideoName(backgroundVideo) || raw.style !== 'talking')) throw new Error('Gameplay split works with talking-head videos only.')
   const script = parseAvatarScript(raw.script, raw.style)
+  if (raw.style === 'cinematic') {
+    const long = overlongScenes(script)
+    if (long.length) throw new Error(`Scene ${long.join(', ')} has more narration than one ${MAX_SCENE_SECONDS}-second shot. Split it into two scenes.`)
+  }
   return {
-    avatarId: raw.avatarId, style: raw.style, lipSync, script, captionPreset: raw.captionPreset,
+    avatarId: raw.avatarId, style: raw.style, lipSync, sceneQuality, script, captionPreset: raw.captionPreset,
     includeCaptions: raw.includeCaptions !== false, includeTitle: raw.includeTitle !== false, backgroundVideo
   }
 }
@@ -229,7 +234,7 @@ export function narrationShares(scenes: readonly AvatarScene[], seconds: number)
   return words.map((count) => (count / total) * seconds)
 }
 
-interface FinishResult { captions: 'transcribed' | 'estimated' | 'none' }
+interface FinishResult { captions: 'transcribed' | 'estimated' | 'failed' | 'none' }
 
 /**
  * Burn captions, hook title and optional gameplay split with the engine.
@@ -269,7 +274,7 @@ function runFinisher(render: ActiveRender, request: Record<string, unknown>): Pr
     child.on('close', () => {
       clearTimeout(timer); render.child = undefined
       if (render.abort.signal.aborted) reject(new DOMException('Aborted', 'AbortError'))
-      else if (result?.ok) resolve({ captions: result.captions === 'transcribed' || result.captions === 'estimated' ? result.captions : 'none' })
+      else if (result?.ok) resolve({ captions: result.captions === 'transcribed' || result.captions === 'estimated' || result.captions === 'failed' ? result.captions : 'none' })
       else { logger.warn('avatar.finish.failed', { stderr: stderr.slice(-1500) }); reject(new FinishError()) }
     })
     child.stdin.end(JSON.stringify(request))
@@ -284,6 +289,7 @@ function kill(child?: ChildProcess, force = false): void {
 }
 
 export function cancelAvatarRender(): boolean {
+  if (pending) { pending.cancelled = true; return true }
   if (!active) return false
   active.cancelled = true
   active.abort.abort()
@@ -297,7 +303,7 @@ export function stopAvatarRenderForQuit(): void {
 
 /** The avatar the current render uses, so it can't be removed mid-render. */
 export function avatarInUse(): string | null {
-  return active ? active.status.avatarId : null
+  return active ? active.status.avatarId : pending?.avatarId ?? null
 }
 
 /**
@@ -317,12 +323,14 @@ async function preflight(folder: string): Promise<void> {
 }
 
 let starting = false
+/** The avatar and cancel request for a render still in its pre-flight checks. */
+let pending: { avatarId: string; cancelled: boolean } | null = null
 
 /** A message safe to show: our own errors as written, system errors without local paths. */
 export function renderErrorMessage(error: unknown): string {
   const candidate = error as NodeJS.ErrnoException | null
   if (!candidate || typeof candidate.message !== 'string' || !candidate.message || candidate.name === 'AbortError') return 'Generation failed. Try again.'
-  const code = candidate.code
+  const code = typeof candidate.code === 'string' ? candidate.code : undefined
   if (code === 'ENOSPC') return 'Your disk is full. Free some space and try again.'
   if (code || /(?:^|[\s'"(])(?:\/(?:Users|home|var|private|tmp|Volumes)\/|[A-Za-z]:\\)/.test(candidate.message)) return 'Generation failed while saving files. Check the output folder in Settings and try again.'
   return candidate.message
@@ -331,7 +339,11 @@ export function renderErrorMessage(error: unknown): string {
 async function launch(avatarId: string, folder: string, estimatedCostUsd: number, first: { phase: AvatarRenderPhase; detail: string },
   job: (render: ActiveRender) => Promise<void>): Promise<AvatarRenderStatus> {
   starting = true
+  pending = { avatarId, cancelled: false }
   try { await preflight(folder) } finally { starting = false }
+  const cancelledEarly = pending?.cancelled
+  pending = null
+  if (cancelledEarly) throw new Error('Generation cancelled.')
   if (active) throw new Error('A video is already being generated. Wait for it to finish or cancel it.')
   const render: ActiveRender = {
     abort: new AbortController(), cancelled: false,
@@ -389,15 +401,16 @@ async function runRender(render: ActiveRender, request: AvatarRenderRequest, voi
   const narration = join(parts, 'narration.mp3')
   await downloadFalFile(audioUrl, narration, { signal, maxBytes: 50_000_000 })
   const seconds = await mediaSeconds(narration)
-  if (seconds > MAX_SPOKEN_SECONDS + 2) throw new Error('The voiceover runs over a minute. Shorten the script and try again.')
+  if (seconds > (request.style === 'talking' ? 59.5 : MAX_SPOKEN_SECONDS + 4)) throw new Error('The voiceover runs over a minute. Shorten the script a little and try again.')
   update(render, 'voice', 'Voiceover ready', 10)
 
   // 2. Picture.
   const assembled = join(parts, 'assembled.mp4')
   if (request.style === 'talking') {
     const imageUrl = await portraitInput(request.avatarId, key, signal)
-    const model = request.lipSync === 'omnihuman' ? FAL_MODELS.omnihuman : FAL_MODELS.fabric
-    const output = await falRun(model, { image_url: imageUrl, audio_url: audioUrl, resolution: '720p' },
+    const model = request.lipSync === 'omnihuman' ? FAL_MODELS.omnihuman : request.lipSync === 'economy' ? FAL_MODELS.klingAvatar : FAL_MODELS.fabric
+    const input = request.lipSync === 'economy' ? { image_url: imageUrl, audio_url: audioUrl } : { image_url: imageUrl, audio_url: audioUrl, resolution: '720p' }
+    const output = await falRun(model, input,
       { key, signal, timeoutMs: 30 * 60_000, onStatus: (status) => update(render, 'animate', `Animating your avatar · ${status}`, 20) })
     update(render, 'animate', 'Downloading the video', 70)
     const raw = join(parts, 'talking.mp4')
@@ -418,7 +431,7 @@ async function runRender(render: ActiveRender, request: AvatarRenderRequest, voi
           { key, signal, timeoutMs: 10 * 60_000, onStatus: () => update(render, 'scenes', `Designing ${label}`, 12) })
         : await falRun(FAL_MODELS.portrait, { prompt: scenePrompt(scene), aspect_ratio: '9:16', resolution: '1K', output_format: 'jpeg' },
           { key, signal, timeoutMs: 10 * 60_000, onStatus: () => update(render, 'scenes', `Designing ${label}`, 12) })
-      const video = await falRun(FAL_MODELS.imageToVideo, { start_image_url: falFileUrl(still, 'images'), prompt: motionPrompt(scene), duration: String(durations[index]), generate_audio: false },
+      const video = await falRun(request.sceneQuality === 'pro' ? FAL_MODELS.imageToVideo : FAL_MODELS.imageToVideoStandard, { start_image_url: falFileUrl(still, 'images'), prompt: motionPrompt(scene), duration: String(durations[index]), generate_audio: false },
         { key, signal, timeoutMs: 30 * 60_000, onStatus: () => update(render, 'animate', `Animating ${label}`, 15 + (finished / scenes.length) * 60) })
       const clip = join(parts, `scene-${index + 1}.mp4`)
       await downloadFalFile(falFileUrl(video, 'video'), clip, { signal })
@@ -495,18 +508,18 @@ export async function probeMedia(path: string): Promise<MediaInfo> {
   return { width: video.width, height: video.height, seconds, hasAudio: Boolean(info.streams?.some((stream) => stream.codec_type === 'audio')) }
 }
 
-/** Even dimensions with the long side at most `max`, keeping the aspect ratio. */
-export function fitWithin(width: number, height: number, max = 1280): { width: number; height: number } {
-  const scale = Math.min(1, max / Math.max(width, height))
-  const even = (value: number): number => Math.max(2, Math.round((value * scale) / 2) * 2)
-  return { width: even(width), height: even(height) }
-}
+/**
+ * Scale filter keeping the long side at most 1280px with even dimensions.
+ * It works from the frame as displayed: ffmpeg has already applied a phone
+ * video's rotation flag, so portrait iPhone clips stay portrait.
+ */
+export const RECREATE_SCALE = "scale='if(gte(iw,ih),trunc(min(1280,iw)/2)*2,-2)':'if(gte(iw,ih),-2,trunc(min(1280,ih)/2)*2)'"
 
 export async function parseRecreateRequest(value: unknown, outputDirectory: string): Promise<{ request: AvatarRecreateRequest; source: MediaInfo }> {
   const raw = (value ?? {}) as Record<string, unknown>
   if (!isAvatarId(raw.avatarId)) throw new Error('Choose an avatar.')
   if (raw.rightsConfirmed !== true) throw new Error('Confirm you own this video or have permission to use it.')
-  if (raw.mode !== 'replace' && raw.mode !== 'move') throw new Error('Choose how to recreate the video.')
+  if (raw.mode !== 'replace' && raw.mode !== 'move' && raw.mode !== 'motion') throw new Error('Choose how to recreate the video.')
   if (!isCaptionPresetId(raw.captionPreset)) throw new Error('Choose a caption style.')
   try { assertMediaPath(raw.sourcePath, outputDirectory) } catch { throw new Error('Choose the source video again.') }
   const sourcePath = raw.sourcePath as string
@@ -528,23 +541,22 @@ export async function startAvatarRecreate(value: unknown): Promise<AvatarRenderS
   assertIdle()
   const settings = loadSettings()
   const key = requireFalKey()
-  const { request, source } = await parseRecreateRequest(value, settings.outputDirectory)
+  const { request } = await parseRecreateRequest(value, settings.outputDirectory)
   const avatar = readAvatar(request.avatarId)
   const folder = join(settings.outputDirectory, 'Avatar Studio', renderFolderName(request.title || `${avatar.name} recreate`, new Date()))
   return launch(request.avatarId, folder, estimateRecreateCost(request), { phase: 'scenes', detail: 'Preparing the source video' },
-    (render) => runRecreate(render, request, source, key, folder))
+    (render) => runRecreate(render, request, key, folder))
 }
 
-async function runRecreate(render: ActiveRender, request: AvatarRecreateRequest, source: MediaInfo, key: string, folder: string): Promise<void> {
+async function runRecreate(render: ActiveRender, request: AvatarRecreateRequest, key: string, folder: string): Promise<void> {
   const signal = render.abort.signal
   const parts = join(folder, 'parts')
   await mkdir(parts, { recursive: true })
   const window = ['-ss', request.startSeconds.toFixed(2), '-t', recreateSeconds(request).toFixed(2)]
 
   // 1. A compact, constant-rate copy of the chosen window (fal bills per frame).
-  const size = fitWithin(source.width, source.height)
   const clip = join(parts, 'source.mp4')
-  await ffmpeg([...window, '-i', request.sourcePath, '-an', '-vf', `fps=${RECREATE_FPS},scale=${size.width}:${size.height},setsar=1`,
+  await ffmpeg([...window, '-i', request.sourcePath, '-an', '-vf', `fps=${RECREATE_FPS},${RECREATE_SCALE},setsar=1`,
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-maxrate', '2500k', '-bufsize', '5000k', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', clip], signal)
   const audio = request.keepAudio ? join(parts, 'source-audio.m4a') : null
   if (audio) await ffmpeg([...window, '-i', request.sourcePath, '-vn', '-c:a', 'aac', '-b:a', '160k', audio], signal)
@@ -555,26 +567,32 @@ async function runRecreate(render: ActiveRender, request: AvatarRecreateRequest,
     falInputUrl(await readFile(clip), 'video/mp4', 'source.mp4', { key, signal }),
     portraitInput(request.avatarId, key, signal)
   ])
-  const model = request.mode === 'replace' ? FAL_MODELS.recreateReplace : FAL_MODELS.recreateMove
+  const model = request.mode === 'replace' ? FAL_MODELS.recreateReplace : request.mode === 'motion' ? FAL_MODELS.recreateMotion : FAL_MODELS.recreateMove
   const input = request.mode === 'replace'
     ? { video_url: videoUrl, image_url: imageUrl, resolution: '720p', video_quality: 'high' }
-    : { video_url: videoUrl, image_url: imageUrl, adapt_motion: true }
+    : request.mode === 'motion'
+      // 'video' orientation follows the source's framing and allows up to 30s; we restore the audio ourselves.
+      ? { video_url: videoUrl, image_url: imageUrl, character_orientation: 'video', keep_original_sound: false }
+      : { video_url: videoUrl, image_url: imageUrl, adapt_motion: true }
   const output = await falRun(model, input, { key, signal, timeoutMs: 40 * 60_000, onStatus: (status) => update(render, 'animate', `Recreating with your avatar · ${status}`, 15) })
   update(render, 'animate', 'Downloading the video', 75)
   const recreated = join(parts, 'recreated.mp4')
   await downloadFalFile(falFileUrl(output, 'video'), recreated, { signal })
 
-  // 3. Original audio back on, then captions and title.
+  // 3. Original audio back on (retimed if the model changed the length), then the 9:16 finish.
   const assembled = join(parts, 'assembled.mp4')
   update(render, 'assemble', 'Adding the original audio', 80)
-  if (audio) await ffmpeg(['-i', recreated, '-i', audio, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', assembled], signal)
+  const windowSeconds = recreateSeconds(request)
+  const produced = (await probeMedia(recreated)).seconds
+  const retime = Math.abs(produced - windowSeconds) > 0.2 ? windowSeconds / produced : null
+  if (retime) logger.warn('avatar.recreate.retime', { produced, windowSeconds })
+  const video = retime
+    ? ['-filter:v', `setpts=${retime.toFixed(6)}*PTS`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p']
+    : ['-c:v', 'copy']
+  if (audio) await ffmpeg(['-i', recreated, '-i', audio, '-map', '0:v:0', '-map', '1:a:0', ...video, '-c:a', 'aac', '-b:a', '192k', '-shortest', assembled], signal)
+  else if (retime) await ffmpeg(['-i', recreated, '-an', ...video, assembled], signal)
   else await copyFile(recreated, assembled)
   const final = join(folder, 'final.mp4')
-  if (!request.includeCaptions && !request.includeTitle) {
-    await copyFile(assembled, final)
-    render.status = { ...render.status, outputPath: final }
-    return
-  }
   const recreatedInfo = await probeMedia(assembled)
   update(render, 'finish', request.includeCaptions ? 'Transcribing and adding captions' : 'Adding the title', 85)
   try {
@@ -583,9 +601,10 @@ async function runRecreate(render: ActiveRender, request: AvatarRecreateRequest,
       include_captions: request.includeCaptions, title: request.title, include_title: request.includeTitle, background_video: null, words: [],
       layout: Math.abs(recreatedInfo.width / recreatedInfo.height - 9 / 16) < 0.02 ? 'fill' : 'auto'
     })
-    const warning = request.includeCaptions && result.captions === 'none'
-      ? (loadSettings().openrouterApiKey ? 'No speech was found to caption, so this video has no captions.' : 'Captions need your OpenRouter key (Settings → API keys) to transcribe the audio.')
-      : null
+    const warning = !request.includeCaptions || result.captions === 'transcribed' || result.captions === 'estimated' ? null
+      : !loadSettings().openrouterApiKey ? 'Captions need your OpenRouter key (Settings → API keys) to transcribe the audio.'
+        : result.captions === 'failed' ? 'The audio could not be transcribed, so this video has no captions. Check your OpenRouter key and credits.'
+          : 'No speech was found to caption, so this video has no captions.'
     render.status = { ...render.status, outputPath: final, warning }
   } catch (error) {
     if (!(error instanceof FinishError)) throw error

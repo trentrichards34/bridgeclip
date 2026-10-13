@@ -32,7 +32,10 @@ export interface AvatarSummary extends Avatar {
 }
 
 export type AvatarVideoStyle = 'talking' | 'cinematic'
-export type LipSyncModel = 'fabric' | 'omnihuman'
+/** economy: Kling AI Avatar v2 Standard; fabric: VEED Fabric; omnihuman: OmniHuman 1.5. */
+export type LipSyncModel = 'economy' | 'fabric' | 'omnihuman'
+/** Image-to-video tier for cinematic scenes. */
+export type SceneQuality = 'standard' | 'pro'
 
 export interface AvatarScene {
   /** The words spoken over this scene. Scenes joined in order form the script. */
@@ -65,6 +68,7 @@ export interface AvatarRenderRequest {
   style: AvatarVideoStyle
   script: AvatarScript
   lipSync: LipSyncModel
+  sceneQuality: SceneQuality
   captionPreset: string
   includeCaptions: boolean
   includeTitle: boolean
@@ -126,7 +130,11 @@ export const FAL_MODELS = {
   voiceClone: 'fal-ai/minimax/voice-clone',
   fabric: 'veed/fabric-1.0',
   omnihuman: 'fal-ai/bytedance/omnihuman/v1.5',
+  klingAvatar: 'fal-ai/kling-video/ai-avatar/v2/standard',
   imageToVideo: 'fal-ai/kling-video/v3/pro/image-to-video',
+  imageToVideoStandard: 'fal-ai/kling-video/v3/standard/image-to-video',
+  /** Kling motion control: the avatar's photo performs the source video's motion. */
+  recreateMotion: 'fal-ai/kling-video/v3/standard/motion-control',
   /** Puts the avatar into the source video, keeping its scene, lighting and camera. */
   recreateReplace: 'fal-ai/wan/v2.2-14b/animate/replace',
   /** Drives the avatar's own photo with the source video's motion. */
@@ -140,18 +148,21 @@ export const PRICES = {
   voiceClone: 1.5,
   fabricPerSecond: 0.15,
   omnihumanPerSecond: 0.16,
+  klingAvatarPerSecond: 0.0562,
   imageToVideoPerSecond: 0.112,
+  imageToVideoStandardPerSecond: 0.084,
+  motionControlPerSecond: 0.126,
   /** Wan Animate bills per 16 frames: $0.08 per 16 frames at 720p. */
   replacePer16Frames: 0.08,
   /** Wan Motion bills $0.06 per second at 24 fps. */
   movePerSecond: 0.06
 } as const
 
-/** Lip-sync models accept up to a minute of audio. */
-export const MAX_SPOKEN_SECONDS = 60
+/** Lip-sync models accept just under a minute of audio (OmniHuman: under 60s at 720p). */
+export const MAX_SPOKEN_SECONDS = 58
 export const MAX_SCENES = 8
 export const MIN_SCENE_SECONDS = 3
-export const MAX_SCENE_SECONDS = 10
+export const MAX_SCENE_SECONDS = 15
 /** Typical narration pace used to estimate length before any audio exists. */
 export const WORDS_PER_SECOND = 2.6
 export const MAX_SCRIPT_CHARS = 1200
@@ -179,16 +190,25 @@ export function sceneDurations(scenes: readonly AvatarScene[], spokenSeconds: nu
   return words.map((count) => Math.min(MAX_SCENE_SECONDS, Math.max(MIN_SCENE_SECONDS, Math.ceil((count / total) * spokenSeconds))))
 }
 
-export function estimateRenderCost(request: Pick<AvatarRenderRequest, 'style' | 'lipSync' | 'script'>): number {
+/** 1-based numbers of cinematic scenes whose narration runs longer than one generated shot. */
+export function overlongScenes(script: AvatarScript): number[] {
+  const seconds = estimateSpokenSeconds(scriptText(script))
+  const words = script.scenes.map((scene) => Math.max(1, wordCount(scene.narration)))
+  const total = words.reduce((sum, value) => sum + value, 0)
+  return words.flatMap((count, index) => (count / total) * seconds > MAX_SCENE_SECONDS ? [index + 1] : [])
+}
+
+export function estimateRenderCost(request: Pick<AvatarRenderRequest, 'style' | 'lipSync' | 'script'> & { sceneQuality?: SceneQuality }): number {
   const text = scriptText(request.script)
   const seconds = estimateSpokenSeconds(text)
   const voice = (text.length / 1000) * PRICES.ttsPer1000Chars
   if (request.style === 'talking') {
-    const perSecond = request.lipSync === 'omnihuman' ? PRICES.omnihumanPerSecond : PRICES.fabricPerSecond
+    const perSecond = request.lipSync === 'omnihuman' ? PRICES.omnihumanPerSecond : request.lipSync === 'economy' ? PRICES.klingAvatarPerSecond : PRICES.fabricPerSecond
     return round(voice + seconds * perSecond)
   }
   const footage = sceneDurations(request.script.scenes, seconds).reduce((sum, value) => sum + value, 0)
-  return round(voice + request.script.scenes.length * PRICES.image + footage * PRICES.imageToVideoPerSecond)
+  const perSecond = request.sceneQuality === 'pro' ? PRICES.imageToVideoPerSecond : PRICES.imageToVideoStandardPerSecond
+  return round(voice + request.script.scenes.length * PRICES.image + footage * perSecond)
 }
 
 function round(value: number): number {
@@ -284,7 +304,8 @@ export function renderFolderName(title: string, date: Date): string {
 // Recreate: restage an existing video with the avatar (motion transfer)
 // ---------------------------------------------------------------------------
 
-export type RecreateMode = 'replace' | 'move'
+/** replace: swap into the scene (Wan Animate); move: Wan Motion; motion: Kling motion control. */
+export type RecreateMode = 'replace' | 'move' | 'motion'
 export const RECREATE_MIN_SECONDS = 3
 export const RECREATE_MAX_SECONDS = 30
 /** Source footage is resampled to this rate: smooth motion without paying for 60 fps. */
@@ -315,7 +336,7 @@ export function estimateRecreateCost(request: Pick<AvatarRecreateRequest, 'start
   const seconds = recreateSeconds(request)
   const cost = request.mode === 'replace'
     ? Math.ceil((seconds * RECREATE_FPS) / 16) * PRICES.replacePer16Frames
-    : seconds * PRICES.movePerSecond
+    : request.mode === 'motion' ? seconds * PRICES.motionControlPerSecond : seconds * PRICES.movePerSecond
   return round(cost)
 }
 

@@ -306,10 +306,22 @@ export async function cloneVoice(id: unknown, samplePath: string, consent: unkno
   const output = await falRun(FAL_MODELS.voiceClone, { audio_url: audioUrl, noise_reduction: true, need_volume_normalization: true }, { key, signal, timeoutMs: 5 * 60_000 })
   const voiceId = output.custom_voice_id
   if (typeof voiceId !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/.test(voiceId)) throw new FalError('fal.ai did not return a cloned voice. Try a cleaner recording.')
-  await falRun(FAL_MODELS.cloneTts, { prompt: 'Voice ready.', voice_setting: { voice_id: voiceId }, output_format: 'url' }, { key, signal, timeoutMs: 3 * 60_000 })
+  // Save the paid clone before anything else can fail.
+  const previous = { voice: avatar.voice, clonedVoice: avatar.clonedVoice }
   avatar.clonedVoice = { voiceId, clonedAt: new Date().toISOString() }
   avatar.voice = { provider: 'minimax-clone', ...avatar.clonedVoice }
   avatar.consentAt ??= new Date().toISOString()
   await writeAvatar(avatar)
+  // One short line keeps the clone (MiniMax deletes clones unused for 7 days) and proves it speaks.
+  try {
+    await falRun(FAL_MODELS.cloneTts, { prompt: 'Voice ready.', voice_setting: { voice_id: voiceId }, output_format: 'url' }, { key, signal, timeoutMs: 3 * 60_000 })
+  } catch (error) {
+    if (error instanceof FalError && /could not process|could not finish/.test(error.message)) {
+      Object.assign(avatar, previous)
+      await writeAvatar(avatar)
+      throw new FalError('The voice was cloned but fal.ai could not speak with it. Try a cleaner 30-90 second recording.')
+    }
+    // Network trouble: the clone is saved and the first video will use it.
+  }
   return listAvatars()
 }

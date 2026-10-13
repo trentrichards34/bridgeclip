@@ -64,7 +64,7 @@ test('voices are preset names or cloned ids; anything else is rejected', () => {
 test('scene lengths follow the narration and stay within what the video model renders', () => {
   const scenes = [{ narration: 'one two three' }, { narration: Array.from({ length: 60 }, () => 'w').join(' ') }, { narration: 'a' }]
   const durations = plain(shared.sceneDurations(scenes, 30))
-  assert.deepEqual(durations, [3, 10, 3])
+  assert.deepEqual(durations, [3, 15, 3])
 })
 
 test('estimated word timings are ordered, non-overlapping and fit the audio', () => {
@@ -385,19 +385,19 @@ test('recreate windows are 3-30 seconds inside the source; costs follow fal bill
   // 10s at 24 fps = 240 frames = 15 billed chunks of 16 frames at $0.08.
   assert.equal(shared.estimateRecreateCost({ startSeconds: 0, endSeconds: 10, mode: 'replace' }), 1.2)
   assert.equal(shared.estimateRecreateCost({ startSeconds: 0, endSeconds: 10, mode: 'move' }), 0.6)
+  assert.equal(shared.estimateRecreateCost({ startSeconds: 0, endSeconds: 10, mode: 'motion' }), 1.26)
 })
 
-test('source frames are scaled to even sizes within 1280px', () => {
-  const studio = loadStudio()
-  assert.deepEqual(plain(studio.fitWithin(1920, 1080)), { width: 1280, height: 720 })
-  assert.deepEqual(plain(studio.fitWithin(1080, 1920)), { width: 720, height: 1280 })
-  assert.deepEqual(plain(studio.fitWithin(641, 359)), { width: 642, height: 360 })
-})
+const ENGINE_PYTHON = path.join(__dirname, '../../engine/.venv/bin/python')
+const hasEngine = fs.existsSync(ENGINE_PYTHON)
 
-test('a recreate run cuts the window, sends it with the portrait and puts the original audio back', { skip: !hasFfmpeg && 'ffmpeg not installed' }, async () => {
-  const output = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-recreate-'))
-  const source = path.join(output, 'dance.mp4')
-  execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=60', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '12', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', source])
+test('a recreate run keeps phone rotation, retimes to the window, restores audio and finishes at 9:16', { skip: !hasFfmpeg && 'ffmpeg not installed' }, async () => {
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), 'cc recreate '))
+  const flat = path.join(output, 'flat.mp4')
+  const source = path.join(output, 'phone clip.mov')
+  // A "portrait phone video": stored 640x360 with a 90 degree rotation flag, plus audio.
+  execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=60', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '12', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', flat])
+  execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-display_rotation:v:0', '90', '-i', flat, '-c', 'copy', source])
   const calls = []
   const statuses = []
   const settings = { ...SETTINGS, outputDirectory: output, openrouterApiKey: '' }
@@ -405,29 +405,129 @@ test('a recreate run cuts the window, sends it with the portrait and puts the or
     './settings-store': { loadSettings: () => settings },
     './security': { assertMediaPath: (p) => { if (!String(p).startsWith(output)) throw new Error('nope') } },
     './avatars': { portraitInput: async () => 'data:image/jpeg;base64,AA==', readAvatar: () => ({ name: 'Maya' }) },
+    './pipeline-runner': {
+      getBridgeRunnerPath: () => path.join(__dirname, '../../bridge/bridge_runner.py'), getEnginePath: () => path.join(__dirname, '../../engine'),
+      resolvePythonPath: () => ENGINE_PYTHON, runtimeEnvironment: () => ({ PATH: process.env.PATH, HOME: process.env.HOME }), validatePython: async () => ({ ok: true })
+    },
     './fal': {
       falInputUrl: async (bytes, type) => { calls.push(['upload', type, bytes.length]); return 'https://v3.fal.media/source.mp4' },
       falRun: async (model, input) => { calls.push(['run', model, input]); return { video: { url: 'https://v3.fal.media/out.mp4' } } },
       falFileUrl: (outputJson) => outputJson.video.url,
-      // The "recreated" video is the prepared source clip itself.
-      downloadFalFile: async (_url, destination) => fs.copyFileSync(path.join(path.dirname(destination), 'source.mp4'), destination)
+      // The model "returns" the prepared clip, but 1s short, to exercise retiming.
+      downloadFalFile: async (_url, destination) => execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', path.join(path.dirname(destination), 'source.mp4'), '-t', '4', '-c', 'copy', destination])
     }
   })
   studio.onAvatarRenderStatus((status) => statuses.push(status))
-  const request = { avatarId: 'abcdef1234567890', sourcePath: source, startSeconds: 2, endSeconds: 7, mode: 'replace', keepAudio: true, title: '', captionPreset: 'pop', includeCaptions: false, includeTitle: false, rightsConfirmed: true }
+  const request = { avatarId: 'abcdef1234567890', sourcePath: source, startSeconds: 2, endSeconds: 7, mode: 'motion', keepAudio: true, title: 'POV test', captionPreset: 'pop', includeCaptions: false, includeTitle: true, rightsConfirmed: true }
   await assert.rejects(studio.startAvatarRecreate({ ...request, rightsConfirmed: false }), /own this video/)
   await assert.rejects(studio.startAvatarRecreate({ ...request, sourcePath: '/etc/passwd.mp4' }), /Choose the source video again/)
   await assert.rejects(studio.startAvatarRecreate({ ...request, endSeconds: 3.5 }), /at least 3 seconds/)
+  await assert.rejects(studio.startAvatarRecreate({ ...request, mode: 'bogus' }), /how to recreate/)
   await studio.startAvatarRecreate(request)
-  for (let i = 0; i < 200 && !['done', 'failed'].includes(statuses.at(-1)?.phase); i++) await new Promise((r) => setTimeout(r, 100))
+  for (let i = 0; i < 600 && !['done', 'failed'].includes(statuses.at(-1)?.phase); i++) await new Promise((r) => setTimeout(r, 100))
   const last = statuses.at(-1)
   assert.equal(last.phase, 'done', last.error)
   const run = calls.find((c) => c[0] === 'run')
-  assert.equal(run[1], 'fal-ai/wan/v2.2-14b/animate/replace')
-  assert.deepEqual(plain(run[2]), { video_url: 'https://v3.fal.media/source.mp4', image_url: 'data:image/jpeg;base64,AA==', resolution: '720p', video_quality: 'high' })
-  const info = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height,r_frame_rate:format=duration', '-of', 'json', last.outputPath], { encoding: 'utf8' }))
-  const v = info.streams.find((s) => s.codec_type === 'video')
-  assert.equal(v.width, 1280); assert.equal(v.height, 720); assert.equal(v.r_frame_rate, '24/1')
-  assert.ok(info.streams.some((s) => s.codec_type === 'audio'), 'original audio kept')
-  assert.ok(Math.abs(Number(info.format.duration) - 5) < 0.15, info.format.duration)
+  assert.equal(run[1], 'fal-ai/kling-video/v3/standard/motion-control')
+  assert.deepEqual(plain(run[2]), { video_url: 'https://v3.fal.media/source.mp4', image_url: 'data:image/jpeg;base64,AA==', character_orientation: 'video', keep_original_sound: false })
+  const probe = (file) => JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height,r_frame_rate:format=duration', '-of', 'json', file], { encoding: 'utf8' }))
+  const folder = path.dirname(last.outputPath)
+  const sent = probe(path.join(folder, 'parts', 'source.mp4')).streams[0]
+  assert.deepEqual([sent.width, sent.height, sent.r_frame_rate], [360, 640, '24/1'], 'portrait stays portrait, at 24 fps')
+  const assembled = probe(path.join(folder, 'parts', 'assembled.mp4'))
+  assert.ok(Math.abs(Number(assembled.format.duration) - 5) < 0.15, `retimed to the 5s window: ${assembled.format.duration}`)
+  assert.ok(assembled.streams.some((s) => s.codec_type === 'audio'), 'original audio kept')
+  if (hasEngine) {
+    assert.equal(path.basename(last.outputPath), 'final.mp4', last.warning)
+    const final = probe(last.outputPath).streams.find((s) => s.codec_type === 'video')
+    assert.deepEqual([final.width, final.height], [1080, 1920])
+  } else {
+    assert.match(last.warning, /Captions could not be added/)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Audit fixes: model tiers, long scenes, paid-result resilience, clone safety
+// ---------------------------------------------------------------------------
+
+test('economy and pro tiers change the model and the estimate', () => {
+  const words = (n) => Array.from({ length: n }, () => 'word').join(' ')
+  const talking = { title: '', scenes: [{ narration: words(52), visual: '', featuresAvatar: true }] }
+  assert.ok(shared.estimateRenderCost({ style: 'talking', lipSync: 'economy', script: talking }) < shared.estimateRenderCost({ style: 'talking', lipSync: 'fabric', script: talking }) / 2)
+  const cinematic = { title: '', scenes: [{ narration: words(26), visual: 'a', featuresAvatar: true }, { narration: words(26), visual: 'b', featuresAvatar: false }] }
+  assert.ok(shared.estimateRenderCost({ style: 'cinematic', lipSync: 'fabric', sceneQuality: 'standard', script: cinematic }) < shared.estimateRenderCost({ style: 'cinematic', lipSync: 'fabric', sceneQuality: 'pro', script: cinematic }))
+  const studio = loadStudio()
+  const base = { avatarId: 'abcdef1234567890', captionPreset: 'pop' }
+  assert.equal(studio.parseRenderRequest({ ...base, style: 'talking', lipSync: 'economy', script: talking }).lipSync, 'economy')
+  assert.equal(studio.parseRenderRequest({ ...base, style: 'cinematic', script: cinematic }).sceneQuality, 'standard')
+  assert.equal(studio.parseRenderRequest({ ...base, style: 'cinematic', sceneQuality: 'pro', script: cinematic }).sceneQuality, 'pro')
+})
+
+test('a scene with more narration than one shot is caught before paying', () => {
+  const words = (n) => Array.from({ length: n }, () => 'word').join(' ')
+  const script = { title: '', scenes: [{ narration: words(130), visual: 'a', featuresAvatar: true }, { narration: words(10), visual: 'b', featuresAvatar: false }] }
+  assert.deepEqual(plain(shared.overlongScenes(script)), [1])
+  const studio = loadStudio()
+  assert.throws(() => studio.parseRenderRequest({ avatarId: 'abcdef1234567890', captionPreset: 'pop', style: 'cinematic', script }), /Scene 1 has more narration than one 15-second shot/)
+})
+
+test('brief fal outages while polling or fetching a paid result are waited out', async () => {
+  const responses = [
+    jsonResponse({ status_url: `${Q}/status`, response_url: Q, cancel_url: `${Q}/cancel` }),
+    new Response('busy', { status: 503 }),
+    jsonResponse({ status: 'COMPLETED' }),
+    new Response('busy', { status: 502 }),
+    jsonResponse({ video: { url: 'https://v3.fal.media/files/out.mp4' } })
+  ]
+  const urls = []
+  const result = await fal.falRun('fal-ai/x', {}, { key: 'k', pollMs: 1, fetch: async (url) => { urls.push(url); return responses.shift() } })
+  assert.equal(result.video.url, 'https://v3.fal.media/files/out.mp4')
+  assert.equal(urls.filter((u) => u === Q).length, 2, 'result fetch retried')
+})
+
+test('giving up on a job cancels it so it stops billing', async () => {
+  const calls = []
+  const responses = [jsonResponse({ status_url: `${Q}/status`, response_url: Q, cancel_url: `${Q}/cancel` }), jsonResponse({ detail: 'bad' }, 422)]
+  await assert.rejects(fal.falRun('fal-ai/x', {}, { key: 'k', pollMs: 1, fetch: async (url, init) => { calls.push([url, init?.method]); return responses.shift() ?? jsonResponse({}) } }), /could not process/)
+  assert.deepEqual(calls.at(-1), [`${Q}/cancel`, 'PUT'])
+})
+
+test('a dropped download is retried; the body is not cut off by the header timeout', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-dl2-'))
+  let attempts = 0
+  await fal.downloadFalFile('https://v3.fal.media/a.mp4', path.join(dir, 'a.mp4'), {
+    fetch: async () => { attempts++; if (attempts === 1) throw new TypeError('socket hang up'); return new Response('ok-bytes', { status: 200 }) }
+  })
+  assert.equal(attempts, 2)
+  assert.equal(fs.readFileSync(path.join(dir, 'a.mp4'), 'utf8'), 'ok-bytes')
+})
+
+test('timeouts are not mistaken for file errors', () => {
+  const studio = loadStudio()
+  const timeout = new DOMException('The operation timed out.', 'TimeoutError')
+  assert.equal(studio.renderErrorMessage(timeout), 'The operation timed out.')
+})
+
+test('a paid voice clone is saved even if the warm-up call has network trouble', async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-clone2-'))
+  class FalError extends Error {}
+  let runs = 0
+  const image = { isEmpty: () => false, getSize: () => ({ width: 900, height: 1600 }), resize: () => image, toJPEG: () => Buffer.from('jpeg') }
+  const lib = load('main/avatars.ts', {
+    electron: { app: { getPath: () => userData }, nativeImage: { createFromBuffer: () => image } },
+    './security': { authorizeMedia: (p) => p },
+    './settings-store': settingsStub,
+    './tools': { resolveBinary: () => 'ffprobe-missing' },
+    './fal': {
+      FalError, falInputUrl: async () => 'data:', falFileUrl: () => '', downloadFalFile: async () => {},
+      falRun: async () => { runs++; if (runs === 1) return { custom_voice_id: 'clone_1' }; throw new FalError('fal.ai could not be reached.') }
+    }
+  })
+  const photo = path.join(userData, 'me.jpg'); fs.writeFileSync(photo, 'photo')
+  const sample = path.join(userData, 'voice.mp3'); fs.writeFileSync(sample, 'audio')
+  const draft = await lib.draftFromPhoto(photo)
+  const [avatar] = plain(await lib.createAvatar({ draftId: draft.draftId, name: 'Me', kind: 'self', voice: { provider: 'elevenlabs', voice: 'Brian' }, consent: true }))
+  const [cloned] = plain(await lib.cloneVoice(avatar.id, sample, true))
+  assert.equal(cloned.clonedVoice.voiceId, 'clone_1')
+  assert.equal(cloned.voice.provider, 'minimax-clone')
 })

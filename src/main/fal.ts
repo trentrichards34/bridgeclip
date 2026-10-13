@@ -31,6 +31,22 @@ export function withTimeout(signal: AbortSignal | undefined, ms: number): AbortS
   return signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms)
 }
 
+/**
+ * Fetch where the time limit covers only the wait for response headers; the
+ * body keeps streaming under the caller's signal (large videos on slow links).
+ */
+async function fetchHeaders(doFetch: typeof fetch, url: string, init: RequestInit, signal: AbortSignal | undefined, ms: number): Promise<Response> {
+  const limit = new AbortController()
+  const timer = setTimeout(() => limit.abort(new DOMException('Timed out', 'TimeoutError')), ms)
+  try { return await doFetch(url, { ...init, signal: signal ? AbortSignal.any([signal, limit.signal]) : limit.signal }) }
+  finally { clearTimeout(timer) }
+}
+
+/** Transient server states worth waiting out rather than failing a paid job. */
+function transient(status: number): boolean {
+  return status === 429 || status >= 500
+}
+
 /** True only for a cancel the user asked for, not a step timing out. */
 function userAborted(error: unknown, signal?: AbortSignal): boolean {
   return Boolean(signal?.aborted) && (error as Error)?.name === 'AbortError'
@@ -118,7 +134,10 @@ export async function falRun(model: string, input: Record<string, unknown>, opti
         await sleep(options.pollMs ?? 2500, options.signal)
         continue
       }
-      if (!response.ok) throw await falFailure(response, model)
+      if (!response.ok) {
+        if (transient(response.status)) { await sleep(options.pollMs ?? 2500, options.signal); continue }
+        throw await falFailure(response, model)
+      }
       const status = await json(response)
       if (status.status === 'COMPLETED') {
         if (status.error) throw new FalError(`fal.ai could not finish this step (${model}). Try again or adjust the prompt.`)
@@ -128,12 +147,21 @@ export async function falRun(model: string, input: Record<string, unknown>, opti
       else if (status.status === 'IN_PROGRESS') options.onStatus?.('Generating')
       await sleep(options.pollMs ?? 2500, options.signal)
     }
-    const result = await doFetch(responseUrl, { headers: headers(options.key, false), redirect: 'error', signal: withTimeout(options.signal, 60_000) })
-    if (!result.ok) throw await falFailure(result, model)
-    return await json(result)
+    // The job is paid for by now: retry fetching its result through brief outages.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const result = await doFetch(responseUrl, { headers: headers(options.key, false), redirect: 'error', signal: withTimeout(options.signal, 60_000) })
+        if (result.ok) return await json(result)
+        if (!transient(result.status) || attempt >= 3) throw await falFailure(result, model)
+      } catch (error) {
+        if (userAborted(error, options.signal) || error instanceof FalError || attempt >= 3) throw error
+      }
+      await sleep(2000 * (attempt + 1), options.signal)
+    }
   } catch (error) {
-    if (userAborted(error, options.signal)) cancel()
-    else if ((error as Error)?.name === 'AbortError' || (error as Error)?.name === 'TimeoutError') throw new FalError('fal.ai stopped responding. Try again shortly.')
+    // Stop the fal job whenever we give up on it, so it doesn't keep billing unseen.
+    cancel()
+    if (!userAborted(error, options.signal) && ((error as Error)?.name === 'AbortError' || (error as Error)?.name === 'TimeoutError')) throw new FalError('fal.ai stopped responding. Try again shortly.')
     throw error
   }
 }
@@ -155,15 +183,29 @@ export function isFalResultUrl(value: string): boolean {
   } catch { return false }
 }
 
-/** Download a fal result to `destination`, capped at `maxBytes`. Redirects must stay on fal hosts. */
+/**
+ * Download a fal result to `destination`, capped at `maxBytes`. Redirects
+ * must stay on fal hosts. Results are already paid for, so a failed transfer
+ * is retried twice before giving up.
+ */
 export async function downloadFalFile(url: string, destination: string, options: Pick<FalOptions, 'signal' | 'fetch'> & { maxBytes?: number } = {}): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await downloadOnce(url, destination, options) }
+    catch (error) {
+      if (userAborted(error, options.signal) || attempt >= 2 || (error instanceof FalError && /unexpected host|too large|redirect/.test(error.message))) throw error
+      await sleep(2000 * (attempt + 1), options.signal)
+    }
+  }
+}
+
+async function downloadOnce(url: string, destination: string, options: Pick<FalOptions, 'signal' | 'fetch'> & { maxBytes?: number }): Promise<void> {
   const doFetch = options.fetch ?? fetch
   const maxBytes = options.maxBytes ?? 500_000_000
   let current = url
   let response: Response | null = null
   for (let hop = 0; hop < 4; hop++) {
     if (!isFalResultUrl(current)) throw new FalError('fal.ai returned a file from an unexpected host.')
-    response = await doFetch(current, { redirect: 'manual', signal: withTimeout(options.signal, 60_000) })
+    response = await fetchHeaders(doFetch, current, { redirect: 'manual' }, options.signal, 60_000)
     if (response.status < 300 || response.status >= 400) break
     const location = response.headers.get('location')
     if (!location) throw new FalError('Downloading the result from fal.ai failed (bad redirect).')
@@ -198,13 +240,13 @@ export async function downloadFalFile(url: string, destination: string, options:
 }
 
 /**
- * Make local bytes usable as a model input URL. Small files go inline as a
- * data URI; larger ones are uploaded to fal's storage, falling back to inline
- * if the upload endpoint is unavailable.
+ * Make local bytes usable as a model input URL. Small images go inline as a
+ * data URI; everything else is uploaded to fal's storage, falling back to
+ * inline only for modest files if the upload endpoint is unavailable.
  */
 export async function falInputUrl(bytes: Buffer, contentType: string, fileName: string, options: Pick<FalOptions, 'key' | 'signal' | 'fetch'>): Promise<string> {
   const inline = `data:${contentType};base64,${bytes.toString('base64')}`
-  if (bytes.byteLength <= 2_000_000) return inline
+  if (contentType.startsWith('image/') && bytes.byteLength <= 1_000_000) return inline
   const doFetch = options.fetch ?? fetch
   try {
     const initiated = await doFetch(STORAGE_INITIATE, { method: 'POST', headers: headers(options.key), body: JSON.stringify({ content_type: contentType, file_name: fileName }), redirect: 'error', signal: withTimeout(options.signal, 30_000) })
@@ -217,7 +259,7 @@ export async function falInputUrl(bytes: Buffer, contentType: string, fileName: 
     return fileUrl
   } catch (error) {
     if (userAborted(error, options.signal)) throw error
-    if (bytes.byteLength > 15_000_000) throw new FalError('Uploading the file to fal.ai failed. Try a shorter or smaller file.')
+    if (bytes.byteLength > 8_000_000) throw new FalError('Uploading the file to fal.ai failed. Try a shorter or smaller file.')
     return inline
   }
 }

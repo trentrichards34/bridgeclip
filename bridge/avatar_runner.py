@@ -57,9 +57,10 @@ async def transcript_segments(config, video, duration_ms):
         segments = [s for s in result.segments if s.words and s.start_time_ms < duration_ms]
         if segments:
             return segments, 'transcribed'
+        return estimated, 'estimated' if estimated else 'none'
     except Exception as error:  # noqa: BLE001 - fall back to the estimate
         print(f'Transcription failed, using estimated timing: {type(error).__name__}', file=sys.stderr)
-    return estimated, 'estimated' if estimated else 'none'
+        return estimated, 'estimated' if estimated else 'failed'
 
 
 async def finish(config):
