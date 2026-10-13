@@ -100,6 +100,11 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
     if (typeof requested.layout_vision_enabled === 'boolean') safe.layout_vision_enabled = requested.layout_vision_enabled
     if (requested.pacing === 'tight' || requested.pacing === 'natural') safe.pacing = requested.pacing
     if (typeof requested.video_speed === 'number' && Number.isFinite(requested.video_speed) && requested.video_speed >= 1 && requested.video_speed <= 2) safe.video_speed = requested.video_speed
+    if (['a', 'b', 'c', 'all', 'off'].includes(requested.quality_bar as string)) safe.quality_bar = requested.quality_bar
+    const grading = requested.framework_grading
+    if (record(grading) && typeof grading.enabled === 'boolean' && nonNegative(grading.candidates) && nonNegative(grading.graded) && nonNegative(grading.kept)) {
+      safe.framework_grading = { enabled: grading.enabled, candidates: grading.candidates, graded: grading.graded, kept: grading.kept }
+    }
     result.requested_settings = safe
   }
   for (const field of ['planned_clip_count', 'rendered_clip_count', 'failed_clip_count', 'uploaded_clip_count',

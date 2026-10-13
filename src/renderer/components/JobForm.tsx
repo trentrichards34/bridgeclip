@@ -55,6 +55,7 @@ export const WIZARD_STEPS: { id: WizardStep; label: string; title: string; descr
 const QUALITY_BAR_OPTIONS: { id: QualityBar; label: string; hint: string; summary: string }[] = [
   { id: 'b', label: 'B or better', hint: 'Recommended', summary: 'Keep B grades and up' },
   { id: 'a', label: 'A only', hint: 'Fewest, strongest', summary: 'Keep A grades only' },
+  { id: 'c', label: 'C or better', hint: 'More clips', summary: 'Keep C grades and up' },
   { id: 'all', label: 'Grade all', hint: 'Keep everything', summary: 'Grade and keep all' },
   { id: 'off', label: 'Off', hint: 'No grading', summary: 'No grading' }
 ]
@@ -471,6 +472,7 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
 
 export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
   const jevEnabled = useSettingsStore((s) => s.jevEnabled === 'on')
+  const openrouterConfigured = useSettingsStore((s) => s.openrouterConfigured)
   const toggleDuration = (id: string): void => {
     update({ durations: draft.durations.includes(id) ? draft.durations.filter((d) => d !== id) : [...draft.durations, id] })
   }
@@ -539,7 +541,7 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
       </Group>
 
       <Group label="Quality bar" aside="Graded on the Paid Creators frameworks">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label="Quality bar">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5" role="radiogroup" aria-label="Quality bar">
           {QUALITY_BAR_OPTIONS.map((option) => {
             const selected = draft.qualityBar === option.id
             return (
@@ -553,11 +555,15 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
           })}
         </div>
         <p className="mt-2 text-2xs text-ink-subtle">
-          {draft.qualityBar === 'off'
-            ? 'No grading: clips are picked by the planner alone.'
-            : draft.qualityBar === 'all'
-              ? 'Every clip is graded on the Triple Hook, story and payoff, and all are kept.'
-              : 'CreatorClips finds extra candidates, grades each one on the Triple Hook, story and payoff, and keeps only those that make the bar. Expect fewer, stronger clips.'}
+          {!openrouterConfigured
+            ? 'Grading uses your OpenRouter key. Add it in Settings to grade clips.'
+            : draft.qualityBar === 'off'
+              ? 'No grading: clips are picked by the planner alone.'
+              : draft.aspectRatio === '16:9' && draft.durations.some((id) => ['xlong', 'extended', 'feature'].includes(id))
+                ? 'Long 16:9 episodes are not graded; the bar applies to short clips.'
+                : draft.qualityBar === 'all' || draft.clipRequest.trim()
+                  ? 'Every clip is graded on the Triple Hook, story and payoff, and all are kept.'
+                  : 'CreatorClips finds extra candidates, grades each one on the Triple Hook, story and payoff, and keeps only those that make the bar. Expect fewer, stronger clips.'}
         </p>
       </Group>
 

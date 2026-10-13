@@ -569,10 +569,13 @@ class IntelligencePlannerService:
             clip_count = min(clip_count, 8)
         self.discovery_limit = clip_count
         longform = bool(transcript) and is_longform(aspect_ratio, min_duration_seconds)
+        self._oversampling = False
         if oversample > 1 and discovery_feedback is None and not longform:
-            ceiling = max_fit if effective_duration_seconds > 0 else self.settings.max_clips_absolute
-            requested = min(ceiling, self.settings.max_clips_absolute * 2, max(clip_count + 2, math.ceil(clip_count * oversample)))
+            # Leave room between candidates: asking for every slot that fits forces back-to-back padding.
+            ceiling = max(clip_count, int(max_fit * 0.6)) if effective_duration_seconds > 0 else self.settings.max_clips_absolute
+            requested = min(ceiling, self.settings.max_clips_absolute, max(clip_count + 2, math.ceil(clip_count * oversample)))
             if requested > clip_count:
+                self._oversampling = True
                 logger.info(f"Oversampling candidates for framework grading: {clip_count} -> {requested}")
                 clip_count = requested
         self._current_longform = longform
@@ -833,6 +836,8 @@ class IntelligencePlannerService:
             output_count = (
                 f"Return up to {clip_count} clips that match the user clip request as JSON:"
                 if getattr(self, "_clip_request", None) else
+                f"Return up to {clip_count} clips as JSON, strongest first. Each will be graded and only the best kept, so return fewer rather than pad with weak or overlapping moments:"
+                if getattr(self, "_oversampling", False) else
                 f"Return exactly {clip_count} clips as JSON:"
             )
             duration_guidance = ""

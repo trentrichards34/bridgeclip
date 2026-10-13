@@ -19,7 +19,7 @@ const GRADE_TONES: Record<Grade, string> = {
 export function GradeChip({ grade, className }: { grade: FrameworkGrade; className?: string }): React.JSX.Element {
   return (
     <span className={cn('inline-flex h-5 items-center gap-1 rounded-full px-1.5 text-2xs font-bold tabular shadow-[inset_0_1px_0_rgb(255_255_255/0.2)]', GRADE_TONES[grade.grade], className)}
-      title={`Framework grade ${grade.grade} (${grade.score.toFixed(1)}/10)`}>
+      title={`Framework grade ${grade.grade} (${grade.score.toFixed(1)}/10)`} aria-label={`Framework grade ${grade.grade}, ${grade.score.toFixed(1)} out of 10`}>
       {grade.grade}
       <span className="font-mono font-medium opacity-80">{grade.score.toFixed(1)}</span>
     </span>
@@ -105,9 +105,14 @@ function GradeDialog({ grade, title, onClose }: { grade: FrameworkGrade; title: 
         <section>
           <h3 className="eyebrow mb-2">Five-step story</h3>
           <div className="flex flex-wrap gap-1.5">
-            {STORY_BEATS.map(({ key, label }) => (
-              <span key={key} className={cn('rounded-full px-2 py-0.5 text-2xs', grade.storyBeats[key] ? 'bg-emerald-400/20 text-emerald-200' : 'bg-white/[0.06] text-ink-subtle line-through')}>{label}</span>
-            ))}
+            {STORY_BEATS.map(({ key, label }) => {
+              const optional = key === 'call_to_action'
+              return (
+                <span key={key} className={cn('rounded-full px-2 py-0.5 text-2xs', grade.storyBeats[key] ? 'bg-emerald-400/20 text-emerald-200' : optional ? 'bg-white/[0.06] text-ink-subtle' : 'bg-white/[0.06] text-ink-subtle line-through')}>
+                  {label}{optional && !grade.storyBeats[key] ? ' (optional)' : ''}
+                </span>
+              )
+            })}
           </div>
         </section>
 

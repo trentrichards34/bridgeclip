@@ -30,9 +30,9 @@ import { useSettingsStore } from '../store/use-settings-store'
 import type { LibraryClipPostingStatus } from '../../shared/library-posting'
 import type { Page as AppPage } from './Sidebar'
 
-/** Framework grade when graded (0-10), otherwise the planner's virality score (0-10). */
+/** Framework grade when graded, otherwise the planner's virality score, both on 0-10. */
 function clipRank(clip: ClipArtifact): number {
-  return clip.framework ? 10 + clip.framework.score : clip.virality_score * 10
+  return clip.framework ? clip.framework.score : clip.virality_score * 10
 }
 
 type Sort = 'score' | 'timeline' | 'editorial'

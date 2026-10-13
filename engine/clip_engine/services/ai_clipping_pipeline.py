@@ -36,7 +36,7 @@ from clip_engine.services.coherence_review import CoherenceReviewer, CoherenceRe
 from clip_engine.services.editorial_context import analyze_reactions, empty_report, repair_context_boundaries
 from clip_engine.services.editorial_vision import EditorialVision
 from clip_engine.services.editorial_review import protect_acknowledgments, review_duplicate_candidates, editorial_summary
-from clip_engine.services.framework_grader import FrameworkGrader, select_by_grade
+from clip_engine.services.framework_grader import GRADER_MODEL, FrameworkGrader, select_by_grade
 from clip_engine.services.intelligence_planner import (
     MAX_CLIP_REQUEST_CHARS,
     ClipPlanResponse,
@@ -443,31 +443,46 @@ class AIClippingPipeline:
             if not clip_plan.segments:
                 edit_audit['outcome'] = 'no_candidates'
                 raise NoRequestedMomentsError() if request.clip_request else NoClipCandidatesError()
+            framework_state = {'cost': 0.0, 'cost_incomplete': False, 'candidates': 0, 'graded': 0, 'kept': 0}
+            keep_all_grades = request.quality_bar == 'all' or bool(request.clip_request)
+
+            async def grade_segments(segments, target):
+                """Grade and filter candidates; any grading failure leaves them as planned."""
+                grader = FrameworkGrader(self.settings)
+                try:
+                    grades = await grader.grade(transcription_result.segments, segments)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:  # Grading is an optional quality pass.
+                    logger.warning(f"Framework grading unavailable: {type(error).__name__}")
+                    grades = {}
+                finally:
+                    await grader.close()
+                framework_state['cost'] += grader.cost_usd
+                framework_state['cost_incomplete'] |= grader.cost_incomplete
+                kept, _ = select_by_grade(segments, grades, request.quality_bar, target, keep_all=keep_all_grades)
+                for index, segment in enumerate(segments):
+                    if index in grades:
+                        segment.framework = {**grades[index].to_dict(), 'graded_interval': [segment.start_time_ms, segment.end_time_ms], 'graded_title': segment.summary or ''}
+                framework_state['candidates'] += len(segments)
+                framework_state['graded'] += len(grades)
+                return kept
+
             if grading:
                 self._update_progress(job_id, JobStatus.PLANNING, 33,
                     f"Grading {len(clip_plan.segments)} candidates against the content frameworks...",
                     stage_id="planning", stage_percent=None)
-                grader = FrameworkGrader(self.settings)
-                try:
-                    grades = await grader.grade(transcription_result.segments, clip_plan.segments)
-                finally:
-                    await grader.close()
-                for index, segment in enumerate(clip_plan.segments):
-                    if index in grades:
-                        segment.framework = grades[index].to_dict()
-                target = getattr(self.intelligence_planner, 'discovery_limit', None) or request.max_clips or 0
-                kept, dropped = select_by_grade(clip_plan.segments, grades, request.quality_bar, target,
-                    keep_all=request.quality_bar == 'all' or bool(request.clip_request))
-                edit_audit['framework'] = {'bar': request.quality_bar, 'candidates': len(clip_plan.segments), 'kept': len(kept),
-                    'graded': len(grades), 'cost_usd': grader.cost_usd,
-                    'grades': [{'title': seg.summary, 'interval': [seg.start_time_ms, seg.end_time_ms], **(seg.framework or {})} for seg in clip_plan.segments]}
-                logger.info(f"Framework grading kept {len(kept)} of {len(clip_plan.segments)} candidates (bar {request.quality_bar}, dropped {dropped})")
-                framework_cost = grader.cost_usd
+                planned = list(clip_plan.segments)
+                # Review projects get the target count; the automatic accept loop enforces its own limit
+                # and can fall back to later passing clips when editorial review rejects one.
+                review_target = (getattr(self.intelligence_planner, 'discovery_limit', None) or request.max_clips or 0) if request.workflow == 'review' else 0
+                kept = await grade_segments(planned, review_target)
+                edit_audit['framework'] = {'bar': request.quality_bar,
+                    'grades': [{'title': seg.summary, 'interval': [seg.start_time_ms, seg.end_time_ms], 'kept': seg in kept, **(seg.framework or {})} for seg in planned]}
+                logger.info(f"Framework grading kept {len(kept)} of {len(planned)} candidates (bar {request.quality_bar})")
                 clip_plan.segments = kept
                 clip_plan.total_clips = len(kept)
                 save_edit_audit()
-            else:
-                framework_cost = 0.0
             reviewer = CoherenceReviewer(coherence_service, self.settings, transcription_result.segments, round(video_duration * 1000))
             editorial_vision = EditorialVision(self.settings, download_result.video_path, work_dir, round(video_duration * 1000))
             reviewer.source_context = context_brief
@@ -483,7 +498,7 @@ class AIClippingPipeline:
                         stage_id=stage, stage_percent=percent))
                 edit_audit['outcome'] = 'ready_for_review'
                 save_edit_audit()
-                costs = source_context_cost + coherence_service.estimated_cost_usd
+                costs = source_context_cost + coherence_service.estimated_cost_usd + framework_state['cost']
                 for api in (transcription_result.api_costs, clip_plan.api_costs):
                     costs += getattr(api, 'estimated_cost_usd', 0) if api else 0
                 output = JobOutput(job_id=job_id, source_video_url=request.video_url,
@@ -563,6 +578,8 @@ class AIClippingPipeline:
                     pending = [c for c in extra.segments[:8]
                         if any(overlaps([c.start_time_ms, c.end_time_ms], span) for span in feedback['search_intervals'])
                         and not any(overlaps([c.start_time_ms, c.end_time_ms], old['interval']) for old in feedback['previous_candidates'])]
+                    if grading and pending:
+                        pending = await grade_segments(pending, 0)
                     edit_audit['discovery']['status'] = 'completed'
                     if extra.api_costs:
                         if clip_plan.api_costs:
@@ -582,6 +599,28 @@ class AIClippingPipeline:
                     break
             clip_plan.segments = accepted
             clip_plan.total_clips = len(accepted)
+            if grading and accepted:
+                # Editorial review can move boundaries or retitle a clip; grade what will actually render.
+                changed = [seg for seg in accepted if seg.framework and (seg.framework.get('graded_interval') != [seg.start_time_ms, seg.end_time_ms]
+                           or seg.framework.get('graded_title') != (seg.summary or ''))]
+                if changed:
+                    grader = FrameworkGrader(self.settings)
+                    try:
+                        regrades = await grader.grade(transcription_result.segments, changed)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        regrades = {}
+                    finally:
+                        await grader.close()
+                    framework_state['cost'] += grader.cost_usd
+                    framework_state['cost_incomplete'] |= grader.cost_incomplete
+                    for index, seg in enumerate(changed):
+                        if index in regrades:
+                            seg.framework = {**regrades[index].to_dict(), 'graded_interval': [seg.start_time_ms, seg.end_time_ms], 'graded_title': seg.summary or ''}
+                framework_state['kept'] = len(accepted)
+                edit_audit.setdefault('framework', {}).update({'candidates': framework_state['candidates'], 'graded': framework_state['graded'],
+                    'kept': len(accepted), 'cost_usd': framework_state['cost']})
             if not accepted:
                 edit_audit['outcome'] = 'no_approved_clips'
                 save_edit_audit()
@@ -1011,10 +1050,10 @@ class AIClippingPipeline:
                 api_costs['editorial_vision'] = {'provider': 'openrouter', 'model': self.settings.layout_vision_model,
                     'estimated_cost_usd': editorial_vision.cost_usd, 'attempts': editorial_vision.requests}
                 total_cost += editorial_vision.cost_usd
-            if framework_cost:
-                api_costs['framework_grading'] = {'provider': 'openrouter', 'model': self.settings.planner_model,
-                    'estimated_cost_usd': round(framework_cost, 6)}
-                total_cost += framework_cost
+            if framework_state['candidates']:
+                api_costs['framework_grading'] = {'provider': 'openrouter', 'model': GRADER_MODEL,
+                    'estimated_cost_usd': round(framework_state['cost'], 6), 'cost_incomplete': framework_state['cost_incomplete']}
+                total_cost += framework_state['cost']
             api_costs["total_estimated_cost_usd"] = round(total_cost, 6)
             api_costs["cost_incomplete"] = any(section.get("cost_incomplete", False) for section in api_costs.values() if isinstance(section, dict))
 
@@ -1043,6 +1082,8 @@ class AIClippingPipeline:
                     "hook_preview": request.hook_preview,
                     "clip_request": request.clip_request,
                     "quality_bar": request.quality_bar,
+                    "framework_grading": {"enabled": grading, "candidates": framework_state['candidates'],
+                                          "graded": framework_state['graded'], "kept": framework_state['kept']},
                 },
                 "transcription_status": transcription_status,
                 "planning_source": "visual" if visual_frames else "transcript",
