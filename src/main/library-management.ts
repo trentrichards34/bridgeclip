@@ -161,7 +161,7 @@ export async function deleteLibraryClips(outputDir: unknown, indices: unknown): 
     if (basename(file) !== `${name}.mp4` || realpathSync(dirname(file)) !== canonical) throw new Error('The selected clip is outside its Library run.')
     include(file)
     // Sidecars written next to each clip: framing, captions and upload notes.
-    for (const suffix of ['.framing.json', '.srt', '.youtube.txt']) include(join(run, `${name}${suffix}`))
+    for (const suffix of ['.framing.json', '.srt', '.youtube.txt', '.source.json']) include(join(run, `${name}${suffix}`))
     include(join(run, manualPostedFile(clip.clip_index)))
   }
   const changes: [string, Record<string, unknown>][] = []

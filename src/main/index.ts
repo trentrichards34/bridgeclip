@@ -1,6 +1,6 @@
 import { awaitEditorSaveBeforeClose, stopEditorsForQuit } from './clip-editor'
 import { stopAvatarRenderForQuit } from './avatar-studio'
-import { stopRemixForQuit } from './remix'
+import { cleanupAbandoned, stopRemixForQuit } from './remix'
 import { app, BrowserWindow, dialog, nativeTheme, shell, protocol } from 'electron'
 import { extname, join } from 'path'
 import { mkdirSync } from 'fs'
@@ -279,6 +279,8 @@ app.whenReady().then(() => {
   assistant = registerAssistant(() => mainWindow)
   const stopAutomations = startAutomationScheduler()
   void sweepDeletingRuns()
+  // Remix plans left in review when the app closed: drop their downloads (never finished videos).
+  void cleanupAbandoned(loadSettings().outputDirectory)
   app.on('before-quit', stopAutomations)
   createWindow()
   initAutoUpdater(() => mainWindow)

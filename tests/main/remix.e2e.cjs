@@ -92,9 +92,13 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   }, output)
   await page.getByRole('heading', { name: /Review your takes/ }).waitFor()
   await page.getByText(/6 remixes of Coach Example/).waitFor()
-  const openings = page.getByLabel('Opening (presenter)')
+  const openings = page.getByLabel(/^Opening \(presenter\), take/)
   assert.equal(await openings.count(), 2)
-  await openings.first().fill('Hold on. That is the biggest pull-up myth there is.')
+  await page.getByLabel('Opening (presenter), take 1').fill('Hold on. That is the biggest pull-up myth there is.')
+  // An over-long line is caught before anything is paid for.
+  await page.getByLabel('Close (presenter), take 1').fill(Array.from({ length: 40 }, () => 'word').join(' '))
+  await page.getByText('Keep the close to 35 words.').waitFor()
+  await page.getByLabel('Close (presenter), take 1').fill('Train the pull, not the scale.')
   const makeButton = page.getByRole('button', { name: /^Make 1 remix/ })
   await makeButton.waitFor()
   if (process.env.BRIDGECLIP_E2E_SHOTS) {

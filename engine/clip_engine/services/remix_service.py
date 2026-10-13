@@ -273,7 +273,11 @@ def unsupported_numbers(text: str, *sources: str) -> list[str]:
         if not key:
             continue
         plain_small = token.isdigit() and int(token) <= 10
-        if not plain_small and key not in known:
+        year = token.isdigit() and len(token) == 4 and 1900 <= int(token) <= 2099
+        start, end = match.span()
+        # Part of a name or phrase: COVID-19, 24/7, 9-5.
+        joined = (start > 0 and text[start - 1] in "-/") or (end < len(text) and text[end:end + 1] in "-/")
+        if not plain_small and not year and not joined and key not in known:
             missing.append(token)
     return missing
 
@@ -403,7 +407,9 @@ def run_checks(script: RemixScript, borrowed_ms: int, total_ms: int, credited: b
         Check("music", not music_in_excerpt,
               "No music detected in the borrowed part" if not music_in_excerpt else "Music in the borrowed part may trigger Content ID"),
         Check("stands_alone", not any("stands on its own" in n for n in script.notes), "The take stands on its own"),
-        Check("proof", not any("proof" in n for n in script.notes), "Numbers and results come from your Brand Identity"),
+        Check("proof", not any("proof" in n or "numbers" in n for n in script.notes),
+              "Numbers and results come from your Brand Identity" if not any("proof" in n or "numbers" in n for n in script.notes)
+              else "Check the numbers and results: some are not in your Brand Identity"),
     ]
     checks.append(Check("ai_label", True, "AI presenter marked on screen; turn on the platform's AI label when you post" if ai_presenter
                         else "AI voice: turn on the platform's AI label when you post"))
@@ -764,6 +770,7 @@ class RemixResult:
     excerpt_end_ms: int = 0
     creator: str = ""
     ai_presenter: bool = False
+    clip_index: int = 0
 
 
 Progress = Callable[[str, float], None]
@@ -994,12 +1001,20 @@ class Remixer:
             content, _ = message_text(body)
             grades = json.loads(content or "{}").get("grades")
             for item in grades if isinstance(grades, list) else []:
-                if not isinstance(item, dict) or not isinstance(item.get("id"), int) or not 0 <= item["id"] < len(scripts):
+                try:
+                    if not isinstance(item, dict) or type(item.get("id")) is not int or not 0 <= item["id"] < len(scripts):
+                        continue
+                    scores = {}
+                    for key in GRADE_WEIGHTS:
+                        value = float(item.get(key) or 0)
+                        scores[key] = max(0.0, min(10.0, value)) if math.isfinite(value) else 0.0
+                    letter, score = grade_letter(scores)
+                    scripts[item["id"]].grade = {"letter": letter, "score": score, "scores": scores,
+                                                 "verdict": _clean_line(item.get("verdict"), 40), "fix": _clean_line(item.get("fix"), 60)}
+                except (TypeError, ValueError):
                     continue
-                scores = {k: max(0.0, min(10.0, float(item.get(k) or 0))) for k in GRADE_WEIGHTS}
-                letter, score = grade_letter(scores)
-                scripts[item["id"]].grade = {"letter": letter, "score": score, "scores": scores,
-                                             "verdict": _clean_line(item.get("verdict"), 40), "fix": _clean_line(item.get("fix"), 60)}
+            if any(s.grade is None for s in scripts):
+                self.warnings.append("Some takes could not be graded; review those yourself.")
         except Exception as error:  # noqa: BLE001 - grading is advisory
             logger.warning(f"Remix grading failed: {type(error).__name__}: {error}")
             self.warnings.append("The takes could not be graded this time; review them yourself before rendering.")
@@ -1053,7 +1068,7 @@ class Remixer:
             await self._grade([s for _, s in scripts])
             drafts = [script_to_draft(s, i, src, saved_sources[src]["meta"], self.config.host) for i, (src, s) in enumerate(scripts)]
             with open(os.path.join(work, PLAN_FILE), "w", encoding="utf-8") as handle:
-                json.dump({"version": 1, "sources": saved_sources,
+                json.dump({"version": 1, "plan_cost_usd": round(self.cost_usd, 4), "sources": saved_sources,
                            "scripts": [{"source_index": src, **asdict(s)} for src, s in scripts]}, handle)
             self.progress("Ready for review", 100)
             return {"drafts": drafts, "cost_usd": round(self.cost_usd, 4), "warnings": self.warnings,
@@ -1073,27 +1088,37 @@ class Remixer:
         except (OSError, ValueError):
             raise RemixError("This review expired. Plan the remixes again.") from None
         sources = saved["sources"]
+        plan_cost = float(saved.get("plan_cost_usd") or 0)
         segments_by_source = [_segments_from_json(s["segments"]) for s in sources]
         scripts = saved["scripts"]
-        chosen: list[tuple[int, RemixScript]] = []
+        chosen: list[tuple[int, int, RemixScript]] = []
         brand = (self.config.brand_identity or "").strip()[:MAX_BRAND_CHARS]
         for edit in approved[:MAX_REMIXES * MAX_SOURCES]:
             draft_id = edit.get("id") if isinstance(edit, dict) else None
-            if not isinstance(draft_id, int) or not 0 <= draft_id < len(scripts):
+            if type(draft_id) is not int or not 0 <= draft_id < len(scripts):
                 continue
             item = scripts[draft_id]
             src = int(item["source_index"])
             transcript_text = " ".join(s.text for s in segments_by_source[src])
-            chosen.append((src, apply_edit(_script_from_json(item), edit, brand, transcript_text)))
+            try:
+                chosen.append((draft_id, src, apply_edit(_script_from_json(item), edit, brand, transcript_text)))
+            except RemixError as error:
+                self.warnings.append(f"Skipped “{str(item.get('headline'))[:60]}”: {error}")
         if not chosen:
+            await self.media.aclose()
             raise RemixError("Choose at least one remix to render.")
         results: list[RemixResult] = []
         first_error: Optional[BaseException] = None
         try:
-            for index, (src, script) in enumerate(chosen):
+            for index, (draft_id, src, script) in enumerate(chosen):
                 source = sources[src]
                 try:
-                    results.append(await self._one(index, len(chosen), script, source["video"], segments_by_source[src], source["meta"], root))
+                    if not os.path.isfile(source["video"]):
+                        raise RemixError("its source video is no longer there (it was moved or deleted). Plan it again.")
+                    result = await self._one(index, len(chosen), script, source["video"], segments_by_source[src], source["meta"], root)
+                    results.append(result)
+                    # Written after every remix: a cancel or crash keeps the finished ones in the Library.
+                    write_job_output(root, results, sources, plan_cost + self.cost_usd + self.media.cost_usd)
                 except Exception as error:  # noqa: BLE001 - keep the remixes already made
                     logger.warning(f"Remix {index + 1} failed: {type(error).__name__}: {error}")
                     first_error = first_error or error
@@ -1105,13 +1130,15 @@ class Remixer:
                 if isinstance(first_error, RemixError):
                     raise first_error
                 raise RemixError("No remix could be made.")
-            write_job_output(root, results, sources, self.cost_usd + self.media.cost_usd)
-            total = self.cost_usd + self.media.cost_usd
-            return {"remixes": [asdict(r) for r in results], "cost_usd": round(total, 4), "warnings": self.warnings}
+            total = plan_cost + self.cost_usd + self.media.cost_usd
+            return {"remixes": [asdict(r) for r in results], "cost_usd": round(total - plan_cost, 4), "warnings": self.warnings}
         finally:
             await self.media.aclose()
-            import shutil
-            shutil.rmtree(work, ignore_errors=True)
+            # Keep the plan when nothing was made, so the review can be retried
+            # without paying to plan again; otherwise the sources are no longer needed.
+            if results:
+                import shutil
+                shutil.rmtree(work, ignore_errors=True)
 
     async def _broll(self, queries: list[str], cache: str) -> list[Optional[str]]:
         key = getattr(self.settings, "pexels_api_key", None)
@@ -1156,7 +1183,8 @@ class Remixer:
         base = 2 + 96 * index / total
         step = 96 / total
         say = lambda detail, fraction: self.progress(f"Remix {index + 1} of {total}: {detail}", base + step * fraction)  # noqa: E731
-        name = f"{index + 1:02d} {safe_name(script.headline, f'Remix {index + 1}')}"
+        # Library naming (clip_NN) so remixes can be deleted and posted like clips.
+        name = f"clip_{index:02d}"
         work = os.path.join(root, ".work", f"remix-{index + 1}")
         os.makedirs(work, exist_ok=True)
         cost_before = self.media.cost_usd
@@ -1334,14 +1362,14 @@ class Remixer:
             "timeline": [{"part": kind, "start_seconds": round(starts[i], 2), "seconds": round(durations[i], 2)} for i, (kind, _) in enumerate(parts)],
             "checks": [asdict(c) for c in checks], "warnings": warnings, "cost_usd": round(remix_cost, 4),
         }
-        manifest_path = os.path.join(root, f"{name}.json")
+        manifest_path = os.path.join(root, f"{name}.source.json")
         with open(manifest_path, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle, indent=2, ensure_ascii=False)
         say("done", 1)
         return RemixResult(final, manifest_path, script.headline, script.stance, borrowed_ms / 1000, round(total_s, 2),
                            round(remix_cost, 4), [asdict(c) for c in checks], warnings, script.style,
                            (script.grade or {}).get("letter"), script.start_ms, script.end_ms, source_meta.get("creator") or "",
-                           ai_presenter)
+                           ai_presenter, index)
 
     async def _caption_words(self, assembled: str, work: str, script: RemixScript, segments: list[TranscriptSegment],
                              parts: list[tuple[str, str]], starts: list[float], durations: list[float]) -> list[TranscriptSegment]:
@@ -1372,15 +1400,14 @@ class Remixer:
         return words_to_segments(words)
 
 
-
 def write_job_output(root: str, results: list[RemixResult], sources: list[dict], cost_usd: float) -> None:
     """A Library-compatible result file, so remixes can be browsed and posted like clips."""
     first = sources[0]["meta"] if sources else {}
     title = f"Remix · {first.get('title') or 'video'}" + (f" (+{len(sources) - 1} more)" if len(sources) > 1 else "")
     clips = []
-    for index, result in enumerate(results):
+    for result in results:
         clips.append({
-            "clip_index": index, "s3_url": "file://" + os.path.abspath(result.path), "duration_ms": round(result.duration_seconds * 1000),
+            "clip_index": result.clip_index, "s3_url": "file://" + os.path.abspath(result.path), "duration_ms": round(result.duration_seconds * 1000),
             "start_time_ms": result.excerpt_start_ms, "end_time_ms": max(result.excerpt_start_ms, result.excerpt_end_ms),
             "virality_score": 0.0, "layout_type": "", "summary": result.headline, "headline": result.headline,
             "tags": [],

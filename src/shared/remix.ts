@@ -268,6 +268,27 @@ export function parseRemixDraft(value: unknown): RemixDraft | null {
   }
 }
 
+/** Word limits per line (the engine holds edits to the same limits). */
+export const REMIX_WORD_LIMITS = { headline: 16, intro: 45, beat: 45, close: 35 } as const
+
+export function wordCount(value: string): number {
+  return value.trim() ? value.trim().split(/\s+/).length : 0
+}
+
+/** What's wrong with an edited take, or null when it's ready to make. */
+export function remixEditProblem(edit: Pick<RemixEdit, 'headline' | 'intro' | 'beats' | 'close'>): string | null {
+  if (wordCount(edit.headline) < 3) return 'The headline needs at least 3 words.'
+  if (wordCount(edit.headline) > REMIX_WORD_LIMITS.headline) return `Keep the headline to ${REMIX_WORD_LIMITS.headline} words.`
+  if (!edit.intro.trim()) return 'Add an opening line.'
+  if (wordCount(edit.intro) > REMIX_WORD_LIMITS.intro) return `Keep the opening to ${REMIX_WORD_LIMITS.intro} words.`
+  if (!edit.beats.some((beat) => beat.text.trim())) return 'Keep at least one voice-over beat.'
+  const long = edit.beats.findIndex((beat) => wordCount(beat.text) > REMIX_WORD_LIMITS.beat)
+  if (long >= 0) return `Keep beat ${long + 1} to ${REMIX_WORD_LIMITS.beat} words.`
+  if (!edit.close.trim()) return 'Add a closing line.'
+  if (wordCount(edit.close) > REMIX_WORD_LIMITS.close) return `Keep the close to ${REMIX_WORD_LIMITS.close} words.`
+  return null
+}
+
 /** Approved edits from the renderer, checked in main before they reach the engine. */
 export function parseRemixEdits(value: unknown, draftIds: ReadonlySet<number>): RemixEdit[] {
   if (!Array.isArray(value) || value.length === 0) throw new Error('Choose at least one remix to make.')
@@ -283,7 +304,8 @@ export function parseRemixEdits(value: unknown, draftIds: ReadonlySet<number>): 
       return typeof b.text === 'string' && b.text.trim() ? [{ text: text(b.text, 400), broll: text(b.broll, 60) }] : []
     }).slice(0, 4) : []
     const headline = text(raw.headline, 200), intro = text(raw.intro, 400), close = text(raw.close, 400)
-    if (headline.split(' ').length < 3 || !intro || !close || beats.length === 0) throw new Error('Each remix needs a headline of 3+ words, an opening line, at least one beat and a closing line.')
+    const problem = remixEditProblem({ headline, intro, beats, close })
+    if (problem) throw new Error(`“${headline.slice(0, 60) || 'A take'}”: ${problem}`)
     edits.push({ id, headline, intro, beats, close })
   }
   if (edits.length === 0) throw new Error('Choose at least one remix to make.')

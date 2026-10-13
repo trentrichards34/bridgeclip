@@ -54,6 +54,7 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   // Several links, de-duplicated; the creator name only applies to a single video.
   const many = main.parseRemixRequest({ ...base, creator: 'X', sources: ['https://a.com/1', ' https://a.com/1 ', 'https://b.com/2'] }, userData).request
   assert.deepEqual(plain(many.sources), ['https://a.com/1', 'https://b.com/2'])
+  assert.equal(main.parseRemixRequest({ ...base, sources: ['https://a.com', 'https://a.com/'] }, userData).request.sources.length, 1)
   assert.equal(many.creator, '')
   assert.throws(() => main.parseRemixRequest({ ...base, sources: Array.from({ length: 11 }, (_, i) => `https://a.com/${i}`) }, userData), /up to 10/)
   assert.throws(() => main.parseRemixRequest({ ...base, order: 'random' }, userData), /order/)
@@ -141,8 +142,27 @@ test('drafts from the engine and edits from the renderer are checked', () => {
   ], ids)
   assert.deepEqual(plain(edits), [{ id: 2, headline: 'This coach says lose weight first', intro: 'Wrong.', close: 'Done.', beats: [{ text: 'Do negatives.', broll: 'gym' }] }])
   assert.throws(() => shared.parseRemixEdits([], ids), /at least one/)
-  assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'Too short', intro: 'x', close: 'y', beats: [{ text: 'z' }] }], ids), /3\+ words/)
+  assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'Too short', intro: 'x', close: 'y', beats: [{ text: 'z' }] }], ids), /at least 3 words/)
+  const long = Array.from({ length: 50 }, () => 'word').join(' ')
+  assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: long, close: 'y', beats: [{ text: 'z' }] }], ids), /“A fine long headline”: Keep the opening to 45 words/)
+  assert.equal(shared.remixEditProblem({ headline: 'A fine long headline', intro: 'x', close: 'y', beats: [{ text: ' ' }] }), 'Keep at least one voice-over beat.')
   assert.throws(() => shared.parseRemixEdits([{ id: 9 }], ids), /at least one/)
+})
+
+test('cleanup removes leftovers of abandoned runs but never finished videos', async () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'remix-clean-'))
+  const id = () => `remix-${require('node:crypto').randomUUID()}`
+  const abandoned = path.join(out, id()), finished = path.join(out, id()), cancelled = path.join(out, id()), other = path.join(out, 'remix-notes')
+  for (const dir of [abandoned, finished, cancelled, other]) fs.mkdirSync(path.join(dir, '.work'), { recursive: true })
+  fs.writeFileSync(path.join(abandoned, '.presenter.jpg'), 'x')
+  fs.writeFileSync(path.join(finished, 'job_output.json'), '{}')
+  fs.writeFileSync(path.join(cancelled, 'clip_00.mp4'), 'video')
+  await main.cleanupAbandoned(out)
+  assert.equal(fs.existsSync(abandoned), false)
+  assert.equal(fs.existsSync(path.join(finished, 'job_output.json')), true)
+  assert.equal(fs.existsSync(path.join(cancelled, 'clip_00.mp4')), true)
+  assert.equal(fs.existsSync(path.join(cancelled, '.work')), false)
+  assert.equal(fs.existsSync(path.join(other, '.work')), true, 'only remix-<uuid> folders are touched')
 })
 
 test('variety guard: too many remixes of one creator in a week gets a warning', async () => {

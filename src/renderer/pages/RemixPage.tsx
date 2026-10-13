@@ -5,7 +5,7 @@ import type { AvatarSummary } from '../../shared/avatars'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import {
   BRAND_IDENTITY_TEMPLATE, estimateRemixCost, isRunning, MAX_BRAND_IDENTITY_CHARS, MAX_SOURCES, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
-  remixSourceUrl, STANCE_LABELS, STYLE_LABELS,
+  REMIX_WORD_LIMITS, remixEditProblem, remixSourceUrl, STANCE_LABELS, STYLE_LABELS, wordCount,
   type BrandIdentity, type RemixAngle, type RemixDraft, type RemixEdit, type RemixHost, type RemixOrder, type RemixOutput, type RemixStatus
 } from '../../shared/remix'
 import type { Page as PageName } from '../components/Sidebar'
@@ -158,7 +158,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
 
       {status && (reviewing || busy || status.phase === 'done' || status.phase === 'failed' || status.phase === 'cancelled') && (
         <div className="mt-5">
-          {reviewing ? <ReviewPanel status={status} onError={setError} /> : (
+          {reviewing ? <ReviewPanel key={status.id} status={status} onError={setError} /> : (
             <Panel>
               <PanelHeader title={status.phase === 'planning' ? 'Writing your takes' : status.phase === 'rendering' ? 'Making your remixes' : 'Latest run'} />
               <div className="mt-4 space-y-3">
@@ -175,6 +175,9 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
       )}
 
       <div className="mt-5 space-y-5">
+        {reviewing && (
+          <Callout tone="info">The takes above use the settings they were planned with. Changes below apply to your next plan.</Callout>
+        )}
         <Panel>
           <PanelHeader title="1 · The videos" description={`Any public videos with a moment worth reacting to. Paste one link per line, up to ${MAX_SOURCES}.`} />
           <div className="mt-4 space-y-3">
@@ -335,11 +338,14 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
   const [edits, setEdits] = useState<Record<number, RemixEdit>>({})
   const [selected, setSelected] = useState<Set<number>>(() => new Set(ordered.filter((draft) => !draft.grade || 'ABC'.includes(draft.grade.letter)).map((draft) => draft.id)))
   const [working, setWorking] = useState(false)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
   const value = (draft: RemixDraft): RemixEdit => edits[draft.id] ?? { id: draft.id, headline: draft.headline, intro: draft.intro, beats: draft.beats, close: draft.close }
   const change = (draft: RemixDraft, patch: Partial<RemixEdit>): void => setEdits((current) => ({ ...current, [draft.id]: { ...value(draft), ...patch } }))
   const toggle = (id: number): void => setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const chosen = ordered.filter((draft) => selected.has(draft.id))
   const total = chosen.reduce((sum, draft) => sum + draft.estimateUsd, 0)
+  const problems = new Map(chosen.map((draft) => [draft.id, remixEditProblem(value(draft))]))
+  const blocked = [...problems.values()].some(Boolean)
 
   const make = async (): Promise<void> => {
     setWorking(true); onError(null)
@@ -347,6 +353,7 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
     finally { setWorking(false) }
   }
   const discard = async (): Promise<void> => {
+    if (!confirmDiscard) { setConfirmDiscard(true); return }
     setWorking(true); onError(null)
     try { await getApi().remix.discard() } catch (err) { onError(errorMessage(err)) } finally { setWorking(false) }
   }
@@ -356,10 +363,14 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
       <PanelHeader title={`Review your takes · ${status.drafts.length}`}
         description={`Graded on the Paid Creators frameworks, best first. Edit any line, untick the ones you don't want, then make the rest.${status.costUsd !== null ? ` Planning cost about $${status.costUsd.toFixed(2)}.` : ''}`} />
       <div className="mt-4 space-y-3">
-        {status.warnings.map((warning) => <Callout key={warning} tone="warning">{warning}</Callout>)}
-        {ordered.map((draft) => {
+        {status.error && <Callout tone="danger">{status.error} Your takes are still here, so you can try again.</Callout>}
+        {status.warnings.map((warning, i) => <Callout key={i} tone="warning">{warning}</Callout>)}
+        {ordered.map((draft, position) => {
           const current = value(draft)
           const on = selected.has(draft.id)
+          const take = `take ${position + 1}`
+          const problem = on ? problems.get(draft.id) : null
+          const counter = (text: string, limit: number): string => `${wordCount(text)} / ${limit} words`
           return (
             <div key={draft.id} className={cn('glass-tile space-y-3 rounded-2xl p-4', !on && 'opacity-60')}>
               <div className="flex items-start gap-3">
@@ -383,23 +394,34 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
                 <span className="font-medium text-ink">Their moment</span> · {((draft.endMs - draft.startMs) / 1000).toFixed(1)}s{draft.sourceTitle ? ` from “${draft.sourceTitle}”` : ''}
                 <p className="mt-0.5 italic">“{draft.quote}”</p>
               </div>
-              <Field label="Headline"><TextInput aria-label="Headline" value={current.headline} maxLength={120} onChange={(e) => change(draft, { headline: e.target.value })} /></Field>
-              <Field label="Opening (presenter)"><TextArea aria-label="Opening (presenter)" rows={2} value={current.intro} onChange={(e) => change(draft, { intro: e.target.value })} /></Field>
+              <Field label="Headline" hint={counter(current.headline, REMIX_WORD_LIMITS.headline)}>
+                <TextInput aria-label={`Headline, ${take}`} value={current.headline} maxLength={160} onChange={(e) => change(draft, { headline: e.target.value })} />
+              </Field>
+              <Field label="Opening (presenter)" hint={counter(current.intro, REMIX_WORD_LIMITS.intro)}>
+                <TextArea aria-label={`Opening (presenter), ${take}`} rows={2} value={current.intro} onChange={(e) => change(draft, { intro: e.target.value })} />
+              </Field>
               {current.beats.map((beat, index) => (
-                <Field key={index} label={`Beat ${index + 1} (voice-over on “${beat.broll}”)`}>
-                  <TextArea aria-label={`Beat ${index + 1}`} rows={2} value={beat.text} onChange={(e) => change(draft, { beats: current.beats.map((b, i) => i === index ? { ...b, text: e.target.value } : b) })} />
+                <Field key={index} label={`Beat ${index + 1} (voice-over on “${beat.broll}”)`} hint={counter(beat.text, REMIX_WORD_LIMITS.beat)}>
+                  <TextArea aria-label={`Beat ${index + 1}, ${take}`} rows={2} value={beat.text} onChange={(e) => change(draft, { beats: current.beats.map((b, i) => i === index ? { ...b, text: e.target.value } : b) })} />
                 </Field>
               ))}
-              <Field label="Close (presenter)"><TextArea aria-label="Close (presenter)" rows={2} value={current.close} onChange={(e) => change(draft, { close: e.target.value })} /></Field>
-              {draft.notes.map((note) => <p key={note} className="text-2xs text-warning"><AlertTriangle className="mr-1 inline h-3 w-3" />{note}</p>)}
+              <Field label="Close (presenter)" hint={counter(current.close, REMIX_WORD_LIMITS.close)}>
+                <TextArea aria-label={`Close (presenter), ${take}`} rows={2} value={current.close} onChange={(e) => change(draft, { close: e.target.value })} />
+              </Field>
+              {edits[draft.id] && draft.grade && <p className="text-2xs text-ink-subtle">Graded before your edits.</p>}
+              {problem && <p className="text-2xs text-danger" role="alert">{problem}</p>}
+              {draft.notes.map((note, i) => <p key={i} className="text-2xs text-warning"><AlertTriangle className="mr-1 inline h-3 w-3" />{note}</p>)}
             </div>
           )
         })}
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={working} disabled={working || chosen.length === 0} onClick={() => void make()}>
+          <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={working} disabled={working || chosen.length === 0 || blocked}
+            tooltip={blocked ? 'Fix the takes marked in red first' : undefined} onClick={() => void make()}>
             Make {chosen.length === 1 ? '1 remix' : `${chosen.length} remixes`}{chosen.length ? ` · about $${total.toFixed(2)}` : ''}
           </Button>
-          <Button variant="ghost" icon={<X className="h-4 w-4" />} disabled={working} onClick={() => void discard()}>Discard all</Button>
+          <Button variant={confirmDiscard ? 'danger' : 'ghost'} icon={<X className="h-4 w-4" />} disabled={working} onClick={() => void discard()}>
+            {confirmDiscard ? 'Click again to discard' : 'Discard all'}
+          </Button>
         </div>
       </div>
     </Panel>
@@ -409,9 +431,11 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
 function RemixProgress({ status }: { status: RemixStatus }): React.JSX.Element | null {
   if (status.phase === 'failed') return <Callout tone="danger">{status.error ?? 'The remix failed.'}</Callout>
   if (status.phase === 'cancelled') {
-    return status.detail === 'Discarded' ? <Callout tone="info">Takes discarded. Nothing was made.</Callout> : (
+    if (status.detail === 'Discarded') return <Callout tone="info">Takes discarded. Nothing was made.</Callout>
+    if (status.detail === 'Cancelled while planning') return <Callout tone="info">Cancelled before anything was made.</Callout>
+    return (
       <Callout tone="info" action={<Button size="sm" variant="secondary" onClick={() => void getApi().shell.openPath(status.folder)}>Open folder</Button>}>
-        Remix cancelled. Any remixes already finished are in the folder. Steps already running on OpenRouter may still be charged.
+        Remix cancelled. Any remixes already finished are in the folder and your Library. Steps already running on OpenRouter may still be charged.
       </Callout>
     )
   }
@@ -433,7 +457,7 @@ function RemixProgress({ status }: { status: RemixStatus }): React.JSX.Element |
         </p>
         <Button size="sm" variant="secondary" icon={<FolderOpen className="h-3.5 w-3.5" />} onClick={() => void getApi().shell.openPath(status.folder)}>Open folder</Button>
       </div>
-      {status.warnings.map((warning) => <Callout key={warning} tone="warning">{warning}</Callout>)}
+      {status.warnings.map((warning, i) => <Callout key={i} tone="warning">{warning}</Callout>)}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {status.outputs.map((output) => <RemixCard key={output.path} output={output} />)}
       </div>
@@ -462,7 +486,7 @@ function RemixCard({ output }: { output: RemixOutput }): React.JSX.Element {
           </li>
         ))}
       </ul>
-      {output.warnings.map((warning) => <p key={warning} className="text-2xs text-warning">{warning}</p>)}
+      {output.warnings.map((warning, i) => <p key={i} className="text-2xs text-warning">{warning}</p>)}
       <div className="flex gap-2">
         <Button size="sm" variant="secondary" icon={<FolderOpen className="h-3.5 w-3.5" />} onClick={() => void getApi().shell.showItemInFolder(output.path)}>Show in folder</Button>
         <Button size="sm" variant="ghost" icon={<FileText className="h-3.5 w-3.5" />} onClick={() => void getApi().shell.openPath(output.manifestPath)}>Source record</Button>

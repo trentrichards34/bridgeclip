@@ -354,7 +354,9 @@ def test_a_failed_remix_keeps_the_ones_already_made(tmp_path, monkeypatch):
     async def source(src, work, single):
         if src.endswith("broken"):
             raise RuntimeError("download failed")
-        return "v.mp4", {"url": src, "title": "t", "creator": "c", "platform": "youtube"}
+        video = tmp_path / "v.mp4"
+        video.write_bytes(b"v")
+        return str(video), {"url": src, "title": "t", "creator": "c", "platform": "youtube"}
 
     async def transcribe(video, work):
         return transcript()
@@ -368,7 +370,8 @@ def test_a_failed_remix_keeps_the_ones_already_made(tmp_path, monkeypatch):
     async def one(index, total, script, *rest):
         if index == 1:
             raise OSError("disk hiccup")
-        return remix.RemixResult(str(tmp_path / f"{index}.mp4"), str(tmp_path / f"{index}.json"), script.headline, script.stance, 4.0, 25.0, 0.1, [], [])
+        return remix.RemixResult(str(tmp_path / f"{index}.mp4"), str(tmp_path / f"{index}.json"), script.headline, script.stance, 4.0, 25.0, 0.1, [], [],
+                                 clip_index=index)
     remixer = remix.Remixer(config, media=Media(), settings=settings)
     for name, fn in (("_source", source), ("_transcribe", transcribe), ("_plan", plan), ("_grade", grade)):
         monkeypatch.setattr(remixer, name, fn)
@@ -380,6 +383,52 @@ def test_a_failed_remix_keeps_the_ones_already_made(tmp_path, monkeypatch):
     assert [os.path.basename(r["path"]) for r in result["remixes"]] == ["0.mp4", "2.mp4"]
     assert any("Remix 2 could not be made" in w for w in result["warnings"])
     assert os.path.isfile(tmp_path / "job_output.json") and not os.path.exists(tmp_path / ".work")
+    job = json.load(open(tmp_path / "job_output.json"))
+    assert [c["clip_index"] for c in job["clips"]] == [0, 2]
+
+
+def test_a_render_where_nothing_works_keeps_the_plan_for_a_retry(tmp_path, monkeypatch):
+    settings = SimpleNamespace(openrouter_api_key="k", openrouter_base_url="https://x.test/api/v1", planner_model="m",
+                               get_planner_fallback_models=lambda: [], pexels_api_key=None)
+
+    class Media:
+        cost_usd = 0.0
+
+        async def aclose(self):
+            pass
+    config = remix.RemixConfig(sources=["https://example.com/v"], output_dir=str(tmp_path), host="voice", count=1)
+    scripts = remix.parse_plan({"remixes": [plan_item(4, 8)]}, transcript(), "", 1)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"v")
+
+    async def source(src, work, single):
+        return str(video), {"url": src, "title": "t", "creator": "c", "platform": "youtube"}
+
+    async def transcribe(video, work):
+        return transcript()
+
+    async def plan(segments, meta):
+        return scripts
+
+    async def grade(items):
+        pass
+
+    async def one(*args):
+        raise remix.RemixError("OpenRouter reports insufficient credits.")
+    remixer = remix.Remixer(config, media=Media(), settings=settings)
+    for name, fn in (("_source", source), ("_transcribe", transcribe), ("_plan", plan), ("_grade", grade)):
+        monkeypatch.setattr(remixer, name, fn)
+    asyncio.run(remixer.plan())
+    remixer = remix.Remixer(config, media=Media(), settings=settings)
+    monkeypatch.setattr(remixer, "_one", one)
+    with pytest.raises(remix.RemixError, match="credits"):
+        asyncio.run(remixer.render([{"id": 0}]))
+    assert os.path.isfile(tmp_path / ".work" / remix.PLAN_FILE) and not os.path.exists(tmp_path / "job_output.json")
+
+
+def test_numbers_in_names_and_years_are_not_flagged():
+    assert remix.unsupported_numbers("In 2024 during COVID-19 he worked 24/7 on a 9-5", "") == []
+    assert remix.unsupported_numbers("He made $40,000", "") == ["$40,000"]
 
 
 def test_edits_keep_limits_and_flag_new_numbers():
@@ -387,6 +436,8 @@ def test_edits_keep_limits_and_flag_new_numbers():
     script.grade = {"letter": "B"}
     edited = remix.apply_edit(script, {"intro": "I made $9,999 last week doing this one thing every single day."}, "", "")
     assert edited.intro.startswith("I made $9,999") and any("numbers" in n for n in edited.notes) and edited.grade["edited"]
+    checks = {c.id: c for c in remix.run_checks(edited, 4000, 30000, True, False, True)}
+    assert not checks["proof"].ok
     assert remix.apply_edit(script, {}, "", "").grade == {"letter": "B"}
     with pytest.raises(remix.RemixError):
         remix.apply_edit(script, {"headline": "Too short"}, "", "")

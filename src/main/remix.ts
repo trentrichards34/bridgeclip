@@ -150,7 +150,9 @@ export interface ParsedRemix { request: RemixRequest; sourceIsUrl: boolean }
 export function parseRemixRequest(value: unknown, outputDirectory: string): ParsedRemix {
   const raw = (value ?? {}) as Record<string, unknown>
   const given = Array.isArray(raw.sources) ? raw.sources : typeof raw.source === 'string' ? [raw.source] : []
-  const sources = [...new Set(given.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean))]
+  const trimmed = given.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean)
+  // De-duplicate after normalizing, so the same video pasted twice isn't planned twice.
+  const sources = [...new Set(trimmed.map((item) => remixSourceUrl(item) ?? item))]
   if (sources.length === 0) throw new Error('Paste a video link or choose a file.')
   if (sources.length > MAX_SOURCES) throw new Error(`Add up to ${MAX_SOURCES} videos per run.`)
   const urls = sources.map(remixSourceUrl)
@@ -212,9 +214,12 @@ let starting = false
 /** The avatar and cancel request for a run still in its pre-flight checks. */
 let pending: { avatarId: string | null; cancelled: boolean } | null = null
 
-/** The avatar a remix is using (running or waiting for review), so it can't be deleted mid-run. */
+/**
+ * Avatars a remix needs right now. A run uses its own copy of the photo once
+ * it starts, so only a run still in its pre-flight checks needs the original.
+ */
 export function remixAvatarInUse(): string | null {
-  return active?.avatarId ?? reviewing?.avatarId ?? pending?.avatarId ?? null
+  return pending?.avatarId ?? null
 }
 
 // Variety guard: how often each creator was remixed recently (platforms flag repetitive reposting).
@@ -267,13 +272,12 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       photo = portraitPath(request.avatarId)
       if (!existsSync(photo)) throw new Error('That avatar’s photo is missing. Choose another avatar.')
     }
-    // Starting a new plan replaces one waiting for review, and clears plans
-    // abandoned when the app closed (downloaded sources, no finished videos).
-    if (reviewing) await discardRemix()
-    await cleanupAbandoned(settings.outputDirectory)
     // `remix-…` (not a bare id): the Library lists it only once it has finished videos.
     const folder = join(settings.outputDirectory, `remix-${randomUUID()}`)
     await preflight(folder)
+    // Only once the new run can start: it replaces takes waiting for review.
+    if (reviewing) await discardRemix()
+    await cleanupAbandoned(settings.outputDirectory, folder)
     // The run reads its own copy, so editing or deleting the avatar can't break it.
     if (photo) {
       const copy = join(folder, '.presenter.jpg')
@@ -320,14 +324,23 @@ export async function renderRemix(value: unknown): Promise<RemixStatus> {
   return run.status
 }
 
-async function cleanupAbandoned(outputDirectory: string): Promise<void> {
+/**
+ * Remove what abandoned remix runs left behind (downloaded sources, plans,
+ * the presenter copy). Finished videos are never deleted: a folder is only
+ * removed when nothing but those leftovers is in it.
+ */
+export async function cleanupAbandoned(outputDirectory: string, keep: string | null = null): Promise<void> {
   let names: string[] = []
   try { names = await readdir(outputDirectory) } catch { return }
   for (const name of names) {
     if (!/^remix-[0-9a-f-]{36}$/.test(name)) continue
     const folder = join(outputDirectory, name)
-    if (existsSync(join(folder, 'job_output.json'))) continue
-    await rm(folder, { recursive: true, force: true }).catch(() => undefined)
+    if (folder === keep || folder === active?.status.folder || folder === reviewing?.status.folder) continue
+    try {
+      await rm(join(folder, '.work'), { recursive: true, force: true })
+      await rm(join(folder, '.presenter.jpg'), { force: true })
+      if ((await readdir(folder)).length === 0) await rm(folder, { recursive: true, force: true })
+    } catch { /* best effort */ }
   }
 }
 
@@ -391,7 +404,8 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     const planning = run.status.phase === 'planning'
     if (run.cancelled) {
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
-      finish(run, { phase: 'cancelled', detail: 'Cancelled' })
+      else await rm(join(run.status.folder, '.presenter.jpg'), { force: true }).catch(() => undefined)
+      finish(run, { phase: 'cancelled', detail: planning ? 'Cancelled while planning' : 'Cancelled' })
       return
     }
     const warnings = Array.isArray(result?.warnings) ? result.warnings.filter((w): w is string => typeof w === 'string').map((w) => w.slice(0, 400)).slice(0, 12) : []
@@ -412,6 +426,11 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
       const message = typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : 'The remix could not be made. Check Settings → System check, then try again.'
       logger.warn('remix.failed', { stderr: stderr.slice(-1500) })
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
+      // Nothing was made but the plan is still there: back to review to retry without planning (and paying) again.
+      if (!planning && existsSync(join(run.status.folder, '.work', 'plan.json'))) {
+        finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, error: message, warnings })
+        return
+      }
       finish(run, { phase: 'failed', error: message })
     }
   }
