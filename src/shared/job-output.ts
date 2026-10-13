@@ -1,9 +1,12 @@
 import { parseRunDiagnostics } from './run-diagnostics'
 import { parseStages } from './job-progress'
 import { parseEditorialSummary, type EditorialSummary } from './editorial'
+import { parseFrameworkGrade, type FrameworkGrade } from './framework-grade'
 
 export interface ClipArtifact {
   editorial?: EditorialSummary | null
+  /** Paid Creators framework grade, when grading ran. */
+  framework?: FrameworkGrade | null
   clip_index: number
   s3_url: string
   duration_ms: number
@@ -97,6 +100,11 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
     if (typeof requested.layout_vision_enabled === 'boolean') safe.layout_vision_enabled = requested.layout_vision_enabled
     if (requested.pacing === 'tight' || requested.pacing === 'natural') safe.pacing = requested.pacing
     if (typeof requested.video_speed === 'number' && Number.isFinite(requested.video_speed) && requested.video_speed >= 1 && requested.video_speed <= 2) safe.video_speed = requested.video_speed
+    if (['a', 'b', 'c', 'all', 'off'].includes(requested.quality_bar as string)) safe.quality_bar = requested.quality_bar
+    const grading = requested.framework_grading
+    if (record(grading) && typeof grading.enabled === 'boolean' && nonNegative(grading.candidates) && nonNegative(grading.graded) && nonNegative(grading.kept)) {
+      safe.framework_grading = { enabled: grading.enabled, candidates: grading.candidates, graded: grading.graded, kept: grading.kept }
+    }
     result.requested_settings = safe
   }
   for (const field of ['planned_clip_count', 'rendered_clip_count', 'failed_clip_count', 'uploaded_clip_count',
@@ -138,7 +146,7 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
   if (record(costs) && finite(costs.total_estimated_cost_usd) && costs.total_estimated_cost_usd >= 0) {
     const safeCosts: Record<string, unknown> = { total_estimated_cost_usd: costs.total_estimated_cost_usd }
     if (typeof costs.cost_incomplete === 'boolean') safeCosts.cost_incomplete = costs.cost_incomplete
-    for (const name of ['transcription', 'planning', 'layout_vision', 'source_context', 'editorial', 'editorial_vision', 'editorial_repair']) {
+    for (const name of ['transcription', 'planning', 'layout_vision', 'source_context', 'editorial', 'editorial_vision', 'editorial_repair', 'framework_grading']) {
       const section = costs[name]
       if (!record(section)) continue
       const safe: Record<string, unknown> = {}
@@ -172,6 +180,7 @@ export function parseJobOutput(value: unknown): JobOutput | null {
     indices.add(item.clip_index as number)
     clips.push({
       editorial: parseEditorialSummary(item.editorial),
+      framework: parseFrameworkGrade(item.framework),
       clip_index: item.clip_index as number,
       s3_url: item.s3_url,
       duration_ms: item.duration_ms,

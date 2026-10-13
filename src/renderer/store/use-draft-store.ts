@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { QualityBar } from '../../shared/jobs'
 
 /** The Create wizard's steps, in order. */
 export type WizardStep = 'video' | 'format' | 'clips' | 'captions' | 'review'
@@ -44,6 +45,8 @@ export interface ClipDraft {
   broll: 'off' | 'after-hook' | 'full'
   /** Hook preview (Automatic): open with the clip's strongest line. */
   hookPreview: boolean
+  /** Framework grading bar: keep clips graded at or above it. */
+  qualityBar: QualityBar
   trimOpen: boolean
   trimStart: string
   trimEnd: string
@@ -82,6 +85,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   backgroundVideo: null,
   broll: 'off',
   hookPreview: false,
+  qualityBar: 'b',
   trimOpen: false,
   trimStart: '',
   trimEnd: '',
