@@ -35,6 +35,7 @@ export interface ApiCosts {
   source_context?: LayoutVisionCost
   editorial?: LayoutVisionCost
   editorial_repair?: LayoutVisionCost
+  framework_grading?: LayoutVisionCost
   editorial_vision?: LayoutVisionCost
   layout_vision?: LayoutVisionCost
   total_estimated_cost_usd: number
