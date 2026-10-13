@@ -1,15 +1,15 @@
 import { app } from 'electron'
 import { execFile, execFileSync, spawn, type ChildProcess } from 'child_process'
-import { randomBytes } from 'crypto'
+import { randomBytes, randomUUID } from 'crypto'
 import { existsSync } from 'fs'
 import { access, constants as fsConstants, copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
 import { delimiter, dirname, extname, join } from 'path'
 import { promisify } from 'util'
-import { isAvatarId, renderFolderName } from '../shared/avatars'
+import { isAvatarId } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
 import {
-  estimateRemixCost, isRemixAngle, isRemixHost, MAX_BRAND_IDENTITY_CHARS, MAX_REMIXES, parseRemixOutput, REMIX_ANGLES, REMIX_VOICE_IDS, remixSourceUrl,
-  type BrandIdentity, type RemixOutput, type RemixRequest, type RemixStatus
+  estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_BRAND_IDENTITY_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput,
+  REMIX_VOICE_IDS, remixSourceUrl, type BrandIdentity, type RemixDraft, type RemixOutput, type RemixRequest, type RemixStatus
 } from '../shared/remix'
 import { portraitPath, readAvatar } from './avatars'
 import { logger } from './logger'
@@ -104,20 +104,33 @@ export async function readBrandIdentityFile(path: string): Promise<{ name: strin
 }
 
 // ---------------------------------------------------------------------------
-// Remix runs
+// Remix runs: plan (download, transcribe, write and grade takes) → review
+// (the user edits or drops drafts; nothing paid for yet) → render.
 // ---------------------------------------------------------------------------
 
-interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null }
+interface RunContext {
+  request: RemixRequest
+  /** The engine config shared by both phases. */
+  config: Record<string, unknown>
+  draftIds: Set<number>
+  planCostUsd: number
+}
+
+interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null; context: RunContext }
 
 let active: ActiveRemix | null = null
+/** A planned run waiting for the user's review (not running, but holds the folder and drafts). */
+let reviewing: ActiveRemix | null = null
 let lastStatus: RemixStatus | null = null
 let notify: (status: RemixStatus) => void = () => undefined
 
 export function onRemixStatus(listener: (status: RemixStatus) => void): void { notify = listener }
-export function remixStatus(): RemixStatus | null { return active?.status ?? lastStatus }
+export function remixStatus(): RemixStatus | null { return active?.status ?? reviewing?.status ?? lastStatus }
+
+function running(run: ActiveRemix): boolean { return run.status.phase === 'planning' || run.status.phase === 'rendering' }
 
 function publish(run: ActiveRemix, patch: Partial<RemixStatus>): void {
-  if (run.status.phase !== 'running') return
+  if (!running(run)) return
   run.status = { ...run.status, ...patch, percent: Math.max(run.status.percent, Math.min(100, Math.round(patch.percent ?? run.status.percent))) }
   notify(run.status)
 }
@@ -126,21 +139,30 @@ function finish(run: ActiveRemix, patch: Partial<RemixStatus>): void {
   run.status = { ...run.status, ...patch }
   lastStatus = run.status
   if (active === run) active = null
+  reviewing = run.status.phase === 'review' ? run : reviewing === run ? null : reviewing
   notify(run.status)
 }
+
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.mkv', '.webm', '.avi', '.flv'])
 
 export interface ParsedRemix { request: RemixRequest; sourceIsUrl: boolean }
 
 export function parseRemixRequest(value: unknown, outputDirectory: string): ParsedRemix {
   const raw = (value ?? {}) as Record<string, unknown>
-  const source = typeof raw.source === 'string' ? raw.source.trim() : ''
-  if (!source) throw new Error('Paste a video link or choose a file.')
-  const url = remixSourceUrl(source)
-  if (!url) {
-    try { assertMediaPath(source, outputDirectory) } catch { throw new Error('Paste a full video link (https://…) or choose the file again.') }
-    if (!VIDEO_EXTENSIONS.has(extname(source).toLowerCase())) throw new Error('Choose a video file (MP4, MOV, MKV or WebM).')
+  const given = Array.isArray(raw.sources) ? raw.sources : typeof raw.source === 'string' ? [raw.source] : []
+  const sources = [...new Set(given.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean))]
+  if (sources.length === 0) throw new Error('Paste a video link or choose a file.')
+  if (sources.length > MAX_SOURCES) throw new Error(`Add up to ${MAX_SOURCES} videos per run.`)
+  const urls = sources.map(remixSourceUrl)
+  const local = sources.filter((_, i) => !urls[i])
+  if (local.length > 0) {
+    if (sources.length > 1) throw new Error('Use one file at a time, or paste links (one per line) for several videos.')
+    try { assertMediaPath(local[0], outputDirectory) } catch { throw new Error('Paste full video links (https://…) or choose the file again.') }
+    if (!VIDEO_EXTENSIONS.has(extname(local[0]).toLowerCase())) throw new Error('Choose a video file (MP4, MOV, MKV or WebM).')
   }
   if (!isRemixAngle(raw.angle)) throw new Error('Choose a remix style.')
+  const order = raw.order === undefined ? 'moment_first' : raw.order
+  if (!isRemixOrder(order)) throw new Error('Choose the order of the video.')
   if (!isRemixHost(raw.host)) throw new Error('Choose how your presenter appears.')
   const avatarId = raw.host === 'voice' ? null : raw.avatarId
   if (raw.host !== 'voice' && !isAvatarId(avatarId)) throw new Error('Choose an avatar, or switch to voice only.')
@@ -148,17 +170,18 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   if (!voice) throw new Error('Choose a voice.')
   const brandIdentityId = raw.brandIdentityId === null || raw.brandIdentityId === undefined ? null : raw.brandIdentityId
   if (brandIdentityId !== null && !isBrandId(brandIdentityId)) throw new Error('Choose a brand identity.')
-  if (typeof raw.count !== 'number' || !Number.isInteger(raw.count) || raw.count < 1 || raw.count > MAX_REMIXES) throw new Error(`Make between 1 and ${MAX_REMIXES} remixes.`)
+  if (typeof raw.count !== 'number' || !Number.isInteger(raw.count) || raw.count < 1 || raw.count > MAX_REMIXES) throw new Error(`Make between 1 and ${MAX_REMIXES} remixes per video.`)
   if (!isCaptionPresetId(raw.captionPreset)) throw new Error('Choose a caption style.')
   const creator = typeof raw.creator === 'string' ? raw.creator.replace(/\s+/g, ' ').trim() : ''
   if (creator.length > 80) throw new Error('Keep the creator name under 80 characters.')
-  if (!url && !creator) throw new Error('Add the original creator’s name so the video credits them.')
+  if (local.length > 0 && !creator) throw new Error('Add the original creator’s name so the video credits them.')
   if (raw.aiLabelAck !== true) throw new Error('Confirm you’ll turn on the AI-content label when you post.')
   return {
-    sourceIsUrl: Boolean(url),
+    sourceIsUrl: local.length === 0,
     request: {
-      source: url ?? source, creator, angle: raw.angle, host: raw.host, avatarId: avatarId as string | null, voice, brandIdentityId,
-      count: raw.count, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: raw.aiLabelAck === true
+      sources: sources.map((source, i) => urls[i] ?? source), creator: sources.length === 1 ? creator : '', angle: raw.angle, order,
+      host: raw.host, avatarId: avatarId as string | null, voice, brandIdentityId,
+      count: raw.count, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: true
     }
   }
 }
@@ -176,8 +199,6 @@ async function preflight(folder: string): Promise<void> {
   catch { throw new Error('The output folder is not writable. Choose another in Settings → Output.') }
 }
 
-const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.mkv', '.webm', '.avi', '.flv'])
-
 function kill(child?: ChildProcess, force = false, sync = false): void {
   if (!child?.pid) return
   try {
@@ -191,9 +212,45 @@ let starting = false
 /** The avatar and cancel request for a run still in its pre-flight checks. */
 let pending: { avatarId: string | null; cancelled: boolean } | null = null
 
-/** The avatar a remix is using, so it can't be deleted mid-run. */
+/** The avatar a remix is using (running or waiting for review), so it can't be deleted mid-run. */
 export function remixAvatarInUse(): string | null {
-  return active?.avatarId ?? pending?.avatarId ?? null
+  return active?.avatarId ?? reviewing?.avatarId ?? pending?.avatarId ?? null
+}
+
+// Variety guard: how often each creator was remixed recently (platforms flag repetitive reposting).
+const LEDGER_DAYS = 7
+const LEDGER_LIMIT = 5
+
+function ledgerPath(): string { return join(app.getPath('userData'), 'remix-ledger.json') }
+
+async function readLedger(): Promise<{ creator: string; at: string }[]> {
+  try {
+    const items = JSON.parse(await readFile(ledgerPath(), 'utf8')) as unknown
+    const cutoff = Date.now() - LEDGER_DAYS * 86_400_000
+    return Array.isArray(items) ? items.filter((item): item is { creator: string; at: string } =>
+      Boolean(item) && typeof item.creator === 'string' && typeof item.at === 'string' && Date.parse(item.at) > cutoff).slice(-2000) : []
+  } catch { return [] }
+}
+
+async function recordCreators(creators: string[]): Promise<void> {
+  try {
+    const items = [...await readLedger(), ...creators.filter(Boolean).map((creator) => ({ creator: creator.toLowerCase().slice(0, 120), at: new Date().toISOString() }))]
+    await writeFile(ledgerPath(), JSON.stringify(items.slice(-2000)), 'utf8')
+  } catch { /* advisory only */ }
+}
+
+export async function varietyWarnings(drafts: RemixDraft[]): Promise<string[]> {
+  const ledger = await readLedger()
+  const counts = new Map<string, number>()
+  for (const item of ledger) counts.set(item.creator, (counts.get(item.creator) ?? 0) + 1)
+  const warnings: string[] = []
+  const planned = new Map<string, number>()
+  for (const draft of drafts) if (draft.creator) planned.set(draft.creator, (planned.get(draft.creator) ?? 0) + 1)
+  for (const [creator, count] of planned) {
+    const total = (counts.get(creator.toLowerCase()) ?? 0) + count
+    if (total > LEDGER_LIMIT) warnings.push(`You'd post ${total} remixes of ${creator} this week. Platforms can treat that as repetitive reposting; mix in other creators.`)
+  }
+  return warnings
 }
 
 export async function startRemix(value: unknown): Promise<RemixStatus> {
@@ -210,8 +267,12 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       photo = portraitPath(request.avatarId)
       if (!existsSync(photo)) throw new Error('That avatar’s photo is missing. Choose another avatar.')
     }
-    const angle = REMIX_ANGLES.find((item) => item.id === request.angle)?.label ?? 'Remix'
-    const folder = join(settings.outputDirectory, 'Remix', renderFolderName(`${angle} ${request.creator || ''}`.trim(), new Date()))
+    // Starting a new plan replaces one waiting for review, and clears plans
+    // abandoned when the app closed (downloaded sources, no finished videos).
+    if (reviewing) await discardRemix()
+    await cleanupAbandoned(settings.outputDirectory)
+    // `remix-…` (not a bare id): the Library lists it only once it has finished videos.
+    const folder = join(settings.outputDirectory, `remix-${randomUUID()}`)
     await preflight(folder)
     // The run reads its own copy, so editing or deleting the avatar can't break it.
     if (photo) {
@@ -219,29 +280,75 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       await copyFile(photo, copy)
       photo = copy
     }
-    if (pending.cancelled) throw new Error('Cancelled before it started.')
+    if (pending.cancelled) { await rm(folder, { recursive: true, force: true }); throw new Error('Cancelled before it started.') }
+    const context: RunContext = {
+      request, draftIds: new Set(), planCostUsd: 0,
+      config: {
+        sources: request.sources, output_dir: folder, angle: request.angle, order: request.order, count: request.count, host: request.host,
+        voice: request.voice, avatar_photo: photo, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
+        caption_preset: request.captionPreset, include_captions: request.includeCaptions
+      }
+    }
     const run: ActiveRemix = {
-      cancelled: false, avatarId: request.avatarId,
+      cancelled: false, avatarId: request.avatarId, context,
       status: {
-        id: randomBytes(6).toString('hex'), phase: 'running', detail: 'Starting', percent: 1, folder,
-        estimateUsd: estimateRemixCost(request.host, request.count).total, outputs: [], costUsd: null, warnings: [], error: null
+        id: randomBytes(6).toString('hex'), phase: 'planning', detail: 'Starting', percent: 1, folder,
+        estimateUsd: estimateRemixCost(request.host, request.count * request.sources.length).total,
+        drafts: [], outputs: [], costUsd: null, warnings: [], error: null
       }
     }
     active = run
     notify(run.status)
-    execute(run, request, {
-      source: request.source, output_dir: folder, angle: request.angle, count: request.count, host: request.host, voice: request.voice,
-      avatar_photo: photo, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
-      caption_preset: request.captionPreset, include_captions: request.includeCaptions
-    }).catch((error: unknown) => {
-      logger.warn('remix.spawn.failed', { message: String(error).slice(0, 300) })
-      finish(run, { phase: 'failed', error: 'The clipping engine could not start. Run Settings → System check.' })
-    })
+    launch(run, { ...context.config, mode: 'plan' })
     return run.status
   } finally { starting = false; pending = null }
 }
 
-async function execute(run: ActiveRemix, request: RemixRequest, config: Record<string, unknown>): Promise<void> {
+/** Render the drafts the user approved (with their edits). */
+export async function renderRemix(value: unknown): Promise<RemixStatus> {
+  if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
+  const run = reviewing
+  if (!run || run.status.phase !== 'review') throw new Error('There is nothing waiting for review. Plan the remixes again.')
+  const edits = parseRemixEdits(value, run.context.draftIds)
+  reviewing = null
+  active = run
+  run.cancelled = false
+  run.status = { ...run.status, phase: 'rendering', detail: 'Starting', percent: 1, error: null,
+    estimateUsd: run.status.drafts.filter((draft) => edits.some((edit) => edit.id === draft.id)).reduce((sum, draft) => sum + draft.estimateUsd, 0) }
+  notify(run.status)
+  launch(run, { ...run.context.config, mode: 'render', approved: edits })
+  return run.status
+}
+
+async function cleanupAbandoned(outputDirectory: string): Promise<void> {
+  let names: string[] = []
+  try { names = await readdir(outputDirectory) } catch { return }
+  for (const name of names) {
+    if (!/^remix-[0-9a-f-]{36}$/.test(name)) continue
+    const folder = join(outputDirectory, name)
+    if (existsSync(join(folder, 'job_output.json'))) continue
+    await rm(folder, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+/** Drop a plan waiting for review and its downloaded sources. */
+export async function discardRemix(): Promise<boolean> {
+  const run = reviewing
+  if (!run) return false
+  reviewing = null
+  await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
+  finish(run, { phase: 'cancelled', detail: 'Discarded', drafts: [] })
+  return true
+}
+
+function launch(run: ActiveRemix, config: Record<string, unknown>): void {
+  execute(run, config).catch((error: unknown) => {
+    logger.warn('remix.spawn.failed', { message: String(error).slice(0, 300) })
+    finish(run, { phase: 'failed', error: 'The clipping engine could not start. Run Settings → System check.' })
+  })
+}
+
+async function execute(run: ActiveRemix, config: Record<string, unknown>): Promise<void> {
   const settings = loadSettings(), engine = getEnginePath()
   const env: Record<string, string | undefined> = {
     ...runtimeEnvironment(), ...getSettingsForBridge(settings), LAYOUT_VISION_ENABLED: 'false',
@@ -250,7 +357,8 @@ async function execute(run: ActiveRemix, request: RemixRequest, config: Record<s
   const ffmpegPath = resolveBinary('ffmpeg')
   if (ffmpegPath !== 'ffmpeg') env.PATH = `${dirname(ffmpegPath)}${delimiter}${env.PATH ?? ''}`
   const python = resolvePythonPath(engine, settings.pythonPath)
-  logger.info('remix.start', { angle: request.angle, host: request.host, count: request.count, brand: Boolean(request.brandIdentityId) })
+  const request = run.context.request
+  logger.info('remix.start', { mode: config.mode, angle: request.angle, host: request.host, videos: request.sources.length, brand: Boolean(request.brandIdentityId) })
   const child = spawn(python, [join(dirname(getBridgeRunnerPath()), 'remix_runner.py')], {
     cwd: engine, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true
   })
@@ -266,7 +374,7 @@ async function execute(run: ActiveRemix, request: RemixRequest, config: Record<s
       try {
         const message = JSON.parse(line) as Record<string, unknown>
         if (message.type === 'progress' && typeof message.percent === 'number') {
-          publish(run, { detail: typeof message.detail === 'string' ? message.detail.slice(0, 160) : run.status.detail, percent: message.percent })
+          if (!run.cancelled) publish(run, { detail: typeof message.detail === 'string' ? message.detail.slice(0, 160) : run.status.detail, percent: message.percent })
         } else if (typeof message.ok === 'boolean') result = message
       } catch { /* ignore non-protocol output */ }
     }
@@ -276,22 +384,37 @@ async function execute(run: ActiveRemix, request: RemixRequest, config: Record<s
     clearTimeout(timer)
     finish(run, { phase: 'failed', error: 'The clipping engine could not start. Run Settings → System check.' })
   })
-  child.on('close', () => {
+  child.on('close', () => { void closed() })
+  async function closed(): Promise<void> {
     clearTimeout(timer); run.child = undefined
-    if (run.status.phase !== 'running') return
-    if (run.cancelled) { finish(run, { phase: 'cancelled', detail: 'Cancelled' }); return }
-    if (result?.ok === true) {
+    if (!running(run)) return
+    const planning = run.status.phase === 'planning'
+    if (run.cancelled) {
+      if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
+      finish(run, { phase: 'cancelled', detail: 'Cancelled' })
+      return
+    }
+    const warnings = Array.isArray(result?.warnings) ? result.warnings.filter((w): w is string => typeof w === 'string').map((w) => w.slice(0, 400)).slice(0, 12) : []
+    const cost = typeof result?.cost_usd === 'number' && Number.isFinite(result.cost_usd) ? result.cost_usd : null
+    if (result?.ok === true && planning) {
+      const drafts = (Array.isArray(result.drafts) ? result.drafts : []).map(parseRemixDraft).filter((item): item is RemixDraft => item !== null)
+      run.context.draftIds = new Set(drafts.map((draft) => draft.id))
+      run.context.planCostUsd = cost ?? 0
+      logger.info('remix.planned', { drafts: drafts.length, cost })
+      finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, drafts, warnings: [...warnings, ...await varietyWarnings(drafts)], costUsd: cost })
+    } else if (result?.ok === true) {
       const outputs = (Array.isArray(result.remixes) ? result.remixes : []).map(parseRemixOutput).filter((item): item is RemixOutput => item !== null)
-      const warnings = Array.isArray(result.warnings) ? result.warnings.filter((w): w is string => typeof w === 'string').map((w) => w.slice(0, 400)).slice(0, 10) : []
-      const cost = typeof result.cost_usd === 'number' && Number.isFinite(result.cost_usd) ? result.cost_usd : null
+      await recordCreators(outputs.map((output) => output.creator))
+      await rm(join(run.status.folder, '.presenter.jpg'), { force: true }).catch(() => undefined)
       logger.info('remix.done', { count: outputs.length, cost })
-      finish(run, { phase: 'done', detail: 'Done', percent: 100, outputs, warnings, costUsd: cost })
+      finish(run, { phase: 'done', detail: 'Done', percent: 100, outputs, warnings, costUsd: (cost ?? 0) + run.context.planCostUsd })
     } else {
       const message = typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : 'The remix could not be made. Check Settings → System check, then try again.'
       logger.warn('remix.failed', { stderr: stderr.slice(-1500) })
+      if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
       finish(run, { phase: 'failed', error: message })
     }
-  })
+  }
   child.stdin.on('error', () => undefined)
   child.stdin.end(JSON.stringify(config))
 }
@@ -302,7 +425,8 @@ export function cancelRemix(): boolean {
   const run = active
   if (run.cancelled) return true
   run.cancelled = true
-  publish(run, { detail: 'Cancelling…' })
+  run.status = { ...run.status, detail: 'Cancelling…' }
+  notify(run.status)
   kill(run.child)
   // A download or upload in progress can ignore the polite stop; force it shortly after.
   setTimeout(() => { if (run.child) kill(run.child, true) }, 5000).unref()

@@ -57,6 +57,8 @@ export interface PostableClip {
   title: string
   tags: string[]
   durationMs: number
+  /** Remixes (AI presenter or voice): TikTok's "made with AI" starts on. */
+  aiGenerated?: boolean
 }
 
 interface PostDialogProps {
@@ -163,7 +165,7 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
 
   // Kept across clips in a batch.
   const [selected, setSelected] = useState<string[]>([])
-  const [tiktok, setTiktok] = useState<TikTokPostOptions>(EMPTY_TIKTOK)
+  const [tiktok, setTiktok] = useState<TikTokPostOptions>(() => clips.some((item) => item.aiGenerated) ? { ...EMPTY_TIKTOK, madeWithAi: true } : EMPTY_TIKTOK)
   const [creatorInfo, setCreatorInfo] = useState<Record<string, CreatorInfoState>>({})
   const [shareToFeed, setShareToFeed] = useState(true)
   const [facebookFormat, setFacebookFormat] = useState<FacebookFormat | null>(null)

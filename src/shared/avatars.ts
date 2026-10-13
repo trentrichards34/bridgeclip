@@ -58,6 +58,8 @@ export interface AvatarScriptRequest {
   niche: string
   seconds: ScriptLength
   style: AvatarVideoStyle
+  /** Write in this brand's voice and beliefs, using only its proof (see Remix → Brand Identity). */
+  brandIdentityId?: string | null
 }
 
 export const SCRIPT_LENGTHS = [15, 30, 45, 60] as const

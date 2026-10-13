@@ -4,14 +4,28 @@
  * every model call goes through OpenRouter, stock B-roll through Pexels.
  */
 
-export type RemixAngle = 'reaction' | 'myth_truth' | 'science' | 'lessons' | 'do_this_instead'
+export type RemixStyle = 'reaction' | 'myth_truth' | 'science' | 'lessons' | 'do_this_instead'
+/** A style, or 'mix': the AI picks a fitting style per moment so the account doesn't repeat one template. */
+export type RemixAngle = RemixStyle | 'mix'
 
 export const REMIX_ANGLES: { id: RemixAngle; label: string; description: string; example: string }[] = [
   { id: 'reaction', label: 'Reaction take', description: 'Agree and add to it, disagree and correct it, or add the missing nuance, in your brand’s voice.', example: '“He’s half right. Here’s what he left out…”' },
   { id: 'myth_truth', label: 'Myth vs. truth', description: 'The moment states a common belief; your presenter breaks it down and gives the truth.', example: '“You don’t need to lose weight first. Here’s why.”' },
   { id: 'science', label: 'The science behind it', description: 'Explain why what happens in the moment works, or why it fails, in plain language.', example: '“Here’s why that actually works…”' },
   { id: 'lessons', label: 'Lessons from this', description: 'Two or three practical lessons your audience can take from the moment.', example: '“3 things this teaches you about…”' },
-  { id: 'do_this_instead', label: 'Do this instead', description: 'What they did, why it falls short, and the better way you teach.', example: '“Don’t do that. Do this instead.”' }
+  { id: 'do_this_instead', label: 'Do this instead', description: 'What they did, why it falls short, and the better way you teach.', example: '“Don’t do that. Do this instead.”' },
+  { id: 'mix', label: 'Mix of styles', description: 'The AI picks the best style for each moment, so a batch doesn’t repeat one template. Best for posting daily.', example: 'Varies per video' }
+]
+
+export const STYLE_LABELS: Record<RemixStyle, string> = {
+  reaction: 'Reaction take', myth_truth: 'Myth vs. truth', science: 'The science behind it', lessons: 'Lessons from this', do_this_instead: 'Do this instead'
+}
+
+/** moment_first: the borrowed moment is the hook, then the presenter reacts. take_first: the presenter opens. */
+export type RemixOrder = 'moment_first' | 'take_first'
+export const REMIX_ORDERS: { id: RemixOrder; label: string; detail: string }[] = [
+  { id: 'moment_first', label: 'Moment first', detail: 'Their viral moment hooks the viewer, then your presenter reacts' },
+  { id: 'take_first', label: 'Take first', detail: 'Your presenter opens, then the moment plays as the setup' }
 ]
 
 /** lipsync: lip-synced avatar on camera; still: the avatar photo with a slow push-in; voice: voice-over only (cheapest). */
@@ -39,6 +53,7 @@ export const REMIX_VOICES: { id: string; label: string; detail: string }[] = [
 export const REMIX_VOICE_IDS: readonly string[] = REMIX_VOICES.map((voice) => voice.id)
 
 export const MAX_REMIXES = 10
+export const MAX_SOURCES = 10
 export const MAX_BRAND_IDENTITY_CHARS = 40000
 
 /** Estimates for the cost preview (OpenRouter prices, October 2026). */
@@ -72,11 +87,12 @@ export interface BrandIdentity {
 }
 
 export interface RemixRequest {
-  /** A video link, or a local file chosen with dialog.selectVideo. */
-  source: string
-  /** The original creator, for the on-screen credit (filled from the link when blank). */
+  /** Video links (one per video, up to MAX_SOURCES), or one local file chosen with dialog.selectVideo. */
+  sources: string[]
+  /** The original creator, for the on-screen credit (filled from the link when blank; single video only). */
   creator: string
   angle: RemixAngle
+  order: RemixOrder
   host: RemixHost
   avatarId: string | null
   voice: string
@@ -87,6 +103,40 @@ export interface RemixRequest {
   /** The user confirmed they'll turn on the platform's AI-content label when posting. */
   aiLabelAck: boolean
 }
+
+export interface RemixGrade {
+  letter: 'A' | 'B' | 'C' | 'D' | 'F'
+  score: number
+  verdict: string
+  fix: string
+  /** The take was edited after grading. */
+  edited: boolean
+}
+
+export interface RemixBeat { text: string; broll: string }
+
+/** A planned remix the user reviews, edits or drops before anything is paid for. */
+export interface RemixDraft {
+  id: number
+  sourceTitle: string
+  creator: string
+  startMs: number
+  endMs: number
+  quote: string
+  why: string
+  style: RemixStyle
+  stance: RemixOutput['stance']
+  headline: string
+  intro: string
+  beats: RemixBeat[]
+  close: string
+  notes: string[]
+  grade: RemixGrade | null
+  estimateUsd: number
+}
+
+/** What the user approves: the draft id and any edited text. */
+export interface RemixEdit { id: number; headline: string; intro: string; beats: RemixBeat[]; close: string }
 
 export interface RemixCheck { id: string; ok: boolean; label: string }
 
@@ -100,9 +150,13 @@ export interface RemixOutput {
   costUsd: number
   checks: RemixCheck[]
   warnings: string[]
+  style: RemixStyle
+  grade: RemixGrade['letter'] | null
+  creator: string
 }
 
-export type RemixPhase = 'running' | 'done' | 'failed' | 'cancelled'
+/** planning → review (drafts to approve) → rendering → done; or failed / cancelled. */
+export type RemixPhase = 'planning' | 'review' | 'rendering' | 'done' | 'failed' | 'cancelled'
 
 export interface RemixStatus {
   id: string
@@ -111,16 +165,32 @@ export interface RemixStatus {
   percent: number
   folder: string
   estimateUsd: number
+  drafts: RemixDraft[]
   outputs: RemixOutput[]
+  /** Spent so far: planning (transcription, writing, grading), plus rendering when done. */
   costUsd: number | null
   warnings: string[]
   error: string | null
+}
+
+export function isRunning(status: RemixStatus | null): boolean {
+  return status?.phase === 'planning' || status?.phase === 'rendering'
 }
 
 export const STANCE_LABELS: Record<RemixOutput['stance'], string> = {
   agree_extend: 'Agrees and adds to it',
   disagree_correct: 'Disagrees and corrects it',
   add_nuance: 'Adds nuance'
+}
+
+const STYLES: readonly string[] = ['reaction', 'myth_truth', 'science', 'lessons', 'do_this_instead']
+
+export function isRemixStyle(value: unknown): value is RemixStyle {
+  return typeof value === 'string' && STYLES.includes(value)
+}
+
+export function isRemixOrder(value: unknown): value is RemixOrder {
+  return value === 'moment_first' || value === 'take_first'
 }
 
 export function isRemixAngle(value: unknown): value is RemixAngle {
@@ -163,6 +233,95 @@ export function parseRemixOutput(value: unknown): RemixOutput | null {
   return {
     path: raw.path, manifestPath: raw.manifest_path, headline: text(raw.headline, 200), stance,
     excerptSeconds: number(raw.excerpt_seconds), durationSeconds: number(raw.duration_seconds), costUsd: number(raw.cost_usd),
-    checks, warnings: Array.isArray(raw.warnings) ? raw.warnings.filter((w): w is string => typeof w === 'string').map((w) => text(w, 400)).slice(0, 8) : []
+    checks, warnings: Array.isArray(raw.warnings) ? raw.warnings.filter((w): w is string => typeof w === 'string').map((w) => text(w, 400)).slice(0, 8) : [],
+    style: isRemixStyle(raw.style) ? raw.style : 'reaction',
+    grade: typeof raw.grade === 'string' && ['A', 'B', 'C', 'D', 'F'].includes(raw.grade) ? raw.grade as RemixGrade['letter'] : null,
+    creator: text(raw.creator, 120)
   }
 }
+
+function parseGrade(value: unknown): RemixGrade | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  if (typeof raw.letter !== 'string' || !['A', 'B', 'C', 'D', 'F'].includes(raw.letter)) return null
+  return { letter: raw.letter as RemixGrade['letter'], score: Math.min(10, Math.max(0, number(raw.score))), verdict: text(raw.verdict, 300), fix: text(raw.fix, 400), edited: raw.edited === true }
+}
+
+/** A planned remix from the engine, parsed defensively. */
+export function parseRemixDraft(value: unknown): RemixDraft | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  if (!Number.isInteger(raw.id) || (raw.id as number) < 0 || typeof raw.headline !== 'string' || typeof raw.intro !== 'string' || typeof raw.close !== 'string' || !Array.isArray(raw.beats)) return null
+  const beats = raw.beats.flatMap((item): RemixBeat[] => {
+    if (!item || typeof item !== 'object') return []
+    const beat = item as Record<string, unknown>
+    return typeof beat.text === 'string' ? [{ text: text(beat.text, 400), broll: text(beat.broll, 60) }] : []
+  }).slice(0, 4)
+  return {
+    id: raw.id as number, sourceTitle: text(raw.source_title, 300), creator: text(raw.creator, 120),
+    startMs: Math.max(0, number(raw.start_ms)), endMs: Math.max(0, number(raw.end_ms)), quote: text(raw.quote, 600), why: text(raw.why, 300),
+    style: isRemixStyle(raw.style) ? raw.style : 'reaction',
+    stance: raw.stance === 'agree_extend' || raw.stance === 'disagree_correct' ? raw.stance : 'add_nuance',
+    headline: text(raw.headline, 200), intro: text(raw.intro, 400), beats, close: text(raw.close, 400),
+    notes: Array.isArray(raw.notes) ? raw.notes.filter((n): n is string => typeof n === 'string').map((n) => text(n, 300)).slice(0, 6) : [],
+    grade: parseGrade(raw.grade), estimateUsd: number(raw.estimate_usd)
+  }
+}
+
+/** Approved edits from the renderer, checked in main before they reach the engine. */
+export function parseRemixEdits(value: unknown, draftIds: ReadonlySet<number>): RemixEdit[] {
+  if (!Array.isArray(value) || value.length === 0) throw new Error('Choose at least one remix to make.')
+  const edits: RemixEdit[] = []
+  const seen = new Set<number>()
+  for (const item of value.slice(0, MAX_REMIXES * MAX_SOURCES)) {
+    const raw = (item ?? {}) as Record<string, unknown>
+    const id = raw.id
+    if (typeof id !== 'number' || !draftIds.has(id) || seen.has(id)) continue
+    seen.add(id)
+    const beats = Array.isArray(raw.beats) ? raw.beats.flatMap((beat): RemixBeat[] => {
+      const b = (beat ?? {}) as Record<string, unknown>
+      return typeof b.text === 'string' && b.text.trim() ? [{ text: text(b.text, 400), broll: text(b.broll, 60) }] : []
+    }).slice(0, 4) : []
+    const headline = text(raw.headline, 200), intro = text(raw.intro, 400), close = text(raw.close, 400)
+    if (headline.split(' ').length < 3 || !intro || !close || beats.length === 0) throw new Error('Each remix needs a headline of 3+ words, an opening line, at least one beat and a closing line.')
+    edits.push({ id, headline, intro, beats, close })
+  }
+  if (edits.length === 0) throw new Error('Choose at least one remix to make.')
+  return edits
+}
+
+/**
+ * The Brand Identity format Remix reads best (docs/brand-identity-spec.md has
+ * the full spec and the generator prompt for the membership-area button).
+ */
+export const BRAND_IDENTITY_TEMPLATE = `BRAND: [name]
+WHO WE HELP: [the specific person, their situation and what they want]
+CORE PROMISE: [the result we deliver, in one sentence]
+
+WHAT WE BELIEVE (3-7 beliefs, each with why and the proof)
+1. Belief: [...]
+   Why: [...]
+   Proof: [real result, client story or reason — never invented]
+
+MYTHS WE PUSH BACK ON (what people in this space say, and our counter-take)
+- Myth: [...]
+  Our take: [...]
+
+OUR METHOD (named framework and its steps)
+- Name: [...]
+- Steps: 1. [...] 2. [...] 3. [...]
+
+PROOF WE CAN USE (only real, approved numbers, results and testimonials)
+- [...]
+
+VOICE
+- Tone: [e.g. direct, warm, playful, no hype]
+- Words we use: [...]
+- Words we never use: [...]
+- How we disagree: [e.g. firm but respectful, never mocking the person]
+
+OFF-LIMITS
+- Claims we never make: [e.g. medical promises, guaranteed income]
+- Topics we avoid: [...]
+
+CALL TO ACTION (optional): [what to say at the end, e.g. "Comment PULL-UP for the free plan"]`

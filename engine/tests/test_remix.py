@@ -136,8 +136,8 @@ class FakeMedia:
 
 
 @needs_libass
-@pytest.mark.parametrize("host,fail_avatar", [("lipsync", False), ("lipsync", True), ("voice", False)])
-def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar):
+@pytest.mark.parametrize("host,fail_avatar,order", [("lipsync", False, "moment_first"), ("lipsync", True, "take_first"), ("voice", False, "moment_first")])
+def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar, order):
     ffmpeg, ffprobe = FFMPEG_WITH_ASS
     monkeypatch.setenv("PATH", os.path.dirname(ffmpeg) + os.pathsep + os.environ.get("PATH", ""))
     source = tmp_path / "source.mp4"
@@ -164,7 +164,14 @@ def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar):
     import clip_engine.services.transcription_service as ts
     monkeypatch.setattr(ts, "TranscriptionService", FakeTranscription)
 
+    calls = []
+
     async def fake_chat(client, payload):
+        calls.append(payload)
+        if payload["response_format"]["json_schema"]["name"] == "remix_grades":
+            grades = [{"id": i, "hook": 8.5 - i * 3, "payoff": 8, "stands_alone": 8, "specificity": 7, "stance": 8,
+                       "verdict": "Strong open.", "fix": "Name the drill."} for i in range(2)]
+            return {"choices": [{"message": {"content": json.dumps({"grades": grades})}}]}, {"cost": 0.01}
         content = json.dumps({"remixes": [plan_item(4, 8), plan_item(20, 24, headline="A second moment people argue about")]})
         return {"choices": [{"message": {"content": content}}]}, {"cost": 0.05}
     monkeypatch.setattr(remix, "chat_completion", fake_chat)
@@ -173,10 +180,21 @@ def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar):
                                planner_model="test/model", get_planner_fallback_models=lambda: [], pexels_api_key=None)
     media = FakeMedia(ffmpeg, fail_avatar)
     progress = []
-    config = remix.RemixConfig(source=str(source), output_dir=str(tmp_path / "out"), angle="myth_truth", count=2, host=host,
+    config = remix.RemixConfig(sources=[str(source)], output_dir=str(tmp_path / "out"), angle="myth_truth", count=2, host=host,
                                voice="nova", avatar_photo=str(photo), creator="Coach Example", brand_name="Pull-Up Lab",
-                               brand_identity="We believe strength comes before weight loss.")
-    result = asyncio.run(remix.Remixer(config, lambda d, p: progress.append((d, p)), media=media, settings=settings).run())
+                               brand_identity="We believe strength comes before weight loss.", order=order)
+    planned = asyncio.run(remix.Remixer(config, lambda d, p: progress.append((d, p)), media=media, settings=settings).plan())
+    drafts = planned["drafts"]
+    assert len(drafts) == 2 and drafts[0]["style"] == "myth_truth" and drafts[0]["creator"] == "Coach Example"
+    assert drafts[0]["grade"]["letter"] == "A" and drafts[1]["grade"]["letter"] == "B" and drafts[0]["grade"]["fix"]
+    assert "OPENS on the borrowed moment" in calls[0]["messages"][0]["content"] if order == "moment_first" else True
+    assert media.speech_calls == [] and media.avatar_calls == 0  # nothing paid for before review
+    # The user edits the first take's opening line and approves both.
+    edits = [{"id": 0, "headline": drafts[0]["headline"], "intro": "Hold on. That is the biggest myth about pull-ups.",
+              "beats": drafts[0]["beats"], "close": drafts[0]["close"]}, {"id": 1}]
+    media2 = FakeMedia(ffmpeg, fail_avatar)
+    result = asyncio.run(remix.Remixer(config, lambda d, p: progress.append((d, p)), media=media2, settings=settings).render(edits))
+    media = media2
 
     assert len(result["remixes"]) == 2
     assert media.avatar_calls == (4 if host == "lipsync" else 0)
@@ -195,8 +213,15 @@ def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar):
         assert any("photo instead" in w for w in first["warnings"])
     manifest = json.load(open(first["manifest_path"]))
     assert manifest["rights_lane"] == "commentary" and manifest["source"]["creator"] == "Coach Example"
-    assert [p["part"] for p in manifest["timeline"]] == ["host", "excerpt", "beat", "beat", "host"]
-    assert 2.4 <= manifest["timeline"][1]["seconds"] <= remix.MAX_EXCERPT_MS / 1000 + 0.3
+    expected = ["excerpt", "host", "beat", "beat", "host"] if order == "moment_first" else ["host", "excerpt", "beat", "beat", "host"]
+    assert [p["part"] for p in manifest["timeline"]] == expected
+    excerpt_part = next(p for p in manifest["timeline"] if p["part"] == "excerpt")
+    assert 2.4 <= excerpt_part["seconds"] <= remix.MAX_EXCERPT_MS / 1000 + 0.3
+    assert manifest["script"]["intro"] == "Hold on. That is the biggest myth about pull-ups."
+    assert manifest["grade"]["edited"] is True and manifest["order"] == order
+    job = json.load(open(tmp_path / "out" / "job_output.json"))
+    assert len(job["clips"]) == 2 and job["clips"][0]["s3_url"].startswith("file://") and job["clips"][0]["ai_generated"] is True
+    assert job["source_video_title"].startswith("Remix")
     assert not os.path.exists(tmp_path / "out" / ".work")
     assert progress[-1][1] >= 90
     if keep:
@@ -323,12 +348,13 @@ def test_a_failed_remix_keeps_the_ones_already_made(tmp_path, monkeypatch):
 
         async def aclose(self):
             pass
-    config = remix.RemixConfig(source="https://example.com/v", output_dir=str(tmp_path), host="voice", count=3)
-    remixer = remix.Remixer(config, media=Media(), settings=settings)
+    config = remix.RemixConfig(sources=["https://example.com/v", "https://example.com/broken"], output_dir=str(tmp_path), host="voice", count=3)
     scripts = remix.parse_plan({"remixes": [plan_item(4, 8), plan_item(12, 16), plan_item(20, 24)]}, transcript(), "", 3)
 
-    async def source(work):
-        return "v.mp4", {"url": "u", "title": "t", "creator": "c", "platform": "youtube"}
+    async def source(src, work, single):
+        if src.endswith("broken"):
+            raise RuntimeError("download failed")
+        return "v.mp4", {"url": src, "title": "t", "creator": "c", "platform": "youtube"}
 
     async def transcribe(video, work):
         return transcript()
@@ -336,14 +362,33 @@ def test_a_failed_remix_keeps_the_ones_already_made(tmp_path, monkeypatch):
     async def plan(segments, meta):
         return scripts
 
+    async def grade(items):
+        pass
+
     async def one(index, total, script, *rest):
         if index == 1:
             raise OSError("disk hiccup")
-        return remix.RemixResult(f"/o/{index}.mp4", f"/o/{index}.json", script.headline, script.stance, 4.0, 25.0, 0.1, [], [])
-    monkeypatch.setattr(remixer, "_source", source)
-    monkeypatch.setattr(remixer, "_transcribe", transcribe)
-    monkeypatch.setattr(remixer, "_plan", plan)
+        return remix.RemixResult(str(tmp_path / f"{index}.mp4"), str(tmp_path / f"{index}.json"), script.headline, script.stance, 4.0, 25.0, 0.1, [], [])
+    remixer = remix.Remixer(config, media=Media(), settings=settings)
+    for name, fn in (("_source", source), ("_transcribe", transcribe), ("_plan", plan), ("_grade", grade)):
+        monkeypatch.setattr(remixer, name, fn)
+    planned = asyncio.run(remixer.plan())
+    assert len(planned["drafts"]) == 3 and any("Video 2 of 2: Skipped" in w for w in planned["warnings"])
+    remixer = remix.Remixer(config, media=Media(), settings=settings)
     monkeypatch.setattr(remixer, "_one", one)
-    result = asyncio.run(remixer.run())
-    assert [r["path"] for r in result["remixes"]] == ["/o/0.mp4", "/o/2.mp4"]
+    result = asyncio.run(remixer.render([{"id": 0}, {"id": 1}, {"id": 2}, {"id": 99}, "junk"]))
+    assert [os.path.basename(r["path"]) for r in result["remixes"]] == ["0.mp4", "2.mp4"]
     assert any("Remix 2 could not be made" in w for w in result["warnings"])
+    assert os.path.isfile(tmp_path / "job_output.json") and not os.path.exists(tmp_path / ".work")
+
+
+def test_edits_keep_limits_and_flag_new_numbers():
+    script = remix.parse_plan({"remixes": [plan_item(4, 8)]}, transcript(), "", 1)[0]
+    script.grade = {"letter": "B"}
+    edited = remix.apply_edit(script, {"intro": "I made $9,999 last week doing this one thing every single day."}, "", "")
+    assert edited.intro.startswith("I made $9,999") and any("numbers" in n for n in edited.notes) and edited.grade["edited"]
+    assert remix.apply_edit(script, {}, "", "").grade == {"letter": "B"}
+    with pytest.raises(remix.RemixError):
+        remix.apply_edit(script, {"headline": "Too short"}, "", "")
+    assert remix.grade_letter({"hook": 9, "payoff": 9, "stands_alone": 8, "specificity": 8, "stance": 8})[0] == "A"
+    assert remix.grade_letter({"hook": 3, "payoff": 9, "stands_alone": 9, "specificity": 9, "stance": 9})[0] == "C"

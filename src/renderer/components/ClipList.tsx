@@ -55,7 +55,7 @@ const MAX_POST_BATCH = 10
 const MAX_BANK_BATCH = 30
 
 function toPostable(clip: ClipArtifact): PostableClip {
-  return { path: clipFilePath(clip.s3_url), title: clip.summary || `Clip ${clip.clip_index + 1}`, tags: clip.tags, durationMs: clip.duration_ms }
+  return { path: clipFilePath(clip.s3_url), title: clip.summary || `Clip ${clip.clip_index + 1}`, tags: clip.tags, durationMs: clip.duration_ms, aiGenerated: clip.ai_generated === true }
 }
 
 export function ClipList(props: ClipListProps): React.JSX.Element {

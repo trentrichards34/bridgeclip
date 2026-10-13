@@ -13,20 +13,28 @@ import sys
 from bridge_runner import reserve_stdout_for_protocol, emit
 
 MAX_REQUEST = 262144
-STRING_LIMITS = {"source": 8192, "output_dir": 4096, "angle": 32, "host": 16, "voice": 32, "avatar_photo": 4096,
-                 "brand_identity": 60000, "brand_name": 120, "creator": 120, "caption_preset": 64}
+STRING_LIMITS = {"output_dir": 4096, "angle": 32, "host": 16, "voice": 32, "avatar_photo": 4096, "order": 16,
+                 "brand_identity": 60000, "brand_name": 120, "creator": 120, "caption_preset": 64, "mode": 8}
 
 
 def parse_config(raw):
-    from clip_engine.services.remix_service import ANGLES, HOSTS, MAX_REMIXES, RemixConfig
+    from clip_engine.services.remix_service import ANGLES, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, RemixConfig
     if not isinstance(raw, dict):
         raise ValueError("Invalid request")
     for key, limit in STRING_LIMITS.items():
         value = raw.get(key)
         if value is not None and (not isinstance(value, str) or len(value) > limit or "\0" in value):
             raise ValueError(f"Invalid {key}")
-    if not raw.get("source") or not isinstance(raw.get("output_dir"), str) or not os.path.isabs(raw["output_dir"]):
-        raise ValueError("Invalid source or output")
+    if raw.get("mode", "plan") not in ("plan", "render"):
+        raise ValueError("Invalid mode")
+    sources = raw.get("sources") or []
+    if raw.get("mode", "plan") == "plan" and (not isinstance(sources, list) or not 1 <= len(sources) <= MAX_SOURCES or any(
+            not isinstance(s, str) or not s or len(s) > 8192 or "\0" in s for s in sources)):
+        raise ValueError("Invalid sources")
+    if raw.get("order", "moment_first") not in ORDERS:
+        raise ValueError("Invalid order")
+    if not isinstance(raw.get("output_dir"), str) or not os.path.isabs(raw["output_dir"]):
+        raise ValueError("Invalid output")
     photo = raw.get("avatar_photo")
     if photo is not None and not os.path.isabs(photo):
         raise ValueError("Invalid avatar photo")
@@ -36,7 +44,8 @@ def parse_config(raw):
     if type(count) is not int or not 1 <= count <= MAX_REMIXES:
         raise ValueError("Invalid count")
     return RemixConfig(
-        source=raw["source"], output_dir=raw["output_dir"], angle=raw["angle"], count=count, host=raw["host"],
+        sources=list(sources), output_dir=raw["output_dir"], angle=raw["angle"], count=count, host=raw["host"],
+        order=raw.get("order") or "moment_first",
         voice=raw.get("voice") or "onyx", avatar_photo=photo, brand_identity=raw.get("brand_identity") or "",
         brand_name=raw.get("brand_name") or "", creator=raw.get("creator") or "",
         caption_preset=raw.get("caption_preset") or "pop", include_captions=raw.get("include_captions") is not False,
@@ -51,7 +60,8 @@ def main():
         raw = sys.stdin.read(MAX_REQUEST + 1)
         if len(raw) > MAX_REQUEST:
             raise ValueError("Request too large")
-        config = parse_config(json.loads(raw))
+        raw_request = json.loads(raw)
+        config = parse_config(raw_request)
         os.environ["LOCAL_MODE"] = "true"
         from network_guard import install
         install()
@@ -64,7 +74,13 @@ def main():
             task = asyncio.current_task()
             if os.name != "nt":
                 asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
-            return await Remixer(config, progress).run()
+            remixer = Remixer(config, progress)
+            if raw_request.get("mode") == "render":
+                approved = raw_request.get("approved")
+                if not isinstance(approved, list) or len(approved) > 200:
+                    raise ValueError("Invalid approval list")
+                return await remixer.render(approved)
+            return await remixer.plan()
 
         result = asyncio.run(work())
         emit({"ok": True, **result})

@@ -58,6 +58,7 @@ interface StudioDraft {
   includeCaptions: boolean
   includeTitle: boolean
   backgroundVideo: string | null
+  brandIdentityId: string | null
   update: (patch: Partial<Omit<StudioDraft, 'update'>>) => void
 }
 
@@ -67,7 +68,7 @@ const useStudioDraft = create<StudioDraft>((set) => ({
   avatarId: null, style: 'talking',
   recreate: { sourcePath: null, sourceSeconds: 0, startSeconds: 0, endSeconds: 0, mode: 'replace', keepAudio: true, rightsConfirmed: false },
   topic: '', niche: '', seconds: 30, script: EMPTY_SCRIPT, lipSync: 'fabric', sceneQuality: 'standard', cinematicScenes: null,
-  captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, includeTitle: true, backgroundVideo: null,
+  captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, includeTitle: true, backgroundVideo: null, brandIdentityId: null,
   update: (patch) => set(patch)
 }))
 
@@ -85,9 +86,11 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
   const [writing, setWriting] = useState(false)
   const [status, setStatus] = useState<AvatarRenderStatus | null>(null)
   const [launching, setLaunching] = useState(false)
+  const [brands, setBrands] = useState<{ id: string; name: string }[]>([])
 
   useEffect(() => {
     let live = true
+    getApi().brandIdentities.list().then((list) => { if (live) setBrands(list.map(({ id, name }) => ({ id, name }))) }).catch(() => undefined)
     getApi().avatars.list().then((list) => { if (live) setAvatars(list) }).catch((err) => { if (live) setError(errorMessage(err)) })
     getApi().avatars.renderStatus().then((current) => { if (live && current) setStatus(current) }).catch(() => undefined)
     const off = getApi().avatars.onStatus((next) => setStatus(next))
@@ -133,7 +136,8 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
     setWriting(true); setError(null)
     try {
       if (draft.style === 'recreate') return
-      const script = await getApi().avatars.writeScript({ topic: draft.topic, niche: draft.niche, seconds: draft.seconds, style: draft.style })
+      const brandIdentityId = brands.some((brand) => brand.id === draft.brandIdentityId) ? draft.brandIdentityId : null
+      const script = await getApi().avatars.writeScript({ topic: draft.topic, niche: draft.niche, seconds: draft.seconds, style: draft.style, brandIdentityId })
       draft.update({ script })
     } catch (err) { setError(errorMessage(err, 'The script could not be written.')) }
     finally { setWriting(false) }
@@ -233,6 +237,12 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
                   <TextInput value={draft.niche} maxLength={200} placeholder="e.g. personal finance" onChange={(e) => draft.update({ niche: e.target.value })} />
                 </Field>
               </div>
+              {brands.length > 0 && (
+                <Field label="Brand identity (optional)" hint="Writes in your brand's voice and beliefs, using only its real proof.">
+                  <Select value={brands.some((brand) => brand.id === draft.brandIdentityId) ? draft.brandIdentityId ?? '' : ''} onChange={(value) => draft.update({ brandIdentityId: value || null })}
+                    options={[{ value: '', label: 'None' }, ...brands.map((brand) => ({ value: brand.id, label: brand.name }))]} />
+                </Field>
+              )}
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <Segmented label="Length" size="sm" value={String(draft.seconds)} onChange={(value) => draft.update({ seconds: Number(value) as ScriptLength })}
                   options={SCRIPT_LENGTHS.map((length) => ({ value: String(length), label: `${length}s` }))} />

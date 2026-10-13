@@ -17,6 +17,8 @@ export interface ClipArtifact {
   summary: string | null
   /** Story headline drawn in the bar above the video (headline title style). */
   headline?: string | null
+  /** Made with AI (Remix): posting starts with the platform's AI label on. */
+  ai_generated?: boolean
   tags: string[]
   /** Set when smart framing failed and a letterbox fallback produced the clip. */
   render_fallback: string | null
@@ -192,6 +194,7 @@ export function parseJobOutput(value: unknown): JobOutput | null {
       layout_type: typeof item.layout_type === 'string' && ['talking_head', 'two_shot', 'screen_cam', 'screen', 'fit', 'center_crop'].includes(item.layout_type) ? item.layout_type : '',
       summary: boundedText(item.summary, 2048),
       headline: boundedText(item.headline, 512),
+      ai_generated: item.ai_generated === true,
       tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 50).map((tag) => tag.slice(0, 64)) : [],
       render_fallback: boundedText(item.render_fallback, 256)
     })

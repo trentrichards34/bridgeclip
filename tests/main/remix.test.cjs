@@ -42,19 +42,26 @@ const main = load('main/remix.ts', {
 })
 
 const base = {
-  source: 'https://www.youtube.com/watch?v=abcdefghijk', creator: '', angle: 'reaction', host: 'lipsync', avatarId: 'a'.repeat(16),
+  sources: ['https://www.youtube.com/watch?v=abcdefghijk'], creator: '', angle: 'reaction', order: 'moment_first', host: 'lipsync', avatarId: 'a'.repeat(16),
   voice: 'onyx', brandIdentityId: null, count: 3, captionPreset: 'pop', includeCaptions: true, aiLabelAck: true
 }
 
 test('remix requests: links or chosen files, a style, a presenter, a voice, and the AI-label promise', () => {
   const { request, sourceIsUrl } = main.parseRemixRequest(base, userData)
   assert.equal(sourceIsUrl, true)
-  assert.equal(request.source, 'https://www.youtube.com/watch?v=abcdefghijk')
+  assert.deepEqual(plain(request.sources), ['https://www.youtube.com/watch?v=abcdefghijk'])
+  assert.equal(main.parseRemixRequest({ ...base, angle: 'mix', order: 'take_first' }, userData).request.order, 'take_first')
+  // Several links, de-duplicated; the creator name only applies to a single video.
+  const many = main.parseRemixRequest({ ...base, creator: 'X', sources: ['https://a.com/1', ' https://a.com/1 ', 'https://b.com/2'] }, userData).request
+  assert.deepEqual(plain(many.sources), ['https://a.com/1', 'https://b.com/2'])
+  assert.equal(many.creator, '')
+  assert.throws(() => main.parseRemixRequest({ ...base, sources: Array.from({ length: 11 }, (_, i) => `https://a.com/${i}`) }, userData), /up to 10/)
+  assert.throws(() => main.parseRemixRequest({ ...base, order: 'random' }, userData), /order/)
   assert.equal(main.parseRemixRequest({ ...base, host: 'voice', avatarId: 'junk' }, userData).request.avatarId, null)
 
-  assert.throws(() => main.parseRemixRequest({ ...base, source: '' }, userData), /video link/)
-  assert.throws(() => main.parseRemixRequest({ ...base, source: 'https://user:pw@example.com/v' }, userData), /full video link/)
-  assert.throws(() => main.parseRemixRequest({ ...base, source: '/etc/passwd' }, userData), /full video link/)
+  assert.throws(() => main.parseRemixRequest({ ...base, sources: [] }, userData), /video link/)
+  assert.throws(() => main.parseRemixRequest({ ...base, sources: ['https://user:pw@example.com/v'] }, userData), /full video links/)
+  assert.throws(() => main.parseRemixRequest({ ...base, sources: ['/etc/passwd'] }, userData), /full video links/)
   assert.throws(() => main.parseRemixRequest({ ...base, angle: 'repost' }, userData), /remix style/)
   assert.throws(() => main.parseRemixRequest({ ...base, host: 'clone' }, userData), /presenter/)
   assert.throws(() => main.parseRemixRequest({ ...base, avatarId: null }, userData), /Choose an avatar/)
@@ -67,11 +74,12 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   // A local file must have been chosen in the file dialog and needs the creator's name for the credit.
   const file = path.join(userData, 'clip.mp4')
   selected.add(file)
-  assert.throws(() => main.parseRemixRequest({ ...base, source: file }, userData), /original creator/)
-  assert.equal(main.parseRemixRequest({ ...base, source: file, creator: ' Coach  Example ' }, userData).request.creator, 'Coach Example')
+  assert.throws(() => main.parseRemixRequest({ ...base, sources: [file] }, userData), /original creator/)
+  assert.equal(main.parseRemixRequest({ ...base, sources: [file], creator: ' Coach  Example ' }, userData).request.creator, 'Coach Example')
   const image = path.join(userData, 'photo.jpg')
   selected.add(image)
-  assert.throws(() => main.parseRemixRequest({ ...base, source: image, creator: 'X' }, userData), /video file/)
+  assert.throws(() => main.parseRemixRequest({ ...base, sources: [image], creator: 'X' }, userData), /video file/)
+  assert.throws(() => main.parseRemixRequest({ ...base, sources: [file, 'https://a.com/1'], creator: 'X' }, userData), /one file at a time/)
 })
 
 test('brand identities are saved, listed newest first, updated in place and removed', async () => {
@@ -110,8 +118,42 @@ test('engine results are parsed defensively', () => {
   })
   assert.deepEqual(plain(out), {
     path: '/o/01 x.mp4', manifestPath: '/o/01 x.json', headline: 'He said what', stance: 'add_nuance', excerptSeconds: 4.2, durationSeconds: 0, costUsd: 0.61,
-    checks: [{ id: 'credited', ok: true, label: 'Credited' }], warnings: ['w']
+    checks: [{ id: 'credited', ok: true, label: 'Credited' }], warnings: ['w'], style: 'reaction', grade: null, creator: ''
   })
+})
+
+test('drafts from the engine and edits from the renderer are checked', () => {
+  const draft = shared.parseRemixDraft({
+    id: 2, source_title: 'Pull-ups 101', creator: 'Coach', start_ms: 4000, end_ms: 8000, quote: 'you must lose weight', why: 'claim',
+    style: 'myth_truth', stance: 'disagree_correct', headline: 'This coach says lose weight first', intro: 'He is wrong.', close: 'Train the pull.',
+    beats: [{ text: 'Strength first.', broll: 'pull up bar' }, 'junk'], notes: ['n'], grade: { letter: 'A', score: 12, verdict: 'v', fix: 'f' }, estimate_usd: 0.6
+  })
+  assert.equal(draft.grade.score, 10)
+  assert.equal(draft.beats.length, 1)
+  assert.equal(shared.parseRemixDraft({ id: -1, headline: 'x', intro: 'y', close: 'z', beats: [] }), null)
+  assert.equal(shared.parseRemixDraft({ ...draft, id: 'x' }), null)
+
+  const ids = new Set([0, 2])
+  const edits = shared.parseRemixEdits([
+    { id: 2, headline: 'This coach says lose weight first', intro: 'Wrong.', close: 'Done.', beats: [{ text: 'Do negatives.', broll: 'gym' }, { text: ' ' }] },
+    { id: 2, headline: 'Duplicate is ignored here', intro: 'x', close: 'y', beats: [{ text: 'z' }] },
+    { id: 7, headline: 'Not a planned draft at all', intro: 'x', close: 'y', beats: [{ text: 'z' }] }
+  ], ids)
+  assert.deepEqual(plain(edits), [{ id: 2, headline: 'This coach says lose weight first', intro: 'Wrong.', close: 'Done.', beats: [{ text: 'Do negatives.', broll: 'gym' }] }])
+  assert.throws(() => shared.parseRemixEdits([], ids), /at least one/)
+  assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'Too short', intro: 'x', close: 'y', beats: [{ text: 'z' }] }], ids), /3\+ words/)
+  assert.throws(() => shared.parseRemixEdits([{ id: 9 }], ids), /at least one/)
+})
+
+test('variety guard: too many remixes of one creator in a week gets a warning', async () => {
+  fs.writeFileSync(path.join(userData, 'remix-ledger.json'), JSON.stringify([
+    ...Array.from({ length: 4 }, () => ({ creator: 'coach', at: new Date().toISOString() })),
+    { creator: 'coach', at: '2020-01-01T00:00:00Z' }
+  ]))
+  const drafts = [{ creator: 'Coach' }, { creator: 'Coach' }, { creator: 'Other' }]
+  const warnings = await main.varietyWarnings(drafts)
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0], /6 remixes of Coach/)
 })
 
 test('cost estimate: the on-camera avatar is the main cost, voice-only is cents', () => {

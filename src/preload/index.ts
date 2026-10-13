@@ -25,7 +25,7 @@ import type { UpdateState } from '../shared/updates'
 import type { OutputStorageUsage } from '../shared/output-storage'
 import type { YouTubePreview } from '../shared/youtube-preview'
 import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/avatars'
-import type { BrandIdentity, RemixRequest, RemixStatus } from '../shared/remix'
+import type { BrandIdentity, RemixEdit, RemixRequest, RemixStatus } from '../shared/remix'
 import type {
   AppDataScope,
   AssistantConversation,
@@ -253,7 +253,7 @@ export interface BridgeClipAPI {
     remove: (id: string) => Promise<AvatarSummary[]>
     /** Opens a file dialog in main; null when cancelled. */
     cloneVoice: (id: string, consent: boolean) => Promise<AvatarSummary[] | null>
-    writeScript: (request: { topic: string; niche: string; seconds: number; style: 'talking' | 'cinematic' }) => Promise<AvatarScript>
+    writeScript: (request: { topic: string; niche: string; seconds: number; style: 'talking' | 'cinematic'; brandIdentityId?: string | null }) => Promise<AvatarScript>
     render: (request: unknown) => Promise<AvatarRenderStatus>
     /** Restage a video the user picked with dialog.selectVideo using an avatar. */
     recreate: (request: unknown) => Promise<AvatarRenderStatus>
@@ -271,7 +271,12 @@ export interface BridgeClipAPI {
   }
   /** Remix: commentary videos built on someone else's viral moments. */
   remix: {
+    /** Plans the remixes; the status moves to 'review' with drafts to approve. */
     start: (request: RemixRequest) => Promise<RemixStatus>
+    /** Renders the approved drafts (with edits). */
+    render: (edits: RemixEdit[]) => Promise<RemixStatus>
+    /** Drops the plan waiting for review. */
+    discard: () => Promise<boolean>
     cancel: () => Promise<boolean>
     status: () => Promise<RemixStatus | null>
     onStatus: (callback: (status: RemixStatus) => void) => () => void
@@ -474,6 +479,8 @@ const api: BridgeClipAPI = {
   },
   remix: {
     start: (request) => ipcRenderer.invoke('remix:start', request),
+    render: (edits) => ipcRenderer.invoke('remix:render', edits),
+    discard: () => ipcRenderer.invoke('remix:discard'),
     cancel: () => ipcRenderer.invoke('remix:cancel'),
     status: () => ipcRenderer.invoke('remix:status'),
     onStatus: (callback) => subscribe('remix:status', callback)

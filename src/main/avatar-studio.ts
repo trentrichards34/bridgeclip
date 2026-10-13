@@ -12,6 +12,7 @@ import {
 import { isCaptionPresetId } from '../shared/caption-presets'
 import { isBackgroundVideoName } from '../shared/backgrounds'
 import { portraitInput, readAvatar } from './avatars'
+import { readBrandIdentity } from './remix'
 import { resolveBackground } from './backgrounds'
 import { assertMediaPath } from './security'
 import { downloadFalFile, falFileUrl, falInputUrl, falRun } from './fal'
@@ -52,6 +53,14 @@ export function scriptSystemPrompt(): string {
   ].join('\n')
 }
 
+/** Added when the request carries a brand identity. */
+export const BRAND_RULES = [
+  'brandIdentity is the brand this video speaks for. Write in its voice, take its positions, and use its method.',
+  'Structure the script as a story where it fits: hook, background, conflict, resolution, then the brand\'s call to action if it names one.',
+  'Results, numbers, client stories and testimonials may come ONLY from brandIdentity\'s proof. Never invent any.',
+  'Respect its off-limits claims and topics.'
+].join('\n')
+
 const SCRIPT_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['title', 'scenes'],
   properties: {
@@ -70,7 +79,8 @@ function parseScriptRequest(value: unknown): AvatarScriptRequest {
   const seconds = SCRIPT_LENGTHS.find((length) => length === raw.seconds)
   if (!seconds) throw new Error('Choose a video length.')
   if (raw.style !== 'talking' && raw.style !== 'cinematic') throw new Error('Choose a video style.')
-  return { topic, niche, seconds, style: raw.style }
+  const brandIdentityId = typeof raw.brandIdentityId === 'string' ? raw.brandIdentityId : null
+  return { topic, niche, seconds, style: raw.style, brandIdentityId }
 }
 
 export async function writeAvatarScript(value: unknown, fetchImpl: typeof fetch = fetch): Promise<AvatarScript> {
@@ -78,11 +88,13 @@ export async function writeAvatarScript(value: unknown, fetchImpl: typeof fetch 
   const key = loadSettings().openrouterApiKey
   if (!key) throw new Error('Add your OpenRouter key in Settings → API keys to write scripts.')
   // Aim a little under the target: voices vary in pace and the hard limit is a minute.
+  const brand = request.brandIdentityId ? await readBrandIdentity(request.brandIdentityId) : null
   const words = Math.round(request.seconds * WORDS_PER_SECOND * 0.9)
   const scenes = scriptSceneCount(request.seconds, request.style)
   const user = JSON.stringify({
     topic: request.topic, niche: request.niche || null, style: request.style === 'talking' ? 'talking head: the presenter speaks to camera the whole time' : 'cinematic: narrated scenes, presenter in some shots',
-    targetWords: words, maxWords: Math.round(MAX_SPOKEN_SECONDS * WORDS_PER_SECOND * 0.9), scenes
+    targetWords: words, maxWords: Math.round(MAX_SPOKEN_SECONDS * WORDS_PER_SECOND * 0.9), scenes,
+    ...(brand ? { brandIdentity: { name: brand.name, text: brand.text } } : {})
   })
   const endpoint = app.isPackaged ? 'https://openrouter.ai/api/v1/chat/completions' : process.env.BRIDGECLIP_E2E_OPENROUTER_URL || 'https://openrouter.ai/api/v1/chat/completions'
   let response: Response
@@ -92,7 +104,7 @@ export async function writeAvatarScript(value: unknown, fetchImpl: typeof fetch 
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips' },
       body: JSON.stringify({ model: SCRIPT_MODEL, temperature: 0.8, max_tokens: 2500, provider: { require_parameters: true },
         response_format: { type: 'json_schema', json_schema: { name: 'avatar_script', strict: true, schema: SCRIPT_SCHEMA } },
-        messages: [{ role: 'system', content: scriptSystemPrompt() }, { role: 'user', content: user }] })
+        messages: [{ role: 'system', content: scriptSystemPrompt() + (brand ? '\n' + BRAND_RULES : '') }, { role: 'user', content: user }] })
     })
   } catch { throw new Error('OpenRouter could not be reached. Check your connection and try again.') }
   if (!response.ok) {
