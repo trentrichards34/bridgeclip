@@ -285,6 +285,7 @@ async def run(config: dict) -> bool:
         include_captions=config.get("include_captions", True),
         caption_style=caption_style,
         include_title=config.get("include_title", True),
+        title_style=config.get("title_style", "card"),
         start_time_seconds=config.get("start_time_seconds"),
         end_time_seconds=config.get("end_time_seconds"),
         banner_platform=config.get("banner_platform"),
@@ -359,6 +360,8 @@ def validate_config(config: object) -> dict:
     for field in ("include_captions", "include_title", "auto_clip_count", "layout_vision_enabled", "debug_capture", "broll_enabled", "broll_keep_hook", "hook_preview"):
         if field in config and not isinstance(config[field], bool):
             raise ValueError(f"{field} must be a boolean")
+    if config.get('title_style', 'card') not in ('card', 'headline'):
+        raise ValueError('Invalid title style')
     if config.get('quality_bar', 'b') not in ('a', 'b', 'c', 'all', 'off'):
         raise ValueError('Invalid quality bar')
     if config.get('workflow', 'automatic') not in ('automatic', 'review'):

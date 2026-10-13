@@ -110,6 +110,9 @@ class ClippingJobRequest:
     caption_style: Optional[CaptionStyle] = None
     # Title card over the top of each rendered clip.
     include_title: bool = True
+    # "headline": a story headline in a bar above the video; "card": the short
+    # title in a rounded card over the video.
+    title_style: str = "card"
     callback_url: Optional[str] = None
     start_time_seconds: Optional[float] = None
     end_time_seconds: Optional[float] = None
@@ -746,6 +749,8 @@ class AIClippingPipeline:
                         caption_style=request.caption_style,
                         title_text=segment.summary,
                         include_title=request.include_title,
+                        title_style=request.title_style,
+                        headline_text=segment.headline,
                         emphasis_words=segment.emphasis_words,
                         banner_platform=request.banner_platform,
                         banner_channel_url=request.banner_channel_url,
@@ -966,6 +971,7 @@ class AIClippingPipeline:
                         virality_score=segment.virality_score,
                         layout_type=segment.layout_type,
                         summary=segment.summary,
+                        headline=segment.headline,
                         tags=segment.tags or [],
                         render_fallback=segment.render_fallback,
                         description=segment.description,
@@ -1078,6 +1084,7 @@ class AIClippingPipeline:
                     "pacing": request.pacing,
                     "video_speed": request.video_speed,
                     "include_title": request.include_title,
+                    "title_style": request.title_style,
                     "background_video": os.path.basename(request.background_video_path) if request.background_video_path else None,
                     "broll": {"enabled": request.broll_enabled, "keep_hook": request.broll_keep_hook},
                     "hook_preview": request.hook_preview,
@@ -1158,6 +1165,7 @@ class AIClippingPipeline:
                         "layout_type": clip.layout_type,
                         "render_fallback": clip.render_fallback,
                         "summary": clip.summary,
+                        "headline": clip.headline,
                         "tags": clip.tags or [],
                         "description": clip.description,
                         "chapters": clip.chapters,
@@ -1323,6 +1331,7 @@ class AIClippingPipeline:
                 virality_score=segment.virality_score,
                 layout_type=segment.layout_type,
                 summary=segment.summary,
+                headline=segment.headline,
                 tags=segment.tags or [],
                 render_fallback=segment.render_fallback,
                 description=segment.description,

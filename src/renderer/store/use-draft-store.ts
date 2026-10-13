@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { QualityBar } from '../../shared/jobs'
+import type { QualityBar, TitleStyle } from '../../shared/jobs'
 
 /** The Create wizard's steps, in order. */
 export type WizardStep = 'video' | 'format' | 'clips' | 'captions' | 'review'
@@ -39,6 +39,7 @@ export interface ClipDraft {
   captionPreset: string
   /** Automatic clips: the title card at the top of each clip. */
   includeTitle: boolean
+  titleStyle: TitleStyle
   /** Gameplay split (9:16, Automatic): background-library file under the speaker. */
   backgroundVideo: string | null
   /** B-roll mode (Automatic): Pexels footage after the hook, for the whole clip, or off. */
@@ -82,6 +83,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   includeCaptions: true,
   captionPreset: 'pop',
   includeTitle: true,
+  titleStyle: 'headline',
   backgroundVideo: null,
   broll: 'off',
   hookPreview: false,

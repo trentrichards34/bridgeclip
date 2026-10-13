@@ -485,6 +485,7 @@ export function startClipJob(
     include_captions: config.includeCaptions,
     caption_preset: config.captionPreset,
     include_title: config.includeTitle ?? true,
+    title_style: config.titleStyle ?? 'card',
     ...(backgroundPath ? { background_video_path: backgroundPath } : {}),
     ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook' } : {}),
     ...(config.hookPreview ? { hook_preview: true } : {}),

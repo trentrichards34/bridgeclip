@@ -45,6 +45,8 @@ class ClipArtifact:
     layout_type: str
     summary: Optional[str] = None
     tags: list[str] = None
+    # Story headline drawn in the top bar (headline title style).
+    headline: Optional[str] = None
     # Set when the smart render failed and a letterbox fallback produced the
     # clip ("letterbox" keeps pacing cuts, "letterbox_natural" doesn't).
     render_fallback: Optional[str] = None
