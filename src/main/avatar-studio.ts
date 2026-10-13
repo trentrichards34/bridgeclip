@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { execFile, spawn, type ChildProcess } from 'child_process'
 import { randomBytes } from 'crypto'
-import { mkdir, writeFile } from 'fs/promises'
+import { access, constants as fsConstants, copyFile, mkdir, writeFile } from 'fs/promises'
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
 import {
@@ -13,11 +13,11 @@ import { isCaptionPresetId } from '../shared/caption-presets'
 import { isBackgroundVideoName } from '../shared/backgrounds'
 import { portraitInput, readAvatar } from './avatars'
 import { resolveBackground } from './backgrounds'
-import { downloadFalFile, falFileUrl, falRun, FalError } from './fal'
+import { downloadFalFile, falFileUrl, falRun } from './fal'
 import { readResponseText } from './http-response'
 import { logger } from './logger'
-import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment } from './pipeline-runner'
-import { getSettingsForBridge, loadSettings } from './settings-store'
+import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
+import { loadSettings } from './settings-store'
 import { resolveBinary } from './tools'
 
 const execFileAsync = promisify(execFile)
@@ -76,11 +76,12 @@ export async function writeAvatarScript(value: unknown, fetchImpl: typeof fetch 
   const request = parseScriptRequest(value)
   const key = loadSettings().openrouterApiKey
   if (!key) throw new Error('Add your OpenRouter key in Settings → API keys to write scripts.')
-  const words = Math.round(request.seconds * WORDS_PER_SECOND)
+  // Aim a little under the target: voices vary in pace and the hard limit is a minute.
+  const words = Math.round(request.seconds * WORDS_PER_SECOND * 0.9)
   const scenes = scriptSceneCount(request.seconds, request.style)
   const user = JSON.stringify({
     topic: request.topic, niche: request.niche || null, style: request.style === 'talking' ? 'talking head: the presenter speaks to camera the whole time' : 'cinematic: narrated scenes, presenter in some shots',
-    targetWords: words, maxWords: Math.round(MAX_SPOKEN_SECONDS * WORDS_PER_SECOND), scenes
+    targetWords: words, maxWords: Math.round(MAX_SPOKEN_SECONDS * WORDS_PER_SECOND * 0.9), scenes
   })
   const endpoint = app.isPackaged ? 'https://openrouter.ai/api/v1/chat/completions' : process.env.BRIDGECLIP_E2E_OPENROUTER_URL || 'https://openrouter.ai/api/v1/chat/completions'
   let response: Response
@@ -104,7 +105,7 @@ export async function writeAvatarScript(value: unknown, fetchImpl: typeof fetch 
     const body = JSON.parse(await readResponseText(response, 200_000, 'OpenRouter returned too much data.')) as { choices?: { message?: { content?: unknown } }[] }
     content = JSON.parse(String(body.choices?.[0]?.message?.content ?? ''))
   } catch { throw new Error('OpenRouter returned an unreadable script. Try again.') }
-  const script = parseAvatarScript(content, request.style)
+  const script = parseAvatarScript(content, request.style, true)
   if (request.style === 'talking') return { title: script.title, scenes: [{ narration: scriptText(script), visual: '', featuresAvatar: true }] }
   return script
 }
@@ -115,7 +116,9 @@ export async function writeAvatarScript(value: unknown, fetchImpl: typeof fetch 
 
 interface ActiveRender {
   status: AvatarRenderStatus
+  /** Aborted by Cancel, quit, or the first failed step (stops parallel scenes spending more). */
   abort: AbortController
+  cancelled: boolean
   child?: ChildProcess
 }
 
@@ -131,7 +134,12 @@ export function avatarRenderStatus(): AvatarRenderStatus | null {
   return active?.status ?? lastStatus
 }
 
+function finished(status: AvatarRenderStatus): boolean {
+  return status.phase === 'done' || status.phase === 'failed' || status.phase === 'cancelled'
+}
+
 function update(render: ActiveRender, phase: AvatarRenderPhase, detail: string, percent: number): void {
+  if (finished(render.status) || (render.abort.signal.aborted && phase !== 'done')) return
   render.status = { ...render.status, phase, detail, percent: Math.max(render.status.percent, Math.min(100, Math.round(percent))) }
   notify(render.status)
 }
@@ -186,15 +194,24 @@ export function motionPrompt(scene: AvatarScene): string {
   return `${scene.visual} Smooth, subtle cinematic camera movement, natural motion, realistic.${scene.featuresAvatar ? ' The person moves naturally and does not speak.' : ''}`
 }
 
-async function pool<T>(items: T[], limit: number, work: (item: T, index: number) => Promise<void>): Promise<void> {
+/**
+ * Run `work` over items, at most `limit` at a time. The first failure stops
+ * new items from starting and aborts `controller` so in-flight paid steps are
+ * cancelled; the call settles only after every runner has stopped.
+ */
+export async function pool<T>(items: T[], limit: number, controller: AbortController, work: (item: T, index: number) => Promise<void>): Promise<void> {
   let next = 0
+  let failure: unknown = null
   const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
+    while (failure === null && !controller.signal.aborted && next < items.length) {
       const index = next++
-      await work(items[index], index)
+      try { await work(items[index], index) }
+      catch (error) { if (failure === null) failure = error; controller.abort() }
     }
   })
   await Promise.all(runners)
+  if (failure !== null) throw failure
+  if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError')
 }
 
 /** The ffmpeg filter that cuts each scene to its share of the narration and joins them. */
@@ -213,7 +230,8 @@ export function narrationShares(scenes: readonly AvatarScene[], seconds: number)
 
 function runFinisher(render: ActiveRender, request: Record<string, unknown>): Promise<void> {
   const settings = loadSettings(), engine = getEnginePath()
-  const env: Record<string, string | undefined> = { ...runtimeEnvironment(), ...getSettingsForBridge(settings), PYTHONPATH: engine, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1' }
+  // No provider keys and no vision: finishing generated 9:16 footage is local work only.
+  const env: Record<string, string | undefined> = { ...runtimeEnvironment(), LAYOUT_VISION_ENABLED: 'false', LOCAL_MODE: 'true', PYTHONPATH: engine, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1' }
   const ffmpegPath = resolveBinary('ffmpeg')
   if (ffmpegPath !== 'ffmpeg') env.PATH = `${dirname(ffmpegPath)}${delimiter}${env.PATH ?? ''}`
   const python = resolvePythonPath(engine, settings.pythonPath)
@@ -240,11 +258,13 @@ function runFinisher(render: ActiveRender, request: Record<string, unknown>): Pr
       clearTimeout(timer); render.child = undefined
       if (render.abort.signal.aborted) reject(new DOMException('Aborted', 'AbortError'))
       else if (result?.ok) resolve()
-      else { logger.warn('avatar.finish.failed', { stderr: stderr.slice(-1500) }); reject(new Error('Adding captions failed. Try again, or turn captions off.')) }
+      else { logger.warn('avatar.finish.failed', { stderr: stderr.slice(-1500) }); reject(new FinishError()) }
     })
     child.stdin.end(JSON.stringify(request))
   })
 }
+
+class FinishError extends Error {}
 
 function kill(child?: ChildProcess, force = false): void {
   if (!child?.pid) return
@@ -253,41 +273,79 @@ function kill(child?: ChildProcess, force = false): void {
 
 export function cancelAvatarRender(): boolean {
   if (!active) return false
+  active.cancelled = true
   active.abort.abort()
   kill(active.child)
   return true
 }
 
 export function stopAvatarRenderForQuit(): void {
-  if (active) { active.abort.abort(); kill(active.child, true) }
+  if (active) { active.cancelled = true; active.abort.abort(); kill(active.child, true) }
 }
 
-export function startAvatarRender(value: unknown): AvatarRenderStatus {
-  if (active) throw new Error('A video is already being generated. Wait for it to finish or cancel it.')
+/** The avatar the current render uses, so it can't be removed mid-render. */
+export function avatarInUse(): string | null {
+  return active ? active.status.avatarId : null
+}
+
+/**
+ * Everything checked before any paid step: the engine's Python, ffmpeg and
+ * ffprobe, and a writable output folder.
+ */
+async function preflight(folder: string): Promise<void> {
+  const settings = loadSettings(), engine = getEnginePath()
+  for (const tool of ['ffmpeg', 'ffprobe'] as const) {
+    try { await execFileAsync(resolveBinary(tool), ['-version'], { timeout: 15_000 }) }
+    catch { throw new Error(`${tool === 'ffmpeg' ? 'FFmpeg' : 'FFprobe'} is missing. Run Settings → System check before generating.`) }
+  }
+  const python = await validatePython(resolvePythonPath(engine, settings.pythonPath), engine)
+  if (!python.ok) throw new Error('The clipping engine is not ready. Run Settings → System check before generating.')
+  try { await mkdir(folder, { recursive: true }); await access(folder, fsConstants.W_OK) }
+  catch { throw new Error('The output folder is not writable. Choose another in Settings → Output.') }
+}
+
+let starting = false
+
+/** A message safe to show: our own errors as written, system errors without local paths. */
+export function renderErrorMessage(error: unknown): string {
+  const candidate = error as NodeJS.ErrnoException | null
+  if (!candidate || typeof candidate.message !== 'string' || !candidate.message || candidate.name === 'AbortError') return 'Generation failed. Try again.'
+  const code = candidate.code
+  if (code === 'ENOSPC') return 'Your disk is full. Free some space and try again.'
+  if (code || /(?:^|[\s'"(])(?:\/(?:Users|home|var|private|tmp|Volumes)\/|[A-Za-z]:\\)/.test(candidate.message)) return 'Generation failed while saving files. Check the output folder in Settings and try again.'
+  return candidate.message
+}
+
+export async function startAvatarRender(value: unknown): Promise<AvatarRenderStatus> {
+  if (active || starting) throw new Error('A video is already being generated. Wait for it to finish or cancel it.')
   const request = parseRenderRequest(value)
   const settings = loadSettings()
   if (!settings.falApiKey) throw new Error('Add your fal.ai API key in Settings → API keys to use Avatar Studio.')
   const avatar = readAvatar(request.avatarId)
   const background = request.backgroundVideo ? resolveBackground(request.backgroundVideo) : null
+  const folder = join(settings.outputDirectory, 'Avatar Studio', renderFolderName(request.script.title || avatar.name, new Date()))
+  starting = true
+  try { await preflight(folder) } finally { starting = false }
+  if (active) throw new Error('A video is already being generated. Wait for it to finish or cancel it.')
   const render: ActiveRender = {
-    abort: new AbortController(),
-    status: { id: randomBytes(8).toString('hex'), phase: 'voice', detail: 'Recording the voiceover', percent: 1, outputPath: null, error: null,
+    abort: new AbortController(), cancelled: false,
+    status: { id: randomBytes(8).toString('hex'), avatarId: request.avatarId, phase: 'voice', detail: 'Recording the voiceover', percent: 1, outputPath: null, error: null, warning: null,
       estimatedCostUsd: estimateRenderCost(request), startedAt: new Date().toISOString() }
   }
   active = render
   notify(render.status)
-  const folder = join(settings.outputDirectory, 'Avatar Studio', renderFolderName(request.script.title || avatar.name, new Date()))
   void runRender(render, request, avatar.voice, settings.falApiKey, folder, background).then(() => {
-    update(render, 'done', 'Ready', 100)
+    render.status = { ...render.status, phase: 'done', detail: 'Ready', percent: 100 }
   }).catch((error: unknown) => {
-    const cancelled = render.abort.signal.aborted
+    const cancelled = render.cancelled
     render.status = { ...render.status, phase: cancelled ? 'cancelled' : 'failed', detail: cancelled ? 'Cancelled' : 'Failed',
-      error: cancelled ? null : error instanceof FalError || error instanceof Error ? error.message : 'Generation failed.' }
+      error: cancelled ? null : renderErrorMessage(error) }
     if (!cancelled) logger.warn('avatar.render.failed', { message: String((error as Error)?.message ?? error).slice(0, 300) })
-    notify(render.status)
+    render.abort.abort()
   }).finally(() => {
     lastStatus = render.status
     if (active === render) active = null
+    notify(render.status)
   })
   return render.status
 }
@@ -326,7 +384,7 @@ async function runRender(render: ActiveRender, request: AvatarRenderRequest, voi
     const portrait = scenes.some((scene) => scene.featuresAvatar) ? await portraitInput(request.avatarId, key, signal) : null
     const clips: string[] = new Array(scenes.length)
     let finished = 0
-    await pool(scenes, SCENE_CONCURRENCY, async (scene, index) => {
+    await pool(scenes, SCENE_CONCURRENCY, render.abort, async (scene, index) => {
       const label = `scene ${index + 1} of ${scenes.length}`
       const still = scene.featuresAvatar && portrait
         ? await falRun(FAL_MODELS.sceneEdit, { prompt: scenePrompt(scene), image_urls: [portrait], aspect_ratio: '9:16', resolution: '1K', output_format: 'jpeg' },
@@ -348,14 +406,49 @@ async function runRender(render: ActiveRender, request: AvatarRenderRequest, voi
   }
 
   // 3. Captions, hook title, optional gameplay split.
-  const durationMs = Math.round((await mediaSeconds(assembled)) * 1000)
   const output = join(folder, 'final.mp4')
+  if (!request.includeCaptions && !request.includeTitle && !background) {
+    await copyFile(assembled, output)
+    render.status = { ...render.status, outputPath: output }
+    return
+  }
+  const durationMs = Math.round((await mediaSeconds(assembled)) * 1000)
+  const lead = await speechBounds(narration, seconds)
   update(render, 'finish', 'Adding captions and title', 85)
-  await runFinisher(render, {
+  try {
+    await runFinisher(render, {
     video: assembled, output, duration_ms: durationMs, caption_preset: request.captionPreset,
     include_captions: request.includeCaptions, title: request.script.title, include_title: request.includeTitle,
     background_video: background,
-    words: estimateWordTimings(text, Math.min(durationMs, Math.round(seconds * 1000))).map((word) => ({ word: word.word, start_ms: word.startMs, end_ms: word.endMs }))
-  })
+    words: estimateWordTimings(text, Math.max(1, Math.min(durationMs, lead.endMs) - lead.startMs)).map((word) => ({ word: word.word, start_ms: word.startMs + lead.startMs, end_ms: word.endMs + lead.startMs }))
+    })
+  } catch (error) {
+    if (!(error instanceof FinishError)) throw error
+    // The paid parts worked; keep the narrated video rather than losing it.
+    const plain = join(folder, 'final-no-captions.mp4')
+    await copyFile(assembled, plain)
+    render.status = { ...render.status, outputPath: plain, warning: 'Captions could not be added, so this is the video without them. Run Settings → System check, then generate again if you need captions.' }
+    return
+  }
   render.status = { ...render.status, outputPath: output }
+}
+
+/** Where speech starts and ends in the narration, trimming silent lead-in and tail. */
+export async function speechBounds(path: string, seconds: number): Promise<{ startMs: number; endMs: number }> {
+  const total = Math.round(seconds * 1000)
+  try {
+    const { stderr } = await execFileAsync(resolveBinary('ffmpeg'), ['-hide_banner', '-nostdin', '-i', path, '-af', 'silencedetect=noise=-40dB:d=0.25', '-f', 'null', '-'], { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 })
+    return parseSpeechBounds(stderr, total)
+  } catch { return { startMs: 0, endMs: total } }
+}
+
+export function parseSpeechBounds(log: string, totalMs: number): { startMs: number; endMs: number } {
+  const starts = [...log.matchAll(/silence_start: (-?[\d.]+)/g)].map((m) => Math.max(0, Math.round(Number(m[1]) * 1000)))
+  const ends = [...log.matchAll(/silence_end: ([\d.]+)/g)].map((m) => Math.round(Number(m[1]) * 1000))
+  let startMs = 0, endMs = totalMs
+  if (starts.length && starts[0] <= 50 && ends.length) startMs = ends[0]
+  const lastStart = starts.at(-1)
+  if (lastStart !== undefined && lastStart > startMs && (ends.length < starts.length || (ends.at(-1) ?? 0) >= totalMs - 50)) endMs = lastStart
+  if (endMs - startMs < 500) return { startMs: 0, endMs: totalMs }
+  return { startMs, endMs }
 }

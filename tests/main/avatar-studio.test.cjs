@@ -160,7 +160,7 @@ function loadStudio(overrides = {}) {
     './avatars': { portraitInput: async () => 'data:', readAvatar: () => ({}) },
     './backgrounds': { resolveBackground: (name) => `/library/${name}` },
     './logger': { logger: { warn() {}, info() {} } },
-    './pipeline-runner': { getBridgeRunnerPath: () => '/b/bridge_runner.py', getEnginePath: () => '/engine', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}) },
+    './pipeline-runner': { getBridgeRunnerPath: () => '/b/bridge_runner.py', getEnginePath: () => '/engine', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
     './settings-store': settingsStub,
     './tools': { resolveBinary: (name) => name },
     ...overrides
@@ -274,4 +274,99 @@ test('avatars need consent for a real likeness and must otherwise be fictional',
   await assert.rejects(lib.cloneVoice(id, photo, false), /Confirm this is your voice/)
   await assert.rejects(lib.updateAvatar('../escape', { name: 'x' }), /Invalid avatar/)
   assert.deepEqual(plain(await lib.removeAvatar(id)), [])
+})
+
+// ---------------------------------------------------------------------------
+// Review fixes: failure containment, timing, orientation, safe messages
+// ---------------------------------------------------------------------------
+
+test('a failed scene stops new scenes from starting and aborts the rest', async () => {
+  const studio = loadStudio()
+  const controller = new AbortController()
+  const started = []
+  const pending = studio.pool([0, 1, 2, 3, 4, 5], 2, controller, async (item) => {
+    started.push(item)
+    if (item === 1) throw new Error('content blocked')
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, 50)
+      controller.signal.addEventListener('abort', () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')) })
+    })
+  })
+  await assert.rejects(pending, /content blocked/)
+  assert.ok(controller.signal.aborted)
+  assert.deepEqual(started, [0, 1])
+})
+
+test('caption timing skips silent lead-in and tail in the narration', () => {
+  const studio = loadStudio()
+  const log = 'silence_start: 0\nsilence_end: 0.42 | silence_duration: 0.42\nsilence_start: 3.1\nsilence_end: 3.5\nsilence_start: 9.65\nsilence_end: 10.0 | silence_duration: 0.35'
+  assert.deepEqual(plain(studio.parseSpeechBounds(log, 10_000)), { startMs: 420, endMs: 9650 })
+  assert.deepEqual(plain(studio.parseSpeechBounds('silence_start: 0.000\n', 10_000)), { startMs: 0, endMs: 10_000 })
+  assert.deepEqual(plain(studio.parseSpeechBounds('', 8000)), { startMs: 0, endMs: 8000 })
+})
+
+test('render errors never show local paths', () => {
+  const studio = loadStudio()
+  assert.equal(studio.renderErrorMessage(new Error('Your fal.ai balance is empty. Add credits at fal.ai/dashboard/billing, then try again.')), 'Your fal.ai balance is empty. Add credits at fal.ai/dashboard/billing, then try again.')
+  const enoent = Object.assign(new Error("ENOENT: no such file, open '/Users/trent/Library/x/portrait.jpg'"), { code: 'ENOENT' })
+  assert.doesNotMatch(studio.renderErrorMessage(enoent), /Users/)
+  assert.match(studio.renderErrorMessage(Object.assign(new Error('x'), { code: 'ENOSPC' })), /disk is full/)
+  assert.equal(studio.renderErrorMessage(new DOMException('Aborted', 'AbortError')), 'Generation failed. Try again.')
+})
+
+test('over-long drafts from the writer stay editable; rendering still enforces the limit', () => {
+  const long = Array.from({ length: 175 }, () => 'word').join(' ')
+  const script = shared.parseAvatarScript({ title: 'Hook', scenes: [{ narration: long }] }, 'talking', true)
+  assert.equal(shared.wordCount(shared.scriptText(script)), 175)
+  assert.throws(() => shared.parseAvatarScript(script, 'talking'), /about a minute/)
+})
+
+test('downloads only follow redirects that stay on fal hosts', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-dl-'))
+  const seen = []
+  const redirect = (to) => new Response(null, { status: 302, headers: { location: to } })
+  await assert.rejects(fal.downloadFalFile('https://v3.fal.media/a.mp4', path.join(dir, 'a.mp4'), {
+    fetch: async (url, init) => { seen.push([url, init.redirect]); return redirect('http://169.254.169.254/latest') }
+  }), /unexpected host/)
+  assert.deepEqual(seen, [['https://v3.fal.media/a.mp4', 'manual']])
+  const hops = [redirect('https://cdn.fal.media/b.mp4'), new Response('video-bytes', { status: 200 })]
+  await fal.downloadFalFile('https://v3.fal.media/a.mp4', path.join(dir, 'b.mp4'), { fetch: async () => hops.shift() })
+  assert.equal(fs.readFileSync(path.join(dir, 'b.mp4'), 'utf8'), 'video-bytes')
+  assert.equal(fs.existsSync(path.join(dir, 'b.mp4.part')), false)
+})
+
+test('phone photos report their EXIF orientation', () => {
+  const lib = loadLibrary(os.tmpdir())
+  const exif = (orientation, little) => {
+    const tiff = Buffer.alloc(26)
+    tiff.write(little ? 'II' : 'MM', 0, 'latin1')
+    const u16 = (v, at) => little ? tiff.writeUInt16LE(v, at) : tiff.writeUInt16BE(v, at)
+    const u32 = (v, at) => little ? tiff.writeUInt32LE(v, at) : tiff.writeUInt32BE(v, at)
+    u16(42, 2); u32(8, 4); u16(1, 8)
+    u16(0x0112, 10); u16(3, 12); u32(1, 14); u16(orientation, 18)
+    const payload = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff])
+    const app1 = Buffer.alloc(4); app1[0] = 0xff; app1[1] = 0xe1; app1.writeUInt16BE(payload.length + 2, 2)
+    return Buffer.concat([Buffer.from([0xff, 0xd8]), app1, payload, Buffer.from([0xff, 0xda, 0, 2])])
+  }
+  assert.equal(lib.jpegOrientation(exif(6, true)), 6)
+  assert.equal(lib.jpegOrientation(exif(8, false)), 8)
+  assert.equal(lib.jpegOrientation(Buffer.from([0xff, 0xd8, 0xff, 0xda, 0, 2])), 1)
+  assert.equal(lib.jpegOrientation(Buffer.from('not a jpeg')), 1)
+})
+
+test('a cloned voice survives switching to a preset and back', async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-clone-'))
+  const lib = loadLibrary(userData)
+  const photo = path.join(userData, 'me.jpg'); fs.writeFileSync(photo, 'photo-bytes')
+  const draft = await lib.draftFromPhoto(photo)
+  const [created] = plain(await lib.createAvatar({ draftId: draft.draftId, name: 'Me', kind: 'self', voice: { provider: 'elevenlabs', voice: 'Brian' }, consent: true }))
+  // Simulate a finished clone on disk.
+  const file = path.join(userData, 'avatars', created.id, 'avatar.json')
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
+  fs.writeFileSync(file, JSON.stringify({ ...saved, clonedVoice: { voiceId: 'my_clone', clonedAt: 'x' }, voice: { provider: 'minimax-clone', voiceId: 'my_clone', clonedAt: 'x' } }))
+  let [avatar] = plain(await lib.updateAvatar(created.id, { voice: { provider: 'elevenlabs', voice: 'Sarah' } }))
+  assert.equal(avatar.voice.voice, 'Sarah')
+  assert.equal(avatar.clonedVoice.voiceId, 'my_clone')
+  ;[avatar] = plain(await lib.updateAvatar(created.id, { voice: { provider: 'minimax-clone', voiceId: 'my_clone', clonedAt: 'forged' } }))
+  assert.deepEqual(avatar.voice, { provider: 'minimax-clone', voiceId: 'my_clone', clonedAt: 'x' })
 })

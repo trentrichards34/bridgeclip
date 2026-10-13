@@ -19,6 +19,8 @@ export interface Avatar {
   /** AI avatars: the description they were generated from. */
   description: string
   voice: AvatarVoice
+  /** A voice cloned for this avatar, kept when a preset voice is chosen so it can be switched back. */
+  clonedVoice: { voiceId: string; clonedAt: string } | null
   /** Own-likeness avatars and cloned voices record when consent was confirmed. */
   consentAt: string | null
   createdAt: string
@@ -74,6 +76,7 @@ export type AvatarRenderPhase = 'voice' | 'scenes' | 'animate' | 'assemble' | 'f
 
 export interface AvatarRenderStatus {
   id: string
+  avatarId: string
   phase: AvatarRenderPhase
   /** Human-readable step, e.g. "Animating scene 2 of 4". */
   detail: string
@@ -82,6 +85,8 @@ export interface AvatarRenderStatus {
   /** Finished video, inside the output folder. */
   outputPath: string | null
   error: string | null
+  /** Set when the video finished with a compromise, e.g. captions could not be added. */
+  warning: string | null
   estimatedCostUsd: number
   startedAt: string
 }
@@ -194,8 +199,12 @@ function cleanText(value: unknown, max: number): string | null {
   return text.length <= max ? text : null
 }
 
-/** Validate a script from the renderer or the model. Throws a user-facing message. */
-export function parseAvatarScript(value: unknown, style: AvatarVideoStyle): AvatarScript {
+/**
+ * Validate a script from the renderer or the model. Throws a user-facing
+ * message. `allowLong` keeps over-length drafts (from the writer) editable
+ * instead of discarding them; rendering always enforces the limit.
+ */
+export function parseAvatarScript(value: unknown, style: AvatarVideoStyle, allowLong = false): AvatarScript {
   if (!value || typeof value !== 'object') throw new Error('The script is missing.')
   const raw = value as { title?: unknown; scenes?: unknown }
   const title = cleanText(raw.title ?? '', 80)
@@ -204,7 +213,7 @@ export function parseAvatarScript(value: unknown, style: AvatarVideoStyle): Avat
   if (raw.scenes.length > MAX_SCENES) throw new Error(`Use at most ${MAX_SCENES} scenes.`)
   const scenes = raw.scenes.map((scene, index): AvatarScene => {
     const item = (scene ?? {}) as { narration?: unknown; visual?: unknown; featuresAvatar?: unknown }
-    const narration = cleanText(item.narration, MAX_SCRIPT_CHARS)
+    const narration = cleanText(item.narration, MAX_SCRIPT_CHARS * (allowLong ? 3 : 1))
     const visual = cleanText(item.visual ?? '', 600)
     if (!narration) throw new Error(`Scene ${index + 1} has no narration.`)
     if (visual === null) throw new Error(`Scene ${index + 1}'s visual description is too long.`)
@@ -213,6 +222,10 @@ export function parseAvatarScript(value: unknown, style: AvatarVideoStyle): Avat
   })
   const script = { title, scenes }
   const text = scriptText(script)
+  if (allowLong) {
+    if (text.length > MAX_SCRIPT_CHARS * 3) throw new Error('The script came back far too long. Try again.')
+    return script
+  }
   if (text.length > MAX_SCRIPT_CHARS) throw new Error(`Keep the script under ${MAX_SCRIPT_CHARS} characters (about a minute).`)
   if (estimateSpokenSeconds(text) > MAX_SPOKEN_SECONDS) throw new Error('Keep the script to about a minute of speech.')
   return script

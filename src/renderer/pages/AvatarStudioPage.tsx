@@ -107,10 +107,12 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
     if (!selected) return
     setError(null)
     try {
-      setStatus(await getApi().avatars.render({
+      const started = await getApi().avatars.render({
         avatarId: selected.id, style: draft.style, script: draft.script, lipSync: draft.lipSync, captionPreset: draft.captionPreset,
         includeCaptions: draft.includeCaptions, includeTitle: draft.includeTitle, backgroundVideo: draft.style === 'talking' ? draft.backgroundVideo : null
-      }))
+      })
+      // A status event for this render may already have arrived; keep the newer one.
+      setStatus((previous) => previous?.id === started.id ? previous : started)
     } catch (err) { setError(errorMessage(err, 'The video could not be started.')) }
   }
 
@@ -138,7 +140,7 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
         <div className="space-y-5">
           <Panel>
             <PanelHeader title="Your avatars" description="Your own likeness or a fictional AI person."
-              action={<Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} disabled={!falConfigured} onClick={() => setCreating(true)}>New</Button>} />
+              action={<Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreating(true)}>New</Button>} />
             {avatars.length === 0 ? (
               <EmptyState className="mt-4" icon={<UserRound />} title="No avatars yet"
                 description="Use a photo of yourself, or describe a person and generate one." />
@@ -155,7 +157,7 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
               </div>
             )}
           </Panel>
-          {selected && <AvatarDetails avatar={selected} disabled={busy || !falConfigured} onChange={setAvatars} onError={setError} />}
+          {selected && <AvatarDetails avatar={selected} busy={busy} falConfigured={falConfigured} onChange={setAvatars} onError={setError} />}
         </div>
 
         <div className="space-y-5">
@@ -271,13 +273,16 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
                   </Button>
                 )}
               </div>
-              <p className="text-2xs text-ink-subtle">Talking-head videos take a few minutes; cinematic ones up to 10-15. You can leave this page while it works.</p>
+              <p className="text-2xs text-ink-subtle">
+                Talking-head videos take a few minutes; cinematic ones up to 10-15. You can leave this page while it works.
+                {busy && ' Cancelling stops what hasn’t started; a step already running on fal.ai may still be charged.'}
+              </p>
             </div>
           </Panel>
         </div>
       </div>
 
-      {creating && <CreateAvatarDialog onClose={() => setCreating(false)} onCreated={(list) => {
+      {creating && <CreateAvatarDialog falConfigured={falConfigured} onClose={() => setCreating(false)} onCreated={(list) => {
         setAvatars(list); setCreating(false); if (list[0]) draft.update({ avatarId: list[0].id })
       }} />}
     </Page>
@@ -298,6 +303,7 @@ function RenderProgress({ status }: { status: AvatarRenderStatus }): React.JSX.E
   if (status.phase === 'done' && status.outputPath) {
     return (
       <div className="space-y-3">
+        {status.warning && <Callout tone="warning">{status.warning}</Callout>}
         <video key={status.outputPath} src={localFileUrl(status.outputPath)} controls className="mx-auto aspect-[9/16] max-h-[520px] rounded-2xl bg-black" />
         <div className="flex justify-center gap-2">
           <Button size="sm" variant="secondary" icon={<FolderOpen className="h-3.5 w-3.5" />} onClick={() => void getApi().shell.showItemInFolder(status.outputPath!)}>Show in folder</Button>
@@ -315,13 +321,14 @@ function RenderProgress({ status }: { status: AvatarRenderStatus }): React.JSX.E
   )
 }
 
-function AvatarDetails({ avatar, disabled, onChange, onError }: { avatar: AvatarSummary; disabled: boolean; onChange: (list: AvatarSummary[]) => void; onError: (message: string | null) => void }): React.JSX.Element {
+function AvatarDetails({ avatar, busy, falConfigured, onChange, onError }: { avatar: AvatarSummary; busy: boolean; falConfigured: boolean; onChange: (list: AvatarSummary[]) => void; onError: (message: string | null) => void }): React.JSX.Element {
   const [consent, setConsent] = useState(false)
   const [cloning, setCloning] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
   useEffect(() => { setConsent(false); setConfirmRemove(false) }, [avatar.id])
+  const clone = avatar.clonedVoice
   const options = [
-    ...(avatar.voice.provider === 'minimax-clone' ? [{ value: 'clone', label: 'Cloned voice', detail: 'Your recording' }] : []),
+    ...(clone ? [{ value: 'clone', label: 'Cloned voice', detail: 'Your recording' }] : []),
     ...PRESET_VOICES.map((voice) => ({ value: voice.id, label: voice.label, detail: voice.hint }))
   ]
   const value = avatar.voice.provider === 'minimax-clone' ? 'clone' : avatar.voice.voice
@@ -335,34 +342,35 @@ function AvatarDetails({ avatar, disabled, onChange, onError }: { avatar: Avatar
         action={<Badge tone={avatar.kind === 'self' ? 'accent' : 'neutral'}>{voiceLabel(avatar.voice)}</Badge>} />
       <div className="mt-4 space-y-4">
         <Field label="Voice">
-          <Select value={value} options={options} disabled={disabled} searchable onChange={(next) => {
-            if (next !== 'clone') void run(() => getApi().avatars.update(avatar.id, { voice: { provider: 'elevenlabs', voice: next } }))
+          <Select value={value} options={options} disabled={busy} searchable onChange={(next) => {
+            const voice = next === 'clone' ? (clone ? { provider: 'minimax-clone', voiceId: clone.voiceId, clonedAt: clone.clonedAt } : null) : { provider: 'elevenlabs', voice: next }
+            if (voice) void run(() => getApi().avatars.update(avatar.id, { voice }))
           }} />
         </Field>
         <div className="glass-tile space-y-2 rounded-xl p-3">
           <p className="flex items-center gap-1.5 text-xs font-medium text-ink"><Mic className="h-3.5 w-3.5" />Clone a voice</p>
-          <p className="text-2xs text-ink-subtle">Upload 30-90 seconds of clear speech (MP3, WAV or M4A). About $1.50 on fal.ai.</p>
+          <p className="text-2xs text-ink-subtle">Upload 30-90 seconds of clear speech (MP3, WAV or M4A). About $1.50 on fal.ai.{clone ? ' Cloning again replaces the current clone.' : ''}</p>
           <LabeledCheckbox checked={consent} onChange={setConsent} label="This is my voice, or I have the speaker's permission" />
-          <Button size="sm" variant="secondary" icon={<AudioLines className="h-3.5 w-3.5" />} loading={cloning} disabled={disabled || !consent}
+          <Button size="sm" variant="secondary" icon={<AudioLines className="h-3.5 w-3.5" />} loading={cloning} disabled={busy || !falConfigured || !consent}
             onClick={() => { setCloning(true); void run(() => getApi().avatars.cloneVoice(avatar.id, true)).finally(() => setCloning(false)) }}>
             Choose recording
           </Button>
         </div>
         {confirmRemove ? (
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="danger" onClick={() => void run(() => getApi().avatars.remove(avatar.id))}>Remove {avatar.name}</Button>
+            <Button size="sm" variant="danger" disabled={busy} onClick={() => void run(() => getApi().avatars.remove(avatar.id))}>Remove {avatar.name}</Button>
             <Button size="sm" variant="ghost" onClick={() => setConfirmRemove(false)}>Keep</Button>
           </div>
         ) : (
-          <Button size="sm" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} disabled={disabled} onClick={() => setConfirmRemove(true)}>Remove avatar</Button>
+          <Button size="sm" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} disabled={busy} onClick={() => setConfirmRemove(true)}>Remove avatar</Button>
         )}
       </div>
     </Panel>
   )
 }
 
-function CreateAvatarDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (list: AvatarSummary[]) => void }): React.JSX.Element {
-  const [kind, setKind] = useState<'self' | 'ai'>('ai')
+function CreateAvatarDialog({ falConfigured, onClose, onCreated }: { falConfigured: boolean; onClose: () => void; onCreated: (list: AvatarSummary[]) => void }): React.JSX.Element {
+  const [kind, setKind] = useState<'self' | 'ai'>(falConfigured ? 'ai' : 'self')
   const [description, setDescription] = useState('')
   const [drafts, setDrafts] = useState<{ draftId: string; path: string }[]>([])
   const [chosen, setChosen] = useState<string | null>(null)
@@ -404,7 +412,7 @@ function CreateAvatarDialog({ onClose, onCreated }: { onClose: () => void; onCre
           { value: 'self', label: 'Use my photo' }
         ]} />
         {kind === 'ai' ? (
-          <Field label="Describe the person" hint="Fictional people only. About $0.16 for two options.">
+          <Field label="Describe the person" hint={falConfigured ? 'Fictional people only. About $0.16 for two options.' : 'Add your fal.ai key in Settings → API keys to generate faces.'}>
             <TextArea rows={3} value={description} maxLength={600} onChange={(e) => setDescription(e.target.value)}
               placeholder="e.g. Woman in her early 30s, curly dark hair, warm smile, casual olive jacket, cozy home office" />
           </Field>
@@ -413,7 +421,7 @@ function CreateAvatarDialog({ onClose, onCreated }: { onClose: () => void; onCre
         )}
         <div className="flex gap-2">
           {kind === 'ai'
-            ? <Button icon={<Sparkles className="h-4 w-4" />} loading={working && drafts.length === 0} disabled={working || description.trim().length < 10} onClick={() => void generateFaces()}>{drafts.length ? 'Generate again' : 'Generate faces'}</Button>
+            ? <Button icon={<Sparkles className="h-4 w-4" />} loading={working && drafts.length === 0} disabled={working || !falConfigured || description.trim().length < 10} onClick={() => void generateFaces()}>{drafts.length ? 'Generate again' : 'Generate faces'}</Button>
             : <Button icon={<UserRound className="h-4 w-4" />} disabled={working} onClick={() => void pickPhoto()}>{drafts.length ? 'Choose another photo' : 'Choose photo'}</Button>}
         </div>
         {drafts.length > 0 && (

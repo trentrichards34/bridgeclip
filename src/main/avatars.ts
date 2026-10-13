@@ -57,13 +57,18 @@ function falKey(): string {
   return key
 }
 
+function parseClone(value: unknown): Avatar['clonedVoice'] {
+  const raw = (value ?? {}) as { voiceId?: unknown; clonedAt?: unknown }
+  return typeof raw.voiceId === 'string' && /^[A-Za-z0-9_-]{1,120}$/.test(raw.voiceId) && typeof raw.clonedAt === 'string' ? { voiceId: raw.voiceId, clonedAt: raw.clonedAt } : null
+}
+
 function parseAvatar(value: unknown, id: string): Avatar | null {
   try {
     const raw = value as Record<string, unknown>
     if (raw.id !== id || typeof raw.name !== 'string' || (raw.kind !== 'self' && raw.kind !== 'ai') || typeof raw.createdAt !== 'string') return null
     return {
       id, name: raw.name.slice(0, 60), kind: raw.kind, description: typeof raw.description === 'string' ? raw.description.slice(0, 600) : '',
-      voice: parseVoice(raw.voice), consentAt: typeof raw.consentAt === 'string' ? raw.consentAt : null, createdAt: raw.createdAt
+      voice: parseVoice(raw.voice), clonedVoice: parseClone(raw.clonedVoice) ?? (raw.voice && (raw.voice as { provider?: unknown }).provider === 'minimax-clone' ? parseClone(raw.voice) : null), consentAt: typeof raw.consentAt === 'string' ? raw.consentAt : null, createdAt: raw.createdAt
     }
   } catch { return null }
 }
@@ -105,12 +110,59 @@ export async function listAvatars(): Promise<AvatarSummary[]> {
   return avatars.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
+/** EXIF orientation (1-8) of a JPEG, or 1 when absent. Phone photos are often stored sideways with this tag. */
+export function jpegOrientation(bytes: Buffer): number {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return 1
+  let offset = 2
+  while (offset + 4 <= bytes.length && bytes[offset] === 0xff) {
+    const marker = bytes[offset + 1]
+    const length = bytes.readUInt16BE(offset + 2)
+    if (marker === 0xda || length < 2) break
+    if (marker === 0xe1 && bytes.toString('latin1', offset + 4, offset + 10) === 'Exif\0\0') {
+      const tiff = offset + 10
+      if (tiff + 8 > bytes.length) return 1
+      const little = bytes.toString('latin1', tiff, tiff + 2) === 'II'
+      const u16 = (at: number): number => little ? bytes.readUInt16LE(at) : bytes.readUInt16BE(at)
+      const u32 = (at: number): number => little ? bytes.readUInt32LE(at) : bytes.readUInt32BE(at)
+      const ifd = tiff + u32(tiff + 4)
+      if (ifd + 2 > bytes.length) return 1
+      const entries = u16(ifd)
+      for (let i = 0; i < entries; i++) {
+        const entry = ifd + 2 + i * 12
+        if (entry + 12 > bytes.length) return 1
+        if (u16(entry) === 0x0112) {
+          const value = u16(entry + 8)
+          return value >= 1 && value <= 8 ? value : 1
+        }
+      }
+      return 1
+    }
+    offset += 2 + length
+  }
+  return 1
+}
+
+/** ffmpeg filters that turn an EXIF-oriented image upright. */
+const ORIENTATION_FILTERS: Record<number, string> = { 2: 'hflip', 3: 'hflip,vflip', 4: 'vflip', 5: 'transpose=0', 6: 'transpose=1', 7: 'transpose=3', 8: 'transpose=2' }
+
+async function upright(bytes: Buffer): Promise<Buffer> {
+  const filter = ORIENTATION_FILTERS[jpegOrientation(bytes)]
+  if (!filter) return bytes
+  const dir = join(draftsDir(), `${newId(6)}.rotate`)
+  await mkdir(dir, { recursive: true })
+  try {
+    await writeFile(join(dir, 'in.jpg'), bytes)
+    await execFileAsync(resolveBinary('ffmpeg'), ['-nostdin', '-loglevel', 'error', '-y', '-noautorotate', '-i', join(dir, 'in.jpg'), '-vf', filter, '-q:v', '2', join(dir, 'out.jpg')], { timeout: 30_000 })
+    return await readFile(join(dir, 'out.jpg'))
+  } catch { return bytes } finally { await rm(dir, { recursive: true, force: true }) }
+}
+
 /** A normalized JPEG: upright, at most 1536px on the long side. */
 function normalizePhoto(bytes: Buffer): Buffer {
   let image = nativeImage.createFromBuffer(bytes)
   if (image.isEmpty()) throw new Error('Could not read that image. Use a JPG or PNG photo.')
   const { width, height } = image.getSize()
-  if (Math.min(width, height) < 384) throw new Error('That photo is too small. Use one at least 512 pixels wide.')
+  if (Math.min(width, height) < 384) throw new Error('That photo is too small. Use one at least 512 pixels on its shortest side.')
   const scale = Math.min(1, 1536 / Math.max(width, height))
   if (scale < 1) image = image.resize({ width: Math.round(width * scale), height: Math.round(height * scale), quality: 'best' })
   return image.toJPEG(92)
@@ -131,7 +183,7 @@ export async function draftFromPhoto(path: string): Promise<AvatarDraft> {
   if (!PHOTO_EXTENSIONS.includes(extname(path).slice(1).toLowerCase())) throw new Error('Use a JPG or PNG photo.')
   const info = await stat(path)
   if (!info.isFile() || info.size > MAX_PHOTO_BYTES) throw new Error('Use a photo under 25 MB.')
-  return saveDraft(normalizePhoto(await readFile(path)))
+  return saveDraft(normalizePhoto(await upright(await readFile(path))))
 }
 
 export function portraitPrompt(description: string): string {
@@ -189,7 +241,7 @@ export async function createAvatar(input: CreateAvatarInput): Promise<AvatarSumm
   const id = newId(10)
   await mkdir(avatarDir(id), { recursive: true })
   await rename(draft, portraitPath(id))
-  await writeAvatar({ id, name, kind, description, voice, consentAt: kind === 'self' ? new Date().toISOString() : null, createdAt: new Date().toISOString() })
+  await writeAvatar({ id, name, kind, description, voice, clonedVoice: null, consentAt: kind === 'self' ? new Date().toISOString() : null, createdAt: new Date().toISOString() })
   return listAvatars()
 }
 
@@ -203,9 +255,11 @@ export async function updateAvatar(id: unknown, patch: { name?: unknown; voice?:
   }
   if (patch.voice !== undefined) {
     const voice = parseVoice(patch.voice)
-    // A cloned voice can only be set by cloning, never named by the renderer.
-    if (voice.provider === 'minimax-clone' && (avatar.voice.provider !== 'minimax-clone' || avatar.voice.voiceId !== voice.voiceId)) throw new Error('Clone a voice to use it.')
-    avatar.voice = voice
+    // A cloned voice can only be this avatar's own clone, never one named by the renderer.
+    if (voice.provider === 'minimax-clone') {
+      if (!avatar.clonedVoice || avatar.clonedVoice.voiceId !== voice.voiceId) throw new Error('Clone a voice to use it.')
+      avatar.voice = { provider: 'minimax-clone', ...avatar.clonedVoice }
+    } else avatar.voice = voice
   }
   await writeAvatar(avatar)
   return listAvatars()
@@ -253,7 +307,8 @@ export async function cloneVoice(id: unknown, samplePath: string, consent: unkno
   const voiceId = output.custom_voice_id
   if (typeof voiceId !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/.test(voiceId)) throw new FalError('fal.ai did not return a cloned voice. Try a cleaner recording.')
   await falRun(FAL_MODELS.cloneTts, { prompt: 'Voice ready.', voice_setting: { voice_id: voiceId }, output_format: 'url' }, { key, signal, timeoutMs: 3 * 60_000 })
-  avatar.voice = { provider: 'minimax-clone', voiceId, clonedAt: new Date().toISOString() }
+  avatar.clonedVoice = { voiceId, clonedAt: new Date().toISOString() }
+  avatar.voice = { provider: 'minimax-clone', ...avatar.clonedVoice }
   avatar.consentAt ??= new Date().toISOString()
   await writeAvatar(avatar)
   return listAvatars()

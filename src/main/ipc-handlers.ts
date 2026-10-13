@@ -11,7 +11,7 @@ import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds } fr
 import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { cloneVoice, createAvatar, draftFromPhoto, draftsFromDescription, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
-import { avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRender, writeAvatarScript } from './avatar-studio'
+import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
 import { getModelCatalog } from './openrouter-models'
@@ -181,7 +181,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('avatars:generateFaces', (_event, description: unknown) => draftsFromDescription(description))
   handle('avatars:create', (_event, input: unknown) => createAvatar((input ?? {}) as Parameters<typeof createAvatar>[0]))
   handle('avatars:update', (_event, id: unknown, patch: unknown) => updateAvatar(id, (patch ?? {}) as { name?: unknown; voice?: unknown }))
-  handle('avatars:remove', (_event, id: unknown) => removeAvatar(id))
+  handle('avatars:remove', (_event, id: unknown) => {
+    if (id === avatarInUse()) throw new Error('This avatar is being used by the video in progress. Wait for it to finish or cancel it first.')
+    return removeAvatar(id)
+  })
   handle('avatars:cloneVoice', async (_event, id: unknown, consent: unknown) => {
     const window = getMainWindow()
     if (!window) return null
