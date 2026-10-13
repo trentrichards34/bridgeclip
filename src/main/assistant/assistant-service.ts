@@ -164,7 +164,7 @@ export class AssistantService {
   }
 
   async shutdown(): Promise<void> {
-    for (const turn of this.turns.values()) turn.stop('BridgeClip is closing.')
+    for (const turn of this.turns.values()) turn.stop('CreatorClips is closing.')
     for (const [id, pending] of this.approvals) {
       this.approvals.delete(id)
       pending.resolve(false)
@@ -289,7 +289,7 @@ export class AssistantService {
   }
 
   private withHistory(history: string, text: string): string {
-    return `Earlier in this BridgeClip chat (for context; it happened before this session):\n\n${history}\n\n---\n\n${text}`
+    return `Earlier in this CreatorClips chat (for context; it happened before this session):\n\n${history}\n\n---\n\n${text}`
   }
 
   /** The chat before this message, as OpenRouter messages, newest kept when it's long. */
@@ -370,7 +370,7 @@ export class AssistantService {
       }
     }
     const session = await this.mcp.openSession({
-      instructions: 'Tools for controlling the BridgeClip desktop app: clipping jobs, the clip library, automations, social posting and settings.',
+      instructions: 'Tools for controlling the CreatorClips desktop app: clipping jobs, the clip library, automations, social posting and settings.',
       listTools: () => this.toolDefinitions(provider),
       callTool: (name, args, signal) => this.callTool(turn, name, args, signal)
     })

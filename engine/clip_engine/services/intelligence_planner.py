@@ -67,6 +67,8 @@ class ClipPlanSegment:
     subtitle_path: Optional[str] = None
     editorial: Optional[dict] = None
     moment: Optional[dict] = None
+    # Paid Creators framework grade (see framework_grader.ClipGrade.to_dict).
+    framework: Optional[dict] = None
 
 
 @dataclass
@@ -99,6 +101,8 @@ DEFAULT_PRICING = {"input": 2.00e-6, "output": 12.0e-6}
 # The five rubric dimensions the model scores each clip on (0-10 each).
 # virality_score is computed from these rather than trusting model arithmetic.
 RUBRIC_DIMENSIONS = ("hook", "standalone", "arc", "quotability", "ending")
+# Hook and payoff decide whether a short works; they carry 60% of the rank.
+RUBRIC_WEIGHTS = {"hook": 0.35, "standalone": 0.15, "arc": 0.1, "quotability": 0.15, "ending": 0.25}
 
 MOMENT_SCHEMA = {'type': 'object', 'properties': {
     'topic': {'type': 'string', 'description': 'One specific topic of this moment, not a summary of the whole video.'},
@@ -405,8 +409,8 @@ class IntelligencePlannerService:
                 timeout=httpx.Timeout(600.0, connect=30.0),
                 headers={
                     "Authorization": f"Bearer {self.settings.openrouter_api_key}",
-                    "HTTP-Referer": "https://github.com/bridge-mind/bridgeclip",
-                    "X-Title": "BridgeClip AI Clipping Agent",
+                    "HTTP-Referer": "https://github.com/trentrichards34/bridgeclip",
+                    "X-Title": "CreatorClips AI Clipping Agent",
                 },
             )
         return self._http_client
@@ -429,6 +433,7 @@ class IntelligencePlannerService:
         source_context: Optional[dict] = None,
         jev_enabled: bool = False,
         clip_request: Optional[str] = None,
+        oversample: float = 1.0,
     ) -> ClipPlanResponse:
         """
         Plan viral clips from video content.
@@ -456,6 +461,9 @@ class IntelligencePlannerService:
                 confined to the selected range.
             clip_request: The user's description of the moments to clip. Only
                 matching moments are selected, so fewer than N (or none) may return.
+            oversample: Ask for this many times the target count so a later
+                framework grade can keep only the strongest. `discovery_limit`
+                stays the target count.
 
         Returns:
             ClipPlanResponse with identified clips
@@ -561,6 +569,15 @@ class IntelligencePlannerService:
             clip_count = min(clip_count, 8)
         self.discovery_limit = clip_count
         longform = bool(transcript) and is_longform(aspect_ratio, min_duration_seconds)
+        self._oversampling = False
+        if oversample > 1 and discovery_feedback is None and not longform:
+            # Leave room between candidates: asking for every slot that fits forces back-to-back padding.
+            ceiling = max(clip_count, int(max_fit * 0.6)) if effective_duration_seconds > 0 else self.settings.max_clips_absolute
+            requested = min(ceiling, self.settings.max_clips_absolute, max(clip_count + 2, math.ceil(clip_count * oversample)))
+            if requested > clip_count:
+                self._oversampling = True
+                logger.info(f"Oversampling candidates for framework grading: {clip_count} -> {requested}")
+                clip_count = requested
         self._current_longform = longform
         if longform:
             logger.info("Planning longform edits (16:9, 5+ minute clips)")
@@ -804,7 +821,13 @@ class IntelligencePlannerService:
                 "- NO OVERLAP: No two clips should share more than 5 seconds of content. "
                 "If two great moments are adjacent, pick the stronger one."
             )
-            title_rules = """- Use curiosity gaps: "Why Most Developers Get This Wrong", "The Truth About AI Coding"
+            title_rules = """- The title is the HOOK TEXT burned in at the top of the clip. It tells the viewer exactly what they are about to get: "The Ad That Made Me $1M", "How I Got 5,400 Sales From One Ad".
+- The clip MUST deliver what the title promises. If the payoff is not inside the clip, change the title or the clip; never promise what the clip does not show.
+- Lead with the OUTCOME the viewer wants, not the product, tool or category name: "Stop Dreading Tax Season", not "Our Bookkeeping Platform".
+- Use the speaker's real numbers exactly as said. Never invent, round up or exaggerate a number.
+- The title and the spoken opening work together as one Triple Hook: if the speech is missing an element (usually the Twist), the title can carry it, using only what the clip actually says.
+- Promise the payoff, never give it away ("Don't show them that until the end"): the title opens the curiosity gap the clip closes.
+- Use curiosity gaps only when the clip closes them: "Why Most Developers Get This Wrong", "The Truth About AI Coding"
 - Use power words when appropriate: "brutal", "insane", "secret", "truth", "nobody", "actual"
 - Match the speaker's energy — if they are calm and analytical, do NOT use hyperbolic clickbait
 - NEVER use generic titles: "Great Advice", "Important Point", "Good Tip", "Interesting Thought"
@@ -813,6 +836,8 @@ class IntelligencePlannerService:
             output_count = (
                 f"Return up to {clip_count} clips that match the user clip request as JSON:"
                 if getattr(self, "_clip_request", None) else
+                f"Return up to {clip_count} clips as JSON, strongest first. Each will be graded and only the best kept, so return fewer rather than pad with weak or overlapping moments:"
+                if getattr(self, "_oversampling", False) else
                 f"Return exactly {clip_count} clips as JSON:"
             )
             duration_guidance = ""
@@ -857,7 +882,7 @@ Each transcript line is `[start - end] (speaker) text (audio events)`, with time
 
 Score every clip you return on these 5 dimensions (each 0-10) in its "scores" object, using the keys hook, standalone, arc, quotability and ending. Be calibrated: reserve 8-10 for genuinely exceptional moments.
 
-1. HOOK STRENGTH (0-10): Does the clip open with something that stops the scroll within the first 3 seconds? A clip that starts with dead air, "um", or a continuation scores 0-2. A clip that opens with a bold claim, shocking stat, or direct question scores 8-10.
+1. HOOK STRENGTH (0-10): Is the FIRST sentence of the clip a hook that stops the scroll within 3 seconds? A clip that starts with dead air, "um", setup, or a continuation scores 0-2, however good the hook that comes later. A clip whose first words are a bold claim, a specific result, a shocking stat, or a direct question scores 8-10.
 
 2. STANDALONE CLARITY (0-10): Can a viewer understand this clip with ZERO context from the rest of the video? If the clip references "what I said earlier" or assumes knowledge from a previous segment, it scores 0-3. If it is a fully self-contained idea, it scores 8-10.
 
@@ -865,7 +890,7 @@ Score every clip you return on these 5 dimensions (each 0-10) in its "scores" ob
 
 4. QUOTABILITY (0-10): Does the clip contain a memorable, shareable statement — something a viewer would repeat, screenshot, or put in their bio? Generic advice scores 0-3. A punchy one-liner or hot take scores 8-10.
 
-5. ENDING QUALITY (0-10): Does the clip end on a strong beat — a completed thought, a mic-drop moment, or a natural pause? Ending mid-sentence scores 0-2. Ending right after a powerful statement scores 8-10.
+5. PAYOFF (0-10, key "ending"): Does the clip deliver what its hook promised, then end on that beat? Cutting off before the promise is delivered (the number is never shown, the "how" never explained, the story never resolved) scores 0-2. Ending mid-sentence scores 0-2. Delivering the proof or answer and ending right after it scores 8-10.
 
 ## HOOK TYPES TO LOOK FOR
 
@@ -877,11 +902,33 @@ Prioritize clips whose opening matches one of these proven hook patterns:
 - Story opener: "So last week something crazy happened..." / "Let me tell you about the time..."
 - Direct address: "If you're a developer, you need to hear this." / "Stop doing this right now."
 
+## THE FORMAT THAT WORKS: HOOK → PROMISE → PAYOFF
+
+Short-form clips win on two things only: the hook, and delivering on it. Build every clip to this shape:
+
+1. HOOK (first sentence): Start the clip exactly where the speaker says the strongest line of the moment — the claim, the result, the number. Never start on the setup that comes before it. If the hook line comes after a sentence or two of setup, start at the hook line and check the clip still makes sense.
+2. PROMISE (title at the top): The title states what the viewer is about to get, in the speaker's own terms. Example: "The One Ad That Made Me $1M".
+3. PAYOFF (the rest of the clip): The speaker delivers it — shows the numbers, explains the how, finishes the story. End right after the payoff lands. Do not end before it, and do not run on into the next topic.
+
+Prefer moments where the payoff is concrete and visible: real numbers, results, a demonstration, a screen being shown. A moment with a great hook but no payoff in range is not a clip; skip it.
+
+## WHAT MAKES A STRONG CLIP
+
+1. TRIPLE HOOK (Paid Creators playbook: "If your hook sucks, nothing else matters"): the strongest openings stack three equal elements, in any order, in the first sentences. QUALIFIER: a bold line that sets the tone and creates anticipation ("You're not going to believe this, but…", "I probably shouldn't tell you this…", "Everyone thinks X, but…", "This is the moment everything changed…"). MAIN STATEMENT: the core result or method with specifics ("we generated 160 B2B leads for just $531", "I went from X to Y in Z"). TWIST: the false-belief breaker, usually the "without" formula ("…without going viral", "…by breaking the number one rule of landing pages", "…and I only worked 10 hours a week", "…despite having no audience"). Optional fourth: STAKES (a real win/lose consequence). Long conversations rarely contain a scripted Triple Hook, so do not require one: a single strong line (a bold claim, a specific result, a story opener, a contrarian take, a vulnerable admission) is a good hook (7-8). Stacking two or three elements makes it great (9-10). Prefer clips that open on the strongest such line.
+2. A COMPLETE MINI STORY: Inside the clip, prefer the arc Hook → Background → Conflict → Resolution: how they got here, what went wrong or was hard, and what solved it. A clip with the whole arc beats a clip of loose tips.
+3. STORY MOMENTS TRAVEL: Favor moments that are one of these stories: origin (rock bottom to breakthrough), results with limited resources, "getting fired was the best thing", a regret ("if I could tell my 25-year-old self"), before vs. after, overcoming a failure, a student or client result, something learned from someone big, a contrarian stance ("everyone says X, they're wrong").
+4. SPECIFIC BEATS VAGUE: exact numbers are more believable than round ones ("$53,847" beats "over $50,000"; "5,400 sales from one ad" beats "a lot of sales"). Prefer moments with real numbers, timeframes, anchoring ("I was spending $10,000 a month… now $500"), and proof backing bold claims.
+4b. THE FIVE-STEP STORY: the best clips follow Hook → Background → Conflict → Resolution (→ Call to Action). Prefer moments where the conflict or "breaking point" and its resolution are both inside the clip.
+5. A STANCE: Prefer moments where the speaker takes a clear position not everybody shares over neutral, hedged advice.
+6. END ON THE PAYOFF, NOT A PITCH: These clips reach new people. End on the resolution or the result. Do not run on into "link in bio", "comment below" or a sales pitch unless that line is the payoff itself.
+
 ## ANTI-PATTERNS — NEVER SELECT CLIPS THAT:
 
 - Start mid-sentence or mid-thought. Always begin at the start of a sentence or idea.
 - End mid-sentence without resolution. Always end on a completed thought or natural pause.
+- Promise something in the hook or title and cut off before delivering it.
 - Contain long pauses, "um"s, "uh"s, throat clearing, or stammering as the primary content.
+- Open on a price, a greeting, housekeeping or a generic question the viewer won't relate to ("do you have tight hip flexors?").
 - Require context from earlier in the video to make sense ("as I mentioned earlier", "going back to what we said").
 - Are just transitions or filler ("okay so moving on...", "anyway let's talk about...", "so yeah").
 - Contain the same core point as another selected clip. Each clip must cover a distinct idea.
@@ -1709,20 +1756,26 @@ Do not overlap clips by more than 5 seconds."""
 
     @staticmethod
     def _score_clip(clip: dict) -> float:
-        """Virality score in [0, 1]: mean of the rubric scores / 10.
+        """Virality score in [0, 1]: weighted mean of the rubric scores / 10.
 
-        Falls back to a model-supplied `virality_score`, then 0.5.
+        Hook and payoff ("ending") carry most of the weight: a clip that
+        doesn't open on its hook or deliver on it doesn't work, however
+        quotable it is. Falls back to a model-supplied `virality_score`,
+        then 0.5.
         """
         scores = clip.get("scores")
         if isinstance(scores, dict):
-            values = []
+            total = weight_sum = 0.0
             for dim in RUBRIC_DIMENSIONS:
                 try:
-                    values.append(min(10.0, max(0.0, float(scores[dim]))))
+                    value = min(10.0, max(0.0, float(scores[dim])))
                 except (KeyError, TypeError, ValueError):
                     continue
-            if values:
-                return round(sum(values) / len(values) / 10.0, 3)
+                weight = RUBRIC_WEIGHTS[dim]
+                total += value * weight
+                weight_sum += weight
+            if weight_sum:
+                return round(total / weight_sum / 10.0, 3)
         try:
             return min(1.0, max(0.0, float(clip.get("virality_score", 0.5))))
         except (TypeError, ValueError):

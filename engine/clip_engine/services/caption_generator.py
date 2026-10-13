@@ -494,7 +494,7 @@ class CaptionGeneratorService:
         )
 
         return f"""[Script Info]
-Title: BridgeClip Captions
+Title: CreatorClips Captions
 ScriptType: v4.00+
 WrapStyle: 0
 ScaledBorderAndShadow: yes

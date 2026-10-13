@@ -1,7 +1,7 @@
 // Normalize the two CLIs' JSONL output into the few things the chat needs:
-// assistant text, the id to resume the conversation, and errors. BridgeClip
+// assistant text, the id to resume the conversation, and errors. CreatorClips
 // tool calls are reported by the MCP server itself, so the CLIs' own tool
-// events are only used for activity BridgeClip doesn't run (web searches and
+// events are only used for activity CreatorClips doesn't run (web searches and
 // page reads, Codex shell reads).
 
 export type CliStreamEvent =
@@ -237,7 +237,7 @@ export function describeCliFailure(provider: 'claude' | 'codex', stderr: string,
       return 'Your Claude subscription has reached its usage limit for now. Try again after it resets.'
     }
     if (/unknown option|unknown argument/.test(text)) {
-      return 'This version of Claude Code is too old for BridgeClip. Run `claude update`, then try again.'
+      return 'This version of Claude Code is too old for CreatorClips. Run `claude update`, then try again.'
     }
   } else {
     if (/not logged in|codex login|login required|not authenticated|401 unauthorized/.test(text)) {
@@ -247,7 +247,7 @@ export function describeCliFailure(provider: 'claude' | 'codex', stderr: string,
       return 'Your ChatGPT plan has reached its Codex usage limit for now. Try again after it resets.'
     }
     if (/unexpected argument|unrecognized subcommand/.test(text)) {
-      return 'This version of Codex is too old for BridgeClip. Run `codex update`, then try again.'
+      return 'This version of Codex is too old for CreatorClips. Run `codex update`, then try again.'
     }
   }
   const tail = stderr.trim().split('\n').filter(Boolean).slice(-3).join(' ')

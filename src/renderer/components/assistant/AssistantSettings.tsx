@@ -37,7 +37,7 @@ export function AssistantSettings(): React.JSX.Element {
       <PanelHeader
         icon={<IconTile tone="accent"><Sparkles /></IconTile>}
         title="Assistant"
-        description="Chat with BridgeClip using your Claude or ChatGPT subscription, or any OpenRouter model. BridgeClip runs Claude Code or Codex on this computer (your sign-in stays with them), or calls OpenRouter with your API key."
+        description="Chat with CreatorClips using your Claude or ChatGPT subscription, or any OpenRouter model. CreatorClips runs Claude Code or Codex on this computer (your sign-in stays with them), or calls OpenRouter with your API key."
         action={
           <Button size="sm" variant="ghost" icon={<RefreshCw className={cn('h-3.5 w-3.5', checking && 'animate-spin')} />} onClick={() => void store.refreshStatus(true)} disabled={checking}>
             Check again
@@ -67,7 +67,7 @@ export function AssistantSettings(): React.JSX.Element {
       </div>
       {error && <Callout tone="danger" className="mt-3" onDismiss={store.clearError}>{error}</Callout>}
       <p className="mt-3 px-1 text-2xs text-ink-subtle">
-        The assistant gets BridgeClip’s own tools plus web search and page reading (to find videos and look things up): no shell or files. Anything that posts, deletes or uses your OpenRouter credit for clipping asks you in the chat first. Chatting on an OpenRouter model, and its web searches, are billed to your key.
+        The assistant gets CreatorClips’s own tools plus web search and page reading (to find videos and look things up): no shell or files. Anything that posts, deletes or uses your OpenRouter credit for clipping asks you in the chat first. Chatting on an OpenRouter model, and its web searches, are billed to your key.
       </p>
     </>
   )

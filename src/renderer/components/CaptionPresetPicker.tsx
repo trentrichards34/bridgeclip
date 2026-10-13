@@ -6,7 +6,7 @@ import { Button } from './ui/Button'
 /**
  * Mirrors the caption presets in engine/clip_engine/config.py closely
  * enough to preview them: typeface, colours, stroke, shadow, glow, pill,
- * plate and karaoke sweep. BridgeClip engine renders with its bundled fonts; the preview
+ * plate and karaoke sweep. CreatorClips engine renders with its bundled fonts; the preview
  * uses the same bundled faces, with a system fallback while they load.
  */
 interface CaptionPreset {
@@ -245,6 +245,65 @@ const PRESETS: CaptionPreset[] = [
     uppercase: false,
     future: 'dim',
     words: ['I think', 'that’s', 'fair']
+  },
+  {
+    id: 'beast',
+    name: 'Beast',
+    description: 'Comic type, challenge energy',
+    font: '"Bangers", "Impact", system-ui, sans-serif',
+    weight: 400,
+    size: 20,
+    primary: '#FFFFFF',
+    highlight: '#FFE600',
+    stroke: 9,
+    shadow: 'hard',
+    uppercase: true,
+    maxWords: 2,
+    words: ['last one', 'standing', 'wins']
+  },
+  {
+    id: 'bubble',
+    name: 'Bubble',
+    description: 'Rounded & friendly',
+    font: '"Lilita One", system-ui, sans-serif',
+    weight: 400,
+    size: 17,
+    primary: '#FFFFFF',
+    highlight: '#FF6FB5',
+    stroke: 7,
+    shadow: 'soft',
+    uppercase: true,
+    words: ['you have', 'to try', 'this']
+  },
+  {
+    id: 'retro',
+    name: 'Retro',
+    description: 'Cream type, hard orange shadow',
+    font: '"Bowlby One", system-ui, sans-serif',
+    weight: 400,
+    size: 14,
+    primary: '#FFF4DC',
+    highlight: '#FF7A1A',
+    stroke: 6,
+    shadow: 'hard',
+    uppercase: true,
+    future: 'hide',
+    words: ['back in', 'the day', 'we']
+  },
+  {
+    id: 'lime',
+    name: 'Lime',
+    description: 'Word on a lime pill',
+    font: '"Archivo Black", system-ui, sans-serif',
+    weight: 400,
+    size: 14,
+    primary: '#FFFFFF',
+    highlight: '#0B0B0B',
+    stroke: 5,
+    shadow: 'soft',
+    uppercase: true,
+    pill: '#C6FF3D',
+    words: ['one ad', 'made', 'a million']
   }
 ]
 

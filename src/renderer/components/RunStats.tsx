@@ -54,6 +54,9 @@ interface RunStatsProps {
 export function RunStats({ output, costs, videoSpeed }: RunStatsProps): React.JSX.Element {
   const clips = output.total_clips
   const topScore = output.clips.reduce((best, clip) => Math.max(best, clip.virality_score), 0) * 10
+  const gradedClips = output.clips.filter((clip) => clip.framework)
+  const topGrade = gradedClips.reduce<(typeof gradedClips)[number] | null>((best, clip) => !best || clip.framework!.score > best.framework!.score ? clip : best, null)?.framework ?? null
+  const grading = (output.metrics?.requested_settings as { framework_grading?: { enabled: boolean; candidates: number; kept: number } } | undefined)?.framework_grading
   const sourceSeconds = output.source_video_duration_seconds
   const processingMs = output.processing_time_seconds * 1000
   const created = output.created_at && Number.isFinite(Date.parse(output.created_at)) ? new Date(output.created_at) : null
@@ -100,7 +103,7 @@ export function RunStats({ output, costs, videoSpeed }: RunStatsProps): React.JS
         label="Clips"
         value={String(clipCount)}
         final={String(clips)}
-        sub={clips > 0 && <>Top score <Num>{topScore.toFixed(1)}</Num>{videoSpeed && <> · <Num>{videoSpeed}×</Num> speed</>}</>}
+        sub={clips > 0 && <>{topGrade ? <>Best grade <Num>{topGrade.grade}</Num></> : <>Top score <Num>{topScore.toFixed(1)}</Num></>}{grading?.enabled && grading.candidates > clips ? <> · kept from <Num>{grading.candidates}</Num> graded</> : null}{videoSpeed && <> · <Num>{videoSpeed}×</Num> speed</>}</>}
       />
       {faster ? (
         <HoverCard
@@ -220,7 +223,8 @@ function costParts(costs: ApiCosts): string | null {
     costs.layout_vision && `framing ${formatUsd(costs.layout_vision.estimated_cost_usd)}`,
     costs.editorial && `editorial ${formatUsd(costs.editorial.estimated_cost_usd)}`,
     costs.editorial_vision && `context vision ${formatUsd(costs.editorial_vision.estimated_cost_usd)}`,
-    costs.editorial_repair && `edit repair ${formatUsd(costs.editorial_repair.estimated_cost_usd)}`
+    costs.editorial_repair && `edit repair ${formatUsd(costs.editorial_repair.estimated_cost_usd)}`,
+    costs.framework_grading && `grading ${formatUsd(costs.framework_grading.estimated_cost_usd)}`
   ].filter(Boolean)
   return parts.length > 0 ? parts.join(' · ') : null
 }

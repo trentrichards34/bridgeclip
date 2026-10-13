@@ -92,6 +92,30 @@ test('a job requires an explicit workflow and each new video resets that choice'
   } finally { useDraftStore.setState(original) }
 })
 
+test('B-roll and a background video are sent only for Automatic jobs, never together', () => {
+  const { useDraftStore, buildJobRequest } = form.exports
+  const original = useDraftStore.getState()
+  const trim = { start: null, end: null }
+  try {
+    const base = { source: 'https://example.com/video', workflow: 'automatic', aspectRatio: '9:16' }
+    original.update({ ...base, broll: 'off', backgroundVideo: 'gameplay.mp4' })
+    let request = buildJobRequest(useDraftStore.getState(), trim)
+    assert.equal(request.backgroundVideo, 'gameplay.mp4')
+    assert.equal(request.broll, undefined)
+    original.update({ broll: 'after-hook' })
+    request = buildJobRequest(useDraftStore.getState(), trim)
+    assert.equal(request.broll, 'after-hook')
+    assert.equal(request.backgroundVideo, undefined)
+    original.update({ hookPreview: true })
+    assert.equal(buildJobRequest(useDraftStore.getState(), trim).hookPreview, true)
+    original.update({ workflow: 'review' })
+    request = buildJobRequest(useDraftStore.getState(), trim)
+    assert.equal(request.broll, undefined)
+    assert.equal(request.hookPreview, undefined)
+    assert.equal(request.backgroundVideo, undefined)
+  } finally { useDraftStore.setState(original) }
+})
+
 test('clipping mode is selectable and economy disables paid vision in the submitted request', () => {
   const { ClipsStep, buildJobRequest } = form.exports
   const draft = {

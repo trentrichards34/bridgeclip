@@ -26,6 +26,8 @@ from typing import Any, Callable, Optional
 
 from clip_engine.config import CaptionStyle, LayoutStyle, get_settings, is_longform, resolve_clip_duration_bounds
 from clip_engine.services.video_speed import validate_video_speed
+from clip_engine.services.broll_service import PexelsKeyRejected, prepare_broll
+from clip_engine.services.hook_preview import pick_teaser
 from clip_engine.error_policy import NoClipCandidatesError, NoRequestedMomentsError, safe_failure_code, safe_processing_error
 from clip_engine.services.source_context import SourceContextService, context_for_prompt, transcription_terms
 from clip_engine.services.editorial_evidence import discovery_feedback, overlaps
@@ -34,6 +36,7 @@ from clip_engine.services.coherence_review import CoherenceReviewer, CoherenceRe
 from clip_engine.services.editorial_context import analyze_reactions, empty_report, repair_context_boundaries
 from clip_engine.services.editorial_vision import EditorialVision
 from clip_engine.services.editorial_review import protect_acknowledgments, review_duplicate_candidates, editorial_summary
+from clip_engine.services.framework_grader import GRADER_MODEL, FrameworkGrader, select_by_grade
 from clip_engine.services.intelligence_planner import (
     MAX_CLIP_REQUEST_CHARS,
     ClipPlanResponse,
@@ -117,12 +120,23 @@ class ClippingJobRequest:
     # The user's description of the moments to clip; None picks the best moments.
     clip_request: Optional[str] = None
     layout_style: str = LayoutStyle.AUTO
+    # Gameplay split (9:16): looping background video under the speaker.
+    background_video_path: Optional[str] = None
+    # B-roll mode: stock footage (Pexels) over the speaker; keep the speaker
+    # on screen for the opening hook.
+    broll_enabled: bool = False
+    broll_keep_hook: bool = True
+    # Hook preview: open each clip with its strongest line, then play it.
+    hook_preview: bool = False
     debug_capture: bool = False
     # "tight" cuts dead air and filler words; "natural" keeps original timing.
     pacing: str = "tight"
     video_speed: float = 1.0
     workflow: str = 'automatic'
     caption_preset: str = 'pop'
+    # Paid Creators framework grading: keep clips graded at or above this bar
+    # ("a", "b", "c") or grade everything and keep all ("all"); "off" skips it.
+    quality_bar: str = 'b'
 
     def __post_init__(self):
         validate_video_speed(self.video_speed)
@@ -416,13 +430,60 @@ class AIClippingPipeline:
                 jev_enabled=jev_enabled,
                 clip_request=request.clip_request,
             )
-            clip_plan = await self.intelligence_planner.plan_clips(**planning_args)
+            longform_plan = is_longform(request.aspect_ratio, resolve_clip_duration_bounds(
+                request.duration_ranges, request.min_clip_duration_seconds, request.max_clip_duration_seconds)[0])
+            grading = (request.quality_bar in ('a', 'b', 'c', 'all') and not longform_plan
+                       and bool(self.settings.openrouter_api_key))
+            # Strict bars plan extra candidates so grading can keep only the strongest.
+            oversample = 1.0 if not grading or request.quality_bar == 'all' or request.clip_request else 1.75
+            clip_plan = await self.intelligence_planner.plan_clips(**planning_args, oversample=oversample)
             edit_audit['planner'] = getattr(self.intelligence_planner, 'audit', {'requests': []})
             stage_timings["planning"] = time.perf_counter() - stage_start
             logger.info(f"Planned {len(clip_plan.segments)} clips")
             if not clip_plan.segments:
                 edit_audit['outcome'] = 'no_candidates'
                 raise NoRequestedMomentsError() if request.clip_request else NoClipCandidatesError()
+            framework_state = {'cost': 0.0, 'cost_incomplete': False, 'candidates': 0, 'graded': 0, 'kept': 0}
+            keep_all_grades = request.quality_bar == 'all' or bool(request.clip_request)
+
+            async def grade_segments(segments, target, fill_to=0):
+                """Grade and filter candidates; any grading failure leaves them as planned."""
+                grader = FrameworkGrader(self.settings)
+                try:
+                    grades = await grader.grade(transcription_result.segments, segments)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:  # Grading is an optional quality pass.
+                    logger.warning(f"Framework grading unavailable: {type(error).__name__}")
+                    grades = {}
+                finally:
+                    await grader.close()
+                framework_state['cost'] += grader.cost_usd
+                framework_state['cost_incomplete'] |= grader.cost_incomplete
+                kept, _ = select_by_grade(segments, grades, request.quality_bar, target, keep_all=keep_all_grades, fill_to=fill_to)
+                for index, segment in enumerate(segments):
+                    if index in grades:
+                        segment.framework = {**grades[index].to_dict(), 'graded_interval': [segment.start_time_ms, segment.end_time_ms], 'graded_title': segment.summary or ''}
+                framework_state['candidates'] += len(segments)
+                framework_state['graded'] += len(grades)
+                return kept
+
+            if grading:
+                self._update_progress(job_id, JobStatus.PLANNING, 33,
+                    f"Grading {len(clip_plan.segments)} candidates against the content frameworks...",
+                    stage_id="planning", stage_percent=None)
+                planned = list(clip_plan.segments)
+                # Review projects get the target count; the automatic accept loop enforces its own limit
+                # and can fall back to later passing clips when editorial review rejects one.
+                review_target = (getattr(self.intelligence_planner, 'discovery_limit', None) or request.max_clips or 0) if request.workflow == 'review' else 0
+                clip_target = getattr(self.intelligence_planner, 'discovery_limit', None) or request.max_clips or 0
+                kept = await grade_segments(planned, review_target, fill_to=clip_target)
+                edit_audit['framework'] = {'bar': request.quality_bar,
+                    'grades': [{'title': seg.summary, 'interval': [seg.start_time_ms, seg.end_time_ms], 'kept': seg in kept, **(seg.framework or {})} for seg in planned]}
+                logger.info(f"Framework grading kept {len(kept)} of {len(planned)} candidates (bar {request.quality_bar})")
+                clip_plan.segments = kept
+                clip_plan.total_clips = len(kept)
+                save_edit_audit()
             reviewer = CoherenceReviewer(coherence_service, self.settings, transcription_result.segments, round(video_duration * 1000))
             editorial_vision = EditorialVision(self.settings, download_result.video_path, work_dir, round(video_duration * 1000))
             reviewer.source_context = context_brief
@@ -438,7 +499,7 @@ class AIClippingPipeline:
                         stage_id=stage, stage_percent=percent))
                 edit_audit['outcome'] = 'ready_for_review'
                 save_edit_audit()
-                costs = source_context_cost + coherence_service.estimated_cost_usd
+                costs = source_context_cost + coherence_service.estimated_cost_usd + framework_state['cost']
                 for api in (transcription_result.api_costs, clip_plan.api_costs):
                     costs += getattr(api, 'estimated_cost_usd', 0) if api else 0
                 output = JobOutput(job_id=job_id, source_video_url=request.video_url,
@@ -518,6 +579,8 @@ class AIClippingPipeline:
                     pending = [c for c in extra.segments[:8]
                         if any(overlaps([c.start_time_ms, c.end_time_ms], span) for span in feedback['search_intervals'])
                         and not any(overlaps([c.start_time_ms, c.end_time_ms], old['interval']) for old in feedback['previous_candidates'])]
+                    if grading and pending:
+                        pending = await grade_segments(pending, 0)
                     edit_audit['discovery']['status'] = 'completed'
                     if extra.api_costs:
                         if clip_plan.api_costs:
@@ -537,6 +600,28 @@ class AIClippingPipeline:
                     break
             clip_plan.segments = accepted
             clip_plan.total_clips = len(accepted)
+            if grading and accepted:
+                # Editorial review can move boundaries or retitle a clip; grade what will actually render.
+                changed = [seg for seg in accepted if seg.framework and (seg.framework.get('graded_interval') != [seg.start_time_ms, seg.end_time_ms]
+                           or seg.framework.get('graded_title') != (seg.summary or ''))]
+                if changed:
+                    grader = FrameworkGrader(self.settings)
+                    try:
+                        regrades = await grader.grade(transcription_result.segments, changed)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        regrades = {}
+                    finally:
+                        await grader.close()
+                    framework_state['cost'] += grader.cost_usd
+                    framework_state['cost_incomplete'] |= grader.cost_incomplete
+                    for index, seg in enumerate(changed):
+                        if index in regrades:
+                            seg.framework = {**regrades[index].to_dict(), 'graded_interval': [seg.start_time_ms, seg.end_time_ms], 'graded_title': seg.summary or ''}
+                framework_state['kept'] = len(accepted)
+                edit_audit.setdefault('framework', {}).update({'candidates': framework_state['candidates'], 'graded': framework_state['graded'],
+                    'kept': len(accepted), 'cost_usd': framework_state['cost']})
             if not accepted:
                 edit_audit['outcome'] = 'no_approved_clips'
                 save_edit_audit()
@@ -630,6 +715,23 @@ class AIClippingPipeline:
                         segment.end_time_ms,
                     )
 
+                    broll_shots: list[tuple[int, int, str]] = []
+                    if request.broll_enabled and not request.background_video_path:
+                        render_progress(i, 'Finding B-roll', None)
+                        try:
+                            shots = await prepare_broll(
+                                clip_transcript, segment.start_time_ms, segment.end_time_ms,
+                                # The job's private work folder: cleaned up with the job, never
+                                # next to a local source video (local files are used in place).
+                                os.path.join(work_dir, 'broll'),
+                                portrait=request.aspect_ratio == '9:16', keep_hook=request.broll_keep_hook,
+                            )
+                            broll_shots = [(shot.start_ms, shot.end_ms, shot.path) for shot in shots if shot.path]
+                        except PexelsKeyRejected:
+                            raise
+                        except Exception as exc:
+                            logger.warning(f"B-roll unavailable for clip {i + 1}; rendering the speaker only: {exc}")
+
                     render_request = RenderRequest(
                         progress_callback=lambda detail, percent=None: render_progress(i, detail, percent),
                         video_path=download_result.video_path,
@@ -649,6 +751,8 @@ class AIClippingPipeline:
                         banner_channel_url=request.banner_channel_url,
                         aspect_ratio=request.aspect_ratio,
                         layout_style=request.layout_style,
+                        background_video_path=request.background_video_path,
+                        broll_shots=broll_shots,
                         debug_capture=request.debug_capture,
                         pacing=request.pacing,
                         video_speed=request.video_speed,
@@ -664,6 +768,11 @@ class AIClippingPipeline:
                     )
 
                     render_result = await self.rendering_service.render_clip(render_request)
+                    if request.hook_preview and not longform:
+                        render_progress(i, 'Adding the hook preview', None)
+                        teaser = await pick_teaser(clip_transcript, segment.start_time_ms, segment.end_time_ms)
+                        if teaser:
+                            render_result = await self.rendering_service.prepend_teaser(render_request, render_result, *teaser)
                     if getattr(render_result, "framing_trace_path", None):
                         clip_trace_paths[i] = render_result.framing_trace_path
                     segment.layout_type = render_result.layout_type
@@ -862,6 +971,7 @@ class AIClippingPipeline:
                         description=segment.description,
                         chapters=self._chapter_dicts(segment),
                         editorial=editorial_summary(segment.editorial),
+                        framework=segment.framework,
                     )
 
                 upload_tasks = [
@@ -941,6 +1051,10 @@ class AIClippingPipeline:
                 api_costs['editorial_vision'] = {'provider': 'openrouter', 'model': self.settings.layout_vision_model,
                     'estimated_cost_usd': editorial_vision.cost_usd, 'attempts': editorial_vision.requests}
                 total_cost += editorial_vision.cost_usd
+            if framework_state['candidates']:
+                api_costs['framework_grading'] = {'provider': 'openrouter', 'model': GRADER_MODEL,
+                    'estimated_cost_usd': round(framework_state['cost'], 6), 'cost_incomplete': framework_state['cost_incomplete']}
+                total_cost += framework_state['cost']
             api_costs["total_estimated_cost_usd"] = round(total_cost, 6)
             api_costs["cost_incomplete"] = any(section.get("cost_incomplete", False) for section in api_costs.values() if isinstance(section, dict))
 
@@ -964,7 +1078,13 @@ class AIClippingPipeline:
                     "pacing": request.pacing,
                     "video_speed": request.video_speed,
                     "include_title": request.include_title,
+                    "background_video": os.path.basename(request.background_video_path) if request.background_video_path else None,
+                    "broll": {"enabled": request.broll_enabled, "keep_hook": request.broll_keep_hook},
+                    "hook_preview": request.hook_preview,
                     "clip_request": request.clip_request,
+                    "quality_bar": request.quality_bar,
+                    "framework_grading": {"enabled": grading, "candidates": framework_state['candidates'],
+                                          "graded": framework_state['graded'], "kept": framework_state['kept']},
                 },
                 "transcription_status": transcription_status,
                 "planning_source": "visual" if visual_frames else "transcript",
@@ -1209,6 +1329,7 @@ class AIClippingPipeline:
                 chapters=self._chapter_dicts(segment),
                 subtitle_url=subtitle_url,
                 editorial=editorial_summary(segment.editorial),
+                framework=segment.framework,
             ))
 
             if progress: progress(i + 1, len(rendered_clips))

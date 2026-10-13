@@ -7,7 +7,7 @@ const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
 
 test('About shows output storage and update state, and restart installs updates', { timeout: 90000 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-updates-e2e-'))
-  const outputDirectory = path.join(root, 'user-data', 'BridgeClip')
+  const outputDirectory = path.join(root, 'user-data', 'CreatorClips')
   fs.mkdirSync(path.join(outputDirectory, 'run', '.editor'), { recursive: true })
   fs.writeFileSync(path.join(outputDirectory, 'run', 'clip.mp4'), Buffer.alloc(2_000_000))
   fs.writeFileSync(path.join(outputDirectory, 'run', '.editor', 'source.mp4'), Buffer.alloc(500_000))
@@ -80,7 +80,7 @@ test('About shows output storage and update state, and restart installs updates'
 
   await report({ status: 'ready', version: '0.1.18' })
   await page.getByText('Version 0.1.18 is ready.', { exact: false }).waitFor()
-  const sidebar = page.getByRole('button', { name: 'BridgeClip 0.1.18 is ready. Restart to update' })
+  const sidebar = page.getByRole('button', { name: 'CreatorClips 0.1.18 is ready. Restart to update' })
   await sidebar.waitFor()
   if (shots) {
     await page.locator('#settings-about').scrollIntoViewIfNeeded()
@@ -104,7 +104,7 @@ test('About shows output storage and update state, and restart installs updates'
   const preload = fs.readFileSync(preloadPath, 'utf8')
   assert.match(preload, /^\s*storageUsage:.*$/m)
   for (const [implementation, message] of [
-    ['undefined', 'Restart BridgeClip to load the storage display.'],
+    ['undefined', 'Restart CreatorClips to load the storage display.'],
     ['() => { throw new Error("Storage unavailable") }', 'Could not read the output folder.']
   ]) {
     fs.writeFileSync(preloadPath, preload.replace(/^(\s*)storageUsage:.*$/m, `$1storageUsage: ${implementation},`))

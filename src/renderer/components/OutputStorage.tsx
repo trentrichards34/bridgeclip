@@ -28,7 +28,7 @@ export function OutputStorage({ outputDirectory }: { outputDirectory: string }):
         try {
           const storageUsage = getApi().settings.storageUsage
           if (typeof storageUsage !== 'function') {
-            if (!cancelled) setFailure('Restart BridgeClip to load the storage display.')
+            if (!cancelled) setFailure('Restart CreatorClips to load the storage display.')
             return
           }
           const result = await storageUsage(refresh > 0)

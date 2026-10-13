@@ -29,7 +29,7 @@ type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
 export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): React.JSX.Element {
-  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, sourceContextWebResearch, saving, save, toolStatus, toolError, checkTools, checkingTools } =
+  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, pexelsConfigured, sourceContextWebResearch, saving, save, toolStatus, toolError, checkTools, checkingTools } =
     useSettingsStore()
   const keys = useApiKeyDrafts()
   const [isPackaged, setIsPackaged] = useState(true)
@@ -153,7 +153,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
             <PanelHeader
               icon={<IconTile tone="accent"><KeyRound /></IconTile>}
               title="API keys"
-              description="Encrypted with your system keychain. BridgeClip has no account and no server of its own."
+              description="Encrypted with your system keychain. CreatorClips has no account and no server of its own."
             />
             <div className="mt-4 space-y-2">
               <KeyRow>
@@ -190,6 +190,19 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                   getKeyUrl={PROVIDER_LINKS.zernio}
                 />
               </KeyRow>
+              <KeyRow>
+                <ApiKeyInput
+                  label="Pexels (optional)"
+                  value={keys.drafts.pexelsApiKey}
+                  configured={pexelsConfigured}
+                  onChange={(v) => keys.setDraft('pexelsApiKey', v)}
+                  onRemove={() => void keys.remove('pexelsApiKey')}
+                  onBlur={() => void keys.persist()}
+                  placeholder="Your Pexels API key"
+                  description="Free stock video for B-roll mode. CreatorClips searches Pexels for footage that matches each beat of a clip."
+                  getKeyUrl={PROVIDER_LINKS.pexels}
+                />
+              </KeyRow>
             </div>
           </Section>
 
@@ -222,7 +235,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
             <PanelHeader
               icon={<IconTile tone={toolsChecked && toolsMissing ? 'danger' : 'neutral'}><Cpu /></IconTile>}
               title="System check"
-              description="Tools BridgeClip needs to download, transcribe and cut video."
+              description="Tools CreatorClips needs to download, transcribe and cut video."
               action={
                 <Button
                   size="sm"
@@ -257,7 +270,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                   <Badge className="font-mono tabular">v{APP_VERSION}</Badge>
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-                  Released under the {LICENSE_NAME} license. Built by{' '}
+                  Released under the {LICENSE_NAME} license. Built on BridgeClip by{' '}
                   <button
                     onClick={() => getApi().shell.openPath(BRIDGEMIND_URL)}
                     className="text-ink underline decoration-white/25 underline-offset-2 transition-colors hover:decoration-ink"
@@ -507,7 +520,7 @@ function toolRows(status: ToolStatus | null): ToolRow[] {
     },
     { name: 'FFprobe', ok: status?.ffprobe ?? null },
     { name: 'yt-dlp', ok: status?.ytdlp ?? null, detail: 'Downloads YouTube videos and Twitch VODs' },
-    { name: 'BridgeClip clipping engine', ok: status?.engine ?? null, detail: status?.enginePath },
+    { name: 'CreatorClips clipping engine', ok: status?.engine ?? null, detail: status?.enginePath },
     { name: 'Bridge runner', ok: status?.bridgeRunner ?? null, detail: status?.bridgePath }
   ]
 }
@@ -524,7 +537,7 @@ function ToolList({ rows, checking }: { rows: ToolRow[]; checking: boolean }): R
         <div className="mb-3 flex items-center gap-2 px-1 text-xs">
           <StatusDot tone={missing > 0 ? 'danger' : 'success'} />
           <span className={cn('flex-1', missing > 0 ? 'text-danger' : 'text-ink-muted')}>
-            {missing > 0 ? `${missing} required check${missing === 1 ? '' : 's'} need${missing === 1 ? 's' : ''} attention` : `Everything BridgeClip needs is installed (${rows.filter((row) => row.ok).length} tools)`}
+            {missing > 0 ? `${missing} required check${missing === 1 ? '' : 's'} need${missing === 1 ? 's' : ''} attention` : `Everything CreatorClips needs is installed (${rows.filter((row) => row.ok).length} tools)`}
           </span>
           {missing === 0 && (
             <Button

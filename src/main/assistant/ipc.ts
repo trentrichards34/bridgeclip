@@ -137,7 +137,7 @@ export function registerAssistant(getMainWindow: () => BrowserWindow | null): As
   handle('assistant:signIn:code', (id, code) => signIn.submitCode(cliProvider(id), code))
   handle('assistant:signIn:cancel', (id) => signIn.cancel(cliProvider(id)))
   handle('assistant:signIn:open', (id) => signIn.openUrl(cliProvider(id)))
-  // Only BridgeClip's own fixed commands reach the clipboard.
+  // Only CreatorClips's own fixed commands reach the clipboard.
   handle('assistant:copyCommand', (id, which) => {
     const info = ASSISTANT_PROVIDER_INFO[cliProvider(id)]
     const command = which === 'signIn' ? info.signInCommand : info.installCommand

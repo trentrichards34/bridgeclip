@@ -241,8 +241,8 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
     // ── Overview and options ──────────────────────────────────────────────
     {
       name: 'get_overview',
-      title: 'Checked BridgeClip status',
-      description: 'Current state of BridgeClip: whether the OpenRouter key (needed to make clips) and Zernio key (needed to post) are set, running and queued jobs, Library size and automations. Call this first when you need context.',
+      title: 'Checked CreatorClips status',
+      description: 'Current state of CreatorClips: whether the OpenRouter key (needed to make clips) and Zernio key (needed to post) are set, running and queued jobs, Library size and automations. Call this first when you need context.',
       inputSchema: object({}),
       readOnly: true,
       run: async () => {
@@ -324,7 +324,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
       inputSchema: object({}),
       run: async () => {
         const window = host.getMainWindow()
-        if (!window || window.isDestroyed()) throw new AssistantToolError('Open the BridgeClip window first.')
+        if (!window || window.isDestroyed()) throw new AssistantToolError('Open the CreatorClips window first.')
         window.focus()
         const result = await dialog.showOpenDialog(window, {
           properties: ['openFile'],
@@ -351,7 +351,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
         captionStyle: { type: 'string', enum: CAPTION_PRESET_IDS, description: 'Default pop.' },
         titleCard: { type: 'boolean', description: 'Title card at the top of Automatic clips. Default true.' },
         durations: { type: 'array', items: { type: 'string', enum: DURATION_IDS }, minItems: 1, maxItems: DURATION_IDS.length, description: 'Clip length ranges. Default ["short"] (30–60s).' },
-        maxClips: { type: 'integer', minimum: 1, maximum: 100, description: 'Exact number of clips. Omit to let BridgeClip decide.' },
+        maxClips: { type: 'integer', minimum: 1, maximum: 100, description: 'Exact number of clips. Omit to let CreatorClips decide.' },
         speed: { type: 'number', enum: [...VIDEO_SPEED_OPTIONS], description: 'Playback speed for every clip. Default 1.' },
         pacing: { type: 'string', enum: ['tight', 'natural'] },
         layout: { type: 'string', enum: ['auto', 'fill', 'fit'] },
@@ -377,7 +377,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
         return [
           `Video: ${label}`,
           `${input.workflow === 'review' ? 'Review & edit' : 'Automatic'} · ${input.mode === 'economy' ? 'Economy' : 'Quality'} · ${input.aspectRatio ?? '9:16'}${input.speed && input.speed !== 1 ? ` · ${input.speed}×` : ''}`,
-          `${typeof input.maxClips === 'number' ? `${input.maxClips} clips` : 'BridgeClip picks the number of clips'} · ${durations.join(', ')}`,
+          `${typeof input.maxClips === 'number' ? `${input.maxClips} clips` : 'CreatorClips picks the number of clips'} · ${durations.join(', ')}`,
           input.captions === false ? 'No captions' : `Captions: ${preset?.name ?? 'Pop'}`,
           ...(input.clipRequest ? [`Focus: “${String(input.clipRequest).slice(0, 200)}”`] : []),
           'Uses your OpenRouter credit for transcription and planning.'
@@ -596,8 +596,8 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
     },
     {
       name: 'show_in_bridgeclip',
-      title: 'Opened a page in BridgeClip',
-      description: 'Show a page in the BridgeClip window, e.g. a Library run after it finishes, or Automations after editing one.',
+      title: 'Opened a page in CreatorClips',
+      description: 'Show a page in the CreatorClips window, e.g. a Library run after it finishes, or Automations after editing one.',
       inputSchema: object({
         page: { type: 'string', enum: ['clip', 'library', 'jobs', 'accounts', 'posts', 'automations', 'settings'], description: 'clip is the Create page.' },
         runId: { ...runIdProperty, description: 'With page "library": open this run.' }
@@ -1018,7 +1018,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
     {
       name: 'list_posts',
       title: 'Checked posts',
-      description: 'Recent posts made from BridgeClip with their status on each platform. Set refresh to fetch the latest status from Zernio first.',
+      description: 'Recent posts made from CreatorClips with their status on each platform. Set refresh to fetch the latest status from Zernio first.',
       inputSchema: object({ refresh: { type: 'boolean' }, limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Default 25.' } }),
       readOnly: true,
       run: async (input) => {
@@ -1081,7 +1081,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
     {
       name: 'get_settings',
       title: 'Read settings',
-      description: 'BridgeClip settings: whether API keys are saved (never the keys), the Library folder, custom vocabulary for transcription, Jev editorial review and web research switches.',
+      description: 'CreatorClips settings: whether API keys are saved (never the keys), the Library folder, custom vocabulary for transcription, Jev editorial review and web research switches.',
       inputSchema: object({}),
       readOnly: true,
       run: async () => {

@@ -1,4 +1,4 @@
-// The assistant on an OpenRouter model. There is no CLI to drive: BridgeClip
+// The assistant on an OpenRouter model. There is no CLI to drive: CreatorClips
 // sends the chat to OpenRouter's chat completions API with the user's key,
 // streams the reply, runs the tool calls the model asks for (through the same
 // path as the CLIs' MCP calls, approvals included) and sends the results back
@@ -68,7 +68,7 @@ export function describeOpenRouterFailure(status: number | null, message: string
   if (status === 402) return 'Your OpenRouter account is out of credits. Add credits on openrouter.ai, then try again.'
   if (status === 429) return 'OpenRouter is rate limiting requests. Wait a moment, then try again.'
   if (message && /tool/i.test(message) && /support|endpoint/i.test(message)) {
-    return `${model} can’t use tools through OpenRouter right now, so it can’t run BridgeClip. Choose another model.`
+    return `${model} can’t use tools through OpenRouter right now, so it can’t run CreatorClips. Choose another model.`
   }
   if (status === null) return message ? `OpenRouter stopped the reply: ${message}` : 'OpenRouter stopped the reply. Try again.'
   if (status === 404) return message ? `OpenRouter couldn’t use ${model}: ${message}` : `OpenRouter doesn’t list ${model} anymore. Choose another model.`
@@ -105,8 +105,8 @@ async function complete(options: OpenRouterTurnOptions, messages: OpenRouterMess
         Authorization: `Bearer ${options.apiKey}`,
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
-        'HTTP-Referer': 'https://github.com/bridge-mind/bridgeclip',
-        'X-Title': 'BridgeClip'
+        'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip',
+        'X-Title': 'CreatorClips'
       },
       body: JSON.stringify({
         model: options.model,

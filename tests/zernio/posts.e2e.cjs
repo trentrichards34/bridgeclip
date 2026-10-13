@@ -1,5 +1,5 @@
 'use strict'
-// End to end: an isolated BridgeClip (hidden window, own userData, mock
+// End to end: an isolated CreatorClips (hidden window, own userData, mock
 // keychain) posts a real clip from the Library to a local mock Zernio, then
 // cancels a scheduled post from the Accounts page. No real key or account.
 //
@@ -95,7 +95,7 @@ async function start(t, { titles, key = true, tiktokLane = null } = {}) {
   if (tiktokLane) mock.setHealth(accounts.tiktok._id, { integrationLane: tiktokLane })
   const userDataDir = path.join(work, 'userData')
   // launchApp seeds settings (no keys) with this folder, inside the isolated dir, as the Library.
-  const clipPaths = seedLibrary(path.join(userDataDir, 'BridgeClip'), titles)
+  const clipPaths = seedLibrary(path.join(userDataDir, 'CreatorClips'), titles)
   appDir ??= buildApp(process.env.BRIDGECLIP_E2E_APP_DIR || path.join(os.tmpdir(), 'bridgeclip-posts-e2e-app'))
   app = await launchApp({ appDir, userDataDir, mock })
   // Links never reach a real browser from a test run.

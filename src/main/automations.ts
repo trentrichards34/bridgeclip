@@ -278,7 +278,7 @@ function data(): { workspace: string; automations: Automation[] } {
     for (const automation of cached) for (const item of automation.content) {
       if (item.status === 'posting') {
         item.status = 'needs_review'
-        item.error = 'BridgeClip closed while posting. Check Zernio before returning this clip to the queue.'
+        item.error = 'CreatorClips closed while posting. Check Zernio before returning this clip to the queue.'
         item.warningsAcknowledged = false
         recovered = true
       } else if (item.status === 'needs_review' && !item.postId &&

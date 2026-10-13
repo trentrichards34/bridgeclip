@@ -16,7 +16,11 @@ export const CAPTION_PRESETS = [
   { id: 'neon', name: 'Neon', description: 'Magenta bloom, music & lifestyle' },
   { id: 'headline', name: 'Headline', description: 'Word on a red news tag' },
   { id: 'paper', name: 'Paper', description: 'Dark type on a white card' },
-  { id: 'subtle', name: 'Subtle', description: 'Light touch for interviews & vlogs' }
+  { id: 'subtle', name: 'Subtle', description: 'Light touch for interviews & vlogs' },
+  { id: 'beast', name: 'Beast', description: 'Comic type, challenge energy' },
+  { id: 'bubble', name: 'Bubble', description: 'Rounded & friendly' },
+  { id: 'retro', name: 'Retro', description: 'Cream type, hard orange shadow' },
+  { id: 'lime', name: 'Lime', description: 'Word on a lime pill' }
 ] as const
 
 export type CaptionPresetId = (typeof CAPTION_PRESETS)[number]['id']

@@ -40,6 +40,24 @@
   font-display: swap;
 }
 @font-face {
+  font-family: 'Bangers';
+  src: url('../../engine/assets/fonts/Bangers-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Lilita One';
+  src: url('../../engine/assets/fonts/LilitaOne-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Bowlby One';
+  src: url('../../engine/assets/fonts/BowlbyOne-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
   font-family: 'Instrument Serif';
   src: url('../../engine/assets/fonts/InstrumentSerif-Italic.ttf') format('truetype');
   font-weight: 400;
@@ -65,7 +83,7 @@
   font-display: swap;
 }
 
-/* BridgeClip glass. Surfaces are flat translucent layers over one solid dark
+/* CreatorClips glass. Surfaces are flat translucent layers over one solid dark
    backdrop. No gradients anywhere: every fill is a single colour. Ink stays
    opaque; colour comes from the video, the one primary action, chosen options
    and status. */

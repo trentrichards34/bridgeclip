@@ -373,7 +373,7 @@ export function ModelMenu({ provider, models, statuses, onChoose, onConnect }: {
             </div>
             {tab === 'openrouter' && (
               <p className="border-t border-white/[0.06] px-2.5 pb-1 pt-2 text-2xs text-ink-subtle">
-                Models that can use BridgeClip’s tools. Prices per million tokens, in / out, billed by OpenRouter.
+                Models that can use CreatorClips’s tools. Prices per million tokens, in / out, billed by OpenRouter.
               </p>
             )}
           </div>

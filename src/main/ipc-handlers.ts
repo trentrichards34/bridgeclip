@@ -9,6 +9,7 @@ import { inspectEdits } from './edit-inspector'
 import { getEnginePath, getBridgeRunnerPath, resolvePythonPath, validatePython } from './pipeline-runner'
 import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds } from './job-manager'
 import { startClipJobRequest } from './job-start'
+import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
 import { getModelCatalog } from './openrouter-models'
@@ -151,6 +152,20 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (result.canceled || result.filePaths.length === 0) return null
     selectedOutputDirectories.add(result.filePaths[0])
     return result.filePaths[0]
+  })
+
+  handle('backgrounds:list', () => listBackgrounds())
+  handle('backgrounds:remove', (_event, name: unknown) => removeBackground(name))
+  handle('backgrounds:add', async () => {
+    const window = getMainWindow()
+    if (!window) return listBackgrounds()
+    const result = await dialog.showOpenDialog(window, {
+      properties: ['openFile', 'multiSelections'],
+      title: 'Add background videos',
+      filters: [{ name: 'Videos', extensions: ['mp4', 'mov', 'm4v', 'webm'] }]
+    })
+    if (result.canceled) return listBackgrounds()
+    return addBackgrounds(result.filePaths)
   })
 
   handle('job:start', (_event, config: unknown) => startClipJobRequest(config))
@@ -333,7 +348,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     // made the check report them missing even when installed.
     const check = async (cmd: string, flag = '--version'): Promise<boolean> => {
       try {
-        await execFileAsync(cmd, [flag], { timeout: 5000 })
+        await execFileAsync(cmd, [flag], { timeout: 15000 })
         return true
       } catch {
         return false

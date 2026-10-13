@@ -1,10 +1,10 @@
 import { normalizeVideoSource, twitchSourceError } from '../../shared/video-source'
-import { useEffect, useMemo, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, type ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, ListVideo, Minus, Plus, Sparkles } from 'lucide-react'
 import { cn, MOD_KEY, parseTimecode, sourceLabel } from '../lib/utils'
 import { useDraftStore, type ClipDraft, type WizardStep } from '../store/use-draft-store'
 import { useActiveJobs } from '../store/use-job-store'
-import type { ClipJobRequest } from '../../shared/jobs'
+import type { ClipJobRequest, QualityBar } from '../../shared/jobs'
 import { MAX_PARALLEL_JOBS } from '../../shared/jobs'
 import { CaptionPresetPicker, CAPTION_PRESET_NAMES } from './CaptionPresetPicker'
 import { SourcePicker } from './SourcePicker'
@@ -21,6 +21,7 @@ import { useModelStore } from '../store/use-model-store'
 import { useSettingsStore } from '../store/use-settings-store'
 import { ModelPicker } from './ModelPicker'
 import { WorkflowPicker } from './WorkflowPicker'
+import { BackgroundPicker } from './BackgroundPicker'
 
 const DURATIONS = DURATION_OPTIONS
 
@@ -35,6 +36,12 @@ const LAYOUT_STYLES = [
   { id: 'fit', label: 'Classic', hint: 'Whole frame, blurred' }
 ] as const
 
+const BROLL_OPTIONS = [
+  { id: 'off', label: 'Off', hint: 'Just the speaker', summary: 'Off' },
+  { id: 'after-hook', label: 'After the hook', hint: 'Speaker for 3 s first', summary: 'Pexels footage after a 3 s speaker hook' },
+  { id: 'full', label: 'Whole clip', hint: 'Footage from the start', summary: 'Pexels footage for the whole clip' }
+] as const
+
 const MAX_CLIPS = 100
 
 export const WIZARD_STEPS: { id: WizardStep; label: string; title: string; description: string }[] = [
@@ -43,6 +50,14 @@ export const WIZARD_STEPS: { id: WizardStep; label: string; title: string; descr
   { id: 'clips', label: 'Clips', title: 'What to clip, length and count', description: 'Optionally describe the moments you want. Pick one or more lengths, or none for any length.' },
   { id: 'captions', label: 'Captions', title: 'Captions', description: 'Word-by-word captions burned into each clip. Silent videos are clipped without them.' },
   { id: 'review', label: 'Review', title: 'Review and generate', description: 'Check the run, then generate. You can queue another video right after.' }
+]
+
+const QUALITY_BAR_OPTIONS: { id: QualityBar; label: string; hint: string; summary: string }[] = [
+  { id: 'b', label: 'B or better', hint: 'Recommended', summary: 'Keep B grades and up' },
+  { id: 'a', label: 'Standouts', hint: 'A first, topped up with B', summary: 'Keep A grades, top up with B' },
+  { id: 'c', label: 'C or better', hint: 'More clips', summary: 'Keep C grades and up' },
+  { id: 'all', label: 'Grade all', hint: 'Keep everything', summary: 'Grade and keep all' },
+  { id: 'off', label: 'Off', hint: 'No grading', summary: 'No grading' }
 ]
 
 export function parseTrimRange(enabled: boolean, startText: string, endText: string): {
@@ -78,6 +93,10 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     includeCaptions: draft.includeCaptions,
     captionPreset: draft.captionPreset,
     includeTitle: draft.includeTitle,
+    ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo && draft.broll === 'off' ? { backgroundVideo: draft.backgroundVideo } : {}),
+    ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
+    ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
+    qualityBar: draft.qualityBar,
     startTimeSeconds: trim.start,
     endTimeSeconds: trim.end,
     bannerPlatform: null,
@@ -296,6 +315,8 @@ function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; u
 
 /** Format, framing and pacing. Exported for the keyboard-navigation test. */
 export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
+  const setBackground = useCallback((backgroundVideo: string | null) => update(backgroundVideo ? { backgroundVideo, broll: 'off' } : { backgroundVideo }), [update])
+  const pexelsConfigured = useSettingsStore((s) => s.pexelsConfigured)
   return (
     <div className="space-y-4">
       <Group label="Format">
@@ -376,6 +397,47 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
         </Group>
       )}
 
+      {draft.workflow !== 'review' && (
+        <Group label="B-roll" aside="Stock footage from Pexels">
+          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="B-roll">
+            {BROLL_OPTIONS.map((option) => {
+              const selected = draft.broll === option.id
+              const disabled = option.id !== 'off' && !pexelsConfigured
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  disabled={disabled}
+                  tabIndex={selected ? 0 : -1}
+                  onKeyDown={onRadioKeyDown}
+                  onClick={() => update(option.id === 'off' ? { broll: 'off' } : { broll: option.id, backgroundVideo: null })}
+                  className={cn(
+                    'glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left disabled:cursor-not-allowed disabled:opacity-50',
+                    selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink'
+                  )}
+                >
+                  <span className="block text-xs font-medium">{option.label}</span>
+                  <span className={cn('block truncate text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{option.hint}</span>
+                </button>
+              )
+            })}
+          </div>
+          <p className="mt-2 text-2xs text-ink-subtle">
+            {pexelsConfigured
+              ? 'AI picks footage for each beat of what’s said. The speaker’s audio, captions and title stay.'
+              : 'Add a free Pexels API key in Settings → API keys to turn on B-roll.'}
+          </p>
+        </Group>
+      )}
+
+      {draft.aspectRatio === '9:16' && draft.workflow !== 'review' && draft.broll === 'off' && (
+        <Group label="Background video" aside="Gameplay split">
+          <BackgroundPicker value={draft.backgroundVideo} onChange={setBackground} />
+        </Group>
+      )}
+
       <Group label="Pacing">
         <SettingRow
           title="Cut dead air"
@@ -410,6 +472,7 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
 
 export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
   const jevEnabled = useSettingsStore((s) => s.jevEnabled === 'on')
+  const openrouterConfigured = useSettingsStore((s) => s.openrouterConfigured)
   const toggleDuration = (id: string): void => {
     update({ durations: draft.durations.includes(id) ? draft.durations.filter((d) => d !== id) : [...draft.durations, id] })
   }
@@ -427,6 +490,13 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
         />
         <p id="clip-request-help" className="mt-2 text-2xs text-ink-subtle">Only matching moments are clipped, so you may get fewer clips, or none. Leave blank for the best moments.</p>
       </Group>
+      {draft.workflow !== 'review' && (
+        <SettingRow
+          title="Hook preview"
+          description="Open each clip with its strongest line, then play it from the start. Adds a few seconds; clips under 12 s are left as they are."
+          control={<Switch label="Open each clip with its strongest line" checked={draft.hookPreview} onChange={(hookPreview) => update({ hookPreview })} />}
+        />
+      )}
       <Group label="Clipping mode">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Clipping mode">
           {([
@@ -468,6 +538,33 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
           })}
         </div>
         {(draft.videoSpeed ?? 1) > 1 && <p className="mt-2 text-2xs text-ink-subtle">Lengths refer to the original footage. At {draft.videoSpeed}×, 60 seconds becomes about {Math.round(60 / draft.videoSpeed)} seconds before dead-air cuts.</p>}
+      </Group>
+
+      <Group label="Quality bar" aside="Graded on the Paid Creators frameworks">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5" role="radiogroup" aria-label="Quality bar">
+          {QUALITY_BAR_OPTIONS.map((option) => {
+            const selected = draft.qualityBar === option.id
+            return (
+              <button key={option.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+                onClick={() => update({ qualityBar: option.id })}
+                className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+                <span className="block text-xs font-medium">{option.label}</span>
+                <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{option.hint}</span>
+              </button>
+            )
+          })}
+        </div>
+        <p className="mt-2 text-2xs text-ink-subtle">
+          {!openrouterConfigured
+            ? 'Grading uses your OpenRouter key. Add it in Settings to grade clips.'
+            : draft.qualityBar === 'off'
+              ? 'No grading: clips are picked by the planner alone.'
+              : draft.aspectRatio === '16:9' && draft.durations.some((id) => ['xlong', 'extended', 'feature'].includes(id))
+                ? 'Long 16:9 episodes are not graded; the bar applies to short clips.'
+                : draft.qualityBar === 'all' || draft.clipRequest.trim()
+                  ? 'Every clip is graded on hook, payoff and story, and all are kept.'
+                  : 'CreatorClips finds extra candidates, grades each on hook, payoff and story, and keeps the ones that make the bar. If too few do, it tops up with the next grade down so you still get a full set.'}
+        </p>
       </Group>
 
       <Group label="Number of clips">
@@ -566,12 +663,17 @@ function ReviewStep({ draft, trim, onEdit }: {
     { step: 'clips', label: 'Mode', value: draft.clippingMode === 'advanced' ? 'Advanced · custom models' : draft.clippingMode === 'economy' ? 'Economy · lower cost' : 'Quality · higher accuracy' },
     { step: 'clips', label: 'Clips', value: `${lengths}${(draft.videoSpeed ?? 1) > 1 && draft.durations.length > 0 ? ' of source footage' : ''} · ${draft.autoClipCount ? 'AI decides how many' : `Up to ${draft.maxClips}`}` },
     { step: 'clips', label: 'What to clip', value: draft.clipRequest?.trim() || 'The best moments' },
+    ...(draft.workflow !== 'review' && draft.hookPreview ? [{ step: 'clips' as const, label: 'Hook preview', value: 'Opens with the strongest line' }] : []),
+    { step: 'clips' as const, label: 'Quality bar', value: QUALITY_BAR_OPTIONS.find((option) => option.id === draft.qualityBar)?.summary ?? 'B or better' },
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? 'Shown at the top' : 'Off' })
   if (draft.clippingMode === 'advanced') rows.splice(5, 0,
     { step: 'clips', label: 'Transcribe', value: draft.transcriptionModel || 'Choose a model' },
     { step: 'clips', label: 'Plan', value: draft.plannerModel || 'Choose a model' })
+  const afterFormat = rows.findIndex((row) => row.label === 'Format') + 1
+  if (draft.workflow !== 'review' && draft.broll !== 'off') rows.splice(afterFormat, 0, { step: 'format', label: 'B-roll', value: BROLL_OPTIONS.find((o) => o.id === draft.broll)?.summary ?? 'On' })
+  else if (draft.workflow !== 'review' && draft.aspectRatio === '9:16' && draft.backgroundVideo) rows.splice(afterFormat, 0, { step: 'format', label: 'Background', value: `${draft.backgroundVideo} · under the speaker` })
 
   return (
     <div className="space-y-3">
@@ -612,7 +714,7 @@ function StartedPanel({ className, onViewJob }: { className?: string; onViewJob?
       <p className="mt-1 max-w-md text-xs text-ink-subtle">
         {started.queued
           ? `Up to ${MAX_PARALLEL_JOBS} jobs run at once. This one starts as soon as a slot frees up.`
-          : 'It keeps running while you queue more videos or use the rest of BridgeClip.'}
+          : 'It keeps running while you queue more videos or use the rest of CreatorClips.'}
       </p>
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
         <Button variant="primary" icon={<Plus className="h-3.5 w-3.5" />} onClick={startAnother}>

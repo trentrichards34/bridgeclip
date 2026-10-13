@@ -12,7 +12,7 @@ import {
 } from '../../shared/assistant'
 
 // Conversations are plain JSON files under <userData>/assistant. They hold the
-// chat as shown in BridgeClip plus the CLI's resume id; the CLI keeps its own
+// chat as shown in CreatorClips plus the CLI's resume id; the CLI keeps its own
 // transcript in the user's ~/.claude or ~/.codex as it does for any session.
 
 const MAX_CONVERSATIONS = 50

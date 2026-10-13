@@ -296,7 +296,7 @@ export async function generateAutomationMetadata(transcript: string, title: stri
   for (let attempt = 0; attempt < 2; attempt++) {
     let response: Record<string, unknown>
     try { response = await providerResponse(await fetch(endpoint('BRIDGECLIP_E2E_OPENROUTER_URL', 'https://openrouter.ai/api/v1/chat/completions'), {
-      method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/bridge-mind/bridgeclip', 'X-Title': 'BridgeClip' },
+      method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips' },
       redirect: 'error',
       signal: AbortSignal.timeout(120_000),
       body: JSON.stringify({ model: MODEL, temperature: 0.2, messages: [

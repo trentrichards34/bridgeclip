@@ -9,7 +9,7 @@ const { editorTools } = require('./editor-e2e-tools.cjs')
 
 async function setupLibrary(t, tools) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-bookmarks-'))
-  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'BridgeClip')
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips')
   const titles = ['A better morning', 'The creative process', 'Small ideas, big changes', 'Behind the scenes', 'Finding your focus', 'The long conversation']
   const video = path.join(root, 'sample.mp4')
   execFileSync(tools.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=10:duration=1', ...tools.encoder, '-pix_fmt', 'yuv420p', video])

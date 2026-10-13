@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Release smoke test for the bundled BridgeClip smart graph and FFmpeg audio."""
+"""Release smoke test for the bundled CreatorClips smart graph and FFmpeg audio."""
 
 import subprocess
 import sys
