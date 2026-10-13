@@ -25,6 +25,7 @@ import type { UpdateState } from '../shared/updates'
 import type { OutputStorageUsage } from '../shared/output-storage'
 import type { YouTubePreview } from '../shared/youtube-preview'
 import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/avatars'
+import type { BrandIdentity, RemixRequest, RemixStatus } from '../shared/remix'
 import type {
   AppDataScope,
   AssistantConversation,
@@ -260,6 +261,21 @@ export interface BridgeClipAPI {
     renderStatus: () => Promise<AvatarRenderStatus | null>
     onStatus: (callback: (status: AvatarRenderStatus) => void) => () => void
   }
+  /** Brand identities: what a brand believes, imported or pasted in; Remix writes takes from them. */
+  brandIdentities: {
+    list: () => Promise<BrandIdentity[]>
+    save: (input: { id?: string; name: string; text: string }) => Promise<BrandIdentity[]>
+    remove: (id: string) => Promise<BrandIdentity[]>
+    /** Opens a file dialog in main; null when cancelled. */
+    importFile: () => Promise<{ name: string; text: string } | null>
+  }
+  /** Remix: commentary videos built on someone else's viral moments. */
+  remix: {
+    start: (request: RemixRequest) => Promise<RemixStatus>
+    cancel: () => Promise<boolean>
+    status: () => Promise<RemixStatus | null>
+    onStatus: (callback: (status: RemixStatus) => void) => () => void
+  }
   /** Gameplay background library (file names only). */
   backgrounds: {
     list: () => Promise<string[]>
@@ -449,6 +465,18 @@ const api: BridgeClipAPI = {
     cancelRender: () => ipcRenderer.invoke('avatars:cancelRender'),
     renderStatus: () => ipcRenderer.invoke('avatars:renderStatus'),
     onStatus: (callback) => subscribe('avatars:status', callback)
+  },
+  brandIdentities: {
+    list: () => ipcRenderer.invoke('brandIdentities:list'),
+    save: (input) => ipcRenderer.invoke('brandIdentities:save', input),
+    remove: (id) => ipcRenderer.invoke('brandIdentities:remove', id),
+    importFile: () => ipcRenderer.invoke('brandIdentities:importFile')
+  },
+  remix: {
+    start: (request) => ipcRenderer.invoke('remix:start', request),
+    cancel: () => ipcRenderer.invoke('remix:cancel'),
+    status: () => ipcRenderer.invoke('remix:status'),
+    onStatus: (callback) => subscribe('remix:status', callback)
   },
   backgrounds: {
     list: () => ipcRenderer.invoke('backgrounds:list'),

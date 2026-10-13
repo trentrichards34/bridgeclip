@@ -11,6 +11,7 @@ import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds } fr
 import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { cloneVoice, createAvatar, draftFromPhoto, draftsFromDescription, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
+import { BRAND_IDENTITY_EXTENSIONS, cancelRemix, listBrandIdentities, onRemixStatus, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
@@ -200,6 +201,24 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   onAvatarRenderStatus((status) => {
     const window = getMainWindow()
     if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('avatars:status', status)
+  })
+
+  handle('brandIdentities:list', () => listBrandIdentities())
+  handle('brandIdentities:save', (_event, input: unknown) => saveBrandIdentity(input))
+  handle('brandIdentities:remove', (_event, id: unknown) => removeBrandIdentity(id))
+  handle('brandIdentities:importFile', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a brand identity document', filters: [{ name: 'Text', extensions: BRAND_IDENTITY_EXTENSIONS }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return readBrandIdentityFile(result.filePaths[0])
+  })
+  handle('remix:start', (_event, request: unknown) => startRemix(request))
+  handle('remix:cancel', () => cancelRemix())
+  handle('remix:status', () => remixStatus())
+  onRemixStatus((status) => {
+    const window = getMainWindow()
+    if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('remix:status', status)
   })
 
   handle('job:start', (_event, config: unknown) => startClipJobRequest(config))

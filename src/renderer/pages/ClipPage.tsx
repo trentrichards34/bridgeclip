@@ -10,6 +10,7 @@ import { SetupCard } from '../components/SetupCard'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Page } from '../components/ui/Page'
 import { Callout } from '../components/ui/Callout'
+import { Button } from '../components/ui/Button'
 import type { Page as PageId } from '../components/Sidebar'
 
 /**
@@ -63,8 +64,13 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
       <PageHeader
         eyebrow="Studio"
         title="Create clips"
-        description="Pick a long video and a few options. CreatorClips finds the strongest moments and cuts them into captioned clips."
+        description="Straight clips from your own videos, or ones you have permission to use. CreatorClips finds the strongest moments and cuts them into captioned clips."
       />
+
+      <Callout tone="info" className="mt-4" title="Someone else's video?"
+        action={<Button size="sm" variant="secondary" onClick={() => onNavigate('remix')}>Open Remix</Button>}>
+        Make reaction clips instead: a few seconds of their moment, then your take in your brand's voice, with the creator credited.
+      </Callout>
 
       <SetupCard className="mt-4" onOpenSettings={() => onNavigate('settings')} />
 

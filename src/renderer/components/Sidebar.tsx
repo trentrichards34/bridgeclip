@@ -1,4 +1,4 @@
-import { ChevronRight, Film, ScanFace, Layers, MessagesSquare, PanelLeftClose, PanelLeftOpen, Send, Settings, UsersRound, WandSparkles, Workflow, type LucideIcon } from 'lucide-react'
+import { ChevronRight, Clapperboard, Film, ScanFace, Layers, MessagesSquare, PanelLeftClose, PanelLeftOpen, Send, Settings, UsersRound, WandSparkles, Workflow, type LucideIcon } from 'lucide-react'
 import { cn, MOD_KEY, sourceLabel } from '../lib/utils'
 import { useIsWide, useSidebarExpanded, useSidebarStore } from '../store/use-sidebar-store'
 import { useActiveJobs } from '../store/use-job-store'
@@ -11,10 +11,11 @@ import { STAGE_LABELS } from './JobProgress'
 import { SidebarUpdateButton } from './Updates'
 import { useAssistantStore } from '../store/use-assistant-store'
 
-export type Page = 'clip' | 'avatar' | 'library' | 'jobs' | 'assistant' | 'accounts' | 'posts' | 'automations' | 'settings'
+export type Page = 'clip' | 'remix' | 'avatar' | 'library' | 'jobs' | 'assistant' | 'accounts' | 'posts' | 'automations' | 'settings'
 
 export const NAV_ITEMS: { id: Page; label: string; icon: LucideIcon; shortcut: string; group: 'studio' | 'app' }[] = [
   { id: 'clip', label: 'Create', icon: WandSparkles, shortcut: '1', group: 'studio' },
+  { id: 'remix', label: 'Remix', icon: Clapperboard, shortcut: '9', group: 'studio' },
   { id: 'avatar', label: 'Avatar Studio', icon: ScanFace, shortcut: '8', group: 'studio' },
   { id: 'library', label: 'Library', icon: Film, shortcut: '2', group: 'studio' },
   { id: 'jobs', label: 'Jobs', icon: Layers, shortcut: '3', group: 'studio' },
