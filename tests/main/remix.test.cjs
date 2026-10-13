@@ -69,6 +69,9 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   selected.add(file)
   assert.throws(() => main.parseRemixRequest({ ...base, source: file }, userData), /original creator/)
   assert.equal(main.parseRemixRequest({ ...base, source: file, creator: ' Coach  Example ' }, userData).request.creator, 'Coach Example')
+  const image = path.join(userData, 'photo.jpg')
+  selected.add(image)
+  assert.throws(() => main.parseRemixRequest({ ...base, source: image, creator: 'X' }, userData), /video file/)
 })
 
 test('brand identities are saved, listed newest first, updated in place and removed', async () => {
@@ -92,7 +95,7 @@ test('brand identities are saved, listed newest first, updated in place and remo
 test('brand identity files: text or markdown only', async () => {
   const md = path.join(userData, 'Pull Up Brand.md')
   fs.writeFileSync(md, '# Beliefs\r\nStrength first.\r\n')
-  assert.deepEqual(plain(await main.readBrandIdentityFile(md)), { name: 'Pull Up Brand', text: '# Beliefs\nStrength first.' })
+  assert.deepEqual(plain(await main.readBrandIdentityFile(md)), { name: 'Pull Up Brand', text: '# Beliefs\nStrength first.', truncated: false })
   const pdf = path.join(userData, 'brand.pdf')
   fs.writeFileSync(pdf, '%PDF')
   await assert.rejects(main.readBrandIdentityFile(pdf), /\.txt or \.md/)
@@ -114,8 +117,8 @@ test('engine results are parsed defensively', () => {
 test('cost estimate: the on-camera avatar is the main cost, voice-only is cents', () => {
   const lipsync = shared.estimateRemixCost('lipsync', 1, 0.5)
   const voice = shared.estimateRemixCost('voice', 1, 0.5)
-  assert.ok(lipsync.perRemix > 0.5 && lipsync.perRemix < 1)
-  assert.ok(voice.perRemix < 0.05)
+  assert.ok(lipsync.perRemixLow >= 0.5 && lipsync.perRemixHigh <= 1.25 && lipsync.perRemixHigh > lipsync.perRemixLow)
+  assert.ok(voice.perRemixHigh < 0.05)
   assert.ok(shared.estimateRemixCost('lipsync', 3, 1).total > lipsync.total)
   assert.equal(shared.remixSourceUrl('ftp://x.com/a'), null)
   assert.equal(shared.remixSourceUrl('https://localhost/a'), null)

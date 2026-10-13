@@ -4,7 +4,7 @@ import { AlertTriangle, Check, FileText, Film, FolderOpen, Pencil, Plus, Trash2,
 import type { AvatarSummary } from '../../shared/avatars'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import {
-  estimateRemixCost, MAX_BRAND_IDENTITY_CHARS, REMIX_ANGLES, REMIX_HOSTS, REMIX_VOICES, remixSourceUrl, STANCE_LABELS,
+  estimateRemixCost, MAX_BRAND_IDENTITY_CHARS, REMIX_ANGLES, REMIX_HOSTS, REMIX_PRICES, REMIX_VOICES, remixSourceUrl, STANCE_LABELS,
   type BrandIdentity, type RemixAngle, type RemixHost, type RemixOutput, type RemixStatus
 } from '../../shared/remix'
 import type { Page as PageName } from '../components/Sidebar'
@@ -64,6 +64,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
   const [status, setStatus] = useState<RemixStatus | null>(null)
   const [launching, setLaunching] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -98,6 +99,8 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
   }
 
   const removeBrand = async (id: string): Promise<void> => {
+    if (!confirmDelete) { setConfirmDelete(true); return }
+    setConfirmDelete(false)
     setError(null)
     try {
       setBrands(await getApi().brandIdentities.remove(id))
@@ -154,7 +157,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                 <Button variant="secondary" icon={<Film className="h-4 w-4" />} disabled={busy} onClick={() => void chooseFile()}>Choose file</Button>
               </div>
             )}
-            {draft.link.trim() && !remixSourceUrl(draft.link) && <p className="text-2xs text-danger">Paste the full link, starting with https://</p>}
+            {draft.link.trim() && !remixSourceUrl(draft.link) && <p className="text-2xs text-danger">Paste the full link, starting with https:// or http://</p>}
             <Field label={draft.filePath ? 'Original creator' : 'Original creator (optional)'}
               hint={draft.filePath ? 'Shown on screen while their moment plays.' : 'Shown on screen while their moment plays. Filled in from the link when left blank.'}>
               <TextInput value={draft.creator} maxLength={80} placeholder="e.g. @coachname" onChange={(e) => draft.update({ creator: e.target.value })} />
@@ -184,13 +187,15 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
           <PanelHeader title="3 · Your take" description="Your Brand Identity decides what your presenter believes, so every reaction sounds like your brand and only uses your real proof."
             action={<Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setEditing('new')}>Add</Button>} />
           <div className="mt-4 space-y-3">
-            <Select value={brand?.id ?? ''} onChange={(value) => draft.update({ brandIdentityId: value || null })}
+            <Select value={brand?.id ?? ''} onChange={(value) => { setConfirmDelete(false); draft.update({ brandIdentityId: value || null }) }}
               options={[{ value: '', label: 'No brand identity', detail: 'A neutral expert voice, no results or numbers' },
                 ...brands.map((item) => ({ value: item.id, label: item.name, detail: `${item.text.length.toLocaleString()} characters` }))]} />
             {brand && (
               <div className="flex gap-2">
                 <Button size="sm" variant="secondary" icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setEditing(brand)}>Edit</Button>
-                <Button size="sm" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => void removeBrand(brand.id)}>Delete</Button>
+                <Button size="sm" variant={confirmDelete ? 'danger' : 'ghost'} icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => void removeBrand(brand.id)}>
+                  {confirmDelete ? 'Click again to delete' : 'Delete'}
+                </Button>
               </div>
             )}
           </div>
@@ -218,7 +223,8 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
             ) : (
               <div className="grid grid-cols-4 gap-2 sm:grid-cols-6" role="radiogroup" aria-label="Avatar">
                 {avatars.map((item) => (
-                  <button key={item.id} type="button" role="radio" aria-checked={avatar?.id === item.id} onClick={() => draft.update({ avatarId: item.id })}
+                  <button key={item.id} type="button" role="radio" aria-checked={avatar?.id === item.id} tabIndex={avatar?.id === item.id ? 0 : -1}
+                    onKeyDown={onRadioKeyDown} onClick={() => draft.update({ avatarId: item.id })}
                     className={cn('glass-tile glass-tile-hover overflow-hidden rounded-xl text-left', avatar?.id === item.id && 'glass-selected')}>
                     <img src={localFileUrl(item.portraitPath)} alt="" className="aspect-[9/16] w-full object-cover" />
                     <span className="block truncate px-2 py-1 text-2xs font-medium text-ink">{item.name}</span>
@@ -234,7 +240,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         </Panel>
 
         <Panel>
-          <PanelHeader title="5 · Make it" description={`About $${cost.perRemix.toFixed(2)} per remix, plus about $0.35 per hour of source video to transcribe and plan, on your OpenRouter account.`} />
+          <PanelHeader title="5 · Make it" description={`${cost.perRemixHigh - cost.perRemixLow < 0.01 ? `About $${cost.perRemixHigh.toFixed(2)}` : `About $${cost.perRemixLow.toFixed(2)}–$${cost.perRemixHigh.toFixed(2)}`} per remix, plus about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of source video to transcribe and plan, on your OpenRouter account.`} />
           <div className="mt-4 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span className="text-sm text-ink">Remixes from this video</span>
@@ -258,7 +264,9 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
             {status && <RemixProgress status={status} />}
             <div className="flex flex-wrap items-center gap-2">
               {busy ? (
-                <Button variant="secondary" onClick={() => void getApi().remix.cancel()}>Cancel</Button>
+                <Button variant="secondary" disabled={status?.detail === 'Cancelling…'} onClick={() => void getApi().remix.cancel()}>
+                  {status?.detail === 'Cancelling…' ? 'Cancelling…' : 'Cancel'}
+                </Button>
               ) : (
                 <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || blocker !== null}
                   tooltip={blocker ?? undefined} onClick={() => void generate()}>
@@ -280,7 +288,13 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
 
 function RemixProgress({ status }: { status: RemixStatus }): React.JSX.Element {
   if (status.phase === 'failed') return <Callout tone="danger">{status.error ?? 'The remix failed.'}</Callout>
-  if (status.phase === 'cancelled') return <Callout tone="info">Remix cancelled. Steps already running on OpenRouter may still be charged.</Callout>
+  if (status.phase === 'cancelled') {
+    return (
+      <Callout tone="info" action={<Button size="sm" variant="secondary" onClick={() => void getApi().shell.openPath(status.folder)}>Open folder</Button>}>
+        Remix cancelled. Any remixes already finished are in the folder. Steps already running on OpenRouter may still be charged.
+      </Callout>
+    )
+  }
   if (status.phase === 'running') {
     return (
       <div className="space-y-1.5">
@@ -339,6 +353,7 @@ function BrandIdentityDialog({ brand, onClose, onSaved }: { brand: BrandIdentity
   const [text, setText] = useState(brand?.text ?? '')
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => { ref.current?.focus() }, [])
 
@@ -346,15 +361,18 @@ function BrandIdentityDialog({ brand, onClose, onSaved }: { brand: BrandIdentity
     setError(null)
     try {
       const file = await getApi().brandIdentities.importFile()
-      if (file) { setText(file.text); if (!name.trim()) setName(file.name) }
+      if (file) {
+        setText(file.text); if (!name.trim()) setName(file.name)
+        setNotice(file.truncated ? `That file is longer than ${MAX_BRAND_IDENTITY_CHARS.toLocaleString()} characters, so the end was cut off. Trim it so your proof and voice sections fit.` : null)
+      }
     } catch (err) { setError(errorMessage(err)) }
   }
   const save = async (): Promise<void> => {
     setWorking(true); setError(null)
     try {
       const list = await getApi().brandIdentities.save({ ...(brand ? { id: brand.id } : {}), name, text })
-      const saved = brand ? list.find((item) => item.id === brand.id) : list.find((item) => item.name === name.replace(/\s+/g, ' ').trim()) ?? list[0]
-      onSaved(list, saved?.id ?? list[0]?.id ?? '')
+      // The list is newest first, so a new identity is first.
+      onSaved(list, brand?.id ?? list[0]?.id ?? '')
     } catch (err) { setError(errorMessage(err)) } finally { setWorking(false) }
   }
 
@@ -373,6 +391,7 @@ function BrandIdentityDialog({ brand, onClose, onSaved }: { brand: BrandIdentity
           <TextArea rows={14} value={text} maxLength={MAX_BRAND_IDENTITY_CHARS} onChange={(e) => setText(e.target.value)}
             placeholder={'Core promise: …\nWhat we believe: …\nMyths we push back on: …\nOur method: …\nProof (real results only): …\nVoice: …'} />
         </Field>
+        {notice && <Callout tone="warning">{notice}</Callout>}
         {error && <Callout tone="danger">{error}</Callout>}
       </div>
       <DialogFooter>

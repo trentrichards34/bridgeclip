@@ -226,7 +226,7 @@ export function ClipCard({
           {title}
         </h3>
         {clip.headline && clip.headline !== title && (
-          <p className="mt-1 line-clamp-2 text-xs text-ink-muted" title="Headline in the bar above the video">“{clip.headline}”</p>
+          <p className="mt-1 line-clamp-2 text-xs text-ink-muted" title="Story headline. It is drawn above the video when the Headline bar title style is on, and works as a post caption.">“{clip.headline}”</p>
         )}
         {clip.framework && <GradeDetailsButton grade={clip.framework} title={title} />}
         {clip.editorial && clip.editorial.flags.length > 0 && <p className="mt-2 text-2xs text-amber-200" title={clip.editorial.flags.map((f) => f.replaceAll('_', ' ')).join('; ')}>

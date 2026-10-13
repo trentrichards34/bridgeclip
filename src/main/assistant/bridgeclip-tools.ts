@@ -226,6 +226,7 @@ export function clipJobRequestFromInput(input: Record<string, unknown>): ClipJob
     includeCaptions: input.captions !== false,
     captionPreset: (input.captionStyle as string | undefined) ?? DEFAULT_CAPTION_PRESET,
     includeTitle: input.titleCard !== false,
+    titleStyle: 'headline',
     startTimeSeconds: (input.startSeconds as number | undefined) ?? null,
     endTimeSeconds: (input.endSeconds as number | undefined) ?? null,
     bannerPlatform: null,

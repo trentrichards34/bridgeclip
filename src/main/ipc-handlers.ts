@@ -11,7 +11,7 @@ import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds } fr
 import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { cloneVoice, createAvatar, draftFromPhoto, draftsFromDescription, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
-import { BRAND_IDENTITY_EXTENSIONS, cancelRemix, listBrandIdentities, onRemixStatus, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
+import { BRAND_IDENTITY_EXTENSIONS, cancelRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
@@ -183,7 +183,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('avatars:create', (_event, input: unknown) => createAvatar((input ?? {}) as Parameters<typeof createAvatar>[0]))
   handle('avatars:update', (_event, id: unknown, patch: unknown) => updateAvatar(id, (patch ?? {}) as { name?: unknown; voice?: unknown }))
   handle('avatars:remove', (_event, id: unknown) => {
-    if (id === avatarInUse()) throw new Error('This avatar is being used by the video in progress. Wait for it to finish or cancel it first.')
+    if (id === avatarInUse() || id === remixAvatarInUse()) throw new Error('This avatar is being used by the video in progress. Wait for it to finish or cancel it first.')
     return removeAvatar(id)
   })
   handle('avatars:cloneVoice', async (_event, id: unknown, consent: unknown) => {

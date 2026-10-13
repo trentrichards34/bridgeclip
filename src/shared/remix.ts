@@ -45,17 +45,21 @@ export const MAX_BRAND_IDENTITY_CHARS = 40000
 export const REMIX_PRICES = {
   /** HeyGen Avatar IV, per second of on-camera speech. */
   avatarPerSecond: 0.05,
-  /** About 12 seconds of the avatar on camera per remix (opening + closing lines). */
-  onCameraSeconds: 12,
+  /** The avatar is on camera for the opening and closing lines: about 10-23 seconds per remix. */
+  onCameraSecondsLow: 10,
+  onCameraSecondsHigh: 23,
   /** Voice for ~30 seconds of narration. */
   voicePerRemix: 0.01,
   /** Transcribing and planning, per hour of source video. */
   sourcePerHour: 0.35
 }
 
-export function estimateRemixCost(host: RemixHost, count: number, sourceHours = 0.5): { perRemix: number; total: number } {
-  const perRemix = REMIX_PRICES.voicePerRemix + (host === 'lipsync' ? REMIX_PRICES.onCameraSeconds * REMIX_PRICES.avatarPerSecond : 0)
-  return { perRemix, total: perRemix * count + REMIX_PRICES.sourcePerHour * Math.max(0.1, sourceHours) }
+/** Per-remix range (the avatar's speaking time varies) and the total at the high end. */
+export function estimateRemixCost(host: RemixHost, count: number, sourceHours = 0.5): { perRemixLow: number; perRemixHigh: number; total: number } {
+  const avatar = (seconds: number): number => host === 'lipsync' ? seconds * REMIX_PRICES.avatarPerSecond : 0
+  const perRemixLow = REMIX_PRICES.voicePerRemix + avatar(REMIX_PRICES.onCameraSecondsLow)
+  const perRemixHigh = REMIX_PRICES.voicePerRemix + avatar(REMIX_PRICES.onCameraSecondsHigh)
+  return { perRemixLow, perRemixHigh, total: perRemixHigh * count + REMIX_PRICES.sourcePerHour * Math.max(0.1, sourceHours) }
 }
 
 export interface BrandIdentity {

@@ -59,6 +59,7 @@ test('start_clip_job builds a request the Create page’s validator accepts, wit
     includeCaptions: true,
     captionPreset: 'pop',
     includeTitle: true,
+    titleStyle: 'headline',
     startTimeSeconds: null,
     endTimeSeconds: null,
     bannerPlatform: null,

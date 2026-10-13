@@ -71,7 +71,16 @@ def main():
         return 0
     except (Exception, asyncio.CancelledError) as error:
         from clip_engine.services.remix_service import RemixError
-        message = str(error) if isinstance(error, RemixError) else None
+        from bridge_runner import describe_failure
+        if isinstance(error, RemixError):
+            message = str(error)
+        elif isinstance(error, asyncio.CancelledError):
+            message = "Cancelled"
+        else:
+            # Download and transcription failures get the same plain-language
+            # explanations as the clip pipeline.
+            described = describe_failure(error)
+            message = None if described["message"] == "The clipping pipeline failed." else f"{described['message']} {described['hint']}"
         try:
             from clip_engine.logging_safety import safe_log_text
             print(f"Remix failed: {type(error).__name__}: {safe_log_text(str(error))[-500:]}", file=sys.stderr)

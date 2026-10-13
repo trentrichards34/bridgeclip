@@ -1,8 +1,8 @@
 import { app } from 'electron'
-import { execFile, spawn, type ChildProcess } from 'child_process'
+import { execFile, execFileSync, spawn, type ChildProcess } from 'child_process'
 import { randomBytes } from 'crypto'
 import { existsSync } from 'fs'
-import { access, constants as fsConstants, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
+import { access, constants as fsConstants, copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
 import { delimiter, dirname, extname, join } from 'path'
 import { promisify } from 'util'
 import { isAvatarId, renderFolderName } from '../shared/avatars'
@@ -93,21 +93,21 @@ export async function removeBrandIdentity(id: unknown): Promise<BrandIdentity[]>
 }
 
 /** Text of a .txt/.md file the user picked, to fill the editor. */
-export async function readBrandIdentityFile(path: string): Promise<{ name: string; text: string }> {
+export async function readBrandIdentityFile(path: string): Promise<{ name: string; text: string; truncated: boolean }> {
   const extension = extname(path).slice(1).toLowerCase()
   if (!BRAND_IDENTITY_EXTENSIONS.includes(extension)) throw new Error('Choose a .txt or .md file, or paste the text.')
   const info = await stat(path)
   if (!info.isFile() || info.size > MAX_IMPORT_BYTES) throw new Error('That file is too large. Paste the text instead.')
   const text = (await readFile(path, 'utf8')).replace(/\r\n/g, '\n').trim()
   const name = path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '').slice(0, 120) || 'Brand identity'
-  return { name, text: text.slice(0, MAX_BRAND_IDENTITY_CHARS) }
+  return { name, text: text.slice(0, MAX_BRAND_IDENTITY_CHARS), truncated: text.length > MAX_BRAND_IDENTITY_CHARS }
 }
 
 // ---------------------------------------------------------------------------
 // Remix runs
 // ---------------------------------------------------------------------------
 
-interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean }
+interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null }
 
 let active: ActiveRemix | null = null
 let lastStatus: RemixStatus | null = null
@@ -138,6 +138,7 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const url = remixSourceUrl(source)
   if (!url) {
     try { assertMediaPath(source, outputDirectory) } catch { throw new Error('Paste a full video link (https://…) or choose the file again.') }
+    if (!VIDEO_EXTENSIONS.has(extname(source).toLowerCase())) throw new Error('Choose a video file (MP4, MOV, MKV or WebM).')
   }
   if (!isRemixAngle(raw.angle)) throw new Error('Choose a remix style.')
   if (!isRemixHost(raw.host)) throw new Error('Choose how your presenter appears.')
@@ -175,12 +176,25 @@ async function preflight(folder: string): Promise<void> {
   catch { throw new Error('The output folder is not writable. Choose another in Settings → Output.') }
 }
 
-function kill(child?: ChildProcess, force = false): void {
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.mkv', '.webm', '.avi', '.flv'])
+
+function kill(child?: ChildProcess, force = false, sync = false): void {
   if (!child?.pid) return
-  try { if (process.platform === 'win32') execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], () => undefined); else process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM') } catch { /* already exited */ }
+  try {
+    if (process.platform !== 'win32') process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM')
+    else if (sync) execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000 })
+    else execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], () => undefined)
+  } catch { /* already exited */ }
 }
 
 let starting = false
+/** The avatar and cancel request for a run still in its pre-flight checks. */
+let pending: { avatarId: string | null; cancelled: boolean } | null = null
+
+/** The avatar a remix is using, so it can't be deleted mid-run. */
+export function remixAvatarInUse(): string | null {
+  return active?.avatarId ?? pending?.avatarId ?? null
+}
 
 export async function startRemix(value: unknown): Promise<RemixStatus> {
   if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
@@ -188,6 +202,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
   try {
     const settings = loadSettings()
     const { request } = parseRemixRequest(value, settings.outputDirectory)
+    pending = { avatarId: request.avatarId, cancelled: false }
     const brand = request.brandIdentityId ? await readBrandIdentity(request.brandIdentityId) : null
     let photo: string | null = null
     if (request.avatarId) {
@@ -198,8 +213,15 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     const angle = REMIX_ANGLES.find((item) => item.id === request.angle)?.label ?? 'Remix'
     const folder = join(settings.outputDirectory, 'Remix', renderFolderName(`${angle} ${request.creator || ''}`.trim(), new Date()))
     await preflight(folder)
+    // The run reads its own copy, so editing or deleting the avatar can't break it.
+    if (photo) {
+      const copy = join(folder, '.presenter.jpg')
+      await copyFile(photo, copy)
+      photo = copy
+    }
+    if (pending.cancelled) throw new Error('Cancelled before it started.')
     const run: ActiveRemix = {
-      cancelled: false,
+      cancelled: false, avatarId: request.avatarId,
       status: {
         id: randomBytes(6).toString('hex'), phase: 'running', detail: 'Starting', percent: 1, folder,
         estimateUsd: estimateRemixCost(request.host, request.count).total, outputs: [], costUsd: null, warnings: [], error: null
@@ -207,13 +229,16 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     }
     active = run
     notify(run.status)
-    void execute(run, request, {
+    execute(run, request, {
       source: request.source, output_dir: folder, angle: request.angle, count: request.count, host: request.host, voice: request.voice,
       avatar_photo: photo, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
       caption_preset: request.captionPreset, include_captions: request.includeCaptions
+    }).catch((error: unknown) => {
+      logger.warn('remix.spawn.failed', { message: String(error).slice(0, 300) })
+      finish(run, { phase: 'failed', error: 'The clipping engine could not start. Run Settings → System check.' })
     })
     return run.status
-  } finally { starting = false }
+  } finally { starting = false; pending = null }
 }
 
 async function execute(run: ActiveRemix, request: RemixRequest, config: Record<string, unknown>): Promise<void> {
@@ -267,16 +292,23 @@ async function execute(run: ActiveRemix, request: RemixRequest, config: Record<s
       finish(run, { phase: 'failed', error: message })
     }
   })
+  child.stdin.on('error', () => undefined)
   child.stdin.end(JSON.stringify(config))
 }
 
 export function cancelRemix(): boolean {
+  if (pending) { pending.cancelled = true; return true }
   if (!active) return false
-  active.cancelled = true
-  kill(active.child)
+  const run = active
+  if (run.cancelled) return true
+  run.cancelled = true
+  publish(run, { detail: 'Cancelling…' })
+  kill(run.child)
+  // A download or upload in progress can ignore the polite stop; force it shortly after.
+  setTimeout(() => { if (run.child) kill(run.child, true) }, 5000).unref()
   return true
 }
 
 export function stopRemixForQuit(): void {
-  if (active) { active.cancelled = true; kill(active.child, true) }
+  if (active) { active.cancelled = true; kill(active.child, true, true) }
 }

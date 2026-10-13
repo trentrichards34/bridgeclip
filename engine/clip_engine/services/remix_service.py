@@ -218,7 +218,7 @@ def transcript_words(segments: list[TranscriptSegment]) -> list[TranscriptWord]:
 
 
 def snap_excerpt(words: list[TranscriptWord], start_ms: int, end_ms: int) -> Optional[tuple[int, int]]:
-    """The excerpt on whole words, between MIN and MAX_EXCERPT_MS; None if no words are there."""
+    """The excerpt on whole words, at most MAX_EXCERPT_MS and extended toward MIN_EXCERPT_MS; None if no words are there."""
     # Start on the first word that begins at (or just before) the requested start.
     inside = [w for w in words if w.start_time_ms >= start_ms - 250 and w.start_time_ms < end_ms + 300]
     if not inside:
@@ -234,65 +234,110 @@ def snap_excerpt(words: list[TranscriptWord], start_ms: int, end_ms: int) -> Opt
             end = w.end_time_ms
             if end - start >= MIN_EXCERPT_MS:
                 break
+    # Near the end of a video there may be nothing to extend into; accept a
+    # slightly shorter setup there rather than lose the moment.
     if end - start < MIN_EXCERPT_MS * 0.6:
         return None
     return start, end
 
 
+# Digits (money, percentages, results) in the take must come from the brand
+# identity or the source; small counting numbers ("3 lessons") are fine.
+_NUMBER = re.compile(r"(?<![\w.])[$£€]?\d[\d,]*(?:\.\d+)?\s*(?:%|percent|k\b|m\b|x\b)?", re.IGNORECASE)
+
+
+def _number_key(token: str) -> str:
+    return re.sub(r"[^\d.]", "", token).rstrip(".")
+
+
+def unsupported_numbers(text: str, *sources: str) -> list[str]:
+    """Numbers in `text` (money, %, results) that appear in none of `sources`."""
+    known = {_number_key(m.group()) for source in sources for m in _NUMBER.finditer(source or "")}
+    missing = []
+    for match in _NUMBER.finditer(text):
+        token = match.group().strip()
+        key = _number_key(token)
+        if not key:
+            continue
+        plain_small = token.isdigit() and int(token) <= 10
+        if not plain_small and key not in known:
+            missing.append(token)
+    return missing
+
+
+def _phrase_in(phrase: str, haystack_norm: str) -> bool:
+    """A proof phrase of 3+ words found on word boundaries in the normalized text."""
+    norm = _normalize(phrase)
+    return len(norm.split()) >= 3 and f" {norm} " in f" {haystack_norm} "
+
+
+def _parse_item(item: dict, words: list[TranscriptWord], brand_text: str, brand_norm: str, transcript_text: str,
+                taken: list[RemixScript]) -> Optional[RemixScript]:
+    check = item.get("self_check") if isinstance(item.get("self_check"), dict) else {}
+    if check.get("attacks_person") is True or check.get("invented_claims") is True:
+        logger.info("Remix plan dropped by its own check")
+        return None
+    start_s, end_s = float(item["start"]), float(item["end"])
+    if not (math.isfinite(start_s) and math.isfinite(end_s)) or end_s <= start_s or start_s < 0:
+        return None
+    snapped = snap_excerpt(words, round(start_s * 1000), round(end_s * 1000))
+    if not snapped or any(min(s.end_ms, snapped[1]) - max(s.start_ms, snapped[0]) > 0 for s in taken):
+        return None
+    intro = _clean_line(item.get("intro"), 45)
+    close = _clean_line(item.get("close"), 35)
+    headline = _clean_line(item.get("headline"), 16)
+    raw_beats = item.get("beats") if isinstance(item.get("beats"), list) else []
+    beats = []
+    for beat in raw_beats:
+        if isinstance(beat, dict):
+            text = _clean_line(beat.get("text"), 45)
+            query = _clean_line(beat.get("broll"), 4)
+            if text:
+                beats.append(Beat(text, query or "abstract motion background"))
+    beats = beats[:4]
+    if not intro or not close or not beats or len(headline.split()) < 3:
+        return None
+    take = " ".join([headline, intro, *(b.text for b in beats), close])
+    invented = unsupported_numbers(take, brand_text, transcript_text)
+    if invented:
+        logger.info(f"Remix plan dropped: numbers not in the brand identity or source ({len(invented)})")
+        return None
+    notes: list[str] = []
+    raw_proof = item.get("proof_used") if isinstance(item.get("proof_used"), list) else []
+    proof = [p.strip() for p in raw_proof if isinstance(p, str) and p.strip()]
+    verified = [p for p in proof if brand_norm and _phrase_in(p, brand_norm)]
+    if len(verified) < len(proof):
+        notes.append("Some proof the AI cited was not found word for word in your Brand Identity; check any results it mentions.")
+    if check.get("stands_alone") is False:
+        notes.append("The AI was not sure this take stands on its own without the clip.")
+    # The record of what was borrowed comes from the transcript, not the model.
+    quote = " ".join(w.word for w in words if w.start_time_ms >= snapped[0] and w.end_time_ms <= snapped[1] + 50)
+    return RemixScript(
+        start_ms=snapped[0], end_ms=snapped[1], moment_quote=quote[:600],
+        why_this_moment=_clean_line(item.get("why_this_moment"), 40),
+        stance=item.get("stance") if item.get("stance") in STANCES else "add_nuance",
+        headline=headline, intro=intro, beats=beats, close=close, proof_used=verified, notes=notes,
+    )
+
+
 def parse_plan(raw: Any, segments: list[TranscriptSegment], brand_text: str, count: int) -> list[RemixScript]:
-    """Validate model plans; drop the ones that break the rules."""
+    """Validate model plans; drop the ones that break the rules (model output is untrusted)."""
     items = raw.get("remixes") if isinstance(raw, dict) else None
     if not isinstance(items, list):
         return []
     words = transcript_words(segments)
     brand_norm = _normalize(brand_text or "")
+    transcript_text = " ".join(s.text for s in segments)
     scripts: list[RemixScript] = []
     for item in items:
         if not isinstance(item, dict):
             continue
-        check = item.get("self_check") if isinstance(item.get("self_check"), dict) else {}
-        if check.get("attacks_person") is True or check.get("invented_claims") is True:
-            logger.info("Remix plan dropped by its own check")
-            continue
         try:
-            start_ms, end_ms = round(float(item["start"]) * 1000), round(float(item["end"]) * 1000)
-        except (KeyError, TypeError, ValueError):
+            script = _parse_item(item, words, brand_text or "", brand_norm, transcript_text, scripts)
+        except (KeyError, TypeError, ValueError, OverflowError, AttributeError):
             continue
-        if not (math.isfinite(start_ms) and math.isfinite(end_ms)) or end_ms <= start_ms:
-            continue
-        snapped = snap_excerpt(words, start_ms, end_ms)
-        if not snapped:
-            continue
-        if any(min(s.end_ms, snapped[1]) - max(s.start_ms, snapped[0]) > 0 for s in scripts):
-            continue
-        intro = _clean_line(item.get("intro"), 45)
-        close = _clean_line(item.get("close"), 35)
-        headline = _clean_line(item.get("headline"), 16)
-        beats = []
-        for beat in item.get("beats") or []:
-            if isinstance(beat, dict):
-                text = _clean_line(beat.get("text"), 45)
-                query = _clean_line(beat.get("broll"), 4)
-                if text:
-                    beats.append(Beat(text, query or "abstract motion background"))
-        beats = beats[:4]
-        if not intro or not close or not beats or len(headline.split()) < 3:
-            continue
-        notes: list[str] = []
-        proof = [p.strip() for p in item.get("proof_used") or [] if isinstance(p, str) and p.strip()]
-        verified = [p for p in proof if brand_norm and _normalize(p) and _normalize(p) in brand_norm]
-        if len(verified) < len(proof):
-            notes.append("Some proof the AI cited was not found in your Brand Identity; check any numbers or results it mentions.")
-        if check.get("stands_alone") is False:
-            notes.append("The AI was not sure this take stands on its own without the clip.")
-        stance = item.get("stance") if item.get("stance") in STANCES else "add_nuance"
-        scripts.append(RemixScript(
-            start_ms=snapped[0], end_ms=snapped[1],
-            moment_quote=_clean_line(item.get("moment_quote"), 60),
-            why_this_moment=_clean_line(item.get("why_this_moment"), 40),
-            stance=stance, headline=headline, intro=intro, beats=beats, close=close,
-            proof_used=verified, notes=notes,
-        ))
+        if script:
+            scripts.append(script)
         if len(scripts) >= count:
             break
     return scripts
@@ -359,6 +404,9 @@ class RemixError(Exception):
     """A failure the user can act on; the message is safe to show."""
 
 
+IN_PROGRESS = ("pending", "queued", "in_progress", "processing", "running", "starting")
+
+
 class OpenRouterMedia:
     def __init__(self, api_key: str, client: Optional[httpx.AsyncClient] = None, base_url: Optional[str] = None):
         self.base = (base_url or get_settings().openrouter_base_url).rstrip("/")
@@ -368,6 +416,8 @@ class OpenRouterMedia:
                      "X-Title": "CreatorClips Remix"},
         )
         self.cost_usd = 0.0
+        # Keep parallel voice requests polite (rate limits).
+        self._speech_slots = asyncio.Semaphore(2)
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -382,40 +432,61 @@ class OpenRouterMedia:
             return RemixError(f"OpenRouter is rate limiting {what}. Try again shortly.")
         return RemixError(f"OpenRouter could not {what} ({status}).")
 
+    @staticmethod
+    def _retry_after(response: httpx.Response, attempt: int) -> float:
+        try:
+            return min(30.0, max(1.0, float(response.headers.get("retry-after", ""))))
+        except ValueError:
+            return 2.0 + attempt * 3
+
     async def speech(self, text: str, voice: str, instructions: str, out_path: str) -> str:
         payload = {"model": TTS_MODEL, "input": text, "voice": voice if voice in VOICES else DEFAULT_VOICE,
                    "response_format": "mp3", "instructions": instructions[:600]}
-        for attempt in range(3):
-            try:
-                async with self._client.stream("POST", f"{self.base}/audio/speech", json=payload) as response:
-                    if response.status_code != 200:
-                        if response.status_code in (429, 500, 502, 503, 504) and attempt < 2:
-                            await asyncio.sleep(2 + attempt * 3)
-                            continue
-                        raise self._error(response.status_code, "generate the voice")
-                    size = 0
-                    with open(out_path, "wb") as handle:
-                        async for chunk in response.aiter_bytes():
-                            size += len(chunk)
-                            if size > MAX_TTS_BYTES:
-                                raise RemixError("The voice file was unexpectedly large.")
-                            handle.write(chunk)
-                if size == 0:
-                    raise RemixError("OpenRouter returned an empty voice file.")
-                self.cost_usd += estimate_speech_seconds(text) / 60 * TTS_PRICE_PER_MINUTE
-                return out_path
-            except (httpx.TimeoutException, httpx.TransportError):
-                if attempt == 2:
-                    raise RemixError("OpenRouter could not be reached for the voice. Check your connection.") from None
-                await asyncio.sleep(2 + attempt * 3)
+        async with self._speech_slots:
+            for attempt in range(4):
+                try:
+                    async with self._client.stream("POST", f"{self.base}/audio/speech", json=payload) as response:
+                        if response.status_code != 200:
+                            if response.status_code in (408, 429, 500, 502, 503, 504) and attempt < 3:
+                                await asyncio.sleep(self._retry_after(response, attempt))
+                                continue
+                            raise self._error(response.status_code, "generate the voice")
+                        size = 0
+                        with open(out_path, "wb") as handle:
+                            async for chunk in response.aiter_bytes():
+                                size += len(chunk)
+                                if size > MAX_TTS_BYTES:
+                                    raise RemixError("The voice file was unexpectedly large.")
+                                handle.write(chunk)
+                    if size == 0:
+                        raise RemixError("OpenRouter returned an empty voice file.")
+                    self.cost_usd += estimate_speech_seconds(text) / 60 * TTS_PRICE_PER_MINUTE
+                    return out_path
+                except (httpx.TimeoutException, httpx.TransportError):
+                    if attempt == 3:
+                        raise RemixError("OpenRouter could not be reached for the voice. Check your connection.") from None
+                    await asyncio.sleep(2 + attempt * 3)
         raise RemixError("The voice could not be generated.")
 
+    @staticmethod
+    def _json(response: httpx.Response, what: str) -> dict:
+        try:
+            body = response.json()
+        except ValueError:
+            raise RemixError(f"OpenRouter returned an unreadable reply while {what}.") from None
+        if not isinstance(body, dict):
+            raise RemixError(f"OpenRouter returned an unexpected reply while {what}.")
+        return body
+
     async def avatar_video(self, photo_path: str, audio_path: str, text: str, out_path: str) -> str:
-        """Lip-synced talking head of the photo speaking the audio. Raises RemixError on failure."""
-        with open(photo_path, "rb") as handle:
-            photo = base64.b64encode(handle.read()).decode()
-        with open(audio_path, "rb") as handle:
-            audio = base64.b64encode(handle.read()).decode()
+        """Lip-synced talking head of the photo speaking the audio. Raises RemixError on any failure."""
+        try:
+            with open(photo_path, "rb") as handle:
+                photo = base64.b64encode(handle.read()).decode()
+            with open(audio_path, "rb") as handle:
+                audio = base64.b64encode(handle.read()).decode()
+        except OSError:
+            raise RemixError("The avatar photo could not be read.") from None
         payload = {
             "model": AVATAR_MODEL, "prompt": text, "aspect_ratio": "9:16", "resolution": "720p",
             "input_references": [
@@ -430,13 +501,13 @@ class OpenRouterMedia:
         if response.status_code not in (200, 201, 202):
             logger.warning(f"Avatar video request rejected ({response.status_code}): {response.text[:300]}")
             raise self._error(response.status_code, "start the avatar video")
-        job = response.json() if response.content else {}
+        job = self._json(response, "starting the avatar video")
         job_id = job.get("id")
         if not isinstance(job_id, str) or not re.fullmatch(r"[A-Za-z0-9_\-]{1,128}", job_id):
             raise RemixError("OpenRouter returned an invalid avatar job.")
         deadline = time.monotonic() + AVATAR_TIMEOUT_SECONDS
         status: dict = job
-        while status.get("status") not in ("completed", "failed"):
+        while str(status.get("status", "pending")).lower() in IN_PROGRESS:
             if time.monotonic() > deadline:
                 raise RemixError("The avatar video took too long.")
             await asyncio.sleep(AVATAR_POLL_SECONDS)
@@ -445,26 +516,57 @@ class OpenRouterMedia:
             except (httpx.TimeoutException, httpx.TransportError):
                 continue
             if poll.status_code != 200:
-                if poll.status_code in (429, 500, 502, 503, 504):
+                if poll.status_code in (408, 429, 500, 502, 503, 504):
                     continue
                 raise self._error(poll.status_code, "check the avatar video")
-            status = poll.json()
-        if status.get("status") == "failed":
-            logger.warning(f"Avatar video failed: {str(status.get('error'))[:300]}")
+            try:
+                status = self._json(poll, "checking the avatar video")
+            except RemixError:
+                continue
+        state = str(status.get("status", "")).lower()
+        if state != "completed":
+            logger.warning(f"Avatar video ended as {state[:40]}: {str(status.get('error'))[:300]}")
             raise RemixError("The avatar video failed on OpenRouter.")
-        cost = (status.get("usage") or {}).get("cost")
-        self.cost_usd += float(cost) if isinstance(cost, (int, float)) else estimate_speech_seconds(text) * AVATAR_PRICE_PER_SECOND
-        size = 0
-        async with self._client.stream("GET", f"{self.base}/videos/{job_id}/content", params={"index": 0}) as content:
+        usage = status.get("usage") if isinstance(status.get("usage"), dict) else {}
+        cost = usage.get("cost")
+        self.cost_usd += float(cost) if isinstance(cost, (int, float)) and math.isfinite(cost) else estimate_speech_seconds(text) * AVATAR_PRICE_PER_SECOND
+        try:
+            await self._download(f"{self.base}/videos/{job_id}/content", out_path)
+        except (httpx.TimeoutException, httpx.TransportError, OSError):
+            try:
+                await self._download(f"{self.base}/videos/{job_id}/content", out_path)
+            except (httpx.TimeoutException, httpx.TransportError, OSError):
+                raise RemixError("The avatar video could not be downloaded.") from None
+        return out_path
+
+    async def _download(self, url: str, out_path: str) -> None:
+        """Download a finished video. A redirect to an https file host is followed without our key."""
+        async with self._client.stream("GET", url, params={"index": 0}) as content:
+            if content.status_code in (301, 302, 303, 307, 308):
+                location = content.headers.get("location", "")
+                if not location.startswith("https://"):
+                    raise RemixError("The avatar video could not be downloaded.")
+                async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=30.0), follow_redirects=False) as plain:
+                    async with plain.stream("GET", location) as hop:
+                        if hop.status_code != 200:
+                            raise self._error(hop.status_code, "download the avatar video")
+                        await self._save(hop, out_path)
+                return
             if content.status_code != 200:
                 raise self._error(content.status_code, "download the avatar video")
-            with open(out_path, "wb") as handle:
-                async for chunk in content.aiter_bytes():
-                    size += len(chunk)
-                    if size > MAX_VIDEO_BYTES:
-                        raise RemixError("The avatar video was unexpectedly large.")
-                    handle.write(chunk)
-        return out_path
+            await self._save(content, out_path)
+
+    @staticmethod
+    async def _save(response: httpx.Response, out_path: str) -> None:
+        size = 0
+        with open(out_path, "wb") as handle:
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > MAX_VIDEO_BYTES:
+                    raise RemixError("The avatar video was unexpectedly large.")
+                handle.write(chunk)
+        if size == 0:
+            raise RemixError("OpenRouter returned an empty avatar video.")
 
 
 # ---------------------------------------------------------------------------
@@ -482,8 +584,11 @@ VIDEO_ARGS = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt"
 LOUDNORM = "loudnorm=I=-16:TP=-1.5:LRA=11"
 
 
+PROBE_GUARD = ["-protocol_whitelist", "file,pipe,fd", "-format_whitelist", "mov,matroska,webm,avi,flv,mpegts,mp3,wav,image2,mjpeg"]
+
+
 def media_seconds(path: str) -> float:
-    result = run_media(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", path], timeout=60)
+    result = run_media(["ffprobe", "-v", "error", *PROBE_GUARD, "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", path], timeout=60)
     try:
         seconds = float((result.stdout or b"").decode().strip())
     except ValueError:
@@ -494,7 +599,7 @@ def media_seconds(path: str) -> float:
 
 
 def has_audio(path: str) -> bool:
-    result = run_media(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", path], timeout=60)
+    result = run_media(["ffprobe", "-v", "error", *PROBE_GUARD, "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", path], timeout=60)
     return bool((result.stdout or b"").strip())
 
 
@@ -809,10 +914,11 @@ class Remixer:
         async def animate(key: str, text: str) -> None:
             try:
                 host_videos[key] = await self.media.avatar_video(self.config.avatar_photo, audio[key], text, os.path.join(work, f"{key}-avatar.mp4"))
-            except RemixError as error:
-                logger.warning(f"Avatar video unavailable, using the still: {error}")
-                if not any("still photo" in w for w in warnings):
-                    warnings.append(f"The lip-synced avatar could not be made ({error}) so this remix uses your avatar's photo instead.")
+            except Exception as error:  # noqa: BLE001 - fall back to the avatar's photo
+                logger.warning(f"Avatar video unavailable, using the still: {type(error).__name__}: {error}")
+                reason = str(error) if isinstance(error, RemixError) else "an unexpected error"
+                if not any("avatar's photo instead" in w for w in warnings):
+                    warnings.append(f"The lip-synced avatar could not be made ({reason}) so this remix uses your avatar's photo instead.")
 
         tasks = []
         if self.config.host == "lipsync":
@@ -834,8 +940,18 @@ class Remixer:
         # 4. Parts in order: intro (host), excerpt, beats, close (host).
         def host_part(key: str, out: str) -> str:
             seconds = media_seconds(audio[key])
-            if host_videos.get(key):
-                return video_segment(host_videos[key], out, OUT_W, panel_h)
+            video_path = host_videos.get(key)
+            if video_path:
+                try:
+                    # The avatar must be lip-synced to OUR voice track: same length,
+                    # with sound. Otherwise it spoke with its own voice; use the photo.
+                    if has_audio(video_path) and abs(media_seconds(video_path) - seconds) <= 0.75:
+                        return video_segment(video_path, out, OUT_W, panel_h, audio[key], seconds)
+                    logger.warning("Avatar video does not match the voice track; using the still")
+                except RemixError:
+                    logger.warning("Avatar video unreadable; using the still")
+                if not any("did not match" in w for w in warnings):
+                    warnings.append("The lip-synced avatar did not match your voice track, so this remix uses your avatar's photo for those lines.")
             if self.config.host in ("lipsync", "still"):
                 return still_segment(self.config.avatar_photo, audio[key], out, OUT_W, panel_h, seconds)
             return still_segment(freeze, audio[key], out, OUT_W, panel_h, seconds, blur=True)
@@ -849,12 +965,16 @@ class Remixer:
         for i, beat in enumerate(script.beats):
             out = os.path.join(work, f"p2-beat{i}.mp4")
             seconds = await asyncio.to_thread(media_seconds, audio[f"beat{i}"])
+            path = None
             if broll[i]:
-                path = await asyncio.to_thread(video_segment, broll[i], out, OUT_W, panel_h, audio[f"beat{i}"], seconds, True)
-            elif self.config.host != "voice":
+                try:
+                    path = await asyncio.to_thread(video_segment, broll[i], out, OUT_W, panel_h, audio[f"beat{i}"], seconds, True)
+                except RemixError:
+                    logger.warning("A B-roll file could not be used; using a still")
+            if not path and self.config.host != "voice":
                 path = await asyncio.to_thread(still_segment, self.config.avatar_photo, audio[f"beat{i}"], out, OUT_W, panel_h, seconds)
                 avatar_parts.add(len(parts))
-            else:
+            elif not path:
                 path = await asyncio.to_thread(still_segment, freeze, audio[f"beat{i}"], out, OUT_W, panel_h, seconds, True)
             parts.append(("beat", path))
         close_part = await asyncio.to_thread(host_part, "close", os.path.join(work, "p3-close.mp4"))
@@ -951,7 +1071,8 @@ class Remixer:
             audio_path = os.path.join(work, "captions.wav")
             await asyncio.to_thread(ffmpeg, ["-i", assembled, "-vn", "-ac", "1", "-ar", "16000", audio_path])
             result = await TranscriptionService().transcribe_audio(audio_path)
-            self.cost_usd += float(getattr(getattr(result, "api_costs", None), "estimated_cost_usd", 0.0) or 0.0)
+            # Counted with the remix it belongs to (media cost is per remix).
+            self.media.cost_usd += float(getattr(getattr(result, "api_costs", None), "estimated_cost_usd", 0.0) or 0.0)
             found = [s for s in result.segments if s.words]
             if found:
                 return found
@@ -981,14 +1102,20 @@ class Remixer:
             segments = await self._transcribe(video, work)
             scripts = await self._plan(segments, source_meta)
             results: list[RemixResult] = []
+            first_error: Optional[BaseException] = None
             for index, script in enumerate(scripts):
                 try:
                     results.append(await self._one(index, len(scripts), script, video, segments, source_meta, root))
-                except RemixError as error:
-                    if not results and index == len(scripts) - 1:
-                        raise
-                    self.warnings.append(f"Remix {index + 1} could not be made: {error}")
+                except Exception as error:  # noqa: BLE001 - keep the remixes already made
+                    logger.warning(f"Remix {index + 1} failed: {type(error).__name__}: {error}")
+                    first_error = first_error or error
+                    reason = str(error) if isinstance(error, RemixError) else "an unexpected error (see the log)"
+                    self.warnings.append(f"Remix {index + 1} could not be made: {reason}")
+                    if isinstance(error, RemixError) and ("API key" in str(error) or "credits" in str(error)):
+                        break  # every remaining remix would fail the same way
             if not results:
+                if isinstance(first_error, RemixError):
+                    raise first_error
                 raise RemixError("No remix could be made from this video.")
             total = self.cost_usd + self.media.cost_usd
             return {"remixes": [asdict(r) for r in results], "cost_usd": round(total, 4), "warnings": self.warnings,

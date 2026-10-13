@@ -202,3 +202,148 @@ def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar):
     if keep:
         import shutil
         shutil.copy(first["path"], os.path.join(keep, f"{host}-{fail_avatar}.mp4"))
+
+
+class TestHardening:
+    def test_invented_numbers_drop_the_plan_but_brand_and_source_numbers_pass(self):
+        brand = "Our clients get their first pull-up in 6 weeks. We have helped 100 people."
+        invented = plan_item(4, 8, intro="Our members lost 40 pounds in 10 days doing this, and you can too, starting today.")
+        from_brand = plan_item(12, 16, intro="We have helped 100 people get their first pull-up in 6 weeks without dieting first.")
+        counting = plan_item(20, 24, intro="Here are 3 things he missed about pull-ups, and the last one matters most.")
+        scripts = remix.parse_plan({"remixes": [invented, from_brand, counting]}, transcript(), brand, 5)
+        assert [s.start_ms for s in scripts] == [12000, 20000]
+        assert remix.unsupported_numbers("I made $53,847 and 97% more", "made $53,847") == ["97%"]
+
+    def test_quote_comes_from_the_transcript_and_short_proof_does_not_verify(self):
+        item = plan_item(4, 8, moment_quote="I never said anything like this", proof_used=["10", "helped"])
+        script = remix.parse_plan({"remixes": [item]}, transcript(), "We have helped 100 people", 1)[0]
+        assert script.moment_quote.startswith("word10 word11") and "never said" not in script.moment_quote
+        assert script.proof_used == [] and script.notes
+
+    def test_malformed_values_drop_only_that_plan(self):
+        items = [plan_item(float("inf"), 8), plan_item(1e400, 2e400), plan_item(4, 8, beats=5), plan_item(12, 16, proof_used="abc"),
+                 plan_item("x", 3), plan_item(20, 24)]
+        scripts = remix.parse_plan({"remixes": items}, transcript(), "", 10)
+        assert [s.start_ms for s in scripts] == [12000, 20000]
+        assert scripts[0].proof_used == []
+
+
+def _media(handler):
+    import httpx
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False)
+    return remix.OpenRouterMedia("key", client=client, base_url="https://openrouter.test/api/v1")
+
+
+@pytest.fixture
+def fast_poll(monkeypatch):
+    monkeypatch.setattr(remix, "AVATAR_POLL_SECONDS", 0)
+
+
+def _avatar_files(tmp_path):
+    photo, audio = tmp_path / "p.jpg", tmp_path / "a.mp3"
+    photo.write_bytes(b"jpg")
+    audio.write_bytes(b"mp3")
+    return str(photo), str(audio), str(tmp_path / "out.mp4")
+
+
+class TestAvatarClient:
+    def test_success_sends_photo_and_voice_and_follows_a_file_redirect(self, tmp_path, fast_poll, monkeypatch):
+        import httpx
+        seen = {}
+        polls = iter([{"status": "in_progress"}, "<html>502</html>", {"status": "completed", "usage": {"cost": 0.4}}])
+
+        def handler(request):
+            if request.method == "POST":
+                seen["body"] = json.loads(request.content)
+                return httpx.Response(202, json={"id": "job_1", "status": "pending"})
+            if request.url.path.endswith("/content"):
+                return httpx.Response(302, headers={"location": "https://cdn.test/v.mp4"})
+            body = next(polls)
+            return httpx.Response(200, text=body) if isinstance(body, str) else httpx.Response(200, json=body)
+
+        Real = httpx.AsyncClient
+
+        class Plain:
+            def __init__(self, *a, **k):
+                self.client = Real(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b"video")))
+            async def __aenter__(self):
+                return self.client
+            async def __aexit__(self, *a):
+                await self.client.aclose()
+        media = _media(handler)
+        monkeypatch.setattr(remix.httpx, "AsyncClient", Plain)
+        photo, audio, out = _avatar_files(tmp_path)
+        asyncio.run(media.avatar_video(photo, audio, "Hello there", out))
+        refs = seen["body"]["input_references"]
+        assert seen["body"]["model"] == remix.AVATAR_MODEL and seen["body"]["aspect_ratio"] == "9:16"
+        assert refs[0]["type"] == "image_url" and refs[1]["type"] == "input_audio"
+        assert open(out, "rb").read() == b"video" and media.cost_usd == pytest.approx(0.4)
+
+    @pytest.mark.parametrize("final", [{"status": "cancelled"}, {"status": "failed", "error": "x"}, ["not", "a", "dict"]])
+    def test_terminal_and_odd_statuses_raise_a_remix_error(self, tmp_path, fast_poll, final):
+        import httpx
+        polls = iter([final, {"status": "failed"}])
+
+        def handler(request):
+            if request.method == "POST":
+                return httpx.Response(202, json={"id": "job_2"})
+            return httpx.Response(200, json=next(polls))
+        photo, audio, out = _avatar_files(tmp_path)
+        with pytest.raises(remix.RemixError):
+            asyncio.run(_media(handler).avatar_video(photo, audio, "Hi", out))
+
+    def test_rejected_or_unreadable_start_raises_a_remix_error(self, tmp_path):
+        import httpx
+        photo, audio, out = _avatar_files(tmp_path)
+        for response in (httpx.Response(400, text="bad audio"), httpx.Response(202, text="<html>"), httpx.Response(202, json={"id": "../x"})):
+            with pytest.raises(remix.RemixError):
+                asyncio.run(_media(lambda r, resp=response: resp).avatar_video(photo, audio, "Hi", out))
+
+    def test_speech_retries_rate_limits_then_saves(self, tmp_path, monkeypatch):
+        import httpx
+        replies = iter([httpx.Response(429, headers={"retry-after": "1"}), httpx.Response(200, content=b"mp3data")])
+        sleeps = []
+
+        async def no_sleep(seconds):
+            sleeps.append(seconds)
+        monkeypatch.setattr(remix.asyncio, "sleep", no_sleep)
+        out = str(tmp_path / "v.mp3")
+        asyncio.run(_media(lambda r: next(replies)).speech("Hello", "nova", "", out))
+        assert open(out, "rb").read() == b"mp3data" and sleeps == [1.0]
+        with pytest.raises(remix.RemixError, match="API key"):
+            asyncio.run(_media(lambda r: httpx.Response(401)).speech("Hello", "nova", "", out))
+
+
+def test_a_failed_remix_keeps_the_ones_already_made(tmp_path, monkeypatch):
+    settings = SimpleNamespace(openrouter_api_key="k", openrouter_base_url="https://x.test/api/v1", planner_model="m",
+                               get_planner_fallback_models=lambda: [], pexels_api_key=None)
+
+    class Media:
+        cost_usd = 0.0
+
+        async def aclose(self):
+            pass
+    config = remix.RemixConfig(source="https://example.com/v", output_dir=str(tmp_path), host="voice", count=3)
+    remixer = remix.Remixer(config, media=Media(), settings=settings)
+    scripts = remix.parse_plan({"remixes": [plan_item(4, 8), plan_item(12, 16), plan_item(20, 24)]}, transcript(), "", 3)
+
+    async def source(work):
+        return "v.mp4", {"url": "u", "title": "t", "creator": "c", "platform": "youtube"}
+
+    async def transcribe(video, work):
+        return transcript()
+
+    async def plan(segments, meta):
+        return scripts
+
+    async def one(index, total, script, *rest):
+        if index == 1:
+            raise OSError("disk hiccup")
+        return remix.RemixResult(f"/o/{index}.mp4", f"/o/{index}.json", script.headline, script.stance, 4.0, 25.0, 0.1, [], [])
+    monkeypatch.setattr(remixer, "_source", source)
+    monkeypatch.setattr(remixer, "_transcribe", transcribe)
+    monkeypatch.setattr(remixer, "_plan", plan)
+    monkeypatch.setattr(remixer, "_one", one)
+    result = asyncio.run(remixer.run())
+    assert [r["path"] for r in result["remixes"]] == ["/o/0.mp4", "/o/2.mp4"]
+    assert any("Remix 2 could not be made" in w for w in result["warnings"])

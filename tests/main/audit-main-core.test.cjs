@@ -46,7 +46,7 @@ function ipcWithLibrary(library) {
     './backgrounds': {},
     './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [] },
     './avatar-studio': { onAvatarRenderStatus: () => {} },
-    './remix': { onRemixStatus: () => {}, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
+    './remix': { onRemixStatus: () => {}, remixAvatarInUse: () => null, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
     './logger': {},
     './security': security,
     './network-policy': {},

@@ -267,7 +267,7 @@ export interface BridgeClipAPI {
     save: (input: { id?: string; name: string; text: string }) => Promise<BrandIdentity[]>
     remove: (id: string) => Promise<BrandIdentity[]>
     /** Opens a file dialog in main; null when cancelled. */
-    importFile: () => Promise<{ name: string; text: string } | null>
+    importFile: () => Promise<{ name: string; text: string; truncated: boolean } | null>
   }
   /** Remix: commentary videos built on someone else's viral moments. */
   remix: {
