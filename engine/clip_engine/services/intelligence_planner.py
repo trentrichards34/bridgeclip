@@ -67,6 +67,8 @@ class ClipPlanSegment:
     subtitle_path: Optional[str] = None
     editorial: Optional[dict] = None
     moment: Optional[dict] = None
+    # Paid Creators framework grade (see framework_grader.ClipGrade.to_dict).
+    framework: Optional[dict] = None
 
 
 @dataclass
@@ -431,6 +433,7 @@ class IntelligencePlannerService:
         source_context: Optional[dict] = None,
         jev_enabled: bool = False,
         clip_request: Optional[str] = None,
+        oversample: float = 1.0,
     ) -> ClipPlanResponse:
         """
         Plan viral clips from video content.
@@ -458,6 +461,9 @@ class IntelligencePlannerService:
                 confined to the selected range.
             clip_request: The user's description of the moments to clip. Only
                 matching moments are selected, so fewer than N (or none) may return.
+            oversample: Ask for this many times the target count so a later
+                framework grade can keep only the strongest. `discovery_limit`
+                stays the target count.
 
         Returns:
             ClipPlanResponse with identified clips
@@ -563,6 +569,12 @@ class IntelligencePlannerService:
             clip_count = min(clip_count, 8)
         self.discovery_limit = clip_count
         longform = bool(transcript) and is_longform(aspect_ratio, min_duration_seconds)
+        if oversample > 1 and discovery_feedback is None and not longform:
+            ceiling = max_fit if effective_duration_seconds > 0 else self.settings.max_clips_absolute
+            requested = min(ceiling, self.settings.max_clips_absolute * 2, max(clip_count + 2, math.ceil(clip_count * oversample)))
+            if requested > clip_count:
+                logger.info(f"Oversampling candidates for framework grading: {clip_count} -> {requested}")
+                clip_count = requested
         self._current_longform = longform
         if longform:
             logger.info("Planning longform edits (16:9, 5+ minute clips)")
@@ -810,6 +822,8 @@ class IntelligencePlannerService:
 - The clip MUST deliver what the title promises. If the payoff is not inside the clip, change the title or the clip; never promise what the clip does not show.
 - Lead with the OUTCOME the viewer wants, not the product, tool or category name: "Stop Dreading Tax Season", not "Our Bookkeeping Platform".
 - Use the speaker's real numbers exactly as said. Never invent, round up or exaggerate a number.
+- The title and the spoken opening work together as one Triple Hook: if the speech is missing an element (usually the Twist), the title can carry it, using only what the clip actually says.
+- Promise the payoff, never give it away ("Don't show them that until the end"): the title opens the curiosity gap the clip closes.
 - Use curiosity gaps only when the clip closes them: "Why Most Developers Get This Wrong", "The Truth About AI Coding"
 - Use power words when appropriate: "brutal", "insane", "secret", "truth", "nobody", "actual"
 - Match the speaker's energy — if they are calm and analytical, do NOT use hyperbolic clickbait
@@ -895,10 +909,11 @@ Prefer moments where the payoff is concrete and visible: real numbers, results, 
 
 ## WHAT MAKES A STRONG CLIP
 
-1. TRIPLE HOOK: The strongest openings stack three things in the first sentences. PREMISE: a bold, specific, credible claim, ideally with a real number ("my business is making over $7,000 a day"). STAKES: why it matters to the viewer ("you're not going to believe this"). TWIST: a pattern interrupt that breaks a common false belief ("and virtually nobody knows who I am"). An opening with two or three of these scores 9-10 on hook.
+1. TRIPLE HOOK (Paid Creators playbook: "If your hook sucks, nothing else matters"): the strongest openings stack three equal elements, in any order, in the first sentences. QUALIFIER: a bold line that sets the tone and creates anticipation ("You're not going to believe this, but…", "I probably shouldn't tell you this…", "Everyone thinks X, but…", "This is the moment everything changed…"). MAIN STATEMENT: the core result or method with specifics ("we generated 160 B2B leads for just $531", "I went from X to Y in Z"). TWIST: the false-belief breaker, usually the "without" formula ("…without going viral", "…by breaking the number one rule of landing pages", "…and I only worked 10 hours a week", "…despite having no audience"). Optional fourth: STAKES (a real win/lose consequence). One element is weak; a claim without a twist gets "So what? I've heard that before." An opening with all three scores 9-10 on hook; two scores 6-7.
 2. A COMPLETE MINI STORY: Inside the clip, prefer the arc Hook → Background → Conflict → Resolution: how they got here, what went wrong or was hard, and what solved it. A clip with the whole arc beats a clip of loose tips.
 3. STORY MOMENTS TRAVEL: Favor moments that are one of these stories: origin (rock bottom to breakthrough), results with limited resources, "getting fired was the best thing", a regret ("if I could tell my 25-year-old self"), before vs. after, overcoming a failure, a student or client result, something learned from someone big, a contrarian stance ("everyone says X, they're wrong").
-4. SPECIFIC BEATS VAGUE: "5,400 sales from one ad" beats "a lot of sales". Prefer moments with real numbers, names of results, and proof shown on screen.
+4. SPECIFIC BEATS VAGUE: exact numbers are more believable than round ones ("$53,847" beats "over $50,000"; "5,400 sales from one ad" beats "a lot of sales"). Prefer moments with real numbers, timeframes, anchoring ("I was spending $10,000 a month… now $500"), and proof backing bold claims.
+4b. THE FIVE-STEP STORY: the best clips follow Hook → Background → Conflict → Resolution (→ Call to Action). Prefer moments where the conflict or "breaking point" and its resolution are both inside the clip.
 5. A STANCE: Prefer moments where the speaker takes a clear position not everybody shares over neutral, hedged advice.
 6. END ON THE PAYOFF, NOT A PITCH: These clips reach new people. End on the resolution or the result. Do not run on into "link in bio", "comment below" or a sales pitch unless that line is the payoff itself.
 
@@ -908,6 +923,7 @@ Prefer moments where the payoff is concrete and visible: real numbers, results, 
 - End mid-sentence without resolution. Always end on a completed thought or natural pause.
 - Promise something in the hook or title and cut off before delivering it.
 - Contain long pauses, "um"s, "uh"s, throat clearing, or stammering as the primary content.
+- Open on a price, a greeting, housekeeping or a generic question the viewer won't relate to ("do you have tight hip flexors?").
 - Require context from earlier in the video to make sense ("as I mentioned earlier", "going back to what we said").
 - Are just transitions or filler ("okay so moving on...", "anyway let's talk about...", "so yeah").
 - Contain the same core point as another selected clip. Each clip must cover a distinct idea.

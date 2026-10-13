@@ -1,3 +1,7 @@
+/** Clip grading bar: A only, B or better, C or better, grade but keep everything, or no grading. */
+export type QualityBar = 'a' | 'b' | 'c' | 'all' | 'off'
+export const QUALITY_BARS: readonly QualityBar[] = ['a', 'b', 'c', 'all', 'off']
+
 import type { RunDiagnostics } from './run-diagnostics'
 import type { PipelineStage } from './job-progress'
 import type { JobOutput } from './job-output'
@@ -32,6 +36,8 @@ export interface ClipJobRequest {
   broll?: 'after-hook' | 'full'
   /** Hook preview: open each clip with its strongest line, then play it from the start. */
   hookPreview?: boolean
+  /** Paid Creators framework grading: keep clips graded at or above this bar, grade but keep all, or skip grading. Defaults to 'b'. */
+  qualityBar?: QualityBar
   startTimeSeconds: number | null
   endTimeSeconds: number | null
   bannerPlatform: string | null

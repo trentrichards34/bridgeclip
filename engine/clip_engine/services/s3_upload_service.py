@@ -54,6 +54,8 @@ class ClipArtifact:
     chapters: Optional[list[dict]] = None
     subtitle_url: Optional[str] = None
     editorial: Optional[dict] = None
+    # Paid Creators framework grade: letter, criteria scores, hook evidence, fix.
+    framework: Optional[dict] = None
 
 
 @dataclass

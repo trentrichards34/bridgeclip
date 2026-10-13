@@ -19,7 +19,7 @@ function loadModule(file, mocks = {}) {
 const progress = loadModule('shared/job-progress.ts')
 const diagnostics = loadModule('shared/run-diagnostics.ts', { './job-progress': progress })
 const jobs = loadModule('shared/jobs.ts')
-const jobOutput = loadModule('shared/job-output.ts', { './editorial': loadModule('shared/editorial.ts'), './job-progress': progress, './run-diagnostics': diagnostics })
+const jobOutput = loadModule('shared/job-output.ts', { './editorial': loadModule('shared/editorial.ts'), './framework-grade': loadModule('shared/framework-grade.ts'), './job-progress': progress, './run-diagnostics': diagnostics })
 
 /** A job manager wired to a fake runner that records each start and lets the test drive it. */
 function setup() {

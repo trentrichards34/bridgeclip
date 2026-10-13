@@ -1,9 +1,12 @@
 import { parseRunDiagnostics } from './run-diagnostics'
 import { parseStages } from './job-progress'
 import { parseEditorialSummary, type EditorialSummary } from './editorial'
+import { parseFrameworkGrade, type FrameworkGrade } from './framework-grade'
 
 export interface ClipArtifact {
   editorial?: EditorialSummary | null
+  /** Paid Creators framework grade, when grading ran. */
+  framework?: FrameworkGrade | null
   clip_index: number
   s3_url: string
   duration_ms: number
@@ -138,7 +141,7 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
   if (record(costs) && finite(costs.total_estimated_cost_usd) && costs.total_estimated_cost_usd >= 0) {
     const safeCosts: Record<string, unknown> = { total_estimated_cost_usd: costs.total_estimated_cost_usd }
     if (typeof costs.cost_incomplete === 'boolean') safeCosts.cost_incomplete = costs.cost_incomplete
-    for (const name of ['transcription', 'planning', 'layout_vision', 'source_context', 'editorial', 'editorial_vision', 'editorial_repair']) {
+    for (const name of ['transcription', 'planning', 'layout_vision', 'source_context', 'editorial', 'editorial_vision', 'editorial_repair', 'framework_grading']) {
       const section = costs[name]
       if (!record(section)) continue
       const safe: Record<string, unknown> = {}
@@ -172,6 +175,7 @@ export function parseJobOutput(value: unknown): JobOutput | null {
     indices.add(item.clip_index as number)
     clips.push({
       editorial: parseEditorialSummary(item.editorial),
+      framework: parseFrameworkGrade(item.framework),
       clip_index: item.clip_index as number,
       s3_url: item.s3_url,
       duration_ms: item.duration_ms,

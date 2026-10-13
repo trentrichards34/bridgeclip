@@ -4,7 +4,7 @@ import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, ListVideo, Minus, P
 import { cn, MOD_KEY, parseTimecode, sourceLabel } from '../lib/utils'
 import { useDraftStore, type ClipDraft, type WizardStep } from '../store/use-draft-store'
 import { useActiveJobs } from '../store/use-job-store'
-import type { ClipJobRequest } from '../../shared/jobs'
+import type { ClipJobRequest, QualityBar } from '../../shared/jobs'
 import { MAX_PARALLEL_JOBS } from '../../shared/jobs'
 import { CaptionPresetPicker, CAPTION_PRESET_NAMES } from './CaptionPresetPicker'
 import { SourcePicker } from './SourcePicker'
@@ -52,6 +52,13 @@ export const WIZARD_STEPS: { id: WizardStep; label: string; title: string; descr
   { id: 'review', label: 'Review', title: 'Review and generate', description: 'Check the run, then generate. You can queue another video right after.' }
 ]
 
+const QUALITY_BAR_OPTIONS: { id: QualityBar; label: string; hint: string; summary: string }[] = [
+  { id: 'b', label: 'B or better', hint: 'Recommended', summary: 'Keep B grades and up' },
+  { id: 'a', label: 'A only', hint: 'Fewest, strongest', summary: 'Keep A grades only' },
+  { id: 'all', label: 'Grade all', hint: 'Keep everything', summary: 'Grade and keep all' },
+  { id: 'off', label: 'Off', hint: 'No grading', summary: 'No grading' }
+]
+
 export function parseTrimRange(enabled: boolean, startText: string, endText: string): {
   start: number | null
   end: number | null
@@ -88,6 +95,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo && draft.broll === 'off' ? { backgroundVideo: draft.backgroundVideo } : {}),
     ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
     ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
+    qualityBar: draft.qualityBar,
     startTimeSeconds: trim.start,
     endTimeSeconds: trim.end,
     bannerPlatform: null,
@@ -530,6 +538,29 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
         {(draft.videoSpeed ?? 1) > 1 && <p className="mt-2 text-2xs text-ink-subtle">Lengths refer to the original footage. At {draft.videoSpeed}×, 60 seconds becomes about {Math.round(60 / draft.videoSpeed)} seconds before dead-air cuts.</p>}
       </Group>
 
+      <Group label="Quality bar" aside="Graded on the Paid Creators frameworks">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label="Quality bar">
+          {QUALITY_BAR_OPTIONS.map((option) => {
+            const selected = draft.qualityBar === option.id
+            return (
+              <button key={option.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+                onClick={() => update({ qualityBar: option.id })}
+                className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+                <span className="block text-xs font-medium">{option.label}</span>
+                <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{option.hint}</span>
+              </button>
+            )
+          })}
+        </div>
+        <p className="mt-2 text-2xs text-ink-subtle">
+          {draft.qualityBar === 'off'
+            ? 'No grading: clips are picked by the planner alone.'
+            : draft.qualityBar === 'all'
+              ? 'Every clip is graded on the Triple Hook, story and payoff, and all are kept.'
+              : 'CreatorClips finds extra candidates, grades each one on the Triple Hook, story and payoff, and keeps only those that make the bar. Expect fewer, stronger clips.'}
+        </p>
+      </Group>
+
       <Group label="Number of clips">
         <SettingRow
           title="Let AI decide"
@@ -627,6 +658,7 @@ function ReviewStep({ draft, trim, onEdit }: {
     { step: 'clips', label: 'Clips', value: `${lengths}${(draft.videoSpeed ?? 1) > 1 && draft.durations.length > 0 ? ' of source footage' : ''} · ${draft.autoClipCount ? 'AI decides how many' : `Up to ${draft.maxClips}`}` },
     { step: 'clips', label: 'What to clip', value: draft.clipRequest?.trim() || 'The best moments' },
     ...(draft.workflow !== 'review' && draft.hookPreview ? [{ step: 'clips' as const, label: 'Hook preview', value: 'Opens with the strongest line' }] : []),
+    { step: 'clips' as const, label: 'Quality bar', value: QUALITY_BAR_OPTIONS.find((option) => option.id === draft.qualityBar)?.summary ?? 'B or better' },
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? 'Shown at the top' : 'Off' })

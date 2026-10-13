@@ -486,7 +486,7 @@ class TestJevOffPipeline:
         monkeypatch.setattr(pipeline.intelligence_planner, "_call_openrouter", call)
         result = asyncio.run(pipeline.process_video(ClippingJobRequest(
             video_url="fixture.mp4", job_id="jev-off", max_clips=3, auto_clip_count=False,
-            start_time_seconds=range_start, end_time_seconds=range_end)))
+            start_time_seconds=range_start, end_time_seconds=range_end, quality_bar="off")))
 
         assert result.status == JobStatus.COMPLETED, result.error
         context.assert_not_awaited()                          # no source-context model call

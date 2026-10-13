@@ -9,6 +9,7 @@ import { Badge } from './ui/Badge'
 import { Skeleton } from './ui/Skeleton'
 import { ActionMenu } from './ui/ActionMenu'
 import { LIBRARY_POSTING_LABELS, type LibraryClipPostingStatus } from '../../shared/library-posting'
+import { GradeChip, GradeDetailsButton } from './FrameworkGrade'
 
 // How the engine framed a vertical clip (its dominant layout).
 const LAYOUT_LABELS: Record<string, string> = {
@@ -191,13 +192,15 @@ export function ClipCard({
               Top pick
             </span>
           )}
-          <span
-            className="glass-chip pointer-events-auto inline-flex h-5 items-center gap-1 rounded-full px-1.5 font-mono text-2xs font-medium tabular text-white"
-            title="Virality score"
-          >
-            <TrendingUp className="h-3 w-3 text-brand-gold" />
-            {score}
-          </span>
+          {clip.framework ? <GradeChip grade={clip.framework} className="pointer-events-auto" /> : (
+            <span
+              className="glass-chip pointer-events-auto inline-flex h-5 items-center gap-1 rounded-full px-1.5 font-mono text-2xs font-medium tabular text-white"
+              title="Virality score"
+            >
+              <TrendingUp className="h-3 w-3 text-brand-gold" />
+              {score}
+            </span>
+          )}
         </div>
         <span className="glass-chip pointer-events-none absolute bottom-2 left-2 z-10 rounded-full px-1.5 py-px font-mono text-2xs tabular text-white/95">
           {formatTimecode(clip.duration_ms)}
@@ -222,6 +225,7 @@ export function ClipCard({
         <h3 className="line-clamp-2 text-sm font-medium leading-[18px] text-ink" title={title}>
           {title}
         </h3>
+        {clip.framework && <GradeDetailsButton grade={clip.framework} title={title} />}
         {clip.editorial && clip.editorial.flags.length > 0 && <p className="mt-2 text-2xs text-amber-200" title={clip.editorial.flags.map((f) => f.replaceAll('_', ' ')).join('; ')}>
           Editorial review: {clip.editorial.flags.includes('incomplete_reaction_context') ? 'incomplete reaction context' : `${clip.editorial.flags.length} flag${clip.editorial.flags.length === 1 ? '' : 's'}`}
         </p>}

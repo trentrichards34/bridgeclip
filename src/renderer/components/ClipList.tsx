@@ -30,6 +30,11 @@ import { useSettingsStore } from '../store/use-settings-store'
 import type { LibraryClipPostingStatus } from '../../shared/library-posting'
 import type { Page as AppPage } from './Sidebar'
 
+/** Framework grade when graded (0-10), otherwise the planner's virality score (0-10). */
+function clipRank(clip: ClipArtifact): number {
+  return clip.framework ? 10 + clip.framework.score : clip.virality_score * 10
+}
+
 type Sort = 'score' | 'timeline' | 'editorial'
 
 interface ClipListProps {
@@ -178,7 +183,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
 
   const topIndex = useMemo(() => {
     let best: ClipArtifact | null = null
-    for (const clip of output.clips) if (!best || clip.virality_score > best.virality_score) best = clip
+    for (const clip of output.clips) if (!best || clipRank(clip) > clipRank(best)) best = clip
     return best?.clip_index ?? null
   }, [output.clips])
 
@@ -189,7 +194,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
     })
     if (sort === 'editorial') return list.sort((a, b) => (editorialScore(b.editorial, weights) ?? -1) - (editorialScore(a.editorial, weights) ?? -1))
     return sort === 'score'
-      ? list.sort((a, b) => b.virality_score - a.virality_score)
+      ? list.sort((a, b) => clipRank(b) - clipRank(a))
       : list.sort((a, b) => a.start_time_ms - b.start_time_ms)
   }, [output.clips, sort, weights, focusedClip, search])
 

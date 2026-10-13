@@ -36,6 +36,7 @@ from clip_engine.services.coherence_review import CoherenceReviewer, CoherenceRe
 from clip_engine.services.editorial_context import analyze_reactions, empty_report, repair_context_boundaries
 from clip_engine.services.editorial_vision import EditorialVision
 from clip_engine.services.editorial_review import protect_acknowledgments, review_duplicate_candidates, editorial_summary
+from clip_engine.services.framework_grader import FrameworkGrader, select_by_grade
 from clip_engine.services.intelligence_planner import (
     MAX_CLIP_REQUEST_CHARS,
     ClipPlanResponse,
@@ -133,6 +134,9 @@ class ClippingJobRequest:
     video_speed: float = 1.0
     workflow: str = 'automatic'
     caption_preset: str = 'pop'
+    # Paid Creators framework grading: keep clips graded at or above this bar
+    # ("a", "b", "c") or grade everything and keep all ("all"); "off" skips it.
+    quality_bar: str = 'b'
 
     def __post_init__(self):
         validate_video_speed(self.video_speed)
@@ -426,13 +430,44 @@ class AIClippingPipeline:
                 jev_enabled=jev_enabled,
                 clip_request=request.clip_request,
             )
-            clip_plan = await self.intelligence_planner.plan_clips(**planning_args)
+            longform_plan = is_longform(request.aspect_ratio, resolve_clip_duration_bounds(
+                request.duration_ranges, request.min_clip_duration_seconds, request.max_clip_duration_seconds)[0])
+            grading = (request.quality_bar in ('a', 'b', 'c', 'all') and not longform_plan
+                       and bool(self.settings.openrouter_api_key))
+            # Strict bars plan extra candidates so grading can keep only the strongest.
+            oversample = 1.0 if not grading or request.quality_bar == 'all' or request.clip_request else 1.75
+            clip_plan = await self.intelligence_planner.plan_clips(**planning_args, oversample=oversample)
             edit_audit['planner'] = getattr(self.intelligence_planner, 'audit', {'requests': []})
             stage_timings["planning"] = time.perf_counter() - stage_start
             logger.info(f"Planned {len(clip_plan.segments)} clips")
             if not clip_plan.segments:
                 edit_audit['outcome'] = 'no_candidates'
                 raise NoRequestedMomentsError() if request.clip_request else NoClipCandidatesError()
+            if grading:
+                self._update_progress(job_id, JobStatus.PLANNING, 33,
+                    f"Grading {len(clip_plan.segments)} candidates against the content frameworks...",
+                    stage_id="planning", stage_percent=None)
+                grader = FrameworkGrader(self.settings)
+                try:
+                    grades = await grader.grade(transcription_result.segments, clip_plan.segments)
+                finally:
+                    await grader.close()
+                for index, segment in enumerate(clip_plan.segments):
+                    if index in grades:
+                        segment.framework = grades[index].to_dict()
+                target = getattr(self.intelligence_planner, 'discovery_limit', None) or request.max_clips or 0
+                kept, dropped = select_by_grade(clip_plan.segments, grades, request.quality_bar, target,
+                    keep_all=request.quality_bar == 'all' or bool(request.clip_request))
+                edit_audit['framework'] = {'bar': request.quality_bar, 'candidates': len(clip_plan.segments), 'kept': len(kept),
+                    'graded': len(grades), 'cost_usd': grader.cost_usd,
+                    'grades': [{'title': seg.summary, 'interval': [seg.start_time_ms, seg.end_time_ms], **(seg.framework or {})} for seg in clip_plan.segments]}
+                logger.info(f"Framework grading kept {len(kept)} of {len(clip_plan.segments)} candidates (bar {request.quality_bar}, dropped {dropped})")
+                framework_cost = grader.cost_usd
+                clip_plan.segments = kept
+                clip_plan.total_clips = len(kept)
+                save_edit_audit()
+            else:
+                framework_cost = 0.0
             reviewer = CoherenceReviewer(coherence_service, self.settings, transcription_result.segments, round(video_duration * 1000))
             editorial_vision = EditorialVision(self.settings, download_result.video_path, work_dir, round(video_duration * 1000))
             reviewer.source_context = context_brief
@@ -896,6 +931,7 @@ class AIClippingPipeline:
                         description=segment.description,
                         chapters=self._chapter_dicts(segment),
                         editorial=editorial_summary(segment.editorial),
+                        framework=segment.framework,
                     )
 
                 upload_tasks = [
@@ -975,6 +1011,10 @@ class AIClippingPipeline:
                 api_costs['editorial_vision'] = {'provider': 'openrouter', 'model': self.settings.layout_vision_model,
                     'estimated_cost_usd': editorial_vision.cost_usd, 'attempts': editorial_vision.requests}
                 total_cost += editorial_vision.cost_usd
+            if framework_cost:
+                api_costs['framework_grading'] = {'provider': 'openrouter', 'model': self.settings.planner_model,
+                    'estimated_cost_usd': round(framework_cost, 6)}
+                total_cost += framework_cost
             api_costs["total_estimated_cost_usd"] = round(total_cost, 6)
             api_costs["cost_incomplete"] = any(section.get("cost_incomplete", False) for section in api_costs.values() if isinstance(section, dict))
 
@@ -1002,6 +1042,7 @@ class AIClippingPipeline:
                     "broll": {"enabled": request.broll_enabled, "keep_hook": request.broll_keep_hook},
                     "hook_preview": request.hook_preview,
                     "clip_request": request.clip_request,
+                    "quality_bar": request.quality_bar,
                 },
                 "transcription_status": transcription_status,
                 "planning_source": "visual" if visual_frames else "transcript",
@@ -1246,6 +1287,7 @@ class AIClippingPipeline:
                 chapters=self._chapter_dicts(segment),
                 subtitle_url=subtitle_url,
                 editorial=editorial_summary(segment.editorial),
+                framework=segment.framework,
             ))
 
             if progress: progress(i + 1, len(rendered_clips))
