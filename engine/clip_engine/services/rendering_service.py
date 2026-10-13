@@ -79,6 +79,27 @@ BACKGROUND_SPLIT = 0.5
 BROLL_MIN_VISIBLE_MS = 600
 # Bound raster allocation even when a model ignores the requested title length.
 MAX_TITLE_CHARS = 120
+
+
+class TitleStyle:
+    CARD = "card"
+    HEADLINE = "headline"
+    ALL = (CARD, HEADLINE)
+
+
+# Headline bar, as a share of a 1080x1920 frame: the clear space above the
+# text (platform UI sits there), padding around it, and the bar's limits.
+HEADLINE_TOP_SAFE = 0.055
+HEADLINE_PAD_Y = 0.025
+HEADLINE_PAD_X = 0.06
+HEADLINE_MIN_H = 0.17
+HEADLINE_MAX_H = 0.30
+HEADLINE_FONT_SIZES = (60, 54, 48, 42)
+HEADLINE_MAX_LINES = 3
+# Captions inside the video panel under a headline bar (share of the panel).
+HEADLINE_CAPTION_Y = 0.70
+# Emoji and other symbols the bundled fonts cannot draw.
+_UNDRAWABLE = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
 # Landscape H.264 bitrates (Mbps) by output height at 30 fps, after
 # YouTube's upload recommendations; 60 fps sources get 1.5x.
 LANDSCAPE_BITRATE_MBPS = {1080: 12, 1440: 20, 2160: 45}
@@ -111,6 +132,11 @@ class RenderRequest:
     title_text: Optional[str] = None
     # Off keeps title_text for editorial review but draws no title card.
     include_title: bool = True
+    # "card": title_text in a rounded card over the video. "headline" (9:16,
+    # no gameplay background): headline_text, or title_text when there is
+    # none, in a white bar above the video, which fills the rest of the frame.
+    title_style: str = TitleStyle.CARD
+    headline_text: Optional[str] = None
     # Planner-chosen punch words highlighted in the captions.
     emphasis_words: list[str] = field(default_factory=list)
 
@@ -563,7 +589,9 @@ class RenderingService:
         """Build the graph, captions and overlays for one edit and run FFmpeg."""
         has_audio = request.include_audio and await self._has_audio(request.video_path)
         background = self._background_video(request, is_landscape)
-        speaker_h = even(target_height * BACKGROUND_SPLIT) if background else target_height
+        headline = None if background else self._headline_bar_image(request, target_width, target_height, is_landscape)
+        bar_h = headline[1] if headline else 0
+        speaker_h = even(target_height * BACKGROUND_SPLIT) if background else target_height - bar_h
         graph = build_layout_graph(
             plan, target_width, speaker_h, time_map.keeps, has_audio, landscape=is_landscape,
             fps=fps, loudness_filter=loudness_filter,
@@ -576,14 +604,17 @@ class RenderingService:
         else:
             broll = self._broll_windows(request, time_map, window_start_ms)
             if broll:
-                graph = self._overlay_broll(graph, broll, target_width, target_height, fps)
+                graph = self._overlay_broll(graph, broll, target_width, speaker_h, fps)
                 looped_inputs = [path for path, _, _ in broll]
+        if headline:
+            graph = self._pad_for_headline(graph, target_width, target_height, bar_h)
         out_plan = remap_plan(plan, time_map)
         caption_path = await self._generate_captions(
             request, target_width, target_height, window_start_ms, time_map, out_plan, is_landscape, plan,
+            bar_h=bar_h,
         )
         graph += self._caption_graph(caption_path, request.caption_suppression_ranges_ms, window_start_ms, time_map)
-        overlays = self._overlays(request, out_plan, target_width, target_height, is_landscape)
+        overlays = self._overlays(request, out_plan, target_width, target_height, is_landscape, headline=headline)
         # Burn captions and animate framing/overlays on the edited source clock,
         # then speed up the entire composited picture to match the tempo audio.
         filter_complex, extra_inputs = self._compose_overlays(
@@ -687,13 +718,16 @@ class RenderingService:
         target_width: int,
         target_height: int,
         is_landscape: bool,
+        headline: Optional[tuple[str, int]] = None,
     ) -> list[Overlay]:
-        """Title card and channel banner, positioned per shot on the output timeline."""
+        """Title card or headline bar, and channel banner, positioned per shot on the output timeline."""
         src_w, src_h = out_plan.source_width, out_plan.source_height
         overlays: list[Overlay] = []
         # Landscape overlays were sized for 1080p; scale them with the output.
         scale = target_height / 1080 if is_landscape else 1.0
-        title = self._title_overlay_image(request, target_width, scale)
+        title = None if headline else self._title_overlay_image(request, target_width, scale)
+        if headline:
+            overlays.append((headline[0], "0", "0"))
         if title:
             path, _, height = title
             if is_landscape:
@@ -813,6 +847,83 @@ class RenderingService:
         return ";".join(parts)
 
     @staticmethod
+    def _pad_for_headline(graph: str, width: int, height: int, bar_h: int) -> str:
+        """Put the video panel under a white headline bar; output stays [base]."""
+        assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
+        return f"{graph.replace('[base]', '[panel]')};[panel]pad={width}:{height}:0:{bar_h}:color=white,setsar=1[base]"
+
+    @staticmethod
+    def _headline_lines(draw: "ImageDraw.ImageDraw", text: str, font, max_w: int) -> list[str]:
+        """Greedy word wrap to max_w pixels."""
+        lines: list[str] = []
+        for word in text.split():
+            trial = f"{lines[-1]} {word}" if lines else word
+            if lines and draw.textlength(trial, font=font) <= max_w:
+                lines[-1] = trial
+            else:
+                lines.append(word)
+        return lines
+
+    def _headline_bar_image(
+        self, request: RenderRequest, target_width: int, target_height: int, is_landscape: bool,
+    ) -> Optional[tuple[str, int]]:
+        """Render the white headline bar PNG (full width). Returns (path, bar height) or None."""
+        if is_landscape or request.title_style != TitleStyle.HEADLINE or not request.include_title:
+            return None
+        text = " ".join(_UNDRAWABLE.sub("", request.headline_text or request.title_text or "").split())[:MAX_TITLE_CHARS]
+        if len(text.split()) < 2:
+            return None
+        unit = target_height / 1920
+        pad_x = round(target_width * HEADLINE_PAD_X)
+        max_w = target_width - 2 * pad_x
+        draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        for size in HEADLINE_FONT_SIZES:
+            try:
+                font = ImageFont.truetype(self._headline_font_path(), round(size * unit))
+            except Exception:
+                font = ImageFont.load_default()
+            lines = self._headline_lines(draw, text, font, max_w)
+            if len(lines) <= HEADLINE_MAX_LINES:
+                # Balance the lines (no lone last word): the narrowest wrap
+                # that still fits in the same number of lines.
+                width = max_w
+                while len(lines) > 1 and width > max_w // 2:
+                    narrower = self._headline_lines(draw, text, font, width - 20)
+                    if len(narrower) != len(lines):
+                        break
+                    lines, width = narrower, width - 20
+                break
+        lines = lines[:HEADLINE_MAX_LINES]
+        line_h = round(font.size * 1.22) if hasattr(font, "size") else 24
+        top = round(target_height * HEADLINE_TOP_SAFE)
+        pad_y = round(target_height * HEADLINE_PAD_Y)
+        text_h = line_h * len(lines)
+        bar_h = even(min(max(top + 2 * pad_y + text_h, target_height * HEADLINE_MIN_H), target_height * HEADLINE_MAX_H))
+        img = Image.new("RGBA", (target_width, bar_h), (255, 255, 255, 255))
+        out = ImageDraw.Draw(img)
+        # Center the text in the space below the platform UI.
+        y = top + max(0, (bar_h - top - text_h) // 2)
+        for line in lines:
+            w = out.textlength(line, font=font)
+            out.text(((target_width - w) / 2, y), line, font=font, fill=(0, 0, 0, 255))
+            y += line_h
+        path = os.path.join(
+            os.path.dirname(request.output_path), f"headline-{request.start_time_ms}-{request.end_time_ms}.png",
+        )
+        img.save(path, "PNG")
+        return path, bar_h
+
+    def _headline_font_path(self) -> str:
+        """A bold (not black) face reads like a caption headline; fall back to the title font."""
+        for p in (
+            os.path.join(os.path.dirname(__file__), "..", "..", "assets", "fonts", "Montserrat-ExtraBold.ttf"),
+            os.path.join("/app", "assets", "fonts", "Montserrat-ExtraBold.ttf"),
+        ):
+            if os.path.isfile(p):
+                return os.path.abspath(p)
+        return self._font_path
+
+    @staticmethod
     def _stack_background(graph: str, width: int, panel_h: int, fps: str) -> str:
         """Stack the looping background (input 1) under the speaker panel; output stays [base]."""
         assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
@@ -878,6 +989,7 @@ class RenderingService:
         out_plan: ClipLayoutPlan,
         is_landscape: bool,
         plan: Optional[ClipLayoutPlan] = None,
+        bar_h: int = 0,
     ) -> Optional[str]:
         """ASS captions on the edited timeline, positioned per shot (9:16).
 
@@ -895,7 +1007,12 @@ class RenderingService:
             src_w, src_h = out_plan.source_width, out_plan.source_height
             anchors = []
             for shot in out_plan.shots:
-                alignment, y = caption_anchor(shot, src_w, src_h, target_width, target_height)
+                if bar_h:
+                    # Under a headline bar the video is a shorter panel; keep
+                    # captions in its lower part, clear of the headline.
+                    alignment, y = 5, bar_h + round((target_height - bar_h) * HEADLINE_CAPTION_Y)
+                else:
+                    alignment, y = caption_anchor(shot, src_w, src_h, target_width, target_height)
                 anchors.append((shot.end_ms, alignment, y))
             anchors[-1] = (10**9, anchors[-1][1], anchors[-1][2])
 
@@ -907,7 +1024,7 @@ class RenderingService:
         elif self._background_video(request, is_landscape):
             # Gameplay split: captions ride the seam between speaker and background.
             anchors = [(10**9, 5, even(target_height * BACKGROUND_SPLIT))]
-        elif anchors and plan is not None:
+        elif anchors and plan is not None and not bar_h:
             zones = face_zones(plan, time_map, target_width, target_height)
             if zones:
                 placer = CaptionPlacer(anchors, zones, target_width, target_height)

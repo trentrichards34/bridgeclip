@@ -302,6 +302,18 @@ class TestPlanClips:
         assert result.api_costs.estimated_cost_usd == 0.01
         assert result.api_costs.cost_incomplete
 
+    def test_headline_is_parsed_and_the_prompt_asks_for_it(self, no_sleep):
+        planner = make_planner()
+        raw = {**clip(10, 40), "headline": "\u201cThis trader spent $60,000 on breakfast\u201d #trading"}
+        planner._http_client = FakeClient([(200, completion(json.dumps({"insights": "x", "clips": [raw]})))])
+        result = asyncio.run(planner.plan_clips(
+            transcript_result=make_transcript(300), video_metadata=SimpleNamespace(duration_seconds=300),
+            max_clips=1, auto_clip_count=False, min_duration_seconds=15, max_duration_seconds=60,
+        ))
+        assert result.segments[0].headline == "This trader spent $60,000 on breakfast"
+        system = planner._http_client.payloads[0]["messages"][0]["content"]
+        assert "## HEADLINE (top bar)" in system and "WHAT IS WORKING ON SHORT-FORM RIGHT NOW" in system
+
     @pytest.mark.parametrize("clip_request", [None, "  every time they talk about pricing\n" + "x" * 2000], ids=["none", "long-request"])
     def test_clip_request_reaches_the_planner_and_replaces_the_exact_count(self, no_sleep, clip_request):
         planner = make_planner()

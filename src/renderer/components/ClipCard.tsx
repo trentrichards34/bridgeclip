@@ -225,6 +225,9 @@ export function ClipCard({
         <h3 className="line-clamp-2 text-sm font-medium leading-[18px] text-ink" title={title}>
           {title}
         </h3>
+        {clip.headline && clip.headline !== title && (
+          <p className="mt-1 line-clamp-2 text-xs text-ink-muted" title="Headline in the bar above the video">“{clip.headline}”</p>
+        )}
         {clip.framework && <GradeDetailsButton grade={clip.framework} title={title} />}
         {clip.editorial && clip.editorial.flags.length > 0 && <p className="mt-2 text-2xs text-amber-200" title={clip.editorial.flags.map((f) => f.replaceAll('_', ' ')).join('; ')}>
           Editorial review: {clip.editorial.flags.includes('incomplete_reaction_context') ? 'incomplete reaction context' : `${clip.editorial.flags.length} flag${clip.editorial.flags.length === 1 ? '' : 's'}`}

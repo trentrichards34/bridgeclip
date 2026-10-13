@@ -42,6 +42,18 @@ from clip_engine.services.transcription_service import (
 logger = logging.getLogger(__name__)
 
 
+MAX_HEADLINE_CHARS = 120
+
+
+def clean_headline(value: Any) -> Optional[str]:
+    """A model headline as one bounded line without hashtags, or None."""
+    if not isinstance(value, str):
+        return None
+    words = [w for w in value.split() if not w.startswith("#")]
+    text = " ".join(words)[:MAX_HEADLINE_CHARS].strip().strip('"\u201c\u201d').strip()
+    return text if len(text.split()) >= 2 else None
+
+
 @dataclass
 class ClipPlanSegment:
     """A planned clip segment with timing and metadata."""
@@ -51,6 +63,8 @@ class ClipPlanSegment:
     virality_score: float
     layout_type: str = "center_crop"
     summary: Optional[str] = None
+    # Story headline for the top bar ("A 9-5 mechanic tried to humble Brez").
+    headline: Optional[str] = None
     tags: list[str] = field(default_factory=list)
     # Punch words to highlight in captions, as spoken in the clip.
     emphasis_words: list[str] = field(default_factory=list)
@@ -162,6 +176,7 @@ CLIP_PLAN_SCHEMA: dict[str, Any] = {
                     "start_time": {"type": "number", "description": "Clip start, seconds from the start of the video."},
                     "end_time": {"type": "number", "description": "Clip end, seconds from the start of the video."},
                     "summary": {"type": "string", "description": "2-7 word on-screen title."},
+                    "headline": {"type": "string", "description": "4-12 word third-person story headline for the top bar."},
                     "scores": {
                         "type": "object",
                         "properties": {
@@ -177,7 +192,7 @@ CLIP_PLAN_SCHEMA: dict[str, Any] = {
                         "description": "2-5 single punch words spoken in the clip, highlighted in captions.",
                     },
                 },
-                "required": ["moment", "start_time", "end_time", "summary", "scores", "tags", "emphasis"],
+                "required": ["moment", "start_time", "end_time", "summary", "headline", "scores", "tags", "emphasis"],
                 "additionalProperties": False,
             },
         },
@@ -922,6 +937,16 @@ Prefer moments where the payoff is concrete and visible: real numbers, results, 
 5. A STANCE: Prefer moments where the speaker takes a clear position not everybody shares over neutral, hedged advice.
 6. END ON THE PAYOFF, NOT A PITCH: These clips reach new people. End on the resolution or the result. Do not run on into "link in bio", "comment below" or a sales pitch unless that line is the payoff itself.
 
+## WHAT IS WORKING ON SHORT-FORM RIGHT NOW
+
+From the top clips across 500 paid clipping campaigns (business, finance, podcast and personal-brand creators), the moments that travel furthest are:
+- CONFLICT AND PUSHBACK: someone challenges, tests or "tries to humble" the speaker, a debate where people pick sides, someone getting called out or proven wrong.
+- REACTIONS AND REVEALS: the speaker finds out, reacts to, or reveals something ("finds out people are getting scammed by this", "reveals a shocking study").
+- SPECIFIC MONEY AND STAKES: real figures said out loud ($60K on breakfast, losing $10,000, the first to 100k), what something costs, what someone earns.
+- RELATABLE COMPARISONS AND HOT TAKES: "a Honda Civic is better than a Lambo", "streaming is harder than a 9-5", a status or lifestyle opinion people will argue with in the comments.
+- QUOTABLE ONE-LINERS: a line strong enough to put on screen as a quote ("I bought a Corvette").
+A clip does not need a scripted hook if it contains one of these moments: start where the moment starts and let the headline frame it.
+
 ## ANTI-PATTERNS — NEVER SELECT CLIPS THAT:
 
 - Start mid-sentence or mid-thought. Always begin at the start of a sentence or idea.
@@ -948,6 +973,15 @@ The "summary" field is the title displayed on screen. It must be 2-7 words.
 Rules:
 {title_rules}
 
+## HEADLINE (top bar)
+
+The "headline" field is the story headline shown in a bar above the video, the format the best performing clips use. Write it the way a clipper would caption the moment for someone scrolling past, in the third person:
+- Frame the situation, not a quote: "A 9-5 mechanic tried to humble Brez", "TJR finds out people are getting scammed by this", "Multi-millionaire reveals shocking study on women", "This debate had everyone picking sides", "How much does the average American man make per year?".
+- Name the speaker only if their name is said in the transcript or given in the video context; otherwise describe them by role or result ("This founder", "A trader who lost $10,000", "This 22-year-old").
+- 4-12 words, sentence case, no hashtags, no emoji.
+- Use the real numbers exactly as said. Never claim anything the clip does not show, and do not give away the payoff.
+- Different from the "summary" title: the summary is a short label, the headline is the story.
+
 ## CAPTION EMPHASIS
 
 For each clip, list 2-5 single words, exactly as spoken inside the clip, that carry its punch: numbers and money ("$50K", "97%"), strong verbs, surprising nouns, names. They are highlighted in a contrasting color in the burned-in captions. Never pick articles, pronouns, filler, or words that are not spoken in that clip.
@@ -962,6 +996,7 @@ For each clip, list 2-5 single words, exactly as spoken inside the clip, that ca
       "start_time": <number in seconds>,
       "end_time": <number in seconds>,
       "summary": "<2-7 word title>",
+      "headline": "<4-12 word third-person story headline>",
       "scores": {{"hook": <0-10>, "standalone": <0-10>, "arc": <0-10>, "quotability": <0-10>, "ending": <0-10>}},
       "tags": ["tag1", "tag2"],
       "emphasis": ["word1", "word2"]
@@ -1556,6 +1591,7 @@ Do not overlap clips by more than 5 seconds."""
                 virality_score=self._score_clip(clip),
                 layout_type=layout_type,
                 summary=summary or None,
+                headline=clean_headline(clip.get("headline")),
                 tags=clip.get("tags", []),
                 emphasis_words=(
                     [w for w in clip.get("emphasis", []) if isinstance(w, str)][:5]
@@ -1650,7 +1686,7 @@ Do not overlap clips by more than 5 seconds."""
             summary = clip.get("summary")
             summary = " ".join(summary.split())[:200] if isinstance(summary, str) else ""
             segment = ClipPlanSegment(start_ms, end_ms, self._score_clip(clip), moment=moment,
-                summary=summary or None, tags=clip.get('tags', []),
+                summary=summary or None, headline=clean_headline(clip.get('headline')), tags=clip.get('tags', []),
                 emphasis_words=[w for w in clip.get('emphasis', []) if isinstance(w, str)][:5] if transcript else [])
             if getattr(self, '_current_longform', False):
                 segment.skip_ranges_ms = self._clean_skips(clip.get('skip'), start_ms, end_ms, 0, transcript)

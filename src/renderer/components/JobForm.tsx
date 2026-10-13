@@ -4,7 +4,7 @@ import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, ListVideo, Minus, P
 import { cn, MOD_KEY, parseTimecode, sourceLabel } from '../lib/utils'
 import { useDraftStore, type ClipDraft, type WizardStep } from '../store/use-draft-store'
 import { useActiveJobs } from '../store/use-job-store'
-import type { ClipJobRequest, QualityBar } from '../../shared/jobs'
+import type { ClipJobRequest, QualityBar, TitleStyle } from '../../shared/jobs'
 import { MAX_PARALLEL_JOBS } from '../../shared/jobs'
 import { CaptionPresetPicker, CAPTION_PRESET_NAMES } from './CaptionPresetPicker'
 import { SourcePicker } from './SourcePicker'
@@ -93,6 +93,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     includeCaptions: draft.includeCaptions,
     captionPreset: draft.captionPreset,
     includeTitle: draft.includeTitle,
+    titleStyle: draft.titleStyle ?? 'headline',
     ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo && draft.broll === 'off' ? { backgroundVideo: draft.backgroundVideo } : {}),
     ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
     ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
@@ -607,15 +608,44 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
   )
 }
 
+const TITLE_STYLE_OPTIONS: { id: TitleStyle; label: string; hint: string }[] = [
+  { id: 'headline', label: 'Headline bar', hint: 'A one-line story in a white bar above the video, like “A 9-5 mechanic tried to humble Brez”. The format top clipping campaigns use.' },
+  { id: 'card', label: 'Title card', hint: 'A short 2-7 word title in a card over the top of the video.' }
+]
+
 export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
+  const titleStyle = draft.titleStyle ?? 'headline'
+  const headlineUnavailable = draft.aspectRatio !== '9:16' || Boolean(draft.backgroundVideo && draft.broll === 'off')
   return (
     <div className="space-y-3">
       {draft.workflow !== 'review' && (
         <SettingRow
           title="Show title at the top"
-          description="Each clip's title over the video. Turn off to leave it out."
+          description="Each clip's hook text at the top. Turn off to leave it out."
           control={<Switch label="Title at the top" checked={draft.includeTitle} onChange={(includeTitle) => update({ includeTitle })} />}
         />
+      )}
+      {draft.workflow !== 'review' && draft.includeTitle && (
+        <div>
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Title style">
+            {TITLE_STYLE_OPTIONS.map((option) => {
+              const selected = titleStyle === option.id
+              return (
+                <button key={option.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+                  onClick={() => update({ titleStyle: option.id })}
+                  className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+                  <span className="block text-xs font-medium">{option.label}</span>
+                  <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{option.hint}</span>
+                </button>
+              )
+            })}
+          </div>
+          {titleStyle === 'headline' && headlineUnavailable && (
+            <p className="mt-2 text-2xs text-ink-subtle">
+              {draft.aspectRatio !== '9:16' ? 'The headline bar is for vertical clips; 16:9 clips use the title card.' : 'With a gameplay background the clips use the title card.'}
+            </p>
+          )}
+        </div>
       )}
       <SettingRow
         title="Burn in captions"
@@ -667,7 +697,7 @@ function ReviewStep({ draft, trim, onEdit }: {
     { step: 'clips' as const, label: 'Quality bar', value: QUALITY_BAR_OPTIONS.find((option) => option.id === draft.qualityBar)?.summary ?? 'B or better' },
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
-  if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? 'Shown at the top' : 'Off' })
+  if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? ((draft.titleStyle ?? 'headline') === 'headline' && draft.aspectRatio === '9:16' ? 'Headline bar above the video' : 'Title card at the top') : 'Off' })
   if (draft.clippingMode === 'advanced') rows.splice(5, 0,
     { step: 'clips', label: 'Transcribe', value: draft.transcriptionModel || 'Choose a model' },
     { step: 'clips', label: 'Plan', value: draft.plannerModel || 'Choose a model' })

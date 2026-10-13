@@ -673,6 +673,7 @@ test('pipeline preserves split JSON messages and protects the job identity', asy
   const forwarded = JSON.parse(workerInput)
   assert.equal(forwarded.video_speed, 1.5)
   assert.equal(forwarded.include_title, true)
+  assert.equal(forwarded.title_style, 'card')
   assert.equal(forwarded.clip_request, 'the pricing debate')
   assert.equal(forwarded.debug_capture, undefined)
   assert.equal(forwarded.contract_version, 3)
