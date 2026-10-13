@@ -54,7 +54,7 @@ export const WIZARD_STEPS: { id: WizardStep; label: string; title: string; descr
 
 const QUALITY_BAR_OPTIONS: { id: QualityBar; label: string; hint: string; summary: string }[] = [
   { id: 'b', label: 'B or better', hint: 'Recommended', summary: 'Keep B grades and up' },
-  { id: 'a', label: 'A only', hint: 'Fewest, strongest', summary: 'Keep A grades only' },
+  { id: 'a', label: 'Standouts', hint: 'A first, topped up with B', summary: 'Keep A grades, top up with B' },
   { id: 'c', label: 'C or better', hint: 'More clips', summary: 'Keep C grades and up' },
   { id: 'all', label: 'Grade all', hint: 'Keep everything', summary: 'Grade and keep all' },
   { id: 'off', label: 'Off', hint: 'No grading', summary: 'No grading' }
@@ -562,8 +562,8 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
               : draft.aspectRatio === '16:9' && draft.durations.some((id) => ['xlong', 'extended', 'feature'].includes(id))
                 ? 'Long 16:9 episodes are not graded; the bar applies to short clips.'
                 : draft.qualityBar === 'all' || draft.clipRequest.trim()
-                  ? 'Every clip is graded on the Triple Hook, story and payoff, and all are kept.'
-                  : 'CreatorClips finds extra candidates, grades each one on the Triple Hook, story and payoff, and keeps only those that make the bar. Expect fewer, stronger clips.'}
+                  ? 'Every clip is graded on hook, payoff and story, and all are kept.'
+                  : 'CreatorClips finds extra candidates, grades each on hook, payoff and story, and keeps the ones that make the bar. If too few do, it tops up with the next grade down so you still get a full set.'}
         </p>
       </Group>
 
