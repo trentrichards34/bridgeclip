@@ -446,7 +446,7 @@ class AIClippingPipeline:
             framework_state = {'cost': 0.0, 'cost_incomplete': False, 'candidates': 0, 'graded': 0, 'kept': 0}
             keep_all_grades = request.quality_bar == 'all' or bool(request.clip_request)
 
-            async def grade_segments(segments, target):
+            async def grade_segments(segments, target, fill_to=0):
                 """Grade and filter candidates; any grading failure leaves them as planned."""
                 grader = FrameworkGrader(self.settings)
                 try:
@@ -460,7 +460,7 @@ class AIClippingPipeline:
                     await grader.close()
                 framework_state['cost'] += grader.cost_usd
                 framework_state['cost_incomplete'] |= grader.cost_incomplete
-                kept, _ = select_by_grade(segments, grades, request.quality_bar, target, keep_all=keep_all_grades)
+                kept, _ = select_by_grade(segments, grades, request.quality_bar, target, keep_all=keep_all_grades, fill_to=fill_to)
                 for index, segment in enumerate(segments):
                     if index in grades:
                         segment.framework = {**grades[index].to_dict(), 'graded_interval': [segment.start_time_ms, segment.end_time_ms], 'graded_title': segment.summary or ''}
@@ -476,7 +476,8 @@ class AIClippingPipeline:
                 # Review projects get the target count; the automatic accept loop enforces its own limit
                 # and can fall back to later passing clips when editorial review rejects one.
                 review_target = (getattr(self.intelligence_planner, 'discovery_limit', None) or request.max_clips or 0) if request.workflow == 'review' else 0
-                kept = await grade_segments(planned, review_target)
+                clip_target = getattr(self.intelligence_planner, 'discovery_limit', None) or request.max_clips or 0
+                kept = await grade_segments(planned, review_target, fill_to=clip_target)
                 edit_audit['framework'] = {'bar': request.quality_bar,
                     'grades': [{'title': seg.summary, 'interval': [seg.start_time_ms, seg.end_time_ms], 'kept': seg in kept, **(seg.framework or {})} for seg in planned]}
                 logger.info(f"Framework grading kept {len(kept)} of {len(planned)} candidates (bar {request.quality_bar})")

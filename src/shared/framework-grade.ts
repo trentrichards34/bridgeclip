@@ -7,13 +7,13 @@
 export type Grade = 'A' | 'B' | 'C' | 'D' | 'F'
 
 export const FRAMEWORK_CRITERIA = [
-  { key: 'triple_hook', label: 'Triple Hook', weight: 0.25 },
-  { key: 'twist', label: 'Twist / false belief', weight: 0.15 },
-  { key: 'hook_speed', label: 'Hook speed', weight: 0.15 },
-  { key: 'story_arc', label: 'Story arc', weight: 0.15 },
-  { key: 'payoff', label: 'Payoff', weight: 0.15 },
+  { key: 'hook', label: 'Hook', weight: 0.3 },
+  { key: 'payoff', label: 'Payoff', weight: 0.2 },
+  { key: 'standalone', label: 'Stands alone', weight: 0.15 },
+  { key: 'story_arc', label: 'Story arc', weight: 0.1 },
   { key: 'specificity', label: 'Specificity & proof', weight: 0.1 },
-  { key: 'emotion_stance', label: 'Emotion & stance', weight: 0.05 }
+  { key: 'emotion_stance', label: 'Emotion & stance', weight: 0.1 },
+  { key: 'triple_hook', label: 'Triple Hook bonus', weight: 0.05 }
 ] as const
 export type CriterionKey = (typeof FRAMEWORK_CRITERIA)[number]['key']
 
@@ -51,7 +51,8 @@ export interface FrameworkGrade {
   grade: Grade
   /** Weighted 0-10. */
   score: number
-  scores: Record<CriterionKey, number>
+  /** Criteria the grader scored (grades from older versions may lack some). */
+  scores: Partial<Record<CriterionKey, number>>
   hookElements: Record<HookElementKey, string | null>
   hookType: string
   storyBeats: Record<StoryBeatKey, boolean>
@@ -79,7 +80,7 @@ export function parseFrameworkGrade(value: unknown): FrameworkGrade | null {
   return {
     grade: raw.grade as Grade,
     score: score(raw.score),
-    scores: Object.fromEntries(FRAMEWORK_CRITERIA.map(({ key }) => [key, score(scores[key])])) as Record<CriterionKey, number>,
+    scores: Object.fromEntries(FRAMEWORK_CRITERIA.filter(({ key }) => key in scores).map(({ key }) => [key, score(scores[key])])) as Partial<Record<CriterionKey, number>>,
     hookElements: Object.fromEntries(HOOK_ELEMENTS.map(({ key }) => [key, text(elements[key], 300) || null])) as Record<HookElementKey, string | null>,
     hookType: typeof raw.hook_type === 'string' && raw.hook_type in HOOK_TYPE_LABELS ? raw.hook_type : 'none',
     storyBeats: Object.fromEntries(STORY_BEATS.map(({ key }) => [key, beats[key] === true])) as Record<StoryBeatKey, boolean>,

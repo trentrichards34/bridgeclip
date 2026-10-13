@@ -34,14 +34,31 @@ def test_full_triple_hook_and_strong_scores_earn_an_a():
     assert grade.hook_elements["qualifier"] == "quote qualifier"
 
 
-def test_triple_hook_score_is_capped_by_the_elements_actually_quoted():
+def test_a_strong_natural_hook_does_not_need_a_full_triple_hook():
+    # One strong line, everything else excellent: still an A. The Triple Hook is a small bonus.
     one = compute_grade(raw(ALL_TENS, elements=("m",)))
-    assert one.scores["triple_hook"] == 4
-    # "If your hook sucks, nothing else matters": a weak hook caps the grade at C.
-    assert one.grade == "C"
-    two = compute_grade(raw(ALL_TENS, elements=("q", "m")))
-    assert two.scores["triple_hook"] == 7 and two.grade in ("B", "C")
-    assert two.grade != "A"
+    assert one.scores["triple_hook"] == 4 and one.grade == "A"
+    # A typical good conversational clip: no scripted hook elements, solid everywhere else -> B.
+    typical = compute_grade(raw({"hook": 7.5, "payoff": 7, "standalone": 7, "story_arc": 6, "specificity": 6, "emotion_stance": 6, "triple_hook": 2}, elements=()))
+    assert typical.grade == "B", typical.score
+
+
+def test_a_weak_opening_still_caps_the_grade():
+    weak = compute_grade(raw({**ALL_TENS, "hook": 3}))
+    assert weak.grade == "C"
+
+
+def test_too_few_passing_clips_are_topped_up_with_the_next_grade_down():
+    segments = [ClipPlanSegment(i * 1000, i * 1000 + 500, 0.5, summary=f"c{i}") for i in range(6)]
+    grades = {0: grade("C", 6), 1: grade("B", 7.1), 2: grade("C", 5.6), 3: grade("D", 4), 4: grade("F", 1), 5: grade("C", 5.2)}
+    kept, _ = select_by_grade(segments, grades, "b", fill_to=3)
+    assert [s.summary for s in kept] == ["c1", "c0", "c2"]
+    assert "kept so the run reaches your clip count" in grades[0].fix and "kept so" not in grades[1].fix
+    # Never tops up with D or F, and no top-up without a target.
+    kept, _ = select_by_grade(segments, grades, "b", fill_to=6)
+    assert [s.summary for s in kept] == ["c1", "c0", "c2", "c5"]
+    kept, _ = select_by_grade(segments, grades, "b")
+    assert [s.summary for s in kept] == ["c1"]
 
 
 def test_hard_fails_are_an_f_and_bad_values_are_clamped():

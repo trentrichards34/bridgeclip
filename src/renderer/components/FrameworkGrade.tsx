@@ -67,7 +67,7 @@ function GradeDialog({ grade, title, onClose }: { grade: FrameworkGrade; title: 
         )}
 
         <section>
-          <h3 className="eyebrow mb-2">Triple Hook · {elementsFound} of 3 elements · {HOOK_TYPE_LABELS[grade.hookType]}</h3>
+          <h3 className="eyebrow mb-2">Hook · {HOOK_TYPE_LABELS[grade.hookType]} · Triple Hook elements {elementsFound} of 3 (bonus)</h3>
           <ul className="space-y-1.5">
             {HOOK_ELEMENTS.map(({ key, label }) => {
               const quote = grade.hookElements[key]
@@ -87,8 +87,8 @@ function GradeDialog({ grade, title, onClose }: { grade: FrameworkGrade; title: 
         <section>
           <h3 className="eyebrow mb-2">Criteria</h3>
           <div className="space-y-1.5">
-            {FRAMEWORK_CRITERIA.map(({ key, label, weight }) => {
-              const value = grade.scores[key]
+            {FRAMEWORK_CRITERIA.filter(({ key }) => grade.scores[key] !== undefined).map(({ key, label, weight }) => {
+              const value = grade.scores[key] ?? 0
               return (
                 <div key={key} className="grid grid-cols-[150px_1fr_36px] items-center gap-2 text-xs">
                   <span className="text-ink-muted">{label} <span className="text-ink-subtle">{Math.round(weight * 100)}%</span></span>

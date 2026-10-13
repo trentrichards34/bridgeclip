@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process'
 import { readFileSync, readdirSync, statSync } from 'fs'
 import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
@@ -5,6 +6,15 @@ import react from '@vitejs/plugin-react'
 import type { Plugin } from 'vite'
 
 const { version } = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8')) as { version: string }
+
+/** `npm run dev` shows the commit after the version (v0.1.19+8f9f986) so testers can tell updates apart. */
+function displayVersion(): string {
+  if (!process.argv.includes('dev')) return version
+  try {
+    const commit = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: __dirname, encoding: 'utf8', timeout: 5000 }).trim()
+    return /^[0-9a-f]{7,12}$/.test(commit) ? `${version}+${commit}` : version
+  } catch { return version }
+}
 
 /** Renderer dependencies are bundled from devDependencies, outside npm's runtime inventory. */
 function bundledLicenseNotices(): Plugin {
@@ -80,7 +90,7 @@ export default defineConfig({
       }
     ],
     define: {
-      __APP_VERSION__: JSON.stringify(version)
+      __APP_VERSION__: JSON.stringify(displayVersion())
     },
     resolve: {
       alias: {
