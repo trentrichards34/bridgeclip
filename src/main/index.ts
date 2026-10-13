@@ -1,4 +1,5 @@
 import { awaitEditorSaveBeforeClose, stopEditorsForQuit } from './clip-editor'
+import { stopAvatarRenderForQuit } from './avatar-studio'
 import { app, BrowserWindow, dialog, nativeTheme, shell, protocol } from 'electron'
 import { extname, join } from 'path'
 import { mkdirSync } from 'fs'
@@ -301,6 +302,7 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   void assistant?.shutdown()
   stopEditorsForQuit()
+  stopAvatarRenderForQuit()
   cancelQueuedJobsForQuit()
   stopAllJobsForQuit()
 })

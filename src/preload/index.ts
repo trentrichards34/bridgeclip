@@ -24,6 +24,7 @@ import type { OpenRouterCatalog } from '../shared/openrouter-models'
 import type { UpdateState } from '../shared/updates'
 import type { OutputStorageUsage } from '../shared/output-storage'
 import type { YouTubePreview } from '../shared/youtube-preview'
+import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/avatars'
 import type {
   AppDataScope,
   AssistantConversation,
@@ -41,6 +42,7 @@ export interface ClipSettings extends JevThresholdSettings {
   openrouterConfigured: boolean
   zernioConfigured: boolean
   pexelsConfigured: boolean
+  falConfigured: boolean
   jevEnabled: string
   jevVisualContext: string
   sourceContextWebResearch: string
@@ -162,7 +164,7 @@ export interface BridgeClipAPI {
     /** Pass true to count again instead of reusing a result from the last few seconds. */
     storageUsage: (fresh?: boolean) => Promise<OutputStorageUsage>
     save: (settings: ClipSettings) => Promise<ClipSettings>
-    replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey' | 'pexelsApiKey', value: string) => Promise<ClipSettings>
+    replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey' | 'pexelsApiKey' | 'falApiKey', value: string) => Promise<ClipSettings>
     selectOutputDir: () => Promise<string | null>
   }
   zernio: {
@@ -238,6 +240,23 @@ export interface BridgeClipAPI {
   }
   dialog: {
     selectVideo: () => Promise<string | null>
+  }
+  /** Avatar Studio: avatar library, scripts and video generation. */
+  avatars: {
+    list: () => Promise<AvatarSummary[]>
+    /** Opens a file dialog in main; null when cancelled. */
+    pickPhoto: () => Promise<{ draftId: string; path: string } | null>
+    generateFaces: (description: string) => Promise<{ draftId: string; path: string }[]>
+    create: (input: { draftId: string; name: string; kind: 'self' | 'ai'; description: string; voice: unknown; consent: boolean }) => Promise<AvatarSummary[]>
+    update: (id: string, patch: { name?: string; voice?: unknown }) => Promise<AvatarSummary[]>
+    remove: (id: string) => Promise<AvatarSummary[]>
+    /** Opens a file dialog in main; null when cancelled. */
+    cloneVoice: (id: string, consent: boolean) => Promise<AvatarSummary[] | null>
+    writeScript: (request: { topic: string; niche: string; seconds: number; style: 'talking' | 'cinematic' }) => Promise<AvatarScript>
+    render: (request: unknown) => Promise<AvatarRenderStatus>
+    cancelRender: () => Promise<boolean>
+    renderStatus: () => Promise<AvatarRenderStatus | null>
+    onStatus: (callback: (status: AvatarRenderStatus) => void) => () => void
   }
   /** Gameplay background library (file names only). */
   backgrounds: {
@@ -413,6 +432,20 @@ const api: BridgeClipAPI = {
   },
   dialog: {
     selectVideo: () => ipcRenderer.invoke('dialog:selectVideo')
+  },
+  avatars: {
+    list: () => ipcRenderer.invoke('avatars:list'),
+    pickPhoto: () => ipcRenderer.invoke('avatars:pickPhoto'),
+    generateFaces: (description) => ipcRenderer.invoke('avatars:generateFaces', description),
+    create: (input) => ipcRenderer.invoke('avatars:create', input),
+    update: (id, patch) => ipcRenderer.invoke('avatars:update', id, patch),
+    remove: (id) => ipcRenderer.invoke('avatars:remove', id),
+    cloneVoice: (id, consent) => ipcRenderer.invoke('avatars:cloneVoice', id, consent),
+    writeScript: (request) => ipcRenderer.invoke('avatars:writeScript', request),
+    render: (request) => ipcRenderer.invoke('avatars:render', request),
+    cancelRender: () => ipcRenderer.invoke('avatars:cancelRender'),
+    renderStatus: () => ipcRenderer.invoke('avatars:renderStatus'),
+    onStatus: (callback) => subscribe('avatars:status', callback)
   },
   backgrounds: {
     list: () => ipcRenderer.invoke('backgrounds:list'),

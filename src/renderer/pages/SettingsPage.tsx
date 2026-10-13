@@ -29,7 +29,7 @@ type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
 export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): React.JSX.Element {
-  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, pexelsConfigured, sourceContextWebResearch, saving, save, toolStatus, toolError, checkTools, checkingTools } =
+  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, pexelsConfigured, falConfigured, sourceContextWebResearch, saving, save, toolStatus, toolError, checkTools, checkingTools } =
     useSettingsStore()
   const keys = useApiKeyDrafts()
   const [isPackaged, setIsPackaged] = useState(true)
@@ -201,6 +201,19 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                   placeholder="Your Pexels API key"
                   description="Free stock video for B-roll mode. CreatorClips searches Pexels for footage that matches each beat of a clip."
                   getKeyUrl={PROVIDER_LINKS.pexels}
+                />
+              </KeyRow>
+              <KeyRow>
+                <ApiKeyInput
+                  label="fal.ai (optional)"
+                  value={keys.drafts.falApiKey}
+                  configured={falConfigured}
+                  onChange={(v) => keys.setDraft('falApiKey', v)}
+                  onRemove={() => void keys.remove('falApiKey')}
+                  onBlur={() => void keys.persist()}
+                  placeholder="Your fal.ai API key"
+                  description="Powers Avatar Studio: AI faces, voices, talking-head and cinematic videos. Pay-as-you-go on your fal.ai account."
+                  getKeyUrl={PROVIDER_LINKS.fal}
                 />
               </KeyRow>
             </div>

@@ -8,13 +8,15 @@ const ts = require('typescript')
 const { fileLinksAvailable, directoryLinkType } = require('../support/symlinks.cjs')
 
 // The gameplay background library, for modules that only pass names through.
+const AVATARS_STUB = { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [] }
+const AVATAR_STUDIO_STUB = { onAvatarRenderStatus: () => {} }
 const BACKGROUNDS_STUB = { resolveBackground: (name) => '/library/' + name, listBackgrounds: async () => [], addBackgrounds: async () => [], removeBackground: async () => [] }
 
 function loadSource(file, mocks = {}, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../src/main', file), 'utf8')
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const module = { exports: {} }
-  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? (id === './backgrounds' ? BACKGROUNDS_STUB : null) ?? (id.startsWith('../shared/') ? loadShared(id.slice('../shared/'.length) + '.ts') : require(id)), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, __dirname: path.join(__dirname, '../../src/main'), ...globals })
+  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? (id === './backgrounds' ? BACKGROUNDS_STUB : id === './avatars' ? AVATARS_STUB : id === './avatar-studio' ? AVATAR_STUDIO_STUB : null) ?? (id.startsWith('../shared/') ? loadShared(id.slice('../shared/'.length) + '.ts') : require(id)), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, __dirname: path.join(__dirname, '../../src/main'), ...globals })
   return module.exports
 }
 function loadShared(file) {
@@ -192,6 +194,8 @@ test('the native picker authorizes media and shell opening rejects aliased appli
       './job-manager': { initJobManager() {} },
       './job-start': {},
     './backgrounds': {},
+    './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [] },
+    './avatar-studio': { onAvatarRenderStatus: () => {} },
       './logger': {},
       './security': security,
       './network-policy': {},

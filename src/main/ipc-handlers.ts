@@ -10,6 +10,8 @@ import { getEnginePath, getBridgeRunnerPath, resolvePythonPath, validatePython }
 import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds } from './job-manager'
 import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
+import { cloneVoice, createAvatar, draftFromPhoto, draftsFromDescription, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
+import { avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
 import { getModelCatalog } from './openrouter-models'
@@ -166,6 +168,34 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     })
     if (result.canceled) return listBackgrounds()
     return addBackgrounds(result.filePaths)
+  })
+
+  handle('avatars:list', () => listAvatars())
+  handle('avatars:pickPhoto', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a photo for your avatar', filters: [{ name: 'Photos', extensions: PHOTO_EXTENSIONS }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return draftFromPhoto(result.filePaths[0])
+  })
+  handle('avatars:generateFaces', (_event, description: unknown) => draftsFromDescription(description))
+  handle('avatars:create', (_event, input: unknown) => createAvatar((input ?? {}) as Parameters<typeof createAvatar>[0]))
+  handle('avatars:update', (_event, id: unknown, patch: unknown) => updateAvatar(id, (patch ?? {}) as { name?: unknown; voice?: unknown }))
+  handle('avatars:remove', (_event, id: unknown) => removeAvatar(id))
+  handle('avatars:cloneVoice', async (_event, id: unknown, consent: unknown) => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a voice recording (30-90 seconds of clear speech)', filters: [{ name: 'Audio', extensions: VOICE_SAMPLE_EXTENSIONS }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return cloneVoice(id, result.filePaths[0], consent)
+  })
+  handle('avatars:writeScript', (_event, request: unknown) => writeAvatarScript(request))
+  handle('avatars:render', (_event, request: unknown) => startAvatarRender(request))
+  handle('avatars:cancelRender', () => cancelAvatarRender())
+  handle('avatars:renderStatus', () => avatarRenderStatus())
+  onAvatarRenderStatus((status) => {
+    const window = getMainWindow()
+    if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('avatars:status', status)
   })
 
   handle('job:start', (_event, config: unknown) => startClipJobRequest(config))

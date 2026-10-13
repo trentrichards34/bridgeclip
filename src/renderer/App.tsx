@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useState } from 'react'
 import { Layout } from './components/Layout'
 import { NAV_ITEMS, SIDEBAR_SHORTCUT_KEY, type Page } from './components/Sidebar'
 import { ClipPage } from './pages/ClipPage'
+import { AvatarStudioPage } from './pages/AvatarStudioPage'
 import { LibraryPage } from './pages/LibraryPage'
 import { JobsPage } from './pages/JobsPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -157,6 +158,7 @@ export default function App(): React.JSX.Element {
         <Layout currentPage={page} onNavigate={navigateRoot}>
           <Fragment key={pageVisit}>
             {page === 'clip' && <ClipPage onNavigate={setPage} />}
+            {page === 'avatar' && <AvatarStudioPage onNavigate={setPage} />}
             {page === 'library' && <LibraryPage onNavigate={setPage} initialRun={libraryRun?.outputDir} initialClipIndex={libraryRun?.clipIndex} />}
             {page === 'jobs' && <JobsPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'assistant' && <AssistantPage onOpenSettings={openAssistantSettings} />}

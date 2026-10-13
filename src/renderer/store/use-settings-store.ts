@@ -12,7 +12,7 @@ interface SettingsState extends ClipSettings {
   toolError: string | null
   load: () => Promise<void>
   save: (settings: Partial<ClipSettings>) => Promise<void>
-  replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey' | 'pexelsApiKey', value: string) => Promise<void>
+  replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey' | 'pexelsApiKey' | 'falApiKey', value: string) => Promise<void>
   checkTools: () => Promise<void>
 }
 
@@ -25,6 +25,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   openrouterConfigured: false,
   zernioConfigured: false,
   pexelsConfigured: false,
+  falConfigured: false,
   ...JEV_DEFAULTS,
   ...JEV_FEATURE_DEFAULTS,
   outputDirectory: '',
@@ -102,6 +103,7 @@ function pickSettings(s: ClipSettings): ClipSettings {
     sourceContextWebResearch: s.sourceContextWebResearch ?? JEV_FEATURE_DEFAULTS.sourceContextWebResearch,
     zernioConfigured: s.zernioConfigured,
     pexelsConfigured: s.pexelsConfigured ?? false,
+    falConfigured: s.falConfigured ?? false,
     outputDirectory: s.outputDirectory,
     pythonPath: s.pythonPath,
     customVocabulary: s.customVocabulary

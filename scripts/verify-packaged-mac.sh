@@ -25,7 +25,7 @@ getCurrentFuseWire(process.argv[2]).then((wire) => {
 }).catch((error) => { console.error(error.message); process.exitCode = 1 })
 JS
 for required in \
-  bridge/bridge_runner.py bridge/editor_runner.py bridge/smoke_smart_render.py bridge/smoke_transcription_audio.py \
+  bridge/bridge_runner.py bridge/editor_runner.py bridge/avatar_runner.py bridge/smoke_smart_render.py bridge/smoke_transcription_audio.py \
   engine/clip_engine/bridge_contract.py engine/LICENSE engine/THIRD_PARTY_NOTICES.md \
   engine-venv/bin/python3 engine-venv/PYTHON-LICENSE \
   engine-bin/ffmpeg engine-bin/ffprobe engine-bin/yt-dlp \

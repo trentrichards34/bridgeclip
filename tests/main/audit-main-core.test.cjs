@@ -44,6 +44,8 @@ function ipcWithLibrary(library) {
     './job-manager': { initJobManager() {} },
     './job-start': {},
     './backgrounds': {},
+    './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [] },
+    './avatar-studio': { onAvatarRenderStatus: () => {} },
     './logger': {},
     './security': security,
     './network-policy': {},
