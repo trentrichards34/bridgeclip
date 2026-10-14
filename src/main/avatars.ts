@@ -70,7 +70,9 @@ export function readReactions(id: string): AvatarReaction[] {
   return REACTIONS.flatMap((reaction): AvatarReaction[] => {
     const path = join(reactionsDir(id), `${reaction.id}.mp4`)
     if (!isReactionId(reaction.id) || !existsSync(path)) return []
-    return [{ id: reaction.id, source: meta[reaction.id] === 'own' ? 'own' : 'ai', path }]
+    let version = 0
+    try { version = Math.round(statSync(path).mtimeMs) } catch { /* just removed */ }
+    return [{ id: reaction.id, source: meta[reaction.id] === 'own' ? 'own' : 'ai', path, version }]
   })
 }
 
@@ -208,7 +210,7 @@ function normalizePhoto(bytes: Buffer): Buffer {
   let image = nativeImage.createFromBuffer(bytes)
   if (image.isEmpty()) throw new Error('Could not read that image. Use a JPG or PNG photo.')
   const { width, height } = image.getSize()
-  if (Math.min(width, height) < 384) throw new Error('That photo is too small. Use one at least 512 pixels on its shortest side.')
+  if (Math.min(width, height) < 384) throw new Error('That photo is too small. Use one at least 384 pixels on its shortest side (larger is better).')
   const scale = Math.min(1, 1536 / Math.max(width, height))
   if (scale < 1) image = image.resize({ width: Math.round(width * scale), height: Math.round(height * scale), quality: 'best' })
   return image.toJPEG(92)
@@ -315,6 +317,10 @@ export async function setPortrait(id: unknown, draftId: unknown): Promise<Avatar
   await rename(draft, join(avatarDir(id), file))
   await writeAvatar(avatar, file)
   if (basename(previous) !== file) await rm(previous, { force: true })
+  // AI reactions show the old picture's face: remove them so they can be made again. The member's own clips stay.
+  for (const reaction of readReactions(id)) {
+    if (reaction.source === 'ai') await rm(reaction.path, { force: true })
+  }
   return listAvatars()
 }
 
@@ -393,9 +399,12 @@ export async function speechFor(id: string, voice: AvatarVoice, text: string): P
   }
 }
 
+// A recording the member picks is read only as a local audio file (no playlists or network fetches).
+const AUDIO_INPUT_GUARD = ['-protocol_whitelist', 'file,pipe,fd', '-format_whitelist', 'mp3,wav,mov']
+
 async function audioSeconds(path: string): Promise<number> {
   try {
-    const { stdout } = await execFileAsync(resolveBinary('ffprobe'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', path], { timeout: 15_000 })
+    const { stdout } = await execFileAsync(resolveBinary('ffprobe'), ['-v', 'error', ...AUDIO_INPUT_GUARD, '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', path], { timeout: 15_000 })
     const seconds = Number(stdout.trim())
     return Number.isFinite(seconds) ? seconds : 0
   } catch { return 0 }
@@ -410,7 +419,7 @@ async function transcribeReference(path: string, key: string, signal?: AbortSign
   await mkdir(dir, { recursive: true })
   try {
     const wav = join(dir, 'speech.wav')
-    await execFileAsync(resolveBinary('ffmpeg'), ['-nostdin', '-loglevel', 'error', '-y', '-i', path, '-ac', '1', '-ar', '16000', '-acodec', 'pcm_s16le', wav], { timeout: 60_000 })
+    await execFileAsync(resolveBinary('ffmpeg'), ['-nostdin', '-loglevel', 'error', '-y', ...AUDIO_INPUT_GUARD, '-i', path, '-ac', '1', '-ar', '16000', '-acodec', 'pcm_s16le', wav], { timeout: 60_000 })
     const response = await fetch(`${openRouterBase()}/audio/transcriptions`, {
       method: 'POST', redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(90_000)]) : AbortSignal.timeout(90_000),
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -428,8 +437,21 @@ async function transcribeReference(path: string, key: string, signal?: AbortSign
  * goes with each request (Fish Audio clones from it every time). One short
  * line is spoken right away to prove the recording works.
  */
+const cloning = new Set<string>()
+
+/** True while a voice is being cloned for this avatar (it can't be removed meanwhile). */
+export function cloningInProgress(id: string): boolean {
+  return cloning.has(id)
+}
+
 export async function cloneVoice(id: unknown, samplePath: string, consent: unknown, signal?: AbortSignal): Promise<AvatarSummary[]> {
   if (!isAvatarId(id)) throw new Error('Invalid avatar')
+  if (cloning.has(id)) throw new Error('This voice is already being cloned. It takes about a minute.')
+  cloning.add(id)
+  try { return await cloneVoiceNow(id, samplePath, consent, signal) } finally { cloning.delete(id) }
+}
+
+async function cloneVoiceNow(id: string, samplePath: string, consent: unknown, signal?: AbortSignal): Promise<AvatarSummary[]> {
   if (consent !== true) throw new Error('Confirm this is your voice, or that you have the speaker’s permission, before cloning it.')
   const avatar = readAvatar(id)
   const extension = extname(samplePath).slice(1).toLowerCase()
@@ -442,7 +464,7 @@ export async function cloneVoice(id: unknown, samplePath: string, consent: unkno
   // A clean, compact reference: mono, loudness-evened, at most CLONE_REFERENCE_SECONDS.
   const reference = join(avatarDir(id), 'voice-sample.new.mp3')
   try {
-    await execFileAsync(resolveBinary('ffmpeg'), ['-nostdin', '-loglevel', 'error', '-y', '-i', samplePath, '-t', String(CLONE_REFERENCE_SECONDS), '-vn',
+    await execFileAsync(resolveBinary('ffmpeg'), ['-nostdin', '-loglevel', 'error', '-y', ...AUDIO_INPUT_GUARD, '-i', samplePath, '-t', String(CLONE_REFERENCE_SECONDS), '-vn',
       '-af', 'loudnorm=I=-18:TP=-1.5:LRA=11', '-ac', '1', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '128k', reference], { timeout: 120_000 })
   } catch {
     await rm(reference, { force: true })

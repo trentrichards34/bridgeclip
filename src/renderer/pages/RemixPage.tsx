@@ -173,7 +173,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
 
       {!openrouterConfigured && (
         <Callout tone="info" className="mt-4" title="Add your OpenRouter key to start" action={<Button size="sm" onClick={openKeys}>Open API keys</Button>}>
-          Remix writes, voices and animates everything through your OpenRouter account.
+          Remix finds the moments, writes the takes and records the voice through your OpenRouter account.
         </Callout>
       )}
       <Callout tone="info" className="mt-4" title="Is it your own video, or do you have permission?"
@@ -315,7 +315,9 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                 </Field>
               </div>
               {keyword === null ? <p className="text-2xs text-danger">One word: letters, numbers or a dash (2–20 characters).</p>
-                : keyword ? <p className="text-2xs text-ink-muted">Every video ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
+                : keyword ? (silent
+                  ? <p className="text-2xs text-ink-muted">“Comment {keyword}” shows on screen at the end, and the caption ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
+                  : <p className="text-2xs text-ink-muted">Every video ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>)
                   : brandKeyword ? (
                     <button type="button" className="text-2xs text-accent" onClick={() => form.update({ ctaKeyword: brandKeyword })}>
                       Use “{brandKeyword}” from your Brand Identity

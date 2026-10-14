@@ -178,6 +178,9 @@ export function parseRenderRequest(value: unknown): AvatarRenderRequest {
   }
 }
 
+// Files the member picks are read only as local video files (no playlists or network fetches).
+const VIDEO_INPUT_GUARD = ['-protocol_whitelist', 'file,pipe,fd', '-format_whitelist', 'mov,matroska,webm,avi,flv,mpegts']
+
 async function mediaSeconds(path: string): Promise<number> {
   const { stdout } = await execFileAsync(resolveBinary('ffprobe'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', path], { timeout: 30_000 })
   const seconds = Number(stdout.trim())
@@ -401,7 +404,7 @@ export async function startAvatarRender(value: unknown): Promise<AvatarRenderSta
   const avatar = readAvatar(request.avatarId)
   const background = request.backgroundVideo ? resolveBackground(request.backgroundVideo) : null
   const folder = join(loadSettings().outputDirectory, 'Avatar Studio', renderFolderName(request.script.title || avatar.name, new Date()))
-  return launch(request.avatarId, folder, estimateRenderCost(request), { phase: 'voice', detail: 'Recording the voiceover' },
+  return launch(request.avatarId, folder, estimateRenderCost({ ...request, voiceProvider: avatar.voice.provider }), { phase: 'voice', detail: 'Recording the voiceover' },
     (render) => runRender(render, request, avatar.voice, key, folder, background))
 }
 
@@ -516,7 +519,7 @@ export function parseSpeechBounds(log: string, totalMs: number): { startMs: numb
 interface MediaInfo { width: number; height: number; seconds: number; hasAudio: boolean }
 
 export async function probeMedia(path: string): Promise<MediaInfo> {
-  const { stdout } = await execFileAsync(resolveBinary('ffprobe'), ['-v', 'error', '-show_entries', 'stream=codec_type,width,height:format=duration', '-of', 'json', path], { timeout: 30_000, maxBuffer: 1024 * 1024 })
+  const { stdout } = await execFileAsync(resolveBinary('ffprobe'), ['-v', 'error', ...VIDEO_INPUT_GUARD, '-show_entries', 'stream=codec_type,width,height:format=duration', '-of', 'json', path], { timeout: 30_000, maxBuffer: 1024 * 1024 })
   const info = JSON.parse(stdout) as { streams?: { codec_type?: string; width?: number; height?: number }[]; format?: { duration?: string } }
   const video = info.streams?.find((stream) => stream.codec_type === 'video')
   const seconds = Number(info.format?.duration)
@@ -572,10 +575,10 @@ async function runRecreate(render: ActiveRender, request: AvatarRecreateRequest,
 
   // 1. A compact, constant-rate copy of the chosen window (fal bills per frame).
   const clip = join(parts, 'source.mp4')
-  await ffmpeg([...window, '-i', request.sourcePath, '-an', '-vf', `fps=${RECREATE_FPS},${RECREATE_SCALE},setsar=1`,
+  await ffmpeg([...window, ...VIDEO_INPUT_GUARD, '-i', request.sourcePath, '-an', '-vf', `fps=${RECREATE_FPS},${RECREATE_SCALE},setsar=1`,
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-maxrate', '2500k', '-bufsize', '5000k', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', clip], signal)
   const audio = request.keepAudio ? join(parts, 'source-audio.m4a') : null
-  if (audio) await ffmpeg([...window, '-i', request.sourcePath, '-vn', '-c:a', 'aac', '-b:a', '160k', audio], signal)
+  if (audio) await ffmpeg([...window, ...VIDEO_INPUT_GUARD, '-i', request.sourcePath, '-vn', '-c:a', 'aac', '-b:a', '160k', audio], signal)
   update(render, 'scenes', 'Uploading the source video', 8)
 
   // 2. Restage it with the avatar.

@@ -129,6 +129,7 @@ def parse_headline_look(raw: Any) -> HeadlineLook:
     """A look from a request (untrusted): unknown values fall back to the white bar in the clean font."""
     if not isinstance(raw, dict):
         return HeadlineLook()
+    raw = {key: value for key, value in raw.items() if isinstance(value, str)}
     look = raw.get("look") if raw.get("look") in HEADLINE_LOOKS else "white"
     color = raw.get("color") if isinstance(raw.get("color"), str) and _HEX.match(raw["color"]) else "#FFFFFF"
     font = raw.get("font") if raw.get("font") in HEADLINE_FONTS else "clean"
@@ -139,8 +140,10 @@ def validate_headline_look(raw: Any) -> Optional[dict]:
     """Strict check for requests from the app: None, or {look, color, font} with known values."""
     if raw is None:
         return None
-    if not isinstance(raw, dict) or set(raw) - {"look", "color", "font"} or raw.get("look", "white") not in HEADLINE_LOOKS \
-            or raw.get("font", "clean") not in HEADLINE_FONTS or not _HEX.match(raw.get("color", "#FFFFFF") if isinstance(raw.get("color", "#FFFFFF"), str) else ""):
+    if not isinstance(raw, dict) or set(raw) - {"look", "color", "font"} \
+            or not all(isinstance(raw.get(key, ""), str) for key in ("look", "color", "font")) \
+            or raw.get("look", "white") not in HEADLINE_LOOKS or raw.get("font", "clean") not in HEADLINE_FONTS \
+            or not _HEX.match(raw.get("color", "#FFFFFF")):
         raise ValueError("Invalid headline look")
     return {"look": raw.get("look", "white"), "color": raw.get("color", "#FFFFFF").upper(), "font": raw.get("font", "clean")}
 

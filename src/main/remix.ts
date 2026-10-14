@@ -299,42 +299,48 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     const brand = request.brandIdentityId ? await readBrandIdentity(request.brandIdentityId) : null
     let photo: string | null = null
     const avatar = request.avatarId ? readAvatar(request.avatarId) : null
-    if (request.avatarId && request.host !== 'voice') {
+    const silent = request.format === 'silent'
+    // Silent react uses neither the photo nor the voice: only the reaction clips.
+    if (request.avatarId && request.host !== 'voice' && !silent) {
       photo = portraitPath(request.avatarId)
       if (!existsSync(photo)) throw new Error('That avatar’s photo is missing. Choose another avatar.')
     }
-    const { preset, cloned } = remixVoice(request.voice, avatar)
+    const { preset, cloned } = silent ? { preset: DEFAULT_VOICE_NAME.toLowerCase(), cloned: null } : remixVoice(request.voice, avatar)
     if (cloned && !existsSync(voiceSamplePath(request.avatarId as string))) throw new Error('This avatar’s cloned voice recording is missing. Clone it again in Avatar Studio, or pick a preset voice.')
+    const clips = silent ? readReactions(request.avatarId as string) : []
+    if (silent && !clips.length) throw new Error('Make this avatar’s reactions in Avatar Studio first (Reactions for Silent react).')
     // `remix-…` (not a bare id): the Library lists it only once it has finished videos.
     const folder = join(settings.outputDirectory, `remix-${randomUUID()}`)
     await preflight(folder)
-    // Only once the new run can start: it replaces takes waiting for review.
-    if (reviewing) await discardRemix()
-    await cleanupAbandoned(settings.outputDirectory, folder)
-    // The run reads its own copy, so editing or deleting the avatar can't break it.
-    if (photo) {
-      const copy = join(folder, '.presenter.jpg')
-      await copyFile(photo, copy)
-      photo = copy
-    }
-    // Silent react: the avatar's reaction clips, copied so editing the avatar can't break the run.
+    // The run reads its own copies, so editing or deleting the avatar can't break it.
     const reactions: Record<string, string> = {}
     let reactionsAi = false
-    if (request.format === 'silent') {
-      const clips = readReactions(request.avatarId as string)
-      if (!clips.length) throw new Error('Make this avatar’s reactions in Avatar Studio first (Reactions for Silent react).')
-      await mkdir(join(folder, '.reactions'), { recursive: true })
-      for (const clip of clips) {
-        reactions[clip.id] = join(folder, '.reactions', `${clip.id}.mp4`)
-        await copyFile(clip.path, reactions[clip.id])
-        reactionsAi ||= clip.source === 'ai'
-      }
-    }
     let voiceReference: string | null = null
-    if (cloned) {
-      voiceReference = join(folder, '.voice.mp3')
-      await copyFile(voiceSamplePath(request.avatarId as string), voiceReference)
+    try {
+      if (photo) {
+        const copy = join(folder, '.presenter.jpg')
+        await copyFile(photo, copy)
+        photo = copy
+      }
+      if (clips.length) {
+        await mkdir(join(folder, '.reactions'), { recursive: true })
+        for (const clip of clips) {
+          reactions[clip.id] = join(folder, '.reactions', `${clip.id}.mp4`)
+          await copyFile(clip.path, reactions[clip.id])
+          reactionsAi ||= clip.source === 'ai'
+        }
+      }
+      if (cloned) {
+        voiceReference = join(folder, '.voice.mp3')
+        await copyFile(voiceSamplePath(request.avatarId as string), voiceReference)
+      }
+    } catch {
+      await rm(folder, { recursive: true, force: true })
+      throw new Error('This avatar’s files could not be copied for the remix. Check that your output folder has free space, then try again.')
     }
+    // Only now that the new run can start: it replaces takes waiting for review.
+    if (reviewing) await discardRemix()
+    await cleanupAbandoned(settings.outputDirectory, folder)
     if (pending.cancelled) { await rm(folder, { recursive: true, force: true }); throw new Error('Cancelled before it started.') }
     const context: RunContext = {
       request, draftIds: new Set(), planCostUsd: 0,

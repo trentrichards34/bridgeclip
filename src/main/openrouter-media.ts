@@ -58,22 +58,32 @@ export function failure(status: number, what: string): OpenRouterMediaError {
   if (status === 401 || status === 403) return new OpenRouterMediaError('OpenRouter rejected the API key. Check it in Settings → API keys.')
   if (status === 402) return new OpenRouterMediaError('OpenRouter reports insufficient credits. Add credits at openrouter.ai/credits.')
   if (status === 429) return new OpenRouterMediaError(`OpenRouter is busy and could not ${what} right now. Try again shortly.`)
-  if (status === 400 || status === 422) return new OpenRouterMediaError(`OpenRouter could not ${what}: the request was rejected. Try a different description or recording.`)
+  if (status === 400 || status === 422) return new OpenRouterMediaError(`OpenRouter could not ${what}: the request was rejected. Try again with different wording or a different file.`)
   return new OpenRouterMediaError(`OpenRouter could not ${what} (${status}). Try again.`)
+}
+
+/** The request never left this computer (so retrying a paid POST can't charge twice). */
+function neverSent(error: unknown): boolean {
+  const code = (error as { cause?: { code?: string } } | null)?.cause?.code
+  return ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH'].includes(code ?? '')
 }
 
 async function send(path: string, init: RequestInit, options: MediaOptions, what: string, ms: number): Promise<Response> {
   const doFetch = options.fetch ?? fetch
+  // A POST starts paid work. Once it may have reached OpenRouter (a timeout or a 5xx), sending it
+  // again could pay twice, so POSTs retry only when it surely didn't (busy, or never connected).
+  const post = (init.method ?? 'GET').toUpperCase() === 'POST'
   for (let attempt = 0; ; attempt++) {
     let response: Response
     try {
       response = await doFetch(`${openRouterBase()}${path}`, { ...init, redirect: 'manual', signal: withTimeout(options.signal, ms) })
     } catch (error) {
       if (aborted(error, options.signal)) throw error
-      if (attempt < 2) { await sleep(1500 * (attempt + 1), options.signal); continue }
+      if (attempt < 2 && (!post || neverSent(error))) { await sleep(1500 * (attempt + 1), options.signal); continue }
+      if ((error as { name?: string } | null)?.name === 'TimeoutError') throw new OpenRouterMediaError(`OpenRouter took too long to ${what}. Try again.`)
       throw new OpenRouterMediaError('OpenRouter could not be reached. Check your connection and try again.')
     }
-    if ([408, 429, 500, 502, 503, 504].includes(response.status) && attempt < 2) {
+    if ((post ? [429] : [408, 429, 500, 502, 503, 504]).includes(response.status) && attempt < 2) {
       const wait = Math.min(20_000, Math.max(1000, Number(response.headers.get('retry-after')) * 1000 || 2000 * (attempt + 1)))
       await sleep(wait, options.signal)
       continue

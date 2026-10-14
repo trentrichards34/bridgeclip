@@ -841,4 +841,42 @@ test('reaction library: AI reactions from the picture (failed ones reported), ow
   await assert.rejects(reactions.uploadReaction(avatar.id, 'nod', photo), /Choose a video/)
   const [removed] = plain(await reactions.removeReaction(avatar.id, 'nod'))
   assert.ok(!removed.reactions.some((r) => r.id === 'nod'))
+
+  // Out of credits mid-batch: nothing new starts, finished ones are kept and listed, and the error comes back with them.
+  await reactions.uploadReaction(avatar.id, 'nod', clip)
+  for (const kind of ['listen', 'point', 'surprised']) fs.rmSync(path.join(userData, 'avatars', avatar.id, 'reactions', `${kind}.mp4`))
+  let calls = 0
+  const broke = plain(await reactions.makeReactions(avatar.id, undefined, { generate: async (request, destination) => {
+    calls++
+    if (request.prompt.includes('points up')) throw new Error('OpenRouter reports insufficient credits. Add credits at openrouter.ai/credits.')
+    await new Promise((r) => setTimeout(r, 30))
+    fs.copyFileSync(clip, destination)
+  } }))
+  assert.match(broke.error, /insufficient credits/)
+  assert.equal(broke.made, 2)
+  assert.equal(calls, 3)
+  assert.equal(reactions.reactionsInProgress(avatar.id), false)
+  const nod = broke.avatars[0].reactions.find((r) => r.id === 'nod')
+  assert.ok(nod.version > 0, 'a version, so a replaced clip reloads')
+
+  // A new picture removes the AI reactions made from the old face; the member's own clip stays.
+  const fresh = await lib.draftFromPhoto(photo)
+  const [swapped] = plain(await lib.setPortrait(avatar.id, fresh.draftId))
+  assert.deepEqual(swapped.reactions.map((r) => [r.id, r.source]), [['nod', 'own']])
+})
+
+test('a paid POST is never sent twice once it may have reached OpenRouter; busy or never-connected ones retry', async () => {
+  const media = loadMedia()
+  let calls = 0
+  await assert.rejects(media.generateImage({ model: 'm', prompt: 'p' }, { key: 'k', fetch: async () => { calls++; return new Response('bad gateway', { status: 502 }) } }), /\(502\)/)
+  assert.equal(calls, 1, 'a 5xx after submitting is not retried')
+  calls = 0
+  const timeout = Object.assign(new Error('timed out'), { name: 'TimeoutError' })
+  await assert.rejects(media.synthesizeSpeech({ model: 'm', input: 'x' }, { key: 'k', fetch: async () => { calls++; throw timeout } }), /took too long/)
+  assert.equal(calls, 1, 'a timeout is not retried')
+  calls = 0
+  const refused = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } })
+  const bytes = await media.synthesizeSpeech({ model: 'm', input: 'x' }, { key: 'k', fetch: async () => { if (++calls < 2) throw refused; return new Response(new Uint8Array([1]), { status: 200 }) } })
+  assert.equal(bytes.length, 1)
+  assert.equal(calls, 2, 'never connected: retried')
 })

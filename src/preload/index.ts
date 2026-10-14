@@ -251,7 +251,7 @@ export interface BridgeClipAPI {
     /** "AI version of me": new pictures of the person in a chosen photo (a draft or an avatar's picture). */
     restyle: (source: { draftId: string } | { avatarId: string }, look: string, detail: string, consent: boolean) => Promise<{ draftId: string; path: string }[]>
     /** Generate the avatar's missing silent reaction clips (a few minutes); failed ones are named. */
-    makeReactions: (id: string) => Promise<{ avatars: AvatarSummary[]; made: number; failed: string[] }>
+    makeReactions: (id: string) => Promise<{ avatars: AvatarSummary[]; made: number; failed: string[]; error?: string }>
     /** Opens a file dialog in main; null when cancelled. */
     uploadReaction: (id: string, kind: string) => Promise<AvatarSummary[] | null>
     removeReaction: (id: string, kind: string) => Promise<AvatarSummary[]>

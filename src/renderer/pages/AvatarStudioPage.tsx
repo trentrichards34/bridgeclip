@@ -112,8 +112,8 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
   const recreateReady = Boolean(recreate.sourcePath) && recreate.rightsConfirmed && recreateLength >= RECREATE_MIN_SECONDS && recreateLength <= RECREATE_MAX_SECONDS
   const cost = useMemo(() => draft.style === 'recreate'
     ? (recreate.sourcePath ? estimateRecreateCost({ ...recreate, mode: recreate.mode }) : 0)
-    : text ? estimateRenderCost({ style: draft.style, lipSync: draft.lipSync, sceneQuality: draft.sceneQuality, script: draft.script }) : 0,
-  [draft.style, draft.lipSync, draft.sceneQuality, draft.script, text, recreate])
+    : text ? estimateRenderCost({ style: draft.style, lipSync: draft.lipSync, sceneQuality: draft.sceneQuality, script: draft.script, voiceProvider: selected?.voice.provider }) : 0,
+  [draft.style, draft.lipSync, draft.sceneQuality, draft.script, text, recreate, selected?.voice.provider])
   const longScenes = draft.style === 'cinematic' && text ? overlongScenes(draft.script) : []
   const updateRecreate = (patch: Partial<RecreateDraft>): void => draft.update({ recreate: { ...draft.recreate, ...patch } })
 
@@ -588,7 +588,7 @@ function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { open
             ]} />
             {picture === 'ai' && (
               <RestyleControls source={{ draftId: photo.draftId }} consent={consent} openrouterConfigured={openrouterConfigured} disabled={working}
-                onMade={(made) => { setDrafts([photo, ...made]); setChosen(made[0]?.draftId ?? photo.draftId) }} onError={setError} />
+                onBusy={setWorking} onMade={(made) => { setDrafts([photo, ...made]); setChosen(made[0]?.draftId ?? photo.draftId) }} onError={setError} />
             )}
           </div>
         )}
@@ -626,16 +626,18 @@ function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { open
 }
 
 /** Look + optional detail, then "Make AI versions": new pictures of the person in a photo. */
-function RestyleControls({ source, consent, openrouterConfigured, disabled, onMade, onError }: {
+function RestyleControls({ source, consent, openrouterConfigured, disabled, onMade, onError, onBusy }: {
   source: { draftId: string } | { avatarId: string }; consent: boolean; openrouterConfigured: boolean; disabled: boolean
   onMade: (drafts: { draftId: string; path: string }[]) => void; onError: (message: string | null) => void
+  /** While AI versions are being made (the parent locks its other buttons). */
+  onBusy?: (busy: boolean) => void
 }): React.JSX.Element {
   const [look, setLook] = useState<PortraitLook>('studio')
   const [detail, setDetail] = useState('')
   const [making, setMaking] = useState(false)
   const make = async (): Promise<void> => {
-    setMaking(true); onError(null)
-    try { onMade(await getApi().avatars.restyle(source, look, detail, consent)) } catch (err) { onError(errorMessage(err)) } finally { setMaking(false) }
+    setMaking(true); onBusy?.(true); onError(null)
+    try { onMade(await getApi().avatars.restyle(source, look, detail, consent)) } catch (err) { onError(errorMessage(err)) } finally { setMaking(false); onBusy?.(false) }
   }
   const blocker = !openrouterConfigured ? 'Add your OpenRouter key in Settings first' : !consent ? 'Confirm this is you (below) first' : undefined
   return (
@@ -693,7 +695,7 @@ function RestylePortrait({ avatar, busy, openrouterConfigured, onChange, onError
         <Button size="sm" variant="primary" disabled={!chosen || saving || busy} loading={saving} onClick={() => void save()}>Use this picture</Button>
         <Button size="sm" variant="ghost" disabled={saving} onClick={() => { setOpen(false); setDrafts([]); setChosen(null) }}>Cancel</Button>
       </div>
-      <p className="text-2xs text-ink-subtle">Replaces the picture your videos use. The voice and cloned voice stay as they are.</p>
+      <p className="text-2xs text-ink-subtle">Replaces the picture your videos use. The voice and cloned voice stay as they are. AI reactions made from the old picture are removed so you can make them again; reactions you recorded yourself stay.</p>
     </div>
   )
 }
@@ -712,7 +714,8 @@ function ReactionLibrary({ avatar, busy, openrouterConfigured, onChange, onError
     try {
       const result = await getApi().avatars.makeReactions(avatar.id)
       onChange(result.avatars)
-      setNote(result.failed.length ? `Made ${result.made}. These didn’t work this time: ${result.failed.join(', ')}. Try again, or upload your own.` : `Made ${result.made} reaction${result.made === 1 ? '' : 's'}.`)
+      if (result.error) onError(`${result.error}${result.made ? ` (${result.made} reaction${result.made === 1 ? ' was' : 's were'} made first and kept.)` : ''}`)
+      else setNote(result.failed.length ? `Made ${result.made}. These didn’t work this time: ${result.failed.join(', ')}. Try again, or upload your own.` : `Made ${result.made} reaction${result.made === 1 ? '' : 's'}.`)
     } catch (err) { onError(errorMessage(err)) } finally { setMaking(false) }
   }
   const upload = async (kind: string): Promise<void> => {
@@ -731,7 +734,7 @@ function ReactionLibrary({ avatar, busy, openrouterConfigured, onChange, onError
           return (
             <div key={reaction.id} className="space-y-1">
               {clip
-                ? <video src={localFileUrl(clip.path)} muted loop autoPlay playsInline aria-label={`${reaction.label} reaction`} className="aspect-[9/16] w-full rounded-lg bg-black object-cover" />
+                ? <video key={`${clip.path}:${clip.version ?? 0}`} src={localFileUrl(clip.path)} muted loop autoPlay playsInline aria-label={`${reaction.label} reaction`} className="aspect-[9/16] w-full rounded-lg bg-black object-cover" />
                 : <div className="flex aspect-[9/16] w-full items-center justify-center rounded-lg bg-white/[0.04] text-2xs text-ink-subtle">Not made yet</div>}
               <div className="flex items-center justify-between gap-1">
                 <span className="truncate text-2xs text-ink">{reaction.label}{clip?.source === 'own' ? ' · yours' : ''}</span>

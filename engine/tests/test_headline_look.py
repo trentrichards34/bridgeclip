@@ -113,3 +113,10 @@ def test_render_floating_keeps_the_video_full_frame(tmp_path, monkeypatch):
     ffmpeg, out = _render(tmp_path, monkeypatch, {"look": "floating"})
     corner = _mean(ffmpeg, out, 1.0, "crop=20:10:0:0")
     assert corner.max() < 235, corner  # no white bar: the video shows at the very top
+
+
+def test_non_string_values_are_rejected_cleanly():
+    for bad in ({"font": ["clean"]}, {"look": {"x": 1}}, {"color": None}):
+        with pytest.raises(ValueError):
+            validate_headline_look(bad)
+    assert parse_headline_look({"font": ["clean"], "look": "black"}).look == "black"

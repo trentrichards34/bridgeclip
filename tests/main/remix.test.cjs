@@ -58,6 +58,9 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   assert.equal(main.parseRemixRequest({ ...base, ctaKeyword: '', ctaOffer: 'ignored without a keyword' }, userData).request.ctaOffer, '')
   assert.throws(() => main.parseRemixRequest({ ...base, ctaKeyword: 'two words' }, userData), /one word/)
   assert.throws(() => main.parseRemixRequest({ ...base, ctaKeyword: 'SALES', ctaOffer: 'x'.repeat(81) }, userData), /under 80/)
+  // Word counts and the close's call to action match the engine.
+  assert.equal(shared.wordCount('Stop #hustling now'), 2)
+  assert.equal(shared.closeWithoutCta('Train the pull first. Comment SALES and I’ll send you my $9.99 course.'), 'Train the pull first.')
   // Hook text look: optional, normalized, strict.
   assert.equal('headlineLook' in main.parseRemixRequest(base, userData).request, false)
   assert.deepEqual(plain(main.parseRemixRequest({ ...base, headlineLook: { look: 'brand', color: '#ff8800', font: 'serif' } }, userData).request.headlineLook),
@@ -179,7 +182,7 @@ test('drafts from the engine and edits from the renderer are checked', () => {
   assert.throws(() => shared.parseRemixEdits([{ id: 9 }], ids), /at least one/)
   const captioned = shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: 'x', close: 'y', beats: [{ text: 'z' }], postCaption: 'Line one\n\n1. Two' }], ids)
   assert.equal(captioned[0].postCaption, 'Line one\n\n1. Two')
-  assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: 'x', close: 'y', beats: [{ text: 'z' }], postCaption: 'x'.repeat(2300) }], ids), /caption to 2,200/)
+  assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: 'x', close: 'y', beats: [{ text: 'z' }], postCaption: 'x'.repeat(2300) }], ids), /caption to 2,000/)
 })
 
 test('silent drafts: headline and caption only, reactions parsed; edits skip the spoken lines', () => {

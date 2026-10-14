@@ -64,8 +64,8 @@ export const REMIX_VOICE_IDS: readonly string[] = [AVATAR_VOICE, ...PRESET_VOICE
 export const MAX_REMIXES = 10
 export const MAX_SOURCES = 10
 export const MAX_BRAND_IDENTITY_CHARS = 40000
-/** Instagram's caption limit (the strictest of the main platforms after X). */
-export const MAX_POST_CAPTION_CHARS = 2200
+/** Post caption limit, call to action and credit included (the engine uses the same; platforms allow 2,200). */
+export const MAX_POST_CAPTION_CHARS = 2000
 export const MAX_CTA_OFFER_CHARS = 80
 
 /** A comment keyword in capitals (one word: letters, numbers, dashes), '' for none, or null when it can't be one. */
@@ -335,13 +335,15 @@ export function parseRemixDraft(value: unknown): RemixDraft | null {
 /** Word limits per line (the engine holds edits to the same limits). */
 export const REMIX_WORD_LIMITS = { headline: 16, intro: 35, beat: 35, close: 25 } as const
 
+/** Words as the engine counts them (it drops #hashtags from spoken lines). */
 export function wordCount(value: string): number {
-  return value.trim() ? value.trim().split(/\s+/).length : 0
+  return value.trim().split(/\s+/).filter((word) => word && !word.startsWith('#')).length
 }
 
 /** The close without a trailing "Comment KEYWORD …" call to action, which doesn't count toward its word limit. */
 export function closeWithoutCta(close: string): string {
-  return close.replace(/(^|[.!?]\s+)\s*(?:comment|Comment|COMMENT)\s+["“'‘]?[A-Za-z0-9][A-Za-z0-9-]{1,19}\b[^.!?]*[.!?]?\s*$/, '$1').trim()
+  // From "Comment KEYWORD" to the end, so an offer like "my $9.99 course" is stripped whole.
+  return close.replace(/(^|[.!?]\s+)\s*(?:comment|Comment|COMMENT)\s+["“'‘]?[A-Za-z0-9][A-Za-z0-9-]{1,19}\b[\s\S]*$/, '$1').trim()
 }
 
 /** Hard cap on the close with its call to action (the engine holds it to the same). */

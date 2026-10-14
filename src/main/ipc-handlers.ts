@@ -10,9 +10,9 @@ import { getEnginePath, getBridgeRunnerPath, resolvePythonPath, validatePython }
 import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds } from './job-manager'
 import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
-import { cloneVoice, createAvatar, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
+import { cloneVoice, cloningInProgress, createAvatar, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
-import { makeReactions, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
+import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
 import { BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
@@ -185,12 +185,15 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('avatars:restyle', (_event, source: unknown, look: unknown, detail: unknown, consent: unknown) => restyleDrafts(source, look, detail, consent))
   handle('avatars:setPortrait', (_event, id: unknown, draftId: unknown) => {
     if (id === avatarInUse() || id === remixAvatarInUse()) throw new Error('This avatar is being used for a video right now. Try again when it finishes.')
+    if (typeof id === 'string' && reactionsInProgress(id)) throw new Error('This avatar’s reactions are being made from its current picture. Change the picture when they finish.')
     return setPortrait(id, draftId)
   })
   handle('avatars:create', (_event, input: unknown) => createAvatar((input ?? {}) as Parameters<typeof createAvatar>[0]))
   handle('avatars:update', (_event, id: unknown, patch: unknown) => updateAvatar(id, (patch ?? {}) as { name?: unknown; voice?: unknown }))
   handle('avatars:remove', (_event, id: unknown) => {
     if (id === avatarInUse() || id === remixAvatarInUse()) throw new Error('This avatar is being used by the video in progress. Wait for it to finish or cancel it first.')
+    if (typeof id === 'string' && reactionsInProgress(id)) throw new Error('This avatar’s reactions are still being made (a few minutes). Remove it when they finish.')
+    if (typeof id === 'string' && cloningInProgress(id)) throw new Error('This avatar’s voice is being cloned. Remove it when that finishes.')
     return removeAvatar(id)
   })
   handle('avatars:makeReactions', (_event, id: unknown) => makeReactions(id))

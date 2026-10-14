@@ -33,7 +33,7 @@ export function reactionPrompt(reaction: (typeof REACTIONS)[number]): string {
 /** Normalize any clip into the library format: cover-cropped 1080x1920, 30 fps, silent, at most `seconds`. */
 async function normalize(input: string, output: string, seconds: number): Promise<void> {
   try {
-    await execFileAsync(resolveBinary('ffmpeg'), ['-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-protocol_whitelist', 'file,pipe,fd',
+    await execFileAsync(resolveBinary('ffmpeg'), ['-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-protocol_whitelist', 'file,pipe,fd', '-format_whitelist', 'mov,matroska,webm,avi,flv,mpegts',
       '-i', input, '-t', String(seconds), '-an',
       '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,format=yuv420p',
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', output], { timeout: 5 * 60_000, maxBuffer: 4 * 1024 * 1024 })
@@ -61,7 +61,7 @@ async function save(id: string, kind: ReactionId, clip: string, source: 'ai' | '
   } finally { await rm(normalized, { force: true }) }
 }
 
-export interface MakeReactionsResult { avatars: AvatarSummary[]; made: number; failed: string[] }
+export interface MakeReactionsResult { avatars: AvatarSummary[]; made: number; failed: string[]; error?: string }
 
 /**
  * Generate the reactions this avatar doesn't have yet (or the ones named), a few
@@ -81,6 +81,7 @@ export async function makeReactions(id: unknown, kinds?: unknown, deps: { genera
   const frame = { bytes: await portraitBytes(id), mime: 'image/jpeg' }
   const failed: string[] = []
   let made = 0
+  let stopped: string | undefined
   try {
     const queue = [...wanted]
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
@@ -98,15 +99,17 @@ export async function makeReactions(id: unknown, kinds?: unknown, deps: { genera
         } catch (error) {
           logger.warn('avatar.reaction.failed', { kind, message: String((error as Error)?.message ?? error).slice(0, 200) })
           failed.push(reaction.label)
-          if (error instanceof Error && /API key|credits/.test(error.message)) {
+          const message = String((error as Error)?.message ?? '')
+          if (/API key|credits/.test(message)) {
+            // Stop starting new ones; the ones already running finish and are kept.
             queue.length = 0
-            throw error
+            stopped = message
           }
         } finally { await rm(raw, { force: true }) }
       }
     }))
   } finally { making.delete(id) }
-  return { avatars: await listAvatars(), made, failed }
+  return { avatars: await listAvatars(), made, failed, ...(stopped ? { error: stopped } : {}) }
 }
 
 /** Use the member's own recording (first 10 seconds, silent) for one reaction. */

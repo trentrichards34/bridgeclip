@@ -12,7 +12,8 @@ import sys
 
 from bridge_runner import reserve_stdout_for_protocol, emit
 
-MAX_REQUEST = 262144
+# Render requests carry the brand text and every approved take.
+MAX_REQUEST = 4 * 1024 * 1024
 STRING_LIMITS = {"output_dir": 4096, "angle": 32, "host": 16, "voice": 32, "avatar_photo": 4096, "order": 16,
                  "brand_identity": 60000, "brand_name": 120, "creator": 120, "caption_preset": 64, "mode": 8,
                  "cta_keyword": 32, "cta_offer": 200,

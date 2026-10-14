@@ -294,6 +294,9 @@ def _avatar_files(tmp_path):
 class TestAvatarClient:
     def test_success_sends_photo_and_voice_and_follows_a_file_redirect(self, tmp_path, fast_poll, monkeypatch):
         import httpx
+        from clip_engine import network_policy
+        checked = []
+        monkeypatch.setattr(network_policy, "public_source_url", lambda url: checked.append(url) or True)
         seen = {}
         polls = iter([{"status": "in_progress"}, "<html>502</html>", {"status": "completed", "usage": {"cost": 0.4}}])
 
@@ -643,3 +646,59 @@ def test_headline_reports_how_far_floating_text_reaches(tmp_path):
     assert remix.Remixer(remix.RemixConfig(output_dir=str(tmp_path), host="voice", headline_look={"look": "black"}), media=FakeMedia("ffmpeg"),
                          settings=SimpleNamespace(openrouter_api_key="k", openrouter_base_url="https://example.invalid", planner_model="m",
                                                   get_planner_fallback_models=lambda: [], pexels_api_key=None))._look.pad_color == "0x0E0E0E"
+
+
+def test_redirect_to_a_private_host_is_refused(monkeypatch):
+    import httpx
+    from clip_engine import network_policy
+    monkeypatch.setattr(network_policy, "public_source_url", lambda url: False)
+
+    def handler(request):
+        return httpx.Response(302, headers={"location": "https://10.0.0.5/secret"})
+    media = remix.OpenRouterMedia.__new__(remix.OpenRouterMedia)
+    media._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid")
+    with pytest.raises(remix.RemixError):
+        asyncio.run(media._download("https://example.invalid/videos/x/content", "/tmp/never.mp4"))
+
+
+def test_review_caption_edits_arrive_as_postCaption():
+    script = remix.parse_plan({"remixes": [plan_item(4, 8)]}, transcript(), "", 1)[0]
+    edit = {"headline": script.headline, "intro": script.intro, "beats": [{"text": b.text} for b in script.beats],
+            "close": script.close, "postCaption": "My own caption."}
+    assert remix.apply_edit(script, edit, "", "").post_caption == "My own caption."
+
+
+def test_lines_fit_the_review_limits_on_a_sentence():
+    long = " ".join(["Strength comes first."] + ["word"] * 40)
+    assert remix.fit_words(long, 35) == "Strength comes first." or len(remix.fit_words(long, 35).split()) <= 35
+    two = "One two three four five six. Seven eight nine ten eleven twelve thirteen fourteen."
+    assert remix.fit_words(two, 10) == "One two three four five six."
+    assert remix.fit_words("short line", 35) == "short line"
+
+
+def test_other_cta_wordings_are_replaced_not_doubled():
+    std = "Comment SALES and I'll send you my plan."
+    for close in ("Strength comes first. Comment the word SALES and I will send you my plan.",
+                  "Strength comes first. Drop SALES in the comments for my plan.",
+                  "Strength comes first. Comment SALES and I'll send you my plan."):
+        settled = remix.settle_cta(close, "SALES", "my plan")
+        assert settled.count("SALES") == 1 and settled.startswith("Strength comes first."), settled
+    assert remix.settle_cta("Sales measure trust.", "SALES", "my plan") == "Sales measure trust. " + std
+
+
+def test_caption_fits_and_credit_matches_whole_names():
+    body = "x " * 1100
+    final = remix.finalize_caption(body, "SALES", "my playbook", "Dan")
+    assert len(final) <= remix.POSTED_CAPTION_CHARS and final.endswith("Comment SALES and I'll send you my playbook.\n\nClip: Dan")
+    assert remix.finalize_caption("Stop dancing around it.", "", "", "Dan").endswith("Clip: Dan")
+    assert remix.finalize_caption("Dan says stop.", "", "", "Dan") == "Dan says stop."
+
+
+def test_long_tags_shrink_to_fit(tmp_path):
+    w, _ = remix.tag_image("Original: " + "W" * 40, str(tmp_path / "t.png"), max_w=960)
+    assert w <= 960
+
+
+def test_cues_follow_the_cut_start():
+    cues = remix.clean_cues([{"at": 0, "reaction": "listen"}, {"at": 5, "reaction": "nod"}], 20, ("listen", "nod"), 1.5)
+    assert {"at": 6.5, "reaction": "nod"} in cues and cues[0]["at"] == 0.0

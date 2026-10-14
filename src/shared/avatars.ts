@@ -66,6 +66,8 @@ export interface AvatarReaction {
   id: ReactionId
   /** ai: generated from the avatar's picture; own: the member's recording. */
   source: 'ai' | 'own'
+  /** Changes when the clip is replaced, so the app reloads it. */
+  version?: number
   path: string
 }
 
@@ -242,10 +244,10 @@ export function overlongScenes(script: AvatarScript): number[] {
   return words.flatMap((count, index) => (count / total) * seconds > MAX_SCENE_SECONDS ? [index + 1] : [])
 }
 
-export function estimateRenderCost(request: Pick<AvatarRenderRequest, 'style' | 'script'> & { lipSync?: LipSyncModel; sceneQuality?: SceneQuality }): number {
+export function estimateRenderCost(request: Pick<AvatarRenderRequest, 'style' | 'script'> & { lipSync?: LipSyncModel; sceneQuality?: SceneQuality; voiceProvider?: AvatarVoice['provider'] }): number {
   const text = scriptText(request.script)
   const seconds = estimateSpokenSeconds(text)
-  const voice = (text.length / 1000) * PRICES.ttsPer1000Chars
+  const voice = (text.length / 1000) * (request.voiceProvider === 'clone' ? PRICES.cloneTtsPer1000Chars : PRICES.ttsPer1000Chars)
   // Talking heads are the avatar's photo with the voice (made locally) until OpenRouter can lip-sync to our audio.
   if (request.style === 'talking') return round(Math.max(0.01, voice))
   const footage = sceneDurations(request.script.scenes, seconds).reduce((sum, value) => sum + value, 0)
