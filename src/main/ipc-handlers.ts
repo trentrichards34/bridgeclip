@@ -10,7 +10,7 @@ import { getEnginePath, getBridgeRunnerPath, resolvePythonPath, validatePython }
 import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds } from './job-manager'
 import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
-import { cloneVoice, createAvatar, draftFromPhoto, draftsFromDescription, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
+import { cloneVoice, createAvatar, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
 import { BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
@@ -181,6 +181,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return draftFromPhoto(result.filePaths[0])
   })
   handle('avatars:generateFaces', (_event, description: unknown) => draftsFromDescription(description))
+  handle('avatars:restyle', (_event, source: unknown, look: unknown, detail: unknown, consent: unknown) => restyleDrafts(source, look, detail, consent))
+  handle('avatars:setPortrait', (_event, id: unknown, draftId: unknown) => {
+    if (id === avatarInUse() || id === remixAvatarInUse()) throw new Error('This avatar is being used for a video right now. Try again when it finishes.')
+    return setPortrait(id, draftId)
+  })
   handle('avatars:create', (_event, input: unknown) => createAvatar((input ?? {}) as Parameters<typeof createAvatar>[0]))
   handle('avatars:update', (_event, id: unknown, patch: unknown) => updateAvatar(id, (patch ?? {}) as { name?: unknown; voice?: unknown }))
   handle('avatars:remove', (_event, id: unknown) => {

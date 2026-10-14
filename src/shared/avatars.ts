@@ -165,6 +165,22 @@ export const WORDS_PER_SECOND = 2.6
 export const MAX_SCRIPT_CHARS = 1200
 export const AI_PORTRAIT_CANDIDATES = 2
 
+/**
+ * "AI version of me": a new picture of the same person, made from their photo.
+ * Each look is the setting and framing; the face always comes from the photo.
+ */
+export const PORTRAIT_LOOKS = [
+  { id: 'studio', label: 'Studio headshot', hint: 'Clean backdrop, soft studio light', prompt: 'a professional studio headshot against a clean softly lit neutral backdrop, soft key light' },
+  { id: 'creator', label: 'Creator at a desk', hint: 'Bright home office, natural light', prompt: 'a content creator in a bright, tidy home office with natural window light and a softly blurred background' },
+  { id: 'podcast', label: 'Podcast set', hint: 'Mic in frame, warm moody light', prompt: 'a podcast studio with a broadcast microphone in frame, warm moody lighting and a softly blurred background' },
+  { id: 'outdoor', label: 'Outdoors', hint: 'Golden hour, shallow depth of field', prompt: 'outdoors at golden hour with a shallow depth of field and a softly blurred natural background' },
+  { id: 'polish', label: 'Same scene, polished', hint: 'Keeps your setting, better light and sharpness', prompt: 'the same setting as the reference photo, re-shot with flattering light, sharp focus and a cleaner composition' }
+] as const
+export type PortraitLook = (typeof PORTRAIT_LOOKS)[number]['id']
+export function isPortraitLook(value: unknown): value is PortraitLook {
+  return PORTRAIT_LOOKS.some((look) => look.id === value)
+}
+
 export function wordCount(text: string): number {
   return text.trim() ? text.trim().split(/\s+/).length : 0
 }

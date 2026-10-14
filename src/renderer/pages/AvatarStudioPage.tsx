@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { create } from 'zustand'
 import { AudioLines, Clapperboard, Film, FolderOpen, Mic, Plus, Repeat2, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
 import {
-  estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, MAX_SCENES, MAX_SCENE_SECONDS, overlongScenes, type SceneQuality, RECREATE_MAX_SECONDS, RECREATE_MIN_SECONDS, type RecreateMode, MAX_SPOKEN_SECONDS, PRESET_VOICES, PRICES, AI_PORTRAIT_CANDIDATES, scriptText, SCRIPT_LENGTHS,
+  estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, MAX_SCENES, MAX_SCENE_SECONDS, overlongScenes, type SceneQuality, RECREATE_MAX_SECONDS, RECREATE_MIN_SECONDS, type RecreateMode, MAX_SPOKEN_SECONDS, PRESET_VOICES, PRICES, AI_PORTRAIT_CANDIDATES, PORTRAIT_LOOKS, type PortraitLook, scriptText, SCRIPT_LENGTHS,
   type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarSummary, type AvatarVideoStyle, type AvatarVoice, type LipSyncModel, type ScriptLength
 } from '../../shared/avatars'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
@@ -498,6 +498,7 @@ function AvatarDetails({ avatar, busy, openrouterConfigured, onChange, onError }
             <VoicePreview request={{ kind: 'avatar', voice: avatar.voice, avatarId: avatar.id }} name={voiceLabel(avatar.voice)} />
           </div>
         </Field>
+        {avatar.kind === 'self' && <RestylePortrait avatar={avatar} busy={busy} openrouterConfigured={openrouterConfigured} onChange={onChange} onError={onError} />}
         <div className="glass-tile space-y-2 rounded-xl p-3">
           <p className="flex items-center gap-1.5 text-xs font-medium text-ink"><Mic className="h-3.5 w-3.5" />Clone a voice</p>
           <p className="text-2xs text-ink-subtle">Upload 30-90 seconds of clear speech from one person (MP3, WAV or M4A). No setup fee: the recording stays with this avatar and your OpenRouter account clones from it as each video is voiced.{clone ? ' Cloning again replaces the current clone.' : ''}</p>
@@ -530,10 +531,13 @@ function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { open
   const [consent, setConsent] = useState(false)
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Own photo: use it as is, or make an AI version of the person from it. */
+  const [picture, setPicture] = useState<'photo' | 'ai'>('photo')
+  const [photo, setPhoto] = useState<{ draftId: string; path: string } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => { ref.current?.focus() }, [])
 
-  const switchKind = (next: 'self' | 'ai'): void => { setKind(next); setDrafts([]); setChosen(null); setError(null) }
+  const switchKind = (next: 'self' | 'ai'): void => { setKind(next); setDrafts([]); setChosen(null); setError(null); setPhoto(null); setPicture('photo') }
   const attempt = useCallback(async (action: () => Promise<void>): Promise<void> => {
     setWorking(true); setError(null)
     try { await action() } catch (err) { setError(errorMessage(err)) } finally { setWorking(false) }
@@ -541,7 +545,7 @@ function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { open
 
   const pickPhoto = (): Promise<void> => attempt(async () => {
     const draft = await getApi().avatars.pickPhoto()
-    if (draft) { setDrafts([draft]); setChosen(draft.draftId) }
+    if (draft) { setPhoto(draft); setDrafts([draft]); setChosen(draft.draftId) }
   })
   const generateFaces = (): Promise<void> => attempt(async () => {
     const list = await getApi().avatars.generateFaces(description)
@@ -575,8 +579,20 @@ function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { open
             ? <Button icon={<Sparkles className="h-4 w-4" />} loading={working && drafts.length === 0} disabled={working || !openrouterConfigured || description.trim().length < 10} onClick={() => void generateFaces()}>{drafts.length ? 'Generate again' : 'Generate faces'}</Button>
             : <Button icon={<UserRound className="h-4 w-4" />} disabled={working} onClick={() => void pickPhoto()}>{drafts.length ? 'Choose another photo' : 'Choose photo'}</Button>}
         </div>
+        {kind === 'self' && photo && (
+          <div className="space-y-3">
+            <Segmented label="Picture" value={picture} onChange={(next) => { setPicture(next); if (next === 'photo') { setDrafts([photo]); setChosen(photo.draftId) } }} options={[
+              { value: 'photo', label: 'Use my photo as is' },
+              { value: 'ai', label: 'Make an AI version of me' }
+            ]} />
+            {picture === 'ai' && (
+              <RestyleControls source={{ draftId: photo.draftId }} consent={consent} openrouterConfigured={openrouterConfigured} disabled={working}
+                onMade={(made) => { setDrafts([photo, ...made]); setChosen(made[0]?.draftId ?? photo.draftId) }} onError={setError} />
+            )}
+          </div>
+        )}
         {drafts.length > 0 && (
-          <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Face">
+          <div className={cn('grid gap-3', drafts.length > 2 ? 'grid-cols-3' : 'grid-cols-2')} role="radiogroup" aria-label="Face">
             {drafts.map((item) => (
               <button key={item.draftId} type="button" role="radio" aria-checked={chosen === item.draftId} onClick={() => setChosen(item.draftId)}
                 className={cn('glass-tile overflow-hidden rounded-xl', chosen === item.draftId && 'glass-selected')}>
@@ -597,6 +613,7 @@ function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { open
           </Field>
         </div>
         {kind === 'self' && <LabeledCheckbox checked={consent} onChange={setConsent} label="This is me, or I have this person's written permission to use their likeness" />}
+        {kind === 'self' && drafts.length > 1 && <p className="text-2xs text-ink-subtle">The first picture is your original photo; the others are AI versions. Pick the one your videos should use.</p>}
         {error && <Callout tone="danger">{error}</Callout>}
       </div>
       <DialogFooter>
@@ -604,5 +621,78 @@ function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { open
         <Button variant="primary" disabled={!ready || working} onClick={() => void createAvatar()}>Create avatar</Button>
       </DialogFooter>
     </Dialog>
+  )
+}
+
+/** Look + optional detail, then "Make AI versions": new pictures of the person in a photo. */
+function RestyleControls({ source, consent, openrouterConfigured, disabled, onMade, onError }: {
+  source: { draftId: string } | { avatarId: string }; consent: boolean; openrouterConfigured: boolean; disabled: boolean
+  onMade: (drafts: { draftId: string; path: string }[]) => void; onError: (message: string | null) => void
+}): React.JSX.Element {
+  const [look, setLook] = useState<PortraitLook>('studio')
+  const [detail, setDetail] = useState('')
+  const [making, setMaking] = useState(false)
+  const make = async (): Promise<void> => {
+    setMaking(true); onError(null)
+    try { onMade(await getApi().avatars.restyle(source, look, detail, consent)) } catch (err) { onError(errorMessage(err)) } finally { setMaking(false) }
+  }
+  const blocker = !openrouterConfigured ? 'Add your OpenRouter key in Settings first' : !consent ? 'Confirm this is you (below) first' : undefined
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Look">
+          <Select value={look} onChange={(value) => setLook(value as PortraitLook)} options={PORTRAIT_LOOKS.map((item) => ({ value: item.id, label: item.label, detail: item.hint }))} />
+        </Field>
+        <Field label="Extra detail (optional)">
+          <TextInput value={detail} maxLength={200} placeholder="e.g. navy blazer, short beard" onChange={(e) => setDetail(e.target.value)} />
+        </Field>
+      </div>
+      <Button size="sm" icon={<Sparkles className="h-3.5 w-3.5" />} loading={making} disabled={making || disabled || Boolean(blocker)} tooltip={blocker} onClick={() => void make()}>
+        Make AI versions · about ${(PRICES.image * AI_PORTRAIT_CANDIDATES).toFixed(2)}
+      </Button>
+      <p className="text-2xs text-ink-subtle">Same face from your photo, a new professional shot. Make more until you like one.</p>
+    </div>
+  )
+}
+
+/** Existing own-photo avatars: make AI versions of the picture and swap it in; the voice and clone stay. */
+function RestylePortrait({ avatar, busy, openrouterConfigured, onChange, onError }: {
+  avatar: AvatarSummary; busy: boolean; openrouterConfigured: boolean; onChange: (list: AvatarSummary[]) => void; onError: (message: string | null) => void
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [drafts, setDrafts] = useState<{ draftId: string; path: string }[]>([])
+  const [chosen, setChosen] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setOpen(false); setDrafts([]); setChosen(null) }, [avatar.id])
+  const save = async (): Promise<void> => {
+    if (!chosen) return
+    setSaving(true); onError(null)
+    try { onChange(await getApi().avatars.setPortrait(avatar.id, chosen)); setOpen(false); setDrafts([]); setChosen(null) }
+    catch (err) { onError(errorMessage(err)) } finally { setSaving(false) }
+  }
+  if (!open) {
+    return <Button size="sm" variant="secondary" icon={<Sparkles className="h-3.5 w-3.5" />} disabled={busy} onClick={() => setOpen(true)}>Make an AI version of this photo</Button>
+  }
+  return (
+    <div className="glass-tile space-y-3 rounded-xl p-3">
+      <p className="flex items-center gap-1.5 text-xs font-medium text-ink"><Sparkles className="h-3.5 w-3.5" />AI version of {avatar.name}</p>
+      <RestyleControls source={{ avatarId: avatar.id }} consent openrouterConfigured={openrouterConfigured} disabled={busy || saving}
+        onMade={(made) => { setDrafts((current) => [...made, ...current].slice(0, 6)); setChosen(made[0]?.draftId ?? null) }} onError={onError} />
+      {drafts.length > 0 && (
+        <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="New picture">
+          {drafts.map((item) => (
+            <button key={item.draftId} type="button" role="radio" aria-checked={chosen === item.draftId} onClick={() => setChosen(item.draftId)}
+              className={cn('glass-tile overflow-hidden rounded-xl', chosen === item.draftId && 'glass-selected')}>
+              <img src={localFileUrl(item.path)} alt="" className="aspect-[9/16] w-full object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Button size="sm" variant="primary" disabled={!chosen || saving || busy} loading={saving} onClick={() => void save()}>Use this picture</Button>
+        <Button size="sm" variant="ghost" disabled={saving} onClick={() => { setOpen(false); setDrafts([]); setChosen(null) }}>Cancel</Button>
+      </div>
+      <p className="text-2xs text-ink-subtle">Replaces the picture your videos use. The voice and cloned voice stay as they are.</p>
+    </div>
   )
 }

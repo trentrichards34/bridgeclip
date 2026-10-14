@@ -3,10 +3,10 @@ import { execFile } from 'child_process'
 import { randomBytes } from 'crypto'
 import { existsSync, readFileSync, statSync } from 'fs'
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'fs/promises'
-import { extname, join } from 'path'
+import { basename, extname, join } from 'path'
 import { promisify } from 'util'
 import {
-  AI_PORTRAIT_CANDIDATES, DEFAULT_VOICE, isAvatarId, OPENROUTER_MODELS, parseVoice,
+  AI_PORTRAIT_CANDIDATES, DEFAULT_VOICE, isAvatarId, isPortraitLook, OPENROUTER_MODELS, parseVoice, PORTRAIT_LOOKS,
   type Avatar, type AvatarKind, type AvatarSummary, type AvatarVoice
 } from '../shared/avatars'
 import { falInputUrl } from './fal'
@@ -44,7 +44,17 @@ function avatarDir(id: string): string {
   return join(avatarsDir(), id)
 }
 
+const PORTRAIT_FILE = /^portrait(?:-[a-f0-9]{8})?\.jpg$/
+
+/**
+ * The avatar's picture. A restyled picture gets a new file name (recorded in
+ * avatar.json) so every view shows the new one rather than a cached image.
+ */
 export function portraitPath(id: string): string {
+  try {
+    const file = (JSON.parse(readFileSync(join(avatarDir(id), 'avatar.json'), 'utf8')) as { portraitFile?: unknown }).portraitFile
+    if (typeof file === 'string' && PORTRAIT_FILE.test(file)) return join(avatarDir(id), file)
+  } catch { /* new avatar, or the original file name */ }
   return join(avatarDir(id), 'portrait.jpg')
 }
 
@@ -98,9 +108,10 @@ export function readAvatar(id: string): Avatar {
   return parsed
 }
 
-async function writeAvatar(avatar: Avatar): Promise<void> {
+async function writeAvatar(avatar: Avatar, portraitFile?: string): Promise<void> {
   const file = join(avatarDir(avatar.id), 'avatar.json')
-  await writeFile(`${file}.tmp`, JSON.stringify(avatar, null, 2), { mode: 0o600 })
+  const current = portraitFile ?? basename(portraitPath(avatar.id))
+  await writeFile(`${file}.tmp`, JSON.stringify({ ...avatar, ...(current !== 'portrait.jpg' ? { portraitFile: current } : {}) }, null, 2), { mode: 0o600 })
   await rename(`${file}.tmp`, file)
 }
 
@@ -231,6 +242,63 @@ export async function draftsFromDescription(description: unknown, signal?: Abort
   const drafts: AvatarDraft[] = []
   for (const image of images) drafts.push(await saveDraft(normalizePhoto(Buffer.from(image))))
   return drafts
+}
+
+/** The identity-keeping prompt for an "AI version of me". */
+export function restylePrompt(look: (typeof PORTRAIT_LOOKS)[number], detail: string): string {
+  return 'The same person as in the reference photo. Keep their exact face, facial features, skin tone, hair, age and build so they are clearly recognizable as themselves. ' +
+    `Photorealistic vertical 9:16 smartphone video still: ${look.prompt}. ${detail ? `${detail}. ` : ''}` +
+    'Head and shoulders framing, looking straight into the camera, natural relaxed expression with the mouth closed, sharp focus on the face, no text, no watermark.'
+}
+
+/**
+ * "AI version of me": new pictures of the person in a photo they chose (a draft
+ * not yet saved, or an existing avatar's picture), kept as drafts to pick from.
+ * Only for the user's own likeness, with their confirmation.
+ */
+export async function restyleDrafts(source: unknown, look: unknown, detail: unknown, consent: unknown, signal?: AbortSignal): Promise<AvatarDraft[]> {
+  if (consent !== true) throw new Error('Confirm this is you, or that you have the person’s permission, first.')
+  if (!isPortraitLook(look)) throw new Error('Choose a look.')
+  const extra = typeof detail === 'string' ? detail.replace(/\s+/g, ' ').trim() : ''
+  if (extra.length > 200) throw new Error('Keep the extra detail under 200 characters.')
+  if (LIKENESS.test(extra)) throw new Error('Describe the look without referencing another real person.')
+  const raw = (source ?? {}) as { draftId?: unknown; avatarId?: unknown }
+  let photo: string
+  if (typeof raw.draftId === 'string' && DRAFT_ID.test(raw.draftId)) photo = join(draftsDir(), `${raw.draftId}.jpg`)
+  else if (isAvatarId(raw.avatarId)) {
+    const avatar = readAvatar(raw.avatarId)
+    if (avatar.kind !== 'self') throw new Error('AI avatars already are AI. Restyle works on avatars made from your photo.')
+    photo = portraitPath(raw.avatarId)
+  } else throw new Error('Choose a photo first.')
+  if (!existsSync(photo)) throw new Error('That photo is no longer available. Choose it again.')
+  const reference = { bytes: new Uint8Array(await readFile(photo)), mime: 'image/jpeg' }
+  const options: MediaOptions = { key: openRouterKey(), signal }
+  const prompt = restylePrompt(PORTRAIT_LOOKS.find((item) => item.id === look) ?? PORTRAIT_LOOKS[0], extra)
+  const results = await Promise.allSettled(Array.from({ length: AI_PORTRAIT_CANDIDATES }, () =>
+    generateImage({ model: OPENROUTER_MODELS.image, prompt, aspectRatio: '9:16', references: [reference] }, options)))
+  const images = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : [])
+  if (!images.length) {
+    const reason = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason
+    throw reason instanceof Error ? reason : new OpenRouterMediaError('OpenRouter returned no images. Try another look.')
+  }
+  const drafts: AvatarDraft[] = []
+  for (const image of images) drafts.push(await saveDraft(normalizePhoto(Buffer.from(image))))
+  return drafts
+}
+
+/** Swap an existing avatar's picture for a chosen draft; its voice and clone stay. */
+export async function setPortrait(id: unknown, draftId: unknown): Promise<AvatarSummary[]> {
+  if (!isAvatarId(id)) throw new Error('Invalid avatar')
+  if (typeof draftId !== 'string' || !DRAFT_ID.test(draftId)) throw new Error('Choose a picture first.')
+  const avatar = readAvatar(id)
+  const draft = join(draftsDir(), `${draftId}.jpg`)
+  if (!existsSync(draft)) throw new Error('That picture expired. Make it again.')
+  const previous = portraitPath(id)
+  const file = `portrait-${newId(4)}.jpg`
+  await rename(draft, join(avatarDir(id), file))
+  await writeAvatar(avatar, file)
+  if (basename(previous) !== file) await rm(previous, { force: true })
+  return listAvatars()
 }
 
 export interface CreateAvatarInput {

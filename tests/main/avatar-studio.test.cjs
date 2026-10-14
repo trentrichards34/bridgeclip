@@ -741,3 +741,52 @@ test('a talking-head and a cinematic render run end to end on OpenRouter (mocked
   assert.deepEqual([video.width, video.height], [1080, 1920])
   assert.ok(probe.streams.some((s) => s.codec_type === 'audio'))
 })
+
+test('"AI version of me": new pictures from the person’s own photo, then swapped in without touching the voice', async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-restyle-'))
+  const requests = []
+  const image = { isEmpty: () => false, getSize: () => ({ width: 900, height: 1600 }), resize: () => image, toJPEG: () => Buffer.from('jpeg') }
+  const lib = load('main/avatars.ts', {
+    electron: { app: { getPath: () => userData }, nativeImage: { createFromBuffer: () => image } },
+    './security': { authorizeMedia: (p) => p },
+    './settings-store': settingsStub,
+    './tools': { resolveBinary: (name) => name },
+    './fal': { falInputUrl: async () => 'data:' },
+    './logger': { logger: { warn() {}, info() {} } },
+    './openrouter-media': mediaStub({ generateImage: async (request) => { requests.push(request); return new Uint8Array([0xff, 0xd8, requests.length]) } })
+  })
+  const photo = path.join(userData, 'me.jpg'); fs.writeFileSync(photo, 'my-photo')
+  const draft = await lib.draftFromPhoto(photo)
+
+  // Before the avatar exists: from the chosen photo, only with consent, with an allowed look.
+  await assert.rejects(lib.restyleDrafts({ draftId: draft.draftId }, 'studio', '', false), /Confirm this is you/)
+  await assert.rejects(lib.restyleDrafts({ draftId: draft.draftId }, 'anime', '', true), /Choose a look/)
+  await assert.rejects(lib.restyleDrafts({ draftId: draft.draftId }, 'studio', 'looks like a famous actor', true), /another real person/)
+  const made = plain(await lib.restyleDrafts({ draftId: draft.draftId }, 'podcast', 'navy blazer', true))
+  assert.equal(made.length, 2)
+  assert.equal(requests[0].model, 'google/gemini-3.1-flash-image')
+  assert.equal(requests[0].aspectRatio, '9:16')
+  assert.equal(Buffer.from(requests[0].references[0].bytes).toString(), 'jpeg', 'the person’s photo is the reference')
+  assert.match(requests[0].prompt, /same person as in the reference photo/i)
+  assert.match(requests[0].prompt, /podcast studio/)
+  assert.match(requests[0].prompt, /navy blazer/)
+
+  // Create with an AI version, then restyle the saved avatar: the voice and clone stay.
+  const [created] = plain(await lib.createAvatar({ draftId: made[0].draftId, name: 'Me', kind: 'self', voice: { provider: 'elevenlabs', voice: 'Brian' }, consent: true }))
+  const dir = path.join(userData, 'avatars', created.id)
+  fs.writeFileSync(path.join(dir, 'voice-sample.mp3'), 'audio')
+  const json = path.join(dir, 'avatar.json')
+  fs.writeFileSync(json, JSON.stringify({ ...JSON.parse(fs.readFileSync(json, 'utf8')), clonedVoice: { clonedAt: 'x', transcript: '' }, voice: { provider: 'clone', clonedAt: 'x' } }))
+  const again = plain(await lib.restyleDrafts({ avatarId: created.id }, 'studio', '', true))
+  const [after] = plain(await lib.setPortrait(created.id, again[1].draftId))
+  assert.match(path.basename(after.portraitPath), /^portrait-[a-f0-9]{8}\.jpg$/, 'a new file name, so no stale cached image')
+  assert.ok(!fs.existsSync(path.join(dir, 'portrait.jpg')), 'the old picture is removed')
+  assert.deepEqual(after.voice, { provider: 'clone', clonedAt: 'x' })
+  assert.equal(lib.portraitPath(created.id), after.portraitPath)
+  await assert.rejects(lib.setPortrait(created.id, again[1].draftId), /expired/)
+
+  // Fictional AI avatars aren't restyled from a photo.
+  const aiDraft = await lib.draftFromPhoto(photo)
+  const [ai] = plain(await lib.createAvatar({ draftId: aiDraft.draftId, name: 'Maya', kind: 'ai', description: 'A fictional person with red hair', voice: { provider: 'elevenlabs', voice: 'Sarah' } }))
+  await assert.rejects(lib.restyleDrafts({ avatarId: ai.id }, 'studio', '', true), /made from your photo/)
+})

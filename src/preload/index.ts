@@ -248,6 +248,10 @@ export interface BridgeClipAPI {
     /** Opens a file dialog in main; null when cancelled. */
     pickPhoto: () => Promise<{ draftId: string; path: string } | null>
     generateFaces: (description: string) => Promise<{ draftId: string; path: string }[]>
+    /** "AI version of me": new pictures of the person in a chosen photo (a draft or an avatar's picture). */
+    restyle: (source: { draftId: string } | { avatarId: string }, look: string, detail: string, consent: boolean) => Promise<{ draftId: string; path: string }[]>
+    /** Replace an avatar's picture with a chosen draft; its voice stays. */
+    setPortrait: (id: string, draftId: string) => Promise<AvatarSummary[]>
     create: (input: { draftId: string; name: string; kind: 'self' | 'ai'; description: string; voice: unknown; consent: boolean }) => Promise<AvatarSummary[]>
     update: (id: string, patch: { name?: string; voice?: unknown }) => Promise<AvatarSummary[]>
     remove: (id: string) => Promise<AvatarSummary[]>
@@ -464,6 +468,8 @@ const api: BridgeClipAPI = {
     list: () => ipcRenderer.invoke('avatars:list'),
     pickPhoto: () => ipcRenderer.invoke('avatars:pickPhoto'),
     generateFaces: (description) => ipcRenderer.invoke('avatars:generateFaces', description),
+    restyle: (source, look, detail, consent) => ipcRenderer.invoke('avatars:restyle', source, look, detail, consent),
+    setPortrait: (id, draftId) => ipcRenderer.invoke('avatars:setPortrait', id, draftId),
     create: (input) => ipcRenderer.invoke('avatars:create', input),
     update: (id, patch) => ipcRenderer.invoke('avatars:update', id, patch),
     remove: (id) => ipcRenderer.invoke('avatars:remove', id),
