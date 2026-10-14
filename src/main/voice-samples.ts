@@ -3,7 +3,6 @@ import { createHash, randomBytes } from 'crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { isAvatarId, parseVoice } from '../shared/avatars'
-import { REMIX_VOICE_IDS } from '../shared/remix'
 import { readAvatar, speechFor } from './avatars'
 import { synthesizeSpeech, type SpeechRequest } from './openrouter-media'
 import { loadSettings } from './settings-store'
@@ -14,8 +13,6 @@ import { loadSettings } from './settings-store'
  * userData, so replaying it is free and instant.
  */
 export const SAMPLE_TEXT = "Hey there! This is how I'll sound in your videos. Clear, natural, and ready to post."
-/** Must match the engine's remix_service.TTS_MODEL. */
-export const REMIX_TTS_MODEL = 'openai/gpt-4o-mini-tts-2025-12-15'
 
 export interface VoiceSampleDeps { speak?: typeof synthesizeSpeech }
 
@@ -25,6 +22,7 @@ function cacheDir(): string { return join(app.getPath('userData'), 'voice-sample
 
 /** What to say and with which voice, plus a cache id that changes whenever the voice does. */
 async function plan(value: unknown): Promise<{ id: string; request: SpeechRequest }> {
+  // Remix and Avatar Studio share the same voices: an ElevenLabs preset or an avatar's clone.
   const raw = (value ?? {}) as { kind?: unknown; voice?: unknown; avatarId?: unknown }
   if (raw.kind === 'avatar') {
     const voice = parseVoice(raw.voice)
@@ -38,15 +36,6 @@ async function plan(value: unknown): Promise<{ id: string; request: SpeechReques
     if (!clone) throw new Error('Clone a voice to hear it.')
     const request = await speechFor(raw.avatarId, voice, SAMPLE_TEXT)
     return { id: `${request.model}:${raw.avatarId}:${clone.clonedAt}`, request }
-  }
-  if (raw.kind === 'remix') {
-    // Remix voices: OpenAI voices, the same model the engine uses.
-    if (typeof raw.voice !== 'string' || !REMIX_VOICE_IDS.includes(raw.voice)) throw new Error('Choose a voice.')
-    return {
-      id: `${REMIX_TTS_MODEL}:${raw.voice}`,
-      request: { model: REMIX_TTS_MODEL, input: SAMPLE_TEXT, voice: raw.voice,
-        instructions: 'Speak like a confident, friendly creator talking to camera: natural pace, no announcer voice.' }
-    }
   }
   throw new Error('Choose a voice.')
 }

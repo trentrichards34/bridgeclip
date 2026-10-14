@@ -43,19 +43,19 @@ const samples = load('main/voice-samples.ts', {
 
 const MP3 = Uint8Array.from([0x49, 0x44, 0x33, 1, 2, 3])
 
-test('Remix voices: one OpenRouter request per voice, then served from the cache', async () => {
+test('one OpenRouter request per voice, then served from the cache', async () => {
   const calls = []
   const speak = async (request, options) => { calls.push({ request, key: options.key }); await new Promise((r) => setTimeout(r, 20)); return MP3 }
+  const sarah = { kind: 'avatar', voice: { provider: 'elevenlabs', voice: 'Sarah' } }
   // Two clicks at once share one request.
-  const [a, b] = await Promise.all([samples.voiceSample({ kind: 'remix', voice: 'nova' }, { speak }), samples.voiceSample({ kind: 'remix', voice: 'nova' }, { speak })])
+  const [a, b] = await Promise.all([samples.voiceSample(sarah, { speak }), samples.voiceSample(sarah, { speak })])
   assert.deepEqual([...a], [...MP3])
   assert.deepEqual([...b], [...MP3])
   assert.equal(calls.length, 1)
   assert.equal(calls[0].key, 'or-key')
-  assert.equal(calls[0].request.model, samples.REMIX_TTS_MODEL)
-  assert.equal(calls[0].request.voice, 'nova')
+  assert.equal(calls[0].request.voice, 'sarah')
   assert.equal(calls[0].request.input, samples.SAMPLE_TEXT)
-  await samples.voiceSample({ kind: 'remix', voice: 'nova' }, { speak })
+  await samples.voiceSample(sarah, { speak })
   assert.equal(calls.length, 1, 'replayed from disk')
 })
 
@@ -76,14 +76,13 @@ test('Avatar voices: ElevenLabs presets and the avatar clone, both on OpenRouter
 })
 
 test('failures pass through and leave nothing in the cache; no key, no request', async () => {
-  await assert.rejects(samples.voiceSample({ kind: 'remix', voice: 'onyx' }, { speak: async () => { throw new Error('OpenRouter reports insufficient credits.') } }), /insufficient credits/)
-  await assert.rejects(samples.voiceSample({ kind: 'remix', voice: 'robot' }), /Choose a voice/)
-  await assert.rejects(samples.voiceSample({ kind: 'other', voice: 'nova' }), /Choose a voice/)
+  await assert.rejects(samples.voiceSample({ kind: 'avatar', voice: { provider: 'elevenlabs', voice: 'Will' } }, { speak: async () => { throw new Error('OpenRouter reports insufficient credits.') } }), /insufficient credits/)
+  await assert.rejects(samples.voiceSample({ kind: 'remix', voice: 'onyx' }), /Choose a voice/)
   const files = fs.existsSync(path.join(userData, 'voice-samples')) ? fs.readdirSync(path.join(userData, 'voice-samples')) : []
   assert.equal(files.filter((f) => f.endsWith('.part')).length, 0)
   SETTINGS.openrouterApiKey = ''
   let called = false
-  await assert.rejects(samples.voiceSample({ kind: 'remix', voice: 'echo' }, { speak: async () => { called = true; return MP3 } }), /OpenRouter key/)
+  await assert.rejects(samples.voiceSample({ kind: 'avatar', voice: { provider: 'elevenlabs', voice: 'Roger' } }, { speak: async () => { called = true; return MP3 } }), /OpenRouter key/)
   assert.equal(called, false)
   SETTINGS.openrouterApiKey = 'or-key'
 })

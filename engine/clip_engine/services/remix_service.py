@@ -44,13 +44,20 @@ logger = logging.getLogger(__name__)
 
 OUT_W, OUT_H = 1080, 1920
 FPS = 30
-TTS_MODEL = "openai/gpt-4o-mini-tts-2025-12-15"
+# The presenter speaks with the avatar's own voice, the same models Avatar Studio uses:
+# an ElevenLabs v3 preset, or the avatar's cloned voice (Fish Audio, cloned from its recording each time).
+TTS_MODEL = "elevenlabs/eleven-v3"
+CLONE_TTS_MODEL = "fish-audio/s2.1-pro"
+TTS_MODELS = (TTS_MODEL, CLONE_TTS_MODEL)
+TTS_PRICE_PER_1000_CHARS = {TTS_MODEL: 0.08, CLONE_TTS_MODEL: 0.015}
+MAX_REFERENCE_BYTES = 8 * 1024 * 1024
 AVATAR_MODEL = "heygen/avatar-iv"
 AVATAR_PRICE_PER_SECOND = 0.05
 # gpt-4o-mini-tts is about $0.015 per minute of speech; used only for the estimate.
-TTS_PRICE_PER_MINUTE = 0.015
-VOICES = ("alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse")
-DEFAULT_VOICE = "onyx"
+# ElevenLabs v3 voices OpenRouter lists (supported_voices).
+VOICES = ("adam", "alice", "bella", "bill", "brian", "callum", "charlie", "chris", "daniel", "eric", "george", "harry",
+          "jessica", "laura", "liam", "lily", "matilda", "river", "roger", "sarah", "will")
+DEFAULT_VOICE = "brian"
 
 # Borrowed excerpt: long enough to set up the moment, short enough to stay evidence.
 MIN_EXCERPT_MS = 2500
@@ -469,7 +476,8 @@ def estimate_speech_seconds(text: str) -> float:
 def estimate_remix_cost(script: RemixScript, host: str) -> float:
     on_camera = estimate_speech_seconds(script.intro) + estimate_speech_seconds(script.close)
     spoken = on_camera + sum(estimate_speech_seconds(b.text) for b in script.beats)
-    cost = spoken / 60 * TTS_PRICE_PER_MINUTE
+    characters = len(script.intro) + len(script.close) + sum(len(b.text) for b in script.beats)
+    cost = characters / 1000 * TTS_PRICE_PER_1000_CHARS[TTS_MODEL]
     if host == "lipsync":
         cost += on_camera * AVATAR_PRICE_PER_SECOND
     return cost
@@ -555,9 +563,16 @@ class OpenRouterMedia:
         except ValueError:
             return 2.0 + attempt * 3
 
-    async def speech(self, text: str, voice: str, instructions: str, out_path: str) -> str:
-        payload = {"model": TTS_MODEL, "input": text, "voice": voice if voice in VOICES else DEFAULT_VOICE,
-                   "response_format": "mp3", "instructions": instructions[:600]}
+    async def speech(self, text: str, out_path: str, voice: str = DEFAULT_VOICE, model: str = TTS_MODEL,
+                     reference: Optional[str] = None, transcript: str = "") -> str:
+        """Speak `text` with an ElevenLabs preset, or (clone model) with a voice cloned from `reference`, a data URL."""
+        if model == CLONE_TTS_MODEL and reference:
+            refs: list[dict] = [{"type": "input_audio", "input_audio": {"data": reference}}]
+            if transcript:
+                refs.append({"type": "text", "text": transcript[:10000]})
+            payload = {"model": CLONE_TTS_MODEL, "input": text, "response_format": "mp3", "input_references": refs}
+        else:
+            payload = {"model": TTS_MODEL, "input": text, "response_format": "mp3", "voice": voice if voice in VOICES else DEFAULT_VOICE}
         async with self._speech_slots:
             for attempt in range(4):
                 try:
@@ -566,6 +581,12 @@ class OpenRouterMedia:
                             if response.status_code in (408, 429, 500, 502, 503, 504) and attempt < 3:
                                 await asyncio.sleep(self._retry_after(response, attempt))
                                 continue
+                            # OpenRouter says why in the body; keep it in the log for support.
+                            try:
+                                reason = (await response.aread()).decode("utf-8", "replace")[:400]
+                            except Exception:  # noqa: BLE001
+                                reason = ""
+                            logger.warning(f"Voice request rejected ({response.status_code}, {payload['model']}): {reason}")
                             raise self._error(response.status_code, "generate the voice")
                         size = 0
                         with open(out_path, "wb") as handle:
@@ -576,7 +597,7 @@ class OpenRouterMedia:
                                 handle.write(chunk)
                     if size == 0:
                         raise RemixError("OpenRouter returned an empty voice file.")
-                    self.cost_usd += estimate_speech_seconds(text) / 60 * TTS_PRICE_PER_MINUTE
+                    self.cost_usd += len(text) / 1000 * TTS_PRICE_PER_1000_CHARS.get(payload["model"], 0.08)
                     return out_path
                 except (httpx.TimeoutException, httpx.TransportError):
                     if attempt == 3:
@@ -842,6 +863,10 @@ class RemixConfig:
     order: str = "moment_first"
     host: str = "lipsync"
     voice: str = DEFAULT_VOICE
+    # The avatar's cloned voice: its recording (copied into the run folder) and transcript.
+    voice_model: str = TTS_MODEL
+    voice_reference: Optional[str] = None
+    voice_transcript: str = ""
     avatar_photo: Optional[str] = None
     brand_identity: str = ""
     brand_name: str = ""
@@ -1017,6 +1042,11 @@ class Remixer:
         self.media = media or OpenRouterMedia(self.settings.openrouter_api_key)
         self.cost_usd = 0.0
         self.warnings: list[str] = []
+        self._voice_reference: Optional[str] = None
+        if config.voice_model not in TTS_MODELS:
+            raise RemixError("Choose a voice.")
+        if config.voice_model == CLONE_TTS_MODEL and not config.voice_reference:
+            raise RemixError("Your avatar's cloned voice recording is missing. Clone the voice again in Avatar Studio.")
 
     def _client(self, title: str) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -1260,6 +1290,21 @@ class Remixer:
                 import shutil
                 shutil.rmtree(work, ignore_errors=True)
 
+    def _voice(self) -> dict:
+        """How every line is spoken: the preset, or the cloned voice with its recording inline."""
+        if self.config.voice_model == CLONE_TTS_MODEL:
+            if not self._voice_reference:
+                try:
+                    with open(self.config.voice_reference or "", "rb") as handle:
+                        data = handle.read(MAX_REFERENCE_BYTES + 1)
+                except OSError:
+                    raise RemixError("Your avatar's cloned voice recording is missing. Clone the voice again in Avatar Studio.") from None
+                if not data or len(data) > MAX_REFERENCE_BYTES:
+                    raise RemixError("Your avatar's cloned voice recording could not be used. Clone the voice again in Avatar Studio.")
+                self._voice_reference = "data:audio/mpeg;base64," + base64.b64encode(data).decode()
+            return {"model": CLONE_TTS_MODEL, "reference": self._voice_reference, "transcript": self.config.voice_transcript}
+        return {"model": TTS_MODEL, "voice": self.config.voice}
+
     async def _broll(self, queries: list[str], cache: str) -> list[Optional[str]]:
         key = getattr(self.settings, "pexels_api_key", None)
         if not key:
@@ -1322,10 +1367,9 @@ class Remixer:
         # 1. Voice for every line.
         say("recording the voice", 0.05)
         lines = [("intro", script.intro)] + [(f"beat{i}", b.text) for i, b in enumerate(script.beats)] + [("close", script.close)]
-        instructions = ("Speak like a confident, friendly creator reacting on camera: natural pace, clear emphasis, no announcer voice. "
-                        + ("Match this brand's voice: " + self.config.brand_identity[:300] if self.config.brand_identity else ""))
+        voice = self._voice()
         audio = dict(zip([k for k, _ in lines], await asyncio.gather(*[
-            self.media.speech(text, self.config.voice, instructions, os.path.join(work, f"{key}.mp3")) for key, text in lines
+            self.media.speech(text, os.path.join(work, f"{key}.mp3"), **voice) for key, text in lines
         ])))
 
         # 2. On-camera lines with the avatar (lip-synced when chosen), in parallel with B-roll.
@@ -1486,8 +1530,9 @@ class Remixer:
             "script": {"intro": script.intro, "beats": [asdict(b) for b in script.beats], "close": script.close},
             "brand_identity": self.config.brand_name or None, "proof_used": script.proof_used,
             "post_caption": post_caption, "call_to_action": {"keyword": keyword, "offer": self.config.cta_offer} if keyword else None,
-            "presenter": {"mode": self.config.host, "voice": self.config.voice, "ai_generated": ai_presenter},
-            "models": {"plan": self.settings.planner_model, "voice": TTS_MODEL, "avatar": AVATAR_MODEL if self.config.host == "lipsync" else None},
+            "presenter": {"mode": self.config.host, "voice": "cloned" if self.config.voice_model == CLONE_TTS_MODEL else self.config.voice,
+                          "ai_generated": ai_presenter},
+            "models": {"plan": self.settings.planner_model, "voice": self.config.voice_model, "avatar": AVATAR_MODEL if self.config.host == "lipsync" else None},
             "timeline": [{"part": kind, "start_seconds": round(starts[i], 2), "seconds": round(durations[i], 2)} for i, (kind, _) in enumerate(parts)],
             "checks": [asdict(c) for c in checks], "warnings": warnings, "cost_usd": round(remix_cost, 4),
         }

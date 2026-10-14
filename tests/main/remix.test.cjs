@@ -33,7 +33,7 @@ const SETTINGS = { openrouterApiKey: 'or-key', outputDirectory: userData, python
 const selected = new Set()
 const main = load('main/remix.ts', {
   electron: { app: { getPath: () => userData } },
-  './avatars': { portraitPath: (id) => path.join(userData, id, 'portrait.jpg'), readAvatar: () => ({}) },
+  './avatars': { portraitPath: (id) => path.join(userData, id, 'portrait.jpg'), voiceSamplePath: (id) => path.join(userData, id, 'voice-sample.mp3'), readAvatar: () => ({}) },
   './logger': { logger: { info() {}, warn() {} } },
   './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
   './security': { assertMediaPath: (p) => { if (!selected.has(p)) throw new Error('Invalid media path') } },
@@ -43,7 +43,7 @@ const main = load('main/remix.ts', {
 
 const base = {
   sources: ['https://www.youtube.com/watch?v=abcdefghijk'], creator: '', angle: 'reaction', order: 'moment_first', host: 'lipsync', avatarId: 'a'.repeat(16),
-  voice: 'onyx', brandIdentityId: null, count: 3, captionPreset: 'pop', includeCaptions: true, aiLabelAck: true
+  voice: 'avatar', brandIdentityId: null, count: 3, captionPreset: 'pop', includeCaptions: true, aiLabelAck: true
 }
 
 test('remix requests: links or chosen files, a style, a presenter, a voice, and the AI-label promise', () => {
@@ -64,7 +64,12 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   assert.equal(many.creator, '')
   assert.throws(() => main.parseRemixRequest({ ...base, sources: Array.from({ length: 11 }, (_, i) => `https://a.com/${i}`) }, userData), /up to 10/)
   assert.throws(() => main.parseRemixRequest({ ...base, order: 'random' }, userData), /order/)
-  assert.equal(main.parseRemixRequest({ ...base, host: 'voice', avatarId: 'junk' }, userData).request.avatarId, null)
+  assert.equal(main.parseRemixRequest({ ...base, host: 'voice', voice: 'Sarah', avatarId: 'junk' }, userData).request.avatarId, null)
+  // Voice only can still borrow an avatar's voice; a preset is matched in any case.
+  assert.equal(main.parseRemixRequest({ ...base, host: 'voice' }, userData).request.avatarId, 'a'.repeat(16))
+  assert.throws(() => main.parseRemixRequest({ ...base, host: 'voice', avatarId: null }, userData), /whose voice/)
+  assert.equal(main.parseRemixRequest({ ...base, voice: 'sarah' }, userData).request.voice, 'Sarah')
+  assert.throws(() => main.parseRemixRequest({ ...base, voice: 'onyx' }, userData), /voice/)
 
   assert.throws(() => main.parseRemixRequest({ ...base, sources: [] }, userData), /video link/)
   assert.throws(() => main.parseRemixRequest({ ...base, sources: ['https://user:pw@example.com/v'] }, userData), /full video links/)
@@ -207,6 +212,14 @@ test('variety guard: too many remixes of one creator in a week gets a warning', 
   const warnings = await main.varietyWarnings(drafts)
   assert.equal(warnings.length, 1)
   assert.match(warnings[0], /6 remixes of Coach/)
+})
+
+test('the presenter speaks with the avatar’s clone, its preset, or the preset chosen in Remix', () => {
+  const clone = { clonedAt: 'x', transcript: 'hi' }
+  assert.deepEqual(plain(main.remixVoice('avatar', { voice: { provider: 'clone', clonedAt: 'x' }, clonedVoice: clone })), { preset: 'brian', cloned: clone })
+  assert.deepEqual(plain(main.remixVoice('avatar', { voice: { provider: 'elevenlabs', voice: 'Harry' }, clonedVoice: clone })), { preset: 'harry', cloned: null })
+  assert.deepEqual(plain(main.remixVoice('Sarah', { voice: { provider: 'clone', clonedAt: 'x' }, clonedVoice: clone })), { preset: 'sarah', cloned: null })
+  assert.deepEqual(plain(main.remixVoice('avatar', null)), { preset: 'brian', cloned: null })
 })
 
 test('cost estimate: the on-camera avatar is the main cost, voice-only is cents', () => {

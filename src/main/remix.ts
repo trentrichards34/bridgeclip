@@ -9,9 +9,12 @@ import { isAvatarId } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
 import {
   estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput,
-  normalizeCtaKeyword, REMIX_VOICE_IDS, remixSourceUrl, type BrandIdentity, type RemixDraft, type RemixOutput, type RemixRequest, type RemixStatus
+  AVATAR_VOICE, normalizeCtaKeyword, remixSourceUrl, type BrandIdentity, type RemixDraft, type RemixOutput, type RemixRequest, type RemixStatus
 } from '../shared/remix'
-import { portraitPath, readAvatar } from './avatars'
+import { presetVoiceId, type Avatar } from '../shared/avatars'
+
+const DEFAULT_VOICE_NAME = 'Brian'
+import { portraitPath, readAvatar, voiceSamplePath } from './avatars'
 import { logger } from './logger'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
 import { assertMediaPath } from './security'
@@ -166,10 +169,12 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const order = raw.order === undefined ? 'moment_first' : raw.order
   if (!isRemixOrder(order)) throw new Error('Choose the order of the video.')
   if (!isRemixHost(raw.host)) throw new Error('Choose how your presenter appears.')
-  const avatarId = raw.host === 'voice' ? null : raw.avatarId
-  if (raw.host !== 'voice' && !isAvatarId(avatarId)) throw new Error('Choose an avatar, or switch to voice only.')
-  const voice = typeof raw.voice === 'string' && REMIX_VOICE_IDS.includes(raw.voice) ? raw.voice : null
+  const voice = raw.voice === AVATAR_VOICE ? AVATAR_VOICE : presetVoiceId(raw.voice)
   if (!voice) throw new Error('Choose a voice.')
+  // An avatar presents the video, or (voice only) lends its voice.
+  const avatarId = raw.host === 'voice' && voice !== AVATAR_VOICE ? null : raw.avatarId
+  if (raw.host !== 'voice' && !isAvatarId(avatarId)) throw new Error('Choose an avatar, or switch to voice only.')
+  if (voice === AVATAR_VOICE && !isAvatarId(avatarId)) throw new Error('Choose the avatar whose voice to use, or pick a preset voice.')
   const brandIdentityId = raw.brandIdentityId === null || raw.brandIdentityId === undefined ? null : raw.brandIdentityId
   if (brandIdentityId !== null && !isBrandId(brandIdentityId)) throw new Error('Choose a brand identity.')
   if (typeof raw.count !== 'number' || !Number.isInteger(raw.count) || raw.count < 1 || raw.count > MAX_REMIXES) throw new Error(`Make between 1 and ${MAX_REMIXES} remixes per video.`)
@@ -263,6 +268,18 @@ export async function varietyWarnings(drafts: RemixDraft[]): Promise<string[]> {
   return warnings
 }
 
+/**
+ * How the presenter speaks: the avatar's own voice (its clone, or its preset)
+ * when 'avatar' is chosen, otherwise the preset picked in Remix. The engine
+ * gets the ElevenLabs name in lower case, as OpenRouter lists it.
+ */
+export function remixVoice(voice: string, avatar: Pick<Avatar, 'voice' | 'clonedVoice'> | null): { preset: string; cloned: Avatar['clonedVoice'] } {
+  const own = voice === AVATAR_VOICE ? avatar?.voice ?? null : null
+  const cloned = own?.provider === 'clone' && avatar?.clonedVoice ? avatar.clonedVoice : null
+  const preset = own?.provider === 'elevenlabs' ? own.voice : voice === AVATAR_VOICE ? DEFAULT_VOICE_NAME : voice
+  return { preset: preset.toLowerCase(), cloned }
+}
+
 export async function startRemix(value: unknown): Promise<RemixStatus> {
   if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
   starting = true
@@ -272,11 +289,13 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     pending = { avatarId: request.avatarId, cancelled: false }
     const brand = request.brandIdentityId ? await readBrandIdentity(request.brandIdentityId) : null
     let photo: string | null = null
-    if (request.avatarId) {
-      readAvatar(request.avatarId)
+    const avatar = request.avatarId ? readAvatar(request.avatarId) : null
+    if (request.avatarId && request.host !== 'voice') {
       photo = portraitPath(request.avatarId)
       if (!existsSync(photo)) throw new Error('That avatar’s photo is missing. Choose another avatar.')
     }
+    const { preset, cloned } = remixVoice(request.voice, avatar)
+    if (cloned && !existsSync(voiceSamplePath(request.avatarId as string))) throw new Error('This avatar’s cloned voice recording is missing. Clone it again in Avatar Studio, or pick a preset voice.')
     // `remix-…` (not a bare id): the Library lists it only once it has finished videos.
     const folder = join(settings.outputDirectory, `remix-${randomUUID()}`)
     await preflight(folder)
@@ -289,12 +308,18 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       await copyFile(photo, copy)
       photo = copy
     }
+    let voiceReference: string | null = null
+    if (cloned) {
+      voiceReference = join(folder, '.voice.mp3')
+      await copyFile(voiceSamplePath(request.avatarId as string), voiceReference)
+    }
     if (pending.cancelled) { await rm(folder, { recursive: true, force: true }); throw new Error('Cancelled before it started.') }
     const context: RunContext = {
       request, draftIds: new Set(), planCostUsd: 0,
       config: {
         sources: request.sources, output_dir: folder, angle: request.angle, order: request.order, count: request.count, host: request.host,
-        voice: request.voice, avatar_photo: photo, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
+        voice: preset, voice_model: cloned ? 'fish-audio/s2.1-pro' : 'elevenlabs/eleven-v3', voice_reference: voiceReference,
+        voice_transcript: cloned?.transcript ?? '', avatar_photo: photo, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
         caption_preset: request.captionPreset, include_captions: request.includeCaptions,
         cta_keyword: request.ctaKeyword, cta_offer: request.ctaOffer
       }
@@ -345,6 +370,7 @@ export async function cleanupAbandoned(outputDirectory: string, keep: string | n
     try {
       await rm(join(folder, '.work'), { recursive: true, force: true })
       await rm(join(folder, '.presenter.jpg'), { force: true })
+      await rm(join(folder, '.voice.mp3'), { force: true })
       if ((await readdir(folder)).length === 0) await rm(folder, { recursive: true, force: true })
     } catch { /* best effort */ }
   }
@@ -410,7 +436,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     const planning = run.status.phase === 'planning'
     if (run.cancelled) {
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
-      else await rm(join(run.status.folder, '.presenter.jpg'), { force: true }).catch(() => undefined)
+      else for (const copy of ['.presenter.jpg', '.voice.mp3']) await rm(join(run.status.folder, copy), { force: true }).catch(() => undefined)
       finish(run, { phase: 'cancelled', detail: planning ? 'Cancelled while planning' : 'Cancelled' })
       return
     }
@@ -425,7 +451,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     } else if (result?.ok === true) {
       const outputs = (Array.isArray(result.remixes) ? result.remixes : []).map(parseRemixOutput).filter((item): item is RemixOutput => item !== null)
       await recordCreators(outputs.map((output) => output.creator))
-      await rm(join(run.status.folder, '.presenter.jpg'), { force: true }).catch(() => undefined)
+      for (const copy of ['.presenter.jpg', '.voice.mp3']) await rm(join(run.status.folder, copy), { force: true }).catch(() => undefined)
       logger.info('remix.done', { count: outputs.length, cost })
       finish(run, { phase: 'done', detail: 'Done', percent: 100, outputs, warnings, costUsd: (cost ?? 0) + run.context.planCostUsd })
     } else {

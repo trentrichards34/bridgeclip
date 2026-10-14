@@ -117,8 +117,8 @@ class FakeMedia:
     async def aclose(self):
         pass
 
-    async def speech(self, text, voice, instructions, out_path):
-        self.speech_calls.append((text, voice))
+    async def speech(self, text, out_path, voice=None, model=remix.TTS_MODEL, reference=None, transcript=""):
+        self.speech_calls.append((text, voice if model == remix.TTS_MODEL else ("clone", reference[:22], transcript)))
         seconds = max(1.0, len(text.split()) / 2.6)
         subprocess.run([self.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds:.2f}",
                         "-c:a", "libmp3lame", out_path], check=True, timeout=60)
@@ -181,7 +181,7 @@ def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar, orde
     media = FakeMedia(ffmpeg, fail_avatar)
     progress = []
     config = remix.RemixConfig(sources=[str(source)], output_dir=str(tmp_path / "out"), angle="myth_truth", count=2, host=host,
-                               voice="nova", avatar_photo=str(photo), creator="Coach Example", brand_name="Pull-Up Lab",
+                               voice="sarah", avatar_photo=str(photo), creator="Coach Example", brand_name="Pull-Up Lab",
                                brand_identity="We believe strength comes before weight loss.", order=order,
                                cta_keyword="pullup" if host == "voice" else "", cta_offer="my free pull-up plan" if host == "voice" else "")
     keyword = host == "voice"
@@ -207,7 +207,7 @@ def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar, orde
 
     assert len(result["remixes"]) == 2
     assert media.avatar_calls == (4 if host == "lipsync" else 0)
-    assert all(voice == "nova" for _, voice in media.speech_calls)
+    assert all(voice == "sarah" for _, voice in media.speech_calls)
     first = result["remixes"][0]
     assert os.path.isfile(first["path"]) and first["path"].endswith(".mp4")
     probe = json.loads(subprocess.run([ffprobe, "-v", "error", "-show_entries", "stream=codec_type,width,height", "-of", "json",
@@ -352,10 +352,31 @@ class TestAvatarClient:
             sleeps.append(seconds)
         monkeypatch.setattr(remix.asyncio, "sleep", no_sleep)
         out = str(tmp_path / "v.mp3")
-        asyncio.run(_media(lambda r: next(replies)).speech("Hello", "nova", "", out))
+        sent = []
+
+        def reply(request):
+            sent.append(json.loads(request.content))
+            return next(replies)
+        asyncio.run(_media(reply).speech("Hello", out, voice="sarah"))
         assert open(out, "rb").read() == b"mp3data" and sleeps == [1.0]
+        assert sent[-1] == {"model": "elevenlabs/eleven-v3", "input": "Hello", "response_format": "mp3", "voice": "sarah"}
         with pytest.raises(remix.RemixError, match="API key"):
-            asyncio.run(_media(lambda r: httpx.Response(401)).speech("Hello", "nova", "", out))
+            asyncio.run(_media(lambda r: httpx.Response(401)).speech("Hello", out))
+        # A rejected request is reported (and its reason logged), not retried.
+        with pytest.raises(remix.RemixError, match=r"generate the voice \(400\)"):
+            asyncio.run(_media(lambda r: httpx.Response(400, json={"error": {"message": "voice not found"}})).speech("Hello", out))
+
+    def test_cloned_voice_sends_the_recording_and_transcript(self, tmp_path):
+        import httpx
+        sent = []
+
+        def reply(request):
+            sent.append(json.loads(request.content))
+            return httpx.Response(200, content=b"mp3")
+        out = str(tmp_path / "v.mp3")
+        asyncio.run(_media(reply).speech("Hello", out, model=remix.CLONE_TTS_MODEL, reference="data:audio/mpeg;base64,AAAA", transcript="hi there"))
+        assert sent[0] == {"model": "fish-audio/s2.1-pro", "input": "Hello", "response_format": "mp3", "input_references": [
+            {"type": "input_audio", "input_audio": {"data": "data:audio/mpeg;base64,AAAA"}}, {"type": "text", "text": "hi there"}]}
 
 
 def test_a_failed_remix_keeps_the_ones_already_made(tmp_path, monkeypatch):
@@ -508,3 +529,22 @@ class TestCallToActionAndCaption:
         prompt = remix.plan_system_prompt("lessons", 3, "moment_first", "SALES", "my playbook")
         assert 'Comment SALES and I\'ll send you' in prompt and '"my playbook"' in prompt and "POST CAPTION" in prompt
         assert "Comment" not in remix.plan_system_prompt("lessons", 3).split("POST CAPTION")[0].split("CALL TO ACTION")[1][:80]
+
+
+def test_remix_speaks_with_the_avatars_cloned_voice(tmp_path):
+    reference = tmp_path / "voice.mp3"
+    reference.write_bytes(b"ID3voice")
+    settings = SimpleNamespace(openrouter_api_key="k", openrouter_base_url="https://x.test/api/v1", planner_model="m",
+                               get_planner_fallback_models=lambda: [], pexels_api_key=None)
+    config = remix.RemixConfig(output_dir=str(tmp_path / "out"), sources=["x"], host="voice", voice_model=remix.CLONE_TTS_MODEL,
+                               voice_reference=str(reference), voice_transcript="hello there")
+    remixer = remix.Remixer(config, media=FakeMedia("ffmpeg"), settings=settings)
+    voice = remixer._voice()
+    assert voice["model"] == remix.CLONE_TTS_MODEL and voice["transcript"] == "hello there"
+    assert voice["reference"] == "data:audio/mpeg;base64,SUQzdm9pY2U="
+    with pytest.raises(remix.RemixError, match="cloned voice"):
+        remix.Remixer(remix.RemixConfig(output_dir=str(tmp_path), host="voice", voice_model=remix.CLONE_TTS_MODEL), media=FakeMedia("ffmpeg"), settings=settings)
+    missing = remix.Remixer(remix.RemixConfig(output_dir=str(tmp_path), host="voice", voice_model=remix.CLONE_TTS_MODEL,
+                                              voice_reference=str(tmp_path / "gone.mp3")), media=FakeMedia("ffmpeg"), settings=settings)
+    with pytest.raises(remix.RemixError, match="Clone the voice again"):
+        missing._voice()

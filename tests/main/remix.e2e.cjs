@@ -80,10 +80,10 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   }
 
   // Hear the voice before choosing it; a replay doesn't ask main again.
-  await page.getByRole('button', { name: 'Hear Onyx' }).click()
-  await page.waitForFunction(() => true)
-  assert.deepEqual(await app.evaluate(() => globalThis.sampleRequests), [{ kind: 'remix', voice: 'onyx' }])
-  await page.getByRole('button', { name: /^(Stop the Onyx sample|Hear Onyx)$/ }).waitFor()
+  // By default the presenter speaks with the avatar's own voice (set in Avatar Studio).
+  await page.getByRole('button', { name: 'Hear Maya’s voice (Brian)' }).click()
+  await page.getByRole('button', { name: /^(Stop the Maya’s voice \(Brian\) sample|Hear Maya’s voice \(Brian\))$/ }).waitFor()
+  assert.deepEqual(await app.evaluate(() => globalThis.sampleRequests), [{ kind: 'avatar', voice: { provider: 'elevenlabs', voice: 'Brian' }, avatarId: 'a'.repeat(16) }])
   assert.equal(await page.getByText('That sample could not be played.').count(), 0)
 
   await page.getByRole('radio', { name: /Myth vs\. truth/ }).click()
@@ -96,6 +96,7 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   assert.equal(request.angle, 'myth_truth')
   assert.equal(request.order, 'moment_first')
   assert.equal(request.host, 'lipsync')
+  assert.equal(request.voice, 'avatar')
   assert.equal(request.avatarId, 'a'.repeat(16))
   assert.equal(request.count, 3)
   assert.equal(request.aiLabelAck, true)

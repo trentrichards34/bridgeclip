@@ -4,6 +4,8 @@
  * every model call goes through OpenRouter, stock B-roll through Pexels.
  */
 
+import { PRESET_VOICE_IDS, PRESET_VOICES } from './voices'
+
 export type RemixStyle = 'reaction' | 'myth_truth' | 'science' | 'lessons' | 'do_this_instead'
 /** A style, or 'mix': the AI picks a fitting style per moment so the account doesn't repeat one template. */
 export type RemixAngle = RemixStyle | 'mix'
@@ -36,21 +38,13 @@ export const REMIX_HOSTS: { id: RemixHost; label: string; detail: string }[] = [
   { id: 'voice', label: 'Voice only', detail: 'Voice-over on B-roll and stills, cheapest' }
 ]
 
-/** OpenAI voices on OpenRouter (gpt-4o-mini-tts). */
-export const REMIX_VOICES: { id: string; label: string; detail: string }[] = [
-  { id: 'onyx', label: 'Onyx', detail: 'Deep, steady (male)' },
-  { id: 'ash', label: 'Ash', detail: 'Clear, confident (male)' },
-  { id: 'echo', label: 'Echo', detail: 'Warm, even (male)' },
-  { id: 'verse', label: 'Verse', detail: 'Expressive (male)' },
-  { id: 'ballad', label: 'Ballad', detail: 'Soft, storytelling (male)' },
-  { id: 'nova', label: 'Nova', detail: 'Bright, upbeat (female)' },
-  { id: 'coral', label: 'Coral', detail: 'Friendly, energetic (female)' },
-  { id: 'shimmer', label: 'Shimmer', detail: 'Light, warm (female)' },
-  { id: 'sage', label: 'Sage', detail: 'Calm, thoughtful (female)' },
-  { id: 'alloy', label: 'Alloy', detail: 'Neutral' },
-  { id: 'fable', label: 'Fable', detail: 'Animated, British' }
-]
-export const REMIX_VOICE_IDS: readonly string[] = REMIX_VOICES.map((voice) => voice.id)
+/**
+ * Remix speaks with the same voices as Avatar Studio: 'avatar' is the chosen
+ * avatar's own voice (its clone or its preset); otherwise an ElevenLabs preset.
+ */
+export const AVATAR_VOICE = 'avatar'
+export const REMIX_VOICES: { id: string; label: string; detail: string }[] = PRESET_VOICES.map((voice) => ({ id: voice.id, label: voice.label, detail: voice.hint }))
+export const REMIX_VOICE_IDS: readonly string[] = [AVATAR_VOICE, ...PRESET_VOICE_IDS]
 
 export const MAX_REMIXES = 10
 export const MAX_SOURCES = 10
@@ -88,8 +82,8 @@ export const REMIX_PRICES = {
   /** The avatar is on camera for the opening and closing lines: about 10-23 seconds per remix. */
   onCameraSecondsLow: 10,
   onCameraSecondsHigh: 23,
-  /** Voice for ~30 seconds of narration. */
-  voicePerRemix: 0.01,
+  /** Voice for ~30 seconds of narration (ElevenLabs v3, about 400 characters). */
+  voicePerRemix: 0.03,
   /** Transcribing and planning, per hour of source video. */
   sourcePerHour: 0.35
 }

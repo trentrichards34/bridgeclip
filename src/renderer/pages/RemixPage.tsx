@@ -5,7 +5,7 @@ import type { AvatarSummary } from '../../shared/avatars'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import {
   BRAND_IDENTITY_TEMPLATE, brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_POST_CAPTION_CHARS, MAX_SOURCES,
-  closeWithoutCta, normalizeCtaKeyword, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
+  closeWithoutCta, normalizeCtaKeyword, AVATAR_VOICE, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
   REMIX_WORD_LIMITS, remixEditProblem, remixSourceUrl, STANCE_LABELS, STYLE_LABELS, wordCount,
   type BrandIdentity, type RemixAngle, type RemixDraft, type RemixEdit, type RemixHost, type RemixOrder, type RemixOutput, type RemixStatus
 } from '../../shared/remix'
@@ -55,7 +55,7 @@ interface FormDraft {
 
 /** The form survives navigating away (e.g. to Settings to add a key). */
 const useRemixForm = create<FormDraft>((set) => ({
-  links: '', filePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'lipsync', avatarId: null, voice: 'onyx',
+  links: '', filePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'lipsync', avatarId: null, voice: AVATAR_VOICE,
   count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false, ctaKeyword: '', ctaOffer: '',
   update: (patch) => set(patch)
 }))
@@ -98,6 +98,10 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
   const { links, invalid } = parseLinks(form.links)
   const sources = form.filePath ? [form.filePath] : links
   const needsAvatar = form.host !== 'voice'
+  // The avatar's own voice (its clone or preset) unless a preset is picked here; voice-only can borrow it too.
+  const usesAvatarVoice = form.voice === AVATAR_VOICE
+  const showAvatars = needsAvatar || usesAvatarVoice
+  const avatarVoiceName = avatar ? (avatar.voice.provider === 'clone' ? `${avatar.name}’s cloned voice` : `${avatar.name}’s voice (${avatar.voice.voice})`) : 'Your avatar’s voice'
   const cost = estimateRemixCost(form.host, form.count)
   const keyword = normalizeCtaKeyword(form.ctaKeyword)
   const brandKeyword = brand ? brandCtaKeyword(brand.text) : ''
@@ -107,6 +111,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         : invalid.length > 0 && !form.filePath ? 'Fix the links that aren’t valid'
           : form.filePath && !form.creator.trim() ? 'Add the original creator’s name for the credit'
             : needsAvatar && !avatar ? 'Create an avatar in Avatar Studio, or use voice only'
+              : usesAvatarVoice && !avatar ? 'Create an avatar in Avatar Studio, or pick a preset voice'
               : keyword === null ? 'Use one word for the comment keyword, like SALES'
               : !form.aiLabelAck ? 'Confirm you’ll turn on the AI label when you post' : null
 
@@ -136,7 +141,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
     try {
       const started = await getApi().remix.start({
         sources, creator: sources.length === 1 ? form.creator : '', angle: form.angle, order: form.order, host: form.host,
-        avatarId: needsAvatar ? avatar?.id ?? null : null, voice: form.voice, brandIdentityId: brand?.id ?? null, count: form.count,
+        avatarId: showAvatars ? avatar?.id ?? null : null, voice: form.voice, brandIdentityId: brand?.id ?? null, count: form.count,
         captionPreset: form.captionPreset, includeCaptions: form.includeCaptions, aiLabelAck: form.aiLabelAck,
         ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : ''
       })
@@ -304,7 +309,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                 )
               })}
             </div>
-            {needsAvatar && (avatars.length === 0 ? (
+            {showAvatars && (avatars.length === 0 ? (
               <EmptyState icon={<UserRound />} title="No avatars yet" description="Create one in Avatar Studio from your photo, then come back."
                 action={<Button size="sm" onClick={() => onNavigate('avatar')}>Open Avatar Studio</Button>} />
             ) : (
@@ -322,10 +327,15 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
             <Field label="Voice">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
-                  <Select value={form.voice} onChange={(voice) => form.update({ voice })}
-                    options={REMIX_VOICES.map((voice) => ({ value: voice.id, label: voice.label, detail: voice.detail }))} />
+                  <Select value={form.voice} searchable onChange={(voice) => form.update({ voice })}
+                    options={[{ value: AVATAR_VOICE, label: avatarVoiceName, detail: 'Set in Avatar Studio · clone your voice there' },
+                      ...REMIX_VOICES.map((voice) => ({ value: voice.id, label: voice.label, detail: voice.detail }))]} />
                 </div>
-                <VoicePreview request={{ kind: 'remix', voice: form.voice }} name={REMIX_VOICES.find((voice) => voice.id === form.voice)?.label ?? form.voice} />
+                {(!usesAvatarVoice || avatar) && (
+                  <VoicePreview
+                    request={usesAvatarVoice && avatar ? { kind: 'avatar', voice: avatar.voice, avatarId: avatar.id } : { kind: 'avatar', voice: { provider: 'elevenlabs', voice: form.voice } }}
+                    name={usesAvatarVoice ? avatarVoiceName : form.voice} />
+                )}
               </div>
             </Field>
           </div>
