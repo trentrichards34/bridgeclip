@@ -20,7 +20,8 @@ export const CAPTION_PRESETS = [
   { id: 'beast', name: 'Beast', description: 'Comic type, challenge energy' },
   { id: 'bubble', name: 'Bubble', description: 'Rounded & friendly' },
   { id: 'retro', name: 'Retro', description: 'Cream type, hard orange shadow' },
-  { id: 'lime', name: 'Lime', description: 'Word on a lime pill' }
+  { id: 'lime', name: 'Lime', description: 'Word on a lime pill' },
+  { id: 'vintage', name: 'Vintage', description: 'Retro ad-style serif' }
 ] as const
 
 export type CaptionPresetId = (typeof CAPTION_PRESETS)[number]['id']

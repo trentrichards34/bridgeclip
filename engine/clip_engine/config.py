@@ -245,6 +245,7 @@ class CaptionPreset:
     BUBBLE = "bubble"
     RETRO = "retro"
     LIME = "lime"
+    VINTAGE = "vintage"
 
 
 DEFAULT_CAPTION_PRESET = CaptionPreset.POP
@@ -270,6 +271,7 @@ def get_caption_preset(preset_id: str) -> CaptionStyle:
         CaptionPreset.BUBBLE: _create_bubble_style,
         CaptionPreset.RETRO: _create_retro_style,
         CaptionPreset.LIME: _create_lime_style,
+        CaptionPreset.VINTAGE: _create_vintage_style,
     }
 
     builder = builders.get(preset_id)
@@ -384,6 +386,12 @@ def get_available_presets() -> list[dict]:
             "name": "Lime",
             "description": "Archivo Black with the spoken word on a lime pill - business & finance",
             "preview_colors": {"primary": "#FFFFFF", "highlight": "#0B0B0B"},
+        },
+        {
+            "id": CaptionPreset.VINTAGE,
+            "name": "Vintage",
+            "description": "Fraunces Black, a retro ad-style serif in cream with a mustard active word - stories, money & business",
+            "preview_colors": {"primary": "#FFF3DD", "highlight": "#FFB547"},
         },
     ]
 
@@ -1030,4 +1038,24 @@ def _create_lime_style() -> CaptionStyle:
     s.highlight_box_color = "#C6FF3D"
     s.highlight_box_padding = 16
     s.emphasis_color = "#C6FF3D"
+    return s
+
+
+def _create_vintage_style() -> CaptionStyle:
+    """Vintage: Fraunces Black (a free retro serif in the spirit of old print ads), sentence case,
+    cream with a mustard active word, dark-brown stroke and a hard printed shadow."""
+    s = CaptionStyle()
+    s.font_name = "Fraunces 72pt Black"
+    s.font_size = 98
+    s.uppercase = False
+    s.primary_color = "#FFF3DD"
+    s.highlight_color = "#FFB547"
+    s.outline_color = "#1E120A"
+    s.outline_width = 6
+    s.shadow_color = "#1E120A"
+    s.shadow_opacity = 0.85
+    s.shadow_blur = 0
+    s.shadow_offset = 7
+    s.shadow_spread = 0
+    s.emphasis_color = "#FF6B4A"
     return s

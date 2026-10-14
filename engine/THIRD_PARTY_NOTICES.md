@@ -12,6 +12,7 @@ The [MIT license](LICENSE) covers CreatorClips clipping engine source (based on 
 | Plus Jakarta Sans | `assets/fonts/PlusJakartaSans.ttf` | [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans), SIL Open Font License 1.1; text in `assets/fonts/PlusJakartaSans-OFL.txt`. |
 | Bangers | `assets/fonts/Bangers-Regular.ttf` | [Google Fonts Bangers](https://github.com/google/fonts/tree/main/ofl/bangers), SIL Open Font License 1.1; text in `assets/fonts/Bangers-OFL.txt`. |
 | Lilita One | `assets/fonts/LilitaOne-Regular.ttf` | [Google Fonts Lilita One](https://github.com/google/fonts/tree/main/ofl/lilitaone), SIL Open Font License 1.1; text in `assets/fonts/LilitaOne-OFL.txt`. |
+| Fraunces 72pt Black | `assets/fonts/Fraunces72pt-Black.ttf` | [Fraunces](https://github.com/undercasetype/Fraunces) by Undercase Type, SIL Open Font License 1.1; text in `assets/fonts/Fraunces-OFL.txt`. |
 | Bowlby One | `assets/fonts/BowlbyOne-Regular.ttf` | [Google Fonts Bowlby One](https://github.com/google/fonts/tree/main/ofl/bowlbyone), SIL Open Font License 1.1; text in `assets/fonts/BowlbyOne-OFL.txt`. |
 | YuNet face detector | `assets/models/face_detection_yunet_2023mar.onnx` | [OpenCV Zoo YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet), MIT; text in `assets/models/YuNet-LICENSE`. The model file was checked byte for byte against the upstream copy during this review. |
 

@@ -52,6 +52,12 @@
   font-display: swap;
 }
 @font-face {
+  font-family: 'Fraunces 72pt Black';
+  src: url('../../engine/assets/fonts/Fraunces72pt-Black.ttf') format('truetype');
+  font-weight: 900;
+  font-display: swap;
+}
+@font-face {
   font-family: 'Bowlby One';
   src: url('../../engine/assets/fonts/BowlbyOne-Regular.ttf') format('truetype');
   font-weight: 400;

@@ -304,6 +304,20 @@ const PRESETS: CaptionPreset[] = [
     uppercase: true,
     pill: '#C6FF3D',
     words: ['one ad', 'made', 'a million']
+  },
+  {
+    id: 'vintage',
+    name: 'Vintage',
+    description: 'Retro ad-style serif',
+    font: '"Fraunces 72pt Black", "Georgia", serif',
+    weight: 900,
+    size: 15,
+    primary: '#FFF3DD',
+    highlight: '#FFB547',
+    stroke: 6,
+    shadow: 'hard',
+    uppercase: false,
+    words: ['your best', 'reel made', '$0']
   }
 ]
 
