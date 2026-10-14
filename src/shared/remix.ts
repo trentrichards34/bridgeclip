@@ -23,6 +23,19 @@ export const STYLE_LABELS: Record<RemixStyle, string> = {
   reaction: 'Reaction take', myth_truth: 'Myth vs. truth', science: 'The science behind it', lessons: 'Lessons from this', do_this_instead: 'Do this instead'
 }
 
+/**
+ * commentary: the presenter gives a voiced take around a short borrowed moment.
+ * silent: the moment plays with its own sound while the avatar reacts silently behind it (green screen).
+ */
+export type RemixFormat = 'commentary' | 'silent'
+export const REMIX_FORMATS: { id: RemixFormat; label: string; detail: string }[] = [
+  { id: 'commentary', label: 'Voiced take', detail: 'A few seconds of their moment, then your presenter’s take in your voice' },
+  { id: 'silent', label: 'Silent react', detail: 'Their moment plays with its sound; your avatar reacts behind it without speaking' }
+]
+
+/** A silent reaction timed into the moment (seconds from its start). */
+export interface RemixCue { at: number; reaction: string }
+
 /** moment_first: the borrowed moment is the hook, then the presenter reacts. take_first: the presenter opens. */
 export type RemixOrder = 'moment_first' | 'take_first'
 export const REMIX_ORDERS: { id: RemixOrder; label: string; detail: string }[] = [
@@ -90,7 +103,9 @@ export const REMIX_PRICES = {
 }
 
 /** Per-remix range (the avatar's speaking time varies) and the total at the high end. */
-export function estimateRemixCost(host: RemixHost, count: number, sourceHours = 0.5): { perRemixLow: number; perRemixHigh: number; total: number } {
+export function estimateRemixCost(host: RemixHost, count: number, sourceHours = 0.5, format: RemixFormat = 'commentary'): { perRemixLow: number; perRemixHigh: number; total: number } {
+  // Silent reacts reuse the avatar's reaction clips: nothing is voiced or animated per video.
+  if (format === 'silent') return { perRemixLow: 0, perRemixHigh: 0, total: REMIX_PRICES.sourcePerHour * Math.max(0.1, sourceHours) }
   const avatar = (seconds: number): number => host === 'lipsync' ? seconds * REMIX_PRICES.avatarPerSecond : 0
   const perRemixLow = REMIX_PRICES.voicePerRemix + avatar(REMIX_PRICES.onCameraSecondsLow)
   const perRemixHigh = REMIX_PRICES.voicePerRemix + avatar(REMIX_PRICES.onCameraSecondsHigh)
@@ -126,6 +141,9 @@ export interface RemixRequest {
   ctaKeyword: string
   /** What commenters get ("my free playbook"), used in "Comment SALES and I'll send you …". */
   ctaOffer: string
+  format: RemixFormat
+  /** Silent react plays much more of the clip: the user confirmed they're allowed to use it. */
+  clipRightsAck: boolean
 }
 
 export interface RemixGrade {
@@ -159,6 +177,9 @@ export interface RemixDraft {
   estimateUsd: number
   /** The caption for the post: takeaways, the call to action and the credit. */
   postCaption: string
+  format: RemixFormat
+  /** Silent react: when each reaction plays. */
+  cues: RemixCue[]
 }
 
 /** What the user approves: the draft id and any edited text. */
@@ -299,7 +320,12 @@ export function parseRemixDraft(value: unknown): RemixDraft | null {
     stance: raw.stance === 'agree_extend' || raw.stance === 'disagree_correct' ? raw.stance : 'add_nuance',
     headline: text(raw.headline, 200), intro: text(raw.intro, 400), beats, close: text(raw.close, 400),
     notes: Array.isArray(raw.notes) ? raw.notes.filter((n): n is string => typeof n === 'string').map((n) => text(n, 300)).slice(0, 6) : [],
-    grade: parseGrade(raw.grade), estimateUsd: number(raw.estimate_usd), postCaption: captionText(raw.post_caption)
+    grade: parseGrade(raw.grade), estimateUsd: number(raw.estimate_usd), postCaption: captionText(raw.post_caption),
+    format: raw.format === 'silent' ? 'silent' : 'commentary',
+    cues: Array.isArray(raw.cues) ? raw.cues.flatMap((item): RemixCue[] => {
+      const cue = (item ?? {}) as Record<string, unknown>
+      return typeof cue.reaction === 'string' && typeof cue.at === 'number' && Number.isFinite(cue.at) ? [{ at: Math.max(0, cue.at), reaction: cue.reaction.slice(0, 20) }] : []
+    }).slice(0, 8) : []
   }
 }
 
@@ -319,9 +345,11 @@ export function closeWithoutCta(close: string): string {
 export const MAX_CLOSE_WORDS_WITH_CTA = 60
 
 /** What's wrong with an edited take, or null when it's ready to make. */
-export function remixEditProblem(edit: Pick<RemixEdit, 'headline' | 'intro' | 'beats' | 'close'> & { postCaption?: string }): string | null {
+export function remixEditProblem(edit: Pick<RemixEdit, 'headline' | 'intro' | 'beats' | 'close'> & { postCaption?: string }, format: RemixFormat = 'commentary'): string | null {
   if (wordCount(edit.headline) < 3) return 'The headline needs at least 3 words.'
   if (wordCount(edit.headline) > REMIX_WORD_LIMITS.headline) return `Keep the headline to ${REMIX_WORD_LIMITS.headline} words.`
+  // Silent reacts have no spoken lines: just the headline and the caption.
+  if (format === 'silent') return (edit.postCaption ?? '').length > MAX_POST_CAPTION_CHARS ? `Keep the caption to ${MAX_POST_CAPTION_CHARS.toLocaleString('en-US')} characters.` : null
   if (!edit.intro.trim()) return 'Add an opening line.'
   if (wordCount(edit.intro) > REMIX_WORD_LIMITS.intro) return `Keep the opening to ${REMIX_WORD_LIMITS.intro} words.`
   if (!edit.beats.some((beat) => beat.text.trim())) return 'Keep at least one voice-over beat.'
@@ -336,7 +364,7 @@ export function remixEditProblem(edit: Pick<RemixEdit, 'headline' | 'intro' | 'b
 }
 
 /** Approved edits from the renderer, checked in main before they reach the engine. */
-export function parseRemixEdits(value: unknown, draftIds: ReadonlySet<number>): RemixEdit[] {
+export function parseRemixEdits(value: unknown, draftIds: ReadonlySet<number>, silentIds: ReadonlySet<number> = new Set()): RemixEdit[] {
   if (!Array.isArray(value) || value.length === 0) throw new Error('Choose at least one remix to make.')
   const edits: RemixEdit[] = []
   const seen = new Set<number>()
@@ -354,7 +382,7 @@ export function parseRemixEdits(value: unknown, draftIds: ReadonlySet<number>): 
       throw new Error(`“${headline.slice(0, 60) || 'A take'}”: Keep the caption to ${MAX_POST_CAPTION_CHARS.toLocaleString('en-US')} characters.`)
     }
     const postCaption = captionText(raw.postCaption)
-    const problem = remixEditProblem({ headline, intro, beats, close, postCaption })
+    const problem = remixEditProblem({ headline, intro, beats, close, postCaption }, silentIds.has(id) ? 'silent' : 'commentary')
     if (problem) throw new Error(`“${headline.slice(0, 60) || 'A take'}”: ${problem}`)
     // An empty caption keeps the one the AI wrote.
     edits.push({ id, headline, intro, beats, close, ...(postCaption ? { postCaption } : {}) })

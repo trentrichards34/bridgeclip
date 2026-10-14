@@ -20,6 +20,8 @@ class ParseConfigTests(unittest.TestCase):
         self.assertEqual((config.angle, config.count, config.voice, config.host, config.order), ("reaction", 2, "sarah", "voice", "moment_first"))
         clone = remix_runner.parse_config(self.base(voice_model="fish-audio/s2.1-pro", voice_reference=os.path.abspath("v.mp3"), voice_transcript="hi"))
         self.assertEqual((clone.voice_model, clone.voice_transcript), ("fish-audio/s2.1-pro", "hi"))
+        silent = remix_runner.parse_config(self.base(format="silent", reactions={"nod": os.path.abspath("nod.mp4")}, reactions_ai=False))
+        self.assertEqual((silent.format, silent.reactions, silent.reactions_ai), ("silent", {"nod": os.path.abspath("nod.mp4")}, False))
         render = remix_runner.parse_config({"mode": "render", "output_dir": os.path.abspath("out"), "angle": "mix", "host": "voice"})
         self.assertEqual(render.sources, [])
         cta = remix_runner.parse_config(self.base(cta_keyword=" sales ", cta_offer="  my   playbook "))
@@ -30,7 +32,8 @@ class ParseConfigTests(unittest.TestCase):
                     self.base(output_dir="relative"), self.base(avatar_photo="photo.jpg"), self.base(sources=[]), self.base(sources=["x"] * 11), self.base(sources=[5]), self.base(order="random"), self.base(mode="go"),
                     self.base(creator="x" * 500), self.base(voice=5), self.base(cta_keyword="two words"),
                     self.base(cta_keyword=5), self.base(cta_offer="x" * 500), self.base(voice="onyx"),
-                    self.base(voice_model="openai/gpt-4o-mini-tts"), self.base(voice_reference="rel.mp3"), "nope"):
+                    self.base(voice_model="openai/gpt-4o-mini-tts"), self.base(voice_reference="rel.mp3"), self.base(format="dance"),
+                    self.base(format="silent", reactions={"wave": "/x.mp4"}), self.base(format="silent", reactions={"nod": "rel.mp4"}), "nope"):
             with self.assertRaises(ValueError):
                 remix_runner.parse_config(bad)
 

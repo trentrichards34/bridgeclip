@@ -16,12 +16,12 @@ MAX_REQUEST = 262144
 STRING_LIMITS = {"output_dir": 4096, "angle": 32, "host": 16, "voice": 32, "avatar_photo": 4096, "order": 16,
                  "brand_identity": 60000, "brand_name": 120, "creator": 120, "caption_preset": 64, "mode": 8,
                  "cta_keyword": 32, "cta_offer": 200,
-                 "voice_model": 64, "voice_reference": 4096, "voice_transcript": 4000}
+                 "voice_model": 64, "voice_reference": 4096, "voice_transcript": 4000, "format": 16}
 
 
 def parse_config(raw):
-    from clip_engine.services.remix_service import (ANGLES, DEFAULT_VOICE, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, TTS_MODEL, TTS_MODELS,
-                                                    VOICES, RemixConfig, normalize_keyword)
+    from clip_engine.services.remix_service import (ANGLES, DEFAULT_VOICE, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, REACTION_KINDS, TTS_MODEL,
+                                                    TTS_MODELS, VOICES, RemixConfig, normalize_keyword)
     if not isinstance(raw, dict):
         raise ValueError("Invalid request")
     for key, limit in STRING_LIMITS.items():
@@ -51,6 +51,11 @@ def parse_config(raw):
     reference = raw.get("voice_reference")
     if voice_model not in TTS_MODELS or voice not in VOICES or (reference is not None and not os.path.isabs(reference)):
         raise ValueError("Invalid voice")
+    fmt = raw.get("format") or "commentary"
+    reactions = raw.get("reactions") or {}
+    if fmt not in ("commentary", "silent") or not isinstance(reactions, dict) or any(
+            k not in REACTION_KINDS or not isinstance(v, str) or len(v) > 4096 or "\0" in v or not os.path.isabs(v) for k, v in reactions.items()):
+        raise ValueError("Invalid format")
     try:
         keyword = normalize_keyword(raw.get("cta_keyword"))
     except ValueError:
@@ -62,6 +67,7 @@ def parse_config(raw):
         avatar_photo=photo, brand_identity=raw.get("brand_identity") or "",
         brand_name=raw.get("brand_name") or "", creator=raw.get("creator") or "",
         caption_preset=raw.get("caption_preset") or "pop", include_captions=raw.get("include_captions") is not False,
+        format=fmt, reactions=dict(reactions), reactions_ai=raw.get("reactions_ai") is not False,
         cta_keyword=keyword, cta_offer=" ".join((raw.get("cta_offer") or "").split())[:80],
     )
 

@@ -14,7 +14,7 @@ import {
 import { presetVoiceId, type Avatar } from '../shared/avatars'
 
 const DEFAULT_VOICE_NAME = 'Brian'
-import { portraitPath, readAvatar, voiceSamplePath } from './avatars'
+import { portraitPath, readAvatar, readReactions, voiceSamplePath } from './avatars'
 import { logger } from './logger'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
 import { assertMediaPath } from './security'
@@ -171,10 +171,14 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   if (!isRemixHost(raw.host)) throw new Error('Choose how your presenter appears.')
   // Lip-sync to our own voice isn't possible on OpenRouter yet: the avatar's photo presents instead.
   const host = raw.host === 'lipsync' ? 'still' : raw.host
+  const format = raw.format === 'silent' ? 'silent' : 'commentary'
+  if (raw.format !== undefined && raw.format !== 'silent' && raw.format !== 'commentary') throw new Error('Choose the kind of remix.')
+  if (format === 'silent' && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use these clips: Silent react plays much more of them.')
+  if (format === 'silent' && !isAvatarId(raw.avatarId)) throw new Error('Choose the avatar whose reactions to use.')
   const voice = raw.voice === AVATAR_VOICE ? AVATAR_VOICE : presetVoiceId(raw.voice)
   if (!voice) throw new Error('Choose a voice.')
   // An avatar presents the video, or (voice only) lends its voice.
-  const avatarId = host === 'voice' && voice !== AVATAR_VOICE ? null : raw.avatarId
+  const avatarId = host === 'voice' && voice !== AVATAR_VOICE && format !== 'silent' ? null : raw.avatarId
   if (host !== 'voice' && !isAvatarId(avatarId)) throw new Error('Choose an avatar, or switch to voice only.')
   if (voice === AVATAR_VOICE && !isAvatarId(avatarId)) throw new Error('Choose the avatar whose voice to use, or pick a preset voice.')
   const brandIdentityId = raw.brandIdentityId === null || raw.brandIdentityId === undefined ? null : raw.brandIdentityId
@@ -195,7 +199,7 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
       sources: sources.map((source, i) => urls[i] ?? source), creator: sources.length === 1 ? creator : '', angle: raw.angle, order,
       host, avatarId: avatarId as string | null, voice, brandIdentityId,
       count: raw.count, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: true,
-      ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : ''
+      ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : '', format, clipRightsAck: format === 'silent'
     }
   }
 }
@@ -310,6 +314,19 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       await copyFile(photo, copy)
       photo = copy
     }
+    // Silent react: the avatar's reaction clips, copied so editing the avatar can't break the run.
+    const reactions: Record<string, string> = {}
+    let reactionsAi = false
+    if (request.format === 'silent') {
+      const clips = readReactions(request.avatarId as string)
+      if (!clips.length) throw new Error('Make this avatar’s reactions in Avatar Studio first (Reactions for Silent react).')
+      await mkdir(join(folder, '.reactions'), { recursive: true })
+      for (const clip of clips) {
+        reactions[clip.id] = join(folder, '.reactions', `${clip.id}.mp4`)
+        await copyFile(clip.path, reactions[clip.id])
+        reactionsAi ||= clip.source === 'ai'
+      }
+    }
     let voiceReference: string | null = null
     if (cloned) {
       voiceReference = join(folder, '.voice.mp3')
@@ -321,7 +338,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       config: {
         sources: request.sources, output_dir: folder, angle: request.angle, order: request.order, count: request.count, host: request.host,
         voice: preset, voice_model: cloned ? 'fish-audio/s2.1-pro' : 'elevenlabs/eleven-v3', voice_reference: voiceReference,
-        voice_transcript: cloned?.transcript ?? '', avatar_photo: photo, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
+        voice_transcript: cloned?.transcript ?? '', avatar_photo: request.format === 'silent' ? null : photo,
+        format: request.format, reactions, reactions_ai: reactionsAi, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
         caption_preset: request.captionPreset, include_captions: request.includeCaptions,
         cta_keyword: request.ctaKeyword, cta_offer: request.ctaOffer
       }
@@ -330,7 +348,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       cancelled: false, avatarId: request.avatarId, context,
       status: {
         id: randomBytes(6).toString('hex'), phase: 'planning', detail: 'Starting', percent: 1, folder,
-        estimateUsd: estimateRemixCost(request.host, request.count * request.sources.length).total,
+        estimateUsd: estimateRemixCost(request.host, request.count * request.sources.length, 0.5, request.format).total,
         drafts: [], outputs: [], costUsd: null, warnings: [], error: null
       }
     }
@@ -346,7 +364,7 @@ export async function renderRemix(value: unknown): Promise<RemixStatus> {
   if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
   const run = reviewing
   if (!run || run.status.phase !== 'review') throw new Error('There is nothing waiting for review. Plan the remixes again.')
-  const edits = parseRemixEdits(value, run.context.draftIds)
+  const edits = parseRemixEdits(value, run.context.draftIds, new Set(run.status.drafts.filter((draft) => draft.format === 'silent').map((draft) => draft.id)))
   reviewing = null
   active = run
   run.cancelled = false
@@ -373,6 +391,7 @@ export async function cleanupAbandoned(outputDirectory: string, keep: string | n
       await rm(join(folder, '.work'), { recursive: true, force: true })
       await rm(join(folder, '.presenter.jpg'), { force: true })
       await rm(join(folder, '.voice.mp3'), { force: true })
+      await rm(join(folder, '.reactions'), { recursive: true, force: true })
       if ((await readdir(folder)).length === 0) await rm(folder, { recursive: true, force: true })
     } catch { /* best effort */ }
   }
@@ -438,7 +457,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     const planning = run.status.phase === 'planning'
     if (run.cancelled) {
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
-      else for (const copy of ['.presenter.jpg', '.voice.mp3']) await rm(join(run.status.folder, copy), { force: true }).catch(() => undefined)
+      else for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
       finish(run, { phase: 'cancelled', detail: planning ? 'Cancelled while planning' : 'Cancelled' })
       return
     }
@@ -453,7 +472,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     } else if (result?.ok === true) {
       const outputs = (Array.isArray(result.remixes) ? result.remixes : []).map(parseRemixOutput).filter((item): item is RemixOutput => item !== null)
       await recordCreators(outputs.map((output) => output.creator))
-      for (const copy of ['.presenter.jpg', '.voice.mp3']) await rm(join(run.status.folder, copy), { force: true }).catch(() => undefined)
+      for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
       logger.info('remix.done', { count: outputs.length, cost })
       finish(run, { phase: 'done', detail: 'Done', percent: 100, outputs, warnings, costUsd: (cost ?? 0) + run.context.planCostUsd })
     } else {

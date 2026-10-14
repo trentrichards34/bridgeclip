@@ -6,8 +6,8 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'fs/promis
 import { basename, extname, join } from 'path'
 import { promisify } from 'util'
 import {
-  AI_PORTRAIT_CANDIDATES, DEFAULT_VOICE, isAvatarId, isPortraitLook, OPENROUTER_MODELS, parseVoice, PORTRAIT_LOOKS,
-  type Avatar, type AvatarKind, type AvatarSummary, type AvatarVoice
+  AI_PORTRAIT_CANDIDATES, DEFAULT_VOICE, isAvatarId, isPortraitLook, isReactionId, REACTIONS, OPENROUTER_MODELS, parseVoice, PORTRAIT_LOOKS,
+  type Avatar, type AvatarKind, type AvatarReaction, type AvatarSummary, type AvatarVoice
 } from '../shared/avatars'
 import { falInputUrl } from './fal'
 import { generateImage, openRouterBase, OpenRouterMediaError, synthesizeSpeech, type MediaOptions, type SpeechRequest } from './openrouter-media'
@@ -56,6 +56,22 @@ export function portraitPath(id: string): string {
     if (typeof file === 'string' && PORTRAIT_FILE.test(file)) return join(avatarDir(id), file)
   } catch { /* new avatar, or the original file name */ }
   return join(avatarDir(id), 'portrait.jpg')
+}
+
+/** Where the avatar's silent reaction clips live: <id>.mp4 plus reactions.json (source of each). */
+export function reactionsDir(id: string): string {
+  return join(avatarDir(id), 'reactions')
+}
+
+/** The avatar's reaction clips on disk, in library order, with where each came from. */
+export function readReactions(id: string): AvatarReaction[] {
+  let meta: Record<string, unknown> = {}
+  try { meta = JSON.parse(readFileSync(join(reactionsDir(id), 'reactions.json'), 'utf8')) as Record<string, unknown> } catch { /* none yet */ }
+  return REACTIONS.flatMap((reaction): AvatarReaction[] => {
+    const path = join(reactionsDir(id), `${reaction.id}.mp4`)
+    if (!isReactionId(reaction.id) || !existsSync(path)) return []
+    return [{ id: reaction.id, source: meta[reaction.id] === 'own' ? 'own' : 'ai', path }]
+  })
 }
 
 /** The avatar's cloned-voice recording (trimmed, mono MP3), sent as the reference on every cloned-voice request. */
@@ -133,7 +149,8 @@ export async function listAvatars(): Promise<AvatarSummary[]> {
   for (const id of ids) {
     try {
       const avatar = readAvatar(id)
-      avatars.push({ ...avatar, portraitPath: authorizeMedia(portraitPath(id)) })
+      const reactions = readReactions(id).map((reaction) => ({ ...reaction, path: authorizeMedia(reaction.path) }))
+      avatars.push({ ...avatar, portraitPath: authorizeMedia(portraitPath(id)), reactions })
     } catch { /* skip damaged entries */ }
   }
   return avatars.sort((a, b) => b.createdAt.localeCompare(a.createdAt))

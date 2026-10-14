@@ -790,3 +790,55 @@ test('"AI version of me": new pictures from the person’s own photo, then swapp
   const [ai] = plain(await lib.createAvatar({ draftId: aiDraft.draftId, name: 'Maya', kind: 'ai', description: 'A fictional person with red hair', voice: { provider: 'elevenlabs', voice: 'Sarah' } }))
   await assert.rejects(lib.restyleDrafts({ avatarId: ai.id }, 'studio', '', true), /made from your photo/)
 })
+
+test('reaction library: AI reactions from the picture (failed ones reported), own uploads normalized to 1080x1920 silent', { skip: !hasFfmpeg && 'ffmpeg not installed' }, async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-reactions-'))
+  const image = { isEmpty: () => false, getSize: () => ({ width: 900, height: 1600 }), resize: () => image, toJPEG: () => Buffer.from('jpeg') }
+  const mocks = {
+    electron: { app: { getPath: () => userData }, nativeImage: { createFromBuffer: () => image } },
+    './security': { authorizeMedia: (p) => p },
+    './settings-store': settingsStub,
+    './tools': { resolveBinary: (name) => name },
+    './fal': { falInputUrl: async () => 'data:' },
+    './logger': { logger: { warn() {}, info() {} } },
+    './openrouter-media': mediaStub()
+  }
+  const lib = load('main/avatars.ts', mocks)
+  const reactions = load('main/reactions.ts', { ...mocks, './avatars': lib })
+  const photo = path.join(userData, 'me.jpg'); fs.writeFileSync(photo, 'photo')
+  const draft = await lib.draftFromPhoto(photo)
+  const [avatar] = plain(await lib.createAvatar({ draftId: draft.draftId, name: 'Me', kind: 'self', voice: { provider: 'elevenlabs', voice: 'Brian' }, consent: true }))
+  assert.deepEqual(avatar.reactions, [])
+
+  const clip = path.join(userData, 'clip.mp4')
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x336699:s=720x1280:d=5:r=24', '-f', 'lavfi', '-i', 'sine=d=5', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', clip])
+  const requests = []
+  const generate = async (request, destination) => {
+    requests.push(request)
+    if (request.prompt.includes('laughs')) throw new Error('The video could not be made on OpenRouter.')
+    fs.copyFileSync(clip, destination)
+    return { costUsd: 0.42 }
+  }
+  const result = plain(await reactions.makeReactions(avatar.id, undefined, { generate }))
+  assert.equal(requests.length, 6)
+  assert.ok(requests.every((r) => r.model === 'kwaivgi/kling-v3.0-std' && r.duration === 5 && r.generateAudio === false && r.firstFrame.mime === 'image/jpeg'))
+  assert.match(requests.find((r) => r.prompt.includes('points up')).prompt, /do not speak/)
+  assert.equal(result.made, 5)
+  assert.deepEqual(result.failed, ['Laughing'])
+  const listed = result.avatars[0].reactions
+  assert.deepEqual(listed.map((r) => r.id), ['listen', 'nod', 'point', 'surprised', 'skeptical'])
+  const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height', '-of', 'json', listed[0].path]).toString())
+  assert.deepEqual(probe.streams.map((s) => s.codec_type), ['video'], 'stored silent')
+  assert.deepEqual([probe.streams[0].width, probe.streams[0].height], [1080, 1920])
+
+  // A second run only makes what's missing; an own clip replaces one and is marked as yours.
+  requests.length = 0
+  await reactions.makeReactions(avatar.id, undefined, { generate: async (request, destination) => { requests.push(request); fs.copyFileSync(clip, destination) } })
+  assert.equal(requests.length, 1)
+  const [mine] = plain(await reactions.uploadReaction(avatar.id, 'nod', clip))
+  assert.equal(mine.reactions.find((r) => r.id === 'nod').source, 'own')
+  await assert.rejects(reactions.uploadReaction(avatar.id, 'wave', clip), /Choose a reaction/)
+  await assert.rejects(reactions.uploadReaction(avatar.id, 'nod', photo), /Choose a video/)
+  const [removed] = plain(await reactions.removeReaction(avatar.id, 'nod'))
+  assert.ok(!removed.reactions.some((r) => r.id === 'nod'))
+})

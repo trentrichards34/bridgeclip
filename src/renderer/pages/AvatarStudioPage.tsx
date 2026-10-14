@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { create } from 'zustand'
 import { AudioLines, Clapperboard, Film, FolderOpen, Mic, Plus, Repeat2, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
 import {
-  estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, MAX_SCENES, MAX_SCENE_SECONDS, overlongScenes, type SceneQuality, RECREATE_MAX_SECONDS, RECREATE_MIN_SECONDS, type RecreateMode, MAX_SPOKEN_SECONDS, PRESET_VOICES, PRICES, AI_PORTRAIT_CANDIDATES, PORTRAIT_LOOKS, type PortraitLook, scriptText, SCRIPT_LENGTHS,
+  estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, MAX_SCENES, MAX_SCENE_SECONDS, overlongScenes, type SceneQuality, RECREATE_MAX_SECONDS, RECREATE_MIN_SECONDS, type RecreateMode, MAX_SPOKEN_SECONDS, PRESET_VOICES, PRICES, AI_PORTRAIT_CANDIDATES, PORTRAIT_LOOKS, type PortraitLook, REACTIONS, scriptText, SCRIPT_LENGTHS,
   type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarSummary, type AvatarVideoStyle, type AvatarVoice, type LipSyncModel, type ScriptLength
 } from '../../shared/avatars'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
@@ -499,6 +499,7 @@ function AvatarDetails({ avatar, busy, openrouterConfigured, onChange, onError }
           </div>
         </Field>
         {avatar.kind === 'self' && <RestylePortrait avatar={avatar} busy={busy} openrouterConfigured={openrouterConfigured} onChange={onChange} onError={onError} />}
+        <ReactionLibrary avatar={avatar} busy={busy} openrouterConfigured={openrouterConfigured} onChange={onChange} onError={onError} />
         <div className="glass-tile space-y-2 rounded-xl p-3">
           <p className="flex items-center gap-1.5 text-xs font-medium text-ink"><Mic className="h-3.5 w-3.5" />Clone a voice</p>
           <p className="text-2xs text-ink-subtle">Upload 30-90 seconds of clear speech from one person (MP3, WAV or M4A). No setup fee: the recording stays with this avatar and your OpenRouter account clones from it as each video is voiced.{clone ? ' Cloning again replaces the current clone.' : ''}</p>
@@ -693,6 +694,62 @@ function RestylePortrait({ avatar, busy, openrouterConfigured, onChange, onError
         <Button size="sm" variant="ghost" disabled={saving} onClick={() => { setOpen(false); setDrafts([]); setChosen(null) }}>Cancel</Button>
       </div>
       <p className="text-2xs text-ink-subtle">Replaces the picture your videos use. The voice and cloned voice stay as they are.</p>
+    </div>
+  )
+}
+
+/** Silent reaction clips for Remix's "Silent react": made once with AI from the picture, or the member's own recordings. */
+function ReactionLibrary({ avatar, busy, openrouterConfigured, onChange, onError }: {
+  avatar: AvatarSummary; busy: boolean; openrouterConfigured: boolean; onChange: (list: AvatarSummary[]) => void; onError: (message: string | null) => void
+}): React.JSX.Element {
+  const [making, setMaking] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  useEffect(() => setNote(null), [avatar.id])
+  const ready = new Map((avatar.reactions ?? []).map((reaction) => [reaction.id, reaction]))
+  const missing = REACTIONS.filter((reaction) => !ready.has(reaction.id)).length
+  const make = async (): Promise<void> => {
+    setMaking(true); onError(null); setNote(null)
+    try {
+      const result = await getApi().avatars.makeReactions(avatar.id)
+      onChange(result.avatars)
+      setNote(result.failed.length ? `Made ${result.made}. These didn’t work this time: ${result.failed.join(', ')}. Try again, or upload your own.` : `Made ${result.made} reaction${result.made === 1 ? '' : 's'}.`)
+    } catch (err) { onError(errorMessage(err)) } finally { setMaking(false) }
+  }
+  const upload = async (kind: string): Promise<void> => {
+    onError(null)
+    try { const list = await getApi().avatars.uploadReaction(avatar.id, kind); if (list) onChange(list) } catch (err) { onError(errorMessage(err)) }
+  }
+  return (
+    <div className="glass-tile space-y-3 rounded-xl p-3">
+      <div>
+        <p className="flex items-center gap-1.5 text-xs font-medium text-ink"><Film className="h-3.5 w-3.5" />Reactions for Silent react</p>
+        <p className="mt-0.5 text-2xs text-ink-subtle">Short silent clips of {avatar.name} watching, nodding and pointing, played behind the viral clip in Remix. Made once, reused in every video.</p>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {REACTIONS.map((reaction) => {
+          const clip = ready.get(reaction.id)
+          return (
+            <div key={reaction.id} className="space-y-1">
+              {clip
+                ? <video src={localFileUrl(clip.path)} muted loop autoPlay playsInline aria-label={`${reaction.label} reaction`} className="aspect-[9/16] w-full rounded-lg bg-black object-cover" />
+                : <div className="flex aspect-[9/16] w-full items-center justify-center rounded-lg bg-white/[0.04] text-2xs text-ink-subtle">Not made yet</div>}
+              <div className="flex items-center justify-between gap-1">
+                <span className="truncate text-2xs text-ink">{reaction.label}{clip?.source === 'own' ? ' · yours' : ''}</span>
+                <button type="button" className="shrink-0 text-2xs text-accent disabled:opacity-50" disabled={busy || making}
+                  aria-label={`Upload my own ${reaction.label} clip`} onClick={() => void upload(reaction.id)}>{clip ? 'Replace' : 'Upload'}</button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {missing > 0 && (
+        <Button size="sm" icon={<Sparkles className="h-3.5 w-3.5" />} loading={making} disabled={making || busy || !openrouterConfigured}
+          tooltip={!openrouterConfigured ? 'Add your OpenRouter key in Settings first' : undefined} onClick={() => void make()}>
+          {making ? `Making ${missing} reactions…` : `Make ${missing} AI reaction${missing === 1 ? '' : 's'} · about $${(missing * PRICES.reactionClip).toFixed(2)}`}
+        </Button>
+      )}
+      {making && <p className="text-2xs text-ink-subtle">This takes a few minutes. You can keep working; they’ll appear here when ready.</p>}
+      {note && <p className="text-2xs text-ink-muted">{note}</p>}
     </div>
   )
 }

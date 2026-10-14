@@ -47,6 +47,7 @@ function ipcWithLibrary(library) {
     './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [] },
     './avatar-studio': { onAvatarRenderStatus: () => {} },
     './voice-samples': { voiceSample: async () => new Uint8Array() },
+    './reactions': { makeReactions: async () => ({}), uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] },
     './remix': { onRemixStatus: () => {}, remixAvatarInUse: () => null, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
     './logger': {},
     './security': security,

@@ -12,6 +12,7 @@ import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { cloneVoice, createAvatar, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
+import { makeReactions, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
 import { BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
@@ -192,6 +193,15 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (id === avatarInUse() || id === remixAvatarInUse()) throw new Error('This avatar is being used by the video in progress. Wait for it to finish or cancel it first.')
     return removeAvatar(id)
   })
+  handle('avatars:makeReactions', (_event, id: unknown) => makeReactions(id))
+  handle('avatars:uploadReaction', async (_event, id: unknown, kind: unknown) => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a short silent reaction clip (5-10 seconds)', filters: [{ name: 'Video', extensions: REACTION_VIDEO_EXTENSIONS }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return uploadReaction(id, kind, result.filePaths[0])
+  })
+  handle('avatars:removeReaction', (_event, id: unknown, kind: unknown) => removeReaction(id, kind))
   handle('avatars:cloneVoice', async (_event, id: unknown, consent: unknown) => {
     const window = getMainWindow()
     if (!window) return null

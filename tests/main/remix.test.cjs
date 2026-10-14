@@ -33,7 +33,7 @@ const SETTINGS = { openrouterApiKey: 'or-key', outputDirectory: userData, python
 const selected = new Set()
 const main = load('main/remix.ts', {
   electron: { app: { getPath: () => userData } },
-  './avatars': { portraitPath: (id) => path.join(userData, id, 'portrait.jpg'), voiceSamplePath: (id) => path.join(userData, id, 'voice-sample.mp3'), readAvatar: () => ({}) },
+  './avatars': { portraitPath: (id) => path.join(userData, id, 'portrait.jpg'), voiceSamplePath: (id) => path.join(userData, id, 'voice-sample.mp3'), readAvatar: () => ({}), readReactions: () => [] },
   './logger': { logger: { info() {}, warn() {} } },
   './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
   './security': { assertMediaPath: (p) => { if (!selected.has(p)) throw new Error('Invalid media path') } },
@@ -69,6 +69,13 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   assert.equal(main.parseRemixRequest({ ...base, host: 'voice' }, userData).request.avatarId, 'a'.repeat(16))
   assert.throws(() => main.parseRemixRequest({ ...base, host: 'voice', avatarId: null }, userData), /whose voice/)
   assert.equal(main.parseRemixRequest({ ...base, voice: 'sarah' }, userData).request.voice, 'Sarah')
+  // Silent react: needs an avatar (its reactions) and the clip-permission promise.
+  assert.throws(() => main.parseRemixRequest({ ...base, format: 'silent' }, userData), /allowed to use these clips/)
+  const silent = main.parseRemixRequest({ ...base, format: 'silent', clipRightsAck: true, host: 'voice', voice: 'Sarah' }, userData).request
+  assert.deepEqual([silent.format, silent.clipRightsAck, silent.avatarId], ['silent', true, 'a'.repeat(16)])
+  assert.throws(() => main.parseRemixRequest({ ...base, format: 'silent', clipRightsAck: true, avatarId: null }, userData), /reactions/)
+  assert.throws(() => main.parseRemixRequest({ ...base, format: 'dance' }, userData), /kind of remix/)
+  assert.equal(main.parseRemixRequest(base, userData).request.format, 'commentary')
   // Lip-sync isn't available on OpenRouter yet: the avatar's photo presents.
   assert.equal(main.parseRemixRequest({ ...base, host: 'lipsync' }, userData).request.host, 'still')
   assert.throws(() => main.parseRemixRequest({ ...base, voice: 'onyx' }, userData), /voice/)
@@ -166,6 +173,19 @@ test('drafts from the engine and edits from the renderer are checked', () => {
   const captioned = shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: 'x', close: 'y', beats: [{ text: 'z' }], postCaption: 'Line one\n\n1. Two' }], ids)
   assert.equal(captioned[0].postCaption, 'Line one\n\n1. Two')
   assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: 'x', close: 'y', beats: [{ text: 'z' }], postCaption: 'x'.repeat(2300) }], ids), /caption to 2,200/)
+})
+
+test('silent drafts: headline and caption only, reactions parsed; edits skip the spoken lines', () => {
+  const draft = shared.parseRemixDraft({ id: 0, headline: 'This creator says your reel made nothing', intro: '', close: '', beats: [], format: 'silent',
+    cues: [{ at: 0, reaction: 'listen' }, { at: 6.5, reaction: 'point' }, { at: 'x', reaction: 'nod' }], post_caption: 'Take.', estimate_usd: 0 })
+  assert.equal(draft.format, 'silent')
+  assert.deepEqual(plain(draft.cues), [{ at: 0, reaction: 'listen' }, { at: 6.5, reaction: 'point' }])
+  assert.equal(shared.remixEditProblem({ headline: 'A fine long headline', intro: '', beats: [], close: '' }, 'silent'), null)
+  assert.equal(shared.remixEditProblem({ headline: 'Too short', intro: '', beats: [], close: '' }, 'silent'), 'The headline needs at least 3 words.')
+  const edits = shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: '', close: '', beats: [], postCaption: 'My take.' }], new Set([0]), new Set([0]))
+  assert.equal(edits[0].postCaption, 'My take.')
+  assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: '', close: '', beats: [] }], new Set([0])), /opening line/)
+  assert.equal(shared.estimateRemixCost('still', 3, 1, 'silent').perRemixHigh, 0)
 })
 
 test('comment-keyword call to action', () => {

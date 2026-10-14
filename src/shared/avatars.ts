@@ -35,9 +35,38 @@ export interface Avatar {
   createdAt: string
 }
 
-/** What the renderer sees: the avatar plus a viewable portrait path. */
+/** What the renderer sees: the avatar plus a viewable portrait path and its reaction clips. */
 export interface AvatarSummary extends Avatar {
   portraitPath: string
+  reactions: AvatarReaction[]
+}
+
+/**
+ * Silent reaction clips for "Silent react" remixes: the avatar behind a viral
+ * clip, pointing, nodding and pulling faces without speaking. Each is made once
+ * (AI from the avatar's picture, or the member's own recording) and reused.
+ */
+export const REACTIONS = [
+  { id: 'listen', label: 'Watching', prompt: 'watches something just above the camera with interest, small natural movements, blinks, a slight head tilt' },
+  { id: 'nod', label: 'Nodding', prompt: 'nods slowly in agreement while looking up at something just above the camera, approving expression' },
+  { id: 'point', label: 'Pointing up', prompt: 'points up with one hand at something just above their head, eyebrows raised, as if to say look at this' },
+  { id: 'surprised', label: 'Surprised', prompt: 'reacts with surprise: eyes widen, mouth opens slightly, leans back a little' },
+  { id: 'laugh', label: 'Laughing', prompt: 'laughs silently with a big smile, shoulders shaking slightly' },
+  { id: 'skeptical', label: 'Skeptical', prompt: 'looks skeptical: raises one eyebrow, slight frown, small head shake' }
+] as const
+export type ReactionId = (typeof REACTIONS)[number]['id']
+export const REACTION_IDS: readonly string[] = REACTIONS.map((reaction) => reaction.id)
+export function isReactionId(value: unknown): value is ReactionId {
+  return typeof value === 'string' && REACTION_IDS.includes(value)
+}
+/** Seconds of each AI reaction (looped as needed). */
+export const REACTION_SECONDS = 5
+
+export interface AvatarReaction {
+  id: ReactionId
+  /** ai: generated from the avatar's picture; own: the member's recording. */
+  source: 'ai' | 'own'
+  path: string
 }
 
 export type AvatarVideoStyle = 'talking' | 'cinematic'
@@ -148,6 +177,8 @@ export const PRICES = {
   talkingPerSecond: 0.05,
   imageToVideoPerSecond: 0.112,
   imageToVideoStandardPerSecond: 0.084,
+  /** One AI reaction clip: Kling v3 Standard, REACTION_SECONDS long. */
+  reactionClip: 0.42,
   motionControlPerSecond: 0.126,
   /** Wan Animate bills per 16 frames: $0.08 per 16 frames at 720p. */
   replacePer16Frames: 0.08,

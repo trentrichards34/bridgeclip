@@ -250,6 +250,11 @@ export interface BridgeClipAPI {
     generateFaces: (description: string) => Promise<{ draftId: string; path: string }[]>
     /** "AI version of me": new pictures of the person in a chosen photo (a draft or an avatar's picture). */
     restyle: (source: { draftId: string } | { avatarId: string }, look: string, detail: string, consent: boolean) => Promise<{ draftId: string; path: string }[]>
+    /** Generate the avatar's missing silent reaction clips (a few minutes); failed ones are named. */
+    makeReactions: (id: string) => Promise<{ avatars: AvatarSummary[]; made: number; failed: string[] }>
+    /** Opens a file dialog in main; null when cancelled. */
+    uploadReaction: (id: string, kind: string) => Promise<AvatarSummary[] | null>
+    removeReaction: (id: string, kind: string) => Promise<AvatarSummary[]>
     /** Replace an avatar's picture with a chosen draft; its voice stays. */
     setPortrait: (id: string, draftId: string) => Promise<AvatarSummary[]>
     create: (input: { draftId: string; name: string; kind: 'self' | 'ai'; description: string; voice: unknown; consent: boolean }) => Promise<AvatarSummary[]>
@@ -470,6 +475,9 @@ const api: BridgeClipAPI = {
     generateFaces: (description) => ipcRenderer.invoke('avatars:generateFaces', description),
     restyle: (source, look, detail, consent) => ipcRenderer.invoke('avatars:restyle', source, look, detail, consent),
     setPortrait: (id, draftId) => ipcRenderer.invoke('avatars:setPortrait', id, draftId),
+    makeReactions: (id) => ipcRenderer.invoke('avatars:makeReactions', id),
+    uploadReaction: (id, kind) => ipcRenderer.invoke('avatars:uploadReaction', id, kind),
+    removeReaction: (id, kind) => ipcRenderer.invoke('avatars:removeReaction', id, kind),
     create: (input) => ipcRenderer.invoke('avatars:create', input),
     update: (id, patch) => ipcRenderer.invoke('avatars:update', id, patch),
     remove: (id) => ipcRenderer.invoke('avatars:remove', id),

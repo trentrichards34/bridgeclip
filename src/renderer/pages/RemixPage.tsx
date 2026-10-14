@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { create } from 'zustand'
 import { AlertTriangle, Check, Copy, FileText, Film, FolderOpen, MessageCircle, Pencil, Plus, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
 import type { AvatarSummary } from '../../shared/avatars'
+import { REACTIONS } from '../../shared/avatars'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import {
   BRAND_IDENTITY_TEMPLATE, brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_POST_CAPTION_CHARS, MAX_SOURCES,
   closeWithoutCta, normalizeCtaKeyword, AVATAR_VOICE, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
   REMIX_WORD_LIMITS, remixEditProblem, remixSourceUrl, STANCE_LABELS, STYLE_LABELS, wordCount,
-  type BrandIdentity, type RemixAngle, type RemixDraft, type RemixEdit, type RemixHost, type RemixOrder, type RemixOutput, type RemixStatus
+  REMIX_FORMATS, type RemixFormat, type BrandIdentity, type RemixAngle, type RemixDraft, type RemixEdit, type RemixHost, type RemixOrder, type RemixOutput, type RemixStatus
 } from '../../shared/remix'
 import type { Page as PageName } from '../components/Sidebar'
 import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
@@ -48,6 +49,8 @@ interface FormDraft {
   captionPreset: string
   includeCaptions: boolean
   aiLabelAck: boolean
+  format: RemixFormat
+  clipRightsAck: boolean
   ctaKeyword: string
   ctaOffer: string
   update: (patch: Partial<Omit<FormDraft, 'update'>>) => void
@@ -56,7 +59,7 @@ interface FormDraft {
 /** The form survives navigating away (e.g. to Settings to add a key). */
 const useRemixForm = create<FormDraft>((set) => ({
   links: '', filePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'still', avatarId: null, voice: AVATAR_VOICE,
-  count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false, ctaKeyword: '', ctaOffer: '',
+  count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false, ctaKeyword: '', ctaOffer: '', format: 'commentary', clipRightsAck: false,
   update: (patch) => set(patch)
 }))
 
@@ -97,12 +100,14 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
   const reviewing = status?.phase === 'review'
   const { links, invalid } = parseLinks(form.links)
   const sources = form.filePath ? [form.filePath] : links
-  const needsAvatar = form.host !== 'voice'
+  const silent = form.format === 'silent'
+  const needsAvatar = silent || form.host !== 'voice'
   // The avatar's own voice (its clone or preset) unless a preset is picked here; voice-only can borrow it too.
   const usesAvatarVoice = form.voice === AVATAR_VOICE
   const showAvatars = needsAvatar || usesAvatarVoice
   const avatarVoiceName = avatar ? (avatar.voice.provider === 'clone' ? `${avatar.name}’s cloned voice` : `${avatar.name}’s voice (${avatar.voice.voice})`) : 'Your avatar’s voice'
-  const cost = estimateRemixCost(form.host, form.count)
+  const cost = estimateRemixCost(form.host, form.count, 0.5, form.format)
+  const reactionCount = avatar?.reactions?.length ?? 0
   const keyword = normalizeCtaKeyword(form.ctaKeyword)
   const brandKeyword = brand ? brandCtaKeyword(brand.text) : ''
   const blocker = !openrouterConfigured ? 'Add your OpenRouter key in Settings first'
@@ -110,6 +115,9 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
       : sources.length > MAX_SOURCES ? `Up to ${MAX_SOURCES} videos per run`
         : invalid.length > 0 && !form.filePath ? 'Fix the links that aren’t valid'
           : form.filePath && !form.creator.trim() ? 'Add the original creator’s name for the credit'
+            : silent && !avatar ? 'Create an avatar in Avatar Studio first'
+            : silent && reactionCount === 0 ? 'Make this avatar’s reactions in Avatar Studio first'
+            : silent && !form.clipRightsAck ? 'Confirm you’re allowed to use these clips'
             : needsAvatar && !avatar ? 'Create an avatar in Avatar Studio, or use voice only'
               : usesAvatarVoice && !avatar ? 'Create an avatar in Avatar Studio, or pick a preset voice'
               : keyword === null ? 'Use one word for the comment keyword, like SALES'
@@ -143,7 +151,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         sources, creator: sources.length === 1 ? form.creator : '', angle: form.angle, order: form.order, host: form.host,
         avatarId: showAvatars ? avatar?.id ?? null : null, voice: form.voice, brandIdentityId: brand?.id ?? null, count: form.count,
         captionPreset: form.captionPreset, includeCaptions: form.includeCaptions, aiLabelAck: form.aiLabelAck,
-        ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : ''
+        ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : '', format: form.format, clipRightsAck: silent && form.clipRightsAck
       })
       setStatus((previous) => previous?.id === started.id && previous.phase !== 'planning' ? previous : started)
     } catch (err) { setError(errorMessage(err, 'The remixes could not be started.')) }
@@ -224,6 +232,24 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         <Panel>
           <PanelHeader title="2 · Style" description="How your presenter responds to the moment." />
           <div className="mt-4 space-y-4">
+            <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Remix format">
+              {REMIX_FORMATS.map((item) => {
+                const selected = form.format === item.id
+                return (
+                  <button key={item.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+                    onClick={() => form.update({ format: item.id })}
+                    className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+                    <span className="block text-sm font-medium">{item.label}</span>
+                    <span className={cn('mt-0.5 block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{item.detail}</span>
+                  </button>
+                )
+              })}
+            </div>
+            {silent ? (
+              <p className="text-2xs text-ink-muted">
+                The AI picks complete 10–45 second moments, writes the hook text above the clip, times your avatar’s reactions (watching, nodding, pointing, laughing) to what’s said, and writes the caption with your take and call to action.
+              </p>
+            ) : (<>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3" role="radiogroup" aria-label="Remix style">
               {REMIX_ANGLES.map((angle) => {
                 const selected = form.angle === angle.id
@@ -246,6 +272,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
               <Segmented label="Order" size="sm" value={form.order} onChange={(order) => form.update({ order })}
                 options={REMIX_ORDERS.map((order) => ({ value: order.id, label: order.label }))} />
             </div>
+            </>)}
           </div>
         </Panel>
 
@@ -294,9 +321,9 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         </Panel>
 
         <Panel>
-          <PanelHeader title="4 · Presenter" description="Who delivers the take." />
+          <PanelHeader title="4 · Presenter" description={silent ? 'Whose reactions play behind the clip.' : 'Who delivers the take.'} />
           <div className="mt-4 space-y-4">
-            <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Presenter">
+            {!silent && <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Presenter">
               {REMIX_HOSTS.map((host) => {
                 const selected = form.host === host.id
                 return (
@@ -310,7 +337,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                   </button>
                 )
               })}
-            </div>
+            </div>}
             {showAvatars && (avatars.length === 0 ? (
               <EmptyState icon={<UserRound />} title="No avatars yet" description="Create one in Avatar Studio from your photo, then come back."
                 action={<Button size="sm" onClick={() => onNavigate('avatar')}>Open Avatar Studio</Button>} />
@@ -326,7 +353,12 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                 ))}
               </div>
             ))}
-            <Field label="Voice">
+            {silent && avatar && (reactionCount > 0
+              ? <p className="text-2xs text-ink-muted">{reactionCount} of 6 reactions ready for {avatar.name}. More reactions make the video feel more natural.</p>
+              : <Callout tone="info" title={`${avatar.name} has no reactions yet`} action={<Button size="sm" onClick={() => onNavigate('avatar')}>Open Avatar Studio</Button>}>
+                  Make them once in Avatar Studio (AI from the picture, about $2.50, or upload your own short clips), then come back.
+                </Callout>)}
+            {!silent && <Field label="Voice">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <Select value={form.voice} searchable onChange={(voice) => form.update({ voice })}
@@ -339,12 +371,14 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                     name={usesAvatarVoice ? avatarVoiceName : form.voice} />
                 )}
               </div>
-            </Field>
+            </Field>}
           </div>
         </Panel>
 
         <Panel>
-          <PanelHeader title="5 · Write the takes" description={`First the AI finds the moments and writes and grades a take for each (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You review and edit them, and only the ones you approve are made: ${cost.perRemixHigh - cost.perRemixLow < 0.01 ? `about $${cost.perRemixHigh.toFixed(2)}` : `about $${cost.perRemixLow.toFixed(2)}–$${cost.perRemixHigh.toFixed(2)}`} each.`} />
+          <PanelHeader title="5 · Write the takes" description={silent
+            ? `The AI finds the moments, writes the hook text and caption, and times the reactions (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You review them, and making them is free: your reactions are reused.`
+            : `First the AI finds the moments and writes and grades a take for each (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You review and edit them, and only the ones you approve are made: ${cost.perRemixHigh - cost.perRemixLow < 0.01 ? `about $${cost.perRemixHigh.toFixed(2)}` : `about $${cost.perRemixLow.toFixed(2)}–$${cost.perRemixHigh.toFixed(2)}`} each.`} />
           <div className="mt-4 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span className="text-sm text-ink">Takes per video</span>
@@ -354,10 +388,18 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
             <SettingRow title="Captions" description="Word-by-word captions across the whole video."
               control={<Switch label="Captions" checked={form.includeCaptions} onChange={(includeCaptions) => form.update({ includeCaptions })} />} />
             {form.includeCaptions && <CaptionPresetPicker value={form.captionPreset} onChange={(captionPreset) => form.update({ captionPreset })} />}
-            {!pexelsConfigured && (
+            {!pexelsConfigured && !silent && (
               <p className="text-2xs text-ink-subtle">
                 Tip: add a free Pexels key in Settings → API keys for stock B-roll under the voice-over. Without it, those beats use stills.
               </p>
+            )}
+            {silent && (
+              <div className="flex items-start gap-2">
+                <Checkbox checked={form.clipRightsAck} onChange={(clipRightsAck) => form.update({ clipRightsAck })} label="I'm allowed to use these clips" className="mt-px" />
+                <span aria-hidden="true" className="cursor-pointer select-none text-xs text-ink-muted" onClick={() => form.update({ clipRightsAck: !form.clipRightsAck })}>
+                  I’m allowed to use these clips: my own, an affiliate’s, or a creator who openly allows clipping. Silent react plays up to 45 seconds of their video with its sound.
+                </span>
+              </div>
             )}
             <div className="flex items-start gap-2">
               <Checkbox checked={form.aiLabelAck} onChange={(aiLabelAck) => form.update({ aiLabelAck })} label="I'll turn on the AI-content label when I post" className="mt-px" />
@@ -395,7 +437,7 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
   const toggle = (id: number): void => setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const chosen = ordered.filter((draft) => selected.has(draft.id))
   const total = chosen.reduce((sum, draft) => sum + draft.estimateUsd, 0)
-  const problems = new Map(chosen.map((draft) => [draft.id, remixEditProblem(value(draft))]))
+  const problems = new Map(chosen.map((draft) => [draft.id, remixEditProblem(value(draft), draft.format)]))
   const blocked = [...problems.values()].some(Boolean)
 
   const make = async (): Promise<void> => {
@@ -444,11 +486,18 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
               </div>
               <div className="rounded-xl bg-white/[0.04] px-3 py-2 text-xs text-ink-muted">
                 <span className="font-medium text-ink">Their moment</span> · {((draft.endMs - draft.startMs) / 1000).toFixed(1)}s{draft.sourceTitle ? ` from “${draft.sourceTitle}”` : ''}
-                <p className="mt-0.5 italic">“{draft.quote}”</p>
+                <p className={cn('mt-0.5 italic', draft.format === 'silent' && 'line-clamp-4')}>“{draft.quote}”</p>
               </div>
+              {draft.format === 'silent' && draft.cues.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5" aria-label={`Reactions, ${take}`}>
+                  <span className="text-2xs text-ink-subtle">Reactions:</span>
+                  {draft.cues.map((cue, i) => <Badge key={i}>{cue.at.toFixed(0)}s · {REACTIONS.find((item) => item.id === cue.reaction)?.label ?? cue.reaction}</Badge>)}
+                </div>
+              )}
               <Field label="Headline" hint={counter(current.headline, REMIX_WORD_LIMITS.headline)}>
                 <TextInput aria-label={`Headline, ${take}`} value={current.headline} maxLength={160} onChange={(e) => change(draft, { headline: e.target.value })} />
               </Field>
+              {draft.format !== 'silent' && (<>
               <Field label="Opening (presenter)" hint={counter(current.intro, REMIX_WORD_LIMITS.intro)}>
                 <TextArea aria-label={`Opening (presenter), ${take}`} rows={2} value={current.intro} onChange={(e) => change(draft, { intro: e.target.value })} />
               </Field>
@@ -460,6 +509,7 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
               <Field label="Close (presenter)" hint={`${counter(closeWithoutCta(current.close), REMIX_WORD_LIMITS.close)}${cta ? ` · plus “Comment ${cta}…”, which is added back if you remove it` : ''}`}>
                 <TextArea aria-label={`Close (presenter), ${take}`} rows={2} value={current.close} onChange={(e) => change(draft, { close: e.target.value })} />
               </Field>
+              </>)}
               <Field label="Post caption" hint={`${(current.postCaption ?? '').length.toLocaleString('en-US')} / ${MAX_POST_CAPTION_CHARS.toLocaleString('en-US')} characters · filled in when you post from the Library; empty keeps the AI’s`}>
                 <TextArea aria-label={`Post caption, ${take}`} rows={6} value={current.postCaption ?? ''} maxLength={MAX_POST_CAPTION_CHARS}
                   onChange={(e) => change(draft, { postCaption: e.target.value })} />

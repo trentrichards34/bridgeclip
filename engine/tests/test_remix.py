@@ -549,3 +549,78 @@ def test_remix_speaks_with_the_avatars_cloned_voice(tmp_path):
                                               voice_reference=str(tmp_path / "gone.mp3")), media=FakeMedia("ffmpeg"), settings=settings)
     with pytest.raises(remix.RemixError, match="Clone the voice again"):
         missing._voice()
+
+
+@needs_libass
+def test_silent_react_end_to_end(tmp_path, monkeypatch):
+    ffmpeg, ffprobe = FFMPEG_WITH_ASS
+    monkeypatch.setenv("PATH", os.path.dirname(ffmpeg) + os.pathsep + os.environ.get("PATH", ""))
+    source = tmp_path / "source.mp4"
+    subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=40:r=30", "-f", "lavfi", "-i",
+                    "sine=frequency=220:duration=40", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(source)], check=True, timeout=120)
+    reactions = {}
+    for kind, color in (("listen", "0x2266aa"), ("nod", "0x22aa66"), ("point", "0xaa6622")):
+        path = tmp_path / f"{kind}.mp4"
+        # A portrait-like clip: the "face" sits at about 40% of the height, like a real reaction.
+        subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c={color}:s=1080x1920:d=3:r=30", "-vf",
+                        "drawbox=x=390:y=568:w=300:h=400:color=0xe0b090@1:t=fill,drawbox=x=240:y=1000:w=600:h=920:color=0x223344@1:t=fill",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)], check=True, timeout=60)
+        reactions[kind] = str(path)
+    monkeypatch.setattr(remix, "VIDEO_ARGS", ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p", "-r", "30"])
+    keep = os.environ.get("REMIX_KEEP_OUTPUT")
+
+    class FakeTranscription:
+        async def transcribe(self, video, work):
+            return TranscriptionResult(segments=transcript(40), full_text="")
+    import clip_engine.services.transcription_service as ts
+    monkeypatch.setattr(ts, "TranscriptionService", FakeTranscription)
+    calls = []
+
+    async def fake_chat(client, payload):
+        calls.append(payload)
+        if payload["response_format"]["json_schema"]["name"] == "remix_grades":
+            return {"choices": [{"message": {"content": json.dumps({"grades": [{"id": 0, "hook": 8, "payoff": 8, "stands_alone": 8, "specificity": 7,
+                                                                                  "stance": 7, "verdict": "Strong.", "fix": "Sharper headline."}]})}}]}, {"cost": 0.01}
+        item = {"start": 4, "end": 20, "moment_quote": "word10 word11", "why_this_moment": "Bold claim with a payoff.",
+                "headline": "This creator says your best reel probably made nothing",
+                "cues": [{"at": 0, "reaction": "listen"}, {"at": 5, "reaction": "nod"}, {"at": 6, "reaction": "point"},
+                         {"at": 10, "reaction": "laugh"}, {"at": 11, "reaction": "point"}],
+                "post_caption": "Your most viewed reel made nothing.\n\n1. Views measure attention.\n2. Sales measure trust.",
+                "proof_used": [], "self_check": {"attacks_person": False, "invented_claims": False}}
+        return {"choices": [{"message": {"content": json.dumps({"remixes": [item]})}}]}, {"cost": 0.05}
+    monkeypatch.setattr(remix, "chat_completion", fake_chat)
+    settings = SimpleNamespace(openrouter_api_key="test", openrouter_base_url="https://example.invalid/api/v1",
+                               planner_model="test/model", get_planner_fallback_models=lambda: [], pexels_api_key=None)
+    config = remix.RemixConfig(sources=[str(source)], output_dir=str(tmp_path / "out"), count=1, host="voice", creator="Coach Example",
+                               format="silent", reactions=reactions, reactions_ai=True, cta_keyword="SALES", cta_offer="my playbook",
+                               caption_preset="vintage")
+    planned = asyncio.run(remix.Remixer(config, media=FakeMedia(ffmpeg), settings=settings).plan())
+    draft = planned["drafts"][0]
+    assert "SILENT REACTION" in calls[0]["messages"][0]["content"] and "laugh" not in calls[0]["messages"][0]["content"].split("Use only:")[1]
+    assert draft["format"] == "silent" and draft["estimate_usd"] == 0.0 and draft["grade"]["letter"] in "AB"
+    # Only reactions the avatar has, spaced out, starting at 0.
+    assert [c["reaction"] for c in draft["cues"]] == ["listen", "nod", "point"] and draft["cues"][2]["at"] == 11
+    assert 12 <= (draft["end_ms"] - draft["start_ms"]) / 1000 <= 17
+    assert draft["post_caption"].endswith("Clip: Coach Example") and "Comment SALES" in draft["post_caption"]
+
+    media = FakeMedia(ffmpeg)
+    edits = [{"id": 0, "headline": "This creator says your best reel made zero sales", "post_caption": draft["post_caption"]}]
+    result = asyncio.run(remix.Remixer(config, media=media, settings=settings).render(edits))
+    assert media.speech_calls == [] and media.avatar_calls == 0  # nothing voiced or animated
+    out = result["remixes"][0]
+    probe = json.loads(subprocess.run([ffprobe, "-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration", "-of", "json",
+                                       out["path"]], capture_output=True, check=True, text=True).stdout)
+    video = next(s for s in probe["streams"] if s["codec_type"] == "video")
+    assert (video["width"], video["height"]) == (1080, 1920)
+    assert any(s["codec_type"] == "audio" for s in probe["streams"])
+    assert abs(float(probe["format"]["duration"]) - out["duration_seconds"]) < 0.5
+    checks = {c["id"]: c["ok"] for c in out["checks"]}
+    assert checks["permission"] and checks["credited"] and checks["cta"] and "take_dominates" not in checks
+    manifest = json.load(open(out["manifest_path"]))
+    assert manifest["format"] == "silent" and manifest["rights_lane"] == "permission" and manifest["headline"].endswith("zero sales")
+    assert manifest["presenter"]["ai_generated"] is True and out["cost_usd"] == 0.0
+    job = json.load(open(tmp_path / "out" / "job_output.json"))
+    assert job["clips"][0]["post_caption"].startswith("Your most viewed reel")
+    if keep:
+        import shutil
+        shutil.copy(out["path"], os.path.join(keep, "silent.mp4"))
