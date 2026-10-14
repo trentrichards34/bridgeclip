@@ -11,6 +11,7 @@ import {
 } from '../../shared/remix'
 import type { Page as PageName } from '../components/Sidebar'
 import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
+import { VoicePreview } from '../components/VoicePreview'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Callout } from '../components/ui/Callout'
@@ -319,8 +320,13 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
               </div>
             ))}
             <Field label="Voice">
-              <Select value={form.voice} onChange={(voice) => form.update({ voice })}
-                options={REMIX_VOICES.map((voice) => ({ value: voice.id, label: voice.label, detail: voice.detail }))} />
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <Select value={form.voice} onChange={(voice) => form.update({ voice })}
+                    options={REMIX_VOICES.map((voice) => ({ value: voice.id, label: voice.label, detail: voice.detail }))} />
+                </div>
+                <VoicePreview request={{ kind: 'remix', voice: form.voice }} name={REMIX_VOICES.find((voice) => voice.id === form.voice)?.label ?? form.voice} />
+              </div>
             </Field>
           </div>
         </Panel>

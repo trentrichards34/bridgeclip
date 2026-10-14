@@ -46,6 +46,7 @@ function ipcWithLibrary(library) {
     './backgrounds': {},
     './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [] },
     './avatar-studio': { onAvatarRenderStatus: () => {} },
+    './voice-samples': { voiceSample: async () => new Uint8Array() },
     './remix': { onRemixStatus: () => {}, remixAvatarInUse: () => null, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
     './logger': {},
     './security': security,

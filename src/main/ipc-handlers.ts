@@ -11,6 +11,7 @@ import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds } fr
 import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { cloneVoice, createAvatar, draftFromPhoto, draftsFromDescription, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
+import { voiceSample } from './voice-samples'
 import { BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
@@ -198,6 +199,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('avatars:recreate', (_event, request: unknown) => startAvatarRecreate(request))
   handle('avatars:cancelRender', () => cancelAvatarRender())
   handle('avatars:renderStatus', () => avatarRenderStatus())
+  handle('voices:sample', (_event, request: unknown) => voiceSample(request))
   onAvatarRenderStatus((status) => {
     const window = getMainWindow()
     if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('avatars:status', status)

@@ -261,6 +261,10 @@ export interface BridgeClipAPI {
     renderStatus: () => Promise<AvatarRenderStatus | null>
     onStatus: (callback: (status: AvatarRenderStatus) => void) => () => void
   }
+  /** Short voice previews (MP3 bytes), cached after the first play. */
+  voices: {
+    sample: (request: { kind: 'avatar'; voice: unknown } | { kind: 'remix'; voice: string }) => Promise<Uint8Array>
+  }
   /** Brand identities: what a brand believes, imported or pasted in; Remix writes takes from them. */
   brandIdentities: {
     list: () => Promise<BrandIdentity[]>
@@ -470,6 +474,9 @@ const api: BridgeClipAPI = {
     cancelRender: () => ipcRenderer.invoke('avatars:cancelRender'),
     renderStatus: () => ipcRenderer.invoke('avatars:renderStatus'),
     onStatus: (callback) => subscribe('avatars:status', callback)
+  },
+  voices: {
+    sample: (request) => ipcRenderer.invoke('voices:sample', request)
   },
   brandIdentities: {
     list: () => ipcRenderer.invoke('brandIdentities:list'),

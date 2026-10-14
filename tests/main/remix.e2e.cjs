@@ -20,11 +20,16 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   const video = path.join(output, '01 This coach says you must lose weight first.mp4')
   execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x3355ff:s=270x480:d=2', '-f', 'lavfi', '-i', 'sine=d=2',
     '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', video])
+  const sample = path.join(root, 'sample.mp3')
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=d=0.6', '-c:a', 'libmp3lame', sample])
   const portrait = path.join(root, 'portrait.jpg')
   execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0xcc8844:s=270x480', '-frames:v', '1', portrait])
 
-  await app.evaluate(({ ipcMain }, { root, portrait }) => {
+  await app.evaluate(({ ipcMain }, { root, portrait, sample }) => {
     globalThis.remixRequests = []
+    globalThis.sampleRequests = []
+    ipcMain.removeHandler('voices:sample')
+    ipcMain.handle('voices:sample', (_event, request) => { globalThis.sampleRequests.push(request); return new Uint8Array(require('fs').readFileSync(sample)) })
     ipcMain.removeHandler('settings:load')
     ipcMain.handle('settings:load', () => ({ openrouterConfigured: true, pexelsConfigured: false, zernioConfigured: false, outputDirectory: root, pythonPath: '', customVocabulary: '' }))
     ipcMain.removeHandler('avatars:list')
@@ -41,7 +46,7 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
       globalThis.renderRequests.push(edits)
       return { id: 'run1', phase: 'rendering', detail: 'Starting', percent: 1, folder: root, estimateUsd: 0.6, drafts: [], outputs: [], costUsd: 0.2, warnings: [], error: null }
     })
-  }, { root: path.join(userData, 'CreatorClips'), portrait })
+  }, { root: path.join(userData, 'CreatorClips'), portrait, sample })
   await page.reload()
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
@@ -73,6 +78,13 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
     await page.getByLabel('Comment keyword').scrollIntoViewIfNeeded()
     await page.screenshot({ path: path.join(process.env.BRIDGECLIP_E2E_SHOTS, 'remix-cta.png'), timeout: 10000 }).catch(() => undefined)
   }
+
+  // Hear the voice before choosing it; a replay doesn't ask main again.
+  await page.getByRole('button', { name: 'Hear Onyx' }).click()
+  await page.waitForFunction(() => true)
+  assert.deepEqual(await app.evaluate(() => globalThis.sampleRequests), [{ kind: 'remix', voice: 'onyx' }])
+  await page.getByRole('button', { name: /^(Stop the Onyx sample|Hear Onyx)$/ }).waitFor()
+  assert.equal(await page.getByText('That sample could not be played.').count(), 0)
 
   await page.getByRole('radio', { name: /Myth vs\. truth/ }).click()
   assert.equal(await make.isDisabled(), true, 'needs the AI-label promise')

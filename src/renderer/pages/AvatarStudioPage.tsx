@@ -9,6 +9,7 @@ import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import type { Page as PageName } from '../components/Sidebar'
 import { BackgroundPicker } from '../components/BackgroundPicker'
 import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
+import { VoicePreview } from '../components/VoicePreview'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Callout } from '../components/ui/Callout'
@@ -493,10 +494,15 @@ function AvatarDetails({ avatar, busy, falConfigured, onChange, onError }: { ava
         action={<Badge tone={avatar.kind === 'self' ? 'accent' : 'neutral'}>{voiceLabel(avatar.voice)}</Badge>} />
       <div className="mt-4 space-y-4">
         <Field label="Voice">
-          <Select value={value} options={options} disabled={busy} searchable onChange={(next) => {
-            const voice = next === 'clone' ? (clone ? { provider: 'minimax-clone', voiceId: clone.voiceId, clonedAt: clone.clonedAt } : null) : { provider: 'elevenlabs', voice: next }
-            if (voice) void run(() => getApi().avatars.update(avatar.id, { voice }))
-          }} />
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <Select value={value} options={options} disabled={busy} searchable onChange={(next) => {
+                const voice = next === 'clone' ? (clone ? { provider: 'minimax-clone', voiceId: clone.voiceId, clonedAt: clone.clonedAt } : null) : { provider: 'elevenlabs', voice: next }
+                if (voice) void run(() => getApi().avatars.update(avatar.id, { voice }))
+              }} />
+            </div>
+            <VoicePreview request={{ kind: 'avatar', voice: avatar.voice }} name={voiceLabel(avatar.voice)} />
+          </div>
         </Field>
         <div className="glass-tile space-y-2 rounded-xl p-3">
           <p className="flex items-center gap-1.5 text-xs font-medium text-ink"><Mic className="h-3.5 w-3.5" />Clone a voice</p>
@@ -588,7 +594,12 @@ function CreateAvatarDialog({ falConfigured, onClose, onCreated }: { falConfigur
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Name"><TextInput value={name} maxLength={60} placeholder="e.g. Maya" onChange={(e) => setName(e.target.value)} /></Field>
           <Field label="Voice">
-            <Select value={voice} searchable onChange={setVoice} options={PRESET_VOICES.map((item) => ({ value: item.id, label: item.label, detail: item.hint }))} />
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <Select value={voice} searchable onChange={setVoice} options={PRESET_VOICES.map((item) => ({ value: item.id, label: item.label, detail: item.hint }))} />
+              </div>
+              <VoicePreview request={{ kind: 'avatar', voice: { provider: 'elevenlabs', voice } }} name={voice} />
+            </div>
           </Field>
         </div>
         {kind === 'self' && <LabeledCheckbox checked={consent} onChange={setConsent} label="This is me, or I have this person's written permission to use their likeness" />}
