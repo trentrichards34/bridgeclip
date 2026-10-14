@@ -14,11 +14,12 @@ from bridge_runner import reserve_stdout_for_protocol, emit
 
 MAX_REQUEST = 262144
 STRING_LIMITS = {"output_dir": 4096, "angle": 32, "host": 16, "voice": 32, "avatar_photo": 4096, "order": 16,
-                 "brand_identity": 60000, "brand_name": 120, "creator": 120, "caption_preset": 64, "mode": 8}
+                 "brand_identity": 60000, "brand_name": 120, "creator": 120, "caption_preset": 64, "mode": 8,
+                 "cta_keyword": 32, "cta_offer": 200}
 
 
 def parse_config(raw):
-    from clip_engine.services.remix_service import ANGLES, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, RemixConfig
+    from clip_engine.services.remix_service import ANGLES, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, RemixConfig, normalize_keyword
     if not isinstance(raw, dict):
         raise ValueError("Invalid request")
     for key, limit in STRING_LIMITS.items():
@@ -43,12 +44,17 @@ def parse_config(raw):
     count = raw.get("count", 3)
     if type(count) is not int or not 1 <= count <= MAX_REMIXES:
         raise ValueError("Invalid count")
+    try:
+        keyword = normalize_keyword(raw.get("cta_keyword"))
+    except ValueError:
+        raise ValueError("Invalid call-to-action keyword") from None
     return RemixConfig(
         sources=list(sources), output_dir=raw["output_dir"], angle=raw["angle"], count=count, host=raw["host"],
         order=raw.get("order") or "moment_first",
         voice=raw.get("voice") or "onyx", avatar_photo=photo, brand_identity=raw.get("brand_identity") or "",
         brand_name=raw.get("brand_name") or "", creator=raw.get("creator") or "",
         caption_preset=raw.get("caption_preset") or "pop", include_captions=raw.get("include_captions") is not False,
+        cta_keyword=keyword, cta_offer=" ".join((raw.get("cta_offer") or "").split())[:80],
     )
 
 

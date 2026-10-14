@@ -8,8 +8,8 @@ import { promisify } from 'util'
 import { isAvatarId } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
 import {
-  estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_BRAND_IDENTITY_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput,
-  REMIX_VOICE_IDS, remixSourceUrl, type BrandIdentity, type RemixDraft, type RemixOutput, type RemixRequest, type RemixStatus
+  estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput,
+  normalizeCtaKeyword, REMIX_VOICE_IDS, remixSourceUrl, type BrandIdentity, type RemixDraft, type RemixOutput, type RemixRequest, type RemixStatus
 } from '../shared/remix'
 import { portraitPath, readAvatar } from './avatars'
 import { logger } from './logger'
@@ -178,12 +178,17 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   if (creator.length > 80) throw new Error('Keep the creator name under 80 characters.')
   if (local.length > 0 && !creator) throw new Error('Add the original creator’s name so the video credits them.')
   if (raw.aiLabelAck !== true) throw new Error('Confirm you’ll turn on the AI-content label when you post.')
+  const ctaKeyword = normalizeCtaKeyword(raw.ctaKeyword)
+  if (ctaKeyword === null) throw new Error('Use one word for the comment keyword (letters, numbers or a dash), like SALES.')
+  const ctaOffer = typeof raw.ctaOffer === 'string' ? raw.ctaOffer.replace(/\s+/g, ' ').trim() : ''
+  if (ctaOffer.length > MAX_CTA_OFFER_CHARS) throw new Error(`Keep “what they get” under ${MAX_CTA_OFFER_CHARS} characters.`)
   return {
     sourceIsUrl: local.length === 0,
     request: {
       sources: sources.map((source, i) => urls[i] ?? source), creator: sources.length === 1 ? creator : '', angle: raw.angle, order,
       host: raw.host, avatarId: avatarId as string | null, voice, brandIdentityId,
-      count: raw.count, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: true
+      count: raw.count, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: true,
+      ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : ''
     }
   }
 }
@@ -290,7 +295,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       config: {
         sources: request.sources, output_dir: folder, angle: request.angle, order: request.order, count: request.count, host: request.host,
         voice: request.voice, avatar_photo: photo, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
-        caption_preset: request.captionPreset, include_captions: request.includeCaptions
+        caption_preset: request.captionPreset, include_captions: request.includeCaptions,
+        cta_keyword: request.ctaKeyword, cta_offer: request.ctaOffer
       }
     }
     const run: ActiveRemix = {

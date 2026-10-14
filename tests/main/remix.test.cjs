@@ -52,6 +52,12 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   assert.deepEqual(plain(request.sources), ['https://www.youtube.com/watch?v=abcdefghijk'])
   assert.equal(main.parseRemixRequest({ ...base, angle: 'mix', order: 'take_first' }, userData).request.order, 'take_first')
   // Several links, de-duplicated; the creator name only applies to a single video.
+  assert.deepEqual([request.ctaKeyword, request.ctaOffer], ['', ''])
+  const cta = main.parseRemixRequest({ ...base, ctaKeyword: ' sales ', ctaOffer: '  my   free playbook ' }, userData).request
+  assert.deepEqual([cta.ctaKeyword, cta.ctaOffer], ['SALES', 'my free playbook'])
+  assert.equal(main.parseRemixRequest({ ...base, ctaKeyword: '', ctaOffer: 'ignored without a keyword' }, userData).request.ctaOffer, '')
+  assert.throws(() => main.parseRemixRequest({ ...base, ctaKeyword: 'two words' }, userData), /one word/)
+  assert.throws(() => main.parseRemixRequest({ ...base, ctaKeyword: 'SALES', ctaOffer: 'x'.repeat(81) }, userData), /under 80/)
   const many = main.parseRemixRequest({ ...base, creator: 'X', sources: ['https://a.com/1', ' https://a.com/1 ', 'https://b.com/2'] }, userData).request
   assert.deepEqual(plain(many.sources), ['https://a.com/1', 'https://b.com/2'])
   assert.equal(main.parseRemixRequest({ ...base, sources: ['https://a.com', 'https://a.com/'] }, userData).request.sources.length, 1)
@@ -119,17 +125,20 @@ test('engine results are parsed defensively', () => {
   })
   assert.deepEqual(plain(out), {
     path: '/o/01 x.mp4', manifestPath: '/o/01 x.json', headline: 'He said what', stance: 'add_nuance', excerptSeconds: 4.2, durationSeconds: 0, costUsd: 0.61,
-    checks: [{ id: 'credited', ok: true, label: 'Credited' }], warnings: ['w'], style: 'reaction', grade: null, creator: ''
+    checks: [{ id: 'credited', ok: true, label: 'Credited' }], warnings: ['w'], style: 'reaction', grade: null, creator: '', postCaption: ''
   })
+  assert.equal(shared.parseRemixOutput({ path: '/a.mp4', manifest_path: '/a.json', post_caption: 'Hook\r\n\n\n\n1.   One\n2. Two  ' }).postCaption, 'Hook\n\n1. One\n2. Two')
 })
 
 test('drafts from the engine and edits from the renderer are checked', () => {
   const draft = shared.parseRemixDraft({
     id: 2, source_title: 'Pull-ups 101', creator: 'Coach', start_ms: 4000, end_ms: 8000, quote: 'you must lose weight', why: 'claim',
     style: 'myth_truth', stance: 'disagree_correct', headline: 'This coach says lose weight first', intro: 'He is wrong.', close: 'Train the pull.',
-    beats: [{ text: 'Strength first.', broll: 'pull up bar' }, 'junk'], notes: ['n'], grade: { letter: 'A', score: 12, verdict: 'v', fix: 'f' }, estimate_usd: 0.6
+    beats: [{ text: 'Strength first.', broll: 'pull up bar' }, 'junk'], notes: ['n'], grade: { letter: 'A', score: 12, verdict: 'v', fix: 'f' }, estimate_usd: 0.6,
+    post_caption: 'Stop dieting first.\n\n1. Strength first.\n\nComment SALES and I\'ll send you my plan.'
   })
   assert.equal(draft.grade.score, 10)
+  assert.equal(draft.postCaption, 'Stop dieting first.\n\n1. Strength first.\n\nComment SALES and I\'ll send you my plan.')
   assert.equal(draft.beats.length, 1)
   assert.equal(shared.parseRemixDraft({ id: -1, headline: 'x', intro: 'y', close: 'z', beats: [] }), null)
   assert.equal(shared.parseRemixDraft({ ...draft, id: 'x' }), null)
@@ -147,6 +156,30 @@ test('drafts from the engine and edits from the renderer are checked', () => {
   assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: long, close: 'y', beats: [{ text: 'z' }] }], ids), /“A fine long headline”: Keep the opening to 45 words/)
   assert.equal(shared.remixEditProblem({ headline: 'A fine long headline', intro: 'x', close: 'y', beats: [{ text: ' ' }] }), 'Keep at least one voice-over beat.')
   assert.throws(() => shared.parseRemixEdits([{ id: 9 }], ids), /at least one/)
+  const captioned = shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: 'x', close: 'y', beats: [{ text: 'z' }], postCaption: 'Line one\n\n1. Two' }], ids)
+  assert.equal(captioned[0].postCaption, 'Line one\n\n1. Two')
+  assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: 'x', close: 'y', beats: [{ text: 'z' }], postCaption: 'x'.repeat(2300) }], ids), /caption to 2,200/)
+})
+
+test('comment-keyword call to action', () => {
+  assert.equal(shared.normalizeCtaKeyword(' sales '), 'SALES')
+  assert.equal(shared.normalizeCtaKeyword(''), '')
+  assert.equal(shared.normalizeCtaKeyword(undefined), '')
+  for (const bad of ['two words', 'x', 'a'.repeat(21), '-dash', 5]) assert.equal(shared.normalizeCtaKeyword(bad), null)
+  assert.equal(shared.brandCtaKeyword('CALL TO ACTION: Comment "PULL-UP" for the free plan'), 'PULL-UP')
+  assert.equal(shared.brandCtaKeyword('Comment below what you think'), '')
+  assert.equal(shared.brandCtaKeyword("comment 'guide' and we'll DM you"), 'GUIDE')
+  assert.equal(shared.brandCtaKeyword('No call to action here'), '')
+  assert.equal(shared.ctaLine('SALES', ' my playbook. '), "Comment SALES and I'll send you my playbook.")
+  assert.equal(shared.ctaLine('SALES', ''), "Comment SALES and I'll send you the full breakdown.")
+  // The call to action doesn't count toward the close's 35 words.
+  const thirty = Array.from({ length: 30 }, () => 'word').join(' ')
+  assert.equal(shared.closeWithoutCta(`${thirty}. Comment SALES and I'll send you my free playbook.`), `${thirty}.`)
+  assert.equal(shared.closeWithoutCta('Comment SALES now.'), '')
+  assert.equal(shared.closeWithoutCta('Train the pull, not the scale.'), 'Train the pull, not the scale.')
+  const edit = { headline: 'A fine long headline', intro: 'x', beats: [{ text: 'z' }] }
+  assert.equal(shared.remixEditProblem({ ...edit, close: `${thirty}. Comment SALES and I'll send you my free playbook.` }), null)
+  assert.match(shared.remixEditProblem({ ...edit, close: `${thirty} one two three four five six. Comment SALES.` }), /35 words/)
 })
 
 test('cleanup removes leftovers of abandoned runs but never finished videos', async () => {

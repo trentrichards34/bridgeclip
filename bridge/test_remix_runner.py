@@ -20,11 +20,14 @@ class ParseConfigTests(unittest.TestCase):
         self.assertEqual((config.angle, config.count, config.voice, config.host, config.order), ("reaction", 2, "nova", "voice", "moment_first"))
         render = remix_runner.parse_config({"mode": "render", "output_dir": os.path.abspath("out"), "angle": "mix", "host": "voice"})
         self.assertEqual(render.sources, [])
+        cta = remix_runner.parse_config(self.base(cta_keyword=" sales ", cta_offer="  my   playbook "))
+        self.assertEqual((cta.cta_keyword, cta.cta_offer), ("SALES", "my playbook"))
 
     def test_rejects_bad_values(self):
         for bad in (self.base(angle="repost"), self.base(host="clone"), self.base(count=0), self.base(count=True),
                     self.base(output_dir="relative"), self.base(avatar_photo="photo.jpg"), self.base(sources=[]), self.base(sources=["x"] * 11), self.base(sources=[5]), self.base(order="random"), self.base(mode="go"),
-                    self.base(creator="x" * 500), self.base(voice=5), "nope"):
+                    self.base(creator="x" * 500), self.base(voice=5), self.base(cta_keyword="two words"),
+                    self.base(cta_keyword=5), self.base(cta_offer="x" * 500), "nope"):
             with self.assertRaises(ValueError):
                 remix_runner.parse_config(bad)
 

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { create } from 'zustand'
-import { AlertTriangle, Check, FileText, Film, FolderOpen, Pencil, Plus, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
+import { AlertTriangle, Check, Copy, FileText, Film, FolderOpen, MessageCircle, Pencil, Plus, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
 import type { AvatarSummary } from '../../shared/avatars'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import {
-  BRAND_IDENTITY_TEMPLATE, estimateRemixCost, isRunning, MAX_BRAND_IDENTITY_CHARS, MAX_SOURCES, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
+  BRAND_IDENTITY_TEMPLATE, brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_POST_CAPTION_CHARS, MAX_SOURCES,
+  closeWithoutCta, normalizeCtaKeyword, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
   REMIX_WORD_LIMITS, remixEditProblem, remixSourceUrl, STANCE_LABELS, STYLE_LABELS, wordCount,
   type BrandIdentity, type RemixAngle, type RemixDraft, type RemixEdit, type RemixHost, type RemixOrder, type RemixOutput, type RemixStatus
 } from '../../shared/remix'
@@ -46,13 +47,15 @@ interface FormDraft {
   captionPreset: string
   includeCaptions: boolean
   aiLabelAck: boolean
+  ctaKeyword: string
+  ctaOffer: string
   update: (patch: Partial<Omit<FormDraft, 'update'>>) => void
 }
 
 /** The form survives navigating away (e.g. to Settings to add a key). */
 const useRemixForm = create<FormDraft>((set) => ({
   links: '', filePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'lipsync', avatarId: null, voice: 'onyx',
-  count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false,
+  count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false, ctaKeyword: '', ctaOffer: '',
   update: (patch) => set(patch)
 }))
 
@@ -95,12 +98,15 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
   const sources = form.filePath ? [form.filePath] : links
   const needsAvatar = form.host !== 'voice'
   const cost = estimateRemixCost(form.host, form.count)
+  const keyword = normalizeCtaKeyword(form.ctaKeyword)
+  const brandKeyword = brand ? brandCtaKeyword(brand.text) : ''
   const blocker = !openrouterConfigured ? 'Add your OpenRouter key in Settings first'
     : sources.length === 0 ? 'Paste a video link or choose a file'
       : sources.length > MAX_SOURCES ? `Up to ${MAX_SOURCES} videos per run`
         : invalid.length > 0 && !form.filePath ? 'Fix the links that aren’t valid'
           : form.filePath && !form.creator.trim() ? 'Add the original creator’s name for the credit'
             : needsAvatar && !avatar ? 'Create an avatar in Avatar Studio, or use voice only'
+              : keyword === null ? 'Use one word for the comment keyword, like SALES'
               : !form.aiLabelAck ? 'Confirm you’ll turn on the AI label when you post' : null
 
   const openKeys = (): void => { requestSettingsSection('keys'); onNavigate('settings') }
@@ -130,7 +136,8 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
       const started = await getApi().remix.start({
         sources, creator: sources.length === 1 ? form.creator : '', angle: form.angle, order: form.order, host: form.host,
         avatarId: needsAvatar ? avatar?.id ?? null : null, voice: form.voice, brandIdentityId: brand?.id ?? null, count: form.count,
-        captionPreset: form.captionPreset, includeCaptions: form.includeCaptions, aiLabelAck: form.aiLabelAck
+        captionPreset: form.captionPreset, includeCaptions: form.includeCaptions, aiLabelAck: form.aiLabelAck,
+        ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : ''
       })
       setStatus((previous) => previous?.id === started.id && previous.phase !== 'planning' ? previous : started)
     } catch (err) { setError(errorMessage(err, 'The remixes could not be started.')) }
@@ -251,6 +258,32 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                 </Button>
               </div>
             )}
+            <div className="glass-tile space-y-3 rounded-xl p-3">
+              <div className="flex items-start gap-2">
+                <MessageCircle className="mt-0.5 h-4 w-4 shrink-0 text-ink-muted" />
+                <div>
+                  <span className="block text-sm text-ink">Comment-keyword call to action</span>
+                  <span className="block text-2xs text-ink-subtle">Turns viewers into DMs: every video ends with it, it shows on screen, and it closes the caption. Deliver what you promise with an auto-DM tool like ManyChat.</span>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+                <Field label="Comment keyword (optional)">
+                  <TextInput aria-label="Comment keyword" value={form.ctaKeyword} maxLength={20} placeholder="e.g. SALES"
+                    onChange={(e) => form.update({ ctaKeyword: e.target.value.toUpperCase().replace(/\s+/g, '') })} />
+                </Field>
+                <Field label="What they get">
+                  <TextInput aria-label="What they get" value={form.ctaOffer} maxLength={MAX_CTA_OFFER_CHARS} disabled={!keyword}
+                    placeholder="e.g. my free playbook" onChange={(e) => form.update({ ctaOffer: e.target.value })} />
+                </Field>
+              </div>
+              {keyword === null ? <p className="text-2xs text-danger">One word: letters, numbers or a dash (2–20 characters).</p>
+                : keyword ? <p className="text-2xs text-ink-muted">Every video ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
+                  : brandKeyword ? (
+                    <button type="button" className="text-2xs text-accent" onClick={() => form.update({ ctaKeyword: brandKeyword })}>
+                      Use “{brandKeyword}” from your Brand Identity
+                    </button>
+                  ) : <p className="text-2xs text-ink-subtle">Leave it empty to end on the payoff (or your Brand Identity’s own call to action).</p>}
+            </div>
           </div>
         </Panel>
 
@@ -339,7 +372,7 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
   const [selected, setSelected] = useState<Set<number>>(() => new Set(ordered.filter((draft) => !draft.grade || 'ABC'.includes(draft.grade.letter)).map((draft) => draft.id)))
   const [working, setWorking] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
-  const value = (draft: RemixDraft): RemixEdit => edits[draft.id] ?? { id: draft.id, headline: draft.headline, intro: draft.intro, beats: draft.beats, close: draft.close }
+  const value = (draft: RemixDraft): RemixEdit => edits[draft.id] ?? { id: draft.id, headline: draft.headline, intro: draft.intro, beats: draft.beats, close: draft.close, postCaption: draft.postCaption }
   const change = (draft: RemixDraft, patch: Partial<RemixEdit>): void => setEdits((current) => ({ ...current, [draft.id]: { ...value(draft), ...patch } }))
   const toggle = (id: number): void => setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const chosen = ordered.filter((draft) => selected.has(draft.id))
@@ -371,6 +404,7 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
           const take = `take ${position + 1}`
           const problem = on ? problems.get(draft.id) : null
           const counter = (text: string, limit: number): string => `${wordCount(text)} / ${limit} words`
+          const cta = /\b[Cc]omment\s+["“]?([A-Z0-9][A-Z0-9-]{1,19})\b/.exec(draft.close)?.[1]
           return (
             <div key={draft.id} className={cn('glass-tile space-y-3 rounded-2xl p-4', !on && 'opacity-60')}>
               <div className="flex items-start gap-3">
@@ -405,8 +439,12 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
                   <TextArea aria-label={`Beat ${index + 1}, ${take}`} rows={2} value={beat.text} onChange={(e) => change(draft, { beats: current.beats.map((b, i) => i === index ? { ...b, text: e.target.value } : b) })} />
                 </Field>
               ))}
-              <Field label="Close (presenter)" hint={counter(current.close, REMIX_WORD_LIMITS.close)}>
+              <Field label="Close (presenter)" hint={`${counter(closeWithoutCta(current.close), REMIX_WORD_LIMITS.close)}${cta ? ` · plus “Comment ${cta}…”, which is added back if you remove it` : ''}`}>
                 <TextArea aria-label={`Close (presenter), ${take}`} rows={2} value={current.close} onChange={(e) => change(draft, { close: e.target.value })} />
+              </Field>
+              <Field label="Post caption" hint={`${(current.postCaption ?? '').length.toLocaleString('en-US')} / ${MAX_POST_CAPTION_CHARS.toLocaleString('en-US')} characters · filled in when you post from the Library; empty keeps the AI’s`}>
+                <TextArea aria-label={`Post caption, ${take}`} rows={6} value={current.postCaption ?? ''} maxLength={MAX_POST_CAPTION_CHARS}
+                  onChange={(e) => change(draft, { postCaption: e.target.value })} />
               </Field>
               {edits[draft.id] && draft.grade && <p className="text-2xs text-ink-subtle">Graded before your edits.</p>}
               {problem && <p className="text-2xs text-danger" role="alert">{problem}</p>}
@@ -467,6 +505,7 @@ function RemixProgress({ status }: { status: RemixStatus }): React.JSX.Element |
 
 function RemixCard({ output }: { output: RemixOutput }): React.JSX.Element {
   const issues = output.checks.filter((check) => !check.ok).length
+  const [copied, setCopied] = useState(false)
   return (
     <div className="glass-tile space-y-2 rounded-2xl p-3">
       <video src={localFileUrl(output.path)} controls preload="metadata" className="mx-auto aspect-[9/16] max-h-[380px] rounded-xl bg-black" />
@@ -487,7 +526,19 @@ function RemixCard({ output }: { output: RemixOutput }): React.JSX.Element {
         ))}
       </ul>
       {output.warnings.map((warning, i) => <p key={i} className="text-2xs text-warning">{warning}</p>)}
-      <div className="flex gap-2">
+      {output.postCaption && (
+        <details className="rounded-xl bg-white/[0.04] px-3 py-2 text-xs text-ink-muted">
+          <summary className="cursor-pointer text-ink">Post caption</summary>
+          <p className="mt-1.5 whitespace-pre-line" data-selectable>{output.postCaption}</p>
+        </details>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {output.postCaption && (
+          <Button size="sm" variant="secondary" icon={copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            onClick={() => { void navigator.clipboard?.writeText(output.postCaption).then(() => setCopied(true)).catch(() => undefined) }}>
+            {copied ? 'Copied' : 'Copy caption'}
+          </Button>
+        )}
         <Button size="sm" variant="secondary" icon={<FolderOpen className="h-3.5 w-3.5" />} onClick={() => void getApi().shell.showItemInFolder(output.path)}>Show in folder</Button>
         <Button size="sm" variant="ghost" icon={<FileText className="h-3.5 w-3.5" />} onClick={() => void getApi().shell.openPath(output.manifestPath)}>Source record</Button>
       </div>

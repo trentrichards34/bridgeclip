@@ -19,6 +19,8 @@ export interface ClipArtifact {
   headline?: string | null
   /** Made with AI (Remix): posting starts with the platform's AI label on. */
   ai_generated?: boolean
+  /** Ready-to-post caption (Remix: takeaways, call to action, credit). */
+  post_caption?: string | null
   tags: string[]
   /** Set when smart framing failed and a letterbox fallback produced the clip. */
   render_fallback: string | null
@@ -195,6 +197,7 @@ export function parseJobOutput(value: unknown): JobOutput | null {
       summary: boundedText(item.summary, 2048),
       headline: boundedText(item.headline, 512),
       ai_generated: item.ai_generated === true,
+      post_caption: typeof item.post_caption === 'string' && item.post_caption.trim() ? item.post_caption.slice(0, 5000) : null,
       tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 50).map((tag) => tag.slice(0, 64)) : [],
       render_fallback: boundedText(item.render_fallback, 256)
     })

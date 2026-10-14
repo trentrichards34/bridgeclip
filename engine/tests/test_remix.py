@@ -182,16 +182,25 @@ def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar, orde
     progress = []
     config = remix.RemixConfig(sources=[str(source)], output_dir=str(tmp_path / "out"), angle="myth_truth", count=2, host=host,
                                voice="nova", avatar_photo=str(photo), creator="Coach Example", brand_name="Pull-Up Lab",
-                               brand_identity="We believe strength comes before weight loss.", order=order)
+                               brand_identity="We believe strength comes before weight loss.", order=order,
+                               cta_keyword="pullup" if host == "voice" else "", cta_offer="my free pull-up plan" if host == "voice" else "")
+    keyword = host == "voice"
     planned = asyncio.run(remix.Remixer(config, lambda d, p: progress.append((d, p)), media=media, settings=settings).plan())
     drafts = planned["drafts"]
     assert len(drafts) == 2 and drafts[0]["style"] == "myth_truth" and drafts[0]["creator"] == "Coach Example"
     assert drafts[0]["grade"]["letter"] == "A" and drafts[1]["grade"]["letter"] == "B" and drafts[0]["grade"]["fix"]
     assert "OPENS on the borrowed moment" in calls[0]["messages"][0]["content"] if order == "moment_first" else True
     assert media.speech_calls == [] and media.avatar_calls == 0  # nothing paid for before review
+    if keyword:
+        assert "Comment PULLUP" in calls[0]["messages"][0]["content"]
+        assert drafts[0]["close"].endswith("Comment PULLUP and I'll send you my free pull-up plan.")
+        assert "Comment PULLUP" in drafts[0]["post_caption"] and drafts[0]["post_caption"].endswith("Clip: Coach Example")
+    else:
+        assert "Comment" not in drafts[0]["close"] and drafts[0]["post_caption"].endswith("Clip: Coach Example")
     # The user edits the first take's opening line and approves both.
     edits = [{"id": 0, "headline": drafts[0]["headline"], "intro": "Hold on. That is the biggest myth about pull-ups.",
-              "beats": drafts[0]["beats"], "close": drafts[0]["close"]}, {"id": 1}]
+              "beats": drafts[0]["beats"], "close": "Train the pull, not the scale.",
+              "post_caption": "Stop dieting for your first pull-up.\n\n1. Strength comes first."}, {"id": 1}]
     media2 = FakeMedia(ffmpeg, fail_avatar)
     result = asyncio.run(remix.Remixer(config, lambda d, p: progress.append((d, p)), media=media2, settings=settings).render(edits))
     media = media2
@@ -222,6 +231,16 @@ def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar, orde
     job = json.load(open(tmp_path / "out" / "job_output.json"))
     assert len(job["clips"]) == 2 and job["clips"][0]["s3_url"].startswith("file://") and job["clips"][0]["ai_generated"] is True
     assert job["source_video_title"].startswith("Remix")
+    caption = job["clips"][0]["post_caption"]
+    assert caption.startswith("Stop dieting for your first pull-up.") and caption.endswith("Clip: Coach Example")
+    assert manifest["post_caption"] == caption
+    if keyword:
+        # The edit dropped the call to action; it is put back on the close and the caption.
+        assert manifest["script"]["close"] == "Train the pull, not the scale. Comment PULLUP and I'll send you my free pull-up plan."
+        assert "Comment PULLUP and I'll send you my free pull-up plan." in caption and checks["cta"]
+        assert manifest["call_to_action"] == {"keyword": "PULLUP", "offer": "my free pull-up plan"}
+    else:
+        assert "cta" not in checks and manifest["call_to_action"] is None
     assert not os.path.exists(tmp_path / "out" / ".work")
     assert progress[-1][1] >= 90
     if keep:
@@ -443,3 +462,49 @@ def test_edits_keep_limits_and_flag_new_numbers():
         remix.apply_edit(script, {"headline": "Too short"}, "", "")
     assert remix.grade_letter({"hook": 9, "payoff": 9, "stands_alone": 8, "specificity": 8, "stance": 8})[0] == "A"
     assert remix.grade_letter({"hook": 3, "payoff": 9, "stands_alone": 9, "specificity": 9, "stance": 9})[0] == "C"
+
+
+class TestCallToActionAndCaption:
+    def test_keyword_rules(self):
+        assert remix.normalize_keyword(" sales ") == "SALES" and remix.normalize_keyword("pull-up") == "PULL-UP"
+        assert remix.normalize_keyword("") == "" and remix.normalize_keyword(None) == ""
+        for bad in ("two words", "x", "a" * 21, "-dash", "émoji"):
+            with pytest.raises(ValueError):
+                remix.normalize_keyword(bad)
+        assert remix.has_cta("Comment “SALES” below", "SALES") and remix.has_cta("comment sales", "SALES")
+        assert not remix.has_cta("Sales measure trust", "SALES") and not remix.has_cta("Comment SALESPEOPLE", "SALES")
+
+    def test_close_gets_the_call_to_action_once(self):
+        added = remix.ensure_cta("Train the pull, not the scale", "SALES", "my playbook.")
+        assert added == "Train the pull, not the scale. Comment SALES and I'll send you my playbook."
+        assert remix.ensure_cta(added, "SALES", "my playbook") == added
+        assert remix.ensure_cta("Done!", "SALES", "") == "Done! Comment SALES and I'll send you the full breakdown."
+        assert remix.ensure_cta("Done.", "", "x") == "Done."
+
+    def test_caption_is_kept_checked_and_finalized(self):
+        item = plan_item(4, 8, post_caption="Your biggest reel made $0.\n\n\n\n1.  Views measure attention.\n2. Sales measure trust.")
+        script = remix.parse_plan({"remixes": [item]}, transcript(), "", 1)[0]
+        # $0 is not in the brand identity or the transcript, so the AI caption is replaced by one built from the take.
+        assert script.post_caption.startswith("This coach says") and "1. Strength comes first." in script.post_caption
+        brand = "My reels made $0 while low-view posts brought clients."
+        script = remix.parse_plan({"remixes": [item]}, transcript(), brand, 1)[0]
+        assert script.post_caption == "Your biggest reel made $0.\n\n1. Views measure attention.\n2. Sales measure trust."
+        final = remix.finalize_caption(script.post_caption, "SALES", "my playbook", "Alex Hormozi")
+        assert final.endswith("Comment SALES and I'll send you my playbook.\n\nClip: Alex Hormozi")
+        assert remix.finalize_caption(final, "SALES", "my playbook", "Alex Hormozi") == final
+
+    def test_edits_restore_the_cta_and_flag_caption_numbers(self):
+        script = remix.parse_plan({"remixes": [plan_item(4, 8)]}, transcript(), "", 1)[0]
+        edit = {"headline": script.headline, "intro": script.intro, "beats": [{"text": b.text} for b in script.beats],
+                "close": "Train the pull.", "post_caption": "We got 500 clients this way."}
+        edited = remix.apply_edit(script, edit, "", "", "SALES", "")
+        assert edited.close == "Train the pull. Comment SALES and I'll send you the full breakdown."
+        assert edited.post_caption == "We got 500 clients this way." and any("caption has numbers" in n for n in edited.notes)
+        assert {c.id: c.ok for c in remix.run_checks(edited, 4000, 30000, True, False, True, "SALES")}["cta"]
+        edited.close = "Train the pull."
+        assert {c.id: c.ok for c in remix.run_checks(edited, 4000, 30000, True, False, True, "SALES")}["cta"] is False
+
+    def test_prompt_carries_the_keyword(self):
+        prompt = remix.plan_system_prompt("lessons", 3, "moment_first", "SALES", "my playbook")
+        assert 'Comment SALES and I\'ll send you' in prompt and '"my playbook"' in prompt and "POST CAPTION" in prompt
+        assert "Comment" not in remix.plan_system_prompt("lessons", 3).split("POST CAPTION")[0].split("CALL TO ACTION")[1][:80]

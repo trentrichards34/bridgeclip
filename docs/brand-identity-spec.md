@@ -16,7 +16,7 @@ sections below, in this order, with these headings.
 | PROOF WE CAN USE | Real, approved numbers, results, testimonials | The ONLY numbers and results a take may use. Anything else is dropped |
 | VOICE | Tone, words used, words never used, how the brand disagrees | Script wording and the delivery of the AI voice |
 | OFF-LIMITS | Claims never made, topics avoided | Hard limits for the writer |
-| CALL TO ACTION (optional) | What to say at the end | The closing line |
+| CALL TO ACTION (optional) | What to say at the end, ideally a comment keyword: `Comment PULL-UP and I'll send you the free plan` | The closing line, the on-screen keyword and the caption's last line. Remix offers a keyword written in capitals here as a one-click choice. |
 
 Rules for the generator:
 
@@ -68,7 +68,7 @@ OFF-LIMITS
 - Claims we never make: ...
 - Topics we avoid: ...
 
-CALL TO ACTION: <optional, from the material>
+CALL TO ACTION: <optional, from the material; when the member uses a comment keyword, write it in capitals: Comment GUIDE and I'll send you …>
 
 MATERIAL:
 <<<paste the member's materials here>>>

@@ -59,6 +59,12 @@ export interface PostableClip {
   durationMs: number
   /** Remixes (AI presenter or voice): TikTok's "made with AI" starts on. */
   aiGenerated?: boolean
+  /** A caption written with the video (Remix); used instead of the title and tags. */
+  postCaption?: string
+}
+
+function startingCaption(clip: PostableClip): string {
+  return clip.postCaption?.trim() ? clip.postCaption.trim() : defaultCaption(clip.title, clip.tags)
 }
 
 interface PostDialogProps {
@@ -156,7 +162,7 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
   // Per clip.
   const [media, setMedia] = useState<ClipMediaInfo | null>(null)
   const [thumb, setThumb] = useState<string | null>(null)
-  const [caption, setCaption] = useState(() => defaultCaption(clip.title, clip.tags))
+  const [caption, setCaption] = useState(() => startingCaption(clip))
   const [youtube, setYoutube] = useState<YouTubePostOptions>(() => ({ title: youtubeTitleFor(clip.title) || 'Untitled clip', visibility: 'public', madeForKids: false }))
   const [phase, setPhase] = useState<Phase>('editing')
   const [progress, setProgress] = useState<PostProgress | null>(null)
@@ -397,7 +403,7 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
     if (!next) return
     setIndex(index + 1)
     setAttemptId(newAttemptId())
-    setCaption(defaultCaption(next.title, next.tags))
+    setCaption(startingCaption(next))
     setYoutube((y) => ({ ...y, title: youtubeTitleFor(next.title) || 'Untitled clip', tags: undefined, categoryId: undefined }))
     setPlatformCaptions({}); setFacebookTitle(''); setThreadsTopicTag(''); setEnhanced(false); setEnhancementOpen(false)
     // TikTok's consent covers one piece of content.

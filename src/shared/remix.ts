@@ -55,6 +55,31 @@ export const REMIX_VOICE_IDS: readonly string[] = REMIX_VOICES.map((voice) => vo
 export const MAX_REMIXES = 10
 export const MAX_SOURCES = 10
 export const MAX_BRAND_IDENTITY_CHARS = 40000
+/** Instagram's caption limit (the strictest of the main platforms after X). */
+export const MAX_POST_CAPTION_CHARS = 2200
+export const MAX_CTA_OFFER_CHARS = 80
+
+/** A comment keyword in capitals (one word: letters, numbers, dashes), '' for none, or null when it can't be one. */
+export function normalizeCtaKeyword(value: unknown): string | null {
+  if (value === undefined || value === null) return ''
+  if (typeof value !== 'string') return null
+  const keyword = value.trim().toUpperCase()
+  if (!keyword) return ''
+  return /^[A-Z0-9][A-Z0-9-]{1,19}$/.test(keyword) ? keyword : null
+}
+
+/** The keyword a Brand Identity's call to action already uses ("Comment PULL-UP for…"), if any. */
+export function brandCtaKeyword(text: string): string {
+  // The keyword is written in capitals (or quoted): "Comment below" is not one.
+  const match = /\b(?:comment|Comment|COMMENT)\s+(?:["“'‘]([A-Za-z0-9][A-Za-z0-9-]{1,19})["”'’]|([A-Z0-9][A-Z0-9-]{1,19}))(?=[\s.,!?:;)]|$)/.exec(text)
+  return match ? normalizeCtaKeyword(match[1] ?? match[2]) ?? '' : ''
+}
+
+/** The line every video ends with (the engine writes the same words). */
+export function ctaLine(keyword: string, offer: string): string {
+  const what = offer.replace(/\s+/g, ' ').trim().replace(/[.!? ]+$/, '')
+  return `Comment ${keyword} and I'll send you ${what || 'the full breakdown'}.`
+}
 
 /** Estimates for the cost preview (OpenRouter prices, October 2026). */
 export const REMIX_PRICES = {
@@ -102,6 +127,10 @@ export interface RemixRequest {
   includeCaptions: boolean
   /** The user confirmed they'll turn on the platform's AI-content label when posting. */
   aiLabelAck: boolean
+  /** Comment keyword for the call to action ("SALES"), '' for none. */
+  ctaKeyword: string
+  /** What commenters get ("my free playbook"), used in "Comment SALES and I'll send you …". */
+  ctaOffer: string
 }
 
 export interface RemixGrade {
@@ -133,10 +162,12 @@ export interface RemixDraft {
   notes: string[]
   grade: RemixGrade | null
   estimateUsd: number
+  /** The caption for the post: takeaways, the call to action and the credit. */
+  postCaption: string
 }
 
 /** What the user approves: the draft id and any edited text. */
-export interface RemixEdit { id: number; headline: string; intro: string; beats: RemixBeat[]; close: string }
+export interface RemixEdit { id: number; headline: string; intro: string; beats: RemixBeat[]; close: string; postCaption?: string }
 
 export interface RemixCheck { id: string; ok: boolean; label: string }
 
@@ -153,6 +184,7 @@ export interface RemixOutput {
   style: RemixStyle
   grade: RemixGrade['letter'] | null
   creator: string
+  postCaption: string
 }
 
 /** planning → review (drafts to approve) → rendering → done; or failed / cancelled. */
@@ -215,6 +247,13 @@ function text(value: unknown, max: number): string {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : ''
 }
 
+/** Caption text: line breaks kept (they carry the numbered takeaways), spaces and blank runs squeezed. */
+export function captionText(value: unknown, max = MAX_POST_CAPTION_CHARS): string {
+  if (typeof value !== 'string') return ''
+  return value.replace(/\r/g, '').split('\n').map((line) => line.replace(/[ \t\f\v]+/g, ' ').trim()).join('\n')
+    .replace(/\n{3,}/g, '\n\n').trim().slice(0, max)
+}
+
 function number(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
@@ -236,7 +275,8 @@ export function parseRemixOutput(value: unknown): RemixOutput | null {
     checks, warnings: Array.isArray(raw.warnings) ? raw.warnings.filter((w): w is string => typeof w === 'string').map((w) => text(w, 400)).slice(0, 8) : [],
     style: isRemixStyle(raw.style) ? raw.style : 'reaction',
     grade: typeof raw.grade === 'string' && ['A', 'B', 'C', 'D', 'F'].includes(raw.grade) ? raw.grade as RemixGrade['letter'] : null,
-    creator: text(raw.creator, 120)
+    creator: text(raw.creator, 120),
+    postCaption: captionText(raw.post_caption)
   }
 }
 
@@ -264,7 +304,7 @@ export function parseRemixDraft(value: unknown): RemixDraft | null {
     stance: raw.stance === 'agree_extend' || raw.stance === 'disagree_correct' ? raw.stance : 'add_nuance',
     headline: text(raw.headline, 200), intro: text(raw.intro, 400), beats, close: text(raw.close, 400),
     notes: Array.isArray(raw.notes) ? raw.notes.filter((n): n is string => typeof n === 'string').map((n) => text(n, 300)).slice(0, 6) : [],
-    grade: parseGrade(raw.grade), estimateUsd: number(raw.estimate_usd)
+    grade: parseGrade(raw.grade), estimateUsd: number(raw.estimate_usd), postCaption: captionText(raw.post_caption)
   }
 }
 
@@ -275,8 +315,16 @@ export function wordCount(value: string): number {
   return value.trim() ? value.trim().split(/\s+/).length : 0
 }
 
+/** The close without a trailing "Comment KEYWORD …" call to action, which doesn't count toward its word limit. */
+export function closeWithoutCta(close: string): string {
+  return close.replace(/(^|[.!?]\s+)\s*(?:comment|Comment|COMMENT)\s+["“'‘]?[A-Za-z0-9][A-Za-z0-9-]{1,19}\b[^.!?]*[.!?]?\s*$/, '$1').trim()
+}
+
+/** Hard cap on the close with its call to action (the engine holds it to the same). */
+export const MAX_CLOSE_WORDS_WITH_CTA = 60
+
 /** What's wrong with an edited take, or null when it's ready to make. */
-export function remixEditProblem(edit: Pick<RemixEdit, 'headline' | 'intro' | 'beats' | 'close'>): string | null {
+export function remixEditProblem(edit: Pick<RemixEdit, 'headline' | 'intro' | 'beats' | 'close'> & { postCaption?: string }): string | null {
   if (wordCount(edit.headline) < 3) return 'The headline needs at least 3 words.'
   if (wordCount(edit.headline) > REMIX_WORD_LIMITS.headline) return `Keep the headline to ${REMIX_WORD_LIMITS.headline} words.`
   if (!edit.intro.trim()) return 'Add an opening line.'
@@ -285,7 +333,10 @@ export function remixEditProblem(edit: Pick<RemixEdit, 'headline' | 'intro' | 'b
   const long = edit.beats.findIndex((beat) => wordCount(beat.text) > REMIX_WORD_LIMITS.beat)
   if (long >= 0) return `Keep beat ${long + 1} to ${REMIX_WORD_LIMITS.beat} words.`
   if (!edit.close.trim()) return 'Add a closing line.'
-  if (wordCount(edit.close) > REMIX_WORD_LIMITS.close) return `Keep the close to ${REMIX_WORD_LIMITS.close} words.`
+  if (wordCount(closeWithoutCta(edit.close)) > REMIX_WORD_LIMITS.close || wordCount(edit.close) > MAX_CLOSE_WORDS_WITH_CTA) {
+    return `Keep the close to ${REMIX_WORD_LIMITS.close} words (plus the comment call to action).`
+  }
+  if ((edit.postCaption ?? '').length > MAX_POST_CAPTION_CHARS) return `Keep the caption to ${MAX_POST_CAPTION_CHARS.toLocaleString('en-US')} characters.`
   return null
 }
 
@@ -304,9 +355,14 @@ export function parseRemixEdits(value: unknown, draftIds: ReadonlySet<number>): 
       return typeof b.text === 'string' && b.text.trim() ? [{ text: text(b.text, 400), broll: text(b.broll, 60) }] : []
     }).slice(0, 4) : []
     const headline = text(raw.headline, 200), intro = text(raw.intro, 400), close = text(raw.close, 400)
-    const problem = remixEditProblem({ headline, intro, beats, close })
+    if (typeof raw.postCaption === 'string' && captionText(raw.postCaption, MAX_POST_CAPTION_CHARS + 1).length > MAX_POST_CAPTION_CHARS) {
+      throw new Error(`“${headline.slice(0, 60) || 'A take'}”: Keep the caption to ${MAX_POST_CAPTION_CHARS.toLocaleString('en-US')} characters.`)
+    }
+    const postCaption = captionText(raw.postCaption)
+    const problem = remixEditProblem({ headline, intro, beats, close, postCaption })
     if (problem) throw new Error(`“${headline.slice(0, 60) || 'A take'}”: ${problem}`)
-    edits.push({ id, headline, intro, beats, close })
+    // An empty caption keeps the one the AI wrote.
+    edits.push({ id, headline, intro, beats, close, ...(postCaption ? { postCaption } : {}) })
   }
   if (edits.length === 0) throw new Error('Choose at least one remix to make.')
   return edits
