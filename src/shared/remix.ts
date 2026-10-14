@@ -147,6 +147,8 @@ export interface RemixRequest {
   clipRightsAck: boolean
   /** How the hook text at the top looks; missing means the white bar. */
   headlineLook?: HeadlineLook
+  /** A call to action from the member's library, played at the end of every video (it replaces the spoken one). */
+  ctaId?: string
 }
 
 export interface RemixGrade {

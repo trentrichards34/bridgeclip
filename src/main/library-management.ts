@@ -161,7 +161,7 @@ export async function deleteLibraryClips(outputDir: unknown, indices: unknown): 
     if (basename(file) !== `${name}.mp4` || realpathSync(dirname(file)) !== canonical) throw new Error('The selected clip is outside its Library run.')
     include(file)
     // Sidecars written next to each clip: framing, captions and upload notes.
-    for (const suffix of ['.framing.json', '.srt', '.youtube.txt', '.source.json']) include(join(run, `${name}${suffix}`))
+    for (const suffix of ['.framing.json', '.srt', '.youtube.txt', '.source.json', '.original.mp4']) include(join(run, `${name}${suffix}`))
     include(join(run, manualPostedFile(clip.clip_index)))
   }
   const changes: [string, Record<string, unknown>][] = []
@@ -212,4 +212,19 @@ export async function deleteLibraryClips(outputDir: unknown, indices: unknown): 
   // cleanup starts, since some deleted files may already have been removed.
   try { rmSync(staging, { recursive: true }) } catch { throw new Error('Clips were removed from the Library, but some files could not be cleaned up in the run folder.') }
   return parseJobOutput(raw)!
+}
+
+/** Add, switch or remove the call to action at the end of one clip in a finished run. */
+export async function setLibraryClipCta(outputDir: unknown, clipIndex: unknown,
+  apply: (run: string, clipIndex: number) => Promise<{ failed: number[] }>, busyFolder: string | null = null): Promise<JobOutput> {
+  if (!Number.isSafeInteger(clipIndex) || (clipIndex as number) < 0 || (clipIndex as number) > 999) throw new Error('Choose a clip from this Library run.')
+  const { check, output } = await checkedRun(outputDir)
+  const run = check()
+  if (busyFolder && realpathSync(busyFolder) === realpathSync(run)) throw new Error('Wait for this remix to finish before changing its videos.')
+  if (!output.clips.some((clip) => clip.clip_index === clipIndex)) throw new Error('That clip is no longer in this run. Refresh and try again.')
+  const { failed } = await apply(run, clipIndex as number)
+  if (failed.length) throw new Error('The call to action could not be added to this clip. Try again, or choose another call to action.')
+  const updated = await getJobOutput(check(), loadSettings().outputDirectory)
+  if (!updated) throw new Error('This completed run is no longer available in your Library.')
+  return updated
 }

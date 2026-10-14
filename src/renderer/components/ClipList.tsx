@@ -1,4 +1,5 @@
 import { SavedStageTimings } from './StageBreakdown'
+import { ClipCtaDialog } from './CtaPicker'
 import { parseJobOutput } from '../../shared/job-output'
 import { editorProgress } from '../../shared/clip-editor'
 import { ClipEditor } from './ClipEditor'
@@ -127,6 +128,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
   const closeConfirm = useCallback(() => setConfirm(null), [])
   const [posting, setPosting] = useState<PostableClip[] | null>(null)
   const [bankClips, setBankClips] = useState<number[] | null>(null)
+  const [ctaClip, setCtaClip] = useState<ClipArtifact | null>(null)
   const [addedToBank, setAddedToBank] = useState(false)
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const exportingRef = useRef(false)
@@ -302,6 +304,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
               onPost={() => setPosting([asPostable(clip)])}
               onAddToAutomation={outputDir ? () => setBankClips([clip.clip_index]) : undefined}
               onDelete={outputDir ? () => confirmDelete([clip.clip_index]) : undefined}
+              onChangeCta={outputDir ? () => setCtaClip(clip) : undefined}
               actionsDisabled={deleting || exporting}
               onSetPosted={outputDir ? async (posted) => {
                 if (!getApi().history.setPosted) throw new Error('Restart CreatorClips to enable manual posted marks.')
@@ -493,6 +496,18 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
       {confirm && <ConfirmDialog request={confirm} onClose={closeConfirm} />}
       {posting && <PostDialog clips={posting} onClose={() => setPosting(null)} onNavigate={onNavigate} />}
       {inspectEdits && <EditInspector outputDir={outputDir} onClose={() => setInspectEdits(false)} />}
+      {ctaClip && outputDir && <ClipCtaDialog
+        title={ctaClip.summary || `Clip ${ctaClip.clip_index + 1}`}
+        current={ctaClip.cta?.id ?? null}
+        onClose={() => setCtaClip(null)}
+        onApply={async (ctaId) => {
+          const fresh = await getApi().clips.setCta(outputDir, ctaClip.clip_index, ctaId)
+          onOutputChanged(fresh)
+          setNotice(ctaId ? 'The call to action was added to the end of the clip.' : 'The call to action was removed.')
+          if (noticeTimer.current) clearTimeout(noticeTimer.current)
+          noticeTimer.current = setTimeout(() => setNotice(null), 6000)
+        }}
+      />}
       {bankClips && outputDir && <AddToAutomationDialog
         outputDir={outputDir}
         clipIndices={bankClips}

@@ -86,6 +86,18 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   assert.deepEqual(await app.evaluate(() => globalThis.sampleRequests), [{ kind: 'avatar', voice: { provider: 'elevenlabs', voice: 'Brian' }, avatarId: 'a'.repeat(16) }])
   assert.equal(await page.getByText('That sample could not be played.').count(), 0)
 
+  // A recorded call to action, added to the library through the real main process, ends every video.
+  const ctaVideo = path.join(root, 'Comment PULLUP.mov')
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=360x640:d=3:r=24', '-f', 'lavfi', '-i', 'sine=d=3', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', ctaVideo])
+  await app.evaluate(({ dialog }, file) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] }) }, ctaVideo)
+  const ctaGroup = page.getByRole('radiogroup', { name: 'Call to action' })
+  assert.equal(await ctaGroup.getByRole('radio', { name: /None/ }).getAttribute('aria-checked'), 'true')
+  await page.getByRole('button', { name: /Add CTA/ }).click()
+  const added = ctaGroup.getByRole('radio', { name: /Comment PULLUP \(video, 3 seconds\)/ })
+  await added.waitFor({ timeout: 30000 })
+  assert.equal(await added.getAttribute('aria-checked'), 'true', 'a new CTA is chosen right away')
+  await page.getByText(/Your CTA clip below plays at the end of every video/).waitFor()
+
   // Hook text look: a brand-color bar in the condensed font.
   const looks = page.getByRole('radiogroup', { name: 'Hook text look' })
   assert.equal(await looks.getByRole('radio', { name: /White bar/ }).getAttribute('aria-checked'), 'true')
@@ -116,6 +128,7 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   assert.equal(request.ctaKeyword, 'PULLUP')
   assert.equal(request.ctaOffer, 'my free pull-up plan')
   assert.deepEqual(request.headlineLook, { look: 'brand', color: '#FF8800', font: 'condensed' })
+  assert.match(request.ctaId, /^[a-f0-9]{16}$/)
   await page.getByText('Video 1 of 2: finding moments and writing your takes').waitFor()
 
   // Review: two graded takes, best first; edit one line, drop the weaker one, make the rest.

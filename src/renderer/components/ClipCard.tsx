@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, FolderOpen, ImageOff, ListPlus, Play, Send, Trash2, TrendingUp, TriangleAlert, Undo2 } from 'lucide-react'
+import { Check, FolderOpen, ImageOff, ListPlus, Megaphone, Play, Send, Trash2, TrendingUp, TriangleAlert, Undo2 } from 'lucide-react'
 import { cn, formatTimecode, isMac, localFileUrl } from '../lib/utils'
 import { getApi } from '../lib/ipc'
 import { clipFilePath, loadThumbnail } from '../lib/thumbnails'
@@ -36,6 +36,8 @@ interface ClipCardProps {
   onAddToAutomation?: () => void
   onSetPosted?: (posted: boolean) => Promise<void>
   onDelete?: () => void
+  /** Add, switch or remove the call to action at the end. */
+  onChangeCta?: () => void
   actionsDisabled?: boolean
 }
 
@@ -52,6 +54,7 @@ export function ClipCard({
   onAddToAutomation,
   onSetPosted,
   onDelete,
+  onChangeCta,
   actionsDisabled
 }: ClipCardProps): React.JSX.Element {
   const filePath = clipFilePath(clip.s3_url)
@@ -214,6 +217,7 @@ export function ClipCard({
             <ActionMenu label={`Actions for “${title}”`} disabled={markingPosted || actionsDisabled} actions={[
               ...(onPost ? [{ label: 'Post or schedule', icon: <Send className="h-3.5 w-3.5" />, onSelect: onPost }] : []),
               ...(onAddToAutomation ? [{ label: 'Add to automation', icon: <ListPlus className="h-3.5 w-3.5" />, onSelect: onAddToAutomation }] : []),
+              ...(onChangeCta ? [{ label: clip.cta ? 'Change call to action' : 'Add call to action', icon: <Megaphone className="h-3.5 w-3.5" />, onSelect: onChangeCta }] : []),
               ...(onSetPosted && postingStatus && (postingStatus.state !== 'posted' || postingStatus.manuallyPosted) ? [postingStatus.manuallyPosted
                 ? { label: 'Undo manual posted mark', icon: <Undo2 className="h-3.5 w-3.5" />, onSelect: () => { void setPosted(false) } }
                 : { label: 'Mark as posted', icon: <Check className="h-3.5 w-3.5" />, onSelect: () => { void setPosted(true) } }] : []),
@@ -225,6 +229,11 @@ export function ClipCard({
         <h3 className="line-clamp-2 text-sm font-medium leading-[18px] text-ink" title={title}>
           {title}
         </h3>
+        {clip.cta && (
+          <p className="mt-1 flex items-center gap-1 text-2xs text-ink-muted" title="This clip ends with a call to action from your library.">
+            <Megaphone className="h-3 w-3 shrink-0" /><span className="truncate">Ends with: {clip.cta.name}</span>
+          </p>
+        )}
         {clip.headline && clip.headline !== title && (
           <p className="mt-1 line-clamp-2 text-xs text-ink-muted" title="Story headline. It is drawn above the video when the Headline bar title style is on, and works as a post caption.">“{clip.headline}”</p>
         )}

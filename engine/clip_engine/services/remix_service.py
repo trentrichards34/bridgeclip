@@ -243,9 +243,17 @@ def finalize_caption(caption: str, keyword: str, offer: str, creator: str) -> st
     return f"{text}{suffix}".strip()
 
 
-def plan_system_prompt(angle: str, count: int, order: str = "moment_first", keyword: str = "", offer: str = "") -> str:
+def plan_system_prompt(angle: str, count: int, order: str = "moment_first", keyword: str = "", offer: str = "",
+                       cta_clip: bool = False) -> str:
     spec = ANGLES[angle]
-    if keyword:
+    if cta_clip:
+        # The member's own recorded call to action plays after the close.
+        cta = ("CALL TO ACTION: the creator's own recorded call to action plays right after the close, so the close ends on the payoff "
+               "and never asks for a comment, follow or click itself.")
+        close_rule = "the payoff that lands the take (no call to action: the creator's recorded one follows)."
+        caption_cta = (f'the call to action ("Comment {keyword} and I\'ll send you …")' if keyword
+                       else "a one-line question that invites comments (or the brand identity's call to action, if it names one)")
+    elif keyword:
         offer_text = f'"{offer}"' if offer else "what the brand identity's call to action offers (or, if it names nothing, \"the full breakdown\")"
         cta = (f'CALL TO ACTION: every close ENDS with the keyword call to action "Comment {keyword} and I\'ll send you …", where … is {offer_text}. '
                "The payoff comes first, then the call to action; keep the whole close under 30 words including it. Use the same call to action as the caption's last line.")
@@ -1108,6 +1116,8 @@ class RemixConfig:
     cta_offer: str = ""
     # The hook text's look: {"look": white|black|brand|floating, "color": "#RRGGBB", "font": clean|serif|condensed}.
     headline_look: Optional[dict] = None
+    # The member's recorded call to action is added after rendering (by the app): no spoken or on-screen one.
+    cta_clip: bool = False
 
 
 @dataclass
@@ -1362,7 +1372,8 @@ class Remixer:
         silent = self.config.format == "silent"
         kinds = tuple(k for k in REACTION_KINDS if k in self.config.reactions)
         system = (silent_system_prompt(self.config.count, kinds, self.config.cta_keyword, self.config.cta_offer) if silent
-                  else plan_system_prompt(self.config.angle, self.config.count, self.config.order, self.config.cta_keyword, self.config.cta_offer))
+                  else plan_system_prompt(self.config.angle, self.config.count, self.config.order, self.config.cta_keyword, self.config.cta_offer,
+                                          self.config.cta_clip))
         payload = {
             "model": self.settings.planner_model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -1392,7 +1403,9 @@ class Remixer:
                         if self.config.angle != "mix":
                             script.style = self.config.angle
                         keyword = self.config.cta_keyword
-                        script.close = ensure_cta(fit_words(strip_cta(script.close, keyword), CLOSE_WORDS), keyword, self.config.cta_offer)
+                        close = fit_words(strip_cta(script.close, keyword), CLOSE_WORDS)
+                        # With their recorded call to action at the end, the presenter doesn't say one.
+                        script.close = close if self.config.cta_clip else ensure_cta(close, keyword, self.config.cta_offer)
                     if scripts:
                         return scripts
                 except (OpenRouterError, ValueError) as error:
@@ -1531,7 +1544,7 @@ class Remixer:
             transcript_text = " ".join(s.text for s in segments_by_source[src])
             try:
                 chosen.append((draft_id, src, apply_edit(_script_from_json(item), edit, brand, transcript_text,
-                                                         self.config.cta_keyword, self.config.cta_offer)))
+                                                         "" if self.config.cta_clip else self.config.cta_keyword, self.config.cta_offer)))
             except RemixError as error:
                 self.warnings.append(f"Skipped “{str(item.get('headline'))[:60]}”: {error}")
         if not chosen:
@@ -1793,7 +1806,7 @@ class Remixer:
             shown = [(starts[i], starts[i] + durations[i]) for i in sorted(avatar_parts)]
             overlays.append((ai_png, str(OUT_W - w - 40), str(clear_h + 32), enable_expr(shown)))
         keyword = self.config.cta_keyword
-        if keyword and windows["host"]:
+        if keyword and windows["host"] and not self.config.cta_clip:
             # The keyword on screen while the presenter says it (the close).
             cta_png = os.path.join(work, "cta.png")
             w, _ = tag_image(f"Comment {keyword}", cta_png, 44, fill=(255, 255, 255, 240), color=(10, 10, 10, 255))
@@ -1817,7 +1830,10 @@ class Remixer:
         borrowed_ms = round(sum(b - a for a, b in windows["excerpt"]) * 1000)
         events = " ".join(" ".join(getattr(s, "audio_events", None) or []) for s in segments
                           if s.end_time_ms > script.start_ms and s.start_time_ms < script.end_ms).lower()
-        checks = run_checks(script, borrowed_ms, round(total_s * 1000), bool(credit_text), "music" in events, ai_presenter, keyword)
+        checks = run_checks(script, borrowed_ms, round(total_s * 1000), bool(credit_text), "music" in events, ai_presenter,
+                            "" if self.config.cta_clip else keyword)
+        if self.config.cta_clip:
+            checks.insert(-1, Check("cta", True, "Your call-to-action clip plays at the end"))
         post_caption = finalize_caption(script.post_caption or fallback_caption(script.headline, script.beats), keyword,
                                         self.config.cta_offer, creator)
         remix_cost = self.media.cost_usd - cost_before
@@ -1959,7 +1975,7 @@ class Remixer:
             else:
                 overlays.append((ai_png, str(OUT_W - w - SILENT_MARGIN), str(tags_y), "1"))
         keyword = self.config.cta_keyword
-        if keyword:
+        if keyword and not self.config.cta_clip:
             cta_png = os.path.join(work, "cta.png")
             w, _ = tag_image(f"Comment {keyword}", cta_png, 44, fill=(255, 255, 255, 240), color=(10, 10, 10, 255), max_w=row_w)
             overlays.append((cta_png, str((OUT_W - w) // 2), str(cta_y), enable_expr([(max(0.0, total_s - 4.0), total_s)])))
@@ -1985,7 +2001,9 @@ class Remixer:
             Check("credited", bool(credit_text), "Original creator credited on screen" if credit_text else "No creator credit (add the creator's name)"),
             Check("music", "music" not in events, "No music detected in the clip" if "music" not in events else "Music in the clip may trigger Content ID"),
         ]
-        if keyword:
+        if self.config.cta_clip:
+            checks.append(Check("cta", True, "Your call-to-action clip plays at the end"))
+        elif keyword:
             checks.append(Check("cta", has_cta(post_caption, keyword), f"“Comment {keyword}” on screen and in the caption"))
         checks.append(Check("ai_label", True, "AI presenter marked on screen; turn on the platform's AI label when you post" if ai_presenter
                             else "Your own reaction clips: no AI label needed for them"))

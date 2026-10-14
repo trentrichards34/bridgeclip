@@ -72,7 +72,7 @@ def parse_config(raw):
         caption_preset=raw.get("caption_preset") or "pop", include_captions=raw.get("include_captions") is not False,
         format=fmt, reactions=dict(reactions), reactions_ai=raw.get("reactions_ai") is not False,
         cta_keyword=keyword, cta_offer=" ".join((raw.get("cta_offer") or "").split())[:80],
-        headline_look=headline_look,
+        headline_look=headline_look, cta_clip=raw.get("cta_clip") is True,
     )
 
 

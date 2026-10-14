@@ -42,13 +42,22 @@ async function normalize(input: string, output: string, seconds: number): Promis
   }
 }
 
-async function writeMeta(id: string, kind: ReactionId, source: 'ai' | 'own'): Promise<void> {
-  const file = join(reactionsDir(id), 'reactions.json')
-  let meta: Record<string, string> = {}
-  try { meta = JSON.parse(await readFile(file, 'utf8')) as Record<string, string> } catch { /* first one */ }
-  meta[kind] = source
-  await writeFile(`${file}.tmp`, JSON.stringify(meta, null, 2))
-  await rename(`${file}.tmp`, file)
+// Reactions finishing together update the same list one at a time, so none is lost.
+const metaWrites = new Map<string, Promise<void>>()
+
+function writeMeta(id: string, kind: ReactionId, source: 'ai' | 'own'): Promise<void> {
+  const next = (metaWrites.get(id) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+    const file = join(reactionsDir(id), 'reactions.json')
+    let meta: Record<string, string> = {}
+    try { meta = JSON.parse(await readFile(file, 'utf8')) as Record<string, string> } catch { /* first one */ }
+    meta[kind] = source
+    const temp = `${file}.${randomBytes(4).toString('hex')}.tmp`
+    await writeFile(temp, JSON.stringify(meta, null, 2))
+    await rename(temp, file)
+  })
+  metaWrites.set(id, next)
+  void next.finally(() => { if (metaWrites.get(id) === next) metaWrites.delete(id) }).catch(() => undefined)
+  return next
 }
 
 async function save(id: string, kind: ReactionId, clip: string, source: 'ai' | 'own', seconds: number): Promise<void> {

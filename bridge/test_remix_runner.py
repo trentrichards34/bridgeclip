@@ -27,6 +27,8 @@ class ParseConfigTests(unittest.TestCase):
         cta = remix_runner.parse_config(self.base(cta_keyword=" sales ", cta_offer="  my   playbook "))
         self.assertEqual((cta.cta_keyword, cta.cta_offer), ("SALES", "my playbook"))
         self.assertIsNone(cta.headline_look)
+        self.assertFalse(cta.cta_clip)
+        self.assertTrue(remix_runner.parse_config(self.base(cta_clip=True)).cta_clip)
         look = remix_runner.parse_config(self.base(headline_look={"look": "brand", "color": "#ff8800", "font": "serif"}))
         self.assertEqual(look.headline_look, {"look": "brand", "color": "#FF8800", "font": "serif"})
 

@@ -38,6 +38,8 @@ export interface ClipJobRequest {
   titleStyle?: TitleStyle
   /** How the headline looks (bar color or floating text, and font). Older requests: the white bar. */
   headlineLook?: HeadlineLook
+  /** A call to action from the member's library, added to the end of every clip. */
+  ctaId?: string
   /** Gameplay split (9:16): a background-library file looped under the speaker. */
   backgroundVideo?: string
   /** B-roll mode: Pexels stock footage over the speaker, after the hook or for the whole clip. */

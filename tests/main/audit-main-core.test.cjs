@@ -47,7 +47,7 @@ function ipcWithLibrary(library) {
     './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [], cloningInProgress: () => false },
     './avatar-studio': { onAvatarRenderStatus: () => {} },
     './voice-samples': { voiceSample: async () => new Uint8Array() },
-    './reactions': { makeReactions: async () => ({}), reactionsInProgress: () => false, uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] },
+    '../shared/ctas': { CTA_IMAGE_EXTENSIONS: [], CTA_VIDEO_EXTENSIONS: [], parseCtaChoice: (v) => v ?? null }, './ctas': { addCta: async () => [], applyRunCta: async () => ({ failed: [] }), listCtas: async () => [], removeCta: async () => [], updateCta: async () => [] }, './reactions': { makeReactions: async () => ({}), reactionsInProgress: () => false, uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] },
     './remix': { onRemixStatus: () => {}, remixAvatarInUse: () => null, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
     './logger': {},
     './security': security,

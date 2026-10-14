@@ -3,6 +3,7 @@ import type { LibraryClipTarget } from '../shared/library-posting'
 import type { AutomationReviewResult } from '../shared/automations'
 import type { CandidateEdit, EditorProgressSummary, EditorSession } from '../shared/clip-editor'
 import type { JobOutput } from '../shared/job-output'
+import type { CtaSummary } from '../shared/ctas'
 import type { EditAudit } from '../shared/editorial'
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
@@ -302,6 +303,16 @@ export interface BridgeClipAPI {
   }
   clips: {
     bulkExport: (clips: { path: string; name: string }[]) => Promise<{ success: boolean; count: number; failedCount: number; destDir?: string }>
+    /** Add, switch (an id) or remove (null) the call to action at the end of one clip. */
+    setCta: (outputDir: string, clipIndex: number, ctaId: string | null) => Promise<JobOutput>
+  }
+  /** Call-to-action library: short videos or images added to the end of clips. */
+  ctas: {
+    list: () => Promise<CtaSummary[]>
+    /** Opens a file dialog; null when cancelled. */
+    add: (name?: string) => Promise<CtaSummary[] | null>
+    update: (id: string, patch: { name?: string; seconds?: number }) => Promise<CtaSummary[]>
+    remove: (id: string) => Promise<CtaSummary[]>
   }
   system: {
     isPackaged: () => Promise<boolean>
@@ -512,7 +523,14 @@ const api: BridgeClipAPI = {
     remove: (name) => ipcRenderer.invoke('backgrounds:remove', name)
   },
   clips: {
-    bulkExport: (clips) => ipcRenderer.invoke('clips:bulkExport', clips)
+    bulkExport: (clips) => ipcRenderer.invoke('clips:bulkExport', clips),
+    setCta: (outputDir, clipIndex, ctaId) => ipcRenderer.invoke('clips:setCta', outputDir, clipIndex, ctaId)
+  },
+  ctas: {
+    list: () => ipcRenderer.invoke('ctas:list'),
+    add: (name) => ipcRenderer.invoke('ctas:add', name),
+    update: (id, patch) => ipcRenderer.invoke('ctas:update', id, patch),
+    remove: (id) => ipcRenderer.invoke('ctas:remove', id)
   },
   system: {
     isPackaged: () => ipcRenderer.invoke('system:isPackaged'),

@@ -18,6 +18,8 @@ import type { OpenRouterModel } from '../shared/openrouter-models'
 import { finishRunRecord, type StoredRunStatus } from './run-history'
 import { resolveBinary } from './tools'
 import { resolveBackground } from './backgrounds'
+import { applyRunCta, readCta } from './ctas'
+import { readFile } from 'fs/promises'
 
 export type ClipJobConfig = ClipJobRequest & { plannerCapabilities?: OpenRouterModel }
 
@@ -459,6 +461,14 @@ export function startClipJob(
       return
     }
   }
+  if (config.ctaId) {
+    try { readCta(config.ctaId) }
+    catch (error) {
+      reportError({ jobId, message: String((error as Error | null)?.message || 'That call to action is unavailable.').slice(0, 300) })
+      exitWithoutProcess()
+      return
+    }
+  }
 
   const jobConfig = JSON.stringify({
     contract_version: BRIDGE_CONTRACT_VERSION,
@@ -670,16 +680,37 @@ export function startClipJob(
     reportError(payload)
   })
 
-  child.on('close', (code, signal) => {
+  const finishClose = (code: number | null, signal: NodeJS.Signals | null): void => {
     activeProcesses.delete(jobId)
     activeJobDirectories.delete(jobId)
-    engineLog.close()
     try {
       reportClose(code, signal)
     } finally {
       cleanJobWork(jobId)
       onExit?.()
     }
+  }
+
+  child.on('close', (code, signal) => {
+    engineLog.close()
+    const ctaId = config.ctaId
+    if (!ctaId || code !== 0 || !pendingOutput || errored || cancelledJobs.has(jobId)) { finishClose(code, signal); return }
+    // The run's call to action goes on every clip before the run is shown as done
+    // (it stays live meanwhile, so nothing else can change these clips).
+    void (async () => {
+      const run = join(settings.outputDirectory, jobId)
+      try {
+        send('job:progress', { type: 'progress', jobId, status: 'rendering', step: 'Adding your call to action', stages: [], percent: 99,
+          clips_done: 0, clips_total: pendingOutput?.clips.length ?? 0 })
+        const { failed } = await applyRunCta(run, ctaId)
+        if (failed.length) logger.warn('job.cta.failed', { jobId, clips: failed.length })
+        const updated = parseJobOutput(JSON.parse(await readFile(join(run, 'job_output.json'), 'utf8')))
+        if (updated && updated.job_id === jobId) pendingOutput = updated
+      } catch (error) {
+        logger.warn('job.cta.skipped', { jobId, message: String((error as Error)?.message ?? error).slice(0, 200) })
+      }
+      finishClose(code, signal)
+    })()
   })
 
   function reportClose(code: number | null, signal: NodeJS.Signals | null): void {

@@ -41,7 +41,7 @@ function fakeChild() {
   return child
 }
 
-function startRunner({ child, env = process.env, onSpawn = () => {} }) {
+function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { applyRunCta: async () => ({ failed: [] }), readCta: () => ({}) } }) {
   const sent = []
   const signals = []
   const settings = { openrouterApiKey: SECRET, outputDirectory: WORK_HOME, pythonPath: '/opt/python3', enginePath: WORK_HOME }
@@ -58,7 +58,8 @@ function startRunner({ child, env = process.env, onSpawn = () => {} }) {
     './run-history': runHistory,
     '../shared/job-contract': jobContract,
     './tools': { resolveBinary: () => '/staged/engine-bin/ffmpeg' },
-    './backgrounds': { resolveBackground: (name) => '/library/' + name }
+    './backgrounds': { resolveBackground: (name) => '/library/' + name },
+    './ctas': ctas
   }, {
     process: { ...process, platform: 'darwin', env, kill: (pid, signal) => { signals.push({ pid, signal }) } }
   })
@@ -161,4 +162,44 @@ test('a result is accepted once, only for this job, and only with a clean exit',
   assert.equal(sent.filter((event) => event.channel === 'job:error').length, 1, 'a second result is an error')
   child.emit('close', 0, null)
   assert.equal(sent.some((event) => event.channel === 'job:complete'), false)
+})
+
+test('a run with a call to action adds it to every clip before the run is shown as done', async () => {
+  const child = fakeChild()
+  const applied = []
+  let exited = false
+  const run = path.join(WORK_HOME, 'cta-job')
+  fs.mkdirSync(run, { recursive: true })
+  const clip = { clip_index: 0, s3_url: `file://${run}/clip_00.mp4`, duration_ms: 3000, start_time_ms: 0, end_time_ms: 3000, virality_score: 1 }
+  const { runner, window, sent } = startRunner({ child, ctas: {
+    readCta: (id) => ({ id }),
+    applyRunCta: async (dir, id) => {
+      applied.push({ dir, id, exitedYet: exited })
+      fs.writeFileSync(path.join(dir, 'job_output.json'), JSON.stringify({ job_id: 'cta-job', clips: [{ ...clip, duration_ms: 7000, cta: { id, name: 'Comment PLAYBOOK' } }] }))
+      return { failed: [] }
+    }
+  } })
+  runner.startClipJob('cta-job', { videoUrl: path.join(WORK_HOME, 'video.mp4'), ctaId: 'a1b2c3d4e5f60718' }, window, () => { exited = true })
+  child.stdout.write(JSON.stringify({ type: 'result', status: 'completed', job_id: 'cta-job', output: { job_id: 'cta-job', clips: [clip] } }) + '\n')
+  await tick()
+  child.emit('close', 0, null)
+  for (let i = 0; i < 20 && !sent.some((event) => event.channel === 'job:complete'); i++) await new Promise((r) => setTimeout(r, 10))
+  assert.deepEqual(applied, [{ dir: run, id: 'a1b2c3d4e5f60718', exitedYet: false }], 'the slot is held until the CTA is on')
+  assert.ok(sent.some((event) => event.channel === 'job:progress' && event.data.step === 'Adding your call to action'))
+  const done = sent.find((event) => event.channel === 'job:complete')
+  assert.equal(done.data.output.clips[0].duration_ms, 7000)
+  assert.equal(done.data.output.clips[0].cta.name, 'Comment PLAYBOOK')
+  assert.equal(exited, true)
+})
+
+test('a removed call to action stops the run before it starts', () => {
+  const child = fakeChild()
+  let spawned = false
+  const { runner, window, sent } = startRunner({ child, onSpawn: () => { spawned = true }, ctas: {
+    applyRunCta: async () => ({ failed: [] }),
+    readCta: () => { throw new Error('That call to action is no longer in your library. Choose another.') }
+  } })
+  runner.startClipJob('cta-gone', { videoUrl: path.join(WORK_HOME, 'video.mp4'), ctaId: 'a1b2c3d4e5f60718' }, window)
+  assert.equal(spawned, false)
+  assert.match(sent.find((event) => event.channel === 'job:error').data.message, /no longer in your library/)
 })

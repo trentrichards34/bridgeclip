@@ -43,6 +43,8 @@ export interface ClipDraft {
   titleStyle: TitleStyle
   /** How the headline bar looks: color or floating text, and font. */
   headlineLook: HeadlineLook
+  /** A call to action from the library, added to the end of every clip (null: none). */
+  ctaId: string | null
   /** Gameplay split (9:16, Automatic): background-library file under the speaker. */
   backgroundVideo: string | null
   /** B-roll mode (Automatic): Pexels footage after the hook, for the whole clip, or off. */
@@ -88,6 +90,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   includeTitle: true,
   titleStyle: 'headline',
   headlineLook: DEFAULT_HEADLINE_LOOK,
+  ctaId: null,
   backgroundVideo: null,
   broll: 'off',
   hookPreview: false,

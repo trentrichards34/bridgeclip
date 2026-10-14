@@ -10,10 +10,12 @@ import { getEnginePath, getBridgeRunnerPath, resolvePythonPath, validatePython }
 import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds } from './job-manager'
 import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
+import { addCta, applyRunCta, listCtas, removeCta, updateCta } from './ctas'
+import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../shared/ctas'
 import { cloneVoice, cloningInProgress, createAvatar, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
-import { BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
+import { BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
@@ -24,7 +26,7 @@ import { automationEnhancementGroups, enhanceAutomationBatch, automationContentS
 import { acknowledgeAutomationWarnings, retryAutomationContent, dismissAutomationMetadataError, automationLibraryClip, reorderAutomationContent, reviewAutomationContent, showAutomationContentInFolder } from './automations'
 import { libraryPostingStatus, libraryMetadataSource, enhanceLibraryMetadata } from './library-posting'
 import { libraryPostingSummary } from './library-posting'
-import { deleteLibraryClips, deleteLibraryRun, setLibraryFavorite, setLibraryPosted } from './library-management'
+import { deleteLibraryClips, deleteLibraryRun, setLibraryClipCta, setLibraryFavorite, setLibraryPosted } from './library-management'
 import {
   cancelZernioConnect,
   connectZernioAccount,
@@ -171,6 +173,26 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     })
     if (result.canceled) return listBackgrounds()
     return addBackgrounds(result.filePaths)
+  })
+
+  // Call-to-action library: the dialog opens here, so the renderer never names a file.
+  handle('ctas:list', () => listCtas())
+  handle('ctas:add', async (_event, name: unknown) => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, {
+      properties: ['openFile'],
+      title: 'Choose a call-to-action video or image',
+      filters: [{ name: 'Video or image', extensions: [...CTA_VIDEO_EXTENSIONS, ...CTA_IMAGE_EXTENSIONS] }]
+    })
+    if (result.canceled || !result.filePaths[0]) return null
+    return addCta(result.filePaths[0], name)
+  })
+  handle('ctas:update', (_event, id: unknown, patch: unknown) => updateCta(id, patch))
+  handle('ctas:remove', (_event, id: unknown) => removeCta(id))
+  handle('clips:setCta', (_event, outputDir: unknown, clipIndex: unknown, ctaId: unknown) => {
+    const choice = parseCtaChoice(ctaId)
+    return setLibraryClipCta(outputDir, clipIndex, (run, index) => applyRunCta(run, choice, [index]), remixFolderInUse())
   })
 
   handle('avatars:list', () => listAvatars())

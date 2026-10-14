@@ -14,6 +14,7 @@ import type { Page as PageName } from '../components/Sidebar'
 import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
 import { VoicePreview } from '../components/VoicePreview'
 import { HeadlineLookPicker } from '../components/HeadlineLookPicker'
+import { CtaPicker } from '../components/CtaPicker'
 import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
@@ -56,6 +57,8 @@ interface FormDraft {
   ctaKeyword: string
   ctaOffer: string
   headlineLook: HeadlineLook
+  /** A recorded call to action from the library, played at the end of every video. */
+  ctaId: string | null
   update: (patch: Partial<Omit<FormDraft, 'update'>>) => void
 }
 
@@ -64,6 +67,7 @@ const useRemixForm = create<FormDraft>((set) => ({
   links: '', filePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'still', avatarId: null, voice: AVATAR_VOICE,
   count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false, ctaKeyword: '', ctaOffer: '', format: 'commentary', clipRightsAck: false,
   headlineLook: DEFAULT_HEADLINE_LOOK,
+  ctaId: null,
   update: (patch) => set(patch)
 }))
 
@@ -156,7 +160,8 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         avatarId: showAvatars ? avatar?.id ?? null : null, voice: form.voice, brandIdentityId: brand?.id ?? null, count: form.count,
         captionPreset: form.captionPreset, includeCaptions: form.includeCaptions, aiLabelAck: form.aiLabelAck,
         ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : '', format: form.format, clipRightsAck: silent && form.clipRightsAck,
-        headlineLook: form.headlineLook
+        headlineLook: form.headlineLook,
+        ...(form.ctaId ? { ctaId: form.ctaId } : {})
       })
       setStatus((previous) => previous?.id === started.id && previous.phase !== 'planning' ? previous : started)
     } catch (err) { setError(errorMessage(err, 'The remixes could not be started.')) }
@@ -315,6 +320,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                 </Field>
               </div>
               {keyword === null ? <p className="text-2xs text-danger">One word: letters, numbers or a dash (2–20 characters).</p>
+                : keyword && form.ctaId ? <p className="text-2xs text-ink-muted">Your CTA clip below plays at the end of every video (so the presenter doesn’t say one too), and the caption ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
                 : keyword ? (silent
                   ? <p className="text-2xs text-ink-muted">“Comment {keyword}” shows on screen at the end, and the caption ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
                   : <p className="text-2xs text-ink-muted">Every video ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>)
@@ -323,6 +329,13 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                       Use “{brandKeyword}” from your Brand Identity
                     </button>
                   ) : <p className="text-2xs text-ink-subtle">Leave it empty to end on the payoff (or your Brand Identity’s own call to action).</p>}
+            </div>
+            <div className="glass-tile space-y-3 rounded-xl p-3">
+              <div>
+                <span className="block text-sm text-ink">Your call-to-action clip (optional)</span>
+                <span className="block text-2xs text-ink-subtle">A short video of you (or an image) played at the end of every video. It replaces the presenter’s spoken call to action. You can change it on any video afterward in the Library.</span>
+              </div>
+              <CtaPicker value={form.ctaId} onChange={(ctaId) => form.update({ ctaId })} />
             </div>
           </div>
         </Panel>

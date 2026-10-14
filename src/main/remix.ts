@@ -3,11 +3,13 @@ import { execFile, execFileSync, spawn, type ChildProcess } from 'child_process'
 import { randomBytes, randomUUID } from 'crypto'
 import { existsSync } from 'fs'
 import { access, constants as fsConstants, copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
-import { delimiter, dirname, extname, join } from 'path'
+import { basename, delimiter, dirname, extname, join } from 'path'
 import { promisify } from 'util'
 import { isAvatarId } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
 import { headlineLookForEngine, parseHeadlineLook } from '../shared/headline-look'
+import { parseCtaChoice } from '../shared/ctas'
+import { applyRunCta, readCta } from './ctas'
 import {
   estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput,
   AVATAR_VOICE, normalizeCtaKeyword, remixSourceUrl, type BrandIdentity, type RemixDraft, type RemixOutput, type RemixRequest, type RemixStatus
@@ -195,6 +197,7 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const ctaOffer = typeof raw.ctaOffer === 'string' ? raw.ctaOffer.replace(/\s+/g, ' ').trim() : ''
   if (ctaOffer.length > MAX_CTA_OFFER_CHARS) throw new Error(`Keep “what they get” under ${MAX_CTA_OFFER_CHARS} characters.`)
   const headlineLook = raw.headlineLook === undefined || raw.headlineLook === null ? undefined : parseHeadlineLook(raw.headlineLook)
+  const ctaId = parseCtaChoice(raw.ctaId)
   return {
     sourceIsUrl: local.length === 0,
     request: {
@@ -202,7 +205,8 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
       host, avatarId: avatarId as string | null, voice, brandIdentityId,
       count: raw.count, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: true,
       ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : '', format, clipRightsAck: format === 'silent',
-      ...(headlineLook ? { headlineLook } : {})
+      ...(headlineLook ? { headlineLook } : {}),
+      ...(ctaId ? { ctaId } : {})
     }
   }
 }
@@ -237,6 +241,11 @@ let pending: { avatarId: string | null; cancelled: boolean } | null = null
  * Avatars a remix needs right now. A run uses its own copy of the photo once
  * it starts, so only a run still in its pre-flight checks needs the original.
  */
+/** The run folder a remix is writing to right now (its videos can't be changed meanwhile). */
+export function remixFolderInUse(): string | null {
+  return active?.status.folder ?? null
+}
+
 export function remixAvatarInUse(): string | null {
   return pending?.avatarId ?? null
 }
@@ -299,6 +308,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     const brand = request.brandIdentityId ? await readBrandIdentity(request.brandIdentityId) : null
     let photo: string | null = null
     const avatar = request.avatarId ? readAvatar(request.avatarId) : null
+    if (request.ctaId) readCta(request.ctaId)
     const silent = request.format === 'silent'
     // Silent react uses neither the photo nor the voice: only the reaction clips.
     if (request.avatarId && request.host !== 'voice' && !silent) {
@@ -351,7 +361,9 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         format: request.format, reactions, reactions_ai: reactionsAi, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
         caption_preset: request.captionPreset, include_captions: request.includeCaptions,
         cta_keyword: request.ctaKeyword, cta_offer: request.ctaOffer,
-        ...(headlineLookForEngine(request.headlineLook) ? { headline_look: headlineLookForEngine(request.headlineLook) } : {})
+        ...(headlineLookForEngine(request.headlineLook) ? { headline_look: headlineLookForEngine(request.headlineLook) } : {}),
+        // Their recorded call to action ends each video, so the presenter doesn't say one too.
+        ...(request.ctaId ? { cta_clip: true } : {})
       }
     }
     const run: ActiveRemix = {
@@ -417,6 +429,18 @@ export async function discardRemix(): Promise<boolean> {
   return true
 }
 
+/** Video lengths after the call to action was added (read back from the run's job_output.json). */
+async function withCtaDurations(folder: string, outputs: RemixOutput[]): Promise<RemixOutput[]> {
+  try {
+    const job = JSON.parse(await readFile(join(folder, 'job_output.json'), 'utf8')) as { clips?: { clip_index?: unknown; duration_ms?: unknown }[] }
+    const lengths = new Map((job.clips ?? []).map((clip) => [`clip_${String(clip.clip_index).padStart(2, '0')}.mp4`, Number(clip.duration_ms) / 1000]))
+    return outputs.map((output) => {
+      const seconds = lengths.get(basename(output.path))
+      return seconds && Number.isFinite(seconds) ? { ...output, durationSeconds: seconds } : output
+    })
+  } catch { return outputs }
+}
+
 function launch(run: ActiveRemix, config: Record<string, unknown>): void {
   execute(run, config).catch((error: unknown) => {
     logger.warn('remix.spawn.failed', { message: String(error).slice(0, 300) })
@@ -480,7 +504,17 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
       logger.info('remix.planned', { drafts: drafts.length, cost })
       finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, drafts, warnings: [...warnings, ...await varietyWarnings(drafts)], costUsd: cost })
     } else if (result?.ok === true) {
-      const outputs = (Array.isArray(result.remixes) ? result.remixes : []).map(parseRemixOutput).filter((item): item is RemixOutput => item !== null)
+      let outputs = (Array.isArray(result.remixes) ? result.remixes : []).map(parseRemixOutput).filter((item): item is RemixOutput => item !== null)
+      if (request.ctaId && outputs.length) {
+        publish(run, { detail: 'Adding your call to action', percent: 99 })
+        try {
+          const { failed } = await applyRunCta(run.status.folder, request.ctaId)
+          if (failed.length) warnings.push(`The call to action could not be added to ${failed.length} video${failed.length === 1 ? '' : 's'}. Add it from the Library (⋯ → Add call to action).`)
+          outputs = await withCtaDurations(run.status.folder, outputs)
+        } catch (error) {
+          warnings.push(error instanceof Error ? error.message : 'The call to action could not be added.')
+        }
+      }
       await recordCreators(outputs.map((output) => output.creator))
       for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
       logger.info('remix.done', { count: outputs.length, cost })

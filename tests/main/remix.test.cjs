@@ -61,6 +61,10 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   // Word counts and the close's call to action match the engine.
   assert.equal(shared.wordCount('Stop #hustling now'), 2)
   assert.equal(shared.closeWithoutCta('Train the pull first. Comment SALES and I’ll send you my $9.99 course.'), 'Train the pull first.')
+  // A call-to-action clip from the library: optional, by id only.
+  assert.equal('ctaId' in main.parseRemixRequest(base, userData).request, false)
+  assert.equal(main.parseRemixRequest({ ...base, ctaId: 'a1b2c3d4e5f60718' }, userData).request.ctaId, 'a1b2c3d4e5f60718')
+  assert.throws(() => main.parseRemixRequest({ ...base, ctaId: '../../etc/passwd' }, userData), /call to action from your library/)
   // Hook text look: optional, normalized, strict.
   assert.equal('headlineLook' in main.parseRemixRequest(base, userData).request, false)
   assert.deepEqual(plain(main.parseRemixRequest({ ...base, headlineLook: { look: 'brand', color: '#ff8800', font: 'serif' } }, userData).request.headlineLook),

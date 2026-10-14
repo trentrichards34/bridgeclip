@@ -23,6 +23,7 @@ import { ModelPicker } from './ModelPicker'
 import { WorkflowPicker } from './WorkflowPicker'
 import { BackgroundPicker } from './BackgroundPicker'
 import { HeadlineLookPicker } from './HeadlineLookPicker'
+import { CtaPicker } from './CtaPicker'
 import { DEFAULT_HEADLINE_LOOK, HEADLINE_LOOKS } from '../../shared/headline-look'
 
 const DURATIONS = DURATION_OPTIONS
@@ -97,6 +98,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     includeTitle: draft.includeTitle,
     titleStyle: draft.titleStyle ?? 'headline',
     headlineLook: draft.headlineLook ?? DEFAULT_HEADLINE_LOOK,
+    ...(draft.ctaId ? { ctaId: draft.ctaId } : {}),
     ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo && draft.broll === 'off' ? { backgroundVideo: draft.backgroundVideo } : {}),
     ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
     ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
@@ -656,6 +658,11 @@ export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Upda
           )}
         </div>
       )}
+      <div>
+        <p className="text-sm font-medium text-ink">Call to action at the end</p>
+        <p className="mb-2.5 mt-0.5 text-2xs text-ink-muted">Add one of your CTA clips to the end of every clip. You can change it on any single clip afterward.</p>
+        <CtaPicker value={draft.ctaId ?? null} onChange={(ctaId) => update({ ctaId })} />
+      </div>
       <SettingRow
         title="Burn in captions"
         description="Turn off for clips without word-by-word captions."
@@ -707,6 +714,7 @@ function ReviewStep({ draft, trim, onEdit }: {
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? ((draft.titleStyle ?? 'headline') === 'headline' && draft.aspectRatio === '9:16' && !(draft.backgroundVideo && draft.broll === 'off') ? `Headline: ${(HEADLINE_LOOKS.find((item) => item.id === (draft.headlineLook ?? DEFAULT_HEADLINE_LOOK).look)?.label ?? 'White bar').toLowerCase()}` : 'Title card at the top') : 'Off' })
+  rows.push({ step: 'captions', label: 'Call to action', value: draft.ctaId ? 'Added to the end of every clip' : 'None' })
   if (draft.clippingMode === 'advanced') rows.splice(5, 0,
     { step: 'clips', label: 'Transcribe', value: draft.transcriptionModel || 'Choose a model' },
     { step: 'clips', label: 'Plan', value: draft.plannerModel || 'Choose a model' })

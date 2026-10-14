@@ -702,3 +702,14 @@ def test_long_tags_shrink_to_fit(tmp_path):
 def test_cues_follow_the_cut_start():
     cues = remix.clean_cues([{"at": 0, "reaction": "listen"}, {"at": 5, "reaction": "nod"}], 20, ("listen", "nod"), 1.5)
     assert {"at": 6.5, "reaction": "nod"} in cues and cues[0]["at"] == 0.0
+
+
+def test_a_recorded_cta_replaces_the_spoken_one():
+    prompt = remix.plan_system_prompt("reaction", 2, keyword="SALES", offer="my plan", cta_clip=True)
+    assert "recorded call to action plays right after the close" in prompt and "Comment SALES and I'll send you" in prompt  # caption keeps it
+    script = remix.parse_plan({"remixes": [plan_item(4, 8)]}, transcript(), "", 1)[0]
+    edit = {"headline": script.headline, "intro": script.intro, "beats": [{"text": b.text} for b in script.beats], "close": "Train the pull."}
+    # The app passes no keyword for the close when a CTA clip ends the video.
+    assert remix.apply_edit(script, edit, "", "", "", "").close == "Train the pull."
+    config = remix.RemixConfig(output_dir="/tmp/x", cta_clip=True, cta_keyword="SALES")
+    assert config.cta_clip is True
