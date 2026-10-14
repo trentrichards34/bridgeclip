@@ -41,7 +41,11 @@ export interface AvatarSummary extends Avatar {
 }
 
 export type AvatarVideoStyle = 'talking' | 'cinematic'
-/** Talking heads: HeyGen Avatar IV on OpenRouter (the earlier fal models are gone). */
+/**
+ * Talking heads: HeyGen Avatar IV is the lip-sync model on OpenRouter, but its API
+ * takes images only (no audio to sync to yet), so talking heads are currently the
+ * avatar's photo with the voice. The type stays for when lip-sync returns.
+ */
 export type LipSyncModel = 'avatar-iv'
 /** Image-to-video tier for cinematic scenes. */
 export type SceneQuality = 'standard' | 'pro'
@@ -195,7 +199,8 @@ export function estimateRenderCost(request: Pick<AvatarRenderRequest, 'style' | 
   const text = scriptText(request.script)
   const seconds = estimateSpokenSeconds(text)
   const voice = (text.length / 1000) * PRICES.ttsPer1000Chars
-  if (request.style === 'talking') return round(voice + seconds * PRICES.talkingPerSecond)
+  // Talking heads are the avatar's photo with the voice (made locally) until OpenRouter can lip-sync to our audio.
+  if (request.style === 'talking') return round(Math.max(0.01, voice))
   const footage = sceneDurations(request.script.scenes, seconds).reduce((sum, value) => sum + value, 0)
   const perSecond = request.sceneQuality === 'pro' ? PRICES.imageToVideoPerSecond : PRICES.imageToVideoStandardPerSecond
   return round(voice + request.script.scenes.length * PRICES.image + footage * perSecond)

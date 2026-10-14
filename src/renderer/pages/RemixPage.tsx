@@ -55,7 +55,7 @@ interface FormDraft {
 
 /** The form survives navigating away (e.g. to Settings to add a key). */
 const useRemixForm = create<FormDraft>((set) => ({
-  links: '', filePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'lipsync', avatarId: null, voice: AVATAR_VOICE,
+  links: '', filePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'still', avatarId: null, voice: AVATAR_VOICE,
   count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false, ctaKeyword: '', ctaOffer: '',
   update: (patch) => set(patch)
 }))
@@ -300,11 +300,13 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
               {REMIX_HOSTS.map((host) => {
                 const selected = form.host === host.id
                 return (
-                  <button key={host.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+                  <button key={host.id} type="button" role="radio" aria-checked={selected} aria-disabled={host.unavailable ? true : undefined}
+                    tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown} disabled={Boolean(host.unavailable)} title={host.unavailable}
                     onClick={() => form.update({ host: host.id })}
-                    className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
-                    <span className="block text-xs font-medium">{host.label}</span>
-                    <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{host.detail}</span>
+                    className={cn('glass-tile rounded-xl px-3 py-2.5 text-left', host.unavailable ? 'cursor-not-allowed opacity-50' : 'glass-tile-hover',
+                      selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+                    <span className="block text-xs font-medium">{host.label}{host.unavailable && <span className="ml-1.5 text-2xs font-normal text-ink-subtle">· Coming soon</span>}</span>
+                    <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{host.unavailable ?? host.detail}</span>
                   </button>
                 )
               })}

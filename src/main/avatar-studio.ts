@@ -231,6 +231,11 @@ export async function pool<T>(items: T[], limit: number, controller: AbortContro
   if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError')
 }
 
+/** A slow push-in on the avatar's photo at 1080x1920 (the talking head until lip-sync is available). */
+export function stillFilter(): string {
+  return "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(1+0.0005*on,1.10)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,setsar=1,format=yuv420p"
+}
+
 /** The ffmpeg filter that cuts each scene to its share of the narration and joins them. */
 export function sceneFilter(shares: number[]): string {
   const parts = shares.map((seconds, index) =>
@@ -419,16 +424,15 @@ async function runRender(render: ActiveRender, request: AvatarRenderRequest, voi
   // 2. Picture.
   const assembled = join(parts, 'assembled.mp4')
   if (request.style === 'talking') {
-    const raw = join(parts, 'talking.mp4')
-    update(render, 'animate', 'Animating your avatar', 15)
-    // HeyGen Avatar IV lip-syncs the portrait to our voiceover.
-    await generateVideo({
-      model: OPENROUTER_MODELS.talking, prompt: text, aspectRatio: '9:16', resolution: '720p',
-      references: [{ kind: 'image', bytes: await portraitBytes(request.avatarId), mime: 'image/jpeg' }, { kind: 'audio', bytes: narrationBytes, mime: 'audio/mpeg' }]
-    }, raw, { ...options, timeoutMs: 30 * 60_000, onStatus: (status) => update(render, 'animate', `Animating your avatar · ${status}`, 20) })
-    update(render, 'assemble', 'Syncing the audio', 78)
-    // Our narration track is the reference for captions, so it replaces whatever audio the model returned.
-    await ffmpeg(['-i', raw, '-i', narration, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', assembled], signal)
+    // OpenRouter's video API takes images only, so it can't lip-sync the avatar to this
+    // voice yet: the talking head is the avatar's photo with a slow push-in, made locally.
+    update(render, 'animate', 'Putting your avatar on screen', 40)
+    const portrait = join(parts, 'portrait.jpg')
+    await writeFile(portrait, await portraitBytes(request.avatarId))
+    await ffmpeg(['-loop', '1', '-framerate', '30', '-i', portrait, '-i', narration, '-vf', stillFilter(),
+      '-map', '0:v:0', '-map', '1:a:0', '-t', seconds.toFixed(3), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-b:a', '192k', assembled], signal)
+    update(render, 'assemble', 'Talking head ready', 78)
   } else {
     const scenes = request.script.scenes
     const durations = sceneDurations(scenes, seconds)

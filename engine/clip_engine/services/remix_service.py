@@ -65,6 +65,8 @@ MAX_EXCERPT_MS = 8000
 # Checks: the borrowed part should be a small share of the finished video.
 MAX_BORROWED_SHARE = 0.30
 MAX_REMIXES = 10
+# Over this many spoken words a take runs past ~50 seconds: flagged for trimming.
+LONG_TAKE_WORDS = 130
 MAX_BRAND_CHARS = 40000
 MAX_TRANSCRIPT_CHARS = 400000
 MAX_TTS_BYTES = 20 * 1024 * 1024
@@ -130,7 +132,7 @@ PLAN_SCHEMA: dict[str, Any] = {
                     "stance": {"type": "string", "enum": list(STANCES)},
                     "style": {"type": "string", "enum": list(STYLES)},
                     "headline": {"type": "string", "description": "4-14 word third-person headline for the bar above the video."},
-                    "intro": {"type": "string", "description": "On-camera opening line(s), 15-35 words."},
+                    "intro": {"type": "string", "description": "On-camera opening line(s), 12-25 words."},
                     "beats": {
                         "type": "array",
                         "items": {
@@ -138,12 +140,12 @@ PLAN_SCHEMA: dict[str, Any] = {
                             "additionalProperties": False,
                             "required": ["text", "broll"],
                             "properties": {
-                                "text": {"type": "string", "description": "Voice-over, 15-35 words."},
+                                "text": {"type": "string", "description": "Voice-over, 12-25 words."},
                                 "broll": {"type": "string", "description": "2-4 word stock video search."},
                             },
                         },
                     },
-                    "close": {"type": "string", "description": "On-camera closing line, 10-30 words (ends with the call to action when one is set)."},
+                    "close": {"type": "string", "description": "On-camera closing line, 8-20 words (plus the call to action when one is set)."},
                     "post_caption": {"type": "string", "description": "The post's caption (text under the video), 60-180 words with line breaks."},
                     "proof_used": {"type": "array", "items": {"type": "string"},
                                    "description": "Verbatim phrases from the brand identity behind any result, number or testimonial used."},
@@ -234,7 +236,7 @@ def plan_system_prompt(angle: str, count: int, order: str = "moment_first", keyw
     if keyword:
         offer_text = f'"{offer}"' if offer else "what the brand identity's call to action offers (or, if it names nothing, \"the full breakdown\")"
         cta = (f'CALL TO ACTION: every close ENDS with the keyword call to action "Comment {keyword} and I\'ll send you …", where … is {offer_text}. '
-               "The payoff comes first, then the call to action; keep the whole close under 30 words. Use the same call to action as the caption's last line.")
+               "The payoff comes first, then the call to action; keep the whole close under 30 words including it. Use the same call to action as the caption's last line.")
         close_rule = "the payoff that lands the take, then the call to action below."
         caption_cta = f'the call to action ("Comment {keyword} and I\'ll send you …")'
     else:
@@ -257,9 +259,10 @@ PICKING THE MOMENT
 - Different moments for different videos; no two videos on the same point.
 
 THE TAKE (written in the brand's voice from the BRAND IDENTITY)
-- intro (on camera, 15-35 words): name what they said in one line, then the brand's stance. Hook first; no greetings or channel names.
-- beats (2-3 voice-over beats, 15-35 words each): the reasoning, method or steps. Each with a 2-4 word concrete stock-footage search (objects, actions, places; no people's names, brands or text).
-- close (on camera, 10-30 words): {close_rule}
+- LENGTH: the whole take is 80-120 spoken words (about 30-45 seconds with the moment). Short-form rewards tight videos; cut anything that repeats.
+- intro (on camera, 12-25 words): name what they said in one line, then the brand's stance. Hook first; no greetings or channel names.
+- beats (2 voice-over beats, a 3rd only when the steps need it; 12-25 words each): the reasoning, method or steps. Each with a 2-4 word concrete stock-footage search (objects, actions, places; no people's names, brands or text).
+- close (on camera, 8-20 words): {close_rule}
 - The take must stand on its own: a viewer who never saw the original still learns something.
 - Disagree with ideas, never attack the person: no insults, no guessing motives, no claims about them beyond what the transcript shows.
 - Results, numbers, client stories and testimonials may come ONLY from the brand identity. Copy the exact phrases you relied on into proof_used. Never invent statistics, studies or quotes.
@@ -420,6 +423,9 @@ def _parse_item(item: dict, words: list[TranscriptWord], brand_text: str, brand_
         notes.append("Some proof the AI cited was not found word for word in your Brand Identity; check any results it mentions.")
     if check.get("stands_alone") is False:
         notes.append("The AI was not sure this take stands on its own without the clip.")
+    spoken = len(" ".join([intro, *(b.text for b in beats), close]).split())
+    if spoken > LONG_TAKE_WORDS:
+        notes.append(f"This take runs about {round(spoken / 2.6 + (snapped[1] - snapped[0]) / 1000)} seconds; trim it toward 30-45 for short-form.")
     # The caption follows the same proof rule; a caption with invented numbers is
     # replaced by one built from the take (which already passed the check).
     caption = clean_caption(item.get("post_caption"))
@@ -965,7 +971,7 @@ def apply_edit(script: RemixScript, edit: dict, brand_text: str, transcript_text
     """The user's edited text, held to the same length limits; their own numbers get a note, not a block.
     With a call-to-action keyword, the close always ends with it (added when an edit removed it)."""
     headline = _clean_line(edit.get("headline"), 16) if isinstance(edit.get("headline"), str) else script.headline
-    intro = _clean_line(edit.get("intro"), 45) if isinstance(edit.get("intro"), str) else script.intro
+    intro = _clean_line(edit.get("intro"), 35) if isinstance(edit.get("intro"), str) else script.intro
     close = _clean_line(edit.get("close"), 60) if isinstance(edit.get("close"), str) else script.close
     beats = script.beats
     if isinstance(edit.get("beats"), list):
@@ -973,7 +979,7 @@ def apply_edit(script: RemixScript, edit: dict, brand_text: str, transcript_text
         for i, beat in enumerate(edit["beats"][:4]):
             if not isinstance(beat, dict):
                 continue
-            text = _clean_line(beat.get("text"), 45)
+            text = _clean_line(beat.get("text"), 35)
             query = _clean_line(beat.get("broll"), 4) or (script.beats[i].broll if i < len(script.beats) else "abstract motion background")
             if text:
                 edited.append(Beat(text, query))
@@ -1025,6 +1031,10 @@ class Remixer:
             raise RemixError("Choose a remix style.")
         if config.host not in HOSTS:
             raise RemixError("Choose how your presenter appears.")
+        # OpenRouter's video API takes images only, so a lip-synced avatar can't speak our
+        # voice track yet: the presenter is the avatar's photo with the voice until it can.
+        if config.host == "lipsync":
+            config.host = "still"
         if config.order not in ORDERS:
             raise RemixError("Choose the order of the video.")
         if config.host != "voice" and not (config.avatar_photo and os.path.isfile(config.avatar_photo)):

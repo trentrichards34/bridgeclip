@@ -169,11 +169,13 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const order = raw.order === undefined ? 'moment_first' : raw.order
   if (!isRemixOrder(order)) throw new Error('Choose the order of the video.')
   if (!isRemixHost(raw.host)) throw new Error('Choose how your presenter appears.')
+  // Lip-sync to our own voice isn't possible on OpenRouter yet: the avatar's photo presents instead.
+  const host = raw.host === 'lipsync' ? 'still' : raw.host
   const voice = raw.voice === AVATAR_VOICE ? AVATAR_VOICE : presetVoiceId(raw.voice)
   if (!voice) throw new Error('Choose a voice.')
   // An avatar presents the video, or (voice only) lends its voice.
-  const avatarId = raw.host === 'voice' && voice !== AVATAR_VOICE ? null : raw.avatarId
-  if (raw.host !== 'voice' && !isAvatarId(avatarId)) throw new Error('Choose an avatar, or switch to voice only.')
+  const avatarId = host === 'voice' && voice !== AVATAR_VOICE ? null : raw.avatarId
+  if (host !== 'voice' && !isAvatarId(avatarId)) throw new Error('Choose an avatar, or switch to voice only.')
   if (voice === AVATAR_VOICE && !isAvatarId(avatarId)) throw new Error('Choose the avatar whose voice to use, or pick a preset voice.')
   const brandIdentityId = raw.brandIdentityId === null || raw.brandIdentityId === undefined ? null : raw.brandIdentityId
   if (brandIdentityId !== null && !isBrandId(brandIdentityId)) throw new Error('Choose a brand identity.')
@@ -191,7 +193,7 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
     sourceIsUrl: local.length === 0,
     request: {
       sources: sources.map((source, i) => urls[i] ?? source), creator: sources.length === 1 ? creator : '', angle: raw.angle, order,
-      host: raw.host, avatarId: avatarId as string | null, voice, brandIdentityId,
+      host, avatarId: avatarId as string | null, voice, brandIdentityId,
       count: raw.count, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: true,
       ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : ''
     }

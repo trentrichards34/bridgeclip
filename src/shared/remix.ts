@@ -32,8 +32,9 @@ export const REMIX_ORDERS: { id: RemixOrder; label: string; detail: string }[] =
 
 /** lipsync: lip-synced avatar on camera; still: the avatar photo with a slow push-in; voice: voice-over only (cheapest). */
 export type RemixHost = 'lipsync' | 'still' | 'voice'
-export const REMIX_HOSTS: { id: RemixHost; label: string; detail: string }[] = [
-  { id: 'lipsync', label: 'Avatar on camera', detail: 'Lip-synced talking head for the opening and closing lines' },
+export const REMIX_HOSTS: { id: RemixHost; label: string; detail: string; unavailable?: string }[] = [
+  { id: 'lipsync', label: 'Avatar on camera', detail: 'Lip-synced talking head for the opening and closing lines',
+    unavailable: 'Coming soon: OpenRouter can’t lip-sync an avatar to your own voice yet' },
   { id: 'still', label: 'Avatar photo', detail: 'Your avatar’s photo with the voice, no lip-sync' },
   { id: 'voice', label: 'Voice only', detail: 'Voice-over on B-roll and stills, cheapest' }
 ]
@@ -303,7 +304,7 @@ export function parseRemixDraft(value: unknown): RemixDraft | null {
 }
 
 /** Word limits per line (the engine holds edits to the same limits). */
-export const REMIX_WORD_LIMITS = { headline: 16, intro: 45, beat: 45, close: 35 } as const
+export const REMIX_WORD_LIMITS = { headline: 16, intro: 35, beat: 35, close: 25 } as const
 
 export function wordCount(value: string): number {
   return value.trim() ? value.trim().split(/\s+/).length : 0

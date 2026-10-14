@@ -95,7 +95,8 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   assert.deepEqual(request.sources, ['https://www.youtube.com/watch?v=abcdefghijk', 'https://www.youtube.com/watch?v=bcdefghijkl'])
   assert.equal(request.angle, 'myth_truth')
   assert.equal(request.order, 'moment_first')
-  assert.equal(request.host, 'lipsync')
+  assert.equal(request.host, 'still')
+  assert.equal(await page.getByRole('radio', { name: /Avatar on camera/ }).isDisabled(), true)
   assert.equal(request.voice, 'avatar')
   assert.equal(request.avatarId, 'a'.repeat(16))
   assert.equal(request.count, 3)
@@ -127,7 +128,7 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   await page.getByLabel('Opening (presenter), take 1').fill('Hold on. That is the biggest pull-up myth there is.')
   // An over-long line is caught before anything is paid for.
   await page.getByLabel('Close (presenter), take 1').fill(Array.from({ length: 40 }, () => 'word').join(' '))
-  await page.getByText('Keep the close to 35 words (plus the comment call to action).').waitFor()
+  await page.getByText('Keep the close to 25 words (plus the comment call to action).').waitFor()
   await page.getByLabel('Close (presenter), take 1').fill('Train the pull, not the scale.')
   await page.getByText(/plus “Comment PULLUP…”/).first().waitFor()
   const caption = page.getByLabel('Post caption, take 1')

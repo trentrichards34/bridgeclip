@@ -87,8 +87,8 @@ test('estimated word timings are ordered, non-overlapping and fit the audio', ()
 
 test('cost estimates use the listed per-second prices', () => {
   const script = { title: '', scenes: [{ narration: Array.from({ length: 52 }, () => 'word').join(' '), visual: 'x', featuresAvatar: true }] }
-  // 52 words ≈ 20s; 259 characters of text: ElevenLabs v3 at $0.08/1k characters plus Avatar IV at $0.05/s.
-  assert.equal(shared.estimateRenderCost({ style: 'talking', script }), Math.round((0.259 * 0.08 + 20 * 0.05) * 100) / 100)
+  // 259 characters of text at ElevenLabs v3's $0.08/1k; the talking head itself (photo + voice) is made locally.
+  assert.equal(shared.estimateRenderCost({ style: 'talking', script }), Math.round(0.259 * 0.08 * 100) / 100)
   assert.ok(shared.estimateRenderCost({ style: 'cinematic', script }) > 0.08)
 })
 
@@ -691,6 +691,8 @@ test('a talking-head and a cinematic render run end to end on OpenRouter (mocked
   execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=6', '-c:a', 'libmp3lame', narration])
   const clip = path.join(out, 'clip.mp4')
   execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x3355ff:s=720x1280:d=6:r=30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', clip])
+  const portrait = path.join(out, 'portrait.jpg')
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0xcc8844:s=720x1280', '-frames:v', '1', portrait])
   const calls = []
   const media = {
     synthesizeSpeech: async (request) => { calls.push(['speech', request]); return new Uint8Array(fs.readFileSync(narration)) },
@@ -700,7 +702,7 @@ test('a talking-head and a cinematic render run end to end on OpenRouter (mocked
   const studio = loadStudio({
     './openrouter-media': media,
     './avatars': {
-      openRouterKey: () => 'or-key', portraitBytes: async () => new Uint8Array([0xff, 0xd8]), portraitInput: async () => 'data:',
+      openRouterKey: () => 'or-key', portraitBytes: async () => new Uint8Array(fs.readFileSync(portrait)), portraitInput: async () => 'data:',
       readAvatar: () => ({ name: 'Maya', voice: { provider: 'elevenlabs', voice: 'Brian' } }),
       speechFor: async (id, voice, text) => ({ model: 'elevenlabs/eleven-v3', input: text, voice: voice.voice.toLowerCase() })
     }
@@ -714,10 +716,12 @@ test('a talking-head and a cinematic render run end to end on OpenRouter (mocked
   let status = await done
   assert.equal(status.phase, 'done', status.error ?? '')
   assert.ok(fs.existsSync(status.outputPath))
-  const talking = calls.find(([kind]) => kind === 'video')[1]
-  assert.equal(talking.model, 'heygen/avatar-iv')
-  assert.deepEqual(plain(talking.references.map((ref) => ref.kind)), ['image', 'audio'])
+  // No paid video call: the talking head is the photo with the voice, made locally.
+  assert.equal(calls.filter(([kind]) => kind === 'video').length, 0)
   assert.equal(calls[0][1].voice, 'brian')
+  const talking = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=width,height,codec_type:format=duration', '-of', 'json', status.outputPath]).toString())
+  assert.deepEqual([talking.streams.find((s) => s.codec_type === 'video').width, talking.streams.find((s) => s.codec_type === 'video').height], [1080, 1920])
+  assert.ok(Math.abs(Number(talking.format.duration) - 6) < 0.5, `matches the voiceover (${talking.format.duration}s)`)
 
   calls.length = 0
   done = finished()

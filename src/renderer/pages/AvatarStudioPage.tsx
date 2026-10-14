@@ -305,7 +305,7 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
             <PanelHeader title="2 · Look" description="The same caption styles as Create." />
             <div className="mt-4 space-y-4">
               {draft.style === 'talking' && (
-                <p className="text-2xs text-ink-subtle">Your avatar is lip-synced to the voiceover with HeyGen Avatar IV (about ${PRICES.talkingPerSecond.toFixed(2)} per second).</p>
+                <p className="text-2xs text-ink-subtle">Your avatar’s photo with a slow push-in, voiced in its voice. Lip-sync is coming: OpenRouter can’t animate a face to your own voice yet.</p>
               )}
               {draft.style === 'cinematic' && (
                 <Field label="Scene quality">

@@ -206,7 +206,7 @@ def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar, orde
     media = media2
 
     assert len(result["remixes"]) == 2
-    assert media.avatar_calls == (4 if host == "lipsync" else 0)
+    assert media.avatar_calls == 0  # lip-sync is off until OpenRouter takes audio: the photo presents
     assert all(voice == "sarah" for _, voice in media.speech_calls)
     first = result["remixes"][0]
     assert os.path.isfile(first["path"]) and first["path"].endswith(".mp4")
@@ -218,9 +218,10 @@ def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar, orde
     checks = {c["id"]: c["ok"] for c in first["checks"]}
     assert checks["credited"] and checks["short_excerpt"] and not checks["music"]
     assert "ai_label" in checks
-    if fail_avatar:
-        assert any("photo instead" in w for w in first["warnings"])
+    assert not any("photo instead" in w for w in first["warnings"])
     manifest = json.load(open(first["manifest_path"]))
+    if host != "voice":
+        assert manifest["presenter"]["mode"] == "still"
     assert manifest["rights_lane"] == "commentary" and manifest["source"]["creator"] == "Coach Example"
     expected = ["excerpt", "host", "beat", "beat", "host"] if order == "moment_first" else ["host", "excerpt", "beat", "beat", "host"]
     assert [p["part"] for p in manifest["timeline"]] == expected

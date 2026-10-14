@@ -69,6 +69,8 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   assert.equal(main.parseRemixRequest({ ...base, host: 'voice' }, userData).request.avatarId, 'a'.repeat(16))
   assert.throws(() => main.parseRemixRequest({ ...base, host: 'voice', avatarId: null }, userData), /whose voice/)
   assert.equal(main.parseRemixRequest({ ...base, voice: 'sarah' }, userData).request.voice, 'Sarah')
+  // Lip-sync isn't available on OpenRouter yet: the avatar's photo presents.
+  assert.equal(main.parseRemixRequest({ ...base, host: 'lipsync' }, userData).request.host, 'still')
   assert.throws(() => main.parseRemixRequest({ ...base, voice: 'onyx' }, userData), /voice/)
 
   assert.throws(() => main.parseRemixRequest({ ...base, sources: [] }, userData), /video link/)
@@ -158,7 +160,7 @@ test('drafts from the engine and edits from the renderer are checked', () => {
   assert.throws(() => shared.parseRemixEdits([], ids), /at least one/)
   assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'Too short', intro: 'x', close: 'y', beats: [{ text: 'z' }] }], ids), /at least 3 words/)
   const long = Array.from({ length: 50 }, () => 'word').join(' ')
-  assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: long, close: 'y', beats: [{ text: 'z' }] }], ids), /“A fine long headline”: Keep the opening to 45 words/)
+  assert.throws(() => shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: long, close: 'y', beats: [{ text: 'z' }] }], ids), /“A fine long headline”: Keep the opening to 35 words/)
   assert.equal(shared.remixEditProblem({ headline: 'A fine long headline', intro: 'x', close: 'y', beats: [{ text: ' ' }] }), 'Keep at least one voice-over beat.')
   assert.throws(() => shared.parseRemixEdits([{ id: 9 }], ids), /at least one/)
   const captioned = shared.parseRemixEdits([{ id: 0, headline: 'A fine long headline', intro: 'x', close: 'y', beats: [{ text: 'z' }], postCaption: 'Line one\n\n1. Two' }], ids)
@@ -178,13 +180,13 @@ test('comment-keyword call to action', () => {
   assert.equal(shared.ctaLine('SALES', ' my playbook. '), "Comment SALES and I'll send you my playbook.")
   assert.equal(shared.ctaLine('SALES', ''), "Comment SALES and I'll send you the full breakdown.")
   // The call to action doesn't count toward the close's 35 words.
-  const thirty = Array.from({ length: 30 }, () => 'word').join(' ')
+  const thirty = Array.from({ length: 22 }, () => 'word').join(' ')
   assert.equal(shared.closeWithoutCta(`${thirty}. Comment SALES and I'll send you my free playbook.`), `${thirty}.`)
   assert.equal(shared.closeWithoutCta('Comment SALES now.'), '')
   assert.equal(shared.closeWithoutCta('Train the pull, not the scale.'), 'Train the pull, not the scale.')
   const edit = { headline: 'A fine long headline', intro: 'x', beats: [{ text: 'z' }] }
   assert.equal(shared.remixEditProblem({ ...edit, close: `${thirty}. Comment SALES and I'll send you my free playbook.` }), null)
-  assert.match(shared.remixEditProblem({ ...edit, close: `${thirty} one two three four five six. Comment SALES.` }), /35 words/)
+  assert.match(shared.remixEditProblem({ ...edit, close: `${thirty} one two three four. Comment SALES.` }), /25 words/)
 })
 
 test('cleanup removes leftovers of abandoned runs but never finished videos', async () => {
