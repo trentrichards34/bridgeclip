@@ -58,6 +58,13 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   assert.equal(main.parseRemixRequest({ ...base, ctaKeyword: '', ctaOffer: 'ignored without a keyword' }, userData).request.ctaOffer, '')
   assert.throws(() => main.parseRemixRequest({ ...base, ctaKeyword: 'two words' }, userData), /one word/)
   assert.throws(() => main.parseRemixRequest({ ...base, ctaKeyword: 'SALES', ctaOffer: 'x'.repeat(81) }, userData), /under 80/)
+  // Hook text look: optional, normalized, strict.
+  assert.equal('headlineLook' in main.parseRemixRequest(base, userData).request, false)
+  assert.deepEqual(plain(main.parseRemixRequest({ ...base, headlineLook: { look: 'brand', color: '#ff8800', font: 'serif' } }, userData).request.headlineLook),
+    { look: 'brand', color: '#FF8800', font: 'serif' })
+  for (const headlineLook of [{ look: 'neon' }, { font: 'comic' }, { color: 'red' }, { look: 'white', extra: 1 }, 'white']) {
+    assert.throws(() => main.parseRemixRequest({ ...base, headlineLook }, userData), /headline look/)
+  }
   const many = main.parseRemixRequest({ ...base, creator: 'X', sources: ['https://a.com/1', ' https://a.com/1 ', 'https://b.com/2'] }, userData).request
   assert.deepEqual(plain(many.sources), ['https://a.com/1', 'https://b.com/2'])
   assert.equal(main.parseRemixRequest({ ...base, sources: ['https://a.com', 'https://a.com/'] }, userData).request.sources.length, 1)

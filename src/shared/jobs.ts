@@ -1,11 +1,12 @@
 /** Clip grading bar: A only, B or better, C or better, grade but keep everything, or no grading. */
 export type QualityBar = 'a' | 'b' | 'c' | 'all' | 'off'
 export const QUALITY_BARS: readonly QualityBar[] = ['a', 'b', 'c', 'all', 'off']
-/** Headline: a story headline in a white bar above the video. Card: the short title over the video. */
+/** Headline: a story headline above the video (see headline-look.ts for its look). Card: the short title over the video. */
 export type TitleStyle = 'headline' | 'card'
 export const TITLE_STYLES: readonly TitleStyle[] = ['headline', 'card']
 
 import type { RunDiagnostics } from './run-diagnostics'
+import type { HeadlineLook } from './headline-look'
 import type { PipelineStage } from './job-progress'
 import type { JobOutput } from './job-output'
 
@@ -35,6 +36,8 @@ export interface ClipJobRequest {
   includeTitle?: boolean
   /** How the title is drawn (9:16). Older requests default to the card. */
   titleStyle?: TitleStyle
+  /** How the headline looks (bar color or floating text, and font). Older requests: the white bar. */
+  headlineLook?: HeadlineLook
   /** Gameplay split (9:16): a background-library file looped under the speaker. */
   backgroundVideo?: string
   /** B-roll mode: Pexels stock footage over the speaker, after the hook or for the whole clip. */

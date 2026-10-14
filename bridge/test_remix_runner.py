@@ -26,6 +26,9 @@ class ParseConfigTests(unittest.TestCase):
         self.assertEqual(render.sources, [])
         cta = remix_runner.parse_config(self.base(cta_keyword=" sales ", cta_offer="  my   playbook "))
         self.assertEqual((cta.cta_keyword, cta.cta_offer), ("SALES", "my playbook"))
+        self.assertIsNone(cta.headline_look)
+        look = remix_runner.parse_config(self.base(headline_look={"look": "brand", "color": "#ff8800", "font": "serif"}))
+        self.assertEqual(look.headline_look, {"look": "brand", "color": "#FF8800", "font": "serif"})
 
     def test_rejects_bad_values(self):
         for bad in (self.base(angle="repost"), self.base(host="clone"), self.base(count=0), self.base(count=True),
@@ -33,7 +36,8 @@ class ParseConfigTests(unittest.TestCase):
                     self.base(creator="x" * 500), self.base(voice=5), self.base(cta_keyword="two words"),
                     self.base(cta_keyword=5), self.base(cta_offer="x" * 500), self.base(voice="onyx"),
                     self.base(voice_model="openai/gpt-4o-mini-tts"), self.base(voice_reference="rel.mp3"), self.base(format="dance"),
-                    self.base(format="silent", reactions={"wave": "/x.mp4"}), self.base(format="silent", reactions={"nod": "rel.mp4"}), "nope"):
+                    self.base(format="silent", reactions={"wave": "/x.mp4"}), self.base(format="silent", reactions={"nod": "rel.mp4"}),
+                    self.base(headline_look={"look": "neon"}), self.base(headline_look={"color": "red"}), self.base(headline_look="white"), "nope"):
             with self.assertRaises(ValueError):
                 remix_runner.parse_config(bad)
 

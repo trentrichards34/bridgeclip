@@ -7,6 +7,7 @@ import { delimiter, dirname, extname, join } from 'path'
 import { promisify } from 'util'
 import { isAvatarId } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
+import { headlineLookForEngine, parseHeadlineLook } from '../shared/headline-look'
 import {
   estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput,
   AVATAR_VOICE, normalizeCtaKeyword, remixSourceUrl, type BrandIdentity, type RemixDraft, type RemixOutput, type RemixRequest, type RemixStatus
@@ -193,13 +194,15 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   if (ctaKeyword === null) throw new Error('Use one word for the comment keyword (letters, numbers or a dash), like SALES.')
   const ctaOffer = typeof raw.ctaOffer === 'string' ? raw.ctaOffer.replace(/\s+/g, ' ').trim() : ''
   if (ctaOffer.length > MAX_CTA_OFFER_CHARS) throw new Error(`Keep “what they get” under ${MAX_CTA_OFFER_CHARS} characters.`)
+  const headlineLook = raw.headlineLook === undefined || raw.headlineLook === null ? undefined : parseHeadlineLook(raw.headlineLook)
   return {
     sourceIsUrl: local.length === 0,
     request: {
       sources: sources.map((source, i) => urls[i] ?? source), creator: sources.length === 1 ? creator : '', angle: raw.angle, order,
       host, avatarId: avatarId as string | null, voice, brandIdentityId,
       count: raw.count, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: true,
-      ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : '', format, clipRightsAck: format === 'silent'
+      ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : '', format, clipRightsAck: format === 'silent',
+      ...(headlineLook ? { headlineLook } : {})
     }
   }
 }
@@ -341,7 +344,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         voice_transcript: cloned?.transcript ?? '', avatar_photo: request.format === 'silent' ? null : photo,
         format: request.format, reactions, reactions_ai: reactionsAi, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
         caption_preset: request.captionPreset, include_captions: request.includeCaptions,
-        cta_keyword: request.ctaKeyword, cta_offer: request.ctaOffer
+        cta_keyword: request.ctaKeyword, cta_offer: request.ctaOffer,
+        ...(headlineLookForEngine(request.headlineLook) ? { headline_look: headlineLookForEngine(request.headlineLook) } : {})
       }
     }
     const run: ActiveRemix = {

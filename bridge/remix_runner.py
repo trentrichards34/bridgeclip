@@ -56,6 +56,8 @@ def parse_config(raw):
     if fmt not in ("commentary", "silent") or not isinstance(reactions, dict) or any(
             k not in REACTION_KINDS or not isinstance(v, str) or len(v) > 4096 or "\0" in v or not os.path.isabs(v) for k, v in reactions.items()):
         raise ValueError("Invalid format")
+    from clip_engine.services.rendering_service import validate_headline_look
+    headline_look = validate_headline_look(raw.get("headline_look"))
     try:
         keyword = normalize_keyword(raw.get("cta_keyword"))
     except ValueError:
@@ -69,6 +71,7 @@ def parse_config(raw):
         caption_preset=raw.get("caption_preset") or "pop", include_captions=raw.get("include_captions") is not False,
         format=fmt, reactions=dict(reactions), reactions_ai=raw.get("reactions_ai") is not False,
         cta_keyword=keyword, cta_offer=" ".join((raw.get("cta_offer") or "").split())[:80],
+        headline_look=headline_look,
     )
 
 

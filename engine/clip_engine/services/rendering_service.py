@@ -21,9 +21,9 @@ import sys
 import tempfile
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
-from typing import Callable, Optional, Union
+from typing import Any, Callable, Optional, Union
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from clip_engine.config import CaptionStyle, LayoutStyle, get_landscape_dimensions, get_output_dimensions, get_settings
 from clip_engine.services.caption_generator import CaptionGeneratorService
@@ -87,6 +87,64 @@ class TitleStyle:
     ALL = (CARD, HEADLINE)
 
 
+# How the headline (hook text) looks: a bar in white, black or a brand color,
+# or floating text over the top of the video; and its font.
+HEADLINE_LOOKS = ("white", "black", "brand", "floating")
+HEADLINE_FONTS = {"clean": "Montserrat-ExtraBold.ttf", "serif": "Fraunces72pt-Black.ttf", "condensed": "Anton-Regular.ttf"}
+_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+@dataclass
+class HeadlineLook:
+    look: str = "white"
+    color: str = "#FFFFFF"
+    font: str = "clean"
+
+    @property
+    def background(self) -> Optional[tuple[int, int, int]]:
+        """The bar's color, or None for floating text."""
+        if self.look == "floating":
+            return None
+        if self.look == "black":
+            return (14, 14, 14)
+        if self.look == "brand":
+            return tuple(int(self.color[i:i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]
+        return (255, 255, 255)
+
+    @property
+    def text(self) -> tuple[int, int, int]:
+        bg = self.background
+        if bg is None:
+            return (255, 255, 255)
+        luminance = 0.2126 * bg[0] + 0.7152 * bg[1] + 0.0722 * bg[2]
+        return (0, 0, 0) if luminance > 150 else (255, 255, 255)
+
+    @property
+    def pad_color(self) -> str:
+        bg = self.background or (0, 0, 0)
+        return "0x%02X%02X%02X" % bg
+
+
+def parse_headline_look(raw: Any) -> HeadlineLook:
+    """A look from a request (untrusted): unknown values fall back to the white bar in the clean font."""
+    if not isinstance(raw, dict):
+        return HeadlineLook()
+    look = raw.get("look") if raw.get("look") in HEADLINE_LOOKS else "white"
+    color = raw.get("color") if isinstance(raw.get("color"), str) and _HEX.match(raw["color"]) else "#FFFFFF"
+    font = raw.get("font") if raw.get("font") in HEADLINE_FONTS else "clean"
+    return HeadlineLook(look, color.upper(), font)
+
+
+def validate_headline_look(raw: Any) -> Optional[dict]:
+    """Strict check for requests from the app: None, or {look, color, font} with known values."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) - {"look", "color", "font"} or raw.get("look", "white") not in HEADLINE_LOOKS \
+            or raw.get("font", "clean") not in HEADLINE_FONTS or not _HEX.match(raw.get("color", "#FFFFFF") if isinstance(raw.get("color", "#FFFFFF"), str) else ""):
+        raise ValueError("Invalid headline look")
+    return {"look": raw.get("look", "white"), "color": raw.get("color", "#FFFFFF").upper(), "font": raw.get("font", "clean")}
+
+
 # Headline bar, as a share of a 1080x1920 frame: the clear space above the
 # text (platform UI sits there), padding around it, and the bar's limits.
 HEADLINE_TOP_SAFE = 0.055
@@ -137,6 +195,8 @@ class RenderRequest:
     # none, in a white bar above the video, which fills the rest of the frame.
     title_style: str = TitleStyle.CARD
     headline_text: Optional[str] = None
+    # The headline's look (bar color or floating, and font); see HeadlineLook.
+    headline_look: Optional[dict] = None
     # Planner-chosen punch words highlighted in the captions.
     emphasis_words: list[str] = field(default_factory=list)
 
@@ -607,7 +667,7 @@ class RenderingService:
                 graph = self._overlay_broll(graph, broll, target_width, speaker_h, fps)
                 looped_inputs = [path for path, _, _ in broll]
         if headline:
-            graph = self._pad_for_headline(graph, target_width, target_height, bar_h)
+            graph = self._pad_for_headline(graph, target_width, target_height, bar_h, parse_headline_look(request.headline_look).pad_color)
         out_plan = remap_plan(plan, time_map)
         caption_path = await self._generate_captions(
             request, target_width, target_height, window_start_ms, time_map, out_plan, is_landscape, plan,
@@ -847,10 +907,12 @@ class RenderingService:
         return ";".join(parts)
 
     @staticmethod
-    def _pad_for_headline(graph: str, width: int, height: int, bar_h: int) -> str:
-        """Put the video panel under a white headline bar; output stays [base]."""
+    def _pad_for_headline(graph: str, width: int, height: int, bar_h: int, color: str = "white") -> str:
+        """Put the video panel under the headline bar (in the bar's color); output stays [base]."""
         assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
-        return f"{graph.replace('[base]', '[panel]')};[panel]pad={width}:{height}:0:{bar_h}:color=white,setsar=1[base]"
+        if not bar_h:
+            return graph
+        return f"{graph.replace('[base]', '[panel]')};[panel]pad={width}:{height}:0:{bar_h}:color={color},setsar=1[base]"
 
     @staticmethod
     def _headline_lines(draw: "ImageDraw.ImageDraw", text: str, font, max_w: int) -> list[str]:
@@ -867,19 +929,23 @@ class RenderingService:
     def _headline_bar_image(
         self, request: RenderRequest, target_width: int, target_height: int, is_landscape: bool,
     ) -> Optional[tuple[str, int]]:
-        """Render the white headline bar PNG (full width). Returns (path, bar height) or None."""
+        """Render the headline PNG (full width). Returns (path, bar height) or None.
+        A floating headline is text over the video: its bar height is 0."""
         if is_landscape or request.title_style != TitleStyle.HEADLINE or not request.include_title:
             return None
         text = " ".join(_UNDRAWABLE.sub("", request.headline_text or request.title_text or "").split())[:MAX_TITLE_CHARS]
         if len(text.split()) < 2:
             return None
+        style = parse_headline_look(request.headline_look)
+        if style.font == "condensed":
+            text = text.upper()
         unit = target_height / 1920
         pad_x = round(target_width * HEADLINE_PAD_X)
         max_w = target_width - 2 * pad_x
         draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
         for size in HEADLINE_FONT_SIZES:
             try:
-                font = ImageFont.truetype(self._headline_font_path(), round(size * unit))
+                font = ImageFont.truetype(self._headline_font_path(style.font), round(size * (1.18 if style.font == "condensed" else 1) * unit))
             except Exception:
                 font = ImageFont.load_default()
             lines = self._headline_lines(draw, text, font, max_w)
@@ -899,25 +965,40 @@ class RenderingService:
         pad_y = round(target_height * HEADLINE_PAD_Y)
         text_h = line_h * len(lines)
         bar_h = even(min(max(top + 2 * pad_y + text_h, target_height * HEADLINE_MIN_H), target_height * HEADLINE_MAX_H))
-        img = Image.new("RGBA", (target_width, bar_h), (255, 255, 255, 255))
+        bg = style.background
+        img = Image.new("RGBA", (target_width, bar_h), (*bg, 255) if bg else (0, 0, 0, 0))
         out = ImageDraw.Draw(img)
         # Center the text in the space below the platform UI.
         y = top + max(0, (bar_h - top - text_h) // 2)
+        stroke = 0 if bg else max(3, round(getattr(font, "size", 40) * 0.09))
+        if not bg:
+            # Floating: a soft shadow under the outlined text keeps it readable on any footage.
+            shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            sd = ImageDraw.Draw(shadow)
+            sy = y
+            for line in lines:
+                w = sd.textlength(line, font=font)
+                sd.text(((target_width - w) / 2, sy + round(6 * unit)), line, font=font, fill=(0, 0, 0, 150), stroke_width=stroke, stroke_fill=(0, 0, 0, 150))
+                sy += line_h
+            img = Image.alpha_composite(img, shadow.filter(ImageFilter.GaussianBlur(round(8 * unit))))
+            out = ImageDraw.Draw(img)
         for line in lines:
             w = out.textlength(line, font=font)
-            out.text(((target_width - w) / 2, y), line, font=font, fill=(0, 0, 0, 255))
+            out.text(((target_width - w) / 2, y), line, font=font, fill=(*style.text, 255),
+                     stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
             y += line_h
         path = os.path.join(
             os.path.dirname(request.output_path), f"headline-{request.start_time_ms}-{request.end_time_ms}.png",
         )
         img.save(path, "PNG")
-        return path, bar_h
+        return path, (bar_h if bg else 0)
 
-    def _headline_font_path(self) -> str:
-        """A bold (not black) face reads like a caption headline; fall back to the title font."""
+    def _headline_font_path(self, font: str = "clean") -> str:
+        """The look's font (clean: Montserrat ExtraBold, a bold-not-black caption face); fall back to the title font."""
+        name = HEADLINE_FONTS.get(font, HEADLINE_FONTS["clean"])
         for p in (
-            os.path.join(os.path.dirname(__file__), "..", "..", "assets", "fonts", "Montserrat-ExtraBold.ttf"),
-            os.path.join("/app", "assets", "fonts", "Montserrat-ExtraBold.ttf"),
+            os.path.join(os.path.dirname(__file__), "..", "..", "assets", "fonts", name),
+            os.path.join("/app", "assets", "fonts", name),
         ):
             if os.path.isfile(p):
                 return os.path.abspath(p)

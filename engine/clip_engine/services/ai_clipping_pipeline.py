@@ -113,6 +113,8 @@ class ClippingJobRequest:
     # "headline": a story headline in a bar above the video; "card": the short
     # title in a rounded card over the video.
     title_style: str = "card"
+    # The headline's look (bar color or floating text, and font); see HeadlineLook.
+    headline_look: Optional[dict] = None
     callback_url: Optional[str] = None
     start_time_seconds: Optional[float] = None
     end_time_seconds: Optional[float] = None
@@ -750,6 +752,7 @@ class AIClippingPipeline:
                         title_text=segment.summary,
                         include_title=request.include_title,
                         title_style=request.title_style,
+                        headline_look=request.headline_look,
                         headline_text=segment.headline,
                         emphasis_words=segment.emphasis_words,
                         banner_platform=request.banner_platform,
@@ -1085,6 +1088,7 @@ class AIClippingPipeline:
                     "video_speed": request.video_speed,
                     "include_title": request.include_title,
                     "title_style": request.title_style,
+                    "headline_look": request.headline_look,
                     "background_video": os.path.basename(request.background_video_path) if request.background_video_path else None,
                     "broll": {"enabled": request.broll_enabled, "keep_hook": request.broll_keep_hook},
                     "hook_preview": request.hook_preview,

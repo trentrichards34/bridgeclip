@@ -6,6 +6,7 @@ import { CLIP_REQUEST_MAX_CHARS, DURATION_IDS, isVideoSpeed } from '../shared/jo
 import { isModelId } from '../shared/openrouter-models'
 import { QUALITY_BARS, TITLE_STYLES, type ClipJobRequest } from '../shared/jobs'
 import { isBackgroundVideoName } from '../shared/backgrounds'
+import { parseHeadlineLook } from '../shared/headline-look'
 
 // Trims what Python's str.strip() also treats as whitespace (\x1c-\x1f, \x85),
 // so the bridge never receives a request it considers blank.
@@ -52,11 +53,12 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   const clipRequest = v.clipRequest === undefined ? undefined : trimClipRequest(v.clipRequest) || undefined
   // Only known fields continue: a misspelled option must not ride along in the job record.
   const known = Object.fromEntries(JOB_REQUEST_FIELDS.filter((key) => v[key] !== undefined).map((key) => [key, v[key]])) as unknown as ClipJobConfig
+  if (known.headlineLook !== undefined) known.headlineLook = parseHeadlineLook(known.headlineLook)
   return { ...known, videoUrl: normalizeVideoSource(v.videoUrl), videoSpeed: v.videoSpeed ?? 1, includeTitle: v.includeTitle ?? true, clipRequest, plannerCapabilities: undefined }
 }
 
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
   'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'titleStyle', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'includeTitle', 'titleStyle', 'headlineLook', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

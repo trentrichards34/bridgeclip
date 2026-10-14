@@ -4,6 +4,7 @@
  * every model call goes through OpenRouter, stock B-roll through Pexels.
  */
 
+import type { HeadlineLook } from './headline-look'
 import { PRESET_VOICE_IDS, PRESET_VOICES } from './voices'
 
 export type RemixStyle = 'reaction' | 'myth_truth' | 'science' | 'lessons' | 'do_this_instead'
@@ -144,6 +145,8 @@ export interface RemixRequest {
   format: RemixFormat
   /** Silent react plays much more of the clip: the user confirmed they're allowed to use it. */
   clipRightsAck: boolean
+  /** How the hook text at the top looks; missing means the white bar. */
+  headlineLook?: HeadlineLook
 }
 
 export interface RemixGrade {

@@ -13,6 +13,7 @@ import { logger } from './logger'
 import { parseJobOutput, type JobOutput } from '../shared/job-output'
 import { BRIDGE_CONTRACT_VERSION } from '../shared/job-contract'
 import type { ClipJobRequest } from '../shared/jobs'
+import { headlineLookForEngine } from '../shared/headline-look'
 import type { OpenRouterModel } from '../shared/openrouter-models'
 import { finishRunRecord, type StoredRunStatus } from './run-history'
 import { resolveBinary } from './tools'
@@ -486,6 +487,7 @@ export function startClipJob(
     caption_preset: config.captionPreset,
     include_title: config.includeTitle ?? true,
     title_style: config.titleStyle ?? 'card',
+    ...(headlineLookForEngine(config.headlineLook) ? { headline_look: headlineLookForEngine(config.headlineLook) } : {}),
     ...(backgroundPath ? { background_video_path: backgroundPath } : {}),
     ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook' } : {}),
     ...(config.hookPreview ? { hook_preview: true } : {}),

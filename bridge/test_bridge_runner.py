@@ -79,6 +79,10 @@ class BridgeTests(unittest.TestCase):
         with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
             self.assertTrue(asyncio.run(bridge.run(self.config(title_style="headline"))))
         self.assertEqual(requests[-1]["title_style"], "headline")
+        self.assertIsNone(requests[-1]["headline_look"])
+        with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
+            self.assertTrue(asyncio.run(bridge.run(self.config(title_style="headline", headline_look={"look": "floating", "font": "condensed"}))))
+        self.assertEqual(requests[-1]["headline_look"], {"look": "floating", "font": "condensed"})
         self.assertIsNone(requests[-1]["clip_request"])
         with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
             self.assertTrue(asyncio.run(bridge.run(self.config(clip_request="the pricing debate"))))
@@ -103,7 +107,7 @@ class BridgeTests(unittest.TestCase):
                 bridge.validate_config(self.config(video_speed=speed))
 
     def test_rejects_invalid_config_without_importing_bridgeclip(self):
-        for value in ([], None, "config", self.config(contract_version=None), self.config(contract_version=1), self.config(layout_vision_enabled=None), self.config(job_id="../escape"), self.config(video_url="file:///etc/passwd"), self.config(max_clips=True), self.config(include_title="false"), self.config(title_style="banner"), self.config(aspect_ratio="1:1"), self.config(layout_style="unknown"), self.config(pacing="unknown"), self.config(clipping_mode="unknown"), self.config(duration_ranges=["unknown"])):
+        for value in ([], None, "config", self.config(contract_version=None), self.config(contract_version=1), self.config(layout_vision_enabled=None), self.config(job_id="../escape"), self.config(video_url="file:///etc/passwd"), self.config(max_clips=True), self.config(include_title="false"), self.config(title_style="banner"), self.config(headline_look={"look": "neon"}), self.config(aspect_ratio="1:1"), self.config(layout_style="unknown"), self.config(pacing="unknown"), self.config(clipping_mode="unknown"), self.config(duration_ranges=["unknown"])):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 bridge.validate_config(value)
 

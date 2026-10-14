@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
 import type { QualityBar, TitleStyle } from '../../shared/jobs'
 
 /** The Create wizard's steps, in order. */
@@ -40,6 +41,8 @@ export interface ClipDraft {
   /** Automatic clips: the title card at the top of each clip. */
   includeTitle: boolean
   titleStyle: TitleStyle
+  /** How the headline bar looks: color or floating text, and font. */
+  headlineLook: HeadlineLook
   /** Gameplay split (9:16, Automatic): background-library file under the speaker. */
   backgroundVideo: string | null
   /** B-roll mode (Automatic): Pexels footage after the hook, for the whole clip, or off. */
@@ -84,6 +87,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   captionPreset: 'pop',
   includeTitle: true,
   titleStyle: 'headline',
+  headlineLook: DEFAULT_HEADLINE_LOOK,
   backgroundVideo: null,
   broll: 'off',
   hookPreview: false,

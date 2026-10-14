@@ -1048,6 +1048,8 @@ class RemixConfig:
     include_captions: bool = True
     cta_keyword: str = ""
     cta_offer: str = ""
+    # The hook text's look: {"look": white|black|brand|floating, "color": "#RRGGBB", "font": clean|serif|condensed}.
+    headline_look: Optional[dict] = None
 
 
 @dataclass
@@ -1559,6 +1561,29 @@ class Remixer:
         await asyncio.to_thread(video_segment, framed, out, width, height)
         return out
 
+
+    @property
+    def _look(self) -> HeadlineLook:
+        from clip_engine.services.rendering_service import parse_headline_look
+        return parse_headline_look(self.config.headline_look)
+
+    def _headline(self, service: RenderingService, video: str, work: str, index: int, text: str) -> tuple[Optional[str], int, int]:
+        """The hook text image, the bar height the video sits under (0 when floating),
+        and how far down the frame the hook text reaches (where tags can start)."""
+        from clip_engine.services.rendering_service import RenderRequest, TitleStyle
+        bar = service._headline_bar_image(RenderRequest(
+            video_path=video, output_path=os.path.join(work, "final.mp4"), start_time_ms=index, end_time_ms=index + 1,
+            source_width=OUT_W, source_height=OUT_H, title_style=TitleStyle.HEADLINE, headline_text=text,
+            headline_look=self.config.headline_look,
+        ), OUT_W, OUT_H, False)
+        if not bar:
+            return None, 0, 0
+        path, bar_h = bar
+        if bar_h:
+            return path, bar_h, bar_h
+        with Image.open(path) as img:
+            alpha = img.getchannel("A").getbbox()
+        return path, 0, (alpha[3] if alpha else 0)
     async def _one(self, index: int, total: int, script: RemixScript, video: str, segments: list[TranscriptSegment],
                    source_meta: dict, root: str) -> RemixResult:
         from clip_engine.config import get_caption_preset
@@ -1577,11 +1602,7 @@ class Remixer:
 
         # Headline bar and the panel under it.
         service = RenderingService()
-        bar = service._headline_bar_image(RenderRequest(
-            video_path=video, output_path=os.path.join(work, "final.mp4"), start_time_ms=index, end_time_ms=index + 1,
-            source_width=OUT_W, source_height=OUT_H, title_style=TitleStyle.HEADLINE, headline_text=script.headline,
-        ), OUT_W, OUT_H, False)
-        bar_path, bar_h = bar if bar else (None, 0)
+        bar_path, bar_h, clear_h = self._headline(service, video, work, index, script.headline)
         panel_h = OUT_H - bar_h
 
         # 1. Voice for every line.
@@ -1705,20 +1726,20 @@ class Remixer:
         if credit_text:
             credit_png = os.path.join(work, "credit.png")
             tag_image(credit_text, credit_png)
-            overlays.append((credit_png, "40", str(bar_h + 32), enable_expr(windows["excerpt"])))
+            overlays.append((credit_png, "40", str(clear_h + 32), enable_expr(windows["excerpt"])))
         ai_presenter = self.config.host != "voice"
         if ai_presenter:
             ai_png = os.path.join(work, "ai.png")
             w, _ = tag_image("AI presenter", ai_png, 26)
             shown = [(starts[i], starts[i] + durations[i]) for i in sorted(avatar_parts)]
-            overlays.append((ai_png, str(OUT_W - w - 40), str(bar_h + 32), enable_expr(shown)))
+            overlays.append((ai_png, str(OUT_W - w - 40), str(clear_h + 32), enable_expr(shown)))
         keyword = self.config.cta_keyword
         if keyword and windows["host"]:
             # The keyword on screen while the presenter says it (the close).
             cta_png = os.path.join(work, "cta.png")
             w, _ = tag_image(f"Comment {keyword}", cta_png, 44, fill=(255, 255, 255, 240), color=(10, 10, 10, 255))
-            overlays.append((cta_png, str((OUT_W - w) // 2), str(bar_h + 110), enable_expr([windows["host"][-1]])))
-        graph = f"[0:v]pad={OUT_W}:{OUT_H}:0:{bar_h}:color=white,setsar=1[base]"
+            overlays.append((cta_png, str((OUT_W - w) // 2), str(clear_h + 110), enable_expr([windows["host"][-1]])))
+        graph = f"[0:v]pad={OUT_W}:{OUT_H}:0:{bar_h}:color={self._look.pad_color},setsar=1[base]"
         current = "base"
         if caption_path:
             graph += f";[{current}]{service._caption_filter(caption_path)}[cap]"
@@ -1782,16 +1803,14 @@ class Remixer:
         duration = (script.end_ms - script.start_ms) / 1000
 
         service = RenderingService()
-        bar = service._headline_bar_image(RenderRequest(
-            video_path=video, output_path=os.path.join(work, "final.mp4"), start_time_ms=index, end_time_ms=index + 1,
-            source_width=OUT_W, source_height=OUT_H, title_style=TitleStyle.HEADLINE, headline_text=script.headline,
-        ), OUT_W, OUT_H, False)
-        bar_path, bar_h = bar if bar else (None, 0)
+        bar_path, bar_h, clear_h = self._headline(service, video, work, index, script.headline)
         panel_h = OUT_H - bar_h
 
         # 1. The moment with its own picture and sound, sized to float in the top of the panel.
         say("cutting the moment", 0.1)
-        box_w, box_h = OUT_W - 2 * SILENT_MARGIN, round(panel_h * SILENT_BOX_SHARE)
+        # Floating hook text sits over the reactions, so the moment starts under it.
+        lift = clear_h - bar_h
+        box_w, box_h = OUT_W - 2 * SILENT_MARGIN, round((panel_h - lift) * SILENT_BOX_SHARE)
         moment = os.path.join(work, "moment.mp4")
         guard = ["-protocol_whitelist", "file,pipe,fd", "-format_whitelist", "mov,matroska,webm,avi,flv,mpegts"]
         look = (f"scale={box_w - 12}:{box_h - 12}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,"
@@ -1805,7 +1824,7 @@ class Remixer:
                                              "-map", "0:v:0", "-map", "1:a:0", "-t", f"{duration:.3f}", *VIDEO_ARGS, *AUDIO_ARGS, moment])
         moment_w, moment_h = await asyncio.to_thread(video_size, moment)
         # The presenter sits lower so their face shows under the clip; a blurred copy fills above.
-        open_top = SILENT_TOP + moment_h
+        open_top = lift + SILENT_TOP + moment_h
         shift = max(0, round(open_top + SILENT_FACE_SPOT * (panel_h - open_top) - SILENT_FACE_AT * OUT_H))
         behind = (f"split[a][b];[a]{panel_filter(OUT_W, panel_h)},boxblur=24:2,eq=brightness=-0.12[bg];"
                   f"[b]scale={OUT_W}:-2,fps={FPS},setsar=1[fg];[bg][fg]overlay=x=0:y={shift},format=yuv420p")
@@ -1831,14 +1850,14 @@ class Remixer:
         say("putting it together", 0.6)
         assembled = os.path.join(work, "assembled.mp4")
         await asyncio.to_thread(ffmpeg, ["-i", background, "-i", moment, "-filter_complex",
-                                         f"[0:v][1:v]overlay=x=(W-w)/2:y={SILENT_TOP}:eof_action=pass[v]",
+                                         f"[0:v][1:v]overlay=x=(W-w)/2:y={lift + SILENT_TOP}:eof_action=pass[v]",
                                          "-map", "[v]", "-map", "1:a:0", "-t", f"{duration:.3f}", *VIDEO_ARGS, *AUDIO_ARGS, assembled])
         total_s = await asyncio.to_thread(media_seconds, assembled)
 
         # 4. Captions from the moment's own words, under the clip.
         say("adding captions", 0.8)
         caption_path = None
-        below = bar_h + SILENT_TOP + moment_h
+        below = clear_h + SILENT_TOP + moment_h
         if self.config.include_captions:
             words = [TranscriptWord(w.word, w.start_time_ms - script.start_ms, w.end_time_ms - script.start_ms)
                      for w in transcript_words(segments) if w.start_time_ms >= script.start_ms and w.end_time_ms <= script.end_ms + 50]
@@ -1876,7 +1895,7 @@ class Remixer:
             cta_png = os.path.join(work, "cta.png")
             w, _ = tag_image(f"Comment {keyword}", cta_png, 44, fill=(255, 255, 255, 240), color=(10, 10, 10, 255))
             overlays.append((cta_png, str((OUT_W - w) // 2), str(tags_y + 80), enable_expr([(max(0.0, total_s - 4.0), total_s)])))
-        graph = f"[0:v]pad={OUT_W}:{OUT_H}:0:{bar_h}:color=white,setsar=1[base]"
+        graph = f"[0:v]pad={OUT_W}:{OUT_H}:0:{bar_h}:color={self._look.pad_color},setsar=1[base]"
         current = "base"
         if caption_path:
             graph += f";[{current}]{service._caption_filter(caption_path)}[cap]"

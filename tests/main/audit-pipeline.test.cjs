@@ -53,6 +53,7 @@ function startRunner({ child, env = process.env, onSpawn = () => {} }) {
     './logger': { logger: { info() {}, error() {}, warn() {} } },
     '../shared/job-output': jobOutput,
     '../shared/run-diagnostics': loadShared('run-diagnostics.ts'),
+    '../shared/headline-look': loadShared('headline-look.ts'),
     '../shared/job-progress': loadShared('job-progress.ts'),
     './run-history': runHistory,
     '../shared/job-contract': jobContract,

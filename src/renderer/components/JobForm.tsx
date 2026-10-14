@@ -22,6 +22,8 @@ import { useSettingsStore } from '../store/use-settings-store'
 import { ModelPicker } from './ModelPicker'
 import { WorkflowPicker } from './WorkflowPicker'
 import { BackgroundPicker } from './BackgroundPicker'
+import { HeadlineLookPicker } from './HeadlineLookPicker'
+import { DEFAULT_HEADLINE_LOOK, HEADLINE_LOOKS } from '../../shared/headline-look'
 
 const DURATIONS = DURATION_OPTIONS
 
@@ -94,6 +96,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     captionPreset: draft.captionPreset,
     includeTitle: draft.includeTitle,
     titleStyle: draft.titleStyle ?? 'headline',
+    headlineLook: draft.headlineLook ?? DEFAULT_HEADLINE_LOOK,
     ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo && draft.broll === 'off' ? { backgroundVideo: draft.backgroundVideo } : {}),
     ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
     ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
@@ -609,7 +612,7 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
 }
 
 const TITLE_STYLE_OPTIONS: { id: TitleStyle; label: string; hint: string }[] = [
-  { id: 'headline', label: 'Headline bar', hint: 'A one-line story in a white bar above the video, like “A 9-5 mechanic tried to humble Brez”. The format top clipping campaigns use.' },
+  { id: 'headline', label: 'Headline bar', hint: 'A one-line story above the video, like “A 9-5 mechanic tried to humble Brez”. The format top clipping campaigns use.' },
   { id: 'card', label: 'Title card', hint: 'A short 2-7 word title in a card over the top of the video.' }
 ]
 
@@ -640,6 +643,12 @@ export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Upda
               )
             })}
           </div>
+          {titleStyle === 'headline' && !headlineUnavailable && (
+            <div className="mt-3">
+              <p className="mb-2 text-xs font-medium text-ink">Hook text look</p>
+              <HeadlineLookPicker value={draft.headlineLook ?? DEFAULT_HEADLINE_LOOK} onChange={(headlineLook) => update({ headlineLook })} />
+            </div>
+          )}
           {titleStyle === 'headline' && headlineUnavailable && (
             <p className="mt-2 text-2xs text-ink-subtle">
               {draft.aspectRatio !== '9:16' ? 'The headline bar is for vertical clips; 16:9 clips use the title card.' : 'With a gameplay background the clips use the title card.'}
@@ -697,7 +706,7 @@ function ReviewStep({ draft, trim, onEdit }: {
     { step: 'clips' as const, label: 'Quality bar', value: QUALITY_BAR_OPTIONS.find((option) => option.id === draft.qualityBar)?.summary ?? 'B or better' },
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
-  if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? ((draft.titleStyle ?? 'headline') === 'headline' && draft.aspectRatio === '9:16' && !(draft.backgroundVideo && draft.broll === 'off') ? 'Headline bar above the video' : 'Title card at the top') : 'Off' })
+  if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? ((draft.titleStyle ?? 'headline') === 'headline' && draft.aspectRatio === '9:16' && !(draft.backgroundVideo && draft.broll === 'off') ? `Headline: ${(HEADLINE_LOOKS.find((item) => item.id === (draft.headlineLook ?? DEFAULT_HEADLINE_LOOK).look)?.label ?? 'White bar').toLowerCase()}` : 'Title card at the top') : 'Off' })
   if (draft.clippingMode === 'advanced') rows.splice(5, 0,
     { step: 'clips', label: 'Transcribe', value: draft.transcriptionModel || 'Choose a model' },
     { step: 'clips', label: 'Plan', value: draft.plannerModel || 'Choose a model' })

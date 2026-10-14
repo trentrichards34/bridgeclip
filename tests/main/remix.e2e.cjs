@@ -86,6 +86,17 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   assert.deepEqual(await app.evaluate(() => globalThis.sampleRequests), [{ kind: 'avatar', voice: { provider: 'elevenlabs', voice: 'Brian' }, avatarId: 'a'.repeat(16) }])
   assert.equal(await page.getByText('That sample could not be played.').count(), 0)
 
+  // Hook text look: a brand-color bar in the condensed font.
+  const looks = page.getByRole('radiogroup', { name: 'Hook text look' })
+  assert.equal(await looks.getByRole('radio', { name: /White bar/ }).getAttribute('aria-checked'), 'true')
+  await looks.getByRole('radio', { name: /Brand color/ }).click()
+  await page.getByLabel('Bar color').fill('#ff8800')
+  await page.getByRole('radiogroup', { name: 'Hook text font' }).getByRole('radio', { name: 'Bold condensed' }).click()
+  if (process.env.BRIDGECLIP_E2E_SHOTS) {
+    await looks.scrollIntoViewIfNeeded()
+    await page.screenshot({ path: path.join(process.env.BRIDGECLIP_E2E_SHOTS, 'remix-hook-look.png'), timeout: 10000 }).catch(() => undefined)
+  }
+
   await page.getByRole('radio', { name: /Myth vs\. truth/ }).click()
   assert.equal(await make.isDisabled(), true, 'needs the AI-label promise')
   await page.getByRole('checkbox', { name: "I'll turn on the AI-content label when I post" }).click()
@@ -104,6 +115,7 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   assert.match(request.brandIdentityId, /^[a-f0-9]{16}$/)
   assert.equal(request.ctaKeyword, 'PULLUP')
   assert.equal(request.ctaOffer, 'my free pull-up plan')
+  assert.deepEqual(request.headlineLook, { look: 'brand', color: '#FF8800', font: 'condensed' })
   await page.getByText('Video 1 of 2: finding moments and writing your takes').waitFor()
 
   // Review: two graded takes, best first; edit one line, drop the weaker one, make the rest.

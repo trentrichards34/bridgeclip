@@ -273,6 +273,11 @@ test('job validation rejects malformed options and invalid trim intervals', () =
   assert.equal(validateJobConfig(job).videoSpeed, 1)
   assert.equal(validateJobConfig(job).includeTitle, true)
   assert.equal(validateJobConfig({ ...job, includeTitle: false }).includeTitle, false)
+  assert.equal(validateJobConfig(job).headlineLook, undefined)
+  assert.deepEqual({ ...validateJobConfig({ ...job, headlineLook: { look: 'floating', color: '#ffffff', font: 'condensed' } }).headlineLook },
+    { look: 'floating', color: '#FFFFFF', font: 'condensed' })
+  assert.throws(() => validateJobConfig({ ...job, headlineLook: { look: 'neon' } }), /headline look/)
+  assert.throws(() => validateJobConfig({ ...job, headlineLook: { look: 'brand', color: 'javascript:1' } }), /headline look/)
   assert.equal(validateJobConfig({ ...job, backgroundVideo: 'Minecraft parkour (2).mp4' }).backgroundVideo, 'Minecraft parkour (2).mp4')
   assert.equal(validateJobConfig(job).backgroundVideo, undefined)
   for (const backgroundVideo of ['../secret.mp4', '/etc/passwd', 'a/b.mp4', '.hidden.mp4', 'notes.txt', 'x..mp4', 'clip', '', 5, null]) {

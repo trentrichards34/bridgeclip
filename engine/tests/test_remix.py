@@ -552,7 +552,8 @@ def test_remix_speaks_with_the_avatars_cloned_voice(tmp_path):
 
 
 @needs_libass
-def test_silent_react_end_to_end(tmp_path, monkeypatch):
+@pytest.mark.parametrize("look", [None, {"look": "floating", "font": "condensed"}])
+def test_silent_react_end_to_end(tmp_path, monkeypatch, look):
     ffmpeg, ffprobe = FFMPEG_WITH_ASS
     monkeypatch.setenv("PATH", os.path.dirname(ffmpeg) + os.pathsep + os.environ.get("PATH", ""))
     source = tmp_path / "source.mp4"
@@ -593,7 +594,7 @@ def test_silent_react_end_to_end(tmp_path, monkeypatch):
                                planner_model="test/model", get_planner_fallback_models=lambda: [], pexels_api_key=None)
     config = remix.RemixConfig(sources=[str(source)], output_dir=str(tmp_path / "out"), count=1, host="voice", creator="Coach Example",
                                format="silent", reactions=reactions, reactions_ai=True, cta_keyword="SALES", cta_offer="my playbook",
-                               caption_preset="vintage")
+                               caption_preset="vintage", headline_look=look)
     planned = asyncio.run(remix.Remixer(config, media=FakeMedia(ffmpeg), settings=settings).plan())
     draft = planned["drafts"][0]
     assert "SILENT REACTION" in calls[0]["messages"][0]["content"] and "laugh" not in calls[0]["messages"][0]["content"].split("Use only:")[1]
@@ -619,8 +620,26 @@ def test_silent_react_end_to_end(tmp_path, monkeypatch):
     manifest = json.load(open(out["manifest_path"]))
     assert manifest["format"] == "silent" and manifest["rights_lane"] == "permission" and manifest["headline"].endswith("zero sales")
     assert manifest["presenter"]["ai_generated"] is True and out["cost_usd"] == 0.0
+    from .test_background_split import _mean
+    corner = _mean(ffmpeg, out["path"], 1.0, "crop=40:20:0:0")
+    # The white bar by default; floating hook text leaves the reactions showing at the top.
+    assert (corner.min() > 235) if look is None else (corner.max() < 235), corner
     job = json.load(open(tmp_path / "out" / "job_output.json"))
     assert job["clips"][0]["post_caption"].startswith("Your most viewed reel")
     if keep:
         import shutil
         shutil.copy(out["path"], os.path.join(keep, "silent.mp4"))
+
+
+def test_headline_reports_how_far_floating_text_reaches(tmp_path):
+    from clip_engine.services.rendering_service import RenderingService
+    for look, floating in ((None, False), ({"look": "black"}, False), ({"look": "floating"}, True)):
+        remixer = remix.Remixer(remix.RemixConfig(output_dir=str(tmp_path), host="voice", headline_look=look), media=FakeMedia("ffmpeg"),
+                                settings=SimpleNamespace(openrouter_api_key="k", openrouter_base_url="https://example.invalid", planner_model="m",
+                                                         get_planner_fallback_models=lambda: [], pexels_api_key=None))
+        path, bar_h, clear_h = remixer._headline(RenderingService(), "in.mp4", str(tmp_path), 0, "This creator says your best reel made zero sales")
+        assert path and clear_h > 150
+        assert (bar_h == 0) is floating and (floating or clear_h == bar_h)
+    assert remix.Remixer(remix.RemixConfig(output_dir=str(tmp_path), host="voice", headline_look={"look": "black"}), media=FakeMedia("ffmpeg"),
+                         settings=SimpleNamespace(openrouter_api_key="k", openrouter_base_url="https://example.invalid", planner_model="m",
+                                                  get_planner_fallback_models=lambda: [], pexels_api_key=None))._look.pad_color == "0x0E0E0E"

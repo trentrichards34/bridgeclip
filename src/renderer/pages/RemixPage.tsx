@@ -13,6 +13,8 @@ import {
 import type { Page as PageName } from '../components/Sidebar'
 import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
 import { VoicePreview } from '../components/VoicePreview'
+import { HeadlineLookPicker } from '../components/HeadlineLookPicker'
+import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Callout } from '../components/ui/Callout'
@@ -53,6 +55,7 @@ interface FormDraft {
   clipRightsAck: boolean
   ctaKeyword: string
   ctaOffer: string
+  headlineLook: HeadlineLook
   update: (patch: Partial<Omit<FormDraft, 'update'>>) => void
 }
 
@@ -60,6 +63,7 @@ interface FormDraft {
 const useRemixForm = create<FormDraft>((set) => ({
   links: '', filePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'still', avatarId: null, voice: AVATAR_VOICE,
   count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false, ctaKeyword: '', ctaOffer: '', format: 'commentary', clipRightsAck: false,
+  headlineLook: DEFAULT_HEADLINE_LOOK,
   update: (patch) => set(patch)
 }))
 
@@ -151,7 +155,8 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         sources, creator: sources.length === 1 ? form.creator : '', angle: form.angle, order: form.order, host: form.host,
         avatarId: showAvatars ? avatar?.id ?? null : null, voice: form.voice, brandIdentityId: brand?.id ?? null, count: form.count,
         captionPreset: form.captionPreset, includeCaptions: form.includeCaptions, aiLabelAck: form.aiLabelAck,
-        ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : '', format: form.format, clipRightsAck: silent && form.clipRightsAck
+        ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : '', format: form.format, clipRightsAck: silent && form.clipRightsAck,
+        headlineLook: form.headlineLook
       })
       setStatus((previous) => previous?.id === started.id && previous.phase !== 'planning' ? previous : started)
     } catch (err) { setError(errorMessage(err, 'The remixes could not be started.')) }
@@ -388,6 +393,11 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
             <SettingRow title="Captions" description="Word-by-word captions across the whole video."
               control={<Switch label="Captions" checked={form.includeCaptions} onChange={(includeCaptions) => form.update({ includeCaptions })} />} />
             {form.includeCaptions && <CaptionPresetPicker value={form.captionPreset} onChange={(captionPreset) => form.update({ captionPreset })} />}
+            <div>
+              <p className="mb-1 text-sm text-ink">Hook text at the top</p>
+              <p className="mb-2.5 text-2xs text-ink-muted">How the headline over each video looks.</p>
+              <HeadlineLookPicker value={form.headlineLook} onChange={(headlineLook) => form.update({ headlineLook })} />
+            </div>
             {!pexelsConfigured && !silent && (
               <p className="text-2xs text-ink-subtle">
                 Tip: add a free Pexels key in Settings → API keys for stock B-roll under the voice-over. Without it, those beats use stills.
