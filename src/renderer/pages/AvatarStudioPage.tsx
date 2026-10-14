@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { create } from 'zustand'
 import { AudioLines, Clapperboard, Film, FolderOpen, Mic, Plus, Repeat2, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
 import {
-  estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, MAX_SCENES, MAX_SCENE_SECONDS, overlongScenes, type SceneQuality, RECREATE_MAX_SECONDS, RECREATE_MIN_SECONDS, type RecreateMode, MAX_SPOKEN_SECONDS, PRESET_VOICES, scriptText, SCRIPT_LENGTHS,
+  estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, MAX_SCENES, MAX_SCENE_SECONDS, overlongScenes, type SceneQuality, RECREATE_MAX_SECONDS, RECREATE_MIN_SECONDS, type RecreateMode, MAX_SPOKEN_SECONDS, PRESET_VOICES, PRICES, AI_PORTRAIT_CANDIDATES, scriptText, SCRIPT_LENGTHS,
   type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarSummary, type AvatarVideoStyle, type AvatarVoice, type LipSyncModel, type ScriptLength
 } from '../../shared/avatars'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
@@ -68,7 +68,7 @@ const EMPTY_SCRIPT: AvatarScript = { title: '', scenes: [{ narration: '', visual
 const useStudioDraft = create<StudioDraft>((set) => ({
   avatarId: null, style: 'talking',
   recreate: { sourcePath: null, sourceSeconds: 0, startSeconds: 0, endSeconds: 0, mode: 'replace', keepAudio: true, rightsConfirmed: false },
-  topic: '', niche: '', seconds: 30, script: EMPTY_SCRIPT, lipSync: 'fabric', sceneQuality: 'standard', cinematicScenes: null,
+  topic: '', niche: '', seconds: 30, script: EMPTY_SCRIPT, lipSync: 'avatar-iv', sceneQuality: 'standard', cinematicScenes: null,
   captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, includeTitle: true, backgroundVideo: null, brandIdentityId: null,
   update: (patch) => set(patch)
 }))
@@ -177,10 +177,10 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
         description="Create an AI avatar once, then turn scripts into ready-to-post vertical videos for faceless channels."
       />
 
-      {!falConfigured && (
-        <Callout tone="info" className="mt-4" title="Add your fal.ai key to start"
+      {!openrouterConfigured && (
+        <Callout tone="info" className="mt-4" title="Add your OpenRouter key to start"
           action={<Button size="sm" onClick={openKeys}>Open API keys</Button>}>
-          Avatar Studio generates faces, voices and video on your own fal.ai account (pay as you go).
+          Avatar Studio makes faces, voices and video on your own OpenRouter account (pay as you go), the same key Create and Remix use.
         </Callout>
       )}
       {error && <Callout tone="danger" className="mt-4" onDismiss={() => setError(null)}>{error}</Callout>}
@@ -206,7 +206,7 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
               </div>
             )}
           </Panel>
-          {selected && <AvatarDetails avatar={selected} busy={busy} falConfigured={falConfigured} onChange={setAvatars} onError={setError} />}
+          {selected && <AvatarDetails avatar={selected} busy={busy} openrouterConfigured={openrouterConfigured} onChange={setAvatars} onError={setError} />}
         </div>
 
         <div className="space-y-5">
@@ -305,13 +305,7 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
             <PanelHeader title="2 · Look" description="The same caption styles as Create." />
             <div className="mt-4 space-y-4">
               {draft.style === 'talking' && (
-                <Field label="Animation quality">
-                  <Select value={draft.lipSync} onChange={(value) => draft.update({ lipSync: value as LipSyncModel })} options={[
-                    { value: 'economy', label: 'Economy', detail: 'Kling Avatar · about 1/3 the cost' },
-                    { value: 'fabric', label: 'Standard', detail: 'VEED Fabric · up to 1 min' },
-                    { value: 'omnihuman', label: 'Premium', detail: 'OmniHuman 1.5 · most expressive' }
-                  ]} />
-                </Field>
+                <p className="text-2xs text-ink-subtle">Your avatar is lip-synced to the voiceover with HeyGen Avatar IV (about ${PRICES.talkingPerSecond.toFixed(2)} per second).</p>
               )}
               {draft.style === 'cinematic' && (
                 <Field label="Scene quality">
@@ -338,30 +332,30 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
 
           <Panel>
             <PanelHeader title="3 · Generate" description={draft.style === 'recreate'
-              ? (recreate.sourcePath ? `Estimated cost about $${cost.toFixed(2)} on fal.ai · ${recreateLength.toFixed(1)}s video` : 'Choose a video to see the estimated cost.')
-              : text ? `Estimated cost about $${cost.toFixed(2)} on fal.ai · ${seconds}s video` : 'Write a script to see the estimated cost.'} />
+              ? (recreate.sourcePath ? `Estimated cost about $${cost.toFixed(2)} on fal.ai · ${recreateLength.toFixed(1)}s video` : 'Recreate runs on fal.ai. Choose a video to see the estimated cost.')
+              : text ? `Estimated cost about $${cost.toFixed(2)} on OpenRouter · ${seconds}s video` : 'Write a script to see the estimated cost.'} />
             <div className="mt-4 space-y-3">
               {status && <RenderProgress status={status} />}
               <div className="flex flex-wrap gap-2">
                 {busy ? (
                   <Button variant="secondary" onClick={() => void getApi().avatars.cancelRender()}>Cancel</Button>
                 ) : (
-                  <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || !falConfigured || !selected || (draft.style === 'recreate' ? !recreateReady : !text || seconds > MAX_SPOKEN_SECONDS || longScenes.length > 0)}
-                    tooltip={!selected ? 'Create an avatar first' : draft.style === 'recreate' ? (recreateReady ? undefined : 'Choose a video, a 3-30 second range, and confirm your rights') : !text ? 'Write a script first' : undefined} onClick={() => void generate()}>
+                  <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || (draft.style === 'recreate' ? !falConfigured : !openrouterConfigured) || !selected || (draft.style === 'recreate' ? !recreateReady : !text || seconds > MAX_SPOKEN_SECONDS || longScenes.length > 0)}
+                    tooltip={draft.style === 'recreate' && !falConfigured ? 'Recreate needs a fal.ai key (Settings → API keys)' : draft.style !== 'recreate' && !openrouterConfigured ? 'Add your OpenRouter key first' : !selected ? 'Create an avatar first' : draft.style === 'recreate' ? (recreateReady ? undefined : 'Choose a video, a 3-30 second range, and confirm your rights') : !text ? 'Write a script first' : undefined} onClick={() => void generate()}>
                     Generate video
                   </Button>
                 )}
               </div>
               <p className="text-2xs text-ink-subtle">
                 Talking-head videos take a few minutes; cinematic and recreated ones up to 10-20. You can leave this page while it works.
-                {busy && ' Cancelling stops what hasn’t started; a step already running on fal.ai may still be charged.'}
+                {busy && ` Cancelling stops what hasn’t started; a step already running on ${draft.style === 'recreate' ? 'fal.ai' : 'OpenRouter'} may still be charged.`}
               </p>
             </div>
           </Panel>
         </div>
       </div>
 
-      {creating && <CreateAvatarDialog falConfigured={falConfigured} onClose={() => setCreating(false)} onCreated={(list) => {
+      {creating && <CreateAvatarDialog openrouterConfigured={openrouterConfigured} onClose={() => setCreating(false)} onCreated={(list) => {
         setAvatars(list); setCreating(false); if (list[0]) draft.update({ avatarId: list[0].id })
       }} />}
     </Page>
@@ -473,7 +467,7 @@ function RenderProgress({ status }: { status: AvatarRenderStatus }): React.JSX.E
   )
 }
 
-function AvatarDetails({ avatar, busy, falConfigured, onChange, onError }: { avatar: AvatarSummary; busy: boolean; falConfigured: boolean; onChange: (list: AvatarSummary[]) => void; onError: (message: string | null) => void }): React.JSX.Element {
+function AvatarDetails({ avatar, busy, openrouterConfigured, onChange, onError }: { avatar: AvatarSummary; busy: boolean; openrouterConfigured: boolean; onChange: (list: AvatarSummary[]) => void; onError: (message: string | null) => void }): React.JSX.Element {
   const [consent, setConsent] = useState(false)
   const [cloning, setCloning] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
@@ -483,7 +477,7 @@ function AvatarDetails({ avatar, busy, falConfigured, onChange, onError }: { ava
     ...(clone ? [{ value: 'clone', label: 'Cloned voice', detail: 'Your recording' }] : []),
     ...PRESET_VOICES.map((voice) => ({ value: voice.id, label: voice.label, detail: voice.hint }))
   ]
-  const value = avatar.voice.provider === 'minimax-clone' ? 'clone' : avatar.voice.voice
+  const value = avatar.voice.provider === 'clone' ? 'clone' : avatar.voice.voice
   const run = async (action: () => Promise<AvatarSummary[] | null>): Promise<void> => {
     onError(null)
     try { const list = await action(); if (list) onChange(list) } catch (err) { onError(errorMessage(err)) }
@@ -497,18 +491,18 @@ function AvatarDetails({ avatar, busy, falConfigured, onChange, onError }: { ava
           <div className="flex items-start gap-2">
             <div className="min-w-0 flex-1">
               <Select value={value} options={options} disabled={busy} searchable onChange={(next) => {
-                const voice = next === 'clone' ? (clone ? { provider: 'minimax-clone', voiceId: clone.voiceId, clonedAt: clone.clonedAt } : null) : { provider: 'elevenlabs', voice: next }
+                const voice = next === 'clone' ? (clone ? { provider: 'clone', clonedAt: clone.clonedAt } : null) : { provider: 'elevenlabs', voice: next }
                 if (voice) void run(() => getApi().avatars.update(avatar.id, { voice }))
               }} />
             </div>
-            <VoicePreview request={{ kind: 'avatar', voice: avatar.voice }} name={voiceLabel(avatar.voice)} />
+            <VoicePreview request={{ kind: 'avatar', voice: avatar.voice, avatarId: avatar.id }} name={voiceLabel(avatar.voice)} />
           </div>
         </Field>
         <div className="glass-tile space-y-2 rounded-xl p-3">
           <p className="flex items-center gap-1.5 text-xs font-medium text-ink"><Mic className="h-3.5 w-3.5" />Clone a voice</p>
-          <p className="text-2xs text-ink-subtle">Upload 30-90 seconds of clear speech (MP3, WAV or M4A). About $1.50 on fal.ai.{clone ? ' Cloning again replaces the current clone.' : ''}</p>
+          <p className="text-2xs text-ink-subtle">Upload 30-90 seconds of clear speech from one person (MP3, WAV or M4A). No setup fee: the recording stays with this avatar and your OpenRouter account clones from it as each video is voiced.{clone ? ' Cloning again replaces the current clone.' : ''}</p>
           <LabeledCheckbox checked={consent} onChange={setConsent} label="This is my voice, or I have the speaker's permission" />
-          <Button size="sm" variant="secondary" icon={<AudioLines className="h-3.5 w-3.5" />} loading={cloning} disabled={busy || !falConfigured || !consent}
+          <Button size="sm" variant="secondary" icon={<AudioLines className="h-3.5 w-3.5" />} loading={cloning} disabled={busy || !openrouterConfigured || !consent}
             onClick={() => { setCloning(true); void run(() => getApi().avatars.cloneVoice(avatar.id, true)).finally(() => setCloning(false)) }}>
             Choose recording
           </Button>
@@ -526,8 +520,8 @@ function AvatarDetails({ avatar, busy, falConfigured, onChange, onError }: { ava
   )
 }
 
-function CreateAvatarDialog({ falConfigured, onClose, onCreated }: { falConfigured: boolean; onClose: () => void; onCreated: (list: AvatarSummary[]) => void }): React.JSX.Element {
-  const [kind, setKind] = useState<'self' | 'ai'>(falConfigured ? 'ai' : 'self')
+function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { openrouterConfigured: boolean; onClose: () => void; onCreated: (list: AvatarSummary[]) => void }): React.JSX.Element {
+  const [kind, setKind] = useState<'self' | 'ai'>(openrouterConfigured ? 'ai' : 'self')
   const [description, setDescription] = useState('')
   const [drafts, setDrafts] = useState<{ draftId: string; path: string }[]>([])
   const [chosen, setChosen] = useState<string | null>(null)
@@ -569,7 +563,7 @@ function CreateAvatarDialog({ falConfigured, onClose, onCreated }: { falConfigur
           { value: 'self', label: 'Use my photo' }
         ]} />
         {kind === 'ai' ? (
-          <Field label="Describe the person" hint={falConfigured ? 'Fictional people only. About $0.16 for two options.' : 'Add your fal.ai key in Settings → API keys to generate faces.'}>
+          <Field label="Describe the person" hint={openrouterConfigured ? `Fictional people only. About $${(PRICES.image * AI_PORTRAIT_CANDIDATES).toFixed(2)} for ${AI_PORTRAIT_CANDIDATES} options.` : 'Add your OpenRouter key in Settings → API keys to generate faces.'}>
             <TextArea rows={3} value={description} maxLength={600} onChange={(e) => setDescription(e.target.value)}
               placeholder="e.g. Woman in her early 30s, curly dark hair, warm smile, casual olive jacket, cozy home office" />
           </Field>
@@ -578,7 +572,7 @@ function CreateAvatarDialog({ falConfigured, onClose, onCreated }: { falConfigur
         )}
         <div className="flex gap-2">
           {kind === 'ai'
-            ? <Button icon={<Sparkles className="h-4 w-4" />} loading={working && drafts.length === 0} disabled={working || !falConfigured || description.trim().length < 10} onClick={() => void generateFaces()}>{drafts.length ? 'Generate again' : 'Generate faces'}</Button>
+            ? <Button icon={<Sparkles className="h-4 w-4" />} loading={working && drafts.length === 0} disabled={working || !openrouterConfigured || description.trim().length < 10} onClick={() => void generateFaces()}>{drafts.length ? 'Generate again' : 'Generate faces'}</Button>
             : <Button icon={<UserRound className="h-4 w-4" />} disabled={working} onClick={() => void pickPhoto()}>{drafts.length ? 'Choose another photo' : 'Choose photo'}</Button>}
         </div>
         {drafts.length > 0 && (

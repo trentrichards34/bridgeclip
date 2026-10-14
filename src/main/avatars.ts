@@ -6,10 +6,11 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'fs/promis
 import { extname, join } from 'path'
 import { promisify } from 'util'
 import {
-  AI_PORTRAIT_CANDIDATES, FAL_MODELS, isAvatarId, parseVoice,
+  AI_PORTRAIT_CANDIDATES, DEFAULT_VOICE, isAvatarId, OPENROUTER_MODELS, parseVoice,
   type Avatar, type AvatarKind, type AvatarSummary, type AvatarVoice
 } from '../shared/avatars'
-import { downloadFalFile, falFileUrl, falInputUrl, falRun, FalError } from './fal'
+import { falInputUrl } from './fal'
+import { generateImage, openRouterBase, OpenRouterMediaError, synthesizeSpeech, type MediaOptions, type SpeechRequest } from './openrouter-media'
 import { authorizeMedia } from './security'
 import { loadSettings } from './settings-store'
 import { resolveBinary } from './tools'
@@ -47,28 +48,45 @@ export function portraitPath(id: string): string {
   return join(avatarDir(id), 'portrait.jpg')
 }
 
+/** The avatar's cloned-voice recording (trimmed, mono MP3), sent as the reference on every cloned-voice request. */
+export function voiceSamplePath(id: string): string {
+  return join(avatarDir(id), 'voice-sample.mp3')
+}
+
 function newId(bytes: number): string {
   return randomBytes(bytes).toString('hex')
 }
 
-function falKey(): string {
-  const key = loadSettings().falApiKey
-  if (!key) throw new Error('Add your fal.ai API key in Settings → API keys to use Avatar Studio.')
+export function openRouterKey(): string {
+  const key = loadSettings().openrouterApiKey
+  if (!key) throw new Error('Add your OpenRouter key in Settings → API keys to use Avatar Studio.')
   return key
 }
 
-function parseClone(value: unknown): Avatar['clonedVoice'] {
-  const raw = (value ?? {}) as { voiceId?: unknown; clonedAt?: unknown }
-  return typeof raw.voiceId === 'string' && /^[A-Za-z0-9_-]{1,120}$/.test(raw.voiceId) && typeof raw.clonedAt === 'string' ? { voiceId: raw.voiceId, clonedAt: raw.clonedAt } : null
+/** A clone made in this version (recording on disk). Clones from the fal version had no recording and are dropped. */
+function parseClone(value: unknown, id: string): Avatar['clonedVoice'] {
+  const raw = (value ?? {}) as { clonedAt?: unknown; transcript?: unknown; voiceId?: unknown }
+  if (typeof raw.clonedAt !== 'string' || raw.voiceId !== undefined || !existsSync(voiceSamplePath(id))) return null
+  return { clonedAt: raw.clonedAt.slice(0, 40), transcript: typeof raw.transcript === 'string' ? raw.transcript.slice(0, 4000) : '' }
+}
+
+/** The stored voice, moved onto what OpenRouter offers: a retired preset maps to its closest match, an old fal clone falls back to the default. */
+function migrateVoice(value: unknown, clone: Avatar['clonedVoice']): AvatarVoice {
+  try {
+    const voice = parseVoice(value)
+    if (voice.provider === 'clone') return clone ? { provider: 'clone', clonedAt: clone.clonedAt } : DEFAULT_VOICE
+    return voice
+  } catch { return DEFAULT_VOICE }
 }
 
 function parseAvatar(value: unknown, id: string): Avatar | null {
   try {
     const raw = value as Record<string, unknown>
     if (raw.id !== id || typeof raw.name !== 'string' || (raw.kind !== 'self' && raw.kind !== 'ai') || typeof raw.createdAt !== 'string') return null
+    const clonedVoice = parseClone(raw.clonedVoice, id)
     return {
       id, name: raw.name.slice(0, 60), kind: raw.kind, description: typeof raw.description === 'string' ? raw.description.slice(0, 600) : '',
-      voice: parseVoice(raw.voice), clonedVoice: parseClone(raw.clonedVoice) ?? (raw.voice && (raw.voice as { provider?: unknown }).provider === 'minimax-clone' ? parseClone(raw.voice) : null), consentAt: typeof raw.consentAt === 'string' ? raw.consentAt : null, createdAt: raw.createdAt
+      voice: migrateVoice(raw.voice, clonedVoice), clonedVoice, consentAt: typeof raw.consentAt === 'string' ? raw.consentAt : null, createdAt: raw.createdAt
     }
   } catch { return null }
 }
@@ -200,20 +218,18 @@ export function assertFictional(description: string): void {
 export async function draftsFromDescription(description: unknown, signal?: AbortSignal): Promise<AvatarDraft[]> {
   if (typeof description !== 'string' || description.trim().length < 10 || description.length > 600) throw new Error('Describe the person in a sentence or two (10-600 characters).')
   assertFictional(description)
-  const key = falKey()
-  const output = await falRun(FAL_MODELS.portrait, {
-    prompt: portraitPrompt(description.trim()), aspect_ratio: '9:16', resolution: '1K', num_images: AI_PORTRAIT_CANDIDATES, output_format: 'jpeg'
-  }, { key, signal, timeoutMs: 5 * 60_000 })
-  const images = Array.isArray(output.images) ? output.images : []
-  if (!images.length) throw new FalError('fal.ai returned no images. Try a different description.')
-  const drafts: AvatarDraft[] = []
-  await mkdir(draftsDir(), { recursive: true })
-  for (const image of images.slice(0, AI_PORTRAIT_CANDIDATES)) {
-    const url = falFileUrl({ images: [image] }, 'images')
-    const temp = join(draftsDir(), `${newId(8)}.download`)
-    await downloadFalFile(url, temp, { signal, maxBytes: 30_000_000 })
-    try { drafts.push(await saveDraft(normalizePhoto(await readFile(temp)))) } finally { await rm(temp, { force: true }) }
+  const options: MediaOptions = { key: openRouterKey(), signal }
+  const prompt = portraitPrompt(description.trim())
+  // One request per face: each comes back as its own image.
+  const results = await Promise.allSettled(Array.from({ length: AI_PORTRAIT_CANDIDATES }, () =>
+    generateImage({ model: OPENROUTER_MODELS.image, prompt, aspectRatio: '9:16' }, options)))
+  const images = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : [])
+  if (!images.length) {
+    const reason = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason
+    throw reason instanceof Error ? reason : new OpenRouterMediaError('OpenRouter returned no images. Try a different description.')
   }
+  const drafts: AvatarDraft[] = []
+  for (const image of images) drafts.push(await saveDraft(normalizePhoto(Buffer.from(image))))
   return drafts
 }
 
@@ -255,10 +271,10 @@ export async function updateAvatar(id: unknown, patch: { name?: unknown; voice?:
   }
   if (patch.voice !== undefined) {
     const voice = parseVoice(patch.voice)
-    // A cloned voice can only be this avatar's own clone, never one named by the renderer.
-    if (voice.provider === 'minimax-clone') {
-      if (!avatar.clonedVoice || avatar.clonedVoice.voiceId !== voice.voiceId) throw new Error('Clone a voice to use it.')
-      avatar.voice = { provider: 'minimax-clone', ...avatar.clonedVoice }
+    // A cloned voice can only be this avatar's own clone.
+    if (voice.provider === 'clone') {
+      if (!avatar.clonedVoice) throw new Error('Clone a voice to use it.')
+      avatar.voice = { provider: 'clone', clonedAt: avatar.clonedVoice.clonedAt }
     } else avatar.voice = voice
   }
   await writeAvatar(avatar)
@@ -271,9 +287,25 @@ export async function removeAvatar(id: unknown): Promise<AvatarSummary[]> {
   return listAvatars()
 }
 
-/** The portrait as a model input URL. */
+/** The portrait as a fal input URL (Recreate only). */
 export async function portraitInput(id: string, key: string, signal?: AbortSignal): Promise<string> {
   return falInputUrl(await readFile(portraitPath(id)), 'image/jpeg', 'portrait.jpg', { key, signal })
+}
+
+/** The portrait's JPEG bytes (sent inline to OpenRouter). */
+export async function portraitBytes(id: string): Promise<Uint8Array> {
+  return new Uint8Array(await readFile(portraitPath(id)))
+}
+
+/** The voice an avatar speaks with, as an OpenRouter speech request. */
+export async function speechFor(id: string, voice: AvatarVoice, text: string): Promise<SpeechRequest> {
+  if (voice.provider === 'elevenlabs') return { model: OPENROUTER_MODELS.tts, input: text, voice: voice.voice.toLowerCase() }
+  const avatar = readAvatar(id)
+  if (!avatar.clonedVoice) throw new Error('This avatar’s cloned voice is missing. Clone it again or pick a preset voice.')
+  return {
+    model: OPENROUTER_MODELS.cloneTts, input: text,
+    references: [{ audio: new Uint8Array(await readFile(voiceSamplePath(id))), mime: 'audio/mpeg', transcript: avatar.clonedVoice.transcript || undefined }]
+  }
 }
 
 async function audioSeconds(path: string): Promise<number> {
@@ -284,12 +316,32 @@ async function audioSeconds(path: string): Promise<number> {
   } catch { return 0 }
 }
 
-const SAMPLE_TYPES: Record<string, string> = { mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4' }
+/** Longest stretch of the recording kept as the cloning reference: plenty for a likeness, small enough to send each time. */
+export const CLONE_REFERENCE_SECONDS = 45
+
+/** What the reference recording says; cloning is better with it, but works without. */
+async function transcribeReference(path: string, key: string, signal?: AbortSignal): Promise<string> {
+  const dir = join(draftsDir(), `${newId(6)}.transcribe`)
+  await mkdir(dir, { recursive: true })
+  try {
+    const wav = join(dir, 'speech.wav')
+    await execFileAsync(resolveBinary('ffmpeg'), ['-nostdin', '-loglevel', 'error', '-y', '-i', path, '-ac', '1', '-ar', '16000', '-acodec', 'pcm_s16le', wav], { timeout: 60_000 })
+    const response = await fetch(`${openRouterBase()}/audio/transcriptions`, {
+      method: 'POST', redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(90_000)]) : AbortSignal.timeout(90_000),
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'microsoft/mai-transcribe-2', input_audio: { data: (await readFile(wav)).toString('base64'), format: 'wav' } })
+    })
+    if (!response.ok) return ''
+    const body = await response.json() as { text?: unknown }
+    return typeof body.text === 'string' ? body.text.replace(/\s+/g, ' ').trim().slice(0, 4000) : ''
+  } catch { return '' } finally { await rm(dir, { recursive: true, force: true }) }
+}
 
 /**
  * Clone a voice from a recording the user chose and attach it to the avatar.
- * MiniMax deletes clones never used within 7 days, so one short line is
- * spoken right away to keep it.
+ * Nothing is uploaded to keep: the trimmed recording stays with the avatar and
+ * goes with each request (Fish Audio clones from it every time). One short
+ * line is spoken right away to prove the recording works.
  */
 export async function cloneVoice(id: unknown, samplePath: string, consent: unknown, signal?: AbortSignal): Promise<AvatarSummary[]> {
   if (!isAvatarId(id)) throw new Error('Invalid avatar')
@@ -301,27 +353,30 @@ export async function cloneVoice(id: unknown, samplePath: string, consent: unkno
   if (size > MAX_SAMPLE_BYTES) throw new Error('Use a recording under 20 MB (1-2 minutes is plenty).')
   const seconds = await audioSeconds(samplePath)
   if (seconds && seconds < 10) throw new Error('The recording needs at least 10 seconds of clear speech. 30-90 seconds works best.')
-  const key = falKey()
-  const audioUrl = await falInputUrl(await readFile(samplePath), SAMPLE_TYPES[extension], `voice.${extension}`, { key, signal })
-  const output = await falRun(FAL_MODELS.voiceClone, { audio_url: audioUrl, noise_reduction: true, need_volume_normalization: true }, { key, signal, timeoutMs: 5 * 60_000 })
-  const voiceId = output.custom_voice_id
-  if (typeof voiceId !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/.test(voiceId)) throw new FalError('fal.ai did not return a cloned voice. Try a cleaner recording.')
-  // Save the paid clone before anything else can fail.
-  const previous = { voice: avatar.voice, clonedVoice: avatar.clonedVoice }
-  avatar.clonedVoice = { voiceId, clonedAt: new Date().toISOString() }
-  avatar.voice = { provider: 'minimax-clone', ...avatar.clonedVoice }
-  avatar.consentAt ??= new Date().toISOString()
-  await writeAvatar(avatar)
-  // One short line keeps the clone (MiniMax deletes clones unused for 7 days) and proves it speaks.
+  const key = openRouterKey()
+  // A clean, compact reference: mono, loudness-evened, at most CLONE_REFERENCE_SECONDS.
+  const reference = join(avatarDir(id), 'voice-sample.new.mp3')
   try {
-    await falRun(FAL_MODELS.cloneTts, { prompt: 'Voice ready.', voice_setting: { voice_id: voiceId }, output_format: 'url' }, { key, signal, timeoutMs: 3 * 60_000 })
+    await execFileAsync(resolveBinary('ffmpeg'), ['-nostdin', '-loglevel', 'error', '-y', '-i', samplePath, '-t', String(CLONE_REFERENCE_SECONDS), '-vn',
+      '-af', 'loudnorm=I=-18:TP=-1.5:LRA=11', '-ac', '1', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '128k', reference], { timeout: 120_000 })
+  } catch {
+    await rm(reference, { force: true })
+    throw new Error('That recording could not be read. Try an MP3 or WAV file.')
+  }
+  try {
+    const transcript = await transcribeReference(reference, key, signal)
+    // Prove the clone speaks before replacing anything.
+    await synthesizeSpeech({ model: OPENROUTER_MODELS.cloneTts, input: 'Voice ready.',
+      references: [{ audio: new Uint8Array(await readFile(reference)), mime: 'audio/mpeg', transcript: transcript || undefined }] }, { key, signal })
+    await rename(reference, voiceSamplePath(id))
+    avatar.clonedVoice = { clonedAt: new Date().toISOString(), transcript }
+    avatar.voice = { provider: 'clone', clonedAt: avatar.clonedVoice.clonedAt }
+    avatar.consentAt ??= new Date().toISOString()
+    await writeAvatar(avatar)
   } catch (error) {
-    if (error instanceof FalError && /could not process|could not finish/.test(error.message)) {
-      Object.assign(avatar, previous)
-      await writeAvatar(avatar)
-      throw new FalError('The voice was cloned but fal.ai could not speak with it. Try a cleaner 30-90 second recording.')
-    }
-    // Network trouble: the clone is saved and the first video will use it.
+    await rm(reference, { force: true })
+    if (error instanceof OpenRouterMediaError && /request was rejected/.test(error.message)) throw new OpenRouterMediaError('OpenRouter could not clone that recording. Try a cleaner 30-90 second recording of one person speaking.')
+    throw error
   }
   return listAvatars()
 }

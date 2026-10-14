@@ -4,7 +4,7 @@ import { Button } from './ui/Button'
 import { getApi } from '../lib/ipc'
 import { errorMessage } from '../lib/utils'
 
-export type VoiceSampleRequest = { kind: 'avatar'; voice: unknown } | { kind: 'remix'; voice: string }
+export type VoiceSampleRequest = { kind: 'avatar'; voice: unknown; avatarId?: string } | { kind: 'remix'; voice: string }
 
 // One sample plays at a time across the app; samples already heard replay from memory.
 const urls = new Map<string, string>()

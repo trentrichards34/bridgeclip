@@ -34,16 +34,16 @@ function render(state) {
   finally { React.useSyncExternalStore = original }
 }
 
-test('without a fal.ai key the page explains what to add and disables generation', () => {
-  const html = render({ falConfigured: false, openrouterConfigured: true })
+test('without an OpenRouter key the page explains what to add and disables generation', () => {
+  const html = render({ falConfigured: true, openrouterConfigured: false })
   assert.match(html, /Avatar Studio/)
-  assert.match(html, /Add your fal.ai key to start/)
+  assert.match(html, /Add your OpenRouter key to start/)
   for (const step of ['1 · Script', '2 · Look', '3 · Generate']) assert.ok(html.includes(step), step)
   assert.match(html, /<button[^>]*disabled=""[^>]*>.*?Generate video/s)
 })
 
-test('with keys set the setup prompt is gone', () => {
-  const html = render({ falConfigured: true, openrouterConfigured: true })
-  assert.doesNotMatch(html, /Add your fal.ai key to start/)
+test('an OpenRouter key alone is enough; fal.ai is only for Recreate', () => {
+  const html = render({ falConfigured: false, openrouterConfigured: true })
+  assert.doesNotMatch(html, /Add your (OpenRouter|fal\.ai) key to start/)
   assert.match(html, /No avatars yet/)
 })

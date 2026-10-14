@@ -5,17 +5,18 @@ import { access, constants as fsConstants, copyFile, mkdir, readFile, writeFile 
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
 import {
-  estimateRecreateCost, estimateRenderCost, estimateWordTimings, FAL_MODELS, MAX_SCENE_SECONDS, overlongScenes, RECREATE_FPS, recreateSeconds, validateRecreateWindow, isAvatarId, MAX_SPOKEN_SECONDS, parseAvatarScript, renderFolderName,
+  estimateRecreateCost, estimateRenderCost, estimateWordTimings, FAL_MODELS, MAX_SCENE_SECONDS, OPENROUTER_MODELS, overlongScenes, RECREATE_FPS, recreateSeconds, validateRecreateWindow, isAvatarId, MAX_SPOKEN_SECONDS, parseAvatarScript, renderFolderName,
   sceneDurations, SCRIPT_LENGTHS, scriptText, wordCount, WORDS_PER_SECOND,
   type AvatarRecreateRequest, type AvatarRenderPhase, type AvatarRenderRequest, type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarScriptRequest, type AvatarVoice
 } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
 import { isBackgroundVideoName } from '../shared/backgrounds'
-import { portraitInput, readAvatar } from './avatars'
+import { openRouterKey, portraitBytes, portraitInput, readAvatar, speechFor } from './avatars'
 import { readBrandIdentity } from './remix'
 import { resolveBackground } from './backgrounds'
 import { assertMediaPath } from './security'
 import { downloadFalFile, falFileUrl, falInputUrl, falRun } from './fal'
+import { generateImage, generateVideo, synthesizeSpeech } from './openrouter-media'
 import { readResponseText } from './http-response'
 import { logger } from './logger'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
@@ -161,7 +162,7 @@ export function parseRenderRequest(value: unknown): AvatarRenderRequest {
   const raw = (value ?? {}) as Record<string, unknown>
   if (!isAvatarId(raw.avatarId)) throw new Error('Choose an avatar.')
   if (raw.style !== 'talking' && raw.style !== 'cinematic') throw new Error('Choose a video style.')
-  const lipSync = raw.lipSync === 'omnihuman' || raw.lipSync === 'economy' ? raw.lipSync : 'fabric'
+  const lipSync = 'avatar-iv' as const
   const sceneQuality = raw.sceneQuality === 'pro' ? 'pro' : 'standard'
   if (!isCaptionPresetId(raw.captionPreset)) throw new Error('Choose a caption style.')
   const backgroundVideo = raw.backgroundVideo === null || raw.backgroundVideo === undefined ? null : raw.backgroundVideo
@@ -194,14 +195,12 @@ async function ffmpeg(args: string[], signal: AbortSignal): Promise<void> {
   }
 }
 
-async function speak(text: string, voice: AvatarVoice, key: string, signal: AbortSignal, onStatus: (status: string) => void): Promise<string> {
-  const output = voice.provider === 'elevenlabs'
-    ? await falRun(FAL_MODELS.tts, { text, voice: voice.voice, stability: 0.5 }, { key, signal, onStatus, timeoutMs: 5 * 60_000 })
-    : await falRun(FAL_MODELS.cloneTts, { prompt: text, voice_setting: { voice_id: voice.voiceId }, output_format: 'url' }, { key, signal, onStatus, timeoutMs: 5 * 60_000 })
-  return falFileUrl(output, 'audio')
+/** JPEG or PNG, from the file's first bytes (image models return either). */
+export function imageMime(bytes: Uint8Array): string {
+  return bytes[0] === 0x89 && bytes[1] === 0x50 ? 'image/png' : bytes[0] === 0x52 && bytes[1] === 0x49 ? 'image/webp' : 'image/jpeg'
 }
 
-/** A scene still of the avatar (or a faceless shot) as a fal image URL. */
+/** A scene still prompt: the avatar (kept from its photo) or a faceless shot. */
 export function scenePrompt(scene: AvatarScene): string {
   return scene.featuresAvatar
     ? `The same person from the reference photo, keeping their exact face, hair and identity. ${scene.visual} Photorealistic, vertical 9:16 frame, cinematic lighting, no text or logos.`
@@ -386,14 +385,14 @@ function assertIdle(): void {
 
 function requireFalKey(): string {
   const key = loadSettings().falApiKey
-  if (!key) throw new Error('Add your fal.ai API key in Settings → API keys to use Avatar Studio.')
+  if (!key) throw new Error('Recreate runs on fal.ai: add your fal.ai key in Settings → API keys to use it.')
   return key
 }
 
 export async function startAvatarRender(value: unknown): Promise<AvatarRenderStatus> {
   assertIdle()
   const request = parseRenderRequest(value)
-  const key = requireFalKey()
+  const key = openRouterKey()
   const avatar = readAvatar(request.avatarId)
   const background = request.backgroundVideo ? resolveBackground(request.backgroundVideo) : null
   const folder = join(loadSettings().outputDirectory, 'Avatar Studio', renderFolderName(request.script.title || avatar.name, new Date()))
@@ -409,9 +408,10 @@ async function runRender(render: ActiveRender, request: AvatarRenderRequest, voi
   await writeFile(join(folder, 'script.json'), JSON.stringify({ ...request.script, style: request.style, voice }, null, 2))
 
   // 1. Voiceover.
-  const audioUrl = await speak(text, voice, key, signal, (status) => update(render, 'voice', `Recording the voiceover · ${status}`, 3))
+  const options = { key, signal }
+  const narrationBytes = await synthesizeSpeech(await speechFor(request.avatarId, voice, text), options)
   const narration = join(parts, 'narration.mp3')
-  await downloadFalFile(audioUrl, narration, { signal, maxBytes: 50_000_000 })
+  await writeFile(narration, narrationBytes)
   const seconds = await mediaSeconds(narration)
   if (seconds > (request.style === 'talking' ? 59.5 : MAX_SPOKEN_SECONDS + 4)) throw new Error('The voiceover runs over a minute. Shorten the script a little and try again.')
   update(render, 'voice', 'Voiceover ready', 10)
@@ -419,34 +419,34 @@ async function runRender(render: ActiveRender, request: AvatarRenderRequest, voi
   // 2. Picture.
   const assembled = join(parts, 'assembled.mp4')
   if (request.style === 'talking') {
-    const imageUrl = await portraitInput(request.avatarId, key, signal)
-    const model = request.lipSync === 'omnihuman' ? FAL_MODELS.omnihuman : request.lipSync === 'economy' ? FAL_MODELS.klingAvatar : FAL_MODELS.fabric
-    const input = request.lipSync === 'economy' ? { image_url: imageUrl, audio_url: audioUrl } : { image_url: imageUrl, audio_url: audioUrl, resolution: '720p' }
-    const output = await falRun(model, input,
-      { key, signal, timeoutMs: 30 * 60_000, onStatus: (status) => update(render, 'animate', `Animating your avatar · ${status}`, 20) })
-    update(render, 'animate', 'Downloading the video', 70)
     const raw = join(parts, 'talking.mp4')
-    await downloadFalFile(falFileUrl(output, 'video'), raw, { signal })
+    update(render, 'animate', 'Animating your avatar', 15)
+    // HeyGen Avatar IV lip-syncs the portrait to our voiceover.
+    await generateVideo({
+      model: OPENROUTER_MODELS.talking, prompt: text, aspectRatio: '9:16', resolution: '720p',
+      references: [{ kind: 'image', bytes: await portraitBytes(request.avatarId), mime: 'image/jpeg' }, { kind: 'audio', bytes: narrationBytes, mime: 'audio/mpeg' }]
+    }, raw, { ...options, timeoutMs: 30 * 60_000, onStatus: (status) => update(render, 'animate', `Animating your avatar · ${status}`, 20) })
     update(render, 'assemble', 'Syncing the audio', 78)
     // Our narration track is the reference for captions, so it replaces whatever audio the model returned.
     await ffmpeg(['-i', raw, '-i', narration, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', assembled], signal)
   } else {
     const scenes = request.script.scenes
     const durations = sceneDurations(scenes, seconds)
-    const portrait = scenes.some((scene) => scene.featuresAvatar) ? await portraitInput(request.avatarId, key, signal) : null
+    const portrait = scenes.some((scene) => scene.featuresAvatar) ? await portraitBytes(request.avatarId) : null
     const clips: string[] = new Array(scenes.length)
     let finished = 0
     await pool(scenes, SCENE_CONCURRENCY, render.abort, async (scene, index) => {
       const label = `scene ${index + 1} of ${scenes.length}`
-      const still = scene.featuresAvatar && portrait
-        ? await falRun(FAL_MODELS.sceneEdit, { prompt: scenePrompt(scene), image_urls: [portrait], aspect_ratio: '9:16', resolution: '1K', output_format: 'jpeg' },
-          { key, signal, timeoutMs: 10 * 60_000, onStatus: () => update(render, 'scenes', `Designing ${label}`, 12) })
-        : await falRun(FAL_MODELS.portrait, { prompt: scenePrompt(scene), aspect_ratio: '9:16', resolution: '1K', output_format: 'jpeg' },
-          { key, signal, timeoutMs: 10 * 60_000, onStatus: () => update(render, 'scenes', `Designing ${label}`, 12) })
-      const video = await falRun(request.sceneQuality === 'pro' ? FAL_MODELS.imageToVideo : FAL_MODELS.imageToVideoStandard, { start_image_url: falFileUrl(still, 'images'), prompt: motionPrompt(scene), duration: String(durations[index]), generate_audio: false },
-        { key, signal, timeoutMs: 30 * 60_000, onStatus: () => update(render, 'animate', `Animating ${label}`, 15 + (finished / scenes.length) * 60) })
+      update(render, 'scenes', `Designing ${label}`, 12)
+      const still = await generateImage({
+        model: OPENROUTER_MODELS.image, prompt: scenePrompt(scene), aspectRatio: '9:16',
+        references: scene.featuresAvatar && portrait ? [{ bytes: portrait, mime: 'image/jpeg' }] : undefined
+      }, options)
       const clip = join(parts, `scene-${index + 1}.mp4`)
-      await downloadFalFile(falFileUrl(video, 'video'), clip, { signal })
+      await generateVideo({
+        model: request.sceneQuality === 'pro' ? OPENROUTER_MODELS.scenePro : OPENROUTER_MODELS.sceneStandard, prompt: motionPrompt(scene),
+        aspectRatio: '9:16', duration: durations[index], generateAudio: false, firstFrame: { bytes: still, mime: imageMime(still) }
+      }, clip, { ...options, timeoutMs: 30 * 60_000, onStatus: () => update(render, 'animate', `Animating ${label}`, 15 + (finished / scenes.length) * 60) })
       clips[index] = clip
       finished++
       update(render, 'animate', `${finished} of ${scenes.length} scenes ready`, 15 + (finished / scenes.length) * 60)

@@ -54,11 +54,18 @@ test('scripts are validated: narration required, cinematic shots described, abou
   assert.throws(() => shared.parseAvatarScript({ title: '', scenes: Array.from({ length: 9 }, () => ({ narration: 'a', visual: 'b' })) }, 'cinematic'), /at most 8/)
 })
 
-test('voices are preset names or cloned ids; anything else is rejected', () => {
+test('voices are OpenRouter presets (any case, retired ones mapped) or the avatar clone; anything else is rejected', () => {
   assert.deepEqual(plain(shared.parseVoice({ provider: 'elevenlabs', voice: 'Brian' })), { provider: 'elevenlabs', voice: 'Brian' })
+  assert.deepEqual(plain(shared.parseVoice({ provider: 'elevenlabs', voice: 'harry' })), { provider: 'elevenlabs', voice: 'Harry' })
+  // Voices fal offered that OpenRouter doesn't move to the closest match.
+  assert.equal(shared.parseVoice({ provider: 'elevenlabs', voice: 'Aria' }).voice, 'Bella')
+  assert.equal(shared.parseVoice({ provider: 'elevenlabs', voice: 'Charlotte' }).voice, 'Alice')
+  assert.deepEqual(plain(shared.parseVoice({ provider: 'clone', clonedAt: '2026-10-14' })), { provider: 'clone', clonedAt: '2026-10-14' })
   assert.throws(() => shared.parseVoice({ provider: 'elevenlabs', voice: 'Taylor Swift' }), /Choose a voice/)
-  assert.throws(() => shared.parseVoice({ provider: 'minimax-clone', voiceId: '../x', clonedAt: 'now' }), /Choose a voice/)
-  assert.equal(shared.parseVoice({ provider: 'minimax-clone', voiceId: 'voice_123', clonedAt: '2026-10-13' }).voiceId, 'voice_123')
+  assert.throws(() => shared.parseVoice({ provider: 'minimax-clone', voiceId: 'voice_123', clonedAt: 'now' }), /Choose a voice/)
+  // Every preset is one OpenRouter lists for ElevenLabs v3.
+  const listed = ['george', 'sarah', 'adam', 'alice', 'bella', 'bill', 'brian', 'callum', 'charlie', 'chris', 'daniel', 'eric', 'harry', 'jessica', 'laura', 'liam', 'lily', 'matilda', 'river', 'roger', 'will']
+  for (const id of shared.PRESET_VOICE_IDS) assert.ok(listed.includes(id.toLowerCase()), id)
 })
 
 test('scene lengths follow the narration and stay within what the video model renders', () => {
@@ -80,9 +87,9 @@ test('estimated word timings are ordered, non-overlapping and fit the audio', ()
 
 test('cost estimates use the listed per-second prices', () => {
   const script = { title: '', scenes: [{ narration: Array.from({ length: 52 }, () => 'word').join(' '), visual: 'x', featuresAvatar: true }] }
-  // 52 words ≈ 20s; 259 characters of text.
-  assert.equal(shared.estimateRenderCost({ style: 'talking', lipSync: 'fabric', script }), Math.round((0.0259 + 20 * 0.15) * 100) / 100)
-  assert.ok(shared.estimateRenderCost({ style: 'cinematic', lipSync: 'fabric', script }) > 0.08)
+  // 52 words ≈ 20s; 259 characters of text: ElevenLabs v3 at $0.08/1k characters plus Avatar IV at $0.05/s.
+  assert.equal(shared.estimateRenderCost({ style: 'talking', script }), Math.round((0.259 * 0.08 + 20 * 0.05) * 100) / 100)
+  assert.ok(shared.estimateRenderCost({ style: 'cinematic', script }) > 0.08)
 })
 
 test('render folders are safe names', () => {
@@ -170,7 +177,8 @@ function loadStudio(overrides = {}) {
 test('render requests are validated before any paid call', () => {
   const studio = loadStudio()
   const base = { avatarId: 'abcdef1234567890', style: 'talking', captionPreset: 'beast', script: { title: 'Hook', scenes: [{ narration: 'Say this.' }] } }
-  assert.equal(studio.parseRenderRequest(base).lipSync, 'fabric')
+  assert.equal(studio.parseRenderRequest(base).lipSync, 'avatar-iv')
+  assert.equal(studio.parseRenderRequest({ ...base, lipSync: 'omnihuman' }).lipSync, 'avatar-iv')
   assert.throws(() => studio.parseRenderRequest({ ...base, avatarId: '../x' }), /Choose an avatar/)
   assert.throws(() => studio.parseRenderRequest({ ...base, captionPreset: 'nope' }), /caption style/)
   assert.throws(() => studio.parseRenderRequest({ ...base, style: 'cinematic', backgroundVideo: 'game.mp4', script: { title: '', scenes: [{ narration: 'a', visual: 'b' }] } }), /talking-head videos only/)
@@ -242,8 +250,20 @@ function loadLibrary(userData) {
     './security': { authorizeMedia: (p) => p },
     './settings-store': settingsStub,
     './tools': { resolveBinary: (name) => name },
-    './fal': { falRun: async () => { throw new Error('no network in tests') }, falFileUrl: () => '', falInputUrl: async () => 'data:', downloadFalFile: async () => {}, FalError: Error }
+    './fal': { falInputUrl: async () => 'data:' },
+    './logger': { logger: { warn() {}, info() {} } },
+    './openrouter-media': mediaStub()
   })
+}
+
+class OpenRouterMediaError extends Error {}
+function mediaStub(overrides = {}) {
+  return {
+    OpenRouterMediaError, openRouterBase: () => 'https://openrouter.test/api/v1',
+    generateImage: async () => { throw new Error('no network in tests') },
+    synthesizeSpeech: async () => { throw new Error('no network in tests') },
+    ...overrides
+  }
 }
 
 test('avatars need consent for a real likeness and must otherwise be fictional', async () => {
@@ -269,8 +289,8 @@ test('avatars need consent for a real likeness and must otherwise be fictional',
 
   const id = list[0].id
   assert.equal(plain(await lib.updateAvatar(id, { voice: { provider: 'elevenlabs', voice: 'Sarah' } }))[0].voice.voice, 'Sarah')
-  // A cloned voice id can only come from cloning, never from the renderer.
-  await assert.rejects(lib.updateAvatar(id, { voice: { provider: 'minimax-clone', voiceId: 'someone_elses', clonedAt: 'x' } }), /Clone a voice/)
+  // A cloned voice can only come from cloning, never from the renderer.
+  await assert.rejects(lib.updateAvatar(id, { voice: { provider: 'clone', clonedAt: 'x' } }), /Clone a voice/)
   await assert.rejects(lib.cloneVoice(id, photo, false), /Confirm this is your voice/)
   await assert.rejects(lib.updateAvatar('../escape', { name: 'x' }), /Invalid avatar/)
   assert.deepEqual(plain(await lib.removeAvatar(id)), [])
@@ -360,15 +380,42 @@ test('a cloned voice survives switching to a preset and back', async () => {
   const photo = path.join(userData, 'me.jpg'); fs.writeFileSync(photo, 'photo-bytes')
   const draft = await lib.draftFromPhoto(photo)
   const [created] = plain(await lib.createAvatar({ draftId: draft.draftId, name: 'Me', kind: 'self', voice: { provider: 'elevenlabs', voice: 'Brian' }, consent: true }))
-  // Simulate a finished clone on disk.
-  const file = path.join(userData, 'avatars', created.id, 'avatar.json')
+  // Simulate a finished clone on disk: the recording plus its record.
+  const dir = path.join(userData, 'avatars', created.id)
+  const file = path.join(dir, 'avatar.json')
   const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
-  fs.writeFileSync(file, JSON.stringify({ ...saved, clonedVoice: { voiceId: 'my_clone', clonedAt: 'x' }, voice: { provider: 'minimax-clone', voiceId: 'my_clone', clonedAt: 'x' } }))
+  fs.writeFileSync(path.join(dir, 'voice-sample.mp3'), 'audio')
+  fs.writeFileSync(file, JSON.stringify({ ...saved, clonedVoice: { clonedAt: 'x', transcript: 'hello' }, voice: { provider: 'clone', clonedAt: 'x' } }))
   let [avatar] = plain(await lib.updateAvatar(created.id, { voice: { provider: 'elevenlabs', voice: 'Sarah' } }))
   assert.equal(avatar.voice.voice, 'Sarah')
-  assert.equal(avatar.clonedVoice.voiceId, 'my_clone')
-  ;[avatar] = plain(await lib.updateAvatar(created.id, { voice: { provider: 'minimax-clone', voiceId: 'my_clone', clonedAt: 'forged' } }))
-  assert.deepEqual(avatar.voice, { provider: 'minimax-clone', voiceId: 'my_clone', clonedAt: 'x' })
+  assert.equal(avatar.clonedVoice.clonedAt, 'x')
+  ;[avatar] = plain(await lib.updateAvatar(created.id, { voice: { provider: 'clone', clonedAt: 'forged' } }))
+  assert.deepEqual(avatar.voice, { provider: 'clone', clonedAt: 'x' })
+  // The clone speaks through Fish Audio with the recording (and transcript) as the reference.
+  const speech = plain(await lib.speechFor(created.id, avatar.voice, 'Hi.'))
+  assert.equal(speech.model, 'fish-audio/s2.1-pro')
+  assert.equal(speech.references[0].transcript, 'hello')
+  assert.equal(plain(await lib.speechFor(created.id, { provider: 'elevenlabs', voice: 'Sarah' }, 'Hi.')).voice, 'sarah')
+})
+
+test('avatars made on the fal version open with their voices moved to OpenRouter', async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-migrate-'))
+  const lib = loadLibrary(userData)
+  const photo = path.join(userData, 'me.jpg'); fs.writeFileSync(photo, 'photo-bytes')
+  const write = async (voice, clonedVoice) => {
+    const draft = await lib.draftFromPhoto(photo)
+    const [created] = plain(await lib.createAvatar({ draftId: draft.draftId, name: 'Old', kind: 'self', voice: { provider: 'elevenlabs', voice: 'Brian' }, consent: true }))
+    const file = path.join(userData, 'avatars', created.id, 'avatar.json')
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), voice, clonedVoice }))
+    return created.id
+  }
+  const aria = await write({ provider: 'elevenlabs', voice: 'Aria' }, null)
+  const minimax = await write({ provider: 'minimax-clone', voiceId: 'old_clone', clonedAt: 'x' }, { voiceId: 'old_clone', clonedAt: 'x' })
+  const list = plain(await lib.listAvatars())
+  assert.deepEqual(list.find((a) => a.id === aria).voice, { provider: 'elevenlabs', voice: 'Bella' })
+  const old = list.find((a) => a.id === minimax)
+  assert.deepEqual(old.voice, { provider: 'elevenlabs', voice: 'Brian' })
+  assert.equal(old.clonedVoice, null)
 })
 
 // ---------------------------------------------------------------------------
@@ -450,15 +497,14 @@ test('a recreate run keeps phone rotation, retimes to the window, restores audio
 // Audit fixes: model tiers, long scenes, paid-result resilience, clone safety
 // ---------------------------------------------------------------------------
 
-test('economy and pro tiers change the model and the estimate', () => {
+test('standard and pro scene tiers change the estimate', () => {
   const words = (n) => Array.from({ length: n }, () => 'word').join(' ')
   const talking = { title: '', scenes: [{ narration: words(52), visual: '', featuresAvatar: true }] }
-  assert.ok(shared.estimateRenderCost({ style: 'talking', lipSync: 'economy', script: talking }) < shared.estimateRenderCost({ style: 'talking', lipSync: 'fabric', script: talking }) / 2)
   const cinematic = { title: '', scenes: [{ narration: words(26), visual: 'a', featuresAvatar: true }, { narration: words(26), visual: 'b', featuresAvatar: false }] }
   assert.ok(shared.estimateRenderCost({ style: 'cinematic', lipSync: 'fabric', sceneQuality: 'standard', script: cinematic }) < shared.estimateRenderCost({ style: 'cinematic', lipSync: 'fabric', sceneQuality: 'pro', script: cinematic }))
   const studio = loadStudio()
   const base = { avatarId: 'abcdef1234567890', captionPreset: 'pop' }
-  assert.equal(studio.parseRenderRequest({ ...base, style: 'talking', lipSync: 'economy', script: talking }).lipSync, 'economy')
+  assert.equal(studio.parseRenderRequest({ ...base, style: 'talking', script: talking }).lipSync, 'avatar-iv')
   assert.equal(studio.parseRenderRequest({ ...base, style: 'cinematic', script: cinematic }).sceneQuality, 'standard')
   assert.equal(studio.parseRenderRequest({ ...base, style: 'cinematic', sceneQuality: 'pro', script: cinematic }).sceneQuality, 'pro')
 })
@@ -508,26 +554,186 @@ test('timeouts are not mistaken for file errors', () => {
   assert.equal(studio.renderErrorMessage(timeout), 'The operation timed out.')
 })
 
-test('a paid voice clone is saved even if the warm-up call has network trouble', async () => {
+test('cloning keeps a trimmed recording with the avatar, proves it speaks, and changes nothing if OpenRouter refuses it', { skip: !hasFfmpeg && 'ffmpeg not installed' }, async () => {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-clone2-'))
-  class FalError extends Error {}
-  let runs = 0
+  const calls = []
+  let refuse = false
   const image = { isEmpty: () => false, getSize: () => ({ width: 900, height: 1600 }), resize: () => image, toJPEG: () => Buffer.from('jpeg') }
   const lib = load('main/avatars.ts', {
     electron: { app: { getPath: () => userData }, nativeImage: { createFromBuffer: () => image } },
     './security': { authorizeMedia: (p) => p },
     './settings-store': settingsStub,
-    './tools': { resolveBinary: () => 'ffprobe-missing' },
-    './fal': {
-      FalError, falInputUrl: async () => 'data:', falFileUrl: () => '', downloadFalFile: async () => {},
-      falRun: async () => { runs++; if (runs === 1) return { custom_voice_id: 'clone_1' }; throw new FalError('fal.ai could not be reached.') }
-    }
+    './tools': { resolveBinary: (name) => name },
+    './fal': { falInputUrl: async () => 'data:' },
+    './logger': { logger: { warn() {}, info() {} } },
+    './openrouter-media': mediaStub({
+      synthesizeSpeech: async (request) => {
+        calls.push(request)
+        if (refuse) throw new OpenRouterMediaError('OpenRouter could not record the voice: the request was rejected. Try a different description or recording.')
+        return new Uint8Array([1, 2, 3])
+      }
+    })
   })
   const photo = path.join(userData, 'me.jpg'); fs.writeFileSync(photo, 'photo')
-  const sample = path.join(userData, 'voice.mp3'); fs.writeFileSync(sample, 'audio')
+  const sample = path.join(userData, 'voice.wav')
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=220:duration=60', sample])
   const draft = await lib.draftFromPhoto(photo)
   const [avatar] = plain(await lib.createAvatar({ draftId: draft.draftId, name: 'Me', kind: 'self', voice: { provider: 'elevenlabs', voice: 'Brian' }, consent: true }))
   const [cloned] = plain(await lib.cloneVoice(avatar.id, sample, true))
-  assert.equal(cloned.clonedVoice.voiceId, 'clone_1')
-  assert.equal(cloned.voice.provider, 'minimax-clone')
+  assert.equal(cloned.voice.provider, 'clone')
+  assert.ok(cloned.clonedVoice.clonedAt)
+  assert.equal(calls[0].model, 'fish-audio/s2.1-pro')
+  assert.equal(calls[0].references[0].mime, 'audio/mpeg')
+  const reference = path.join(userData, 'avatars', avatar.id, 'voice-sample.mp3')
+  const seconds = Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', reference]).toString())
+  assert.ok(seconds <= lib.CLONE_REFERENCE_SECONDS + 0.5, `trimmed to ${seconds}s`)
+
+  // A refused recording leaves the existing clone untouched.
+  refuse = true
+  await assert.rejects(lib.cloneVoice(avatar.id, sample, true), /could not clone that recording/)
+  const [after] = plain(await lib.listAvatars())
+  assert.equal(after.clonedVoice.clonedAt, cloned.clonedVoice.clonedAt)
+  assert.ok(!fs.existsSync(path.join(userData, 'avatars', avatar.id, 'voice-sample.new.mp3')))
+})
+
+// ---------------------------------------------------------------------------
+// OpenRouter media client
+// ---------------------------------------------------------------------------
+
+function loadMedia() {
+  return load('main/openrouter-media.ts', { electron: { app: { isPackaged: true } }, './logger': { logger: { warn() {}, info() {} } },
+    './network-policy': { assertPublicWebUrl: async (url) => { if (/localhost|127\.0\.0\.1|169\.254/.test(url)) throw new Error('Local network sources are not allowed') } } })
+}
+
+test('images: Nano Banana request with the reference photo inline; base64 result decoded', async () => {
+  const media = loadMedia()
+  const seen = []
+  const fetch = async (url, init) => { seen.push({ url, body: JSON.parse(init.body), auth: init.headers.Authorization }); return jsonResponse({ data: [{ b64_json: Buffer.from('png-bytes').toString('base64'), media_type: 'image/png' }] }) }
+  const bytes = await media.generateImage({ model: 'google/gemini-3.1-flash-image', prompt: 'A face', aspectRatio: '9:16', references: [{ bytes: new Uint8Array([1, 2]), mime: 'image/jpeg' }] }, { key: 'k', fetch })
+  assert.equal(Buffer.from(bytes).toString(), 'png-bytes')
+  assert.equal(seen[0].url, 'https://openrouter.ai/api/v1/images')
+  assert.equal(seen[0].auth, 'Bearer k')
+  assert.equal(seen[0].body.aspect_ratio, '9:16')
+  assert.deepEqual(seen[0].body.input_references, [{ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AQI=' } }])
+  await assert.rejects(media.generateImage({ model: 'm', prompt: 'p' }, { key: 'k', fetch: async () => jsonResponse({ data: [] }) }), /no image/)
+  await assert.rejects(media.generateImage({ model: 'm', prompt: 'p' }, { key: 'k', fetch: async () => jsonResponse({ error: 'x' }, 402) }), /insufficient credits/)
+})
+
+test('speech: preset voices by name, cloned voices by reference recording; raw audio back', async () => {
+  const media = loadMedia()
+  const seen = []
+  const fetch = async (url, init) => { seen.push({ url, body: JSON.parse(init.body) }); return new Response(new Uint8Array([9, 9, 9]), { status: 200 }) }
+  assert.deepEqual([...await media.synthesizeSpeech({ model: 'elevenlabs/eleven-v3', input: 'Hi', voice: 'brian' }, { key: 'k', fetch })], [9, 9, 9])
+  await media.synthesizeSpeech({ model: 'fish-audio/s2.1-pro', input: 'Hi', references: [{ audio: new Uint8Array([7]), mime: 'audio/mpeg', transcript: 'hello there' }] }, { key: 'k', fetch })
+  assert.equal(seen[0].url, 'https://openrouter.ai/api/v1/audio/speech')
+  assert.equal(seen[0].body.voice, 'brian')
+  assert.equal(seen[0].body.response_format, 'mp3')
+  assert.deepEqual(seen[1].body.input_references, [{ type: 'input_audio', input_audio: { data: 'data:audio/mpeg;base64,Bw==' } }, { type: 'text', text: 'hello there' }])
+  assert.equal(seen[1].body.voice, undefined)
+  await assert.rejects(media.synthesizeSpeech({ model: 'm', input: 'x' }, { key: 'k', fetch: async () => new Response(new Uint8Array(), { status: 200 }) }), /empty/)
+})
+
+test('video jobs: submit, poll until done, download (following the file-host redirect without the key), report cost', async () => {
+  const media = loadMedia()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-video-'))
+  const calls = []
+  let polls = 0
+  const fetch = async (url, init = {}) => {
+    calls.push({ url, method: init.method ?? 'GET', auth: init.headers?.Authorization, body: init.body ? JSON.parse(init.body) : null })
+    if (url.endsWith('/videos') && init.method === 'POST') return jsonResponse({ id: 'job_1', status: 'pending' }, 202)
+    if (url.endsWith('/videos/job_1')) return jsonResponse(++polls < 2 ? { id: 'job_1', status: 'in_progress' } : { id: 'job_1', status: 'completed', usage: { cost: 0.42 } })
+    if (url.includes('/videos/job_1/content')) return new Response(null, { status: 302, headers: { location: 'https://files.example/video.mp4' } })
+    if (url === 'https://files.example/video.mp4') return new Response(new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]), { status: 200 })
+    throw new Error(`unexpected ${url}`)
+  }
+  const out = path.join(dir, 'talking.mp4')
+  const statuses = []
+  const result = await media.generateVideo({
+    model: 'heygen/avatar-iv', prompt: 'Say it', aspectRatio: '9:16', resolution: '720p',
+    references: [{ kind: 'image', bytes: new Uint8Array([1]), mime: 'image/jpeg' }, { kind: 'audio', bytes: new Uint8Array([2]), mime: 'audio/mpeg' }]
+  }, out, { key: 'k', fetch, pollMs: 1, onStatus: (s) => statuses.push(s) })
+  assert.equal(result.costUsd, 0.42)
+  assert.equal(fs.readFileSync(out).length, 8)
+  assert.deepEqual(calls[0].body.input_references, [
+    { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AQ==' } },
+    { type: 'input_audio', input_audio: { data: 'data:audio/mpeg;base64,Ag==' } }
+  ])
+  assert.ok(statuses.length >= 1)
+  const fileHost = calls.find((call) => call.url === 'https://files.example/video.mp4')
+  assert.equal(fileHost.auth, undefined)
+  // A redirect into the local network is refused.
+  const local = async (url, init = {}) => init.method === 'POST' ? jsonResponse({ id: 'job_9', status: 'completed' })
+    : new Response(null, { status: 302, headers: { location: 'https://169.254.169.254/latest' } })
+  await assert.rejects(media.generateVideo({ model: 'm', prompt: 'p' }, path.join(dir, 'local.mp4'), { key: 'k', fetch: local, pollMs: 1 }), /could not be downloaded/)
+
+  // Image-to-video sends the still as the first frame.
+  const sent = []
+  const kling = async (url, init = {}) => {
+    if (init.method === 'POST') { sent.push(JSON.parse(init.body)); return jsonResponse({ id: 'job_2', status: 'completed' }) }
+    return new Response(new Uint8Array([1, 2, 3]), { status: 200 })
+  }
+  await media.generateVideo({ model: 'kwaivgi/kling-v3.0-std', prompt: 'Pan', aspectRatio: '9:16', duration: 5, generateAudio: false, firstFrame: { bytes: new Uint8Array([5]), mime: 'image/png' } },
+    path.join(dir, 'scene.mp4'), { key: 'k', fetch: kling, pollMs: 1 })
+  assert.deepEqual(sent[0].frame_images, [{ type: 'image_url', image_url: { url: 'data:image/png;base64,BQ==' }, frame_type: 'first_frame' }])
+  assert.equal(sent[0].duration, 5)
+  assert.equal(sent[0].generate_audio, false)
+
+  // A failed job is reported, and nothing is left behind.
+  const failed = async (url, init = {}) => init.method === 'POST' ? jsonResponse({ id: 'job_3', status: 'failed', error: 'content policy' }) : jsonResponse({})
+  await assert.rejects(media.generateVideo({ model: 'm', prompt: 'p' }, path.join(dir, 'x.mp4'), { key: 'k', fetch: failed, pollMs: 1 }), /could not be made/)
+  assert.ok(!fs.existsSync(path.join(dir, 'x.mp4')))
+  await assert.rejects(media.generateVideo({ model: 'm', prompt: 'p' }, path.join(dir, 'y.mp4'), { key: 'k', fetch: async () => jsonResponse({ id: '../evil' }) }), /invalid video job/)
+})
+
+test('a talking-head and a cinematic render run end to end on OpenRouter (mocked) and produce a 9:16 video', { skip: !hasFfmpeg && 'ffmpeg not installed' }, async () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-render-'))
+  const narration = path.join(out, 'voice.mp3')
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=6', '-c:a', 'libmp3lame', narration])
+  const clip = path.join(out, 'clip.mp4')
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x3355ff:s=720x1280:d=6:r=30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', clip])
+  const calls = []
+  const media = {
+    synthesizeSpeech: async (request) => { calls.push(['speech', request]); return new Uint8Array(fs.readFileSync(narration)) },
+    generateImage: async (request) => { calls.push(['image', request]); return new Uint8Array([0x89, 0x50, 1]) },
+    generateVideo: async (request, destination) => { calls.push(['video', request]); fs.copyFileSync(clip, destination); return { costUsd: 0.1 } }
+  }
+  const studio = loadStudio({
+    './openrouter-media': media,
+    './avatars': {
+      openRouterKey: () => 'or-key', portraitBytes: async () => new Uint8Array([0xff, 0xd8]), portraitInput: async () => 'data:',
+      readAvatar: () => ({ name: 'Maya', voice: { provider: 'elevenlabs', voice: 'Brian' } }),
+      speechFor: async (id, voice, text) => ({ model: 'elevenlabs/eleven-v3', input: text, voice: voice.voice.toLowerCase() })
+    }
+  })
+  SETTINGS.outputDirectory = out
+  const finished = () => new Promise((resolve) => studio.onAvatarRenderStatus((status) => { if (['done', 'failed', 'cancelled'].includes(status.phase)) resolve(status) }))
+  const base = { avatarId: 'abcdef1234567890', captionPreset: 'pop', includeCaptions: false, includeTitle: false }
+
+  let done = finished()
+  await studio.startAvatarRender({ ...base, style: 'talking', script: { title: 'Hook', scenes: [{ narration: 'Stop doing this. Do that instead, it works.' }] } })
+  let status = await done
+  assert.equal(status.phase, 'done', status.error ?? '')
+  assert.ok(fs.existsSync(status.outputPath))
+  const talking = calls.find(([kind]) => kind === 'video')[1]
+  assert.equal(talking.model, 'heygen/avatar-iv')
+  assert.deepEqual(plain(talking.references.map((ref) => ref.kind)), ['image', 'audio'])
+  assert.equal(calls[0][1].voice, 'brian')
+
+  calls.length = 0
+  done = finished()
+  await studio.startAvatarRender({ ...base, style: 'cinematic', sceneQuality: 'pro', script: { title: 'Hook', scenes: [
+    { narration: 'First the hook line here.', visual: 'A person at a desk', featuresAvatar: true },
+    { narration: 'Then the payoff line here.', visual: 'A city street at dusk', featuresAvatar: false }
+  ] } })
+  status = await done
+  assert.equal(status.phase, 'done', status.error ?? '')
+  const images = calls.filter(([kind]) => kind === 'image').map(([, r]) => r)
+  assert.equal(images.length, 2)
+  assert.equal(images.filter((r) => r.references?.length).length, 1, 'only the avatar shot carries the portrait')
+  const videos = calls.filter(([kind]) => kind === 'video').map(([, r]) => r)
+  assert.ok(videos.every((r) => r.model === 'kwaivgi/kling-v3.0-pro' && r.firstFrame.mime === 'image/png' && r.generateAudio === false && r.duration >= 3))
+  const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=width,height,codec_type', '-of', 'json', status.outputPath]).toString())
+  const video = probe.streams.find((s) => s.codec_type === 'video')
+  assert.deepEqual([video.width, video.height], [1080, 1920])
+  assert.ok(probe.streams.some((s) => s.codec_type === 'audio'))
 })

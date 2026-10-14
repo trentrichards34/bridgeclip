@@ -1,16 +1,21 @@
 /**
  * Avatar Studio: reusable AI avatars that read scripts as talking-head videos
  * or appear in cinematic scenes, finished with the clip engine's captions.
- * Generation runs on fal.ai with the user's own key; prices below are fal's
- * listed prices (October 2026) and only drive estimates shown to the user.
+ * Generation runs on OpenRouter with the user's own key (Recreate alone still
+ * uses fal.ai); prices below are list prices (October 2026) and only drive the
+ * estimates shown to the user.
  */
 
 export type AvatarKind = 'self' | 'ai'
 
-/** A preset ElevenLabs voice (by name), or a MiniMax voice cloned from a sample. */
+/**
+ * A preset ElevenLabs voice (by name), or the avatar's own cloned voice: its
+ * recording is kept with the avatar and sent with each request (Fish Audio
+ * clones from a reference every time, so there is no stored voice id).
+ */
 export type AvatarVoice =
   | { provider: 'elevenlabs'; voice: string }
-  | { provider: 'minimax-clone'; voiceId: string; clonedAt: string }
+  | { provider: 'clone'; clonedAt: string }
 
 export interface Avatar {
   id: string
@@ -20,7 +25,7 @@ export interface Avatar {
   description: string
   voice: AvatarVoice
   /** A voice cloned for this avatar, kept when a preset voice is chosen so it can be switched back. */
-  clonedVoice: { voiceId: string; clonedAt: string } | null
+  clonedVoice: { clonedAt: string; transcript: string } | null
   /** Own-likeness avatars and cloned voices record when consent was confirmed. */
   consentAt: string | null
   createdAt: string
@@ -32,8 +37,8 @@ export interface AvatarSummary extends Avatar {
 }
 
 export type AvatarVideoStyle = 'talking' | 'cinematic'
-/** economy: Kling AI Avatar v2 Standard; fabric: VEED Fabric; omnihuman: OmniHuman 1.5. */
-export type LipSyncModel = 'economy' | 'fabric' | 'omnihuman'
+/** Talking heads: HeyGen Avatar IV on OpenRouter (the earlier fal models are gone). */
+export type LipSyncModel = 'avatar-iv'
 /** Image-to-video tier for cinematic scenes. */
 export type SceneQuality = 'standard' | 'pro'
 
@@ -97,15 +102,20 @@ export interface AvatarRenderStatus {
   startedAt: string
 }
 
-/** ElevenLabs v3 voice names fal lists for fal-ai/elevenlabs/tts/eleven-v3. */
+/**
+ * ElevenLabs v3 voices OpenRouter lists for elevenlabs/eleven-v3 (its
+ * supported_voices are lower case; ids here are display names).
+ */
 export const PRESET_VOICES = [
   { id: 'Brian', label: 'Brian', hint: 'Deep, narrator' },
+  { id: 'Adam', label: 'Adam', hint: 'Deep, confident' },
   { id: 'Charlie', label: 'Charlie', hint: 'Natural, Australian' },
   { id: 'George', label: 'George', hint: 'Warm, British' },
   { id: 'Daniel', label: 'Daniel', hint: 'Authoritative, British' },
   { id: 'Eric', label: 'Eric', hint: 'Friendly, smooth' },
   { id: 'Chris', label: 'Chris', hint: 'Casual, natural' },
   { id: 'Liam', label: 'Liam', hint: 'Young, energetic' },
+  { id: 'Harry', label: 'Harry', hint: 'Animated, energetic' },
   { id: 'Will', label: 'Will', hint: 'Relaxed, friendly' },
   { id: 'Callum', label: 'Callum', hint: 'Intense, gravelly' },
   { id: 'Roger', label: 'Roger', hint: 'Laid-back' },
@@ -113,8 +123,7 @@ export const PRESET_VOICES = [
   { id: 'Sarah', label: 'Sarah', hint: 'Soft, reassuring' },
   { id: 'Jessica', label: 'Jessica', hint: 'Expressive, upbeat' },
   { id: 'Laura', label: 'Laura', hint: 'Bright, quirky' },
-  { id: 'Aria', label: 'Aria', hint: 'Husky, expressive' },
-  { id: 'Charlotte', label: 'Charlotte', hint: 'Smooth, Swedish accent' },
+  { id: 'Bella', label: 'Bella', hint: 'Bright, warm' },
   { id: 'Alice', label: 'Alice', hint: 'Clear, British' },
   { id: 'Matilda', label: 'Matilda', hint: 'Warm, friendly' },
   { id: 'Lily', label: 'Lily', hint: 'Warm, British' },
@@ -122,19 +131,23 @@ export const PRESET_VOICES = [
 ] as const
 export const PRESET_VOICE_IDS: readonly string[] = PRESET_VOICES.map((voice) => voice.id)
 export const DEFAULT_VOICE: AvatarVoice = { provider: 'elevenlabs', voice: 'Brian' }
+/** Voices the fal version offered that OpenRouter doesn't: the closest match. */
+export const RETIRED_VOICES: Record<string, string> = { aria: 'Bella', charlotte: 'Alice' }
 
-/** fal endpoints. Kept together so a model swap is a one-line change. */
+/** OpenRouter models. Kept together so a model swap is a one-line change. */
+export const OPENROUTER_MODELS = {
+  /** Nano Banana 2: faces and scene stills (keeps the avatar's face from its photo). */
+  image: 'google/gemini-3.1-flash-image',
+  tts: 'elevenlabs/eleven-v3',
+  /** Clones from the avatar's recording on every request. */
+  cloneTts: 'fish-audio/s2.1-pro',
+  talking: 'heygen/avatar-iv',
+  sceneStandard: 'kwaivgi/kling-v3.0-std',
+  scenePro: 'kwaivgi/kling-v3.0-pro'
+} as const
+
+/** Recreate is the one feature still on fal.ai (OpenRouter has no documented video-reference input yet). */
 export const FAL_MODELS = {
-  portrait: 'fal-ai/nano-banana-2',
-  sceneEdit: 'fal-ai/nano-banana-2/edit',
-  tts: 'fal-ai/elevenlabs/tts/eleven-v3',
-  cloneTts: 'fal-ai/minimax/speech-2.8-hd',
-  voiceClone: 'fal-ai/minimax/voice-clone',
-  fabric: 'veed/fabric-1.0',
-  omnihuman: 'fal-ai/bytedance/omnihuman/v1.5',
-  klingAvatar: 'fal-ai/kling-video/ai-avatar/v2/standard',
-  imageToVideo: 'fal-ai/kling-video/v3/pro/image-to-video',
-  imageToVideoStandard: 'fal-ai/kling-video/v3/standard/image-to-video',
   /** Kling motion control: the avatar's photo performs the source video's motion. */
   recreateMotion: 'fal-ai/kling-video/v3/standard/motion-control',
   /** Puts the avatar into the source video, keeping its scene, lighting and camera. */
@@ -145,12 +158,14 @@ export const FAL_MODELS = {
 
 /** USD list prices used for estimates. */
 export const PRICES = {
+  /** Nano Banana 2, one 1K image (about 1,300 output tokens at $0.00006). */
   image: 0.08,
-  ttsPer1000Chars: 0.1,
-  voiceClone: 1.5,
-  fabricPerSecond: 0.15,
-  omnihumanPerSecond: 0.16,
-  klingAvatarPerSecond: 0.0562,
+  /** ElevenLabs v3 list price ($80 per million characters). */
+  ttsPer1000Chars: 0.08,
+  /** Fish Audio S2.1 Pro ($15 per million characters). */
+  cloneTtsPer1000Chars: 0.015,
+  /** HeyGen Avatar IV. */
+  talkingPerSecond: 0.05,
   imageToVideoPerSecond: 0.112,
   imageToVideoStandardPerSecond: 0.084,
   motionControlPerSecond: 0.126,
@@ -200,14 +215,11 @@ export function overlongScenes(script: AvatarScript): number[] {
   return words.flatMap((count, index) => (count / total) * seconds > MAX_SCENE_SECONDS ? [index + 1] : [])
 }
 
-export function estimateRenderCost(request: Pick<AvatarRenderRequest, 'style' | 'lipSync' | 'script'> & { sceneQuality?: SceneQuality }): number {
+export function estimateRenderCost(request: Pick<AvatarRenderRequest, 'style' | 'script'> & { lipSync?: LipSyncModel; sceneQuality?: SceneQuality }): number {
   const text = scriptText(request.script)
   const seconds = estimateSpokenSeconds(text)
   const voice = (text.length / 1000) * PRICES.ttsPer1000Chars
-  if (request.style === 'talking') {
-    const perSecond = request.lipSync === 'omnihuman' ? PRICES.omnihumanPerSecond : request.lipSync === 'economy' ? PRICES.klingAvatarPerSecond : PRICES.fabricPerSecond
-    return round(voice + seconds * perSecond)
-  }
+  if (request.style === 'talking') return round(voice + seconds * PRICES.talkingPerSecond)
   const footage = sceneDurations(request.script.scenes, seconds).reduce((sum, value) => sum + value, 0)
   const perSecond = request.sceneQuality === 'pro' ? PRICES.imageToVideoPerSecond : PRICES.imageToVideoStandardPerSecond
   return round(voice + request.script.scenes.length * PRICES.image + footage * perSecond)
@@ -261,12 +273,18 @@ export function parseAvatarScript(value: unknown, style: AvatarVideoStyle, allow
   return script
 }
 
+/** A preset voice by name in any case, with retired voices mapped to their closest match; null if unknown. */
+export function presetVoiceId(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const lower = value.trim().toLowerCase()
+  return PRESET_VOICE_IDS.find((id) => id.toLowerCase() === lower) ?? RETIRED_VOICES[lower] ?? null
+}
+
 export function parseVoice(value: unknown): AvatarVoice {
-  const raw = (value ?? {}) as { provider?: unknown; voice?: unknown; voiceId?: unknown; clonedAt?: unknown }
-  if (raw.provider === 'elevenlabs' && typeof raw.voice === 'string' && PRESET_VOICE_IDS.includes(raw.voice)) return { provider: 'elevenlabs', voice: raw.voice }
-  if (raw.provider === 'minimax-clone' && typeof raw.voiceId === 'string' && /^[A-Za-z0-9_-]{1,120}$/.test(raw.voiceId) && typeof raw.clonedAt === 'string') {
-    return { provider: 'minimax-clone', voiceId: raw.voiceId, clonedAt: raw.clonedAt }
-  }
+  const raw = (value ?? {}) as { provider?: unknown; voice?: unknown; clonedAt?: unknown }
+  const preset = raw.provider === 'elevenlabs' ? presetVoiceId(raw.voice) : null
+  if (preset) return { provider: 'elevenlabs', voice: preset }
+  if (raw.provider === 'clone' && typeof raw.clonedAt === 'string' && raw.clonedAt.length <= 40) return { provider: 'clone', clonedAt: raw.clonedAt }
   throw new Error('Choose a voice for this avatar.')
 }
 

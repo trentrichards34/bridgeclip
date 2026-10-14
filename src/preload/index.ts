@@ -263,7 +263,7 @@ export interface BridgeClipAPI {
   }
   /** Short voice previews (MP3 bytes), cached after the first play. */
   voices: {
-    sample: (request: { kind: 'avatar'; voice: unknown } | { kind: 'remix'; voice: string }) => Promise<Uint8Array>
+    sample: (request: { kind: 'avatar'; voice: unknown; avatarId?: string } | { kind: 'remix'; voice: string }) => Promise<Uint8Array>
   }
   /** Brand identities: what a brand believes, imported or pasted in; Remix writes takes from them. */
   brandIdentities: {

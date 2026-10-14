@@ -27,68 +27,63 @@ function load(relative, mocks = {}) {
 }
 
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-samples-'))
-const SETTINGS = { openrouterApiKey: 'or-key', falApiKey: 'fal-key' }
+const SETTINGS = { openrouterApiKey: 'or-key' }
+const AVATARS = { abcdef1234567890: { clonedVoice: { clonedAt: '2026-10-14T10:00:00Z', transcript: 'hi' } } }
 const samples = load('main/voice-samples.ts', {
   electron: { app: { getPath: () => userData, isPackaged: false } },
-  './fal': { falRun: async () => { throw new Error('not mocked') }, falFileUrl: (output) => output.audio.url, downloadFalFile: async () => { throw new Error('not mocked') } },
+  './avatars': {
+    readAvatar: (id) => { if (!AVATARS[id]) throw new Error('That avatar is no longer in your library.'); return AVATARS[id] },
+    speechFor: async (id, voice, text) => voice.provider === 'elevenlabs'
+      ? { model: 'elevenlabs/eleven-v3', input: text, voice: voice.voice.toLowerCase() }
+      : { model: 'fish-audio/s2.1-pro', input: text, references: [{ audio: new Uint8Array([1]), mime: 'audio/mpeg' }] }
+  },
+  './openrouter-media': { synthesizeSpeech: async () => { throw new Error('not mocked') } },
   './settings-store': { loadSettings: () => SETTINGS }
 })
 
 const MP3 = Uint8Array.from([0x49, 0x44, 0x33, 1, 2, 3])
 
-test('Remix voices: one OpenRouter call per voice, then served from the cache', async () => {
+test('Remix voices: one OpenRouter request per voice, then served from the cache', async () => {
   const calls = []
-  const fetch = async (url, init) => {
-    calls.push({ url, body: JSON.parse(init.body), auth: init.headers.Authorization })
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    return { ok: true, status: 200, arrayBuffer: async () => MP3.buffer.slice(0) }
-  }
+  const speak = async (request, options) => { calls.push({ request, key: options.key }); await new Promise((r) => setTimeout(r, 20)); return MP3 }
   // Two clicks at once share one request.
-  const [a, b] = await Promise.all([samples.voiceSample({ kind: 'remix', voice: 'nova' }, { fetch }), samples.voiceSample({ kind: 'remix', voice: 'nova' }, { fetch })])
+  const [a, b] = await Promise.all([samples.voiceSample({ kind: 'remix', voice: 'nova' }, { speak }), samples.voiceSample({ kind: 'remix', voice: 'nova' }, { speak })])
   assert.deepEqual([...a], [...MP3])
   assert.deepEqual([...b], [...MP3])
   assert.equal(calls.length, 1)
-  assert.equal(calls[0].url, 'https://openrouter.ai/api/v1/audio/speech')
-  assert.equal(calls[0].auth, 'Bearer or-key')
-  assert.equal(calls[0].body.model, samples.REMIX_TTS_MODEL)
-  assert.equal(calls[0].body.voice, 'nova')
-  assert.equal(calls[0].body.input, samples.SAMPLE_TEXT)
-  // Replays come from disk.
-  await samples.voiceSample({ kind: 'remix', voice: 'nova' }, { fetch })
-  assert.equal(calls.length, 1)
-  assert.equal(fs.readdirSync(path.join(userData, 'voice-samples')).filter((f) => f.endsWith('.mp3')).length, 1)
+  assert.equal(calls[0].key, 'or-key')
+  assert.equal(calls[0].request.model, samples.REMIX_TTS_MODEL)
+  assert.equal(calls[0].request.voice, 'nova')
+  assert.equal(calls[0].request.input, samples.SAMPLE_TEXT)
+  await samples.voiceSample({ kind: 'remix', voice: 'nova' }, { speak })
+  assert.equal(calls.length, 1, 'replayed from disk')
 })
 
-test('failures explain themselves and leave nothing half-written in the cache', async () => {
-  const failing = (status) => async () => ({ ok: false, status, arrayBuffer: async () => new ArrayBuffer(0) })
-  await assert.rejects(samples.voiceSample({ kind: 'remix', voice: 'onyx' }, { fetch: failing(402) }), /insufficient credits/)
-  await assert.rejects(samples.voiceSample({ kind: 'remix', voice: 'onyx' }, { fetch: failing(401) }), /rejected the API key/)
-  await assert.rejects(samples.voiceSample({ kind: 'remix', voice: 'onyx' }, { fetch: async () => { throw new Error('offline') } }), /could not be reached/)
-  await assert.rejects(samples.voiceSample({ kind: 'remix', voice: 'onyx' }, { fetch: async () => ({ ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(0) }) }), /unusable/)
+test('Avatar voices: ElevenLabs presets and the avatar clone, both on OpenRouter', async () => {
+  const calls = []
+  const speak = async (request) => { calls.push(request); return MP3 }
+  await samples.voiceSample({ kind: 'avatar', voice: { provider: 'elevenlabs', voice: 'Brian' } }, { speak })
+  assert.equal(calls[0].model, 'elevenlabs/eleven-v3')
+  assert.equal(calls[0].voice, 'brian')
+  await samples.voiceSample({ kind: 'avatar', voice: { provider: 'clone', clonedAt: '2026-10-14T10:00:00Z' }, avatarId: 'abcdef1234567890' }, { speak })
+  assert.equal(calls[1].model, 'fish-audio/s2.1-pro')
+  // A new clone is a new sample.
+  AVATARS.abcdef1234567890.clonedVoice.clonedAt = '2026-10-15T09:00:00Z'
+  await samples.voiceSample({ kind: 'avatar', voice: { provider: 'clone', clonedAt: '2026-10-15T09:00:00Z' }, avatarId: 'abcdef1234567890' }, { speak })
+  assert.equal(calls.length, 3)
+  await assert.rejects(samples.voiceSample({ kind: 'avatar', voice: { provider: 'clone', clonedAt: 'x' } }, { speak }), /Choose an avatar/)
+  await assert.rejects(samples.voiceSample({ kind: 'avatar', voice: { provider: 'elevenlabs', voice: 'Nobody' } }, { speak }), /Choose a voice/)
+})
+
+test('failures pass through and leave nothing in the cache; no key, no request', async () => {
+  await assert.rejects(samples.voiceSample({ kind: 'remix', voice: 'onyx' }, { speak: async () => { throw new Error('OpenRouter reports insufficient credits.') } }), /insufficient credits/)
   await assert.rejects(samples.voiceSample({ kind: 'remix', voice: 'robot' }), /Choose a voice/)
   await assert.rejects(samples.voiceSample({ kind: 'other', voice: 'nova' }), /Choose a voice/)
-  assert.equal(fs.readdirSync(path.join(userData, 'voice-samples')).filter((f) => f.endsWith('.part')).length, 0)
+  const files = fs.existsSync(path.join(userData, 'voice-samples')) ? fs.readdirSync(path.join(userData, 'voice-samples')) : []
+  assert.equal(files.filter((f) => f.endsWith('.part')).length, 0)
   SETTINGS.openrouterApiKey = ''
-  await assert.rejects(samples.voiceSample({ kind: 'remix', voice: 'onyx' }, { fetch: failing(500) }), /OpenRouter key/)
+  let called = false
+  await assert.rejects(samples.voiceSample({ kind: 'remix', voice: 'echo' }, { speak: async () => { called = true; return MP3 } }), /OpenRouter key/)
+  assert.equal(called, false)
   SETTINGS.openrouterApiKey = 'or-key'
-})
-
-test('Avatar voices: ElevenLabs presets and cloned voices through fal', async () => {
-  const runs = []
-  const falRun = async (model, input, options) => { runs.push({ model, input, key: options.key }); return { audio: { url: 'https://v3.fal.media/files/sample.mp3' } } }
-  const download = async (url, destination) => { fs.writeFileSync(destination, Buffer.from(MP3)) }
-  const preset = await samples.voiceSample({ kind: 'avatar', voice: { provider: 'elevenlabs', voice: 'Brian' } }, { falRun, download })
-  assert.deepEqual([...preset], [...MP3])
-  assert.equal(runs[0].model, 'fal-ai/elevenlabs/tts/eleven-v3')
-  assert.equal(runs[0].input.voice, 'Brian')
-  assert.equal(runs[0].key, 'fal-key')
-  await samples.voiceSample({ kind: 'avatar', voice: { provider: 'minimax-clone', voiceId: 'voice_abc', clonedAt: '2026-10-01' } }, { falRun, download })
-  assert.equal(runs[1].model, 'fal-ai/minimax/speech-2.8-hd')
-  assert.equal(runs[1].input.voice_setting.voice_id, 'voice_abc')
-  await samples.voiceSample({ kind: 'avatar', voice: { provider: 'elevenlabs', voice: 'Brian' } }, { falRun, download })
-  assert.equal(runs.length, 2, 'cached')
-  await assert.rejects(samples.voiceSample({ kind: 'avatar', voice: { provider: 'elevenlabs', voice: 'Nobody' } }, { falRun, download }), /Choose a voice/)
-  SETTINGS.falApiKey = ''
-  await assert.rejects(samples.voiceSample({ kind: 'avatar', voice: { provider: 'elevenlabs', voice: 'Sarah' } }, { falRun, download }), /fal\.ai key/)
-  SETTINGS.falApiKey = 'fal-key'
 })

@@ -212,7 +212,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                   onRemove={() => void keys.remove('falApiKey')}
                   onBlur={() => void keys.persist()}
                   placeholder="Your fal.ai API key"
-                  description="Powers Avatar Studio: AI faces, voices, talking-head and cinematic videos. Pay-as-you-go on your fal.ai account."
+                  description="Only for Avatar Studio’s Recreate (your avatar takes over someone in a video). Everything else in Avatar Studio runs on your OpenRouter key."
                   getKeyUrl={PROVIDER_LINKS.fal}
                 />
               </KeyRow>
