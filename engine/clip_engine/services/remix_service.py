@@ -540,6 +540,20 @@ SILENT_FACE_AT = 0.40
 SILENT_FACE_SPOT = 0.38
 SILENT_CAPTION_FROM_BOTTOM = 400
 SILENT_MAX_MS = 45000
+# A video this short (a reel, a TikTok, a Short) is reacted to as one piece: one take per video.
+# Silent react plays all of it; a voiced take uses its best moment.
+SHORT_VIDEO_MAX_S = 180
+# The shortest whole video Silent react will play (anything shorter has nothing to react to).
+WHOLE_VIDEO_MIN_MS = 3000
+
+
+def is_short_video(duration_seconds: Any) -> bool:
+    """A reel-length video (its length known and at most SHORT_VIDEO_MAX_S)."""
+    try:
+        seconds = float(duration_seconds)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(seconds) and 0 < seconds <= SHORT_VIDEO_MAX_S
 REACTION_KINDS = ("listen", "nod", "point", "surprised", "laugh", "skeptical")
 MIN_CUE_GAP_S = 2.5
 
@@ -567,21 +581,31 @@ SILENT_SCHEMA: dict[str, Any] = {
 }
 
 
-def silent_system_prompt(count: int, kinds: tuple[str, ...], keyword: str = "", offer: str = "") -> str:
+def silent_system_prompt(count: int, kinds: tuple[str, ...], keyword: str = "", offer: str = "", whole_seconds: float = 0) -> str:
     cta = (f'Last caption line: "Comment {keyword} and I\'ll send you {offer or "the full breakdown"}."' if keyword
            else "Last caption line: a one-line question that invites comments (or the brand identity's call to action, if it names one).")
-    return f"""You pick moments for SILENT REACTION videos (9:16). The moment plays with its own sound in the top of the frame while the brand's presenter reacts silently behind it: watching, nodding, pointing, pulling faces. Nobody speaks over it. The brand adds value through the hook text, the reactions and the caption.
+    if whole_seconds:
+        # A reel: the reaction covers the whole video, so there is one take and no moment to pick.
+        picking = f"""This is a short video (a reel). Make exactly ONE take that reacts to the WHOLE video: start 0, end {whole_seconds:.1f}. Do not pick a part of it.
 
-Find up to {count} moments in the transcript, strongest first, each a different point.
+THE VIDEO
+- Copy its words into moment_quote; give start 0 and end {whole_seconds:.1f}.
+- why_this_moment: what makes the whole video worth reacting to.
+"""
+    else:
+        picking = f"""Find up to {count} moments in the transcript, strongest first, each a different point.
 
 PICKING THE MOMENT
 - A complete thought of 10-45 seconds that lands its own payoff: a bold claim and why, a story with a twist, real numbers, a hot take, conflict. Start on the line that hooks; end right after the payoff. Never cut mid-sentence.
 - Prefer moments the brand's audience cares about and the brand identity agrees with or can add a sharp angle to.
 - Copy the moment's words exactly into moment_quote; give start/end from the transcript times.
+"""
+    return f"""You pick moments for SILENT REACTION videos (9:16). The moment plays with its own sound in the top of the frame while the brand's presenter reacts silently behind it: watching, nodding, pointing, pulling faces. Nobody speaks over it. The brand adds value through the hook text, the reactions and the caption.
 
+{picking}
 HEADLINE (hook text above the video, 4-14 words, third person, sentence case, no emoji): frame what is said and why it matters, like "Alex Hormozi says his most-watched videos made zero sales". Never give away the payoff.
 
-CUES (the presenter's silent reactions, seconds from the start of the moment): start with "listen" at 0; "nod" when a point lands; "point" at the key line (the presenter points up at the clip); "surprised" at a reveal or a number; "laugh" at a joke; "skeptical" at a claim the brand would push back on. 3-6 cues, at least 3 seconds apart, matched to what is said. Use only: {", ".join(kinds)}.
+CUES (the presenter's silent reactions, seconds from the start of the moment): start with "listen" at 0; "nod" when a point lands; "point" at the key line (the presenter points up at the clip); "surprised" at a reveal or a number; "laugh" at a joke; "skeptical" at a claim the brand would push back on. {"Spread 4-8 cues across the whole video" if whole_seconds else "3-6 cues"}, at least 3 seconds apart, matched to what is said. Use only: {", ".join(kinds)}.
 
 POST CAPTION (the text under the video, 60-180 words, plain text with line breaks): it carries the brand's take.
 - First line: a hook that makes people tap "more".
@@ -622,16 +646,20 @@ def clean_cues(raw: Any, duration_s: float, kinds: tuple[str, ...], shift_s: flo
 
 
 def _parse_silent_item(item: dict, words: list[TranscriptWord], brand_text: str, brand_norm: str, transcript_text: str,
-                       taken: list["RemixScript"], kinds: tuple[str, ...]) -> Optional["RemixScript"]:
+                       taken: list["RemixScript"], kinds: tuple[str, ...], whole_ms: int = 0) -> Optional["RemixScript"]:
     check = item.get("self_check") if isinstance(item.get("self_check"), dict) else {}
     if check.get("attacks_person") is True or check.get("invented_claims") is True:
         return None
-    start_s, end_s = float(item["start"]), float(item["end"])
-    if not (math.isfinite(start_s) and math.isfinite(end_s)) or end_s <= start_s or start_s < 0:
-        return None
-    snapped = snap_excerpt(words, round(start_s * 1000), round(end_s * 1000), SILENT_MIN_MS, SILENT_MAX_MS)
-    if not snapped or snapped[1] - snapped[0] < SILENT_MIN_MS * 0.8:
-        return None
+    if whole_ms:
+        # A reel: the whole video, start to finish, whatever times the model gave.
+        start_s, snapped = 0.0, (0, whole_ms)
+    else:
+        start_s, end_s = float(item["start"]), float(item["end"])
+        if not (math.isfinite(start_s) and math.isfinite(end_s)) or end_s <= start_s or start_s < 0:
+            return None
+        snapped = snap_excerpt(words, round(start_s * 1000), round(end_s * 1000), SILENT_MIN_MS, SILENT_MAX_MS)
+        if not snapped or snapped[1] - snapped[0] < SILENT_MIN_MS * 0.8:
+            return None
     if any(min(s.end_ms, snapped[1]) - max(s.start_ms, snapped[0]) > 0 for s in taken):
         return None
     headline = _clean_line(item.get("headline"), 16)
@@ -652,7 +680,8 @@ def _parse_silent_item(item: dict, words: list[TranscriptWord], brand_text: str,
     )
 
 
-def parse_silent_plan(raw: Any, segments: list[TranscriptSegment], brand_text: str, count: int, kinds: tuple[str, ...]) -> list["RemixScript"]:
+def parse_silent_plan(raw: Any, segments: list[TranscriptSegment], brand_text: str, count: int, kinds: tuple[str, ...],
+                      whole_ms: int = 0) -> list["RemixScript"]:
     items = raw.get("remixes") if isinstance(raw, dict) else None
     if not isinstance(items, list):
         return []
@@ -664,7 +693,7 @@ def parse_silent_plan(raw: Any, segments: list[TranscriptSegment], brand_text: s
         if not isinstance(item, dict):
             continue
         try:
-            script = _parse_silent_item(item, words, brand_text or "", brand_norm, transcript_text, scripts, kinds)
+            script = _parse_silent_item(item, words, brand_text or "", brand_norm, transcript_text, scripts, kinds, whole_ms)
         except (KeyError, TypeError, ValueError, OverflowError, AttributeError):
             continue
         if script:
@@ -1371,8 +1400,14 @@ class Remixer:
         )
         silent = self.config.format == "silent"
         kinds = tuple(k for k in REACTION_KINDS if k in self.config.reactions)
-        system = (silent_system_prompt(self.config.count, kinds, self.config.cta_keyword, self.config.cta_offer) if silent
-                  else plan_system_prompt(self.config.angle, self.config.count, self.config.order, self.config.cta_keyword, self.config.cta_offer,
+        # A reel gets one take: Silent react reacts to all of it, a voiced take to its best moment.
+        short = is_short_video(source_meta.get("duration_seconds"))
+        count = 1 if short else self.config.count
+        whole_ms = round(float(source_meta["duration_seconds"]) * 1000) if short and silent else 0
+        if whole_ms and whole_ms < WHOLE_VIDEO_MIN_MS:
+            raise RemixError("This video is only a couple of seconds long, so there is nothing to react to. Try a longer one.")
+        system = (silent_system_prompt(count, kinds, self.config.cta_keyword, self.config.cta_offer, whole_ms / 1000) if silent
+                  else plan_system_prompt(self.config.angle, count, self.config.order, self.config.cta_keyword, self.config.cta_offer,
                                           self.config.cta_clip))
         payload = {
             "model": self.settings.planner_model,
@@ -1394,11 +1429,11 @@ class Remixer:
                         self.cost_usd += usage["cost"]
                     content, _ = message_text(body)
                     if silent:
-                        scripts = parse_silent_plan(json.loads(content or "{}"), segments, brand, self.config.count, kinds)
+                        scripts = parse_silent_plan(json.loads(content or "{}"), segments, brand, count, kinds, whole_ms)
                         if scripts:
                             return scripts
                         continue
-                    scripts = parse_plan(json.loads(content or "{}"), segments, brand, self.config.count)
+                    scripts = parse_plan(json.loads(content or "{}"), segments, brand, count)
                     for script in scripts:
                         if self.config.angle != "mix":
                             script.style = self.config.angle

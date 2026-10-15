@@ -401,7 +401,10 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
             : `First the AI finds the moments and writes and grades a take for each (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You review and edit them, and only the ones you approve are made: ${cost.perRemixHigh - cost.perRemixLow < 0.01 ? `about $${cost.perRemixHigh.toFixed(2)}` : `about $${cost.perRemixLow.toFixed(2)}–$${cost.perRemixHigh.toFixed(2)}`} each.`} />
           <div className="mt-4 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className="text-sm text-ink">Takes per video</span>
+              <span>
+                <span className="block text-sm text-ink">Takes per long video</span>
+                <span className="block text-2xs text-ink-subtle">A reel, TikTok or Short (up to 3 minutes) always gets one take{silent ? ' that reacts to the whole video' : ''}.</span>
+              </span>
               <Segmented label="Takes per video" size="sm" value={String(form.count)} onChange={(value) => form.update({ count: Number(value) })}
                 options={COUNTS.map((count) => ({ value: String(count), label: String(count) }))} />
             </div>

@@ -139,6 +139,7 @@ class FakeMedia:
 @pytest.mark.parametrize("host,fail_avatar,order", [("lipsync", False, "moment_first"), ("lipsync", True, "take_first"), ("voice", False, "moment_first")])
 def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar, order):
     ffmpeg, ffprobe = FFMPEG_WITH_ASS
+    monkeypatch.setattr(remix, "SHORT_VIDEO_MAX_S", 30)  # the 40 s test video stands in for a long one
     monkeypatch.setenv("PATH", os.path.dirname(ffmpeg) + os.pathsep + os.environ.get("PATH", ""))
     source = tmp_path / "source.mp4"
     subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=40:r=30", "-f", "lavfi", "-i",
@@ -558,6 +559,7 @@ def test_remix_speaks_with_the_avatars_cloned_voice(tmp_path):
 @pytest.mark.parametrize("look", [None, {"look": "floating", "font": "condensed"}])
 def test_silent_react_end_to_end(tmp_path, monkeypatch, look):
     ffmpeg, ffprobe = FFMPEG_WITH_ASS
+    monkeypatch.setattr(remix, "SHORT_VIDEO_MAX_S", 30)  # the 40 s test video stands in for a long one
     monkeypatch.setenv("PATH", os.path.dirname(ffmpeg) + os.pathsep + os.environ.get("PATH", ""))
     source = tmp_path / "source.mp4"
     subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=40:r=30", "-f", "lavfi", "-i",
@@ -713,3 +715,58 @@ def test_a_recorded_cta_replaces_the_spoken_one():
     assert remix.apply_edit(script, edit, "", "", "", "").close == "Train the pull."
     config = remix.RemixConfig(output_dir="/tmp/x", cta_clip=True, cta_keyword="SALES")
     assert config.cta_clip is True
+
+
+def test_short_video_detection():
+    assert remix.is_short_video(25) and remix.is_short_video(180) and not remix.is_short_video(181)
+    assert not remix.is_short_video(None) and not remix.is_short_video(0) and not remix.is_short_video("x")
+
+
+def test_whole_reel_prompt_and_parse():
+    prompt = remix.silent_system_prompt(1, ("listen", "nod"), whole_seconds=31.5)
+    assert "exactly ONE take that reacts to the WHOLE video" in prompt and "end 31.5" in prompt and "Spread 4-8 cues" in prompt
+    assert "Find up to" not in prompt
+    long = remix.silent_system_prompt(3, ("listen", "nod"))
+    assert "Find up to 3 moments" in long and "WHOLE video" not in long
+    item = {"start": 6, "end": 14, "headline": "This coach says strength beats the scale every time",
+            "cues": [{"at": 0, "reaction": "listen"}, {"at": 9, "reaction": "nod"}, {"at": 27, "reaction": "nod"}],
+            "post_caption": "Strength first.\n\n1. Train the pull.", "proof_used": [], "self_check": {}}
+    [script] = remix.parse_silent_plan({"remixes": [item, dict(item, headline="A second take that should not be kept")]},
+                                       transcript(32), "", 3, ("listen", "nod"), whole_ms=31500)
+    assert (script.start_ms, script.end_ms) == (0, 31500), "the whole reel, whatever times the model gave"
+    assert [c["at"] for c in script.cues] == [0.0, 9.0, 27.0], "cues across the whole reel"
+
+
+def test_a_reel_gets_one_take_and_a_long_video_several(tmp_path, monkeypatch):
+    """Plan only: the count and the moment follow the video's length (Silent react and voiced)."""
+    import clip_engine.services.transcription_service as ts
+    from clip_engine.services.transcription_service import TranscriptionResult
+
+    class FakeTranscription:
+        async def transcribe(self, video, work):
+            return TranscriptionResult(segments=transcript(40), full_text="")
+    monkeypatch.setattr(ts, "TranscriptionService", FakeTranscription)
+    seen = []
+
+    async def fake_chat(client, payload):
+        seen.append(payload["messages"][0]["content"])
+        if payload["response_format"]["json_schema"]["name"] == "remix_grades":
+            return {"choices": [{"message": {"content": json.dumps({"grades": []})}}]}, {"cost": 0}
+        item = {"start": 4, "end": 20, "moment_quote": "word10", "why_this_moment": "Bold.", "headline": "This creator says your best reel made nothing",
+                "cues": [{"at": 0, "reaction": "listen"}, {"at": 30, "reaction": "nod"}], "post_caption": "Hook.\n\n1. Point.",
+                "proof_used": [], "self_check": {}}
+        return {"choices": [{"message": {"content": json.dumps({"remixes": [item, dict(item, start=22, end=38, headline="Another take on the same video here")]})}}]}, {"cost": 0.01}
+    monkeypatch.setattr(remix, "chat_completion", fake_chat)
+    settings = SimpleNamespace(openrouter_api_key="t", openrouter_base_url="https://example.invalid/api/v1", planner_model="m",
+                               get_planner_fallback_models=lambda: [], pexels_api_key=None)
+    for seconds, expected in ((38.0, 1), (600.0, 2)):
+        async def source(self, src, work, single, seconds=seconds):
+            return "/tmp/x.mp4", {"url": src, "title": "T", "creator": "C", "platform": "Instagram", "duration_seconds": seconds}
+        monkeypatch.setattr(remix.Remixer, "_source", source)
+        config = remix.RemixConfig(sources=["https://www.instagram.com/p/x/"], output_dir=str(tmp_path / f"out{seconds}"), count=3, host="voice",
+                                   format="silent", reactions={"listen": "/x/listen.mp4", "nod": "/x/nod.mp4"})
+        drafts = asyncio.run(remix.Remixer(config, media=FakeMedia("ffmpeg"), settings=settings).plan())["drafts"]
+        assert len(drafts) == expected, (seconds, len(drafts))
+        if expected == 1:
+            assert (drafts[0]["start_ms"], drafts[0]["end_ms"]) == (0, 38000)
+            assert "WHOLE video" in seen[-2]
