@@ -770,3 +770,11 @@ def test_a_reel_gets_one_take_and_a_long_video_several(tmp_path, monkeypatch):
         if expected == 1:
             assert (drafts[0]["start_ms"], drafts[0]["end_ms"]) == (0, 38000)
             assert "WHOLE video" in seen[-2]
+
+
+def test_no_hook_text_in_remix(tmp_path):
+    from clip_engine.services.rendering_service import RenderingService
+    remixer = remix.Remixer(remix.RemixConfig(output_dir=str(tmp_path), host="voice", headline_look={"look": "none"}), media=FakeMedia("ffmpeg"),
+                            settings=SimpleNamespace(openrouter_api_key="k", openrouter_base_url="https://example.invalid", planner_model="m",
+                                                     get_planner_fallback_models=lambda: [], pexels_api_key=None))
+    assert remixer._headline(RenderingService(), "in.mp4", str(tmp_path), 0, "This creator says your best reel made zero sales") == (None, 0, 0)

@@ -27,7 +27,7 @@ function LookPreview({ look }: { look: HeadlineLook }): React.JSX.Element {
           textShadow: bar ? undefined : '0 0 2px #000, 0 1px 3px rgb(0 0 0 / 0.8)'
         }}
       >
-        {text}
+        {look.look === 'none' ? '' : text}
       </div>
     </div>
   )
@@ -37,7 +37,7 @@ function LookPreview({ look }: { look: HeadlineLook }): React.JSX.Element {
 export function HeadlineLookPicker({ value, onChange }: { value: HeadlineLook; onChange: (look: HeadlineLook) => void }): React.JSX.Element {
   return (
     <div className="space-y-2.5">
-      <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Hook text look">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-5" role="radiogroup" aria-label="Hook text look">
         {HEADLINE_LOOKS.map((option) => {
           const selected = value.look === option.id
           const look: HeadlineLook = { ...value, look: option.id, color: option.id === 'brand' && value.look !== 'brand' && value.color === '#FFFFFF' ? DEFAULT_BRAND_COLOR : value.color }
@@ -54,13 +54,13 @@ export function HeadlineLookPicker({ value, onChange }: { value: HeadlineLook; o
       </div>
       <p className="text-2xs text-ink-subtle">{HEADLINE_LOOKS.find((item) => item.id === value.look)?.hint}</p>
       <div className="flex flex-wrap items-center gap-3">
-        <Segmented
+        {value.look !== 'none' && <Segmented
           label="Hook text font"
           size="sm"
           value={value.font}
           options={HEADLINE_FONTS.map((font) => ({ value: font.id, label: <span style={{ fontFamily: font.family }}>{font.label}</span> }))}
           onChange={(font) => onChange({ ...value, font })}
-        />
+        />}
         {value.look === 'brand' && (
           <label className="flex items-center gap-2 text-2xs text-ink-muted">
             Bar color

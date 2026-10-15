@@ -120,3 +120,20 @@ def test_non_string_values_are_rejected_cleanly():
         with pytest.raises(ValueError):
             validate_headline_look(bad)
     assert parse_headline_look({"font": ["clean"], "look": "black"}).look == "black"
+
+
+def test_no_hook_text(tmp_path):
+    assert validate_headline_look({"look": "none"}) == {"look": "none", "color": "#FFFFFF", "font": "clean"}
+    assert _bar(tmp_path, {"look": "none"}) is None
+    # Headline style with no hook text doesn't fall back to a title card either.
+    request = RenderRequest("in.mp4", str(tmp_path / "o.mp4"), 0, 1000, 64, 64, title_style=TitleStyle.HEADLINE,
+                            title_text="Short title", headline_text=TEXT, headline_look={"look": "none"})
+    assert RenderingService()._title_overlay_image(request, 1080) is None
+    card = RenderRequest("in.mp4", str(tmp_path / "o.mp4"), 0, 1000, 64, 64, title_style=TitleStyle.CARD, title_text="Short title")
+    assert RenderingService()._title_overlay_image(card, 1080) is not None
+
+
+def test_render_with_no_hook_text_keeps_the_full_frame(tmp_path, monkeypatch):
+    ffmpeg, out = _render(tmp_path, monkeypatch, {"look": "none"})
+    corner = _mean(ffmpeg, out, 1.0, "crop=20:10:0:0")
+    assert corner.max() < 235, corner

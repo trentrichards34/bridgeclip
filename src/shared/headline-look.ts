@@ -3,7 +3,7 @@
  * white (the original look), black or a brand color, or floating text over the
  * video with no bar; and its font. The engine draws it (rendering_service.HeadlineLook).
  */
-export type HeadlineLookStyle = 'white' | 'black' | 'brand' | 'floating'
+export type HeadlineLookStyle = 'white' | 'black' | 'brand' | 'floating' | 'none'
 export type HeadlineFont = 'clean' | 'serif' | 'condensed'
 
 export interface HeadlineLook {
@@ -20,7 +20,8 @@ export const HEADLINE_LOOKS: readonly { id: HeadlineLookStyle; label: string; hi
   { id: 'white', label: 'White bar', hint: 'Black text on a white bar. The original look.' },
   { id: 'black', label: 'Black bar', hint: 'White text on a black bar.' },
   { id: 'brand', label: 'Brand color', hint: 'A bar in your color; the text turns black or white to stay readable.' },
-  { id: 'floating', label: 'Floating text', hint: 'No bar: outlined white text over the top of the video.' }
+  { id: 'floating', label: 'Floating text', hint: 'No bar: outlined white text over the top of the video.' },
+  { id: 'none', label: 'No hook text', hint: 'Nothing at the top: the video fills the frame.' }
 ]
 
 export const HEADLINE_FONTS: readonly { id: HeadlineFont; label: string; family: string; upper?: boolean }[] = [
@@ -44,7 +45,7 @@ export function headlineTextColor(look: HeadlineLook): string {
 }
 
 export function headlineBarColor(look: HeadlineLook): string | null {
-  if (look.look === 'floating') return null
+  if (look.look === 'floating' || look.look === 'none') return null
   if (look.look === 'black') return '#0E0E0E'
   if (look.look === 'brand') return look.color
   return '#FFFFFF'

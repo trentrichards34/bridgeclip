@@ -89,7 +89,7 @@ class TitleStyle:
 
 # How the headline (hook text) looks: a bar in white, black or a brand color,
 # or floating text over the top of the video; and its font.
-HEADLINE_LOOKS = ("white", "black", "brand", "floating")
+HEADLINE_LOOKS = ("white", "black", "brand", "floating", "none")
 HEADLINE_FONTS = {"clean": "Montserrat-ExtraBold.ttf", "serif": "Fraunces72pt-Black.ttf", "condensed": "Anton-Regular.ttf"}
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -940,6 +940,9 @@ class RenderingService:
         if len(text.split()) < 2:
             return None
         style = parse_headline_look(request.headline_look)
+        if style.look == "none":
+            # No hook text: nothing drawn, and the video keeps the whole frame.
+            return None
         if style.font == "condensed":
             text = text.upper()
         unit = target_height / 1920
@@ -1053,6 +1056,9 @@ class RenderingService:
     ) -> Optional[tuple[str, int, int]]:
         """Render the title card PNG. Returns (path, width, height) or None."""
         if not (request.include_title and request.title_text):
+            return None
+        # Headline style with "No hook text" chosen: no title card in its place either.
+        if request.title_style == TitleStyle.HEADLINE and parse_headline_look(request.headline_look).look == "none":
             return None
         path = os.path.join(
             os.path.dirname(request.output_path),
