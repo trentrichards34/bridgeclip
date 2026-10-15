@@ -123,8 +123,10 @@ def main():
             described = describe_failure(error)
             if described["message"] == "The clipping pipeline failed.":
                 # Say what went wrong (first line, no local paths), so it can be acted on or reported.
+                from clip_engine.logging_safety import safe_log_text
                 first = (str(error).strip().splitlines() or [type(error).__name__])[0]
-                first = re.sub(r"(/Users|/home|[A-Za-z]:\\\\Users)[^\s'\"]*", "…", first)[:220]
+                # No paths, links or credentials: the shared redactor, then a short first line.
+                first = safe_log_text(first).strip()[:220]
                 message = f"The remix could not be made: {first or type(error).__name__}"
             else:
                 message = f"{described['message']} {described['hint']}"

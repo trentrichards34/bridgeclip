@@ -7,7 +7,7 @@ import {
   isAvatarId, isReactionId, OPENROUTER_MODELS, REACTION_SECONDS, REACTIONS,
   type AvatarSummary, type ReactionId
 } from '../shared/avatars'
-import { listAvatars, openRouterKey, portraitBytes, reactionsDir, readAvatar, readReactions } from './avatars'
+import { listAvatars, openRouterKey, portraitBytes, reactionsDir, readAvatar, readReactions, withReactionsLock } from './avatars'
 import { logger } from './logger'
 import { generateVideo, type MediaOptions } from './openrouter-media'
 import { resolveBinary } from './tools'
@@ -24,6 +24,7 @@ const MAX_UPLOAD_BYTES = 300_000_000
 const MAX_OWN_SECONDS = 10
 const CONCURRENCY = 3
 const making = new Set<string>()
+const uploading = new Set<string>()
 
 export function reactionPrompt(reaction: (typeof REACTIONS)[number]): string {
   return `The same person from the photo ${reaction.prompt}. They do not speak: no talking or lip movement. ` +
@@ -42,22 +43,14 @@ async function normalize(input: string, output: string, seconds: number): Promis
   }
 }
 
-// Reactions finishing together update the same list one at a time, so none is lost.
-const metaWrites = new Map<string, Promise<void>>()
-
-function writeMeta(id: string, kind: ReactionId, source: 'ai' | 'own'): Promise<void> {
-  const next = (metaWrites.get(id) ?? Promise.resolve()).catch(() => undefined).then(async () => {
-    const file = join(reactionsDir(id), 'reactions.json')
-    let meta: Record<string, string> = {}
-    try { meta = JSON.parse(await readFile(file, 'utf8')) as Record<string, string> } catch { /* first one */ }
-    meta[kind] = source
-    const temp = `${file}.${randomBytes(4).toString('hex')}.tmp`
-    await writeFile(temp, JSON.stringify(meta, null, 2))
-    await rename(temp, file)
-  })
-  metaWrites.set(id, next)
-  void next.finally(() => { if (metaWrites.get(id) === next) metaWrites.delete(id) }).catch(() => undefined)
-  return next
+async function writeMeta(id: string, kind: ReactionId, source: 'ai' | 'own'): Promise<void> {
+  const file = join(reactionsDir(id), 'reactions.json')
+  let meta: Record<string, string> = {}
+  try { meta = JSON.parse(await readFile(file, 'utf8')) as Record<string, string> } catch { /* first one */ }
+  meta[kind] = source
+  const temp = `${file}.${randomBytes(4).toString('hex')}.tmp`
+  await writeFile(temp, JSON.stringify(meta, null, 2))
+  await rename(temp, file)
 }
 
 async function save(id: string, kind: ReactionId, clip: string, source: 'ai' | 'own', seconds: number): Promise<void> {
@@ -65,8 +58,12 @@ async function save(id: string, kind: ReactionId, clip: string, source: 'ai' | '
   const normalized = join(dir, `.${kind}-${randomBytes(4).toString('hex')}.mp4`)
   try {
     await normalize(clip, normalized, seconds)
-    await rename(normalized, join(dir, `${kind}.mp4`))
-    await writeMeta(id, kind, source)
+    // Installing the clip and recording where it came from happen together, one change at a time per avatar
+    // (other reactions finishing, a picture switch), so none is lost or overwritten.
+    await withReactionsLock(id, async () => {
+      await rename(normalized, join(dir, `${kind}.mp4`))
+      await writeMeta(id, kind, source)
+    })
   } finally { await rm(normalized, { force: true }) }
 }
 
@@ -130,17 +127,19 @@ export async function uploadReaction(id: unknown, kind: unknown, path: string): 
   const info = await stat(path)
   if (!info.isFile() || info.size > MAX_UPLOAD_BYTES) throw new Error('Choose a video under 300 MB (a few seconds is plenty).')
   await mkdir(reactionsDir(id), { recursive: true })
-  await save(id, kind, path, 'own', MAX_OWN_SECONDS)
+  uploading.add(id)
+  try { await save(id, kind, path, 'own', MAX_OWN_SECONDS) } finally { uploading.delete(id) }
   return listAvatars()
 }
 
 export async function removeReaction(id: unknown, kind: unknown): Promise<AvatarSummary[]> {
   if (!isAvatarId(id)) throw new Error('Invalid avatar')
   if (!isReactionId(kind)) throw new Error('Choose a reaction.')
-  await rm(join(reactionsDir(id), `${kind}.mp4`), { force: true })
+  await withReactionsLock(id, () => rm(join(reactionsDir(id), `${kind}.mp4`), { force: true }))
   return listAvatars()
 }
 
+/** Reactions being made or uploaded for this avatar (its picture can't change meanwhile). */
 export function reactionsInProgress(id: string): boolean {
-  return making.has(id)
+  return making.has(id) || uploading.has(id)
 }

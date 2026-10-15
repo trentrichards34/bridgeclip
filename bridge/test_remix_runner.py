@@ -55,3 +55,20 @@ class FailureMessageTest(unittest.TestCase):
                             ("Social login unreadable: CreatorClips could not read your browser's Instagram login", "couldn’t read your browser"),
                             ("Social post has no video: this Instagram post is a photo", "no video")):
             self.assertIn(words, describe_failure(Exception(text))["message"])
+
+    def test_unknown_failures_never_show_paths_links_or_keys(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        out = io.StringIO()
+        raw = {"mode": "plan", "output_dir": os.path.abspath("out"), "angle": "mix", "host": "voice", "sources": ["https://a.example/v"]}
+        boom = RuntimeError("Weird failure at C:\\Users\\trent\\x.mp4 and /private/var/folders/x/y.mp4 via https://bucket.s3.amazonaws.com/v.mp4?X-Amz-Signature=abc")
+        sent = []
+        with patch("sys.stdin", io.StringIO(__import__("json").dumps(raw))), patch.object(remix_runner, "parse_config", side_effect=boom), \
+                patch.object(remix_runner, "reserve_stdout_for_protocol", lambda: None), patch.object(remix_runner, "emit", sent.append), redirect_stdout(out):
+            remix_runner.main()
+        line = __import__("json").dumps(sent[-1])
+        for leak in ("trent", "/private/var", "amazonaws", "Signature"):
+            self.assertNotIn(leak, line)
+        self.assertIn("The remix could not be made: Weird failure", line)
+        self.assertFalse(sent[-1]["ok"])

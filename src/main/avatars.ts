@@ -289,7 +289,11 @@ export async function restyleDrafts(source: unknown, look: unknown, detail: unkn
     const avatar = readAvatar(raw.avatarId)
     if (avatar.kind !== 'self') throw new Error('AI avatars already are AI. Restyle works on avatars made from your photo.')
     // AI versions start from the member's own photo (the newest one), not from an earlier AI version.
-    photo = readPictures(raw.avatarId).find((picture) => picture.source === 'photo')?.path ?? portraitPath(raw.avatarId)
+    const pictures = readPictures(raw.avatarId)
+    if (pictures.length >= MAX_AVATAR_PICTURES) throw new Error(`${avatar.name} has ${MAX_AVATAR_PICTURES} pictures, the most an avatar keeps. Remove one you no longer need first.`)
+    // Avatars from before pictures were labeled: their oldest picture is the one they were made from.
+    photo = pictures.find((picture) => picture.source === 'photo')?.path
+      ?? [...pictures].reverse().find((picture) => picture.source === 'unknown')?.path ?? portraitPath(raw.avatarId)
   } else throw new Error('Choose a photo first.')
   if (!existsSync(photo)) throw new Error('That photo is no longer available. Choose it again.')
   const reference = { bytes: new Uint8Array(await readFile(photo)), mime: 'image/jpeg' }
@@ -335,13 +339,26 @@ export function readPictures(id: string): AvatarPicture[] {
     let createdAt = typeof info.createdAt === 'string' ? info.createdAt : ''
     if (!createdAt) try { createdAt = statSync(join(avatarDir(id), file)).mtime.toISOString() } catch { /* listed above */ }
     const source = info.source === 'photo' || info.source === 'ai' ? info.source : 'unknown'
-    return { file, path: join(avatarDir(id), file), source, createdAt, active: file === active }
+    let archivedReactions = 0
+    try { archivedReactions = readdirSync(reactionsArchive(id, file)).filter((name) => name.endsWith('.mp4')).length } catch { /* none */ }
+    return { file, path: join(avatarDir(id), file), source, createdAt, active: file === active, archivedReactions }
   }).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 function pictureFile(id: string, file: unknown): string {
   if (typeof file !== 'string' || !PORTRAIT_FILE.test(file) || !existsSync(join(avatarDir(id), file))) throw new Error('That picture is no longer saved with this avatar.')
   return file
+}
+
+// Everything that moves reaction clips or rewrites reactions.json for an avatar runs one at a time
+// (a reaction finishing, an upload, a picture switch), so none overwrites another's change.
+const reactionLocks = new Map<string, Promise<unknown>>()
+
+export function withReactionsLock<T>(id: string, work: () => Promise<T>): Promise<T> {
+  const next = (reactionLocks.get(id) ?? Promise.resolve()).catch(() => undefined).then(work)
+  reactionLocks.set(id, next)
+  void next.finally(() => { if (reactionLocks.get(id) === next) reactionLocks.delete(id) }).catch(() => undefined)
+  return next
 }
 
 /** Where AI reactions made from one picture wait while another picture is in use. */
@@ -354,7 +371,11 @@ function reactionsArchive(id: string, file: string): string {
  * picture's away and bring back any made earlier from `to`. The member's own
  * clips stay in use whatever the picture.
  */
-async function swapReactions(id: string, from: string, to: string): Promise<void> {
+function swapReactions(id: string, from: string, to: string): Promise<void> {
+  return withReactionsLock(id, () => swapReactionsNow(id, from, to))
+}
+
+async function swapReactionsNow(id: string, from: string, to: string): Promise<void> {
   if (from === to) return
   const dir = reactionsDir(id)
   const metaFile = join(dir, 'reactions.json')
@@ -374,7 +395,9 @@ async function swapReactions(id: string, from: string, to: string): Promise<void
     await rename(saved, join(dir, `${kind}.mp4`))
     meta[kind] = 'ai'
   }
-  await rm(back, { recursive: true, force: true }).catch(() => undefined)
+  // A kind the member has their own clip for stays put away with its picture (never deleted): it comes
+  // back if the own clip is removed and the picture is switched to again.
+  try { if (!readdirSync(back).length) await rm(back, { recursive: true, force: true }) } catch { /* nothing saved for it */ }
   if (existsSync(dir)) {
     const temp = `${metaFile}.${newId(4)}.tmp`
     await writeFile(temp, JSON.stringify(meta, null, 2))
@@ -383,7 +406,7 @@ async function swapReactions(id: string, from: string, to: string): Promise<void
 }
 
 async function addPicture(id: string, bytes: Buffer | null, from: string | null, source: 'photo' | 'ai', use: boolean): Promise<void> {
-  const avatar = readAvatar(id)
+  readAvatar(id)
   if (readPictures(id).length >= MAX_AVATAR_PICTURES) throw new Error(`An avatar keeps up to ${MAX_AVATAR_PICTURES} pictures. Remove one you no longer need first.`)
   const file = `portrait-${newId(4)}.jpg`
   if (from) await rename(from, join(avatarDir(id), file))
@@ -391,7 +414,7 @@ async function addPicture(id: string, bytes: Buffer | null, from: string | null,
   await writePicturesMeta(id, { ...picturesMeta(id), [file]: { source, createdAt: new Date().toISOString() } })
   if (use) {
     const previous = basename(portraitPath(id))
-    await writeAvatar(avatar, file)
+    await writeAvatar(readAvatar(id), file)
     await swapReactions(id, previous, file)
   }
 }
@@ -400,7 +423,7 @@ async function addPicture(id: string, bytes: Buffer | null, from: string | null,
 export async function setPortrait(id: unknown, draftId: unknown): Promise<AvatarSummary[]> {
   if (!isAvatarId(id)) throw new Error('Invalid avatar')
   if (typeof draftId !== 'string' || !DRAFT_ID.test(draftId)) throw new Error('Choose a picture first.')
-  readAvatar(id)
+  if (readAvatar(id).kind !== 'self') throw new Error('AI avatars are fictional people; new pictures from a photo are for avatars of you.')
   const draft = join(draftsDir(), `${draftId}.jpg`)
   if (!existsSync(draft)) throw new Error('That picture expired. Make it again.')
   await addPicture(id, null, draft, 'ai', true)
@@ -410,11 +433,11 @@ export async function setPortrait(id: unknown, draftId: unknown): Promise<Avatar
 /** Switch to one of the avatar's saved pictures. */
 export async function usePicture(id: unknown, file: unknown): Promise<AvatarSummary[]> {
   if (!isAvatarId(id)) throw new Error('Invalid avatar')
-  const avatar = readAvatar(id)
+  readAvatar(id)
   const chosen = pictureFile(id, file)
   const previous = basename(portraitPath(id))
   if (chosen !== previous) {
-    await writeAvatar(avatar, chosen)
+    await writeAvatar(readAvatar(id), chosen)
     await swapReactions(id, previous, chosen)
   }
   return listAvatars()

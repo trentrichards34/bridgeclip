@@ -115,12 +115,17 @@ UA_LIST = [
 VideoSourceType = Literal["youtube", "twitch", "social", "s3", "direct_url", "local"]
 
 # Video sites read with yt-dlp (like YouTube): a link to their page, not to a video file.
-SOCIAL_HOSTS = ("instagram.com", "tiktok.com", "x.com", "twitter.com", "facebook.com", "fb.watch", "threads.net", "vimeo.com")
+SOCIAL_HOSTS = ("instagram.com", "tiktok.com", "x.com", "twitter.com", "facebook.com", "fb.watch", "vimeo.com")
+# Only these sites' own extractors run for social links: a post that links to another site (YouTube, a
+# web page) is refused instead of followed, so the member's login never goes anywhere else.
+SOCIAL_EXTRACTORS = ["instagram", "instagramios", "facebook", "facebook:reel", "facebookpluginsvideo", "tiktok", r"vm\.tiktok",
+                     "twitter", "twitter:card", "twitter:shortener", "twitter:amplify", "vimeo"]
 LOGIN_BROWSERS = ("chrome", "safari", "firefox", "edge", "brave")
 # What these sites say when a video needs a login (yt-dlp's wording varies by site and version).
 LOGIN_MARKERS = ("login required", "log in", "logged-in", "rate-limit reached", "use --cookies", "cookies-from-browser",
                  "empty media response", "authentication", "this content isn't available", "requires authentication")
-NO_VIDEO_MARKERS = ("there is no video in this post", "no video formats found", "no video could be found")
+NO_VIDEO_MARKERS = ("there is no video in this post", "no video formats found", "no video could be found", "unsupported url",
+                    "no suitable infoextractor")
 
 
 def social_video_url(url: str) -> bool:
@@ -129,11 +134,14 @@ def social_video_url(url: str) -> bool:
 
 
 def login_browser_opts(url: str) -> dict:
-    """Read the member's chosen browser login for social links only (never for YouTube or other sites)."""
+    """Social links: only the site's own extractors, and the member's chosen browser login (never for YouTube or other sites)."""
     if not social_video_url(url):
         return {}
+    opts: dict = {"allowed_extractors": SOCIAL_EXTRACTORS}
     browser = str(getattr(get_settings(), "download_login_browser", "") or "").strip().lower()
-    return {"cookiesfrombrowser": (browser,)} if browser in LOGIN_BROWSERS else {}
+    if browser in LOGIN_BROWSERS:
+        opts["cookiesfrombrowser"] = (browser,)
+    return opts
 
 
 def social_failure(url: str, error: BaseException) -> Optional["VideoDownloadError"]:
@@ -146,7 +154,8 @@ def social_failure(url: str, error: BaseException) -> Optional["VideoDownloadErr
             "threads": "Threads", "vimeo": "Vimeo"}.get(site, site)
     if any(marker in text for marker in NO_VIDEO_MARKERS):
         return VideoDownloadError(f"Social post has no video: this {site} post is a photo or a carousel without a video", reason="no_video")
-    if ("could not find" in text and "cookies" in text) or "keychain" in text or "full disk access" in text or "operation not permitted" in text:
+    if (("could not find" in text and "cookies" in text) or "keychain" in text or "full disk access" in text or "operation not permitted" in text
+            or "could not copy" in text or "cookie database" in text or "decrypt" in text):
         return VideoDownloadError(f"Social login unreadable: CreatorClips could not read your browser's {site} login", reason="login_unreadable")
     if any(marker in text for marker in LOGIN_MARKERS):
         return VideoDownloadError(f"Social login required: {site} only shares this video with a logged-in viewer", reason="login_required")
@@ -567,7 +576,7 @@ class VideoDownloaderService:
                             raise
 
                         # Bot detection will affect every format selector.
-                        if "Sign in to confirm" in error_str or "bot" in error_str.lower():
+                        if "Sign in to confirm" in error_str or ("bot" in error_str.lower() and not social_video_url(url)):
                             logger.warning("Bot detection triggered")
                             raise
 
@@ -1010,7 +1019,7 @@ class VideoDownloaderService:
                 raise VideoDownloadError("Twitch VOD unavailable", reason="twitch_unavailable") from e
             error_str = str(e)
             # Provide user-friendly error for YouTube bot detection
-            if "Sign in to confirm" in error_str or "bot" in error_str.lower():
+            if "Sign in to confirm" in error_str or ("bot" in error_str.lower() and not social_video_url(url)):
                 logger.error("YouTube bot detection triggered for metadata")
                 raise VideoDownloadError(
                     "YouTube is temporarily blocking this request. Please try again in a few moments, "

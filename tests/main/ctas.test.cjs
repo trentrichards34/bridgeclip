@@ -78,9 +78,9 @@ test('the CTA library takes videos and images, and appends, switches and removes
   execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=green:s=1080x1920:d=3:r=30', '-f', 'lavfi', '-i', 'sine=d=3', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', path.join(run, 'clip_01.mp4')])
   fs.writeFileSync(path.join(run, 'job_output.json'), JSON.stringify({ clips: [{ clip_index: 0, duration_ms: 3000, summary: 'A' }, { clip_index: 1, duration_ms: 3000, summary: 'B' }] }))
 
-  assert.deepEqual(plain(await ctas.applyRunCta(run, image.id)), { failed: [] })
+  assert.deepEqual(plain(await ctas.applyRunCta(run, image.id)), { failed: [], cancelled: false })
   let out = JSON.parse(fs.readFileSync(path.join(run, 'job_output.json'), 'utf8'))
-  assert.deepEqual(out.clips.map((c) => c.cta), [{ id: image.id, name: 'Free guide' }, { id: image.id, name: 'Free guide' }])
+  assert.deepEqual(out.clips.map((c) => c.cta), [{ id: image.id, name: 'Free guide', seconds: 3 }, { id: image.id, name: 'Free guide', seconds: 3 }])
   assert.ok(Math.abs(out.clips[0].duration_ms - 6000) < 250, `3s clip + 3s image (${out.clips[0].duration_ms})`)
   assert.equal(out.clips[0].summary, 'A', 'other fields are kept')
   const wide = probe(path.join(run, 'clip_00.mp4'))
@@ -109,9 +109,38 @@ test('the CTA library takes videos and images, and appends, switches and removes
   assert.ok(!fs.existsSync(path.join(run, 'clip_01.original.mp4')))
   assert.deepEqual(fs.readdirSync(run).filter((f) => f.startsWith('.cta-')), [], 'no temp files left')
 
+  // A transparent PNG keeps its transparency: the clip's own last frame (blurred) shows around the logo, not a black box.
+  const logo = path.join(userData, 'logo.png')
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=200x200,format=rgba,pad=600:600:200:200:color=black@0', '-frames:v', '1', logo])
+  list = plain(await ctas.addCta(logo, 'Logo'))
+  const png = list.find((c) => c.name === 'Logo')
+  assert.match(png.path, /\.png$/)
+  await ctas.applyRunCta(run, png.id, [0])
+  const [lr] = meanColor(path.join(run, 'clip_00.mp4'), 4, 'crop=200:200:860:440')
+  assert.ok(lr > 150, `the logo shows (${lr})`)
+  const [er, eg] = meanColor(path.join(run, 'clip_00.mp4'), 4, 'crop=100:100:40:40')
+  assert.ok(eg > er, `around it: the clip's green, blurred (${er},${eg})`)
+  out = JSON.parse(fs.readFileSync(path.join(run, 'job_output.json'), 'utf8'))
+  assert.equal(out.clips[0].cta.seconds, 4)
+
+  // Cancelled before it starts: nothing changes, and it says so.
+  const before = fs.readFileSync(path.join(run, 'job_output.json'), 'utf8')
+  const stop = new AbortController(); stop.abort()
+  assert.deepEqual(plain(await ctas.applyRunCta(run, video.id, undefined, { signal: stop.signal })), { failed: [], cancelled: true })
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(run, 'job_output.json'), 'utf8')).clips.map((c) => c.cta?.id ?? null),
+    JSON.parse(before).clips.map((c) => c.cta?.id ?? null))
+  // Progress per clip.
+  const steps = []
+  await ctas.applyRunCta(run, null, undefined, { onProgress: (done, total) => steps.push([done, total]) })
+  assert.deepEqual(steps, [[1, 2], [2, 2]])
+  // Leftover temp files from an interrupted change are cleared.
+  fs.writeFileSync(path.join(run, '.cta-deadbeef.mp4'), 'partial')
+  await ctas.applyRunCta(run, null)
+  assert.ok(!fs.existsSync(path.join(run, '.cta-deadbeef.mp4')))
+
   // A removed CTA can't be used; the library entry is gone.
   list = plain(await ctas.removeCta(image.id))
-  assert.equal(list.length, 1)
+  assert.equal(list.length, 2)
   await assert.rejects(ctas.applyRunCta(run, image.id), /no longer in your library/)
   await assert.rejects(ctas.removeCta('../x'), /Choose a call to action/)
 })

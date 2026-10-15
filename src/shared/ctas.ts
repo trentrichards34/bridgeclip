@@ -17,7 +17,7 @@ export interface CtaSummary {
 }
 
 /** Which CTA a finished clip ends with (stored on the clip in job_output.json). */
-export interface ClipCta { id: string; name: string }
+export interface ClipCta { id: string; name: string; /** How long the CTA plays at the end. */ seconds?: number }
 
 export const CTA_VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'webm']
 export const CTA_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp']

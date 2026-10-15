@@ -375,6 +375,9 @@ export function preflightCheck(paths: {
   return { ok: true }
 }
 
+/** Create runs adding their call to action (after the engine exits), so cancel can stop it. */
+const ctaSteps = new Map<string, AbortController>()
+
 /**
  * Runs one clipping job in its own bridge process. Events go to `sink`;
  * `onExit` fires once when the run no longer holds a process (after the bridge
@@ -567,6 +570,8 @@ export function startClipJob(
   let errored = false
   let completed = false
   let pendingOutput: JobOutput | null = null
+  /** Shown when the run's call to action couldn't be added to every clip. */
+  let ctaNotice: string | null = null
   const startedAt = Date.now()
 
   const MAX_BRIDGE_LINE_BYTES = 1024 * 1024
@@ -699,16 +704,25 @@ export function startClipJob(
     // (it stays live meanwhile, so nothing else can change these clips).
     void (async () => {
       const run = join(settings.outputDirectory, jobId)
+      // Cancel stops the CTA step too (see cancelJob): the clip in progress is dropped, the rest stay as made.
+      const abort = new AbortController()
+      ctaSteps.set(jobId, abort)
       try {
-        send('job:progress', { type: 'progress', jobId, status: 'rendering', step: 'Adding your call to action', stages: [], percent: 99,
-          clips_done: 0, clips_total: pendingOutput?.clips.length ?? 0 })
-        const { failed } = await applyRunCta(run, ctaId)
-        if (failed.length) logger.warn('job.cta.failed', { jobId, clips: failed.length })
+        const total = pendingOutput?.clips.length ?? 0
+        const progress = (done: number): void => send('job:progress', { type: 'progress', jobId, status: 'rendering',
+          step: `Adding your call to action (${Math.min(done + 1, total)} of ${total})`, stages: [], percent: 99, clips_done: done, clips_total: total })
+        progress(0)
+        const { failed } = await applyRunCta(run, ctaId, undefined, { signal: abort.signal, onProgress: (done) => { if (done < total) progress(done) } })
+        if (failed.length) {
+          logger.warn('job.cta.failed', { jobId, clips: failed.length })
+          ctaNotice = `Done. The call to action couldn’t be added to ${failed.length} clip${failed.length === 1 ? '' : 's'}: add it from the Library (⋯ → Add call to action).`
+        }
         const updated = parseJobOutput(JSON.parse(await readFile(join(run, 'job_output.json'), 'utf8')))
         if (updated && updated.job_id === jobId) pendingOutput = updated
       } catch (error) {
         logger.warn('job.cta.skipped', { jobId, message: String((error as Error)?.message ?? error).slice(0, 200) })
-      }
+        ctaNotice = 'Done, without the call to action: it could not be added. Add it from the Library (⋯ → Add call to action).'
+      } finally { ctaSteps.delete(jobId) }
       finishClose(code, signal)
     })()
   })
@@ -733,7 +747,7 @@ export function startClipJob(
     if (code === 0 && pendingOutput) {
       completed = true
       finishHistory('completed')
-      send('job:complete', { type: 'result', status: 'completed', jobId, job_id: jobId, output: pendingOutput })
+      send('job:complete', { type: 'result', status: 'completed', jobId, job_id: jobId, output: pendingOutput, ...(ctaNotice ? { step: ctaNotice } : {}) })
       return
     }
 
@@ -774,6 +788,8 @@ export function startClipJob(
 }
 
 export function cancelJob(jobId: string): boolean {
+  // After the engine finished: the call-to-action step stops its FFmpeg right away.
+  ctaSteps.get(jobId)?.abort()
   const proc = activeProcesses.get(jobId)
   if (proc) {
     if (cancelledJobs.has(jobId)) return true

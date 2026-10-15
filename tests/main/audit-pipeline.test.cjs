@@ -14,7 +14,7 @@ function loadSource(file, mocks = {}, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../src/main', file), 'utf8')
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const module = { exports: {} }
-  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? require(id), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, queueMicrotask, __dirname: path.join(__dirname, '../../src/main'), ...globals })
+  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? require(id), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, queueMicrotask, AbortController, __dirname: path.join(__dirname, '../../src/main'), ...globals })
   return module.exports
 }
 function loadShared(file) {
@@ -185,7 +185,7 @@ test('a run with a call to action adds it to every clip before the run is shown 
   child.emit('close', 0, null)
   for (let i = 0; i < 20 && !sent.some((event) => event.channel === 'job:complete'); i++) await new Promise((r) => setTimeout(r, 10))
   assert.deepEqual(applied, [{ dir: run, id: 'a1b2c3d4e5f60718', exitedYet: false }], 'the slot is held until the CTA is on')
-  assert.ok(sent.some((event) => event.channel === 'job:progress' && event.data.step === 'Adding your call to action'))
+  assert.ok(sent.some((event) => event.channel === 'job:progress' && /^Adding your call to action/.test(event.data.step)))
   const done = sent.find((event) => event.channel === 'job:complete')
   assert.equal(done.data.output.clips[0].duration_ms, 7000)
   assert.equal(done.data.output.clips[0].cta.name, 'Comment PLAYBOOK')
@@ -202,4 +202,32 @@ test('a removed call to action stops the run before it starts', () => {
   runner.startClipJob('cta-gone', { videoUrl: path.join(WORK_HOME, 'video.mp4'), ctaId: 'a1b2c3d4e5f60718' }, window)
   assert.equal(spawned, false)
   assert.match(sent.find((event) => event.channel === 'job:error').data.message, /no longer in your library/)
+})
+
+test('cancelling while the call to action is added stops it and the run ends cancelled', async () => {
+  const child = fakeChild()
+  let aborted = false
+  const run = path.join(WORK_HOME, 'cta-cancel')
+  fs.mkdirSync(run, { recursive: true })
+  const clip = { clip_index: 0, s3_url: `file://${run}/clip_00.mp4`, duration_ms: 3000, start_time_ms: 0, end_time_ms: 3000, virality_score: 1 }
+  let release
+  const { runner, window, sent } = startRunner({ child, ctas: {
+    readCta: (id) => ({ id }),
+    applyRunCta: (dir, id, indices, { signal }) => new Promise((resolve) => {
+      release = resolve
+      signal.addEventListener('abort', () => { aborted = true; resolve({ failed: [], cancelled: true }) })
+    })
+  } })
+  runner.startClipJob('cta-cancel', { videoUrl: path.join(WORK_HOME, 'video.mp4'), ctaId: 'a1b2c3d4e5f60718' }, window)
+  child.stdout.write(JSON.stringify({ type: 'result', status: 'completed', job_id: 'cta-cancel', output: { job_id: 'cta-cancel', clips: [clip] } }) + '\n')
+  await tick()
+  child.emit('close', 0, null)
+  await tick()
+  assert.ok(sent.some((event) => event.channel === 'job:progress' && /Adding your call to action \(1 of 1\)/.test(event.data.step)))
+  assert.equal(runner.cancelJob('cta-cancel'), true)
+  for (let i = 0; i < 20 && !aborted; i++) await new Promise((r) => setTimeout(r, 10))
+  await tick()
+  assert.equal(aborted, true, 'the FFmpeg step was told to stop')
+  assert.equal(sent.some((event) => event.channel === 'job:complete'), false, 'no completed result after a cancel')
+  void release
 })

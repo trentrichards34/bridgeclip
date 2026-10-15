@@ -201,7 +201,7 @@ export function parseJobOutput(value: unknown): JobOutput | null {
       headline: boundedText(item.headline, 512),
       ai_generated: item.ai_generated === true,
       post_caption: typeof item.post_caption === 'string' && item.post_caption.trim() ? item.post_caption.slice(0, 5000) : null,
-      cta: record(item.cta) && typeof item.cta.id === 'string' && /^[a-f0-9]{16}$/.test(item.cta.id) && typeof item.cta.name === 'string' ? { id: item.cta.id, name: item.cta.name.slice(0, 60) } : null,
+      cta: record(item.cta) && typeof item.cta.id === 'string' && /^[a-f0-9]{16}$/.test(item.cta.id) && typeof item.cta.name === 'string' ? { id: item.cta.id, name: item.cta.name.slice(0, 60), ...(typeof item.cta.seconds === 'number' && Number.isFinite(item.cta.seconds) ? { seconds: item.cta.seconds } : {}) } : null,
       tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 50).map((tag) => tag.slice(0, 64)) : [],
       render_fallback: boundedText(item.render_fallback, 256)
     })

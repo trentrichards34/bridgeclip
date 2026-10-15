@@ -788,7 +788,11 @@ class RenderingService:
         overlays: list[Overlay] = []
         # Landscape overlays were sized for 1080p; scale them with the output.
         scale = target_height / 1080 if is_landscape else 1.0
-        title = None if headline else self._title_overlay_image(request, target_width, scale)
+        # Headline style with "No hook text" (where a headline is drawn: 9:16, no gameplay background):
+        # nothing at the top, not a title card in its place. 16:9 and background clips keep their title card.
+        no_hook = (request.title_style == TitleStyle.HEADLINE and parse_headline_look(request.headline_look).look == "none"
+                   and not is_landscape and not self._background_video(request, is_landscape))
+        title = None if headline or no_hook else self._title_overlay_image(request, target_width, scale)
         if headline:
             overlays.append((headline[0], "0", "0"))
         if title:
@@ -1056,9 +1060,6 @@ class RenderingService:
     ) -> Optional[tuple[str, int, int]]:
         """Render the title card PNG. Returns (path, width, height) or None."""
         if not (request.include_title and request.title_text):
-            return None
-        # Headline style with "No hook text" chosen: no title card in its place either.
-        if request.title_style == TitleStyle.HEADLINE and parse_headline_look(request.headline_look).look == "none":
             return None
         path = os.path.join(
             os.path.dirname(request.output_path),

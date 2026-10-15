@@ -122,7 +122,7 @@ interface RunContext {
   planCostUsd: number
 }
 
-interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null; context: RunContext }
+interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null; context: RunContext; ctaAbort?: AbortController }
 
 let active: ActiveRemix | null = null
 /** A planned run waiting for the user's review (not running, but holds the folder and drafts). */
@@ -508,7 +508,13 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
       if (request.ctaId && outputs.length) {
         publish(run, { detail: 'Adding your call to action', percent: 99 })
         try {
-          const { failed } = await applyRunCta(run.status.folder, request.ctaId)
+          run.ctaAbort = new AbortController()
+          const total = outputs.length
+          const { failed, cancelled } = await applyRunCta(run.status.folder, request.ctaId, undefined, {
+            signal: run.ctaAbort.signal,
+            onProgress: (done) => { if (done < total && !run.cancelled) publish(run, { detail: `Adding your call to action (${done + 1} of ${total})`, percent: 99 }) }
+          })
+          if (cancelled) warnings.push('Cancelled while adding your call to action: the videos are made, and some end without it. Add it from the Library (⋯ → Add call to action).')
           if (failed.length) warnings.push(`The call to action could not be added to ${failed.length} video${failed.length === 1 ? '' : 's'}. Add it from the Library (⋯ → Add call to action).`)
           outputs = await withCtaDurations(run.status.folder, outputs)
         } catch (error) {
@@ -546,6 +552,7 @@ export function cancelRemix(): boolean {
   const run = active
   if (run.cancelled) return true
   run.cancelled = true
+  run.ctaAbort?.abort()
   run.status = { ...run.status, detail: 'Cancelling…' }
   notify(run.status)
   kill(run.child)

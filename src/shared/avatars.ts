@@ -44,6 +44,8 @@ export interface AvatarPicture {
   createdAt: string
   /** The picture videos use now. */
   active: boolean
+  /** AI reactions made from this picture, put away while another picture is in use. */
+  archivedReactions: number
 }
 
 /** Pictures kept per avatar (the one in use plus earlier ones to switch back to). */

@@ -811,6 +811,11 @@ test('"AI version of me": new pictures from the person’s own photo, then swapp
   const aiDraft = await lib.draftFromPhoto(photo)
   const [ai] = plain(await lib.createAvatar({ draftId: aiDraft.draftId, name: 'Maya', kind: 'ai', description: 'A fictional person with red hair', voice: { provider: 'elevenlabs', voice: 'Sarah' } }))
   await assert.rejects(lib.restyleDrafts({ avatarId: ai.id }, 'studio', '', true), /made from your photo/)
+  const realPhoto = await lib.draftFromPhoto(photo)
+  await assert.rejects(lib.setPortrait(ai.id, realPhoto.draftId), /fictional/)
+  // At the picture limit, AI versions aren't made (so none are paid for and then can't be saved).
+  for (let i = added.pictures.length; i < 12; i++) await lib.addPhotoToAvatar(created.id, photo)
+  await assert.rejects(lib.restyleDrafts({ avatarId: created.id }, 'studio', '', true), /12 pictures/)
 })
 
 test('reaction library: AI reactions from the picture (failed ones reported), own uploads normalized to 1080x1920 silent', { skip: !hasFfmpeg && 'ffmpeg not installed' }, async () => {
@@ -893,6 +898,25 @@ test('reaction library: AI reactions from the picture (failed ones reported), ow
   const [restored] = plain(await lib.usePicture(avatar.id, firstPicture.file))
   assert.deepEqual(restored.reactions.filter((r) => r.source === 'ai').map((r) => r.id).sort(), aiKinds)
   assert.equal(restored.reactions.find((r) => r.id === 'nod').source, 'own')
+
+  // An own clip uploaded while another picture is in use doesn't cost the AI clip of that kind: it stays put away.
+  const listenWasAi = restored.reactions.find((r) => r.id === 'listen')?.source === 'ai'
+  assert.ok(listenWasAi)
+  const second = restored.pictures.find((p) => !p.active)
+  await lib.usePicture(avatar.id, second.file)
+  await reactions.uploadReaction(avatar.id, 'listen', clip)
+  const [backAgain] = plain(await lib.usePicture(avatar.id, firstPicture.file))
+  assert.equal(backAgain.reactions.find((r) => r.id === 'listen').source, 'own')
+  assert.equal(backAgain.pictures.find((p) => p.active).archivedReactions, 1, 'the AI clip waits behind the own clip')
+  const kept = path.join(userData, 'avatars', avatar.id, 'reactions', 'by-picture', path.basename(firstPicture.file, '.jpg'), 'listen.mp4')
+  assert.ok(fs.existsSync(kept), 'the paid AI clip is kept, not deleted')
+  // Removing the own clip and switching away and back brings the AI one back.
+  await reactions.removeReaction(avatar.id, 'listen')
+  await lib.usePicture(avatar.id, second.file)
+  const [revived] = plain(await lib.usePicture(avatar.id, firstPicture.file))
+  assert.equal(revived.reactions.find((r) => r.id === 'listen').source, 'ai')
+  // An upload in progress blocks picture changes.
+  assert.equal(reactions.reactionsInProgress(avatar.id), false)
 })
 
 test('a paid POST is never sent twice once it may have reached OpenRouter; busy or never-connected ones retry', async () => {

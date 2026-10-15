@@ -34,12 +34,18 @@ def test_youtube_is_unchanged(service):
 
 def test_browser_login_only_for_social_links(monkeypatch):
     monkeypatch.setattr(module, "get_settings", lambda: settings("chrome"))
-    assert module.login_browser_opts("https://www.instagram.com/p/x/") == {"cookiesfrombrowser": ("chrome",)}
+    opts = module.login_browser_opts("https://www.instagram.com/p/x/")
+    assert opts["cookiesfrombrowser"] == ("chrome",)
+    assert "generic" not in opts["allowed_extractors"] and not any("youtube" in e for e in opts["allowed_extractors"])
     assert module.login_browser_opts("https://www.youtube.com/watch?v=x") == {}
     monkeypatch.setattr(module, "get_settings", lambda: settings("netscape"))
-    assert module.login_browser_opts("https://www.instagram.com/p/x/") == {}
+    assert "cookiesfrombrowser" not in module.login_browser_opts("https://www.instagram.com/p/x/")
     monkeypatch.setattr(module, "get_settings", lambda: settings(""))
-    assert module.login_browser_opts("https://www.instagram.com/p/x/") == {}
+    assert "cookiesfrombrowser" not in module.login_browser_opts("https://www.instagram.com/p/x/")
+    # Only the social sites' own extractors load: a post linking to YouTube or a web page isn't followed.
+    import yt_dlp
+    loaded = set(yt_dlp.YoutubeDL({"allowed_extractors": module.SOCIAL_EXTRACTORS, "quiet": True})._ies)
+    assert {"Instagram", "TikTok", "Twitter", "Facebook", "Vimeo"} <= loaded and not ({"Youtube", "Generic", "FacebookRedirectURL"} & loaded)
 
 
 @pytest.mark.parametrize("text, reason", [
@@ -47,6 +53,9 @@ def test_browser_login_only_for_social_links(monkeypatch):
     ("ERROR: [Instagram] x: Instagram sent an empty media response. Check if this post is accessible in your browser without being logged-in", "login_required"),
     ("ERROR: [Instagram] x: There is no video in this post", "no_video"),
     ("could not find chrome cookies database", "login_unreadable"),
+    ("ERROR: Could not copy Chrome cookie database. See https://github.com/yt-dlp/yt-dlp/issues/7271", "login_unreadable"),
+    ("ERROR: Failed to decrypt with DPAPI", "login_unreadable"),
+    ("ERROR: Unsupported URL: https://www.youtube.com/watch?v=x", "no_video"),
 ])
 def test_social_failures_are_explained(text, reason):
     error = module.social_failure("https://www.instagram.com/p/x/", Exception(text))

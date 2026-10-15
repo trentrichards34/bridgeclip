@@ -214,7 +214,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // Saved pictures: switch, remove, or add another photo (the dialog opens here).
   const pictureGuard = (id: unknown): void => {
     if (id === avatarInUse() || id === remixAvatarInUse()) throw new Error('This avatar is being used for a video right now. Try again when it finishes.')
-    if (typeof id === 'string' && reactionsInProgress(id)) throw new Error('This avatar’s reactions are being made from its current picture. Change the picture when they finish.')
+    if (typeof id === 'string' && reactionsInProgress(id)) throw new Error('This avatar’s reactions are being made or uploaded. Change the picture when that finishes.')
+    if (typeof id === 'string' && cloningInProgress(id)) throw new Error('This avatar’s voice is being cloned. Change the picture when that finishes.')
   }
   handle('avatars:usePicture', (_event, id: unknown, file: unknown) => { pictureGuard(id); return usePicture(id, file) })
   handle('avatars:removePicture', (_event, id: unknown, file: unknown) => { pictureGuard(id); return removePicture(id, file) })

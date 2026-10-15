@@ -403,7 +403,7 @@ def test_a_failed_remix_keeps_the_ones_already_made(tmp_path, monkeypatch):
         video.write_bytes(b"v")
         return str(video), {"url": src, "title": "t", "creator": "c", "platform": "youtube"}
 
-    async def transcribe(video, work):
+    async def transcribe(video, work, allow_silence=False):
         return transcript()
 
     async def plan(segments, meta):
@@ -449,7 +449,7 @@ def test_a_render_where_nothing_works_keeps_the_plan_for_a_retry(tmp_path, monke
     async def source(src, work, single):
         return str(video), {"url": src, "title": "t", "creator": "c", "platform": "youtube"}
 
-    async def transcribe(video, work):
+    async def transcribe(video, work, allow_silence=False):
         return transcript()
 
     async def plan(segments, meta):
@@ -778,3 +778,38 @@ def test_no_hook_text_in_remix(tmp_path):
                             settings=SimpleNamespace(openrouter_api_key="k", openrouter_base_url="https://example.invalid", planner_model="m",
                                                      get_planner_fallback_models=lambda: [], pexels_api_key=None))
     assert remixer._headline(RenderingService(), "in.mp4", str(tmp_path), 0, "This creator says your best reel made zero sales") == (None, 0, 0)
+
+
+def test_a_wordless_reel_still_works_for_silent_react(tmp_path, monkeypatch):
+    import clip_engine.services.transcription_service as ts
+    from clip_engine.services.transcription_service import TranscriptionResult
+
+    class Silent:
+        async def transcribe(self, video, work):
+            return TranscriptionResult(segments=[], full_text="")
+    monkeypatch.setattr(ts, "TranscriptionService", Silent)
+    prompts = []
+
+    async def fake_chat(client, payload):
+        prompts.append(payload["messages"][1]["content"])
+        if payload["response_format"]["json_schema"]["name"] == "remix_grades":
+            return {"choices": [{"message": {"content": json.dumps({"grades": []})}}]}, {"cost": 0}
+        item = {"start": 0, "end": 20, "headline": "This dancer turns a kitchen into a stage", "cues": [{"at": 0, "reaction": "listen"}],
+                "post_caption": "Watch till the end.", "proof_used": [], "self_check": {}}
+        return {"choices": [{"message": {"content": json.dumps({"remixes": [item]})}}]}, {"cost": 0.01}
+    monkeypatch.setattr(remix, "chat_completion", fake_chat)
+
+    async def source(self, src, work, single):
+        return "/tmp/x.mp4", {"url": src, "title": "Kitchen dance", "creator": "C", "platform": "Instagram", "duration_seconds": 20.0}
+    monkeypatch.setattr(remix.Remixer, "_source", source)
+    settings = SimpleNamespace(openrouter_api_key="t", openrouter_base_url="https://example.invalid/api/v1", planner_model="m",
+                               get_planner_fallback_models=lambda: [], pexels_api_key=None)
+    config = remix.RemixConfig(sources=["https://www.instagram.com/p/x/"], output_dir=str(tmp_path / "o"), host="voice", format="silent",
+                               reactions={"listen": "/x/listen.mp4"})
+    drafts = asyncio.run(remix.Remixer(config, media=FakeMedia("ffmpeg"), settings=settings).plan())["drafts"]
+    assert len(drafts) == 1 and (drafts[0]["start_ms"], drafts[0]["end_ms"]) == (0, 20000)
+    assert "no speech" in prompts[0]
+    # A voiced take still needs speech.
+    voiced = remix.RemixConfig(sources=["https://www.instagram.com/p/x/"], output_dir=str(tmp_path / "v"), host="voice")
+    with pytest.raises(remix.RemixError, match="No speech"):
+        asyncio.run(remix.Remixer(voiced, media=FakeMedia("ffmpeg"), settings=settings).plan())

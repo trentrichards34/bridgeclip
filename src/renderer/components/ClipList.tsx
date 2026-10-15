@@ -503,7 +503,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
         onApply={async (ctaId) => {
           const fresh = await getApi().clips.setCta(outputDir, ctaClip.clip_index, ctaId)
           onOutputChanged(fresh)
-          setNotice(ctaId ? 'The call to action was added to the end of the clip.' : 'The call to action was removed.')
+          setNotice(`${ctaId ? 'The call to action was added to the end of the clip.' : 'The call to action was removed.'} Copies already queued in an automation keep their earlier ending.`)
           if (noticeTimer.current) clearTimeout(noticeTimer.current)
           noticeTimer.current = setTimeout(() => setNotice(null), 6000)
         }}

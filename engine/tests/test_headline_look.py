@@ -125,12 +125,14 @@ def test_non_string_values_are_rejected_cleanly():
 def test_no_hook_text(tmp_path):
     assert validate_headline_look({"look": "none"}) == {"look": "none", "color": "#FFFFFF", "font": "clean"}
     assert _bar(tmp_path, {"look": "none"}) is None
-    # Headline style with no hook text doesn't fall back to a title card either.
+    # Headline style with no hook text doesn't fall back to a title card on 9:16 clips; 16:9 keeps its title card.
+    from clip_engine.services.layout_analyzer import ClipLayoutPlan, LayoutType, ShotLayout
     request = RenderRequest("in.mp4", str(tmp_path / "o.mp4"), 0, 1000, 64, 64, title_style=TitleStyle.HEADLINE,
                             title_text="Short title", headline_text=TEXT, headline_look={"look": "none"})
-    assert RenderingService()._title_overlay_image(request, 1080) is None
-    card = RenderRequest("in.mp4", str(tmp_path / "o.mp4"), 0, 1000, 64, 64, title_style=TitleStyle.CARD, title_text="Short title")
-    assert RenderingService()._title_overlay_image(card, 1080) is not None
+    plan = ClipLayoutPlan([ShotLayout(0, 1000, LayoutType.TALKING_HEAD)], 64, 64)
+    titles = lambda overlays: [o for o in overlays if "title-" in str(o[0])]  # noqa: E731
+    assert titles(RenderingService()._overlays(request, plan, 1080, 1920, False)) == []
+    assert titles(RenderingService()._overlays(request, plan, 1920, 1080, True)) != []
 
 
 def test_render_with_no_hook_text_keeps_the_full_frame(tmp_path, monkeypatch):

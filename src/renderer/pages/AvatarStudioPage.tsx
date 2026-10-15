@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { AudioLines, Clapperboard, Film, FolderOpen, Mic, Plus, Repeat2, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
 import {
   estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, MAX_SCENES, MAX_SCENE_SECONDS, overlongScenes, type SceneQuality, RECREATE_MAX_SECONDS, RECREATE_MIN_SECONDS, type RecreateMode, MAX_SPOKEN_SECONDS, PRESET_VOICES, PRICES, AI_PORTRAIT_CANDIDATES, PORTRAIT_LOOKS, type PortraitLook, REACTIONS, scriptText, SCRIPT_LENGTHS,
-  type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarSummary, type AvatarVideoStyle, type AvatarVoice, type LipSyncModel, type ScriptLength
+  MAX_AVATAR_PICTURES, type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarSummary, type AvatarVideoStyle, type AvatarVoice, type LipSyncModel, type ScriptLength
 } from '../../shared/avatars'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import type { Page as PageName } from '../components/Sidebar'
@@ -681,7 +681,9 @@ function RestylePortrait({ avatar, busy, openrouterConfigured, onChange, onError
     catch (err) { onError(errorMessage(err)) } finally { setSaving(false) }
   }
   if (!open) {
-    return <Button size="sm" variant="secondary" icon={<Sparkles className="h-3.5 w-3.5" />} disabled={busy} onClick={() => setOpen(true)}>Make an AI version of your photo</Button>
+    const full = (avatar.pictures ?? []).length >= MAX_AVATAR_PICTURES
+    return <Button size="sm" variant="secondary" icon={<Sparkles className="h-3.5 w-3.5" />} disabled={busy || full}
+      tooltip={full ? `Remove a picture first: an avatar keeps up to ${MAX_AVATAR_PICTURES}.` : undefined} onClick={() => setOpen(true)}>Make an AI version of your photo</Button>
   }
   return (
     <div className="glass-tile space-y-3 rounded-xl p-3">
@@ -714,6 +716,9 @@ function PictureLibrary({ avatar, busy, onChange, onError }: {
   avatar: AvatarSummary; busy: boolean; onChange: (list: AvatarSummary[]) => void; onError: (message: string | null) => void
 }): React.JSX.Element | null {
   const [working, setWorking] = useState<string | null>(null)
+  /** A picture waiting for a second click to delete it. */
+  const [confirming, setConfirming] = useState<string | null>(null)
+  useEffect(() => setConfirming(null), [avatar.id])
   const pictures = avatar.pictures ?? []
   const run = async (key: string, action: () => Promise<AvatarSummary[] | null>): Promise<void> => {
     setWorking(key); onError(null)
@@ -738,7 +743,7 @@ function PictureLibrary({ avatar, busy, onChange, onError }: {
             </button>
             {!picture.active && (
               <button type="button" aria-label={`Remove this ${PICTURE_LABELS[picture.source].toLowerCase()}`} disabled={busy || working !== null}
-                onClick={() => void run(`rm:${picture.file}`, () => getApi().avatars.removePicture(avatar.id, picture.file))}
+                onClick={() => setConfirming(picture.file)}
                 className="glass-chip absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full text-white disabled:opacity-40">
                 <X className="h-3 w-3" />
               </button>
@@ -746,7 +751,7 @@ function PictureLibrary({ avatar, busy, onChange, onError }: {
             {picture.active && picture.source !== 'unknown' && <span className="pointer-events-none absolute left-1 top-1"><Badge tone="neutral">{PICTURE_LABELS[picture.source]}</Badge></span>}
           </div>
         ))}
-        {avatar.kind === 'self' && (
+        {avatar.kind === 'self' && pictures.length < MAX_AVATAR_PICTURES && (
           <button type="button" disabled={busy || working !== null} onClick={() => void run('add', () => getApi().avatars.addPhoto(avatar.id))}
             className="glass-tile glass-tile-hover flex aspect-[9/16] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 text-center text-ink-muted hover:text-ink disabled:opacity-50">
             <Plus className="h-4 w-4" />
@@ -754,6 +759,19 @@ function PictureLibrary({ avatar, busy, onChange, onError }: {
           </button>
         )}
       </div>
+      {confirming && (() => {
+        const picture = pictures.find((item) => item.file === confirming)
+        if (!picture) return null
+        const reactions = picture.archivedReactions
+        return (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg bg-white/[0.04] px-2.5 py-2 text-2xs text-ink-muted">
+            <span className="flex-1">Delete this {PICTURE_LABELS[picture.source].toLowerCase()}{reactions ? ` and the ${reactions} AI reaction${reactions === 1 ? '' : 's'} made from it` : ''}? This can’t be undone.</span>
+            <Button size="sm" variant="danger" disabled={working !== null} onClick={() => { setConfirming(null); void run(`rm:${picture.file}`, () => getApi().avatars.removePicture(avatar.id, picture.file)) }}>Delete</Button>
+            <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>Keep it</Button>
+          </div>
+        )
+      })()}
+      {pictures.length >= MAX_AVATAR_PICTURES && <p className="text-2xs text-ink-subtle">{avatar.name} has {MAX_AVATAR_PICTURES} pictures, the most an avatar keeps. Remove one to add or make another.</p>}
     </div>
   )
 }

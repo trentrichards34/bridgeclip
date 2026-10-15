@@ -147,7 +147,7 @@ function onRunnerEvent(jobId: string, channel: string, payload: unknown): void {
   } else if (channel === 'job:complete') {
     const output = parseJobOutput(data.output)
     if (output) {
-      finish(jobId, 'completed', { output, percent: 100, step: 'Complete', clipsDone: output.total_clips, clipsTotal: output.total_clips })
+      finish(jobId, 'completed', { output, percent: 100, step: typeof data.step === 'string' ? data.step.slice(0, 300) : 'Complete', clipsDone: output.total_clips, clipsTotal: output.total_clips })
     } else {
       finish(jobId, 'failed', { error: 'The clipping engine returned an unsupported result.', step: 'Failed' })
     }

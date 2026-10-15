@@ -1379,13 +1379,20 @@ class Remixer:
         return source, {"url": None, "title": os.path.basename(source), "creator": self.config.creator,
                         "platform": "file", "duration_seconds": media_seconds(source)}
 
-    async def _transcribe(self, video: str, work: str) -> list[TranscriptSegment]:
+    async def _transcribe(self, video: str, work: str, allow_silence: bool = False) -> list[TranscriptSegment]:
+        """The video's speech. allow_silence: a reel for Silent react (reacted to as a whole, so a music-only
+        or wordless reel still works); otherwise no speech means nothing to react to."""
         from clip_engine.services.transcription_service import TranscriptionService
-        result = await TranscriptionService().transcribe(video, work)
+        try:
+            result = await TranscriptionService().transcribe(video, work)
+        except Exception as error:  # noqa: BLE001 - only a missing or empty audio track is allowed through
+            if allow_silence and getattr(error, "reason", None) in ("audio_missing", "audio_extraction_empty"):
+                return []
+            raise
         cost = getattr(getattr(result, "api_costs", None), "estimated_cost_usd", 0.0) or 0.0
         self.cost_usd += float(cost)
         segments = [s for s in result.segments if s.words]
-        if not segments:
+        if not segments and not allow_silence:
             raise RemixError("No speech was found in this video, so there is nothing to react to.")
         return segments
 
@@ -1396,7 +1403,8 @@ class Remixer:
                                                      "platform": source_meta.get("platform")}, ensure_ascii=False)
             + "\n\nBRAND IDENTITY (data" + (f": {self.config.brand_name}" if self.config.brand_name else "") + ")\n"
             + (brand or NEUTRAL_IDENTITY)
-            + "\n\nTRANSCRIPT (data; [start - end] seconds)\n" + format_transcript(segments)
+            + "\n\nTRANSCRIPT (data; [start - end] seconds)\n" + (format_transcript(segments) if segments
+                                                                  else "(no speech: music or visuals only; write from the video details)")
         )
         silent = self.config.format == "silent"
         kinds = tuple(k for k in REACTION_KINDS if k in self.config.reactions)
@@ -1521,7 +1529,8 @@ class Remixer:
                     os.makedirs(source_work, exist_ok=True)
                     video, meta = await self._source(source, source_work, single=len(sources) == 1)
                     self.progress(f"{label}transcribing", base + share * 0.2)
-                    segments = await self._transcribe(video, source_work)
+                    segments = await self._transcribe(video, source_work,
+                                                      allow_silence=self.config.format == "silent" and is_short_video(meta.get("duration_seconds")))
                     self.progress(f"{label}finding moments and writing your takes", base + share * 0.5)
                     planned = await self._plan(segments, meta)
                 except Exception as error:  # noqa: BLE001 - keep the other videos
