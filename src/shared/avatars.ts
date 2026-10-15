@@ -35,9 +35,24 @@ export interface Avatar {
   createdAt: string
 }
 
-/** What the renderer sees: the avatar plus a viewable portrait path and its reaction clips. */
+/** One of an avatar's saved pictures: the member's own photo or an AI version. */
+export interface AvatarPicture {
+  file: string
+  path: string
+  /** photo: a photo the member chose; ai: made by AI; unknown for pictures saved before this was recorded. */
+  source: 'photo' | 'ai' | 'unknown'
+  createdAt: string
+  /** The picture videos use now. */
+  active: boolean
+}
+
+/** Pictures kept per avatar (the one in use plus earlier ones to switch back to). */
+export const MAX_AVATAR_PICTURES = 12
+
+/** What the renderer sees: the avatar plus a viewable portrait path, its saved pictures and its reaction clips. */
 export interface AvatarSummary extends Avatar {
   portraitPath: string
+  pictures: AvatarPicture[]
   reactions: AvatarReaction[]
 }
 

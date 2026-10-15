@@ -258,7 +258,12 @@ export interface BridgeClipAPI {
     removeReaction: (id: string, kind: string) => Promise<AvatarSummary[]>
     /** Replace an avatar's picture with a chosen draft; its voice stays. */
     setPortrait: (id: string, draftId: string) => Promise<AvatarSummary[]>
-    create: (input: { draftId: string; name: string; kind: 'self' | 'ai'; description: string; voice: unknown; consent: boolean }) => Promise<AvatarSummary[]>
+    /** Switch to one of the avatar's saved pictures (its own photo or an AI version). */
+    usePicture: (id: string, file: string) => Promise<AvatarSummary[]>
+    removePicture: (id: string, file: string) => Promise<AvatarSummary[]>
+    /** Opens a file dialog to add another photo of yourself; null when cancelled. */
+    addPhoto: (id: string) => Promise<AvatarSummary[] | null>
+    create: (input: { draftId: string; name: string; kind: 'self' | 'ai'; description: string; voice: unknown; consent: boolean; pictureSource?: 'photo' | 'ai'; keepPhotoDraftId?: string }) => Promise<AvatarSummary[]>
     update: (id: string, patch: { name?: string; voice?: unknown }) => Promise<AvatarSummary[]>
     remove: (id: string) => Promise<AvatarSummary[]>
     /** Opens a file dialog in main; null when cancelled. */
@@ -486,6 +491,9 @@ const api: BridgeClipAPI = {
     generateFaces: (description) => ipcRenderer.invoke('avatars:generateFaces', description),
     restyle: (source, look, detail, consent) => ipcRenderer.invoke('avatars:restyle', source, look, detail, consent),
     setPortrait: (id, draftId) => ipcRenderer.invoke('avatars:setPortrait', id, draftId),
+    usePicture: (id, file) => ipcRenderer.invoke('avatars:usePicture', id, file),
+    removePicture: (id, file) => ipcRenderer.invoke('avatars:removePicture', id, file),
+    addPhoto: (id) => ipcRenderer.invoke('avatars:addPhoto', id),
     makeReactions: (id) => ipcRenderer.invoke('avatars:makeReactions', id),
     uploadReaction: (id, kind) => ipcRenderer.invoke('avatars:uploadReaction', id, kind),
     removeReaction: (id, kind) => ipcRenderer.invoke('avatars:removeReaction', id, kind),

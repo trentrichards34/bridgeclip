@@ -12,7 +12,7 @@ import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { addCta, applyRunCta, listCtas, removeCta, updateCta } from './ctas'
 import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../shared/ctas'
-import { cloneVoice, cloningInProgress, createAvatar, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
+import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
 import { BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
@@ -211,6 +211,20 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return setPortrait(id, draftId)
   })
   handle('avatars:create', (_event, input: unknown) => createAvatar((input ?? {}) as Parameters<typeof createAvatar>[0]))
+  // Saved pictures: switch, remove, or add another photo (the dialog opens here).
+  const pictureGuard = (id: unknown): void => {
+    if (id === avatarInUse() || id === remixAvatarInUse()) throw new Error('This avatar is being used for a video right now. Try again when it finishes.')
+    if (typeof id === 'string' && reactionsInProgress(id)) throw new Error('This avatar’s reactions are being made from its current picture. Change the picture when they finish.')
+  }
+  handle('avatars:usePicture', (_event, id: unknown, file: unknown) => { pictureGuard(id); return usePicture(id, file) })
+  handle('avatars:removePicture', (_event, id: unknown, file: unknown) => { pictureGuard(id); return removePicture(id, file) })
+  handle('avatars:addPhoto', async (_event, id: unknown) => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Add a photo of yourself', filters: [{ name: 'Photos', extensions: PHOTO_EXTENSIONS }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return addPhotoToAvatar(id, result.filePaths[0])
+  })
   handle('avatars:update', (_event, id: unknown, patch: unknown) => updateAvatar(id, (patch ?? {}) as { name?: unknown; voice?: unknown }))
   handle('avatars:remove', (_event, id: unknown) => {
     if (id === avatarInUse() || id === remixAvatarInUse()) throw new Error('This avatar is being used by the video in progress. Wait for it to finish or cancel it first.')

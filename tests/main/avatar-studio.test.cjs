@@ -771,18 +771,40 @@ test('"AI version of me": new pictures from the person’s own photo, then swapp
   assert.match(requests[0].prompt, /podcast studio/)
   assert.match(requests[0].prompt, /navy blazer/)
 
-  // Create with an AI version, then restyle the saved avatar: the voice and clone stay.
-  const [created] = plain(await lib.createAvatar({ draftId: made[0].draftId, name: 'Me', kind: 'self', voice: { provider: 'elevenlabs', voice: 'Brian' }, consent: true }))
+  // Create with an AI version: the person's own photo is kept with it, to switch back to.
+  const [created] = plain(await lib.createAvatar({ draftId: made[0].draftId, name: 'Me', kind: 'self', voice: { provider: 'elevenlabs', voice: 'Brian' }, consent: true,
+    pictureSource: 'ai', keepPhotoDraftId: draft.draftId }))
+  assert.deepEqual(created.pictures.map((p) => [p.source, p.active]), [['ai', true], ['photo', false]])
   const dir = path.join(userData, 'avatars', created.id)
+  const original = created.pictures.find((p) => p.source === 'photo')
+  fs.writeFileSync(original.path, 'my-original-photo')
   fs.writeFileSync(path.join(dir, 'voice-sample.mp3'), 'audio')
   const json = path.join(dir, 'avatar.json')
   fs.writeFileSync(json, JSON.stringify({ ...JSON.parse(fs.readFileSync(json, 'utf8')), clonedVoice: { clonedAt: 'x', transcript: '' }, voice: { provider: 'clone', clonedAt: 'x' } }))
+  // More AI versions start from the person's own photo, not from the AI one.
+  requests.length = 0
   const again = plain(await lib.restyleDrafts({ avatarId: created.id }, 'studio', '', true))
+  assert.equal(Buffer.from(requests[0].references[0].bytes).toString(), 'my-original-photo')
   const [after] = plain(await lib.setPortrait(created.id, again[1].draftId))
   assert.match(path.basename(after.portraitPath), /^portrait-[a-f0-9]{8}\.jpg$/, 'a new file name, so no stale cached image')
-  assert.ok(!fs.existsSync(path.join(dir, 'portrait.jpg')), 'the old picture is removed')
+  assert.equal(after.pictures.length, 3, 'the earlier pictures are kept')
+  assert.ok(fs.existsSync(path.join(dir, 'portrait.jpg')), 'the first AI version is still there')
   assert.deepEqual(after.voice, { provider: 'clone', clonedAt: 'x' })
   assert.equal(lib.portraitPath(created.id), after.portraitPath)
+
+  // Switch back to the original photo; remove an unused picture; the one in use can't be removed.
+  const [back] = plain(await lib.usePicture(created.id, original.file))
+  assert.equal(path.basename(back.portraitPath), original.file)
+  assert.equal(back.pictures.find((p) => p.active).source, 'photo')
+  await assert.rejects(lib.removePicture(created.id, original.file), /in use/)
+  const [trimmed] = plain(await lib.removePicture(created.id, 'portrait.jpg'))
+  assert.equal(trimmed.pictures.length, 2)
+  await assert.rejects(lib.usePicture(created.id, 'portrait.jpg'), /no longer saved/)
+  await assert.rejects(lib.usePicture(created.id, '../avatar.json'), /no longer saved/)
+  // Another photo can be added (kept, not switched to).
+  const [added] = plain(await lib.addPhotoToAvatar(created.id, photo))
+  assert.equal(added.pictures.length, 3)
+  assert.equal(path.basename(added.portraitPath), original.file)
   await assert.rejects(lib.setPortrait(created.id, again[1].draftId), /expired/)
 
   // Fictional AI avatars aren't restyled from a photo.
@@ -859,10 +881,18 @@ test('reaction library: AI reactions from the picture (failed ones reported), ow
   const nod = broke.avatars[0].reactions.find((r) => r.id === 'nod')
   assert.ok(nod.version > 0, 'a version, so a replaced clip reloads')
 
-  // A new picture removes the AI reactions made from the old face; the member's own clip stays.
+  // A new picture puts the AI reactions made from the old face away (the member's own clip stays);
+  // switching back brings them back, so they're never paid for twice.
+  const before = plain((await lib.listAvatars())[0])
+  const aiKinds = before.reactions.filter((r) => r.source === 'ai').map((r) => r.id).sort()
+  assert.ok(aiKinds.length > 0)
   const fresh = await lib.draftFromPhoto(photo)
   const [swapped] = plain(await lib.setPortrait(avatar.id, fresh.draftId))
   assert.deepEqual(swapped.reactions.map((r) => [r.id, r.source]), [['nod', 'own']])
+  const firstPicture = swapped.pictures.find((p) => !p.active)
+  const [restored] = plain(await lib.usePicture(avatar.id, firstPicture.file))
+  assert.deepEqual(restored.reactions.filter((r) => r.source === 'ai').map((r) => r.id).sort(), aiKinds)
+  assert.equal(restored.reactions.find((r) => r.id === 'nod').source, 'own')
 })
 
 test('a paid POST is never sent twice once it may have reached OpenRouter; busy or never-connected ones retry', async () => {

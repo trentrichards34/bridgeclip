@@ -498,6 +498,7 @@ function AvatarDetails({ avatar, busy, openrouterConfigured, onChange, onError }
             <VoicePreview request={{ kind: 'avatar', voice: avatar.voice, avatarId: avatar.id }} name={voiceLabel(avatar.voice)} />
           </div>
         </Field>
+        <PictureLibrary avatar={avatar} busy={busy} onChange={onChange} onError={onError} />
         {avatar.kind === 'self' && <RestylePortrait avatar={avatar} busy={busy} openrouterConfigured={openrouterConfigured} onChange={onChange} onError={onError} />}
         <ReactionLibrary avatar={avatar} busy={busy} openrouterConfigured={openrouterConfigured} onChange={onChange} onError={onError} />
         <div className="glass-tile space-y-2 rounded-xl p-3">
@@ -554,7 +555,13 @@ function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { open
   })
   const createAvatar = (): Promise<void> => attempt(async () => {
     if (!chosen) return
-    onCreated(await getApi().avatars.create({ draftId: chosen, name, kind, description: kind === 'ai' ? description : '', voice: { provider: 'elevenlabs', voice }, consent }))
+    const ownPhoto = kind === 'self' && photo !== null && chosen === photo.draftId
+    onCreated(await getApi().avatars.create({
+      draftId: chosen, name, kind, description: kind === 'ai' ? description : '', voice: { provider: 'elevenlabs', voice }, consent,
+      pictureSource: ownPhoto ? 'photo' : 'ai',
+      // An AI version of you: your own photo is kept with the avatar too, so you can switch back.
+      ...(kind === 'self' && photo && !ownPhoto ? { keepPhotoDraftId: photo.draftId } : {})
+    }))
   })
 
   const ready = Boolean(chosen && name.trim() && (kind === 'ai' || consent))
@@ -674,7 +681,7 @@ function RestylePortrait({ avatar, busy, openrouterConfigured, onChange, onError
     catch (err) { onError(errorMessage(err)) } finally { setSaving(false) }
   }
   if (!open) {
-    return <Button size="sm" variant="secondary" icon={<Sparkles className="h-3.5 w-3.5" />} disabled={busy} onClick={() => setOpen(true)}>Make an AI version of this photo</Button>
+    return <Button size="sm" variant="secondary" icon={<Sparkles className="h-3.5 w-3.5" />} disabled={busy} onClick={() => setOpen(true)}>Make an AI version of your photo</Button>
   }
   return (
     <div className="glass-tile space-y-3 rounded-xl p-3">
@@ -695,7 +702,58 @@ function RestylePortrait({ avatar, busy, openrouterConfigured, onChange, onError
         <Button size="sm" variant="primary" disabled={!chosen || saving || busy} loading={saving} onClick={() => void save()}>Use this picture</Button>
         <Button size="sm" variant="ghost" disabled={saving} onClick={() => { setOpen(false); setDrafts([]); setChosen(null) }}>Cancel</Button>
       </div>
-      <p className="text-2xs text-ink-subtle">Replaces the picture your videos use. The voice and cloned voice stay as they are. AI reactions made from the old picture are removed so you can make them again; reactions you recorded yourself stay.</p>
+      <p className="text-2xs text-ink-subtle">Made from your own photo. The new picture is used from now on, and your current one stays under Pictures so you can switch back. The voice, the cloned voice and your own reaction clips stay as they are; AI reactions are kept with the picture they were made from.</p>
+    </div>
+  )
+}
+
+const PICTURE_LABELS = { photo: 'Your photo', ai: 'AI version', unknown: 'Picture' } as const
+
+/** Every picture the avatar has used: switch between them, remove old ones, or add another photo. */
+function PictureLibrary({ avatar, busy, onChange, onError }: {
+  avatar: AvatarSummary; busy: boolean; onChange: (list: AvatarSummary[]) => void; onError: (message: string | null) => void
+}): React.JSX.Element | null {
+  const [working, setWorking] = useState<string | null>(null)
+  const pictures = avatar.pictures ?? []
+  const run = async (key: string, action: () => Promise<AvatarSummary[] | null>): Promise<void> => {
+    setWorking(key); onError(null)
+    try { const list = await action(); if (list) onChange(list) } catch (err) { onError(errorMessage(err)) } finally { setWorking(null) }
+  }
+  if (pictures.length < 2 && avatar.kind !== 'self') return null
+  return (
+    <div className="glass-tile space-y-2.5 rounded-xl p-3">
+      <div>
+        <p className="flex items-center gap-1.5 text-xs font-medium text-ink"><UserRound className="h-3.5 w-3.5" />Pictures</p>
+        <p className="mt-0.5 text-2xs text-ink-subtle">Every picture is kept. Choose the one your videos use.</p>
+      </div>
+      <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label={`${avatar.name}’s picture`}>
+        {pictures.map((picture) => (
+          <div key={picture.file} className="relative">
+            <button type="button" role="radio" aria-checked={picture.active} disabled={busy || working !== null}
+              aria-label={`${PICTURE_LABELS[picture.source]}${picture.active ? ' (in use)' : ''}`}
+              onClick={() => { if (!picture.active) void run(picture.file, () => getApi().avatars.usePicture(avatar.id, picture.file)) }}
+              className={cn('glass-tile block w-full overflow-hidden rounded-lg text-left', picture.active ? 'glass-selected ring-1 ring-accent' : 'glass-tile-hover opacity-80 hover:opacity-100')}>
+              <img src={localFileUrl(picture.path)} alt="" className="aspect-[9/16] w-full object-cover" />
+              <span className="block truncate px-1.5 py-1 text-2xs text-ink">{working === picture.file ? 'Switching…' : picture.active ? 'In use' : PICTURE_LABELS[picture.source]}</span>
+            </button>
+            {!picture.active && (
+              <button type="button" aria-label={`Remove this ${PICTURE_LABELS[picture.source].toLowerCase()}`} disabled={busy || working !== null}
+                onClick={() => void run(`rm:${picture.file}`, () => getApi().avatars.removePicture(avatar.id, picture.file))}
+                className="glass-chip absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full text-white disabled:opacity-40">
+                <X className="h-3 w-3" />
+              </button>
+            )}
+            {picture.active && picture.source !== 'unknown' && <span className="pointer-events-none absolute left-1 top-1"><Badge tone="neutral">{PICTURE_LABELS[picture.source]}</Badge></span>}
+          </div>
+        ))}
+        {avatar.kind === 'self' && (
+          <button type="button" disabled={busy || working !== null} onClick={() => void run('add', () => getApi().avatars.addPhoto(avatar.id))}
+            className="glass-tile glass-tile-hover flex aspect-[9/16] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 text-center text-ink-muted hover:text-ink disabled:opacity-50">
+            <Plus className="h-4 w-4" />
+            <span className="px-1 text-2xs">{working === 'add' ? 'Adding…' : 'Add your photo'}</span>
+          </button>
+        )}
+      </div>
     </div>
   )
 }

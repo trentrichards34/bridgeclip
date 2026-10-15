@@ -1,13 +1,13 @@
 import { app, nativeImage } from 'electron'
 import { execFile } from 'child_process'
 import { randomBytes } from 'crypto'
-import { existsSync, readFileSync, statSync } from 'fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'fs/promises'
 import { basename, extname, join } from 'path'
 import { promisify } from 'util'
 import {
-  AI_PORTRAIT_CANDIDATES, DEFAULT_VOICE, isAvatarId, isPortraitLook, isReactionId, REACTIONS, OPENROUTER_MODELS, parseVoice, PORTRAIT_LOOKS,
-  type Avatar, type AvatarKind, type AvatarReaction, type AvatarSummary, type AvatarVoice
+  AI_PORTRAIT_CANDIDATES, DEFAULT_VOICE, isAvatarId, isPortraitLook, isReactionId, MAX_AVATAR_PICTURES, REACTIONS, OPENROUTER_MODELS, parseVoice, PORTRAIT_LOOKS,
+  type Avatar, type AvatarKind, type AvatarPicture, type AvatarReaction, type AvatarSummary, type AvatarVoice
 } from '../shared/avatars'
 import { falInputUrl } from './fal'
 import { generateImage, openRouterBase, OpenRouterMediaError, synthesizeSpeech, type MediaOptions, type SpeechRequest } from './openrouter-media'
@@ -152,7 +152,8 @@ export async function listAvatars(): Promise<AvatarSummary[]> {
     try {
       const avatar = readAvatar(id)
       const reactions = readReactions(id).map((reaction) => ({ ...reaction, path: authorizeMedia(reaction.path) }))
-      avatars.push({ ...avatar, portraitPath: authorizeMedia(portraitPath(id)), reactions })
+      const pictures = readPictures(id).map((picture) => ({ ...picture, path: authorizeMedia(picture.path) }))
+      avatars.push({ ...avatar, portraitPath: authorizeMedia(portraitPath(id)), pictures, reactions })
     } catch { /* skip damaged entries */ }
   }
   return avatars.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -287,7 +288,8 @@ export async function restyleDrafts(source: unknown, look: unknown, detail: unkn
   else if (isAvatarId(raw.avatarId)) {
     const avatar = readAvatar(raw.avatarId)
     if (avatar.kind !== 'self') throw new Error('AI avatars already are AI. Restyle works on avatars made from your photo.')
-    photo = portraitPath(raw.avatarId)
+    // AI versions start from the member's own photo (the newest one), not from an earlier AI version.
+    photo = readPictures(raw.avatarId).find((picture) => picture.source === 'photo')?.path ?? portraitPath(raw.avatarId)
   } else throw new Error('Choose a photo first.')
   if (!existsSync(photo)) throw new Error('That photo is no longer available. Choose it again.')
   const reference = { bytes: new Uint8Array(await readFile(photo)), mime: 'image/jpeg' }
@@ -305,27 +307,151 @@ export async function restyleDrafts(source: unknown, look: unknown, detail: unkn
   return drafts
 }
 
-/** Swap an existing avatar's picture for a chosen draft; its voice and clone stay. */
+// ---------------------------------------------------------------------------
+// Saved pictures: every picture an avatar has used is kept, so the member can
+// switch between their own photo and AI versions. pictures.json records where
+// each came from; the files themselves are the list.
+// ---------------------------------------------------------------------------
+
+function picturesMeta(id: string): Record<string, { source?: string; createdAt?: string }> {
+  try { return JSON.parse(readFileSync(join(avatarDir(id), 'pictures.json'), 'utf8')) as Record<string, { source?: string; createdAt?: string }> } catch { return {} }
+}
+
+async function writePicturesMeta(id: string, meta: Record<string, { source?: string; createdAt?: string }>): Promise<void> {
+  const file = join(avatarDir(id), 'pictures.json')
+  const temp = `${file}.${newId(4)}.tmp`
+  await writeFile(temp, JSON.stringify(meta, null, 2), { mode: 0o600 })
+  await rename(temp, file)
+}
+
+/** The avatar's saved pictures, newest first, the one in use marked. */
+export function readPictures(id: string): AvatarPicture[] {
+  const active = basename(portraitPath(id))
+  const meta = picturesMeta(id)
+  let files: string[] = []
+  try { files = readdirSync(avatarDir(id)).filter((name) => PORTRAIT_FILE.test(name)) } catch { return [] }
+  return files.map((file): AvatarPicture => {
+    const info = meta[file] ?? {}
+    let createdAt = typeof info.createdAt === 'string' ? info.createdAt : ''
+    if (!createdAt) try { createdAt = statSync(join(avatarDir(id), file)).mtime.toISOString() } catch { /* listed above */ }
+    const source = info.source === 'photo' || info.source === 'ai' ? info.source : 'unknown'
+    return { file, path: join(avatarDir(id), file), source, createdAt, active: file === active }
+  }).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+function pictureFile(id: string, file: unknown): string {
+  if (typeof file !== 'string' || !PORTRAIT_FILE.test(file) || !existsSync(join(avatarDir(id), file))) throw new Error('That picture is no longer saved with this avatar.')
+  return file
+}
+
+/** Where AI reactions made from one picture wait while another picture is in use. */
+function reactionsArchive(id: string, file: string): string {
+  return join(reactionsDir(id), 'by-picture', basename(file, '.jpg'))
+}
+
+/**
+ * AI reactions belong to the picture they were made from: put the current
+ * picture's away and bring back any made earlier from `to`. The member's own
+ * clips stay in use whatever the picture.
+ */
+async function swapReactions(id: string, from: string, to: string): Promise<void> {
+  if (from === to) return
+  const dir = reactionsDir(id)
+  const metaFile = join(dir, 'reactions.json')
+  let meta: Record<string, string> = {}
+  try { meta = JSON.parse(await readFile(metaFile, 'utf8')) as Record<string, string> } catch { /* none yet */ }
+  const away = reactionsArchive(id, from)
+  for (const reaction of readReactions(id)) {
+    if (reaction.source !== 'ai') continue
+    await mkdir(away, { recursive: true })
+    await rename(reaction.path, join(away, `${reaction.id}.mp4`))
+    delete meta[reaction.id]
+  }
+  const back = reactionsArchive(id, to)
+  for (const kind of REACTIONS.map((reaction) => reaction.id)) {
+    const saved = join(back, `${kind}.mp4`)
+    if (!existsSync(saved) || existsSync(join(dir, `${kind}.mp4`))) continue
+    await rename(saved, join(dir, `${kind}.mp4`))
+    meta[kind] = 'ai'
+  }
+  await rm(back, { recursive: true, force: true }).catch(() => undefined)
+  if (existsSync(dir)) {
+    const temp = `${metaFile}.${newId(4)}.tmp`
+    await writeFile(temp, JSON.stringify(meta, null, 2))
+    await rename(temp, metaFile)
+  }
+}
+
+async function addPicture(id: string, bytes: Buffer | null, from: string | null, source: 'photo' | 'ai', use: boolean): Promise<void> {
+  const avatar = readAvatar(id)
+  if (readPictures(id).length >= MAX_AVATAR_PICTURES) throw new Error(`An avatar keeps up to ${MAX_AVATAR_PICTURES} pictures. Remove one you no longer need first.`)
+  const file = `portrait-${newId(4)}.jpg`
+  if (from) await rename(from, join(avatarDir(id), file))
+  else if (bytes) await writeFile(join(avatarDir(id), file), bytes, { mode: 0o600 })
+  await writePicturesMeta(id, { ...picturesMeta(id), [file]: { source, createdAt: new Date().toISOString() } })
+  if (use) {
+    const previous = basename(portraitPath(id))
+    await writeAvatar(avatar, file)
+    await swapReactions(id, previous, file)
+  }
+}
+
+/** Use a chosen draft (an AI version) as the avatar's picture; the previous picture is kept to switch back to. */
 export async function setPortrait(id: unknown, draftId: unknown): Promise<AvatarSummary[]> {
   if (!isAvatarId(id)) throw new Error('Invalid avatar')
   if (typeof draftId !== 'string' || !DRAFT_ID.test(draftId)) throw new Error('Choose a picture first.')
-  const avatar = readAvatar(id)
+  readAvatar(id)
   const draft = join(draftsDir(), `${draftId}.jpg`)
   if (!existsSync(draft)) throw new Error('That picture expired. Make it again.')
-  const previous = portraitPath(id)
-  const file = `portrait-${newId(4)}.jpg`
-  await rename(draft, join(avatarDir(id), file))
-  await writeAvatar(avatar, file)
-  if (basename(previous) !== file) await rm(previous, { force: true })
-  // AI reactions show the old picture's face: remove them so they can be made again. The member's own clips stay.
-  for (const reaction of readReactions(id)) {
-    if (reaction.source === 'ai') await rm(reaction.path, { force: true })
+  await addPicture(id, null, draft, 'ai', true)
+  return listAvatars()
+}
+
+/** Switch to one of the avatar's saved pictures. */
+export async function usePicture(id: unknown, file: unknown): Promise<AvatarSummary[]> {
+  if (!isAvatarId(id)) throw new Error('Invalid avatar')
+  const avatar = readAvatar(id)
+  const chosen = pictureFile(id, file)
+  const previous = basename(portraitPath(id))
+  if (chosen !== previous) {
+    await writeAvatar(avatar, chosen)
+    await swapReactions(id, previous, chosen)
   }
+  return listAvatars()
+}
+
+/** Delete a saved picture that isn't in use (and the AI reactions made from it). */
+export async function removePicture(id: unknown, file: unknown): Promise<AvatarSummary[]> {
+  if (!isAvatarId(id)) throw new Error('Invalid avatar')
+  readAvatar(id)
+  const chosen = pictureFile(id, file)
+  if (chosen === basename(portraitPath(id))) throw new Error('This picture is in use. Switch to another picture first.')
+  await rm(join(avatarDir(id), chosen), { force: true })
+  await rm(reactionsArchive(id, chosen), { recursive: true, force: true })
+  const meta = picturesMeta(id)
+  delete meta[chosen]
+  await writePicturesMeta(id, meta)
+  return listAvatars()
+}
+
+/** Add another photo of the member to their own-likeness avatar (kept, not switched to). */
+export async function addPhotoToAvatar(id: unknown, path: string): Promise<AvatarSummary[]> {
+  if (!isAvatarId(id)) throw new Error('Invalid avatar')
+  const avatar = readAvatar(id)
+  if (avatar.kind !== 'self') throw new Error('AI avatars are fictional people, so they can’t use a real photo. Make a new avatar from your photo instead.')
+  if (!PHOTO_EXTENSIONS.includes(extname(path).slice(1).toLowerCase())) throw new Error('Use a JPG or PNG photo.')
+  const info = await stat(path)
+  if (!info.isFile() || info.size > MAX_PHOTO_BYTES) throw new Error('Use a photo under 25 MB.')
+  await addPicture(id, normalizePhoto(await upright(await readFile(path))), null, 'photo', false)
   return listAvatars()
 }
 
 export interface CreateAvatarInput {
   draftId: unknown
+  /** photo: the member's own photo as is; anything else is an AI-made picture. */
+  pictureSource?: unknown
+  /** Own-likeness avatars made from an AI version: the original photo's draft, kept as a saved picture. */
+  keepPhotoDraftId?: unknown
   name: unknown
   kind: unknown
   description: unknown
@@ -349,6 +475,15 @@ export async function createAvatar(input: CreateAvatarInput): Promise<AvatarSumm
   await mkdir(avatarDir(id), { recursive: true })
   await rename(draft, portraitPath(id))
   await writeAvatar({ id, name, kind, description, voice, clonedVoice: null, consentAt: kind === 'self' ? new Date().toISOString() : null, createdAt: new Date().toISOString() })
+  await writePicturesMeta(id, { 'portrait.jpg': { source: input.pictureSource === 'photo' && kind === 'self' ? 'photo' : 'ai', createdAt: new Date().toISOString() } })
+  // Made from an AI version of their photo: the photo itself is kept too, to switch to any time.
+  const keep = typeof input.keepPhotoDraftId === 'string' && DRAFT_ID.test(input.keepPhotoDraftId) && input.keepPhotoDraftId !== input.draftId
+    ? join(draftsDir(), `${input.keepPhotoDraftId}.jpg`) : null
+  if (kind === 'self' && keep && existsSync(keep)) {
+    const file = `portrait-${newId(4)}.jpg`
+    await rename(keep, join(avatarDir(id), file))
+    await writePicturesMeta(id, { ...picturesMeta(id), [file]: { source: 'photo', createdAt: new Date(Date.now() - 1000).toISOString() } })
+  }
   return listAvatars()
 }
 
