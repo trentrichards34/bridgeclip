@@ -643,6 +643,8 @@ class Settings(BaseSettings):
     jev_enabled: bool = False
     jev_visual_context: bool = False
     source_context_web_research: bool = False
+    # Social links (Instagram, TikTok, X, Facebook): download with this browser's login ("" for none).
+    download_login_browser: str = ""
     source_context_model: str = "google/gemini-3.8-flash"
 
     # Security - API authentication

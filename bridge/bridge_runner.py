@@ -37,6 +37,15 @@ DURATION_RANGE_IDS = ("xshort", "short", "medium", "long", "xlong", "extended", 
 # request URLs, proxy credentials and local paths, so only these fixed strings
 # reach the UI. First match wins.
 FAILURES = (
+    (("social login required",),
+     "This site only shares the video with a logged-in viewer.",
+     "In Settings → API keys, under “Instagram, TikTok, X and Facebook links”, choose the browser you’re logged in with, then try again. Or download the video and choose it as a file."),
+    (("social login unreadable",),
+     "CreatorClips couldn’t read your browser’s login.",
+     "Allow the Keychain prompt when it appears (Chrome, Edge, Brave), or give CreatorClips Full Disk Access in System Settings → Privacy & Security (Safari). Or pick another browser in Settings → API keys."),
+    (("social post has no video",),
+     "That post has no video.",
+     "It’s a photo or a carousel. Paste the link of a Reel or a video post."),
     (("pexels rejected the api key",),
      "Pexels rejected your API key, so B-roll could not be added.",
      "Check the Pexels key in Settings → API keys, or turn B-roll off in Format, then retry."),

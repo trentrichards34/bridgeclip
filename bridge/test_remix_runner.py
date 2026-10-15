@@ -46,3 +46,12 @@ class ParseConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FailureMessageTest(unittest.TestCase):
+    def test_social_failures_have_plain_messages(self):
+        from bridge_runner import describe_failure
+        for text, words in (("Social login required: Instagram only shares this video with a logged-in viewer", "logged-in viewer"),
+                            ("Social login unreadable: CreatorClips could not read your browser's Instagram login", "couldn’t read your browser"),
+                            ("Social post has no video: this Instagram post is a photo", "no video")):
+            self.assertIn(words, describe_failure(Exception(text))["message"])

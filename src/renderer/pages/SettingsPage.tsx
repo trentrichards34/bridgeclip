@@ -29,7 +29,7 @@ type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
 export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): React.JSX.Element {
-  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, pexelsConfigured, falConfigured, sourceContextWebResearch, saving, save, toolStatus, toolError, checkTools, checkingTools } =
+  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, pexelsConfigured, falConfigured, sourceContextWebResearch, downloadLoginBrowser, saving, save, toolStatus, toolError, checkTools, checkingTools } =
     useSettingsStore()
   const keys = useApiKeyDrafts()
   const [isPackaged, setIsPackaged] = useState(true)
@@ -175,6 +175,20 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                 <span>Research the source before clipping <Badge tone="warning" className="ml-1 align-middle">Beta</Badge>
                   <span className="mt-1 block text-xs text-ink-subtle">Off by default. When on, the video’s title, description and channel go to OpenRouter web search (up to two searches) and Gemini builds a channel and video overview before transcription. Uses extra OpenRouter credit and adds time. Only YouTube and Twitch sources are researched; local files never are. View the brief and sources in the transcript inspector.</span>
                 </span>
+              </label>
+              <label className="flex items-start gap-3 px-3 py-2 text-sm text-ink-muted">
+                <span className="flex-1">Instagram, TikTok, X and Facebook links
+                  <span className="mt-1 block text-xs text-ink-subtle">These sites often only share a video with someone logged in. Choose the browser you’re logged in with and CreatorClips downloads with that login (it reads the browser’s cookies on this computer, nothing is sent anywhere else). For Chrome, Edge or Brave your Mac asks once to allow it; Safari needs Full Disk Access for CreatorClips in System Settings → Privacy & Security.</span>
+                </span>
+                <select aria-label="Browser login for social links" value={downloadLoginBrowser ?? ''} onChange={(e) => void commit({ downloadLoginBrowser: e.target.value })}
+                  className="mt-0.5 rounded-lg border border-white/10 bg-black/20 px-2 py-1.5 text-xs text-ink">
+                  <option value="">Don’t use a login</option>
+                  <option value="chrome">Chrome</option>
+                  <option value="safari">Safari</option>
+                  <option value="firefox">Firefox</option>
+                  <option value="edge">Edge</option>
+                  <option value="brave">Brave</option>
+                </select>
               </label>
               <p className="eyebrow px-1 pt-2">Optional</p>
               <KeyRow>

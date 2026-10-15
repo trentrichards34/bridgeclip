@@ -26,10 +26,15 @@ export interface AppSettings extends JevThresholdSettings {
   pythonPath: string
   /** Names and jargon the speech-to-text should spell correctly, one per line. */
   customVocabulary: string
+  /** Instagram, TikTok, X and Facebook links: download with this browser's login ('' for none). */
+  downloadLoginBrowser: string
 }
 
+/** Browsers whose login yt-dlp can use for social video links. */
+export const LOGIN_BROWSERS = ['', 'chrome', 'safari', 'firefox', 'edge', 'brave'] as const
+
 export type ApiKeyName = 'openrouterApiKey' | 'zernioApiKey' | 'pexelsApiKey' | 'falApiKey'
-export type PublicSettings = Pick<AppSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'jevEnabled' | 'jevVisualContext' | 'sourceContextWebResearch' | keyof JevThresholdSettings> & {
+export type PublicSettings = Pick<AppSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'jevEnabled' | 'jevVisualContext' | 'sourceContextWebResearch' | 'downloadLoginBrowser' | keyof JevThresholdSettings> & {
   openrouterConfigured: boolean
   zernioConfigured: boolean
   pexelsConfigured: boolean
@@ -48,7 +53,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   falApiKey: '',
   outputDirectory: join(app.getPath('home'), 'CreatorClips'),
   pythonPath: process.platform === 'win32' ? 'python' : 'python3',
-  customVocabulary: ''
+  customVocabulary: '',
+  downloadLoginBrowser: ''
 }
 
 const SETTINGS_VERSION = 12
@@ -74,6 +80,7 @@ interface PersistedSettings extends JevThresholdSettings {
   outputDirectory: string
   pythonPath: string
   customVocabulary?: string
+  downloadLoginBrowser?: string
 }
 
 function ensureDir(dir: string): string {
@@ -110,7 +117,8 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
     sourceContextWebResearch: settings.sourceContextWebResearch ?? DEFAULT_SETTINGS.sourceContextWebResearch,
     outputDirectory: (settings.outputDirectory || DEFAULT_SETTINGS.outputDirectory).trim(),
     pythonPath: (settings.pythonPath || DEFAULT_SETTINGS.pythonPath).trim(),
-    customVocabulary: vocabularyTerms(settings.customVocabulary ?? DEFAULT_SETTINGS.customVocabulary).join('\n')
+    customVocabulary: vocabularyTerms(settings.customVocabulary ?? DEFAULT_SETTINGS.customVocabulary).join('\n'),
+    downloadLoginBrowser: settings.downloadLoginBrowser ?? DEFAULT_SETTINGS.downloadLoginBrowser
   }
   for (const key of Object.keys(JEV_DEFAULTS) as (keyof JevThresholdSettings)[]) {
     const value = probability(normalized[key])
@@ -122,6 +130,7 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
   if (!SWITCHES.includes(normalized.jevEnabled)) throw new Error('Invalid Jev review setting')
   if (!SWITCHES.includes(normalized.jevVisualContext)) throw new Error('Invalid visual context setting')
   if (!SWITCHES.includes(normalized.sourceContextWebResearch)) throw new Error('Invalid source research setting')
+  if (!(LOGIN_BROWSERS as readonly string[]).includes(normalized.downloadLoginBrowser)) throw new Error('Invalid browser login setting')
   if (!isAbsolute(normalized.outputDirectory)) throw new Error('Settings folders must be absolute paths')
   return normalized
 }
@@ -217,7 +226,8 @@ export function loadSettings(): AppSettings {
       ...savedJevSettings(raw),
       outputDirectory: typeof raw.outputDirectory === 'string' ? raw.outputDirectory : DEFAULT_SETTINGS.outputDirectory,
       pythonPath: typeof raw.pythonPath === 'string' ? raw.pythonPath : DEFAULT_SETTINGS.pythonPath,
-      customVocabulary: typeof raw.customVocabulary === 'string' ? raw.customVocabulary : DEFAULT_SETTINGS.customVocabulary
+      customVocabulary: typeof raw.customVocabulary === 'string' ? raw.customVocabulary : DEFAULT_SETTINGS.customVocabulary,
+      downloadLoginBrowser: typeof raw.downloadLoginBrowser === 'string' && (LOGIN_BROWSERS as readonly string[]).includes(raw.downloadLoginBrowser) ? raw.downloadLoginBrowser : ''
     })
 
     if (needsMigration && canEncrypt()) writeSettings(settings)
@@ -250,7 +260,8 @@ function writeSettings(settings: AppSettings): void {
     sourceContextWebResearch: settings.sourceContextWebResearch,
     outputDirectory: settings.outputDirectory,
     pythonPath: settings.pythonPath,
-    customVocabulary: settings.customVocabulary
+    customVocabulary: settings.customVocabulary,
+    downloadLoginBrowser: settings.downloadLoginBrowser
   }
 
   let fd: number | undefined
@@ -292,11 +303,12 @@ export function publicSettings(settings: AppSettings): PublicSettings {
     falConfigured: Boolean(settings.falApiKey),
     jevEnabled: settings.jevEnabled,
     jevVisualContext: settings.jevVisualContext,
-    sourceContextWebResearch: settings.sourceContextWebResearch
+    sourceContextWebResearch: settings.sourceContextWebResearch,
+    downloadLoginBrowser: settings.downloadLoginBrowser
   }
 }
 
-export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'jevEnabled' | 'jevVisualContext' | 'sourceContextWebResearch' | keyof JevThresholdSettings>): PublicSettings {
+export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'jevEnabled' | 'jevVisualContext' | 'sourceContextWebResearch' | keyof JevThresholdSettings> & { downloadLoginBrowser?: string }): PublicSettings {
   const current = loadSettings()
   return publicSettings(saveSettings({
     ...current,
@@ -312,7 +324,8 @@ export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory
     customVocabulary: update.customVocabulary,
     jevEnabled: update.jevEnabled ?? current.jevEnabled,
     jevVisualContext: update.jevVisualContext ?? current.jevVisualContext,
-    sourceContextWebResearch: update.sourceContextWebResearch ?? current.sourceContextWebResearch
+    sourceContextWebResearch: update.sourceContextWebResearch ?? current.sourceContextWebResearch,
+    downloadLoginBrowser: update.downloadLoginBrowser ?? current.downloadLoginBrowser
   }))
 }
 
@@ -357,6 +370,7 @@ export function getSettingsForBridge(settings: AppSettings): Record<string, stri
     JEV_ENABLED: settings.jevEnabled === 'on' ? 'true' : 'false',
     JEV_VISUAL_CONTEXT: settings.jevVisualContext === 'on' ? 'true' : 'false',
     LOCAL_MODE: 'true',
-    LOCAL_OUTPUT_DIR: settings.outputDirectory
+    LOCAL_OUTPUT_DIR: settings.outputDirectory,
+    ...(settings.downloadLoginBrowser ? { DOWNLOAD_LOGIN_BROWSER: settings.downloadLoginBrowser } : {})
   }
 }

@@ -112,7 +112,45 @@ UA_LIST = [
 
 
 # Source types for videos
-VideoSourceType = Literal["youtube", "twitch", "s3", "direct_url", "local"]
+VideoSourceType = Literal["youtube", "twitch", "social", "s3", "direct_url", "local"]
+
+# Video sites read with yt-dlp (like YouTube): a link to their page, not to a video file.
+SOCIAL_HOSTS = ("instagram.com", "tiktok.com", "x.com", "twitter.com", "facebook.com", "fb.watch", "threads.net", "vimeo.com")
+LOGIN_BROWSERS = ("chrome", "safari", "firefox", "edge", "brave")
+# What these sites say when a video needs a login (yt-dlp's wording varies by site and version).
+LOGIN_MARKERS = ("login required", "log in", "logged-in", "rate-limit reached", "use --cookies", "cookies-from-browser",
+                 "empty media response", "authentication", "this content isn't available", "requires authentication")
+NO_VIDEO_MARKERS = ("there is no video in this post", "no video formats found", "no video could be found")
+
+
+def social_video_url(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == name or host.endswith("." + name) for name in SOCIAL_HOSTS)
+
+
+def login_browser_opts(url: str) -> dict:
+    """Read the member's chosen browser login for social links only (never for YouTube or other sites)."""
+    if not social_video_url(url):
+        return {}
+    browser = str(getattr(get_settings(), "download_login_browser", "") or "").strip().lower()
+    return {"cookiesfrombrowser": (browser,)} if browser in LOGIN_BROWSERS else {}
+
+
+def social_failure(url: str, error: BaseException) -> Optional["VideoDownloadError"]:
+    """A plain-language error for a social link that can't be downloaded, or None."""
+    if not social_video_url(url):
+        return None
+    text = str(error).lower()
+    site = next((name.split(".")[0] for name in SOCIAL_HOSTS if (urlparse(url).hostname or "").lower().endswith(name)), "the site")
+    site = {"instagram": "Instagram", "tiktok": "TikTok", "x": "X", "twitter": "X", "facebook": "Facebook", "fb": "Facebook",
+            "threads": "Threads", "vimeo": "Vimeo"}.get(site, site)
+    if any(marker in text for marker in NO_VIDEO_MARKERS):
+        return VideoDownloadError(f"Social post has no video: this {site} post is a photo or a carousel without a video", reason="no_video")
+    if ("could not find" in text and "cookies" in text) or "keychain" in text or "full disk access" in text or "operation not permitted" in text:
+        return VideoDownloadError(f"Social login unreadable: CreatorClips could not read your browser's {site} login", reason="login_unreadable")
+    if any(marker in text for marker in LOGIN_MARKERS):
+        return VideoDownloadError(f"Social login required: {site} only shares this video with a logged-in viewer", reason="login_required")
+    return None
 
 
 @dataclass
@@ -306,6 +344,9 @@ class VideoDownloaderService:
         host = (parsed.hostname or "").lower()
         if host in {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"}:
             return "youtube"
+        # Instagram, TikTok, X, Facebook and similar: a page with a video, read with yt-dlp.
+        if social_video_url(url_or_key):
+            return "social"
         
         # Direct video URL
         return "direct_url"
@@ -361,6 +402,14 @@ class VideoDownloaderService:
                 result = await self._download_from_youtube(twitch_vod_url(url), output_path, output_dir, max_duration_seconds, source_type="twitch")
             elif source_type == "youtube":
                 result = await self._download_from_youtube(url, output_path, output_dir, max_duration_seconds)
+            elif source_type == "social":
+                try:
+                    result = await self._download_from_youtube(url, output_path, output_dir, max_duration_seconds, source_type="social")
+                except Exception as error:
+                    plain = social_failure(url, error)
+                    if plain is not None:
+                        raise plain from error
+                    raise
             else:
                 result = await self._download_direct_url(url, output_path)
 
@@ -489,6 +538,7 @@ class VideoDownloaderService:
                             ydl_opts["skip_unavailable_fragments"] = False
                             ydl_opts["match_filter"] = lambda info, *, incomplete=False: self._validate_twitch_info(info, max_duration, incomplete)
                         ydl_opts["format"] = format_selector
+                        ydl_opts.update(login_browser_opts(url))
                         ydl_opts["progress_hooks"] = [check_progress]
                         ydl_opts["postprocessor_hooks"] = [check_progress]
 
@@ -942,6 +992,7 @@ class VideoDownloaderService:
                 "quiet": True,
                 "no_warnings": True,
             })
+            opts.update(login_browser_opts(url))
 
             if twitch_url:
                 opts["allowed_extractors"] = ["twitch:vod"]

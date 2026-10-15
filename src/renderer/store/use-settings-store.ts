@@ -106,7 +106,8 @@ function pickSettings(s: ClipSettings): ClipSettings {
     falConfigured: s.falConfigured ?? false,
     outputDirectory: s.outputDirectory,
     pythonPath: s.pythonPath,
-    customVocabulary: s.customVocabulary
+    customVocabulary: s.customVocabulary,
+    downloadLoginBrowser: s.downloadLoginBrowser ?? ''
   }
 }
 

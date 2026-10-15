@@ -6,6 +6,7 @@ clip pipeline: OPENROUTER_API_KEY (required) and PEXELS_API_KEY (optional).
 """
 import asyncio
 import json
+import re
 import os
 import signal
 import sys
@@ -120,7 +121,13 @@ def main():
             # Download and transcription failures get the same plain-language
             # explanations as the clip pipeline.
             described = describe_failure(error)
-            message = None if described["message"] == "The clipping pipeline failed." else f"{described['message']} {described['hint']}"
+            if described["message"] == "The clipping pipeline failed.":
+                # Say what went wrong (first line, no local paths), so it can be acted on or reported.
+                first = (str(error).strip().splitlines() or [type(error).__name__])[0]
+                first = re.sub(r"(/Users|/home|[A-Za-z]:\\\\Users)[^\s'\"]*", "…", first)[:220]
+                message = f"The remix could not be made: {first or type(error).__name__}"
+            else:
+                message = f"{described['message']} {described['hint']}"
         try:
             from clip_engine.logging_safety import safe_log_text
             print(f"Remix failed: {type(error).__name__}: {safe_log_text(str(error))[-500:]}", file=sys.stderr)

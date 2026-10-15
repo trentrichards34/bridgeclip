@@ -522,6 +522,11 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     } else {
       const message = typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : 'The remix could not be made. Check Settings → System check, then try again.'
       logger.warn('remix.failed', { stderr: stderr.slice(-1500) })
+      // Development runs keep the engine's own output next to the app log (the app log hides it).
+      if (!app.isPackaged) {
+        const dir = join(app.getPath('logs'), 'engine')
+        await mkdir(dir, { recursive: true }).then(() => writeFile(join(dir, `remix-${new Date().toISOString().replace(/[:.]/g, '-')}.log`), stderr, { mode: 0o600 })).catch(() => undefined)
+      }
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
       // Nothing was made but the plan is still there: back to review to retry without planning (and paying) again.
       if (!planning && existsSync(join(run.status.folder, '.work', 'plan.json'))) {

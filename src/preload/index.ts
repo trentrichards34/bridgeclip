@@ -51,6 +51,8 @@ export interface ClipSettings extends JevThresholdSettings {
   outputDirectory: string
   pythonPath: string
   customVocabulary: string
+  /** Instagram, TikTok, X and Facebook links download with this browser's login ('' for none). */
+  downloadLoginBrowser?: string
 }
 
 export type { ClipJobRequest, JobSnapshot } from '../shared/jobs'

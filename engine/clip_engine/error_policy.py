@@ -7,6 +7,10 @@ TWITCH_ERRORS = {
     "twitch_not_completed": "Twitch VOD is not completed",
     "twitch_duration": "Twitch VOD duration is invalid or too long",
     "twitch_unavailable": "Twitch VOD unavailable",
+    # Instagram, TikTok, X and Facebook links (fixed wording; the app explains each).
+    "login_required": "Social login required",
+    "login_unreadable": "Social login unreadable",
+    "no_video": "Social post has no video",
 }
 
 DISK_FULL_ERRNOS = {errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)}
