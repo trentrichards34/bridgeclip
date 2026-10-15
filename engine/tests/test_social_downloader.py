@@ -68,3 +68,26 @@ def test_download_routes_social_links_and_explains_a_login_wall(service, monkeyp
     assert seen["source_type"] == "social"
     assert error.value.reason == "login_required"
     assert "Instagram" in str(error.value)
+
+
+def test_a_social_post_without_a_listed_length_is_measured_after_download(service, monkeypatch, tmp_path):
+    """Instagram often omits the length: the file is downloaded and its measured length used (YouTube still refuses)."""
+    async def info(url, deadline=None):
+        return module.VideoMetadata(title="Post", duration_seconds=0, width=0, height=0, fps=0, format_id="", extractor="Instagram", uploader="coach")
+    monkeypatch.setattr(service, "_get_video_info", info)
+    out = tmp_path / "source.mp4"
+
+    class FakeYDL:
+        def __init__(self, opts): self.opts = opts
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def download(self, urls): out.write_bytes(b"video")
+    monkeypatch.setattr(module.yt_dlp, "YoutubeDL", FakeYDL)
+
+    async def probe(path):
+        return module.VideoMetadata(title="", duration_seconds=31.5, width=1080, height=1920, fps=30, format_id="mp4", extractor="file")
+    monkeypatch.setattr(service, "_get_video_metadata_ffprobe", probe)
+    result = asyncio.run(service.download_video("https://www.instagram.com/p/DeaEzA4Ndrd/", str(tmp_path)))
+    assert result.metadata.duration_seconds == 31.5 and result.metadata.uploader == "coach"
+    with pytest.raises(module.VideoDownloadError, match="duration is unavailable"):
+        asyncio.run(service._download_from_youtube("https://www.youtube.com/watch?v=abcdefghijk", str(out), str(tmp_path)))

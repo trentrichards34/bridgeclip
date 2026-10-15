@@ -474,7 +474,10 @@ class VideoDownloaderService:
         )
 
         max_duration = min(max_duration_seconds or self.settings.max_download_duration_seconds, self.settings.max_download_duration_seconds)
-        if metadata.duration_seconds <= 0:
+        # Instagram and other social sites often leave the length out of a post's details (live posts are
+        # already refused above). Their videos are short, so download and measure the file instead: the size
+        # limit and deadline still apply, and download_video checks the measured length against the limit.
+        if metadata.duration_seconds <= 0 and source_type != "social":
             raise VideoDownloadError("Video duration is unavailable; live and upcoming streams are not supported")
         if metadata.duration_seconds > max_duration:
             raise VideoDownloadError(
