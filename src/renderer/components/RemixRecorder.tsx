@@ -46,6 +46,8 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   onClose: () => void
 }): React.JSX.Element {
   const reaction = draft.format === 'silent'
+  // Article or post: you talk over a screenshot, in one take.
+  const image = draft.format === 'image'
   const parts = partsFor(draft.format, edit.beats.length)
   const done = recordings[draft.id] ?? {}
   const [part, setPart] = useState<RecordingPart>(() => parts.find((item) => !done[item]) ?? parts[0])
@@ -56,7 +58,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   const [mics, setMics] = useState<MediaDeviceInfo[]>([])
   const [cameraId, setCameraId] = useState<string>('')
   const [micId, setMicId] = useState<string>('')
-  const [moment, setMoment] = useState<{ path: string; startSeconds: number; endSeconds: number } | null>(null)
+  const [moment, setMoment] = useState<{ path: string; startSeconds: number; endSeconds: number; kind: 'video' | 'image' } | null>(null)
   const [elapsed, setElapsed] = useState(0)
   const [reviewing, setReviewing] = useState(false)
   const preview = useRef<HTMLVideoElement>(null)
@@ -98,7 +100,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
 
   useEffect(() => {
     void openDevices('', '')
-    if (reaction) getApi().remix.moment(draft.id).then(setMoment).catch((err) => setError(errorMessage(err)))
+    if (reaction || image) getApi().remix.moment(draft.id).then(setMoment).catch((err) => setError(errorMessage(err)))
     dialog.current?.focus()
     return () => {
       cancelled.current = true
@@ -106,7 +108,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
       if (token.current) void getApi().remix.recordingAbort(token.current)
       stream.current?.getTracks().forEach((track) => track.stop())
     }
-  }, [draft.id, reaction, openDevices])
+  }, [draft.id, reaction, image, openDevices])
 
   // The moment ready at its start, so the reaction lines up with it.
   useEffect(() => {
@@ -163,11 +165,11 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
     try {
       await queue.current
       token.current = null
-      const list = await getApi().remix.recordingFinish(current, reaction ? offset.current ?? 0 : null)
+      const list = await getApi().remix.recordingFinish(current, reaction ? offset.current ?? 0 : image ? 0 : null)
       onRecordings(list)
       setReviewing(true)
       // A voiced take moves on to the next line still to record.
-      if (!reaction) {
+      if (!reaction && !image) {
         const next = parts.find((item) => item !== part && !list[draft.id]?.[item])
         if (next) { setPart(next); setReviewing(false) }
       }
@@ -194,9 +196,14 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   // Lines: a running clock while recording.
   useEffect(() => {
     if (phase !== 'recording' || reaction) return
-    const timer = setInterval(() => setElapsed((performance.now() - startedAt.current) / 1000), 250)
+    const timer = setInterval(() => {
+      const seconds = (performance.now() - startedAt.current) / 1000
+      setElapsed(seconds)
+      // A take over a screenshot stops at the longest a video can be.
+      if (image && moment && seconds >= moment.endSeconds) stop()
+    }, 250)
     return () => clearInterval(timer)
-  }, [phase, reaction])
+  }, [phase, reaction, image, moment, stop])
 
   const upload = async (): Promise<void> => {
     setError(null)
@@ -210,7 +217,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   const saved = (recordings[draft.id] ?? {})[part]
   const busy = phase !== 'idle'
   const allDone = parts.every((item) => recordings[draft.id]?.[item])
-  const line = reaction ? '' : partText(edit, part)
+  const line = reaction || image ? '' : partText(edit, part)
 
   return (
     <Dialog ref={dialog} aria-label="Record yourself" onBackdropMouseDown={busy ? undefined : onClose} panelClassName="max-w-[920px]"
@@ -218,13 +225,13 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
       <div className="space-y-4 overflow-y-auto p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="flex items-center gap-2 text-base font-semibold text-ink"><Camera className="h-4 w-4" />{reaction ? 'React on camera' : 'Record your take'}</h2>
-            <p className="mt-0.5 truncate text-xs text-ink-muted">“{edit.headline}”</p>
+            <h2 className="flex items-center gap-2 text-base font-semibold text-ink"><Camera className="h-4 w-4" />{reaction ? 'React on camera' : image ? 'Talk over the screenshot' : 'Record your take'}</h2>
+            {edit.headline && <p className="mt-0.5 truncate text-xs text-ink-muted">“{edit.headline}”</p>}
           </div>
           <Button size="sm" variant="ghost" icon={<X className="h-4 w-4" />} disabled={busy} onClick={onClose}>{allDone ? 'Done' : 'Close'}</Button>
         </div>
 
-        {!reaction && (
+        {!reaction && !image && (
           <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Parts of the take">
             {parts.map((item) => (
               <button key={item} type="button" role="tab" aria-selected={item === part} disabled={busy}
@@ -236,13 +243,27 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
           </div>
         )}
 
+        {image && (
+          <p className="text-2xs text-ink-muted">
+            Say what the article or post says and what you think about it, as if you were telling a friend. The AI writes the headline and caption from your words, and the screenshot fills the screen behind you. Up to {Math.round((moment?.endSeconds ?? 180) / 60)} minutes.
+          </p>
+        )}
+
         {reaction && (
           <p className="flex items-center gap-1.5 text-2xs text-ink-muted"><Headphones className="h-3.5 w-3.5" />
             {talk ? 'Wear headphones so the clip’s sound stays out of your voice. Talk as you react; your voice goes over the clip.' : 'React with your face; your microphone isn’t used. Headphones help you hear the clip without it echoing.'}
           </p>
         )}
 
-        <div className={cn('grid gap-3', reaction ? 'sm:grid-cols-2' : '')}>
+        <div className={cn('grid gap-3', reaction || image ? 'sm:grid-cols-2' : '')}>
+          {image && (
+            <div className="space-y-1">
+              <p className="text-2xs text-ink-subtle">Your screenshot</p>
+              {moment
+                ? <div className="aspect-video w-full overflow-y-auto rounded-xl bg-black"><img src={localFileUrl(moment.path)} alt="The screenshot you’re talking about" className="w-full" /></div>
+                : <div className="aspect-video w-full rounded-xl bg-black" />}
+            </div>
+          )}
           {reaction && (
             <div className="space-y-1">
               <p className="text-2xs text-ink-subtle">The moment · {moment ? `${(moment.endSeconds - moment.startSeconds).toFixed(0)}s` : 'loading…'}</p>
@@ -269,8 +290,8 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
         <div className="flex flex-wrap items-center gap-2">
           {phase === 'recording'
             ? <Button variant="danger" icon={<Square className="h-4 w-4" />} onClick={stop}>Stop</Button>
-            : <Button variant="primary" icon={<Circle className="h-4 w-4" />} loading={phase === 'countdown' || phase === 'saving'} disabled={busy || !stream.current || (reaction && !moment)}
-                onClick={() => void record()}>{saved ? 'Record again' : reaction ? 'Start: the clip plays and you react' : `Record ${partLabel(part).toLowerCase()}`}</Button>}
+            : <Button variant="primary" icon={<Circle className="h-4 w-4" />} loading={phase === 'countdown' || phase === 'saving'} disabled={busy || !stream.current || ((reaction || image) && !moment)}
+                onClick={() => void record()}>{saved ? 'Record again' : reaction ? 'Start: the clip plays and you react' : image ? 'Start recording' : `Record ${partLabel(part).toLowerCase()}`}</Button>}
           <Button variant="secondary" icon={<Upload className="h-4 w-4" />} disabled={busy} onClick={() => void upload()}>Upload a video instead</Button>
           {saved && !busy && <Button variant="ghost" icon={<RotateCcw className="h-4 w-4" />} onClick={() => void redo()}>Delete this recording</Button>}
           {saved && <span className="text-2xs text-success">{saved.uploaded ? 'Uploaded' : 'Recorded'} · {saved.seconds ? `${saved.seconds.toFixed(0)}s` : 'saved'}</span>}
@@ -295,6 +316,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
         <p className="text-2xs text-ink-subtle">
           {reaction
             ? 'Filming on your phone? Record yourself while the clip plays out loud, then upload it: CreatorClips lines it up with the clip by its sound.'
+            : image ? 'Filming on your phone? Record yourself talking, then upload it here. Keep the phone upright and your whole head in the frame.'
             : 'Look at the camera and read the line in your own words if you like; captions follow what you actually say. Filming on your phone? Upload each part instead.'}
         </p>
         {error && <p role="alert" className="text-xs text-danger">{error}</p>}

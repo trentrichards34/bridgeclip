@@ -27,12 +27,21 @@ export const STYLE_LABELS: Record<RemixStyle, string> = {
 /**
  * commentary: the presenter gives a voiced take around a short borrowed moment.
  * silent: the moment plays with its own sound while the avatar reacts silently behind it (green screen).
+ * image: the member talks on camera over a screenshot (an article or a post); the AI writes the headline from their words.
  */
-export type RemixFormat = 'commentary' | 'silent'
+export type RemixFormat = 'commentary' | 'silent' | 'image'
 export const REMIX_FORMATS: { id: RemixFormat; label: string; detail: string }[] = [
   { id: 'commentary', label: 'Voiced take', detail: 'A few seconds of their moment, then your presenter’s take in your voice' },
-  { id: 'silent', label: 'Silent react', detail: 'Their moment plays with its sound; your avatar reacts behind it without speaking' }
+  { id: 'silent', label: 'Silent react', detail: 'Their moment plays with its sound; your avatar reacts behind it without speaking' },
+  { id: 'image', label: 'Article or post', detail: 'Talk on camera in front of a screenshot, like a green screen; the AI writes the headline from what you say' }
 ]
+
+/** Screenshots for an article-or-post remix. */
+export const REMIX_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp']
+/** The longest take over a screenshot. */
+export const MAX_IMAGE_TAKE_SECONDS = 180
+/** Headline-only formats: nothing spoken to edit. */
+export function headlineOnly(format: RemixFormat): boolean { return format === 'silent' || format === 'image' }
 
 /** A silent reaction timed into the moment (seconds from its start). */
 export interface RemixCue { at: number; reaction: string }
@@ -108,6 +117,8 @@ export const REMIX_PRICES = {
 export function estimateRemixCost(host: RemixHost, count: number, sourceHours = 0.5, format: RemixFormat = 'commentary'): { perRemixLow: number; perRemixHigh: number; total: number } {
   // Silent reacts reuse the avatar's reaction clips: nothing is voiced or animated per video.
   if (format === 'silent') return { perRemixLow: 0, perRemixHigh: 0, total: REMIX_PRICES.sourcePerHour * Math.max(0.1, sourceHours) }
+  // A screenshot: one transcription and one short writing call.
+  if (format === 'image') return { perRemixLow: 0.01, perRemixHigh: 0.02, total: 0.02 }
   const avatar = (seconds: number): number => host === 'lipsync' ? seconds * REMIX_PRICES.avatarPerSecond : 0
   // On camera: your own voice and face, so nothing is voiced (captions come from a cheap transcription).
   const voice = host === 'camera' ? 0.01 : REMIX_PRICES.voicePerRemix
@@ -192,7 +203,7 @@ export function isRecordingPart(value: unknown): value is RecordingPart {
   return typeof value === 'string' && /^(reaction|intro|close|beat[0-3])$/.test(value)
 }
 export function partsFor(format: RemixFormat, beats: number): RecordingPart[] {
-  if (format === 'silent') return ['reaction']
+  if (format === 'silent' || format === 'image') return ['reaction']
   return ['intro', ...Array.from({ length: Math.min(4, beats) }, (_, i) => `beat${i}` as RecordingPart), 'close']
 }
 /** A take's recordings, as the app lists them. */
@@ -381,7 +392,7 @@ export function parseRemixDraft(value: unknown): RemixDraft | null {
     headline: text(raw.headline, 200), intro: text(raw.intro, 400), beats, close: text(raw.close, 400),
     notes: Array.isArray(raw.notes) ? raw.notes.filter((n): n is string => typeof n === 'string').map((n) => text(n, 300)).slice(0, 6) : [],
     grade: parseGrade(raw.grade), estimateUsd: number(raw.estimate_usd), postCaption: captionText(raw.post_caption),
-    format: raw.format === 'silent' ? 'silent' : 'commentary',
+    format: raw.format === 'silent' || raw.format === 'image' ? raw.format : 'commentary',
     cues: Array.isArray(raw.cues) ? raw.cues.flatMap((item): RemixCue[] => {
       const cue = (item ?? {}) as Record<string, unknown>
       return typeof cue.reaction === 'string' && typeof cue.at === 'number' && Number.isFinite(cue.at) ? [{ at: Math.max(0, cue.at), reaction: cue.reaction.slice(0, 20) }] : []
@@ -411,7 +422,7 @@ export function remixEditProblem(edit: Pick<RemixEdit, 'headline' | 'intro' | 'b
   if (wordCount(edit.headline) < 3) return 'The headline needs at least 3 words.'
   if (wordCount(edit.headline) > REMIX_WORD_LIMITS.headline) return `Keep the headline to ${REMIX_WORD_LIMITS.headline} words.`
   // Silent reacts have no spoken lines: just the headline and the caption.
-  if (format === 'silent') return (edit.postCaption ?? '').length > MAX_POST_CAPTION_CHARS ? `Keep the caption to ${MAX_POST_CAPTION_CHARS.toLocaleString('en-US')} characters.` : null
+  if (headlineOnly(format)) return (edit.postCaption ?? '').length > MAX_POST_CAPTION_CHARS ? `Keep the caption to ${MAX_POST_CAPTION_CHARS.toLocaleString('en-US')} characters.` : null
   if (!edit.intro.trim()) return 'Add an opening line.'
   if (wordCount(edit.intro) > REMIX_WORD_LIMITS.intro) return `Keep the opening to ${REMIX_WORD_LIMITS.intro} words.`
   if (!edit.beats.some((beat) => beat.text.trim())) return 'Keep at least one voice-over beat.'

@@ -138,5 +138,68 @@ test('Me, on camera: pick the background, film a reaction in sync with the clip,
   await recorder.getByRole('button', { name: 'Done' }).click()
   await page.getByRole('button', { name: /^Make 1 remix/ }).click()
   assert.equal(await app.evaluate(() => globalThis.renderRequests.length), 2)
+
+  // Article or post: talk over a screenshot; the headline is written from what you said.
+  const shot = path.join(output, 'article.png')
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=white:s=600x1600', '-frames:v', '1', shot])
+  await app.evaluate(({ ipcMain, BrowserWindow }, { shot, output }) => {
+    const replace = (channel, handler) => { ipcMain.removeHandler(channel); ipcMain.handle(channel, handler) }
+    globalThis.recs = {}
+    globalThis.writes = 0
+    replace('remix:selectImage', () => shot)
+    replace('remix:moment', () => ({ path: shot, startSeconds: 0, endSeconds: 180, kind: 'image' }))
+    const draft = (headline, postCaption, quote) => ({ id: 0, sourceIndex: 0, sourceTitle: 'The Daily Example', creator: 'The Daily Example', startMs: 0, endMs: 0, quote, why: '',
+      style: 'reaction', stance: 'add_nuance', headline, intro: '', beats: [], close: '', notes: [], grade: null, estimateUsd: 0.02, postCaption, format: 'image', cues: [] })
+    const status = (patch) => ({ id: 'run3', phase: 'review', detail: 'Ready', percent: 100, folder: output, estimateUsd: 0.02, costUsd: null, error: null, outputs: [], warnings: [],
+      onCamera: true, cameraTalk: true, drafts: [draft('', '', '')], ...patch })
+    replace('remix:start', (_event, request) => { globalThis.remixRequests.push(request); return status({}) })
+    replace('remix:write', () => {
+      globalThis.writes++
+      const send = (value) => BrowserWindow.getAllWindows()[0].webContents.send('remix:status', value)
+      const planning = status({ phase: 'planning', detail: 'Writing your headline and caption from what you said', percent: 5 })
+      setTimeout(() => send(status({ costUsd: 0.015, drafts: [draft('This paper says remote work is over', 'My take.\n\nSource: The Daily Example', 'So this article claims remote work is over.')] })), 300)
+      send(planning)
+      return planning
+    })
+    // The previous run finishes.
+    BrowserWindow.getAllWindows()[0].webContents.send('remix:status', { id: 'run9', phase: 'done', detail: 'Done', percent: 100, folder: output, estimateUsd: 0, drafts: [], outputs: [], costUsd: 0.1, warnings: [], error: null })
+  }, { shot, output })
+  await page.getByRole('radio', { name: /Article or post/ }).click()
+  await page.getByRole('heading', { name: '1 · The article or post' }).waitFor()
+  const next = page.getByRole('button', { name: 'Continue to recording' })
+  assert.equal(await next.isDisabled(), true)
+  await page.getByRole('button', { name: 'Choose a screenshot' }).click()
+  await page.getByText('article.png').waitFor()
+  await page.getByPlaceholder('e.g. The Wall Street Journal or @handle').fill('The Daily Example')
+  // Green screen is the default look for a screenshot.
+  assert.equal(await page.getByRole('radio', { name: /Green screen/ }).getAttribute('aria-checked'), 'true')
+  // One promise for the run (it stays ticked from the silent react above).
+  await page.getByRole('checkbox', { name: "I'm allowed to share this screenshot" }).check()
+  await next.click()
+  const imageRequest = await app.evaluate(() => globalThis.remixRequests[globalThis.remixRequests.length - 1])
+  assert.deepEqual([imageRequest.format, imageRequest.host, imageRequest.sources[0], imageRequest.creator, imageRequest.camera.talk], ['image', 'camera', shot, 'The Daily Example', true])
+  await page.getByRole('heading', { name: 'Your take on the screenshot' }).waitFor()
+  assert.equal(await page.getByRole('button', { name: /^Make 1 remix/ }).isDisabled(), true)
+  assert.equal(await page.getByLabel('Headline, take 1').count(), 0, 'the headline comes from the recording')
+  await page.getByRole('button', { name: 'Record', exact: true }).click()
+  await recorder.getByRole('img', { name: 'The screenshot you’re talking about' }).waitFor()
+  await recorder.getByRole('button', { name: 'Start recording' }).click()
+  await recorder.getByText(/^REC/).waitFor({ timeout: 10000 })
+  await page.waitForTimeout(1500)
+  await recorder.getByRole('button', { name: 'Stop' }).click()
+  await recorder.getByText(/^Recorded/).waitFor({ timeout: 10000 })
+  const take = await app.evaluate(() => ({ recs: globalThis.recs, offsets: globalThis.offsets }))
+  assert.deepEqual(streams(take.recs[0].reaction.path), ['audio', 'video'])
+  assert.equal(take.offsets['0-reaction'], 0)
+  // Closing the recorder writes the headline and caption from the take.
+  await recorder.getByRole('button', { name: 'Done' }).click()
+  await page.getByLabel('Headline, take 1').waitFor()
+  assert.equal(await page.getByLabel('Headline, take 1').inputValue(), 'This paper says remote work is over')
+  assert.equal(await app.evaluate(() => globalThis.writes), 1)
+  await page.getByText('You said: “So this article claims remote work is over.”').waitFor()
+  await page.getByLabel('Headline, take 1').fill('Remote work is over, says this paper')
+  await page.getByRole('button', { name: /^Make 1 remix/ }).click()
+  const imageRender = await app.evaluate(() => globalThis.renderRequests[globalThis.renderRequests.length - 1])
+  assert.equal(imageRender[0].headline, 'Remote work is over, says this paper')
   assert.deepEqual(errors, [])
 })

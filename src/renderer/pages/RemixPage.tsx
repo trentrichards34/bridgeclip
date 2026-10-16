@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { create } from 'zustand'
-import { AlertTriangle, Camera, Check, Copy, FileText, Film, FolderOpen, MessageCircle, Pencil, Plus, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
+import { AlertTriangle, Camera, Check, Image as ImageIcon, Copy, FileText, Film, FolderOpen, MessageCircle, Pencil, Plus, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
 import type { AvatarSummary } from '../../shared/avatars'
 import { REACTIONS } from '../../shared/avatars'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
@@ -42,6 +42,8 @@ const COUNTS = [1, 3, 5, 10] as const
 interface FormDraft {
   links: string
   filePath: string | null
+  /** Article or post: the screenshot to talk over. */
+  imagePath: string | null
   creator: string
   angle: RemixAngle
   order: RemixOrder
@@ -67,7 +69,7 @@ interface FormDraft {
 
 /** The form survives navigating away (e.g. to Settings to add a key). */
 const useRemixForm = create<FormDraft>((set) => ({
-  links: '', filePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'still', avatarId: null, voice: AVATAR_VOICE,
+  links: '', filePath: null, imagePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'still', avatarId: null, voice: AVATAR_VOICE,
   count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false, ctaKeyword: '', ctaOffer: '', format: 'commentary', clipRightsAck: false,
   headlineLook: DEFAULT_HEADLINE_LOOK,
   ctaId: null,
@@ -111,10 +113,11 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
   const busy = isRunning(status)
   const reviewing = status?.phase === 'review'
   const { links, invalid } = parseLinks(form.links)
-  const sources = form.filePath ? [form.filePath] : links
   const silent = form.format === 'silent'
-  // Silent react: the avatar's reactions, or the member's own.
-  const host: RemixHost = silent ? (form.host === 'camera' ? 'camera' : 'still') : form.host
+  const image = form.format === 'image'
+  const sources = image ? (form.imagePath ? [form.imagePath] : []) : form.filePath ? [form.filePath] : links
+  // Silent react: the avatar's reactions, or the member's own. Over a screenshot it's always you.
+  const host: RemixHost = image ? 'camera' : silent ? (form.host === 'camera' ? 'camera' : 'still') : form.host
   const onCamera = host === 'camera'
   const needsAvatar = !onCamera && (silent || host !== 'voice')
   // The avatar's own voice (its clone or preset) unless a preset is picked here; voice-only can borrow it too.
@@ -126,6 +129,10 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
   const keyword = normalizeCtaKeyword(form.ctaKeyword)
   const brandKeyword = brand ? brandCtaKeyword(brand.text) : ''
   const blocker = !openrouterConfigured ? 'Add your OpenRouter key in Settings first'
+    : image ? (!form.imagePath ? 'Choose a screenshot of the article or post'
+      : !form.creator.trim() ? 'Add where the screenshot is from, for the credit'
+        : keyword === null ? 'Use one word for the comment keyword, like SALES'
+          : !form.clipRightsAck ? 'Confirm you’re allowed to share this screenshot' : null)
     : sources.length === 0 ? 'Paste a video link or choose a file'
       : sources.length > MAX_SOURCES ? `Up to ${MAX_SOURCES} videos per run`
         : invalid.length > 0 && !form.filePath ? 'Fix the links that aren’t valid'
@@ -139,6 +146,14 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
               : !onCamera && !form.aiLabelAck ? 'Confirm you’ll turn on the AI label when you post' : null
 
   const openKeys = (): void => { requestSettingsSection('keys'); onNavigate('settings') }
+
+  const chooseImage = async (): Promise<void> => {
+    setError(null)
+    try {
+      const path = await getApi().remix.selectImage()
+      if (path) form.update({ imagePath: path })
+    } catch (err) { setError(errorMessage(err, 'That screenshot could not be opened.')) }
+  }
 
   const chooseFile = async (): Promise<void> => {
     setError(null)
@@ -166,9 +181,9 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         sources, creator: sources.length === 1 ? form.creator : '', angle: form.angle, order: form.order, host,
         avatarId: showAvatars ? avatar?.id ?? null : null, voice: form.voice, brandIdentityId: brand?.id ?? null, count: form.count,
         captionPreset: form.captionPreset, includeCaptions: form.includeCaptions, aiLabelAck: form.aiLabelAck,
-        ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : '', format: form.format, clipRightsAck: silent && form.clipRightsAck,
+        ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : '', format: form.format, clipRightsAck: (silent || image) && form.clipRightsAck,
         headlineLook: form.headlineLook,
-        ...(onCamera ? { camera: { ...form.camera, talk: silent && form.camera.talk } } : {}),
+        ...(onCamera ? { camera: { ...form.camera, talk: image || (silent && form.camera.talk) } } : {}),
         ...(form.ctaId ? { ctaId: form.ctaId } : {})
       })
       setStatus((previous) => previous?.id === started.id && previous.phase !== 'planning' ? previous : started)
@@ -218,9 +233,21 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
           <Callout tone="info">The takes above use the settings they were planned with. Changes below apply to your next plan.</Callout>
         )}
         <Panel>
-          <PanelHeader title="1 · The videos" description={`Any public videos with a moment worth reacting to. Paste one link per line, up to ${MAX_SOURCES}.`} />
+          <PanelHeader title={image ? '1 · The article or post' : '1 · The videos'} description={image
+            ? 'A screenshot of the article, post, tweet or headline you want to talk about. A long screenshot scrolls behind you as you talk.'
+            : `Any public videos with a moment worth reacting to. Paste one link per line, up to ${MAX_SOURCES}.`} />
           <div className="mt-4 space-y-3">
-            {form.filePath ? (
+            {image ? (
+              form.imagePath ? (
+                <div className="glass-tile flex items-center gap-3 rounded-xl px-3 py-2.5">
+                  <img src={localFileUrl(form.imagePath)} alt="" className="h-14 w-14 shrink-0 rounded-lg object-cover object-top" />
+                  <span className="min-w-0 flex-1 truncate text-sm text-ink" title={form.imagePath}>{form.imagePath.split(/[\\/]/).pop()}</span>
+                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => void chooseImage()}>Change</Button>
+                </div>
+              ) : (
+                <Button variant="secondary" icon={<ImageIcon className="h-4 w-4" />} disabled={busy} onClick={() => void chooseImage()}>Choose a screenshot</Button>
+              )
+            ) : form.filePath ? (
               <div className="glass-tile flex items-center gap-3 rounded-xl px-3 py-2.5">
                 <Film className="h-4 w-4 shrink-0 text-ink-muted" />
                 <span className="min-w-0 flex-1 truncate text-sm text-ink" title={form.filePath}>{form.filePath.split(/[\\/]/).pop()}</span>
@@ -238,7 +265,11 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                 </div>
               </div>
             )}
-            {sources.length <= 1 && (
+            {image ? (
+              <Field label="Where it’s from" hint="Shown on screen as “Source: …” and in the caption, e.g. the publication or the account.">
+                <TextInput value={form.creator} maxLength={80} placeholder="e.g. The Wall Street Journal or @handle" onChange={(e) => form.update({ creator: e.target.value })} />
+              </Field>
+            ) : sources.length <= 1 && (
               <Field label={form.filePath ? 'Original creator' : 'Original creator (optional)'}
                 hint={form.filePath ? 'Shown on screen while their moment plays.' : 'Shown on screen while their moment plays. Filled in from the link when left blank.'}>
                 <TextInput value={form.creator} maxLength={80} placeholder="e.g. @coachname" onChange={(e) => form.update({ creator: e.target.value })} />
@@ -250,12 +281,17 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         <Panel>
           <PanelHeader title="2 · Style" description="How your presenter responds to the moment." />
           <div className="mt-4 space-y-4">
-            <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Remix format">
+            <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Remix format">
               {REMIX_FORMATS.map((item) => {
                 const selected = form.format === item.id
                 return (
                   <button key={item.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
-                    onClick={() => form.update({ format: item.id })}
+                    onClick={() => item.id !== form.format && form.update({
+                      format: item.id,
+                      // Each kind has its own permission promise (clips vs. a screenshot).
+                      clipRightsAck: false,
+                      ...(item.id === 'image' && form.camera.layout === 'filmed' ? { camera: { ...form.camera, layout: 'greenscreen' as const } } : {})
+                    })}
                     className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
                     <span className="block text-sm font-medium">{item.label}</span>
                     <span className={cn('mt-0.5 block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{item.detail}</span>
@@ -263,7 +299,11 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                 )
               })}
             </div>
-            {silent ? (
+            {image ? (
+              <p className="text-2xs text-ink-muted">
+                You record yourself talking about the screenshot, here or on your phone. Then the AI turns what you said into the hook text and the caption with your call to action, and you can edit both before the video is made.
+              </p>
+            ) : silent ? (
               <p className="text-2xs text-ink-muted">
                 The AI picks complete 10–45 second moments, writes the hook text above the clip, times your avatar’s reactions (watching, nodding, pointing, laughing) to what’s said, and writes the caption with your take and call to action.
               </p>
@@ -329,7 +369,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
               </div>
               {keyword === null ? <p className="text-2xs text-danger">One word: letters, numbers or a dash (2–20 characters).</p>
                 : keyword && form.ctaId ? <p className="text-2xs text-ink-muted">Your CTA clip below plays at the end of every video (so the presenter doesn’t say one too), and the caption ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
-                : keyword ? (silent
+                : keyword ? (silent || image
                   ? <p className="text-2xs text-ink-muted">“Comment {keyword}” shows on screen at the end, and the caption ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
                   : <p className="text-2xs text-ink-muted">Every video ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>)
                   : brandKeyword ? (
@@ -349,9 +389,9 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         </Panel>
 
         <Panel>
-          <PanelHeader title="4 · Presenter" description={silent ? 'Whose reactions play with the clip.' : 'Who delivers the take.'} />
+          <PanelHeader title={image ? '4 · You, on camera' : '4 · Presenter'} description={image ? 'You talk in front of the screenshot, like a green screen.' : silent ? 'Whose reactions play with the clip.' : 'Who delivers the take.'} />
           <div className="mt-4 space-y-4">
-            <div className={cn('grid gap-2', silent ? 'sm:grid-cols-2' : 'sm:grid-cols-2 lg:grid-cols-4')} role="radiogroup" aria-label="Presenter">
+            {!image && <div className={cn('grid gap-2', silent ? 'sm:grid-cols-2' : 'sm:grid-cols-2 lg:grid-cols-4')} role="radiogroup" aria-label="Presenter">
               {(silent
                 ? [{ id: 'still' as const, label: 'My avatar’s reactions', detail: 'The reaction clips made in Avatar Studio', unavailable: undefined },
                     { id: 'camera' as const, label: 'Me, on camera', detail: 'You film your real reaction while the clip plays, or upload one', unavailable: undefined }]
@@ -368,8 +408,8 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                   </button>
                 )
               })}
-            </div>
-            {onCamera && <CameraOptions silent={silent} value={form.camera} onChange={(camera) => form.update({ camera })} />}
+            </div>}
+            {onCamera && <CameraOptions mode={image ? 'image' : silent ? 'silent' : 'take'} value={form.camera} onChange={(camera) => form.update({ camera })} />}
             {showAvatars && (avatars.length === 0 ? (
               <EmptyState icon={<UserRound />} title="No avatars yet" description="Create one in Avatar Studio from your photo, then come back."
                 action={<Button size="sm" onClick={() => onNavigate('avatar')}>Open Avatar Studio</Button>} />
@@ -408,7 +448,9 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         </Panel>
 
         <Panel>
-          <PanelHeader title="5 · Write the takes" description={onCamera
+          <PanelHeader title={image ? '5 · Record your take' : '5 · Write the takes'} description={image
+            ? 'Next you record yourself talking about it, then the AI writes the hook text and caption from your words (about $0.02). You can edit both before the video is made.'
+            : onCamera
             ? silent
               ? `The AI finds the moments and writes the hook text and caption (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). Then you film your reaction to each one you keep, and making them is free.`
               : `The AI finds the moments and writes and grades a take for each (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You edit the lines, read them on camera from a teleprompter, and making them costs about $0.01 each for captions.`
@@ -416,14 +458,14 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
             ? `The AI finds the moments, writes the hook text and caption, and times the reactions (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You review them, and making them is free: your reactions are reused.`
             : `First the AI finds the moments and writes and grades a take for each (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You review and edit them, and only the ones you approve are made: ${cost.perRemixHigh - cost.perRemixLow < 0.01 ? `about $${cost.perRemixHigh.toFixed(2)}` : `about $${cost.perRemixLow.toFixed(2)}–$${cost.perRemixHigh.toFixed(2)}`} each.`} />
           <div className="mt-4 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            {!image && <div className="flex flex-wrap items-center justify-between gap-3">
               <span>
                 <span className="block text-sm text-ink">Takes per long video</span>
                 <span className="block text-2xs text-ink-subtle">A reel, TikTok or Short (up to 3 minutes) always gets one take{silent ? ' that reacts to the whole video' : ''}.</span>
               </span>
               <Segmented label="Takes per video" size="sm" value={String(form.count)} onChange={(value) => form.update({ count: Number(value) })}
                 options={COUNTS.map((count) => ({ value: String(count), label: String(count) }))} />
-            </div>
+            </div>}
             <SettingRow title="Captions" description="Word-by-word captions across the whole video."
               control={<Switch label="Captions" checked={form.includeCaptions} onChange={(includeCaptions) => form.update({ includeCaptions })} />} />
             {form.includeCaptions && <CaptionPresetPicker value={form.captionPreset} onChange={(captionPreset) => form.update({ captionPreset })} />}
@@ -432,10 +474,18 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
               <p className="mb-2.5 text-2xs text-ink-muted">How the headline over each video looks.</p>
               <HeadlineLookPicker value={form.headlineLook} onChange={(headlineLook) => form.update({ headlineLook })} />
             </div>
-            {!pexelsConfigured && !silent && (
+            {!pexelsConfigured && !silent && !onCamera && (
               <p className="text-2xs text-ink-subtle">
                 Tip: add a free Pexels key in Settings → API keys for stock B-roll under the voice-over. Without it, those beats use stills.
               </p>
+            )}
+            {image && (
+              <div className="flex items-start gap-2">
+                <Checkbox checked={form.clipRightsAck} onChange={(clipRightsAck) => form.update({ clipRightsAck })} label="I'm allowed to share this screenshot" className="mt-px" />
+                <span aria-hidden="true" className="cursor-pointer select-none text-xs text-ink-muted" onClick={() => form.update({ clipRightsAck: !form.clipRightsAck })}>
+                  I’m allowed to share this screenshot, and I’m commenting on it: it’s public, my own, or shared with permission. The video credits where it’s from.
+                </span>
+              </div>
             )}
             {silent && (
               <div className="flex items-start gap-2">
@@ -452,11 +502,11 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
               </span>
             </div>}
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || busy || blocker !== null}
+              <Button variant="primary" icon={image ? <Camera className="h-4 w-4" /> : <Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || busy || blocker !== null}
                 tooltip={busy ? 'A remix run is in progress' : blocker ?? undefined} onClick={() => void plan()}>
-                Write the takes
+                {image ? 'Continue to recording' : 'Write the takes'}
               </Button>
-              {reviewing && <span className="text-2xs text-warning">Starting again replaces the takes waiting for review.</span>}
+              {reviewing && <span className="text-2xs text-warning">Starting again replaces the {image ? 'take' : 'takes'} waiting for review.</span>}
             </div>
           </div>
         </Panel>
@@ -470,12 +520,17 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
 }
 
 /** How the member appears in their own recordings. */
-function CameraOptions({ silent, value, onChange }: { silent: boolean; value: CameraSettings; onChange: (value: CameraSettings) => void }): React.JSX.Element {
+function CameraOptions({ mode, value, onChange }: { mode: 'take' | 'silent' | 'image'; value: CameraSettings; onChange: (value: CameraSettings) => void }): React.JSX.Element {
+  const silent = mode === 'silent'
+  const image = mode === 'image'
+  const details: Partial<Record<CameraSettings['layout'], string>> = image
+    ? { filmed: 'The screenshot on top, you below as filmed', cutout: 'The screenshot on top, you cut out below', greenscreen: 'The screenshot fills the screen behind you' }
+    : {}
   return (
     <div className="glass-tile space-y-3 rounded-xl p-3">
       <div>
         <span className="flex items-center gap-1.5 text-sm text-ink"><Camera className="h-4 w-4" />Your background</span>
-        <span className="block text-2xs text-ink-subtle">After the AI writes the takes, you record each one here with your camera, or upload a video from your phone.</span>
+        <span className="block text-2xs text-ink-subtle">{image ? 'You record here with your camera, or upload a video from your phone.' : 'After the AI writes the takes, you record each one here with your camera, or upload a video from your phone.'}</span>
       </div>
       <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Your background">
         {CAMERA_LAYOUTS.map((layout) => {
@@ -485,7 +540,7 @@ function CameraOptions({ silent, value, onChange }: { silent: boolean; value: Ca
               onClick={() => onChange({ ...value, layout: layout.id })}
               className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
               <span className="block text-xs font-medium">{layout.label}</span>
-              <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{layout.detail}</span>
+              <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{details[layout.id] ?? layout.detail}</span>
             </button>
           )
         })}
@@ -493,7 +548,7 @@ function CameraOptions({ silent, value, onChange }: { silent: boolean; value: Ca
       {value.layout === 'cutout' && (
         <div className="flex flex-wrap items-center gap-3">
           <Segmented label="Behind you" size="sm" value={value.backdrop} onChange={(backdrop) => onChange({ ...value, backdrop: backdrop as CameraSettings['backdrop'] })}
-            options={[{ value: 'blur', label: 'Blurred clip' }, { value: 'brand', label: 'My color' }]} />
+            options={[{ value: 'blur', label: image ? 'Blurred screenshot' : 'Blurred clip' }, { value: 'brand', label: 'My color' }]} />
           {value.backdrop === 'brand' && (
             <label className="flex items-center gap-2 text-2xs text-ink-muted">
               <input type="color" aria-label="Background color" value={value.backdropColor} onChange={(e) => onChange({ ...value, backdropColor: e.target.value.toUpperCase() })}
@@ -522,10 +577,15 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
   const [recordings, setRecordings] = useState<RemixRecordings>({})
   const [recording, setRecording] = useState<RemixDraft | null>(null)
   const onCamera = status.onCamera === true
+  // Article or post: one take over a screenshot; the AI writes its headline once you've recorded.
+  const imageTake = status.drafts.length === 1 && status.drafts[0].format === 'image' ? status.drafts[0] : null
+  const [screenshot, setScreenshot] = useState<string | null>(null)
+  const [writeOwn, setWriteOwn] = useState(false)
   useEffect(() => {
     if (!onCamera) return
     getApi().remix.recordings().then(setRecordings).catch(() => undefined)
-  }, [onCamera, status.id])
+    if (imageTake) getApi().remix.moment(imageTake.id).then((moment) => setScreenshot(moment.path)).catch(() => undefined)
+  }, [onCamera, status.id, imageTake])
   const value = (draft: RemixDraft): RemixEdit => edits[draft.id] ?? { id: draft.id, headline: draft.headline, intro: draft.intro, beats: draft.beats, close: draft.close, postCaption: draft.postCaption }
   const change = (draft: RemixDraft, patch: Partial<RemixEdit>): void => setEdits((current) => ({ ...current, [draft.id]: { ...value(draft), ...patch } }))
   const toggle = (id: number): void => setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next })
@@ -543,6 +603,17 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
     try { await getApi().remix.render(chosen.map(value)) } catch (err) { onError(errorMessage(err, 'The remixes could not be started.')) }
     finally { setWorking(false) }
   }
+  const write = async (): Promise<void> => {
+    setWorking(true); onError(null)
+    try { await getApi().remix.write() } catch (err) { onError(errorMessage(err, 'The headline could not be written.')) }
+    finally { setWorking(false) }
+  }
+  const closeRecorder = (): void => {
+    const draft = recording
+    setRecording(null)
+    // Recorded over a screenshot with no headline yet: write it straight away.
+    if (draft?.format === 'image' && !draft.headline && !edits[draft.id]?.headline && recordings[draft.id]?.reaction) void write()
+  }
   const discard = async (): Promise<void> => {
     if (!confirmDiscard) { setConfirmDiscard(true); return }
     setWorking(true); onError(null)
@@ -551,21 +622,26 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
 
   return (
     <Panel>
-      <PanelHeader title={`Review your takes · ${status.drafts.length}`}
-        description={`Graded on the Paid Creators frameworks, best first. Edit any line, untick the ones you don't want, then make the rest.${status.costUsd !== null ? ` Planning cost about $${status.costUsd.toFixed(2)}.` : ''}`} />
+      <PanelHeader title={imageTake ? 'Your take on the screenshot' : `Review your takes · ${status.drafts.length}`}
+        description={imageTake
+          ? 'Record yourself talking about it. The AI then writes the hook text and caption from what you said, and you can edit both before the video is made.'
+          : `Graded on the Paid Creators frameworks, best first. Edit any line, untick the ones you don't want, then make the rest.${status.costUsd !== null ? ` Planning cost about $${status.costUsd.toFixed(2)}.` : ''}`} />
       <div className="mt-4 space-y-3">
-        {status.error && <Callout tone="danger">{status.error} Your takes are still here, so you can try again.</Callout>}
+        {status.error && <Callout tone="danger">{status.error} {imageTake ? 'Your recording is still here, so you can try again.' : 'Your takes are still here, so you can try again.'}</Callout>}
         {status.warnings.map((warning, i) => <Callout key={i} tone="warning">{warning}</Callout>)}
         {ordered.map((draft, position) => {
           const current = value(draft)
           const on = selected.has(draft.id)
           const take = `take ${position + 1}`
-          const problem = on ? problems.get(draft.id) : null
+          const image = draft.format === 'image'
+          // Over a screenshot the headline comes after the recording: no need to flag it before then.
+          const showText = !image || Boolean(draft.headline) || writeOwn || Boolean(edits[draft.id])
+          const problem = on && showText ? problems.get(draft.id) : null
           const counter = (text: string, limit: number): string => `${wordCount(text)} / ${limit} words`
           const cta = /\b[Cc]omment\s+["“]?([A-Z0-9][A-Z0-9-]{1,19})\b/.exec(draft.close)?.[1]
           return (
             <div key={draft.id} className={cn('glass-tile space-y-3 rounded-2xl p-4', !on && 'opacity-60')}>
-              <div className="flex items-start gap-3">
+              {!image && <div className="flex items-start gap-3">
                 <Checkbox checked={on} onChange={() => toggle(draft.id)} label={`Make “${current.headline}”`} className="mt-1" />
                 {draft.grade && (
                   <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-base font-black', GRADE_TONES[draft.grade.letter])}
@@ -581,11 +657,19 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
                   {draft.grade?.verdict && <p className="mt-1.5 text-xs text-ink-muted">{draft.grade.verdict}</p>}
                   {draft.grade?.fix && <p className="mt-0.5 text-xs text-ink-subtle"><Sparkles className="mr-1 inline h-3 w-3" />{draft.grade.fix}</p>}
                 </div>
-              </div>
-              <div className="rounded-xl bg-white/[0.04] px-3 py-2 text-xs text-ink-muted">
+              </div>}
+              {image ? (
+                <div className="flex gap-3 rounded-xl bg-white/[0.04] p-2 text-xs text-ink-muted">
+                  {screenshot && <img src={localFileUrl(screenshot)} alt="Your screenshot" className="h-28 w-24 shrink-0 rounded-lg object-cover object-top" />}
+                  <div className="min-w-0 py-1">
+                    <span className="font-medium text-ink">Source: {draft.creator}</span>
+                    {draft.quote ? <p className="mt-1 line-clamp-4 italic">You said: “{draft.quote}”</p> : <p className="mt-1">Say what it says and what you think about it.</p>}
+                  </div>
+                </div>
+              ) : <div className="rounded-xl bg-white/[0.04] px-3 py-2 text-xs text-ink-muted">
                 <span className="font-medium text-ink">Their moment</span> · {((draft.endMs - draft.startMs) / 1000).toFixed(1)}s{draft.sourceTitle ? ` from “${draft.sourceTitle}”` : ''}
                 <p className={cn('mt-0.5 italic', draft.format === 'silent' && 'line-clamp-4')}>“{draft.quote}”</p>
-              </div>
+              </div>}
               {onCamera && on && (() => {
                 const left = missing(draft)
                 const total = partsFor(draft.format, current.beats.length).length
@@ -594,25 +678,33 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
                     <Camera className="h-4 w-4 text-ink-muted" />
                     <span className="flex-1 text-xs text-ink-muted">
                       {left.length === 0 ? <span className="text-success"><Check className="mr-1 inline h-3 w-3" />Recorded</span>
+                        : image ? 'Record yourself talking about this screenshot.'
                         : draft.format === 'silent' ? 'Film your reaction to this moment.'
                           : `Record your lines: ${total - left.length} of ${total} done.`}
-                      {draft.format !== 'silent' && left.length === 0 && <span className="text-ink-subtle"> · Change a line? Record that part again.</span>}
+                      {draft.format === 'commentary' && left.length === 0 && <span className="text-ink-subtle"> · Change a line? Record that part again.</span>}
                     </span>
                     <Button size="sm" variant={left.length ? 'primary' : 'secondary'} icon={<Camera className="h-3.5 w-3.5" />} disabled={working}
                       onClick={() => setRecording(draft)}>{left.length === 0 ? 'Review or redo' : left.length < total ? 'Keep recording' : 'Record'}</Button>
+                    {image && left.length === 0 && (
+                      <Button size="sm" variant={draft.headline ? 'ghost' : 'primary'} icon={<Sparkles className="h-3.5 w-3.5" />} disabled={working} loading={working}
+                        onClick={() => void write()}>{draft.headline ? 'Rewrite from what I said' : 'Write my headline and caption'}</Button>
+                    )}
                   </div>
                 )
               })()}
+              {image && !showText && (
+                <button type="button" className="text-2xs text-accent" onClick={() => setWriteOwn(true)}>Or write the headline and caption yourself</button>
+              )}
               {!onCamera && draft.format === 'silent' && draft.cues.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5" aria-label={`Reactions, ${take}`}>
                   <span className="text-2xs text-ink-subtle">Reactions:</span>
                   {draft.cues.map((cue, i) => <Badge key={i}>{cue.at.toFixed(0)}s · {REACTIONS.find((item) => item.id === cue.reaction)?.label ?? cue.reaction}</Badge>)}
                 </div>
               )}
-              <Field label="Headline" hint={counter(current.headline, REMIX_WORD_LIMITS.headline)}>
+              {showText && <Field label="Headline" hint={counter(current.headline, REMIX_WORD_LIMITS.headline)}>
                 <TextInput aria-label={`Headline, ${take}`} value={current.headline} maxLength={160} onChange={(e) => change(draft, { headline: e.target.value })} />
-              </Field>
-              {draft.format !== 'silent' && (<>
+              </Field>}
+              {draft.format === 'commentary' && (<>
               <Field label="Opening (presenter)" hint={counter(current.intro, REMIX_WORD_LIMITS.intro)}>
                 <TextArea aria-label={`Opening (presenter), ${take}`} rows={2} value={current.intro} onChange={(e) => change(draft, { intro: e.target.value })} />
               </Field>
@@ -625,10 +717,10 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
                 <TextArea aria-label={`Close (presenter), ${take}`} rows={2} value={current.close} onChange={(e) => change(draft, { close: e.target.value })} />
               </Field>
               </>)}
-              <Field label="Post caption" hint={`${(current.postCaption ?? '').length.toLocaleString('en-US')} / ${MAX_POST_CAPTION_CHARS.toLocaleString('en-US')} characters · filled in when you post from the Library; empty keeps the AI’s`}>
+              {showText && <Field label="Post caption" hint={`${(current.postCaption ?? '').length.toLocaleString('en-US')} / ${MAX_POST_CAPTION_CHARS.toLocaleString('en-US')} characters · filled in when you post from the Library; empty keeps the AI’s`}>
                 <TextArea aria-label={`Post caption, ${take}`} rows={6} value={current.postCaption ?? ''} maxLength={MAX_POST_CAPTION_CHARS}
                   onChange={(e) => change(draft, { postCaption: e.target.value })} />
-              </Field>
+              </Field>}
               {edits[draft.id] && draft.grade && <p className="text-2xs text-ink-subtle">Graded before your edits.</p>}
               {problem && <p className="text-2xs text-danger" role="alert">{problem}</p>}
               {draft.notes.map((note, i) => <p key={i} className="text-2xs text-warning"><AlertTriangle className="mr-1 inline h-3 w-3" />{note}</p>)}
@@ -637,16 +729,17 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
         })}
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={working} disabled={working || chosen.length === 0 || blocked}
-            tooltip={unrecorded > 0 ? `Record yourself for ${unrecorded === 1 ? 'the take' : `${unrecorded} takes`} still marked “Record”` : blocked ? 'Fix the takes marked in red first' : undefined} onClick={() => void make()}>
+            tooltip={unrecorded > 0 ? `Record yourself for ${unrecorded === 1 ? 'the take' : `${unrecorded} takes`} still marked “Record”`
+              : imageTake && !value(imageTake).headline.trim() ? 'Write the headline first' : blocked ? 'Fix the takes marked in red first' : undefined} onClick={() => void make()}>
             Make {chosen.length === 1 ? '1 remix' : `${chosen.length} remixes`}{chosen.length ? ` · about $${total.toFixed(2)}` : ''}
           </Button>
           <Button variant={confirmDiscard ? 'danger' : 'ghost'} icon={<X className="h-4 w-4" />} disabled={working} onClick={() => void discard()}>
-            {confirmDiscard ? 'Click again to discard' : 'Discard all'}
+            {confirmDiscard ? 'Click again to discard' : imageTake ? 'Discard' : 'Discard all'}
           </Button>
         </div>
       </div>
       {recording && <RemixRecorder draft={recording} edit={value(recording)} recordings={recordings} talk={status.cameraTalk === true}
-        onRecordings={setRecordings} onClose={() => setRecording(null)} />}
+        onRecordings={setRecordings} onClose={closeRecorder} />}
     </Panel>
   )
 }

@@ -304,7 +304,12 @@ export interface BridgeClipAPI {
     /** Me, on camera: ask for the camera and microphone (macOS asks once). */
     mediaAccess: () => Promise<{ camera: boolean; microphone: boolean }>
     /** The take's moment, to play while recording a reaction. */
-    moment: (draftId: number) => Promise<{ path: string; startSeconds: number; endSeconds: number }>
+    /** The take's moment (or screenshot), to show while recording. */
+    moment: (draftId: number) => Promise<{ path: string; startSeconds: number; endSeconds: number; kind: 'video' | 'image' }>
+    /** Article or post: write the headline and caption from the recorded take. */
+    write: () => Promise<RemixStatus>
+    /** Choose a screenshot for an article-or-post remix. */
+    selectImage: () => Promise<string | null>
     recordings: () => Promise<RemixRecordings>
     recordingBegin: (draftId: number, part: RecordingPart, mime: string) => Promise<string>
     recordingAppend: (token: string, chunk: Uint8Array) => Promise<void>
@@ -541,6 +546,8 @@ const api: BridgeClipAPI = {
     onStatus: (callback) => subscribe('remix:status', callback),
     mediaAccess: () => ipcRenderer.invoke('remix:mediaAccess'),
     moment: (draftId) => ipcRenderer.invoke('remix:moment', draftId),
+    write: () => ipcRenderer.invoke('remix:write'),
+    selectImage: () => ipcRenderer.invoke('remix:selectImage'),
     recordings: () => ipcRenderer.invoke('remix:recordings'),
     recordingBegin: (draftId, part, mime) => ipcRenderer.invoke('remix:recordingBegin', draftId, part, mime),
     recordingAppend: (token, chunk) => ipcRenderer.invoke('remix:recordingAppend', token, chunk),

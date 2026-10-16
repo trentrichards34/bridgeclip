@@ -48,7 +48,7 @@ function ipcWithLibrary(library) {
     './avatar-studio': { onAvatarRenderStatus: () => {} },
     './voice-samples': { voiceSample: async () => new Uint8Array() },
     './media-permissions': { requestMediaAccess: async () => ({ camera: true, microphone: true }) },
-    '../shared/remix': { RECORDING_VIDEO_EXTENSIONS: ['mp4'] },
+    '../shared/remix': { RECORDING_VIDEO_EXTENSIONS: ['mp4'], REMIX_IMAGE_EXTENSIONS: ['png'] },
     '../shared/ctas': { CTA_IMAGE_EXTENSIONS: [], CTA_VIDEO_EXTENSIONS: [], parseCtaChoice: (v) => v ?? null }, './ctas': { addCta: async () => [], applyRunCta: async () => ({ failed: [] }), listCtas: async () => [], removeCta: async () => [], updateCta: async () => [] }, './reactions': { makeReactions: async () => ({}), reactionsInProgress: () => false, uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] },
     './remix': { onRemixStatus: () => {}, remixAvatarInUse: () => null, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
     './logger': {},

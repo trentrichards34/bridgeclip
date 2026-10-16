@@ -1,6 +1,6 @@
 import { openEditor, saveEditor, runEditor, cancelEditor, replaceEditorSource } from './clip-editor'
 import { requestMediaAccess } from './media-permissions'
-import { RECORDING_VIDEO_EXTENSIONS } from '../shared/remix'
+import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
 import { editorCloseReady, freeEditorMedia, readEditorProgress } from './clip-editor'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
@@ -17,7 +17,7 @@ import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../s
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
-import { abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
+import { writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
@@ -280,6 +280,14 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // Me, on camera: recordings for the takes under review.
   handle('remix:mediaAccess', () => requestMediaAccess())
   handle('remix:moment', (_event, draftId: unknown) => remixMoment(draftId))
+  handle('remix:write', () => writeRemix())
+  handle('remix:selectImage', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a screenshot', filters: [{ name: 'Images', extensions: REMIX_IMAGE_EXTENSIONS }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return authorizeMedia(result.filePaths[0])
+  })
   handle('remix:recordings', () => remixRecordings())
   handle('remix:recordingBegin', (_event, draftId: unknown, part: unknown, mime: unknown) => beginRecording(draftId, part, mime))
   handle('remix:recordingAppend', (_event, token: unknown, chunk: unknown) => appendRecording(token, chunk))

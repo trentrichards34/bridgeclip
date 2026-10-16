@@ -391,3 +391,97 @@ test('Me, on camera: recordings are saved per take and part, uploads copied in, 
   assert.equal(fs.existsSync(path.join(status.folder, '.recordings')), false)
   fs.rmSync(out, { recursive: true, force: true })
 })
+
+test('Article or post: a screenshot run starts in review, writes its headline from the recording, then renders over the image', async () => {
+  const { EventEmitter } = require('node:events')
+  const childProcess = require('node:child_process')
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'remix-image-'))
+  const settings = { ...SETTINGS, outputDirectory: out }
+  const configs = []
+  let writeResult = null
+  const spawn = () => {
+    const child = new EventEmitter()
+    child.pid = 0
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
+    child.stdin = { on() {}, end(text) {
+      const config = JSON.parse(text)
+      configs.push(config)
+      const result = config.mode === 'write' ? writeResult : { ok: true, remixes: [] }
+      setImmediate(() => { child.stdout.emit('data', JSON.stringify(result) + '\n'); child.emit('close', 0) })
+    } }
+    return child
+  }
+  const chosen = new Set()
+  const camera = load('main/remix.ts', {
+    electron: { app: { getPath: () => out, isPackaged: true } },
+    child_process: { ...childProcess, spawn },
+    './avatars': { portraitPath: () => '', voiceSamplePath: () => '', readAvatar: () => null, readReactions: () => [] },
+    './logger': { logger: { info() {}, warn() {} } },
+    './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
+    './security': { assertMediaPath: (p) => { if (!chosen.has(p)) throw new Error('Invalid media path') }, authorizeMedia: (p) => p },
+    './settings-store': { loadSettings: () => settings, getSettingsForBridge: () => ({}) },
+    './tools': { resolveBinary: (name) => name }
+  })
+  const shot = path.join(out, 'article.png')
+  childProcess.execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=white:s=400x1200', '-frames:v', '1', shot])
+  chosen.add(shot)
+  const imageBase = { ...base, sources: [shot], format: 'image', creator: 'The Daily Example', clipRightsAck: true, aiLabelAck: false, host: 'still', avatarId: null }
+
+  // Requests: one chosen screenshot, a credit, the sharing promise; always you, always talking, one take.
+  const request = camera.parseRemixRequest(imageBase, out).request
+  assert.deepEqual([request.host, request.format, request.count, request.camera.layout, request.camera.talk], ['camera', 'image', 1, 'greenscreen', true])
+  assert.equal(camera.parseRemixRequest({ ...imageBase, camera: { layout: 'cutout', backdrop: 'blur', backdropColor: '#111111', talk: false } }, out).request.camera.talk, true)
+  assert.throws(() => camera.parseRemixRequest({ ...imageBase, creator: '' }, out), /where the screenshot is from/)
+  assert.throws(() => camera.parseRemixRequest({ ...imageBase, clipRightsAck: false }, out), /share this screenshot/)
+  assert.throws(() => camera.parseRemixRequest({ ...imageBase, sources: ['https://example.com/a.png'] }, out), /screenshot again/)
+  assert.throws(() => camera.parseRemixRequest({ ...imageBase, sources: [shot, shot + 'x'] }, out), /one screenshot/)
+  const video = path.join(out, 'clip.mp4'); fs.writeFileSync(video, 'x'); chosen.add(video)
+  assert.throws(() => camera.parseRemixRequest({ ...imageBase, sources: [video] }, out), /JPG, PNG or WebP/)
+
+  // Starting goes straight to review with one take to record; the engine isn't run yet.
+  const started = await camera.startRemix(imageBase)
+  assert.equal(started.phase, 'review')
+  assert.equal(configs.length, 0)
+  assert.equal(started.drafts.length, 1)
+  assert.deepEqual([started.drafts[0].format, started.drafts[0].headline, started.drafts[0].creator], ['image', '', 'The Daily Example'])
+  const moment = await camera.remixMoment(0)
+  assert.equal(moment.kind, 'image')
+  assert.equal(path.dirname(moment.path), path.join(started.folder, '.work'))
+  assert.equal(fs.readFileSync(moment.path).equals(fs.readFileSync(shot)), true)
+  await assert.rejects(camera.writeRemix(), /Record your take first/)
+  await assert.rejects(camera.renderRemix([{ id: 0, headline: '', intro: '', close: '', beats: [] }]), /headline/)
+
+  // Record (here: an upload), then write: the engine gets the screenshot, the credit and the take.
+  const phone = path.join(out, 'phone.mp4')
+  childProcess.execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=64x64:d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', phone])
+  const list = await camera.uploadRecording(0, 'reaction', phone)
+  const wait = async () => { for (let i = 0; i < 100 && camera.remixStatus()?.phase !== 'review'; i++) await new Promise((resolve) => setTimeout(resolve, 20)) }
+  // A failed write keeps the take and the recording.
+  writeResult = { ok: false, error: 'We couldn’t hear you in that recording. Record it again with your microphone on.' }
+  assert.equal((await camera.writeRemix()).phase, 'planning')
+  await wait()
+  assert.match(camera.remixStatus().error, /couldn’t hear you/)
+  assert.equal(camera.remixRecordings()[0].reaction.path, list[0].reaction.path)
+  writeResult = { ok: true, cost_usd: 0.015, drafts: [{ id: 0, format: 'image', headline: 'This paper says remote work is over', intro: '', close: '', beats: [], quote: 'So this article claims…', post_caption: 'My take.\n\nSource: The Daily Example', estimate_usd: 0.01 }] }
+  await camera.writeRemix()
+  await wait()
+  const write = configs[1]
+  assert.equal(write.mode, 'write')
+  assert.deepEqual(write.sources, [])
+  assert.deepEqual(write.image_source, { path: moment.path, credit: 'The Daily Example' })
+  assert.deepEqual(write.recordings, { 0: { reaction: { path: list[0].reaction.path, offset_s: 0 } } })
+  assert.equal(write.camera_talk, true)
+  const reviewed = camera.remixStatus()
+  assert.equal(reviewed.error, null)
+  assert.equal(reviewed.drafts[0].headline, 'This paper says remote work is over')
+  assert.equal(reviewed.drafts[0].postCaption, 'My take.\n\nSource: The Daily Example')
+  assert.ok(Math.abs(reviewed.costUsd - 0.015) < 1e-9)
+
+  // Make it: the edited headline and the take go to the engine.
+  await camera.renderRemix([{ id: 0, headline: 'Remote work is over, says this paper', intro: '', close: '', beats: [] }])
+  const render = configs[configs.length - 1]
+  assert.equal(render.mode, 'render')
+  assert.equal(render.approved[0].headline, 'Remote work is over, says this paper')
+  assert.deepEqual(render.recordings, { 0: { reaction: { path: list[0].reaction.path, offset_s: 0 } } })
+  fs.rmSync(out, { recursive: true, force: true })
+})

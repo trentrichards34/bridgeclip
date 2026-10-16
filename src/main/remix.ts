@@ -12,7 +12,7 @@ import { parseCtaChoice } from '../shared/ctas'
 import { applyRunCta, readCta } from './ctas'
 import {
   estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput,
-  AVATAR_VOICE, DEFAULT_CAMERA, isRecordingPart, normalizeCtaKeyword, parseCameraSettings, partsFor, RECORDING_VIDEO_EXTENSIONS, remixSourceUrl, type BrandIdentity, type RecordingPart, type RemixDraft, type RemixOutput, type RemixRecordings, type RemixRequest, type RemixStatus
+  headlineOnly, MAX_IMAGE_TAKE_SECONDS, REMIX_IMAGE_EXTENSIONS, AVATAR_VOICE, DEFAULT_CAMERA, isRecordingPart, normalizeCtaKeyword, parseCameraSettings, partsFor, RECORDING_VIDEO_EXTENSIONS, remixSourceUrl, type BrandIdentity, type RecordingPart, type RemixDraft, type RemixOutput, type RemixRecordings, type RemixRequest, type RemixStatus
 } from '../shared/remix'
 import { presetVoiceId, type Avatar } from '../shared/avatars'
 
@@ -124,6 +124,8 @@ interface RunContext {
   config: Record<string, unknown>
   draftIds: Set<number>
   planCostUsd: number
+  /** An article-or-post remix is writing its headline from the recording (back to review afterwards). */
+  writing?: boolean
 }
 
 interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null; context: RunContext; ctaAbort?: AbortController }
@@ -165,9 +167,17 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const sources = [...new Set(trimmed.map((item) => remixSourceUrl(item) ?? item))]
   if (sources.length === 0) throw new Error('Paste a video link or choose a file.')
   if (sources.length > MAX_SOURCES) throw new Error(`Add up to ${MAX_SOURCES} videos per run.`)
-  const urls = sources.map(remixSourceUrl)
+  if (raw.format !== undefined && raw.format !== 'silent' && raw.format !== 'commentary' && raw.format !== 'image') throw new Error('Choose the kind of remix.')
+  const format = raw.format === 'silent' || raw.format === 'image' ? raw.format : 'commentary'
+  const image = format === 'image'
+  const urls = image ? sources.map(() => null) : sources.map(remixSourceUrl)
   const local = sources.filter((_, i) => !urls[i])
-  if (local.length > 0) {
+  if (image) {
+    // An article or a post: one screenshot, chosen in the file dialog.
+    if (sources.length > 1) throw new Error('Choose one screenshot at a time.')
+    try { assertMediaPath(local[0], outputDirectory) } catch { throw new Error('Choose the screenshot again.') }
+    if (!REMIX_IMAGE_EXTENSIONS.includes(extname(local[0]).slice(1).toLowerCase())) throw new Error('Choose a screenshot (JPG, PNG or WebP).')
+  } else if (local.length > 0) {
     if (sources.length > 1) throw new Error('Use one file at a time, or paste links (one per line) for several videos.')
     try { assertMediaPath(local[0], outputDirectory) } catch { throw new Error('Paste full video links (https://…) or choose the file again.') }
     if (!VIDEO_EXTENSIONS.has(extname(local[0]).toLowerCase())) throw new Error('Choose a video file (MP4, MOV, MKV or WebM).')
@@ -175,11 +185,11 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   if (!isRemixAngle(raw.angle)) throw new Error('Choose a remix style.')
   const order = raw.order === undefined ? 'moment_first' : raw.order
   if (!isRemixOrder(order)) throw new Error('Choose the order of the video.')
-  if (!isRemixHost(raw.host)) throw new Error('Choose how your presenter appears.')
+  if (!image && !isRemixHost(raw.host)) throw new Error('Choose how your presenter appears.')
   // Lip-sync to our own voice isn't possible on OpenRouter yet: the avatar's photo presents instead.
-  const host = raw.host === 'lipsync' ? 'still' : raw.host
-  const format = raw.format === 'silent' ? 'silent' : 'commentary'
-  if (raw.format !== undefined && raw.format !== 'silent' && raw.format !== 'commentary') throw new Error('Choose the kind of remix.')
+  // A screenshot is always you, on camera.
+  const host = image ? 'camera' : raw.host === 'lipsync' ? 'still' : raw.host as Exclude<RemixRequest['host'], 'lipsync'>
+  if (image && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to share this screenshot.')
   if (format === 'silent' && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use these clips: Silent react plays much more of them.')
   const onCamera = host === 'camera'
   if (format === 'silent' && !onCamera && !isAvatarId(raw.avatarId)) throw new Error('Choose the avatar whose reactions to use.')
@@ -190,13 +200,16 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const avatarId = onCamera ? null : host === 'voice' && voice !== AVATAR_VOICE && format !== 'silent' ? null : raw.avatarId
   if (!onCamera && host !== 'voice' && !isAvatarId(avatarId)) throw new Error('Choose an avatar, or switch to voice only.')
   if (voice === AVATAR_VOICE && !isAvatarId(avatarId)) throw new Error('Choose the avatar whose voice to use, or pick a preset voice.')
-  const camera = onCamera ? parseCameraSettings(raw.camera ?? DEFAULT_CAMERA) : undefined
+  const parsedCamera = onCamera ? parseCameraSettings(raw.camera ?? (image ? { ...DEFAULT_CAMERA, layout: 'greenscreen' } : DEFAULT_CAMERA)) : undefined
+  // Over a screenshot you're the only sound, so your voice is always kept.
+  const camera = parsedCamera && image ? { ...parsedCamera, talk: true } : parsedCamera
   const brandIdentityId = raw.brandIdentityId === null || raw.brandIdentityId === undefined ? null : raw.brandIdentityId
   if (brandIdentityId !== null && !isBrandId(brandIdentityId)) throw new Error('Choose a brand identity.')
-  if (typeof raw.count !== 'number' || !Number.isInteger(raw.count) || raw.count < 1 || raw.count > MAX_REMIXES) throw new Error(`Make between 1 and ${MAX_REMIXES} remixes per video.`)
+  if (!image && (typeof raw.count !== 'number' || !Number.isInteger(raw.count) || raw.count < 1 || raw.count > MAX_REMIXES)) throw new Error(`Make between 1 and ${MAX_REMIXES} remixes per video.`)
   if (!isCaptionPresetId(raw.captionPreset)) throw new Error('Choose a caption style.')
   const creator = typeof raw.creator === 'string' ? raw.creator.replace(/\s+/g, ' ').trim() : ''
   if (creator.length > 80) throw new Error('Keep the creator name under 80 characters.')
+  if (image && !creator) throw new Error('Add where the screenshot is from (the publication or the account) so the video credits it.')
   if (local.length > 0 && !creator) throw new Error('Add the original creator’s name so the video credits them.')
   // On camera it's really you: no AI presenter or AI voice to label.
   if (!onCamera && raw.aiLabelAck !== true) throw new Error('Confirm you’ll turn on the AI-content label when you post.')
@@ -211,8 +224,8 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
     request: {
       sources: sources.map((source, i) => urls[i] ?? source), creator: sources.length === 1 ? creator : '', angle: raw.angle, order,
       host, avatarId: avatarId as string | null, voice, brandIdentityId,
-      count: raw.count, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: !onCamera,
-      ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : '', format, clipRightsAck: format === 'silent',
+      count: image ? 1 : raw.count as number, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: !onCamera,
+      ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : '', format, clipRightsAck: format !== 'commentary',
       ...(headlineLook ? { headlineLook } : {}),
       ...(ctaId ? { ctaId } : {}),
       ...(camera ? { camera } : {})
@@ -358,6 +371,16 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       await rm(folder, { recursive: true, force: true })
       throw new Error('This avatar’s files could not be copied for the remix. Check that your output folder has free space, then try again.')
     }
+    // A screenshot: the run reads its own copy.
+    const image = request.format === 'image'
+    let imageCopy: string | null = null
+    if (image) {
+      imageCopy = join(folder, '.work', `source${extname(request.sources[0]).toLowerCase()}`)
+      try { await mkdir(dirname(imageCopy), { recursive: true }); await copyFile(request.sources[0], imageCopy) } catch {
+        await rm(folder, { recursive: true, force: true })
+        throw new Error('The screenshot could not be copied for the remix. Check that your output folder has free space, then try again.')
+      }
+    }
     // Only now that the new run can start: it replaces takes waiting for review.
     if (reviewing) await discardRemix()
     await cleanupAbandoned(settings.outputDirectory, folder)
@@ -365,7 +388,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     const context: RunContext = {
       request, draftIds: new Set(), planCostUsd: 0,
       config: {
-        sources: request.sources, output_dir: folder, angle: request.angle, order: request.order, count: request.count, host: request.host,
+        sources: image ? [] : request.sources, output_dir: folder,
+        ...(imageCopy ? { image_source: { path: imageCopy, credit: request.creator } } : {}), angle: request.angle, order: request.order, count: request.count, host: request.host,
         voice: preset, voice_model: cloned ? 'fish-audio/s2.1-pro' : 'elevenlabs/eleven-v3', voice_reference: voiceReference,
         voice_transcript: cloned?.transcript ?? '', avatar_photo: request.format === 'silent' ? null : photo,
         format: request.format, reactions, reactions_ai: reactionsAi, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
@@ -387,6 +411,12 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         drafts: [], outputs: [], costUsd: null, warnings: [], error: null
       }
     }
+    if (image) {
+      // Nothing to plan: you record first, then the AI writes the headline from what you said.
+      context.draftIds = new Set([0])
+      finish(run, { phase: 'review', detail: 'Record your take', percent: 100, drafts: [imageDraft(request.creator)] })
+      return run.status
+    }
     active = run
     notify(run.status)
     launch(run, { ...context.config, mode: 'plan' })
@@ -394,12 +424,38 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
   } finally { starting = false; pending = null }
 }
 
+/** The one take of an article-or-post remix, before its headline is written. */
+function imageDraft(credit: string): RemixDraft {
+  return {
+    id: 0, sourceIndex: 0, sourceTitle: credit, creator: credit, startMs: 0, endMs: 0, quote: '', why: '', style: 'reaction', stance: 'add_nuance',
+    headline: '', intro: '', beats: [], close: '', notes: [], grade: null, estimateUsd: estimateRemixCost('camera', 1, 0, 'image').perRemixHigh,
+    postCaption: '', format: 'image', cues: []
+  }
+}
+
+/** Article or post: write the headline and caption from the recorded take, then back to review. */
+export async function writeRemix(): Promise<RemixStatus> {
+  if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
+  const run = reviewing
+  if (!run || run.status.phase !== 'review' || run.context.request.format !== 'image') throw new Error('There is no screenshot take waiting for review.')
+  if (!run.context.recordings?.get(0)?.get('reaction')) throw new Error('Record your take first.')
+  const recordings = engineRecordings(run, [{ id: 0, beats: [] }])
+  reviewing = null
+  active = run
+  run.cancelled = false
+  run.context.writing = true
+  run.status = { ...run.status, phase: 'planning', detail: 'Writing your headline and caption from what you said', percent: 5, error: null }
+  notify(run.status)
+  launch(run, { ...run.context.config, mode: 'write', recordings })
+  return run.status
+}
+
 /** Render the drafts the user approved (with their edits). */
 export async function renderRemix(value: unknown): Promise<RemixStatus> {
   if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
   const run = reviewing
   if (!run || run.status.phase !== 'review') throw new Error('There is nothing waiting for review. Plan the remixes again.')
-  const edits = parseRemixEdits(value, run.context.draftIds, new Set(run.status.drafts.filter((draft) => draft.format === 'silent').map((draft) => draft.id)))
+  const edits = parseRemixEdits(value, run.context.draftIds, new Set(run.status.drafts.filter((draft) => headlineOnly(draft.format)).map((draft) => draft.id)))
   const recordings = run.context.request.host === 'camera' ? engineRecordings(run, edits) : null
   reviewing = null
   active = run
@@ -456,10 +512,17 @@ async function withCtaDurations(folder: string, outputs: RemixOutput[]): Promise
   } catch { return outputs }
 }
 
+function engineDidNotStart(run: ActiveRemix): void {
+  const error = 'The clipping engine could not start. Run Settings → System check.'
+  // Writing a headline keeps your recording: back to review.
+  if (run.context.writing) { run.context.writing = false; finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, error }); return }
+  finish(run, { phase: 'failed', error })
+}
+
 function launch(run: ActiveRemix, config: Record<string, unknown>): void {
   execute(run, config).catch((error: unknown) => {
     logger.warn('remix.spawn.failed', { message: String(error).slice(0, 300) })
-    finish(run, { phase: 'failed', error: 'The clipping engine could not start. Run Settings → System check.' })
+    engineDidNotStart(run)
   })
 }
 
@@ -497,12 +560,28 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
   child.stderr.on('data', (chunk) => { stderr = (stderr + String(chunk)).slice(-4000) })
   child.on('error', () => {
     clearTimeout(timer)
-    finish(run, { phase: 'failed', error: 'The clipping engine could not start. Run Settings → System check.' })
+    engineDidNotStart(run)
   })
   child.on('close', () => { void closed() })
   async function closed(): Promise<void> {
     clearTimeout(timer); run.child = undefined
     if (!running(run)) return
+    if (run.context.writing) {
+      run.context.writing = false
+      if (run.cancelled) { finish(run, { phase: 'review', detail: 'Ready for review', percent: 100 }); return }
+      const drafts = result?.ok === true && Array.isArray(result.drafts) ? result.drafts.map(parseRemixDraft).filter((item): item is RemixDraft => item !== null && item.id === 0) : []
+      const written = typeof result?.cost_usd === 'number' && Number.isFinite(result.cost_usd) ? result.cost_usd : 0
+      run.context.planCostUsd += written
+      if (drafts.length) {
+        logger.info('remix.written', { cost: written })
+        finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, drafts: [{ ...drafts[0], format: 'image' }], costUsd: run.context.planCostUsd, error: null })
+      } else {
+        logger.warn('remix.write.failed', { stderr: stderr.slice(-1500) })
+        const message = typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : 'The headline could not be written. Try again, or type your own headline.'
+        finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, error: message })
+      }
+      return
+    }
     const planning = run.status.phase === 'planning'
     if (run.cancelled) {
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
@@ -550,7 +629,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
       }
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
       // Nothing was made but the plan is still there: back to review to retry without planning (and paying) again.
-      if (!planning && existsSync(join(run.status.folder, '.work', 'plan.json'))) {
+      if (!planning && (request.format === 'image' || existsSync(join(run.status.folder, '.work', 'plan.json')))) {
         finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, error: message, warnings })
         return
       }
@@ -606,14 +685,19 @@ async function keep(run: ActiveRemix, draftId: number, part: RecordingPart, file
 }
 
 /** Where the take's moment is, so the recorder can play it while you react. */
-export async function remixMoment(draftId: unknown): Promise<{ path: string; startSeconds: number; endSeconds: number }> {
+export async function remixMoment(draftId: unknown): Promise<{ path: string; startSeconds: number; endSeconds: number; kind: 'video' | 'image' }> {
   const run = reviewRun()
   const draft = run.status.drafts.find((item) => item.id === draftId)
   if (!draft) throw new Error('That take is no longer in this review.')
+  if (draft.format === 'image') {
+    const image = (run.context.config.image_source as { path?: unknown } | undefined)?.path
+    if (typeof image !== 'string' || !existsSync(image)) throw new Error('This screenshot is no longer available. Start again.')
+    return { path: authorizeMedia(image), startSeconds: 0, endSeconds: MAX_IMAGE_TAKE_SECONDS, kind: 'image' }
+  }
   const plan = JSON.parse(await readFile(join(run.status.folder, '.work', 'plan.json'), 'utf8')) as { sources?: { video?: unknown }[] }
   const video = plan.sources?.[draft.sourceIndex]?.video
   if (typeof video !== 'string' || !existsSync(video)) throw new Error('This take’s video is no longer available. Plan the remixes again.')
-  return { path: authorizeMedia(video), startSeconds: draft.startMs / 1000, endSeconds: draft.endMs / 1000 }
+  return { path: authorizeMedia(video), startSeconds: draft.startMs / 1000, endSeconds: draft.endMs / 1000, kind: 'video' }
 }
 
 /** Start saving a recording made in the app; chunks follow, then finish. */
@@ -707,8 +791,9 @@ function engineRecordings(run: ActiveRemix, edits: { id: number; beats: unknown[
     const parts = partsFor(draft.format, edit.beats.length)
     const missing = parts.filter((part) => !takes?.get(part))
     if (missing.length) throw new Error(`Record “${draft.headline.slice(0, 60)}” first (${missing.length === parts.length ? 'nothing recorded yet' : `${missing.length} part${missing.length === 1 ? '' : 's'} left`}).`)
-    out[String(edit.id)] = draft.format === 'silent'
-      ? { reaction: { path: takes!.get('reaction')!.path, offset_s: takes!.get('reaction')!.offsetS } }
+    out[String(edit.id)] = headlineOnly(draft.format)
+      // Over a screenshot there's nothing to line up with: the take starts the video.
+      ? { reaction: { path: takes!.get('reaction')!.path, offset_s: draft.format === 'image' ? 0 : takes!.get('reaction')!.offsetS } }
       : { intro: takes!.get('intro')!.path, beats: parts.filter((part) => part.startsWith('beat')).map((part) => takes!.get(part)!.path), close: takes!.get('close')!.path }
   }
   return out
