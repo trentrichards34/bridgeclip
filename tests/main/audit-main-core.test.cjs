@@ -60,7 +60,7 @@ function ipcWithLibrary(library) {
     './zernio/service': {},
     './zernio/posts': {},
     './automations': {},
-    './clip-editor': {},
+    './clip-editor': { onEditorExportCta() {} },
     './output-storage': {},
     './edit-inspector': {},
     './youtube-preview': {},

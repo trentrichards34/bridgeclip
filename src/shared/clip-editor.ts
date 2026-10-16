@@ -1,4 +1,5 @@
 /** Persisted source-time edits. Media paths and review results are main-process owned. */
+import { parseHeadlineLook, type HeadlineLook } from './headline-look'
 export type Crop = [number, number, number, number]
 export type CropCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 export type EditorRange = [number, number]
@@ -12,7 +13,13 @@ export interface EditorScene {
   at_ms: number; layout: 'fill' | 'split' | 'fit'; crops: Crop[]
   /** Incoming eased movement, in source milliseconds. Absent/zero is a cut. */
   transition_ms?: number
+  /** Split layout: the top panel's share of the output height (SPLIT_RANGE). Absent is an even split. */
+  split?: number
 }
+export const SPLIT_RANGE = { min: 0.3, max: 0.7, default: 0.5 } as const
+/** The hook text over a 9:16 clip: its words and look. */
+export interface EditorHook { text: string; look: HeadlineLook }
+export const MAX_HOOK_CHARS = 200
 export interface EditorQuestion {
   id: string; prompt: string; yes: string; no: string; probability: number | null; threshold: number; status: string
 }
@@ -30,6 +37,10 @@ export interface CandidateEdit {
   /** Caption block center, as a fraction of output height. Null uses layout placement. */
   caption_y?: number | null
   dismissed_camera_markers?: number[]
+  /** Hook text: absent keeps the run's original, null removes it. */
+  hook?: EditorHook | null
+  /** Call to action added after export: absent uses the run's, null none. */
+  cta_id?: string | null
 }
 export interface EditorCandidate extends CandidateEdit {
   camera_scan?: CameraScan
@@ -159,8 +170,9 @@ export function parseCandidateEdit(value: unknown, duration: number, transcriptC
     if (crops.length !== (x.layout === 'split' ? 2 : 1)) fail()
     const transition = x.transition_ms === undefined ? 0 : num(x.transition_ms, 0, 5000)
     if (transition > 0 && (transition < 100 || !Number.isInteger(transition))) fail()
+    const split = x.layout === 'split' && x.split !== undefined && x.split !== null ? num(x.split, SPLIT_RANGE.min, SPLIT_RANGE.max) : undefined
     return { at_ms: num(x.at_ms, 0, duration), layout: x.layout as EditorScene['layout'], crops,
-      ...(transition ? { transition_ms: transition } : {}) }
+      ...(transition ? { transition_ms: transition } : {}), ...(split !== undefined && split !== SPLIT_RANGE.default ? { split } : {}) }
   })
   if (!scenes.length || scenes[0].at_ms !== 0 || scenes.some((s, i) => i > 0 && s.at_ms <= scenes[i - 1].at_ms)) fail()
   if (scenes.some((s, i) => s.transition_ms && !canAnimateScene(scenes, i))) fail()
@@ -185,7 +197,19 @@ export function parseCandidateEdit(value: unknown, duration: number, transcriptC
   return { id, title, ranges, scenes, captions: v.captions as boolean, caption_preset, video_speed: num(v.video_speed, 1, 2),
     status: status as CandidateEdit['status'], caption_edits, caption_suppression_ranges,
     caption_y: v.caption_y == null ? null : num(v.caption_y, .1, .9),
+    ...(v.hook === undefined ? {} : { hook: parseHook(v.hook) }),
+    ...(v.cta_id === undefined ? {} : { cta_id: v.cta_id === null ? null : /^[a-f0-9]{16}$/.test(str(v.cta_id, 16)) ? v.cta_id as string : fail() }),
     ...(v.dismissed_camera_markers === undefined ? {} : { dismissed_camera_markers: [...new Set(arr(v.dismissed_camera_markers, 5000).map((t) => num(t, 0, duration)))].sort((a, b) => a - b) }) }
+}
+/** A hook from the project or the renderer: null (none) or text and a look. */
+export function parseHook(value: unknown): EditorHook | null {
+  if (value === null) return null
+  const v = record(value)
+  const text = str(v.text, MAX_HOOK_CHARS * 2).replace(/\s+/g, ' ').trim()
+  if (!text || text.length > MAX_HOOK_CHARS) fail()
+  let look: HeadlineLook
+  try { look = parseHeadlineLook(v.look) } catch { return fail() }
+  return { text, look }
 }
 function question(value: unknown): EditorQuestion {
   const v = record(value)
@@ -234,10 +258,12 @@ export function parseEditorProject(value: unknown): EditorProject {
 }
 export function candidateEdit(c: CandidateEdit): CandidateEdit {
   const { id, title, ranges, scenes, captions, caption_preset, video_speed, status, caption_edits, caption_suppression_ranges = [], dismissed_camera_markers } = c
-  return { id, title, ranges, scenes, captions, caption_preset, video_speed, status, caption_edits, caption_suppression_ranges, caption_y: c.caption_y ?? null, ...(dismissed_camera_markers ? { dismissed_camera_markers } : {}) }
+  return { id, title, ranges, scenes, captions, caption_preset, video_speed, status, caption_edits, caption_suppression_ranges, caption_y: c.caption_y ?? null,
+    ...(dismissed_camera_markers ? { dismissed_camera_markers } : {}), ...(c.hook !== undefined ? { hook: c.hook } : {}), ...(c.cta_id !== undefined ? { cta_id: c.cta_id } : {}) }
 }
 export function renderEditKey(c: CandidateEdit): string {
-  return JSON.stringify({ ...candidateEdit(c), status: undefined, dismissed_camera_markers: undefined })
+  // The call to action is added after rendering, so changing it doesn't need a new render.
+  return JSON.stringify({ ...candidateEdit(c), status: undefined, dismissed_camera_markers: undefined, cta_id: undefined })
 }
 export function refineEdit<T extends CandidateEdit>(c: T, patch: Partial<CandidateEdit>): T {
   const next = { ...c, ...patch }
@@ -263,7 +289,35 @@ export function retimeScene(scenes: EditorScene[], index: number, time: number, 
   return at_ms === scenes[index].at_ms ? scenes : scenes.map((s, i) => i === index ? { ...s, at_ms } : s)
 }
 export function canAnimateScene(scenes: EditorScene[], index: number): boolean {
-  return index > 0 && scenes[index].layout !== 'fit' && scenes[index - 1].layout === scenes[index].layout
+  // A split animates its crops, never its size: both sides need the same split.
+  return index > 0 && scenes[index].layout !== 'fit' && scenes[index - 1].layout === scenes[index].layout && splitOf(scenes[index - 1]) === splitOf(scenes[index])
+}
+/** The top panel's share of the height (1 for a single-panel layout). */
+export function splitOf(scene: Pick<EditorScene, 'layout' | 'split'>): number {
+  return scene.layout === 'split' ? scene.split ?? SPLIT_RANGE.default : 1
+}
+/** Each panel's output rectangle as [y, height] fractions of the output. */
+export function panelRows(scene: Pick<EditorScene, 'layout' | 'split'>): [number, number][] {
+  const top = splitOf(scene)
+  return scene.layout === 'split' ? [[0, top], [top, 1 - top]] : [[0, 1]]
+}
+/** Fit a crop to a panel's aspect (output width / panel height in pixels), keeping its center and height where possible. */
+export function fitCropToAspect(crop: Crop, aspect: number, width: number, height: number): Crop {
+  let h = crop[3], w = h * height * aspect / width
+  if (w > 1) { w = 1; h = w * width / (aspect * height) }
+  if (h > 1) { h = 1; w = h * height * aspect / width }
+  const cx = crop[0] + crop[2] / 2, cy = crop[1] + crop[3] / 2
+  return [Math.max(0, Math.min(1 - w, cx - w / 2)), Math.max(0, Math.min(1 - h, cy - h / 2)), w, h]
+}
+/** Change a split scene's size, re-fitting both crops to their new panel shapes. */
+export function resizeSplit(scene: EditorScene, split: number, outAspect: number, width: number, height: number): EditorScene {
+  const s = Math.round(Math.max(SPLIT_RANGE.min, Math.min(SPLIT_RANGE.max, split)) * 100) / 100
+  if (scene.layout !== 'split') return scene
+  const crops = scene.crops.map((crop, i) => fitCropToAspect(crop, outAspect / (i === 0 ? s : 1 - s), width, height))
+  const next: EditorScene = { ...scene, crops }
+  delete next.split
+  if (s !== SPLIT_RANGE.default) next.split = s
+  return next
 }
 export function normalizeSceneTransitions(scenes: EditorScene[]): EditorScene[] {
   return scenes.map((s, i) => canAnimateScene(scenes, i) ? s : { ...s, transition_ms: undefined })

@@ -14,6 +14,35 @@ import { logger } from './logger'
 type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source'
 interface EditorOperation { progress?: EditorSession['progress']; action: NonNullable<EditorSession['operation']>; child?: ChildProcess; cancelled?: boolean; abort?: AbortController; batch?: EditorBatch }
 const operations = new Map<string, EditorOperation>()
+
+/** Adds a call to action to a newly exported clip (set by the IPC layer, which owns the CTA library). */
+type EditorCtaApplier = (run: string, ctaId: string, clipIndex: number) => Promise<void>
+let applyExportCta: EditorCtaApplier | null = null
+export function onEditorExportCta(applier: EditorCtaApplier): void { applyExportCta = applier }
+
+/** The run's own call to action: the one most of its made clips end with. */
+async function runCtaId(run: string): Promise<string | null> {
+  try {
+    const counts = new Map<string, number>()
+    for (const clip of (await getJobOutput(run))?.clips ?? []) if (clip.cta?.id) counts.set(clip.cta.id, (counts.get(clip.cta.id) ?? 0) + 1)
+    return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+  } catch { return null }
+}
+
+/** After an export: end the new clip with the candidate's call to action (or the run's). A failure leaves the clip as rendered. */
+async function addExportCta(run: string, candidateId: string): Promise<void> {
+  if (!applyExportCta) return
+  try {
+    const candidate = readProject(run).candidates.find((c) => c.id === candidateId)
+    const index = candidate?.exports.at(-1)
+    const ctaId = candidate?.cta_id === undefined ? await runCtaId(run) : candidate.cta_id
+    if (!candidate || index === undefined || !ctaId) return
+    await applyExportCta(run, ctaId, index)
+  } catch (error) {
+    // The clip stays as rendered; the Library can add the call to action later.
+    logger.warn('editor.cta.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
+  }
+}
 export function editorBusy(path: string): boolean { return operations.has(realpathSync(path)) }
 function runPath(path: unknown): string {
   assertAbsolutePath(path)
@@ -313,6 +342,7 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
       if (operation.cancelled) break
       try {
         await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId })
+        if ((action === 'export' || action === 'export-all') && !operation.cancelled) await addExportCta(run, candidate.id)
         if (operation.batch) operation.batch.completed++
       } catch (error) {
         // One failed clip must not strand the rest of "Bake all".

@@ -788,3 +788,46 @@ test('editor media can be freed only when nothing is left to finish, and the pro
     await assert.rejects(f.main.runEditor(f.run, 1, 'candidate-2', 'export'), /read-only/)
   } finally { f.cleanup() }
 })
+
+test('editor split size, hook text and call to action are checked, kept, and only the first two need a new render', () => {
+  const c = structuredClone(fixture.candidates[0])
+  c.scenes = [{ at_ms: 0, layout: 'split', crops: [[0, 0, .5, .5], [.5, .5, .5, .5]], split: .38 }]
+  const parsed = schema.parseCandidateEdit(c, 12000)
+  assert.equal(parsed.scenes[0].split, .38)
+  // An even split is stored as absent; out of range or on a single panel is refused or dropped.
+  assert.equal('split' in schema.parseCandidateEdit({ ...c, scenes: [{ ...c.scenes[0], split: .5 }] }, 12000).scenes[0], false)
+  for (const split of [.29, .71, '0.4', NaN]) assert.throws(() => schema.parseCandidateEdit({ ...c, scenes: [{ ...c.scenes[0], split }] }, 12000))
+  assert.equal('split' in schema.parseCandidateEdit({ ...c, scenes: [{ at_ms: 0, layout: 'fill', crops: [[0, 0, .5, 1]], split: .4 }] }, 12000).scenes[0], false)
+  assert.deepEqual(schema.panelRows(parsed.scenes[0]), [[0, .38], [.38, .62]])
+  // Resizing re-fits each crop to its panel's new shape (9:16 output from a 16:9 source).
+  const scene = schema.resizeSplit({ at_ms: 0, layout: 'split', crops: [[.25, 0, .3, .5], [.5, .5, .3, .5]] }, .6, 9 / 16, 1920, 1080)
+  assert.equal(scene.split, .6)
+  scene.crops.forEach((crop, i) => {
+    const panel = (9 / 16) / (i === 0 ? .6 : .4)
+    assert.ok(Math.abs(crop[2] * 1920 / (crop[3] * 1080) - panel) < 1e-6, `panel ${i} keeps its shape`)
+    assert.ok(crop[0] >= 0 && crop[0] + crop[2] <= 1 && crop[1] >= 0 && crop[1] + crop[3] <= 1)
+  })
+  assert.equal('split' in schema.resizeSplit(scene, .5, 9 / 16, 1920, 1080), false)
+  // Smooth movement between splits needs the same size.
+  const a = { at_ms: 0, layout: 'split', crops: c.scenes[0].crops }
+  assert.equal(schema.canAnimateScene([a, { ...a, at_ms: 1000 }], 1), true)
+  assert.equal(schema.canAnimateScene([a, { ...a, at_ms: 1000, split: .4 }], 1), false)
+
+  // Hook text: null removes it; text and look are checked.
+  const look = { look: 'brand', color: '#ff8800', font: 'serif' }
+  assert.deepEqual(schema.parseCandidateEdit({ ...c, hook: { text: '  This   coach  is wrong ', look } }, 12000).hook, { text: 'This coach is wrong', look: { look: 'brand', color: '#FF8800', font: 'serif' } })
+  assert.equal(schema.parseCandidateEdit({ ...c, hook: null }, 12000).hook, null)
+  assert.equal('hook' in schema.parseCandidateEdit(c, 12000), false)
+  for (const hook of [{ text: '', look }, { text: 'x'.repeat(201), look }, { text: 'ok', look: { look: 'neon' } }, 'text']) assert.throws(() => schema.parseCandidateEdit({ ...c, hook }, 12000))
+  // Call to action: null, an id, or absent.
+  assert.equal(schema.parseCandidateEdit({ ...c, cta_id: 'a1b2c3d4e5f60718' }, 12000).cta_id, 'a1b2c3d4e5f60718')
+  assert.equal(schema.parseCandidateEdit({ ...c, cta_id: null }, 12000).cta_id, null)
+  assert.throws(() => schema.parseCandidateEdit({ ...c, cta_id: '../x' }, 12000))
+
+  // A split or hook change needs a new render; a CTA change doesn't (it's added afterward).
+  const base = { ...parsed, status: 'ready' }
+  assert.equal(schema.refineEdit(base, { hook: null }).status, 'refining')
+  assert.equal(schema.refineEdit(base, { scenes: [{ ...base.scenes[0], split: .45 }] }).status, 'refining')
+  assert.equal(schema.refineEdit(base, { cta_id: 'a1b2c3d4e5f60718' }).status, 'ready')
+  assert.equal(schema.candidateEdit({ ...base, cta_id: null, hook: null }).cta_id, null)
+})

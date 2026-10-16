@@ -5,7 +5,11 @@ import { cloneElement, isValidElement, useCallback, useEffect, useRef, useState,
 import { Archive, Check, ChevronLeft, ChevronRight, ChevronDown, Download, Film, Loader2, Pause, Pencil, Play, Redo2, RotateCcw, Scissors, SkipBack, Undo2, X } from 'lucide-react'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, formatTimecode, localFileUrl, parseTimecode } from '../lib/utils'
-import { EDITOR_REVISION_CONFLICT, cameraMarkers, snapFrame, stepFrame, candidateEdit, canAnimateScene, defaultCrop, editDuration, editSignature, editorProgress, framingAt, normalizeSceneTransitions, refineEdit, renderEditKey, resizeCrop, retimeScene, sceneAt, trimRange, type CandidateEdit, type Crop, type CropCorner, type EditorCandidate, type EditorQuestion, type EditorRange, type EditorScene, type EditorSession } from '../../shared/clip-editor'
+import { HeadlineLookPicker } from './HeadlineLookPicker'
+import { CtaPicker } from './CtaPicker'
+import { Segmented } from './ui/Segmented'
+import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, headlineBarColor, headlineTextColor } from '../../shared/headline-look'
+import { MAX_HOOK_CHARS, SPLIT_RANGE, panelRows, resizeSplit, splitOf, EDITOR_REVISION_CONFLICT, cameraMarkers, snapFrame, stepFrame, candidateEdit, canAnimateScene, defaultCrop, editDuration, editSignature, editorProgress, framingAt, normalizeSceneTransitions, refineEdit, renderEditKey, resizeCrop, retimeScene, sceneAt, trimRange, type CandidateEdit, type Crop, type CropCorner, type EditorCandidate, type EditorQuestion, type EditorRange, type EditorScene, type EditorSession } from '../../shared/clip-editor'
 import { CameraChanges, CameraScanButton } from './CameraChanges'
 import { ActionMenu } from './ui/ActionMenu'
 import { Button } from './ui/Button'
@@ -57,7 +61,10 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
   const [replacement, setReplacement] = useState<string | null>(null)
   const closeReplacement = useCallback(() => setReplacement(null), [])
   const [selected, setSelected] = useState(0)
-  const [tab, setTab] = useState<'review' | 'framing' | 'captions' | 'transcript'>('review')
+  const [tab, setTab] = useState<'review' | 'framing' | 'captions' | 'hook' | 'transcript'>('review')
+  const [ctaMode, setCtaMode] = useState<'run' | 'none' | 'pick' | null>(null)
+  // Each clip shows its own call-to-action choice.
+  useEffect(() => setCtaMode(null), [selected])
   const [time, setTime] = useState(0)
   const timeRef = useRef(time); timeRef.current = time
   const [playing, setPlaying] = useState(false)
@@ -319,7 +326,32 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
           const scale = Math.min(out.width / v.videoWidth, out.height / v.videoHeight)
           const w = v.videoWidth * scale, h = v.videoHeight * scale
           ctx.drawImage(v, (out.width - w) / 2, (out.height - h) / 2, w, h)
-        } else scene.crops.forEach(([x, y, w, h], i) => ctx.drawImage(v, x * v.videoWidth, y * v.videoHeight, w * v.videoWidth, h * v.videoHeight, 0, i * out.height / scene.crops.length, out.width, out.height / scene.crops.length))
+        } else {
+          const rows = panelRows(scene)
+          scene.crops.forEach(([x, y, w, h], i) => ctx.drawImage(v, x * v.videoWidth, y * v.videoHeight, w * v.videoWidth, h * v.videoHeight, 0, rows[i][0] * out.height, out.width, rows[i][1] * out.height))
+        }
+        // Hook text preview (vertical clips): the bar or floating text at the top.
+        const hook = c.hook
+        if (hook && hook.look.look !== 'none' && out.height > out.width) {
+          const bar = headlineBarColor(hook.look), size = Math.round(out.width * 0.058)
+          const family = HEADLINE_FONTS.find((f) => f.id === hook.look.font)?.family ?? 'sans-serif'
+          const text = HEADLINE_FONTS.find((f) => f.id === hook.look.font)?.upper ? hook.text.toUpperCase() : hook.text
+          ctx.font = `800 ${size}px ${family}`
+          const lines: string[] = []
+          for (const word of text.split(' ')) {
+            const last = lines.at(-1)
+            if (last !== undefined && ctx.measureText(`${last} ${word}`).width < out.width * 0.86) lines[lines.length - 1] = `${last} ${word}`
+            else lines.push(word)
+          }
+          const shown = lines.slice(0, 3), top = Math.round(out.height * 0.035), lineH = Math.round(size * 1.18)
+          if (bar) { ctx.fillStyle = bar; ctx.fillRect(0, 0, out.width, top * 2 + shown.length * lineH) }
+          ctx.textAlign = 'center'; ctx.textBaseline = 'top'
+          shown.forEach((line, i) => {
+            if (!bar) { ctx.lineWidth = Math.max(2, size / 7); ctx.strokeStyle = '#000'; ctx.strokeText(line, out.width / 2, top + i * lineH) }
+            ctx.fillStyle = headlineTextColor(hook.look); ctx.fillText(line, out.width / 2, top + i * lineH)
+          })
+          ctx.textAlign = 'start'
+        }
       }
       frame = requestAnimationFrame(draw)
     }
@@ -426,11 +458,15 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
   const sceneIndex = candidate.scenes.indexOf(currentScene)
   const canAnimate = canAnimateScene(candidate.scenes, sceneIndex)
   const crop = currentScene.crops[Math.min(panel, currentScene.crops.length - 1)]
+  // The selected panel's shape: a split's halves follow its size.
+  const panelAspect = aspect / panelRows(currentScene)[Math.min(panel, currentScene.crops.length - 1)][1]
+  const topShare = splitOf(currentScene)
+  const setSplit = (value: number, remember = true): void => sceneChange(resizeSplit(currentScene, value, aspect, project.width, project.height), remember)
   const sceneChange = (patch: Partial<EditorScene>, remember = true): void => change({ scenes: candidate.scenes.map((s, i) => i === sceneIndex ? { ...s, ...patch } : s) }, remember)
   const cropChange = (c: Crop, remember = true): void => sceneChange({ crops: currentScene.crops.map((r, i) => i === Math.min(panel, currentScene.crops.length - 1) ? c : r) }, remember)
   const setLayout = (layout: EditorScene['layout']): void => {
     setPanel(0)
-    sceneChange({ layout, crops: layout === 'split' ? [defaultCrop(project.width, project.height, aspect * 2, .25), defaultCrop(project.width, project.height, aspect * 2, .75)] : [defaultCrop(project.width, project.height, aspect)] })
+    sceneChange({ layout, split: undefined, crops: layout === 'split' ? [defaultCrop(project.width, project.height, aspect / SPLIT_RANGE.default, .25), defaultCrop(project.width, project.height, aspect / SPLIT_RANGE.default, .75)] : [defaultCrop(project.width, project.height, aspect)] })
   }
   const newLayout = (position?: number): void => {
     const v = video.current
@@ -654,16 +690,44 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
           </div>
         </div>
       </div>
-      <aside className="editor-inspector"><div className="editor-tabs">{(['review', 'framing', 'captions', 'transcript'] as const).map((t) => <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)} className={cn(tab === t && 'selected')}>{t === 'review' ? 'Jev' : t[0].toUpperCase() + t.slice(1)}</button>)}</div>
+      <aside className="editor-inspector"><div className="editor-tabs">{(['review', 'framing', 'captions', 'hook', 'transcript'] as const).map((t) => <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)} className={cn(tab === t && 'selected')}>{t === 'review' ? 'Jev' : t === 'hook' ? 'Hook & CTA' : t[0].toUpperCase() + t.slice(1)}</button>)}</div>
         <div ref={transcriptPanel} className="editor-inspector-body"><label className="editor-label" htmlFor="editor-title">Title</label><textarea id="editor-title" value={candidate.title} maxLength={200} disabled={editingDisabled} rows={2} onChange={(e) => { if (e.target.value.trim()) change({ title: e.target.value }) }} />
           {tab === 'review' && <div className="space-y-3 mt-4"><div className="flex items-center justify-between"><span className={cn('text-xs', current ? candidate.review?.decision === 'passes' ? 'text-success' : 'text-warning' : 'text-ink-muted')}>{!current ? 'Review out of date' : candidate.review?.decision === 'passes' ? 'Checks passed' : 'Consider before baking'}</span><Button size="sm" disabled={editingDisabled} onClick={() => { void run('review') }}>Review again</Button></div><p className="text-2xs text-ink-subtle">{current ? 'Review the questions, then adjust the cut and framing. You decide when the clip is ready.' : 'These results describe an earlier edit. Run Jev again to check your changes.'}</p>{candidate.review?.questions.map((q) => <Question key={q.id} q={q} />)}{!candidate.review && <p>No review is available yet. Run Jev to evaluate this candidate.</p>}{candidate.review?.cuts.map((cut, i) => <div key={i}><p className="editor-label">Removed {clock(cut.interval[0])} – {clock(cut.interval[1])}</p>{cut.questions.map((q) => <Question key={q.id} q={q} />)}</div>)}</div>}
-          {tab === 'framing' && <fieldset disabled={editingDisabled} className="space-y-4 mt-4"><div className="editor-layouts">{(['fill', 'split', 'fit'] as const).map((l) => <button key={l} className={cn(currentScene.layout === l && 'selected')} onClick={() => setLayout(l)}>{l === 'fill' ? 'Full frame' : l === 'split' ? 'Split' : 'Fit'}</button>)}</div>{currentScene.layout === 'split' && <div className="flex gap-2">{['Top', 'Bottom'].map((name, i) => <Button key={i} size="sm" variant={panel === i ? 'primary' : 'secondary'} onClick={() => setPanel(i)}>{name}</Button>)}</div>}{currentScene.layout !== 'fit' && <><label className="editor-label">Zoom<input aria-label="Crop zoom" type="range" min={1} max={4} step={.02} value={Math.min(4, defaultCrop(project.width, project.height, aspect * currentScene.crops.length)[2] / crop[2])} onChange={(e) => cropChange(defaultCrop(project.width, project.height, aspect * currentScene.crops.length, crop[0] + crop[2] / 2, crop[1] + crop[3] / 2, Number(e.target.value)))} /></label>{([0, 1] as const).map((axis) => <label key={axis} className="editor-label">{axis === 0 ? 'Horizontal' : 'Vertical'}<input type="range" aria-label={axis === 0 ? 'Horizontal crop position' : 'Vertical crop position'} min={0} max={Math.max(0, 1 - crop[axis + 2])} step={.001} value={crop[axis]} onChange={(e) => { const c = [...crop] as Crop; c[axis] = Number(e.target.value); cropChange(c) }} /></label>)}</>}{sceneIndex > 0 && <div className="editor-motion"><label className="flex items-center justify-between gap-2 text-xs"><span>Smooth movement</span><input type="checkbox" aria-label="Smooth movement" checked={!!currentScene.transition_ms} disabled={!canAnimate || editingDisabled} onChange={(e) => sceneChange({ transition_ms: e.target.checked ? 600 : undefined })} /></label>{canAnimate && currentScene.transition_ms ? <label className="editor-label mt-3">Duration <span className="float-right">{(currentScene.transition_ms / 1000).toFixed(1)}s</span><input aria-label="Movement duration" type="range" min={100} max={5000} step={100} value={currentScene.transition_ms} onChange={(e) => sceneChange({ transition_ms: Number(e.target.value) })} /></label> : !canAnimate ? <p className="text-2xs text-ink-subtle mt-2">Use the same layout as the previous section to animate its crops.</p> : null}{!!currentScene.transition_ms && <Button size="sm" variant="ghost" onClick={() => { seek(Math.max(start, currentScene.at_ms)); void video.current?.play() }}>Preview movement</Button>}</div>}<div className="space-y-2 border-t border-white/10 pt-3"><div className="editor-layout-time">
+          {tab === 'framing' && <fieldset disabled={editingDisabled} className="space-y-4 mt-4"><div className="editor-layouts">{(['fill', 'split', 'fit'] as const).map((l) => <button key={l} className={cn(currentScene.layout === l && 'selected')} onClick={() => setLayout(l)}>{l === 'fill' ? 'Full frame' : l === 'split' ? 'Split' : 'Fit'}</button>)}</div>{currentScene.layout === 'split' && <><div className="flex gap-2">{['Top', 'Bottom'].map((name, i) => <Button key={i} size="sm" variant={panel === i ? 'primary' : 'secondary'} onClick={() => setPanel(i)}>{name}</Button>)}</div>
+            <div className="space-y-2 rounded-lg border border-white/10 p-2.5"><label className="editor-label">Split size <span className="float-right">Top {Math.round(topShare * 100)}% · Bottom {Math.round((1 - topShare) * 100)}%</span>
+              <input aria-label="Split size" type="range" min={SPLIT_RANGE.min * 100} max={SPLIT_RANGE.max * 100} step={1} value={Math.round(topShare * 100)} onChange={(e) => setSplit(Number(e.target.value) / 100)} /></label>
+              <div className="flex flex-wrap gap-1">{([['Bigger top', .6], ['Even', .5], ['Bigger bottom', .4]] as const).map(([label, value]) => <Button key={label} size="sm" variant={Math.abs(topShare - value) < .005 ? 'secondary' : 'ghost'} onClick={() => setSplit(value)}>{label}</Button>)}</div>
+              <p className="text-2xs text-ink-subtle">Applies to this layout section. Use “Use layout for whole clip” to apply it everywhere.</p></div></>}{currentScene.layout !== 'fit' && <><label className="editor-label">Zoom<input aria-label="Crop zoom" type="range" min={1} max={4} step={.02} value={Math.min(4, defaultCrop(project.width, project.height, panelAspect)[2] / crop[2])} onChange={(e) => cropChange(defaultCrop(project.width, project.height, panelAspect, crop[0] + crop[2] / 2, crop[1] + crop[3] / 2, Number(e.target.value)))} /></label>{([0, 1] as const).map((axis) => <label key={axis} className="editor-label">{axis === 0 ? 'Horizontal' : 'Vertical'}<input type="range" aria-label={axis === 0 ? 'Horizontal crop position' : 'Vertical crop position'} min={0} max={Math.max(0, 1 - crop[axis + 2])} step={.001} value={crop[axis]} onChange={(e) => { const c = [...crop] as Crop; c[axis] = Number(e.target.value); cropChange(c) }} /></label>)}</>}{sceneIndex > 0 && <div className="editor-motion"><label className="flex items-center justify-between gap-2 text-xs"><span>Smooth movement</span><input type="checkbox" aria-label="Smooth movement" checked={!!currentScene.transition_ms} disabled={!canAnimate || editingDisabled} onChange={(e) => sceneChange({ transition_ms: e.target.checked ? 600 : undefined })} /></label>{canAnimate && currentScene.transition_ms ? <label className="editor-label mt-3">Duration <span className="float-right">{(currentScene.transition_ms / 1000).toFixed(1)}s</span><input aria-label="Movement duration" type="range" min={100} max={5000} step={100} value={currentScene.transition_ms} onChange={(e) => sceneChange({ transition_ms: Number(e.target.value) })} /></label> : !canAnimate ? <p className="text-2xs text-ink-subtle mt-2">Use the same layout as the previous section to animate its crops.</p> : null}{!!currentScene.transition_ms && <Button size="sm" variant="ghost" onClick={() => { seek(Math.max(start, currentScene.at_ms)); void video.current?.play() }}>Preview movement</Button>}</div>}<div className="space-y-2 border-t border-white/10 pt-3"><div className="editor-layout-time">
             {sceneIndex > 0 ? <label className="flex items-center justify-between gap-3 text-xs"><span>Layout starts</span><TimeInput key={sceneIndex} label="Layout start" value={currentScene.at_ms} disabled={editingDisabled} onChange={(t) => moveScene(sceneIndex, t)} /></label>
               : <p className="text-2xs text-ink-muted">Initial layout</p>}
             {sceneIndex > 0 && frames.length > 0 && <div className="flex gap-2 mt-2"><Button size="sm" variant="ghost" disabled={editingDisabled} onClick={() => moveScene(sceneIndex, stepFrame(frames, currentScene.at_ms, -1))}>One frame earlier</Button><Button size="sm" variant="ghost" disabled={editingDisabled} onClick={() => moveScene(sceneIndex, stepFrame(frames, currentScene.at_ms, 1))}>One frame later</Button></div>}
             {sceneIndex + 1 < candidate.scenes.length && <p className="text-2xs text-ink-subtle mt-2">Until {clock(candidate.scenes[sceneIndex + 1].at_ms)}</p>}
           </div><Button size="sm" icon={<Scissors size={13} />} disabled={candidate.scenes.length >= 60 || time <= start || time >= end || candidate.scenes.some((s) => Math.abs(s.at_ms - time) < .01)} onClick={() => newLayout()}>New layout here</Button>{sceneIndex > 0 && <Button size="sm" variant="ghost" onClick={() => change({ scenes: candidate.scenes.filter((_, i) => i !== sceneIndex) })}>Remove layout change</Button>}<Button size="sm" variant="ghost" onClick={() => change({ scenes: [{ ...currentScene, at_ms: 0 }] })}>Use layout for whole clip</Button></div></fieldset>}
           {tab === 'captions' && <fieldset disabled={editingDisabled} className="space-y-4 mt-4"><div className="flex items-center justify-between text-xs"><span>Burn in captions</span><Switch label="Burn in captions" checked={candidate.captions} onChange={(captions) => change({ captions })} /></div><p className="text-2xs text-ink-subtle">Captions follow your final cuts. Use the placement guide in Transcript to position them before baking.</p><CaptionSuppression key={candidate.id} ranges={suppressedCaptions} cuts={candidate.ranges} time={time} duration={project.duration_ms} disabled={editingDisabled || !candidate.captions} onChange={(caption_suppression_ranges) => { video.current?.pause(); change({ caption_suppression_ranges }) }} seek={seek} />{candidate.captions && <CaptionPresetPicker value={candidate.caption_preset} onChange={(caption_preset) => change({ caption_preset })} />}<label className="editor-label">Export speed<select value={candidate.video_speed} onChange={(e) => change({ video_speed: Number(e.target.value) })}>{[1, 1.1, 1.25, 1.5, 1.75, 2].map((n) => <option key={n} value={n}>{n}×</option>)}</select></label></fieldset>}
+          {tab === 'hook' && <div className="space-y-4 mt-4">
+            <fieldset disabled={editingDisabled} className="space-y-3">
+              <div className="flex items-center justify-between text-xs"><span>Hook text at the top</span>
+                <Switch label="Hook text at the top" checked={candidate.hook !== null}
+                  onChange={(on) => change({ hook: on ? { text: candidate.title.slice(0, MAX_HOOK_CHARS), look: DEFAULT_HEADLINE_LOOK } : null })} /></div>
+              {project.aspect_ratio !== '9:16' && <p className="text-2xs text-ink-subtle">Hook text is drawn on vertical (9:16) clips only.</p>}
+              {candidate.hook === undefined && <p className="text-2xs text-ink-subtle">This clip keeps the hook text it was made with. <button className="underline" onClick={() => change({ hook: { text: candidate.title.slice(0, MAX_HOOK_CHARS), look: DEFAULT_HEADLINE_LOOK } })}>Change it</button></p>}
+              {candidate.hook && <>
+                <label className="editor-label" htmlFor="editor-hook">Words <span className="float-right">{candidate.hook.text.length} / {MAX_HOOK_CHARS}</span></label>
+                <textarea id="editor-hook" aria-label="Hook text" rows={3} maxLength={MAX_HOOK_CHARS} value={candidate.hook.text}
+                  onChange={(e) => { const text = e.target.value.replace(/\s+/g, ' '); if (text.trim() && candidate.hook) change({ hook: { ...candidate.hook, text } }) }} />
+                <HeadlineLookPicker value={candidate.hook.look} onChange={(look) => candidate.hook && change({ hook: { ...candidate.hook, look } })} />
+                <p className="text-2xs text-ink-subtle">The Output preview shows roughly where it sits. Bake the clip again to apply it.</p>
+              </>}
+            </fieldset>
+            <section className="space-y-2 border-t border-white/10 pt-3" aria-label="Call to action">
+              <p className="text-xs">Call to action at the end</p>
+              <Segmented label="Call to action" size="sm" value={ctaMode ?? (candidate.cta_id === undefined ? 'run' : candidate.cta_id === null ? 'none' : 'pick')}
+                onChange={(mode) => { setCtaMode(mode); if (mode === 'run') change({ cta_id: undefined }); else if (mode === 'none') change({ cta_id: null }) }}
+                options={[{ value: 'run', label: 'Same as the run' }, { value: 'none', label: 'None' }, { value: 'pick', label: 'Choose' }]} />
+              {(ctaMode ?? (candidate.cta_id ? 'pick' : null)) === 'pick' && <CtaPicker value={candidate.cta_id ?? null} disabled={editingDisabled} onChange={(id) => change({ cta_id: id })} />}
+              <p className="text-2xs text-ink-subtle">Added to the end when you bake this clip. A clip you already baked can change its call to action in the Library (⋯ → Call to action).</p>
+            </section>
+          </div>}
           {tab === 'transcript' && <section className="editor-subtitle-controls" aria-label="Subtitle placement">
             <div className="flex items-center justify-between gap-2 text-xs"><span>Subtitle placement guide</span><Switch label="Show subtitle guide" checked={showSubtitlePreview} onChange={setShowSubtitlePreview} /></div>
             {!candidate.captions ? <p className="text-2xs text-ink-muted">Subtitles are off for this clip. <button className="underline" disabled={editingDisabled} onClick={() => change({ captions: true })}>Enable subtitles</button></p>

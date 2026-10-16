@@ -1,7 +1,7 @@
 import { openEditor, saveEditor, runEditor, cancelEditor, replaceEditorSource } from './clip-editor'
 import { requestMediaAccess } from './media-permissions'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
-import { editorCloseReady, freeEditorMedia, readEditorProgress } from './clip-editor'
+import { editorCloseReady, freeEditorMedia, onEditorExportCta, readEditorProgress } from './clip-editor'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
 import { loadSettings, publicSettings, replaceApiKey, savePublicSettings, type ApiKeyName, type PublicSettings } from './settings-store'
@@ -57,6 +57,11 @@ import {
 } from './zernio/posts'
 
 export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): void {
+  // Clips exported from the editor end with their call to action, like the run's.
+  onEditorExportCta(async (run, ctaId, index) => {
+    const { failed } = await applyRunCta(run, ctaId, [index])
+    if (failed.length) throw new Error('The call to action could not be added.')
+  })
   const selectedOutputDirectories = new Set<string>()
   initJobManager(getMainWindow)
   const handle: typeof ipcMain.handle = (channel, listener) => ipcMain.handle(channel, (event, ...args) => {
