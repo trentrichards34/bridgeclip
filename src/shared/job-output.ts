@@ -24,9 +24,34 @@ export interface ClipArtifact {
   post_caption?: string | null
   /** The call-to-action clip added to the end, if any. */
   cta?: ClipCta | null
+  /** Remix: saved parts let it be re-made with new hook text, captions or box size (null: made before editing existed). */
+  editable?: { split: boolean } | null
+  /** Remix: the settings it was last made with, to start the edit from. */
+  remix_settings?: RemixClipSettings | null
   tags: string[]
   /** Set when smart framing failed and a letterbox fallback produced the clip. */
   render_fallback: string | null
+}
+
+export interface RemixClipSettings {
+  headline: string
+  headline_look: { look: string; color: string; font: string } | null
+  include_captions: boolean
+  caption_preset: string
+  split: number | null
+}
+
+function remixSettings(value: unknown): RemixClipSettings | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const raw = value as Record<string, unknown>
+  const look = raw.headline_look && typeof raw.headline_look === 'object' ? raw.headline_look as Record<string, unknown> : null
+  return {
+    headline: typeof raw.headline === 'string' ? raw.headline.slice(0, 200) : '',
+    headline_look: look && typeof look.look === 'string' ? { look: look.look, color: typeof look.color === 'string' ? look.color : '#FFFFFF', font: typeof look.font === 'string' ? look.font : 'clean' } : null,
+    include_captions: raw.include_captions !== false,
+    caption_preset: typeof raw.caption_preset === 'string' ? raw.caption_preset.slice(0, 64) : '',
+    split: typeof raw.split === 'number' && Number.isFinite(raw.split) && raw.split >= 0.3 && raw.split <= 0.7 ? raw.split : null
+  }
 }
 
 export interface JobOutput {
@@ -202,6 +227,8 @@ export function parseJobOutput(value: unknown): JobOutput | null {
       ai_generated: item.ai_generated === true,
       post_caption: typeof item.post_caption === 'string' && item.post_caption.trim() ? item.post_caption.slice(0, 5000) : null,
       cta: record(item.cta) && typeof item.cta.id === 'string' && /^[a-f0-9]{16}$/.test(item.cta.id) && typeof item.cta.name === 'string' ? { id: item.cta.id, name: item.cta.name.slice(0, 60), ...(typeof item.cta.seconds === 'number' && Number.isFinite(item.cta.seconds) ? { seconds: item.cta.seconds } : {}) } : null,
+      editable: record(item.editable) ? { split: item.editable.split === true } : null,
+      remix_settings: remixSettings(item.remix_settings ?? item.settings),
       tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 50).map((tag) => tag.slice(0, 64)) : [],
       render_fallback: boundedText(item.render_fallback, 256)
     })

@@ -3,6 +3,7 @@ import type { LibraryClipTarget } from '../shared/library-posting'
 import type { AutomationReviewResult } from '../shared/automations'
 import type { CandidateEdit, EditorProgressSummary, EditorSession } from '../shared/clip-editor'
 import type { JobOutput } from '../shared/job-output'
+import type { HeadlineLook } from '../shared/headline-look'
 import type { CtaSummary } from '../shared/ctas'
 import type { EditAudit } from '../shared/editorial'
 import { contextBridge, ipcRenderer } from 'electron'
@@ -308,6 +309,8 @@ export interface BridgeClipAPI {
     moment: (draftId: number) => Promise<{ path: string; startSeconds: number; endSeconds: number; kind: 'video' | 'image' }>
     /** Article or post: write the headline and caption from the recorded take. */
     write: () => Promise<RemixStatus>
+    /** Re-make a finished remix with new hook text, look, captions or box size (no AI cost). */
+    recompose: (outputDir: string, clipIndex: number, edit: { headline: string; headlineLook: HeadlineLook; includeCaptions: boolean; captionPreset: string; split: number | null }) => Promise<JobOutput | null>
     /** Choose a screenshot for an article-or-post remix. */
     selectImage: () => Promise<string | null>
     recordings: () => Promise<RemixRecordings>
@@ -547,6 +550,7 @@ const api: BridgeClipAPI = {
     mediaAccess: () => ipcRenderer.invoke('remix:mediaAccess'),
     moment: (draftId) => ipcRenderer.invoke('remix:moment', draftId),
     write: () => ipcRenderer.invoke('remix:write'),
+    recompose: (outputDir, clipIndex, edit) => ipcRenderer.invoke('remix:recompose', outputDir, clipIndex, edit),
     selectImage: () => ipcRenderer.invoke('remix:selectImage'),
     recordings: () => ipcRenderer.invoke('remix:recordings'),
     recordingBegin: (draftId, part, mime) => ipcRenderer.invoke('remix:recordingBegin', draftId, part, mime),

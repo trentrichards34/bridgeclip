@@ -1,5 +1,6 @@
 import { SavedStageTimings } from './StageBreakdown'
 import { ClipCtaDialog } from './CtaPicker'
+import { RemixEditDialog } from './RemixEditDialog'
 import { parseJobOutput } from '../../shared/job-output'
 import { editorProgress } from '../../shared/clip-editor'
 import { ClipEditor } from './ClipEditor'
@@ -129,6 +130,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
   const [posting, setPosting] = useState<PostableClip[] | null>(null)
   const [bankClips, setBankClips] = useState<number[] | null>(null)
   const [ctaClip, setCtaClip] = useState<ClipArtifact | null>(null)
+  const [editClip, setEditClip] = useState<ClipArtifact | null>(null)
   const [addedToBank, setAddedToBank] = useState(false)
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const exportingRef = useRef(false)
@@ -305,6 +307,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
               onAddToAutomation={outputDir ? () => setBankClips([clip.clip_index]) : undefined}
               onDelete={outputDir ? () => confirmDelete([clip.clip_index]) : undefined}
               onChangeCta={outputDir ? () => setCtaClip(clip) : undefined}
+              onEditVideo={outputDir && clip.editable ? () => setEditClip(clip) : undefined}
               actionsDisabled={deleting || exporting}
               onSetPosted={outputDir ? async (posted) => {
                 if (!getApi().history.setPosted) throw new Error('Restart CreatorClips to enable manual posted marks.')
@@ -508,6 +511,13 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
           noticeTimer.current = setTimeout(() => setNotice(null), 6000)
         }}
       />}
+      {editClip && outputDir && <RemixEditDialog outputDir={outputDir} clip={editClip} onClose={() => setEditClip(null)}
+        onDone={(fresh) => {
+          if (fresh) onOutputChanged(fresh)
+          setNotice('The video was made again with your changes. Copies already queued in an automation keep their earlier version.')
+          if (noticeTimer.current) clearTimeout(noticeTimer.current)
+          noticeTimer.current = setTimeout(() => setNotice(null), 6000)
+        }} />}
       {bankClips && outputDir && <AddToAutomationDialog
         outputDir={outputDir}
         clipIndices={bankClips}

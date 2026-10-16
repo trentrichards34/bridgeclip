@@ -9,7 +9,7 @@ import { isAvatarId } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
 import { headlineLookForEngine, parseHeadlineLook } from '../shared/headline-look'
 import { parseCtaChoice } from '../shared/ctas'
-import { applyRunCta, readCta } from './ctas'
+import { applyRunCta, originalPath, readCta } from './ctas'
 import {
   estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput,
   headlineOnly, MAX_IMAGE_TAKE_SECONDS, REMIX_IMAGE_EXTENSIONS, AVATAR_VOICE, DEFAULT_CAMERA, isRecordingPart, normalizeCtaKeyword, parseCameraSettings, partsFor, RECORDING_VIDEO_EXTENSIONS, remixSourceUrl, type BrandIdentity, type RecordingPart, type RemixDraft, type RemixOutput, type RemixRecordings, type RemixRequest, type RemixStatus
@@ -842,6 +842,126 @@ function engineRecordings(run: ActiveRemix, edits: { id: number; beats: unknown[
       : { intro: takes!.get('intro')!.path, beats: parts.filter((part) => part.startsWith('beat')).map((part) => takes!.get(part)!.path), close: takes!.get('close')!.path }
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// Re-editing a finished remix: new hook text, look, captions or box size,
+// re-rendered from the parts saved when it was made (.edit/<clip>), no AI cost.
+// ---------------------------------------------------------------------------
+
+/** What a member can change on a finished remix. */
+export interface RemixRecompose {
+  headline: string
+  headlineLook: ReturnType<typeof parseHeadlineLook>
+  includeCaptions: boolean
+  captionPreset: string
+  /** The moment's box share of the height, for layouts with two parts; null elsewhere. */
+  split: number | null
+}
+
+export function parseRemixRecompose(value: unknown): RemixRecompose {
+  const raw = (value ?? {}) as Record<string, unknown>
+  const headline = typeof raw.headline === 'string' ? raw.headline.replace(/\s+/g, ' ').trim() : ''
+  if (headline.split(' ').filter(Boolean).length < 3 || headline.length > 200) throw new Error('The hook text needs at least 3 words (up to 200 characters).')
+  const headlineLook = parseHeadlineLook(raw.headlineLook)
+  if (typeof raw.includeCaptions !== 'boolean') throw new Error('Choose whether to show captions.')
+  if (!isCaptionPresetId(raw.captionPreset)) throw new Error('Choose a caption style.')
+  const split = raw.split === null || raw.split === undefined ? null : raw.split
+  if (split !== null && (typeof split !== 'number' || !Number.isFinite(split) || split < 0.3 || split > 0.7)) throw new Error('Choose a box size between 30% and 70%.')
+  return { headline, headlineLook, includeCaptions: raw.includeCaptions, captionPreset: raw.captionPreset, split: split === null ? null : Math.round(split * 100) / 100 }
+}
+
+let recomposing: string | null = null
+
+/** A finished remix's run folder and clip, checked: inside the output folder, not being made or reviewed. */
+async function remixClip(outputDir: unknown, clipIndex: unknown): Promise<{ folder: string; clip: Record<string, unknown>; path: string; job: Record<string, unknown> }> {
+  const settings = loadSettings()
+  if (typeof outputDir !== 'string' || !/^remix-[0-9a-f-]{36}$/.test(basename(outputDir)) || dirname(outputDir) !== settings.outputDirectory) throw new Error('Only Remix videos can be edited here.')
+  if (outputDir === active?.status.folder || outputDir === reviewing?.status.folder) throw new Error('This remix is still being made. Wait for it to finish.')
+  if (!Number.isInteger(clipIndex) || (clipIndex as number) < 0) throw new Error('Choose a video to edit.')
+  const job = JSON.parse(await readFile(join(outputDir, 'job_output.json'), 'utf8')) as Record<string, unknown>
+  const clip = (Array.isArray(job.clips) ? job.clips : []).find((item: Record<string, unknown>) => item?.clip_index === clipIndex) as Record<string, unknown> | undefined
+  if (!clip) throw new Error('That video is no longer in this run.')
+  const path = join(outputDir, `clip_${String(clipIndex).padStart(2, '0')}.mp4`)
+  if (!existsSync(path)) throw new Error('That video file is missing.')
+  return { folder: outputDir, clip, path, job }
+}
+
+/** Run the engine once outside a remix run (re-editing); resolves with its result line. */
+async function runEngineOnce(config: Record<string, unknown>, limitMs: number): Promise<Record<string, unknown>> {
+  const settings = loadSettings(), engine = getEnginePath()
+  const env: Record<string, string | undefined> = {
+    ...runtimeEnvironment(), ...getSettingsForBridge(settings), LAYOUT_VISION_ENABLED: 'false',
+    PYTHONPATH: engine, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1'
+  }
+  const ffmpegPath = resolveBinary('ffmpeg')
+  if (ffmpegPath !== 'ffmpeg') env.PATH = `${dirname(ffmpegPath)}${delimiter}${env.PATH ?? ''}`
+  const child = spawn(resolvePythonPath(engine, settings.pythonPath), [join(dirname(getBridgeRunnerPath()), 'remix_runner.py')], {
+    cwd: engine, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true
+  })
+  return new Promise((resolve, reject) => {
+    let buffer = '', stderr = '', result: Record<string, unknown> | null = null
+    const timer = setTimeout(() => kill(child, true), limitMs)
+    child.stdout.on('data', (chunk) => {
+      buffer += String(chunk)
+      let end: number
+      while ((end = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, end); buffer = buffer.slice(end + 1)
+        try { const message = JSON.parse(line) as Record<string, unknown>; if (typeof message.ok === 'boolean') result = message } catch { /* not protocol */ }
+      }
+    })
+    child.stderr.on('data', (chunk) => { stderr = (stderr + String(chunk)).slice(-4000) })
+    child.on('error', () => { clearTimeout(timer); reject(new Error('The clipping engine could not start. Run Settings → System check.')) })
+    child.on('close', () => {
+      clearTimeout(timer)
+      if (result?.ok === true) { resolve(result); return }
+      logger.warn('remix.recompose.failed', { stderr: stderr.slice(-1500) })
+      reject(new Error(typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : 'The video could not be made again. Try again.'))
+    })
+    child.stdin.on('error', () => undefined)
+    child.stdin.end(JSON.stringify(config))
+  })
+}
+
+/** Re-render a finished remix with new hook text, look, captions or box size; its call to action is added back. */
+export async function recomposeRemix(outputDir: unknown, clipIndex: unknown, value: unknown): Promise<void> {
+  const edit = parseRemixRecompose(value)
+  if (recomposing) throw new Error('Another video is being re-made. Wait for it to finish.')
+  const { folder, clip, path } = await remixClip(outputDir, clipIndex)
+  const stem = basename(path, '.mp4')
+  if (!existsSync(join(folder, '.edit', stem, 'edit.json'))) throw new Error('This video was made before editing was possible. Make it again to edit it.')
+  recomposing = folder
+  const output = join(folder, `.recompose-${randomBytes(4).toString('hex')}.mp4`)
+  try {
+    const result = await runEngineOnce({
+      mode: 'recompose', output_dir: folder, clip: stem, output_path: output, headline: edit.headline, headline_look: edit.headlineLook,
+      include_captions: edit.includeCaptions, caption_preset: edit.captionPreset, split: edit.split
+    }, 30 * 60_000)
+    if (!existsSync(output)) throw new Error('The video could not be made again. Try again.')
+    // With a call to action, the plain video is the .original copy: replace it, then add the call to action back.
+    const cta = (clip.cta ?? null) as { id?: unknown } | null
+    const hasOriginal = existsSync(originalPath(path))
+    await rename(output, hasOriginal ? originalPath(path) : path)
+    if (hasOriginal && typeof cta?.id === 'string') {
+      const { failed } = await applyRunCta(folder, cta.id, [clipIndex as number])
+      if (failed.length) throw new Error('The video was re-made, but its call to action couldn’t be added back. Add it from the Library (⋯ → Change call to action).')
+    }
+    // The Library shows the new hook text and length.
+    const job = JSON.parse(await readFile(join(folder, 'job_output.json'), 'utf8')) as { clips?: Record<string, unknown>[] }
+    for (const item of job.clips ?? []) {
+      if (item.clip_index !== clipIndex) continue
+      item.headline = edit.headline
+      if (typeof result.duration_seconds === 'number' && !hasOriginal) item.duration_ms = Math.round(result.duration_seconds * 1000)
+      if (result.settings && typeof result.settings === 'object') item.remix_settings = result.settings
+    }
+    const temp = join(folder, `.job_output-${randomBytes(4).toString('hex')}.json`)
+    await writeFile(temp, JSON.stringify(job, null, 2), { mode: 0o600 })
+    await rename(temp, join(folder, 'job_output.json'))
+    logger.info('remix.recomposed', { split: edit.split !== null, captions: edit.includeCaptions })
+  } finally {
+    recomposing = null
+    await rm(output, { force: true }).catch(() => undefined)
+  }
 }
 
 export function cancelRemix(): boolean {
