@@ -61,6 +61,40 @@ class ParseConfigTests(unittest.TestCase):
         self.assertEqual((voiced.camera_layout, voiced.recordings), ("greenscreen", {"1": take}))
         self.assertEqual(remix_runner.parse_config(self.base(host="camera", camera_talk=None)).camera_talk, False)
 
+    def image(self, **over):
+        me = os.path.abspath("me.webm")
+        config = {"mode": "write", "output_dir": os.path.abspath("out"), "host": "camera", "format": "image", "sources": [],
+                  "image_source": {"path": os.path.abspath("out/.work/source.png"), "credit": "  The Wall  Street Journal "},
+                  "camera_talk": True, "recordings": {"0": {"reaction": {"path": me, "offset_s": 0}}}}
+        config.update(over)
+        return config
+
+    def test_image_keys(self):
+        written = remix_runner.parse_config(self.image())
+        self.assertEqual((written.format, written.host, written.camera_layout, written.angle, written.sources, written.camera_talk),
+                         ("image", "camera", "greenscreen", "reaction", [], True))
+        self.assertEqual(written.image_source, {"path": os.path.abspath("out/.work/source.png"), "credit": "The Wall Street Journal"})
+        self.assertEqual(written.recordings["0"]["reaction"]["offset_s"], 0.0)
+        render = remix_runner.parse_config(self.image(mode="render", camera_layout="cutout", image_source={"path": os.path.abspath("x.WEBP")}))
+        self.assertEqual((render.camera_layout, render.image_source["credit"]), ("cutout", ""))
+
+    def test_rejects_bad_image_values(self):
+        me = os.path.abspath("me.webm")
+        bads = [
+            self.image(mode="plan"), self.image(host="voice"), self.image(image_source=None), self.image(image_source="x.png"),
+            self.image(image_source={"path": "rel.png"}), self.image(image_source={"path": os.path.abspath("x.gif")}),
+            self.image(image_source={"path": os.path.abspath("x.png"), "credit": 5}),
+            self.image(image_source={"path": os.path.abspath("x.png"), "credit": "x" * 121}),
+            self.image(image_source={"path": os.path.abspath("x.png"), "url": "https://x"}),
+            self.image(recordings={"0": {"intro": me, "beats": [], "close": me}}),
+            self.image(recordings={"0": {"reaction": {"path": "rel.webm"}}}),
+            self.base(mode="write"),  # write is only for an article or post
+            self.base(image_source={"path": os.path.abspath("x.png")}),  # an image only goes with format image
+        ]
+        for bad in bads:
+            with self.assertRaises(ValueError, msg=repr(bad)[:160]):
+                remix_runner.parse_config(bad)
+
     def test_rejects_bad_camera_values(self):
         me = os.path.abspath("me.webm")
         take = {"intro": me, "beats": [], "close": me}

@@ -41,7 +41,7 @@ def parse_recordings(raw, fmt):
     for key, item in raw.items():
         if not isinstance(key, str) or not re.fullmatch(r"\d{1,4}", key) or not isinstance(item, dict):
             raise ValueError("Invalid recordings")
-        if fmt == "silent":
+        if fmt in ("silent", "image"):
             reaction = item.get("reaction")
             if set(item) != {"reaction"} or not isinstance(reaction, dict) or not set(reaction) <= {"path", "offset_s"} \
                     or not _abs_path(reaction.get("path")):
@@ -61,7 +61,7 @@ def parse_recordings(raw, fmt):
 
 
 def parse_config(raw):
-    from clip_engine.services.remix_service import (ANGLES, CAMERA_BACKDROPS, CAMERA_LAYOUTS, DEFAULT_VOICE, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, REACTION_KINDS, TTS_MODEL,
+    from clip_engine.services.remix_service import (ANGLES, CAMERA_BACKDROPS, CAMERA_LAYOUTS, DEFAULT_VOICE, IMAGE_EXTENSIONS, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, REACTION_KINDS, TTS_MODEL,
                                                     TTS_MODELS, VOICES, RemixConfig, normalize_keyword)
     if not isinstance(raw, dict):
         raise ValueError("Invalid request")
@@ -69,7 +69,7 @@ def parse_config(raw):
         value = raw.get(key)
         if value is not None and (not isinstance(value, str) or len(value) > limit or "\0" in value):
             raise ValueError(f"Invalid {key}")
-    if raw.get("mode", "plan") not in ("plan", "render"):
+    if raw.get("mode", "plan") not in ("plan", "render", "write"):
         raise ValueError("Invalid mode")
     sources = raw.get("sources") or []
     if raw.get("mode", "plan") == "plan" and (not isinstance(sources, list) or not 1 <= len(sources) <= MAX_SOURCES or any(
@@ -82,7 +82,8 @@ def parse_config(raw):
     photo = raw.get("avatar_photo")
     if photo is not None and not os.path.isabs(photo):
         raise ValueError("Invalid avatar photo")
-    if raw.get("angle") not in ANGLES or raw.get("host") not in HOSTS:
+    angle = raw.get("angle") or ("reaction" if raw.get("format") == "image" else None)
+    if angle not in ANGLES or raw.get("host") not in HOSTS:
         raise ValueError("Invalid style")
     count = raw.get("count", 3)
     if type(count) is not int or not 1 <= count <= MAX_REMIXES:
@@ -94,10 +95,25 @@ def parse_config(raw):
         raise ValueError("Invalid voice")
     fmt = raw.get("format") or "commentary"
     reactions = raw.get("reactions") or {}
-    if fmt not in ("commentary", "silent") or not isinstance(reactions, dict) or any(
+    # An article or post: written from the member's recording ("write"), then rendered; never planned.
+    mode = raw.get("mode", "plan")
+    if (fmt == "image" and mode == "plan") or (mode == "write" and fmt != "image"):
+        raise ValueError("Invalid format")
+    image_source = None
+    if fmt == "image":
+        image_source = raw.get("image_source")
+        credit = image_source.get("credit", "") if isinstance(image_source, dict) else None
+        if raw.get("host") != "camera" or not isinstance(image_source, dict) or not set(image_source) <= {"path", "credit"} \
+                or not _abs_path(image_source.get("path")) or not image_source["path"].lower().endswith(IMAGE_EXTENSIONS) \
+                or not isinstance(credit, str) or len(credit) > 120 or "\0" in credit:
+            raise ValueError("Invalid image source")
+        image_source = {"path": image_source["path"], "credit": " ".join(credit.split())}
+    elif raw.get("image_source") is not None:
+        raise ValueError("Invalid image source")
+    if fmt not in ("commentary", "silent", "image") or not isinstance(reactions, dict) or any(
             k not in REACTION_KINDS or not isinstance(v, str) or len(v) > 4096 or "\0" in v or not os.path.isabs(v) for k, v in reactions.items()):
         raise ValueError("Invalid format")
-    layout = raw.get("camera_layout") or "filmed"
+    layout = raw.get("camera_layout") or ("greenscreen" if fmt == "image" else "filmed")
     backdrop = raw.get("camera_backdrop") or "blur"
     color = raw.get("camera_backdrop_color") or "#111111"
     if layout not in CAMERA_LAYOUTS or backdrop not in CAMERA_BACKDROPS or not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
@@ -113,7 +129,7 @@ def parse_config(raw):
     except ValueError:
         raise ValueError("Invalid call-to-action keyword") from None
     return RemixConfig(
-        sources=list(sources), output_dir=raw["output_dir"], angle=raw["angle"], count=count, host=raw["host"],
+        sources=list(sources), output_dir=raw["output_dir"], angle=angle, count=count, host=raw["host"],
         order=raw.get("order") or "moment_first",
         voice=voice, voice_model=voice_model, voice_reference=reference, voice_transcript=raw.get("voice_transcript") or "",
         avatar_photo=photo, brand_identity=raw.get("brand_identity") or "",
@@ -123,7 +139,7 @@ def parse_config(raw):
         cta_keyword=keyword, cta_offer=" ".join((raw.get("cta_offer") or "").split())[:80],
         headline_look=headline_look, cta_clip=raw.get("cta_clip") is True,
         camera_layout=layout, camera_backdrop=backdrop, camera_backdrop_color=color.upper(), camera_talk=talk is True,
-        recordings=recordings,
+        recordings=recordings, image_source=image_source,
     )
 
 
@@ -155,6 +171,8 @@ def main():
                 if not isinstance(approved, list) or len(approved) > 200:
                     raise ValueError("Invalid approval list")
                 return await remixer.render(approved)
+            if raw_request.get("mode") == "write":
+                return await remixer.write()
             return await remixer.plan()
 
         result = asyncio.run(work())

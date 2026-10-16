@@ -126,6 +126,8 @@ interface RunContext {
   planCostUsd: number
   /** An article-or-post remix is writing its headline from the recording (back to review afterwards). */
   writing?: boolean
+  /** Recordings being saved or copied in right now: writing and making wait for them. */
+  savingRecordings?: number
 }
 
 interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null; context: RunContext; ctaAbort?: AbortController }
@@ -438,6 +440,7 @@ export async function writeRemix(): Promise<RemixStatus> {
   if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
   const run = reviewing
   if (!run || run.status.phase !== 'review' || run.context.request.format !== 'image') throw new Error('There is no screenshot take waiting for review.')
+  if (recordingInProgress(run)) throw new Error('Wait for your recording to finish saving.')
   if (!run.context.recordings?.get(0)?.get('reaction')) throw new Error('Record your take first.')
   const recordings = engineRecordings(run, [{ id: 0, beats: [] }])
   reviewing = null
@@ -456,7 +459,13 @@ export async function renderRemix(value: unknown): Promise<RemixStatus> {
   const run = reviewing
   if (!run || run.status.phase !== 'review') throw new Error('There is nothing waiting for review. Plan the remixes again.')
   const edits = parseRemixEdits(value, run.context.draftIds, new Set(run.status.drafts.filter((draft) => headlineOnly(draft.format)).map((draft) => draft.id)))
+  if (recordingInProgress(run)) throw new Error('Wait for your recording to finish saving.')
   const recordings = run.context.request.host === 'camera' ? engineRecordings(run, edits) : null
+  // Keep the edits on the run, so a failed render comes back to review with them.
+  run.status = { ...run.status, drafts: run.status.drafts.map((draft) => {
+    const edit = edits.find((item) => item.id === draft.id)
+    return edit ? { ...draft, headline: edit.headline, intro: edit.intro, beats: edit.beats, close: edit.close, ...(edit.postCaption ? { postCaption: edit.postCaption } : {}) } : draft
+  }) }
   reviewing = null
   active = run
   run.cancelled = false
@@ -495,6 +504,7 @@ export async function discardRemix(): Promise<boolean> {
   const run = reviewing
   if (!run) return false
   reviewing = null
+  await dropWriters(run)
   await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
   finish(run, { phase: 'cancelled', detail: 'Discarded', drafts: [] })
   return true
@@ -516,6 +526,11 @@ function engineDidNotStart(run: ActiveRemix): void {
   const error = 'The clipping engine could not start. Run Settings → System check.'
   // Writing a headline keeps your recording: back to review.
   if (run.context.writing) { run.context.writing = false; finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, error }); return }
+  // Making the approved takes: nothing was made, so back to review with the takes (and recordings) kept.
+  if (run.status.phase === 'rendering' && (run.context.request.format === 'image' || existsSync(join(run.status.folder, '.work', 'plan.json')))) {
+    finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, error })
+    return
+  }
   finish(run, { phase: 'failed', error })
 }
 
@@ -568,7 +583,8 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     if (!running(run)) return
     if (run.context.writing) {
       run.context.writing = false
-      if (run.cancelled) { finish(run, { phase: 'review', detail: 'Ready for review', percent: 100 }); return }
+      // Cancelled before the headline arrived: back to review as it was (a headline that already arrived is kept: it's paid for).
+      if (run.cancelled && result?.ok !== true) { finish(run, { phase: 'review', detail: 'Ready for review', percent: 100 }); return }
       const drafts = result?.ok === true && Array.isArray(result.drafts) ? result.drafts.map(parseRemixDraft).filter((item): item is RemixDraft => item !== null && item.id === 0) : []
       const written = typeof result?.cost_usd === 'number' && Number.isFinite(result.cost_usd) ? result.cost_usd : 0
       run.context.planCostUsd += written
@@ -676,12 +692,30 @@ async function mediaSecondsOf(path: string): Promise<number> {
 }
 
 async function keep(run: ActiveRemix, draftId: number, part: RecordingPart, file: RecordingFile): Promise<void> {
+  // The review may have closed (discarded, replaced, or being made) while the file was saved.
+  if (reviewing !== run) { await rm(file.path, { force: true }).catch(() => undefined); throw new Error('This review was closed, so the recording wasn’t kept.') }
   run.context.recordings ??= new Map()
   const takes = run.context.recordings.get(draftId) ?? new Map<RecordingPart, RecordingFile>()
   const previous = takes.get(part)
   takes.set(part, file)
   run.context.recordings.set(draftId, takes)
   if (previous && previous.path !== file.path) await rm(previous.path, { force: true }).catch(() => undefined)
+}
+
+/** Count a recording being saved, so writing and making wait until it's in place. */
+async function saving<T>(run: ActiveRemix, work: () => Promise<T>): Promise<T> {
+  run.context.savingRecordings = (run.context.savingRecordings ?? 0) + 1
+  try { return await work() } finally { run.context.savingRecordings = (run.context.savingRecordings ?? 1) - 1 }
+}
+
+/** Recording, saving or copying in for this run right now. */
+function recordingInProgress(run: ActiveRemix): boolean {
+  return (run.context.savingRecordings ?? 0) > 0 || [...writers.values()].some((writer) => writer.run === run)
+}
+
+/** Close and delete recordings still being written for a run that's going away (or all of them). */
+async function dropWriters(run: ActiveRemix | null): Promise<void> {
+  for (const [token, writer] of [...writers]) if (!run || writer.run === run) await abortRecording(token)
 }
 
 /** Where the take's moment is, so the recorder can play it while you react. */
@@ -726,14 +760,17 @@ export async function appendRecording(token: unknown, chunk: unknown): Promise<v
 export async function finishRecording(token: unknown, offsetSeconds: unknown): Promise<RemixRecordings> {
   const writer = typeof token === 'string' ? writers.get(token) : undefined
   if (!writer) throw new Error('That recording was stopped.')
-  writers.delete(token as string)
-  await writer.handle.close()
-  if (reviewing !== writer.run) { await rm(writer.file, { force: true }); throw new Error('This review was closed, so the recording wasn’t kept.') }
-  const offset = typeof offsetSeconds === 'number' && Number.isFinite(offsetSeconds) && offsetSeconds >= 0 && offsetSeconds < 600 ? offsetSeconds : null
-  const seconds = await mediaSecondsOf(writer.file)
-  if (writer.bytes < 1000) { await rm(writer.file, { force: true }); throw new Error('Nothing was recorded. Check your camera and microphone, then try again.') }
-  await keep(writer.run, writer.draftId, writer.part, { path: writer.file, offsetS: writer.part === 'reaction' ? offset ?? 0 : null, uploaded: false, seconds })
-  return remixRecordings()
+  return saving(writer.run, async () => {
+    writers.delete(token as string)
+    await writer.handle.close()
+    if (reviewing !== writer.run) { await rm(writer.file, { force: true }); throw new Error('This review was closed, so the recording wasn’t kept.') }
+    // Unknown (null) when the clip never started playing: the engine then lines the reaction up by sound.
+    const offset = typeof offsetSeconds === 'number' && Number.isFinite(offsetSeconds) && offsetSeconds >= 0 && offsetSeconds < 600 ? offsetSeconds : null
+    const seconds = await mediaSecondsOf(writer.file)
+    if (writer.bytes < 1000) { await rm(writer.file, { force: true }); throw new Error('Nothing was recorded. Check your camera and microphone, then try again.') }
+    await keep(writer.run, writer.draftId, writer.part, { path: writer.file, offsetS: writer.part === 'reaction' ? offset : null, uploaded: false, seconds })
+    return remixRecordings()
+  })
 }
 
 export async function abortRecording(token: unknown): Promise<void> {
@@ -752,13 +789,21 @@ export async function uploadRecording(draftId: unknown, part: unknown, source: s
   if (!RECORDING_VIDEO_EXTENSIONS.includes(extension)) throw new Error('Choose a video (MP4, MOV or WebM).')
   const info = await stat(source)
   if (!info.isFile() || info.size > MAX_RECORDING_BYTES) throw new Error('Choose a video under 2 GB.')
-  await mkdir(recordingsDir(run), { recursive: true })
-  const file = join(recordingsDir(run), `${checked.draft.id}-${checked.part}-${randomBytes(4).toString('hex')}.${extension}`)
-  await copyFile(source, file)
-  const seconds = await mediaSecondsOf(file)
-  if (!seconds) { await rm(file, { force: true }); throw new Error('That video could not be read. Try an MP4 or MOV from your phone.') }
-  await keep(run, checked.draft.id, checked.part, { path: file, offsetS: null, uploaded: true, seconds })
-  return remixRecordings()
+  return saving(run, async () => {
+    await mkdir(recordingsDir(run), { recursive: true })
+    const file = join(recordingsDir(run), `${checked.draft.id}-${checked.part}-${randomBytes(4).toString('hex')}.${extension}`)
+    const closed = async (): Promise<never> => { await rm(file, { force: true }).catch(() => undefined); throw new Error('This review was closed, so the recording wasn’t kept.') }
+    await copyFile(source, file).catch(async (error: unknown) => { if (reviewing !== run) await closed(); throw error })
+    const seconds = await mediaSecondsOf(file)
+    if (reviewing !== run) await closed()
+    if (!seconds) { await rm(file, { force: true }); throw new Error('That video could not be read. Try an MP4 or MOV from your phone.') }
+    if (checked.draft.format === 'image' && seconds > MAX_IMAGE_TAKE_SECONDS + 1) {
+      await rm(file, { force: true })
+      throw new Error(`Keep your take to ${MAX_IMAGE_TAKE_SECONDS / 60} minutes. Trim it on your phone, then upload it again.`)
+    }
+    await keep(run, checked.draft.id, checked.part, { path: file, offsetS: null, uploaded: true, seconds })
+    return remixRecordings()
+  })
 }
 
 export async function removeRecording(draftId: unknown, part: unknown): Promise<RemixRecordings> {
@@ -816,4 +861,5 @@ export function cancelRemix(): boolean {
 
 export function stopRemixForQuit(): void {
   if (active) { active.cancelled = true; kill(active.child, true, true) }
+  void dropWriters(null)
 }

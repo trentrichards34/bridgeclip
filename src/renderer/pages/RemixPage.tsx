@@ -8,7 +8,7 @@ import {
   BRAND_IDENTITY_TEMPLATE, brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_POST_CAPTION_CHARS, MAX_SOURCES,
   closeWithoutCta, normalizeCtaKeyword, AVATAR_VOICE, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
   REMIX_WORD_LIMITS, remixEditProblem, remixSourceUrl, STANCE_LABELS, STYLE_LABELS, wordCount,
-  REMIX_FORMATS, CAMERA_LAYOUTS, DEFAULT_CAMERA, partsFor, type CameraSettings, type RemixRecordings, type RemixFormat, type BrandIdentity, type RemixAngle, type RemixDraft, type RemixEdit, type RemixHost, type RemixOrder, type RemixOutput, type RemixStatus
+  REMIX_FORMATS, headlineOnly, CAMERA_LAYOUTS, DEFAULT_CAMERA, partsFor, type CameraSettings, type RemixRecordings, type RemixFormat, type BrandIdentity, type RemixAngle, type RemixDraft, type RemixEdit, type RemixHost, type RemixOrder, type RemixOutput, type RemixStatus
 } from '../../shared/remix'
 import type { Page as PageName } from '../components/Sidebar'
 import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
@@ -64,6 +64,8 @@ interface FormDraft {
   ctaId: string | null
   /** How the member appears when they record themselves ("Me, on camera"). */
   camera: CameraSettings
+  /** The look over a screenshot, kept apart so it doesn't change the video kinds. */
+  imageCamera: CameraSettings
   update: (patch: Partial<Omit<FormDraft, 'update'>>) => void
 }
 
@@ -74,6 +76,7 @@ const useRemixForm = create<FormDraft>((set) => ({
   headlineLook: DEFAULT_HEADLINE_LOOK,
   ctaId: null,
   camera: DEFAULT_CAMERA,
+  imageCamera: { ...DEFAULT_CAMERA, layout: 'greenscreen', talk: true },
   update: (patch) => set(patch)
 }))
 
@@ -183,7 +186,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         captionPreset: form.captionPreset, includeCaptions: form.includeCaptions, aiLabelAck: form.aiLabelAck,
         ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : '', format: form.format, clipRightsAck: (silent || image) && form.clipRightsAck,
         headlineLook: form.headlineLook,
-        ...(onCamera ? { camera: { ...form.camera, talk: image || (silent && form.camera.talk) } } : {}),
+        ...(onCamera ? { camera: image ? { ...form.imageCamera, talk: true } : { ...form.camera, talk: silent && form.camera.talk } } : {}),
         ...(form.ctaId ? { ctaId: form.ctaId } : {})
       })
       setStatus((previous) => previous?.id === started.id && previous.phase !== 'planning' ? previous : started)
@@ -289,8 +292,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                     onClick={() => item.id !== form.format && form.update({
                       format: item.id,
                       // Each kind has its own permission promise (clips vs. a screenshot).
-                      clipRightsAck: false,
-                      ...(item.id === 'image' && form.camera.layout === 'filmed' ? { camera: { ...form.camera, layout: 'greenscreen' as const } } : {})
+                      clipRightsAck: false
                     })}
                     className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
                     <span className="block text-sm font-medium">{item.label}</span>
@@ -409,7 +411,8 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
                 )
               })}
             </div>}
-            {onCamera && <CameraOptions mode={image ? 'image' : silent ? 'silent' : 'take'} value={form.camera} onChange={(camera) => form.update({ camera })} />}
+            {onCamera && <CameraOptions mode={image ? 'image' : silent ? 'silent' : 'take'} value={image ? form.imageCamera : form.camera}
+              onChange={(camera) => form.update(image ? { imageCamera: camera } : { camera })} />}
             {showAvatars && (avatars.length === 0 ? (
               <EmptyState icon={<UserRound />} title="No avatars yet" description="Create one in Avatar Studio from your photo, then come back."
                 action={<Button size="sm" onClick={() => onNavigate('avatar')}>Open Avatar Studio</Button>} />
@@ -608,11 +611,11 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
     try { await getApi().remix.write() } catch (err) { onError(errorMessage(err, 'The headline could not be written.')) }
     finally { setWorking(false) }
   }
-  const closeRecorder = (): void => {
+  const closeRecorder = (changed: boolean): void => {
     const draft = recording
     setRecording(null)
-    // Recorded over a screenshot with no headline yet: write it straight away.
-    if (draft?.format === 'image' && !draft.headline && !edits[draft.id]?.headline && recordings[draft.id]?.reaction) void write()
+    // Just recorded over a screenshot with no headline yet: write it straight away (only for a new recording, so it isn't paid for twice).
+    if (changed && draft?.format === 'image' && !draft.headline && !edits[draft.id]?.headline && recordings[draft.id]?.reaction) void write()
   }
   const discard = async (): Promise<void> => {
     if (!confirmDiscard) { setConfirmDiscard(true); return }
@@ -681,7 +684,7 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
                         : image ? 'Record yourself talking about this screenshot.'
                         : draft.format === 'silent' ? 'Film your reaction to this moment.'
                           : `Record your lines: ${total - left.length} of ${total} done.`}
-                      {draft.format === 'commentary' && left.length === 0 && <span className="text-ink-subtle"> · Change a line? Record that part again.</span>}
+                      {!headlineOnly(draft.format) && left.length === 0 && <span className="text-ink-subtle"> · Change a line? Record that part again.</span>}
                     </span>
                     <Button size="sm" variant={left.length ? 'primary' : 'secondary'} icon={<Camera className="h-3.5 w-3.5" />} disabled={working}
                       onClick={() => setRecording(draft)}>{left.length === 0 ? 'Review or redo' : left.length < total ? 'Keep recording' : 'Record'}</Button>
@@ -701,10 +704,10 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
                   {draft.cues.map((cue, i) => <Badge key={i}>{cue.at.toFixed(0)}s · {REACTIONS.find((item) => item.id === cue.reaction)?.label ?? cue.reaction}</Badge>)}
                 </div>
               )}
-              {showText && <Field label="Headline" hint={counter(current.headline, REMIX_WORD_LIMITS.headline)}>
+              {showText && <Field label="Headline" hint={`${counter(current.headline, REMIX_WORD_LIMITS.headline)} · the hook text at the top (unless you chose no hook text) and the video’s title in your Library`}>
                 <TextInput aria-label={`Headline, ${take}`} value={current.headline} maxLength={160} onChange={(e) => change(draft, { headline: e.target.value })} />
               </Field>}
-              {draft.format === 'commentary' && (<>
+              {!headlineOnly(draft.format) && (<>
               <Field label="Opening (presenter)" hint={counter(current.intro, REMIX_WORD_LIMITS.intro)}>
                 <TextArea aria-label={`Opening (presenter), ${take}`} rows={2} value={current.intro} onChange={(e) => change(draft, { intro: e.target.value })} />
               </Field>

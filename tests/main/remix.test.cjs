@@ -485,3 +485,100 @@ test('Article or post: a screenshot run starts in review, writes its headline fr
   assert.deepEqual(render.recordings, { 0: { reaction: { path: list[0].reaction.path, offset_s: 0 } } })
   fs.rmSync(out, { recursive: true, force: true })
 })
+
+test('on-camera review safety: saving blocks making, edits survive a failed start, unknown offsets stay unknown, long uploads are refused', async () => {
+  const { EventEmitter } = require('node:events')
+  const childProcess = require('node:child_process')
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'remix-safety-'))
+  const settings = { ...SETTINGS, outputDirectory: out }
+  const configs = []
+  let failSpawn = false
+  const spawn = () => {
+    const child = new EventEmitter()
+    child.pid = 0
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
+    child.stdin = { on() {}, end(text) {
+      const config = JSON.parse(text)
+      configs.push(config)
+      setImmediate(() => {
+        if (failSpawn) { child.emit('error', new Error('ENOENT')); return }
+        if (config.mode === 'plan') {
+          const work = path.join(config.output_dir, '.work'); fs.mkdirSync(work, { recursive: true })
+          fs.writeFileSync(path.join(work, 'plan.json'), JSON.stringify({ sources: [] }))
+          child.stdout.emit('data', JSON.stringify({ ok: true, drafts: [{ id: 0, source_index: 0, format: 'silent', headline: 'This coach says lose weight first', intro: '', close: '', beats: [], start_ms: 0, end_ms: 3000 }] }) + '\n')
+        }
+        child.emit('close', 0)
+      })
+    } }
+    return child
+  }
+  const chosen = new Set()
+  const m = load('main/remix.ts', {
+    electron: { app: { getPath: () => out, isPackaged: true } },
+    child_process: { ...childProcess, spawn },
+    './avatars': { portraitPath: () => '', voiceSamplePath: () => '', readAvatar: () => null, readReactions: () => [] },
+    './logger': { logger: { info() {}, warn() {} } },
+    './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
+    './security': { assertMediaPath: (p) => { if (!chosen.has(p)) throw new Error('Invalid media path') }, authorizeMedia: (p) => p },
+    './settings-store': { loadSettings: () => settings, getSettingsForBridge: () => ({}) },
+    './tools': { resolveBinary: (name) => name }
+  })
+  const waitFor = async (phase) => { for (let i = 0; i < 100 && m.remixStatus()?.phase !== phase; i++) await new Promise((resolve) => setTimeout(resolve, 20)) }
+  await m.startRemix({ ...base, host: 'camera', avatarId: null, aiLabelAck: false, format: 'silent', clipRightsAck: true })
+  await waitFor('review')
+
+  // A reaction whose clip never played keeps an unknown offset (the engine lines it up by sound).
+  const clip = path.join(out, 'take.webm')
+  childProcess.execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=s=160x120:d=1', '-c:v', 'libvpx', clip])
+  const token = await m.beginRecording(0, 'reaction', 'video/webm')
+  await m.appendRecording(token, new Uint8Array(fs.readFileSync(clip)))
+  // Still recording: nothing can be made yet.
+  const edit = { id: 0, headline: 'My edited headline for this', intro: '', close: '', beats: [] }
+  await assert.rejects(m.renderRemix([edit]), /finish saving/)
+  await m.finishRecording(token, null)
+
+  // The engine can't start: back to review with the edit and the recording kept.
+  failSpawn = true
+  await m.renderRemix([edit])
+  await waitFor('review')
+  const back = m.remixStatus()
+  assert.match(back.error, /could not start/)
+  assert.equal(back.drafts[0].headline, 'My edited headline for this')
+  assert.equal(Object.keys(m.remixRecordings()[0]).length, 1)
+  failSpawn = false
+  await m.renderRemix([edit])
+  const render = configs[configs.length - 1]
+  assert.equal(render.recordings['0'].reaction.offset_s, null)
+  await waitFor('done')
+  fs.rmSync(out, { recursive: true, force: true })
+})
+
+test('article or post: a phone take longer than 3 minutes is refused; a review closed mid-upload keeps nothing', async () => {
+  const childProcess = require('node:child_process')
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'remix-long-'))
+  const settings = { ...SETTINGS, outputDirectory: out }
+  const chosen = new Set()
+  const m = load('main/remix.ts', {
+    electron: { app: { getPath: () => out, isPackaged: true } },
+    './avatars': { portraitPath: () => '', voiceSamplePath: () => '', readAvatar: () => null, readReactions: () => [] },
+    './logger': { logger: { info() {}, warn() {} } },
+    './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
+    './security': { assertMediaPath: (p) => { if (!chosen.has(p)) throw new Error('Invalid media path') }, authorizeMedia: (p) => p },
+    './settings-store': { loadSettings: () => settings, getSettingsForBridge: () => ({}) },
+    './tools': { resolveBinary: (name) => name }
+  })
+  const shot = path.join(out, 'post.png')
+  childProcess.execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=white:s=200x200', '-frames:v', '1', shot])
+  chosen.add(shot)
+  await m.startRemix({ ...base, sources: [shot], format: 'image', creator: '@someone', clipRightsAck: true, aiLabelAck: false, avatarId: null })
+  const long = path.join(out, 'long.mp4')
+  childProcess.execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=32x32:d=185:r=5', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', long])
+  await assert.rejects(m.uploadRecording(0, 'reaction', long), /3 minutes/)
+  assert.deepEqual(plain(m.remixRecordings()), {})
+  const short = path.join(out, 'short.mp4')
+  childProcess.execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=32x32:d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', short])
+  const upload = m.uploadRecording(0, 'reaction', short)
+  await m.discardRemix()
+  await assert.rejects(upload, /review was closed/)
+  fs.rmSync(out, { recursive: true, force: true })
+})

@@ -712,13 +712,18 @@ export function startClipJob(
         const progress = (done: number): void => send('job:progress', { type: 'progress', jobId, status: 'rendering',
           step: `Adding your call to action (${Math.min(done + 1, total)} of ${total})`, stages: [], percent: 99, clips_done: done, clips_total: total })
         progress(0)
-        const { failed } = await applyRunCta(run, ctaId, undefined, { signal: abort.signal, onProgress: (done) => { if (done < total) progress(done) } })
-        if (failed.length) {
+        const { failed, cancelled } = await applyRunCta(run, ctaId, undefined, { signal: abort.signal, onProgress: (done) => { if (done < total) progress(done) } })
+        if (cancelled) {
+          ctaNotice = 'Done. You stopped the call to action partway: the clips are made, and some end without it. Add it from the Library (⋯ → Add call to action).'
+        } else if (failed.length) {
           logger.warn('job.cta.failed', { jobId, clips: failed.length })
           ctaNotice = `Done. The call to action couldn’t be added to ${failed.length} clip${failed.length === 1 ? '' : 's'}: add it from the Library (⋯ → Add call to action).`
         }
-        const updated = parseJobOutput(JSON.parse(await readFile(join(run, 'job_output.json'), 'utf8')))
-        if (updated && updated.job_id === jobId) pendingOutput = updated
+        // The clip list with the new lengths (keeps the earlier one if it can't be read).
+        try {
+          const updated = parseJobOutput(JSON.parse(await readFile(join(run, 'job_output.json'), 'utf8')))
+          if (updated && updated.job_id === jobId) pendingOutput = updated
+        } catch { logger.warn('job.cta.outputUnreadable', { jobId }) }
       } catch (error) {
         logger.warn('job.cta.skipped', { jobId, message: String((error as Error)?.message ?? error).slice(0, 200) })
         ctaNotice = 'Done, without the call to action: it could not be added. Add it from the Library (⋯ → Add call to action).'
@@ -788,8 +793,10 @@ export function startClipJob(
 }
 
 export function cancelJob(jobId: string): boolean {
-  // After the engine finished: the call-to-action step stops its FFmpeg right away.
-  ctaSteps.get(jobId)?.abort()
+  // After the engine finished: only the call-to-action step stops (its FFmpeg right away).
+  // The clips are made, so the run still finishes as done, with a note.
+  const ctaStep = ctaSteps.get(jobId)
+  if (ctaStep) { ctaStep.abort(); return true }
   const proc = activeProcesses.get(jobId)
   if (proc) {
     if (cancelledJobs.has(jobId)) return true

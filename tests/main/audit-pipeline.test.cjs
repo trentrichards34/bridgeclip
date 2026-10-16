@@ -204,7 +204,7 @@ test('a removed call to action stops the run before it starts', () => {
   assert.match(sent.find((event) => event.channel === 'job:error').data.message, /no longer in your library/)
 })
 
-test('cancelling while the call to action is added stops it and the run ends cancelled', async () => {
+test('cancelling while the call to action is added stops only that step: the made clips finish as done, with a note', async () => {
   const child = fakeChild()
   let aborted = false
   const run = path.join(WORK_HOME, 'cta-cancel')
@@ -228,6 +228,9 @@ test('cancelling while the call to action is added stops it and the run ends can
   for (let i = 0; i < 20 && !aborted; i++) await new Promise((r) => setTimeout(r, 10))
   await tick()
   assert.equal(aborted, true, 'the FFmpeg step was told to stop')
-  assert.equal(sent.some((event) => event.channel === 'job:complete'), false, 'no completed result after a cancel')
+  const complete = sent.find((event) => event.channel === 'job:complete')
+  assert.ok(complete, 'the clips are made, so the run completes')
+  assert.match(complete.data.step, /You stopped the call to action partway/)
+  assert.equal(sent.some((event) => event.channel === 'job:error'), false)
   void release
 })

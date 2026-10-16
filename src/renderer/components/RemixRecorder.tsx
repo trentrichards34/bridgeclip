@@ -43,7 +43,8 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   /** Reactions keep the member's voice. */
   talk: boolean
   onRecordings: (recordings: RemixRecordings) => void
-  onClose: () => void
+  /** changed: a recording was saved, uploaded or deleted while the recorder was open. */
+  onClose: (changed: boolean) => void
 }): React.JSX.Element {
   const reaction = draft.format === 'silent'
   // Article or post: you talk over a screenshot, in one take.
@@ -70,14 +71,24 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   const startedAt = useRef(0)
   const offset = useRef<number | null>(null)
   const cancelled = useRef(false)
+  // Each openDevices call gets a number; a slower, older one stops its own stream.
+  const generation = useRef(0)
+  const [opening, setOpening] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const changed = useRef(false)
   const dialog = useRef<HTMLDivElement>(null)
+  const updateRecordings = (list: RemixRecordings): void => { changed.current = true; onRecordings(list) }
+  const close = (): void => onClose(changed.current)
 
   // Camera and microphone: ask once (macOS), then open the chosen devices.
   const openDevices = useCallback(async (camera: string, mic: string): Promise<void> => {
+    const mine = ++generation.current
     stream.current?.getTracks().forEach((track) => track.stop())
     stream.current = null
+    setOpening(true)
     try {
       const access = await getApi().remix.mediaAccess()
+      if (mine !== generation.current) return
       if (!access.camera || !access.microphone) {
         setError(`CreatorClips can’t use your ${!access.camera ? 'camera' : 'microphone'}. Allow it in System Settings → Privacy & Security, then reopen this window.`)
         return
@@ -87,23 +98,31 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
         // Echo cancellation keeps the clip's sound (from your speakers) out of your voice.
         audio: { ...(mic ? { deviceId: { exact: mic } } : {}), echoCancellation: true, noiseSuppression: true }
       })
+      // Closed, or another device chosen, while this one was opening: let it go.
+      if (mine !== generation.current) { media.getTracks().forEach((track) => track.stop()); return }
       stream.current = media
       if (preview.current) { preview.current.srcObject = media; void preview.current.play().catch(() => undefined) }
       const devices = await navigator.mediaDevices.enumerateDevices()
+      if (mine !== generation.current) return
       setCameras(devices.filter((device) => device.kind === 'videoinput'))
       setMics(devices.filter((device) => device.kind === 'audioinput'))
       setError(null)
     } catch (err) {
-      setError(errorMessage(err, 'Your camera could not be opened. Check that no other app is using it.'))
+      if (mine === generation.current) setError(errorMessage(err, 'Your camera could not be opened. Check that no other app is using it.'))
+    } finally {
+      if (mine === generation.current) setOpening(false)
     }
   }, [])
 
   useEffect(() => {
+    // Reset on every mount (React's development mode mounts twice).
+    cancelled.current = false
     void openDevices('', '')
     if (reaction || image) getApi().remix.moment(draft.id).then(setMoment).catch((err) => setError(errorMessage(err)))
     dialog.current?.focus()
     return () => {
       cancelled.current = true
+      generation.current++
       recorder.current?.state === 'recording' && recorder.current.stop()
       if (token.current) void getApi().remix.recordingAbort(token.current)
       stream.current?.getTracks().forEach((track) => track.stop())
@@ -129,7 +148,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
     for (let n = 3; n > 0; n--) {
       setCount(n)
       await new Promise((resolve) => setTimeout(resolve, 1000))
-      if (cancelled.current) return
+      if (cancelled.current) { setPhase('idle'); return }
     }
     const mime = recorderMime()
     try { token.current = await getApi().remix.recordingBegin(draft.id, part, mime) } catch (err) { setError(errorMessage(err)); setPhase('idle'); return }
@@ -165,8 +184,9 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
     try {
       await queue.current
       token.current = null
-      const list = await getApi().remix.recordingFinish(current, reaction ? offset.current ?? 0 : image ? 0 : null)
-      onRecordings(list)
+      // A reaction whose clip never started playing has no known offset: the engine lines it up by sound.
+      const list = await getApi().remix.recordingFinish(current, reaction ? offset.current : image ? 0 : null)
+      updateRecordings(list)
       setReviewing(true)
       // A voiced take moves on to the next line still to record.
       if (!reaction && !image) {
@@ -206,29 +226,30 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   }, [phase, reaction, image, moment, stop])
 
   const upload = async (): Promise<void> => {
-    setError(null)
-    try { const list = await getApi().remix.uploadRecording(draft.id, part); if (list) { onRecordings(list); setReviewing(true) } } catch (err) { setError(errorMessage(err)) }
+    setError(null); setUploading(true)
+    try { const list = await getApi().remix.uploadRecording(draft.id, part); if (list) { updateRecordings(list); setReviewing(true) } } catch (err) { setError(errorMessage(err)) }
+    finally { setUploading(false) }
   }
   const redo = async (): Promise<void> => {
     setError(null)
-    try { onRecordings(await getApi().remix.removeRecording(draft.id, part)); setReviewing(false) } catch (err) { setError(errorMessage(err)) }
+    try { updateRecordings(await getApi().remix.removeRecording(draft.id, part)); setReviewing(false) } catch (err) { setError(errorMessage(err)) }
   }
 
   const saved = (recordings[draft.id] ?? {})[part]
-  const busy = phase !== 'idle'
+  const busy = phase !== 'idle' || uploading
   const allDone = parts.every((item) => recordings[draft.id]?.[item])
   const line = reaction || image ? '' : partText(edit, part)
 
   return (
-    <Dialog ref={dialog} aria-label="Record yourself" onBackdropMouseDown={busy ? undefined : onClose} panelClassName="max-w-[920px]"
-      onKeyDown={(e) => { if (e.key === 'Escape' && !busy) onClose() }}>
+    <Dialog ref={dialog} aria-label="Record yourself" onBackdropMouseDown={busy ? undefined : close} panelClassName="max-w-[920px]"
+      onKeyDown={(e) => { if (e.key === 'Escape' && !busy) close() }}>
       <div className="space-y-4 overflow-y-auto p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="flex items-center gap-2 text-base font-semibold text-ink"><Camera className="h-4 w-4" />{reaction ? 'React on camera' : image ? 'Talk over the screenshot' : 'Record your take'}</h2>
             {edit.headline && <p className="mt-0.5 truncate text-xs text-ink-muted">“{edit.headline}”</p>}
           </div>
-          <Button size="sm" variant="ghost" icon={<X className="h-4 w-4" />} disabled={busy} onClick={onClose}>{allDone ? 'Done' : 'Close'}</Button>
+          <Button size="sm" variant="ghost" icon={<X className="h-4 w-4" />} disabled={busy} onClick={close}>{allDone ? 'Done' : 'Close'}</Button>
         </div>
 
         {!reaction && !image && (
@@ -275,7 +296,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
           <div className="space-y-1">
             <p className="text-2xs text-ink-subtle">{reviewing && saved ? 'Your recording' : 'Your camera'}</p>
             <div className="relative overflow-hidden rounded-xl bg-black">
-              {!reaction && !reviewing && (
+              {!reaction && !image && !reviewing && (
                 // Teleprompter: the line right under the camera, so your eyes stay near the lens.
                 <p className="absolute inset-x-0 top-0 z-10 bg-black/70 px-4 py-3 text-center text-lg font-semibold leading-snug text-white" aria-label="Your line">{line || 'Nothing to say for this part.'}</p>
               )}
@@ -292,21 +313,21 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
             ? <Button variant="danger" icon={<Square className="h-4 w-4" />} onClick={stop}>Stop</Button>
             : <Button variant="primary" icon={<Circle className="h-4 w-4" />} loading={phase === 'countdown' || phase === 'saving'} disabled={busy || !stream.current || ((reaction || image) && !moment)}
                 onClick={() => void record()}>{saved ? 'Record again' : reaction ? 'Start: the clip plays and you react' : image ? 'Start recording' : `Record ${partLabel(part).toLowerCase()}`}</Button>}
-          <Button variant="secondary" icon={<Upload className="h-4 w-4" />} disabled={busy} onClick={() => void upload()}>Upload a video instead</Button>
+          <Button variant="secondary" icon={<Upload className="h-4 w-4" />} loading={uploading} disabled={busy} onClick={() => void upload()}>{uploading ? 'Copying your video…' : 'Upload a video instead'}</Button>
           {saved && !busy && <Button variant="ghost" icon={<RotateCcw className="h-4 w-4" />} onClick={() => void redo()}>Delete this recording</Button>}
           {saved && <span className="text-2xs text-success">{saved.uploaded ? 'Uploaded' : 'Recorded'} · {saved.seconds ? `${saved.seconds.toFixed(0)}s` : 'saved'}</span>}
         </div>
 
         <div className="flex flex-wrap gap-3 text-2xs text-ink-muted">
           <label className="flex items-center gap-1.5"><Camera className="h-3.5 w-3.5" />
-            <select aria-label="Camera" value={cameraId} disabled={busy} onChange={(e) => { setCameraId(e.target.value); void openDevices(e.target.value, micId) }}
+            <select aria-label="Camera" value={cameraId} disabled={busy || opening} onChange={(e) => { setCameraId(e.target.value); void openDevices(e.target.value, micId) }}
               className="rounded-md border border-white/10 bg-black/20 px-1.5 py-1 text-ink">
               <option value="">Default camera</option>
               {cameras.map((device, i) => <option key={device.deviceId || i} value={device.deviceId}>{device.label || `Camera ${i + 1}`}</option>)}
             </select>
           </label>
           <label className="flex items-center gap-1.5"><Mic className="h-3.5 w-3.5" />
-            <select aria-label="Microphone" value={micId} disabled={busy} onChange={(e) => { setMicId(e.target.value); void openDevices(cameraId, e.target.value) }}
+            <select aria-label="Microphone" value={micId} disabled={busy || opening} onChange={(e) => { setMicId(e.target.value); void openDevices(cameraId, e.target.value) }}
               className="rounded-md border border-white/10 bg-black/20 px-1.5 py-1 text-ink">
               <option value="">Default microphone</option>
               {mics.map((device, i) => <option key={device.deviceId || i} value={device.deviceId}>{device.label || `Microphone ${i + 1}`}</option>)}
