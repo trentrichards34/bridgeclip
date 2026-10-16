@@ -228,6 +228,7 @@ test('cancelling while the call to action is added stops only that step: the mad
   for (let i = 0; i < 20 && !aborted; i++) await new Promise((r) => setTimeout(r, 10))
   await tick()
   assert.equal(aborted, true, 'the FFmpeg step was told to stop')
+  for (let i = 0; i < 50 && !sent.some((event) => event.channel === 'job:complete'); i++) await new Promise((r) => setTimeout(r, 10))
   const complete = sent.find((event) => event.channel === 'job:complete')
   assert.ok(complete, 'the clips are made, so the run completes')
   assert.match(complete.data.step, /You stopped the call to action partway/)
