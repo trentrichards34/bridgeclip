@@ -607,10 +607,18 @@ test('re-editing a finished remix: checked, rebuilt from its saved parts, call t
     return child
   }
   const ctaCalls = []
+  let locked = 0, ctaMissing = false
   const m = load('main/remix.ts', {
     electron: { app: { getPath: () => out, isPackaged: true } },
     child_process: { ...childProcess, spawn },
-    './ctas': { applyRunCta: async (run, id, indices) => { ctaCalls.push([run, id, indices]); return { failed: [], cancelled: false } }, readCta: () => ({}),
+    './ctas': { applyRunCta: async () => ({ failed: [], cancelled: false }), readCta: () => ({}),
+      applyRunCtaInLock: async (run, id, indices) => {
+        ctaCalls.push([run, id, indices])
+        if (id && ctaMissing) throw new Error('That call to action is no longer in your library. Choose another.')
+        if (!id) { fs.copyFileSync(path.join(run, 'clip_00.original.mp4'), path.join(run, 'clip_00.mp4')); fs.rmSync(path.join(run, 'clip_00.original.mp4')) }
+        return { failed: [], cancelled: false }
+      },
+      withRunLock: async (_run, work) => { locked++; try { return await work() } finally { locked-- } },
       originalPath: (p) => p.replace(/\.mp4$/, '.original.mp4') },
     './avatars': { portraitPath: () => '', voiceSamplePath: () => '', readAvatar: () => null, readReactions: () => [] },
     './logger': { logger: { info() {}, warn() {} } },
@@ -635,18 +643,27 @@ test('re-editing a finished remix: checked, rebuilt from its saved parts, call t
   await assert.rejects(m.recomposeRemix(path.join(out, 'my-run'), 0, edit), /Only Remix videos/)
   await assert.rejects(m.recomposeRemix(folder, 7, edit), /no longer in this run/)
   await assert.rejects(m.recomposeRemix(folder, 0, { ...edit, headline: 'Too short' }), /at least 3 words/)
+  await assert.rejects(m.recomposeRemix(folder, 0, { ...edit, headline: Array.from({ length: 17 }, () => 'word').join(' ') }), /16 words/)
+  await assert.rejects(m.recomposeRemix(path.join(out, 'remix-' + '-'.repeat(36)), 0, edit), /Only Remix videos/)
   await assert.rejects(m.recomposeRemix(folder, 0, { ...edit, split: 0.9 }), /between 30% and 70%/)
   await assert.rejects(m.recomposeRemix(folder, 0, { ...edit, headlineLook: { look: 'neon' } }), /headline look/i)
   await assert.rejects(m.recomposeRemix(folder, 1, edit), /made before editing was possible/)
   assert.equal(configs.length, 0, 'nothing ran')
 
-  await m.recomposeRemix(folder, 0, edit)
+  // While it's being re-made, the Library leaves the run alone.
+  const pending = m.recomposeRemix(folder, 0, edit)
+  assert.match(m.remixRunBusy(folder), /being re-made/)
+  await assert.rejects(m.recomposeRemix(folder, 0, edit), /Another video is being re-made/)
+  assert.equal(await pending, null)
+  assert.equal(m.remixRunBusy(folder), null)
+  assert.equal(locked, 0)
   assert.deepEqual(configs[0], { mode: 'recompose', output_dir: folder, clip: 'clip_00', output_path: configs[0].output_path, headline: 'A brand new hook for this',
-    headline_look: { look: 'black', color: '#FFFFFF', font: 'serif' }, include_captions: false, caption_preset: 'pop', split: 0.45 })
+    headline_look: { look: 'black', color: '#FFFFFF', font: 'serif' }, include_captions: false, caption_preset: 'pop', split: 0.45, final_name: 'clip_00.mp4' })
   assert.equal(path.dirname(configs[0].output_path), folder)
   // The plain video (.original) is replaced and the call to action added back on top.
   assert.equal(fs.readFileSync(path.join(folder, 'clip_00.original.mp4'), 'utf8'), 'NEW VIDEO')
   assert.deepEqual(plain(ctaCalls), [[folder, 'a1b2c3d4e5f60718', [0]]])
+  assert.ok(JSON.parse(fs.readFileSync(path.join(folder, 'job_output.json'), 'utf8')).clips[0].edited_at)
   const job = JSON.parse(fs.readFileSync(path.join(folder, 'job_output.json'), 'utf8'))
   assert.equal(job.clips[0].headline, 'A brand new hook for this')
   assert.equal(job.clips[0].editable.split_value, 0.45)
@@ -658,9 +675,23 @@ test('re-editing a finished remix: checked, rebuilt from its saved parts, call t
   assert.equal(parsed.clips[0].remix_settings.headline, 'A brand new hook for this')
   assert.equal(parsed.clips[1].editable, null)
 
+  // The call to action was deleted from the library: the new video is kept, without it, and the member is told.
+  ctaMissing = true
+  const note = await m.recomposeRemix(folder, 0, edit)
+  assert.match(note, /couldn’t be added back/)
+  assert.equal(fs.readFileSync(path.join(folder, 'clip_00.mp4'), 'utf8'), 'NEW VIDEO')
+  assert.equal(fs.existsSync(path.join(folder, 'clip_00.original.mp4')), false)
+  // A clip without a call to action (and a stray .original) is simply replaced.
+  fs.writeFileSync(path.join(folder, 'clip_00.original.mp4'), 'STRAY')
+  const plainJob = JSON.parse(fs.readFileSync(path.join(folder, 'job_output.json'), 'utf8'))
+  plainJob.clips[0].cta = null
+  fs.writeFileSync(path.join(folder, 'job_output.json'), JSON.stringify(plainJob))
+  assert.equal(await m.recomposeRemix(folder, 0, edit), null)
+  assert.equal(fs.existsSync(path.join(folder, 'clip_00.original.mp4')), false)
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'job_output.json'), 'utf8')).clips[0].duration_ms, 12500)
   // An engine failure keeps the video as it was.
   fail = true
   await assert.rejects(m.recomposeRemix(folder, 0, edit), /made before editing was possible/)
-  assert.equal(fs.readFileSync(path.join(folder, 'clip_00.original.mp4'), 'utf8'), 'NEW VIDEO')
+  assert.equal(fs.readFileSync(path.join(folder, 'clip_00.mp4'), 'utf8'), 'NEW VIDEO')
   fs.rmSync(out, { recursive: true, force: true })
 })

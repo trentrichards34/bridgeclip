@@ -512,9 +512,9 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
         }}
       />}
       {editClip && outputDir && <RemixEditDialog outputDir={outputDir} clip={editClip} onClose={() => setEditClip(null)}
-        onDone={(fresh) => {
+        onDone={(fresh, note) => {
           if (fresh) onOutputChanged(fresh)
-          setNotice('The video was made again with your changes. Copies already queued in an automation keep their earlier version.')
+          setNotice(note ?? 'The video was made again with your changes. Copies already queued in an automation keep their earlier version.')
           if (noticeTimer.current) clearTimeout(noticeTimer.current)
           noticeTimer.current = setTimeout(() => setNotice(null), 6000)
         }} />}

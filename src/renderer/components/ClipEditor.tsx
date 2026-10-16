@@ -62,9 +62,9 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
   const closeReplacement = useCallback(() => setReplacement(null), [])
   const [selected, setSelected] = useState(0)
   const [tab, setTab] = useState<'review' | 'framing' | 'captions' | 'hook' | 'transcript'>('review')
-  const [ctaMode, setCtaMode] = useState<'run' | 'none' | 'pick' | null>(null)
-  // Each clip shows its own call-to-action choice.
-  useEffect(() => setCtaMode(null), [selected])
+  // "Choose" picked but no call to action chosen yet (the clip still uses the run's until one is).
+  const [ctaPicking, setCtaPicking] = useState(false)
+  useEffect(() => setCtaPicking(false), [selected])
   const [time, setTime] = useState(0)
   const timeRef = useRef(time); timeRef.current = time
   const [playing, setPlaying] = useState(false)
@@ -708,10 +708,10 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
           {tab === 'hook' && <div className="space-y-4 mt-4">
             <fieldset disabled={editingDisabled} className="space-y-3">
               <div className="flex items-center justify-between text-xs"><span>Hook text at the top</span>
-                <Switch label="Hook text at the top" checked={candidate.hook !== null}
+                <Switch label="Hook text at the top" checked={!!candidate.hook}
                   onChange={(on) => change({ hook: on ? { text: candidate.title.slice(0, MAX_HOOK_CHARS), look: DEFAULT_HEADLINE_LOOK } : null })} /></div>
               {project.aspect_ratio !== '9:16' && <p className="text-2xs text-ink-subtle">Hook text is drawn on vertical (9:16) clips only.</p>}
-              {candidate.hook === undefined && <p className="text-2xs text-ink-subtle">This clip keeps the hook text it was made with. <button className="underline" onClick={() => change({ hook: { text: candidate.title.slice(0, MAX_HOOK_CHARS), look: DEFAULT_HEADLINE_LOOK } })}>Change it</button></p>}
+              {candidate.hook === undefined && <p className="text-2xs text-ink-subtle">This project was made before hook text could be edited, so baked clips have none. <button className="underline" onClick={() => change({ hook: { text: candidate.title.slice(0, MAX_HOOK_CHARS), look: DEFAULT_HEADLINE_LOOK } })}>Add hook text</button></p>}
               {candidate.hook && <>
                 <label className="editor-label" htmlFor="editor-hook">Words <span className="float-right">{candidate.hook.text.length} / {MAX_HOOK_CHARS}</span></label>
                 <textarea id="editor-hook" aria-label="Hook text" rows={3} maxLength={MAX_HOOK_CHARS} value={candidate.hook.text}
@@ -723,10 +723,14 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
             </fieldset>
             <section className="space-y-2 border-t border-white/10 pt-3" aria-label="Call to action">
               <p className="text-xs">Call to action at the end</p>
-              <Segmented label="Call to action" size="sm" value={ctaMode ?? (candidate.cta_id === undefined ? 'run' : candidate.cta_id === null ? 'none' : 'pick')}
-                onChange={(mode) => { setCtaMode(mode); if (mode === 'run') change({ cta_id: undefined }); else if (mode === 'none') change({ cta_id: null }) }}
+              <Segmented label="Call to action" size="sm" value={typeof candidate.cta_id === 'string' || ctaPicking ? 'pick' : candidate.cta_id === null ? 'none' : 'run'}
+                onChange={(mode) => { setCtaPicking(mode === 'pick'); if (mode === 'run') change({ cta_id: undefined }); else if (mode === 'none') change({ cta_id: null }) }}
                 options={[{ value: 'run', label: 'Same as the run' }, { value: 'none', label: 'None' }, { value: 'pick', label: 'Choose' }]} />
-              {(ctaMode ?? (candidate.cta_id ? 'pick' : null)) === 'pick' && <CtaPicker value={candidate.cta_id ?? null} disabled={editingDisabled} onChange={(id) => change({ cta_id: id })} />}
+              {(typeof candidate.cta_id === 'string' || ctaPicking) && <CtaPicker value={typeof candidate.cta_id === 'string' ? candidate.cta_id : null} disabled={editingDisabled}
+                onChange={(id) => { if (id) change({ cta_id: id }) }}
+                // A call to action deleted from the library: back to the run's, without an undo step.
+                onMissing={() => { setCtaPicking(false); change({ cta_id: undefined }, false) }} />}
+              {ctaPicking && typeof candidate.cta_id !== 'string' && <p className="text-2xs text-ink-subtle">Until you choose one, this clip uses the run’s call to action.</p>}
               <p className="text-2xs text-ink-subtle">Added to the end when you bake this clip. A clip you already baked can change its call to action in the Library (⋯ → Change call to action).</p>
             </section>
           </div>}

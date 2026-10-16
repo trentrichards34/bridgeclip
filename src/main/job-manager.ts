@@ -1,7 +1,7 @@
 import { parseRunDiagnostics } from '../shared/run-diagnostics'
 import { parseStages } from '../shared/job-progress'
 import { join } from 'path'
-import { cancelJob as cancelRunningJob, startClipJob, type ClipJobConfig, type JobEventSink } from './pipeline-runner'
+import { cancelJob as cancelRunningJob, ctaStepRunning, startClipJob, type ClipJobConfig, type JobEventSink } from './pipeline-runner'
 import { finishRunRecord } from './run-history'
 import { logger } from './logger'
 import { parseJobOutput } from '../shared/job-output'
@@ -172,6 +172,13 @@ export function cancelTrackedJob(jobId: string): boolean {
     if (index !== -1) queue.splice(index, 1)
     try { finishRunRecord(job.outputDirectory, jobId, 'cancelled') } catch { logger.warn('job.history.writeFailed', { jobId }) }
     finish(jobId, 'cancelled', { step: 'Cancelled' })
+    return true
+  }
+  // Clips already made, call to action being added: only that step stops, and the
+  // job then completes (with a note) through the runner's own completion event.
+  if (ctaStepRunning(jobId)) {
+    cancelRunningJob(jobId)
+    update(jobId, { step: 'Stopping the call to action…' })
     return true
   }
   // The runner records the cancellation and stops the process group; its slot

@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { execFile } from 'child_process'
 import { randomBytes } from 'crypto'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, realpathSync } from 'fs'
 import { copyFile, link, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
 import { basename, dirname, extname, join } from 'path'
 import { promisify } from 'util'
@@ -172,10 +172,12 @@ export interface CtaRunOptions { signal?: AbortSignal; onProgress?: (done: numbe
  */
 export async function renderClipCta(clipPath: string, cta: (StoredCta & { path: string }) | null, signal?: AbortSignal): Promise<number> {
   const original = originalPath(clipPath)
+  let created = false
   if (!existsSync(original)) {
     if (!cta) return Math.round((await mediaInfo(clipPath, [])).seconds * 1000)
     // Keep the render as it was. A hard link costs no space; copy where links aren't possible.
     await link(clipPath, original).catch(() => copyFile(clipPath, original))
+    created = true
   }
   const temp = join(dirname(clipPath), `.cta-${randomBytes(4).toString('hex')}.mp4`)
   try {
@@ -225,6 +227,8 @@ export async function renderClipCta(clipPath: string, cta: (StoredCta & { path: 
     return Math.round(seconds * 1000)
   } catch (error) {
     await rm(temp, { force: true })
+    // The clip is unchanged: don't leave a copy behind that says it has a call to action.
+    if (created) await rm(original, { force: true }).catch(() => undefined)
     if (signal?.aborted) throw new Error('Cancelled')
     if (error instanceof Error && /no longer|could not be read/.test(error.message)) throw error
     throw new Error('The call to action could not be added to this clip. Try again, or choose another call to action.')
@@ -240,10 +244,23 @@ const runLocks = new Map<string, Promise<unknown>>()
  * run stops after the clip in progress; what was done is still recorded.
  */
 export function applyRunCta(run: string, ctaId: string | null, indices?: number[], options: CtaRunOptions = {}): Promise<{ failed: number[]; cancelled: boolean }> {
-  const next = (runLocks.get(run) ?? Promise.resolve()).catch(() => undefined).then(() => applyRunCtaNow(run, ctaId, indices, options))
-  runLocks.set(run, next)
-  void next.finally(() => { if (runLocks.get(run) === next) runLocks.delete(run) }).catch(() => undefined)
+  return withRunLock(run, () => applyRunCtaNow(run, ctaId, indices, options))
+}
+
+/** Run `work` while holding the run's lock (no CTA change or other rewrite of its clips meanwhile). */
+export function withRunLock<T>(run: string, work: () => Promise<T>): Promise<T> {
+  // One lock per folder, however its path was spelled.
+  let key = run
+  try { key = realpathSync(run) } catch { /* a missing run fails inside `work` */ }
+  const next = (runLocks.get(key) ?? Promise.resolve()).catch(() => undefined).then(work)
+  runLocks.set(key, next)
+  void next.finally(() => { if (runLocks.get(key) === next) runLocks.delete(key) }).catch(() => undefined)
   return next
+}
+
+/** applyRunCta for a caller already holding the run's lock (withRunLock). */
+export function applyRunCtaInLock(run: string, ctaId: string | null, indices?: number[]): Promise<{ failed: number[]; cancelled: boolean }> {
+  return applyRunCtaNow(run, ctaId, indices, {})
 }
 
 async function applyRunCtaNow(run: string, ctaId: string | null, indices: number[] | undefined, { signal, onProgress }: CtaRunOptions): Promise<{ failed: number[]; cancelled: boolean }> {

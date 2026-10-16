@@ -792,6 +792,9 @@ export function startClipJob(
   }
 }
 
+/** The clips are made and their call to action is being added (cancel then only stops that step). */
+export function ctaStepRunning(jobId: string): boolean { return ctaSteps.has(jobId) }
+
 export function cancelJob(jobId: string): boolean {
   // After the engine finished: only the call-to-action step stops (its FFmpeg right away).
   // The clips are made, so the run still finishes as done, with a note.

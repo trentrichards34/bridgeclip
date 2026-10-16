@@ -144,3 +144,28 @@ test('the CTA library takes videos and images, and appends, switches and removes
   await assert.rejects(ctas.applyRunCta(run, image.id), /no longer in your library/)
   await assert.rejects(ctas.removeCta('../x'), /Choose a call to action/)
 })
+
+test('a call to action that can\'t be added leaves the clip exactly as it was, with no stray original copy', { skip: !hasFfmpeg && 'ffmpeg not installed' }, async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-ctas-fail-'))
+  const ctas = load('main/ctas.ts', {
+    electron: { app: { getPath: () => userData } },
+    './security': { authorizeMedia: (p) => p },
+    './tools': { resolveBinary: (name) => name }
+  })
+  const clip = path.join(userData, 'clip_00.mp4')
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=64x64:d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', clip])
+  const before = fs.readFileSync(clip)
+  // A CTA whose file is unreadable: the step fails.
+  const broken = path.join(userData, 'broken.mp4')
+  fs.writeFileSync(broken, 'not a video')
+  await assert.rejects(ctas.renderClipCta(clip, { id: 'a1b2c3d4e5f60718', name: 'x', kind: 'video', seconds: 3, path: broken }))
+  assert.equal(fs.readFileSync(clip).equals(before), true)
+  assert.equal(fs.existsSync(ctas.originalPath(clip)), false, 'no original left behind that says the clip has a CTA')
+  // Holding the run's lock: other work on the run waits its turn (any spelling of the path).
+  const order = []
+  const first = ctas.withRunLock(userData, async () => { await new Promise((r) => setTimeout(r, 50)); order.push('first') })
+  const second = ctas.withRunLock(userData + path.sep, async () => { order.push('second') })
+  await Promise.all([first, second])
+  assert.deepEqual(order, ['first', 'second'])
+  fs.rmSync(userData, { recursive: true, force: true })
+})

@@ -1183,11 +1183,11 @@ SPLIT_CONSTANT_SHARE = 0.7
 # 44% of a 1080p recording's height or more fills the frame; smaller ones split.
 PERSON_MAIN_MAX_UPSCALE = 4.0
 PERSON_MAIN_OUT = (1080, 1920)
-# Speech that points at the screen ("as you can see...").
+# Speech that points at the screen ("as you can see..."). Kept specific: everyday phrases ("here's",
+# "you can see", "click") come up in plain talk and would cut to the screen for nothing.
 SCREEN_CUE_PHRASES = (
-    "look at this", "as you can see", "you can see", "here's", "here is", "click", "clicking", "clicked",
-    "on the screen", "on screen", "this slide", "next slide", "right here", "over here", "let me show you",
-    "watch this", "scroll", "this page", "this tab",
+    "look at this", "as you can see", "on the screen", "on screen", "this slide", "next slide", "right here",
+    "over here", "let me show you", "watch this", "scroll", "this page", "this tab",
 )
 
 
@@ -1329,15 +1329,29 @@ def person_main_fits(shot: ShotLayout, src_w: int, src_h: int) -> bool:
     return face is None or crop_h * out_w / out_h >= face.w * src_w * 1.4
 
 
-def person_main_shot(shot: ShotLayout, start_ms: int, end_ms: int) -> ShotLayout:
-    """The webcam filling the frame: a talking head cropped inside the webcam box."""
+def person_main_shot(shot: ShotLayout, start_ms: int, end_ms: int, frames: Optional[list[FrameInfo]] = None,
+                     src_w: int = 0, src_h: int = 0) -> ShotLayout:
+    """The webcam filling the frame: a talking head cropped inside the webcam box.
+
+    With the analysis frames, the crop follows the face inside the webcam (the same calm virtual camera a
+    talking head gets), so a person who leans or shifts stays framed; otherwise it holds on the face."""
     cam = shot.cam_box.clamp()
     face = shot.cam_face if shot.cam_face is not None and cam.contains(shot.cam_face.cx, shot.cam_face.cy) else None
     focus = face or cam
+    path = [(0, focus.cx, focus.cy)]
+    if frames and src_w and src_h:
+        samples = []
+        for frame in frames:
+            if start_ms <= frame.t_ms < end_ms:
+                inside = [box for box in frame.faces if cam.contains(box.cx, box.cy)]
+                if inside:
+                    samples.append((frame.t_ms - start_ms, max(inside, key=lambda box: box.w * box.h)))
+        if len(samples) >= 2:
+            path = smooth_focus_path(samples, end_ms - start_ms, inset_crop_width(cam, src_w, src_h)) or path
     return ShotLayout(
         start_ms, end_ms, LayoutType.TALKING_HEAD, source=shot.source,
         detected_layout=shot.detected_layout or LayoutType.SCREEN_CAM,
-        focus_path=[(0, focus.cx, focus.cy)], people=[face] if face else [],
+        focus_path=path, people=[face] if face else [],
         screen_box=shot.screen_box, screen_focus=shot.screen_focus,
         cam_box=shot.cam_box, cam_face=shot.cam_face, crop_bounds=cam, cam_box_refined=shot.cam_box_refined,
     )
@@ -1367,7 +1381,7 @@ def apply_screen_focus(
                 result.append(replace(shot, start_ms=a, end_ms=b,
                                       detected_layout=shot.detected_layout or LayoutType.SCREEN_CAM))
             else:
-                result.append(person_main_shot(shot, a, b))
+                result.append(person_main_shot(shot, a, b, frames, src_w, src_h))
             if trace is not None and a != shot.start_ms:
                 trace["boundaries"].append({"t_ms": a, "kind": "screen_focus", "accepted": True,
                                             "to_layout": LayoutType.SCREEN_CAM if split else LayoutType.TALKING_HEAD})

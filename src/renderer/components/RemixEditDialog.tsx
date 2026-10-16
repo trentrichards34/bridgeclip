@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { Check, Pencil } from 'lucide-react'
 import type { ClipArtifact, JobOutput } from '../../shared/job-output'
+import { remixEditProblem } from '../../shared/remix'
 import { DEFAULT_CAPTION_PRESET, isCaptionPresetId } from '../../shared/caption-presets'
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from '../../shared/headline-look'
 import { getApi } from '../lib/ipc'
@@ -16,7 +17,6 @@ function startLook(clip: ClipArtifact): HeadlineLook {
   try { return clip.remix_settings?.headline_look ? parseHeadlineLook(clip.remix_settings.headline_look) : DEFAULT_HEADLINE_LOOK } catch { return DEFAULT_HEADLINE_LOOK }
 }
 
-const words = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length
 
 /**
  * Re-make a finished Remix video with new hook text, look, captions or box
@@ -24,7 +24,7 @@ const words = (text: string): number => text.trim().split(/\s+/).filter(Boolean)
  * its call to action is added back at the end.
  */
 export function RemixEditDialog({ outputDir, clip, onDone, onClose }: {
-  outputDir: string; clip: ClipArtifact; onDone: (output: JobOutput | null) => void; onClose: () => void
+  outputDir: string; clip: ClipArtifact; onDone: (output: JobOutput | null, note: string | null) => void; onClose: () => void
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const settings = clip.remix_settings
@@ -39,14 +39,16 @@ export function RemixEditDialog({ outputDir, clip, onDone, onClose }: {
   const [splitTouched, setSplitTouched] = useState(false)
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const problem = words(headline) < 3 ? 'The hook text needs at least 3 words: it’s also the video’s title.' : headline.length > 200 ? 'Keep the hook text to 200 characters.' : null
+  // The same rule as reviewing a take; the hook text is also the video's title.
+  const problem = remixEditProblem({ headline, intro: '', beats: [], close: '' }, 'silent') ?? (headline.length > 200 ? 'Keep the hook text to 200 characters.' : null)
 
   const save = async (): Promise<void> => {
     setWorking(true); setError(null)
     try {
       const keepSplit = madeSplit !== null && madeSplit >= 0.3 && madeSplit <= 0.7 ? madeSplit : null
-      onDone(await getApi().remix.recompose(outputDir, clip.clip_index, { headline: headline.trim(), headlineLook: look, includeCaptions: captions, captionPreset: preset,
-        split: canSplit && splitTouched ? split : canSplit ? keepSplit : null }))
+      const { output, note } = await getApi().remix.recompose(outputDir, clip.clip_index, { headline: headline.trim(), headlineLook: look, includeCaptions: captions, captionPreset: preset,
+        split: canSplit && splitTouched ? split : canSplit ? keepSplit : null })
+      onDone(output, note)
       onClose()
     } catch (err) { setError(errorMessage(err, 'The video could not be made again.')) } finally { setWorking(false) }
   }
@@ -54,7 +56,7 @@ export function RemixEditDialog({ outputDir, clip, onDone, onClose }: {
   return (
     <Dialog ref={ref} aria-label="Edit this video" onBackdropMouseDown={working ? undefined : onClose} panelClassName="max-w-[720px]"
       onKeyDown={(e) => { if (e.key === 'Escape' && !working) onClose() }}>
-      <div className="space-y-5 overflow-y-auto p-5">
+      <fieldset disabled={working} className="min-w-0 space-y-5 overflow-y-auto p-5">
         <div>
           <h2 className="flex items-center gap-2 text-base font-semibold text-ink"><Pencil className="h-4 w-4" />Edit this video</h2>
           <p className="mt-1 text-xs text-ink-muted">Change the hook text, captions{split !== null ? ' or the size of the clip box' : ''}. The video is made again from its saved parts in about a minute, with no AI cost{clip.cta ? ', and your call to action is added back at the end' : ''}.</p>
@@ -86,7 +88,7 @@ export function RemixEditDialog({ outputDir, clip, onDone, onClose }: {
         </div>
         {problem && <p className="text-2xs text-danger">{problem}</p>}
         {error && <p role="alert" className="text-xs text-danger">{error}</p>}
-      </div>
+      </fieldset>
       <DialogFooter>
         <Button variant="ghost" disabled={working} onClick={onClose}>Cancel</Button>
         <Button variant="primary" icon={<Check className="h-4 w-4" />} loading={working} disabled={working || problem !== null} onClick={() => void save()}>

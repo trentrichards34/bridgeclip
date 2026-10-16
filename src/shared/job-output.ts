@@ -28,6 +28,8 @@ export interface ClipArtifact {
   editable?: { split: boolean } | null
   /** Remix: the settings it was last made with, to start the edit from. */
   remix_settings?: RemixClipSettings | null
+  /** When the video was last re-made (thumbnails refresh on it). */
+  edited_at?: string | null
   tags: string[]
   /** Set when smart framing failed and a letterbox fallback produced the clip. */
   render_fallback: string | null
@@ -229,6 +231,7 @@ export function parseJobOutput(value: unknown): JobOutput | null {
       post_caption: typeof item.post_caption === 'string' && item.post_caption.trim() ? item.post_caption.slice(0, 5000) : null,
       cta: record(item.cta) && typeof item.cta.id === 'string' && /^[a-f0-9]{16}$/.test(item.cta.id) && typeof item.cta.name === 'string' ? { id: item.cta.id, name: item.cta.name.slice(0, 60), ...(typeof item.cta.seconds === 'number' && Number.isFinite(item.cta.seconds) ? { seconds: item.cta.seconds } : {}) } : null,
       editable: record(item.editable) ? { split: item.editable.split === true } : null,
+      edited_at: boundedText(item.edited_at, 64),
       // The engine keeps the last-made settings inside `editable`; the box size as made is split_value.
       remix_settings: record(item.editable) ? remixSettings({ ...(record(item.editable.settings) ? item.editable.settings : {}),
         split: typeof item.editable.split_value === 'number' ? item.editable.split_value : record(item.editable.settings) ? item.editable.settings.split : null }) : null,

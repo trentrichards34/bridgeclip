@@ -336,3 +336,19 @@ def test_recompose_an_article_take(env, monkeypatch):
     assert np.ptp(low) > 20 and np.ptp(high) < 6 and high.min() > 150, (low, high)
     assert captions and "remote work pays" in captions[-1][0]
     assert json.load(open(run.out["manifest_path"]))["headline"] == "The Journal says remote workers earn less"
+
+
+
+def test_a_wide_screenshot_offers_no_split_and_is_kept_small(env, monkeypatch):
+    from .recompose_support import bundle
+    image = env.out / ".work" / "source.png"
+    Image.new("RGB", (2400, 1350), GREEN).save(image)  # a wide (16:9) screenshot, wider than the frame
+    image = str(image)
+    recording = make_line_recording(env, env.tmp / "take.mp4", 3, (640, 360), 300)
+    run = write_then_render(env, monkeypatch, image, recording, "cutout")
+    folder, data, _ = bundle(run.out)
+    # It already fills the box's width: a bigger box couldn't show it bigger, so no size slider.
+    assert run.out["editable"]["split"] is False and run.out["editable"]["split_value"] is None
+    assert data["settings"]["split"] is None
+    with Image.open(folder / "image.png") as kept:
+        assert kept.size == (1080, 608)

@@ -487,6 +487,36 @@ def test_recompose_a_live_reaction(env, monkeypatch):
     assert "word" in captions[-1][0]
     assert again["settings"]["split"] == pytest.approx(out["editable"]["split_value"])
 
+    # The app's final name is what gets recorded (not the temporary file it saves to).
+    named = recompose(root, name="tmp-edit-3.mp4", final_name="clip_00.mp4", headline="This #creator says reels are not revenue")
+    assert json.load(open(out["manifest_path"]))["video"] == "clip_00.mp4" == json.load(open(folder / "edit.json"))["video"]
+    assert named["settings"]["headline"] == "This #creator says reels are not revenue"  # kept as typed
+    with pytest.raises(remix.RemixError) as error:
+        recompose(root, headline=" ".join(["word"] * 17))
+    assert str(error.value) == "Keep the hook text to 16 words."
+    with pytest.raises(remix.RemixError, match="where to save"):
+        recompose(root, final_name="../clip_00.mp4")
+    # A killed earlier re-make's leftovers are cleared first.
+    (folder / "recompose-old").mkdir()
+    (root / "clip_00-edit.mp4.part.mp4").write_bytes(b"half")
+    recompose(root, name="clip_00-edit-4.mp4")
+    assert not (folder / "recompose-old").exists() and not (root / "clip_00-edit.mp4.part.mp4").exists()
+    # Making the video fails (FFmpeg, the disk): said plainly, not "made before editing was possible".
+    def broken(args, timeout=900):
+        raise remix.RemixError("Putting the video together failed.")
+    monkeypatch.setattr(remix, "ffmpeg", broken)
+    with pytest.raises(remix.RemixError) as error:
+        recompose(root, name="clip_00-edit-5.mp4")
+    assert str(error.value) == remix.RECOMPOSE_FAILED
+    monkeypatch.setattr(remix, "low_on_disk", lambda path, need=0: True)
+    with pytest.raises(remix.RemixError) as error:
+        recompose(root, name="clip_00-edit-5.mp4")
+    assert str(error.value) == remix.DISK_FULL and not (root / "clip_00-edit-5.mp4").exists()
+    # A damaged kept file is the bundle's problem.
+    (folder / "moment.mp4").write_bytes(b"damaged")
+    with pytest.raises(remix.RemixError, match="made before editing was possible"):
+        recompose(root, name="clip_00-edit-6.mp4")
+
 
 @needs_libass
 def test_green_screen_and_voiced_takes_have_no_split(env, monkeypatch):
@@ -521,3 +551,17 @@ def test_a_missing_old_or_damaged_bundle_says_so(tmp_path):
     for name in ("../elsewhere.mp4", "clip.mov"):
         with pytest.raises(remix.RemixError, match="where to save"):
             recompose(tmp_path, name=name)
+
+
+def test_a_half_written_matte_is_removed(tmp_path, monkeypatch):
+    out = tmp_path / "matte.mkv"
+
+    def fails(video, path, width, height, fps=30):
+        open(path, "wb").write(b"half")
+        raise RuntimeError("model crashed")
+    monkeypatch.setattr(segmentation, "write_matte", fails)
+    monkeypatch.setattr(remix, "video_size", lambda path: (640, 360))
+    remixer = remix.Remixer.__new__(remix.Remixer)
+    warnings = []
+    assert remixer._matte(str(tmp_path / "you.mp4"), str(out), warnings) is None
+    assert not out.exists() and warnings

@@ -9,9 +9,10 @@ import { getApi } from './ipc'
 const cache = new Map<string, Promise<string | null>>()
 let tail: Promise<unknown> = Promise.resolve()
 
-export function loadThumbnail(videoPath: string, seekSeconds?: number): Promise<string | null> {
-  // Keyed by the frame too: a clip that changed length (a call to action added) gets a new thumbnail.
-  const key = `${videoPath}\n${seekSeconds ?? 'middle'}`
+export function loadThumbnail(videoPath: string, seekSeconds?: number, version = ''): Promise<string | null> {
+  // Keyed by the frame too: a clip that changed length (a call to action added) gets a new thumbnail,
+  // and by `version`: a video re-made at the same length (new hook text) does too.
+  const key = `${videoPath}\n${seekSeconds ?? 'middle'}\n${version}`
   const cached = cache.get(key)
   if (cached) return cached
 

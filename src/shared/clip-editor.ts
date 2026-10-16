@@ -206,7 +206,8 @@ export function parseHook(value: unknown): EditorHook | null {
   if (value === null) return null
   const v = record(value)
   const text = str(v.text, MAX_HOOK_CHARS * 2).replace(/\s+/g, ' ').trim()
-  if (!text || text.length > MAX_HOOK_CHARS) fail()
+  // No control characters (the engine refuses them too).
+  if (!text || text.length > MAX_HOOK_CHARS || [...text].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) fail()
   let look: HeadlineLook
   try { look = parseHeadlineLook(v.look) } catch { return fail() }
   return { text, look }

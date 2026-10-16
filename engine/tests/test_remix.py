@@ -879,3 +879,51 @@ def test_a_social_login_problem_keeps_its_hint_with_several_videos(tmp_path, mon
         asyncio.run(remixer.plan())
     assert error.value.reason == "login_required"  # the bridge turns this into the "choose your browser" hint
     assert any("logged-in viewer. In Settings → API keys, choose the browser" in w for w in remixer.warnings)
+
+
+def test_cancelling_a_render_keeps_the_plan_and_drops_the_half_made_remix(tmp_path, monkeypatch):
+    settings = SimpleNamespace(openrouter_api_key="k", openrouter_base_url="https://x.test/api/v1", planner_model="m",
+                               get_planner_fallback_models=lambda: [], pexels_api_key=None)
+
+    class Media:
+        cost_usd = 0.0
+
+        async def aclose(self):
+            pass
+    config = remix.RemixConfig(sources=["https://example.com/v"], output_dir=str(tmp_path), host="voice", count=2)
+    scripts = remix.parse_plan({"remixes": [plan_item(4, 8), plan_item(12, 16)]}, transcript(), "", 2)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"v")
+
+    async def source(src, work, single):
+        return str(video), {"url": src, "title": "t", "creator": "c", "platform": "youtube"}
+
+    async def transcribe(video, work, allow_silence=False):
+        return transcript()
+
+    async def plan(segments, meta):
+        return scripts
+
+    async def grade(items):
+        pass
+    remixer = remix.Remixer(config, media=Media(), settings=settings)
+    for name, fn in (("_source", source), ("_transcribe", transcribe), ("_plan", plan), ("_grade", grade)):
+        monkeypatch.setattr(remixer, name, fn)
+    asyncio.run(remixer.plan())
+
+    async def one(index, total, script, *rest):
+        stem = f"clip_{index:02d}"
+        (tmp_path / f"{stem}.mp4").write_bytes(b"video")
+        (tmp_path / ".edit" / stem).mkdir(parents=True, exist_ok=True)
+        if index == 1:
+            raise asyncio.CancelledError()  # the member pressed Cancel mid-render
+        return remix.RemixResult(str(tmp_path / f"{stem}.mp4"), str(tmp_path / f"{stem}.source.json"), script.headline, script.stance,
+                                 4.0, 25.0, 0.1, [], [], clip_index=index)
+    remixer = remix.Remixer(config, media=Media(), settings=settings)
+    monkeypatch.setattr(remixer, "_one", one)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(remixer.render([{"id": 0}, {"id": 1}]))
+    assert os.path.isfile(tmp_path / ".work" / remix.PLAN_FILE)  # retry without planning again
+    assert os.path.isfile(tmp_path / "clip_00.mp4") and os.path.isdir(tmp_path / ".edit" / "clip_00")  # the finished one stays
+    assert not os.path.exists(tmp_path / "clip_01.mp4") and not os.path.exists(tmp_path / ".edit" / "clip_01")
+    assert [c["clip_index"] for c in json.load(open(tmp_path / "job_output.json"))["clips"]] == [0]

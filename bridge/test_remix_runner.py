@@ -112,6 +112,11 @@ class ParseConfigTests(unittest.TestCase):
         self.assertEqual((plain.split, plain.headline_look, plain.caption_preset, plain.include_captions), (None, None, "pop", True))
         self.assertEqual(remix_runner.parse_config(self.recompose(split=0.3, clip="clip_0123")).split, 0.3)
         self.assertEqual(remix_runner.parse_config(self.recompose(split=1 - 0.3)).split, 0.7)
+        self.assertEqual(remix_runner.parse_config(self.recompose(final_name="clip_03.mp4")).final_name, "clip_03.mp4")
+        self.assertIsNone(remix_runner.parse_config(self.recompose()).final_name)
+        for bad in ("x.mp4", "../clip_00.mp4", "clip_00.mov", "clip_0.mp4", 5, ""):
+            with self.assertRaises(ValueError):
+                remix_runner.parse_config(self.recompose(final_name=bad))
 
     def test_rejects_bad_recompose_values(self):
         root = os.path.abspath("out")
@@ -166,7 +171,9 @@ class FailureMessageTest(unittest.TestCase):
         from bridge_runner import describe_failure
         for text, words in (("Social login required: Instagram only shares this video with a logged-in viewer", "logged-in viewer"),
                             ("Social login unreadable: CreatorClips could not read your browser's Instagram login", "couldn’t read your browser"),
-                            ("Social post has no video: this Instagram post is a photo", "no video")):
+                            ("Social post has no video: this Instagram post is a photo", "no video"),
+                            ("Social link not supported: this kind of Facebook link isn't supported.", "link isn’t supported"),
+                            ("Social link not supported: Instagram stories aren't supported.", "stories aren’t supported")):
             self.assertIn(words, describe_failure(Exception(text))["message"])
 
     def test_unknown_failures_never_show_paths_links_or_keys(self):

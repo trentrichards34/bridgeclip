@@ -60,12 +60,12 @@ function ipcWithLibrary(library) {
     './zernio/service': {},
     './zernio/posts': {},
     './automations': {},
-    './clip-editor': { onEditorExportCta() {} },
+    './clip-editor': { onEditorExportCta() {}, onEditorRunLock() {} },
     './output-storage': {},
     './edit-inspector': {},
     './youtube-preview': {},
     './library-posting': {},
-    './library-management': {}
+    './library-management': { setRunBusyCheck() {} }
   })
   ipc.registerIpcHandlers(() => window)
   const event = { sender: contents, senderFrame: frame }

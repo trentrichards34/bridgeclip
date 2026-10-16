@@ -310,7 +310,7 @@ export interface BridgeClipAPI {
     /** Article or post: write the headline and caption from the recorded take. */
     write: () => Promise<RemixStatus>
     /** Re-make a finished remix with new hook text, look, captions or box size (no AI cost). */
-    recompose: (outputDir: string, clipIndex: number, edit: { headline: string; headlineLook: HeadlineLook; includeCaptions: boolean; captionPreset: string; split: number | null }) => Promise<JobOutput | null>
+    recompose: (outputDir: string, clipIndex: number, edit: { headline: string; headlineLook: HeadlineLook; includeCaptions: boolean; captionPreset: string; split: number | null }) => Promise<{ output: JobOutput | null; note: string | null }>
     /** Choose a screenshot for an article-or-post remix. */
     selectImage: () => Promise<string | null>
     recordings: () => Promise<RemixRecordings>

@@ -47,6 +47,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   onClose: (changed: boolean) => void
 }): React.JSX.Element {
   const reaction = draft.format === 'silent'
+  const needsMic = !reaction || talk
   // Article or post: you talk over a screenshot, in one take.
   const image = draft.format === 'image'
   const parts = partsFor(draft.format, edit.beats.length)
@@ -89,14 +90,15 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
     try {
       const access = await getApi().remix.mediaAccess()
       if (mine !== generation.current) return
-      if (!access.camera || !access.microphone) {
+      if (!access.camera || (needsMic && !access.microphone)) {
         setError(`CreatorClips can’t use your ${!access.camera ? 'camera' : 'microphone'}. Allow it in System Settings → Privacy & Security, then reopen this window.`)
         return
       }
       const media = await navigator.mediaDevices.getUserMedia({
         video: { ...(camera ? { deviceId: { exact: camera } } : {}), width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
         // Echo cancellation keeps the clip's sound (from your speakers) out of your voice.
-        audio: { ...(mic ? { deviceId: { exact: mic } } : {}), echoCancellation: true, noiseSuppression: true }
+        // A silent reaction (talking off) doesn't use the microphone at all.
+        audio: needsMic ? { ...(mic ? { deviceId: { exact: mic } } : {}), echoCancellation: true, noiseSuppression: true } : false
       })
       // Closed, or another device chosen, while this one was opening: let it go.
       if (mine !== generation.current) { media.getTracks().forEach((track) => track.stop()); return }
@@ -112,7 +114,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
     } finally {
       if (mine === generation.current) setOpening(false)
     }
-  }, [])
+  }, [needsMic])
 
   useEffect(() => {
     // Reset on every mount (React's development mode mounts twice).
@@ -255,7 +257,14 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
         {!reaction && !image && (
           <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Parts of the take">
             {parts.map((item) => (
-              <button key={item} type="button" role="tab" aria-selected={item === part} disabled={busy}
+              <button key={item} type="button" role="tab" aria-selected={item === part} disabled={busy} tabIndex={item === part ? 0 : -1}
+                onKeyDown={(e) => {
+                  const order = parts.indexOf(item)
+                  const next = e.key === 'ArrowRight' ? parts[(order + 1) % parts.length] : e.key === 'ArrowLeft' ? parts[(order - 1 + parts.length) % parts.length] : null
+                  if (!next) return
+                  e.preventDefault(); setPart(next); setReviewing(false)
+                  ;(e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[parts.indexOf(next)])?.focus()
+                }}
                 onClick={() => { setPart(item); setReviewing(false) }}
                 className={cn('flex items-center gap-1 rounded-full px-2.5 py-1 text-2xs', item === part ? 'bg-accent text-accent-ink' : 'bg-white/[0.06] text-ink-muted hover:text-ink')}>
                 {recordings[draft.id]?.[item] && <Check className="h-3 w-3" />}{partLabel(item)}

@@ -21,7 +21,7 @@ import { Page } from '../components/ui/Page'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Panel, PanelHeader } from '../components/ui/Panel'
 import { ProgressBar } from '../components/ui/ProgressBar'
-import { Segmented } from '../components/ui/Segmented'
+import { onRadioKeyDown, Segmented } from '../components/ui/Segmented'
 import { Select } from '../components/ui/Select'
 import { SettingRow } from '../components/ui/SettingRow'
 import { Switch } from '../components/ui/Switch'
@@ -602,7 +602,8 @@ function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { open
         {drafts.length > 0 && (
           <div className={cn('grid gap-3', drafts.length > 2 ? 'grid-cols-3' : 'grid-cols-2')} role="radiogroup" aria-label="Face">
             {drafts.map((item) => (
-              <button key={item.draftId} type="button" role="radio" aria-checked={chosen === item.draftId} onClick={() => setChosen(item.draftId)}
+              <button key={item.draftId} type="button" role="radio" aria-checked={chosen === item.draftId} tabIndex={chosen === item.draftId || (!chosen && item === drafts[0]) ? 0 : -1}
+              onKeyDown={onRadioKeyDown} onClick={() => setChosen(item.draftId)}
                 className={cn('glass-tile overflow-hidden rounded-xl', chosen === item.draftId && 'glass-selected')}>
                 <img src={localFileUrl(item.path)} alt="" className="aspect-[9/16] w-full object-cover" />
               </button>
@@ -693,7 +694,8 @@ function RestylePortrait({ avatar, busy, openrouterConfigured, onChange, onError
       {drafts.length > 0 && (
         <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="New picture">
           {drafts.map((item) => (
-            <button key={item.draftId} type="button" role="radio" aria-checked={chosen === item.draftId} onClick={() => setChosen(item.draftId)}
+            <button key={item.draftId} type="button" role="radio" aria-checked={chosen === item.draftId} tabIndex={chosen === item.draftId || (!chosen && item === drafts[0]) ? 0 : -1}
+              onKeyDown={onRadioKeyDown} onClick={() => setChosen(item.draftId)}
               className={cn('glass-tile overflow-hidden rounded-xl', chosen === item.draftId && 'glass-selected')}>
               <img src={localFileUrl(item.path)} alt="" className="aspect-[9/16] w-full object-cover" />
             </button>
@@ -731,10 +733,11 @@ function PictureLibrary({ avatar, busy, onChange, onError }: {
         <p className="flex items-center gap-1.5 text-xs font-medium text-ink"><UserRound className="h-3.5 w-3.5" />Pictures</p>
         <p className="mt-0.5 text-2xs text-ink-subtle">Every picture is kept. Choose the one your videos use.</p>
       </div>
-      <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label={`${avatar.name}’s picture`}>
+      <div className="grid grid-cols-4 gap-2" role="group" aria-label={`${avatar.name}’s pictures`}>
         {pictures.map((picture) => (
           <div key={picture.file} className="relative">
-            <button type="button" role="radio" aria-checked={picture.active} disabled={busy || working !== null}
+            {/* Switching a picture is an action (it swaps the avatar's reactions), so each is a button, not an arrow-key radio. */}
+            <button type="button" aria-pressed={picture.active} disabled={busy || working !== null}
               aria-label={`${PICTURE_LABELS[picture.source]}${picture.active ? ' (in use)' : ''}`}
               onClick={() => { if (!picture.active) void run(picture.file, () => getApi().avatars.usePicture(avatar.id, picture.file)) }}
               className={cn('glass-tile block w-full overflow-hidden rounded-lg text-left', picture.active ? 'glass-selected ring-1 ring-accent' : 'glass-tile-hover opacity-80 hover:opacity-100')}>

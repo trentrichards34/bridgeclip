@@ -64,7 +64,7 @@ def parse_recompose(raw):
     """Mode "recompose": make a finished remix again from its edit bundle with new hook text, captions or split."""
     import math
     from clip_engine.config import CaptionPreset
-    from clip_engine.services.remix_service import SPLIT_MAX, SPLIT_MIN, STEM, RecomposeRequest
+    from clip_engine.services.remix_service import FINAL_NAME, SPLIT_MAX, SPLIT_MIN, STEM, RecomposeRequest
     from clip_engine.services.rendering_service import validate_headline_look
     root, out, clip = raw.get("output_dir"), raw.get("output_path"), raw.get("clip")
     if not _abs_path(root) or not _abs_path(out) or not out.lower().endswith(".mp4"):
@@ -86,9 +86,12 @@ def parse_recompose(raw):
     if split is not None and (isinstance(split, bool) or not isinstance(split, (int, float)) or not math.isfinite(split)
                               or not SPLIT_MIN <= split <= SPLIT_MAX):
         raise ValueError("Invalid split")
+    final_name = raw.get("final_name")
+    if final_name is not None and (not isinstance(final_name, str) or not FINAL_NAME.match(final_name)):
+        raise ValueError("Invalid final name")
     return RecomposeRequest(output_dir=root, clip=clip, output_path=out, headline=" ".join(headline.split()),
                             headline_look=validate_headline_look(raw.get("headline_look")), include_captions=captions,
-                            caption_preset=preset, split=None if split is None else float(split))
+                            caption_preset=preset, split=None if split is None else float(split), final_name=final_name)
 
 
 def parse_config(raw):

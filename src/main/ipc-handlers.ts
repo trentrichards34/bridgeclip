@@ -1,7 +1,7 @@
 import { openEditor, saveEditor, runEditor, cancelEditor, replaceEditorSource } from './clip-editor'
 import { requestMediaAccess } from './media-permissions'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
-import { editorCloseReady, freeEditorMedia, onEditorExportCta, readEditorProgress } from './clip-editor'
+import { editorCloseReady, freeEditorMedia, onEditorExportCta, onEditorRunLock, readEditorProgress } from './clip-editor'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
 import { loadSettings, publicSettings, replaceApiKey, savePublicSettings, type ApiKeyName, type PublicSettings } from './settings-store'
@@ -12,12 +12,12 @@ import { getEnginePath, getBridgeRunnerPath, resolvePythonPath, validatePython }
 import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds } from './job-manager'
 import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
-import { addCta, applyRunCta, listCtas, removeCta, updateCta } from './ctas'
+import { addCta, applyRunCta, applyRunCtaInLock, listCtas, removeCta, updateCta, withRunLock } from './ctas'
 import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../shared/ctas'
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
-import { recomposeRemix, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
+import { recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
@@ -28,7 +28,7 @@ import { automationEnhancementGroups, enhanceAutomationBatch, automationContentS
 import { acknowledgeAutomationWarnings, retryAutomationContent, dismissAutomationMetadataError, automationLibraryClip, reorderAutomationContent, reviewAutomationContent, showAutomationContentInFolder } from './automations'
 import { libraryPostingStatus, libraryMetadataSource, enhanceLibraryMetadata } from './library-posting'
 import { libraryPostingSummary } from './library-posting'
-import { deleteLibraryClips, deleteLibraryRun, setLibraryClipCta, setLibraryFavorite, setLibraryPosted } from './library-management'
+import { deleteLibraryClips, deleteLibraryRun, setLibraryClipCta, setLibraryFavorite, setLibraryPosted, setRunBusyCheck } from './library-management'
 import {
   cancelZernioConnect,
   connectZernioAccount,
@@ -58,8 +58,10 @@ import {
 
 export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): void {
   // Clips exported from the editor end with their call to action, like the run's.
+  onEditorRunLock(withRunLock)
+  // Runs inside the export's run lock (onEditorRunLock), so it uses the in-lock version.
   onEditorExportCta(async (run, ctaId, index) => {
-    const { failed } = await applyRunCta(run, ctaId, [index])
+    const { failed } = await applyRunCtaInLock(run, ctaId, [index])
     if (failed.length) throw new Error('The call to action could not be added.')
   })
   const selectedOutputDirectories = new Set<string>()
@@ -197,9 +199,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   handle('ctas:update', (_event, id: unknown, patch: unknown) => updateCta(id, patch))
   handle('ctas:remove', (_event, id: unknown) => removeCta(id))
+  // Library changes wait while a Remix video in that run is being re-made.
+  setRunBusyCheck(remixRunBusy)
   handle('remix:recompose', async (_event, outputDir: unknown, clipIndex: unknown, edit: unknown) => {
-    await recomposeRemix(outputDir, clipIndex, edit)
-    return getJobOutput(outputDir as string, loadSettings().outputDirectory)
+    const note = await recomposeRemix(outputDir, clipIndex, edit)
+    return { output: await getJobOutput(outputDir as string, loadSettings().outputDirectory), note }
   })
   handle('clips:setCta', (_event, outputDir: unknown, clipIndex: unknown, ctaId: unknown) => {
     const choice = parseCtaChoice(ctaId)

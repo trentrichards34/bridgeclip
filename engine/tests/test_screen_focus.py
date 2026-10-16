@@ -126,8 +126,11 @@ class TestChangeSignal:
         words = [SimpleNamespace(word=w, start_time_ms=10000 + i * 300) for i, w in enumerate(
             "so as you can see we CLICK here and Here’s the next slide".split())]
         segments = [SimpleNamespace(words=words)]
-        # "as you can see" (and "you can see" in it), "click", "here's", "next slide".
-        assert screen_cue_times(segments, 9000, 10000) == [1300, 1600, 2800, 3700, 4300]
+        # Only the specific ones: "as you can see" and "next slide" ("click", "here's" and a bare "you can see" are everyday talk).
+        assert screen_cue_times(segments, 9000, 10000) == [1300, 4300]
+        plain = [SimpleNamespace(words=[SimpleNamespace(word=w, start_time_ms=i * 300) for i, w in enumerate(
+            "here is the thing you can see why people click away".split())])]
+        assert screen_cue_times(plain, 0, 10000) == []
         assert screen_cue_times(segments, 0, 5000) == []
         assert screen_cue_times(None, 0, 5000) == []
 
@@ -164,6 +167,21 @@ class TestShots:
         assert stacked_panel_heights(split, 1080, 1920) == (960, 960)
         assert caption_anchor(split, 1920, 1080, 1080, 1920) == (5, 960)
         assert caption_anchor(person, 1920, 1080, 1080, 1920) == (5, FILL_CAPTION_Y)
+
+    def test_person_main_follows_a_person_who_moves_inside_the_webcam(self):
+        # The face slides right inside the webcam over 12 s; a face on the shared screen is ignored.
+        frames = [FrameInfo(t, [Box(.64 + .2 * t / 12000, .30, .08, .2), Box(.2, .3, .05, .1)], None, thumb=thumb(40))
+                  for t in range(0, 12000, 250)]
+        [person] = apply_screen_focus([self.shot()], frames, [], 1920, 1080)
+        assert person.layout == LayoutType.TALKING_HEAD and len(person.focus_path) > 1
+        early = shot_views(person, 500, 1920, 1080, 1080, 1920)[0][0]
+        late = shot_views(person, 11500, 1920, 1080, 1080, 1920)[0][0]
+        assert late[0] > early[0] + 20, (early, late)
+        for x, y, w, h in (early, late):
+            assert x >= BIG_CAM.x * 1920 - 1 and x + w <= (BIG_CAM.x + BIG_CAM.w) * 1920 + 1
+        # Without frames it holds on the face, as before.
+        held = analyzer.person_main_shot(self.shot(), 0, 12000)
+        assert held.focus_path == [(0, BIG_FACE.cx, BIG_FACE.cy)]
 
     def test_speech_cue_cuts_to_the_split(self):
         shots = apply_screen_focus([self.shot()], [], [4000], 1920, 1080)

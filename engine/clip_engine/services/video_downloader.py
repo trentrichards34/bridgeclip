@@ -122,10 +122,16 @@ SOCIAL_EXTRACTORS = ["instagram", "instagramios", "facebook", "facebook:reel", "
                      "twitter", "twitter:card", "twitter:shortener", "twitter:amplify", "vimeo"]
 LOGIN_BROWSERS = ("chrome", "safari", "firefox", "edge", "brave")
 # What these sites say when a video needs a login (yt-dlp's wording varies by site and version).
+# Narrow on purpose: a proxy's "407 Proxy Authentication Required" or a plain "operation not permitted" is not a login wall.
 LOGIN_MARKERS = ("login required", "log in", "logged-in", "rate-limit reached", "use --cookies", "cookies-from-browser",
-                 "empty media response", "authentication", "this content isn't available", "requires authentication")
-NO_VIDEO_MARKERS = ("there is no video in this post", "no video formats found", "no video could be found", "unsupported url",
-                    "no suitable infoextractor")
+                 "empty media response", "this content isn't available", "requires authentication")
+NO_VIDEO_MARKERS = ("there is no video in this post", "no video formats found", "no video could be found")
+# A kind of link the site's own extractors don't read (only the generic one would, and it is not allowed).
+UNSUPPORTED_MARKERS = ("unsupported url", "no suitable infoextractor", "no suitable extractor")
+# Share links (fb.watch/…, facebook.com/share/v|r/…, instagram.com/share/…) redirect to the post: followed only within these sites.
+SHARE_HOSTS = ("facebook.com", "fb.watch", "instagram.com")
+SHARE_USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/126.0 Safari/537.36")
 
 
 def social_video_url(url: str) -> bool:
@@ -176,6 +182,66 @@ def first_social_video(url: str, info: dict) -> tuple[dict, int]:
                              reason="no_video")
 
 
+def unsupported_link(site: str) -> "VideoDownloadError":
+    return VideoDownloadError(f"Social link not supported: this kind of {site} link isn't supported. Open the post and copy its link "
+                              "from the browser's address bar.", reason="unsupported_link")
+
+
+def _host_in(url: str, names: tuple[str, ...]) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == name or host.endswith("." + name) for name in names)
+
+
+def instagram_story(url: str) -> bool:
+    return _host_in(url, ("instagram.com",)) and urlparse(url).path.lower().startswith("/stories/")
+
+
+def social_share_url(url: str) -> bool:
+    """fb.watch/…, facebook.com/share/…, instagram.com/share/…: links that only redirect to the post."""
+    if _host_in(url, ("fb.watch",)):
+        return True
+    return _host_in(url, ("facebook.com", "instagram.com")) and urlparse(url).path.lower().startswith("/share/")
+
+
+def canonical_social_url(url: str) -> str:
+    """The post's link without tracking parameters (a /watch link keeps its video id)."""
+    from urllib.parse import parse_qs, urlencode, urlunparse
+    parts = urlparse(url)
+    keep = {key: values[:1] for key, values in parse_qs(parts.query).items() if key in ("v", "story_fbid", "id")}
+    return urlunparse(("https", parts.hostname or "", parts.path, "", urlencode(keep, doseq=True), ""))
+
+
+async def resolve_social_share(url: str, transport=None) -> str:
+    """Follow a share link's redirects (only within Facebook and Instagram, https only, at most 6) to the post's own link.
+    Raises VideoDownloadError(unsupported_link) when it doesn't lead to a post."""
+    import httpx
+    from urllib.parse import parse_qs
+    site = social_site(url)
+    current = url
+    async with httpx.AsyncClient(timeout=20, follow_redirects=False, trust_env=False, transport=transport,
+                                 headers={"User-Agent": SHARE_USER_AGENT}) as client:
+        for _ in range(6):
+            if urlparse(current).scheme != "https" or not _host_in(current, SHARE_HOSTS):
+                raise unsupported_link(site)
+            if not social_share_url(current):
+                return canonical_social_url(current)
+            try:
+                destination = await asyncio.to_thread(resolve_public_destination, current)
+                response = await client.get(destination.url, headers={"Host": destination.host_header},
+                                            extensions={"sni_hostname": destination.hostname})
+            except (ValueError, httpx.HTTPError):
+                raise unsupported_link(site) from None
+            location = response.headers.get("location") if response.status_code in (301, 302, 303, 307, 308) else None
+            if not location:
+                raise unsupported_link(site)
+            following = urljoin(current, location)
+            # A login page in between carries the post in its "next" parameter.
+            if urlparse(following).path.rstrip("/").endswith("/login") or "/login/" in urlparse(following).path:
+                following = (parse_qs(urlparse(following).query).get("next") or [""])[0]
+            current = following
+    raise unsupported_link(site)
+
+
 def social_failure(url: str, error: BaseException) -> Optional["VideoDownloadError"]:
     """A plain-language error for a social link that can't be downloaded, or None."""
     if not social_video_url(url):
@@ -184,8 +250,13 @@ def social_failure(url: str, error: BaseException) -> Optional["VideoDownloadErr
     site = social_site(url)
     if any(marker in text for marker in NO_VIDEO_MARKERS):
         return VideoDownloadError(f"Social post has no video: this {site} post is a photo or a carousel without a video", reason="no_video")
-    if (("could not find" in text and "cookies" in text) or "keychain" in text or "full disk access" in text or "operation not permitted" in text
-            or "could not copy" in text or "cookie database" in text or "decrypt" in text):
+    if any(marker in text for marker in UNSUPPORTED_MARKERS):
+        return unsupported_link(site)
+    # Reading the browser's cookies: only cookie-related wording counts (a bare EPERM elsewhere is something else).
+    cookie = "cookie" in text or "keychain" in text or "dpapi" in text
+    if (("could not find" in text and "cookies" in text) or "keychain" in text or "full disk access" in text
+            or (cookie and ("operation not permitted" in text or "could not copy" in text or "decrypt" in text))
+            or "cookie database" in text):
         return VideoDownloadError(f"Social login unreadable: CreatorClips could not read your browser's {site} login", reason="login_unreadable")
     if any(marker in text for marker in LOGIN_MARKERS):
         return VideoDownloadError(f"Social login required: {site} only shares this video with a logged-in viewer", reason="login_required")
@@ -444,6 +515,11 @@ class VideoDownloaderService:
             elif source_type == "youtube":
                 result = await self._download_from_youtube(url, output_path, output_dir, max_duration_seconds)
             elif source_type == "social":
+                if instagram_story(url):
+                    raise VideoDownloadError("Social link not supported: Instagram stories aren't supported. Use the link of a Reel "
+                                             "or a post, or save the story and choose it as a file.", reason="unsupported_link")
+                if social_share_url(url):
+                    url = await resolve_social_share(url)
                 try:
                     result = await self._download_from_youtube(url, output_path, output_dir, max_duration_seconds, source_type="social")
                 except Exception as error:

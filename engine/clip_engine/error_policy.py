@@ -11,6 +11,7 @@ TWITCH_ERRORS = {
     "login_required": "Social login required",
     "login_unreadable": "Social login unreadable",
     "no_video": "Social post has no video",
+    "unsupported_link": "Social link not supported",
 }
 
 DISK_FULL_ERRNOS = {errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)}

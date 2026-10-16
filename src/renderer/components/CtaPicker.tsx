@@ -29,13 +29,19 @@ function CtaThumb({ cta }: { cta: CtaSummary }): React.JSX.Element {
  * Choose a call to action (or none) and manage the library: add a video or
  * image, rename, set how long an image shows, remove.
  */
-export function CtaPicker({ value, onChange, disabled }: { value: string | null; onChange: (id: string | null) => void; disabled?: boolean }): React.JSX.Element {
+export function CtaPicker({ value, onChange, disabled, onMissing }: {
+  value: string | null; onChange: (id: string | null) => void; disabled?: boolean
+  /** The chosen CTA was deleted from the library (default: clear the choice). */
+  onMissing?: () => void
+}): React.JSX.Element {
   const { ctas, setCtas, error: loadError } = useCtas()
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const selected = ctas?.find((cta) => cta.id === value) ?? null
   // A CTA removed from the library is no longer a choice.
-  useEffect(() => { if (ctas && value && !ctas.some((cta) => cta.id === value)) onChange(null) }, [ctas, value, onChange])
+  useEffect(() => {
+    if (ctas && value && !ctas.some((cta) => cta.id === value)) { if (onMissing) onMissing(); else onChange(null) }
+  }, [ctas, value, onChange, onMissing])
 
   const add = async (): Promise<void> => {
     setAdding(true); setError(null)

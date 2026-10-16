@@ -156,7 +156,8 @@ class TestRunHook:
         for c in project['candidates']:
             validate_candidate(c, 12000)
 
-    @pytest.mark.parametrize('extra', [{'title_style': 'card'}, {'include_title': False}, {'aspect_ratio': '16:9'}])
+    @pytest.mark.parametrize('extra', [{'title_style': 'card'}, {'include_title': False}, {'aspect_ratio': '16:9'},
+                                       {'background_video_path': '/videos/gameplay.mp4'}])
     def test_runs_without_a_hook_get_none(self, extra):
         assert run_hook(make_request(**extra), ClipPlanSegment(0, 5000, .9, summary='T', headline='A headline')) is None
 

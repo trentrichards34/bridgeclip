@@ -55,7 +55,9 @@ def test_browser_login_only_for_social_links(monkeypatch):
     ("could not find chrome cookies database", "login_unreadable"),
     ("ERROR: Could not copy Chrome cookie database. See https://github.com/yt-dlp/yt-dlp/issues/7271", "login_unreadable"),
     ("ERROR: Failed to decrypt with DPAPI", "login_unreadable"),
-    ("ERROR: Unsupported URL: https://www.youtube.com/watch?v=x", "no_video"),
+    ("ERROR: Unsupported URL: https://www.youtube.com/watch?v=x", "unsupported_link"),
+    ("ERROR: no suitable extractor for this link", "unsupported_link"),
+    ("ERROR: Operation not permitted: '/Users/x/Library/Cookies/Cookies.binarycookies'", "login_unreadable"),
 ])
 def test_social_failures_are_explained(text, reason):
     error = module.social_failure("https://www.instagram.com/p/x/", Exception(text))
@@ -161,3 +163,69 @@ def test_the_chosen_carousel_item_is_the_one_downloaded(service, monkeypatch, tm
     monkeypatch.setattr(service, "_get_video_metadata_ffprobe", probe)
     asyncio.run(service.download_video("https://www.instagram.com/p/DeaEzA4Ndrd/", str(tmp_path)))
     assert used[-1]["playlist_items"] == "3" and used[-1]["noplaylist"] is False
+
+
+
+@pytest.mark.parametrize("text", ["ERROR: Unable to download webpage: HTTP Error 407: Proxy Authentication Required",
+                                  "ERROR: [Errno 1] Operation not permitted: '/private/var/folders/x/source.mp4.part'"])
+def test_proxy_and_file_errors_are_not_login_walls(text):
+    assert module.social_failure("https://www.instagram.com/p/x/", Exception(text)) is None
+
+
+def _share_transport(routes):
+    import httpx
+
+    def handler(request):
+        status, location = routes.get(str(request.url), (200, None))
+        return httpx.Response(status, headers={"location": location} if location else {})
+    return httpx.MockTransport(handler)
+
+
+def _pass_through(monkeypatch):
+    from urllib.parse import urlparse
+    monkeypatch.setattr(module, "resolve_public_destination",
+                        lambda url: SimpleNamespace(url=url, host_header=urlparse(url).hostname, hostname=urlparse(url).hostname))
+
+
+def test_share_links_resolve_to_the_post(monkeypatch):
+    _pass_through(monkeypatch)
+    routes = {
+        "https://fb.watch/abcDEF/": (302, "https://www.facebook.com/reel/123456/?rdid=x&share_url=https%3A%2F%2Ffb.watch"),
+        "https://www.facebook.com/share/v/AbC12/": (302, "https://www.facebook.com/login/?next=https%3A%2F%2Fwww.facebook.com%2Fwatch%2F%3Fv%3D99%26mibextid%3Dx"),
+        "https://www.instagram.com/share/reel/BAx/": (301, "https://www.instagram.com/reel/DeaEzA4Ndrd/?igsh=abc"),
+        "https://www.facebook.com/share/r/Evil/": (302, "https://evil.example/reel/1"),
+        "https://www.facebook.com/share/r/Plain/": (302, "http://www.facebook.com/reel/1"),
+    }
+    transport = _share_transport(routes)
+    resolve = lambda url: asyncio.run(module.resolve_social_share(url, transport=transport))  # noqa: E731
+    assert resolve("https://fb.watch/abcDEF/") == "https://www.facebook.com/reel/123456/"
+    assert resolve("https://www.facebook.com/share/v/AbC12/") == "https://www.facebook.com/watch/?v=99"
+    assert resolve("https://www.instagram.com/share/reel/BAx/") == "https://www.instagram.com/reel/DeaEzA4Ndrd/"
+    for url in ("https://www.facebook.com/share/r/Evil/", "https://www.facebook.com/share/r/Plain/", "https://www.facebook.com/share/v/NoRedirect/"):
+        with pytest.raises(module.VideoDownloadError) as error:
+            resolve(url)
+        assert error.value.reason == "unsupported_link" and "address bar" in str(error.value)
+    assert module.social_share_url("https://m.facebook.com/share/r/x/") and not module.social_share_url("https://www.facebook.com/reel/1")
+
+
+def test_stories_say_they_are_not_supported(service):
+    with pytest.raises(module.VideoDownloadError) as error:
+        asyncio.run(service.download_video("https://www.instagram.com/stories/coach/3412345/", "/tmp/social-test"))
+    assert error.value.reason == "unsupported_link" and "stories aren't supported" in str(error.value)
+    assert safe_failure_code(error.value) == "download.unsupported_link"
+
+
+def test_a_share_link_is_resolved_before_download(service, monkeypatch):
+    seen = {}
+
+    async def resolve(url, transport=None):
+        return "https://www.facebook.com/reel/123/"
+
+    async def download(url, output_path, output_dir, max_duration_seconds=None, source_type="youtube"):
+        seen["url"] = url
+        raise Exception("stop here")
+    monkeypatch.setattr(module, "resolve_social_share", resolve)
+    monkeypatch.setattr(service, "_download_from_youtube", download)
+    with pytest.raises(Exception, match="stop here"):
+        asyncio.run(service.download_video("https://fb.watch/abc/", "/tmp/social-test"))
+    assert seen["url"] == "https://www.facebook.com/reel/123/"

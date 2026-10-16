@@ -19,6 +19,10 @@ const operations = new Map<string, EditorOperation>()
 type EditorCtaApplier = (run: string, ctaId: string, clipIndex: number) => Promise<void>
 let applyExportCta: EditorCtaApplier | null = null
 export function onEditorExportCta(applier: EditorCtaApplier): void { applyExportCta = applier }
+/** Exports rewrite the run's clips and job_output.json: they wait for other changes to the run (CTA changes, re-makes). */
+type RunLock = <T>(run: string, work: () => Promise<T>) => Promise<T>
+let runExclusive: RunLock = (_run, work) => work()
+export function onEditorRunLock(lock: RunLock): void { runExclusive = lock }
 
 /** The run's own call to action: the one most of its made clips end with. */
 async function runCtaId(run: string): Promise<string | null> {
@@ -341,8 +345,12 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
     for (const candidate of candidates) {
       if (operation.cancelled) break
       try {
-        await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId })
-        if ((action === 'export' || action === 'export-all') && !operation.cancelled) await addExportCta(run, candidate.id)
+        const work = async (): Promise<void> => {
+          await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId })
+          if ((action === 'export' || action === 'export-all') && !operation.cancelled) await addExportCta(run, candidate.id)
+        }
+        if (action === 'export' || action === 'export-all') await runExclusive(run, work)
+        else await work()
         if (operation.batch) operation.batch.completed++
       } catch (error) {
         // One failed clip must not strand the rest of "Bake all".

@@ -84,13 +84,13 @@ export function ClipCard({
     // The middle of the clip itself, not of the call to action added after it.
     const own = clip.duration_ms / 1000 - (clip.cta?.seconds ?? 0)
     const seek = clip.duration_ms > 0 ? (own > 0.5 ? own : clip.duration_ms / 1000) * 0.5 : undefined
-    loadThumbnail(filePath, seek).then((path) => {
+    loadThumbnail(filePath, seek, clip.edited_at ?? '').then((path) => {
       if (!cancelled) setThumb(path)
     })
     return () => {
       cancelled = true
     }
-  }, [filePath, clip.duration_ms, clip.cta?.seconds])
+  }, [filePath, clip.duration_ms, clip.cta?.seconds, clip.edited_at])
 
   const openClip = async (): Promise<void> => {
     setActionError(null)

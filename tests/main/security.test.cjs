@@ -187,7 +187,7 @@ test('the native picker authorizes media and shell opening rejects aliased appli
       './settings-store': { loadSettings: () => ({ outputDirectory: library }) },
       './file-manager': {},
       './output-storage': { measureOutputStorage: async (directory) => ({ outputDirectory: directory, bytes: 0 }) },
-      './clip-editor': { onEditorExportCta() {} },
+      './clip-editor': { onEditorExportCta() {}, onEditorRunLock() {} },
       './edit-inspector': { inspectEdits: async () => ({}) },
       './run-history': runHistory,
       './pipeline-runner': {},
@@ -211,7 +211,7 @@ test('the native picker authorizes media and shell opening rejects aliased appli
       './zernio/posts': {},
       './automations': {},
       './library-posting': {},
-      './library-management': {}
+      './library-management': { setRunBusyCheck() {} }
     })
     ipc.registerIpcHandlers(() => window)
     assert.equal(handlers.has('framing:inspect'), false)

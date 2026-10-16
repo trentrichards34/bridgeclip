@@ -355,8 +355,9 @@ def run_hook(request, segment):
     so they can be turned back on in the editor. None when the run drew no hook.
     """
     from clip_engine.services.rendering_service import TitleStyle, parse_headline_look
+    # A gameplay background stacks the speaker over it: the render drew a title card there, not a hook.
     if (getattr(request, 'aspect_ratio', '9:16') != '9:16' or getattr(request, 'title_style', 'card') != TitleStyle.HEADLINE
-            or not getattr(request, 'include_title', True)):
+            or not getattr(request, 'include_title', True) or getattr(request, 'background_video_path', None)):
         return None
     text = ' '.join((getattr(segment, 'headline', None) or getattr(segment, 'summary', None) or '').split())
     text = ' '.join(utf16_prefix(text, MAX_HOOK_CHARS).split())
