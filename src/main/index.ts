@@ -1,4 +1,5 @@
 import { awaitEditorSaveBeforeClose, stopEditorsForQuit } from './clip-editor'
+import { allowMediaCheck, allowMediaRequest } from './media-permissions'
 import { stopAvatarRenderForQuit } from './avatar-studio'
 import { cleanupAbandoned, stopRemixForQuit } from './remix'
 import { app, BrowserWindow, dialog, nativeTheme, shell, protocol } from 'electron'
@@ -174,8 +175,11 @@ function createWindow(): void {
 
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault())
   mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault())
-  mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-  mainWindow.webContents.session.setPermissionCheckHandler(() => false)
+  // Everything is denied except the camera and microphone for the app's own page (Remix "Me, on camera").
+  const devUrl = is.dev ? process.env['ELECTRON_RENDERER_URL'] : undefined
+  mainWindow.webContents.session.setPermissionRequestHandler((contents, permission, callback, details) =>
+    callback(allowMediaRequest(permission, contents.getURL(), (details as { mediaTypes?: string[] }).mediaTypes, devUrl)))
+  mainWindow.webContents.session.setPermissionCheckHandler((_contents, permission, origin) => allowMediaCheck(permission, origin, devUrl))
 
   createMenu(mainWindow)
 

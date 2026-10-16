@@ -42,10 +42,10 @@ function buildApp(appDir = process.env.BRIDGECLIP_E2E_APP_DIR || path.join(os.tm
 }
 
 /**
- * @param {{ appDir: string, userDataDir: string, mock?: { apiUrl: string, browserUrl: string }, apiUrl?: string, env?: object }} options
+ * @param {{ appDir: string, userDataDir: string, mock?: { apiUrl: string, browserUrl: string }, apiUrl?: string, env?: object, args?: string[] }} options
  * @returns {Promise<{ app: import('playwright-core').ElectronApplication, page: import('playwright-core').Page, close: () => Promise<void> }>}
  */
-async function launchApp({ appDir, userDataDir, mock, apiUrl, env = {} }) {
+async function launchApp({ appDir, userDataDir, mock, apiUrl, env = {}, args = [] }) {
   // Settings migrate (and delete) pre-rename files under the real appData and
   // home. Only a build whose isolation hook also moves those may be launched.
   const main = fs.readFileSync(path.join(appDir, 'out/main/index.js'), 'utf8')
@@ -67,7 +67,7 @@ async function launchApp({ appDir, userDataDir, mock, apiUrl, env = {} }) {
   const app = await _electron.launch({
     executablePath: electronPath,
     // A mock keychain keeps safeStorage off the developer's real keychain.
-    args: [appDir, '--use-mock-keychain'],
+    args: [appDir, '--use-mock-keychain', ...args],
     env: {
       ...cleanEnv,
       ...env,

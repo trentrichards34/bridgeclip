@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { execFile, execFileSync, spawn, type ChildProcess } from 'child_process'
 import { randomBytes, randomUUID } from 'crypto'
 import { existsSync } from 'fs'
-import { access, constants as fsConstants, copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
+import { access, constants as fsConstants, copyFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile, type FileHandle } from 'fs/promises'
 import { basename, delimiter, dirname, extname, join } from 'path'
 import { promisify } from 'util'
 import { isAvatarId } from '../shared/avatars'
@@ -12,7 +12,7 @@ import { parseCtaChoice } from '../shared/ctas'
 import { applyRunCta, readCta } from './ctas'
 import {
   estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput,
-  AVATAR_VOICE, normalizeCtaKeyword, remixSourceUrl, type BrandIdentity, type RemixDraft, type RemixOutput, type RemixRequest, type RemixStatus
+  AVATAR_VOICE, DEFAULT_CAMERA, isRecordingPart, normalizeCtaKeyword, parseCameraSettings, partsFor, RECORDING_VIDEO_EXTENSIONS, remixSourceUrl, type BrandIdentity, type RecordingPart, type RemixDraft, type RemixOutput, type RemixRecordings, type RemixRequest, type RemixStatus
 } from '../shared/remix'
 import { presetVoiceId, type Avatar } from '../shared/avatars'
 
@@ -20,7 +20,7 @@ const DEFAULT_VOICE_NAME = 'Brian'
 import { portraitPath, readAvatar, readReactions, voiceSamplePath } from './avatars'
 import { logger } from './logger'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
-import { assertMediaPath } from './security'
+import { assertMediaPath, authorizeMedia } from './security'
 import { getSettingsForBridge, loadSettings } from './settings-store'
 import { resolveBinary } from './tools'
 
@@ -114,7 +114,11 @@ export async function readBrandIdentityFile(path: string): Promise<{ name: strin
 // (the user edits or drops drafts; nothing paid for yet) → render.
 // ---------------------------------------------------------------------------
 
+interface RecordingFile { path: string; offsetS: number | null; uploaded: boolean; seconds: number }
+
 interface RunContext {
+  /** Me, on camera: each take's recordings (draft id → part → file in the run's .recordings folder). */
+  recordings?: Map<number, Map<RecordingPart, RecordingFile>>
   request: RemixRequest
   /** The engine config shared by both phases. */
   config: Record<string, unknown>
@@ -177,13 +181,16 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const format = raw.format === 'silent' ? 'silent' : 'commentary'
   if (raw.format !== undefined && raw.format !== 'silent' && raw.format !== 'commentary') throw new Error('Choose the kind of remix.')
   if (format === 'silent' && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use these clips: Silent react plays much more of them.')
-  if (format === 'silent' && !isAvatarId(raw.avatarId)) throw new Error('Choose the avatar whose reactions to use.')
-  const voice = raw.voice === AVATAR_VOICE ? AVATAR_VOICE : presetVoiceId(raw.voice)
+  const onCamera = host === 'camera'
+  if (format === 'silent' && !onCamera && !isAvatarId(raw.avatarId)) throw new Error('Choose the avatar whose reactions to use.')
+  // On camera it's your own voice; otherwise an avatar's or a preset.
+  const voice = onCamera ? DEFAULT_VOICE_NAME : raw.voice === AVATAR_VOICE ? AVATAR_VOICE : presetVoiceId(raw.voice)
   if (!voice) throw new Error('Choose a voice.')
-  // An avatar presents the video, or (voice only) lends its voice.
-  const avatarId = host === 'voice' && voice !== AVATAR_VOICE && format !== 'silent' ? null : raw.avatarId
-  if (host !== 'voice' && !isAvatarId(avatarId)) throw new Error('Choose an avatar, or switch to voice only.')
+  // An avatar presents the video, or (voice only) lends its voice. On camera, nobody else does.
+  const avatarId = onCamera ? null : host === 'voice' && voice !== AVATAR_VOICE && format !== 'silent' ? null : raw.avatarId
+  if (!onCamera && host !== 'voice' && !isAvatarId(avatarId)) throw new Error('Choose an avatar, or switch to voice only.')
   if (voice === AVATAR_VOICE && !isAvatarId(avatarId)) throw new Error('Choose the avatar whose voice to use, or pick a preset voice.')
+  const camera = onCamera ? parseCameraSettings(raw.camera ?? DEFAULT_CAMERA) : undefined
   const brandIdentityId = raw.brandIdentityId === null || raw.brandIdentityId === undefined ? null : raw.brandIdentityId
   if (brandIdentityId !== null && !isBrandId(brandIdentityId)) throw new Error('Choose a brand identity.')
   if (typeof raw.count !== 'number' || !Number.isInteger(raw.count) || raw.count < 1 || raw.count > MAX_REMIXES) throw new Error(`Make between 1 and ${MAX_REMIXES} remixes per video.`)
@@ -191,7 +198,8 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const creator = typeof raw.creator === 'string' ? raw.creator.replace(/\s+/g, ' ').trim() : ''
   if (creator.length > 80) throw new Error('Keep the creator name under 80 characters.')
   if (local.length > 0 && !creator) throw new Error('Add the original creator’s name so the video credits them.')
-  if (raw.aiLabelAck !== true) throw new Error('Confirm you’ll turn on the AI-content label when you post.')
+  // On camera it's really you: no AI presenter or AI voice to label.
+  if (!onCamera && raw.aiLabelAck !== true) throw new Error('Confirm you’ll turn on the AI-content label when you post.')
   const ctaKeyword = normalizeCtaKeyword(raw.ctaKeyword)
   if (ctaKeyword === null) throw new Error('Use one word for the comment keyword (letters, numbers or a dash), like SALES.')
   const ctaOffer = typeof raw.ctaOffer === 'string' ? raw.ctaOffer.replace(/\s+/g, ' ').trim() : ''
@@ -203,10 +211,11 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
     request: {
       sources: sources.map((source, i) => urls[i] ?? source), creator: sources.length === 1 ? creator : '', angle: raw.angle, order,
       host, avatarId: avatarId as string | null, voice, brandIdentityId,
-      count: raw.count, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: true,
+      count: raw.count, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: !onCamera,
       ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : '', format, clipRightsAck: format === 'silent',
       ...(headlineLook ? { headlineLook } : {}),
-      ...(ctaId ? { ctaId } : {})
+      ...(ctaId ? { ctaId } : {}),
+      ...(camera ? { camera } : {})
     }
   }
 }
@@ -310,15 +319,16 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     const avatar = request.avatarId ? readAvatar(request.avatarId) : null
     if (request.ctaId) readCta(request.ctaId)
     const silent = request.format === 'silent'
-    // Silent react uses neither the photo nor the voice: only the reaction clips.
-    if (request.avatarId && request.host !== 'voice' && !silent) {
+    const onCamera = request.host === 'camera'
+    // Silent react uses neither the photo nor the voice: only the reaction clips. On camera: none of these.
+    if (request.avatarId && request.host !== 'voice' && !silent && !onCamera) {
       photo = portraitPath(request.avatarId)
       if (!existsSync(photo)) throw new Error('That avatar’s photo is missing. Choose another avatar.')
     }
-    const { preset, cloned } = silent ? { preset: DEFAULT_VOICE_NAME.toLowerCase(), cloned: null } : remixVoice(request.voice, avatar)
+    const { preset, cloned } = silent || onCamera ? { preset: DEFAULT_VOICE_NAME.toLowerCase(), cloned: null } : remixVoice(request.voice, avatar)
     if (cloned && !existsSync(voiceSamplePath(request.avatarId as string))) throw new Error('This avatar’s cloned voice recording is missing. Clone it again in Avatar Studio, or pick a preset voice.')
-    const clips = silent ? readReactions(request.avatarId as string) : []
-    if (silent && !clips.length) throw new Error('Make this avatar’s reactions in Avatar Studio first (Reactions for Silent react).')
+    const clips = silent && !onCamera ? readReactions(request.avatarId as string) : []
+    if (silent && !onCamera && !clips.length) throw new Error('Make this avatar’s reactions in Avatar Studio first (Reactions for Silent react).')
     // `remix-…` (not a bare id): the Library lists it only once it has finished videos.
     const folder = join(settings.outputDirectory, `remix-${randomUUID()}`)
     await preflight(folder)
@@ -363,13 +373,16 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         cta_keyword: request.ctaKeyword, cta_offer: request.ctaOffer,
         ...(headlineLookForEngine(request.headlineLook) ? { headline_look: headlineLookForEngine(request.headlineLook) } : {}),
         // Their recorded call to action ends each video, so the presenter doesn't say one too.
-        ...(request.ctaId ? { cta_clip: true } : {})
+        ...(request.ctaId ? { cta_clip: true } : {}),
+        ...(request.camera ? { camera_layout: request.camera.layout, camera_backdrop: request.camera.backdrop,
+          camera_backdrop_color: request.camera.backdropColor, camera_talk: request.camera.talk } : {})
       }
     }
     const run: ActiveRemix = {
       cancelled: false, avatarId: request.avatarId, context,
       status: {
         id: randomBytes(6).toString('hex'), phase: 'planning', detail: 'Starting', percent: 1, folder,
+        ...(request.host === 'camera' ? { onCamera: true, cameraTalk: request.camera?.talk === true } : {}),
         estimateUsd: estimateRemixCost(request.host, request.count * request.sources.length, 0.5, request.format).total,
         drafts: [], outputs: [], costUsd: null, warnings: [], error: null
       }
@@ -387,13 +400,14 @@ export async function renderRemix(value: unknown): Promise<RemixStatus> {
   const run = reviewing
   if (!run || run.status.phase !== 'review') throw new Error('There is nothing waiting for review. Plan the remixes again.')
   const edits = parseRemixEdits(value, run.context.draftIds, new Set(run.status.drafts.filter((draft) => draft.format === 'silent').map((draft) => draft.id)))
+  const recordings = run.context.request.host === 'camera' ? engineRecordings(run, edits) : null
   reviewing = null
   active = run
   run.cancelled = false
   run.status = { ...run.status, phase: 'rendering', detail: 'Starting', percent: 1, error: null,
     estimateUsd: run.status.drafts.filter((draft) => edits.some((edit) => edit.id === draft.id)).reduce((sum, draft) => sum + draft.estimateUsd, 0) }
   notify(run.status)
-  launch(run, { ...run.context.config, mode: 'render', approved: edits })
+  launch(run, { ...run.context.config, mode: 'render', approved: edits, ...(recordings ? { recordings } : {}) })
   return run.status
 }
 
@@ -414,6 +428,7 @@ export async function cleanupAbandoned(outputDirectory: string, keep: string | n
       await rm(join(folder, '.presenter.jpg'), { force: true })
       await rm(join(folder, '.voice.mp3'), { force: true })
       await rm(join(folder, '.reactions'), { recursive: true, force: true })
+      await rm(join(folder, '.recordings'), { recursive: true, force: true })
       if ((await readdir(folder)).length === 0) await rm(folder, { recursive: true, force: true })
     } catch { /* best effort */ }
   }
@@ -491,7 +506,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     const planning = run.status.phase === 'planning'
     if (run.cancelled) {
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
-      else for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
+      else for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions', '.recordings']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
       finish(run, { phase: 'cancelled', detail: planning ? 'Cancelled while planning' : 'Cancelled' })
       return
     }
@@ -522,7 +537,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
         }
       }
       await recordCreators(outputs.map((output) => output.creator))
-      for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
+      for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions', '.recordings']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
       logger.info('remix.done', { count: outputs.length, cost })
       finish(run, { phase: 'done', detail: 'Done', percent: 100, outputs, warnings, costUsd: (cost ?? 0) + run.context.planCostUsd })
     } else {
@@ -544,6 +559,159 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
   }
   child.stdin.on('error', () => undefined)
   child.stdin.end(JSON.stringify(config))
+}
+
+// ---------------------------------------------------------------------------
+// Me, on camera: recordings made in the app (streamed in chunks) or uploaded,
+// kept in the run folder's .recordings until the videos are made.
+// ---------------------------------------------------------------------------
+
+const MAX_RECORDING_BYTES = 4 * 1024 * 1024 * 1024
+interface Writer { file: string; draftId: number; part: RecordingPart; bytes: number; handle: FileHandle; run: ActiveRemix }
+const writers = new Map<string, Writer>()
+
+function reviewRun(): ActiveRemix {
+  if (!reviewing || reviewing.status.phase !== 'review') throw new Error('Record once your takes are ready for review.')
+  if (reviewing.context.request.host !== 'camera') throw new Error('This remix isn’t set up for “Me, on camera”.')
+  return reviewing
+}
+
+function checkedPart(run: ActiveRemix, draftId: unknown, part: unknown): { draft: RemixDraft; part: RecordingPart } {
+  const draft = run.status.drafts.find((item) => item.id === draftId)
+  if (!draft) throw new Error('That take is no longer in this review.')
+  if (!isRecordingPart(part) || !partsFor(draft.format, 4).includes(part)) throw new Error('Choose what to record for this take.')
+  return { draft, part }
+}
+
+function recordingsDir(run: ActiveRemix): string {
+  return join(run.status.folder, '.recordings')
+}
+
+async function mediaSecondsOf(path: string): Promise<number> {
+  try {
+    const { stdout } = await promisify(execFile)(resolveBinary('ffprobe'), ['-v', 'error', '-protocol_whitelist', 'file,pipe,fd',
+      '-format_whitelist', 'mov,matroska,webm,avi,flv,mpegts', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', path], { timeout: 30_000 })
+    const seconds = Number(String(stdout).trim())
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : 0
+  } catch { return 0 }
+}
+
+async function keep(run: ActiveRemix, draftId: number, part: RecordingPart, file: RecordingFile): Promise<void> {
+  run.context.recordings ??= new Map()
+  const takes = run.context.recordings.get(draftId) ?? new Map<RecordingPart, RecordingFile>()
+  const previous = takes.get(part)
+  takes.set(part, file)
+  run.context.recordings.set(draftId, takes)
+  if (previous && previous.path !== file.path) await rm(previous.path, { force: true }).catch(() => undefined)
+}
+
+/** Where the take's moment is, so the recorder can play it while you react. */
+export async function remixMoment(draftId: unknown): Promise<{ path: string; startSeconds: number; endSeconds: number }> {
+  const run = reviewRun()
+  const draft = run.status.drafts.find((item) => item.id === draftId)
+  if (!draft) throw new Error('That take is no longer in this review.')
+  const plan = JSON.parse(await readFile(join(run.status.folder, '.work', 'plan.json'), 'utf8')) as { sources?: { video?: unknown }[] }
+  const video = plan.sources?.[draft.sourceIndex]?.video
+  if (typeof video !== 'string' || !existsSync(video)) throw new Error('This take’s video is no longer available. Plan the remixes again.')
+  return { path: authorizeMedia(video), startSeconds: draft.startMs / 1000, endSeconds: draft.endMs / 1000 }
+}
+
+/** Start saving a recording made in the app; chunks follow, then finish. */
+export async function beginRecording(draftId: unknown, part: unknown, mime: unknown): Promise<string> {
+  const run = reviewRun()
+  const checked = checkedPart(run, draftId, part)
+  const extension = typeof mime === 'string' && mime.startsWith('video/mp4') ? 'mp4' : 'webm'
+  await mkdir(recordingsDir(run), { recursive: true })
+  const token = randomUUID()
+  const file = join(recordingsDir(run), `${checked.draft.id}-${checked.part}-${randomBytes(4).toString('hex')}.${extension}`)
+  writers.set(token, { file, draftId: checked.draft.id, part: checked.part, bytes: 0, handle: await open(file, 'wx', 0o600), run })
+  return token
+}
+
+export async function appendRecording(token: unknown, chunk: unknown): Promise<void> {
+  const writer = typeof token === 'string' ? writers.get(token) : undefined
+  if (!writer) throw new Error('That recording was stopped.')
+  // A tag check rather than instanceof: IPC (and tests) can hand over bytes from another realm.
+  if (Object.prototype.toString.call(chunk) !== '[object Uint8Array]') throw new Error('Invalid recording data.')
+  writer.bytes += (chunk as Uint8Array).byteLength
+  if (writer.bytes > MAX_RECORDING_BYTES) { await abortRecording(token); throw new Error('That recording is too large.') }
+  await writer.handle.write(chunk as Uint8Array)
+}
+
+/** Finish a recording; offsetSeconds is where the moment started in it (reactions). */
+export async function finishRecording(token: unknown, offsetSeconds: unknown): Promise<RemixRecordings> {
+  const writer = typeof token === 'string' ? writers.get(token) : undefined
+  if (!writer) throw new Error('That recording was stopped.')
+  writers.delete(token as string)
+  await writer.handle.close()
+  if (reviewing !== writer.run) { await rm(writer.file, { force: true }); throw new Error('This review was closed, so the recording wasn’t kept.') }
+  const offset = typeof offsetSeconds === 'number' && Number.isFinite(offsetSeconds) && offsetSeconds >= 0 && offsetSeconds < 600 ? offsetSeconds : null
+  const seconds = await mediaSecondsOf(writer.file)
+  if (writer.bytes < 1000) { await rm(writer.file, { force: true }); throw new Error('Nothing was recorded. Check your camera and microphone, then try again.') }
+  await keep(writer.run, writer.draftId, writer.part, { path: writer.file, offsetS: writer.part === 'reaction' ? offset ?? 0 : null, uploaded: false, seconds })
+  return remixRecordings()
+}
+
+export async function abortRecording(token: unknown): Promise<void> {
+  const writer = typeof token === 'string' ? writers.get(token) : undefined
+  if (!writer) return
+  writers.delete(token as string)
+  await writer.handle.close().catch(() => undefined)
+  await rm(writer.file, { force: true })
+}
+
+/** Use a video filmed elsewhere (a phone): copied into the run. A reaction is lined up with the clip by its sound. */
+export async function uploadRecording(draftId: unknown, part: unknown, source: string): Promise<RemixRecordings> {
+  const run = reviewRun()
+  const checked = checkedPart(run, draftId, part)
+  const extension = extname(source).slice(1).toLowerCase()
+  if (!RECORDING_VIDEO_EXTENSIONS.includes(extension)) throw new Error('Choose a video (MP4, MOV or WebM).')
+  const info = await stat(source)
+  if (!info.isFile() || info.size > MAX_RECORDING_BYTES) throw new Error('Choose a video under 4 GB.')
+  await mkdir(recordingsDir(run), { recursive: true })
+  const file = join(recordingsDir(run), `${checked.draft.id}-${checked.part}-${randomBytes(4).toString('hex')}.${extension}`)
+  await copyFile(source, file)
+  const seconds = await mediaSecondsOf(file)
+  if (!seconds) { await rm(file, { force: true }); throw new Error('That video could not be read. Try an MP4 or MOV from your phone.') }
+  await keep(run, checked.draft.id, checked.part, { path: file, offsetS: null, uploaded: true, seconds })
+  return remixRecordings()
+}
+
+export async function removeRecording(draftId: unknown, part: unknown): Promise<RemixRecordings> {
+  const run = reviewRun()
+  const checked = checkedPart(run, draftId, part)
+  const takes = run.context.recordings?.get(checked.draft.id)
+  const file = takes?.get(checked.part)
+  if (file) { takes?.delete(checked.part); await rm(file.path, { force: true }).catch(() => undefined) }
+  return remixRecordings()
+}
+
+/** The recordings so far, by take and part (previewable in the app). */
+export function remixRecordings(): RemixRecordings {
+  const run = reviewing
+  const out: RemixRecordings = {}
+  for (const [draftId, takes] of run?.context.recordings ?? []) {
+    out[draftId] = {}
+    for (const [part, file] of takes) out[draftId][part] = { path: authorizeMedia(file.path), uploaded: file.uploaded, seconds: file.seconds }
+  }
+  return out
+}
+
+/** The engine's view of the recordings for the approved takes; throws when one is missing. */
+function engineRecordings(run: ActiveRemix, edits: { id: number; beats: unknown[] }[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const edit of edits) {
+    const draft = run.status.drafts.find((item) => item.id === edit.id)
+    if (!draft) continue
+    const takes = run.context.recordings?.get(edit.id)
+    const parts = partsFor(draft.format, edit.beats.length)
+    const missing = parts.filter((part) => !takes?.get(part))
+    if (missing.length) throw new Error(`Record “${draft.headline.slice(0, 60)}” first (${missing.length === parts.length ? 'nothing recorded yet' : `${missing.length} part${missing.length === 1 ? '' : 's'} left`}).`)
+    out[String(edit.id)] = draft.format === 'silent'
+      ? { reaction: { path: takes!.get('reaction')!.path, offset_s: takes!.get('reaction')!.offsetS } }
+      : { intro: takes!.get('intro')!.path, beats: parts.filter((part) => part.startsWith('beat')).map((part) => takes!.get(part)!.path), close: takes!.get('close')!.path }
+  }
+  return out
 }
 
 export function cancelRemix(): boolean {

@@ -44,9 +44,10 @@ export const REMIX_ORDERS: { id: RemixOrder; label: string; detail: string }[] =
   { id: 'take_first', label: 'Take first', detail: 'Your presenter opens, then the moment plays as the setup' }
 ]
 
-/** lipsync: lip-synced avatar on camera; still: the avatar photo with a slow push-in; voice: voice-over only (cheapest). */
-export type RemixHost = 'lipsync' | 'still' | 'voice'
+/** lipsync: lip-synced avatar on camera; still: the avatar photo with a slow push-in; voice: voice-over only (cheapest); camera: the member on camera, recorded in the app or uploaded. */
+export type RemixHost = 'lipsync' | 'still' | 'voice' | 'camera'
 export const REMIX_HOSTS: { id: RemixHost; label: string; detail: string; unavailable?: string }[] = [
+  { id: 'camera', label: 'Me, on camera', detail: 'You react or read your take on camera: record here or upload a phone video' },
   { id: 'lipsync', label: 'Avatar on camera', detail: 'Lip-synced talking head for the opening and closing lines',
     unavailable: 'Coming soon: OpenRouter can’t lip-sync an avatar to your own voice yet' },
   { id: 'still', label: 'Avatar photo', detail: 'Your avatar’s photo with the voice, no lip-sync' },
@@ -108,8 +109,10 @@ export function estimateRemixCost(host: RemixHost, count: number, sourceHours = 
   // Silent reacts reuse the avatar's reaction clips: nothing is voiced or animated per video.
   if (format === 'silent') return { perRemixLow: 0, perRemixHigh: 0, total: REMIX_PRICES.sourcePerHour * Math.max(0.1, sourceHours) }
   const avatar = (seconds: number): number => host === 'lipsync' ? seconds * REMIX_PRICES.avatarPerSecond : 0
-  const perRemixLow = REMIX_PRICES.voicePerRemix + avatar(REMIX_PRICES.onCameraSecondsLow)
-  const perRemixHigh = REMIX_PRICES.voicePerRemix + avatar(REMIX_PRICES.onCameraSecondsHigh)
+  // On camera: your own voice and face, so nothing is voiced (captions come from a cheap transcription).
+  const voice = host === 'camera' ? 0.01 : REMIX_PRICES.voicePerRemix
+  const perRemixLow = voice + avatar(REMIX_PRICES.onCameraSecondsLow)
+  const perRemixHigh = voice + avatar(REMIX_PRICES.onCameraSecondsHigh)
   return { perRemixLow, perRemixHigh, total: perRemixHigh * count + REMIX_PRICES.sourcePerHour * Math.max(0.1, sourceHours) }
 }
 
@@ -149,7 +152,53 @@ export interface RemixRequest {
   headlineLook?: HeadlineLook
   /** A call to action from the member's library, played at the end of every video (it replaces the spoken one). */
   ctaId?: string
+  /** Me, on camera: how the member appears. */
+  camera?: CameraSettings
 }
+
+/** filmed: your real background; cutout: you cut out over a blur or your color; greenscreen: the clip fills the screen behind you. */
+export type CameraLayout = 'filmed' | 'cutout' | 'greenscreen'
+export interface CameraSettings {
+  layout: CameraLayout
+  backdrop: 'blur' | 'brand'
+  /** The backdrop color for a brand cutout, #RRGGBB. */
+  backdropColor: string
+  /** Reactions: keep your voice (talking over the clip) or just your face. */
+  talk: boolean
+}
+export const DEFAULT_CAMERA: CameraSettings = { layout: 'filmed', backdrop: 'blur', backdropColor: '#111111', talk: false }
+export const CAMERA_LAYOUTS: { id: CameraLayout; label: string; detail: string }[] = [
+  { id: 'filmed', label: 'As filmed', detail: 'Your real room behind you' },
+  { id: 'cutout', label: 'Background removed', detail: 'You cut out, over a blur or your color' },
+  { id: 'greenscreen', label: 'Green screen', detail: 'The clip fills the screen behind you' }
+]
+
+export function parseCameraSettings(value: unknown): CameraSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Choose how you appear on camera.')
+  const raw = value as Record<string, unknown>
+  const layout = raw.layout ?? 'filmed'
+  const backdrop = raw.backdrop ?? 'blur'
+  const color = raw.backdropColor ?? '#111111'
+  if (!CAMERA_LAYOUTS.some((item) => item.id === layout) || (backdrop !== 'blur' && backdrop !== 'brand') ||
+      typeof color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(color) || (raw.talk !== undefined && typeof raw.talk !== 'boolean')) {
+    throw new Error('Choose how you appear on camera.')
+  }
+  return { layout: layout as CameraLayout, backdrop, backdropColor: color.toUpperCase(), talk: raw.talk === true }
+}
+
+/** What a take needs recorded: a reaction for Silent react, or each line of a voiced take. */
+export type RecordingPart = 'reaction' | 'intro' | 'close' | 'beat0' | 'beat1' | 'beat2' | 'beat3'
+export function isRecordingPart(value: unknown): value is RecordingPart {
+  return typeof value === 'string' && /^(reaction|intro|close|beat[0-3])$/.test(value)
+}
+export function partsFor(format: RemixFormat, beats: number): RecordingPart[] {
+  if (format === 'silent') return ['reaction']
+  return ['intro', ...Array.from({ length: Math.min(4, beats) }, (_, i) => `beat${i}` as RecordingPart), 'close']
+}
+/** A take's recordings, as the app lists them. */
+export interface TakeRecording { path: string; uploaded: boolean; seconds: number }
+export type RemixRecordings = Record<number, Partial<Record<RecordingPart, TakeRecording>>>
+export const RECORDING_VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'webm']
 
 export interface RemixGrade {
   letter: 'A' | 'B' | 'C' | 'D' | 'F'
@@ -165,6 +214,8 @@ export interface RemixBeat { text: string; broll: string }
 /** A planned remix the user reviews, edits or drops before anything is paid for. */
 export interface RemixDraft {
   id: number
+  /** Which pasted video this take is from (0-based). */
+  sourceIndex: number
   sourceTitle: string
   creator: string
   startMs: number
@@ -224,6 +275,10 @@ export interface RemixStatus {
   costUsd: number | null
   warnings: string[]
   error: string | null
+  /** Me, on camera: the takes are recorded by the member before they're made. */
+  onCamera?: boolean
+  /** Reactions keep the member's voice (so recording asks for headphones). */
+  cameraTalk?: boolean
 }
 
 export function isRunning(status: RemixStatus | null): boolean {
@@ -319,7 +374,7 @@ export function parseRemixDraft(value: unknown): RemixDraft | null {
     return typeof beat.text === 'string' ? [{ text: text(beat.text, 400), broll: text(beat.broll, 60) }] : []
   }).slice(0, 4)
   return {
-    id: raw.id as number, sourceTitle: text(raw.source_title, 300), creator: text(raw.creator, 120),
+    id: raw.id as number, sourceIndex: Math.max(0, Math.floor(number(raw.source_index))), sourceTitle: text(raw.source_title, 300), creator: text(raw.creator, 120),
     startMs: Math.max(0, number(raw.start_ms)), endMs: Math.max(0, number(raw.end_ms)), quote: text(raw.quote, 600), why: text(raw.why, 300),
     style: isRemixStyle(raw.style) ? raw.style : 'reaction',
     stance: raw.stance === 'agree_extend' || raw.stance === 'disagree_correct' ? raw.stance : 'add_nuance',

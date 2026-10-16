@@ -267,3 +267,127 @@ test('cost estimate: the on-camera avatar is the main cost, voice-only is cents'
   assert.equal(shared.remixSourceUrl('ftp://x.com/a'), null)
   assert.equal(shared.remixSourceUrl('https://localhost/a'), null)
 })
+
+test('Me, on camera: requests need no avatar or AI label; the background choice is checked', () => {
+  const camera = main.parseRemixRequest({ ...base, host: 'camera', avatarId: null, aiLabelAck: false, camera: { layout: 'cutout', backdrop: 'brand', backdropColor: '#ff8800' } }, userData).request
+  assert.deepEqual([camera.host, camera.avatarId], ['camera', null])
+  assert.deepEqual(plain(camera.camera), { layout: 'cutout', backdrop: 'brand', backdropColor: '#FF8800', talk: false })
+  // Silent react on camera: no reactions to make, but the clip-permission promise still applies.
+  const silent = main.parseRemixRequest({ ...base, host: 'camera', avatarId: null, aiLabelAck: false, format: 'silent', clipRightsAck: true, camera: { layout: 'greenscreen', backdrop: 'blur', backdropColor: '#111111', talk: true } }, userData).request
+  assert.equal(silent.camera.talk, true)
+  assert.throws(() => main.parseRemixRequest({ ...base, host: 'camera', format: 'silent' }, userData), /allowed to use these clips/)
+  for (const bad of [{ layout: 'hologram', backdrop: 'blur', backdropColor: '#111111' }, { layout: 'cutout', backdrop: 'blur', backdropColor: 'red' }, 'filmed']) {
+    assert.throws(() => main.parseRemixRequest({ ...base, host: 'camera', camera: bad }, userData), /how you appear on camera/)
+  }
+  // The avatar presenter still needs the AI label.
+  assert.throws(() => main.parseRemixRequest({ ...base, host: 'still', aiLabelAck: false }, userData), /AI-content label/)
+  assert.deepEqual(plain(shared.partsFor('silent', 3)), ['reaction'])
+  assert.deepEqual(plain(shared.partsFor('commentary', 2)), ['intro', 'beat0', 'beat1', 'close'])
+})
+
+test('Me, on camera: recordings are saved per take and part, uploads copied in, and passed to the engine', async () => {
+  const { EventEmitter } = require('node:events')
+  const childProcess = require('node:child_process')
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'remix-camera-'))
+  const settings = { ...SETTINGS, outputDirectory: out }
+  const configs = []
+  const plan = (config) => {
+    const work = path.join(config.output_dir, '.work')
+    fs.mkdirSync(work, { recursive: true })
+    const video = path.join(work, 'source.mp4')
+    childProcess.execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=blue:s=64x64:d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', video])
+    fs.writeFileSync(path.join(work, 'plan.json'), JSON.stringify({ sources: [{ video }] }))
+    return { ok: true, cost_usd: 0.02, drafts: [
+      { id: 0, source_index: 0, headline: 'This coach says lose weight first', intro: 'He is wrong.', close: 'Train the pull.', beats: [{ text: 'Strength first.', broll: 'gym' }], start_ms: 1000, end_ms: 4000, estimate_usd: 0.01 },
+      { id: 1, source_index: 0, headline: 'Another take on the same claim', intro: 'Hold on.', close: 'Pull first.', beats: [{ text: 'Do negatives.', broll: 'bar' }], estimate_usd: 0.01 }
+    ] }
+  }
+  const spawn = () => {
+    const child = new EventEmitter()
+    child.pid = 0
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
+    child.stdin = { on() {}, end(text) {
+      const config = JSON.parse(text)
+      configs.push(config)
+      const result = config.mode === 'plan' ? plan(config) : { ok: true, remixes: [] }
+      setImmediate(() => { child.stdout.emit('data', JSON.stringify(result) + '\n'); child.emit('close', 0) })
+    } }
+    return child
+  }
+  const camera = load('main/remix.ts', {
+    electron: { app: { getPath: () => out, isPackaged: true } },
+    child_process: { ...childProcess, spawn },
+    './avatars': { portraitPath: () => '', voiceSamplePath: () => '', readAvatar: () => null, readReactions: () => [] },
+    './logger': { logger: { info() {}, warn() {} } },
+    './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
+    './security': { assertMediaPath: () => undefined, authorizeMedia: (p) => p },
+    './settings-store': { loadSettings: () => settings, getSettingsForBridge: () => ({}) },
+    './tools': { resolveBinary: (name) => name }
+  })
+  const statuses = []
+  camera.onRemixStatus((status) => statuses.push(status))
+  await assert.rejects(camera.beginRecording(0, 'intro', 'video/webm'), /once your takes are ready/)
+  await camera.startRemix({ ...base, host: 'camera', avatarId: null, aiLabelAck: false, camera: { layout: 'greenscreen', backdrop: 'blur', backdropColor: '#111111' } })
+  for (let i = 0; i < 100 && camera.remixStatus()?.phase !== 'review'; i++) await new Promise((resolve) => setTimeout(resolve, 20))
+  const status = camera.remixStatus()
+  assert.equal(status.phase, 'review')
+  assert.equal(status.onCamera, true)
+  assert.deepEqual([configs[0].host, configs[0].camera_layout, configs[0].camera_talk, configs[0].avatar_photo], ['camera', 'greenscreen', false, null])
+
+  // The moment to react to.
+  const moment = await camera.remixMoment(0)
+  assert.deepEqual([moment.startSeconds, moment.endSeconds], [1, 4])
+  assert.match(moment.path, /source\.mp4$/)
+  await assert.rejects(camera.remixMoment(9), /no longer in this review/)
+
+  // Recording in chunks; an empty recording isn't kept; parts are checked.
+  await assert.rejects(camera.beginRecording(0, 'reaction', 'video/webm'), /what to record/)
+  await assert.rejects(camera.beginRecording(0, '../x', 'video/webm'), /what to record/)
+  const empty = await camera.beginRecording(0, 'intro', 'video/webm')
+  await assert.rejects(camera.finishRecording(empty, null), /Nothing was recorded/)
+  const clip = path.join(out, 'take.webm')
+  childProcess.execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=s=160x120:d=1', '-f', 'lavfi', '-i', 'sine=d=1', '-shortest', '-c:v', 'libvpx', '-c:a', 'libopus', clip])
+  const bytes = fs.readFileSync(clip)
+  const token = await camera.beginRecording(0, 'intro', 'video/webm;codecs=vp9,opus')
+  await camera.appendRecording(token, new Uint8Array(bytes.subarray(0, 500)))
+  await camera.appendRecording(token, new Uint8Array(bytes.subarray(500)))
+  let list = await camera.finishRecording(token, 2)
+  assert.equal(fs.readFileSync(list[0].intro.path).equals(bytes), true)
+  assert.equal(list[0].intro.uploaded, false)
+  assert.ok(list[0].intro.seconds > 0.5)
+  assert.equal(path.dirname(list[0].intro.path), path.join(status.folder, '.recordings'))
+  await assert.rejects(camera.appendRecording(token, new Uint8Array(4)), /stopped/)
+
+  // A redo replaces the earlier file.
+  const first = list[0].intro.path
+  const again = await camera.beginRecording(0, 'intro', 'video/webm')
+  await camera.appendRecording(again, new Uint8Array(bytes))
+  list = await camera.finishRecording(again, null)
+  assert.notEqual(list[0].intro.path, first)
+  assert.equal(fs.existsSync(first), false)
+
+  // Uploads from a phone: videos only.
+  const phone = path.join(out, 'phone.mp4')
+  childProcess.execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=64x64:d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', phone])
+  list = await camera.uploadRecording(0, 'beat0', phone)
+  assert.equal(list[0].beat0.uploaded, true)
+  await assert.rejects(camera.uploadRecording(0, 'close', path.join(out, 'notes.txt')), /Choose a video/)
+
+  // Making them needs every part of every approved take.
+  const edit = (id) => ({ id, headline: status.drafts[id].headline, intro: status.drafts[id].intro, close: status.drafts[id].close, beats: status.drafts[id].beats })
+  await assert.rejects(camera.renderRemix([edit(0)]), /Record “This coach says lose weight first” first \(1 part left\)/)
+  await assert.rejects(camera.renderRemix([edit(1)]), /nothing recorded yet/)
+  list = await camera.uploadRecording(0, 'close', phone)
+  list = await camera.removeRecording(0, 'close')
+  assert.equal(list[0].close, undefined)
+  list = await camera.uploadRecording(0, 'close', phone)
+  await camera.renderRemix([edit(0)])
+  const render = configs[1]
+  assert.equal(render.mode, 'render')
+  assert.deepEqual(Object.keys(render.recordings), ['0'])
+  assert.deepEqual(render.recordings['0'], { intro: list[0].intro.path, beats: [list[0].beat0.path], close: list[0].close.path })
+  for (let i = 0; i < 100 && camera.remixStatus()?.phase === 'rendering'; i++) await new Promise((resolve) => setTimeout(resolve, 20))
+  // The recordings are removed once the videos are made.
+  assert.equal(fs.existsSync(path.join(status.folder, '.recordings')), false)
+  fs.rmSync(out, { recursive: true, force: true })
+})

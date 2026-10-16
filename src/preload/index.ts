@@ -26,7 +26,7 @@ import type { UpdateState } from '../shared/updates'
 import type { OutputStorageUsage } from '../shared/output-storage'
 import type { YouTubePreview } from '../shared/youtube-preview'
 import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/avatars'
-import type { BrandIdentity, RemixEdit, RemixRequest, RemixStatus } from '../shared/remix'
+import type { BrandIdentity, RecordingPart, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
 import type {
   AppDataScope,
   AssistantConversation,
@@ -301,6 +301,19 @@ export interface BridgeClipAPI {
     cancel: () => Promise<boolean>
     status: () => Promise<RemixStatus | null>
     onStatus: (callback: (status: RemixStatus) => void) => () => void
+    /** Me, on camera: ask for the camera and microphone (macOS asks once). */
+    mediaAccess: () => Promise<{ camera: boolean; microphone: boolean }>
+    /** The take's moment, to play while recording a reaction. */
+    moment: (draftId: number) => Promise<{ path: string; startSeconds: number; endSeconds: number }>
+    recordings: () => Promise<RemixRecordings>
+    recordingBegin: (draftId: number, part: RecordingPart, mime: string) => Promise<string>
+    recordingAppend: (token: string, chunk: Uint8Array) => Promise<void>
+    /** offsetSeconds: where the moment started in the recording (reactions). */
+    recordingFinish: (token: string, offsetSeconds: number | null) => Promise<RemixRecordings>
+    recordingAbort: (token: string) => Promise<void>
+    removeRecording: (draftId: number, part: RecordingPart) => Promise<RemixRecordings>
+    /** Opens a file dialog; null when cancelled. */
+    uploadRecording: (draftId: number, part: RecordingPart) => Promise<RemixRecordings | null>
   }
   /** Gameplay background library (file names only). */
   backgrounds: {
@@ -525,7 +538,16 @@ const api: BridgeClipAPI = {
     discard: () => ipcRenderer.invoke('remix:discard'),
     cancel: () => ipcRenderer.invoke('remix:cancel'),
     status: () => ipcRenderer.invoke('remix:status'),
-    onStatus: (callback) => subscribe('remix:status', callback)
+    onStatus: (callback) => subscribe('remix:status', callback),
+    mediaAccess: () => ipcRenderer.invoke('remix:mediaAccess'),
+    moment: (draftId) => ipcRenderer.invoke('remix:moment', draftId),
+    recordings: () => ipcRenderer.invoke('remix:recordings'),
+    recordingBegin: (draftId, part, mime) => ipcRenderer.invoke('remix:recordingBegin', draftId, part, mime),
+    recordingAppend: (token, chunk) => ipcRenderer.invoke('remix:recordingAppend', token, chunk),
+    recordingFinish: (token, offsetSeconds) => ipcRenderer.invoke('remix:recordingFinish', token, offsetSeconds),
+    recordingAbort: (token) => ipcRenderer.invoke('remix:recordingAbort', token),
+    removeRecording: (draftId, part) => ipcRenderer.invoke('remix:removeRecording', draftId, part),
+    uploadRecording: (draftId, part) => ipcRenderer.invoke('remix:uploadRecording', draftId, part)
   },
   backgrounds: {
     list: () => ipcRenderer.invoke('backgrounds:list'),

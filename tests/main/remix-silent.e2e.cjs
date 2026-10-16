@@ -45,7 +45,8 @@ test('Silent react: pick the format, check reactions and permission, review time
   await page.getByRole('radio', { name: /Silent react/ }).click()
   // No voiced-take controls for a silent react.
   assert.equal(await page.getByRole('radiogroup', { name: 'Remix style' }).count(), 0)
-  assert.equal(await page.getByRole('radiogroup', { name: 'Presenter' }).count(), 0)
+  // The presenter is the avatar's reactions or the member on camera.
+  await page.getByRole('radio', { name: /My avatar’s reactions/ }).waitFor()
   await page.getByText('Maya has no reactions yet').waitFor()
   const make = page.getByRole('button', { name: 'Write the takes', exact: true })
   assert.equal(await make.isDisabled(), true)
