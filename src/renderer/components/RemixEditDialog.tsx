@@ -32,7 +32,11 @@ export function RemixEditDialog({ outputDir, clip, onDone, onClose }: {
   const [look, setLook] = useState<HeadlineLook>(() => startLook(clip))
   const [captions, setCaptions] = useState(settings?.include_captions ?? true)
   const [preset, setPreset] = useState<string>(settings?.caption_preset && isCaptionPresetId(settings.caption_preset) ? settings.caption_preset : DEFAULT_CAPTION_PRESET)
-  const [split, setSplit] = useState<number | null>(clip.editable?.split ? settings?.split ?? 0.5 : null)
+  // The slider starts at the box as made (clamped to its range); untouched, the saved size is kept.
+  const canSplit = clip.editable?.split === true
+  const madeSplit = settings?.split ?? null
+  const [split, setSplit] = useState<number | null>(canSplit ? Math.min(0.7, Math.max(0.3, madeSplit ?? 0.5)) : null)
+  const [splitTouched, setSplitTouched] = useState(false)
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const problem = words(headline) < 3 ? 'The hook text needs at least 3 words: it’s also the video’s title.' : headline.length > 200 ? 'Keep the hook text to 200 characters.' : null
@@ -40,7 +44,9 @@ export function RemixEditDialog({ outputDir, clip, onDone, onClose }: {
   const save = async (): Promise<void> => {
     setWorking(true); setError(null)
     try {
-      onDone(await getApi().remix.recompose(outputDir, clip.clip_index, { headline: headline.trim(), headlineLook: look, includeCaptions: captions, captionPreset: preset, split }))
+      const keepSplit = madeSplit !== null && madeSplit >= 0.3 && madeSplit <= 0.7 ? madeSplit : null
+      onDone(await getApi().remix.recompose(outputDir, clip.clip_index, { headline: headline.trim(), headlineLook: look, includeCaptions: captions, captionPreset: preset,
+        split: canSplit && splitTouched ? split : canSplit ? keepSplit : null }))
       onClose()
     } catch (err) { setError(errorMessage(err, 'The video could not be made again.')) } finally { setWorking(false) }
   }
@@ -65,11 +71,11 @@ export function RemixEditDialog({ outputDir, clip, onDone, onClose }: {
         {split !== null && (
           <div className="space-y-2">
             <label className="flex items-center justify-between text-sm text-ink">Size of the clip box <span className="text-2xs text-ink-muted">{Math.round(split * 100)}% of the height</span></label>
-            <input type="range" aria-label="Size of the clip box" min={30} max={70} step={1} value={Math.round(split * 100)} disabled={working} onChange={(e) => setSplit(Number(e.target.value) / 100)} className="w-full" />
+            <input type="range" aria-label="Size of the clip box" min={30} max={70} step={1} value={Math.round(split * 100)} disabled={working} onChange={(e) => { setSplitTouched(true); setSplit(Number(e.target.value) / 100) }} className="w-full" />
             <div className="flex flex-wrap gap-1">{([['Smaller', 0.4], ['Even', 0.5], ['Bigger', 0.6]] as const).map(([label, value]) => (
-              <Button key={label} size="sm" variant={Math.abs(split - value) < 0.005 ? 'secondary' : 'ghost'} disabled={working} onClick={() => setSplit(value)}>{label}</Button>
+              <Button key={label} size="sm" variant={Math.abs(split - value) < 0.005 ? 'secondary' : 'ghost'} disabled={working} onClick={() => { setSplitTouched(true); setSplit(value) }}>{label}</Button>
             ))}</div>
-            <p className="text-2xs text-ink-subtle">The rest of the frame is you (or your avatar).</p>
+            <p className="text-2xs text-ink-subtle">The rest of the frame is you (or your avatar). With hook text on top, the box tops out a little below 70%.</p>
           </div>
         )}
 

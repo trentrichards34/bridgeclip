@@ -60,11 +60,44 @@ def parse_recordings(raw, fmt):
     return out
 
 
+def parse_recompose(raw):
+    """Mode "recompose": make a finished remix again from its edit bundle with new hook text, captions or split."""
+    import math
+    from clip_engine.config import CaptionPreset
+    from clip_engine.services.remix_service import SPLIT_MAX, SPLIT_MIN, STEM, RecomposeRequest
+    from clip_engine.services.rendering_service import validate_headline_look
+    root, out, clip = raw.get("output_dir"), raw.get("output_path"), raw.get("clip")
+    if not _abs_path(root) or not _abs_path(out) or not out.lower().endswith(".mp4"):
+        raise ValueError("Invalid output")
+    # The new file goes straight into the run's folder (never into .edit, .work or anywhere else).
+    if os.path.dirname(os.path.realpath(out)) != os.path.realpath(root):
+        raise ValueError("Invalid output")
+    if not isinstance(clip, str) or not STEM.match(clip):
+        raise ValueError("Invalid clip")
+    headline = raw.get("headline")
+    if not isinstance(headline, str) or not headline.strip() or len(headline) > 300 or "\0" in headline:
+        raise ValueError("Invalid headline")
+    captions = raw.get("include_captions", True)
+    presets = {value for key, value in vars(CaptionPreset).items() if not key.startswith("_") and isinstance(value, str)}
+    preset = raw.get("caption_preset") or "pop"
+    if not isinstance(captions, bool) or preset not in presets:
+        raise ValueError("Invalid captions")
+    split = raw.get("split")
+    if split is not None and (isinstance(split, bool) or not isinstance(split, (int, float)) or not math.isfinite(split)
+                              or not SPLIT_MIN <= split <= SPLIT_MAX):
+        raise ValueError("Invalid split")
+    return RecomposeRequest(output_dir=root, clip=clip, output_path=out, headline=" ".join(headline.split()),
+                            headline_look=validate_headline_look(raw.get("headline_look")), include_captions=captions,
+                            caption_preset=preset, split=None if split is None else float(split))
+
+
 def parse_config(raw):
     from clip_engine.services.remix_service import (ANGLES, CAMERA_BACKDROPS, CAMERA_LAYOUTS, DEFAULT_VOICE, IMAGE_EXTENSIONS, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, REACTION_KINDS, TTS_MODEL,
                                                     TTS_MODELS, VOICES, RemixConfig, normalize_keyword)
     if not isinstance(raw, dict):
         raise ValueError("Invalid request")
+    if raw.get("mode") == "recompose":
+        return parse_recompose(raw)
     for key, limit in STRING_LIMITS.items():
         value = raw.get(key)
         if value is not None and (not isinstance(value, str) or len(value) > limit or "\0" in value):
@@ -165,6 +198,9 @@ def main():
             task = asyncio.current_task()
             if os.name != "nt":
                 asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
+            if raw_request.get("mode") == "recompose":
+                from clip_engine.services.remix_service import recompose
+                return await recompose(config, progress)
             remixer = Remixer(config, progress)
             if raw_request.get("mode") == "render":
                 approved = raw_request.get("approved")

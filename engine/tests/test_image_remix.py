@@ -313,3 +313,26 @@ def test_a_new_take_after_write_is_transcribed_again(env, monkeypatch):
     assert sum(1 for c in calls if c[0] == "transcribe") == before + 1
     assert any("came from an earlier take" in w for w in out["warnings"])
     assert abs(out["duration_seconds"] - 4) < 0.3
+
+
+def test_recompose_an_article_take(env, monkeypatch):
+    from pathlib import Path
+    from .recompose_support import bundle, no_ai, recompose, spy_captions
+    image = article_png(env.out / ".work" / "source.png")
+    recording = make_line_recording(env, env.tmp / "take.mp4", 3, (640, 360), 300)
+    run = write_then_render(env, monkeypatch, image, recording, "cutout", camera_backdrop="brand", camera_backdrop_color="#2040FF")
+    folder, data, size = bundle(run.out)
+    assert set(data["files"]) == {"presenter", "matte", "image"} and run.out["editable"]["split"] is True
+    no_ai(monkeypatch)
+    captions = spy_captions(monkeypatch)
+    edited = recompose(Path(run.out["path"]).parent, headline="The Journal says remote workers earn less", split=0.65,
+                       headline_look={"look": "black", "color": "#FFFFFF", "font": "serif"}, include_captions=True, caption_preset="boxed")
+    assert edited["settings"]["split"] > run.out["editable"]["split_value"] + 0.15  # capped so tags and captions fit under it
+    # The long article box now reaches down past where the brand backdrop was; the black bar is on top; their words caption it.
+    assert _mean(env.ffmpeg, edited["path"], 0.2, "crop=40:20:0:0").max() < 30
+    # At y=1450: the member (skin tones) under the default box; inside the article box (a gray page) after.
+    low = _mean(env.ffmpeg, run.out["path"], 0.2, "crop=60:40:500:1450")
+    high = _mean(env.ffmpeg, edited["path"], 0.2, "crop=60:40:500:1450")
+    assert np.ptp(low) > 20 and np.ptp(high) < 6 and high.min() > 150, (low, high)
+    assert captions and "remote work pays" in captions[-1][0]
+    assert json.load(open(run.out["manifest_path"]))["headline"] == "The Journal says remote workers earn less"

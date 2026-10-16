@@ -952,7 +952,8 @@ export async function recomposeRemix(outputDir: unknown, clipIndex: unknown, val
       if (item.clip_index !== clipIndex) continue
       item.headline = edit.headline
       if (typeof result.duration_seconds === 'number' && !hasOriginal) item.duration_ms = Math.round(result.duration_seconds * 1000)
-      if (result.settings && typeof result.settings === 'object') item.remix_settings = result.settings
+      // The engine reports what can still be changed and the settings it used.
+      if (result.editable && typeof result.editable === 'object') item.editable = result.editable
     }
     const temp = join(folder, `.job_output-${randomBytes(4).toString('hex')}.json`)
     await writeFile(temp, JSON.stringify(job, null, 2), { mode: 0o600 })

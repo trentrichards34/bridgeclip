@@ -245,6 +245,10 @@ def test_end_to_end_remix_offline(tmp_path, monkeypatch, host, fail_avatar, orde
         assert "cta" not in checks and manifest["call_to_action"] is None
     assert not os.path.exists(tmp_path / "out" / ".work")
     assert progress[-1][1] >= 90
+    from .recompose_support import bundle
+    _, data, size = bundle(first)
+    assert data["kind"] == "panel" and first["editable"]["split"] is False and size < 30 * 1024 * 1024
+    assert len(data["words"]) > 5 and data["tags"]["credit_text"] == "Original: Coach Example"
     if keep:
         import shutil
         shutil.copy(first["path"], os.path.join(keep, f"{host}-{fail_avatar}.mp4"))
@@ -667,6 +671,16 @@ def test_silent_react_end_to_end(tmp_path, monkeypatch, look):
     assert (corner.min() > 235) if look is None else (corner.max() < 235), corner
     job = json.load(open(tmp_path / "out" / "job_output.json"))
     assert job["clips"][0]["post_caption"].startswith("Your most viewed reel")
+    # Kept for editing: the moment and the reactions; a bigger box, a new hook and no captions, with no AI calls.
+    from .recompose_support import bundle, no_ai, recompose, spy_captions
+    _, data, size = bundle(out)
+    assert set(data["files"]) == {"presenter", "moment"} and out["editable"]["split"] is True and size < 8 * 1024 * 1024
+    no_ai(monkeypatch)
+    captions = spy_captions(monkeypatch)
+    edited = recompose(tmp_path / "out", headline="This creator says reels are not revenue", split=0.55, include_captions=False,
+                       headline_look=look, caption_preset="vintage")
+    assert not captions and abs(edited["duration_seconds"] - out["duration_seconds"]) < 0.2
+    assert edited["editable"]["split_value"] > out["editable"]["split_value"] + 0.15
     if keep:
         import shutil
         shutil.copy(out["path"], os.path.join(keep, "silent.mp4"))

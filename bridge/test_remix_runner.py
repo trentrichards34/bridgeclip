@@ -95,6 +95,39 @@ class ParseConfigTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=repr(bad)[:160]):
                 remix_runner.parse_config(bad)
 
+    def recompose(self, **over):
+        root = os.path.abspath("out")
+        config = {"mode": "recompose", "output_dir": root, "clip": "clip_00", "output_path": os.path.join(root, "clip_00-edit-1.mp4"),
+                  "headline": "  This creator   says reels make no sales ", "headline_look": {"look": "none"}, "include_captions": False,
+                  "caption_preset": "neon", "split": 0.55}
+        config.update(over)
+        return config
+
+    def test_recompose_keys(self):
+        request = remix_runner.parse_config(self.recompose())
+        self.assertEqual((request.clip, request.headline, request.include_captions, request.caption_preset, request.split),
+                         ("clip_00", "This creator says reels make no sales", False, "neon", 0.55))
+        self.assertEqual(request.headline_look, {"look": "none", "color": "#FFFFFF", "font": "clean"})
+        plain = remix_runner.parse_config(self.recompose(split=None, headline_look=None, caption_preset=None, include_captions=True))
+        self.assertEqual((plain.split, plain.headline_look, plain.caption_preset, plain.include_captions), (None, None, "pop", True))
+        self.assertEqual(remix_runner.parse_config(self.recompose(split=0.3, clip="clip_0123")).split, 0.3)
+        self.assertEqual(remix_runner.parse_config(self.recompose(split=1 - 0.3)).split, 0.7)
+
+    def test_rejects_bad_recompose_values(self):
+        root = os.path.abspath("out")
+        bads = [
+            self.recompose(output_dir="out"), self.recompose(output_path="clip.mp4"), self.recompose(output_path=os.path.join(root, "x.mov")),
+            self.recompose(output_path=os.path.join(root, ".edit", "clip_00", "x.mp4")), self.recompose(output_path=os.path.abspath("other/x.mp4")),
+            self.recompose(output_path=os.path.join(root, "x\0.mp4")), self.recompose(clip="clip_0"), self.recompose(clip="../clip_00"),
+            self.recompose(clip=None), self.recompose(headline=""), self.recompose(headline="   "), self.recompose(headline=5),
+            self.recompose(headline="x" * 301), self.recompose(headline_look={"look": "neon"}), self.recompose(include_captions="yes"),
+            self.recompose(caption_preset="comic"), self.recompose(caption_preset=5), self.recompose(split=0.29), self.recompose(split=0.71),
+            self.recompose(split=True), self.recompose(split="0.5"), self.recompose(split=float("nan")),
+        ]
+        for bad in bads:
+            with self.assertRaises(ValueError, msg=repr(bad)[:160]):
+                remix_runner.parse_config(bad)
+
     def test_rejects_bad_camera_values(self):
         me = os.path.abspath("me.webm")
         take = {"intro": me, "beats": [], "close": me}
@@ -152,3 +185,26 @@ class FailureMessageTest(unittest.TestCase):
             self.assertNotIn(leak, line)
         self.assertIn("The remix could not be made: Weird failure", line)
         self.assertFalse(sent[-1]["ok"])
+
+
+class RecomposeMainTest(unittest.TestCase):
+    def test_main_runs_recompose(self):
+        import io
+        import json
+        from unittest.mock import patch
+        from clip_engine.services import remix_service
+        root = os.path.abspath("out")
+        raw = {"mode": "recompose", "output_dir": root, "clip": "clip_00", "output_path": os.path.join(root, "clip_00-edit.mp4"),
+               "headline": "This creator says reels make no sales", "include_captions": True, "caption_preset": "pop", "split": None}
+        seen, sent = [], []
+
+        async def fake(request, progress):
+            seen.append(request)
+            return {"path": request.output_path, "duration_seconds": 4.0, "settings": {"headline": request.headline}, "editable": None}
+        with patch("sys.stdin", io.StringIO(json.dumps(raw))), patch.object(remix_service, "recompose", fake), \
+                patch.object(remix_runner, "reserve_stdout_for_protocol", lambda: None), patch.object(remix_runner, "emit", sent.append), \
+                patch("network_guard.install", lambda: None):
+            self.assertEqual(remix_runner.main(), 0)
+        self.assertEqual(seen[0].clip, "clip_00")
+        self.assertEqual(sent[-1], {"ok": True, "path": os.path.join(root, "clip_00-edit.mp4"), "duration_seconds": 4.0,
+                                    "settings": {"headline": "This creator says reels make no sales"}, "editable": None})

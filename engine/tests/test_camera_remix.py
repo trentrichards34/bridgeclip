@@ -363,6 +363,16 @@ def test_voiced_take_with_your_own_recordings(env, monkeypatch):
     assert checks["presenter"]["ok"] and "ai_label" not in checks and out["ai_presenter"] is False
     assert captured and "hello from me on camera." in captured[-1]  # timed from their recordings, not the script
     assert out["cost_usd"] == pytest.approx(0.002)
+    from pathlib import Path
+    from .recompose_support import bundle, no_ai, recompose
+    _, data, size = bundle(out)
+    assert data["kind"] == "panel" and out["editable"]["split"] is False and size < 8 * 1024 * 1024
+    no_ai(monkeypatch)
+    # A floating hook: the joined video fills the frame from the top (the moment shows where the bar was).
+    edited = recompose(Path(out["path"]).parent, headline="This coach says you must lose weight first",
+                       headline_look={"look": "floating", "color": "#FFFFFF", "font": "clean"}, include_captions=True, caption_preset="pop")
+    assert abs(edited["duration_seconds"] - out["duration_seconds"]) < 0.2
+    assert abs(_mean(env.ffmpeg, edited["path"], 1.0, "crop=40:20:0:0") - np.array(ORANGE)).max() < 60
     # The intro: the moment (orange) behind, the member cut out at the bottom.
     at = timeline[1]["start_seconds"] + 1.0
     top = _mean(env.ffmpeg, out["path"], at, "crop=100:50:40:700")
@@ -430,3 +440,84 @@ def test_sound_that_starts_late_is_lined_up_on_the_video_timeline(env):
     offset, confidence = remix.find_audio_offset(clip, heard)
     assert confidence > remix.OFFSET_MIN_SCORE and abs(offset - 2.5) < 0.05, (offset, confidence)
     assert len(heard) >= int(9 * rate)
+
+
+# ---------------------------------------------------------------------------
+# Editing a finished remix (recompose)
+# ---------------------------------------------------------------------------
+
+@needs_libass
+def test_recompose_a_live_reaction(env, monkeypatch):
+    from pathlib import Path
+    from .recompose_support import bundle, no_ai, recompose, spy_captions
+    run_ = render_reaction(env, monkeypatch, "cutout", backdrop="brand", offset=2.3)
+    out = run_.out
+    root = Path(out["path"]).parent
+    folder, data, size = bundle(out)
+    assert set(data["files"]) == {"presenter", "matte", "moment"} and data["kind"] == "reaction"
+    assert out["editable"]["split"] is True and 0.25 < out["editable"]["split_value"] < 0.35
+    assert out["editable"]["settings"] == {"headline": out["headline"], "headline_look": None, "include_captions": True,
+                                           "caption_preset": "pop", "split": out["editable"]["split_value"]}
+    assert json.load(open(root / "job_output.json"))["clips"][0]["editable"] == out["editable"]
+    assert size < 8 * 1024 * 1024, size
+    before = _mean(env.ffmpeg, out["path"], 1.0, "crop=40:40:520:1100")
+
+    no_ai(monkeypatch)
+    captions = spy_captions(monkeypatch)
+    edited = recompose(root, headline="This creator says views are not sales",
+                       headline_look={"look": "none", "color": "#FFFFFF", "font": "clean"}, include_captions=False, caption_preset="pop", split=0.6)
+    info = probe(env.ffprobe, edited["path"])
+    video = next(s for s in info["streams"] if s["codec_type"] == "video")
+    assert (video["width"], video["height"]) == (1080, 1920) and any(s["codec_type"] == "audio" for s in info["streams"])
+    assert abs(edited["duration_seconds"] - out["duration_seconds"]) < 0.2 and not captions
+    assert edited["settings"]["split"] == pytest.approx(0.6, abs=0.01) and edited["settings"]["include_captions"] is False
+    # No hook text: the top is the backdrop now, not the white bar. The bigger box reaches where the member was.
+    assert _mean(env.ffmpeg, out["path"], 1.0, "crop=40:20:0:0").min() > 235
+    assert _mean(env.ffmpeg, edited["path"], 1.0, "crop=40:20:0:0").min() < 200
+    after = _mean(env.ffmpeg, edited["path"], 1.0, "crop=40:40:520:1100")
+    assert abs(after - np.array(ORANGE)).max() < 40 and abs(before - np.array(ORANGE)).max() > 80, (before, after)
+    manifest = json.load(open(out["manifest_path"]))
+    assert manifest["headline"] == "This creator says views are not sales" and manifest["video"] == "clip_00-edit.mp4"
+    assert manifest["editable"] == edited["editable"] and json.load(open(folder / "edit.json"))["settings"] == edited["settings"]
+    # Again: captions back on in another style, the default size.
+    again = recompose(root, name="clip_00-edit-2.mp4", include_captions=True, caption_preset="neon", split=None)
+    from clip_engine.config import get_caption_preset
+    neon = get_caption_preset("neon")
+    assert captions and (captions[-1][1].highlight_color, captions[-1][1].glow_color) == (neon.highlight_color, neon.glow_color)
+    assert "word" in captions[-1][0]
+    assert again["settings"]["split"] == pytest.approx(out["editable"]["split_value"])
+
+
+@needs_libass
+def test_green_screen_and_voiced_takes_have_no_split(env, monkeypatch):
+    from pathlib import Path
+    from .recompose_support import bundle, no_ai, recompose
+    run_ = render_reaction(env, monkeypatch, "greenscreen", offset=2.3)
+    folder, data, _ = bundle(run_.out)
+    assert run_.out["editable"]["split"] is False and run_.out["editable"]["split_value"] is None
+    no_ai(monkeypatch)
+    edited = recompose(Path(run_.out["path"]).parent, split=0.6)
+    assert edited["settings"]["split"] is None and abs(edited["duration_seconds"] - run_.out["duration_seconds"]) < 0.2
+
+
+def test_a_missing_old_or_damaged_bundle_says_so(tmp_path):
+    from .recompose_support import recompose
+    with pytest.raises(remix.RemixError) as error:
+        recompose(tmp_path)
+    assert str(error.value) == remix.EDIT_UNAVAILABLE == "This video was made before editing was possible. Make it again to edit it."
+    folder = tmp_path / ".edit" / "clip_00"
+    folder.mkdir(parents=True)
+    (folder / "panel.mp4").write_bytes(b"x")
+    good = {"version": remix.EDIT_VERSION, "kind": "panel", "files": {"panel": "panel.mp4"}, "settings": {}, "tags": {}, "compose": {},
+            "words": [], "duration": 3.0}
+    for bad in ("{", json.dumps(dict(good, version=0)), json.dumps(dict(good, kind="other")), json.dumps(dict(good, files={"panel": "../x.mp4"})),
+                json.dumps(dict(good, files={"panel": "gone.mp4"})), json.dumps(dict(good, words=[["a", "b", 1]])),
+                json.dumps({k: v for k, v in good.items() if k != "duration"})):
+        (folder / "edit.json").write_text(bad)
+        with pytest.raises(remix.RemixError, match="made before editing was possible"):
+            recompose(tmp_path)
+    # Only straight into the run's folder, as an .mp4.
+    (folder / "edit.json").write_text(json.dumps(good))
+    for name in ("../elsewhere.mp4", "clip.mov"):
+        with pytest.raises(remix.RemixError, match="where to save"):
+            recompose(tmp_path, name=name)

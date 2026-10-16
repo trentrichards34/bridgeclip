@@ -50,7 +50,8 @@ function remixSettings(value: unknown): RemixClipSettings | null {
     headline_look: look && typeof look.look === 'string' ? { look: look.look, color: typeof look.color === 'string' ? look.color : '#FFFFFF', font: typeof look.font === 'string' ? look.font : 'clean' } : null,
     include_captions: raw.include_captions !== false,
     caption_preset: typeof raw.caption_preset === 'string' ? raw.caption_preset.slice(0, 64) : '',
-    split: typeof raw.split === 'number' && Number.isFinite(raw.split) && raw.split >= 0.3 && raw.split <= 0.7 ? raw.split : null
+    // The box as made can be smaller than the slider's range (a wide clip defaults below 30%).
+    split: typeof raw.split === 'number' && Number.isFinite(raw.split) && raw.split > 0 && raw.split < 1 ? raw.split : null
   }
 }
 
@@ -228,7 +229,9 @@ export function parseJobOutput(value: unknown): JobOutput | null {
       post_caption: typeof item.post_caption === 'string' && item.post_caption.trim() ? item.post_caption.slice(0, 5000) : null,
       cta: record(item.cta) && typeof item.cta.id === 'string' && /^[a-f0-9]{16}$/.test(item.cta.id) && typeof item.cta.name === 'string' ? { id: item.cta.id, name: item.cta.name.slice(0, 60), ...(typeof item.cta.seconds === 'number' && Number.isFinite(item.cta.seconds) ? { seconds: item.cta.seconds } : {}) } : null,
       editable: record(item.editable) ? { split: item.editable.split === true } : null,
-      remix_settings: remixSettings(item.remix_settings ?? item.settings),
+      // The engine keeps the last-made settings inside `editable`; the box size as made is split_value.
+      remix_settings: record(item.editable) ? remixSettings({ ...(record(item.editable.settings) ? item.editable.settings : {}),
+        split: typeof item.editable.split_value === 'number' ? item.editable.split_value : record(item.editable.settings) ? item.editable.settings.split : null }) : null,
       tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 50).map((tag) => tag.slice(0, 64)) : [],
       render_fallback: boundedText(item.render_fallback, 256)
     })

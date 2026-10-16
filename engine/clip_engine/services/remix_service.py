@@ -1522,6 +1522,111 @@ def image_box(image: str, work: str, box_w: int, box_h: int, duration: float, in
 
 
 # ---------------------------------------------------------------------------
+# Editing a finished remix: what is kept to recompose it, and the box geometry
+# ---------------------------------------------------------------------------
+
+EDIT_VERSION = 1
+EDIT_DIR = ".edit"
+EDIT_UNAVAILABLE = "This video was made before editing was possible. Make it again to edit it."
+# The clip box's share of the frame height a member can choose (layouts with a box over the presenter).
+SPLIT_MIN, SPLIT_MAX = 0.3, 0.7
+# Room always left under the box for its tags, the captions and the presenter.
+MIN_PRESENTER_H = 380
+# The moment kept for recomposing: its own size, at most 1920 on its long side.
+MOMENT_LOOK = ("scale=w='min(iw,1920)':h='min(ih,1920)':force_original_aspect_ratio=decrease:force_divisible_by=2,"
+               f"fps={FPS},setsar=1,format=yuv420p")
+STEM = re.compile(r"^clip_\d{2,4}$")
+
+
+def edit_dir(root: str, stem: str) -> str:
+    return os.path.join(root, EDIT_DIR, stem)
+
+
+def box_limit(panel_h: int, lift: int) -> int:
+    """The tallest the box can be and still leave the presenter room under it."""
+    return max(200, panel_h - lift - SILENT_TOP - MIN_PRESENTER_H)
+
+
+def moment_box(src_w: int, src_h: int, panel_h: int, lift: int, split: Optional[float]) -> tuple[str, int]:
+    """The filter that turns the kept moment into the white-bordered box, and the box's height.
+
+    No split: the moment fits inside the default box (as Silent react always placed it). A split sets the box's
+    height (its share of the frame); a moment too wide for that height is cropped at the sides, so a larger box
+    really shows a larger picture."""
+    box_w = OUT_W - 2 * SILENT_MARGIN
+    if split is None:
+        inner_w, inner_h = box_w - 12, round((panel_h - lift) * SILENT_BOX_SHARE) - 12
+        scale = min(inner_w / src_w, inner_h / src_h)
+        w, h = max(2, int(src_w * scale) // 2 * 2), max(2, int(src_h * scale) // 2 * 2)
+        crop_w, crop_h = w, h
+    else:
+        h = max(2, (min(box_limit(panel_h, lift), round(split * OUT_H)) - 12) // 2 * 2)
+        w = max(2, round(src_w * h / src_h) // 2 * 2)
+        crop_w, crop_h = min(w, (box_w - 12) // 2 * 2), h
+    look = (f"scale={w}:{h},crop={crop_w}:{crop_h},pad={crop_w + 12}:{crop_h + 12}:6:6:color=white,"
+            f"fps={FPS},setsar=1,format=yuv420p")
+    return look, crop_h + 12
+
+
+def image_box_height(panel_h: int, lift: int, split: Optional[float]) -> int:
+    if split is None:
+        return round((panel_h - lift) * SILENT_BOX_SHARE) // 2 * 2
+    return max(200, min(box_limit(panel_h, lift), round(split * OUT_H)) // 2 * 2)
+
+
+def write_edit_bundle(folder: str, data: dict) -> None:
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, "edit.json")
+    with open(path + ".tmp", "w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False)
+    os.replace(path + ".tmp", path)
+
+
+def read_edit_bundle(root: str, stem: str) -> dict:
+    """The saved edit bundle, checked; RemixError(EDIT_UNAVAILABLE) when it is missing, old or damaged."""
+    folder = edit_dir(root, stem)
+    try:
+        with open(os.path.join(folder, "edit.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict) or data.get("version") != EDIT_VERSION or data.get("kind") not in ("panel", "reaction", "image"):
+            raise ValueError("old or unknown")
+        files = data["files"]
+        if not isinstance(files, dict) or not files or not all(
+                isinstance(name, str) and re.fullmatch(r"[\w.-]+", name) and os.path.isfile(os.path.join(folder, name))
+                for name in files.values()):
+            raise ValueError("missing files")
+        for key in ("settings", "tags", "compose"):
+            if not isinstance(data.get(key), dict):
+                raise ValueError("missing " + key)
+        words = data.get("words")
+        if not isinstance(words, list) or not all(isinstance(w, list) and len(w) == 3 and isinstance(w[0], str)
+                                                  and all(isinstance(v, (int, float)) for v in w[1:]) for w in words):
+            raise ValueError("bad words")
+        float(data["duration"])
+    except (OSError, ValueError, KeyError, TypeError):
+        raise RemixError(EDIT_UNAVAILABLE) from None
+    data["dir"] = folder
+    return data
+
+
+def editable_of(data: dict) -> dict:
+    """What the app shows and can change (in results, job_output.json and the manifest)."""
+    return {"split": bool(data.get("split_supported")), "split_value": data.get("split_value"), "settings": data.get("settings")}
+
+
+@dataclass
+class RecomposeRequest:
+    output_dir: str
+    clip: str
+    output_path: str
+    headline: str
+    headline_look: Optional[dict] = None
+    include_captions: bool = True
+    caption_preset: str = "pop"
+    split: Optional[float] = None
+
+
+# ---------------------------------------------------------------------------
 # The run
 # ---------------------------------------------------------------------------
 
@@ -1589,6 +1694,8 @@ class RemixResult:
     camera: bool = False
     # "commentary", "silent" or "image" (an article or post: credited as its source).
     format: str = "commentary"
+    # What can be changed without making it again ({"split", "split_value", "settings"}), or None.
+    editable: Optional[dict] = None
 
 
 Progress = Callable[[str, float], None]
@@ -2211,6 +2318,9 @@ class Remixer:
                     logger.warning(f"Remix {index + 1} failed: {type(error).__name__}: {error}")
                     first_error = first_error or error
                     incomplete = True
+                    # A half-kept edit bundle is no use: only finished remixes can be edited.
+                    import shutil
+                    shutil.rmtree(edit_dir(root, f"clip_{index + self._clip_offset:02d}"), ignore_errors=True)
                     reason = str(error) if isinstance(error, RemixError) else "an unexpected error (see the log)"
                     self.warnings.append(f"Remix {index + 1} could not be made: {reason}")
                     if isinstance(error, RemixError) and ("API key" in str(error) or "credits" in str(error)):
@@ -2303,9 +2413,7 @@ class Remixer:
         return path, 0, (alpha[3] if alpha else 0)
     async def _one(self, index: int, total: int, script: RemixScript, video: str, segments: list[TranscriptSegment],
                    source_meta: dict, root: str, recording: Optional[dict] = None) -> RemixResult:
-        from clip_engine.config import get_caption_preset
-        from clip_engine.services.caption_generator import CaptionGeneratorService
-        from clip_engine.services.rendering_service import RenderingService, RenderRequest, TitleStyle
+        from clip_engine.services.rendering_service import RenderingService
 
         base = 2 + 96 * index / total
         step = 96 / total
@@ -2439,57 +2547,36 @@ class Remixer:
         windows = {kind: [(starts[i], starts[i] + durations[i]) for i, (k, _) in enumerate(parts) if k == kind] for kind in ("host", "excerpt", "beat")}
 
         say("adding captions", 0.85)
-        caption_path = None
+        texts = [script.intro, *(b.text for b in beats), script.close]
         if self.config.include_captions:
-            caption_segments = await self._caption_words(assembled, work, script, segments, parts, starts, durations,
-                                                         [script.intro, *(b.text for b in beats), script.close])
-            if caption_segments:
-                try:
-                    style = get_caption_preset(self.config.caption_preset)
-                except Exception:  # noqa: BLE001 - fall back to the default look
-                    style = get_caption_preset("pop")
-                caption_path = await CaptionGeneratorService().generate_captions(
-                    transcript_segments=caption_segments, clip_start_ms=0, clip_end_ms=round(total_s * 1000),
-                    output_path=os.path.join(work, "captions.ass"), caption_style=style, output_width=OUT_W, output_height=OUT_H,
-                    anchors=[(10**9, 5, bar_h + round(panel_h * 0.72))],
-                )
+            caption_segments = await self._caption_words(assembled, work, script, segments, parts, starts, durations, texts)
+        else:
+            # Kept for editing (captions can be turned on later with no transcription): timed from the script.
+            caption_segments = self._estimated_caption_words(script, segments, parts, starts, durations, texts)
+        words = [w for seg in caption_segments for w in (seg.words or [])]
 
-        # 6. Final: headline bar, captions, credit during the moment, AI mark on the presenter.
+        # 6. Final: headline bar, captions, credit during the moment, AI mark on the presenter, the keyword on the close.
         creator = (source_meta.get("creator") or "").strip()
-        overlays: list[tuple[str, str, str, str]] = []
-        if bar_path:
-            overlays.append((bar_path, "0", "0", "1"))
-        credit_text = f"Original: {creator[:40]}" if creator else ""
-        if credit_text:
-            credit_png = os.path.join(work, "credit.png")
-            tag_image(credit_text, credit_png, max_w=OUT_W - 80)
-            overlays.append((credit_png, "40", str(clear_h + 32), enable_expr(windows["excerpt"])))
         ai_presenter = self.config.host not in ("voice", "camera")
-        if ai_presenter:
-            ai_png = os.path.join(work, "ai.png")
-            w, _ = tag_image("AI presenter", ai_png, 26)
-            shown = [(starts[i], starts[i] + durations[i]) for i in sorted(avatar_parts)]
-            overlays.append((ai_png, str(OUT_W - w - 40), str(clear_h + 32), enable_expr(shown)))
         keyword = self.config.cta_keyword
-        if keyword and windows["host"] and not self.config.cta_clip:
-            # The keyword on screen while the presenter says it (the close).
-            cta_png = os.path.join(work, "cta.png")
-            w, _ = tag_image(f"Comment {keyword}", cta_png, 44, fill=(255, 255, 255, 240), color=(10, 10, 10, 255))
-            overlays.append((cta_png, str((OUT_W - w) // 2), str(clear_h + 110), enable_expr([windows["host"][-1]])))
-        graph = f"[0:v]pad={OUT_W}:{OUT_H}:0:{bar_h}:color={self._look.pad_color},setsar=1[base]"
-        current = "base"
-        if caption_path:
-            graph += f";[{current}]{service._caption_filter(caption_path)}[cap]"
-            current = "cap"
-        for i, (_, x, y, enable) in enumerate(overlays, start=1):
-            label = f"o{i}"
-            graph += f";[{current}][{i}:v]overlay=x={x}:y={y}:enable='{enable}'[{label}]"
-            current = label
+        tags = {"style": "commentary", "credit_text": f"Original: {creator[:40]}" if creator else "", "ai_presenter": ai_presenter,
+                "excerpt_windows": [list(w) for w in windows["excerpt"]],
+                "ai_windows": [[starts[i], starts[i] + durations[i]] for i in sorted(avatar_parts)],
+                "cta_keyword": "" if self.config.cta_clip else keyword,
+                "cta_window": list(windows["host"][-1]) if windows["host"] else None}
+        credit_text = tags["credit_text"]
         os.makedirs(root, exist_ok=True)
         final = os.path.join(root, f"{name}.mp4")
-        overlay_inputs = [arg for path, *_ in overlays for arg in ("-i", path)]
-        await asyncio.to_thread(ffmpeg, ["-i", assembled, *overlay_inputs, "-filter_complex", graph, "-map", f"[{current}]", "-map", "0:a",
-                                         *VIDEO_ARGS, "-c:a", "copy", "-movflags", "+faststart", final])
+        await self._overlay_final(service, assembled, final, work, bar_path=bar_path, bar_h=bar_h, clear_h=clear_h, total_s=total_s,
+                                  words=words, anchor="panel", tags=tags)
+        # Kept for editing: the joined video under the hook text (the hook, captions and tags are redrawn).
+        folder = edit_dir(root, name)
+        os.makedirs(folder, exist_ok=True)
+        os.replace(assembled, os.path.join(folder, "panel.mp4"))
+        editable = self._save_bundle(folder, kind="panel", headline=script.headline, total_s=total_s, files={"panel": "panel.mp4"},
+                                     words=words, anchor="panel", tags=tags,
+                                     compose={"format": "commentary", "layout": self.config.camera_layout if camera else None, "panel_h": panel_h},
+                                     split_supported=False, split_value=None, manifest=f"{name}.source.json", video=f"{name}.mp4")
 
         # 7. Checks and manifest.
         borrowed_ms = round(sum(b - a for a, b in windows["excerpt"]) * 1000)
@@ -2519,7 +2606,7 @@ class Remixer:
             "models": {"plan": self.settings.planner_model, "voice": None if camera else self.config.voice_model,
                        "avatar": AVATAR_MODEL if self.config.host == "lipsync" else None},
             "timeline": [{"part": kind, "start_seconds": round(starts[i], 2), "seconds": round(durations[i], 2)} for i, (kind, _) in enumerate(parts)],
-            "checks": [asdict(c) for c in checks], "warnings": warnings, "cost_usd": round(remix_cost, 4),
+            "checks": [asdict(c) for c in checks], "warnings": warnings, "cost_usd": round(remix_cost, 4), "editable": editable,
         }
         manifest_path = os.path.join(root, f"{name}.source.json")
         with open(manifest_path, "w", encoding="utf-8") as handle:
@@ -2528,7 +2615,7 @@ class Remixer:
         return RemixResult(final, manifest_path, script.headline, script.stance, borrowed_ms / 1000, round(total_s, 2),
                            round(remix_cost, 4), [asdict(c) for c in checks], warnings, script.style,
                            (script.grade or {}).get("letter"), script.start_ms, script.end_ms, source_meta.get("creator") or "",
-                           ai_presenter, index + self._clip_offset, post_caption, camera)
+                           ai_presenter, index + self._clip_offset, post_caption, camera, "commentary", editable)
 
     def _camera_line(self, footage: str, out: str, panel_h: int, stage: str, warnings: list[str]) -> str:
         """An on-camera line of a voiced take from the member's normalized recording, in the chosen layout:
@@ -2552,7 +2639,181 @@ class Remixer:
                 *VIDEO_ARGS, *AUDIO_ARGS, out])
         return out
 
-    async def _moment_cut(self, video: str, script: RemixScript, out: str, look: str) -> str:
+    # -- The shared last step, and recomposing ---------------------------------
+
+    def _settings_now(self, headline: str, split: Optional[float]) -> dict:
+        return {"headline": headline, "headline_look": self.config.headline_look, "include_captions": bool(self.config.include_captions),
+                "caption_preset": self.config.caption_preset, "split": split}
+
+    async def _overlay_final(self, service: Any, assembled: str, out: str, work: str, *, bar_path: Optional[str], bar_h: int,
+                             clear_h: int, total_s: float, words: list[TranscriptWord], anchor: str, tags: dict,
+                             base_filter: str = "") -> None:
+        """Hook text, captions and tags over the composed video (panel-sized, with its sound), written to `out`.
+
+        tags: {"style": "commentary"|"silent", "credit_text", "ai_presenter", "cta_keyword", and for commentary
+        "excerpt_windows", "ai_windows", "cta_window"; for silent "tags_y"}."""
+        from clip_engine.config import get_caption_preset
+        from clip_engine.services.caption_generator import CaptionGeneratorService
+
+        panel_h = OUT_H - bar_h
+        caption_path = None
+        if self.config.include_captions and words:
+            try:
+                style = get_caption_preset(self.config.caption_preset)
+            except Exception:  # noqa: BLE001 - fall back to the default look
+                style = get_caption_preset("pop")
+            # Silent layouts: below the presenter's face, above the platforms' own buttons. Voiced takes: low in the panel.
+            caption_y = OUT_H - SILENT_CAPTION_FROM_BOTTOM if anchor == "silent" else bar_h + round(panel_h * 0.72)
+            if anchor == "silent" and tags.get("tags_y"):
+                # A big box (a larger split) reaches down past the usual caption line: captions go under its tags.
+                caption_y = min(OUT_H - 220, max(caption_y, int(tags["tags_y"]) + 150))
+            caption_path = await CaptionGeneratorService().generate_captions(
+                transcript_segments=words_to_segments(words), clip_start_ms=0, clip_end_ms=round(total_s * 1000),
+                output_path=os.path.join(work, "captions.ass"), caption_style=style, output_width=OUT_W, output_height=OUT_H,
+                anchors=[(10**9, 5, caption_y)],
+            )
+        overlays: list[tuple[str, str, str, str]] = []
+        if bar_path:
+            overlays.append((bar_path, "0", "0", "1"))
+        credit_text = tags.get("credit_text") or ""
+        keyword = tags.get("cta_keyword") or ""
+        if tags.get("style") == "commentary":
+            if credit_text:
+                credit_png = os.path.join(work, "credit.png")
+                tag_image(credit_text, credit_png, max_w=OUT_W - 80)
+                overlays.append((credit_png, "40", str(clear_h + 32), enable_expr([tuple(w) for w in tags.get("excerpt_windows") or []])))
+            if tags.get("ai_presenter"):
+                ai_png = os.path.join(work, "ai.png")
+                w, _ = tag_image("AI presenter", ai_png, 26)
+                overlays.append((ai_png, str(OUT_W - w - 40), str(clear_h + 32), enable_expr([tuple(w) for w in tags.get("ai_windows") or []])))
+            if keyword and tags.get("cta_window"):
+                # The keyword on screen while the presenter says it (the close).
+                cta_png = os.path.join(work, "cta.png")
+                w, _ = tag_image(f"Comment {keyword}", cta_png, 44, fill=(255, 255, 255, 240), color=(10, 10, 10, 255))
+                overlays.append((cta_png, str((OUT_W - w) // 2), str(clear_h + 110), enable_expr([tuple(tags["cta_window"])])))
+        else:
+            tags_y = int(tags["tags_y"])
+            row_w = OUT_W - 2 * SILENT_MARGIN
+            credit_w = credit_h = 0
+            if credit_text:
+                credit_png = os.path.join(work, "credit.png")
+                credit_w, credit_h = tag_image(credit_text, credit_png, max_w=row_w)
+                overlays.append((credit_png, str(SILENT_MARGIN), str(tags_y), "1"))
+            cta_y = tags_y + 80
+            if tags.get("ai_presenter"):
+                ai_png = os.path.join(work, "ai.png")
+                w, h = tag_image("AI presenter", ai_png, 26)
+                if credit_w and credit_w + 24 + w > row_w:
+                    # A long credit: the AI mark goes on its own row under it.
+                    ai_y = tags_y + credit_h + 10
+                    overlays.append((ai_png, str(OUT_W - w - SILENT_MARGIN), str(ai_y), "1"))
+                    cta_y = ai_y + h + 20
+                else:
+                    overlays.append((ai_png, str(OUT_W - w - SILENT_MARGIN), str(tags_y), "1"))
+            if keyword:
+                cta_png = os.path.join(work, "cta.png")
+                w, _ = tag_image(f"Comment {keyword}", cta_png, 44, fill=(255, 255, 255, 240), color=(10, 10, 10, 255), max_w=row_w)
+                overlays.append((cta_png, str((OUT_W - w) // 2), str(cta_y), enable_expr([(max(0.0, total_s - 4.0), total_s)])))
+        graph = f"[0:v]{base_filter + ',' if base_filter else ''}pad={OUT_W}:{OUT_H}:0:{bar_h}:color={self._look.pad_color},setsar=1[base]"
+        current = "base"
+        if caption_path:
+            graph += f";[{current}]{service._caption_filter(caption_path)}[cap]"
+            current = "cap"
+        for i, (_, x, y, enable) in enumerate(overlays, start=1):
+            graph += f";[{current}][{i}:v]overlay=x={x}:y={y}:enable='{enable}'[o{i}]"
+            current = f"o{i}"
+        overlay_inputs = [arg for path, *_ in overlays for arg in ("-i", path)]
+        await asyncio.to_thread(ffmpeg, ["-i", assembled, *overlay_inputs, "-filter_complex", graph, "-map", f"[{current}]", "-map", "0:a",
+                                         *VIDEO_ARGS, "-c:a", "copy", "-movflags", "+faststart", out])
+
+    def _save_bundle(self, folder: str, *, kind: str, headline: str, total_s: float, files: dict, words: list[TranscriptWord],
+                     anchor: str, tags: dict, compose: dict, split_supported: bool, split_value: Optional[float],
+                     manifest: str, video: str) -> dict:
+        """edit.json: everything recompose needs besides the kept files. Returns the `editable` summary."""
+        data = {
+            "version": EDIT_VERSION, "kind": kind, "format": compose.get("format"), "host": self.config.host,
+            "layout": compose.get("layout"), "duration": round(total_s, 3), "files": files,
+            "words": [[w.word, int(w.start_time_ms), int(w.end_time_ms)] for w in words], "anchor": anchor, "tags": tags,
+            "compose": compose, "split_supported": split_supported, "split_value": split_value,
+            "settings": self._settings_now(headline, split_value if split_supported else None),
+            "manifest": manifest, "video": video,
+        }
+        write_edit_bundle(folder, data)
+        return editable_of(data)
+
+    async def _compose(self, data: dict, split: Optional[float], bar_h: int, clear_h: int, work: str) -> tuple[str, dict]:
+        """The video under the hook text and tags, from the kept files: (path, {"tags_y", "split_value", ...})."""
+        folder, files, spec = data["dir"], data["files"], data["compose"]
+        duration = float(data["duration"])
+        panel_h = OUT_H - bar_h
+        lift = clear_h - bar_h
+        assembled = os.path.join(work, "assembled.mp4")
+        if data["kind"] == "panel":
+            return os.path.join(folder, files["panel"]), {"tags_y": 0, "split_value": None}
+        cam = os.path.join(folder, files["presenter"])
+        matte = os.path.join(folder, files["matte"]) if files.get("matte") else None
+        size = await asyncio.to_thread(video_size, cam)
+        layout = spec.get("layout") or "filmed"
+        if matte is None and layout != "filmed":
+            layout = "filmed"
+        # Inputs: 0 the presenter, 1 the matte (a tiny placeholder when filmed), 2+ the moment or the screenshot.
+        inputs = ["-i", cam] + (["-i", matte] if matte else ["-f", "lavfi", "-i", f"color=c=black:s=16x16:r={FPS}:d=0.1"])
+        info: dict = {"split_value": None}
+        if data["kind"] == "reaction":
+            moment = os.path.join(folder, files["moment"])
+            inputs += ["-i", moment]
+            if layout == "greenscreen":
+                stage = (f"[2:v]split[sa][sb];[sa]{panel_filter(OUT_W, panel_h)},boxblur=24:2,eq=brightness=-0.25[sbg];"
+                         f"[sb]{cover(OUT_W, panel_h - lift, 0.5)},setsar=1[sfg];[sbg][sfg]overlay=x=0:y={lift}[stage]")
+                graph = stage + ";" + camera_graph("greenscreen", OUT_W, panel_h, size, matte=True, stage="stage",
+                                                   person_height=min(panel_h, round(OUT_H * GREENSCREEN_PERSON_SHARE)))
+                graph += ";[camv]null[v]"
+                info["tags_y"] = clear_h + 24
+            else:
+                mw, mh = await asyncio.to_thread(video_size, moment)
+                look, box_h = moment_box(mw, mh, panel_h, lift, split)
+                open_top = lift + SILENT_TOP + box_h
+                # The presenter sits lower so their face shows under the clip; a blurred copy fills above.
+                shift = max(0, round(open_top + SILENT_FACE_SPOT * (panel_h - open_top) - SILENT_FACE_AT * OUT_H))
+                graph = (f"[2:v]{look}[box];" + camera_graph(layout, OUT_W, panel_h, size, matte=matte is not None,
+                                                             backdrop=spec.get("backdrop") or "blur", color=spec.get("color") or "#111111",
+                                                             duration=duration, fg_height=OUT_H, shift=shift)
+                         + f";[camv][box]overlay=x=(W-w)/2:y={lift + SILENT_TOP}:eof_action=pass[v]")
+                info.update(tags_y=clear_h + SILENT_TOP + box_h + 16, split_value=round(box_h / OUT_H, 3))
+            graph += ";" + (voice_over_clip("0:a", "2:a", "a") if spec.get("talk") else "[2:a]anull[a]")
+        else:
+            image = os.path.join(folder, files["image"])
+            if layout == "greenscreen":
+                person_h = min(panel_h, round(OUT_H * GREENSCREEN_PERSON_SHARE))
+                # The screenshot starts under the source tag, and its end reaches the part the member leaves clear.
+                top = lift + IMAGE_TAG_ROOM
+                visible_h = max(200, panel_h - top - round(person_h * 0.75))
+                extra, stage, scrolls, cut = await asyncio.to_thread(image_stage, image, work, OUT_W, panel_h, top, visible_h, duration, 2, "stage")
+                graph = stage + ";" + camera_graph("greenscreen", OUT_W, panel_h, size, matte=True, stage="stage", person_height=person_h)
+                graph += ";[camv]null[v]"
+                info["tags_y"] = clear_h + 24
+            else:
+                box_w = OUT_W - 2 * SILENT_MARGIN
+                box_h = image_box_height(panel_h, lift, split)
+                extra, box, moment_h, scrolls, cut = await asyncio.to_thread(image_box, image, work, box_w, box_h, duration, 2, "box")
+                open_top = lift + SILENT_TOP + moment_h
+                shift = max(0, round(open_top + SILENT_FACE_SPOT * (panel_h - open_top) - SILENT_FACE_AT * OUT_H))
+                graph = box + ";" + camera_graph(layout, OUT_W, panel_h, size, matte=matte is not None, backdrop=spec.get("backdrop") or "blur",
+                                                 color=spec.get("color") or "#111111", duration=duration, fg_height=OUT_H, shift=shift)
+                graph += f";[camv][box]overlay=x=(W-w)/2:y={lift + SILENT_TOP}:shortest=1[v]"
+                info.update(tags_y=clear_h + SILENT_TOP + moment_h + 16, split_value=round(moment_h / OUT_H, 3))
+            inputs += extra
+            info.update(scrolls=scrolls, cut=cut)
+            # Their voice only.
+            graph += f";[0:a]{LOUDNORM},aresample=48000[a]"
+        info["layout"] = layout
+        await asyncio.to_thread(ffmpeg, [*inputs, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", "-t", f"{duration:.3f}",
+                                         *VIDEO_ARGS, *AUDIO_ARGS, assembled])
+        return assembled, info
+
+    # -- Silent react ----------------------------------------------------------
+
+    async def _moment_cut(self, video: str, script: RemixScript, out: str, look: str = MOMENT_LOOK) -> str:
         """The moment with its own picture (through `look`) and loudness-matched sound (silence if it has none)."""
         duration = (script.end_ms - script.start_ms) / 1000
         window = ["-ss", f"{script.start_ms / 1000:.3f}", "-t", f"{duration:.3f}"]
@@ -2564,14 +2825,9 @@ class Remixer:
                                              "-map", "0:v:0", "-map", "1:a:0", "-t", f"{duration:.3f}", *VIDEO_ARGS, *AUDIO_ARGS, out])
         return out
 
-    @staticmethod
-    def _box_look(box_w: int, box_h: int) -> str:
-        return (f"scale={box_w - 12}:{box_h - 12}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,"
-                f"pad=iw+12:ih+12:6:6:color=white,fps={FPS},setsar=1,format=yuv420p")
-
     async def _one_silent(self, index: int, total: int, script: RemixScript, video: str, segments: list[TranscriptSegment],
                           source_meta: dict, root: str, recording: Optional[dict] = None) -> RemixResult:
-        """Green screen: the avatar's silent reactions fill the panel, the moment floats in its top half with its own sound."""
+        """The avatar's silent reactions fill the panel, the moment floats in a box at the top with its own sound."""
         if self.config.host == "camera":
             return await self._one_camera_reaction(index, total, script, video, segments, source_meta, root, recording or {})
         from clip_engine.services.rendering_service import RenderingService
@@ -2581,26 +2837,18 @@ class Remixer:
         say = lambda detail, fraction: self.progress(f"Remix {index + 1} of {total}: {detail}", base + step * fraction)  # noqa: E731
         work = os.path.join(root, ".work", f"remix-{index + 1}")
         os.makedirs(work, exist_ok=True)
+        folder = edit_dir(root, f"clip_{index + self._clip_offset:02d}")
+        os.makedirs(folder, exist_ok=True)
         duration = (script.end_ms - script.start_ms) / 1000
 
         service = RenderingService()
         bar_path, bar_h, clear_h = self._headline(service, video, work, index, script.headline)
-        panel_h = OUT_H - bar_h
 
-        # 1. The moment with its own picture and sound, sized to float in the top of the panel.
+        # 1. The moment, kept at its own size with its own sound.
         say("cutting the moment", 0.1)
-        # Floating hook text sits over the reactions, so the moment starts under it.
-        lift = clear_h - bar_h
-        box_w, box_h = OUT_W - 2 * SILENT_MARGIN, round((panel_h - lift) * SILENT_BOX_SHARE)
-        moment = await self._moment_cut(video, script, os.path.join(work, "moment.mp4"), self._box_look(box_w, box_h))
-        moment_w, moment_h = await asyncio.to_thread(video_size, moment)
-        # The presenter sits lower so their face shows under the clip; a blurred copy fills above.
-        open_top = lift + SILENT_TOP + moment_h
-        shift = max(0, round(open_top + SILENT_FACE_SPOT * (panel_h - open_top) - SILENT_FACE_AT * OUT_H))
-        behind = (f"split[a][b];[a]{panel_filter(OUT_W, panel_h)},boxblur=24:2,eq=brightness=-0.12[bg];"
-                  f"[b]scale={OUT_W}:-2,fps={FPS},setsar=1[fg];[bg][fg]overlay=x=0:y={shift},format=yuv420p")
+        await self._moment_cut(video, script, os.path.join(folder, "moment.mp4"))
 
-        # 2. The reactions behind it, each held until the next cue.
+        # 2. The reactions, each held until the next cue (kept full-frame; placed when composed).
         say("timing your reactions", 0.35)
         cues = script.cues or [{"at": 0.0, "reaction": next(iter(self.config.reactions))}]
         parts: list[str] = []
@@ -2610,27 +2858,28 @@ class Remixer:
             clip = self.config.reactions.get(cue["reaction"]) or next(iter(self.config.reactions.values()))
             part = os.path.join(work, f"reaction-{i}.mp4")
             await asyncio.to_thread(ffmpeg, [*MEDIA_GUARD, "-stream_loop", "-1", "-i", clip, "-t", f"{length:.3f}", "-an",
-                                             "-filter_complex", f"[0:v]{behind}[v]", "-map", "[v]", *VIDEO_ARGS, part])
+                                             "-vf", f"fps={FPS},{cover(OUT_W, OUT_H)},setsar=1,format=yuv420p", *VIDEO_ARGS, part])
             parts.append(part)
-        background = os.path.join(work, "reactions.mp4")
         inputs = [arg for path in parts for arg in ("-i", path)]
         await asyncio.to_thread(ffmpeg, [*inputs, "-filter_complex", "".join(f"[{i}:v]" for i in range(len(parts))) + f"concat=n={len(parts)}:v=1:a=0[v]",
-                                         "-map", "[v]", *VIDEO_ARGS, background])
+                                         "-map", "[v]", *VIDEO_ARGS, os.path.join(folder, "presenter.mp4")])
 
         # 3. The moment over the reactions.
         say("putting it together", 0.6)
-        assembled = os.path.join(work, "assembled.mp4")
-        await asyncio.to_thread(ffmpeg, ["-i", background, "-i", moment, "-filter_complex",
-                                         f"[0:v][1:v]overlay=x=(W-w)/2:y={lift + SILENT_TOP}:eof_action=pass[v]",
-                                         "-map", "[v]", "-map", "1:a:0", "-t", f"{duration:.3f}", *VIDEO_ARGS, *AUDIO_ARGS, assembled])
+        files = {"presenter": "presenter.mp4", "moment": "moment.mp4"}
+        compose = {"format": "silent", "layout": "filmed", "talk": False}
+        data = {"dir": folder, "kind": "reaction", "files": files, "compose": compose, "duration": duration}
+        assembled, info = await self._compose(data, None, bar_h, clear_h, work)
         ai_presenter = bool(self.config.reactions_ai)
         return await self._finish_silent(
-            index, say, work, root, service, script, segments, source_meta, assembled, bar_path, bar_h,
-            tags_y=clear_h + SILENT_TOP + moment_h + 16, caption_words=self._moment_words(script, segments), warnings=list(script.notes),
+            index, say, work, root, service, script, segments, source_meta, assembled, bar_path, bar_h, clear_h,
+            tags_y=info["tags_y"], caption_words=self._moment_words(script, segments), warnings=list(script.notes),
             ai_presenter=ai_presenter,
             presenter_check=Check("ai_label", True, "AI presenter marked on screen; turn on the platform's AI label when you post" if ai_presenter
                                   else "Your own reaction clips: no AI label needed for them"),
-            presenter={"mode": "silent_reactions", "ai_generated": ai_presenter}, cost=0.0)
+            presenter={"mode": "silent_reactions", "ai_generated": ai_presenter}, cost=0.0,
+            bundle={"dir": folder, "kind": "reaction", "files": files, "compose": compose, "split_supported": True,
+                    "split_value": info["split_value"]})
 
     @staticmethod
     def _moment_words(script: RemixScript, segments: list[TranscriptSegment]) -> list[TranscriptWord]:
@@ -2639,78 +2888,37 @@ class Remixer:
                 for w in transcript_words(segments) if w.start_time_ms >= script.start_ms and w.end_time_ms <= script.end_ms + 50]
 
     async def _finish_silent(self, index: int, say: Callable, work: str, root: str, service: Any, script: RemixScript,
-                             segments: list[TranscriptSegment], source_meta: dict, assembled: str, bar_path: Optional[str], bar_h: int, *,
-                             tags_y: int, caption_words: list[TranscriptWord], warnings: list[str], ai_presenter: bool,
+                             segments: list[TranscriptSegment], source_meta: dict, assembled: str, bar_path: Optional[str], bar_h: int,
+                             clear_h: int, *, tags_y: int, caption_words: list[TranscriptWord], warnings: list[str], ai_presenter: bool,
                              presenter_check: Check, presenter: dict, cost: float, camera: bool = False,
                              credit_label: str = "Original", caption_credit: str = "Clip",
-                             permission: str = "You confirmed you're allowed to use this clip", music_check: bool = True) -> RemixResult:
+                             permission: str = "You confirmed you're allowed to use this clip", music_check: bool = True,
+                             bundle: Optional[dict] = None) -> RemixResult:
         """Captions, hook text, credit, AI mark and call to action over a reaction video (panel-sized, with its sound);
-        then the checks and the manifest."""
-        from clip_engine.config import get_caption_preset
-        from clip_engine.services.caption_generator import CaptionGeneratorService
-
+        the edit bundle; then the checks and the manifest."""
         name = f"clip_{index + self._clip_offset:02d}"
         duration = (script.end_ms - script.start_ms) / 1000
         total_s = await asyncio.to_thread(media_seconds, assembled)
 
-        # 4. Captions, under the clip.
+        # 4-5. Captions under the clip, hook text, credit, AI mark and the call to action.
         say("adding captions", 0.8)
-        caption_path = None
-        if self.config.include_captions and caption_words:
-            try:
-                style = get_caption_preset(self.config.caption_preset)
-            except Exception:  # noqa: BLE001 - fall back to the default look
-                style = get_caption_preset("pop")
-            # Below the presenter's face, above the platforms' own buttons and text.
-            caption_y = OUT_H - SILENT_CAPTION_FROM_BOTTOM
-            caption_path = await CaptionGeneratorService().generate_captions(
-                transcript_segments=words_to_segments(caption_words), clip_start_ms=0, clip_end_ms=round(total_s * 1000),
-                output_path=os.path.join(work, "captions.ass"), caption_style=style, output_width=OUT_W, output_height=OUT_H,
-                anchors=[(10**9, 5, caption_y)],
-            )
-
-        # 5. Headline bar, captions, credit, AI mark and the call to action.
         creator = (source_meta.get("creator") or "").strip()
-        overlays: list[tuple[str, str, str, str]] = []
-        if bar_path:
-            overlays.append((bar_path, "0", "0", "1"))
-        row_w = OUT_W - 2 * SILENT_MARGIN
-        credit_text = f"{credit_label}: {creator[:40]}" if creator else ""
-        credit_w = credit_h = 0
-        if credit_text:
-            credit_png = os.path.join(work, "credit.png")
-            credit_w, credit_h = tag_image(credit_text, credit_png, max_w=row_w)
-            overlays.append((credit_png, str(SILENT_MARGIN), str(tags_y), "1"))
-        cta_y = tags_y + 80
-        if ai_presenter:
-            ai_png = os.path.join(work, "ai.png")
-            w, h = tag_image("AI presenter", ai_png, 26)
-            if credit_w and credit_w + 24 + w > row_w:
-                # A long credit: the AI mark goes on its own row under it.
-                ai_y = tags_y + credit_h + 10
-                overlays.append((ai_png, str(OUT_W - w - SILENT_MARGIN), str(ai_y), "1"))
-                cta_y = ai_y + h + 20
-            else:
-                overlays.append((ai_png, str(OUT_W - w - SILENT_MARGIN), str(tags_y), "1"))
         keyword = self.config.cta_keyword
-        if keyword and not self.config.cta_clip:
-            cta_png = os.path.join(work, "cta.png")
-            w, _ = tag_image(f"Comment {keyword}", cta_png, 44, fill=(255, 255, 255, 240), color=(10, 10, 10, 255), max_w=row_w)
-            overlays.append((cta_png, str((OUT_W - w) // 2), str(cta_y), enable_expr([(max(0.0, total_s - 4.0), total_s)])))
-        graph = f"[0:v]pad={OUT_W}:{OUT_H}:0:{bar_h}:color={self._look.pad_color},setsar=1[base]"
-        current = "base"
-        if caption_path:
-            graph += f";[{current}]{service._caption_filter(caption_path)}[cap]"
-            current = "cap"
-        for i, (_, x, y, enable) in enumerate(overlays, start=1):
-            graph += f";[{current}][{i}:v]overlay=x={x}:y={y}:enable='{enable}'[o{i}]"
-            current = f"o{i}"
+        tags = {"style": "silent", "credit_text": f"{credit_label}: {creator[:40]}" if creator else "", "ai_presenter": ai_presenter,
+                "cta_keyword": "" if self.config.cta_clip else keyword, "tags_y": tags_y}
         final = os.path.join(root, f"{name}.mp4")
-        overlay_inputs = [arg for path, *_ in overlays for arg in ("-i", path)]
-        await asyncio.to_thread(ffmpeg, ["-i", assembled, *overlay_inputs, "-filter_complex", graph, "-map", f"[{current}]", "-map", "0:a",
-                                         *VIDEO_ARGS, "-c:a", "copy", "-movflags", "+faststart", final])
+        await self._overlay_final(service, assembled, final, work, bar_path=bar_path, bar_h=bar_h, clear_h=clear_h, total_s=total_s,
+                                  words=caption_words, anchor="silent", tags=tags)
+        manifest_path = os.path.join(root, f"{name}.source.json")
+        editable = None
+        if bundle:
+            editable = self._save_bundle(bundle["dir"], kind=bundle["kind"], headline=script.headline, total_s=total_s, files=bundle["files"],
+                                         words=caption_words, anchor="silent", tags=tags, compose=bundle["compose"],
+                                         split_supported=bundle["split_supported"], split_value=bundle["split_value"],
+                                         manifest=os.path.basename(manifest_path), video=os.path.basename(final))
 
         # 6. Checks and manifest.
+        credit_text = tags["credit_text"]
         events = " ".join(" ".join(getattr(s, "audio_events", None) or []) for s in segments
                           if s.end_time_ms > script.start_ms and s.start_time_ms < script.end_ms).lower()
         post_caption = finalize_caption(script.post_caption or script.headline, keyword, self.config.cta_offer, creator, caption_credit)
@@ -2734,15 +2942,15 @@ class Remixer:
             "post_caption": post_caption, "call_to_action": {"keyword": keyword, "offer": self.config.cta_offer} if keyword else None,
             "brand_identity": self.config.brand_name or None, "presenter": presenter,
             "models": {"plan": self.settings.planner_model}, "checks": [asdict(c) for c in checks], "warnings": warnings,
-            "cost_usd": round(cost, 4),
+            "cost_usd": round(cost, 4), "editable": editable,
         }
-        manifest_path = os.path.join(root, f"{name}.source.json")
         with open(manifest_path, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle, indent=2, ensure_ascii=False)
         say("done", 1)
         return RemixResult(final, manifest_path, script.headline, script.stance, duration, round(total_s, 2), round(cost, 4),
                            [asdict(c) for c in checks], warnings, script.style, (script.grade or {}).get("letter"),
-                           script.start_ms, script.end_ms, creator, ai_presenter, index + self._clip_offset, post_caption, camera, script.format)
+                           script.start_ms, script.end_ms, creator, ai_presenter, index + self._clip_offset, post_caption, camera,
+                           script.format, editable)
 
     # -- Me, on camera ---------------------------------------------------------
 
@@ -2757,6 +2965,8 @@ class Remixer:
         say = lambda detail, fraction: self.progress(f"Remix {index + 1} of {total}: {detail}", base + step * fraction)  # noqa: E731
         work = os.path.join(root, ".work", f"remix-{index + 1}")
         os.makedirs(work, exist_ok=True)
+        folder = edit_dir(root, f"clip_{index + self._clip_offset:02d}")
+        os.makedirs(folder, exist_ok=True)
         warnings: list[str] = list(script.notes)
         cost_before = self.media.cost_usd
         reaction = (recording or {}).get("reaction") or {}
@@ -2769,13 +2979,10 @@ class Remixer:
             # They recorded again after the review was written: caption this take's own words.
             segments = []
             warnings.append("You recorded again after your headline and caption were written, so they came from an earlier take. Check they still fit.")
-        image = os.path.join(work, "image.png")
-        await asyncio.to_thread(prepare_image, (self.config.image_source or {}).get("path") or video, image)
+        await asyncio.to_thread(prepare_image, (self.config.image_source or {}).get("path") or video, os.path.join(folder, "image.png"))
 
         service = RenderingService()
         bar_path, bar_h, clear_h = self._headline(service, video, work, index, script.headline)
-        panel_h = OUT_H - bar_h
-        lift = clear_h - bar_h
 
         # 1. Their take, as recorded (from the offset, up to three minutes).
         say("preparing your recording", 0.05)
@@ -2786,66 +2993,43 @@ class Remixer:
         if length <= offset - seek + 0.5:
             raise RemixError("your recording is too short. Record it again.")
         duration = min(MAX_IMAGE_TAKE_S, length - (offset - seek))
-        cam = await asyncio.to_thread(recording_window, normalized, os.path.join(work, "you.mp4"), offset - seek, duration)
-        size = await asyncio.to_thread(video_size, cam)
+        cam = await asyncio.to_thread(recording_window, normalized, os.path.join(folder, "presenter.mp4"), offset - seek, duration)
         script = replace(script, start_ms=0, end_ms=round(duration * 1000))
 
         layout = self.config.camera_layout
-        matte = None
+        files = {"presenter": "presenter.mp4", "image": "image.png"}
         if layout in ("cutout", "greenscreen"):
             say("cutting you out", 0.15)
-            matte = await asyncio.to_thread(self._matte, cam, os.path.join(work, "you-matte.mkv"), warnings)
-            if matte is None:
+            if await asyncio.to_thread(self._matte, cam, os.path.join(folder, "matte.mkv"), warnings):
+                files["matte"] = "matte.mkv"
+            else:
                 layout = "filmed"
 
-        # 2. The screenshot: behind them (green screen) or as the box over them.
-        say("placing the screenshot", 0.45)
-        inputs = ["-i", cam] + (["-i", matte] if matte else ["-f", "lavfi", "-i", f"color=c=black:s=16x16:r={FPS}:d=0.1"])
-        if layout == "greenscreen":
-            person_h = min(panel_h, round(OUT_H * GREENSCREEN_PERSON_SHARE))
-            # The screenshot starts under the source tag, and its end reaches the part the member leaves clear.
-            top = lift + IMAGE_TAG_ROOM
-            visible_h = max(200, panel_h - top - round(person_h * 0.75))
-            extra, stage, scrolls, cut = await asyncio.to_thread(image_stage, image, work, OUT_W, panel_h, top, visible_h, duration, 2, "stage")
-            graph = stage + ";" + camera_graph("greenscreen", OUT_W, panel_h, size, matte=True, stage="stage", person_height=person_h)
-            graph += ";[camv]null[v]"
-            tags_y = clear_h + 24
-        else:
-            box_w = OUT_W - 2 * SILENT_MARGIN
-            box_h = round((panel_h - lift) * SILENT_BOX_SHARE) // 2 * 2
-            extra, box, moment_h, scrolls, cut = await asyncio.to_thread(image_box, image, work, box_w, box_h, duration, 2, "box")
-            open_top = lift + SILENT_TOP + moment_h
-            shift = max(0, round(open_top + SILENT_FACE_SPOT * (panel_h - open_top) - SILENT_FACE_AT * OUT_H))
-            graph = box + ";" + camera_graph(layout, OUT_W, panel_h, size, matte=matte is not None, backdrop=self.config.camera_backdrop,
-                                             color=self.config.camera_backdrop_color, duration=duration, fg_height=OUT_H, shift=shift)
-            graph += f";[camv][box]overlay=x=(W-w)/2:y={lift + SILENT_TOP}:shortest=1[v]"
-            tags_y = clear_h + SILENT_TOP + moment_h + 16
-        inputs += extra
-        if cut:
+        # 2. The screenshot behind them (green screen) or as the box over them, and their voice.
+        say("putting it together", 0.45)
+        compose = {"format": "image", "layout": layout, "backdrop": self.config.camera_backdrop, "color": self.config.camera_backdrop_color}
+        data = {"dir": folder, "kind": "image", "files": files, "compose": compose, "duration": duration}
+        assembled, info = await self._compose(data, None, bar_h, clear_h, work)
+        if info.get("cut"):
             warnings.append("Your screenshot is very long, so only its top part scrolls by. Crop it to the part you talk about.")
 
-        # 3. Their voice only.
-        say("putting it together", 0.6)
-        graph += f";[0:a]{LOUDNORM},aresample=48000[a]"
-        assembled = os.path.join(work, "assembled.mp4")
-        await asyncio.to_thread(ffmpeg, [*inputs, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", "-t", f"{duration:.3f}",
-                                         *VIDEO_ARGS, *AUDIO_ARGS, assembled])
-
-        # 4. Captions: their words (from the review's transcript, or transcribed now).
+        # 3. Captions: their words (from the review's transcript, or transcribed now).
         words = [w for w in transcript_words(segments) if w.start_time_ms < duration * 1000]
-        if not words and self.config.include_captions:
+        if not words:
             say("transcribing your words", 0.7)
             words = await self._transcribe_words(cam, work, "you") or []
         layout_name = {"filmed": "filmed", "cutout": "cut out", "greenscreen": "green screen"}[layout]
         return await self._finish_silent(
-            index, say, work, root, service, script, segments, source_meta, assembled, bar_path, bar_h,
-            tags_y=tags_y, caption_words=words, warnings=warnings, ai_presenter=False,
+            index, say, work, root, service, script, segments, source_meta, assembled, bar_path, bar_h, clear_h,
+            tags_y=info["tags_y"], caption_words=words, warnings=warnings, ai_presenter=False,
             presenter_check=Check("presenter", True, "You on camera: no AI label needed for the presenter"),
             presenter={"mode": "camera", "layout": layout, "layout_label": layout_name, "talk": True,
-                       "backdrop": self.config.camera_backdrop if layout == "cutout" else None, "image_scrolls": scrolls,
+                       "backdrop": self.config.camera_backdrop if layout == "cutout" else None, "image_scrolls": info.get("scrolls"),
                        "ai_generated": False},
             cost=self.media.cost_usd - cost_before, camera=True, credit_label="Source", caption_credit="Source",
-            permission="You confirmed you're allowed to share this article or post", music_check=False)
+            permission="You confirmed you're allowed to share this article or post", music_check=False,
+            bundle={"dir": folder, "kind": "image", "files": files, "compose": compose, "split_supported": layout != "greenscreen",
+                    "split_value": info["split_value"]})
 
     def _matte(self, footage: str, out: str, warnings: list[str]) -> Optional[str]:
         """The cut-out matte for normalized footage, or None (with a warning) when it can't be made."""
@@ -2894,6 +3078,8 @@ class Remixer:
         say = lambda detail, fraction: self.progress(f"Remix {index + 1} of {total}: {detail}", base + step * fraction)  # noqa: E731
         work = os.path.join(root, ".work", f"remix-{index + 1}")
         os.makedirs(work, exist_ok=True)
+        folder = edit_dir(root, f"clip_{index + self._clip_offset:02d}")
+        os.makedirs(folder, exist_ok=True)
         warnings: list[str] = list(script.notes)
         duration = (script.end_ms - script.start_ms) / 1000
         cost_before = self.media.cost_usd
@@ -2904,8 +3090,6 @@ class Remixer:
 
         service = RenderingService()
         bar_path, bar_h, clear_h = self._headline(service, video, work, index, script.headline)
-        panel_h = OUT_H - bar_h
-        lift = clear_h - bar_h
 
         # 1. Line the recording up with the moment, then take that stretch of it.
         say("lining up your recording", 0.05)
@@ -2919,73 +3103,49 @@ class Remixer:
             raise RemixError("your recording ends before the clip starts. Record it again.")
         if length < offset - seek + duration - 0.5:
             warnings.append("Your recording ends before the clip does, so your last frame is held to the end.")
-        cam = await asyncio.to_thread(recording_window, normalized, os.path.join(work, "you.mp4"), offset - seek, duration)
-        size = await asyncio.to_thread(video_size, cam)
+        cam = await asyncio.to_thread(recording_window, normalized, os.path.join(folder, "presenter.mp4"), offset - seek, duration)
 
         # 2. The cut-out, when the layout needs one.
         layout = self.config.camera_layout
-        matte = None
+        files = {"presenter": "presenter.mp4", "moment": "moment.mp4"}
         if layout in ("cutout", "greenscreen"):
             say("cutting you out", 0.15)
-            matte = await asyncio.to_thread(self._matte, cam, os.path.join(work, "you-matte.mkv"), warnings)
-            if matte is None:
+            if await asyncio.to_thread(self._matte, cam, os.path.join(folder, "matte.mkv"), warnings):
+                files["matte"] = "matte.mkv"
+            else:
                 layout = "filmed"
 
-        # 3. The moment: a box over you, or (green screen) the whole stage behind you.
+        # 3. The moment (kept at its own size): a box over you, or (green screen) the whole stage behind you.
         say("cutting the moment", 0.4)
-        # Inputs: 0 the member, 1 the matte (a tiny placeholder when filmed), 2 the moment.
-        inputs = ["-i", cam] + (["-i", matte] if matte else ["-f", "lavfi", "-i", f"color=c=black:s=16x16:r={FPS}:d=0.1"])
-        if layout == "greenscreen":
-            moment = await self._moment_cut(video, script, os.path.join(work, "moment.mp4"), f"fps={FPS},setsar=1,format=yuv420p")
-            area_h = panel_h - lift
-            stage = (f"[2:v]split[sa][sb];[sa]{panel_filter(OUT_W, panel_h)},boxblur=24:2,eq=brightness=-0.25[sbg];"
-                     f"[sb]{cover(OUT_W, area_h, 0.5)},setsar=1[sfg];[sbg][sfg]overlay=x=0:y={lift}[stage]")
-            graph = stage + ";" + camera_graph("greenscreen", OUT_W, panel_h, size, matte=True, stage="stage",
-                                               person_height=min(panel_h, round(OUT_H * GREENSCREEN_PERSON_SHARE)))
-            graph += ";[camv]null[v]"
-            # Tags sit under the hook text, over the clip.
-            tags_y = clear_h + 24
-        else:
-            box_w, box_h = OUT_W - 2 * SILENT_MARGIN, round((panel_h - lift) * SILENT_BOX_SHARE)
-            moment = await self._moment_cut(video, script, os.path.join(work, "moment.mp4"), self._box_look(box_w, box_h))
-            _, moment_h = await asyncio.to_thread(video_size, moment)
-            open_top = lift + SILENT_TOP + moment_h
-            # The same placement Silent react gives a presenter: the face lands under the clip.
-            shift = max(0, round(open_top + SILENT_FACE_SPOT * (panel_h - open_top) - SILENT_FACE_AT * OUT_H))
-            graph = camera_graph(layout, OUT_W, panel_h, size, matte=matte is not None, backdrop=self.config.camera_backdrop,
-                                 color=self.config.camera_backdrop_color, duration=duration, fg_height=OUT_H, shift=shift)
-            graph += f";[camv][2:v]overlay=x=(W-w)/2:y={lift + SILENT_TOP}:eof_action=pass[v]"
-            tags_y = clear_h + SILENT_TOP + moment_h + 16
-        inputs += ["-i", moment]
+        await self._moment_cut(video, script, os.path.join(folder, "moment.mp4"))
 
         # 4. Sound: always the moment's; with "talk", the member's voice in front of it.
         say("putting it together", 0.6)
-        if self.config.camera_talk:
-            graph += ";" + voice_over_clip("0:a", "2:a", "a")
-        else:
-            graph += ";[2:a]anull[a]"
-        assembled = os.path.join(work, "assembled.mp4")
-        await asyncio.to_thread(ffmpeg, [*inputs, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", "-t", f"{duration:.3f}",
-                                         *VIDEO_ARGS, *AUDIO_ARGS, assembled])
+        compose = {"format": "silent", "layout": layout, "backdrop": self.config.camera_backdrop, "color": self.config.camera_backdrop_color,
+                   "talk": bool(self.config.camera_talk)}
+        data = {"dir": folder, "kind": "reaction", "files": files, "compose": compose, "duration": duration}
+        assembled, info = await self._compose(data, None, bar_h, clear_h, work)
 
-        # 5. Captions: the member's words when they talk, otherwise the moment's.
+        # 5. Captions: the member's words when they talk, otherwise the moment's (kept either way, for editing).
         words = self._moment_words(script, segments)
-        if self.config.camera_talk and self.config.include_captions:
+        if self.config.camera_talk:
             say("transcribing your words", 0.7)
             spoken = await self._transcribe_words(cam, work, "you")
             if spoken:
                 words = [w for w in spoken if w.start_time_ms < duration * 1000]
-            else:
+            elif self.config.include_captions:
                 warnings.append("Your words couldn't be transcribed, so the captions show the clip's words.")
         layout_name = {"filmed": "filmed", "cutout": "cut out", "greenscreen": "green screen"}[layout]
         return await self._finish_silent(
-            index, say, work, root, service, script, segments, source_meta, assembled, bar_path, bar_h,
-            tags_y=tags_y, caption_words=words, warnings=warnings, ai_presenter=False,
+            index, say, work, root, service, script, segments, source_meta, assembled, bar_path, bar_h, clear_h,
+            tags_y=info["tags_y"], caption_words=words, warnings=warnings, ai_presenter=False,
             presenter_check=Check("presenter", True, "You on camera: no AI label needed for the presenter"),
             presenter={"mode": "camera", "layout": layout, "layout_label": layout_name, "talk": self.config.camera_talk,
                        "backdrop": self.config.camera_backdrop if layout == "cutout" else None,
                        "offset_seconds": offset, "offset_found_by": found_by, "ai_generated": False},
-            cost=self.media.cost_usd - cost_before, camera=True)
+            cost=self.media.cost_usd - cost_before, camera=True,
+            bundle={"dir": folder, "kind": "reaction", "files": files, "compose": compose, "split_supported": layout != "greenscreen",
+                    "split_value": info["split_value"]})
 
     async def _caption_words(self, assembled: str, work: str, script: RemixScript, segments: list[TranscriptSegment],
                              parts: list[tuple[str, str]], starts: list[float], durations: list[float],
@@ -3003,6 +3163,12 @@ class Remixer:
                 return found
         except Exception as error:  # noqa: BLE001 - estimate instead
             logger.warning(f"Caption transcription failed, estimating timing: {type(error).__name__}")
+        return self._estimated_caption_words(script, segments, parts, starts, durations, texts)
+
+    @staticmethod
+    def _estimated_caption_words(script: RemixScript, segments: list[TranscriptSegment], parts: list[tuple[str, str]],
+                                 starts: list[float], durations: list[float], texts: Optional[list[str]] = None) -> list[TranscriptSegment]:
+        """Caption timing with no transcription: the moment's own words, and the script's lines spread over their parts."""
         texts = texts or ([script.intro] + [b.text for b in script.beats] + [script.close])
         words: list[TranscriptWord] = []
         narration = iter(texts)
@@ -3015,6 +3181,81 @@ class Remixer:
             else:
                 words += estimated_words(next(narration, ""), a, b)
         return words_to_segments(words)
+
+
+async def recompose(request: RecomposeRequest, progress: Progress = lambda detail, percent: None) -> dict:
+    """Make a finished remix again with new hook text, captions or split, from its edit bundle.
+    No network or AI calls: the kept files, caption timings and tags are all it uses."""
+    import shutil
+    import tempfile
+    from clip_engine.services.rendering_service import RenderingService
+
+    root = os.path.realpath(request.output_dir)
+    out = os.path.realpath(request.output_path)
+    if not STEM.match(request.clip or "") or not out.lower().endswith(".mp4") or os.path.dirname(out) != root:
+        raise RemixError("Choose where to save the edited video.")
+    data = read_edit_bundle(root, request.clip)
+    headline = _clean_line(request.headline, 16)
+    if len(headline.split()) < 3:
+        raise RemixError("Use a headline of 3 or more words.")
+    supported = bool(data.get("split_supported"))
+    split = request.split if supported else None
+    if split is not None and not (SPLIT_MIN <= split <= SPLIT_MAX):
+        raise RemixError("Choose a size between 30% and 70%.")
+    config = RemixConfig(output_dir=root, headline_look=request.headline_look, include_captions=request.include_captions,
+                         caption_preset=request.caption_preset)
+    remixer = Remixer.__new__(Remixer)
+    remixer.config, remixer.progress, remixer.warnings, remixer._clip_offset = config, progress, [], 0
+    work = tempfile.mkdtemp(prefix="recompose-", dir=data["dir"])
+    partial = out + ".part.mp4"
+    try:
+        progress("Placing your hook text", 10)
+        service = RenderingService()
+        first_file = os.path.join(data["dir"], next(iter(data["files"].values())))
+        bar_path, bar_h, clear_h = remixer._headline(service, first_file, work, 0, headline)
+        progress("Putting it together", 30)
+        try:
+            assembled, info = await remixer._compose(data, split, bar_h, clear_h, work)
+        except RemixError:
+            raise RemixError(EDIT_UNAVAILABLE) from None
+        tags = dict(data["tags"])
+        if tags.get("style") == "silent":
+            tags["tags_y"] = info["tags_y"]
+        panel_h = OUT_H - bar_h
+        base_filter = ""
+        if data["kind"] == "panel" and panel_h != int(data["compose"].get("panel_h") or 0):
+            # A taller or shorter hook: the joined video is fitted to the new panel.
+            base_filter = f"scale={OUT_W}:{panel_h}:force_original_aspect_ratio=increase,crop={OUT_W}:{panel_h},setsar=1"
+        words = [TranscriptWord(str(w), int(a), int(b)) for w, a, b in data["words"]]
+        progress("Adding captions", 70)
+        await remixer._overlay_final(service, assembled, partial, work, bar_path=bar_path, bar_h=bar_h, clear_h=clear_h,
+                                     total_s=float(data["duration"]), words=words, anchor=data.get("anchor") or "silent", tags=tags,
+                                     base_filter=base_filter)
+        os.replace(partial, out)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+        if os.path.exists(partial):
+            os.remove(partial)
+    split_value = info.get("split_value") if supported else None
+    data["settings"] = {"headline": headline, "headline_look": request.headline_look, "include_captions": bool(request.include_captions),
+                        "caption_preset": request.caption_preset, "split": split_value}
+    data.update(split_value=split_value, video=os.path.basename(out), edited_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+    folder = data.pop("dir")
+    write_edit_bundle(folder, data)
+    editable = editable_of(data)
+    manifest_path = os.path.join(root, str(data.get("manifest") or f"{request.clip}.source.json"))
+    try:
+        with open(manifest_path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        manifest.update(headline=headline, video=os.path.basename(out), editable=editable, edited_at=data["edited_at"])
+        with open(manifest_path + ".tmp", "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, ensure_ascii=False)
+        os.replace(manifest_path + ".tmp", manifest_path)
+    except (OSError, ValueError, AttributeError):
+        logger.warning("The edited remix's manifest could not be updated")
+    progress("Done", 100)
+    return {"path": out, "duration_seconds": round(await asyncio.to_thread(media_seconds, out), 2), "settings": data["settings"],
+            "editable": editable}
 
 
 def previous_clips(root: str) -> list[dict]:
@@ -3042,7 +3283,7 @@ def write_job_output(root: str, results: list[RemixResult], sources: list[dict],
             "virality_score": 0.0, "layout_type": "", "summary": result.headline, "headline": result.headline,
             "tags": [],
             "description": f"{'Source' if result.format == 'image' else 'Original'}: {result.creator}" if result.creator else None, "render_fallback": None,
-            "ai_generated": not result.camera, "post_caption": result.post_caption or None,
+            "ai_generated": not result.camera, "post_caption": result.post_caption or None, "editable": result.editable,
         })
     output = {
         "job_id": os.path.basename(root), "source_video_url": first.get("url") or "", "source_video_title": title[:300],

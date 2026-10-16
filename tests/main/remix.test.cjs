@@ -582,3 +582,85 @@ test('article or post: a phone take longer than 3 minutes is refused; a review c
   await assert.rejects(upload, /review was closed/)
   fs.rmSync(out, { recursive: true, force: true })
 })
+
+test('re-editing a finished remix: checked, rebuilt from its saved parts, call to action added back, Library updated', async () => {
+  const { EventEmitter } = require('node:events')
+  const childProcess = require('node:child_process')
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'remix-recompose-'))
+  const settings = { ...SETTINGS, outputDirectory: out }
+  const configs = []
+  let fail = false
+  const spawn = () => {
+    const child = new EventEmitter()
+    child.pid = 0
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
+    child.stdin = { on() {}, end(text) {
+      const config = JSON.parse(text)
+      configs.push(config)
+      setImmediate(() => {
+        const result = fail ? { ok: false, error: 'This video was made before editing was possible. Make it again to edit it.' }
+          : (fs.writeFileSync(config.output_path, 'NEW VIDEO'), { ok: true, path: config.output_path, duration_seconds: 12.5,
+            editable: { split: true, split_value: config.split ?? 0.28, settings: { headline: config.headline, headline_look: config.headline_look, include_captions: config.include_captions, caption_preset: config.caption_preset, split: config.split } } })
+        child.stdout.emit('data', JSON.stringify(result) + '\n'); child.emit('close', 0)
+      })
+    } }
+    return child
+  }
+  const ctaCalls = []
+  const m = load('main/remix.ts', {
+    electron: { app: { getPath: () => out, isPackaged: true } },
+    child_process: { ...childProcess, spawn },
+    './ctas': { applyRunCta: async (run, id, indices) => { ctaCalls.push([run, id, indices]); return { failed: [], cancelled: false } }, readCta: () => ({}),
+      originalPath: (p) => p.replace(/\.mp4$/, '.original.mp4') },
+    './avatars': { portraitPath: () => '', voiceSamplePath: () => '', readAvatar: () => null, readReactions: () => [] },
+    './logger': { logger: { info() {}, warn() {} } },
+    './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
+    './security': { assertMediaPath: () => undefined, authorizeMedia: (p) => p },
+    './settings-store': { loadSettings: () => settings, getSettingsForBridge: () => ({}) },
+    './tools': { resolveBinary: (name) => name }
+  })
+  const folder = path.join(out, 'remix-0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b')
+  fs.mkdirSync(path.join(folder, '.edit', 'clip_00'), { recursive: true })
+  fs.writeFileSync(path.join(folder, '.edit', 'clip_00', 'edit.json'), '{"version":1}')
+  fs.writeFileSync(path.join(folder, 'clip_00.mp4'), 'WITH CTA')
+  fs.writeFileSync(path.join(folder, 'clip_00.original.mp4'), 'OLD VIDEO')
+  fs.writeFileSync(path.join(folder, 'clip_01.mp4'), 'OLD')
+  fs.writeFileSync(path.join(folder, 'job_output.json'), JSON.stringify({ job_id: 'x', clips: [
+    { clip_index: 0, headline: 'Old hook text here', cta: { id: 'a1b2c3d4e5f60718', name: 'Book a call' }, editable: { split: true, split_value: 0.28 } },
+    { clip_index: 1, headline: 'Made before editing existed' }] }))
+  const edit = { headline: 'A brand new hook  for this', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, includeCaptions: false, captionPreset: 'pop', split: 0.45 }
+
+  // Checked first: only remix runs in the output folder, a real clip, sensible settings.
+  await assert.rejects(m.recomposeRemix(path.join(os.tmpdir(), 'remix-0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b'), 0, edit), /Only Remix videos/)
+  await assert.rejects(m.recomposeRemix(path.join(out, 'my-run'), 0, edit), /Only Remix videos/)
+  await assert.rejects(m.recomposeRemix(folder, 7, edit), /no longer in this run/)
+  await assert.rejects(m.recomposeRemix(folder, 0, { ...edit, headline: 'Too short' }), /at least 3 words/)
+  await assert.rejects(m.recomposeRemix(folder, 0, { ...edit, split: 0.9 }), /between 30% and 70%/)
+  await assert.rejects(m.recomposeRemix(folder, 0, { ...edit, headlineLook: { look: 'neon' } }), /headline look/i)
+  await assert.rejects(m.recomposeRemix(folder, 1, edit), /made before editing was possible/)
+  assert.equal(configs.length, 0, 'nothing ran')
+
+  await m.recomposeRemix(folder, 0, edit)
+  assert.deepEqual(configs[0], { mode: 'recompose', output_dir: folder, clip: 'clip_00', output_path: configs[0].output_path, headline: 'A brand new hook for this',
+    headline_look: { look: 'black', color: '#FFFFFF', font: 'serif' }, include_captions: false, caption_preset: 'pop', split: 0.45 })
+  assert.equal(path.dirname(configs[0].output_path), folder)
+  // The plain video (.original) is replaced and the call to action added back on top.
+  assert.equal(fs.readFileSync(path.join(folder, 'clip_00.original.mp4'), 'utf8'), 'NEW VIDEO')
+  assert.deepEqual(plain(ctaCalls), [[folder, 'a1b2c3d4e5f60718', [0]]])
+  const job = JSON.parse(fs.readFileSync(path.join(folder, 'job_output.json'), 'utf8'))
+  assert.equal(job.clips[0].headline, 'A brand new hook for this')
+  assert.equal(job.clips[0].editable.split_value, 0.45)
+  assert.equal(fs.readdirSync(folder).some((name) => name.startsWith('.recompose-') || name.startsWith('.job_output-')), false, 'no temp files left')
+  // The Library reads the new settings and size.
+  const full = (clip) => ({ s3_url: 'file:///x.mp4', duration_ms: 1000, start_time_ms: 0, end_time_ms: 1000, virality_score: 1, ...clip })
+  const parsed = load('shared/job-output.ts').parseJobOutput({ ...job, clips: job.clips.map(full) })
+  assert.equal(parsed.clips[0].remix_settings.split, 0.45)
+  assert.equal(parsed.clips[0].remix_settings.headline, 'A brand new hook for this')
+  assert.equal(parsed.clips[1].editable, null)
+
+  // An engine failure keeps the video as it was.
+  fail = true
+  await assert.rejects(m.recomposeRemix(folder, 0, edit), /made before editing was possible/)
+  assert.equal(fs.readFileSync(path.join(folder, 'clip_00.original.mp4'), 'utf8'), 'NEW VIDEO')
+  fs.rmSync(out, { recursive: true, force: true })
+})
