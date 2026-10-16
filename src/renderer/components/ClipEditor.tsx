@@ -727,7 +727,7 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
                 onChange={(mode) => { setCtaMode(mode); if (mode === 'run') change({ cta_id: undefined }); else if (mode === 'none') change({ cta_id: null }) }}
                 options={[{ value: 'run', label: 'Same as the run' }, { value: 'none', label: 'None' }, { value: 'pick', label: 'Choose' }]} />
               {(ctaMode ?? (candidate.cta_id ? 'pick' : null)) === 'pick' && <CtaPicker value={candidate.cta_id ?? null} disabled={editingDisabled} onChange={(id) => change({ cta_id: id })} />}
-              <p className="text-2xs text-ink-subtle">Added to the end when you bake this clip. A clip you already baked can change its call to action in the Library (⋯ → Call to action).</p>
+              <p className="text-2xs text-ink-subtle">Added to the end when you bake this clip. A clip you already baked can change its call to action in the Library (⋯ → Change call to action).</p>
             </section>
           </div>}
           {tab === 'transcript' && <section className="editor-subtitle-controls" aria-label="Subtitle placement">
