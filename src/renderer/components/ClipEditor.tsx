@@ -321,30 +321,31 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
         }
         const scene = framingAt(c, t), ctx = out.getContext('2d')!
         ctx.clearRect(0, 0, out.width, out.height)
+        const hookLayout = previewHook(ctx, c, out.width, out.height)
         if (scene.layout === 'fit') {
           ctx.filter = 'blur(16px) brightness(.75)'; ctx.drawImage(v, 0, 0, out.width, out.height); ctx.filter = 'none'
           const scale = Math.min(out.width / v.videoWidth, out.height / v.videoHeight)
           const w = v.videoWidth * scale, h = v.videoHeight * scale
           ctx.drawImage(v, (out.width - w) / 2, (out.height - h) / 2, w, h)
         } else {
+          // A hook bar takes the top of the frame and the video fills the rest (trimmed around its center, as the export does).
+          const barH = hookLayout ? hookLayout.barH : 0, area = out.height - barH
           const rows = panelRows(scene)
-          scene.crops.forEach(([x, y, w, h], i) => ctx.drawImage(v, x * v.videoWidth, y * v.videoHeight, w * v.videoWidth, h * v.videoHeight, 0, rows[i][0] * out.height, out.width, rows[i][1] * out.height))
+          scene.crops.forEach(([x, y, w, h], i) => {
+            let sw = w * v.videoWidth, sh = h * v.videoHeight
+            const dh = rows[i][1] * area, target = out.width / dh
+            let sx = x * v.videoWidth, sy = y * v.videoHeight
+            if (barH && sw / sh < target) { const trimmed = sw / target; sy += (sh - trimmed) / 2; sh = trimmed }
+            else if (barH && sw / sh > target) { const trimmed = sh * target; sx += (sw - trimmed) / 2; sw = trimmed }
+            ctx.drawImage(v, sx, sy, sw, sh, 0, barH + rows[i][0] * area, out.width, dh)
+          })
         }
         // Hook text preview (vertical clips): the bar or floating text at the top.
         const hook = c.hook
-        if (hook && hook.look.look !== 'none' && out.height > out.width) {
-          const bar = headlineBarColor(hook.look), size = Math.round(out.width * 0.058)
-          const family = HEADLINE_FONTS.find((f) => f.id === hook.look.font)?.family ?? 'sans-serif'
-          const text = HEADLINE_FONTS.find((f) => f.id === hook.look.font)?.upper ? hook.text.toUpperCase() : hook.text
-          ctx.font = `800 ${size}px ${family}`
-          const lines: string[] = []
-          for (const word of text.split(' ')) {
-            const last = lines.at(-1)
-            if (last !== undefined && ctx.measureText(`${last} ${word}`).width < out.width * 0.86) lines[lines.length - 1] = `${last} ${word}`
-            else lines.push(word)
-          }
-          const shown = lines.slice(0, 3), top = Math.round(out.height * 0.035), lineH = Math.round(size * 1.18)
-          if (bar) { ctx.fillStyle = bar; ctx.fillRect(0, 0, out.width, top * 2 + shown.length * lineH) }
+        if (hook && hookLayout) {
+          const { bar, size, lines: shown, top, lineH } = hookLayout
+          ctx.font = `800 ${size}px ${hookLayout.family}`
+          if (bar) { ctx.fillStyle = bar; ctx.fillRect(0, 0, out.width, hookLayout.barH) }
           ctx.textAlign = 'center'; ctx.textBaseline = 'top'
           shown.forEach((line, i) => {
             if (!bar) { ctx.lineWidth = Math.max(2, size / 7); ctx.strokeStyle = '#000'; ctx.strokeText(line, out.width / 2, top + i * lineH) }
@@ -715,6 +716,7 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
                 <label className="editor-label" htmlFor="editor-hook">Words <span className="float-right">{candidate.hook.text.length} / {MAX_HOOK_CHARS}</span></label>
                 <textarea id="editor-hook" aria-label="Hook text" rows={3} maxLength={MAX_HOOK_CHARS} value={candidate.hook.text}
                   onChange={(e) => { const text = e.target.value.replace(/\s+/g, ' '); if (text.trim() && candidate.hook) change({ hook: { ...candidate.hook, text } }) }} />
+                {candidate.hook.text.trim().split(/\s+/).length < 2 && <p className="text-2xs text-warning">Use at least two words: a single word isn’t drawn.</p>}
                 <HeadlineLookPicker value={candidate.hook.look} onChange={(look) => candidate.hook && change({ hook: { ...candidate.hook, look } })} />
                 <p className="text-2xs text-ink-subtle">The Output preview shows roughly where it sits. Bake the clip again to apply it.</p>
               </>}
@@ -763,6 +765,22 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
     </div>
     {showAudit && <EditInspector outputDir={outputDir} onClose={() => setShowAudit(false)} />}
   </section>
+}
+/** Where the preview draws a clip's hook text (vertical clips with at least two words, like the export). */
+function previewHook(ctx: CanvasRenderingContext2D, c: CandidateEdit, width: number, height: number): { bar: string | null; barH: number; size: number; lines: string[]; top: number; lineH: number; family: string } | null {
+  const hook = c.hook
+  if (!hook || hook.look.look === 'none' || height <= width || hook.text.trim().split(/\s+/).length < 2) return null
+  const font = HEADLINE_FONTS.find((f) => f.id === hook.look.font)
+  const bar = headlineBarColor(hook.look), size = Math.round(width * 0.058), family = font?.family ?? 'sans-serif'
+  ctx.font = `800 ${size}px ${family}`
+  const lines: string[] = []
+  for (const word of (font?.upper ? hook.text.toUpperCase() : hook.text).split(' ')) {
+    const last = lines.at(-1)
+    if (last !== undefined && ctx.measureText(`${last} ${word}`).width < width * 0.86) lines[lines.length - 1] = `${last} ${word}`
+    else lines.push(word)
+  }
+  const shown = lines.slice(0, 3), top = Math.round(height * 0.035), lineH = Math.round(size * 1.18)
+  return { bar, barH: bar ? top * 2 + shown.length * lineH : 0, size, lines: shown, top, lineH, family }
 }
 function CaptionSuppression({ ranges, cuts, time, duration, disabled, onChange, seek }: {
   ranges: EditorRange[]; cuts: EditorRange[]; time: number; duration: number; disabled: boolean

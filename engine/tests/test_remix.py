@@ -412,24 +412,60 @@ def test_a_failed_remix_keeps_the_ones_already_made(tmp_path, monkeypatch):
     async def grade(items):
         pass
 
-    async def one(index, total, script, *rest):
-        if index == 1:
-            raise OSError("disk hiccup")
-        return remix.RemixResult(str(tmp_path / f"{index}.mp4"), str(tmp_path / f"{index}.json"), script.headline, script.stance, 4.0, 25.0, 0.1, [], [],
-                                 clip_index=index)
+    def make_one(remixer):
+        async def one(index, total, script, *rest):
+            if index == 1 and total == 3:  # the second take fails the first time
+                raise OSError("disk hiccup")
+            number = index + remixer._clip_offset
+            return remix.RemixResult(str(tmp_path / f"{number}.mp4"), str(tmp_path / f"{number}.json"), script.headline, script.stance, 4.0,
+                                     25.0, 0.1, [], [], clip_index=number)
+        return one
     remixer = remix.Remixer(config, media=Media(), settings=settings)
     for name, fn in (("_source", source), ("_transcribe", transcribe), ("_plan", plan), ("_grade", grade)):
         monkeypatch.setattr(remixer, name, fn)
     planned = asyncio.run(remixer.plan())
     assert len(planned["drafts"]) == 3 and any("Video 2 of 2: Skipped" in w for w in planned["warnings"])
     remixer = remix.Remixer(config, media=Media(), settings=settings)
-    monkeypatch.setattr(remixer, "_one", one)
+    monkeypatch.setattr(remixer, "_one", make_one(remixer))
     result = asyncio.run(remixer.render([{"id": 0}, {"id": 1}, {"id": 2}, {"id": 99}, "junk"]))
     assert [os.path.basename(r["path"]) for r in result["remixes"]] == ["0.mp4", "2.mp4"]
     assert any("Remix 2 could not be made" in w for w in result["warnings"])
-    assert os.path.isfile(tmp_path / "job_output.json") and not os.path.exists(tmp_path / ".work")
+    # One take failed: the plan stays so it can be retried without planning (and paying) again.
+    assert os.path.isfile(tmp_path / "job_output.json") and os.path.isfile(tmp_path / ".work" / remix.PLAN_FILE)
     job = json.load(open(tmp_path / "job_output.json"))
     assert [c["clip_index"] for c in job["clips"]] == [0, 2]
+    # The retry makes only that take, numbered after the ones already made, and keeps them in the Library.
+    remixer = remix.Remixer(config, media=Media(), settings=settings)
+    monkeypatch.setattr(remixer, "_one", make_one(remixer))
+    retry = asyncio.run(remixer.render([{"id": 1}]))
+    assert [os.path.basename(r["path"]) for r in retry["remixes"]] == ["3.mp4"]
+    assert [c["clip_index"] for c in json.load(open(tmp_path / "job_output.json"))["clips"]] == [0, 2, 3]
+    assert not os.path.exists(tmp_path / ".work")
+
+
+def test_a_damaged_review_is_reported_as_expired(tmp_path):
+    settings = SimpleNamespace(openrouter_api_key="k", openrouter_base_url="https://x.test/api/v1", planner_model="m",
+                               get_planner_fallback_models=lambda: [], pexels_api_key=None)
+    closed = []
+
+    class Media:
+        cost_usd = 0.0
+
+        async def aclose(self):
+            closed.append(True)
+    config = remix.RemixConfig(output_dir=str(tmp_path), host="voice")
+    (tmp_path / ".work").mkdir()
+    for bad in ("{", "[]", '{"sources": 5, "scripts": []}', '{"sources": [{"video": "/x"}], "scripts": []}',
+                '{"sources": [{"video": "/x", "meta": {}, "segments": [{"start_time_ms": "x"}]}], "scripts": []}'):
+        (tmp_path / ".work" / remix.PLAN_FILE).write_text(bad)
+        with pytest.raises(remix.RemixError, match="This review expired"):
+            asyncio.run(remix.Remixer(config, media=Media(), settings=settings).render([{"id": 0}]))
+    assert len(closed) == 5
+    # A damaged take inside a good plan is skipped with a warning.
+    (tmp_path / ".work" / remix.PLAN_FILE).write_text(json.dumps({"sources": [{"video": "/x", "meta": {}, "segments": []}],
+                                                                   "scripts": [{"source_index": 0}]}))
+    with pytest.raises(remix.RemixError, match="Choose at least one"):
+        asyncio.run(remix.Remixer(config, media=Media(), settings=settings).render([{"id": 0}]))
 
 
 def test_a_render_where_nothing_works_keeps_the_plan_for_a_retry(tmp_path, monkeypatch):
@@ -813,3 +849,19 @@ def test_a_wordless_reel_still_works_for_silent_react(tmp_path, monkeypatch):
     voiced = remix.RemixConfig(sources=["https://www.instagram.com/p/x/"], output_dir=str(tmp_path / "v"), host="voice")
     with pytest.raises(remix.RemixError, match="No speech"):
         asyncio.run(remix.Remixer(voiced, media=FakeMedia("ffmpeg"), settings=settings).plan())
+
+
+def test_a_social_login_problem_keeps_its_hint_with_several_videos(tmp_path, monkeypatch):
+    from clip_engine.services.video_downloader import VideoDownloadError
+    settings = SimpleNamespace(openrouter_api_key="k", openrouter_base_url="https://x.test/api/v1", planner_model="m",
+                               get_planner_fallback_models=lambda: [], pexels_api_key=None)
+    config = remix.RemixConfig(sources=["https://www.instagram.com/p/a/", "https://www.instagram.com/p/b/"], output_dir=str(tmp_path), host="voice")
+    remixer = remix.Remixer(config, media=FakeMedia("ffmpeg"), settings=settings)
+
+    async def source(src, work, single):
+        raise VideoDownloadError("Social login required: Instagram only shares this video with a logged-in viewer", reason="login_required")
+    monkeypatch.setattr(remixer, "_source", source)
+    with pytest.raises(VideoDownloadError) as error:
+        asyncio.run(remixer.plan())
+    assert error.value.reason == "login_required"  # the bridge turns this into the "choose your browser" hint
+    assert any("logged-in viewer. In Settings → API keys, choose the browser" in w for w in remixer.warnings)

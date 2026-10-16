@@ -36,7 +36,7 @@ def test_failed_smart_render_falls_back_to_letterbox(monkeypatch, tmp_path):
     async def no_audio(_path):
         return False
 
-    async def two_shot_plan(video, start, window_ms, w, h, style):
+    async def two_shot_plan(video, start, window_ms, w, h, style, **_):
         return ClipLayoutPlan(
             shots=[ShotLayout(0, window_ms, LayoutType.TWO_SHOT,
                               people=[Box(0.2, 0.3, 0.1, 0.2), Box(0.7, 0.3, 0.1, 0.2)])],

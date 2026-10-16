@@ -14,7 +14,7 @@ from clip_engine.error_policy import NoClipCandidatesError
 
 from clip_engine.services.coherence_review import CLIP_QUESTIONS, CUT_QUESTIONS, CoherenceReviewer, check_threshold, dialogue
 from clip_engine.services.jev_service import JevService
-from clip_engine.services.layout_analyzer import ClipLayoutPlan, ShotLayout, LayoutType
+from clip_engine.services.layout_analyzer import ClipLayoutPlan, ShotLayout, LayoutType, screen_cue_times
 from clip_engine.services.layout_renderer import shot_views
 from clip_engine.services.rendering_service import RenderRequest, RenderingService
 from clip_engine.services.transcription_service import TranscriptSegment, TranscriptWord
@@ -205,19 +205,26 @@ async def prepare_project(request, segments, transcript, download, renderer, rev
         if request.aspect_ratio == '9:16' and request.layout_style != 'fit':
             try:
                 plan = await renderer.layout_analyzer.analyze(download.video_path, a, b - a, w, h, request.layout_style,
-                    progress=report_layout)
+                    progress=report_layout,
+                    **({'screen_cues_ms': cues} if (cues := screen_cue_times(transcript, a, b - a)) else {}))
                 scenes = []
                 for j, shot in enumerate(plan.shots[:60]):
-                    views = shot_views(shot, (shot.start_ms + shot.end_ms) // 2, w, h, 1080, 1920)
+                    views = shot_views(shot, (shot.start_ms + shot.end_ms) // 2, w, h, 1080, 1920)[:2]
+                    # A suggested split keeps the automatic seam (screen + webcam
+                    # can sit below the middle for a small webcam).
+                    split = None
+                    if len(views) == 2:
+                        split = round(max(SPLIT_RANGE[0], min(SPLIT_RANGE[1], views[0][1][3] / 1920)), 2)
+                    panels = [1920 * split, 1920 * (1 - split)] if split else [1920]
                     normalized = []
-                    for ((x, y, cw, ch), _) in views[:2]:
-                        target = aspect * len(views)
+                    for ((x, y, cw, ch), _), panel_h in zip(views, panels):
+                        target = 1080 / panel_h if request.aspect_ratio == '9:16' else aspect
                         zoom = max(1, min(4, min(1, h * target / w) / max(.01, cw / w)))
                         base_w, base_h = min(1, h * target / w) / zoom, min(1, w / target / h) / zoom
                         normalized.append([max(0, min(1 - base_w, (x + cw / 2) / w - base_w / 2)), max(0, min(1 - base_h, (y + ch / 2) / h - base_h / 2)), base_w, base_h])
                     scenes.append({'at_ms': 0 if j == 0 else a + shot.start_ms,
                         'layout': 'split' if len(views) == 2 else 'fit' if shot.layout == LayoutType.SCREEN else 'fill',
-                        'crops': normalized})
+                        'crops': normalized, **({'split': split} if split and split != DEFAULT_SPLIT else {})})
                 if not scenes:
                     scenes = [{'at_ms': 0, 'layout': 'fill', 'crops': [default_crop(w, h, aspect)]}]
             except asyncio.CancelledError:
@@ -229,7 +236,8 @@ async def prepare_project(request, segments, transcript, download, renderer, rev
             'requires_visual_context': bool((getattr(segment, 'moment', None) or {}).get('requires_visual_context')),
             'reason': utf16_prefix(getattr(segment, 'reasoning', '') or '', 4000), 'captions': request.include_captions,
             'caption_preset': request.caption_preset, 'video_speed': request.video_speed, 'exports': [], 'review': None,
-            'status': 'refining', 'caption_edits': [], 'caption_suppression_ranges': []}
+            'status': 'refining', 'caption_edits': [], 'caption_suppression_ranges': [],
+            'hook': run_hook(request, segment)}
         if plan is not None and getattr(plan, 'camera_scan', None):
             c['camera_scan'] = plan.camera_scan
             c['dismissed_camera_markers'] = []
@@ -308,6 +316,56 @@ def read_json(run, name, limit=32 * 1024 * 1024):
     return json.loads(data)
 
 
+# A split scene's top panel share of the output height (absent: even).
+SPLIT_RANGE = (0.3, 0.7)
+DEFAULT_SPLIT = 0.5
+MAX_HOOK_CHARS = 200
+
+
+def split_of(scene):
+    """The top panel's share for a split scene (1 for single-panel layouts), as the app's splitOf."""
+    if scene['layout'] != 'split':
+        return 1
+    return DEFAULT_SPLIT if scene.get('split') is None else scene['split']
+
+
+def utf16_len(text):
+    return sum(2 if ord(char) > 0xFFFF else 1 for char in text)
+
+
+def parse_hook(raw):
+    """A candidate's hook: None (no hook text) or {text, look}. Raises ValueError when invalid."""
+    from clip_engine.services.rendering_service import validate_headline_look
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) - {'text', 'look'} or not isinstance(raw.get('text'), str) \
+            or not isinstance(raw.get('look'), dict):
+        raise ValueError('Invalid hook')
+    text = ' '.join(raw['text'].split())
+    if not text or utf16_len(text) > MAX_HOOK_CHARS or any(ord(char) < 32 for char in text):
+        raise ValueError('Invalid hook text')
+    return {'text': text, 'look': validate_headline_look(raw['look'])}
+
+
+def run_hook(request, segment):
+    """The hook a run drew on this clip (9:16 headline style), for a new editor project.
+
+    Same text as the Create render: the planner's headline, else the clip title.
+    A run with "No hook text" keeps the words with look 'none' (nothing drawn),
+    so they can be turned back on in the editor. None when the run drew no hook.
+    """
+    from clip_engine.services.rendering_service import TitleStyle, parse_headline_look
+    if (getattr(request, 'aspect_ratio', '9:16') != '9:16' or getattr(request, 'title_style', 'card') != TitleStyle.HEADLINE
+            or not getattr(request, 'include_title', True)):
+        return None
+    text = ' '.join((getattr(segment, 'headline', None) or getattr(segment, 'summary', None) or '').split())
+    text = ' '.join(utf16_prefix(text, MAX_HOOK_CHARS).split())
+    if not text or any(ord(char) < 32 for char in text):
+        return None
+    look = parse_headline_look(getattr(request, 'headline_look', None))
+    return {'text': text, 'look': {'look': look.look, 'color': look.color, 'font': look.font}}
+
+
 def validate_candidate(c, duration, transcript_count=100000):
     def number(n, lo, hi):
         return type(n) in (float, int) and math.isfinite(n) and lo <= n <= hi
@@ -328,9 +386,13 @@ def validate_candidate(c, duration, transcript_count=100000):
         if not number(s['at_ms'], previous + .001, duration) or s['layout'] not in ('fill', 'split', 'fit'):
             raise ValueError('Invalid layout')
         previous = s['at_ms']
+        split = s.get('split')
+        if split is not None and s['layout'] == 'split' and not number(split, *SPLIT_RANGE):
+            raise ValueError('Invalid split size')
         transition = s.get('transition_ms', 0)
         if not number(transition, 0, 5000) or (transition and (transition < 100 or transition != int(transition)
-                or i == 0 or s['layout'] == 'fit' or c['scenes'][i - 1]['layout'] != s['layout'])):
+                or i == 0 or s['layout'] == 'fit' or c['scenes'][i - 1]['layout'] != s['layout']
+                or split_of(c['scenes'][i - 1]) != split_of(s))):
             raise ValueError('Invalid layout movement')
         if len(s['crops']) != (2 if s['layout'] == 'split' else 1):
             raise ValueError('Invalid crops')
@@ -343,6 +405,11 @@ def validate_candidate(c, duration, transcript_count=100000):
         raise ValueError('Invalid caption position')
     if c.get('status', 'refining') not in ('refining', 'ready', 'baked', 'discarded'):
         raise ValueError('Invalid clip status')
+    if 'hook' in c:
+        parse_hook(c['hook'])
+    cta = c.get('cta_id')
+    if cta is not None and (not isinstance(cta, str) or not re.fullmatch(r'[a-f0-9]{16}', cta)):
+        raise ValueError('Invalid call to action')
     suppressed = c.get('caption_suppression_ranges', [])
     if not isinstance(suppressed, list) or len(suppressed) > 200:
         raise ValueError('Invalid caption suppression ranges')
@@ -412,7 +479,8 @@ def scene_motion(c):
         previous = scene
 
 
-def manual_plan(project, c):
+def manual_plan(project, c, cover=False):
+    """`cover`: crops are cut to cover their panels (the video sits under a hook bar)."""
     a, b = c['ranges'][0][0], c['ranges'][-1][1]
     shots = []
     for i, (scene, origin) in enumerate(scene_motion(c)):
@@ -421,14 +489,17 @@ def manual_plan(project, c):
             continue
         layout = {'split': LayoutType.TWO_SHOT, 'fit': LayoutType.SCREEN, 'fill': LayoutType.TALKING_HEAD}[scene['layout']]
         crops = [] if scene['layout'] == 'fit' else scene['crops']
+        split = split_of(scene) if scene['layout'] == 'split' else None
         duration = scene.get('transition_ms', 0)
         motion_end = min(end, scene['at_ms'] + duration)
         if duration and start < motion_end:
             shots.append(ShotLayout(start - a, motion_end - a, layout, source='manual', manual_crops=crops,
-                manual_from_crops=origin, manual_transition_start_ms=scene['at_ms'] - a, manual_transition_ms=duration))
+                manual_from_crops=origin, manual_transition_start_ms=scene['at_ms'] - a, manual_transition_ms=duration,
+                manual_split=split, manual_cover=cover))
             start = motion_end
         if start < end:
-            shots.append(ShotLayout(start - a, end - a, layout, source='manual', manual_crops=crops))
+            shots.append(ShotLayout(start - a, end - a, layout, source='manual', manual_crops=crops, manual_split=split,
+                manual_cover=cover))
     return ClipLayoutPlan(shots, project['width'], project['height'])
 
 
@@ -547,6 +618,10 @@ async def export_clip(run, project, c, output, source, transcript):
     with failure_code('engine_unavailable'):
         renderer = RenderingService()
     a, b = c['ranges'][0][0], c['ranges'][-1][1]
+    # Absent hook (a project made before hooks were editable): the run's
+    # original is not recorded for those, so none is drawn, as before.
+    hook = parse_hook(c.get('hook')) if project['aspect_ratio'] == '9:16' else None
+    hook_options = {'title_style': 'headline', 'headline_text': hook['text'], 'headline_look': hook['look']} if hook else {}
     path = run / f'clip_{index:02d}.mp4'
     if path.exists() or path.is_symlink():
         raise ValueError('Export file already exists')
@@ -558,7 +633,8 @@ async def export_clip(run, project, c, output, source, transcript):
             caption_suppression_ranges_ms=[tuple(interval) for interval in c.get('caption_suppression_ranges', [])],
             caption_y=c.get('caption_y'),
             apply_padding=False, aspect_ratio=project['aspect_ratio'], pacing='natural', video_speed=c['video_speed'],
-            manual_ranges_ms=[tuple(interval) for interval in c['ranges']], manual_plan=manual_plan(project, c)))
+            manual_ranges_ms=[tuple(interval) for interval in c['ranges']], manual_plan=manual_plan(project, c, cover=bool(hook)),
+            **hook_options))
         os.replace(result.output_path, path)
     output['clips'].append({'clip_index': index, 's3_url': str(path), 'duration_ms': result.duration_ms,
         'start_time_ms': a, 'end_time_ms': b, 'virality_score': c['score'], 'layout_type': result.layout_type,

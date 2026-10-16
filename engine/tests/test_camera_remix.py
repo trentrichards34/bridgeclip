@@ -376,3 +376,57 @@ def test_nothing_recorded_stops_the_render(env, monkeypatch):
     planned = plan(env, monkeypatch, config, [silent_item(4, 8)])
     with pytest.raises(remix.RemixError, match="Record yourself"):
         asyncio.run(remix.Remixer(config, media=FakeMedia(env.ffmpeg), settings=SETTINGS).render([{"id": planned["drafts"][0]["id"]}]))
+
+
+def _tone_level(samples, rate, freq, start, end):
+    part = samples[int(start * rate):int(end * rate)]
+    spectrum = np.abs(np.fft.rfft(part * np.hanning(len(part))))
+    bins = np.fft.rfftfreq(len(part), 1 / rate)
+    return spectrum[(bins > freq - 15) & (bins < freq + 15)].max()
+
+
+def test_talking_ducks_the_clip_under_the_voice(env):
+    """The clip (a 200 Hz tone) drops while the member (a 1 kHz tone, 2-4 s) speaks, and comes back after."""
+    out = env.tmp / "mix.wav"
+    graph = remix.voice_over_clip("0:a", "1:a", "a")
+    run([env.ffmpeg, "-v", "error", "-y",
+         "-f", "lavfi", "-i", "sine=frequency=1000:duration=6,volume='if(between(t,2,4),0.5,0)':eval=frame,aformat=channel_layouts=stereo",
+         "-f", "lavfi", "-i", "sine=frequency=200:duration=6,volume=0.5,aformat=channel_layouts=stereo",
+         "-filter_complex", graph, "-map", "[a]", "-ac", "1", "-ar", "16000", str(out)])
+    import wave
+    with wave.open(str(out)) as handle:
+        samples = np.frombuffer(handle.readframes(handle.getnframes()), np.int16).astype(np.float32)
+    before = _tone_level(samples, 16000, 200, 0.8, 1.8)
+    during = _tone_level(samples, 16000, 200, 2.6, 3.8)
+    after = _tone_level(samples, 16000, 200, 5.0, 5.9)
+    assert during < before / 2, (before, during)  # at least 6 dB under the voice
+    assert after > before * 0.7, (before, after)  # and back up once they stop
+    assert _tone_level(samples, 16000, 1000, 2.6, 3.8) > before  # the voice is in front
+
+
+def test_a_late_start_is_read_from_near_it(env):
+    recording = make_line_recording(env, env.tmp / "long.mp4", 8, (320, 180), 300)
+    out = str(env.tmp / "norm.mp4")
+    # Starting at 5 s, reading begins a second early: 3 s of normalized recording for a 2 s part.
+    seconds = remix.normalize_recording(recording, out, 3.0, start=5.0)
+    assert remix.seek_point(5.0) == 4.0 and abs(seconds - 3.0) < 0.15
+    assert remix.seek_point(0.4) == 0.0
+
+
+def test_sound_that_starts_late_is_lined_up_on_the_video_timeline(env):
+    """The offset is measured on the same timeline the cut uses, even when the recording's sound starts after its picture."""
+    rate = remix.OFFSET_RATE
+    clip = remix.pcm_mono(env.source, 4.0, 6.0)
+    late = env.tmp / "late.mkv"
+    # Picture from 0 s; sound from 0.5 s, and in it the clip begins 2 s later: 2.5 s on the video's timeline.
+    sound = env.tmp / "sound.mka"
+    run([env.ffmpeg, "-v", "error", "-y", "-ss", "2", "-t", "9", "-i", env.source, "-vn", "-c:a", "pcm_s16le", str(sound)])
+    run([env.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=160x90:d=10:r=30", "-itsoffset", "0.5", "-i", str(sound),
+         "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-c:a", "pcm_s16le", str(late)])
+    streams = json.loads(subprocess.run([env.ffprobe, "-v", "error", "-show_entries", "stream=codec_type,start_time", "-of", "json", str(late)],
+                                        capture_output=True, text=True, check=True).stdout)["streams"]
+    assert float(next(s for s in streams if s["codec_type"] == "audio")["start_time"]) > 0.4  # the fixture really starts late
+    heard = remix.pcm_mono(str(late), 0.0, 9.0)
+    offset, confidence = remix.find_audio_offset(clip, heard)
+    assert confidence > remix.OFFSET_MIN_SCORE and abs(offset - 2.5) < 0.05, (offset, confidence)
+    assert len(heard) >= int(9 * rate)

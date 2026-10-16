@@ -37,7 +37,7 @@ from clip_engine.services.clip_editor import (
     subtract_intervals,
     window_words,
 )
-from clip_engine.services.layout_analyzer import ClipLayoutPlan, LayoutAnalyzer, LayoutType, ShotLayout
+from clip_engine.services.layout_analyzer import ClipLayoutPlan, LayoutAnalyzer, LayoutType, ShotLayout, screen_cue_times
 from clip_engine.services.framing_trace import make_trace, save_trace
 from clip_engine.services.editorial_context import window_protection, record_prevented_cuts
 from clip_engine.services.editorial_review import review_retained_clip
@@ -724,6 +724,8 @@ class RenderingService:
         try:
             return await self.layout_analyzer.analyze(
                 request.video_path, window_start_ms, window_ms, source_w, source_h, request.layout_style,
+                # Only when the speech points at the screen (keeps the call minimal otherwise).
+                **({"screen_cues_ms": cues} if (cues := screen_cue_times(request.transcript_segments, window_start_ms, window_ms)) else {}),
                 **({"capture": True} if request.debug_capture else {}),
                 **({'progress': lambda detail, percent: request.progress_callback(
                     detail if percent is None else f'{detail} {percent}%', None)} if request.progress_callback else {}),

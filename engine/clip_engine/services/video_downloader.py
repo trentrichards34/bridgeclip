@@ -144,14 +144,44 @@ def login_browser_opts(url: str) -> dict:
     return opts
 
 
+def social_site(url: str) -> str:
+    site = next((name.split(".")[0] for name in SOCIAL_HOSTS if (urlparse(url).hostname or "").lower().endswith(name)), "the site")
+    return {"instagram": "Instagram", "tiktok": "TikTok", "x": "X", "twitter": "X", "facebook": "Facebook", "fb": "Facebook",
+            "threads": "Threads", "vimeo": "Vimeo"}.get(site, site)
+
+
+def _entry_is_video(entry: dict) -> bool:
+    """A post entry with a video (not a photo): video formats, a length, or a link to resolve."""
+    if entry.get("_type") in ("url", "url_transparent"):
+        return True
+    if str(entry.get("vcodec") or "none") != "none" or finite_number(entry.get("duration"), 0) > 0:
+        return True
+    return any(isinstance(f, dict) and str(f.get("vcodec") or "none") != "none" for f in entry.get("formats") or [])
+
+
+def first_social_video(url: str, info: dict) -> tuple[dict, int]:
+    """A social post with several items (carousel, multi-video post): its first video and that item's 1-based number.
+    Raises a no_video VideoDownloadError when none of the items is a video."""
+    entries = info.get("entries") or []
+    for number, entry in enumerate(entries, start=1):
+        if number > 50:
+            break
+        if isinstance(entry, dict) and _entry_is_video(entry):
+            merged = {**entry, "_type": "video"}
+            for key in ("title", "uploader", "channel", "channel_id", "upload_date", "description", "thumbnail", "extractor"):
+                if not merged.get(key) and info.get(key):
+                    merged[key] = info[key]
+            return merged, number
+    raise VideoDownloadError(f"Social post has no video: this {social_site(url)} post is a carousel of photos without a video",
+                             reason="no_video")
+
+
 def social_failure(url: str, error: BaseException) -> Optional["VideoDownloadError"]:
     """A plain-language error for a social link that can't be downloaded, or None."""
     if not social_video_url(url):
         return None
     text = str(error).lower()
-    site = next((name.split(".")[0] for name in SOCIAL_HOSTS if (urlparse(url).hostname or "").lower().endswith(name)), "the site")
-    site = {"instagram": "Instagram", "tiktok": "TikTok", "x": "X", "twitter": "X", "facebook": "Facebook", "fb": "Facebook",
-            "threads": "Threads", "vimeo": "Vimeo"}.get(site, site)
+    site = social_site(url)
     if any(marker in text for marker in NO_VIDEO_MARKERS):
         return VideoDownloadError(f"Social post has no video: this {site} post is a photo or a carousel without a video", reason="no_video")
     if (("could not find" in text and "cookies" in text) or "keychain" in text or "full disk access" in text or "operation not permitted" in text
@@ -180,6 +210,8 @@ class VideoMetadata:
     source_type: VideoSourceType = "youtube"
     channel: Optional[str] = None
     channel_id: Optional[str] = None
+    # A social post with several videos (an Instagram carousel, an X post): which one to download (1-based).
+    playlist_item: Optional[int] = None
 
 
 @dataclass
@@ -551,6 +583,10 @@ class VideoDownloaderService:
                             ydl_opts["match_filter"] = lambda info, *, incomplete=False: self._validate_twitch_info(info, max_duration, incomplete)
                         ydl_opts["format"] = format_selector
                         ydl_opts.update(login_browser_opts(url))
+                        if metadata.playlist_item:
+                            # Only that one item of the post (the first video of a carousel).
+                            ydl_opts["noplaylist"] = False
+                            ydl_opts["playlist_items"] = str(metadata.playlist_item)
                         ydl_opts["progress_hooks"] = [check_progress]
                         ydl_opts["postprocessor_hooks"] = [check_progress]
 
@@ -1027,6 +1063,10 @@ class VideoDownloaderService:
                 )
             raise VideoDownloadError(f"Failed to get video info: {e}")
 
+        # A carousel or a post with several videos comes back as a playlist: the first video is the one.
+        playlist_item = None
+        if isinstance(info, dict) and info.get("_type") in ("playlist", "multi_video") and social_video_url(url) and not twitch_url:
+            info, playlist_item = first_social_video(url, info)
         # ydl.download() would otherwise fetch every entry of a playlist or
         # channel into the same output path, one after another.
         if not isinstance(info, dict) or info.get("_type", "video") != "video":
@@ -1055,6 +1095,7 @@ class VideoDownloaderService:
             upload_date=info.get("upload_date"),
             description=info.get("description"),
             thumbnail_url=info.get("thumbnail"),
+            playlist_item=playlist_item,
         )
 
 class VideoDownloadError(Exception):

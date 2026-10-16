@@ -105,7 +105,7 @@ def test_write_transcribes_and_writes_from_the_screenshot(env, monkeypatch):
     assert draft["quote"].startswith("Hello this article") and (draft["intro"], draft["beats"], draft["close"]) == ("", [], "")
     assert abs(draft["end_ms"] - 4000) < 150 and draft["start_ms"] == 0 and draft["source_index"] == 0
     assert (draft["source_title"], draft["creator"], draft["style"], draft["stance"]) == (CREDIT, CREDIT, "reaction", "add_nuance")
-    assert draft["estimate_usd"] == pytest.approx(0.003) and result["cost_usd"] == pytest.approx(0.013)
+    assert draft["estimate_usd"] == 0.0 and result["cost_usd"] == pytest.approx(0.013)
     chat = [c[1] for c in calls if c[0] == "chat"]
     assert len(chat) == 1
     content = chat[0]["messages"][1]["content"]
@@ -243,3 +243,73 @@ def test_job_output_credits_the_source_of_an_article_or_post(tmp_path):
     job = json.load(open(tmp_path / "job_output.json"))
     assert [c["description"] for c in job["clips"]] == ["Source: The Wall Street Journal", "Original: The Wall Street Journal",
                                                         "Original: The Wall Street Journal"]
+
+
+def test_a_long_screenshot_is_read_once_and_cropped_before_resizing(env):
+    import time
+    tall = article_png(env.tmp / "tall.png", 1080, 16000)
+    inputs, graph, scrolls, cut = remix.image_stage(tall, str(env.tmp), 1080, 1660, 330, 700, 20.0, 2, "stage")
+    assert scrolls and not cut and "-loop" not in inputs and "loop=loop=-1:size=1" in graph
+    # 20 seconds of the scrolling stage: read once and repeated, so far faster than real time.
+    started = time.monotonic()
+    # Inputs 0 and 1 stand in for the member and the matte (the stage reads inputs 2 and 3).
+    subprocess.run([env.ffmpeg, "-v", "error", "-f", "lavfi", "-i", "nullsrc=s=16x16:d=1", "-f", "lavfi", "-i", "nullsrc=s=16x16:d=1",
+                    *inputs, "-filter_complex", graph, "-map", "[stage]", "-t", "20", "-f", "null", "-"], check=True, timeout=300)
+    assert time.monotonic() - started < 40
+    # A narrow, very tall image: rows are cropped first (never resized to 1080 x 81000), and the cut is reported.
+    narrow = env.tmp / "narrow.png"
+    Image.new("RGB", (200, 15000), (200, 200, 200)).save(narrow)
+    _, _, scrolls, cut = remix.image_stage(str(narrow), str(env.tmp), 1080, 1660, 330, 700, 10.0, 2, "stage")
+    with Image.open(env.tmp / "stage-strip.png") as strip:
+        assert strip.size[1] <= remix.MAX_SCROLL_HEIGHT + 1660 and scrolls and cut
+    _, _, box_h, _, cut = remix.image_box(str(narrow), str(env.tmp), 960, 900, 10.0, 2, "box")
+    with Image.open(env.tmp / "box-strip.png") as strip:
+        assert strip.size == (948, remix.MAX_SCROLL_HEIGHT) and cut
+    # A very wide one stays small too; anything thinner than 1:80 is refused.
+    wide = env.tmp / "wide.png"
+    Image.new("RGB", (8000, 100), (10, 10, 10)).save(wide)
+    remix.image_stage(str(wide), str(env.tmp), 1080, 1660, 330, 700, 5.0, 2, "stage")
+    Image.new("RGB", (200, 30000), (0, 0, 0)).save(env.tmp / "thin.png")
+    with pytest.raises(remix.RemixError, match="long and thin"):
+        remix.prepare_image(str(env.tmp / "thin.png"))
+
+
+def test_model_images_are_upright(env):
+    photo = Image.new("RGB", (400, 300), (255, 0, 0))
+    exif = photo.getexif()
+    exif[0x0112] = 6  # rotate 90 degrees when shown
+    photo.save(env.tmp / "sideways.jpg", exif=exif)
+    import base64
+    import io
+    [url] = remix.model_images(str(env.tmp / "sideways.jpg"))
+    with Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))) as sent:
+        assert sent.size == (300, 400)
+    assert remix.prepare_image(str(env.tmp / "sideways.jpg")) == (300, 400)
+
+
+def test_write_says_when_a_recording_cant_be_read(env, monkeypatch):
+    image = post_png(env.out / ".work" / "source.png")
+    recording = make_line_recording(env, env.tmp / "take.mp4", 3, (360, 640), 300)
+    fake_services(monkeypatch)
+    cfg = config(env, image, recording)
+    cfg.recordings["0"]["reaction"]["offset_s"] = 50  # starts after it ends
+    with pytest.raises(remix.RemixError) as error:
+        asyncio.run(remix.Remixer(cfg, media=FakeMedia(env.ffmpeg), settings=SETTINGS).write())
+    assert str(error.value) == remix.RECORDING_UNREADABLE
+    assert not os.path.exists(env.out / ".work" / "image-check.png")
+
+
+def test_a_new_take_after_write_is_transcribed_again(env, monkeypatch):
+    image = post_png(env.out / ".work" / "source.png")
+    recording = make_line_recording(env, env.tmp / "take.mp4", 3, (640, 360), 300)
+    calls = fake_services(monkeypatch)
+    cfg = config(env, image, recording, "filmed")
+    asyncio.run(remix.Remixer(cfg, media=FakeMedia(env.ffmpeg), settings=SETTINGS).write())
+    # They record again (same path, new file) before rendering.
+    make_line_recording(env, env.tmp / "take.mp4", 4, (640, 360), 500)
+    before = sum(1 for c in calls if c[0] == "transcribe")
+    result = asyncio.run(remix.Remixer(cfg, media=FakeMedia(env.ffmpeg), settings=SETTINGS).render([{"id": 0}]))
+    out = result["remixes"][0]
+    assert sum(1 for c in calls if c[0] == "transcribe") == before + 1
+    assert any("came from an earlier take" in w for w in out["warnings"])
+    assert abs(out["duration_seconds"] - 4) < 0.3
