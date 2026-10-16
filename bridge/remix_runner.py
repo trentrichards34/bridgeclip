@@ -18,11 +18,50 @@ MAX_REQUEST = 4 * 1024 * 1024
 STRING_LIMITS = {"output_dir": 4096, "angle": 32, "host": 16, "voice": 32, "avatar_photo": 4096, "order": 16,
                  "brand_identity": 60000, "brand_name": 120, "creator": 120, "caption_preset": 64, "mode": 8,
                  "cta_keyword": 32, "cta_offer": 200,
-                 "voice_model": 64, "voice_reference": 4096, "voice_transcript": 4000, "format": 16}
+                 "voice_model": 64, "voice_reference": 4096, "voice_transcript": 4000, "format": 16,
+                 "camera_layout": 16, "camera_backdrop": 16, "camera_backdrop_color": 16}
+MAX_RECORDING_DRAFTS = 200
+MAX_RECORDED_BEATS = 4
+MAX_OFFSET_SECONDS = 3600
+
+
+def _abs_path(value):
+    return isinstance(value, str) and 0 < len(value) <= 4096 and "\0" not in value and os.path.isabs(value)
+
+
+def parse_recordings(raw, fmt):
+    """Recordings keyed by draft id ("0", "1", ...): {"reaction": {"path", "offset_s"}} for Silent react,
+    {"intro", "beats", "close"} for a voiced take. Paths are absolute; anything else is rejected."""
+    import math
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or len(raw) > MAX_RECORDING_DRAFTS:
+        raise ValueError("Invalid recordings")
+    out = {}
+    for key, item in raw.items():
+        if not isinstance(key, str) or not re.fullmatch(r"\d{1,4}", key) or not isinstance(item, dict):
+            raise ValueError("Invalid recordings")
+        if fmt == "silent":
+            reaction = item.get("reaction")
+            if set(item) != {"reaction"} or not isinstance(reaction, dict) or not set(reaction) <= {"path", "offset_s"} \
+                    or not _abs_path(reaction.get("path")):
+                raise ValueError("Invalid recordings")
+            offset = reaction.get("offset_s")
+            if offset is not None and (isinstance(offset, bool) or not isinstance(offset, (int, float)) or not math.isfinite(offset)
+                                       or not 0 <= offset <= MAX_OFFSET_SECONDS):
+                raise ValueError("Invalid recordings")
+            out[key] = {"reaction": {"path": reaction["path"], "offset_s": None if offset is None else float(offset)}}
+        else:
+            beats = item.get("beats")
+            if set(item) != {"intro", "beats", "close"} or not _abs_path(item.get("intro")) or not _abs_path(item.get("close")) \
+                    or not isinstance(beats, list) or len(beats) > MAX_RECORDED_BEATS or not all(_abs_path(b) for b in beats):
+                raise ValueError("Invalid recordings")
+            out[key] = {"intro": item["intro"], "beats": list(beats), "close": item["close"]}
+    return out
 
 
 def parse_config(raw):
-    from clip_engine.services.remix_service import (ANGLES, DEFAULT_VOICE, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, REACTION_KINDS, TTS_MODEL,
+    from clip_engine.services.remix_service import (ANGLES, CAMERA_BACKDROPS, CAMERA_LAYOUTS, DEFAULT_VOICE, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, REACTION_KINDS, TTS_MODEL,
                                                     TTS_MODELS, VOICES, RemixConfig, normalize_keyword)
     if not isinstance(raw, dict):
         raise ValueError("Invalid request")
@@ -58,6 +97,15 @@ def parse_config(raw):
     if fmt not in ("commentary", "silent") or not isinstance(reactions, dict) or any(
             k not in REACTION_KINDS or not isinstance(v, str) or len(v) > 4096 or "\0" in v or not os.path.isabs(v) for k, v in reactions.items()):
         raise ValueError("Invalid format")
+    layout = raw.get("camera_layout") or "filmed"
+    backdrop = raw.get("camera_backdrop") or "blur"
+    color = raw.get("camera_backdrop_color") or "#111111"
+    if layout not in CAMERA_LAYOUTS or backdrop not in CAMERA_BACKDROPS or not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+        raise ValueError("Invalid camera layout")
+    talk = raw.get("camera_talk", False)
+    if talk is not None and not isinstance(talk, bool):
+        raise ValueError("Invalid camera talk")
+    recordings = parse_recordings(raw.get("recordings"), fmt)
     from clip_engine.services.rendering_service import validate_headline_look
     headline_look = validate_headline_look(raw.get("headline_look"))
     try:
@@ -74,6 +122,8 @@ def parse_config(raw):
         format=fmt, reactions=dict(reactions), reactions_ai=raw.get("reactions_ai") is not False,
         cta_keyword=keyword, cta_offer=" ".join((raw.get("cta_offer") or "").split())[:80],
         headline_look=headline_look, cta_clip=raw.get("cta_clip") is True,
+        camera_layout=layout, camera_backdrop=backdrop, camera_backdrop_color=color.upper(), camera_talk=talk is True,
+        recordings=recordings,
     )
 
 

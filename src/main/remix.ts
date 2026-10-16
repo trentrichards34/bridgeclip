@@ -566,7 +566,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
 // kept in the run folder's .recordings until the videos are made.
 // ---------------------------------------------------------------------------
 
-const MAX_RECORDING_BYTES = 4 * 1024 * 1024 * 1024
+const MAX_RECORDING_BYTES = 2 * 1024 * 1024 * 1024
 interface Writer { file: string; draftId: number; part: RecordingPart; bytes: number; handle: FileHandle; run: ActiveRemix }
 const writers = new Map<string, Writer>()
 
@@ -667,7 +667,7 @@ export async function uploadRecording(draftId: unknown, part: unknown, source: s
   const extension = extname(source).slice(1).toLowerCase()
   if (!RECORDING_VIDEO_EXTENSIONS.includes(extension)) throw new Error('Choose a video (MP4, MOV or WebM).')
   const info = await stat(source)
-  if (!info.isFile() || info.size > MAX_RECORDING_BYTES) throw new Error('Choose a video under 4 GB.')
+  if (!info.isFile() || info.size > MAX_RECORDING_BYTES) throw new Error('Choose a video under 2 GB.')
   await mkdir(recordingsDir(run), { recursive: true })
   const file = join(recordingsDir(run), `${checked.draft.id}-${checked.part}-${randomBytes(4).toString('hex')}.${extension}`)
   await copyFile(source, file)

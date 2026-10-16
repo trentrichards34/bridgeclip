@@ -43,6 +43,52 @@ class ParseConfigTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 remix_runner.parse_config(bad)
 
+    def test_camera_keys(self):
+        me = os.path.abspath("me.webm")
+        plain = remix_runner.parse_config(self.base(host="camera"))
+        self.assertEqual((plain.host, plain.camera_layout, plain.camera_backdrop, plain.camera_backdrop_color, plain.camera_talk, plain.recordings),
+                         ("camera", "filmed", "blur", "#111111", False, {}))
+        silent = remix_runner.parse_config(self.base(
+            host="camera", format="silent", mode="render", camera_layout="cutout", camera_backdrop="brand", camera_backdrop_color="#ff8800",
+            camera_talk=True, recordings={"0": {"reaction": {"path": me, "offset_s": 2}}, "3": {"reaction": {"path": me, "offset_s": None}},
+                                          "4": {"reaction": {"path": me}}}))
+        self.assertEqual((silent.camera_layout, silent.camera_backdrop, silent.camera_backdrop_color, silent.camera_talk),
+                         ("cutout", "brand", "#FF8800", True))
+        self.assertEqual(silent.recordings, {"0": {"reaction": {"path": me, "offset_s": 2.0}}, "3": {"reaction": {"path": me, "offset_s": None}},
+                                             "4": {"reaction": {"path": me, "offset_s": None}}})
+        take = {"intro": me, "beats": [me, me], "close": me}
+        voiced = remix_runner.parse_config(self.base(host="camera", camera_layout="greenscreen", recordings={"1": take}))
+        self.assertEqual((voiced.camera_layout, voiced.recordings), ("greenscreen", {"1": take}))
+        self.assertEqual(remix_runner.parse_config(self.base(host="camera", camera_talk=None)).camera_talk, False)
+
+    def test_rejects_bad_camera_values(self):
+        me = os.path.abspath("me.webm")
+        take = {"intro": me, "beats": [], "close": me}
+        reaction = {"reaction": {"path": me, "offset_s": 1.0}}
+        bads = [
+            dict(camera_layout="hologram"), dict(camera_layout=5), dict(camera_backdrop="beach"), dict(camera_backdrop_color="red"),
+            dict(camera_backdrop_color="#12345"), dict(camera_backdrop_color="#1234567"), dict(camera_talk="yes"), dict(camera_talk=1),
+            dict(recordings=[take]), dict(recordings={"x": take}), dict(recordings={0: take}), dict(recordings={"1": "path"}),
+            dict(recordings={"1": dict(take, intro="rel.webm")}), dict(recordings={"1": dict(take, close=None)}),
+            dict(recordings={"1": dict(take, beats=["rel.mp4"])}), dict(recordings={"1": dict(take, beats=[me] * 5)}),
+            dict(recordings={"1": dict(take, beats=me)}), dict(recordings={"1": {"intro": me, "close": me}}),
+            dict(recordings={"1": dict(take, intro=me + "\0x")}), dict(recordings={"1": dict(take, extra=me)}),
+            dict(recordings={"1": reaction}),  # a reaction for a voiced take
+            dict(format="silent", recordings={"1": take}),  # a voiced take's recordings for Silent react
+            dict(format="silent", recordings={"1": {"reaction": {"path": "rel.webm"}}}),
+            dict(format="silent", recordings={"1": {"reaction": {"path": me, "offset_s": -1}}}),
+            dict(format="silent", recordings={"1": {"reaction": {"path": me, "offset_s": True}}}),
+            dict(format="silent", recordings={"1": {"reaction": {"path": me, "offset_s": "2"}}}),
+            dict(format="silent", recordings={"1": {"reaction": {"path": me, "offset_s": float("nan")}}}),
+            dict(format="silent", recordings={"1": {"reaction": {"path": me, "offset_s": 99999}}}),
+            dict(format="silent", recordings={"1": {"reaction": {"path": me, "volume": 1}}}),
+            dict(format="silent", recordings={"1": {"reaction": me}}),
+            dict(format="silent", recordings={str(i): reaction for i in range(201)}),
+        ]
+        for over in bads:
+            with self.assertRaises(ValueError, msg=repr(over)[:120]):
+                remix_runner.parse_config(self.base(host="camera", **over))
+
 
 if __name__ == "__main__":
     unittest.main()

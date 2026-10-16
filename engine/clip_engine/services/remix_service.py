@@ -74,7 +74,22 @@ MAX_VIDEO_BYTES = 300 * 1024 * 1024
 AVATAR_POLL_SECONDS = 10
 AVATAR_TIMEOUT_SECONDS = 20 * 60
 
-HOSTS = ("lipsync", "still", "voice")
+HOSTS = ("lipsync", "still", "voice", "camera")
+# "Me, on camera": the member records themselves. How they appear in the frame,
+# and what is behind them when they're cut out.
+CAMERA_LAYOUTS = ("filmed", "cutout", "greenscreen")
+CAMERA_BACKDROPS = ("blur", "brand")
+HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+MAX_RECORDING_BYTES = 2 * 1024 * 1024 * 1024
+# A commentary line recording longer than this is cut (lines are 35 words at most).
+MAX_LINE_RECORDING_S = 120
+# Live reaction: the recording's start is searched for the clip's sound in this window.
+OFFSET_SEARCH_S = 60
+OFFSET_TEMPLATE_S = 12
+OFFSET_RATE = 8000
+OFFSET_MIN_SCORE = 0.25
+# Green screen: the member cut out over the bottom of the frame, this share of its height.
+GREENSCREEN_PERSON_SHARE = 0.48
 STANCES = ("agree_extend", "disagree_correct", "add_nuance")
 
 ANGLES: dict[str, dict[str, str]] = {
@@ -1115,6 +1130,160 @@ def safe_name(text: str, fallback: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Me, on camera: the member's own recordings
+# ---------------------------------------------------------------------------
+
+MEDIA_GUARD = ["-protocol_whitelist", "file,pipe,fd", "-format_whitelist", "mov,matroska,webm,avi,flv,mpegts"]
+
+
+def _recording_path(value: Any) -> Optional[str]:
+    """An absolute path to a readable, non-empty file under MAX_RECORDING_BYTES, or None."""
+    if not isinstance(value, str) or not value or len(value) > 4096 or "\0" in value or not os.path.isabs(value):
+        return None
+    try:
+        size = os.path.getsize(value)
+        if not os.path.isfile(value) or not 0 < size <= MAX_RECORDING_BYTES:
+            return None
+    except OSError:
+        return None
+    return value
+
+
+def camera_recording(raw: Any, fmt: str) -> Optional[dict]:
+    """The member's recordings for one draft, checked; None when missing or unusable."""
+    if not isinstance(raw, dict):
+        return None
+    if fmt == "silent":
+        reaction = raw.get("reaction")
+        if not isinstance(reaction, dict):
+            return None
+        path = _recording_path(reaction.get("path"))
+        offset = reaction.get("offset_s")
+        if offset is not None:
+            if isinstance(offset, bool) or not isinstance(offset, (int, float)) or not math.isfinite(offset) or offset < 0:
+                return None
+            offset = float(offset)
+        return {"reaction": {"path": path, "offset_s": offset}} if path else None
+    beats_raw = raw.get("beats") if isinstance(raw.get("beats"), list) else []
+    intro, close = _recording_path(raw.get("intro")), _recording_path(raw.get("close"))
+    beats = [_recording_path(b) for b in beats_raw[:4]]
+    if not intro or not close or any(b is None for b in beats):
+        return None
+    return {"intro": intro, "beats": beats, "close": close}
+
+
+def pcm_mono(path: str, start: float, seconds: float, rate: int = OFFSET_RATE) -> Any:
+    """Up to `seconds` of a file's sound from `start` as mono float32 samples (empty if it has none)."""
+    import numpy as np
+    limit = int(seconds * rate * 2) + 65536
+    result = run_media(["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{max(0.0, start):.3f}", *MEDIA_GUARD, "-i", path,
+                        "-t", f"{seconds:.3f}", "-map", "0:a:0", "-vn", "-ac", "1", "-ar", str(rate), "-f", "s16le", "-"],
+                       timeout=300, max_output=limit)
+    data = (result.stdout or b"") if result.returncode == 0 else b""
+    data = data[:len(data) // 2 * 2]
+    return np.frombuffer(data, np.int16).astype(np.float32) / 32768.0
+
+
+def find_audio_offset(clip: Any, recording: Any, rate: int = OFFSET_RATE,
+                      max_offset_s: float = OFFSET_SEARCH_S) -> tuple[Optional[float], float]:
+    """Where `clip`'s sound starts inside `recording` (seconds) by normalized cross-correlation, and
+    how sure that is (0..1). (None, 0) when either is silent or too short to compare."""
+    import numpy as np
+    clip = np.asarray(clip, np.float32)
+    recording = np.asarray(recording, np.float32)
+    if len(clip) < rate or len(recording) < rate:
+        return None, 0.0
+    # Pre-emphasis: speakers, rooms and microphones color the sound; edges survive them.
+    clip = np.append(clip[0], clip[1:] - 0.97 * clip[:-1])
+    recording = np.append(recording[0], recording[1:] - 0.97 * recording[:-1])
+    if len(clip) > len(recording) - rate // 2:
+        clip = clip[:max(rate, len(recording) // 2)]
+    clip = clip - clip.mean()
+    energy = float(np.sqrt(np.sum(clip * clip)))
+    if energy < 1e-3:
+        return None, 0.0
+    lags = len(recording) - len(clip) + 1
+    size = 1 << int(math.ceil(math.log2(len(recording) + len(clip))))
+    corr = np.fft.irfft(np.fft.rfft(recording, size) * np.conj(np.fft.rfft(clip, size)), size)[:lags]
+    sums = np.concatenate([[0.0], np.cumsum(recording.astype(np.float64) ** 2)])
+    local = np.sqrt(np.maximum(sums[len(clip):len(clip) + lags] - sums[:lags], 0.0))
+    score = corr / (energy * local + 1e-6)
+    score = score[:int(max_offset_s * rate) + 1]
+    best = int(np.argmax(score))
+    peak = float(score[best])
+    # A second, distant peak nearly as high means the match is ambiguous.
+    guard = int(0.3 * rate)
+    others = np.concatenate([score[:max(0, best - guard)], score[best + guard:]])
+    runner_up = float(others.max()) if len(others) else 0.0
+    confidence = peak if peak - runner_up >= 0.08 else min(peak, 0.1)
+    return best / rate, max(0.0, min(1.0, confidence))
+
+
+def normalize_recording(path: str, out: str, max_seconds: float) -> float:
+    """A webcam (WebM VP8/VP9 + Opus, often variable frame rate with no duration) or phone (MP4/MOV)
+    recording as constant 30 fps H.264 + AAC, at most 1920 on its long side and max_seconds long.
+    Returns its length. Raises RemixError when it can't be read."""
+    args = [*MEDIA_GUARD, "-i", path]
+    sound = has_audio(path)
+    if not sound:
+        args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+    vf = ("fps=30,scale=w='min(iw,1920)':h='min(ih,1920)':force_original_aspect_ratio=decrease:force_divisible_by=2,"
+          "setsar=1,format=yuv420p")
+    try:
+        ffmpeg([*args, "-vf", vf, "-af", "aresample=48000:async=1:first_pts=0", "-map", "0:v:0", "-map", "0:a:0" if sound else "1:a:0",
+                "-t", f"{max_seconds:.3f}", "-shortest", *VIDEO_ARGS, *AUDIO_ARGS, out])
+        return media_seconds(out)
+    except RemixError:
+        raise RemixError("one of your recordings could not be read (record it again, or use an MP4, MOV or WebM video)") from None
+
+
+def recording_window(path: str, out: str, start: float, duration: float) -> str:
+    """`duration` seconds of a normalized recording from `start`; a short one holds its last frame (and silence)."""
+    vf = (f"trim=start={start:.3f},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={duration:.3f},"
+          f"trim=duration={duration:.3f}")
+    af = f"atrim=start={start:.3f},asetpts=PTS-STARTPTS,apad=whole_dur={duration:.3f},atrim=duration={duration:.3f}"
+    ffmpeg([*MEDIA_GUARD, "-i", path, "-vf", vf, "-af", af, "-map", "0:v:0", "-map", "0:a:0", *VIDEO_ARGS, *AUDIO_ARGS, out])
+    return out
+
+
+def cover(width: int, height: int, top_bias: float = 0.3) -> str:
+    """Scale to cover width x height and crop, keeping more of the top (faces)."""
+    return (f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height}:(iw-{width})/2:(ih-{height})*{top_bias}")
+
+
+def camera_graph(layout: str, width: int, height: int, size: tuple[int, int], *, matte: bool, backdrop: str = "blur",
+                 color: str = "#111111", duration: float = 0.0, fg_height: int = 0, shift: int = 0,
+                 person_height: int = 0, cam: str = "0:v", matte_in: str = "1:v", stage: str = "") -> str:
+    """Filters that put the member in a width x height frame, ending in [camv].
+
+    filmed: their footage covers the frame (with fg_height/shift, it is pushed down over a blurred copy, the
+    way Silent react places a presenter). cutout: the same, cut out over a blurred copy or a brand color.
+    greenscreen: cut out at person_height, centered on the bottom, over the [stage] the caller made."""
+    fw, fh = size
+    fg_height = fg_height or height
+    person = (f"[{cam}]fps={FPS},setsar=1,format=yuva420p[camf];[{matte_in}]scale={fw}:{fh},format=gray[camm];"
+              f"[camf][camm]alphamerge[camp]")
+    if layout == "greenscreen" and matte and stage:
+        return (f"{person};[camp]scale=-2:{person_height or round(height * GREENSCREEN_PERSON_SHARE)}[campp];"
+                f"[{stage}][campp]overlay=x=(W-w)/2:y=H-h,format=yuv420p[camv]")
+    if layout == "cutout" and matte:
+        if backdrop == "brand":
+            back = f"color=c=0x{color.lstrip('#')}:s={width}x{height}:r={FPS}:d={max(duration, 0.1):.3f},setsar=1[cambg];"
+            lead = f"{person}"
+        else:
+            back = ""
+            lead = (f"[{cam}]fps={FPS},setsar=1,split[cama][camb];[cama]{cover(width, height)},boxblur=30:3,eq=brightness=-0.18[cambg];"
+                    f"[camb]format=yuva420p[camf];[{matte_in}]scale={fw}:{fh},format=gray[camm];[camf][camm]alphamerge[camp]")
+        return (f"{back}{lead};[camp]{cover(width, fg_height)}[campp];"
+                f"[cambg][campp]overlay=x=0:y={shift}:shortest=1,format=yuv420p[camv]")
+    if fg_height == height and not shift:
+        return f"[{cam}]fps={FPS},{cover(width, height)},setsar=1,format=yuv420p[camv]"
+    return (f"[{cam}]fps={FPS},setsar=1,split[cama][camb];[cama]{cover(width, height)},boxblur=24:2,eq=brightness=-0.12[cambg];"
+            f"[camb]{cover(width, fg_height)}[campp];[cambg][campp]overlay=x=0:y={shift},format=yuv420p[camv]")
+
+
+# ---------------------------------------------------------------------------
 # The run
 # ---------------------------------------------------------------------------
 
@@ -1147,6 +1316,14 @@ class RemixConfig:
     headline_look: Optional[dict] = None
     # The member's recorded call to action is added after rendering (by the app): no spoken or on-screen one.
     cta_clip: bool = False
+    # "Me, on camera" (host "camera"): layout, backdrop for the cut-out, and whether a live
+    # reaction keeps the member's voice. recordings: draft id (string) -> their recordings,
+    # {"reaction": {"path", "offset_s"}} for Silent react, {"intro", "beats", "close"} for a voiced take.
+    camera_layout: str = "filmed"
+    camera_backdrop: str = "blur"
+    camera_backdrop_color: str = "#111111"
+    camera_talk: bool = False
+    recordings: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -1168,6 +1345,8 @@ class RemixResult:
     ai_presenter: bool = False
     clip_index: int = 0
     post_caption: str = ""
+    # The member is on camera themselves (no AI presenter or voice).
+    camera: bool = False
 
 
 Progress = Callable[[str, float], None]
@@ -1239,7 +1418,7 @@ def script_to_draft(script: RemixScript, draft_id: int, source_index: int, meta:
         "start_ms": script.start_ms, "end_ms": script.end_ms, "quote": script.moment_quote, "why": script.why_this_moment,
         "style": script.style, "stance": script.stance, "headline": script.headline, "intro": script.intro,
         "beats": [asdict(b) for b in script.beats], "close": script.close, "proof_used": script.proof_used, "notes": script.notes,
-        "grade": script.grade, "estimate_usd": 0.0 if script.format == "silent" else round(estimate_remix_cost(script, host, voice_model), 3),
+        "grade": script.grade, "estimate_usd": 0.0 if script.format == "silent" or host == "camera" else round(estimate_remix_cost(script, host, voice_model), 3),
         "format": script.format, "cues": script.cues,
         "post_caption": finalize_caption(script.post_caption or fallback_caption(script.headline, script.beats), keyword, offer,
                                          meta.get("creator") or ""),
@@ -1329,7 +1508,7 @@ class Remixer:
             config.host = "still"
         if config.order not in ORDERS:
             raise RemixError("Choose the order of the video.")
-        if config.format != "silent" and config.host != "voice" and not (config.avatar_photo and os.path.isfile(config.avatar_photo)):
+        if config.format != "silent" and config.host not in ("voice", "camera") and not (config.avatar_photo and os.path.isfile(config.avatar_photo)):
             raise RemixError("Choose an avatar, or use voice only.")
         try:
             config.cta_keyword = normalize_keyword(config.cta_keyword)
@@ -1347,14 +1526,21 @@ class Remixer:
         self._voice_reference: Optional[str] = None
         if config.format not in ("commentary", "silent"):
             raise RemixError("Choose the kind of remix.")
-        if config.format == "silent":
+        if config.host == "camera":
+            if config.camera_layout not in CAMERA_LAYOUTS or config.camera_backdrop not in CAMERA_BACKDROPS:
+                raise RemixError("Choose how you appear on camera.")
+            if not isinstance(config.camera_backdrop_color, str) or not HEX_COLOR.match(config.camera_backdrop_color):
+                raise RemixError("Choose a backdrop color.")
+            config.camera_talk = config.camera_talk is True
+            config.recordings = config.recordings if isinstance(config.recordings, dict) else {}
+        if config.format == "silent" and config.host != "camera":
             usable = {k: v for k, v in (config.reactions or {}).items() if k in REACTION_KINDS and isinstance(v, str)}
             if not usable:
                 raise RemixError("Silent react needs your avatar's reactions. Make them in Avatar Studio first.")
             config.reactions = usable
         if config.voice_model not in TTS_MODELS:
             raise RemixError("Choose a voice.")
-        if config.format == "commentary" and config.voice_model == CLONE_TTS_MODEL and not config.voice_reference:
+        if config.format == "commentary" and config.host != "camera" and config.voice_model == CLONE_TTS_MODEL and not config.voice_reference:
             raise RemixError("Your avatar's cloned voice recording is missing. Clone the voice again in Avatar Studio.")
 
     def _client(self, title: str) -> httpx.AsyncClient:
@@ -1407,7 +1593,8 @@ class Remixer:
                                                                   else "(no speech: music or visuals only; write from the video details)")
         )
         silent = self.config.format == "silent"
-        kinds = tuple(k for k in REACTION_KINDS if k in self.config.reactions)
+        # On camera the member reacts live; the cues are only a guide, so any reaction may be named.
+        kinds = tuple(k for k in REACTION_KINDS if k in self.config.reactions) or REACTION_KINDS
         # A reel gets one take: Silent react reacts to all of it, a voiced take to its best moment.
         short = is_short_video(source_meta.get("duration_seconds"))
         count = 1 if short else self.config.count
@@ -1578,6 +1765,8 @@ class Remixer:
         segments_by_source = [_segments_from_json(s["segments"]) for s in sources]
         scripts = saved["scripts"]
         chosen: list[tuple[int, int, RemixScript]] = []
+        recordings: dict[int, dict] = {}
+        missing_recordings = False
         brand = (self.config.brand_identity or "").strip()[:MAX_BRAND_CHARS]
         for edit in approved[:MAX_REMIXES * MAX_SOURCES]:
             draft_id = edit.get("id") if isinstance(edit, dict) else None
@@ -1587,12 +1776,23 @@ class Remixer:
             src = int(item["source_index"])
             transcript_text = " ".join(s.text for s in segments_by_source[src])
             try:
-                chosen.append((draft_id, src, apply_edit(_script_from_json(item), edit, brand, transcript_text,
-                                                         "" if self.config.cta_clip else self.config.cta_keyword, self.config.cta_offer)))
+                script = apply_edit(_script_from_json(item), edit, brand, transcript_text,
+                                    "" if self.config.cta_clip else self.config.cta_keyword, self.config.cta_offer)
             except RemixError as error:
                 self.warnings.append(f"Skipped “{str(item.get('headline'))[:60]}”: {error}")
+                continue
+            if self.config.host == "camera":
+                recording = camera_recording(self.config.recordings.get(str(draft_id)), script.format)
+                if recording is None:
+                    self.warnings.append(f"No recording for “{script.headline[:60]}”, so it was skipped.")
+                    missing_recordings = True
+                    continue
+                recordings[draft_id] = recording
+            chosen.append((draft_id, src, script))
         if not chosen:
             await self.media.aclose()
+            if missing_recordings:
+                raise RemixError("Record yourself for at least one remix, then make it again.")
             raise RemixError("Choose at least one remix to render.")
         results: list[RemixResult] = []
         first_error: Optional[BaseException] = None
@@ -1603,7 +1803,8 @@ class Remixer:
                     if not os.path.isfile(source["video"]):
                         raise RemixError("its source video is no longer there (it was moved or deleted). Plan it again.")
                     render = self._one_silent if script.format == "silent" else self._one
-                    result = await render(index, len(chosen), script, source["video"], segments_by_source[src], source["meta"], root)
+                    extra = {"recording": recordings[draft_id]} if draft_id in recordings else {}
+                    result = await render(index, len(chosen), script, source["video"], segments_by_source[src], source["meta"], root, **extra)
                     results.append(result)
                     # Written after every remix: a cancel or crash keeps the finished ones in the Library.
                     write_job_output(root, results, sources, plan_cost + self.cost_usd + self.media.cost_usd)
@@ -1701,7 +1902,7 @@ class Remixer:
             alpha = img.getchannel("A").getbbox()
         return path, 0, (alpha[3] if alpha else 0)
     async def _one(self, index: int, total: int, script: RemixScript, video: str, segments: list[TranscriptSegment],
-                   source_meta: dict, root: str) -> RemixResult:
+                   source_meta: dict, root: str, recording: Optional[dict] = None) -> RemixResult:
         from clip_engine.config import get_caption_preset
         from clip_engine.services.caption_generator import CaptionGeneratorService
         from clip_engine.services.rendering_service import RenderingService, RenderRequest, TitleStyle
@@ -1721,13 +1922,30 @@ class Remixer:
         bar_path, bar_h, clear_h = self._headline(service, video, work, index, script.headline)
         panel_h = OUT_H - bar_h
 
-        # 1. Voice for every line.
-        say("recording the voice", 0.05)
-        lines = [("intro", script.intro)] + [(f"beat{i}", b.text) for i, b in enumerate(script.beats)] + [("close", script.close)]
-        voice = self._voice()
-        audio = dict(zip([k for k, _ in lines], await asyncio.gather(*[
-            self.media.speech(text, os.path.join(work, f"{key}.mp3"), **voice) for key, text in lines
-        ])))
+        # 1. Voice for every line: spoken by the AI voice, or (on camera) the member's own recordings.
+        camera = self.config.host == "camera"
+        if camera:
+            say("preparing your recordings", 0.05)
+            recording = recording or {}
+            if not recording.get("intro") or not recording.get("close"):
+                raise RemixError("your recordings are missing. Record them again.")
+            beat_files = list(recording.get("beats") or [])
+            beats = [Beat(script.beats[i].text if i < len(script.beats) else "",
+                          script.beats[min(i, len(script.beats) - 1)].broll if script.beats else "abstract motion background")
+                     for i in range(len(beat_files))]
+            lines = [("intro", script.intro)] + [(f"beat{i}", b.text) for i, b in enumerate(beats)] + [("close", script.close)]
+            audio = {}
+            for (key, _), path in zip(lines, [recording["intro"], *beat_files, recording["close"]]):
+                audio[key] = os.path.join(work, f"{key}-you.mp4")
+                await asyncio.to_thread(normalize_recording, path, audio[key], MAX_LINE_RECORDING_S)
+        else:
+            say("recording the voice", 0.05)
+            beats = script.beats
+            lines = [("intro", script.intro)] + [(f"beat{i}", b.text) for i, b in enumerate(beats)] + [("close", script.close)]
+            voice = self._voice()
+            audio = dict(zip([k for k, _ in lines], await asyncio.gather(*[
+                self.media.speech(text, os.path.join(work, f"{key}.mp3"), **voice) for key, text in lines
+            ])))
 
         # 2. On-camera lines with the avatar (lip-synced when chosen), in parallel with B-roll.
         say("animating your avatar" if self.config.host == "lipsync" else "gathering B-roll", 0.2)
@@ -1745,7 +1963,7 @@ class Remixer:
         tasks = []
         if self.config.host == "lipsync":
             tasks += [animate("intro", script.intro), animate("close", script.close)]
-        broll_task = self._broll([b.broll for b in script.beats], os.path.join(root, ".work", "broll"))
+        broll_task = self._broll([b.broll for b in beats], os.path.join(root, ".work", "broll"))
         results = await asyncio.gather(broll_task, *tasks)
         broll = results[0]
         if any(path is None for path in broll) and getattr(self.settings, "pexels_api_key", None):
@@ -1761,6 +1979,8 @@ class Remixer:
 
         # 4. Parts in order: intro (host), excerpt, beats, close (host).
         def host_part(key: str, out: str) -> str:
+            if camera:
+                return self._camera_line(audio[key], out, panel_h, excerpt, warnings)
             seconds = media_seconds(audio[key])
             video_path = host_videos.get(key)
             if video_path:
@@ -1783,12 +2003,12 @@ class Remixer:
         # Moment first: the borrowed moment is the hook, then the presenter reacts.
         if self.config.order == "moment_first":
             parts.append(("excerpt", excerpt))
-        if self.config.host != "voice":
+        if self.config.host not in ("voice", "camera"):
             avatar_parts.add(len(parts))
         parts.append(("host", intro_part))
         if self.config.order != "moment_first":
             parts.append(("excerpt", excerpt))
-        for i, beat in enumerate(script.beats):
+        for i, beat in enumerate(beats):
             out = os.path.join(work, f"p2-beat{i}.mp4")
             seconds = await asyncio.to_thread(media_seconds, audio[f"beat{i}"])
             path = None
@@ -1797,14 +2017,14 @@ class Remixer:
                     path = await asyncio.to_thread(video_segment, broll[i], out, OUT_W, panel_h, audio[f"beat{i}"], seconds, True)
                 except RemixError:
                     logger.warning("A B-roll file could not be used; using a still")
-            if not path and self.config.host != "voice":
+            if not path and self.config.host not in ("voice", "camera"):
                 path = await asyncio.to_thread(still_segment, self.config.avatar_photo, audio[f"beat{i}"], out, OUT_W, panel_h, seconds)
                 avatar_parts.add(len(parts))
             elif not path:
                 path = await asyncio.to_thread(still_segment, freeze, audio[f"beat{i}"], out, OUT_W, panel_h, seconds, True)
             parts.append(("beat", path))
         close_part = await asyncio.to_thread(host_part, "close", os.path.join(work, "p3-close.mp4"))
-        if self.config.host != "voice":
+        if self.config.host not in ("voice", "camera"):
             avatar_parts.add(len(parts))
         parts.append(("host", close_part))
 
@@ -1821,7 +2041,8 @@ class Remixer:
         say("adding captions", 0.85)
         caption_path = None
         if self.config.include_captions:
-            caption_segments = await self._caption_words(assembled, work, script, segments, parts, starts, durations)
+            caption_segments = await self._caption_words(assembled, work, script, segments, parts, starts, durations,
+                                                         [script.intro, *(b.text for b in beats), script.close])
             if caption_segments:
                 try:
                     style = get_caption_preset(self.config.caption_preset)
@@ -1843,7 +2064,7 @@ class Remixer:
             credit_png = os.path.join(work, "credit.png")
             tag_image(credit_text, credit_png, max_w=OUT_W - 80)
             overlays.append((credit_png, "40", str(clear_h + 32), enable_expr(windows["excerpt"])))
-        ai_presenter = self.config.host != "voice"
+        ai_presenter = self.config.host not in ("voice", "camera")
         if ai_presenter:
             ai_png = os.path.join(work, "ai.png")
             w, _ = tag_image("AI presenter", ai_png, 26)
@@ -1878,6 +2099,8 @@ class Remixer:
                             "" if self.config.cta_clip else keyword)
         if self.config.cta_clip:
             checks.insert(-1, Check("cta", True, "Your call-to-action clip plays at the end"))
+        if camera:
+            checks[-1] = Check("presenter", True, "You on camera: no AI label needed for the presenter")
         post_caption = finalize_caption(script.post_caption or fallback_caption(script.headline, script.beats), keyword,
                                         self.config.cta_offer, creator)
         remix_cost = self.media.cost_usd - cost_before
@@ -1890,9 +2113,11 @@ class Remixer:
             "script": {"intro": script.intro, "beats": [asdict(b) for b in script.beats], "close": script.close},
             "brand_identity": self.config.brand_name or None, "proof_used": script.proof_used,
             "post_caption": post_caption, "call_to_action": {"keyword": keyword, "offer": self.config.cta_offer} if keyword else None,
-            "presenter": {"mode": self.config.host, "voice": "cloned" if self.config.voice_model == CLONE_TTS_MODEL else self.config.voice,
-                          "ai_generated": ai_presenter},
-            "models": {"plan": self.settings.planner_model, "voice": self.config.voice_model, "avatar": AVATAR_MODEL if self.config.host == "lipsync" else None},
+            "presenter": ({"mode": "camera", "layout": self.config.camera_layout, "voice": "own", "ai_generated": False} if camera else
+                          {"mode": self.config.host, "voice": "cloned" if self.config.voice_model == CLONE_TTS_MODEL else self.config.voice,
+                           "ai_generated": ai_presenter}),
+            "models": {"plan": self.settings.planner_model, "voice": None if camera else self.config.voice_model,
+                       "avatar": AVATAR_MODEL if self.config.host == "lipsync" else None},
             "timeline": [{"part": kind, "start_seconds": round(starts[i], 2), "seconds": round(durations[i], 2)} for i, (kind, _) in enumerate(parts)],
             "checks": [asdict(c) for c in checks], "warnings": warnings, "cost_usd": round(remix_cost, 4),
         }
@@ -1903,22 +2128,59 @@ class Remixer:
         return RemixResult(final, manifest_path, script.headline, script.stance, borrowed_ms / 1000, round(total_s, 2),
                            round(remix_cost, 4), [asdict(c) for c in checks], warnings, script.style,
                            (script.grade or {}).get("letter"), script.start_ms, script.end_ms, source_meta.get("creator") or "",
-                           ai_presenter, index, post_caption)
+                           ai_presenter, index, post_caption, camera)
+
+    def _camera_line(self, footage: str, out: str, panel_h: int, stage: str, warnings: list[str]) -> str:
+        """An on-camera line of a voiced take from the member's normalized recording, in the chosen layout:
+        filmed (cover-cropped), cut out over a blurred copy or brand color, or cut out over the moment (muted, looping)."""
+        layout = self.config.camera_layout
+        matte = self._matte(footage, out + ".matte.mkv", warnings) if layout != "filmed" else None
+        if matte is None:
+            return video_segment(footage, out, OUT_W, panel_h)
+        seconds = media_seconds(footage)
+        size = video_size(footage)
+        inputs = ["-i", footage, "-i", matte]
+        if layout == "greenscreen":
+            inputs += [*MEDIA_GUARD, "-stream_loop", "-1", "-i", stage]
+            graph = (f"[2:v]fps={FPS},{cover(OUT_W, panel_h)},setsar=1[stage];"
+                     + camera_graph("greenscreen", OUT_W, panel_h, size, matte=True, stage="stage",
+                                    person_height=min(panel_h, round(OUT_H * GREENSCREEN_PERSON_SHARE))))
+        else:
+            graph = camera_graph("cutout", OUT_W, panel_h, size, matte=True, backdrop=self.config.camera_backdrop,
+                                 color=self.config.camera_backdrop_color, duration=seconds)
+        ffmpeg([*inputs, "-filter_complex", f"{graph};[0:a]{LOUDNORM}[a]", "-map", "[camv]", "-map", "[a]", "-t", f"{seconds:.3f}",
+                *VIDEO_ARGS, *AUDIO_ARGS, out])
+        return out
+
+    async def _moment_cut(self, video: str, script: RemixScript, out: str, look: str) -> str:
+        """The moment with its own picture (through `look`) and loudness-matched sound (silence if it has none)."""
+        duration = (script.end_ms - script.start_ms) / 1000
+        window = ["-ss", f"{script.start_ms / 1000:.3f}", "-t", f"{duration:.3f}"]
+        if await asyncio.to_thread(has_audio, video):
+            await asyncio.to_thread(ffmpeg, [*MEDIA_GUARD, *window, "-i", video, "-vf", look, "-af", LOUDNORM, "-map", "0:v:0", "-map", "0:a:0",
+                                             *VIDEO_ARGS, *AUDIO_ARGS, out])
+        else:
+            await asyncio.to_thread(ffmpeg, [*MEDIA_GUARD, *window, "-i", video, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-vf", look,
+                                             "-map", "0:v:0", "-map", "1:a:0", "-t", f"{duration:.3f}", *VIDEO_ARGS, *AUDIO_ARGS, out])
+        return out
+
+    @staticmethod
+    def _box_look(box_w: int, box_h: int) -> str:
+        return (f"scale={box_w - 12}:{box_h - 12}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,"
+                f"pad=iw+12:ih+12:6:6:color=white,fps={FPS},setsar=1,format=yuv420p")
 
     async def _one_silent(self, index: int, total: int, script: RemixScript, video: str, segments: list[TranscriptSegment],
-                          source_meta: dict, root: str) -> RemixResult:
+                          source_meta: dict, root: str, recording: Optional[dict] = None) -> RemixResult:
         """Green screen: the avatar's silent reactions fill the panel, the moment floats in its top half with its own sound."""
-        from clip_engine.config import get_caption_preset
-        from clip_engine.services.caption_generator import CaptionGeneratorService
-        from clip_engine.services.rendering_service import RenderingService, RenderRequest, TitleStyle
+        if self.config.host == "camera":
+            return await self._one_camera_reaction(index, total, script, video, segments, source_meta, root, recording or {})
+        from clip_engine.services.rendering_service import RenderingService
 
         base = 2 + 96 * index / total
         step = 96 / total
         say = lambda detail, fraction: self.progress(f"Remix {index + 1} of {total}: {detail}", base + step * fraction)  # noqa: E731
-        name = f"clip_{index:02d}"
         work = os.path.join(root, ".work", f"remix-{index + 1}")
         os.makedirs(work, exist_ok=True)
-        warnings: list[str] = list(script.notes)
         duration = (script.end_ms - script.start_ms) / 1000
 
         service = RenderingService()
@@ -1930,17 +2192,7 @@ class Remixer:
         # Floating hook text sits over the reactions, so the moment starts under it.
         lift = clear_h - bar_h
         box_w, box_h = OUT_W - 2 * SILENT_MARGIN, round((panel_h - lift) * SILENT_BOX_SHARE)
-        moment = os.path.join(work, "moment.mp4")
-        guard = ["-protocol_whitelist", "file,pipe,fd", "-format_whitelist", "mov,matroska,webm,avi,flv,mpegts"]
-        look = (f"scale={box_w - 12}:{box_h - 12}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,"
-                f"pad=iw+12:ih+12:6:6:color=white,fps={FPS},setsar=1,format=yuv420p")
-        window = ["-ss", f"{script.start_ms / 1000:.3f}", "-t", f"{duration:.3f}"]
-        if await asyncio.to_thread(has_audio, video):
-            await asyncio.to_thread(ffmpeg, [*guard, *window, "-i", video, "-vf", look, "-af", LOUDNORM, "-map", "0:v:0", "-map", "0:a:0",
-                                             *VIDEO_ARGS, *AUDIO_ARGS, moment])
-        else:
-            await asyncio.to_thread(ffmpeg, [*guard, *window, "-i", video, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-vf", look,
-                                             "-map", "0:v:0", "-map", "1:a:0", "-t", f"{duration:.3f}", *VIDEO_ARGS, *AUDIO_ARGS, moment])
+        moment = await self._moment_cut(video, script, os.path.join(work, "moment.mp4"), self._box_look(box_w, box_h))
         moment_w, moment_h = await asyncio.to_thread(video_size, moment)
         # The presenter sits lower so their face shows under the clip; a blurred copy fills above.
         open_top = lift + SILENT_TOP + moment_h
@@ -1957,7 +2209,7 @@ class Remixer:
             length = max(0.2, end - cue["at"])
             clip = self.config.reactions.get(cue["reaction"]) or next(iter(self.config.reactions.values()))
             part = os.path.join(work, f"reaction-{i}.mp4")
-            await asyncio.to_thread(ffmpeg, [*guard, "-stream_loop", "-1", "-i", clip, "-t", f"{length:.3f}", "-an",
+            await asyncio.to_thread(ffmpeg, [*MEDIA_GUARD, "-stream_loop", "-1", "-i", clip, "-t", f"{length:.3f}", "-an",
                                              "-filter_complex", f"[0:v]{behind}[v]", "-map", "[v]", *VIDEO_ARGS, part])
             parts.append(part)
         background = os.path.join(work, "reactions.mp4")
@@ -1971,34 +2223,55 @@ class Remixer:
         await asyncio.to_thread(ffmpeg, ["-i", background, "-i", moment, "-filter_complex",
                                          f"[0:v][1:v]overlay=x=(W-w)/2:y={lift + SILENT_TOP}:eof_action=pass[v]",
                                          "-map", "[v]", "-map", "1:a:0", "-t", f"{duration:.3f}", *VIDEO_ARGS, *AUDIO_ARGS, assembled])
+        ai_presenter = bool(self.config.reactions_ai)
+        return await self._finish_silent(
+            index, say, work, root, service, script, segments, source_meta, assembled, bar_path, bar_h,
+            tags_y=clear_h + SILENT_TOP + moment_h + 16, caption_words=self._moment_words(script, segments), warnings=list(script.notes),
+            ai_presenter=ai_presenter,
+            presenter_check=Check("ai_label", True, "AI presenter marked on screen; turn on the platform's AI label when you post" if ai_presenter
+                                  else "Your own reaction clips: no AI label needed for them"),
+            presenter={"mode": "silent_reactions", "ai_generated": ai_presenter}, cost=0.0)
+
+    @staticmethod
+    def _moment_words(script: RemixScript, segments: list[TranscriptSegment]) -> list[TranscriptWord]:
+        """The moment's words, timed from its start."""
+        return [TranscriptWord(w.word, w.start_time_ms - script.start_ms, w.end_time_ms - script.start_ms)
+                for w in transcript_words(segments) if w.start_time_ms >= script.start_ms and w.end_time_ms <= script.end_ms + 50]
+
+    async def _finish_silent(self, index: int, say: Callable, work: str, root: str, service: Any, script: RemixScript,
+                             segments: list[TranscriptSegment], source_meta: dict, assembled: str, bar_path: Optional[str], bar_h: int, *,
+                             tags_y: int, caption_words: list[TranscriptWord], warnings: list[str], ai_presenter: bool,
+                             presenter_check: Check, presenter: dict, cost: float, camera: bool = False) -> RemixResult:
+        """Captions, hook text, credit, AI mark and call to action over a reaction video (panel-sized, with its sound);
+        then the checks and the manifest."""
+        from clip_engine.config import get_caption_preset
+        from clip_engine.services.caption_generator import CaptionGeneratorService
+
+        name = f"clip_{index:02d}"
+        duration = (script.end_ms - script.start_ms) / 1000
         total_s = await asyncio.to_thread(media_seconds, assembled)
 
-        # 4. Captions from the moment's own words, under the clip.
+        # 4. Captions, under the clip.
         say("adding captions", 0.8)
         caption_path = None
-        below = clear_h + SILENT_TOP + moment_h
-        if self.config.include_captions:
-            words = [TranscriptWord(w.word, w.start_time_ms - script.start_ms, w.end_time_ms - script.start_ms)
-                     for w in transcript_words(segments) if w.start_time_ms >= script.start_ms and w.end_time_ms <= script.end_ms + 50]
-            if words:
-                try:
-                    style = get_caption_preset(self.config.caption_preset)
-                except Exception:  # noqa: BLE001 - fall back to the default look
-                    style = get_caption_preset("pop")
-                # Below the presenter's face, above the platforms' own buttons and text.
-                caption_y = OUT_H - SILENT_CAPTION_FROM_BOTTOM
-                caption_path = await CaptionGeneratorService().generate_captions(
-                    transcript_segments=words_to_segments(words), clip_start_ms=0, clip_end_ms=round(total_s * 1000),
-                    output_path=os.path.join(work, "captions.ass"), caption_style=style, output_width=OUT_W, output_height=OUT_H,
-                    anchors=[(10**9, 5, caption_y)],
-                )
+        if self.config.include_captions and caption_words:
+            try:
+                style = get_caption_preset(self.config.caption_preset)
+            except Exception:  # noqa: BLE001 - fall back to the default look
+                style = get_caption_preset("pop")
+            # Below the presenter's face, above the platforms' own buttons and text.
+            caption_y = OUT_H - SILENT_CAPTION_FROM_BOTTOM
+            caption_path = await CaptionGeneratorService().generate_captions(
+                transcript_segments=words_to_segments(caption_words), clip_start_ms=0, clip_end_ms=round(total_s * 1000),
+                output_path=os.path.join(work, "captions.ass"), caption_style=style, output_width=OUT_W, output_height=OUT_H,
+                anchors=[(10**9, 5, caption_y)],
+            )
 
         # 5. Headline bar, captions, credit, AI mark and the call to action.
         creator = (source_meta.get("creator") or "").strip()
         overlays: list[tuple[str, str, str, str]] = []
         if bar_path:
             overlays.append((bar_path, "0", "0", "1"))
-        tags_y = below + 16
         row_w = OUT_W - 2 * SILENT_MARGIN
         credit_text = f"Original: {creator[:40]}" if creator else ""
         credit_w = credit_h = 0
@@ -2007,7 +2280,6 @@ class Remixer:
             credit_w, credit_h = tag_image(credit_text, credit_png, max_w=row_w)
             overlays.append((credit_png, str(SILENT_MARGIN), str(tags_y), "1"))
         cta_y = tags_y + 80
-        ai_presenter = bool(self.config.reactions_ai)
         if ai_presenter:
             ai_png = os.path.join(work, "ai.png")
             w, h = tag_image("AI presenter", ai_png, 26)
@@ -2049,27 +2321,170 @@ class Remixer:
             checks.append(Check("cta", True, "Your call-to-action clip plays at the end"))
         elif keyword:
             checks.append(Check("cta", has_cta(post_caption, keyword), f"“Comment {keyword}” on screen and in the caption"))
-        checks.append(Check("ai_label", True, "AI presenter marked on screen; turn on the platform's AI label when you post" if ai_presenter
-                            else "Your own reaction clips: no AI label needed for them"))
+        checks.append(presenter_check)
         manifest = {
             "version": 1, "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "video": os.path.basename(final),
             "source": {**source_meta, "excerpt": {"start_seconds": script.start_ms / 1000, "end_seconds": script.end_ms / 1000,
                                                   "quote": script.moment_quote, "why": script.why_this_moment}},
             "rights_lane": "permission", "format": "silent", "headline": script.headline, "cues": script.cues, "grade": script.grade,
             "post_caption": post_caption, "call_to_action": {"keyword": keyword, "offer": self.config.cta_offer} if keyword else None,
-            "brand_identity": self.config.brand_name or None, "presenter": {"mode": "silent_reactions", "ai_generated": ai_presenter},
-            "models": {"plan": self.settings.planner_model}, "checks": [asdict(c) for c in checks], "warnings": warnings, "cost_usd": 0.0,
+            "brand_identity": self.config.brand_name or None, "presenter": presenter,
+            "models": {"plan": self.settings.planner_model}, "checks": [asdict(c) for c in checks], "warnings": warnings,
+            "cost_usd": round(cost, 4),
         }
         manifest_path = os.path.join(root, f"{name}.source.json")
         with open(manifest_path, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle, indent=2, ensure_ascii=False)
         say("done", 1)
-        return RemixResult(final, manifest_path, script.headline, script.stance, duration, round(total_s, 2), 0.0,
+        return RemixResult(final, manifest_path, script.headline, script.stance, duration, round(total_s, 2), round(cost, 4),
                            [asdict(c) for c in checks], warnings, script.style, (script.grade or {}).get("letter"),
-                           script.start_ms, script.end_ms, creator, ai_presenter, index, post_caption)
+                           script.start_ms, script.end_ms, creator, ai_presenter, index, post_caption, camera)
+
+    # -- Me, on camera ---------------------------------------------------------
+
+    def _matte(self, footage: str, out: str, warnings: list[str]) -> Optional[str]:
+        """The cut-out matte for normalized footage, or None (with a warning) when it can't be made."""
+        from clip_engine.services import segmentation
+        try:
+            width, height = video_size(footage)
+            return segmentation.write_matte(footage, out, width, height, FPS)
+        except Exception as error:  # noqa: BLE001 - fall back to the footage as filmed
+            logger.warning(f"Cut-out unavailable: {type(error).__name__}: {error}")
+            if not any("as filmed" in w for w in warnings):
+                warnings.append("Your background couldn't be removed on this computer, so your video is shown as filmed.")
+            return None
+
+    async def _transcribe_words(self, media: str, work: str, label: str) -> Optional[list[TranscriptWord]]:
+        """Word timings of a recording's speech (its cost added to this remix); None if transcription fails."""
+        try:
+            from clip_engine.services.transcription_service import TranscriptionService
+            audio_path = os.path.join(work, f"{label}-speech.wav")
+            await asyncio.to_thread(ffmpeg, ["-i", media, "-vn", "-ac", "1", "-ar", "16000", audio_path])
+            result = await TranscriptionService().transcribe_audio(audio_path)
+            self.media.cost_usd += float(getattr(getattr(result, "api_costs", None), "estimated_cost_usd", 0.0) or 0.0)
+            return [w for s in result.segments for w in (s.words or [])]
+        except Exception as error:  # noqa: BLE001 - captions fall back
+            logger.warning(f"Transcribing your recording failed: {type(error).__name__}")
+            return None
+
+    async def _reaction_offset(self, video: str, script: RemixScript, recording: str, warnings: list[str]) -> tuple[float, str]:
+        """Where the moment starts in an uploaded recording, found by its sound; 0 (with a warning) when unsure."""
+        duration = (script.end_ms - script.start_ms) / 1000
+        template_s = min(duration, OFFSET_TEMPLATE_S)
+        clip = await asyncio.to_thread(pcm_mono, video, script.start_ms / 1000, template_s)
+        heard = await asyncio.to_thread(pcm_mono, recording, 0.0, OFFSET_SEARCH_S + template_s)
+        offset, confidence = await asyncio.to_thread(find_audio_offset, clip, heard)
+        if offset is None or confidence < OFFSET_MIN_SCORE:
+            warnings.append("Couldn't line your recording up with the clip by sound; it starts with the clip.")
+            return 0.0, "assumed"
+        return round(offset, 3), "sound"
+
+    async def _one_camera_reaction(self, index: int, total: int, script: RemixScript, video: str, segments: list[TranscriptSegment],
+                                   source_meta: dict, root: str, recording: dict) -> RemixResult:
+        """Live reaction: the member filmed themselves watching the moment. Filmed, cut out, or green screen."""
+        from clip_engine.services.rendering_service import RenderingService
+
+        base = 2 + 96 * index / total
+        step = 96 / total
+        say = lambda detail, fraction: self.progress(f"Remix {index + 1} of {total}: {detail}", base + step * fraction)  # noqa: E731
+        work = os.path.join(root, ".work", f"remix-{index + 1}")
+        os.makedirs(work, exist_ok=True)
+        warnings: list[str] = list(script.notes)
+        duration = (script.end_ms - script.start_ms) / 1000
+        cost_before = self.media.cost_usd
+        reaction = recording.get("reaction") or {}
+        source = reaction.get("path")
+        if not source:
+            raise RemixError("your recording is missing. Record it again.")
+
+        service = RenderingService()
+        bar_path, bar_h, clear_h = self._headline(service, video, work, index, script.headline)
+        panel_h = OUT_H - bar_h
+        lift = clear_h - bar_h
+
+        # 1. Line the recording up with the moment, then take that stretch of it.
+        say("lining up your recording", 0.05)
+        offset, found_by = reaction.get("offset_s"), "app"
+        if offset is None:
+            offset, found_by = await self._reaction_offset(video, script, source, warnings)
+        normalized = os.path.join(work, "recording.mp4")
+        length = await asyncio.to_thread(normalize_recording, source, normalized, offset + duration + 0.5)
+        if length <= offset + 0.2:
+            raise RemixError("your recording ends before the clip starts. Record it again.")
+        if length < offset + duration - 0.5:
+            warnings.append("Your recording ends before the clip does, so your last frame is held to the end.")
+        cam = await asyncio.to_thread(recording_window, normalized, os.path.join(work, "you.mp4"), offset, duration)
+        size = await asyncio.to_thread(video_size, cam)
+
+        # 2. The cut-out, when the layout needs one.
+        layout = self.config.camera_layout
+        matte = None
+        if layout in ("cutout", "greenscreen"):
+            say("cutting you out", 0.15)
+            matte = await asyncio.to_thread(self._matte, cam, os.path.join(work, "you-matte.mkv"), warnings)
+            if matte is None:
+                layout = "filmed"
+
+        # 3. The moment: a box over you, or (green screen) the whole stage behind you.
+        say("cutting the moment", 0.4)
+        # Inputs: 0 the member, 1 the matte (a tiny placeholder when filmed), 2 the moment.
+        inputs = ["-i", cam] + (["-i", matte] if matte else ["-f", "lavfi", "-i", f"color=c=black:s=16x16:r={FPS}:d=0.1"])
+        if layout == "greenscreen":
+            moment = await self._moment_cut(video, script, os.path.join(work, "moment.mp4"), f"fps={FPS},setsar=1,format=yuv420p")
+            area_h = panel_h - lift
+            stage = (f"[2:v]split[sa][sb];[sa]{panel_filter(OUT_W, panel_h)},boxblur=24:2,eq=brightness=-0.25[sbg];"
+                     f"[sb]{cover(OUT_W, area_h, 0.5)},setsar=1[sfg];[sbg][sfg]overlay=x=0:y={lift}[stage]")
+            graph = stage + ";" + camera_graph("greenscreen", OUT_W, panel_h, size, matte=True, stage="stage",
+                                               person_height=min(panel_h, round(OUT_H * GREENSCREEN_PERSON_SHARE)))
+            graph += ";[camv]null[v]"
+            # Tags sit under the hook text, over the clip.
+            tags_y = clear_h + 24
+        else:
+            box_w, box_h = OUT_W - 2 * SILENT_MARGIN, round((panel_h - lift) * SILENT_BOX_SHARE)
+            moment = await self._moment_cut(video, script, os.path.join(work, "moment.mp4"), self._box_look(box_w, box_h))
+            _, moment_h = await asyncio.to_thread(video_size, moment)
+            open_top = lift + SILENT_TOP + moment_h
+            # The same placement Silent react gives a presenter: the face lands under the clip.
+            shift = max(0, round(open_top + SILENT_FACE_SPOT * (panel_h - open_top) - SILENT_FACE_AT * OUT_H))
+            graph = camera_graph(layout, OUT_W, panel_h, size, matte=matte is not None, backdrop=self.config.camera_backdrop,
+                                 color=self.config.camera_backdrop_color, duration=duration, fg_height=OUT_H, shift=shift)
+            graph += f";[camv][2:v]overlay=x=(W-w)/2:y={lift + SILENT_TOP}:eof_action=pass[v]"
+            tags_y = clear_h + SILENT_TOP + moment_h + 16
+        inputs += ["-i", moment]
+
+        # 4. Sound: always the moment's; with "talk", the member's voice in front of it.
+        say("putting it together", 0.6)
+        if self.config.camera_talk:
+            graph += (f";[0:a]{LOUDNORM},aresample=48000[you];[2:a]volume=0.55[clip];"
+                      f"[clip][you]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[a]")
+        else:
+            graph += ";[2:a]anull[a]"
+        assembled = os.path.join(work, "assembled.mp4")
+        await asyncio.to_thread(ffmpeg, [*inputs, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", "-t", f"{duration:.3f}",
+                                         *VIDEO_ARGS, *AUDIO_ARGS, assembled])
+
+        # 5. Captions: the member's words when they talk, otherwise the moment's.
+        words = self._moment_words(script, segments)
+        if self.config.camera_talk and self.config.include_captions:
+            say("transcribing your words", 0.7)
+            spoken = await self._transcribe_words(cam, work, "you")
+            if spoken:
+                words = [w for w in spoken if w.start_time_ms < duration * 1000]
+            else:
+                warnings.append("Your words couldn't be transcribed, so the captions show the clip's words.")
+        layout_name = {"filmed": "filmed", "cutout": "cut out", "greenscreen": "green screen"}[layout]
+        return await self._finish_silent(
+            index, say, work, root, service, script, segments, source_meta, assembled, bar_path, bar_h,
+            tags_y=tags_y, caption_words=words, warnings=warnings, ai_presenter=False,
+            presenter_check=Check("presenter", True, "You on camera: no AI label needed for the presenter"),
+            presenter={"mode": "camera", "layout": layout, "layout_label": layout_name, "talk": self.config.camera_talk,
+                       "backdrop": self.config.camera_backdrop if layout == "cutout" else None,
+                       "offset_seconds": offset, "offset_found_by": found_by, "ai_generated": False},
+            cost=self.media.cost_usd - cost_before, camera=True)
 
     async def _caption_words(self, assembled: str, work: str, script: RemixScript, segments: list[TranscriptSegment],
-                             parts: list[tuple[str, str]], starts: list[float], durations: list[float]) -> list[TranscriptSegment]:
+                             parts: list[tuple[str, str]], starts: list[float], durations: list[float],
+                             texts: Optional[list[str]] = None) -> list[TranscriptSegment]:
         """Exact timing from transcribing the finished audio; an estimate if that fails."""
         try:
             from clip_engine.services.transcription_service import TranscriptionService
@@ -2083,7 +2498,7 @@ class Remixer:
                 return found
         except Exception as error:  # noqa: BLE001 - estimate instead
             logger.warning(f"Caption transcription failed, estimating timing: {type(error).__name__}")
-        texts = [script.intro] + [b.text for b in script.beats] + [script.close]
+        texts = texts or ([script.intro] + [b.text for b in script.beats] + [script.close])
         words: list[TranscriptWord] = []
         narration = iter(texts)
         for (kind, _), start, seconds in zip(parts, starts, durations):
@@ -2109,7 +2524,7 @@ def write_job_output(root: str, results: list[RemixResult], sources: list[dict],
             "virality_score": 0.0, "layout_type": "", "summary": result.headline, "headline": result.headline,
             "tags": [],
             "description": f"Original: {result.creator}" if result.creator else None, "render_fallback": None,
-            "ai_generated": True, "post_caption": result.post_caption or None,
+            "ai_generated": not result.camera, "post_caption": result.post_caption or None,
         })
     output = {
         "job_id": os.path.basename(root), "source_video_url": first.get("url") or "", "source_video_title": title[:300],
