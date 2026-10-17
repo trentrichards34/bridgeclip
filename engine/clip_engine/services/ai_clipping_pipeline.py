@@ -912,7 +912,8 @@ class AIClippingPipeline:
                     loop.call_soon_threadsafe(lambda: self._update_progress(job_id, JobStatus.UPLOADING,
                         90 + 5 * done / total, f'Saving clip {done} of {total}', total_clips, total_clips,
                         stage_percent=100 * done / total, completed=done, total=total, unit='clips'))
-                clip_artifacts = await asyncio.to_thread(self._save_clips_locally, job_id, rendered_clips, clip_durations_ms, save_progress)
+                clip_artifacts = await asyncio.to_thread(self._save_clips_locally, job_id, rendered_clips, clip_durations_ms, save_progress,
+                                                       (request.cta_keyword, request.cta_offer))
                 if request.debug_capture:
                     output_dir = self._get_local_output_dir(job_id)
                     preview_status = "available"
@@ -1320,6 +1321,7 @@ class AIClippingPipeline:
         rendered_clips: list[tuple[str, ClipPlanSegment]],
         durations_ms: Optional[dict[int, int]] = None,
         progress=None,
+        cta: tuple[str, str] = ('', ''),
     ) -> list[ClipArtifact]:
         """Copy rendered clips to the local output directory."""
         output_dir = self._get_local_output_dir(job_id)
@@ -1364,7 +1366,7 @@ class AIClippingPipeline:
                 tags=segment.tags or [],
                 render_fallback=segment.render_fallback,
                 description=segment.description,
-                post_caption=create_post_caption(segment, request.cta_keyword, request.cta_offer),
+                post_caption=create_post_caption(segment, *cta),
                 chapters=self._chapter_dicts(segment),
                 subtitle_url=subtitle_url,
                 editorial=editorial_summary(segment.editorial),

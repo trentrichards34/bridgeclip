@@ -173,3 +173,19 @@ def test_remix_keeps_the_mark_in_the_edit_bundle_for_re_making(tmp_path):
     assert again._brand_mark_tag({'style': 'silent'}) is None
     assert again._brand_mark_tag({'brand_mark': {'handle': '@a', 'logo': '../../etc/x.png', 'position': 'top-left'}})['logo_path'] is None
     assert again._brand_mark_tag({'brand_mark': {'handle': '@a', 'position': 'nowhere'}}) is None
+
+
+def test_locally_saved_create_clips_carry_the_keyword_caption(tmp_path, monkeypatch):
+    from clip_engine.services.intelligence_planner import ClipPlanSegment
+    monkeypatch.setattr(RenderingService, '_verify_ffmpeg', lambda self: None)
+    pipeline = AIClippingPipeline()
+    monkeypatch.setattr(pipeline, '_get_local_output_dir', lambda job_id: str(tmp_path / 'out'))
+    os.makedirs(tmp_path / 'out')
+    clip = tmp_path / 'clip.mp4'
+    clip.write_bytes(b'x')
+    segment = ClipPlanSegment(start_time_ms=0, end_time_ms=1000, virality_score=0.8, summary='First pull-up', tags=['fitness'])
+    [with_cta] = pipeline._save_clips_locally('job', [(str(clip), segment)], None, None, ('PULL', 'my plan'))
+    assert with_cta.post_caption == "First pull-up\n\n#fitness\n\nComment PULL and I'll send you my plan."
+    os.remove(tmp_path / 'out' / 'clip_00.mp4')
+    [plain] = pipeline._save_clips_locally('job', [(str(clip), segment)])
+    assert plain.post_caption is None
