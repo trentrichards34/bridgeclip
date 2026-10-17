@@ -666,13 +666,11 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
                         searchPlaceholder="Search time zones"
                       />
                     </div>
-                    <label className="mt-1.5 flex items-center gap-2 text-xs text-ink">
+                    <label className="mt-1.5 flex w-fit items-center gap-2 text-xs text-ink" title="Uploads the next clips early and hands them to Zernio as scheduled posts. Pausing or changing this automation cancels them.">
                       <Switch checked={draft.scheduleAhead === true} onChange={(on) => setDraft({ ...draft, scheduleAhead: on })} label="Schedule ahead with Zernio" />
                       Schedule ahead with Zernio
                     </label>
-                    <p className="mt-1 text-2xs text-ink-subtle">Uploads the next clips early and hands them to Zernio as scheduled posts. Pausing or changing this automation cancels them.</p>
                   </Row>
-                  {upcoming.length > 0 && <UpcomingPosts posts={upcoming} scheduleAhead={selected.scheduleAhead === true} timezone={selected.timezone} now={now} />}
 
                   <details>
                     <summary className="cursor-pointer px-3.5 py-2.5 text-xs text-ink-muted hover:text-ink">More settings</summary>
@@ -795,6 +793,8 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
                   ))}
                 </DragDropContext>
               </Panel>
+
+              {upcoming.length > 0 && <Panel padded={false}><UpcomingPosts posts={upcoming} scheduleAhead={selected.scheduleAhead === true} timezone={selected.timezone} now={now} /></Panel>}
 
               {dirty && (
                 <div className="glass-thick sticky bottom-3 z-10 flex items-center justify-between gap-3 rounded-full py-1.5 pl-4 pr-1.5 animate-fade-in" role="region" aria-label="Unsaved changes">
