@@ -187,7 +187,7 @@ export default function App(): React.JSX.Element {
             {page === 'accounts' && <AccountsPage onNavigate={setPage} />}
             {page === 'posts' && <PostsPage onNavigate={setPage} />}
             {page === 'automations' && <AutomationsPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
-            {page === 'settings' && <SettingsPage showUpdates={showUpdates} />}
+            {page === 'settings' && <SettingsPage showUpdates={showUpdates} onNavigate={setPage} />}
           </Fragment>
         </Layout>
       ) : (

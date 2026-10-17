@@ -16,7 +16,7 @@ const GRADE_TONES: Record<Grade, string> = {
 }
 
 /** Compact letter grade chip for the clip thumbnail. */
-export function GradeChip({ grade, className }: { grade: FrameworkGrade; className?: string }): React.JSX.Element {
+export function GradeChip({ grade, className }: { grade: Pick<FrameworkGrade, 'grade' | 'score'>; className?: string }): React.JSX.Element {
   return (
     <span className={cn('inline-flex h-5 items-center gap-1 rounded-full px-1.5 text-2xs font-bold tabular shadow-[inset_0_1px_0_rgb(255_255_255/0.2)]', GRADE_TONES[grade.grade], className)}
       title={`Framework grade ${grade.grade} (${grade.score.toFixed(1)}/10)`} aria-label={`Framework grade ${grade.grade}, ${grade.score.toFixed(1)} out of 10`}>

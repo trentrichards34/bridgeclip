@@ -23,13 +23,14 @@ import type { ClipMediaInfo, PostClipRequest, PostClipResult, PostProgress, Post
 import type { ClipJobRequest, JobSnapshot } from '../shared/jobs'
 import type { MetadataEnhancement, AutomationSourceGroup, AutomationBatchResult, AutomationSourceContext, Automation, AutomationUpdate, AutomationTikTokReview, AutomationTikTokReviewUpdate } from '../shared/automations'
 import type { LibraryClipPostingStatus, LibraryEnhancementOptions, LibraryRunPostingCounts } from '../shared/library-posting'
+import type { ReadyToPostResult } from '../shared/ready-to-post'
 import type { OpenRouterCatalog } from '../shared/openrouter-models'
 import type { UpdateState } from '../shared/updates'
 import type { OutputStorageUsage } from '../shared/output-storage'
 import type { CleanupFilters, CleanupGroupId, CleanupPlan, CleanupResult, FolderChangeInfo, FreeSpace, MoveProgress, MoveResult, RunSize } from '../shared/library-storage'
 import type { YouTubePreview } from '../shared/youtube-preview'
 import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/avatars'
-import type { MemberPrefs, StyleKind } from '../shared/member-prefs'
+import type { AppPrefsUpdate, MemberPrefs, StyleKind } from '../shared/member-prefs'
 import type { BrandIdentity, RecordingPart, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
 import type {
   AppDataScope,
@@ -136,7 +137,7 @@ export interface BridgeClipAPI {
     savePreset: (kind: StyleKind, name: string, style: object) => Promise<MemberPrefs>
     renamePreset: (kind: StyleKind, id: string, name: string) => Promise<MemberPrefs>
     deletePreset: (kind: StyleKind, id: string) => Promise<MemberPrefs>
-    saveApp: (update: { supportLink?: string; notifyOnFinish?: boolean }) => Promise<MemberPrefs>
+    saveApp: (update: AppPrefsUpdate) => Promise<MemberPrefs>
   }
   support: {
     /** Copies the support report; with `open`, then opens the member's support link or email. */
@@ -251,6 +252,8 @@ export interface BridgeClipAPI {
     postingStatus: (outputDir: string) => Promise<LibraryClipPostingStatus[]>
     /** Posted counts for many runs at once, for the Library list. */
     postingSummary: (outputDirs: string[]) => Promise<LibraryRunPostingCounts[]>
+    /** Not-posted clips from every Library run (Ready to post). */
+    readyToPost: () => Promise<ReadyToPostResult>
     setPosted: (outputDir: string, clipIndex: number, posted: boolean) => Promise<boolean>
     metadataSource: (outputDir: string, clipIndex: number) => Promise<AutomationSourceContext | null>
     enhanceMetadata: (outputDir: string, clipIndex: number, options: LibraryEnhancementOptions) => Promise<MetadataEnhancement>
@@ -590,6 +593,7 @@ const api: BridgeClipAPI = {
     deleteClips: (outputDir, indices) => ipcRenderer.invoke('history:deleteClips', outputDir, indices),
     postingStatus: (outputDir) => ipcRenderer.invoke('history:postingStatus', outputDir),
     postingSummary: (outputDirs) => ipcRenderer.invoke('history:postingSummary', outputDirs),
+    readyToPost: () => ipcRenderer.invoke('history:readyToPost'),
     setPosted: (outputDir, clipIndex, posted) => ipcRenderer.invoke('history:setPosted', outputDir, clipIndex, posted),
     metadataSource: (outputDir, clipIndex) => ipcRenderer.invoke('history:metadataSource', outputDir, clipIndex),
     enhanceMetadata: (outputDir, clipIndex, options) => ipcRenderer.invoke('history:enhanceMetadata', outputDir, clipIndex, options),

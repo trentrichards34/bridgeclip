@@ -8,6 +8,7 @@ import type { ClipJobRequest } from '../../shared/jobs'
 import { JobForm } from '../components/JobForm'
 import { useLowDiskGate } from '../components/LowDiskGate'
 import { SetupCard } from '../components/SetupCard'
+import { SetupChecklist } from '../components/SetupChecklist'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Page } from '../components/ui/Page'
 import { Callout } from '../components/ui/Callout'
@@ -78,6 +79,7 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
       </Callout>
 
       <SetupCard className="mt-4" onOpenSettings={() => onNavigate('settings')} />
+      <SetupChecklist className="mt-4" onNavigate={onNavigate} />
       {lowDisk.element}
 
       {startError && (

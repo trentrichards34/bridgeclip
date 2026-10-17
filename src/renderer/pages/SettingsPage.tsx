@@ -1,6 +1,6 @@
 import { JevSettings } from '../components/JevSettings'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, Loader2, RefreshCw, ScrollText, SlidersHorizontal, Sparkles, Wallet } from 'lucide-react'
+import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, ListChecks, Loader2, RefreshCw, ScrollText, SlidersHorizontal, Sparkles, Wallet } from 'lucide-react'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useChangelogStore } from '../store/use-changelog-store'
 import { useApiKeyDrafts } from '../hooks/use-api-key-drafts'
@@ -26,15 +26,17 @@ import { AssistantSettings } from '../components/assistant/AssistantSettings'
 import { useAssistantStore } from '../store/use-assistant-store'
 import { takeSettingsSection } from '../lib/settings-focus'
 import { SpendingSettings } from '../components/spending/SpendingSettings'
+import { SetupChecklist } from '../components/SetupChecklist'
+import type { Page as AppPage } from '../components/Sidebar'
 
-type SectionId = 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'output' | 'system' | 'about'
+type SectionId = 'setup' | 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'output' | 'system' | 'about'
 type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
 /** Safari and the macOS prompts only exist on a Mac. */
 const IS_MAC = typeof navigator !== 'undefined' && /Mac/.test(navigator.userAgent)
 
-export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): React.JSX.Element {
+export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: number; onNavigate?: (page: AppPage) => void }): React.JSX.Element {
   const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, pexelsConfigured, falConfigured, sourceContextWebResearch, downloadLoginBrowser, saving, save, toolStatus, toolError, checkTools, checkingTools } =
     useSettingsStore()
   const keys = useApiKeyDrafts()
@@ -69,6 +71,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
   const assistantConnected = useAssistantStore((state) => Object.values(state.statuses).some((status) => status?.state === 'connected'))
 
   const sections: { id: SectionId; label: string; icon: ReactNode; tone: SectionTone }[] = [
+    ...(onNavigate ? [{ id: 'setup' as const, label: 'Get set up', icon: <ListChecks />, tone: 'idle' as const }] : []),
     { id: 'keys', label: 'API keys', icon: <KeyRound />, tone: keysMissing ? 'warning' : 'success' },
     { id: 'spending', label: 'Spending', icon: <Wallet />, tone: 'idle' },
     { id: 'assistant', label: 'Assistant', icon: <Sparkles />, tone: assistantConnected ? 'success' : 'idle' },
@@ -157,6 +160,11 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
               ))}
             </div>
           </Panel>
+
+          {onNavigate && <Section id="setup">
+            <PanelHeader icon={<IconTile><ListChecks /></IconTile>} title="Get set up" description="The steps to go from a fresh install to your first posted clip." />
+            <SetupChecklist inSettings onNavigate={onNavigate} className="mt-1" />
+          </Section>}
 
           <Section id="keys">
             <PanelHeader

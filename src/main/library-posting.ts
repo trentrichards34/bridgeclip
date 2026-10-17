@@ -79,8 +79,9 @@ async function postingContext(library: string): Promise<PostingContext> {
   return { library, posts, origins, bankPosts, bankFiles }
 }
 
-async function runPostingStatus(outputDir: unknown, library: string, context: PostingContext | null): Promise<LibraryClipPostingStatus[]> {
-  const output = await libraryRun(outputDir, library)
+type RunClips = Pick<ClipArtifact, 'clip_index' | 's3_url'>[]
+async function runPostingStatus(outputDir: unknown, library: string, context: PostingContext | null, known?: RunClips): Promise<LibraryClipPostingStatus[]> {
+  const output = known ? { clips: known } : await libraryRun(outputDir, library)
   const run = outputDir as string
   const withManualStatus = (status: LibraryClipPostingStatus): LibraryClipPostingStatus =>
     isManuallyPosted(run, status.clipIndex) ? { ...status, state: 'posted', manuallyPosted: true } : status
@@ -131,6 +132,22 @@ export async function libraryPostingSummary(outputDirs: unknown): Promise<Librar
   }
   if (loadSettings().zernioApiKey !== workspaceKey) throw new Error('The posting workspace changed. Refresh the Library.')
   return results
+}
+
+/**
+ * Posting status for many runs whose clips the caller already read from the
+ * Library (the Ready to post index). Like the summary, settings, post history
+ * and automation banks are read once. A run that cannot be checked maps to null.
+ */
+export async function postingStatusForRuns(runs: { outputDir: string; clips: RunClips }[]): Promise<{ statuses: Map<string, LibraryClipPostingStatus[] | null>; postingHistory: boolean }> {
+  const { outputDirectory: library, zernioApiKey: workspaceKey } = loadSettings()
+  const context = workspaceKey ? await postingContext(library) : null
+  const statuses = new Map<string, LibraryClipPostingStatus[] | null>()
+  for (const run of runs) {
+    try { statuses.set(run.outputDir, await runPostingStatus(run.outputDir, library, context, run.clips)) } catch { statuses.set(run.outputDir, null) }
+  }
+  if (loadSettings().zernioApiKey !== workspaceKey) throw new Error('The posting workspace changed. Refresh the Library.')
+  return { statuses, postingHistory: Boolean(workspaceKey) }
 }
 
 export async function libraryMetadataSource(outputDir: unknown, clipIndex: unknown): Promise<AutomationSourceContext | null> {

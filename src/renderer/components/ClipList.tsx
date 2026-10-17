@@ -57,7 +57,7 @@ interface ClipListProps {
 const MAX_POST_BATCH = 10
 const MAX_BANK_BATCH = 30
 
-export function toPostable(clip: ClipArtifact): PostableClip {
+export function toPostable(clip: Pick<ClipArtifact, 's3_url' | 'summary' | 'clip_index' | 'tags' | 'duration_ms' | 'ai_generated' | 'post_caption'>): PostableClip {
   return { path: clipFilePath(clip.s3_url), title: clip.summary || `Clip ${clip.clip_index + 1}`, tags: clip.tags, durationMs: clip.duration_ms, aiGenerated: clip.ai_generated === true, postCaption: clip.post_caption ?? undefined }
 }
 

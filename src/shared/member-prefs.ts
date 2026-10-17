@@ -83,11 +83,19 @@ export interface MemberPrefs {
   supportLink: string
   /** Show a desktop notification when a long job finishes while the app is in the background. */
   notifyOnFinish: boolean
+  /** The "Get set up" checklist was closed; it stays reachable from Settings. */
+  setupChecklistDismissed: boolean
+  /** A video link the checklist's "Try it with a sample video" puts in Create ('' for none). */
+  sampleVideoLink: string
 }
+
+/** The app preferences Settings and the setup checklist can change. */
+export type AppPrefsUpdate = Partial<Pick<MemberPrefs, 'supportLink' | 'notifyOnFinish' | 'setupChecklistDismissed' | 'sampleVideoLink'>>
 
 export const MAX_PRESETS = 30
 export const MAX_PRESET_NAME = 40
 export const MAX_SUPPORT_LINK = 300
+export const MAX_SAMPLE_VIDEO_LINK = 2048
 
 export const CREATE_STYLE_KEYS = [
   'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
@@ -99,7 +107,7 @@ export const REMIX_STYLE_KEYS = [
   'ctaId', 'ctaKeyword', 'ctaOffer', 'camera', 'imageCamera'
 ] as const satisfies readonly (keyof RemixFormStyle)[]
 
-export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true }
+export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '' }
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -241,15 +249,37 @@ export function parseSupportLink(value: unknown): string {
   return (value as string).trim()
 }
 
+/** An http(s) video link with no sign-in details, or null. */
+export function sampleVideoTarget(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const text = value.trim()
+  if (!text || text.length > MAX_SAMPLE_VIDEO_LINK || /[\s\0]/.test(text)) return null
+  try {
+    const url = new URL(text)
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || !url.hostname.includes('.')) return null
+    return text
+  } catch { return null }
+}
+
+/** A sample video link to save: '' clears it; anything else must be an http(s) link. */
+export function parseSampleVideoLink(value: unknown): string {
+  if (value === '' || (typeof value === 'string' && !value.trim())) return ''
+  const link = sampleVideoTarget(value)
+  if (!link) throw new Error('Use a video link that starts with https://.')
+  return link
+}
+
 export function parseMemberPrefs(value: unknown): MemberPrefs {
-  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true }
+  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '' }
   const presets = record(value.presets) ? value.presets : {}
   return {
     create: parseCreateStyle(value.create),
     remix: parseRemixStyle(value.remix),
     presets: { create: parsePresets('create', presets.create), remix: parsePresets('remix', presets.remix) },
     supportLink: typeof value.supportLink === 'string' && supportTarget(value.supportLink) ? value.supportLink.trim() : '',
-    notifyOnFinish: value.notifyOnFinish !== false
+    notifyOnFinish: value.notifyOnFinish !== false,
+    setupChecklistDismissed: value.setupChecklistDismissed === true,
+    sampleVideoLink: sampleVideoTarget(value.sampleVideoLink) ?? ''
   }
 }
 

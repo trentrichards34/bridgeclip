@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { pickStyle, type CreateStyle, type MemberPrefs, type RemixFormStyle, type StyleKind } from '../../shared/member-prefs'
+import { pickStyle, type AppPrefsUpdate, type CreateStyle, type MemberPrefs, type RemixFormStyle, type StyleKind } from '../../shared/member-prefs'
 import { getApi } from '../lib/ipc'
 import { useDraftStore } from './use-draft-store'
 import { useRemixForm } from './use-remix-form-store'
@@ -14,13 +14,15 @@ interface MemberPrefsState {
   presets: MemberPrefs['presets']
   supportLink: string
   notifyOnFinish: boolean
+  setupChecklistDismissed: boolean
+  sampleVideoLink: string
   /** Load once at startup: applies the remembered styles, then keeps them saved. */
   load: () => Promise<void>
   savePreset: (kind: StyleKind, name: string) => Promise<void>
   applyPreset: (kind: StyleKind, id: string) => void
   renamePreset: (kind: StyleKind, id: string, name: string) => Promise<void>
   deletePreset: (kind: StyleKind, id: string) => Promise<void>
-  saveApp: (update: { supportLink?: string; notifyOnFinish?: boolean }) => Promise<void>
+  saveApp: (update: AppPrefsUpdate) => Promise<void>
 }
 
 /** The current style of a form, in the saved shape. */
@@ -62,12 +64,14 @@ function startPersisting(): void {
 let loading: Promise<void> | null = null
 
 export const useMemberPrefsStore = create<MemberPrefsState>((set) => {
-  const take = (prefs: MemberPrefs): void => set({ loaded: true, presets: prefs.presets, supportLink: prefs.supportLink, notifyOnFinish: prefs.notifyOnFinish })
+  const take = (prefs: MemberPrefs): void => set({ loaded: true, presets: prefs.presets, supportLink: prefs.supportLink, notifyOnFinish: prefs.notifyOnFinish, setupChecklistDismissed: prefs.setupChecklistDismissed, sampleVideoLink: prefs.sampleVideoLink })
   return {
     loaded: false,
     presets: { create: [], remix: [] },
     supportLink: '',
     notifyOnFinish: true,
+    setupChecklistDismissed: false,
+    sampleVideoLink: '',
     load: () => {
       // Optional: a renderer hot-reloaded over an older preload has no prefs bridge.
       if (!getApi().prefs) return Promise.resolve()
