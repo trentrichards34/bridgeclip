@@ -6,6 +6,7 @@ import {
   MAX_PRESETS, isPresetId, parseMemberPrefs, parseSampleVideoLink, parseStyleOf, parseSupportLink, presetName,
   type MemberPrefs, type StyleKind, type StylePreset
 } from '../shared/member-prefs'
+import { parseProfileUpdate } from '../shared/onboarding'
 
 /**
  * The member's remembered styles, saved styles and small app preferences
@@ -116,4 +117,10 @@ export function saveAppPrefs(update: unknown): MemberPrefs {
   }
   if ('sampleVideoLink' in raw) next.sampleVideoLink = parseSampleVideoLink(raw.sampleVideoLink)
   return write(next)
+}
+
+/** The member's profile (goals, platforms) and whether the guided setup is still to come. */
+export function saveProfile(update: unknown): MemberPrefs {
+  const prefs = readMemberPrefs()
+  return write({ ...prefs, profile: parseProfileUpdate(update, prefs.profile) })
 }

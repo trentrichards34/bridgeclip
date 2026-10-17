@@ -36,3 +36,19 @@ export async function requestMediaAccess(): Promise<{ camera: boolean; microphon
   const microphone = await ask('microphone')
   return { camera, microphone }
 }
+
+/**
+ * Whether the camera and microphone may be used, without asking: true or false
+ * where the system says (macOS, Windows), null when it can't tell yet ("not
+ * determined": the first recording asks). Linux has no system switch.
+ */
+export function mediaAccessStatus(): { camera: boolean | null; microphone: boolean | null } {
+  if (process.platform !== 'darwin' && process.platform !== 'win32') return { camera: true, microphone: true }
+  const read = (kind: 'camera' | 'microphone'): boolean | null => {
+    try {
+      const status = systemPreferences.getMediaAccessStatus(kind)
+      return status === 'granted' ? true : status === 'denied' || status === 'restricted' ? false : null
+    } catch { return null }
+  }
+  return { camera: read('camera'), microphone: read('microphone') }
+}

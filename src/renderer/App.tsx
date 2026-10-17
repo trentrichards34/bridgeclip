@@ -12,6 +12,9 @@ import { AccountsPage } from './pages/AccountsPage'
 import { PostsPage } from './pages/PostsPage'
 import { AutomationsPage } from './pages/AutomationsPage'
 import { AssistantPage } from './pages/AssistantPage'
+import { GuidesPage } from './pages/GuidesPage'
+import { OnboardingFlow } from './components/OnboardingFlow'
+import { useOnboarding } from './store/use-onboarding-store'
 import { BridgeClipLogo } from './components/brand/BridgeClipLogo'
 import { useSettingsStore } from './store/use-settings-store'
 import { useJobStore } from './store/use-job-store'
@@ -41,6 +44,10 @@ export default function App(): React.JSX.Element {
   const checkTools = useSettingsStore((s) => s.checkTools)
   const settingsLoaded = useSettingsStore((s) => s.loaded)
   const changelogOpen = useChangelogStore((s) => s.open)
+  // The guided setup opens on its own for a new profile, and whenever the member asks for it.
+  const prefsLoaded = useMemberPrefsStore((s) => s.loaded)
+  const firstLaunch = useMemberPrefsStore((s) => s.profile.onboarding === 'new')
+  const onboardingOpen = useOnboarding((s) => s.open)
   const closeChangelog = useCallback(() => useChangelogStore.getState().setOpen(false), [])
 
   // Sidebar destinations always open the page root, even when already active.
@@ -187,6 +194,7 @@ export default function App(): React.JSX.Element {
             {page === 'accounts' && <AccountsPage onNavigate={setPage} />}
             {page === 'posts' && <PostsPage onNavigate={setPage} />}
             {page === 'automations' && <AutomationsPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
+            {page === 'guides' && <GuidesPage onNavigate={setPage} />}
             {page === 'settings' && <SettingsPage showUpdates={showUpdates} onNavigate={setPage} />}
           </Fragment>
         </Layout>
@@ -200,6 +208,7 @@ export default function App(): React.JSX.Element {
           ) : <BridgeClipLogo className="h-7 animate-pulse opacity-80" />}
         </div>
       )}
+      {settingsLoaded && prefsLoaded && (onboardingOpen || firstLaunch) && <OnboardingFlow onNavigate={navigateRoot} />}
       {changelogOpen && <ChangelogDialog onClose={closeChangelog} />}
       {settingsLoaded && <SpendingAlerts onOpenSpending={openSpending} />}
     </>

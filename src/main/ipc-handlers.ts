@@ -1,5 +1,5 @@
 import { openEditor, saveEditor, runEditor, cancelEditor, replaceEditorSource } from './clip-editor'
-import { requestMediaAccess } from './media-permissions'
+import { mediaAccessStatus, requestMediaAccess } from './media-permissions'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
 import { addEditorCandidate, editorCloseReady, freeEditorMedia, onEditorExportCta, onEditorRunLock, readEditorProgress, suggestEditorHooks } from './clip-editor'
@@ -15,7 +15,7 @@ import { allowOnce, assertSpendAllowed, friendlyIpcError, initSpending, metered,
 import { friendlyCreditError, type SpendProvider } from '../shared/spending'
 import { AI_PORTRAIT_CANDIDATES, estimateRecreateCost, estimateRenderCost, PRICES, REACTIONS } from '../shared/avatars'
 import { estimateRemixCost, isRemixHost, MAX_REMIXES } from '../shared/remix'
-import { deletePreset, readMemberPrefs, renamePreset, saveAppPrefs, saveLastStyle, savePreset } from './member-prefs'
+import { deletePreset, readMemberPrefs, renamePreset, saveAppPrefs, saveLastStyle, savePreset, saveProfile } from './member-prefs'
 import { recordToolCheck, reportIssue } from './support-report'
 import { announce, avatarNotice, createNotice, remixNotice } from './job-notifications'
 import { libraryClipForRemix } from './library-source'
@@ -122,10 +122,15 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const [ctas, avatars, brands, backgrounds] = await Promise.all([
       listCtas().catch(() => []), listAvatars().catch(() => []), listBrandIdentities().catch(() => []), listBackgrounds().catch(() => [])
     ])
-    return dropMissing(prefs, {
+    const result = dropMissing(prefs, {
       ctaIds: new Set(ctas.map((item) => item.id)), avatarIds: new Set(avatars.map((item) => item.id)),
       brandIds: new Set(brands.map((item) => item.id)), backgrounds: new Set(backgrounds)
     })
+    // End-to-end tests start on a fresh profile; the guided setup only opens in the tests that ask for it.
+    if (process.env.BRIDGECLIP_E2E === '1' && process.env.BRIDGECLIP_E2E_ONBOARDING !== '1' && result.profile.onboarding === 'new') {
+      return { ...result, profile: { ...result.profile, onboarding: 'skipped' } }
+    }
+    return result
   }
   handle('prefs:load', () => known(readMemberPrefs()))
   handle('prefs:saveLast', (_event, kind: unknown, style: unknown) => { saveLastStyle(kind, style) })
@@ -133,6 +138,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('prefs:renamePreset', (_event, kind: unknown, id: unknown, name: unknown) => known(renamePreset(kind, id, name)))
   handle('prefs:deletePreset', (_event, kind: unknown, id: unknown) => known(deletePreset(kind, id)))
   handle('prefs:saveApp', (_event, update: unknown) => known(saveAppPrefs(update)))
+  handle('prefs:saveProfile', (_event, update: unknown) => known(saveProfile(update)))
+  handle('app:mediaAccessStatus', () => mediaAccessStatus())
   // Copy the support report (never the keys); "Report an issue" then opens the member's support link.
   handle('support:report', (_event, jobId: unknown, open: unknown) => reportIssue(jobId, open === true, [
     () => { const status = remixStatus(); return status?.phase === 'failed' ? { what: 'Remix', message: status.error, at: null } : null },

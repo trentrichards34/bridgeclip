@@ -139,6 +139,13 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
   }
   if (value.planning_source === 'visual' || value.planning_source === 'transcript') result.planning_source = value.planning_source
   if (typeof value.transcript_reused === 'boolean') result.transcript_reused = value.transcript_reused
+  // What made the run: Remix (and which kinds of remix) or Avatar Studio; Create runs have neither.
+  if (value.remix === true) result.remix = true
+  if (Array.isArray(value.remix_kinds)) {
+    const kinds = value.remix_kinds.filter((kind): kind is string => kind === 'ai' || kind === 'camera' || kind === 'image')
+    if (kinds.length) result.remix_kinds = [...new Set(kinds)]
+  }
+  if (typeof value.avatar_studio === 'string' && value.avatar_studio.length <= 32) result.avatar_studio = value.avatar_studio
   if (nonNegative(value.excluded_moment_count)) result.excluded_moment_count = value.excluded_moment_count
   if (nonNegative(value.caption_translation_failures)) result.caption_translation_failures = value.caption_translation_failures
   if (value.captions_status === 'enabled' || value.captions_status === 'disabled_by_request' ||

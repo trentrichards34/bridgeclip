@@ -243,6 +243,8 @@ def test_job_output_credits_the_source_of_an_article_or_post(tmp_path):
     job = json.load(open(tmp_path / "job_output.json"))
     assert [c["description"] for c in job["clips"]] == ["Source: The Wall Street Journal", "Original: The Wall Street Journal",
                                                         "Original: The Wall Street Journal"]
+    # The kinds of remix in the run (the setup path ticks "make your first one" from these): article, AI presenter or on camera.
+    assert job["metrics"]["remix"] is True and job["metrics"]["remix_kinds"] == ["ai", "image"]
 
 
 def test_a_long_screenshot_is_read_once_and_cropped_before_resizing(env):

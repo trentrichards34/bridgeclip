@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { FirstRunGuide } from '../components/FirstRunGuide'
 import { AlertTriangle, Camera, Check, Image as ImageIcon, Copy, FileText, Film, FolderOpen, Library, MessageCircle, Send, Sparkles, UserRound, Wand2, X } from 'lucide-react'
 import type { AvatarSummary } from '../../shared/avatars'
 import { REACTIONS } from '../../shared/avatars'
@@ -165,6 +166,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         title="Remix"
         description="Turn any viral moment into your own take. Their moment hooks the viewer; your presenter's take, in your brand's voice, is the video."
       />
+      <FirstRunGuide page="remix" />
 
       {!openrouterConfigured && (
         <Callout tone="info" className="mt-4" title="Add your OpenRouter key to start" action={<Button size="sm" onClick={openKeys}>Open API keys</Button>}>

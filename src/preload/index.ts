@@ -34,6 +34,7 @@ import type { CleanupFilters, CleanupGroupId, CleanupPlan, CleanupResult, Folder
 import type { YouTubePreview } from '../shared/youtube-preview'
 import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/avatars'
 import type { AppPrefsUpdate, MemberPrefs, StyleKind } from '../shared/member-prefs'
+import type { CreatorProfile } from '../shared/onboarding'
 import type { BrandLook } from '../shared/brand-kit'
 import type { BrandIdentity, RecordingPart, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
 import type {
@@ -95,6 +96,10 @@ export interface MoreClipsChoices {
 }
 
 export interface HistoryEntry {
+  /** What made a finished run: Create, Remix or Avatar Studio. */
+  madeWith?: 'create' | 'remix' | 'avatar'
+  /** Remix runs: AI presenter, on camera, or over an article or post. */
+  remixKinds?: ('ai' | 'camera' | 'image')[]
   editorProject?: boolean
   candidateCount?: number
   favorite?: boolean
@@ -161,6 +166,8 @@ export interface BridgeClipAPI {
     onNavigate: (cb: (target: { page: AssistantNavigationPage; runDir: string | null }) => void) => () => void
     /** A finished-job notification was clicked: show that page (a Library run or a job, when given). */
     onOpenPage: (cb: (target: { page: 'library' | 'jobs' | 'remix' | 'avatar'; runDir: string | null; jobId: string | null }) => void) => () => void
+    /** Camera and microphone allowed (true/false), or null when the system hasn't asked yet. */
+    mediaAccessStatus: () => Promise<{ camera: boolean | null; microphone: boolean | null }>
   }
   /** Remembered styles, saved styles, the support link and notifications. */
   prefs: {
@@ -170,6 +177,8 @@ export interface BridgeClipAPI {
     renamePreset: (kind: StyleKind, id: string, name: string) => Promise<MemberPrefs>
     deletePreset: (kind: StyleKind, id: string) => Promise<MemberPrefs>
     saveApp: (update: AppPrefsUpdate) => Promise<MemberPrefs>
+    /** Goals, platforms and whether the guided setup is done (onboarding). */
+    saveProfile: (update: Partial<CreatorProfile>) => Promise<MemberPrefs>
   }
   support: {
     /** Copies the support report; with `open`, then opens the member's support link or email. */
@@ -544,7 +553,8 @@ const api: BridgeClipAPI = {
   app: {
     onDataChanged: (callback) => subscribe('app:dataChanged', callback),
     onNavigate: (callback) => subscribe('app:navigate', callback),
-    onOpenPage: (callback) => subscribe('app:openPage', callback)
+    onOpenPage: (callback) => subscribe('app:openPage', callback),
+    mediaAccessStatus: () => ipcRenderer.invoke('app:mediaAccessStatus')
   },
   prefs: {
     load: () => ipcRenderer.invoke('prefs:load'),
@@ -552,7 +562,8 @@ const api: BridgeClipAPI = {
     savePreset: (kind, name, style) => ipcRenderer.invoke('prefs:savePreset', kind, name, style),
     renamePreset: (kind, id, name) => ipcRenderer.invoke('prefs:renamePreset', kind, id, name),
     deletePreset: (kind, id) => ipcRenderer.invoke('prefs:deletePreset', kind, id),
-    saveApp: (update) => ipcRenderer.invoke('prefs:saveApp', update)
+    saveApp: (update) => ipcRenderer.invoke('prefs:saveApp', update),
+    saveProfile: (update) => ipcRenderer.invoke('prefs:saveProfile', update)
   },
   support: {
     report: (jobId, open) => ipcRenderer.invoke('support:report', jobId, open)

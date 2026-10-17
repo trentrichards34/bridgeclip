@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { pickStyle, type AppPrefsUpdate, type CreateStyle, type MemberPrefs, type RemixFormStyle, type StyleKind } from '../../shared/member-prefs'
+import { DEFAULT_PROFILE, type CreatorProfile } from '../../shared/onboarding'
 import { getApi } from '../lib/ipc'
 import { useDraftStore } from './use-draft-store'
 import { useRemixForm } from './use-remix-form-store'
@@ -16,6 +17,8 @@ interface MemberPrefsState {
   notifyOnFinish: boolean
   setupChecklistDismissed: boolean
   sampleVideoLink: string
+  /** What the member wants to make and where they post; 'new' opens the guided setup. */
+  profile: CreatorProfile
   /** Load once at startup: applies the remembered styles, then keeps them saved. */
   load: () => Promise<void>
   savePreset: (kind: StyleKind, name: string) => Promise<void>
@@ -23,6 +26,7 @@ interface MemberPrefsState {
   renamePreset: (kind: StyleKind, id: string, name: string) => Promise<void>
   deletePreset: (kind: StyleKind, id: string) => Promise<void>
   saveApp: (update: AppPrefsUpdate) => Promise<void>
+  saveProfile: (update: Partial<CreatorProfile>) => Promise<void>
 }
 
 /** The current style of a form, in the saved shape. */
@@ -64,7 +68,7 @@ function startPersisting(): void {
 let loading: Promise<void> | null = null
 
 export const useMemberPrefsStore = create<MemberPrefsState>((set) => {
-  const take = (prefs: MemberPrefs): void => set({ loaded: true, presets: prefs.presets, supportLink: prefs.supportLink, notifyOnFinish: prefs.notifyOnFinish, setupChecklistDismissed: prefs.setupChecklistDismissed, sampleVideoLink: prefs.sampleVideoLink })
+  const take = (prefs: MemberPrefs): void => set({ loaded: true, presets: prefs.presets, supportLink: prefs.supportLink, notifyOnFinish: prefs.notifyOnFinish, setupChecklistDismissed: prefs.setupChecklistDismissed, sampleVideoLink: prefs.sampleVideoLink, profile: prefs.profile ?? { ...DEFAULT_PROFILE, onboarding: 'skipped' } })
   return {
     loaded: false,
     presets: { create: [], remix: [] },
@@ -72,6 +76,7 @@ export const useMemberPrefsStore = create<MemberPrefsState>((set) => {
     notifyOnFinish: true,
     setupChecklistDismissed: false,
     sampleVideoLink: '',
+    profile: { ...DEFAULT_PROFILE },
     load: () => {
       // Optional: a renderer hot-reloaded over an older preload has no prefs bridge.
       if (!getApi().prefs) return Promise.resolve()
@@ -90,6 +95,7 @@ export const useMemberPrefsStore = create<MemberPrefsState>((set) => {
     },
     renamePreset: async (kind, id, name) => take(await getApi().prefs.renamePreset(kind, id, name)),
     deletePreset: async (kind, id) => take(await getApi().prefs.deletePreset(kind, id)),
-    saveApp: async (update) => take(await getApi().prefs.saveApp(update))
+    saveApp: async (update) => take(await getApi().prefs.saveApp(update)),
+    saveProfile: async (update) => take(await getApi().prefs.saveProfile(update))
   }
 })

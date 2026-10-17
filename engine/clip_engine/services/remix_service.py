@@ -3371,7 +3371,9 @@ def write_job_output(root: str, results: list[RemixResult], sources: list[dict],
         "job_id": os.path.basename(root), "source_video_url": first.get("url") or "", "source_video_title": title[:300],
         "source_video_channel": first.get("creator") or None, "source_video_duration_seconds": float(first.get("duration_seconds") or 0),
         "total_clips": len(clips), "clips": clips, "transcript_url": None, "plan_url": None, "processing_time_seconds": 0,
-        "metrics": {"api_costs": {"total_estimated_cost_usd": round(cost_usd, 4)}, "remix": True},
+        "metrics": {"api_costs": {"total_estimated_cost_usd": round(cost_usd, 4)}, "remix": True,
+                    # What kind of remix this run made (the setup path ticks "make your first one" from it).
+                    "remix_kinds": sorted({"image" if r.format == "image" else "camera" if r.camera else "ai" for r in results})},
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
     path = os.path.join(root, "job_output.json")

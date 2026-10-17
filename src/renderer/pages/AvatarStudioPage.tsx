@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FirstRunGuide } from '../components/FirstRunGuide'
 import { create } from 'zustand'
 import { hasBrandMark } from '../../shared/brand-kit'
 import { useBrands } from '../store/use-brand-store'
@@ -201,6 +202,7 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
         title="Avatar Studio"
         description="Create an AI avatar once, then turn scripts into ready-to-post vertical videos for faceless channels."
       />
+      <FirstRunGuide page="avatar" />
 
       {!openrouterConfigured && (
         <Callout tone="info" className="mt-4" title="Add your OpenRouter key to start"

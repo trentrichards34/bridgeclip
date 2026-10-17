@@ -7,6 +7,7 @@
  */
 
 import { isAvatarId } from './avatars'
+import { DEFAULT_PROFILE, readProfile, type CreatorProfile } from './onboarding'
 import { isBackgroundVideoName } from './backgrounds'
 import { isCaptionPresetId } from './caption-presets'
 import { isCtaId } from './ctas'
@@ -94,6 +95,8 @@ export interface MemberPrefs {
   setupChecklistDismissed: boolean
   /** A video link the checklist's "Try it with a sample video" puts in Create ('' for none). */
   sampleVideoLink: string
+  /** What the member wants to make and where they post (onboarding). */
+  profile: CreatorProfile
 }
 
 /** The app preferences Settings and the setup checklist can change. */
@@ -115,7 +118,7 @@ export const REMIX_STYLE_KEYS = [
   'ctaId', 'ctaKeyword', 'ctaOffer', 'camera', 'imageCamera', 'showHandle'
 ] as const satisfies readonly (keyof RemixFormStyle)[]
 
-export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '' }
+export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE } }
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -286,7 +289,7 @@ export function parseSampleVideoLink(value: unknown): string {
 }
 
 export function parseMemberPrefs(value: unknown): MemberPrefs {
-  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '' }
+  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: readProfile(null) }
   const presets = record(value.presets) ? value.presets : {}
   return {
     create: parseCreateStyle(value.create),
@@ -295,7 +298,8 @@ export function parseMemberPrefs(value: unknown): MemberPrefs {
     supportLink: typeof value.supportLink === 'string' && supportTarget(value.supportLink) ? value.supportLink.trim() : '',
     notifyOnFinish: value.notifyOnFinish !== false,
     setupChecklistDismissed: value.setupChecklistDismissed === true,
-    sampleVideoLink: sampleVideoTarget(value.sampleVideoLink) ?? ''
+    sampleVideoLink: sampleVideoTarget(value.sampleVideoLink) ?? '',
+    profile: readProfile(value.profile)
   }
 }
 

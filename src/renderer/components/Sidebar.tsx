@@ -1,4 +1,4 @@
-import { ChevronRight, Clapperboard, Film, ScanFace, Layers, MessagesSquare, PanelLeftClose, PanelLeftOpen, Send, Settings, UsersRound, WandSparkles, Workflow, type LucideIcon } from 'lucide-react'
+import { BookOpen, ChevronRight, Clapperboard, Film, ScanFace, Layers, MessagesSquare, PanelLeftClose, PanelLeftOpen, Send, Settings, UsersRound, WandSparkles, Workflow, type LucideIcon } from 'lucide-react'
 import { cn, MOD_KEY, sourceLabel } from '../lib/utils'
 import { useIsWide, useSidebarExpanded, useSidebarStore } from '../store/use-sidebar-store'
 import { useActiveJobs } from '../store/use-job-store'
@@ -11,7 +11,7 @@ import { STAGE_LABELS } from './JobProgress'
 import { SidebarUpdateButton } from './Updates'
 import { useAssistantStore } from '../store/use-assistant-store'
 
-export type Page = 'clip' | 'remix' | 'avatar' | 'library' | 'jobs' | 'assistant' | 'accounts' | 'posts' | 'automations' | 'settings'
+export type Page = 'clip' | 'remix' | 'avatar' | 'library' | 'jobs' | 'assistant' | 'accounts' | 'posts' | 'automations' | 'guides' | 'settings'
 
 export const NAV_ITEMS: { id: Page; label: string; icon: LucideIcon; shortcut: string; group: 'studio' | 'app' }[] = [
   { id: 'clip', label: 'Create', icon: WandSparkles, shortcut: '1', group: 'studio' },
@@ -23,6 +23,7 @@ export const NAV_ITEMS: { id: Page; label: string; icon: LucideIcon; shortcut: s
   { id: 'accounts', label: 'Accounts', icon: UsersRound, shortcut: '4', group: 'app' },
   { id: 'posts', label: 'Posts', icon: Send, shortcut: '5', group: 'app' },
   { id: 'automations', label: 'Automations', icon: Workflow, shortcut: '6', group: 'app' },
+  { id: 'guides', label: 'Guides', icon: BookOpen, shortcut: '0', group: 'app' },
   { id: 'settings', label: 'Settings', icon: Settings, shortcut: ',', group: 'app' }
 ]
 
