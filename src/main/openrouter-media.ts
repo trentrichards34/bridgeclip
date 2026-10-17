@@ -5,6 +5,7 @@ import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import { logger } from './logger'
 import { assertPublicWebUrl } from './network-policy'
+import { OUT_OF_CREDITS_MESSAGES } from '../shared/spending'
 
 /**
  * Images, speech and video through OpenRouter with the user's own key: the
@@ -27,6 +28,18 @@ export interface MediaOptions {
   timeoutMs?: number
   /** Tests: replaces the DNS check on redirect targets. */
   assertPublic?: (url: string) => Promise<void>
+}
+
+/** One finished paid media call, for the spend ledger: the cost OpenRouter reported (null when none) and what's needed to estimate it. */
+export interface MediaCharge { what: 'image' | 'speech' | 'video'; model: string; usd: number | null; chars?: number; seconds?: number }
+let chargeListener: (charge: MediaCharge) => void = () => undefined
+export function onMediaCharge(listener: (charge: MediaCharge) => void): void { chargeListener = listener }
+function charged(charge: MediaCharge): void {
+  try { chargeListener(charge) } catch { /* recording never fails the call */ }
+}
+function reportedCost(json: Record<string, unknown>): number | null {
+  const cost = (json.usage as { cost?: unknown } | undefined)?.cost
+  return typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? cost : null
 }
 
 const MAX_IMAGE_BYTES = 30_000_000
@@ -56,7 +69,7 @@ function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
 
 export function failure(status: number, what: string): OpenRouterMediaError {
   if (status === 401 || status === 403) return new OpenRouterMediaError('OpenRouter rejected the API key. Check it in Settings → API keys.')
-  if (status === 402) return new OpenRouterMediaError('OpenRouter reports insufficient credits. Add credits at openrouter.ai/credits.')
+  if (status === 402) return new OpenRouterMediaError(OUT_OF_CREDITS_MESSAGES.openrouter)
   if (status === 429) return new OpenRouterMediaError(`OpenRouter is busy and could not ${what} right now. Try again shortly.`)
   if (status === 400 || status === 422) return new OpenRouterMediaError(`OpenRouter could not ${what}: the request was rejected. Try again with different wording or a different file.`)
   return new OpenRouterMediaError(`OpenRouter could not ${what} (${status}). Try again.`)
@@ -144,6 +157,7 @@ export async function generateImage(request: ImageRequest, options: MediaOptions
   }
   const response = await send('/images', { method: 'POST', headers: headers(options.key), body: JSON.stringify(body) }, options, 'make the image', 5 * 60_000)
   const json = await boundedJson(response, MAX_IMAGE_BYTES * 2, 'make the image')
+  charged({ what: 'image', model: request.model, usd: reportedCost(json) })
   const first = Array.isArray(json.data) ? json.data[0] as { b64_json?: unknown; url?: unknown } | undefined : undefined
   if (typeof first?.b64_json === 'string' && first.b64_json) {
     const bytes = Buffer.from(first.b64_json, 'base64')
@@ -180,6 +194,7 @@ export async function synthesizeSpeech(request: SpeechRequest, options: MediaOpt
   }
   const response = await send('/audio/speech', { method: 'POST', headers: headers(options.key), body: JSON.stringify(body) }, options, 'record the voice', 5 * 60_000)
   const bytes = await boundedBytes(response, MAX_AUDIO_BYTES, 'record the voice')
+  charged({ what: 'speech', model: request.model, usd: null, chars: request.input.length })
   if (bytes.length === 0) throw new OpenRouterMediaError('OpenRouter returned an empty voice recording. Try again.')
   return bytes
 }
@@ -242,9 +257,11 @@ export async function generateVideo(request: VideoRequest, destination: string, 
     if (reason) logger.warn('openrouter.video.failed', { reason: reason.slice(0, 300) })
     throw new OpenRouterMediaError('The video could not be made on OpenRouter. Try again, or adjust the script.')
   }
+  const costUsd = reportedCost(job)
+  // Paid once the job completed, even if the download below fails.
+  charged({ what: 'video', model: request.model, usd: costUsd, seconds: request.duration })
   await downloadVideo(id, destination, options)
-  const cost = (job.usage as { cost?: unknown } | undefined)?.cost
-  return { costUsd: typeof cost === 'number' && Number.isFinite(cost) ? cost : null }
+  return { costUsd }
 }
 
 async function downloadVideo(id: string, destination: string, options: MediaOptions): Promise<void> {

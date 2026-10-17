@@ -48,6 +48,8 @@ export interface AssistantServiceOptions {
     apiKey: () => string
     url?: string
     fetch?: typeof fetch
+    /** Each OpenRouter reply's reported cost (the spend ledger). */
+    onCost?: (usd: number) => void
   }
 }
 
@@ -350,7 +352,8 @@ export class AssistantService {
           turn.lastActivity = Date.now()
           turn.sawOutput = true
         },
-        callTool: (name, args) => this.callTool(turn, name, args, controller.signal)
+        callTool: (name, args) => this.callTool(turn, name, args, controller.signal),
+        onCost: this.options.openRouter?.onCost
       })
       return turn.stopReason ?? error
     } finally {

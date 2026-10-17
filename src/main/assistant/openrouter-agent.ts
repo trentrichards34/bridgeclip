@@ -4,6 +4,8 @@
 // path as the CLIs' MCP calls, approvals included) and sends the results back
 // until the model answers without calling a tool.
 
+import { OUT_OF_CREDITS_MESSAGES } from '../../shared/spending'
+
 export const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions'
 /** Model round trips per user message; each tool batch is one. */
 const MAX_STEPS = 24
@@ -39,6 +41,8 @@ export interface OpenRouterTurnOptions {
   /** Anything arrived from OpenRouter (keeps the stall watchdog quiet). */
   onActivity: () => void
   callTool: (name: string, args: Record<string, unknown>) => Promise<{ text: string; isError?: boolean }>
+  /** What OpenRouter reported this message cost in all (its steps added up), once the turn ends. */
+  onCost?: (usd: number) => void
 }
 
 /** A failure to show the user as is. */
@@ -65,7 +69,7 @@ function providerMessage(value: unknown): string | null {
 /** What went wrong, in words the user can act on. OpenRouter's own message is kept when it explains more. */
 export function describeOpenRouterFailure(status: number | null, message: string | null, model: string): string {
   if (status === 401 || status === 403) return 'OpenRouter rejected your API key. Check it in Settings → API keys.'
-  if (status === 402) return 'Your OpenRouter account is out of credits. Add credits on openrouter.ai, then try again.'
+  if (status === 402) return OUT_OF_CREDITS_MESSAGES.openrouter
   if (status === 429) return 'OpenRouter is rate limiting requests. Wait a moment, then try again.'
   if (message && /tool/i.test(message) && /support|endpoint/i.test(message)) {
     return `${model} can’t use tools through OpenRouter right now, so it can’t run CreatorClips. Choose another model.`
@@ -94,7 +98,7 @@ async function errorBody(response: Response): Promise<string | null> {
 }
 
 /** One streamed completion: its text and the tool calls it asked for. */
-async function complete(options: OpenRouterTurnOptions, messages: OpenRouterMessage[], newParagraph: boolean): Promise<{ text: string; calls: PendingCall[] }> {
+async function complete(options: OpenRouterTurnOptions, messages: OpenRouterMessage[], newParagraph: boolean, spent: { usd: number }): Promise<{ text: string; calls: PendingCall[] }> {
   let response: Response
   try {
     response = await (options.fetch ?? fetch)(options.url ?? OPENROUTER_CHAT_URL, {
@@ -135,6 +139,9 @@ async function complete(options: OpenRouterTurnOptions, messages: OpenRouterMess
     try { chunk = JSON.parse(payload) as Record<string, unknown> } catch { return false }
     const failure = providerMessage(chunk)
     if (failure) throw new OpenRouterError(describeOpenRouterFailure(null, failure, options.model))
+    // The final chunk carries the usage, cost included.
+    const cost = (chunk.usage as { cost?: unknown } | undefined)?.cost
+    if (typeof cost === 'number' && Number.isFinite(cost) && cost > 0 && cost < 1000) spent.usd += cost
     const choice = Array.isArray(chunk.choices) ? chunk.choices[0] as Record<string, unknown> | undefined : undefined
     const delta = choice?.delta as Record<string, unknown> | undefined
     if (!delta) return false
@@ -195,9 +202,10 @@ export async function runOpenRouterTurn(options: OpenRouterTurnOptions): Promise
     { role: 'user', content: options.prompt }
   ]
   let wroteText = false
+  const spent = { usd: 0 }
   try {
     for (let step = 0; step < MAX_STEPS; step++) {
-      const { text, calls } = await complete(options, messages, wroteText)
+      const { text, calls } = await complete(options, messages, wroteText, spent)
       if (text) wroteText = true
       if (calls.length === 0) {
         return wroteText ? null : 'The model ended without replying. Try again or choose another model.'
@@ -222,5 +230,7 @@ export async function runOpenRouterTurn(options: OpenRouterTurnOptions): Promise
     if (options.signal.aborted) return null
     if (error instanceof OpenRouterError) return error.message
     return 'The OpenRouter reply failed. Try again.'
+  } finally {
+    if (spent.usd > 0) { try { options.onCost?.(spent.usd) } catch { /* recording never fails the chat */ } }
   }
 }

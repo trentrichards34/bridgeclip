@@ -616,7 +616,7 @@ test('images: Nano Banana request with the reference photo inline; base64 result
   assert.equal(seen[0].body.aspect_ratio, '9:16')
   assert.deepEqual(seen[0].body.input_references, [{ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AQI=' } }])
   await assert.rejects(media.generateImage({ model: 'm', prompt: 'p' }, { key: 'k', fetch: async () => jsonResponse({ data: [] }) }), /no image/)
-  await assert.rejects(media.generateImage({ model: 'm', prompt: 'p' }, { key: 'k', fetch: async () => jsonResponse({ error: 'x' }, 402) }), /insufficient credits/)
+  await assert.rejects(media.generateImage({ model: 'm', prompt: 'p' }, { key: 'k', fetch: async () => jsonResponse({ error: 'x' }, 402) }), /out of credits/)
 })
 
 test('speech: preset voices by name, cloned voices by reference recording; raw audio back', async () => {

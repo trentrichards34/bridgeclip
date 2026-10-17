@@ -10,13 +10,14 @@ const { fileLinksAvailable, directoryLinkType } = require('../support/symlinks.c
 // The gameplay background library, for modules that only pass names through.
 const AVATARS_STUB = { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [] }
 const AVATAR_STUDIO_STUB = { onAvatarRenderStatus: () => {} }
+const SPENDING_STUB = { allowOnce() {}, assertSpendAllowed: async () => {}, friendlyIpcError: (error) => error, initSpending() {}, metered: (_kind, _label, work) => work(), meteredAvatarRender: (_fal, start) => start(), onOutOfCredits() {}, onSpendingChange() {}, openRouterBalance: async () => null, spendOverview: async () => ({}), trackAvatarStatus() {}, trackJobSnapshot() {}, trackRemixStatus() {} }
 const BACKGROUNDS_STUB = { resolveBackground: (name) => '/library/' + name, listBackgrounds: async () => [], addBackgrounds: async () => [], removeBackground: async () => [] }
 
 function loadSource(file, mocks = {}, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../src/main', file), 'utf8')
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const module = { exports: {} }
-  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? (id === './backgrounds' ? BACKGROUNDS_STUB : id === './avatars' ? AVATARS_STUB : id === './avatar-studio' ? AVATAR_STUDIO_STUB : id === './voice-samples' ? { voiceSample: async () => new Uint8Array() } : id === './media-permissions' ? { requestMediaAccess: async () => ({ camera: true, microphone: true }) } : id === './ctas' ? { addCta: async () => [], applyRunCta: async () => ({ failed: [] }), readCta: () => ({}), listCtas: async () => [], removeCta: async () => [], updateCta: async () => [] } : id === './reactions' ? { makeReactions: async () => ({}), reactionsInProgress: () => false, uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] } : id === './remix' ? { onRemixStatus: () => {}, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] } : null) ?? (id.startsWith('../shared/') ? loadShared(id.slice('../shared/'.length) + '.ts') : require(id)), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, __dirname: path.join(__dirname, '../../src/main'), ...globals })
+  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? (id === './spending' ? SPENDING_STUB : id === './backgrounds' ? BACKGROUNDS_STUB : id === './avatars' ? AVATARS_STUB : id === './avatar-studio' ? AVATAR_STUDIO_STUB : id === './voice-samples' ? { voiceSample: async () => new Uint8Array() } : id === './media-permissions' ? { requestMediaAccess: async () => ({ camera: true, microphone: true }) } : id === './ctas' ? { addCta: async () => [], applyRunCta: async () => ({ failed: [] }), readCta: () => ({}), listCtas: async () => [], removeCta: async () => [], updateCta: async () => [] } : id === './reactions' ? { makeReactions: async () => ({}), reactionsInProgress: () => false, uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] } : id === './remix' ? { onRemixStatus: () => {}, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] } : null) ?? (id.startsWith('../shared/') ? loadShared(id.slice('../shared/'.length) + '.ts') : require(id)), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, __dirname: path.join(__dirname, '../../src/main'), ...globals })
   return module.exports
 }
 function loadShared(file) {
@@ -191,7 +192,7 @@ test('the native picker authorizes media and shell opening rejects aliased appli
       './edit-inspector': { inspectEdits: async () => ({}) },
       './run-history': runHistory,
       './pipeline-runner': {},
-      './job-manager': { initJobManager() {} },
+      './job-manager': { initJobManager() {}, onJobUpdate() {} },
       './job-start': {},
     './backgrounds': {},
     './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [], cloningInProgress: () => false },
