@@ -1,7 +1,7 @@
 import type { JevThresholdSettings } from '../shared/jev-settings'
 import type { LibraryClipTarget } from '../shared/library-posting'
 import type { AutomationReviewResult } from '../shared/automations'
-import type { CandidateEdit, EditorProgressSummary, EditorSession } from '../shared/clip-editor'
+import type { CandidateEdit, EditorProgressSummary, EditorSession, HookIdea } from '../shared/clip-editor'
 import type { JobOutput } from '../shared/job-output'
 import type { HeadlineLook } from '../shared/headline-look'
 import type { CtaSummary } from '../shared/ctas'
@@ -133,6 +133,10 @@ export interface BridgeClipAPI {
     /** Status counts only; cheap enough for list rows and polling. */
     progress: (path: string) => Promise<EditorProgressSummary>
     freeMedia: (path: string, revision: number) => Promise<EditorSession>
+    /** Add a clip from transcript lines, or a copy of `sourceId` (a variant). Main assigns its id. */
+    addCandidate: (path: string, revision: number, candidate: CandidateEdit, sourceId?: string) => Promise<EditorSession>
+    /** Hook ideas from the clip's own words, graded with the hook rubric. Uses the OpenRouter key. */
+    suggestHooks: (path: string, revision: number, id: string) => Promise<{ hooks: HookIdea[] }>
     /** Main asks the open editor to save before a close or quit continues. */
     onSaveBeforeClose: (callback: () => void) => () => void
     closeReady: (saved: boolean) => Promise<void>
@@ -414,6 +418,8 @@ const api: BridgeClipAPI = {
     replaceSource: (path, revision, replacement) => ipcRenderer.invoke('editor:replaceSource', path, revision, replacement),
     progress: (path) => ipcRenderer.invoke('editor:progress', path),
     freeMedia: (path, revision) => ipcRenderer.invoke('editor:freeMedia', path, revision),
+    addCandidate: (path, revision, candidate, sourceId) => ipcRenderer.invoke('editor:addCandidate', path, revision, candidate, sourceId),
+    suggestHooks: (path, revision, id) => ipcRenderer.invoke('editor:suggestHooks', path, revision, id),
     onSaveBeforeClose: (callback) => subscribe<void>('editor:saveBeforeClose', () => callback()),
     closeReady: (saved) => ipcRenderer.invoke('editor:closeReady', saved)
   },

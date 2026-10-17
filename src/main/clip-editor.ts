@@ -1,9 +1,9 @@
 import { execFile, spawn, type ChildProcess } from 'child_process'
-import { constants, closeSync, createWriteStream, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, type Dirent } from 'fs'
+import { constants, closeSync, createWriteStream, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, type Dirent } from 'fs'
 import { pipeline } from 'stream/promises'
 import { delimiter, dirname, join } from 'path'
 import { createHash, randomUUID } from 'crypto'
-import { EDITOR_REVISION_CONFLICT, editorFailureMessage, editorProgress, isEditorErrorCode, parseCandidateEdit, parseEditorProject, renderEditKey, type CandidateEdit, type EditorBatch, type EditorErrorCode, type EditorProgressSummary, type EditorProject, type EditorSession } from '../shared/clip-editor'
+import { EDITOR_REVISION_CONFLICT, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, editorFailureMessage, editorProgress, isEditorErrorCode, parseCandidateEdit, parseEditorProject, parseHookIdeas, renderEditKey, type CandidateEdit, type EditorBatch, type EditorCandidate, type EditorErrorCode, type EditorProgressSummary, type EditorProject, type EditorSession, type HookIdea } from '../shared/clip-editor'
 import { loadSettings, getSettingsForBridge } from './settings-store'
 import { assertAbsolutePath, assertMediaPath, isWithinDirectory, openAuthorizedMedia } from './security'
 import { getJobOutput } from './file-manager'
@@ -11,7 +11,7 @@ import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironme
 import { resolveBinary } from './tools'
 import { logger } from './logger'
 
-type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source'
+type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source' | 'suggest-hooks'
 interface EditorOperation { progress?: EditorSession['progress']; action: NonNullable<EditorSession['operation']>; child?: ChildProcess; cancelled?: boolean; abort?: AbortController; batch?: EditorBatch }
 const operations = new Map<string, EditorOperation>()
 
@@ -241,14 +241,15 @@ function safeTail(stderr: string): Record<string, string> {
 /** Generous for long sources on CPU encoders, yet bounded if a worker hangs. */
 const workerLimitMs = (durationMs: number): number => 30 * 60 * 1000 + 3 * durationMs
 
-function runWorker(run: string, operation: EditorOperation, action: WorkerAction, env: Record<string, string | undefined>, python: string, limitMs: number, request: Record<string, unknown>): Promise<void> {
+type WorkerResult = { ok: boolean; error?: unknown } & Record<string, unknown>
+function runWorker(run: string, operation: EditorOperation, action: WorkerAction, env: Record<string, string | undefined>, python: string, limitMs: number, request: Record<string, unknown>): Promise<WorkerResult> {
   const engine = env.PYTHONPATH!
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<WorkerResult>((resolve, reject) => {
     const child = spawn(python, [join(dirname(getBridgeRunnerPath()), 'editor_runner.py')],
       { cwd: engine, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true })
     operation.child = child
     let stdout = '', stderr = '', settled = false, protocolFailed = false, timedOut = false
-    let result: { ok: boolean; error?: unknown } | undefined
+    let result: WorkerResult | undefined
     const consume = (line: string): void => {
       if (!line.trim()) return
       if (line.length > 16384) { protocolFailed = true; stop(child); return }
@@ -268,7 +269,7 @@ function runWorker(run: string, operation: EditorOperation, action: WorkerAction
       } catch { protocolFailed = true }
     }
     const timer = setTimeout(() => { timedOut = true; stop(child, true) }, limitMs)
-    const finish = (error?: Error): void => { if (settled) return; settled = true; clearTimeout(timer); if (error) reject(error); else resolve() }
+    const finish = (error?: Error): void => { if (settled) return; settled = true; clearTimeout(timer); if (error) reject(error); else resolve(result!) }
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk)
       let end: number
@@ -308,6 +309,13 @@ function batchFailure(batch: EditorBatch, failed: { title: string; error: Error 
   if (batch.completed < batch.total) parts.push('Clips that were not baked are still ready.')
   return new BatchError(parts.join(' '))
 }
+function workerSetup(settings: ReturnType<typeof loadSettings>): { env: Record<string, string | undefined>; python: string } {
+  const engine = getEnginePath()
+  const env: Record<string, string | undefined> = { ...runtimeEnvironment(), ...getSettingsForBridge({ ...settings, jevEnabled: 'on' }), PYTHONPATH: engine, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1' }
+  const ffmpeg = resolveBinary('ffmpeg')
+  if (ffmpeg !== 'ffmpeg') env.PATH = `${dirname(ffmpeg)}${delimiter}${env.PATH ?? ''}`
+  return { env, python: resolvePythonPath(engine, settings.pythonPath) }
+}
 async function executeEditor(path: unknown, revision: unknown, candidateId: unknown, action: WorkerAction, replacement?: string): Promise<EditorSession> {
   const run = runPath(path)
   if (operations.has(run) || operations.size >= 2) throw new Error('An editor operation is already running. Try again when it finishes.')
@@ -336,12 +344,9 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
     const candidates = action === 'replace-source' ? session.project.candidates.slice(0, 1) : action === 'export-all' ? session.project.candidates.filter((c) => c.status === 'ready') : session.project.candidates.filter((c) => c.id === candidateId)
     if (!candidates.length) throw new Error('Mark at least one clip ready before baking.')
     if (action === 'export-all') operation.batch = { completed: 0, total: candidates.length }
-    const settings = loadSettings(), engine = getEnginePath()
+    const settings = loadSettings()
     if (action === 'review' && !settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings to run this review.')
-    const env: Record<string, string | undefined> = { ...runtimeEnvironment(), ...getSettingsForBridge({ ...settings, jevEnabled: 'on' }), PYTHONPATH: engine, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1' }
-    const ffmpeg = resolveBinary('ffmpeg')
-    if (ffmpeg !== 'ffmpeg') env.PATH = `${dirname(ffmpeg)}${delimiter}${env.PATH ?? ''}`
-    const python = resolvePythonPath(engine, settings.pythonPath), limitMs = workerLimitMs(session.project.duration_ms)
+    const { env, python } = workerSetup(settings), limitMs = workerLimitMs(session.project.duration_ms)
     for (const candidate of candidates) {
       if (operation.cancelled) break
       try {
@@ -386,6 +391,99 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
   }
   return openEditor(run)
 }
+/**
+ * Add a clip: one made from transcript lines, or a copy of `sourceId` for A/B
+ * testing. Main assigns its id; the new clip starts refining, unreviewed and
+ * unexported. A copy keeps its source's score, reason and camera scan.
+ */
+export async function addEditorCandidate(path: unknown, revision: unknown, candidate: unknown, sourceId?: unknown): Promise<EditorSession> {
+  const run = runPath(path)
+  if (operations.has(run)) throw new Error('Wait for the current editor operation to finish')
+  operations.set(run, { action: 'save' })
+  try {
+    const { project } = await openEditor(run)
+    if (!Number.isSafeInteger(revision) || project.revision !== revision) throw new Error(EDITOR_REVISION_CONFLICT)
+    if (project.media_freed) throw new Error('Editor media was freed. This project is read-only.')
+    if (project.candidates.length >= MAX_EDITOR_CANDIDATES) throw new Error(`A project can hold up to ${MAX_EDITOR_CANDIDATES} clips. This one is full.`)
+    let source: EditorCandidate | undefined
+    if (sourceId !== undefined && sourceId !== null) {
+      source = typeof sourceId === 'string' ? project.candidates.find((c) => c.id === sourceId) : undefined
+      if (!source) throw new Error('The clip to copy is missing. Reopen the editor and try again.')
+    }
+    const edit = parseCandidateEdit(candidate, project.duration_ms, project.transcript.length)
+    if (!source) {
+      // From transcript lines: one stretch of the source, 3 seconds to 3 minutes.
+      const length = edit.ranges.length === 1 ? edit.ranges[0][1] - edit.ranges[0][0] : -1
+      if (length < Math.min(TRANSCRIPT_CLIP_MS.min, project.duration_ms) || length > TRANSCRIPT_CLIP_MS.max) throw new Error('Invalid candidate edits')
+    }
+    const ids = new Set(project.candidates.map((c) => c.id))
+    let id: string
+    do id = `clip-${randomUUID().replaceAll('-', '').slice(0, 12)}`; while (ids.has(id))
+    const added: EditorCandidate = { ...edit, id, status: 'refining', score: source?.score ?? 0, reason: source?.reason ?? '', review: null, exports: [],
+      requires_visual_context: source?.requires_visual_context === true, ...(source?.camera_scan ? { camera_scan: structuredClone(source.camera_scan) } : {}) }
+    project.candidates.push(added)
+    project.revision++
+    writeProject(run, project)
+  } finally { operations.delete(run) }
+  return openEditor(run)
+}
+
+/** Record what "Suggest hooks" cost in the run's job_output.json (metrics.api_costs.editor_hooks). */
+async function recordHookCost(run: string, result: WorkerResult): Promise<void> {
+  const cost = typeof result.cost_usd === 'number' && Number.isFinite(result.cost_usd) && result.cost_usd >= 0 && result.cost_usd < 1000 ? result.cost_usd : 0
+  const incomplete = result.cost_incomplete === true
+  const model = typeof result.model === 'string' && /^[\w.:/-]{1,120}$/.test(result.model) ? result.model : undefined
+  if (!cost && !incomplete) return
+  const object = (x: unknown): Record<string, unknown> => x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : {}
+  try {
+    await runExclusive(run, async () => {
+      const file = join(run, 'job_output.json')
+      const stat = lstatSync(file)
+      if (!stat.isFile() || stat.size > 64 * 1024 * 1024) throw new Error('Invalid job output')
+      const output = object(JSON.parse(readFileSync(file, 'utf8')))
+      const metrics = object(output.metrics), costs = object(metrics.api_costs), section = object(costs.editor_hooks)
+      const add = (x: unknown, n: number): number => Math.round(((typeof x === 'number' && Number.isFinite(x) ? x : 0) + n) * 1e6) / 1e6
+      costs.editor_hooks = { ...section, provider: 'openrouter', ...(model ? { model } : {}), estimated_cost_usd: add(section.estimated_cost_usd, cost),
+        attempts: add(section.attempts, 1), ...(incomplete || section.cost_incomplete === true ? { cost_incomplete: true } : {}) }
+      costs.total_estimated_cost_usd = add(costs.total_estimated_cost_usd, cost)
+      if (incomplete) costs.cost_incomplete = true
+      metrics.api_costs = costs; output.metrics = metrics
+      const temporary = join(run, `.editor-${randomUUID()}.tmp`)
+      try {
+        writeFileSync(temporary, JSON.stringify(output), { mode: 0o600, flag: 'wx' })
+        renameSync(temporary, file)
+      } finally { try { unlinkSync(temporary) } catch { /* Already committed. */ } }
+    })
+  } catch (error) {
+    // The ideas are still shown; only the cost record is missing.
+    logger.warn('editor.hooks.costNotRecorded', { message: String((error as Error)?.message ?? error).slice(0, 200) })
+  }
+}
+
+/** Hook ideas for one clip, from its own words (OpenRouter, the member's key). The project is not changed. */
+export async function suggestEditorHooks(path: unknown, revision: unknown, candidateId: unknown): Promise<{ hooks: HookIdea[] }> {
+  const run = runPath(path)
+  if (operations.has(run) || operations.size >= 2) throw new Error('An editor operation is already running. Try again when it finishes.')
+  const operation: EditorOperation = { action: 'suggest-hooks' }
+  operations.set(run, operation)
+  try {
+    const { project } = await openEditor(run)
+    if (project.media_freed) throw new Error('Editor media was freed. This project is read-only.')
+    if (revision !== project.revision || typeof candidateId !== 'string' || !project.candidates.some((c) => c.id === candidateId)) throw new Error('Project changed. Reopen it and retry.')
+    const settings = loadSettings()
+    if (!settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings to get hook ideas.')
+    const { env, python } = workerSetup(settings)
+    const result = await runWorker(run, operation, 'suggest-hooks', env, python, 10 * 60 * 1000,
+      { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidateId, action: 'suggest-hooks' })
+    if (operation.cancelled) throw new Error(editorFailureMessage('suggest-hooks', 'cancelled'))
+    await recordHookCost(run, result)
+    return { hooks: parseHookIdeas(result.hooks) }
+  } finally {
+    operation.child = undefined
+    operations.delete(run)
+  }
+}
+
 // Keep IPC's editable surface narrow; no media paths, reviews or export records come from React.
 export type { CandidateEdit }
 

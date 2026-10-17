@@ -1,5 +1,5 @@
 /** Persisted source-time edits. Media paths and review results are main-process owned. */
-import { parseHeadlineLook, type HeadlineLook } from './headline-look'
+import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
 export type Crop = [number, number, number, number]
 export type CropCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 export type EditorRange = [number, number]
@@ -60,7 +60,7 @@ export interface EditorProject {
   transcript: { start_ms: number; end_ms: number; text: string }[]
 }
 export interface EditorProgress { phase: 'scan' | 'preview'; percent: number }
-export type EditorOperation = 'save' | 'review' | 'export' | 'export-all' | 'replace-source' | 'scan-cameras'
+export type EditorOperation = 'save' | 'review' | 'export' | 'export-all' | 'replace-source' | 'scan-cameras' | 'suggest-hooks'
 export interface EditorBatch { completed: number; total: number; failed?: number }
 export interface EditorSession {
   progress?: EditorProgress; project: EditorProject; sourcePath: string; previewPath: string
@@ -81,7 +81,7 @@ export interface EditorProgressSummary {
 export const EDITOR_REVISION_CONFLICT = 'This project changed. Reopen it before saving.'
 /** Fixed worker failure codes (see bridge/editor_runner.py); no tool output crosses the bridge. */
 export const editorErrorCodes = ['duration', 'geometry', 'audio', 'invalid', 'project_changed', 'invalid_edit', 'not_ready',
-  'source_missing', 'source_incompatible', 'render_failed', 'scan_too_long', 'review_unavailable', 'engine_unavailable',
+  'source_missing', 'source_incompatible', 'render_failed', 'scan_too_long', 'review_unavailable', 'hooks_unavailable', 'engine_unavailable',
   'cancelled', 'timeout'] as const
 export type EditorErrorCode = typeof editorErrorCodes[number]
 export function isEditorErrorCode(value: unknown): value is EditorErrorCode {
@@ -117,6 +117,13 @@ export function editorFailureMessage(action: Exclude<EditorOperation, 'save'>, c
       : code === 'cancelled' ? 'Camera scan cancelled. Your edits and previous markers are saved.'
       : code && common[code] ? `${common[code]} Your edits and previous markers are saved.`
       : 'Camera scan stopped or failed. Your edits and previous markers are saved. Try scanning a shorter clip.'
+  }
+  if (action === 'suggest-hooks') {
+    return code === 'hooks_unavailable' ? 'Could not get hook ideas. Check your OpenRouter key and connection, then try again.'
+      : code === 'cancelled' ? 'Hook ideas cancelled.'
+      : code === 'timeout' ? 'Hook ideas took too long and were stopped. Try again.'
+      : code && common[code] ? common[code]!
+      : 'Could not get hook ideas. Try again.'
   }
   if (action === 'review') {
     return code === 'review_unavailable' ? 'Jev could not review this edit. Check your OpenRouter key and connection, then try again. Your previous review is preserved.'
@@ -392,4 +399,142 @@ export function stepFrame(frames: number[], time: number, direction: -1 | 1): nu
 export function cameraMarkers(c: EditorCandidate, threshold: number): CameraScan['markers'] {
   const dismissed = new Set(c.dismissed_camera_markers ?? [])
   return (c.camera_scan?.markers ?? []).filter((m) => m.score >= threshold && !dismissed.has(m.at_ms) && c.ranges.some(([a, b]) => m.at_ms > a && m.at_ms < b))
+}
+
+/** A project holds at most this many clips (parseEditorProject's limit). */
+export const MAX_EDITOR_CANDIDATES = 100
+/** A clip made from transcript lines: whole lines, at least 3 seconds and at most 3 minutes. */
+export const TRANSCRIPT_CLIP_MS = { min: 3000, max: 180000 } as const
+type TranscriptRow = EditorProject['transcript'][number]
+
+/** Snap a run of transcript lines to a source range: whole lines, padded to the minimum, cut to the maximum. */
+export function transcriptRange(transcript: TranscriptRow[], first: number, last: number, duration: number): EditorRange | null {
+  const lo = Math.min(first, last), hi = Math.max(first, last)
+  if (!Number.isInteger(lo) || lo < 0 || hi >= transcript.length) return null
+  const start = Math.max(0, Math.round(transcript[lo].start_ms))
+  let end = Math.round(transcript[lo].end_ms)
+  // Longest run of whole lines that fits; a single over-long line is cut at the maximum.
+  for (let i = lo; i <= hi; i++) { if (transcript[i].end_ms - start > TRANSCRIPT_CLIP_MS.max) break; end = Math.round(transcript[i].end_ms) }
+  end = Math.min(duration, end, start + TRANSCRIPT_CLIP_MS.max)
+  // Too short: take in the following lines (or, at the end of the source, earlier footage).
+  for (let i = hi + 1; end - start < TRANSCRIPT_CLIP_MS.min && i < transcript.length; i++) {
+    if (transcript[i].end_ms - start > TRANSCRIPT_CLIP_MS.max) break
+    end = Math.min(duration, Math.round(transcript[i].end_ms))
+  }
+  if (end - start < TRANSCRIPT_CLIP_MS.min) end = Math.min(duration, start + TRANSCRIPT_CLIP_MS.min)
+  const from = end - start < TRANSCRIPT_CLIP_MS.min ? Math.max(0, end - TRANSCRIPT_CLIP_MS.min) : start
+  return end - from >= 100 ? [from, end] : null
+}
+
+/** The look most of the run's hooks use (the default when none has one). */
+export function runHookLook(candidates: CandidateEdit[]): HeadlineLook {
+  const counts = new Map<string, { look: HeadlineLook; n: number }>()
+  for (const c of candidates) {
+    if (!c.hook) continue
+    const key = JSON.stringify(c.hook.look), item = counts.get(key)
+    counts.set(key, { look: c.hook.look, n: (item?.n ?? 0) + 1 })
+  }
+  return [...counts.values()].sort((a, b) => b.n - a.n)[0]?.look ?? { ...DEFAULT_HEADLINE_LOOK }
+}
+
+/** A title from a line's first words. */
+export function titleFromText(text: string, words = 8): string {
+  const parts = text.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+  const title = parts.slice(0, words).join(' ').replace(/[\s,;:–—-]+$/, '')
+  return clampText(parts.length > words ? `${title}…` : title, MAX_HOOK_CHARS)
+}
+
+/**
+ * A new clip from transcript lines `first`…`last` (main assigns its id).
+ * Framing and caption settings come from the nearest clip; the hook is the
+ * title in the run's hook look. No AI is used.
+ */
+export function transcriptClip(project: Pick<EditorProject, 'transcript' | 'duration_ms' | 'width' | 'height' | 'aspect_ratio'>, candidates: CandidateEdit[], first: number, last: number): CandidateEdit | null {
+  const range = transcriptRange(project.transcript, first, last, project.duration_ms)
+  if (!range) return null
+  const [a, b] = range, mid = (a + b) / 2
+  const distance = (c: CandidateEdit): number => { const s = c.ranges[0][0], e = c.ranges.at(-1)![1]; return mid < s ? s - mid : mid > e ? mid - e : 0 }
+  const nearest = [...candidates].filter((c) => c.status !== 'discarded').sort((x, y) => distance(x) - distance(y))[0] ?? candidates[0]
+  let scene: EditorScene = { at_ms: 0, layout: 'fill', crops: [defaultCrop(project.width, project.height, project.aspect_ratio === '9:16' ? 9 / 16 : 16 / 9)] }
+  if (nearest) {
+    const framing = framingAt(nearest, Math.max(nearest.ranges[0][0], Math.min(nearest.ranges.at(-1)![1], a)))
+    scene = { at_ms: 0, layout: framing.layout, crops: framing.crops.map((c) => [...c] as Crop), ...(framing.split !== undefined ? { split: framing.split } : {}) }
+  }
+  const lines = project.transcript.slice(Math.min(first, last), Math.max(first, last) + 1)
+  const title = titleFromText(lines.map((r) => r.text).join(' ')) || `Clip at ${Math.floor(a / 60000)}:${String(Math.floor(a / 1000) % 60).padStart(2, '0')}`
+  return { id: 'new', title, ranges: [range], scenes: [scene], captions: nearest?.captions ?? true, caption_preset: nearest?.caption_preset ?? 'pop',
+    video_speed: 1, status: 'refining', caption_edits: [], caption_suppression_ranges: [], caption_y: nearest?.caption_y ?? null,
+    hook: { text: title, look: runHookLook(candidates) } }
+}
+
+/** "Title (variant B)", then C, D… so each copy can be told apart. */
+export function variantTitle(title: string, titles: string[]): string {
+  const base = title.replace(/ \(variant [B-Z]\)$/, '')
+  const taken = new Set(titles)
+  for (const letter of 'BCDEFGHIJKLMNOPQRSTUVWXYZ') {
+    const suffix = ` (variant ${letter})`, next = `${clampText(base, 200 - suffix.length)}${suffix}`
+    if (!taken.has(next)) return next
+  }
+  return clampText(`${base} (variant)`, 200)
+}
+
+/** A copy of a clip for A/B testing (main assigns its id and keeps its score and scan). */
+export function variantOf(c: CandidateEdit, candidates: CandidateEdit[]): CandidateEdit {
+  return { ...structuredClone(candidateEdit(c)), id: 'new', title: variantTitle(c.title, candidates.map((x) => x.title)), status: 'refining' }
+}
+
+/**
+ * "Use this style on every clip": captions on/off, caption preset and position,
+ * the hook look (not its words), call to action and export speed go from
+ * clip `source` to every other clip that isn't discarded.
+ */
+export function applyStyleToAll<T extends CandidateEdit>(candidates: T[], source: number): { candidates: T[]; changed: number } {
+  const from = candidates[source]
+  if (!from) return { candidates, changed: 0 }
+  let changed = 0
+  const next = candidates.map((c, i) => {
+    if (i === source || c.status === 'discarded') return c
+    const patch: Partial<CandidateEdit> = { captions: from.captions, caption_preset: from.caption_preset, caption_y: from.caption_y ?? null, video_speed: from.video_speed }
+    if (from.cta_id === undefined) { if (c.cta_id !== undefined) patch.cta_id = undefined } else patch.cta_id = from.cta_id
+    if (from.hook && c.hook) patch.hook = { ...c.hook, look: { ...from.hook.look } }
+    const updated = refineEdit(c, patch)
+    if (patch.cta_id === undefined && 'cta_id' in patch) delete updated.cta_id
+    if (JSON.stringify(candidateEdit(updated)) === JSON.stringify(candidateEdit(c))) return c
+    changed++
+    return updated
+  })
+  return { candidates: next, changed }
+}
+
+/** One hook idea, graded with the framework hook rubric. Only ideas backed by the clip's words reach the editor. */
+export interface HookIdea {
+  text: string
+  /** Letter grade and 0–10 hook score, computed by the engine from the rubric. */
+  grade: 'A' | 'B' | 'C' | 'D' | 'F'; score: number
+  hook_type: string
+  /** Triple Hook elements quoted from the idea's words. */
+  elements: { qualifier: string | null; main_statement: string | null; twist: string | null }
+  /** The clip's own words the idea rests on. */
+  evidence: string
+  why: string
+}
+const HOOK_TYPE_IDS = ['direct_response', 'story', 'challenge', 'educational', 'contrarian', 'vulnerability', 'none']
+/** Worker output for "Suggest hooks": at most 5 well-formed ideas, everything else dropped. */
+export function parseHookIdeas(value: unknown): HookIdea[] {
+  if (!Array.isArray(value)) return []
+  const text = (x: unknown, max: number): string | null => typeof x === 'string' && x.trim() ? clampText(x.replace(/\s+/g, ' ').trim(), max) : null
+  const ideas: HookIdea[] = []
+  for (const item of value.slice(0, 10)) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+    const v = item as Record<string, unknown>, words = text(v.text, MAX_HOOK_CHARS)
+    if (!words || [...words].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) continue
+    if (!['A', 'B', 'C', 'D', 'F'].includes(v.grade as string) || typeof v.score !== 'number' || !Number.isFinite(v.score)) continue
+    const e = v.elements && typeof v.elements === 'object' ? v.elements as Record<string, unknown> : {}
+    ideas.push({ text: words, grade: v.grade as HookIdea['grade'], score: Math.max(0, Math.min(10, Math.round(v.score * 10) / 10)),
+      hook_type: HOOK_TYPE_IDS.includes(v.hook_type as string) ? v.hook_type as string : 'none',
+      elements: { qualifier: text(e.qualifier, 300), main_statement: text(e.main_statement, 300), twist: text(e.twist, 300) },
+      evidence: text(v.evidence, 600) ?? '', why: text(v.why, 300) ?? '' })
+    if (ideas.length === 5) break
+  }
+  return ideas
 }

@@ -1,7 +1,7 @@
 import { openEditor, saveEditor, runEditor, cancelEditor, replaceEditorSource } from './clip-editor'
 import { requestMediaAccess } from './media-permissions'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
-import { editorCloseReady, freeEditorMedia, onEditorExportCta, onEditorRunLock, readEditorProgress } from './clip-editor'
+import { addEditorCandidate, editorCloseReady, freeEditorMedia, onEditorExportCta, onEditorRunLock, readEditorProgress, suggestEditorHooks } from './clip-editor'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
 import { loadSettings, publicSettings, replaceApiKey, savePublicSettings, type ApiKeyName, type PublicSettings } from './settings-store'
@@ -372,6 +372,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('editor:replaceSource', (_event, path: unknown, revision: unknown, replacement: unknown) => replaceEditorSource(path, revision, replacement))
   handle('editor:progress', (_event, path: unknown) => readEditorProgress(path))
   handle('editor:freeMedia', (_event, path: unknown, revision: unknown) => freeEditorMedia(path, revision))
+  handle('editor:addCandidate', (_event, path: unknown, revision: unknown, candidate: unknown, sourceId: unknown) => addEditorCandidate(path, revision, candidate, sourceId))
+  handle('editor:suggestHooks', (_event, path: unknown, revision: unknown, id: unknown) => suggestEditorHooks(path, revision, id))
   handle('editor:closeReady', (_event, saved: unknown) => editorCloseReady(saved))
 
   handle('edits:inspect', (_event, outputDir: string) => inspectEdits(outputDir, loadSettings().outputDirectory))
