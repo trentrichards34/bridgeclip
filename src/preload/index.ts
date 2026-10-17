@@ -1,12 +1,13 @@
 import type { JevThresholdSettings } from '../shared/jev-settings'
 import type { LibraryClipTarget } from '../shared/library-posting'
 import type { AutomationReviewResult } from '../shared/automations'
-import type { CandidateEdit, EditorProgressSummary, EditorSession } from '../shared/clip-editor'
+import type { CandidateEdit, EditorProgressSummary, EditorSession, HookIdea } from '../shared/clip-editor'
 import type { JobOutput } from '../shared/job-output'
 import type { HeadlineLook } from '../shared/headline-look'
 import type { CtaSummary } from '../shared/ctas'
 import type { EditAudit } from '../shared/editorial'
 import { contextBridge, ipcRenderer } from 'electron'
+import { decodeSpendGate, type OpenRouterBalance, type SpendGate, type SpendOverview, type SpendProvider } from '../shared/spending'
 import type {
   ZernioConnectOptions,
   ZernioConnectResult,
@@ -26,8 +27,10 @@ import type { LibraryClipPostingStatus, LibraryEnhancementOptions, LibraryRunPos
 import type { OpenRouterCatalog } from '../shared/openrouter-models'
 import type { UpdateState } from '../shared/updates'
 import type { OutputStorageUsage } from '../shared/output-storage'
+import type { CleanupFilters, CleanupGroupId, CleanupPlan, CleanupResult, FolderChangeInfo, FreeSpace, MoveProgress, MoveResult, RunSize } from '../shared/library-storage'
 import type { YouTubePreview } from '../shared/youtube-preview'
 import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/avatars'
+import type { MemberPrefs, StyleKind } from '../shared/member-prefs'
 import type { BrandIdentity, RecordingPart, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
 import type {
   AppDataScope,
@@ -124,6 +127,21 @@ export interface BridgeClipAPI {
     onDataChanged: (cb: (scope: AppDataScope) => void) => () => void
     /** The assistant asked the window to show a page. */
     onNavigate: (cb: (target: { page: AssistantNavigationPage; runDir: string | null }) => void) => () => void
+    /** A finished-job notification was clicked: show that page (a Library run or a job, when given). */
+    onOpenPage: (cb: (target: { page: 'library' | 'jobs' | 'remix' | 'avatar'; runDir: string | null; jobId: string | null }) => void) => () => void
+  }
+  /** Remembered styles, saved styles, the support link and notifications. */
+  prefs: {
+    load: () => Promise<MemberPrefs>
+    saveLast: (kind: StyleKind, style: object) => Promise<void>
+    savePreset: (kind: StyleKind, name: string, style: object) => Promise<MemberPrefs>
+    renamePreset: (kind: StyleKind, id: string, name: string) => Promise<MemberPrefs>
+    deletePreset: (kind: StyleKind, id: string) => Promise<MemberPrefs>
+    saveApp: (update: { supportLink?: string; notifyOnFinish?: boolean }) => Promise<MemberPrefs>
+  }
+  support: {
+    /** Copies the support report; with `open`, then opens the member's support link or email. */
+    report: (jobId: string | null, open: boolean) => Promise<{ copied: true; opened: 'email' | 'link' | null }>
   }
   editor: {
     open: (path: string) => Promise<EditorSession>
@@ -134,6 +152,10 @@ export interface BridgeClipAPI {
     /** Status counts only; cheap enough for list rows and polling. */
     progress: (path: string) => Promise<EditorProgressSummary>
     freeMedia: (path: string, revision: number) => Promise<EditorSession>
+    /** Add a clip from transcript lines, or a copy of `sourceId` (a variant). Main assigns its id. */
+    addCandidate: (path: string, revision: number, candidate: CandidateEdit, sourceId?: string) => Promise<EditorSession>
+    /** Hook ideas from the clip's own words, graded with the hook rubric. Uses the OpenRouter key. */
+    suggestHooks: (path: string, revision: number, id: string) => Promise<{ hooks: HookIdea[] }>
     /** Main asks the open editor to save before a close or quit continues. */
     onSaveBeforeClose: (callback: () => void) => () => void
     closeReady: (saved: boolean) => Promise<void>
@@ -320,6 +342,8 @@ export interface BridgeClipAPI {
     recompose: (outputDir: string, clipIndex: number, edit: { headline: string; headlineLook: HeadlineLook; includeCaptions: boolean; captionPreset: string; split: number | null }) => Promise<{ output: JobOutput | null; note: string | null }>
     /** Choose a screenshot for an article-or-post remix. */
     selectImage: () => Promise<string | null>
+    /** Library → "Remix this clip": that clip's video as the source file, and its creator when known. */
+    libraryClip: (outputDir: string, clipIndex: number) => Promise<{ path: string; creator: string }>
     recordings: () => Promise<RemixRecordings>
     recordingBegin: (draftId: number, part: RecordingPart, mime: string) => Promise<string>
     recordingAppend: (token: string, chunk: Uint8Array) => Promise<void>
@@ -376,6 +400,66 @@ export interface BridgeClipAPI {
     /** Help → Changelog asks the window to show the changelog. */
     onShow: (cb: () => void) => () => void
   }
+  /** AI spending: the app's own ledger of what paid runs cost, the OpenRouter balance and the monthly limit. */
+  spending: {
+    overview: () => Promise<SpendOverview>
+    /** null when no OpenRouter key is saved. Cached a few minutes unless `force`. */
+    balance: (force?: boolean) => Promise<OpenRouterBalance | null>
+    /** '' clears the limit. Resolves with the new overview. */
+    setLimit: (value: string) => Promise<SpendOverview>
+    onChange: (cb: () => void) => () => void
+    /** A provider said the credit ran out. */
+    onOutOfCredits: (cb: (provider: SpendProvider) => void) => () => void
+    /**
+     * Shows the spending check before a paid run starts (low balance, monthly limit).
+     * Resolve true for "Start anyway" (offered for a low balance only).
+     */
+    setGateHandler: (handler: ((gate: SpendGate) => Promise<boolean>) | null) => void
+  }
+  storage: {
+    /** Size on disk of each Library run (cached by main until the run changes). */
+    runSizes: (outputDirs: string[]) => Promise<RunSize[]>
+    cleanupPlan: (filters: CleanupFilters) => Promise<CleanupPlan>
+    /** Removes the chosen groups; main rebuilds the plan itself. */
+    cleanup: (groups: CleanupGroupId[], filters: CleanupFilters) => Promise<CleanupResult>
+    freeSpace: () => Promise<FreeSpace>
+    folderChangeInfo: () => Promise<FolderChangeInfo>
+    previousFolders: () => Promise<PreviousFolder[]>
+    moveFolder: (folder: string) => Promise<MoveResult>
+    forgetFolder: (folder: string) => Promise<void>
+    onMoveProgress: (callback: (progress: MoveProgress) => void) => () => void
+  }
+}
+
+/** An earlier output folder whose runs the Library still shows. */
+export interface PreviousFolder {
+  folder: string
+  exists: boolean
+  runs: HistoryEntry[]
+  /** Other CreatorClips folders there (unfinished runs, Avatar Studio) that a move also brings. */
+  otherFolders: number
+}
+
+let gateHandler: ((gate: SpendGate) => Promise<boolean>) | null = null
+
+/**
+ * A call that starts paid work. When the main process stops it at the spending
+ * check, the window is asked; "Start anyway" (low balance only) sends it again.
+ */
+async function paid<T>(channel: string, ...args: unknown[]): Promise<T> {
+  try {
+    return await ipcRenderer.invoke(channel, ...args)
+  } catch (error) {
+    const gate = decodeSpendGate((error as Error | null)?.message)
+    if (!gate) throw error
+    let proceed = false
+    try { proceed = gateHandler ? await gateHandler(gate) === true : false } catch { proceed = false }
+    if (!proceed || !gate.canOverride) {
+      throw new Error(gate.reason === 'limit' ? 'Not started: this would go over your monthly AI spending limit (Settings → Spending).' : 'Not started: your OpenRouter balance is low. Add credits, or choose Start anyway.')
+    }
+    await ipcRenderer.invoke('spend:allowOnce', channel)
+    return ipcRenderer.invoke(channel, ...args)
+  }
 }
 
 function subscribe<T>(channel: string, callback: (data: T) => void): () => void {
@@ -411,7 +495,19 @@ const api: BridgeClipAPI = {
   },
   app: {
     onDataChanged: (callback) => subscribe('app:dataChanged', callback),
-    onNavigate: (callback) => subscribe('app:navigate', callback)
+    onNavigate: (callback) => subscribe('app:navigate', callback),
+    onOpenPage: (callback) => subscribe('app:openPage', callback)
+  },
+  prefs: {
+    load: () => ipcRenderer.invoke('prefs:load'),
+    saveLast: (kind, style) => ipcRenderer.invoke('prefs:saveLast', kind, style),
+    savePreset: (kind, name, style) => ipcRenderer.invoke('prefs:savePreset', kind, name, style),
+    renamePreset: (kind, id, name) => ipcRenderer.invoke('prefs:renamePreset', kind, id, name),
+    deletePreset: (kind, id) => ipcRenderer.invoke('prefs:deletePreset', kind, id),
+    saveApp: (update) => ipcRenderer.invoke('prefs:saveApp', update)
+  },
+  support: {
+    report: (jobId, open) => ipcRenderer.invoke('support:report', jobId, open)
   },
   editor: {
     open: (path) => ipcRenderer.invoke('editor:open', path),
@@ -421,6 +517,8 @@ const api: BridgeClipAPI = {
     replaceSource: (path, revision, replacement) => ipcRenderer.invoke('editor:replaceSource', path, revision, replacement),
     progress: (path) => ipcRenderer.invoke('editor:progress', path),
     freeMedia: (path, revision) => ipcRenderer.invoke('editor:freeMedia', path, revision),
+    addCandidate: (path, revision, candidate, sourceId) => ipcRenderer.invoke('editor:addCandidate', path, revision, candidate, sourceId),
+    suggestHooks: (path, revision, id) => ipcRenderer.invoke('editor:suggestHooks', path, revision, id),
     onSaveBeforeClose: (callback) => subscribe<void>('editor:saveBeforeClose', () => callback()),
     closeReady: (saved) => ipcRenderer.invoke('editor:closeReady', saved)
   },
@@ -490,7 +588,7 @@ const api: BridgeClipAPI = {
     }
   },
   job: {
-    start: (config) => ipcRenderer.invoke('job:start', config),
+    start: (config) => paid('job:start', config),
     cancel: (jobId) => ipcRenderer.invoke('job:cancel', jobId),
     list: () => ipcRenderer.invoke('jobs:list'),
     dismiss: (jobId) => ipcRenderer.invoke('jobs:dismiss', jobId),
@@ -521,22 +619,22 @@ const api: BridgeClipAPI = {
   avatars: {
     list: () => ipcRenderer.invoke('avatars:list'),
     pickPhoto: () => ipcRenderer.invoke('avatars:pickPhoto'),
-    generateFaces: (description) => ipcRenderer.invoke('avatars:generateFaces', description),
-    restyle: (source, look, detail, consent) => ipcRenderer.invoke('avatars:restyle', source, look, detail, consent),
+    generateFaces: (description) => paid('avatars:generateFaces', description),
+    restyle: (source, look, detail, consent) => paid('avatars:restyle', source, look, detail, consent),
     setPortrait: (id, draftId) => ipcRenderer.invoke('avatars:setPortrait', id, draftId),
     usePicture: (id, file) => ipcRenderer.invoke('avatars:usePicture', id, file),
     removePicture: (id, file) => ipcRenderer.invoke('avatars:removePicture', id, file),
     addPhoto: (id) => ipcRenderer.invoke('avatars:addPhoto', id),
-    makeReactions: (id) => ipcRenderer.invoke('avatars:makeReactions', id),
+    makeReactions: (id) => paid('avatars:makeReactions', id),
     uploadReaction: (id, kind) => ipcRenderer.invoke('avatars:uploadReaction', id, kind),
     removeReaction: (id, kind) => ipcRenderer.invoke('avatars:removeReaction', id, kind),
     create: (input) => ipcRenderer.invoke('avatars:create', input),
     update: (id, patch) => ipcRenderer.invoke('avatars:update', id, patch),
     remove: (id) => ipcRenderer.invoke('avatars:remove', id),
-    cloneVoice: (id, consent) => ipcRenderer.invoke('avatars:cloneVoice', id, consent),
+    cloneVoice: (id, consent) => paid('avatars:cloneVoice', id, consent),
     writeScript: (request) => ipcRenderer.invoke('avatars:writeScript', request),
-    render: (request) => ipcRenderer.invoke('avatars:render', request),
-    recreate: (request) => ipcRenderer.invoke('avatars:recreate', request),
+    render: (request) => paid('avatars:render', request),
+    recreate: (request) => paid('avatars:recreate', request),
     cancelRender: () => ipcRenderer.invoke('avatars:cancelRender'),
     renderStatus: () => ipcRenderer.invoke('avatars:renderStatus'),
     onStatus: (callback) => subscribe('avatars:status', callback)
@@ -551,17 +649,18 @@ const api: BridgeClipAPI = {
     importFile: () => ipcRenderer.invoke('brandIdentities:importFile')
   },
   remix: {
-    start: (request) => ipcRenderer.invoke('remix:start', request),
-    render: (edits) => ipcRenderer.invoke('remix:render', edits),
+    start: (request) => paid('remix:start', request),
+    render: (edits) => paid('remix:render', edits),
     discard: () => ipcRenderer.invoke('remix:discard'),
     cancel: () => ipcRenderer.invoke('remix:cancel'),
     status: () => ipcRenderer.invoke('remix:status'),
     onStatus: (callback) => subscribe('remix:status', callback),
     mediaAccess: () => ipcRenderer.invoke('remix:mediaAccess'),
     moment: (draftId) => ipcRenderer.invoke('remix:moment', draftId),
-    write: () => ipcRenderer.invoke('remix:write'),
+    write: () => paid('remix:write'),
     recompose: (outputDir, clipIndex, edit) => ipcRenderer.invoke('remix:recompose', outputDir, clipIndex, edit),
     selectImage: () => ipcRenderer.invoke('remix:selectImage'),
+    libraryClip: (outputDir, clipIndex) => ipcRenderer.invoke('library:remixSource', outputDir, clipIndex),
     recordings: () => ipcRenderer.invoke('remix:recordings'),
     recordingBegin: (draftId, part, mime) => ipcRenderer.invoke('remix:recordingBegin', draftId, part, mime),
     recordingAppend: (token, chunk) => ipcRenderer.invoke('remix:recordingAppend', token, chunk),
@@ -604,6 +703,25 @@ const api: BridgeClipAPI = {
   },
   changelog: {
     onShow: (callback) => subscribe('changelog:show', () => callback())
+  },
+  spending: {
+    overview: () => ipcRenderer.invoke('spend:overview'),
+    balance: (force) => ipcRenderer.invoke('spend:balance', force === true),
+    setLimit: (value) => ipcRenderer.invoke('spend:setLimit', value),
+    onChange: (callback) => subscribe('spend:changed', () => callback()),
+    onOutOfCredits: (callback) => subscribe('spend:outOfCredits', callback),
+    setGateHandler: (handler) => { gateHandler = typeof handler === 'function' ? handler : null }
+  },
+  storage: {
+    runSizes: (outputDirs) => ipcRenderer.invoke('storage:runSizes', outputDirs),
+    cleanupPlan: (filters) => ipcRenderer.invoke('storage:cleanupPlan', filters),
+    cleanup: (groups, filters) => ipcRenderer.invoke('storage:cleanup', groups, filters),
+    freeSpace: () => ipcRenderer.invoke('storage:freeSpace'),
+    folderChangeInfo: () => ipcRenderer.invoke('storage:folderChangeInfo'),
+    previousFolders: () => ipcRenderer.invoke('storage:previousFolders'),
+    moveFolder: (folder) => ipcRenderer.invoke('storage:moveFolder', folder),
+    forgetFolder: (folder) => ipcRenderer.invoke('storage:forgetFolder', folder),
+    onMoveProgress: (callback) => subscribe('storage:moveProgress', callback)
   }
 }
 

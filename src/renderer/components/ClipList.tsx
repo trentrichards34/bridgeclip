@@ -29,6 +29,7 @@ import { Callout } from './ui/Callout'
 import { Segmented } from './ui/Segmented'
 import { usePostsStore } from '../store/use-posts-store'
 import { useSettingsStore } from '../store/use-settings-store'
+import { useRemixForm } from '../store/use-remix-form-store'
 import type { LibraryClipPostingStatus } from '../../shared/library-posting'
 import type { Page as AppPage } from './Sidebar'
 
@@ -56,7 +57,7 @@ interface ClipListProps {
 const MAX_POST_BATCH = 10
 const MAX_BANK_BATCH = 30
 
-function toPostable(clip: ClipArtifact): PostableClip {
+export function toPostable(clip: ClipArtifact): PostableClip {
   return { path: clipFilePath(clip.s3_url), title: clip.summary || `Clip ${clip.clip_index + 1}`, tags: clip.tags, durationMs: clip.duration_ms, aiGenerated: clip.ai_generated === true, postCaption: clip.post_caption ?? undefined }
 }
 
@@ -166,6 +167,15 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
   const outputDir = runDirectory ?? (firstClip ? clipFilePath(firstClip.s3_url).replace(/[\\/][^\\/]+$/, '') : '')
 
   const asPostable = (clip: ClipArtifact): PostableClip => ({ ...toPostable(clip), library: { outputDir, clipIndex: clip.clip_index } })
+  // Remix with this clip as the source file (main checks and authorizes it), then open Remix.
+  const remixClip = async (clip: ClipArtifact): Promise<void> => {
+    setExportError(null)
+    try {
+      const source = await getApi().remix.libraryClip(outputDir, clip.clip_index)
+      useRemixForm.getState().setSourceFile(source.path, source.creator)
+      onNavigate?.('remix')
+    } catch (cause) { setExportError(errorMessage(cause, 'This clip could not be opened in Remix.')) }
+  }
 
   useEffect(() => {
     if (!configured) return
@@ -308,6 +318,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
               onDelete={outputDir ? () => confirmDelete([clip.clip_index]) : undefined}
               onChangeCta={outputDir ? () => setCtaClip(clip) : undefined}
               onEditVideo={outputDir && clip.editable ? () => setEditClip(clip) : undefined}
+              onRemix={outputDir && onNavigate ? () => void remixClip(clip) : undefined}
               actionsDisabled={deleting || exporting}
               onSetPosted={outputDir ? async (posted) => {
                 if (!getApi().history.setPosted) throw new Error('Restart CreatorClips to enable manual posted marks.')

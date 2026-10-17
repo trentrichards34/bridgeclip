@@ -6,6 +6,8 @@ const os = require('node:os')
 const vm = require('node:vm')
 const ts = require('typescript')
 
+const SPENDING_STUB = { allowOnce() {}, assertSpendAllowed: async () => {}, friendlyIpcError: (error) => error, initSpending() {}, metered: (_kind, _label, work) => work(), meteredAvatarRender: (_fal, start) => start(), onOutOfCredits() {}, onSpendingChange() {}, openRouterBalance: async () => null, spendOverview: async () => ({}), trackAvatarStatus() {}, trackJobSnapshot() {}, trackRemixStatus() {} }
+
 function loadSource(file, mocks = {}, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../src/main', file), 'utf8')
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
@@ -41,11 +43,14 @@ function ipcWithLibrary(library) {
     './file-manager': {},
     './run-history': {},
     './pipeline-runner': {},
-    './job-manager': { initJobManager() {} },
+    './job-manager': { initJobManager() {}, onJobUpdate() {} }, './member-prefs': {}, './support-report': { recordToolCheck() {} }, './job-notifications': {}, './library-source': {}, '../shared/member-prefs': { dropMissing: (prefs) => prefs },
+    './spending': SPENDING_STUB,
+    '../shared/spending': { friendlyCreditError: (text) => text },
+    '../shared/avatars': {},
     './job-start': {},
     './backgrounds': {},
     './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [], cloningInProgress: () => false },
-    './avatar-studio': { onAvatarRenderStatus: () => {} },
+    './avatar-studio': { onAvatarRenderStatus: () => {}, avatarRunBusy: () => null }, './avatar-library': { importLegacyAvatarVideos: async () => 0 },
     './voice-samples': { voiceSample: async () => new Uint8Array() },
     './media-permissions': { requestMediaAccess: async () => ({ camera: true, microphone: true }) },
     '../shared/remix': { RECORDING_VIDEO_EXTENSIONS: ['mp4'], REMIX_IMAGE_EXTENSIONS: ['png'] },
@@ -65,7 +70,9 @@ function ipcWithLibrary(library) {
     './edit-inspector': {},
     './youtube-preview': {},
     './library-posting': {},
-    './library-management': { setRunBusyCheck() {} }
+    './library-management': { setRunBusyCheck() {} },
+    './library-storage': { onOutputFolderChanged() {} },
+    './library-folders': { previousOutputFolders: () => [] }
   })
   ipc.registerIpcHandlers(() => window)
   const event = { sender: contents, senderFrame: frame }

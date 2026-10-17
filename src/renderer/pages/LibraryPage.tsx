@@ -20,6 +20,11 @@ import { Skeleton } from '../components/ui/Skeleton'
 import { ConfirmDialog, type ConfirmRequest } from '../components/ui/ConfirmDialog'
 import { HoverCard } from '../components/ui/HoverCard'
 import { useLibraryMotion } from '../hooks/use-library-motion'
+import { useRunSizes } from '../hooks/use-run-sizes'
+import { FreeUpSpaceButton } from '../components/FreeUpSpaceDialog'
+import { PreviousFolders } from '../components/PreviousFolders'
+import { Segmented } from '../components/ui/Segmented'
+import { formatBytes } from '../../shared/library-storage'
 import './library.css'
 import type { Page as AppPage } from '../components/Sidebar'
 
@@ -28,7 +33,9 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
   const outputDirectory = useSettingsStore((s) => s.outputDirectory)
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null)
   const [query, setQuery] = useState('')
-  const [open, setOpen] = useState<{ entry: HistoryEntry; output: JobOutput; clipIndex?: number } | null>(null)
+  const [open, setOpen] = useState<{ entry: HistoryEntry; output: JobOutput; clipIndex?: number; earlierFolder?: boolean } | null>(null)
+  const [sort, setSort] = useState<'newest' | 'largest'>('newest')
+  const [storageRevision, setStorageRevision] = useState(0)
   const requestId = useRef(0)
   const openRequestId = useRef(0)
   const [error, setError] = useState<string | null>(null)
@@ -125,17 +132,20 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
     return () => { active = false }
   }, [entryPaths, postsRevision, open, configured])
 
+  const sizes = useRunSizes(JSON.parse(entryPaths) as string[], storageRevision + previewRevision)
   const filtered = useMemo(() => {
     if (!entries) return []
     const q = query.trim().toLowerCase()
-    return entries.filter((entry) => !q || entry.videoTitle.toLowerCase().includes(q))
-  }, [entries, query])
+    const matches = entries.filter((entry) => !q || entry.videoTitle.toLowerCase().includes(q))
+    // Largest first: unknown sizes last, newest first among equals (the list arrives newest first).
+    return sort === 'largest' ? [...matches].sort((a, b) => (sizes[b.outputDir] ?? -1) - (sizes[a.outputDir] ?? -1)) : matches
+  }, [entries, query, sort, sizes])
 
   const bookmarked = filtered.filter(entry => entry.favorite)
   const recent = filtered.filter(entry => !entry.favorite)
   const totalClips = entries?.reduce((sum, e) => sum + e.clipCount, 0) ?? 0
 
-  const openRun = useCallback(async (entry: HistoryEntry, clipIndex?: number): Promise<void> => {
+  const openRun = useCallback(async (entry: HistoryEntry, clipIndex?: number, earlierFolder = false): Promise<void> => {
     if (busyRef.current.has(entry.outputDir)) return
     const request = ++openRequestId.current
     setError(null)
@@ -151,7 +161,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
         setError('This run has an unsupported or damaged result file.')
         return
       }
-      setOpen({ entry, output: parsed, clipIndex })
+      setOpen({ entry, output: parsed, clipIndex, earlierFolder })
       document.getElementById('page-scroll')?.scrollTo({ top: 0 })
     } catch (err) {
       if (request === openRequestId.current) setError(errorMessage(err, 'Could not open this run.'))
@@ -222,11 +232,14 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
         outputDir={open.entry.outputDir}
         initialClipIndex={open.clipIndex}
         onNavigate={onNavigate}
-        leading={<BackLink label="Library" onClick={() => {
-          setOpen(null)
-          setCounts({})
-          void load()
-        }} />}
+        leading={<>
+          <BackLink label="Library" onClick={() => {
+            setOpen(null)
+            setCounts({})
+            void load()
+          }} />
+          {open.earlierFolder && <Callout tone="info" className="mt-3">This run is in an earlier output folder. You can watch and export its clips. To edit it, delete it or change its call to action, go back to the Library and move it to your current folder.</Callout>}
+        </>}
       />
     )
   }
@@ -255,6 +268,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
               disabled={refreshing || busy.size > 0}
               icon={<RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />}
             />
+            <FreeUpSpaceButton onFreed={() => { setStorageRevision((value) => value + 1); void load() }} />
             {outputDirectory && (
               <Button icon={<FolderOpen className="h-4 w-4" />} onClick={() => getApi().shell.openPath(outputDirectory)}>
                 Open folder
@@ -272,14 +286,18 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
       {configured && postError && <Callout tone="warning" className="mt-4">{postError} Showing saved posting status.</Callout>}
 
       {entries && entries.length > 0 && (
-        <TextInput
-          className="mt-5 max-w-sm rounded-full"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by video title"
-          leading={<Search className="h-3.5 w-3.5" />}
-          aria-label="Search runs"
-        />
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <TextInput
+            className="max-w-sm flex-1 rounded-full"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by video title"
+            leading={<Search className="h-3.5 w-3.5" />}
+            aria-label="Search runs"
+          />
+          <Segmented size="sm" label="Sort runs" value={sort} onChange={setSort}
+            options={[{ value: 'newest', label: 'Newest' }, { value: 'largest', label: 'Largest first' }]} />
+        </div>
       )}
 
       <p className="sr-only" role="status" aria-live="polite">{bookmarkMessage}</p>
@@ -326,6 +344,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
               ...group.items.map(entry => <div key={entry.outputDir} data-library-layout={entry.outputDir} data-bookmarked={Boolean(entry.favorite)} className="library-run-slot">
               <RunCard
                 entry={entry}
+                size={sizes[entry.outputDir]}
                 previewRevision={previewRevision}
                 counts={counts[entry.outputDir]}
                 busy={busy.has(entry.outputDir)}
@@ -345,13 +364,16 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
           </div>
         )}
       </div>
+      <PreviousFolders revision={storageRevision} onOpen={(entry) => { void openRun(entry, undefined, true) }} onMoved={() => { setStorageRevision((value) => value + 1); void load() }} />
       {confirm && <ConfirmDialog request={confirm} onClose={closeConfirm} />}
     </Page>
   )
 }
 
-function RunCard({ entry, previewRevision, counts, busy, onFavorite, onDelete, onOpen, onOpenFolder }: {
+function RunCard({ entry, size, previewRevision, counts, busy, onFavorite, onDelete, onOpen, onOpenFolder }: {
   entry: HistoryEntry
+  /** Size on disk; undefined while measuring, null when unreadable. */
+  size?: number | null
   previewRevision: number
   counts: { posted: number; notPosted: number } | null | undefined
   busy: boolean
@@ -416,6 +438,12 @@ function RunCard({ entry, previewRevision, counts, busy, onFavorite, onDelete, o
             <>
               <span className="text-ink-faint">·</span>
               <span className="font-mono tabular">{formatUsd(entry.totalCostUsd)}</span>
+            </>
+          )}
+          {typeof size === 'number' && (
+            <>
+              <span className="text-ink-faint">·</span>
+              <span className="tabular-nums" title="Size of this run’s folder on disk" data-testid="run-size">{formatBytes(size)}</span>
             </>
           )}
         </p>

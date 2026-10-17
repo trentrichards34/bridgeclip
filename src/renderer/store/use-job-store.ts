@@ -36,6 +36,8 @@ export interface ApiCosts {
   editorial?: LayoutVisionCost
   editorial_repair?: LayoutVisionCost
   framework_grading?: LayoutVisionCost
+  /** "Suggest hooks" in the clip editor, added up over every request. */
+  editor_hooks?: LayoutVisionCost
   editorial_vision?: LayoutVisionCost
   layout_vision?: LayoutVisionCost
   total_estimated_cost_usd: number

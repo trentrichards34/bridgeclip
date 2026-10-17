@@ -48,6 +48,8 @@ export interface AssistantServiceOptions {
     apiKey: () => string
     url?: string
     fetch?: typeof fetch
+    /** Each OpenRouter reply's reported cost (the spend ledger). */
+    onCost?: (usd: number) => void
   }
 }
 
@@ -350,7 +352,8 @@ export class AssistantService {
           turn.lastActivity = Date.now()
           turn.sawOutput = true
         },
-        callTool: (name, args) => this.callTool(turn, name, args, controller.signal)
+        callTool: (name, args) => this.callTool(turn, name, args, controller.signal),
+        onCost: this.options.openRouter?.onCost
       })
       return turn.stopReason ?? error
     } finally {
@@ -370,7 +373,7 @@ export class AssistantService {
       }
     }
     const session = await this.mcp.openSession({
-      instructions: 'Tools for controlling the CreatorClips desktop app: clipping jobs, the clip library, automations, social posting and settings.',
+      instructions: 'Tools for controlling the CreatorClips desktop app: clipping jobs, the clip library, Remix, brand identities, calls to action, Avatar Studio, automations, social posting and settings.',
       listTools: () => this.toolDefinitions(provider),
       callTool: (name, args, signal) => this.callTool(turn, name, args, signal)
     })

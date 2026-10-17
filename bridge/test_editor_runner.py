@@ -61,6 +61,17 @@ class EditorRunnerTests(unittest.TestCase):
         self.assertIn('Editor request failed (unknown)', result.stderr)
         self.assertNotIn('/Users/someone', result.stdout + result.stderr)
 
+    def test_hook_ideas_fit_the_result_line(self):
+        self.assertEqual(editor_runner.result_message(None), {'ok': True})
+        idea = {'text': '日本語' * 60, 'grade': 'B', 'score': 7, 'hook_type': 'story', 'evidence': '証拠' * 120,
+                'elements': {'qualifier': '前' * 100, 'main_statement': None, 'twist': None}, 'why': '理由' * 100}
+        message = editor_runner.result_message({'hooks': [idea] * 5, 'cost_usd': 0.01, 'cost_incomplete': False, 'model': 'm', 'extra': 'no'})
+        self.assertLessEqual(len(json.dumps(message)), editor_runner.MAX_RESULT_CHARS)
+        self.assertTrue(message['ok'] and message['hooks'] and message['cost_usd'] == 0.01 and 'extra' not in message)
+        self.assertEqual(message['hooks'][0]['why'], '')
+        self.assertIn('hooks_unavailable', editor_runner.ERROR_CODES)
+        self.assertIn('suggest-hooks', editor_runner.ACTIONS)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -169,3 +169,19 @@ test('a call to action that can\'t be added leaves the clip exactly as it was, w
   assert.deepEqual(order, ['first', 'second'])
   fs.rmSync(userData, { recursive: true, force: true })
 })
+
+test('a clip whose original was removed to free up space keeps its call to action instead of stacking or dropping it', async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-ctas-freed-'))
+  try {
+    const ctas = load('main/ctas.ts', { electron: { app: { getPath: () => userData } }, './security': { authorizeMedia: (p) => p }, './tools': { resolveBinary: (name) => name } })
+    const run = path.join(userData, 'run')
+    fs.mkdirSync(run)
+    fs.writeFileSync(path.join(run, 'clip_00.mp4'), 'clip with its call to action')
+    const output = { clips: [{ clip_index: 0, s3_url: path.join(run, 'clip_00.mp4'), duration_ms: 5000, cta: { id: 'a1b2c3d4e5f60718', name: 'Follow' } }] }
+    fs.writeFileSync(path.join(run, 'job_output.json'), JSON.stringify(output))
+    await assert.rejects(ctas.applyRunCta(run, null, [0]), /original was removed to free up space/)
+    assert.deepEqual(plain(await ctas.applyRunCta(run, null)), { failed: [0], cancelled: false })
+    assert.equal(fs.readFileSync(path.join(run, 'clip_00.mp4'), 'utf8'), 'clip with its call to action')
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(run, 'job_output.json'), 'utf8')).clips[0].cta, output.clips[0].cta)
+  } finally { fs.rmSync(userData, { recursive: true, force: true }) }
+})

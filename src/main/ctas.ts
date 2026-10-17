@@ -278,6 +278,13 @@ async function applyRunCtaNow(run: string, ctaId: string | null, indices: number
     if (signal?.aborted) { cancelled = true; break }
     const index = clip.clip_index as number
     const path = join(run, `clip_${String(index).padStart(2, '0')}.mp4`)
+    // "Free up space" removed this clip's original: its call to action is now part of the video.
+    if (clip.cta && !existsSync(originalPath(path))) {
+      if (indices?.length === 1) throw new Error('This clip’s original was removed to free up space, so its call to action can’t be changed or removed.')
+      failed.push(index)
+      onProgress?.(++done, targets.length)
+      continue
+    }
     if (existsSync(path)) {
       try {
         clip.duration_ms = await renderClipCta(path, cta, signal)

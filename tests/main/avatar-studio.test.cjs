@@ -186,6 +186,43 @@ test('render requests are validated before any paid call', () => {
   assert.equal(studio.parseRenderRequest({ ...base, backgroundVideo: 'game.mp4' }).backgroundVideo, 'game.mp4')
 })
 
+test('hook text, its look and the call to action are parsed like Create’s; the hook falls back to the script’s first line', () => {
+  const studio = loadStudio()
+  const base = { avatarId: 'abcdef1234567890', style: 'talking', captionPreset: 'beast', script: { title: '', scenes: [{ narration: 'Stop buying coffee every morning. Brew it at home.' }] } }
+  // Older requests (no hook fields): the title, else the first line; the white bar; no CTA.
+  let parsed = plain(studio.parseRenderRequest(base))
+  assert.deepEqual([parsed.headline, parsed.includeTitle, parsed.headlineLook, parsed.ctaId], ['Stop buying coffee every morning.', true, { look: 'white', color: '#FFFFFF', font: 'clean' }, null])
+  assert.equal(studio.parseRenderRequest({ ...base, script: { ...base.script, title: 'Hook first' } }).headline, 'Hook first')
+  parsed = plain(studio.parseRenderRequest({ ...base, headline: '  My   hook ', headlineLook: { look: 'brand', color: '#ff8800', font: 'condensed' }, ctaId: 'a1b2c3d4e5f60718' }))
+  assert.deepEqual([parsed.headline, parsed.headlineLook, parsed.ctaId, parsed.includeTitle], ['My hook', { look: 'brand', color: '#FF8800', font: 'condensed' }, 'a1b2c3d4e5f60718', true])
+  // Empty hook text, "No hook text", or the switch off: nothing drawn.
+  assert.equal(studio.parseRenderRequest({ ...base, headline: '' }).includeTitle, false)
+  assert.equal(studio.parseRenderRequest({ ...base, headlineLook: { look: 'none' } }).includeTitle, false)
+  assert.equal(studio.parseRenderRequest({ ...base, includeTitle: false }).includeTitle, false)
+  assert.throws(() => studio.parseRenderRequest({ ...base, headline: 'x'.repeat(81) }), /under 80 characters/)
+  assert.throws(() => studio.parseRenderRequest({ ...base, headline: 42 }), /hook text/)
+  assert.throws(() => studio.parseRenderRequest({ ...base, headlineLook: { look: 'rainbow' } }), /look for the hook text/)
+  assert.throws(() => studio.parseRenderRequest({ ...base, headlineLook: { look: 'brand', color: 'red' } }), /look for the hook text/)
+  assert.throws(() => studio.parseRenderRequest({ ...base, headlineLook: { look: 'white', extra: 1 } }), /look for the hook text/)
+  assert.throws(() => studio.parseRenderRequest({ ...base, ctaId: '../cta' }), /call to action from your library/)
+  // The engine gets a headline in the chosen look (a title card over gameplay is the engine's call, as in Create).
+  assert.deepEqual(plain(studio.hookForEngine('My hook', { look: 'black', color: '#FFFFFF', font: 'serif' }, true)),
+    { title: 'My hook', include_title: true, title_style: 'headline', headline_text: 'My hook', headline_look: { look: 'black', color: '#FFFFFF', font: 'serif' } })
+  assert.equal(studio.hookForEngine('', { look: 'white', color: '#FFFFFF', font: 'clean' }, true).include_title, false)
+})
+
+test('the first line of a script is shortened at a word to fit as hook text; captions are the script’s own words', () => {
+  const long = { title: '', scenes: [{ narration: `${'Really '.repeat(20)}long opener. Second line.` }] }
+  const hook = shared.firstLine(long)
+  assert.ok(hook.length <= 80 && hook.startsWith('Really') && !hook.endsWith(' '), hook)
+  assert.equal(shared.firstLine({ title: '', scenes: [{ narration: 'No punctuation at all here' }] }), 'No punctuation at all here')
+  assert.equal(shared.hookFromScript({ title: ' Title ', scenes: [{ narration: 'A. B.' }] }), 'Title')
+  assert.equal(shared.postCaptionFromScript({ title: 'T', scenes: [{ narration: 'One.' }, { narration: 'Two.' }] }), 'One. Two.')
+  const caption = shared.postCaptionFromScript({ title: '', scenes: [{ narration: 'First sentence here. '.repeat(200) }] }, 100)
+  assert.ok(caption.length <= 100 && caption.endsWith('.'), caption)
+  assert.equal(shared.postCaptionFromScript({ title: '', scenes: [] }), null)
+})
+
 test('the script writer sends the playbook with a strict schema and returns a validated script', async () => {
   let sent
   const studio = loadStudio()
@@ -479,13 +516,19 @@ test('a recreate run keeps phone rotation, retimes to the window, restores audio
   assert.deepEqual(plain(run[2]), { video_url: 'https://v3.fal.media/source.mp4', image_url: 'data:image/jpeg;base64,AA==', character_orientation: 'video', keep_original_sound: false })
   const probe = (file) => JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height,r_frame_rate:format=duration', '-of', 'json', file], { encoding: 'utf8' }))
   const folder = path.dirname(last.outputPath)
-  const sent = probe(path.join(folder, 'parts', 'source.mp4')).streams[0]
+  assert.equal(last.outputDir, folder)
+  assert.match(path.basename(folder), /^avatar-[0-9a-f-]{36}$/, 'saved as its own Library run')
+  const job = JSON.parse(fs.readFileSync(path.join(folder, 'job_output.json'), 'utf8'))
+  assert.equal(job.source_video_title, 'Avatar Studio · POV test')
+  assert.deepEqual([job.clips[0].headline, job.clips[0].ai_generated, job.clips[0].post_caption], ['POV test', true, null])
+  const sent = probe(path.join(folder, '.avatar', 'parts', 'source.mp4')).streams[0]
   assert.deepEqual([sent.width, sent.height, sent.r_frame_rate], [360, 640, '24/1'], 'portrait stays portrait, at 24 fps')
-  const assembled = probe(path.join(folder, 'parts', 'assembled.mp4'))
+  const assembled = probe(path.join(folder, '.avatar', 'parts', 'assembled.mp4'))
   assert.ok(Math.abs(Number(assembled.format.duration) - 5) < 0.15, `retimed to the 5s window: ${assembled.format.duration}`)
   assert.ok(assembled.streams.some((s) => s.codec_type === 'audio'), 'original audio kept')
   if (hasEngine) {
-    assert.equal(path.basename(last.outputPath), 'final.mp4', last.warning)
+    assert.equal(last.warning, null)
+    assert.equal(path.basename(last.outputPath), 'clip_00.mp4')
     const final = probe(last.outputPath).streams.find((s) => s.codec_type === 'video')
     assert.deepEqual([final.width, final.height], [1080, 1920])
   } else {
@@ -616,7 +659,7 @@ test('images: Nano Banana request with the reference photo inline; base64 result
   assert.equal(seen[0].body.aspect_ratio, '9:16')
   assert.deepEqual(seen[0].body.input_references, [{ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AQI=' } }])
   await assert.rejects(media.generateImage({ model: 'm', prompt: 'p' }, { key: 'k', fetch: async () => jsonResponse({ data: [] }) }), /no image/)
-  await assert.rejects(media.generateImage({ model: 'm', prompt: 'p' }, { key: 'k', fetch: async () => jsonResponse({ error: 'x' }, 402) }), /insufficient credits/)
+  await assert.rejects(media.generateImage({ model: 'm', prompt: 'p' }, { key: 'k', fetch: async () => jsonResponse({ error: 'x' }, 402) }), /out of credits/)
 })
 
 test('speech: preset voices by name, cloned voices by reference recording; raw audio back', async () => {
@@ -722,6 +765,18 @@ test('a talking-head and a cinematic render run end to end on OpenRouter (mocked
   const talking = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=width,height,codec_type:format=duration', '-of', 'json', status.outputPath]).toString())
   assert.deepEqual([talking.streams.find((s) => s.codec_type === 'video').width, talking.streams.find((s) => s.codec_type === 'video').height], [1080, 1920])
   assert.ok(Math.abs(Number(talking.format.duration) - 6) < 0.5, `matches the voiceover (${talking.format.duration}s)`)
+  // Saved as a Library run: clip_00.mp4 with job_output.json, the script as the caption, the AI label on.
+  assert.equal(path.basename(status.outputPath), 'clip_00.mp4')
+  assert.equal(path.dirname(status.outputPath), status.outputDir)
+  assert.equal(path.dirname(status.outputDir), out)
+  const job = JSON.parse(fs.readFileSync(path.join(status.outputDir, 'job_output.json'), 'utf8'))
+  assert.equal(job.source_video_title, 'Avatar Studio · Hook')
+  assert.deepEqual([job.clips[0].headline, job.clips[0].post_caption, job.clips[0].ai_generated], [null, 'Stop doing this. Do that instead, it works.', true])
+  assert.ok(Math.abs(job.clips[0].duration_ms - 6000) < 500)
+  assert.ok(fs.existsSync(path.join(status.outputDir, '.avatar', 'script.json')))
+  assert.equal(fs.existsSync(path.join(out, 'Avatar Studio')), false, 'nothing new in the old folder')
+  // A CTA that was removed from the library is caught before anything is paid for.
+  await assert.rejects(studio.startAvatarRender({ ...base, style: 'talking', ctaId: 'a1b2c3d4e5f60718', script: { title: 'Hook', scenes: [{ narration: 'Hi.' }] } }), /no longer in your library/)
 
   calls.length = 0
   done = finished()

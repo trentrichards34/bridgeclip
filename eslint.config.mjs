@@ -2,7 +2,7 @@ import toolkit from '@electron-toolkit/eslint-config-ts'
 
 export default toolkit.config(
   {
-    ignores: ['node_modules/**', 'out/**', 'dist/**', 'build/**', 'resources/**',
+    ignores: ['node_modules/**', '.claude/**', 'out/**', 'dist/**', 'build/**', 'resources/**',
       'engine/.venv/**', 'engine-venv/**', 'engine-bin/**']
   },
   toolkit.configs.recommended,

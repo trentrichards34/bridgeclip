@@ -21,8 +21,10 @@ import { useChangelogStore } from './store/use-changelog-store'
 import { useAssistantStore } from './store/use-assistant-store'
 import { useDataVersionStore } from './store/use-data-version-store'
 import { usePostsStore } from './store/use-posts-store'
+import { useMemberPrefsStore } from './store/use-member-prefs-store'
 import { requestSettingsSection } from './lib/settings-focus'
 import { ChangelogDialog } from './components/Changelog'
+import { SpendingAlerts } from './components/spending/SpendingAlerts'
 import { Button } from './components/ui/Button'
 import { getApi } from './lib/ipc'
 
@@ -68,6 +70,8 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     setLoadError(false)
     void loadSettings().then(() => checkTools()).catch(() => setLoadError(true))
+    // The member's remembered styles and preferences; the forms keep their defaults if this fails.
+    void useMemberPrefsStore.getState().load().catch(() => {})
   }, [loadSettings, checkTools, retry])
 
   // The main process owns the job list. Subscribe first, then load the list,
@@ -96,11 +100,27 @@ export default function App(): React.JSX.Element {
       api.app.onNavigate(({ page: destination, runDir }) => {
         if (runDir) viewLibraryRun(runDir)
         else navigateRoot(destination)
-      })
+      }),
+      // A finished-job notification was clicked.
+      ...(api.app.onOpenPage ? [api.app.onOpenPage(({ page: destination, runDir, jobId }) => {
+        if (destination === 'library' && runDir) viewLibraryRun(runDir)
+        else if (destination === 'jobs' && jobId) {
+          void commitBeforeNavigation().then(() => {
+            useJobStore.getState().focusJob(jobId)
+            setPage('jobs')
+            setPageVisit((visit) => visit + 1)
+          }, () => undefined)
+        } else navigateRoot(destination)
+      })] : [])
     ]
     void assistant.init().catch(() => {})
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
   }, [navigateRoot, viewLibraryRun])
+
+  const openSpending = useCallback((): void => {
+    requestSettingsSection('spending')
+    navigateRoot('settings')
+  }, [navigateRoot])
 
   const openAssistantSettings = useCallback((section: 'assistant' | 'keys' = 'assistant'): void => {
     requestSettingsSection(section)
@@ -159,8 +179,8 @@ export default function App(): React.JSX.Element {
         <Layout currentPage={page} onNavigate={navigateRoot}>
           <Fragment key={pageVisit}>
             {page === 'clip' && <ClipPage onNavigate={setPage} />}
-            {page === 'avatar' && <AvatarStudioPage onNavigate={setPage} />}
-            {page === 'remix' && <RemixPage onNavigate={setPage} />}
+            {page === 'avatar' && <AvatarStudioPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
+            {page === 'remix' && <RemixPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'library' && <LibraryPage onNavigate={setPage} initialRun={libraryRun?.outputDir} initialClipIndex={libraryRun?.clipIndex} />}
             {page === 'jobs' && <JobsPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'assistant' && <AssistantPage onOpenSettings={openAssistantSettings} />}
@@ -181,6 +201,7 @@ export default function App(): React.JSX.Element {
         </div>
       )}
       {changelogOpen && <ChangelogDialog onClose={closeChangelog} />}
+      {settingsLoaded && <SpendingAlerts onOpenSpending={openSpending} />}
     </>
   )
 }

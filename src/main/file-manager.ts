@@ -83,7 +83,7 @@ export async function getJobHistory(baseDir: string, activeJobIds: ReadonlySet<s
   const entries: JobHistoryEntry[] = []
 
   try {
-    const dirs = (await readdir(baseDir, { withFileTypes: true })).filter((d) => d.isDirectory() && !d.name.startsWith(DELETING_RUN_PREFIX))
+    const dirs = (await readdir(baseDir, { withFileTypes: true })).filter((d) => d.isDirectory() && !d.name.startsWith(DELETING_RUN_PREFIX) && !d.name.startsWith('.moving-'))
 
     for (const dir of dirs) {
       const outputPath = join(baseDir, dir.name, 'job_output.json')

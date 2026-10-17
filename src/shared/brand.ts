@@ -17,6 +17,13 @@ export const PROVIDER_LINKS = {
   fal: 'https://fal.ai/dashboard/keys'
 } as const
 
+/** Where members see their real bills and add credit (Settings → Spending). */
+export const SPENDING_LINKS = {
+  openrouterCredits: 'https://openrouter.ai/settings/credits',
+  openrouterActivity: 'https://openrouter.ai/activity',
+  falBilling: 'https://fal.ai/dashboard/billing'
+} as const
+
 export const ZERNIO_LINKS = {
   signup: 'https://zernio.com/signup',
   pricing: 'https://zernio.com/pricing',

@@ -23,7 +23,11 @@ from clip_engine.services.media_process import MEDIA_INPUT_OPTIONS, PROBE_TIMEOU
 
 # Fixed failure codes; the only failure detail that crosses the bridge.
 EDITOR_ERROR_CODES = frozenset({'duration', 'geometry', 'audio', 'invalid', 'project_changed', 'invalid_edit', 'not_ready',
-    'source_missing', 'source_incompatible', 'render_failed', 'scan_too_long', 'review_unavailable', 'engine_unavailable'})
+    'source_missing', 'source_incompatible', 'render_failed', 'scan_too_long', 'review_unavailable', 'hooks_unavailable',
+    'engine_unavailable'})
+# A project's clip limit and id format (MAX_EDITOR_CANDIDATES and parseCandidateEdit in src/shared/clip-editor.ts).
+MAX_CANDIDATES = 100
+CANDIDATE_ID = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 
 
 class EditorError(ValueError):
@@ -437,6 +441,18 @@ def validate_candidate(c, duration, transcript_count=100000):
         seen.add(index)
 
 
+def validate_candidate_list(candidates):
+    """The whole list, before any one clip is used: 1-100 clips with unique, well-formed ids."""
+    if not isinstance(candidates, list) or not 1 <= len(candidates) <= MAX_CANDIDATES:
+        raise ValueError('Invalid clip list')
+    ids = set()
+    for c in candidates:
+        cid = c.get('id') if isinstance(c, dict) else None
+        if not isinstance(cid, str) or not CANDIDATE_ID.fullmatch(cid) or cid in ids:
+            raise ValueError('Invalid clip id')
+        ids.add(cid)
+
+
 def caption_transcript(transcript, edits):
     """A per-clip copy for rendering; original evidence and word timing stay intact.
 
@@ -523,6 +539,8 @@ async def run_editor(config, progress=None):
             raise ValueError('Invalid source generation')
         await replace_source(run, project, source_id)
         return
+    with failure_code('invalid_edit'):
+        validate_candidate_list(project.get('candidates'))
     c = next((c for c in project['candidates'] if c['id'] == config['candidate_id']), None)
     if c is None:
         raise EditorError('project_changed', 'Candidate is missing')
@@ -572,6 +590,16 @@ async def run_editor(config, progress=None):
             return {**item, 'start_time_ms': round(item['start_time_ms']), 'end_time_ms': round(item['end_time_ms'])}
         transcript = [TranscriptSegment(**{**timing(s), 'words': [TranscriptWord(**timing(w)) for w in s.get('words', [])]}) for s in rows]
     action = config['action']
+    if action == 'suggest-hooks':
+        from clip_engine.services.hook_ideas import HooksUnavailable, clip_text, suggest_hooks
+        text = clip_text(caption_transcript(transcript, c.get('caption_edits', [])), c['ranges'])
+        if not text.strip():
+            return {'hooks': []}  # Nothing is said in this clip: no paid request.
+        try:
+            # Ideas only: the project is not changed, so its revision stays.
+            return await suggest_hooks(settings, c['title'], text)
+        except HooksUnavailable as error:
+            raise EditorError('hooks_unavailable', 'Hook ideas unavailable') from error
     if action == 'review':
         with failure_code('review_unavailable'):
             reviewer = CoherenceReviewer(JevService.from_settings(settings, required=True), settings, transcript, project['duration_ms'])

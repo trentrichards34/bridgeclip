@@ -1,12 +1,13 @@
 import { JevSettings } from '../components/JevSettings'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUpRight, BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, Loader2, RefreshCw, ScrollText, SlidersHorizontal, Sparkles } from 'lucide-react'
+import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, Loader2, RefreshCw, ScrollText, SlidersHorizontal, Sparkles, Wallet } from 'lucide-react'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useChangelogStore } from '../store/use-changelog-store'
 import { useApiKeyDrafts } from '../hooks/use-api-key-drafts'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage } from '../lib/utils'
-import { APP_NAME, APP_VERSION, BRIDGEMIND_URL, ISSUES_URL, LICENSE_NAME, PROVIDER_LINKS, REPO_URL } from '../config/brand'
+import { APP_NAME, APP_VERSION, BRIDGEMIND_URL, LICENSE_NAME, PROVIDER_LINKS, REPO_URL } from '../config/brand'
+import { SupportSettings } from '../components/SupportReport'
 import type { ClipSettings, ToolStatus } from '../../preload/index'
 import { ApiKeyInput } from '../components/ApiKeyInput'
 import { BridgeClipLogo } from '../components/brand/BridgeClipLogo'
@@ -20,11 +21,13 @@ import { IconTile } from '../components/ui/IconTile'
 import { Callout } from '../components/ui/Callout'
 import { UpdatesRow } from '../components/Updates'
 import { OutputStorage } from '../components/OutputStorage'
+import { useOutputFolderChange } from '../components/OutputFolderChange'
 import { AssistantSettings } from '../components/assistant/AssistantSettings'
 import { useAssistantStore } from '../store/use-assistant-store'
 import { takeSettingsSection } from '../lib/settings-focus'
+import { SpendingSettings } from '../components/spending/SpendingSettings'
 
-type SectionId = 'keys' | 'assistant' | 'jev' | 'vocabulary' | 'output' | 'system' | 'about'
+type SectionId = 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'output' | 'system' | 'about'
 type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
@@ -54,6 +57,8 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
     }
   }
 
+  // A new output folder asks what to do with the Library runs in the current one.
+  const folderChange = useOutputFolderChange((dir) => commit({ outputDirectory: dir }))
   const lastSaved = Math.max(savedAt ?? 0, keys.savedAt ?? 0)
   const error = saveError ?? keys.error
   const tools = toolRows(toolStatus)
@@ -65,6 +70,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
 
   const sections: { id: SectionId; label: string; icon: ReactNode; tone: SectionTone }[] = [
     { id: 'keys', label: 'API keys', icon: <KeyRound />, tone: keysMissing ? 'warning' : 'success' },
+    { id: 'spending', label: 'Spending', icon: <Wallet />, tone: 'idle' },
     { id: 'assistant', label: 'Assistant', icon: <Sparkles />, tone: assistantConnected ? 'success' : 'idle' },
     { id: 'jev', label: 'TypeSafe Jev', icon: <SlidersHorizontal />, tone: 'idle' },
     { id: 'vocabulary', label: 'Vocabulary', icon: <BookA />, tone: 'idle' },
@@ -236,6 +242,10 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
             </div>
           </Section>
 
+          <Section id="spending">
+            <SpendingSettings />
+          </Section>
+
           <Section id="assistant">
             <AssistantSettings />
           </Section>
@@ -258,7 +268,8 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
               title="Output"
               description="Every run gets its own folder of clips, transcript and plan."
             />
-            <OutputFolder value={outputDirectory} onCommit={(dir) => commit({ outputDirectory: dir })} />
+            <OutputFolder value={outputDirectory} onCommit={(dir) => { void folderChange.change(dir) }} />
+            {folderChange.dialog}
           </Section>
 
           <Section id="system">
@@ -325,14 +336,6 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                 <Button
                   size="sm"
                   variant="ghost"
-                  trailingIcon={<ArrowUpRight className="h-3.5 w-3.5" />}
-                  onClick={() => getApi().shell.openPath(ISSUES_URL)}
-                >
-                  Report an issue
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
                   icon={<ScrollText className="h-3.5 w-3.5" />}
                   onClick={() => getApi().diagnostics.openLogFolder()}
                 >
@@ -340,6 +343,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                 </Button>
               </div>
             </div>
+            <SupportSettings />
             <UpdatesRow />
             <OutputStorage outputDirectory={outputDirectory} />
           </Section>

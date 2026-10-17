@@ -22,3 +22,7 @@ engine/.venv/
 
 __pycache__/
 *.py[cod]
+
+# Links to shared installs in helper worktrees (never commit them).
+node_modules
+engine/.venv

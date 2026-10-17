@@ -1,4 +1,5 @@
 import { JEV_DEFAULTS, JEV_FEATURE_DEFAULTS, type JevThresholdSettings } from '../shared/jev-settings'
+import { parseSpendLimit } from '../shared/spending'
 import { app, safeStorage } from 'electron'
 import { closeSync, existsSync, fchmodSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs'
 import { isAbsolute, join } from 'path'
@@ -28,6 +29,8 @@ export interface AppSettings extends JevThresholdSettings {
   customVocabulary: string
   /** Instagram, TikTok, X and Facebook links: download with this browser's login ('' for none). */
   downloadLoginBrowser: string
+  /** Monthly AI spending limit in USD ('' for none), checked before paid runs (Settings → Spending). */
+  monthlySpendLimitUsd: string
 }
 
 /** Browsers whose login yt-dlp can use for social video links. */
@@ -54,7 +57,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   outputDirectory: join(app.getPath('home'), 'CreatorClips'),
   pythonPath: process.platform === 'win32' ? 'python' : 'python3',
   customVocabulary: '',
-  downloadLoginBrowser: ''
+  downloadLoginBrowser: '',
+  monthlySpendLimitUsd: ''
 }
 
 const SETTINGS_VERSION = 12
@@ -81,6 +85,7 @@ interface PersistedSettings extends JevThresholdSettings {
   pythonPath: string
   customVocabulary?: string
   downloadLoginBrowser?: string
+  monthlySpendLimitUsd?: string
 }
 
 function ensureDir(dir: string): string {
@@ -118,7 +123,8 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
     outputDirectory: (settings.outputDirectory || DEFAULT_SETTINGS.outputDirectory).trim(),
     pythonPath: (settings.pythonPath || DEFAULT_SETTINGS.pythonPath).trim(),
     customVocabulary: vocabularyTerms(settings.customVocabulary ?? DEFAULT_SETTINGS.customVocabulary).join('\n'),
-    downloadLoginBrowser: settings.downloadLoginBrowser ?? DEFAULT_SETTINGS.downloadLoginBrowser
+    downloadLoginBrowser: settings.downloadLoginBrowser ?? DEFAULT_SETTINGS.downloadLoginBrowser,
+    monthlySpendLimitUsd: (settings.monthlySpendLimitUsd ?? DEFAULT_SETTINGS.monthlySpendLimitUsd).trim()
   }
   for (const key of Object.keys(JEV_DEFAULTS) as (keyof JevThresholdSettings)[]) {
     const value = probability(normalized[key])
@@ -132,6 +138,9 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
   if (!SWITCHES.includes(normalized.sourceContextWebResearch)) throw new Error('Invalid source research setting')
   if (!(LOGIN_BROWSERS as readonly string[]).includes(normalized.downloadLoginBrowser)) throw new Error('Invalid browser login setting')
   if (!isAbsolute(normalized.outputDirectory)) throw new Error('Settings folders must be absolute paths')
+  const limit = parseSpendLimit(normalized.monthlySpendLimitUsd)
+  if (limit === undefined) throw new Error('Enter the monthly spending limit in dollars, like 25 or 12.50, or leave it empty for no limit.')
+  normalized.monthlySpendLimitUsd = limit === null ? '' : String(limit)
   return normalized
 }
 
@@ -227,7 +236,9 @@ export function loadSettings(): AppSettings {
       outputDirectory: typeof raw.outputDirectory === 'string' ? raw.outputDirectory : DEFAULT_SETTINGS.outputDirectory,
       pythonPath: typeof raw.pythonPath === 'string' ? raw.pythonPath : DEFAULT_SETTINGS.pythonPath,
       customVocabulary: typeof raw.customVocabulary === 'string' ? raw.customVocabulary : DEFAULT_SETTINGS.customVocabulary,
-      downloadLoginBrowser: typeof raw.downloadLoginBrowser === 'string' && (LOGIN_BROWSERS as readonly string[]).includes(raw.downloadLoginBrowser) ? raw.downloadLoginBrowser : ''
+      downloadLoginBrowser: typeof raw.downloadLoginBrowser === 'string' && (LOGIN_BROWSERS as readonly string[]).includes(raw.downloadLoginBrowser) ? raw.downloadLoginBrowser : '',
+      // An unreadable limit is dropped rather than making the saved keys unreadable.
+      monthlySpendLimitUsd: typeof raw.monthlySpendLimitUsd === 'string' && parseSpendLimit(raw.monthlySpendLimitUsd) !== undefined ? raw.monthlySpendLimitUsd : ''
     })
 
     if (needsMigration && canEncrypt()) writeSettings(settings)
@@ -261,7 +272,8 @@ function writeSettings(settings: AppSettings): void {
     outputDirectory: settings.outputDirectory,
     pythonPath: settings.pythonPath,
     customVocabulary: settings.customVocabulary,
-    downloadLoginBrowser: settings.downloadLoginBrowser
+    downloadLoginBrowser: settings.downloadLoginBrowser,
+    monthlySpendLimitUsd: settings.monthlySpendLimitUsd
   }
 
   let fd: number | undefined
@@ -347,6 +359,14 @@ export function vocabularyTerms(value: string): string[] {
     if (terms.length >= 200) break
   }
   return terms
+}
+
+/** Save the monthly AI spending limit ('' for none). Returns the saved limit in USD, or null. */
+export function saveSpendLimit(value: unknown): number | null {
+  const limit = parseSpendLimit(value)
+  if (limit === undefined) throw new Error('Enter the monthly spending limit in dollars, like 25 or 12.50, or leave it empty for no limit.')
+  const saved = saveSettings({ ...loadSettings(), monthlySpendLimitUsd: limit === null ? '' : String(limit) })
+  return parseSpendLimit(saved.monthlySpendLimitUsd) ?? null
 }
 
 export function replaceApiKey(key: ApiKeyName, value: string): PublicSettings {

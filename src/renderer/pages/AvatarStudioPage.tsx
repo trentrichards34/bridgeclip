@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { create } from 'zustand'
-import { AudioLines, Clapperboard, Film, FolderOpen, Mic, Plus, Repeat2, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
+import { AudioLines, Clapperboard, Film, FolderOpen, ListVideo, Mic, Plus, Repeat2, Send, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
 import {
-  estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, MAX_SCENES, MAX_SCENE_SECONDS, overlongScenes, type SceneQuality, RECREATE_MAX_SECONDS, RECREATE_MIN_SECONDS, type RecreateMode, MAX_SPOKEN_SECONDS, PRESET_VOICES, PRICES, AI_PORTRAIT_CANDIDATES, PORTRAIT_LOOKS, type PortraitLook, REACTIONS, scriptText, SCRIPT_LENGTHS,
+  estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, firstLine, MAX_HOOK_CHARS, MAX_SCENES, MAX_SCENE_SECONDS, overlongScenes, type SceneQuality, RECREATE_MAX_SECONDS, RECREATE_MIN_SECONDS, type RecreateMode, MAX_SPOKEN_SECONDS, PRESET_VOICES, PRICES, AI_PORTRAIT_CANDIDATES, PORTRAIT_LOOKS, type PortraitLook, REACTIONS, scriptText, SCRIPT_LENGTHS,
   MAX_AVATAR_PICTURES, type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarSummary, type AvatarVideoStyle, type AvatarVoice, type LipSyncModel, type ScriptLength
 } from '../../shared/avatars'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
+import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
+import { parseJobOutput } from '../../shared/job-output'
 import type { Page as PageName } from '../components/Sidebar'
 import { BackgroundPicker } from '../components/BackgroundPicker'
 import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
+import { CtaPicker } from '../components/CtaPicker'
+import { HeadlineLookPicker } from '../components/HeadlineLookPicker'
+import { PostDialog, type PostableClip } from '../components/PostDialog'
 import { VoicePreview } from '../components/VoicePreview'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
@@ -27,6 +32,7 @@ import { SettingRow } from '../components/ui/SettingRow'
 import { Switch } from '../components/ui/Switch'
 import { getApi } from '../lib/ipc'
 import { requestSettingsSection } from '../lib/settings-focus'
+import { clipFilePath } from '../lib/thumbnails'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { useSettingsStore } from '../store/use-settings-store'
 
@@ -60,6 +66,9 @@ interface StudioDraft {
   includeTitle: boolean
   backgroundVideo: string | null
   brandIdentityId: string | null
+  headlineLook: HeadlineLook
+  /** A call to action from the library, added to the end of the video. */
+  ctaId: string | null
   update: (patch: Partial<Omit<StudioDraft, 'update'>>) => void
 }
 
@@ -70,6 +79,7 @@ const useStudioDraft = create<StudioDraft>((set) => ({
   recreate: { sourcePath: null, sourceSeconds: 0, startSeconds: 0, endSeconds: 0, mode: 'replace', keepAudio: true, rightsConfirmed: false },
   topic: '', niche: '', seconds: 30, script: EMPTY_SCRIPT, lipSync: 'avatar-iv', sceneQuality: 'standard', cinematicScenes: null,
   captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, includeTitle: true, backgroundVideo: null, brandIdentityId: null,
+  headlineLook: DEFAULT_HEADLINE_LOOK, ctaId: null,
   update: (patch) => set(patch)
 }))
 
@@ -77,7 +87,7 @@ function voiceLabel(voice: AvatarVoice): string {
   return voice.provider === 'elevenlabs' ? voice.voice : 'Cloned voice'
 }
 
-export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) => void }): React.JSX.Element {
+export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (page: PageName) => void; onViewLibrary?: (outputDir: string, clipIndex?: number) => void }): React.JSX.Element {
   const falConfigured = useSettingsStore((s) => s.falConfigured)
   const openrouterConfigured = useSettingsStore((s) => s.openrouterConfigured)
   const draft = useStudioDraft()
@@ -144,6 +154,12 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
     finally { setWriting(false) }
   }
 
+  // Hook text: the title, or else the script's first line (talking and cinematic videos).
+  const hookFallback = draft.style === 'recreate' ? '' : firstLine(draft.script)
+  const hook = draft.script.title.trim() || hookFallback
+  // With a gameplay split the hook is a title card, as in Create.
+  const hookIsCard = draft.style === 'talking' && Boolean(draft.backgroundVideo)
+
   const generate = async (): Promise<void> => {
     if (!selected) return
     setError(null)
@@ -153,11 +169,12 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
         ? await getApi().avatars.recreate({
           avatarId: selected.id, sourcePath: recreate.sourcePath, startSeconds: recreate.startSeconds, endSeconds: recreate.endSeconds, mode: recreate.mode,
           keepAudio: recreate.keepAudio, title: draft.script.title, captionPreset: draft.captionPreset, includeCaptions: draft.includeCaptions && recreate.keepAudio,
-          includeTitle: draft.includeTitle, rightsConfirmed: recreate.rightsConfirmed
+          includeTitle: draft.includeTitle, rightsConfirmed: recreate.rightsConfirmed, headlineLook: draft.headlineLook, ctaId: draft.ctaId
         })
         : await getApi().avatars.render({
           avatarId: selected.id, style: draft.style, script: draft.script, lipSync: draft.lipSync, sceneQuality: draft.sceneQuality, captionPreset: draft.captionPreset,
-          includeCaptions: draft.includeCaptions, includeTitle: draft.includeTitle, backgroundVideo: draft.style === 'talking' ? draft.backgroundVideo : null
+          includeCaptions: draft.includeCaptions, includeTitle: draft.includeTitle, backgroundVideo: draft.style === 'talking' ? draft.backgroundVideo : null,
+          headline: hook, headlineLook: draft.headlineLook, ctaId: draft.ctaId
         })
       // A status event for this render may already have arrived; keep the newer one.
       setStatus((previous) => previous?.id === started.id ? previous : started)
@@ -253,8 +270,8 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
                 </Button>
               </div>
 
-              <Field label="Hook text" hint="Shown at the top of the video. 2-7 words, outcome first.">
-                <TextInput value={draft.script.title} maxLength={80} placeholder="e.g. Stop doing this with your paycheck" onChange={(e) => draft.update({ script: { ...draft.script, title: e.target.value } })} />
+              <Field label="Hook text (optional)" hint="Shown at the top of the video and used as its title in your Library. 2-7 words, outcome first. Leave it empty to use the script’s first line.">
+                <TextInput aria-label="Hook text" value={draft.script.title} maxLength={MAX_HOOK_CHARS} placeholder={hookFallback || 'e.g. Stop doing this with your paycheck'} onChange={(e) => draft.update({ script: { ...draft.script, title: e.target.value } })} />
               </Field>
 
               {draft.script.scenes.map((scene, index) => (
@@ -269,7 +286,7 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
                     </div>
                   )}
                   <Field label={draft.style === 'cinematic' ? 'Narration' : 'Script'}>
-                    <TextArea rows={draft.style === 'cinematic' ? 3 : 8} value={scene.narration} onChange={(e) => updateScene(index, { narration: e.target.value })}
+                    <TextArea aria-label={draft.style === 'cinematic' ? `Scene ${index + 1} narration` : 'Script'} rows={draft.style === 'cinematic' ? 3 : 8} value={scene.narration} onChange={(e) => updateScene(index, { narration: e.target.value })}
                       placeholder="What your avatar says. Open with the hook, deliver the payoff, end strong." />
                   </Field>
                   {draft.style === 'cinematic' && (
@@ -318,8 +335,17 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
               <SettingRow title="Captions"
                 description={draft.style === 'recreate' ? (recreate.keepAudio ? 'Transcribed from the original audio (uses your OpenRouter key).' : 'Keep the original audio to add captions.') : 'Word-by-word captions in the style below.'}
                 control={<Switch label="Captions" disabled={draft.style === 'recreate' && !recreate.keepAudio} checked={draft.includeCaptions && (draft.style !== 'recreate' || recreate.keepAudio)} onChange={(includeCaptions) => draft.update({ includeCaptions })} />} />
-              <SettingRow title="Hook text at the top" description="The hook text card, like Create's clips."
+              <SettingRow title="Hook text at the top" description={hookIsCard ? 'With a gameplay split the hook text is a title card, like Create’s clips.' : 'A headline at the top of the video, like Create’s clips.'}
                 control={<Switch label="Hook text" checked={draft.includeTitle} onChange={(includeTitle) => draft.update({ includeTitle })} />} />
+              {draft.includeTitle && !hookIsCard && (
+                <div>
+                  <p className="mb-2 text-xs font-medium text-ink">Hook text look</p>
+                  <HeadlineLookPicker value={draft.headlineLook} onChange={(headlineLook) => draft.update({ headlineLook })} />
+                  {draft.headlineLook.look !== 'none' && !(draft.style === 'recreate' ? draft.script.title.trim() : hook) && (
+                    <p className="mt-2 text-2xs text-ink-subtle">Add hook text above to show it.</p>
+                  )}
+                </div>
+              )}
               {draft.includeCaptions && (draft.style !== 'recreate' || recreate.keepAudio) && <CaptionPresetPicker value={draft.captionPreset} onChange={(captionPreset) => draft.update({ captionPreset })} />}
               {draft.style === 'talking' && (
                 <div>
@@ -327,6 +353,11 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
                   <BackgroundPicker value={draft.backgroundVideo} onChange={(backgroundVideo) => draft.update({ backgroundVideo })} />
                 </div>
               )}
+              <div>
+                <p className="text-sm font-medium text-ink">Call to action at the end</p>
+                <p className="mb-2.5 mt-0.5 text-2xs text-ink-muted">Add one of your CTA clips to the end of the video. You can change it later in the Library.</p>
+                <CtaPicker value={draft.ctaId} onChange={(ctaId) => draft.update({ ctaId })} disabled={busy} />
+              </div>
             </div>
           </Panel>
 
@@ -335,7 +366,7 @@ export function AvatarStudioPage({ onNavigate }: { onNavigate: (page: PageName) 
               ? (recreate.sourcePath ? `Estimated cost about $${cost.toFixed(2)} on fal.ai · ${recreateLength.toFixed(1)}s video` : 'Recreate runs on fal.ai. Choose a video to see the estimated cost.')
               : text ? `Estimated cost about $${cost.toFixed(2)} on OpenRouter · ${seconds}s video` : 'Write a script to see the estimated cost.'} />
             <div className="mt-4 space-y-3">
-              {status && <RenderProgress status={status} />}
+              {status && <RenderProgress status={status} onNavigate={onNavigate} onViewLibrary={onViewLibrary} />}
               <div className="flex flex-wrap gap-2">
                 {busy ? (
                   <Button variant="secondary" onClick={() => void getApi().avatars.cancelRender()}>Cancel</Button>
@@ -445,15 +476,38 @@ function LabeledCheckbox({ checked, onChange, label }: { checked: boolean; onCha
   )
 }
 
-function RenderProgress({ status }: { status: AvatarRenderStatus }): React.JSX.Element {
+function RenderProgress({ status, onNavigate, onViewLibrary }: {
+  status: AvatarRenderStatus; onNavigate: (page: PageName) => void; onViewLibrary?: (outputDir: string, clipIndex?: number) => void
+}): React.JSX.Element {
+  const [posting, setPosting] = useState<PostableClip[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { setPosting(null); setError(null) }, [status.id])
   if (status.phase === 'done' && status.outputPath) {
+    const outputDir = status.outputDir
+    /** The video as the Library has it (title, caption, AI label, call to action). */
+    const post = async (): Promise<void> => {
+      if (!outputDir) return
+      setError(null)
+      try {
+        const output = parseJobOutput(await getApi().history.getJob(outputDir))
+        const clip = output?.clips[0]
+        if (!clip) { setError('This video is no longer in your Library.'); return }
+        setPosting([{ path: clipFilePath(clip.s3_url), title: clip.summary || 'Avatar video', tags: clip.tags, durationMs: clip.duration_ms,
+          aiGenerated: clip.ai_generated === true, postCaption: clip.post_caption ?? undefined, library: { outputDir, clipIndex: clip.clip_index } }])
+      } catch (err) { setError(errorMessage(err, 'This video could not be opened for posting.')) }
+    }
     return (
       <div className="space-y-3">
         {status.warning && <Callout tone="warning">{status.warning}</Callout>}
-        <video key={status.outputPath} src={localFileUrl(status.outputPath)} controls className="mx-auto aspect-[9/16] max-h-[520px] rounded-2xl bg-black" />
-        <div className="flex justify-center gap-2">
+        <video key={`${status.id}:${status.outputPath}`} src={localFileUrl(status.outputPath)} controls className="mx-auto aspect-[9/16] max-h-[520px] rounded-2xl bg-black" />
+        <div className="flex flex-wrap justify-center gap-2">
+          {outputDir && <Button size="sm" variant="primary" icon={<Send className="h-3.5 w-3.5" />} onClick={() => void post()}>Post or schedule</Button>}
+          {outputDir && onViewLibrary && <Button size="sm" variant="secondary" icon={<ListVideo className="h-3.5 w-3.5" />} onClick={() => onViewLibrary(outputDir, 0)}>Open in Library</Button>}
           <Button size="sm" variant="secondary" icon={<FolderOpen className="h-3.5 w-3.5" />} onClick={() => void getApi().shell.showItemInFolder(status.outputPath!)}>Show in folder</Button>
         </div>
+        {outputDir && <p className="text-center text-2xs text-ink-subtle">Saved to your Library with your other videos. Past avatar videos are there too.</p>}
+        {error && <Callout tone="danger" onDismiss={() => setError(null)}>{error}</Callout>}
+        {posting && <PostDialog clips={posting} onClose={() => setPosting(null)} onNavigate={onNavigate} />}
       </div>
     )
   }

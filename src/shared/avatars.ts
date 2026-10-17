@@ -7,6 +7,7 @@
  */
 
 import { PRESET_VOICE_IDS } from './voices'
+import type { HeadlineLook } from './headline-look'
 
 export { PRESET_VOICES, PRESET_VOICE_IDS } from './voices'
 
@@ -137,6 +138,12 @@ export interface AvatarRenderRequest {
   includeTitle: boolean
   /** Background-library file looped under a talking head (gameplay split), or null. */
   backgroundVideo: string | null
+  /** Hook text at the top ('' for none): the title, or the script's first line. */
+  headline: string
+  /** How the hook text looks (bar color or floating, and font), as in Create. */
+  headlineLook: HeadlineLook
+  /** A call to action from the library, added to the end of the video. */
+  ctaId: string | null
 }
 
 export type AvatarRenderPhase = 'voice' | 'scenes' | 'animate' | 'assemble' | 'finish' | 'done' | 'failed' | 'cancelled'
@@ -151,6 +158,8 @@ export interface AvatarRenderStatus {
   percent: number
   /** Finished video, inside the output folder. */
   outputPath: string | null
+  /** The video's Library run (its folder in the output folder), once finished. */
+  outputDir: string | null
   error: string | null
   /** Set when the video finished with a compromise, e.g. captions could not be added. */
   warning: string | null
@@ -359,6 +368,42 @@ export function estimateWordTimings(text: string, durationMs: number): { word: s
   return timings
 }
 
+/** Longest hook text drawn at the top of a video. */
+export const MAX_HOOK_CHARS = 80
+
+/** Shorten to `max` characters at a word boundary. */
+function clip(text: string, max: number): string {
+  if (text.length <= max) return text
+  const cut = text.slice(0, max + 1)
+  const space = cut.lastIndexOf(' ')
+  return (space > max / 2 ? cut.slice(0, space) : text.slice(0, max)).replace(/[\s,;:–-]+$/, '')
+}
+
+/** The script's first sentence (or line), shortened to fit as hook text. */
+export function firstLine(script: AvatarScript): string {
+  const text = scriptText(script)
+  const sentence = text.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? text
+  return clip(sentence.trim(), MAX_HOOK_CHARS)
+}
+
+/** Hook text for a scripted video: its title, or else the script's first line. */
+export function hookFromScript(script: AvatarScript): string {
+  return script.title.trim() || firstLine(script)
+}
+
+/**
+ * A ready-to-post caption from the script: what the video says, ending at a
+ * sentence within `max` characters. Only the member's own words, nothing added.
+ */
+export function postCaptionFromScript(script: AvatarScript, max = 2000): string | null {
+  const text = scriptText(script).trim()
+  if (!text) return null
+  if (text.length <= max) return text
+  const cut = text.slice(0, max)
+  const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '))
+  return end > max / 3 ? cut.slice(0, end + 1) : clip(text, max)
+}
+
 /** A safe folder name for one render, e.g. "2026-10-13 0931 Stop buying coffee". */
 export function renderFolderName(title: string, date: Date): string {
   const pad = (value: number): string => String(value).padStart(2, '0')
@@ -393,6 +438,8 @@ export interface AvatarRecreateRequest {
   includeTitle: boolean
   /** The user confirmed they own the source video or have permission to use it. */
   rightsConfirmed: boolean
+  headlineLook: HeadlineLook
+  ctaId: string | null
 }
 
 export function recreateSeconds(request: Pick<AvatarRecreateRequest, 'startSeconds' | 'endSeconds'>): number {

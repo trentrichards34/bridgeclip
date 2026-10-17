@@ -1,26 +1,38 @@
 import { openEditor, saveEditor, runEditor, cancelEditor, replaceEditorSource } from './clip-editor'
 import { requestMediaAccess } from './media-permissions'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
-import { editorCloseReady, freeEditorMedia, onEditorExportCta, onEditorRunLock, readEditorProgress } from './clip-editor'
+import { addEditorCandidate, editorCloseReady, freeEditorMedia, onEditorExportCta, onEditorRunLock, readEditorProgress, suggestEditorHooks } from './clip-editor'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
-import { loadSettings, publicSettings, replaceApiKey, savePublicSettings, type ApiKeyName, type PublicSettings } from './settings-store'
+import { loadSettings, publicSettings, replaceApiKey, savePublicSettings, saveSpendLimit, type ApiKeyName, type PublicSettings } from './settings-store'
 import { getJobHistory, getJobOutput, generateThumbnail } from './file-manager'
 import { measureOutputStorage } from './output-storage'
 import { inspectEdits } from './edit-inspector'
 import { getEnginePath, getBridgeRunnerPath, resolvePythonPath, validatePython } from './pipeline-runner'
-import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds } from './job-manager'
+import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds, onJobUpdate } from './job-manager'
+import { allowOnce, assertSpendAllowed, friendlyIpcError, initSpending, metered, meteredAvatarRender, onOutOfCredits, onSpendingChange, openRouterBalance, spendOverview, trackAvatarStatus, trackJobSnapshot, trackRemixStatus } from './spending'
+import { friendlyCreditError, type SpendProvider } from '../shared/spending'
+import { AI_PORTRAIT_CANDIDATES, estimateRecreateCost, estimateRenderCost, PRICES, REACTIONS } from '../shared/avatars'
+import { estimateRemixCost, isRemixHost, MAX_REMIXES } from '../shared/remix'
+import { deletePreset, readMemberPrefs, renamePreset, saveAppPrefs, saveLastStyle, savePreset } from './member-prefs'
+import { recordToolCheck, reportIssue } from './support-report'
+import { announce, avatarNotice, createNotice, remixNotice } from './job-notifications'
+import { libraryClipForRemix } from './library-source'
+import { dropMissing, type MemberPrefs } from '../shared/member-prefs'
 import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { addCta, applyRunCta, applyRunCtaInLock, listCtas, removeCta, updateCta, withRunLock } from './ctas'
 import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../shared/ctas'
-import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
+import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, readReactions, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
 import { recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
-import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
+import { importLegacyAvatarVideos } from './avatar-library'
+import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, parseRenderRequest, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
-import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
+import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, isWithinLibrary, openAuthorizedMedia, setExtraLibraryRoots } from './security'
+import { cleanupPlan, folderChangeInfo, forgetFolder, freeSpace, listPreviousFolders, moveFolderRuns, onOutputFolderChanged, runCleanup, runSizes } from './library-storage'
+import { previousOutputFolders } from './library-folders'
 import { getModelCatalog } from './openrouter-models'
 import { getYouTubePreview } from './youtube-preview'
 import { resolveBinary, supportsCaptionFilter } from './tools'
@@ -67,10 +79,64 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   const selectedOutputDirectories = new Set<string>()
   initJobManager(getMainWindow)
+  // Errors where a provider says the credit ran out reach the page in the same plain words (and show the add-credits banner).
   const handle: typeof ipcMain.handle = (channel, listener) => ipcMain.handle(channel, (event, ...args) => {
     assertTrustedSender(event, getMainWindow())
-    return listener(event, ...args)
+    let result: unknown
+    try { result = listener(event, ...args) } catch (error) { throw friendlyIpcError(error) }
+    return typeof (result as PromiseLike<unknown> | null)?.then === 'function'
+      ? Promise.resolve(result).catch((error: unknown) => { throw friendlyIpcError(error) })
+      : result
   })
+  const sendToWindow = (channel: string, payload?: unknown): void => {
+    const window = getMainWindow()
+    if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(channel, payload)
+  }
+  // Spending: the ledger, the OpenRouter balance and the check before paid runs.
+  initSpending()
+  onSpendingChange(() => sendToWindow('spend:changed'))
+  onOutOfCredits((provider) => sendToWindow('spend:outOfCredits', provider))
+  onJobUpdate(trackJobSnapshot)
+  /** A paid handler: the spending check (monthly limit, OpenRouter balance) runs first. */
+  const paid = (channel: string, provider: SpendProvider, estimate: (...args: unknown[]) => number | null,
+    run: (...args: unknown[]) => unknown): void => {
+    handle(channel, async (_event, ...args: unknown[]) => {
+      let estimateUsd: number | null = null
+      try { estimateUsd = estimate(...args) } catch { estimateUsd = null }
+      await assertSpendAllowed(channel, provider, estimateUsd)
+      return run(...args)
+    })
+  }
+  handle('spend:overview', () => spendOverview())
+  handle('spend:balance', (_event, force: unknown) => openRouterBalance(force === true))
+  handle('spend:setLimit', async (_event, value: unknown) => { saveSpendLimit(value); sendToWindow('spend:changed'); return spendOverview() })
+  handle('spend:allowOnce', (_event, channel: unknown) => allowOnce(channel))
+  // Remembered styles, saved styles, the support link and notifications (member-prefs.json).
+  // Styles name library items by id: ones deleted since are dropped as they're read.
+  const known = async (prefs: MemberPrefs): Promise<MemberPrefs> => {
+    const [ctas, avatars, brands, backgrounds] = await Promise.all([
+      listCtas().catch(() => []), listAvatars().catch(() => []), listBrandIdentities().catch(() => []), listBackgrounds().catch(() => [])
+    ])
+    return dropMissing(prefs, {
+      ctaIds: new Set(ctas.map((item) => item.id)), avatarIds: new Set(avatars.map((item) => item.id)),
+      brandIds: new Set(brands.map((item) => item.id)), backgrounds: new Set(backgrounds)
+    })
+  }
+  handle('prefs:load', () => known(readMemberPrefs()))
+  handle('prefs:saveLast', (_event, kind: unknown, style: unknown) => { saveLastStyle(kind, style) })
+  handle('prefs:savePreset', (_event, kind: unknown, name: unknown, style: unknown) => known(savePreset(kind, name, style)))
+  handle('prefs:renamePreset', (_event, kind: unknown, id: unknown, name: unknown) => known(renamePreset(kind, id, name)))
+  handle('prefs:deletePreset', (_event, kind: unknown, id: unknown) => known(deletePreset(kind, id)))
+  handle('prefs:saveApp', (_event, update: unknown) => known(saveAppPrefs(update)))
+  // Copy the support report (never the keys); "Report an issue" then opens the member's support link.
+  handle('support:report', (_event, jobId: unknown, open: unknown) => reportIssue(jobId, open === true, [
+    () => { const status = remixStatus(); return status?.phase === 'failed' ? { what: 'Remix', message: status.error, at: null } : null },
+    () => { const status = avatarRenderStatus(); return status?.phase === 'failed' ? { what: 'Avatar Studio', message: status.error, at: status.startedAt } : null }
+  ]))
+  handle('library:remixSource', (_event, outputDir: unknown, clipIndex: unknown) => libraryClipForRemix(outputDir, clipIndex))
+  // A desktop notification when a long job finishes while the app is in the background.
+  onJobUpdate((job) => announce(createNotice(job), getMainWindow))
+
   handle('settings:load', () => {
     return publicSettings(loadSettings())
   })
@@ -84,8 +150,24 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (typeof settings.outputDirectory !== 'string' || typeof settings.pythonPath !== 'string' || typeof settings.customVocabulary !== 'string') throw new Error('Invalid settings')
     if (settings.outputDirectory !== current.outputDirectory && !selectedOutputDirectories.has(settings.outputDirectory)) throw new Error('Choose the output folder with the folder picker')
     if (app.isPackaged && settings.pythonPath !== current.pythonPath) throw new Error('Runtime paths cannot be changed in packaged builds')
-    return savePublicSettings(settings)
+    const saved = savePublicSettings(settings)
+    // The old folder's runs stay in the Library (as an earlier output folder) instead of disappearing.
+    if (saved.outputDirectory !== current.outputDirectory) onOutputFolderChanged(current.outputDirectory, saved.outputDirectory)
+    return saved
   })
+
+  // Disk space: run sizes, Free up space, earlier output folders, low-disk check.
+  setExtraLibraryRoots(previousOutputFolders)
+  handle('storage:runSizes', (_event, outputDirs: unknown) => runSizes(outputDirs))
+  handle('storage:cleanupPlan', (_event, filters: unknown) => cleanupPlan(filters))
+  handle('storage:cleanup', (_event, groups: unknown, filters: unknown) => runCleanup(groups, filters))
+  handle('storage:freeSpace', () => freeSpace())
+  handle('storage:folderChangeInfo', () => folderChangeInfo())
+  handle('storage:previousFolders', () => listPreviousFolders())
+  handle('storage:forgetFolder', (_event, folder: unknown) => forgetFolder(folder))
+  handle('storage:moveFolder', (event, folder: unknown) => moveFolderRuns(folder, (progress) => {
+    if (!event.sender.isDestroyed()) event.sender.send('storage:moveProgress', progress)
+  }))
 
   handle('settings:replaceApiKey', (_event, key: ApiKeyName, value: string) => {
     const previousZernioKey = key === 'zernioApiKey' ? loadSettings().zernioApiKey : null
@@ -203,8 +285,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   handle('ctas:update', (_event, id: unknown, patch: unknown) => updateCta(id, patch))
   handle('ctas:remove', (_event, id: unknown) => removeCta(id))
-  // Library changes wait while a Remix video in that run is being re-made.
-  setRunBusyCheck(remixRunBusy)
+  // Library changes wait while a Remix video in that run is being re-made, or an avatar video is finishing.
+  setRunBusyCheck((path) => remixRunBusy(path) ?? avatarRunBusy(path))
   handle('remix:recompose', async (_event, outputDir: unknown, clipIndex: unknown, edit: unknown) => {
     const note = await recomposeRemix(outputDir, clipIndex, edit)
     return { output: await getJobOutput(outputDir as string, loadSettings().outputDirectory), note }
@@ -222,8 +304,9 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (result.canceled || !result.filePaths[0]) return null
     return draftFromPhoto(result.filePaths[0])
   })
-  handle('avatars:generateFaces', (_event, description: unknown) => draftsFromDescription(description))
-  handle('avatars:restyle', (_event, source: unknown, look: unknown, detail: unknown, consent: unknown) => restyleDrafts(source, look, detail, consent))
+  paid('avatars:generateFaces', 'openrouter', () => AI_PORTRAIT_CANDIDATES * PRICES.image, (description) => metered('avatar', 'Avatar pictures', () => draftsFromDescription(description)))
+  paid('avatars:restyle', 'openrouter', () => AI_PORTRAIT_CANDIDATES * PRICES.image,
+    (source, look, detail, consent) => metered('avatar', 'Avatar pictures', () => restyleDrafts(source, look, detail, consent)))
   handle('avatars:setPortrait', (_event, id: unknown, draftId: unknown) => {
     if (id === avatarInUse() || id === remixAvatarInUse()) throw new Error('This avatar is being used for a video right now. Try again when it finishes.')
     if (typeof id === 'string' && reactionsInProgress(id)) throw new Error('This avatar’s reactions are being made from its current picture. Change the picture when they finish.')
@@ -252,7 +335,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (typeof id === 'string' && cloningInProgress(id)) throw new Error('This avatar’s voice is being cloned. Remove it when that finishes.')
     return removeAvatar(id)
   })
-  handle('avatars:makeReactions', (_event, id: unknown) => makeReactions(id))
+  paid('avatars:makeReactions', 'openrouter', (id) => {
+    const have = typeof id === 'string' ? new Set(readReactions(id).map((reaction) => reaction.id)) : new Set<string>()
+    return REACTIONS.filter((reaction) => !have.has(reaction.id)).length * PRICES.reactionClip || null
+  }, (id) => metered('avatar', 'Avatar reactions', () => makeReactions(id)))
   handle('avatars:uploadReaction', async (_event, id: unknown, kind: unknown) => {
     const window = getMainWindow()
     if (!window) return null
@@ -261,22 +347,29 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return uploadReaction(id, kind, result.filePaths[0])
   })
   handle('avatars:removeReaction', (_event, id: unknown, kind: unknown) => removeReaction(id, kind))
-  handle('avatars:cloneVoice', async (_event, id: unknown, consent: unknown) => {
+  paid('avatars:cloneVoice', 'openrouter', () => 0.02, async (id, consent) => {
     const window = getMainWindow()
     if (!window) return null
     const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a voice recording (30-90 seconds of clear speech)', filters: [{ name: 'Audio', extensions: VOICE_SAMPLE_EXTENSIONS }] })
     if (result.canceled || !result.filePaths[0]) return null
-    return cloneVoice(id, result.filePaths[0], consent)
+    return metered('avatar', 'Voice clone', () => cloneVoice(id, result.filePaths[0], consent))
   })
   handle('avatars:writeScript', (_event, request: unknown) => writeAvatarScript(request))
-  handle('avatars:render', (_event, request: unknown) => startAvatarRender(request))
-  handle('avatars:recreate', (_event, request: unknown) => startAvatarRecreate(request))
+  paid('avatars:render', 'openrouter', (request) => estimateRenderCost(parseRenderRequest(request)),
+    (request) => meteredAvatarRender(false, () => startAvatarRender(request)))
+  paid('avatars:recreate', 'fal', (request) => {
+    const raw = (request ?? {}) as Record<string, unknown>
+    if (typeof raw.startSeconds !== 'number' || typeof raw.endSeconds !== 'number' || !['replace', 'move', 'motion'].includes(raw.mode as string)) return null
+    const cost = estimateRecreateCost({ startSeconds: raw.startSeconds, endSeconds: raw.endSeconds, mode: raw.mode as 'replace' | 'move' | 'motion' })
+    return Number.isFinite(cost) && cost > 0 ? cost : null
+  }, (request) => meteredAvatarRender(true, () => startAvatarRecreate(request)))
   handle('avatars:cancelRender', () => cancelAvatarRender())
-  handle('avatars:renderStatus', () => avatarRenderStatus())
-  handle('voices:sample', (_event, request: unknown) => voiceSample(request))
+  handle('avatars:renderStatus', () => friendlyStatus(avatarRenderStatus()))
+  handle('voices:sample', (_event, request: unknown) => metered('avatar', 'Voice preview', () => voiceSample(request)))
   onAvatarRenderStatus((status) => {
-    const window = getMainWindow()
-    if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('avatars:status', status)
+    trackAvatarStatus(status)
+    announce(avatarNotice(status), getMainWindow)
+    sendToWindow('avatars:status', friendlyStatus(status))
   })
 
   handle('brandIdentities:list', () => listBrandIdentities())
@@ -289,15 +382,26 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (result.canceled || !result.filePaths[0]) return null
     return readBrandIdentityFile(result.filePaths[0])
   })
-  handle('remix:start', (_event, request: unknown) => startRemix(request))
-  handle('remix:render', (_event, edits: unknown) => renderRemix(edits))
+  paid('remix:start', 'openrouter', (request) => {
+    const raw = (request ?? {}) as Record<string, unknown>
+    if (raw.format === 'image') return estimateRemixCost('camera', 1, 0, 'image').total
+    const sources = Array.isArray(raw.sources) ? Math.max(1, raw.sources.length) : 1
+    const count = typeof raw.count === 'number' && Number.isInteger(raw.count) && raw.count >= 1 && raw.count <= MAX_REMIXES ? raw.count : null
+    if (!isRemixHost(raw.host) || count === null) return null
+    return estimateRemixCost(raw.host, count * sources, 0.5, raw.format === 'silent' ? 'silent' : 'commentary').total
+  }, (request) => startRemix(request))
+  paid('remix:render', 'openrouter', (edits) => {
+    const ids = new Set(Array.isArray(edits) ? edits.map((edit) => (edit as { id?: unknown } | null)?.id) : [])
+    const total = (remixStatus()?.drafts ?? []).filter((draft) => ids.has(draft.id)).reduce((sum, draft) => sum + draft.estimateUsd, 0)
+    return total > 0 ? total : null
+  }, (edits) => renderRemix(edits))
   handle('remix:discard', () => discardRemix())
   handle('remix:cancel', () => cancelRemix())
-  handle('remix:status', () => remixStatus())
+  handle('remix:status', () => friendlyStatus(remixStatus()))
   // Me, on camera: recordings for the takes under review.
   handle('remix:mediaAccess', () => requestMediaAccess())
   handle('remix:moment', (_event, draftId: unknown) => remixMoment(draftId))
-  handle('remix:write', () => writeRemix())
+  paid('remix:write', 'openrouter', () => estimateRemixCost('camera', 1, 0, 'image').total, () => writeRemix())
   handle('remix:selectImage', async () => {
     const window = getMainWindow()
     if (!window) return null
@@ -319,11 +423,13 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return uploadRecording(draftId, part, result.filePaths[0])
   })
   onRemixStatus((status) => {
-    const window = getMainWindow()
-    if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('remix:status', status)
+    trackRemixStatus(status)
+    announce(remixNotice(status), getMainWindow)
+    sendToWindow('remix:status', friendlyStatus(status))
   })
 
-  handle('job:start', (_event, config: unknown) => startClipJobRequest(config))
+  // Create runs have no cost estimate: the balance check asks for at least $1.
+  paid('job:start', 'openrouter', () => null, (config) => startClipJobRequest(config))
 
   handle('job:cancel', (_event, jobId: unknown) => {
     if (typeof jobId !== 'string') return false
@@ -347,8 +453,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return false
   })
 
-  handle('history:list', () => {
+  handle('history:list', async () => {
     const settings = loadSettings()
+    // Avatar Studio videos made before they were saved to the Library join it once (originals stay put).
+    await importLegacyAvatarVideos(settings.outputDirectory).catch(() => 0)
     return getJobHistory(settings.outputDirectory, liveJobIds())
   })
 
@@ -362,8 +470,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('history:enhanceMetadata', (_event, outputDir: unknown, clipIndex: unknown, options: unknown) => enhanceLibraryMetadata(outputDir, clipIndex, options))
   handle('history:getJob', (_event, outputDir: string) => {
     assertAbsolutePath(outputDir)
-    if (!isWithinDirectory(outputDir, loadSettings().outputDirectory)) throw new Error('Job is outside the library')
-    return getJobOutput(outputDir, loadSettings().outputDirectory)
+    const library = loadSettings().outputDirectory
+    if (isWithinDirectory(outputDir, library)) return getJobOutput(outputDir, library)
+    // A run in an earlier output folder the Library still shows.
+    const previous = previousOutputFolders().find((root) => isWithinDirectory(outputDir, root))
+    if (!previous) throw new Error('Job is outside the library')
+    return getJobOutput(outputDir, previous)
   })
 
   handle('editor:open', (_event, path: unknown) => openEditor(path))
@@ -373,6 +485,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('editor:replaceSource', (_event, path: unknown, revision: unknown, replacement: unknown) => replaceEditorSource(path, revision, replacement))
   handle('editor:progress', (_event, path: unknown) => readEditorProgress(path))
   handle('editor:freeMedia', (_event, path: unknown, revision: unknown) => freeEditorMedia(path, revision))
+  handle('editor:addCandidate', (_event, path: unknown, revision: unknown, candidate: unknown, sourceId: unknown) => addEditorCandidate(path, revision, candidate, sourceId))
+  handle('editor:suggestHooks', (_event, path: unknown, revision: unknown, id: unknown) => suggestEditorHooks(path, revision, id))
   handle('editor:closeReady', (_event, saved: unknown) => editorCloseReady(saved))
 
   handle('edits:inspect', (_event, outputDir: string) => inspectEdits(outputDir, loadSettings().outputDirectory))
@@ -396,7 +510,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (!existsSync(path)) return false
     // Check and open the same canonical name: an alias can hide a .app suffix.
     const canonical = realpathSync(path)
-    if (!isWithinDirectory(canonical, loadSettings().outputDirectory)) assertMediaPath(canonical, loadSettings().outputDirectory)
+    if (!isWithinLibrary(canonical, loadSettings().outputDirectory)) assertMediaPath(canonical, loadSettings().outputDirectory)
     const { statSync } = await import('fs')
     if (statSync(canonical).isDirectory()) {
       // macOS opens these directory packages with Installer, System Settings,
@@ -410,7 +524,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
 
   handle('shell:showItemInFolder', (_event, path: string) => {
     assertAbsolutePath(path)
-    if (!isWithinDirectory(path, loadSettings().outputDirectory)) assertMediaPath(path, loadSettings().outputDirectory)
+    if (!isWithinLibrary(path, loadSettings().outputDirectory)) assertMediaPath(path, loadSettings().outputDirectory)
     if (!existsSync(path)) return false
     shell.showItemInFolder(path)
     return true
@@ -536,6 +650,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       bridgePath
     }
     logger.info('system.checkTools', result)
+    recordToolCheck(result)
     return result
   })
+}
+
+/** A status whose error says the credit ran out, in the same plain words as everywhere else. */
+function friendlyStatus<T extends { error: string | null } | null>(status: T): T {
+  return status && status.error ? { ...status, error: friendlyCreditError(status.error) } : status
 }

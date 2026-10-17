@@ -2,10 +2,10 @@ import { SourcePreview } from './SourcePicker'
 import { JobDiagnostics } from './JobDiagnostics'
 import { StageBreakdown } from './StageBreakdown'
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Clapperboard, Clock3, Gauge, Github, RotateCcw, ScrollText, TextSearch } from 'lucide-react'
+import { AlertTriangle, Clapperboard, Clock3, Gauge, RotateCcw, ScrollText, TextSearch } from 'lucide-react'
 import { formatTimecode, sourceLabel } from '../lib/utils'
 import { getApi } from '../lib/ipc'
-import { ISSUES_URL } from '../config/brand'
+import { ReportButtons } from './SupportReport'
 import type { Job } from '../store/use-job-store'
 import { Page } from './ui/Page'
 import { JobTimeline } from './JobTimeline'
@@ -133,9 +133,7 @@ export function JobFailure({ job, onRetry, leading }: { job: Job; onRetry: () =>
         <Button icon={<ScrollText className="h-4 w-4" />} onClick={() => getApi().diagnostics.openLogFolder()}>
           Show logs
         </Button>
-        <Button variant="ghost" icon={<Github className="h-4 w-4" />} onClick={() => getApi().shell.openPath(ISSUES_URL)}>
-          Report an issue
-        </Button>
+        <ReportButtons jobId={job.id} />
       </div>
     </Page>
   )

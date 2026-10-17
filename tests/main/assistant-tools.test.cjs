@@ -34,7 +34,8 @@ test('every CreatorClips tool has a strict schema, and anything that publishes, 
     if (tool.destructive) assert.equal(typeof tool.confirm, 'function', `${tool.name} is destructive and must ask`)
     if (tool.readOnly) assert.equal(tool.confirm, undefined, `${tool.name} is read-only`)
   }
-  for (const name of ['start_clip_job', 'post_clip', 'run_automation_now', 'delete_library_run', 'delete_clips', 'delete_automation', 'cancel_job', 'cancel_scheduled_post', 'retry_post', 'reschedule_post', 'update_settings', 'update_automation', 'remove_automation_clip']) {
+  for (const name of ['start_clip_job', 'post_clip', 'run_automation_now', 'delete_library_run', 'delete_clips', 'delete_automation', 'cancel_job', 'cancel_scheduled_post', 'retry_post', 'reschedule_post', 'update_settings', 'update_automation', 'remove_automation_clip',
+    'start_remix', 'make_remix_videos', 'cancel_remix', 'recompose_remix_video', 'set_clip_cta', 'save_brand_identity', 'write_avatar_script', 'start_avatar_video']) {
     assert.equal(typeof tools.find((tool) => tool.name === name)?.confirm, 'function', `${name} asks first`)
   }
   // Never exposed: keys, updates, TikTok consent, account sign-in.
@@ -91,7 +92,7 @@ test('job validation drops fields it doesn’t know, so a typo can’t ride alon
 test('tools refuse run ids that could leave the Library', async (t) => {
   const { tools } = loadTools(t)
   const getRun = tools.find((tool) => tool.name === 'get_library_run')
-  for (const runId of ['../secrets', '/etc', 'C:\\Windows', '11111111-1111-4111-8111-11111111111']) {
+  for (const runId of ['../secrets', '/etc', 'C:\\Windows', '11111111-1111-4111-8111-11111111111', 'remix-../x', 'remix-11111111-1111-4111-8111-111111111111/..']) {
     await assert.rejects(getRun.run({ runId }, { conversationId: 'c', signal: new AbortController().signal }), /run id/)
   }
 })

@@ -1,15 +1,20 @@
 import { app } from 'electron'
 import { execFile, spawn, type ChildProcess } from 'child_process'
 import { randomBytes } from 'crypto'
+import { realpathSync } from 'fs'
 import { access, constants as fsConstants, copyFile, mkdir, readFile, writeFile } from 'fs/promises'
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
 import {
-  estimateRecreateCost, estimateRenderCost, estimateWordTimings, FAL_MODELS, MAX_SCENE_SECONDS, OPENROUTER_MODELS, overlongScenes, RECREATE_FPS, recreateSeconds, validateRecreateWindow, isAvatarId, MAX_SPOKEN_SECONDS, parseAvatarScript, renderFolderName,
-  sceneDurations, SCRIPT_LENGTHS, scriptText, wordCount, WORDS_PER_SECOND,
+  estimateRecreateCost, estimateRenderCost, estimateWordTimings, FAL_MODELS, MAX_SCENE_SECONDS, OPENROUTER_MODELS, overlongScenes, RECREATE_FPS, recreateSeconds, validateRecreateWindow, isAvatarId, MAX_HOOK_CHARS, MAX_SPOKEN_SECONDS, parseAvatarScript,
+  hookFromScript, postCaptionFromScript, sceneDurations, SCRIPT_LENGTHS, scriptText, wordCount, WORDS_PER_SECOND,
   type AvatarRecreateRequest, type AvatarRenderPhase, type AvatarRenderRequest, type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarScriptRequest, type AvatarVoice
 } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
+import { parseCtaChoice } from '../shared/ctas'
+import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from '../shared/headline-look'
+import { CLIP_FILE, newAvatarRun, WORK_FOLDER, writeAvatarJobOutput, type AvatarRunInfo } from './avatar-library'
+import { applyRunCtaInLock, readCta, withRunLock } from './ctas'
 import { isBackgroundVideoName } from '../shared/backgrounds'
 import { openRouterKey, portraitBytes, portraitInput, readAvatar, speechFor } from './avatars'
 import { readBrandIdentity } from './remix'
@@ -134,6 +139,8 @@ interface ActiveRender {
   abort: AbortController
   cancelled: boolean
   child?: ChildProcess
+  /** The render's Library run folder. */
+  folder: string
 }
 
 let active: ActiveRender | null = null
@@ -172,10 +179,31 @@ export function parseRenderRequest(value: unknown): AvatarRenderRequest {
     const long = overlongScenes(script)
     if (long.length) throw new Error(`Scene ${long.join(', ')} has more narration than one ${MAX_SCENE_SECONDS}-second shot. Split it into two scenes.`)
   }
+  const hook = parseHook(raw.headline, raw.headlineLook, raw.ctaId, raw.includeTitle !== false)
+  const headline = raw.headline === undefined ? hookFromScript(script) : hook.headline
   return {
     avatarId: raw.avatarId, style: raw.style, lipSync, sceneQuality, script, captionPreset: raw.captionPreset,
-    includeCaptions: raw.includeCaptions !== false, includeTitle: raw.includeTitle !== false, backgroundVideo
+    includeCaptions: raw.includeCaptions !== false, includeTitle: hook.on && Boolean(headline), backgroundVideo,
+    headline, headlineLook: hook.headlineLook, ctaId: hook.ctaId
   }
+}
+
+/**
+ * Hook text, its look and the call to action from the renderer (untrusted).
+ * The hook is drawn only when it's on, has text, and the look isn't "No hook text".
+ */
+export function parseHook(headline: unknown, look: unknown, ctaId: unknown, include: boolean): { headline: string; headlineLook: HeadlineLook; ctaId: string | null; on: boolean } {
+  if (headline !== undefined && headline !== null && (typeof headline !== 'string' || headline.includes('\0'))) throw new Error('Check the hook text.')
+  const text = typeof headline === 'string' ? headline.replace(/\s+/g, ' ').trim() : ''
+  if (text.length > MAX_HOOK_CHARS) throw new Error(`Keep the hook text under ${MAX_HOOK_CHARS} characters.`)
+  let headlineLook: HeadlineLook
+  try { headlineLook = look === undefined || look === null ? DEFAULT_HEADLINE_LOOK : parseHeadlineLook(look) } catch { throw new Error('Choose a look for the hook text.') }
+  return { headline: text, headlineLook, ctaId: parseCtaChoice(ctaId), on: include && headlineLook.look !== 'none' }
+}
+
+/** What the engine needs to draw the hook like Create does (a headline at 9:16; a title card over gameplay). */
+export function hookForEngine(headline: string, look: HeadlineLook, include: boolean): Record<string, unknown> {
+  return { title: headline, include_title: include && Boolean(headline), title_style: 'headline', headline_text: headline || null, headline_look: look }
 }
 
 // Files the member picks are read only as local video files (no playlists or network fetches).
@@ -365,8 +393,8 @@ async function launch(avatarId: string, folder: string, estimatedCostUsd: number
   if (cancelledEarly) throw new Error('Generation cancelled.')
   if (active) throw new Error('A video is already being generated. Wait for it to finish or cancel it.')
   const render: ActiveRender = {
-    abort: new AbortController(), cancelled: false,
-    status: { id: randomBytes(8).toString('hex'), avatarId, phase: first.phase, detail: first.detail, percent: 1, outputPath: null, error: null, warning: null,
+    abort: new AbortController(), cancelled: false, folder,
+    status: { id: randomBytes(8).toString('hex'), avatarId, phase: first.phase, detail: first.detail, percent: 1, outputPath: null, outputDir: null, error: null, warning: null,
       estimatedCostUsd, startedAt: new Date().toISOString() }
   }
   active = render
@@ -387,6 +415,36 @@ async function launch(avatarId: string, folder: string, estimatedCostUsd: number
   return render.status
 }
 
+/** A message while `path` is the run being rendered (the Library waits), else null. */
+export function avatarRunBusy(path: string): string | null {
+  if (!active) return null
+  let folder = active.folder
+  try { folder = realpathSync(folder) } catch { /* not created yet */ }
+  return folder === path ? 'Wait for this avatar video to finish before changing it.' : null
+}
+
+/**
+ * Make the finished video a Library run: write its job_output.json, then add
+ * the call to action, both in the run's lock. A CTA that can't be added
+ * leaves the video as made, with a warning.
+ */
+async function finishRun(render: ActiveRender, info: AvatarRunInfo, ctaId: string | null, warning: string | null): Promise<void> {
+  const folder = render.folder
+  let note = warning
+  await withRunLock(folder, async () => {
+    await writeAvatarJobOutput(folder, info)
+    if (!ctaId || render.abort.signal.aborted) return
+    update(render, 'finish', 'Adding your call to action', 99)
+    try {
+      const { failed } = await applyRunCtaInLock(folder, ctaId)
+      if (failed.length) throw new Error('failed')
+    } catch {
+      note = [note, 'The call to action could not be added. Add it from the Library (Call to action on the video).'].filter(Boolean).join(' ')
+    }
+  })
+  render.status = { ...render.status, outputPath: join(folder, CLIP_FILE), outputDir: folder, warning: note }
+}
+
 function assertIdle(): void {
   if (active || starting) throw new Error('A video is already being generated. Wait for it to finish or cancel it.')
 }
@@ -403,17 +461,19 @@ export async function startAvatarRender(value: unknown): Promise<AvatarRenderSta
   const key = openRouterKey()
   const avatar = readAvatar(request.avatarId)
   const background = request.backgroundVideo ? resolveBackground(request.backgroundVideo) : null
-  const folder = join(loadSettings().outputDirectory, 'Avatar Studio', renderFolderName(request.script.title || avatar.name, new Date()))
+  if (request.ctaId) readCta(request.ctaId)
+  const folder = newAvatarRun(loadSettings().outputDirectory)
   return launch(request.avatarId, folder, estimateRenderCost({ ...request, voiceProvider: avatar.voice.provider }), { phase: 'voice', detail: 'Recording the voiceover' },
-    (render) => runRender(render, request, avatar.voice, key, folder, background))
+    (render) => runRender(render, request, avatar.voice, key, folder, background, avatar.name))
 }
 
-async function runRender(render: ActiveRender, request: AvatarRenderRequest, voice: AvatarVoice, key: string, folder: string, background: string | null): Promise<void> {
+async function runRender(render: ActiveRender, request: AvatarRenderRequest, voice: AvatarVoice, key: string, folder: string, background: string | null, avatarName: string): Promise<void> {
   const signal = render.abort.signal
-  const parts = join(folder, 'parts')
+  const work = join(folder, WORK_FOLDER)
+  const parts = join(work, 'parts')
   await mkdir(parts, { recursive: true })
   const text = scriptText(request.script)
-  await writeFile(join(folder, 'script.json'), JSON.stringify({ ...request.script, style: request.style, voice }, null, 2))
+  await writeFile(join(work, 'script.json'), JSON.stringify({ ...request.script, style: request.style, voice }, null, 2))
 
   // 1. Voiceover.
   const options = { key, signal }
@@ -464,32 +524,34 @@ async function runRender(render: ActiveRender, request: AvatarRenderRequest, voi
       '-map', '[v]', '-map', `${clips.length}:a:0`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-shortest', assembled], signal)
   }
 
-  // 3. Captions, hook title, optional gameplay split.
-  const output = join(folder, 'final.mp4')
+  // 3. Captions, hook text, optional gameplay split; then the Library run and its call to action.
+  const output = join(folder, CLIP_FILE)
+  const finish = async (warning: string | null): Promise<void> => finishRun(render, {
+    title: request.script.title.trim() || request.headline || `${avatarName || 'Avatar'} video`,
+    headline: request.includeTitle ? request.headline : null, postCaption: postCaptionFromScript(request.script),
+    durationMs: Math.round((await mediaSeconds(output)) * 1000), kind: request.style, estimatedCostUsd: render.status.estimatedCostUsd
+  }, request.ctaId, warning)
   if (!request.includeCaptions && !request.includeTitle && !background) {
     await copyFile(assembled, output)
-    render.status = { ...render.status, outputPath: output }
-    return
+    return finish(null)
   }
   const durationMs = Math.round((await mediaSeconds(assembled)) * 1000)
   const lead = await speechBounds(narration, seconds)
-  update(render, 'finish', 'Adding captions and title', 85)
+  update(render, 'finish', 'Adding captions and hook text', 85)
   try {
     await runFinisher(render, {
     video: assembled, output, duration_ms: durationMs, caption_preset: request.captionPreset,
-    include_captions: request.includeCaptions, title: request.script.title, include_title: request.includeTitle,
+    include_captions: request.includeCaptions, ...hookForEngine(request.headline, request.headlineLook, request.includeTitle),
     background_video: background,
     words: estimateWordTimings(text, Math.max(1, Math.min(durationMs, lead.endMs) - lead.startMs)).map((word) => ({ word: word.word, start_ms: word.startMs + lead.startMs, end_ms: word.endMs + lead.startMs }))
     })
   } catch (error) {
     if (!(error instanceof FinishError)) throw error
     // The paid parts worked; keep the narrated video rather than losing it.
-    const plain = join(folder, 'final-no-captions.mp4')
-    await copyFile(assembled, plain)
-    render.status = { ...render.status, outputPath: plain, warning: 'Captions could not be added, so this is the video without them. Run Settings → System check, then generate again if you need captions.' }
-    return
+    await copyFile(assembled, output)
+    return finish('Captions and hook text could not be added, so this is the video without them. Run Settings → System check, then generate again if you need them.')
   }
-  render.status = { ...render.status, outputPath: output }
+  return finish(null)
 }
 
 /** Where speech starts and ends in the narration, trimming silent lead-in and tail. */
@@ -544,14 +606,15 @@ export async function parseRecreateRequest(value: unknown, outputDirectory: stri
   const sourcePath = raw.sourcePath as string
   const source = await probeMedia(sourcePath)
   const window = validateRecreateWindow(raw.startSeconds, raw.endSeconds, source.seconds)
-  const title = typeof raw.title === 'string' ? raw.title.replace(/\s+/g, ' ').trim() : ''
-  if (title.length > 80) throw new Error('Keep the hook text under 80 characters.')
+  const hook = parseHook(raw.title, raw.headlineLook, raw.ctaId, raw.includeTitle !== false)
+  const title = hook.headline
   const keepAudio = raw.keepAudio !== false && source.hasAudio
   return {
     source,
     request: {
       avatarId: raw.avatarId, sourcePath, ...window, mode: raw.mode, keepAudio, title, captionPreset: raw.captionPreset,
-      includeCaptions: raw.includeCaptions !== false && keepAudio, includeTitle: raw.includeTitle !== false && Boolean(title), rightsConfirmed: true
+      includeCaptions: raw.includeCaptions !== false && keepAudio, includeTitle: hook.on && Boolean(title), rightsConfirmed: true,
+      headlineLook: hook.headlineLook, ctaId: hook.ctaId
     }
   }
 }
@@ -562,14 +625,15 @@ export async function startAvatarRecreate(value: unknown): Promise<AvatarRenderS
   const key = requireFalKey()
   const { request } = await parseRecreateRequest(value, settings.outputDirectory)
   const avatar = readAvatar(request.avatarId)
-  const folder = join(settings.outputDirectory, 'Avatar Studio', renderFolderName(request.title || `${avatar.name} recreate`, new Date()))
+  if (request.ctaId) readCta(request.ctaId)
+  const folder = newAvatarRun(settings.outputDirectory)
   return launch(request.avatarId, folder, estimateRecreateCost(request), { phase: 'scenes', detail: 'Preparing the source video' },
-    (render) => runRecreate(render, request, key, folder))
+    (render) => runRecreate(render, request, key, folder, request.title || `${avatar.name || 'Avatar'} recreate`))
 }
 
-async function runRecreate(render: ActiveRender, request: AvatarRecreateRequest, key: string, folder: string): Promise<void> {
+async function runRecreate(render: ActiveRender, request: AvatarRecreateRequest, key: string, folder: string, title: string): Promise<void> {
   const signal = render.abort.signal
-  const parts = join(folder, 'parts')
+  const parts = join(folder, WORK_FOLDER, 'parts')
   await mkdir(parts, { recursive: true })
   const window = ['-ss', request.startSeconds.toFixed(2), '-t', recreateSeconds(request).toFixed(2)]
 
@@ -611,24 +675,27 @@ async function runRecreate(render: ActiveRender, request: AvatarRecreateRequest,
   if (audio) await ffmpeg(['-i', recreated, '-i', audio, '-map', '0:v:0', '-map', '1:a:0', ...video, '-c:a', 'aac', '-b:a', '192k', '-shortest', assembled], signal)
   else if (retime) await ffmpeg(['-i', recreated, '-an', ...video, assembled], signal)
   else await copyFile(recreated, assembled)
-  const final = join(folder, 'final.mp4')
+  const final = join(folder, CLIP_FILE)
   const recreatedInfo = await probeMedia(assembled)
-  update(render, 'finish', request.includeCaptions ? 'Transcribing and adding captions' : 'Adding the title', 85)
+  const finish = async (warning: string | null): Promise<void> => finishRun(render, {
+    title, headline: request.includeTitle ? request.title : null, postCaption: null,
+    durationMs: Math.round((await probeMedia(final)).seconds * 1000), kind: 'recreate', estimatedCostUsd: render.status.estimatedCostUsd
+  }, request.ctaId, warning)
+  update(render, 'finish', request.includeCaptions ? 'Transcribing and adding captions' : 'Adding the hook text', 85)
   try {
     const result = await runFinisher(render, {
       video: assembled, output: final, duration_ms: Math.round(recreatedInfo.seconds * 1000), caption_preset: request.captionPreset,
-      include_captions: request.includeCaptions, title: request.title, include_title: request.includeTitle, background_video: null, words: [],
+      include_captions: request.includeCaptions, ...hookForEngine(request.title, request.headlineLook, request.includeTitle), background_video: null, words: [],
       layout: Math.abs(recreatedInfo.width / recreatedInfo.height - 9 / 16) < 0.02 ? 'fill' : 'auto'
     })
     const warning = !request.includeCaptions || result.captions === 'transcribed' || result.captions === 'estimated' ? null
       : !loadSettings().openrouterApiKey ? 'Captions need your OpenRouter key (Settings → API keys) to transcribe the audio.'
         : result.captions === 'failed' ? 'The audio could not be transcribed, so this video has no captions. Check your OpenRouter key and credits.'
           : 'No speech was found to caption, so this video has no captions.'
-    render.status = { ...render.status, outputPath: final, warning }
+    await finish(warning)
   } catch (error) {
     if (!(error instanceof FinishError)) throw error
-    const plain = join(folder, 'final-no-captions.mp4')
-    await copyFile(assembled, plain)
-    render.status = { ...render.status, outputPath: plain, warning: 'Captions could not be added, so this is the video without them. Run Settings → System check, then try again if you need captions.' }
+    await copyFile(assembled, final)
+    await finish('Captions and hook text could not be added, so this is the video without them. Run Settings → System check, then try again if you need them.')
   }
 }

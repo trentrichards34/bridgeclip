@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Ban, FileText, FolderOpen, ListVideo, Pencil, Plus, RefreshCw, RotateCcw, Search, X } from 'lucide-react'
+import { Ban, FileText, FolderOpen, ListVideo, Pencil, Plus, RefreshCw, RotateCcw, Search, Wallet, X } from 'lucide-react'
+import { requestSettingsSection } from '../lib/settings-focus'
 import type { HistoryEntry } from '../../preload/index'
 import { MAX_PARALLEL_JOBS } from '../../shared/jobs'
 import { EditInspector, InspectEditsButton } from '../components/EditInspector'
@@ -173,6 +174,7 @@ export function JobsPage({ onNavigate, onViewLibrary }: {
       onDismissError={() => setError(null)}
       onRefresh={() => { void load(true) }}
       onNew={() => onNavigate('clip')}
+      onSpending={() => { requestSettingsSection('spending'); onNavigate('settings') }}
       onOpenJob={(job) => { focusJob(job.id); document.getElementById('page-scroll')?.scrollTo({ top: 0 }) }}
       onCancel={(job) => { void cancel(job) }}
       onOpenEntry={(entry) => {
@@ -186,7 +188,7 @@ export function JobsPage({ onNavigate, onViewLibrary }: {
   )
 }
 
-function JobsList({ active, entries, filter, query, error, refreshing, onFilter, onQuery, onDismissError, onRefresh, onNew, onOpenJob, onCancel, onOpenEntry, onOpenFolder }: {
+function JobsList({ active, entries, filter, query, error, refreshing, onFilter, onQuery, onDismissError, onRefresh, onNew, onSpending, onOpenJob, onCancel, onOpenEntry, onOpenFolder }: {
   active: Job[]
   entries: HistoryEntry[] | null
   filter: Filter
@@ -198,6 +200,7 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
   onDismissError: () => void
   onRefresh: () => void
   onNew: () => void
+  onSpending: () => void
   onOpenJob: (job: Job) => void
   onCancel: (job: Job) => void
   onOpenEntry: (entry: HistoryEntry) => void
@@ -237,6 +240,7 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
               disabled={refreshing}
               icon={<RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />}
             />
+            <Button variant="ghost" icon={<Wallet className="h-3.5 w-3.5" />} onClick={onSpending} title="What your AI runs cost (Settings → Spending)">Spending</Button>
             <Button variant="primary" icon={<Plus className="h-3.5 w-3.5" />} onClick={onNew}>New job</Button>
           </>
         }

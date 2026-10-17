@@ -66,7 +66,7 @@ async def transcript_segments(config, video, duration_ms):
 async def finish(config):
     from clip_engine.config import LayoutStyle, get_caption_preset
     from clip_engine.services.clip_editor import Pacing
-    from clip_engine.services.rendering_service import RenderingService, RenderRequest
+    from clip_engine.services.rendering_service import RenderingService, RenderRequest, TitleStyle, validate_headline_look
 
     video, output = config['video'], config['output']
     duration_ms = int(config['duration_ms'])
@@ -81,6 +81,12 @@ async def finish(config):
     except Exception:
         style = get_caption_preset('pop')
     title = str(config.get('title') or '').strip()[:80] or None
+    # Hook text like Create's: a headline at the top of the 9:16 frame (a title card over gameplay).
+    title_style = config.get('title_style') or TitleStyle.CARD
+    if title_style not in TitleStyle.ALL:
+        raise ValueError('Invalid title style')
+    headline = str(config.get('headline_text') or '').strip()[:120] or None
+    headline_look = validate_headline_look(config.get('headline_look'))
     service = RenderingService()
     width, height = await service._get_video_dimensions(video)
     segments, timing = await transcript_segments(config, video, duration_ms) if config.get('include_captions', True) else ([], 'none')
@@ -90,7 +96,8 @@ async def finish(config):
         source_width=width or 1080, source_height=height or 1920,
         transcript_segments=segments or None,
         include_captions=bool(config.get('include_captions', True)) and bool(segments), caption_style=style,
-        title_text=title, include_title=bool(config.get('include_title', True)) and title is not None,
+        title_text=title or headline, include_title=bool(config.get('include_title', True)) and (title or headline) is not None,
+        title_style=title_style, headline_text=headline, headline_look=headline_look,
         apply_padding=False, aspect_ratio='9:16', layout_style=layout,
         background_video_path=background, pacing=Pacing.NATURAL,
         progress_callback=lambda phase, percent: emit({'type': 'progress', 'phase': str(phase)[:40], 'percent': percent}),

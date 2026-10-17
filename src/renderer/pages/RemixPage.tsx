@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { create } from 'zustand'
-import { AlertTriangle, Camera, Check, Image as ImageIcon, Copy, FileText, Film, FolderOpen, MessageCircle, Pencil, Plus, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
+import { AlertTriangle, Camera, Check, Image as ImageIcon, Copy, FileText, Film, FolderOpen, Library, MessageCircle, Pencil, Plus, Send, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
 import type { AvatarSummary } from '../../shared/avatars'
 import { REACTIONS } from '../../shared/avatars'
-import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import {
   BRAND_IDENTITY_TEMPLATE, brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_POST_CAPTION_CHARS, MAX_SOURCES,
   closeWithoutCta, normalizeCtaKeyword, AVATAR_VOICE, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
   REMIX_WORD_LIMITS, remixEditProblem, remixSourceUrl, STANCE_LABELS, STYLE_LABELS, wordCount,
-  REMIX_FORMATS, headlineOnly, CAMERA_LAYOUTS, DEFAULT_CAMERA, partsFor, type CameraSettings, type RemixRecordings, type RemixFormat, type BrandIdentity, type RemixAngle, type RemixDraft, type RemixEdit, type RemixHost, type RemixOrder, type RemixOutput, type RemixStatus
+  REMIX_FORMATS, headlineOnly, CAMERA_LAYOUTS, partsFor, type CameraSettings, type RemixRecordings, type BrandIdentity, type RemixDraft, type RemixEdit, type RemixHost, type RemixOutput, type RemixStatus
 } from '../../shared/remix'
 import type { Page as PageName } from '../components/Sidebar'
 import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
@@ -16,7 +14,7 @@ import { VoicePreview } from '../components/VoicePreview'
 import { HeadlineLookPicker } from '../components/HeadlineLookPicker'
 import { CtaPicker } from '../components/CtaPicker'
 import { partLabel, RemixRecorder } from '../components/RemixRecorder'
-import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
+import { useLowDiskGate } from '../components/LowDiskGate'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Callout } from '../components/ui/Callout'
@@ -36,49 +34,14 @@ import { getApi } from '../lib/ipc'
 import { requestSettingsSection } from '../lib/settings-focus'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { useSettingsStore } from '../store/use-settings-store'
+import { useRemixForm } from '../store/use-remix-form-store'
+import { StylePresets } from '../components/StylePresets'
+import { PostDialog, type PostableClip } from '../components/PostDialog'
+import { toPostable } from '../components/ClipList'
+import { clipFilePath } from '../lib/thumbnails'
+import { parseJobOutput } from '../../shared/job-output'
 
 const COUNTS = [1, 3, 5, 10] as const
-
-interface FormDraft {
-  links: string
-  filePath: string | null
-  /** Article or post: the screenshot to talk over. */
-  imagePath: string | null
-  creator: string
-  angle: RemixAngle
-  order: RemixOrder
-  brandIdentityId: string | null
-  host: RemixHost
-  avatarId: string | null
-  voice: string
-  count: number
-  captionPreset: string
-  includeCaptions: boolean
-  aiLabelAck: boolean
-  format: RemixFormat
-  clipRightsAck: boolean
-  ctaKeyword: string
-  ctaOffer: string
-  headlineLook: HeadlineLook
-  /** A recorded call to action from the library, played at the end of every video. */
-  ctaId: string | null
-  /** How the member appears when they record themselves ("Me, on camera"). */
-  camera: CameraSettings
-  /** The look over a screenshot, kept apart so it doesn't change the video kinds. */
-  imageCamera: CameraSettings
-  update: (patch: Partial<Omit<FormDraft, 'update'>>) => void
-}
-
-/** The form survives navigating away (e.g. to Settings to add a key). */
-const useRemixForm = create<FormDraft>((set) => ({
-  links: '', filePath: null, imagePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'still', avatarId: null, voice: AVATAR_VOICE,
-  count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false, ctaKeyword: '', ctaOffer: '', format: 'commentary', clipRightsAck: false,
-  headlineLook: DEFAULT_HEADLINE_LOOK,
-  ctaId: null,
-  camera: DEFAULT_CAMERA,
-  imageCamera: { ...DEFAULT_CAMERA, layout: 'greenscreen', talk: true },
-  update: (patch) => set(patch)
-}))
 
 /** Links pasted one per line (or separated by spaces). */
 export function parseLinks(value: string): { links: string[]; invalid: string[] } {
@@ -90,7 +53,7 @@ const GRADE_TONES: Record<string, string> = {
   A: 'bg-emerald-400 text-black', B: 'bg-lime-300 text-black', C: 'bg-amber-300 text-black', D: 'bg-orange-400 text-black', F: 'bg-red-500 text-white'
 }
 
-export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void }): React.JSX.Element {
+export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: PageName) => void; onViewLibrary?: (outputDir: string) => void }): React.JSX.Element {
   const openrouterConfigured = useSettingsStore((s) => s.openrouterConfigured)
   const pexelsConfigured = useSettingsStore((s) => s.pexelsConfigured)
   const form = useRemixForm()
@@ -101,6 +64,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
   const [launching, setLaunching] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const lowDisk = useLowDiskGate()
 
   useEffect(() => {
     let live = true
@@ -180,6 +144,8 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
     setError(null)
     setLaunching(true)
     try {
+      // A nearly full drive asks first (and offers Free up space).
+      if (!(await lowDisk.ensureSpace())) return
       const started = await getApi().remix.start({
         sources, creator: sources.length === 1 ? form.creator : '', angle: form.angle, order: form.order, host,
         avatarId: showAvatars ? avatar?.id ?? null : null, voice: form.voice, brandIdentityId: brand?.id ?? null, count: form.count,
@@ -212,6 +178,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
         Use Create for straight clips. Remix is for other people's videos: it keeps the borrowed part short, credits the creator, and makes your take the content.
       </Callout>
       {error && <Callout tone="danger" className="mt-4" onDismiss={() => setError(null)}>{error}</Callout>}
+      {lowDisk.element}
 
       {status && (reviewing || busy || status.phase === 'done' || status.phase === 'failed' || status.phase === 'cancelled') && (
         <div className="mt-5">
@@ -219,7 +186,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
             <Panel>
               <PanelHeader title={status.phase === 'planning' ? 'Writing your takes' : status.phase === 'rendering' ? 'Making your remixes' : 'Latest run'} />
               <div className="mt-4 space-y-3">
-                <RemixProgress status={status} />
+                <RemixProgress status={status} onNavigate={onNavigate} onViewLibrary={onViewLibrary} />
                 {busy && (
                   <Button variant="secondary" disabled={status.detail === 'Cancelling…'} onClick={() => void getApi().remix.cancel()}>
                     {status.detail === 'Cancelling…' ? 'Cancelling…' : 'Cancel'}
@@ -232,6 +199,7 @@ export function RemixPage({ onNavigate }: { onNavigate: (page: PageName) => void
       )}
 
       <div className="mt-5 space-y-5">
+        <StylePresets kind="remix" />
         {reviewing && (
           <Callout tone="info">The takes above use the settings they were planned with. Changes below apply to your next plan.</Callout>
         )}
@@ -747,7 +715,7 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
   )
 }
 
-function RemixProgress({ status }: { status: RemixStatus }): React.JSX.Element | null {
+function RemixProgress({ status, onNavigate, onViewLibrary }: { status: RemixStatus; onNavigate: (page: PageName) => void; onViewLibrary?: (outputDir: string) => void }): React.JSX.Element | null {
   if (status.phase === 'failed') return <Callout tone="danger">{status.error ?? 'The remix failed.'}</Callout>
   if (status.phase === 'cancelled') {
     if (status.detail === 'Discarded') return <Callout tone="info">Takes discarded. Nothing was made.</Callout>
@@ -778,15 +746,34 @@ function RemixProgress({ status }: { status: RemixStatus }): React.JSX.Element |
       </div>
       {status.warnings.map((warning, i) => <Callout key={i} tone="warning">{warning}</Callout>)}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {status.outputs.map((output) => <RemixCard key={output.path} output={output} />)}
+        {status.outputs.map((output) => <RemixCard key={output.path} output={output} folder={status.folder} onNavigate={onNavigate} onViewLibrary={onViewLibrary} />)}
       </div>
     </div>
   )
 }
 
-function RemixCard({ output }: { output: RemixOutput }): React.JSX.Element {
+/** The video's Library clip, read from the run's job_output.json (posting starts from it, like the Library). */
+async function libraryClip(folder: string, path: string): Promise<PostableClip | null> {
+  const output = parseJobOutput(await getApi().history.getJob(folder))
+  const clip = output?.clips.find((item) => clipFilePath(item.s3_url) === path)
+  return clip ? { ...toPostable(clip), library: { outputDir: folder, clipIndex: clip.clip_index } } : null
+}
+
+function RemixCard({ output, folder, onNavigate, onViewLibrary }: { output: RemixOutput; folder: string; onNavigate: (page: PageName) => void; onViewLibrary?: (outputDir: string) => void }): React.JSX.Element {
   const issues = output.checks.filter((check) => !check.ok).length
   const [copied, setCopied] = useState(false)
+  const [posting, setPosting] = useState<PostableClip | null>(null)
+  const [opening, setOpening] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  const post = async (): Promise<void> => {
+    setOpening(true); setProblem(null)
+    try {
+      const clip = await libraryClip(folder, output.path)
+      if (clip) setPosting(clip)
+      else setProblem('This video isn’t in your Library yet. Open it from the Library to post it.')
+    } catch (err) { setProblem(errorMessage(err, 'This video could not be opened for posting.')) }
+    finally { setOpening(false) }
+  }
   return (
     <div className="glass-tile space-y-2 rounded-2xl p-3">
       <video src={localFileUrl(output.path)} controls preload="metadata" className="mx-auto aspect-[9/16] max-h-[380px] rounded-xl bg-black" />
@@ -820,9 +807,13 @@ function RemixCard({ output }: { output: RemixOutput }): React.JSX.Element {
             {copied ? 'Copied' : 'Copy caption'}
           </Button>
         )}
+        <Button size="sm" variant="primary" icon={<Send className="h-3.5 w-3.5" />} loading={opening} disabled={opening} onClick={() => void post()}>Post or schedule</Button>
+        {onViewLibrary && <Button size="sm" variant="secondary" icon={<Library className="h-3.5 w-3.5" />} onClick={() => onViewLibrary(folder)}>Open in Library</Button>}
         <Button size="sm" variant="secondary" icon={<FolderOpen className="h-3.5 w-3.5" />} onClick={() => void getApi().shell.showItemInFolder(output.path)}>Show in folder</Button>
         <Button size="sm" variant="ghost" icon={<FileText className="h-3.5 w-3.5" />} onClick={() => void getApi().shell.openPath(output.manifestPath)}>Source record</Button>
       </div>
+      {problem && <p role="alert" className="text-2xs text-warning">{problem}</p>}
+      {posting && <PostDialog clips={[posting]} onClose={() => setPosting(null)} onNavigate={onNavigate} />}
     </div>
   )
 }
