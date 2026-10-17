@@ -148,7 +148,7 @@ export function findClipSubtitles(clipPath: string): FoundSubtitles | null {
   try { runDir = dirname(realpathSync(clipPath)) } catch { return null }
   const entry = clipEntry(runDir, clipPath)
   const recorded = entry?.clip.captions_srt
-  const languageValue = entry?.clip.captions_language ?? entry?.output.caption_language
+  const languageValue = entry?.clip.caption_language ?? entry?.clip.captions_language ?? entry?.output.caption_language
   const language = isSubtitleLanguage(languageValue) ? languageValue : null
   const candidates: string[] = []
   if (typeof recorded === 'string' && recorded && recorded.length <= 4096 && !recorded.includes('\0')) {
