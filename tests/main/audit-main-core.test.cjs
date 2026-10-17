@@ -45,7 +45,7 @@ function ipcWithLibrary(library) {
     './job-start': {},
     './backgrounds': {},
     './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [], cloningInProgress: () => false },
-    './avatar-studio': { onAvatarRenderStatus: () => {} },
+    './avatar-studio': { onAvatarRenderStatus: () => {}, avatarRunBusy: () => null }, './avatar-library': { importLegacyAvatarVideos: async () => 0 },
     './voice-samples': { voiceSample: async () => new Uint8Array() },
     './media-permissions': { requestMediaAccess: async () => ({ camera: true, microphone: true }) },
     '../shared/remix': { RECORDING_VIDEO_EXTENSIONS: ['mp4'], REMIX_IMAGE_EXTENSIONS: ['png'] },

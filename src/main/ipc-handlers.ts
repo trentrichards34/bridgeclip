@@ -18,7 +18,8 @@ import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePi
 import { voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
 import { recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, BRAND_IDENTITY_EXTENSIONS, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
-import { avatarInUse, avatarRenderStatus, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
+import { importLegacyAvatarVideos } from './avatar-library'
+import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
 import { getModelCatalog } from './openrouter-models'
@@ -199,8 +200,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   handle('ctas:update', (_event, id: unknown, patch: unknown) => updateCta(id, patch))
   handle('ctas:remove', (_event, id: unknown) => removeCta(id))
-  // Library changes wait while a Remix video in that run is being re-made.
-  setRunBusyCheck(remixRunBusy)
+  // Library changes wait while a Remix video in that run is being re-made, or an avatar video is finishing.
+  setRunBusyCheck((path) => remixRunBusy(path) ?? avatarRunBusy(path))
   handle('remix:recompose', async (_event, outputDir: unknown, clipIndex: unknown, edit: unknown) => {
     const note = await recomposeRemix(outputDir, clipIndex, edit)
     return { output: await getJobOutput(outputDir as string, loadSettings().outputDirectory), note }
@@ -343,8 +344,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return false
   })
 
-  handle('history:list', () => {
+  handle('history:list', async () => {
     const settings = loadSettings()
+    // Avatar Studio videos made before they were saved to the Library join it once (originals stay put).
+    await importLegacyAvatarVideos(settings.outputDirectory).catch(() => 0)
     return getJobHistory(settings.outputDirectory, liveJobIds())
   })
 
