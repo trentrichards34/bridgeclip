@@ -144,6 +144,9 @@ export interface AvatarRenderRequest {
   headlineLook: HeadlineLook
   /** A call to action from the library, added to the end of the video. */
   ctaId: string | null
+  /** Draw this brand's handle or logo in a corner (with showHandle). */
+  brandIdentityId?: string | null
+  showHandle?: boolean
 }
 
 export type AvatarRenderPhase = 'voice' | 'scenes' | 'animate' | 'assemble' | 'finish' | 'done' | 'failed' | 'cancelled'
@@ -440,6 +443,9 @@ export interface AvatarRecreateRequest {
   rightsConfirmed: boolean
   headlineLook: HeadlineLook
   ctaId: string | null
+  /** Draw this brand's handle or logo in a corner (with showHandle). */
+  brandIdentityId?: string | null
+  showHandle?: boolean
 }
 
 export function recreateSeconds(request: Pick<AvatarRecreateRequest, 'startSeconds' | 'endSeconds'>): number {

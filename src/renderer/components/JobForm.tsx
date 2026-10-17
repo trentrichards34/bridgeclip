@@ -25,6 +25,7 @@ import { WorkflowPicker } from './WorkflowPicker'
 import { BackgroundPicker } from './BackgroundPicker'
 import { HeadlineLookPicker } from './HeadlineLookPicker'
 import { CtaPicker } from './CtaPicker'
+import { brandRequestFields, CreateBrandSection } from './CreateBrandSection'
 import { DEFAULT_HEADLINE_LOOK, HEADLINE_LOOKS } from '../../shared/headline-look'
 
 const DURATIONS = DURATION_OPTIONS
@@ -104,6 +105,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
     ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
     qualityBar: draft.qualityBar,
+    ...brandRequestFields(draft),
     startTimeSeconds: trim.start,
     endTimeSeconds: trim.end,
     bannerPlatform: null,
@@ -625,6 +627,7 @@ export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Upda
   const headlineUnavailable = draft.aspectRatio !== '9:16' || Boolean(draft.backgroundVideo && draft.broll === 'off')
   return (
     <div className="space-y-3">
+      <CreateBrandSection draft={draft} update={update} />
       {draft.workflow !== 'review' && (
         <SettingRow
           title="Show title at the top"

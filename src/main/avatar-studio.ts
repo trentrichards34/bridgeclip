@@ -18,6 +18,8 @@ import { applyRunCtaInLock, readCta, withRunLock } from './ctas'
 import { isBackgroundVideoName } from '../shared/backgrounds'
 import { openRouterKey, portraitBytes, portraitInput, readAvatar, speechFor } from './avatars'
 import { readBrandIdentity } from './remix'
+import { brandForJob, isBrandId } from './brands'
+import type { BrandMarkForEngine } from '../shared/brand-kit'
 import { resolveBackground } from './backgrounds'
 import { assertMediaPath } from './security'
 import { downloadFalFile, falFileUrl, falInputUrl, falRun } from './fal'
@@ -184,8 +186,21 @@ export function parseRenderRequest(value: unknown): AvatarRenderRequest {
   return {
     avatarId: raw.avatarId, style: raw.style, lipSync, sceneQuality, script, captionPreset: raw.captionPreset,
     includeCaptions: raw.includeCaptions !== false, includeTitle: hook.on && Boolean(headline), backgroundVideo,
-    headline, headlineLook: hook.headlineLook, ctaId: hook.ctaId
+    headline, headlineLook: hook.headlineLook, ctaId: hook.ctaId, ...parseHandleChoice(raw.brandIdentityId, raw.showHandle)
   }
+}
+
+/** The brand whose handle or logo goes in a corner: both a brand and the toggle, or neither. */
+export function parseHandleChoice(brandIdentityId: unknown, showHandle: unknown): { brandIdentityId?: string; showHandle?: true } {
+  if (showHandle !== undefined && typeof showHandle !== 'boolean') throw new Error('Choose whether to show your handle.')
+  if (showHandle !== true) return {}
+  if (!isBrandId(brandIdentityId)) throw new Error('Choose the brand whose handle to show.')
+  return { brandIdentityId, showHandle: true }
+}
+
+/** The mark the finisher draws (read as the render starts). */
+function brandMarkFor(request: { brandIdentityId?: string | null; showHandle?: boolean }): BrandMarkForEngine | null {
+  return request.showHandle && request.brandIdentityId ? brandForJob(request.brandIdentityId, true).mark : null
 }
 
 /**
@@ -462,12 +477,14 @@ export async function startAvatarRender(value: unknown): Promise<AvatarRenderSta
   const avatar = readAvatar(request.avatarId)
   const background = request.backgroundVideo ? resolveBackground(request.backgroundVideo) : null
   if (request.ctaId) readCta(request.ctaId)
+  const brandMark = brandMarkFor(request)
   const folder = newAvatarRun(loadSettings().outputDirectory)
   return launch(request.avatarId, folder, estimateRenderCost({ ...request, voiceProvider: avatar.voice.provider }), { phase: 'voice', detail: 'Recording the voiceover' },
-    (render) => runRender(render, request, avatar.voice, key, folder, background, avatar.name))
+    (render) => runRender(render, request, avatar.voice, key, folder, background, avatar.name, brandMark))
 }
 
-async function runRender(render: ActiveRender, request: AvatarRenderRequest, voice: AvatarVoice, key: string, folder: string, background: string | null, avatarName: string): Promise<void> {
+async function runRender(render: ActiveRender, request: AvatarRenderRequest, voice: AvatarVoice, key: string, folder: string, background: string | null, avatarName: string,
+  brandMark: BrandMarkForEngine | null = null): Promise<void> {
   const signal = render.abort.signal
   const work = join(folder, WORK_FOLDER)
   const parts = join(work, 'parts')
@@ -531,7 +548,7 @@ async function runRender(render: ActiveRender, request: AvatarRenderRequest, voi
     headline: request.includeTitle ? request.headline : null, postCaption: postCaptionFromScript(request.script),
     durationMs: Math.round((await mediaSeconds(output)) * 1000), kind: request.style, estimatedCostUsd: render.status.estimatedCostUsd
   }, request.ctaId, warning)
-  if (!request.includeCaptions && !request.includeTitle && !background) {
+  if (!request.includeCaptions && !request.includeTitle && !background && !brandMark) {
     await copyFile(assembled, output)
     return finish(null)
   }
@@ -542,7 +559,7 @@ async function runRender(render: ActiveRender, request: AvatarRenderRequest, voi
     await runFinisher(render, {
     video: assembled, output, duration_ms: durationMs, caption_preset: request.captionPreset,
     include_captions: request.includeCaptions, ...hookForEngine(request.headline, request.headlineLook, request.includeTitle),
-    background_video: background,
+    background_video: background, ...(brandMark ? { brand_mark: brandMark } : {}),
     words: estimateWordTimings(text, Math.max(1, Math.min(durationMs, lead.endMs) - lead.startMs)).map((word) => ({ word: word.word, start_ms: word.startMs + lead.startMs, end_ms: word.endMs + lead.startMs }))
     })
   } catch (error) {
@@ -614,7 +631,7 @@ export async function parseRecreateRequest(value: unknown, outputDirectory: stri
     request: {
       avatarId: raw.avatarId, sourcePath, ...window, mode: raw.mode, keepAudio, title, captionPreset: raw.captionPreset,
       includeCaptions: raw.includeCaptions !== false && keepAudio, includeTitle: hook.on && Boolean(title), rightsConfirmed: true,
-      headlineLook: hook.headlineLook, ctaId: hook.ctaId
+      headlineLook: hook.headlineLook, ctaId: hook.ctaId, ...parseHandleChoice(raw.brandIdentityId, raw.showHandle)
     }
   }
 }
@@ -626,12 +643,14 @@ export async function startAvatarRecreate(value: unknown): Promise<AvatarRenderS
   const { request } = await parseRecreateRequest(value, settings.outputDirectory)
   const avatar = readAvatar(request.avatarId)
   if (request.ctaId) readCta(request.ctaId)
+  const brandMark = brandMarkFor(request)
   const folder = newAvatarRun(settings.outputDirectory)
   return launch(request.avatarId, folder, estimateRecreateCost(request), { phase: 'scenes', detail: 'Preparing the source video' },
-    (render) => runRecreate(render, request, key, folder, request.title || `${avatar.name || 'Avatar'} recreate`))
+    (render) => runRecreate(render, request, key, folder, request.title || `${avatar.name || 'Avatar'} recreate`, brandMark))
 }
 
-async function runRecreate(render: ActiveRender, request: AvatarRecreateRequest, key: string, folder: string, title: string): Promise<void> {
+async function runRecreate(render: ActiveRender, request: AvatarRecreateRequest, key: string, folder: string, title: string,
+  brandMark: BrandMarkForEngine | null = null): Promise<void> {
   const signal = render.abort.signal
   const parts = join(folder, WORK_FOLDER, 'parts')
   await mkdir(parts, { recursive: true })
@@ -685,7 +704,7 @@ async function runRecreate(render: ActiveRender, request: AvatarRecreateRequest,
   try {
     const result = await runFinisher(render, {
       video: assembled, output: final, duration_ms: Math.round(recreatedInfo.seconds * 1000), caption_preset: request.captionPreset,
-      include_captions: request.includeCaptions, ...hookForEngine(request.title, request.headlineLook, request.includeTitle), background_video: null, words: [],
+      include_captions: request.includeCaptions, ...hookForEngine(request.title, request.headlineLook, request.includeTitle), background_video: null, words: [], ...(brandMark ? { brand_mark: brandMark } : {}),
       layout: Math.abs(recreatedInfo.width / recreatedInfo.height - 9 / 16) < 0.02 ? 'fill' : 'auto'
     })
     const warning = !request.includeCaptions || result.captions === 'transcribed' || result.captions === 'estimated' ? null

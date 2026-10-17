@@ -37,7 +37,9 @@ from clip_engine.services.editorial_context import analyze_reactions, empty_repo
 from clip_engine.services.editorial_vision import EditorialVision
 from clip_engine.services.editorial_review import protect_acknowledgments, review_duplicate_candidates, editorial_summary
 from clip_engine.services.framework_grader import GRADER_MODEL, FrameworkGrader, select_by_grade
+from clip_engine.services.brand_mark import create_post_caption
 from clip_engine.services.intelligence_planner import (
+    MAX_BRAND_IDENTITY_CHARS,
     MAX_CLIP_REQUEST_CHARS,
     ClipPlanResponse,
     ClipPlanSegment,
@@ -142,9 +144,27 @@ class ClippingJobRequest:
     # Paid Creators framework grading: keep clips graded at or above this bar
     # ("a", "b", "c") or grade everything and keep all ("all"); "off" skips it.
     quality_bar: str = 'b'
+    # The member's brand identity (niche, voice, offer, proof): advisory context for titles,
+    # hook text and descriptions. Never a source of facts the video doesn't support.
+    brand_identity: str = ''
+    brand_name: str = ''
+    # Comment-keyword call to action (Automatic): ends each clip's post caption, shown at the end of the video.
+    cta_keyword: str = ''
+    cta_offer: str = ''
+    # The member's @handle and/or logo in a corner ({"handle", "logo_path", "position"}; see brand_mark).
+    brand_mark: Optional[dict] = None
 
     def __post_init__(self):
         validate_video_speed(self.video_speed)
+        self.brand_identity = (self.brand_identity or '').strip()[:MAX_BRAND_IDENTITY_CHARS]
+        self.brand_name = ' '.join((self.brand_name or '').split())[:120]
+        self.cta_keyword = (self.cta_keyword or '').strip().upper()
+        if self.cta_keyword and not re.fullmatch(r"[A-Z0-9][A-Z0-9-]{1,19}", self.cta_keyword):
+            raise ValueError("Invalid call-to-action keyword")
+        self.cta_offer = ' '.join((self.cta_offer or '').split())[:80]
+        if self.workflow == 'review':
+            # The editor's export has its own end card; the keyword tag and mark are Automatic-only for now.
+            self.cta_keyword, self.cta_offer, self.brand_mark = '', '', None
         # Blank means no request, so the run and its no-match error agree with the planner.
         self.clip_request = (self.clip_request or '').strip()[:MAX_CLIP_REQUEST_CHARS] or None
         if self.job_id is None:
@@ -434,6 +454,8 @@ class AIClippingPipeline:
                 aspect_ratio=request.aspect_ratio,
                 jev_enabled=jev_enabled,
                 clip_request=request.clip_request,
+                brand_identity=request.brand_identity or None,
+                brand_name=request.brand_name or None,
             )
             longform_plan = is_longform(request.aspect_ratio, resolve_clip_duration_bounds(
                 request.duration_ranges, request.min_clip_duration_seconds, request.max_clip_duration_seconds)[0])
@@ -773,6 +795,8 @@ class AIClippingPipeline:
                         # Jev reviews exact source intervals; otherwise keep the
                         # usual audio padding around each clip.
                         apply_padding=not jev_enabled,
+                        brand_mark=request.brand_mark,
+                        cta_keyword=request.cta_keyword if not longform else '',
                     )
 
                     render_result = await self.rendering_service.render_clip(render_request)
@@ -978,6 +1002,7 @@ class AIClippingPipeline:
                         tags=segment.tags or [],
                         render_fallback=segment.render_fallback,
                         description=segment.description,
+                        post_caption=create_post_caption(segment, request.cta_keyword, request.cta_offer),
                         chapters=self._chapter_dicts(segment),
                         editorial=editorial_summary(segment.editorial),
                         framework=segment.framework,
@@ -1339,6 +1364,7 @@ class AIClippingPipeline:
                 tags=segment.tags or [],
                 render_fallback=segment.render_fallback,
                 description=segment.description,
+                post_caption=create_post_caption(segment, request.cta_keyword, request.cta_offer),
                 chapters=self._chapter_dicts(segment),
                 subtitle_url=subtitle_url,
                 editorial=editorial_summary(segment.editorial),

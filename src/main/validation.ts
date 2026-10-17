@@ -8,6 +8,7 @@ import { QUALITY_BARS, TITLE_STYLES, type ClipJobRequest } from '../shared/jobs'
 import { isBackgroundVideoName } from '../shared/backgrounds'
 import { parseHeadlineLook } from '../shared/headline-look'
 import { isCtaId } from '../shared/ctas'
+import { MAX_CTA_OFFER_CHARS, normalizeCtaKeyword } from '../shared/remix'
 
 // Trims what Python's str.strip() also treats as whitespace (\x1c-\x1f, \x85),
 // so the bridge never receives a request it considers blank.
@@ -56,11 +57,28 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   const known = Object.fromEntries(JOB_REQUEST_FIELDS.filter((key) => v[key] !== undefined).map((key) => [key, v[key]])) as unknown as ClipJobConfig
   if (known.headlineLook !== undefined) known.headlineLook = parseHeadlineLook(known.headlineLook)
   if (known.ctaId !== undefined && !isCtaId(known.ctaId)) throw new Error('Choose a call to action from your library.')
+  if (known.brandIdentityId !== undefined && (typeof known.brandIdentityId !== 'string' || !/^[a-f0-9]{16}$/.test(known.brandIdentityId))) throw new Error('Choose a brand identity.')
+  if (known.showHandle !== undefined && typeof known.showHandle !== 'boolean') throw new Error('Invalid handle option')
+  if (known.showHandle && (!known.brandIdentityId || v.workflow === 'review')) throw new Error('Showing your handle needs a brand and the Automatic workflow')
+  const keyword = normalizeCtaKeyword(known.ctaKeyword)
+  if (keyword === null) throw new Error('Use one word for the comment keyword (letters, numbers or a dash), like SALES.')
+  if (keyword && v.workflow === 'review') throw new Error('The comment keyword works with the Automatic workflow')
+  if (known.ctaOffer !== undefined && (typeof known.ctaOffer !== 'string' || /[\0\r\n]/.test(known.ctaOffer) || known.ctaOffer.replace(/\s+/g, ' ').trim().length > MAX_CTA_OFFER_CHARS)) {
+    throw new Error(`Keep “what they get” under ${MAX_CTA_OFFER_CHARS} characters.`)
+  }
+  if (keyword) {
+    known.ctaKeyword = keyword
+    known.ctaOffer = (known.ctaOffer ?? '').replace(/\s+/g, ' ').trim()
+  } else {
+    delete known.ctaKeyword
+    delete known.ctaOffer
+  }
+  if (!known.showHandle) delete known.showHandle
   return { ...known, videoUrl: normalizeVideoSource(v.videoUrl), videoSpeed: v.videoSpeed ?? 1, includeTitle: v.includeTitle ?? true, clipRequest, plannerCapabilities: undefined }
 }
 
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
   'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

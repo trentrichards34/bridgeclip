@@ -53,6 +53,13 @@ export interface ClipDraft {
   hookPreview: boolean
   /** Framework grading bar: keep clips graded at or above it. */
   qualityBar: QualityBar
+  /** Brand (optional): its niche, voice and offer guide titles and hook text; choosing one fills its look. */
+  brandIdentityId: string | null
+  /** Comment-keyword call to action (Automatic): ends each post caption and shows at the end of the video. */
+  ctaKeyword: string
+  ctaOffer: string
+  /** Draw the brand's handle or logo in a corner (Automatic). */
+  showHandle: boolean
   trimOpen: boolean
   trimStart: string
   trimEnd: string
@@ -95,6 +102,10 @@ export const useDraftStore = create<DraftState>((set) => ({
   broll: 'off',
   hookPreview: false,
   qualityBar: 'b',
+  brandIdentityId: null,
+  ctaKeyword: '',
+  ctaOffer: '',
+  showHandle: false,
   trimOpen: false,
   trimStart: '',
   trimEnd: '',

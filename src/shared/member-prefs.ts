@@ -44,6 +44,12 @@ export interface CreateStyle {
   broll: 'off' | 'after-hook' | 'full'
   hookPreview: boolean
   qualityBar: QualityBar
+  /** The brand whose niche, voice and offer guide the titles, and whose handle can be drawn. */
+  brandIdentityId: string | null
+  ctaKeyword: string
+  ctaOffer: string
+  /** Draw the brand's handle or logo in a corner. */
+  showHandle: boolean
 }
 
 /** Remix's style choices (not the links, the file, the creator name or the permission boxes). */
@@ -64,6 +70,7 @@ export interface RemixFormStyle {
   ctaOffer: string
   camera: CameraSettings
   imageCamera: CameraSettings
+  showHandle: boolean
 }
 
 export type StyleOf<K extends StyleKind> = K extends 'create' ? CreateStyle : RemixFormStyle
@@ -91,12 +98,13 @@ export const MAX_SUPPORT_LINK = 300
 
 export const CREATE_STYLE_KEYS = [
   'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
-  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar'
+  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar',
+  'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle'
 ] as const satisfies readonly (keyof CreateStyle)[]
 
 export const REMIX_STYLE_KEYS = [
   'format', 'angle', 'order', 'host', 'avatarId', 'voice', 'brandIdentityId', 'count', 'includeCaptions', 'captionPreset', 'headlineLook',
-  'ctaId', 'ctaKeyword', 'ctaOffer', 'camera', 'imageCamera'
+  'ctaId', 'ctaKeyword', 'ctaOffer', 'camera', 'imageCamera', 'showHandle'
 ] as const satisfies readonly (keyof RemixFormStyle)[]
 
 export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true }
@@ -115,6 +123,9 @@ function headlineLook(value: unknown): HeadlineLook | undefined {
 function camera(value: unknown): CameraSettings | undefined {
   try { return parseCameraSettings(value) } catch { return undefined }
 }
+
+const isKeyword = (value: unknown): boolean => typeof value === 'string' && value.length <= 20 && normalizeCtaKeyword(value) !== null
+const isOffer = (value: unknown): boolean => typeof value === 'string' && value.length <= MAX_CTA_OFFER_CHARS && !/[\0\r\n]/.test(value)
 
 const CREATE_CHECKS: { [K in keyof CreateStyle]: (value: unknown) => boolean } = {
   clippingMode: oneOf(['quality', 'economy', 'advanced']),
@@ -137,7 +148,11 @@ const CREATE_CHECKS: { [K in keyof CreateStyle]: (value: unknown) => boolean } =
   backgroundVideo: nullOr(isBackgroundVideoName),
   broll: oneOf(['off', 'after-hook', 'full']),
   hookPreview: bool,
-  qualityBar: oneOf(QUALITY_BARS)
+  qualityBar: oneOf(QUALITY_BARS),
+  brandIdentityId: nullOr(isBrandId),
+  ctaKeyword: (value) => isKeyword(value),
+  ctaOffer: (value) => isOffer(value),
+  showHandle: bool
 }
 
 const VOICE_IDS = [AVATAR_VOICE, ...REMIX_VOICES.map((voice) => voice.id)]
@@ -154,10 +169,11 @@ const REMIX_CHECKS: { [K in keyof RemixFormStyle]: (value: unknown) => boolean }
   captionPreset: isCaptionPresetId,
   headlineLook: () => true,
   ctaId: nullOr(isCtaId),
-  ctaKeyword: (value) => typeof value === 'string' && value.length <= 20 && normalizeCtaKeyword(value) !== null,
-  ctaOffer: (value) => typeof value === 'string' && value.length <= MAX_CTA_OFFER_CHARS && !/[\0\r\n]/.test(value),
+  ctaKeyword: (value) => isKeyword(value),
+  ctaOffer: (value) => isOffer(value),
   camera: () => true,
-  imageCamera: () => true
+  imageCamera: () => true,
+  showHandle: bool
 }
 
 /** The valid fields of a saved style; anything else is dropped. */
@@ -259,11 +275,11 @@ export interface KnownItems { ctaIds: ReadonlySet<string>; avatarIds: ReadonlySe
 function dropMissingFrom<K extends StyleKind>(kind: K, style: Partial<StyleOf<K>>, known: KnownItems): Partial<StyleOf<K>> {
   const next = { ...style } as Record<string, unknown>
   if (typeof next.ctaId === 'string' && !known.ctaIds.has(next.ctaId)) next.ctaId = null
+  if (typeof next.brandIdentityId === 'string' && !known.brandIds.has(next.brandIdentityId)) next.brandIdentityId = null
   if (kind === 'create') {
     if (typeof next.backgroundVideo === 'string' && !known.backgrounds.has(next.backgroundVideo)) next.backgroundVideo = null
   } else {
     if (typeof next.avatarId === 'string' && !known.avatarIds.has(next.avatarId)) next.avatarId = null
-    if (typeof next.brandIdentityId === 'string' && !known.brandIds.has(next.brandIdentityId)) next.brandIdentityId = null
   }
   return next as Partial<StyleOf<K>>
 }

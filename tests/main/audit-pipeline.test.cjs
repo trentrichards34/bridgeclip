@@ -41,7 +41,7 @@ function fakeChild() {
   return child
 }
 
-function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { applyRunCta: async () => ({ failed: [] }), readCta: () => ({}) } }) {
+function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { applyRunCta: async () => ({ failed: [] }), readCta: () => ({}) }, brands = { brandForJob: () => { throw new Error('That brand identity could not be found. Choose it again on Create.') } } }) {
   const sent = []
   const signals = []
   const settings = { openrouterApiKey: SECRET, outputDirectory: WORK_HOME, pythonPath: '/opt/python3', enginePath: WORK_HOME }
@@ -59,7 +59,8 @@ function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { ap
     '../shared/job-contract': jobContract,
     './tools': { resolveBinary: () => '/staged/engine-bin/ffmpeg' },
     './backgrounds': { resolveBackground: (name) => '/library/' + name },
-    './ctas': ctas
+    './ctas': ctas,
+    './brands': brands
   }, {
     process: { ...process, platform: 'darwin', env, kill: (pid, signal) => { signals.push({ pid, signal }) } }
   })

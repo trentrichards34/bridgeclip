@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { create } from 'zustand'
+import { hasBrandMark } from '../../shared/brand-kit'
+import { useBrands } from '../store/use-brand-store'
 import { AudioLines, Clapperboard, Film, FolderOpen, ListVideo, Mic, Plus, Repeat2, Send, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
 import {
   estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, firstLine, MAX_HOOK_CHARS, MAX_SCENES, MAX_SCENE_SECONDS, overlongScenes, type SceneQuality, RECREATE_MAX_SECONDS, RECREATE_MIN_SECONDS, type RecreateMode, MAX_SPOKEN_SECONDS, PRESET_VOICES, PRICES, AI_PORTRAIT_CANDIDATES, PORTRAIT_LOOKS, type PortraitLook, REACTIONS, scriptText, SCRIPT_LENGTHS,
@@ -69,6 +71,8 @@ interface StudioDraft {
   headlineLook: HeadlineLook
   /** A call to action from the library, added to the end of the video. */
   ctaId: string | null
+  /** The brand whose handle or logo goes in a corner (null: none). */
+  handleBrandId: string | null
   update: (patch: Partial<Omit<StudioDraft, 'update'>>) => void
 }
 
@@ -79,7 +83,7 @@ const useStudioDraft = create<StudioDraft>((set) => ({
   recreate: { sourcePath: null, sourceSeconds: 0, startSeconds: 0, endSeconds: 0, mode: 'replace', keepAudio: true, rightsConfirmed: false },
   topic: '', niche: '', seconds: 30, script: EMPTY_SCRIPT, lipSync: 'avatar-iv', sceneQuality: 'standard', cinematicScenes: null,
   captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, includeTitle: true, backgroundVideo: null, brandIdentityId: null,
-  headlineLook: DEFAULT_HEADLINE_LOOK, ctaId: null,
+  headlineLook: DEFAULT_HEADLINE_LOOK, ctaId: null, handleBrandId: null,
   update: (patch) => set(patch)
 }))
 
@@ -97,16 +101,20 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
   const [writing, setWriting] = useState(false)
   const [status, setStatus] = useState<AvatarRenderStatus | null>(null)
   const [launching, setLaunching] = useState(false)
-  const [brands, setBrands] = useState<{ id: string; name: string }[]>([])
+  const brands = useBrands((s) => s.brands)
+  const loadBrands = useBrands((s) => s.load)
+  const markBrands = brands.filter((brand) => hasBrandMark(brand.look))
+  const handleBrand = markBrands.find((brand) => brand.id === draft.handleBrandId) ?? null
+  const handleChoice = handleBrand ? { brandIdentityId: handleBrand.id, showHandle: true } : {}
 
   useEffect(() => {
     let live = true
-    getApi().brandIdentities.list().then((list) => { if (live) setBrands(list.map(({ id, name }) => ({ id, name }))) }).catch(() => undefined)
+    void loadBrands(true)
     getApi().avatars.list().then((list) => { if (live) setAvatars(list) }).catch((err) => { if (live) setError(errorMessage(err)) })
     getApi().avatars.renderStatus().then((current) => { if (live && current) setStatus(current) }).catch(() => undefined)
     const off = getApi().avatars.onStatus((next) => setStatus(next))
     return () => { live = false; off() }
-  }, [])
+  }, [loadBrands])
 
   const selected = avatars.find((avatar) => avatar.id === draft.avatarId) ?? avatars[0] ?? null
   useEffect(() => {
@@ -169,12 +177,12 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
         ? await getApi().avatars.recreate({
           avatarId: selected.id, sourcePath: recreate.sourcePath, startSeconds: recreate.startSeconds, endSeconds: recreate.endSeconds, mode: recreate.mode,
           keepAudio: recreate.keepAudio, title: draft.script.title, captionPreset: draft.captionPreset, includeCaptions: draft.includeCaptions && recreate.keepAudio,
-          includeTitle: draft.includeTitle, rightsConfirmed: recreate.rightsConfirmed, headlineLook: draft.headlineLook, ctaId: draft.ctaId
+          includeTitle: draft.includeTitle, rightsConfirmed: recreate.rightsConfirmed, headlineLook: draft.headlineLook, ctaId: draft.ctaId, ...handleChoice
         })
         : await getApi().avatars.render({
           avatarId: selected.id, style: draft.style, script: draft.script, lipSync: draft.lipSync, sceneQuality: draft.sceneQuality, captionPreset: draft.captionPreset,
           includeCaptions: draft.includeCaptions, includeTitle: draft.includeTitle, backgroundVideo: draft.style === 'talking' ? draft.backgroundVideo : null,
-          headline: hook, headlineLook: draft.headlineLook, ctaId: draft.ctaId
+          headline: hook, headlineLook: draft.headlineLook, ctaId: draft.ctaId, ...handleChoice
         })
       // A status event for this render may already have arrived; keep the newer one.
       setStatus((previous) => previous?.id === started.id ? previous : started)
@@ -335,6 +343,17 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
               <SettingRow title="Captions"
                 description={draft.style === 'recreate' ? (recreate.keepAudio ? 'Transcribed from the original audio (uses your OpenRouter key).' : 'Keep the original audio to add captions.') : 'Word-by-word captions in the style below.'}
                 control={<Switch label="Captions" disabled={draft.style === 'recreate' && !recreate.keepAudio} checked={draft.includeCaptions && (draft.style !== 'recreate' || recreate.keepAudio)} onChange={(includeCaptions) => draft.update({ includeCaptions })} />} />
+              {markBrands.length > 0 && (
+                <div className="space-y-2">
+                  <SettingRow title="Show my handle" description="Your brand’s handle or logo, small in a corner of the video."
+                    control={<Switch label="Show my handle" checked={handleBrand !== null}
+                      onChange={(on) => draft.update({ handleBrandId: on ? (markBrands.find((brand) => brand.id === draft.brandIdentityId) ?? markBrands[0]).id : null })} />} />
+                  {handleBrand && markBrands.length > 1 && (
+                    <Select value={handleBrand.id} aria-label="Brand for the handle" onChange={(handleBrandId) => draft.update({ handleBrandId })}
+                      options={markBrands.map((brand) => ({ value: brand.id, label: brand.name, detail: brand.look?.handle || 'Logo' }))} />
+                  )}
+                </div>
+              )}
               <SettingRow title="Hook text at the top" description={hookIsCard ? 'With a gameplay split the hook text is a title card, like Create’s clips.' : 'A headline at the top of the video, like Create’s clips.'}
                 control={<Switch label="Hook text" checked={draft.includeTitle} onChange={(includeTitle) => draft.update({ includeTitle })} />} />
               {draft.includeTitle && !hookIsCard && (

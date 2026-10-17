@@ -308,6 +308,11 @@ async def run(config: dict) -> bool:
         banner_channel_url=config.get("banner_channel_url"),
         keyterms=config.get("keyterms") or None,
         clip_request=config.get("clip_request"),
+        brand_identity=config.get("brand_identity") or "",
+        brand_name=config.get("brand_name") or "",
+        cta_keyword=config.get("cta_keyword") or "",
+        cta_offer=config.get("cta_offer") or "",
+        brand_mark=config.get("brand_mark"),
     )
 
     emit({
@@ -347,6 +352,10 @@ async def run(config: dict) -> bool:
         diagnostic["http_status"] = http_status
     emit({"type": "error", **describe_failure(result.error), **diagnostic})
     return False
+
+
+# A config carries keyterms and, optionally, the member's brand identity text (up to 40,000 characters).
+MAX_CONFIG_CHARS = 256 * 1024
 
 
 def validate_config(config: object) -> dict:
@@ -432,6 +441,16 @@ def validate_config(config: object) -> dict:
         not isinstance(clip_request, str) or not clip_request.strip() or len(clip_request) > 1000 or "\0" in clip_request
     ):
         raise ValueError("Invalid clip request")
+    # The member's brand (advisory text for the planner), comment keyword and on-video handle/logo.
+    for field, limit in (("brand_identity", 60000), ("brand_name", 120), ("cta_offer", 200)):
+        value = config.get(field)
+        if value is not None and (not isinstance(value, str) or len(value) > limit or "\0" in value):
+            raise ValueError(f"Invalid {field}")
+    keyword = config.get("cta_keyword")
+    if keyword is not None and (not isinstance(keyword, str) or (keyword and not re.fullmatch(r"[A-Z0-9][A-Z0-9-]{1,19}", keyword))):
+        raise ValueError("Invalid call-to-action keyword")
+    from clip_engine.services.brand_mark import validate_brand_mark
+    config["brand_mark"] = validate_brand_mark(config.get("brand_mark"))
     ranges = config.get("duration_ranges")
     if ranges is not None and (
         not isinstance(ranges, list) or len(ranges) > len(DURATION_RANGE_IDS) or
@@ -448,8 +467,8 @@ def main() -> int:
     try:
         # Legacy CLI argument remains accepted; Electron uses stdin to keep
         # private source URLs out of process listings. Bound either transport.
-        raw = sys.argv[1] if len(sys.argv) == 2 else sys.stdin.read(65537)
-        if len(raw) > 65536:
+        raw = sys.argv[1] if len(sys.argv) == 2 else sys.stdin.read(MAX_CONFIG_CHARS + 1)
+        if len(raw) > MAX_CONFIG_CHARS:
             raise ValueError("Config too large")
         config = validate_config(json.loads(raw))
     except (ValueError, TypeError):

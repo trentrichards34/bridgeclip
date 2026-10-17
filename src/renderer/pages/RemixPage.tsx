@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Camera, Check, Image as ImageIcon, Copy, FileText, Film, FolderOpen, Library, MessageCircle, Pencil, Plus, Send, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, Camera, Check, Image as ImageIcon, Copy, FileText, Film, FolderOpen, Library, MessageCircle, Send, Sparkles, UserRound, Wand2, X } from 'lucide-react'
 import type { AvatarSummary } from '../../shared/avatars'
 import { REACTIONS } from '../../shared/avatars'
 import {
-  BRAND_IDENTITY_TEMPLATE, brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_POST_CAPTION_CHARS, MAX_SOURCES,
+  brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_CTA_OFFER_CHARS, MAX_POST_CAPTION_CHARS, MAX_SOURCES,
   closeWithoutCta, normalizeCtaKeyword, AVATAR_VOICE, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
   REMIX_WORD_LIMITS, remixEditProblem, remixSourceUrl, STANCE_LABELS, STYLE_LABELS, wordCount,
   REMIX_FORMATS, headlineOnly, CAMERA_LAYOUTS, partsFor, type CameraSettings, type RemixRecordings, type BrandIdentity, type RemixDraft, type RemixEdit, type RemixHost, type RemixOutput, type RemixStatus
@@ -19,7 +19,6 @@ import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Callout } from '../components/ui/Callout'
 import { Checkbox } from '../components/ui/Checkbox'
-import { Dialog, DialogFooter } from '../components/ui/Dialog'
 import { EmptyState } from '../components/ui/EmptyState'
 import { Field, TextArea, TextInput } from '../components/ui/Field'
 import { Page } from '../components/ui/Page'
@@ -35,6 +34,9 @@ import { requestSettingsSection } from '../lib/settings-focus'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useRemixForm } from '../store/use-remix-form-store'
+import { useBrands } from '../store/use-brand-store'
+import { BrandPicker } from '../components/BrandIdentityDialog'
+import { brandFormPatch, hasBrandMark } from '../../shared/brand-kit'
 import { StylePresets } from '../components/StylePresets'
 import { PostDialog, type PostableClip } from '../components/PostDialog'
 import { toPostable } from '../components/ClipList'
@@ -58,22 +60,21 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const pexelsConfigured = useSettingsStore((s) => s.pexelsConfigured)
   const form = useRemixForm()
   const [avatars, setAvatars] = useState<AvatarSummary[]>([])
-  const [brands, setBrands] = useState<BrandIdentity[]>([])
-  const [editing, setEditing] = useState<BrandIdentity | 'new' | null>(null)
+  const brands = useBrands((s) => s.brands)
+  const loadBrands = useBrands((s) => s.load)
   const [status, setStatus] = useState<RemixStatus | null>(null)
   const [launching, setLaunching] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState(false)
   const lowDisk = useLowDiskGate()
 
   useEffect(() => {
     let live = true
     getApi().avatars.list().then((list) => { if (live) setAvatars(list) }).catch(() => undefined)
-    getApi().brandIdentities.list().then((list) => { if (live) setBrands(list) }).catch((err) => { if (live) setError(errorMessage(err)) })
+    void loadBrands(true)
     getApi().remix.status().then((current) => { if (live && current) setStatus(current) }).catch(() => undefined)
     const off = getApi().remix.onStatus((next) => setStatus(next))
     return () => { live = false; off() }
-  }, [])
+  }, [loadBrands])
 
   const avatar = avatars.find((item) => item.id === form.avatarId) ?? avatars[0] ?? null
   const brand = brands.find((item) => item.id === form.brandIdentityId) ?? null
@@ -130,15 +131,11 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     } catch (err) { setError(errorMessage(err, 'That video could not be opened.')) }
   }
 
-  const removeBrand = async (id: string): Promise<void> => {
-    if (!confirmDelete) { setConfirmDelete(true); return }
-    setConfirmDelete(false)
-    setError(null)
-    try {
-      setBrands(await getApi().brandIdentities.remove(id))
-      if (form.brandIdentityId === id) form.update({ brandIdentityId: null })
-    } catch (err) { setError(errorMessage(err)) }
+  // Picking a different brand fills the style fields from its look (picking the same one again changes nothing).
+  const chooseBrand = (next: BrandIdentity | null): void => {
+    form.update({ brandIdentityId: next?.id ?? null, ...(next ? brandFormPatch(next.look, form) : {}) })
   }
+  const showMark = hasBrandMark(brand?.look)
 
   const plan = async (): Promise<void> => {
     setError(null)
@@ -153,7 +150,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : '', format: form.format, clipRightsAck: (silent || image) && form.clipRightsAck,
         headlineLook: form.headlineLook,
         ...(onCamera ? { camera: image ? { ...form.imageCamera, talk: true } : { ...form.camera, talk: silent && form.camera.talk } } : {}),
-        ...(form.ctaId ? { ctaId: form.ctaId } : {})
+        ...(form.ctaId ? { ctaId: form.ctaId } : {}),
+        ...(brand && showMark && form.showHandle ? { showHandle: true } : {})
       })
       setStatus((previous) => previous?.id === started.id && previous.phase !== 'planning' ? previous : started)
     } catch (err) { setError(errorMessage(err, 'The remixes could not be started.')) }
@@ -305,19 +303,12 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         </Panel>
 
         <Panel>
-          <PanelHeader title="3 · Your take" description="Your Brand Identity decides what your presenter believes, so every reaction sounds like your brand and only uses your real proof."
-            action={<Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setEditing('new')}>Add</Button>} />
+          <PanelHeader title="3 · Your take" description="Your Brand Identity decides what your presenter believes, so every reaction sounds like your brand and only uses your real proof. Its look fills in the style below." />
           <div className="mt-4 space-y-3">
-            <Select value={brand?.id ?? ''} onChange={(value) => { setConfirmDelete(false); form.update({ brandIdentityId: value || null }) }}
-              options={[{ value: '', label: 'No brand identity', detail: 'A neutral expert voice, no results or numbers' },
-                ...brands.map((item) => ({ value: item.id, label: item.name, detail: `${item.text.length.toLocaleString()} characters` }))]} />
-            {brand && (
-              <div className="flex gap-2">
-                <Button size="sm" variant="secondary" icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setEditing(brand)}>Edit</Button>
-                <Button size="sm" variant={confirmDelete ? 'danger' : 'ghost'} icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => void removeBrand(brand.id)}>
-                  {confirmDelete ? 'Click again to delete' : 'Delete'}
-                </Button>
-              </div>
+            <BrandPicker value={form.brandIdentityId} onChange={chooseBrand} noneDetail="A neutral expert voice, no results or numbers" />
+            {showMark && (
+              <SettingRow title="Show my handle" description={`Puts ${brand?.look?.handle ? `“${brand.look.handle}”` : 'your logo'} small in a corner of every video.`}
+                control={<Switch label="Show my handle" checked={form.showHandle} onChange={(showHandle) => form.update({ showHandle })} />} />
             )}
             <div className="glass-tile space-y-3 rounded-xl p-3">
               <div className="flex items-start gap-2">
@@ -483,9 +474,6 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         </Panel>
       </div>
 
-      {editing && <BrandIdentityDialog brand={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={(list, id) => {
-        setBrands(list); setEditing(null); form.update({ brandIdentityId: id })
-      }} />}
     </Page>
   )
 }
@@ -815,62 +803,5 @@ function RemixCard({ output, folder, onNavigate, onViewLibrary }: { output: Remi
       {problem && <p role="alert" className="text-2xs text-warning">{problem}</p>}
       {posting && <PostDialog clips={[posting]} onClose={() => setPosting(null)} onNavigate={onNavigate} />}
     </div>
-  )
-}
-
-function BrandIdentityDialog({ brand, onClose, onSaved }: { brand: BrandIdentity | null; onClose: () => void; onSaved: (list: BrandIdentity[], id: string) => void }): React.JSX.Element {
-  const [name, setName] = useState(brand?.name ?? '')
-  const [text, setText] = useState(brand?.text ?? '')
-  const [working, setWorking] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => { ref.current?.focus() }, [])
-
-  const importFile = async (): Promise<void> => {
-    setError(null)
-    try {
-      const file = await getApi().brandIdentities.importFile()
-      if (file) {
-        setText(file.text); if (!name.trim()) setName(file.name)
-        setNotice(file.truncated ? `That file is longer than ${MAX_BRAND_IDENTITY_CHARS.toLocaleString()} characters, so the end was cut off. Trim it so your proof and voice sections fit.` : null)
-      }
-    } catch (err) { setError(errorMessage(err)) }
-  }
-  const save = async (): Promise<void> => {
-    setWorking(true); setError(null)
-    try {
-      const list = await getApi().brandIdentities.save({ ...(brand ? { id: brand.id } : {}), name, text })
-      // The list is newest first, so a new identity is first.
-      onSaved(list, brand?.id ?? list[0]?.id ?? '')
-    } catch (err) { setError(errorMessage(err)) } finally { setWorking(false) }
-  }
-
-  return (
-    <Dialog ref={ref} aria-label={brand ? 'Edit brand identity' : 'Add brand identity'} onBackdropMouseDown={working ? undefined : onClose} panelClassName="max-w-[640px]"
-      onKeyDown={(e) => { if (e.key === 'Escape' && !working) onClose() }}>
-      <div className="space-y-4 overflow-y-auto p-5">
-        <h2 className="text-base font-semibold text-ink">{brand ? 'Edit brand identity' : 'Add brand identity'}</h2>
-        <p className="text-xs text-ink-muted">
-          Paste the Brand Identity document from your membership area, or import it as a .txt or .md file. The more it covers, the better the takes:
-          what you believe and why, the myths you push back on, your method, your real results and testimonials, and how you talk.
-        </p>
-        <Field label="Name"><TextInput value={name} maxLength={120} placeholder="e.g. Pull-Up Lab" onChange={(e) => setName(e.target.value)} /></Field>
-        <Field label="Brand identity" aside={<span className="flex gap-3">
-          {!text.trim() && <button type="button" className="text-2xs text-accent" onClick={() => setText(BRAND_IDENTITY_TEMPLATE)}>Start from template</button>}
-          <button type="button" className="text-2xs text-accent" onClick={() => void importFile()}>Import file</button>
-        </span>}
-          hint={`${text.length.toLocaleString()} / ${MAX_BRAND_IDENTITY_CHARS.toLocaleString()} characters`}>
-          <TextArea rows={14} value={text} maxLength={MAX_BRAND_IDENTITY_CHARS} onChange={(e) => setText(e.target.value)}
-            placeholder={'Core promise: …\nWhat we believe: …\nMyths we push back on: …\nOur method: …\nProof (real results only): …\nVoice: …'} />
-        </Field>
-        {notice && <Callout tone="warning">{notice}</Callout>}
-        {error && <Callout tone="danger">{error}</Callout>}
-      </div>
-      <DialogFooter>
-        <Button variant="ghost" disabled={working} onClick={onClose}>Cancel</Button>
-        <Button variant="primary" icon={<Check className="h-4 w-4" />} loading={working} disabled={working || !name.trim() || text.trim().length < 40} onClick={() => void save()}>Save</Button>
-      </DialogFooter>
-    </Dialog>
   )
 }

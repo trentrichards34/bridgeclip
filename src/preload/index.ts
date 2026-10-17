@@ -30,6 +30,7 @@ import type { CleanupFilters, CleanupGroupId, CleanupPlan, CleanupResult, Folder
 import type { YouTubePreview } from '../shared/youtube-preview'
 import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/avatars'
 import type { MemberPrefs, StyleKind } from '../shared/member-prefs'
+import type { BrandLook } from '../shared/brand-kit'
 import type { BrandIdentity, RecordingPart, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
 import type {
   AppDataScope,
@@ -308,10 +309,12 @@ export interface BridgeClipAPI {
   /** Brand identities: what a brand believes, imported or pasted in; Remix writes takes from them. */
   brandIdentities: {
     list: () => Promise<BrandIdentity[]>
-    save: (input: { id?: string; name: string; text: string }) => Promise<BrandIdentity[]>
+    save: (input: { id?: string; name: string; text: string; look?: BrandLook }) => Promise<BrandIdentity[]>
     remove: (id: string) => Promise<BrandIdentity[]>
     /** Opens a file dialog in main; null when cancelled. */
     importFile: () => Promise<{ name: string; text: string; truncated: boolean } | null>
+    /** Opens an image dialog in main and stores the logo (saved with the brand); null when cancelled. */
+    chooseLogo: () => Promise<{ logo: string; path: string } | null>
   }
   /** Remix: commentary videos built on someone else's viral moments. */
   remix: {
@@ -636,7 +639,8 @@ const api: BridgeClipAPI = {
     list: () => ipcRenderer.invoke('brandIdentities:list'),
     save: (input) => ipcRenderer.invoke('brandIdentities:save', input),
     remove: (id) => ipcRenderer.invoke('brandIdentities:remove', id),
-    importFile: () => ipcRenderer.invoke('brandIdentities:importFile')
+    importFile: () => ipcRenderer.invoke('brandIdentities:importFile'),
+    chooseLogo: () => ipcRenderer.invoke('brandIdentities:chooseLogo')
   },
   remix: {
     start: (request) => paid('remix:start', request),
