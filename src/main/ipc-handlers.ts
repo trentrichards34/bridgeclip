@@ -37,9 +37,9 @@ import { getModelCatalog } from './openrouter-models'
 import { getYouTubePreview } from './youtube-preview'
 import { resolveBinary, supportsCaptionFilter } from './tools'
 import { automationEnhancementGroups, enhanceAutomationBatch, automationContentSource, enhanceAutomationContent, resolveAutomationMetadataDraft, addAutomationContent, addLibraryClipsToAutomation, createAutomation, deleteAutomation, isAutomationMedia, listAutomations, removeAutomationContent, runAutomation, updateAutomation, updateAutomationContent, approveAutomationTikTokReview, prepareAutomationTikTokReview } from './automations'
-import { acknowledgeAutomationWarnings, retryAutomationContent, dismissAutomationMetadataError, automationLibraryClip, reorderAutomationContent, reviewAutomationContent, showAutomationContentInFolder } from './automations'
+import { unscheduleAutomationContent, acknowledgeAutomationWarnings, retryAutomationContent, dismissAutomationMetadataError, automationLibraryClip, reorderAutomationContent, reviewAutomationContent, showAutomationContentInFolder } from './automations'
 import { libraryPostingStatus, libraryMetadataSource, enhanceLibraryMetadata } from './library-posting'
-import { libraryPostingSummary } from './library-posting'
+import { libraryPostingSummary, postPerformanceInsights } from './library-posting'
 import { readyToPost } from './ready-to-post'
 import { deleteLibraryClips, deleteLibraryRun, setLibraryClipCta, setLibraryFavorite, setLibraryPosted, setRunBusyCheck } from './library-management'
 import {
@@ -65,6 +65,7 @@ import {
   probeClipForPosting,
   publishClip,
   refreshPosts,
+  refreshPostStats,
   reschedulePost,
   retryPost
 } from './zernio/posts'
@@ -197,6 +198,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('zernio:posts:cancelUpload', (_event, attemptId: unknown) => cancelUpload(attemptId))
   handle('zernio:posts:list', () => listPosts())
   handle('zernio:posts:refresh', (_event, force: unknown) => refreshPosts(force))
+  handle('zernio:posts:refreshStats', (_event, force: unknown) => refreshPostStats(force))
+  handle('zernio:posts:insights', () => postPerformanceInsights())
   handle('zernio:posts:cancel', (_event, postId: unknown) => cancelPost(postId))
   handle('zernio:posts:reschedule', (_event, postId: unknown, scheduledFor: unknown, timezone: unknown) => reschedulePost(postId, scheduledFor, timezone))
   handle('zernio:posts:retry', (_event, postId: unknown) => retryPost(postId))
@@ -221,6 +224,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('automations:delete', (_event, id: unknown) => deleteAutomation(id))
   handle('automations:retryContent', (_event, id: unknown, contentId: unknown) => retryAutomationContent(id, contentId))
   handle('automations:run', (_event, id: unknown) => runAutomation(id))
+  handle('automations:unscheduleContent', (_event, id: unknown, contentId: unknown) => unscheduleAutomationContent(id, contentId))
   handle('automations:addLibraryClips', (_event, id: unknown, outputDir: unknown, clipIndices: unknown) => addLibraryClipsToAutomation(id, outputDir, clipIndices))
   handle('automations:updateContent', (_event, id: unknown, contentId: unknown, update: unknown) => updateAutomationContent(id, contentId, update))
   handle('automations:prepareTikTokReview', (_event, id: unknown, contentId: unknown) => prepareAutomationTikTokReview(id, contentId))

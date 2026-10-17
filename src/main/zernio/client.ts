@@ -511,10 +511,10 @@ export class ZernioClient {
   private async postingRequest(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     path: string,
-    options: { body?: unknown; requestId?: string; timeoutMs?: number } = {}
+    options: { body?: unknown; requestId?: string; timeoutMs?: number; acceptStatuses?: readonly number[] } = {}
   ): Promise<{ status: number; body: JsonRecord }> {
     const startedAt = Date.now()
-    const labels = new Set(['posts', 'retry', 'media', 'presign', 'accounts', 'tiktok', 'creator-info'])
+    const labels = new Set(['posts', 'retry', 'media', 'presign', 'accounts', 'tiktok', 'creator-info', 'analytics'])
     const operation = path.split('?')[0].split('/').filter(Boolean).map((part) => labels.has(part) ? part : 'item').join('.')
     const context = { traceId: this.traceId, requestId: randomUUID(), method, operation }
     logger.info('zernio.post.request.start', context)
@@ -547,7 +547,7 @@ export class ZernioClient {
     }
     if (response.status !== 429) noteRateLimit(response.headers)
     const body = asRecord(raw ? safeJson(raw) : {})
-    if (response.ok) {
+    if (response.ok || options.acceptStatuses?.includes(response.status)) {
       logger.info('zernio.post.request.completed', { ...context, status: response.status, durationMs: Date.now() - startedAt })
       return { status: response.status, body }
     }
@@ -627,6 +627,18 @@ export class ZernioClient {
   async retryPost(postId: string, timeoutMs: number): Promise<{ post: JsonRecord; error: string | null }> {
     const { body } = await this.postingRequest('POST', `/posts/${encodeURIComponent(postId)}/retry`, { timeoutMs })
     return { post: asRecord(body.post), error: sanitizeProviderText(body.error, 300) ?? null }
+  }
+
+  /**
+   * GET /v1/analytics?postId=: one post's views, likes and more, per platform.
+   * Zernio answers 202 while it is still syncing the numbers and 424 when every
+   * platform failed; both carry the usual body, so they are returned, not thrown.
+   * `fromDate` (YYYY-MM-DD) must cover the post's publish date.
+   */
+  async getPostAnalytics(postId: string, fromDate: string): Promise<{ status: number; body: JsonRecord }> {
+    if (!isZernioId(postId) || !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) throw new Error('Invalid analytics request')
+    const params = new URLSearchParams({ postId, fromDate })
+    return this.postingRequest('GET', `/analytics?${params}`, { acceptStatuses: [424] })
   }
 
   /** Allowed privacy levels, interaction toggles and limits for a TikTok account. */

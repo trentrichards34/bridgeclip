@@ -21,6 +21,7 @@ import {
   tiktokOptionsError
 } from './posts-payload'
 import { parsePostRecord, PostsStore } from './posts-store'
+import { mergePostStats, parsePostAnalytics, STATS_BATCH, STATS_REQUEST_GAP_MS, statsDue, statsFromDate, statsOrder } from './post-stats'
 import { quarantineUnbound, readableCache, workspaceId } from './workspace-cache'
 import { isPostableAccount, isZernioId, isZernioPlatform, type ZernioAccount } from '../../shared/zernio'
 import {
@@ -38,6 +39,7 @@ import {
   type PostProgress,
   type PostRecord,
   type PostsRefreshResult,
+  type PostStatsRefreshResult,
   type TikTokCreatorInfo
 } from '../../shared/zernio-posts'
 
@@ -622,6 +624,83 @@ export async function refreshPosts(force: unknown): Promise<PostsRefreshResult> 
   return { posts: posts().list(), error: failure }
 }
 
+/** One post from the local history, or null. */
+export function getPostRecord(id: string): PostRecord | null {
+  return isZernioId(id) ? posts().get(id) : null
+}
+
+// ---- Post performance -------------------------------------------------------
+
+/** Whole refreshes start at most this often unless the person asks. */
+const STATS_PASS_GAP_MS = 60_000
+const STATS_FORCED_PASS_GAP_MS = 10_000
+let statsPass: Promise<PostStatsRefreshResult> | null = null
+let lastStatsPassAt = 0
+/** Zernio said this workspace can't read analytics; asked again after this time. */
+let statsUnavailableUntil = 0
+const STATS_UNAVAILABLE_RETRY_MS = 6 * 3_600_000
+
+onZernioReset(() => {
+  lastStatsPassAt = 0
+  statsUnavailableUntil = 0
+})
+
+/**
+ * Fetches views, likes and more for published posts made from CreatorClips,
+ * a few at a time and spaced out (Zernio's analytics have a stricter
+ * per-second limit). Each post is asked about at most every 30 minutes
+ * (5 when the person presses refresh), and the answer is kept with the post.
+ */
+export function refreshPostStats(force: unknown): Promise<PostStatsRefreshResult> {
+  statsPass ??= runStatsPass(force === true).finally(() => { statsPass = null })
+  return statsPass
+}
+
+async function runStatsPass(force: boolean): Promise<PostStatsRefreshResult> {
+  const generation = workspaceGeneration
+  const started = Date.now()
+  const list = (error: string | null = null): PostStatsRefreshResult => ({ posts: posts().list(), error, unavailable: statsUnavailableUntil > Date.now() })
+  if (started - lastStatsPassAt < (force ? STATS_FORCED_PASS_GAP_MS : STATS_PASS_GAP_MS)) return list()
+  if (!force && statsUnavailableUntil > started) return list()
+  const due = posts().list().filter((post) => statsDue(post, started, force)).sort(statsOrder).slice(0, STATS_BATCH)
+  if (!due.length) return list()
+  let client: ZernioClient
+  try { client = getClient() } catch (error) { return list(error instanceof Error ? error.message : 'Add your Zernio API key to see post stats.') }
+  lastStatsPassAt = started
+  let failure: string | null = null
+  for (const [index, post] of due.entries()) {
+    if (index > 0) await new Promise((resolve) => setTimeout(resolve, STATS_REQUEST_GAP_MS))
+    if (generation !== workspaceGeneration) return list()
+    try {
+      const { status, body } = await client.getPostAnalytics(post.id, statsFromDate(post))
+      if (generation !== workspaceGeneration) return list()
+      statsUnavailableUntil = 0
+      const current = posts().get(post.id)
+      if (!current) continue
+      const stamp = new Date(Date.now()).toISOString()
+      posts().save({ ...current, stats: mergePostStats(current.stats, parsePostAnalytics(body, status, current, stamp)) })
+    } catch (error) {
+      if (generation !== workspaceGeneration) return list()
+      const status = error instanceof ZernioApiError ? error.status : -1
+      if (status === 404) {
+        // Zernio has no analytics for this post (yet): remember the try so it isn't asked again at once.
+        const current = posts().get(post.id)
+        if (current) posts().save({ ...current, stats: mergePostStats(current.stats, { fetchedAt: new Date(Date.now()).toISOString(), updatedAt: null, syncStatus: 'unavailable', total: null, targets: [], message: null }) })
+        continue
+      }
+      if (status === 402 || status === 403) {
+        statsUnavailableUntil = Date.now() + STATS_UNAVAILABLE_RETRY_MS
+        return list('Zernio didn’t share post stats for this workspace. Open each post on its platform to see its views and likes.')
+      }
+      failure = error instanceof Error ? error.message : 'Could not load post stats.'
+      // Rate limits, a bad key or no connection affect every request: stop here.
+      if (status === 429 || status === 401 || status === 0) break
+    }
+  }
+  logger.info('zernio.post.stats.refreshed', { asked: due.length, failed: failure !== null })
+  return list(failure)
+}
+
 export async function cancelPost(id: unknown): Promise<PostRecord[]> {
   const generation = workspaceGeneration
   const post = requirePost(id)
@@ -650,6 +729,39 @@ export async function cancelPost(id: unknown): Promise<PostRecord[]> {
       targets: post.targets.map((t) => ({ ...t, status: 'cancelled' })),
       refreshedAt: new Date().toISOString()
     })
+  })
+}
+
+/**
+ * Cancels a post an automation scheduled ahead. 'cancelled' when Zernio no
+ * longer has it scheduled (deleted now, or already gone); 'started' when it
+ * began publishing and can't be stopped. Network and API errors throw, and
+ * the caller tries again later.
+ */
+export async function cancelAutomationPost(id: string): Promise<'cancelled' | 'started'> {
+  if (!isZernioId(id)) throw new Error('Invalid automation post.')
+  const generation = workspaceGeneration
+  return changePost(id, async () => {
+    const client = getClient()
+    let outcome: 'cancelled' | 'started' = 'cancelled'
+    try {
+      await client.deletePost(id)
+    } catch (error) {
+      if (!(error instanceof ZernioApiError) || (error.status !== 404 && error.status !== 400)) throw error
+      if (error.status === 400) outcome = 'started'
+    }
+    assertWorkspace(generation)
+    const current = posts().get(id)
+    const stamp = new Date().toISOString()
+    if (outcome === 'cancelled' && current) {
+      posts().save({ ...current, status: 'cancelled', targets: current.targets.map((t) => ({ ...t, status: 'cancelled' })), refreshedAt: stamp })
+    } else if (current) {
+      const remote = await client.getPost(id).catch(() => null)
+      assertWorkspace(generation)
+      if (remote) posts().save(applyZernioPost(current, remote, { now: stamp }))
+    }
+    logger.info('zernio.post.automation_cancel', { outcome })
+    return outcome
   })
 }
 
@@ -682,6 +794,12 @@ export async function retryPost(id: unknown): Promise<PostRecord[]> {
     assertWorkspace(generation)
     return posts().save(applyZernioPost(post, remote, { error, now: new Date().toISOString() }))
   })
+}
+
+/** Same post state; stats fetched meanwhile don't count as a change. */
+function sameRecord(a: PostRecord | null, b: PostRecord | null): boolean {
+  const strip = (post: PostRecord | null): string => JSON.stringify(post ? { ...post, stats: undefined } : null)
+  return strip(a) === strip(b)
 }
 
 /** Rebuild missing history from identified remote targets, never today's automation account selection. */
@@ -719,14 +837,14 @@ export async function inspectAutomationPost(id: string, clip: { clipPath: string
       assertWorkspace(generation)
       if (!(error instanceof ZernioApiError) || error.status !== 404) throw error
       const current = posts().get(id)
-      if (current && JSON.stringify(current) === JSON.stringify(previous)) {
+      if (current && sameRecord(current, previous)) {
         posts().save({ ...current, status: 'missing', error: 'This post is no longer in your Zernio workspace.', refreshedAt: new Date().toISOString() })
       }
       return { submitted: false, fullyFailed: false, missing: true }
     }
     assertWorkspace(generation)
     const current = posts().get(id)
-    if (JSON.stringify(current) !== JSON.stringify(previous)) throw new Error('The post changed while checking. Refresh its status again.')
+    if (!sameRecord(current, previous)) throw new Error('The post changed while checking. Refresh its status again.')
     const base = current ?? restoreAutomationPost(id, remote, clip)
     if (!base) return { submitted: false, fullyFailed: false }
     const record = applyZernioPost(base, remote, { now: new Date().toISOString() })

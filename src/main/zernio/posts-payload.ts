@@ -9,7 +9,9 @@ import {
   YOUTUBE_TITLE_MAX,
   PLATFORM_RULES,
   captionLength,
+  firstCommentError,
   isValidTimeZone,
+  supportsFirstComment,
   type FacebookFormat,
   type PostClipRequest,
   type PostOptions,
@@ -115,6 +117,13 @@ function parseOptions(value: unknown, targets: PostClipRequest['targets']): Post
     const topicTag = asRecord(o.threads).topicTag
     if (topicTag !== undefined && (typeof topicTag !== 'string' || !topicTag.trim() || [...topicTag.trim()].length > 50 || /[.#&\r\n]/.test(topicTag))) invalid('Threads topic tag')
     options.threads = typeof topicTag === 'string' ? { topicTag: topicTag.trim() } : {}
+  }
+  if (o.firstComment !== undefined) {
+    if (typeof o.firstComment !== 'string') invalid('first comment')
+    const problem = firstCommentError(o.firstComment)
+    if (problem) throw new Error(problem)
+    // Only kept when a selected platform can take it; an empty field means none.
+    if (o.firstComment.trim() && targets.some((t) => supportsFirstComment(t.platform))) options.firstComment = o.firstComment.trim()
   }
   return options
 }
@@ -254,6 +263,8 @@ export function buildCreatePostBody(request: PostClipRequest, context: PostBodyC
       if (options.facebook?.title) data.title = options.facebook.title
     }
     if (target.platform === 'threads' && options.threads?.topicTag) data.topic_tag = options.threads.topicTag
+    // Zernio posts it right after publishing; platforms without the option never get the field.
+    if (options.firstComment && supportsFirstComment(target.platform)) data.firstComment = options.firstComment
     if (target.platform === 'tiktok' && options.tiktok) {
       // The whole settings object per entry, so each account keeps its own
       // privacy level and toggles whatever Zernio's root/entry merge does.

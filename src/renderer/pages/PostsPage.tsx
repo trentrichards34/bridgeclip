@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowUpRight, CalendarClock, Clapperboard, RefreshCw, RotateCcw, Send, X } from 'lucide-react'
+import { ArrowUpRight, BarChart3, CalendarClock, Clapperboard, RefreshCw, RotateCcw, Send, X } from 'lucide-react'
 import { cn, formatRelativeDate, localFileUrl } from '../lib/utils'
 import { loadThumbnail } from '../lib/thumbnails'
 import { usePostsStore } from '../store/use-posts-store'
 import { useSettingsStore } from '../store/use-settings-store'
-import { scheduleError, scheduleWindow, type PostRecord } from '../../shared/zernio-posts'
+import { formatCount, scheduleError, scheduleWindow, statsLine, type PostRecord } from '../../shared/zernio-posts'
+import { MIN_INSIGHT_POSTS, type PostInsights } from '../../shared/post-insights'
 import { PlatformIcon, platformName } from '../components/PlatformIcon'
 import { formatScheduled, targetBadge } from '../components/PostDialog'
 import { Page as PageColumn } from '../components/ui/Page'
 import { PageHeader } from '../components/ui/PageHeader'
-import { Panel } from '../components/ui/Panel'
+import { Panel, PanelHeader } from '../components/ui/Panel'
 import { Button } from '../components/ui/Button'
 import { Callout } from '../components/ui/Callout'
 import { EmptyState } from '../components/ui/EmptyState'
@@ -72,13 +73,17 @@ export function PostsPage({ onNavigate }: { onNavigate: (page: Page) => void }):
 
 /** Posts made from CreatorClips: scheduled, failed and recent, with cancel, retry and links. */
 function PostsList({ onNavigate }: { onNavigate: (page: Page) => void }): React.JSX.Element {
-  const { posts, loaded, refreshing, error, clearError, refresh } = usePostsStore()
+  const { posts, loaded, refreshing, error, clearError, refresh, refreshStats, statsRefreshing, statsError, insights } = usePostsStore()
   const [showAll, setShowAll] = useState(false)
 
   useEffect(() => {
-    void usePostsStore.getState().load().then(() => usePostsStore.getState().refresh(false))
+    // Stats come after statuses; main spaces out the requests and skips posts asked about recently.
+    void usePostsStore.getState().load()
+      .then(() => usePostsStore.getState().refresh(false))
+      .then(() => usePostsStore.getState().refreshStats(false))
+    void usePostsStore.getState().loadInsights()
     const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') void usePostsStore.getState().refresh(false)
+      if (document.visibilityState === 'visible') void usePostsStore.getState().refresh(false).then(() => usePostsStore.getState().refreshStats(false))
     }, POLL_MS)
     const onFocus = (): void => void usePostsStore.getState().refresh(false)
     window.addEventListener('focus', onFocus)
@@ -107,9 +112,9 @@ function PostsList({ onNavigate }: { onNavigate: (page: Page) => void }): React.
             iconOnly
             aria-label="Refresh posts"
             title="Refresh"
-            onClick={() => void refresh(true)}
-            disabled={refreshing}
-            icon={<RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />}
+            onClick={() => void refresh(true).then(() => refreshStats(true))}
+            disabled={refreshing || statsRefreshing}
+            icon={<RefreshCw className={cn('h-3.5 w-3.5', (refreshing || statsRefreshing) && 'animate-spin')} />}
           />
         }
       />
@@ -118,6 +123,11 @@ function PostsList({ onNavigate }: { onNavigate: (page: Page) => void }): React.
         {error && (
           <Callout tone="danger" onDismiss={clearError}>
             {error}
+          </Callout>
+        )}
+        {!error && statsError && (
+          <Callout tone="warning" onDismiss={clearError}>
+            {statsError}
           </Callout>
         )}
 
@@ -142,6 +152,8 @@ function PostsList({ onNavigate }: { onNavigate: (page: Page) => void }): React.
             }
           />
         ) : (
+          <>
+          {insights && <WhatsWorking insights={insights} />}
           <Panel padded={false} className="overflow-hidden">
             <PostGroup title="Scheduled" posts={groups.scheduled} />
             <PostGroup title="Needs attention" posts={groups.attention} />
@@ -154,9 +166,10 @@ function PostsList({ onNavigate }: { onNavigate: (page: Page) => void }): React.
               </div>
             )}
           </Panel>
+          </>
         )}
 
-        <p className="px-1 text-2xs text-ink-subtle">Zernio publishes scheduled posts even when CreatorClips is closed.</p>
+        <p className="px-1 text-2xs text-ink-subtle">Zernio publishes scheduled posts even when CreatorClips is closed. Views and likes come from Zernio, which collects them from each platform from time to time.</p>
       </div>
     </>
   )
@@ -315,6 +328,7 @@ function PostRow({ post }: { post: PostRecord }): React.JSX.Element {
           {post.status === 'failed' && failedTargets.length === 0 && post.error && (
             <p className="mt-1.5 text-xs text-danger" data-selectable>{post.error}</p>
           )}
+          {(post.status === 'published' || post.status === 'partial') && <PostStatsLine post={post} />}
           {capacity && (
             <p className="mt-1 text-xs text-ink-subtle">TikTok direct posting is busy. Retry in a few hours, or post the clip again with “Send to your TikTok inbox” on.</p>
           )}
@@ -345,5 +359,80 @@ function PostRow({ post }: { post: PostRecord }): React.JSX.Element {
         {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
       </div>
     </li>
+  )
+}
+
+function PostStatsLine({ post }: { post: PostRecord }): React.JSX.Element | null {
+  const stats = post.stats
+  if (!stats) return null
+  const total = statsLine(stats.total)
+  const perAccount = post.targets.length > 1 ? stats.targets.filter((target) => target.metrics) : []
+  const when = `updated ${formatRelativeDate(stats.updatedAt ?? stats.fetchedAt)}`
+  if (!total) {
+    return (
+      <p className="mt-1 text-2xs text-ink-subtle">
+        {stats.syncStatus === 'pending' ? 'Zernio is still collecting stats for this post.' : stats.message ?? 'Zernio has no stats for this post yet.'}
+      </p>
+    )
+  }
+  return (
+    <div className="mt-1 text-2xs text-ink-muted" aria-label="Post stats">
+      <p className="flex flex-wrap items-center gap-1.5">
+        <BarChart3 aria-hidden className="h-3 w-3 text-ink-subtle" />
+        <span className="text-ink">{total}</span>
+        <span className="text-ink-subtle">· {when}</span>
+      </p>
+      {perAccount.length > 1 && (
+        <ul className="mt-0.5 space-y-0.5 pl-[18px] text-ink-subtle">
+          {perAccount.map((target) => (
+            <li key={`${target.platform}:${target.accountId}`}>{platformName(target.platform)}: {statsLine(target.metrics) ?? 'no counts yet'}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** Average views by what is known about each clip. Only real stats, with counts. */
+function WhatsWorking({ insights }: { insights: PostInsights }): React.JSX.Element | null {
+  if (insights.posts === 0 && insights.needed > 0) return null
+  return (
+    <Panel aria-label="What’s working">
+      <PanelHeader
+        title="What’s working"
+        description={insights.needed > 0
+          ? `Post ${insights.needed} more clip${insights.needed === 1 ? '' : 's'} from CreatorClips to compare. This needs views for at least ${MIN_INSIGHT_POSTS} posts that are a day old or more; ${insights.posts} so far.`
+          : `Average views per post, from ${insights.posts} posts at least a day old. Clips found in your Library only.`}
+      />
+      {insights.groups.length > 0 && (
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          {insights.groups.map((group) => {
+            const top = Math.max(...group.rows.map((row) => row.averageViews), 1)
+            return (
+              <section key={group.id} aria-label={group.title} className="glass-tile rounded-2xl p-3">
+                <h3 className="eyebrow">{group.title}</h3>
+                <ul className="mt-2 space-y-1.5">
+                  {group.rows.map((row) => (
+                    <li key={row.key} className="text-xs">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-ink">{row.label}</span>
+                        <span className="shrink-0 font-mono tabular text-ink">{formatCount(row.averageViews)}</span>
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-2">
+                        <span className="h-1 flex-1 overflow-hidden rounded-full bg-white/[0.06]"><span className="block h-full rounded-full bg-accent" style={{ width: `${Math.round((row.averageViews / top) * 100)}%` }} /></span>
+                        <span className="shrink-0 text-2xs text-ink-subtle">{row.posts} post{row.posts === 1 ? '' : 's'}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )
+          })}
+        </div>
+      )}
+      {insights.needed === 0 && insights.notes.length > 0 && (
+        <ul className="mt-2 space-y-0.5 text-2xs text-ink-subtle">{insights.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+      )}
+    </Panel>
   )
 }

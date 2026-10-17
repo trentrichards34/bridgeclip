@@ -9,6 +9,7 @@ import { Badge } from './ui/Badge'
 import { Skeleton } from './ui/Skeleton'
 import { ActionMenu } from './ui/ActionMenu'
 import { LIBRARY_POSTING_LABELS, type LibraryClipPostingStatus } from '../../shared/library-posting'
+import { statsLine } from '../../shared/zernio-posts'
 import { GradeChip, GradeDetailsButton } from './FrameworkGrade'
 
 // How the engine framed a vertical clip (its dominant layout).
@@ -240,6 +241,11 @@ export function ClipCard({
         <h3 className="line-clamp-2 text-sm font-medium leading-[18px] text-ink" title={title}>
           {title}
         </h3>
+        {postingStatus?.stats && statsLine(postingStatus.stats.metrics) && (
+          <p className="mt-1 truncate text-2xs text-ink-muted" title={`From Zernio, across ${postingStatus.stats.posts} post${postingStatus.stats.posts === 1 ? '' : 's'}. Updated ${new Date(postingStatus.stats.fetchedAt).toLocaleString()}.`}>
+            {statsLine(postingStatus.stats.metrics)}
+          </p>
+        )}
         {clip.cta && (
           <p className="mt-1 flex items-center gap-1 text-2xs text-ink-muted" title="This clip ends with a call to action from your library.">
             <Megaphone className="h-3 w-3 shrink-0" /><span className="truncate">Ends with: {clip.cta.name}</span>
