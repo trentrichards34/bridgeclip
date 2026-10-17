@@ -58,7 +58,10 @@ test('Settings → Spending: totals, balance, monthly limit, the check before a 
   }, real)
   await page.reload()
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
-  await page.getByRole('button', { name: 'Spending', exact: true }).first().click()
+  // The section list is hidden on narrow windows: scroll to the section itself.
+  const section = page.locator('#settings-spending')
+  await section.waitFor()
+  await section.scrollIntoViewIfNeeded()
 
   const totals = page.getByRole('group', { name: 'Spending totals' })
   await totals.getByText('$1.91', { exact: true }).waitFor()
