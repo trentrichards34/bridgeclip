@@ -186,7 +186,8 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
   const [coverError, setCoverError] = useState<string | null>(null)
   const [subtitles, setSubtitles] = useState<ClipSubtitles | null>(null)
   const [youtubeCaptions, setYoutubeCaptions] = useState(false)
-  const [captionsLanguage, setCaptionsLanguage] = useState('en')
+  /** '' until known: the clip's recorded language, or the member's choice. */
+  const [captionsLanguage, setCaptionsLanguage] = useState('')
 
   // Kept across clips in a batch.
   const [selected, setSelected] = useState<string[]>([])
@@ -225,15 +226,17 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
       .then((info) => { if (!cancelled) setMedia(info) })
       .catch(() => { if (!cancelled) setMedia({ durationMs: clip.durationMs, width: null, height: null, sizeBytes: 0 }) })
     loadThumbnail(clip.path, clip.durationMs > 0 ? clip.durationMs / 2000 : undefined).then((path) => { if (!cancelled) setThumb(path) })
-    // Captions for YouTube start on when the clip has a subtitle file.
+    // Captions for YouTube start on when the clip has a subtitle file in a known language;
+    // otherwise the member picks the language before they can be turned on.
     setSubtitles(null)
     setYoutubeCaptions(false)
+    setCaptionsLanguage('')
     getApi().zernio.posts.subtitles(clip.path)
       .then((info) => {
         if (cancelled) return
         setSubtitles(info)
-        setYoutubeCaptions(info.found)
-        setCaptionsLanguage(info.language ?? 'en')
+        setYoutubeCaptions(info.found && Boolean(info.language))
+        setCaptionsLanguage(info.language ?? '')
       })
       .catch(() => { if (!cancelled) setSubtitles({ found: false, fileName: null, language: null }) })
     return () => { cancelled = true }
@@ -342,7 +345,7 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
   const coverChoice: PostCover | null = covers.supported.length === 0 || coverMode === 'default' ? null
     : coverMode === 'frame' ? { kind: 'frame', atMs: Math.max(0, Math.round(coverAtMs)) }
     : coverImage ? { kind: 'image', path: coverImage.path } : null
-  const addCaptions = has('youtube') && Boolean(subtitles?.found) && youtubeCaptions
+  const addCaptions = has('youtube') && Boolean(subtitles?.found) && youtubeCaptions && Boolean(captionsLanguage)
   const firstCommentProblem = commentPlatforms.length ? firstCommentError(firstComment) : null
   const scheduleProblem = mode === 'schedule' ? scheduleError(scheduledAt, now) : null
   const bounds = scheduleWindow(now)
@@ -614,12 +617,15 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
             {subtitles?.found && (
               <>
                 <CheckRow
-                  checked={youtubeCaptions}
+                  checked={youtubeCaptions && Boolean(captionsLanguage)}
                   onChange={setYoutubeCaptions}
+                  disabled={!captionsLanguage}
                   label="Add captions to YouTube (from the clip’s subtitles)"
-                  description={`Uploads ${subtitles.fileName ?? 'the subtitle file'} as closed captions viewers can turn on.`}
+                  description={captionsLanguage
+                    ? `Uploads ${subtitles.fileName ?? 'the subtitle file'} as closed captions viewers can turn on.`
+                    : 'The clip’s language isn’t known. Choose the language of its subtitles first.'}
                 />
-                {youtubeCaptions && (
+                {(youtubeCaptions || !captionsLanguage) && (
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm font-medium text-ink">Caption language</span>
                     <Select
@@ -628,7 +634,7 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
                       className="w-40"
                       value={captionsLanguage}
                       onChange={setCaptionsLanguage}
-                      options={[...SUBTITLE_LANGUAGES, ...(SUBTITLE_LANGUAGES.some((l) => l.value === captionsLanguage) ? [] : [{ value: captionsLanguage, label: captionsLanguage }])]}
+                      options={[...SUBTITLE_LANGUAGES, ...(!captionsLanguage || SUBTITLE_LANGUAGES.some((l) => l.value === captionsLanguage) ? [] : [{ value: captionsLanguage, label: captionsLanguage }])]}
                     />
                   </div>
                 )}

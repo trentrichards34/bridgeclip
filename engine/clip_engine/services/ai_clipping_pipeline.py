@@ -95,6 +95,14 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
+def spoken_language_code(language: Optional[str]) -> Optional[str]:
+    """A transcript's detected language as a two-letter code ("en", "en-US" -> "en"), or None when it isn't one."""
+    if not isinstance(language, str):
+        return None
+    match = re.fullmatch(r"([a-z]{2})(?:[-_][a-z0-9]{2,8})?", language.strip().lower())
+    return match.group(1) if match else None
+
+
 @dataclass
 class ClippingJobRequest:
     """Request to process a video for AI clipping."""
@@ -156,6 +164,8 @@ class ClippingJobRequest:
     reuse_source_path: Optional[str] = None
     reuse_source_meta: Optional[dict] = None
     reuse_expected_duration_seconds: Optional[float] = None
+    # The earlier run looked at only part of the video (for transcripts that don't record their range).
+    reuse_transcript_partial: bool = False
     exclude_ranges_ms: Optional[list] = None
 
     def __post_init__(self):
@@ -385,7 +395,12 @@ class AIClippingPipeline:
             if request.reuse_transcript_path:
                 saved_transcript = reusable_transcript(
                     load_saved_transcript(request.reuse_transcript_path), download_result.video_path, video_duration,
-                    request.reuse_expected_duration_seconds, compare_bytes=same_bytes)
+                    request.reuse_expected_duration_seconds, compare_bytes=same_bytes,
+                    window=(None, None) if jev_enabled else (request.start_time_seconds, effective_end_time),
+                    earlier_partial=request.reuse_transcript_partial)
+                if not saved_transcript:
+                    self._update_progress(job_id, JobStatus.TRANSCRIBING, 15,
+                                          "The saved transcript doesn't match this video or range, so it is transcribed again...")
             if saved_transcript:
                 # More clips from this video: no transcription is paid again.
                 self._update_progress(job_id, JobStatus.TRANSCRIBING, 25, "Using the saved transcript (no transcription charge)...")
@@ -923,8 +938,10 @@ class AIClippingPipeline:
                 if translator is not None:
                     await translator.close()
             stage_timings["rendering"] = time.perf_counter() - stage_start
+            spoken = spoken_language_code(transcription_result.language)
             for original_index, _, segment in [r for r in render_results if not isinstance(r, BaseException)]:
                 segment.caption_language = clip_caption_languages.get(original_index)
+                segment.spoken_language = spoken
 
             # One bad clip must not sink the whole job: skip failures, and
             # only fail if nothing rendered.
@@ -995,7 +1012,7 @@ class AIClippingPipeline:
                         90 + 5 * done / total, f'Saving clip {done} of {total}', total_clips, total_clips,
                         stage_percent=100 * done / total, completed=done, total=total, unit='clips'))
                 clip_artifacts = await asyncio.to_thread(self._save_clips_locally, job_id, rendered_clips, clip_durations_ms, save_progress,
-                                                       (request.cta_keyword, request.cta_offer))
+                                                       (request.cta_keyword, request.cta_offer, not request.caption_language))
                 if request.debug_capture:
                     output_dir = self._get_local_output_dir(job_id)
                     preview_status = "available"
@@ -1085,7 +1102,8 @@ class AIClippingPipeline:
                         tags=segment.tags or [],
                         render_fallback=segment.render_fallback,
                         description=segment.description,
-                        post_caption=create_post_caption(segment, request.cta_keyword, request.cta_offer),
+                        post_caption=create_post_caption(segment, request.cta_keyword, request.cta_offer,
+                                                         include_cta=not request.caption_language),
                         chapters=self._chapter_dicts(segment),
                         editorial=editorial_summary(segment.editorial),
                         framework=segment.framework,
@@ -1411,7 +1429,8 @@ class AIClippingPipeline:
         rendered_clips: list[tuple[str, ClipPlanSegment]],
         durations_ms: Optional[dict[int, int]] = None,
         progress=None,
-        cta: tuple[str, str] = ('', ''),
+        # (keyword, offer, include_cta): the English line is left out of captions in another language.
+        cta: tuple = ('', '', True),
     ) -> list[ClipArtifact]:
         """Copy rendered clips to the local output directory."""
         output_dir = self._get_local_output_dir(job_id)
@@ -1459,11 +1478,12 @@ class AIClippingPipeline:
                 tags=segment.tags or [],
                 render_fallback=segment.render_fallback,
                 description=segment.description,
-                post_caption=create_post_caption(segment, *cta),
+                post_caption=create_post_caption(segment, cta[0], cta[1], include_cta=cta[2] if len(cta) > 2 else True),
                 chapters=self._chapter_dicts(segment),
                 subtitle_url=subtitle_url,
                 captions_srt=captions_srt,
                 caption_language=getattr(segment, 'caption_language', None),
+                spoken_language=getattr(segment, 'spoken_language', None),
                 editorial=editorial_summary(segment.editorial),
                 framework=segment.framework,
             ))

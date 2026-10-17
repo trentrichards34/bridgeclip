@@ -84,6 +84,8 @@ export interface MoreClipsInfo {
   request: ClipJobRequest
   /** False for runs made before settings were saved: some style choices use defaults. */
   savedSettings: boolean
+  /** Something the new run does differently (e.g. the earlier brand was deleted, so none is used). */
+  note?: string
 }
 
 export interface MoreClipsChoices {
@@ -292,8 +294,8 @@ export interface BridgeClipAPI {
     startMany: (configs: ClipJobRequest[]) => Promise<StartManyJobsResult>
     /** What "More clips from this video" would reuse for a finished Library run. */
     moreClipsInfo: (outputDir: string) => Promise<MoreClipsInfo>
-    /** Starts More clips: the run's saved transcript is reused (no transcription charge). */
-    moreClips: (outputDir: string, choices: MoreClipsChoices) => Promise<{ jobId?: string; queued?: boolean; job?: JobSnapshot; error?: string }>
+    /** Starts More clips: the run's saved transcript is reused when it still matches the video. */
+    moreClips: (outputDir: string, choices: MoreClipsChoices) => Promise<{ jobId?: string; queued?: boolean; job?: JobSnapshot; error?: string; note?: string }>
     cancel: (jobId: string) => Promise<boolean>
     /** Every job the main process knows about this session, newest first. */
     list: () => Promise<JobSnapshot[]>

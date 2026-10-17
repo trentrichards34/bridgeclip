@@ -7,7 +7,7 @@ import { enqueueJob } from './job-manager'
 import { logger } from './logger'
 import { assertMediaPath, authorizeMedia, isWebUrl } from './security'
 import { MAX_CREATE_SOURCES } from '../shared/create-sources'
-import { moreClipsInfo, moreClipsRequest, parseMoreClipsChoices, resolveReuse, writeCreateRequest } from './more-clips'
+import { moreClipsInfo as readMoreClipsInfo, moreClipsRequest, parseMoreClipsChoices, resolveReuse, withoutMissingBrand, writeCreateRequest, type MoreClipsInfo } from './more-clips'
 import { join } from 'path'
 import { assertPublicWebUrl } from './network-policy'
 import { validateJobConfig } from './validation'
@@ -20,7 +20,7 @@ import type { JobSnapshot } from '../shared/jobs'
 const ENGINE_CHECK_TTL_MS = 5 * 60 * 1000
 let lastEngineCheck: { key: string; at: number } | null = null
 
-export type StartJobResult = { jobId: string; queued: boolean; job: JobSnapshot } | { error: string }
+export type StartJobResult = { jobId: string; queued: boolean; job: JobSnapshot; note?: string } | { error: string }
 
 /**
  * Validate a clipping request, check the engine and keys, create its run
@@ -103,7 +103,16 @@ export async function startClipJobRequest(request: unknown): Promise<StartJobRes
   return { jobId, queued: job.status === 'queued', job }
 }
 
-export { moreClipsInfo }
+function brandExists(id: string): boolean {
+  try { brandForJob(id, false); return true } catch { return false }
+}
+
+/** What More clips would reuse, for the dialog; a brand deleted since the earlier run is dropped, with a note. */
+export async function moreClipsInfo(outputDir: unknown): Promise<MoreClipsInfo> {
+  const info = await readMoreClipsInfo(outputDir)
+  const { request, note } = withoutMissingBrand(info.request, brandExists)
+  return { ...info, request, ...(note ? { note } : {}) }
+}
 
 export type StartManyResult = { started: { jobId: string; queued: boolean; job: JobSnapshot; videoUrl: string }[]; failed: { videoUrl: string; error: string }[] } | { error: string }
 
@@ -130,7 +139,12 @@ export async function startClipJobRequests(requests: unknown): Promise<StartMany
 /** "More clips from this video" for a finished Library run, with the member's choices. */
 export async function startMoreClips(outputDir: unknown, choices: unknown): Promise<StartJobResult> {
   let request
-  try { request = moreClipsRequest(await moreClipsInfo(outputDir), parseMoreClipsChoices(choices)) }
-  catch (error) { return { error: String((error as Error | null)?.message || 'Could not start more clips.').slice(0, 300) } }
-  return startClipJobRequest(request)
+  let note: string | undefined
+  try {
+    const info = await moreClipsInfo(outputDir)
+    note = info.note
+    request = moreClipsRequest(info, parseMoreClipsChoices(choices))
+  } catch (error) { return { error: String((error as Error | null)?.message || 'Could not start more clips.').slice(0, 300) } }
+  const result = await startClipJobRequest(request)
+  return note && !('error' in result) ? { ...result, note } : result
 }

@@ -199,7 +199,8 @@ export function BrandPicker({ value, onChange, noneLabel = 'No brand identity', 
   const brand = brands.find((item) => item.id === value) ?? null
   const choose = (id: string): void => {
     setConfirmDelete(false)
-    if ((id || null) === (brand?.id ?? null)) return
+    // Compared with the stored choice, not the resolved brand: a deleted brand's id can still be cleared with "No brand".
+    if ((id || null) === (value ?? null)) return
     onChange(brands.find((item) => item.id === id) ?? null)
   }
   const remove = async (id: string): Promise<void> => {

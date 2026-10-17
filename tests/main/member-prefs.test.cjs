@@ -54,6 +54,10 @@ test('remembered styles: valid fields are kept, unknown or invalid ones fall bac
   assert.deepEqual(plain(shared.parseCreateStyle('nope')), {})
   assert.deepEqual(plain(shared.parseCreateStyle({ plannerModel: 'anthropic/claude-sonnet-4', ctaId: null, backgroundVideo: null })),
     { plannerModel: 'anthropic/claude-sonnet-4', ctaId: null, backgroundVideo: null })
+  // The caption language is part of Create's style: a listed language or the original.
+  assert.deepEqual(plain(shared.parseCreateStyle({ captionLanguage: 'es' })), { captionLanguage: 'es' })
+  assert.deepEqual(plain(shared.parseCreateStyle({ captionLanguage: 'original' })), { captionLanguage: 'original' })
+  assert.deepEqual(plain(shared.parseCreateStyle({ captionLanguage: 'klingon' })), {})
 
   const remix = shared.parseRemixStyle({
     format: 'silent', angle: 'mix', order: 'take_first', host: 'camera', avatarId: AVATAR, voice: 'avatar', brandIdentityId: BRAND, count: 5,

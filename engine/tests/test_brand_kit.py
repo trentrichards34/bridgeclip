@@ -81,8 +81,11 @@ def test_create_post_caption_ends_with_the_comment_keyword_line():
     assert caption == "Your first pull-up\n\n#PullUps #fitness #BusyParents\n\nComment PULL and I'll send you my 4-week plan."
     assert caption.endswith(remix_cta_line('PULL', 'my 4-week plan.'))
     assert brand_mark.create_post_caption(segment, '', 'x') is None
-    assert brand_mark.create_post_caption(SimpleNamespace(summary='', headline='', tags=[]), 'SALES', '').endswith(
-        "Comment SALES and I'll send you the full breakdown.")
+    # No offer: no promise, just the keyword.
+    assert brand_mark.create_post_caption(SimpleNamespace(summary='', headline='', tags=[]), 'SALES', '') == "Comment SALES."
+    assert remix_cta_line('SALES', '  ') == brand_mark.cta_line('SALES', '') == "Comment SALES."
+    # Captions in another language: the English call to action is left out of the post caption.
+    assert brand_mark.create_post_caption(segment, 'PULL', 'my plan', include_cta=False) == "Your first pull-up\n\n#PullUps #fitness #BusyParents"
 
 
 def test_brand_mark_is_validated(tmp_path):

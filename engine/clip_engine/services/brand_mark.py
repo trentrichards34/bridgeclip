@@ -167,12 +167,14 @@ def _hashtag(tag: str) -> Optional[str]:
 def cta_line(keyword: str, offer: str) -> str:
     """The comment-keyword line (the app and Remix write the same words)."""
     offer = " ".join((offer or "").split()).rstrip(".!? ")
-    return f"Comment {keyword} and I'll send you {offer}." if offer else f"Comment {keyword} and I'll send you the full breakdown."
+    # Without an offer nothing is promised: the member says what they send.
+    return f"Comment {keyword} and I'll send you {offer}." if offer else f"Comment {keyword}."
 
 
-def create_post_caption(segment: Any, keyword: str, offer: str, max_tags: int = 5) -> Optional[str]:
+def create_post_caption(segment: Any, keyword: str, offer: str, max_tags: int = 5, include_cta: bool = True) -> Optional[str]:
     """A Create clip's ready-to-post caption when the run has a comment keyword: the title and hashtags
-    (as the app would write them) and the call to action last. None without a keyword, so the app's own default stays."""
+    (as the app would write them) and the call to action last. None without a keyword, so the app's own default stays.
+    `include_cta` is False when the title is in another caption language: the English line is left out."""
     if not keyword:
         return None
     title = " ".join((getattr(segment, "summary", None) or getattr(segment, "headline", None) or "").split())
@@ -188,4 +190,4 @@ def create_post_caption(segment: Any, keyword: str, offer: str, max_tags: int = 
         hashtags.append(hashtag)
         if len(hashtags) == max_tags:
             break
-    return "\n\n".join(part for part in (title, " ".join(hashtags), cta_line(keyword, offer)) if part)
+    return "\n\n".join(part for part in (title, " ".join(hashtags), cta_line(keyword, offer) if include_cta else "") if part)

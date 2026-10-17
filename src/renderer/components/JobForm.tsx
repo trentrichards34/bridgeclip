@@ -30,6 +30,8 @@ import { DEFAULT_HEADLINE_LOOK, HEADLINE_LOOKS } from '../../shared/headline-loo
 import { CAPTION_LANGUAGES, captionLanguageLabel, isCaptionLanguage, type CaptionLanguageChoice } from '../../shared/caption-language'
 import { sourceCountLabel } from '../../shared/create-sources'
 import { Select } from './ui/Select'
+import { useBrands } from '../store/use-brand-store'
+import { createCtaLine, DEFAULT_HANDLE_POSITION, HANDLE_POSITIONS, hasBrandMark } from '../../shared/brand-kit'
 
 const DURATIONS = DURATION_OPTIONS
 
@@ -738,6 +740,7 @@ function ReviewStep({ draft, trim, onEdit }: {
   onEdit: (step: WizardStep) => void
 }): React.JSX.Element {
   const active = useActiveJobs()
+  const brand = useBrands((s) => s.brands.find((item) => item.id === draft.brandIdentityId) ?? null)
   const runningCount = active.filter((job) => job.status !== 'queued').length
   const lengths = draft.durations.length === 0
     ? 'Any length'
@@ -769,6 +772,18 @@ function ReviewStep({ draft, trim, onEdit }: {
   }
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? ((draft.titleStyle ?? 'headline') === 'headline' && draft.aspectRatio === '9:16' && !(draft.backgroundVideo && draft.broll === 'off') ? `Headline: ${(HEADLINE_LOOKS.find((item) => item.id === (draft.headlineLook ?? DEFAULT_HEADLINE_LOOK).look)?.label ?? 'White bar').toLowerCase()}` : 'Title card at the top') : 'Off' })
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Call to action', value: draft.ctaId ? 'Added to the end of every clip' : 'None' })
+  // The brand, comment keyword and handle, as they'll be sent (see brandRequestFields).
+  const brandFields = brandRequestFields(draft)
+  if (brand) rows.push({ step: 'captions', label: 'Brand', value: `${brand.name} · titles in its voice` })
+  if (brandFields.ctaKeyword) {
+    rows.push({ step: 'captions', label: 'Keyword', value: isCaptionLanguage(draft.captionLanguage)
+      ? `“Comment ${brandFields.ctaKeyword}” at the end · left out of the post caption`
+      : `Caption ends with “${createCtaLine(brandFields.ctaKeyword, brandFields.ctaOffer ?? '')}”` })
+  }
+  if (brand && brandFields.showHandle && hasBrandMark(brand.look)) {
+    const corner = HANDLE_POSITIONS.find((item) => item.id === (brand.look?.handlePosition ?? DEFAULT_HANDLE_POSITION))?.label ?? 'Corner'
+    rows.push({ step: 'captions', label: 'Handle', value: `${brand.look?.handle || 'Your logo'} · ${corner.toLowerCase()}` })
+  }
   if (draft.clippingMode === 'advanced') rows.splice(5, 0,
     { step: 'clips', label: 'Transcribe', value: draft.transcriptionModel || 'Choose a model' },
     { step: 'clips', label: 'Plan', value: draft.plannerModel || 'Choose a model' })

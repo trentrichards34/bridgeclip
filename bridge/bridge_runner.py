@@ -318,6 +318,7 @@ async def run(config: dict) -> bool:
         reuse_source_path=config.get("reuse_source_path"),
         reuse_source_meta=config.get("reuse_source_meta"),
         reuse_expected_duration_seconds=config.get("reuse_expected_duration_seconds"),
+        reuse_transcript_partial=config.get("reuse_transcript_partial", False),
         exclude_ranges_ms=config.get("exclude_ranges_ms"),
         brand_identity=config.get("brand_identity") or "",
         brand_name=config.get("brand_name") or "",
@@ -475,6 +476,8 @@ def validate_config(config: object) -> dict:
         or any(value is not None and (not isinstance(value, str) or len(value) > 20000) for value in meta.values())
     ):
         raise ValueError("Invalid kept source details")
+    if "reuse_transcript_partial" in config and type(config["reuse_transcript_partial"]) is not bool:
+        raise ValueError("Invalid saved transcript range")
     expected = config.get("reuse_expected_duration_seconds")
     if expected is not None and (type(expected) not in (int, float) or not 0 < expected <= 86400):
         raise ValueError("Invalid source duration")

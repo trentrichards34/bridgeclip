@@ -212,7 +212,7 @@ test('comment-keyword call to action', () => {
   assert.equal(shared.brandCtaKeyword("comment 'guide' and we'll DM you"), 'GUIDE')
   assert.equal(shared.brandCtaKeyword('No call to action here'), '')
   assert.equal(shared.ctaLine('SALES', ' my playbook. '), "Comment SALES and I'll send you my playbook.")
-  assert.equal(shared.ctaLine('SALES', ''), "Comment SALES and I'll send you the full breakdown.")
+  assert.equal(shared.ctaLine('SALES', ''), 'Comment SALES.')
   // The call to action doesn't count toward the close's 35 words.
   const thirty = Array.from({ length: 22 }, () => 'word').join(' ')
   assert.equal(shared.closeWithoutCta(`${thirty}. Comment SALES and I'll send you my free playbook.`), `${thirty}.`)

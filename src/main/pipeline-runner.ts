@@ -19,7 +19,7 @@ import { finishRunRecord, type StoredRunStatus } from './run-history'
 import { resolveBinary } from './tools'
 import { resolveBackground } from './backgrounds'
 import { applyRunCta, readCta } from './ctas'
-import type { ReusePlan } from './more-clips'
+import { refreshReusePlan, type ReusePlan } from './more-clips'
 import { brandForJob } from './brands'
 import { readFile } from 'fs/promises'
 
@@ -478,12 +478,28 @@ export function startClipJob(
   // The brand (optional): advisory text for the planner, and the handle/logo to draw.
   let brand: ReturnType<typeof brandForJob> | null = null
   if (config.brandIdentityId) {
-    try { brand = brandForJob(config.brandIdentityId, config.showHandle && config.workflow !== 'review') }
+    try { brand = brandForJob(config.brandIdentityId, config.showHandle && config.workflow !== 'review', join(settings.outputDirectory, jobId)) }
     catch (error) {
-      reportError({ jobId, message: String((error as Error | null)?.message || 'That brand identity is unavailable.').slice(0, 300) })
+      // More clips: a brand deleted while the run waited is left out, not a failure.
+      if (config.reuse) logger.warn('job.brand.dropped', { jobId })
+      else {
+        reportError({ jobId, message: String((error as Error | null)?.message || 'That brand identity is unavailable.').slice(0, 300) })
+        exitWithoutProcess()
+        return
+      }
+    }
+  }
+
+  // More clips: the reused files are checked again now, since the run may have waited in the queue.
+  let reuse: ReusePlan | null = config.reuse ?? null
+  if (reuse) {
+    const refreshed = refreshReusePlan(reuse, config.videoUrl)
+    if ('error' in refreshed) {
+      reportError({ jobId, message: refreshed.error })
       exitWithoutProcess()
       return
     }
+    reuse = refreshed.plan
   }
 
   const jobConfig = JSON.stringify({
@@ -519,11 +535,12 @@ export function startClipJob(
     ...(config.hookPreview ? { hook_preview: true } : {}),
     quality_bar: config.qualityBar ?? 'b',
     ...(config.captionLanguage ? { caption_language: config.captionLanguage } : {}),
-    ...(config.reuse ? {
-      reuse_transcript_path: config.reuse.transcriptPath,
-      ...(config.reuse.sourcePath ? { reuse_source_path: config.reuse.sourcePath, reuse_source_meta: config.reuse.sourceMeta } : {}),
-      ...(config.reuse.expectedDurationSeconds ? { reuse_expected_duration_seconds: config.reuse.expectedDurationSeconds } : {}),
-      exclude_ranges_ms: config.reuse.excludeRangesMs
+    ...(reuse ? {
+      reuse_transcript_path: reuse.transcriptPath,
+      ...(reuse.sourcePath ? { reuse_source_path: reuse.sourcePath, reuse_source_meta: reuse.sourceMeta } : {}),
+      ...(reuse.expectedDurationSeconds ? { reuse_expected_duration_seconds: reuse.expectedDurationSeconds } : {}),
+      ...(reuse.transcriptPartial ? { reuse_transcript_partial: true } : {}),
+      exclude_ranges_ms: reuse.excludeRangesMs
     } : {}),
     ...(brand ? { brand_identity: brand.text, brand_name: brand.name } : {}),
     ...(brand?.mark ? { brand_mark: brand.mark } : {}),

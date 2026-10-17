@@ -148,7 +148,8 @@ export function findClipSubtitles(clipPath: string): FoundSubtitles | null {
   try { runDir = dirname(realpathSync(clipPath)) } catch { return null }
   const entry = clipEntry(runDir, clipPath)
   const recorded = entry?.clip.captions_srt
-  const languageValue = entry?.clip.caption_language ?? entry?.clip.captions_language ?? entry?.output.caption_language
+  // Translated captions name their language; otherwise the language spoken in the source, when the run detected it.
+  const languageValue = entry?.clip.caption_language ?? entry?.clip.captions_language ?? entry?.clip.spoken_language ?? entry?.output.caption_language
   const language = isSubtitleLanguage(languageValue) ? languageValue : null
   const candidates: string[] = []
   if (typeof recorded === 'string' && recorded && recorded.length <= 4096 && !recorded.includes('\0')) {
@@ -160,7 +161,8 @@ export function findClipSubtitles(clipPath: string): FoundSubtitles | null {
     if (extension !== '.srt' && extension !== '.vtt') continue
     try {
       const stat = lstatSync(candidate)
-      if (!stat.isFile() || stat.isSymbolicLink() || !isWithinDirectory(candidate, runDir)) continue
+      // Compared as real paths, so a symlinked subfolder can't lead outside the run.
+      if (!stat.isFile() || stat.isSymbolicLink() || !isWithinDirectory(realpathSync(candidate), runDir)) continue
       return { path: candidate, format: extension === '.vtt' ? 'vtt' : 'srt', language }
     } catch { /* Not there. */ }
   }

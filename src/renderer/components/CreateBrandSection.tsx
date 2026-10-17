@@ -55,8 +55,10 @@ export function CreateBrandSection({ draft, update }: { draft: ClipDraft; update
             </Field>
           </div>
           {keyword === null ? <p className="text-2xs text-danger">One word: letters, numbers or a dash (2–20 characters).</p>
-            : keyword ? <p className="text-2xs text-ink-muted">The caption ends with: <span className="text-ink">“{createCtaLine(keyword, draft.ctaOffer)}”</span></p>
-              : null}
+            : keyword && draft.captionLanguage !== 'original'
+              ? <p className="text-2xs text-ink-muted">Captions are in another language, so the post caption leaves this English line out. “Comment {keyword}” still shows at the end of the video.</p>
+              : keyword ? <p className="text-2xs text-ink-muted">The caption ends with: <span className="text-ink">“{createCtaLine(keyword, draft.ctaOffer)}”</span></p>
+                : null}
         </div>
       )}
     </section>

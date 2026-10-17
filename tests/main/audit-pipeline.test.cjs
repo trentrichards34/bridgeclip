@@ -41,7 +41,7 @@ function fakeChild() {
   return child
 }
 
-function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { applyRunCta: async () => ({ failed: [] }), readCta: () => ({}) }, brands = { brandForJob: () => { throw new Error('That brand identity could not be found. Choose it again on Create.') } } }) {
+function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { applyRunCta: async () => ({ failed: [] }), readCta: () => ({}) }, brands = { brandForJob: () => { throw new Error('That brand identity was deleted. Choose another brand, or no brand, and start again.') } }, moreClips = { refreshReusePlan: (plan) => ({ plan }) } }) {
   const sent = []
   const signals = []
   const settings = { openrouterApiKey: SECRET, outputDirectory: WORK_HOME, pythonPath: '/opt/python3', enginePath: WORK_HOME }
@@ -60,7 +60,8 @@ function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { ap
     './tools': { resolveBinary: () => '/staged/engine-bin/ffmpeg' },
     './backgrounds': { resolveBackground: (name) => '/library/' + name },
     './ctas': ctas,
-    './brands': brands
+    './brands': brands,
+    './more-clips': moreClips
   }, {
     process: { ...process, platform: 'darwin', env, kill: (pid, signal) => { signals.push({ pid, signal }) } }
   })
@@ -235,4 +236,35 @@ test('cancelling while the call to action is added stops only that step: the mad
   assert.match(complete.data.step, /You stopped the call to action partway/)
   assert.equal(sent.some((event) => event.channel === 'job:error'), false)
   void release
+})
+
+test('a deleted brand fails a Create run but is left out of a More clips run; its files are checked again at start', async () => {
+  const video = path.join(WORK_HOME, 'video.mp4')
+  const plan = { runId: 'r', transcriptPath: path.join(WORK_HOME, 'run', 'transcript.json'), source: 'original', sourcePath: null, sourceMeta: null, expectedDurationSeconds: 300, transcriptPartial: true, excludeRangesMs: [] }
+  let spawned = 0
+  const create = startRunner({ child: fakeChild(), onSpawn: () => spawned++ })
+  create.runner.startClipJob('brand-job', { videoUrl: video, brandIdentityId: 'a1b2c3d4e5f60718' }, create.window)
+  await tick()
+  assert.equal(spawned, 0)
+  assert.match(create.sent.find((event) => event.channel === 'job:error').data.message, /was deleted/)
+
+  const child = fakeChild()
+  let input = ''
+  child.stdin.on('data', (chunk) => { input += chunk.toString() })
+  const more = startRunner({ child, onSpawn: () => spawned++ })
+  more.runner.startClipJob('more-job', { videoUrl: video, brandIdentityId: 'a1b2c3d4e5f60718', showHandle: true, reuseFrom: 'r', reuse: plan }, more.window)
+  await tick()
+  assert.equal(spawned, 1)
+  const config = JSON.parse(input)
+  assert.equal(config.brand_identity, undefined)
+  assert.equal(config.brand_mark, undefined)
+  assert.equal(config.reuse_transcript_path, plan.transcriptPath)
+  assert.equal(config.reuse_transcript_partial, true)
+  child.emit('close', 1, null)
+
+  const gone = startRunner({ child: fakeChild(), onSpawn: () => spawned++, moreClips: { refreshReusePlan: () => ({ error: 'The video for this run is no longer on this computer.' }) } })
+  gone.runner.startClipJob('gone-job', { videoUrl: video, reuseFrom: 'r', reuse: plan }, gone.window)
+  await tick()
+  assert.equal(spawned, 1)
+  assert.match(gone.sent.find((event) => event.channel === 'job:error').data.message, /no longer on this computer/)
 })

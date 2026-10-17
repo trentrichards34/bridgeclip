@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { execFile } from 'child_process'
 import { randomBytes } from 'crypto'
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
-import { existsSync, readFileSync } from 'fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'fs'
 import { extname, join } from 'path'
 import { promisify } from 'util'
 import {
@@ -119,16 +119,22 @@ export async function removeBrandIdentity(id: unknown): Promise<BrandIdentity[]>
 /**
  * A Create run's brand, read when the run starts (a queued run reads the brand
  * as it is then): its text for the planner, and the handle/logo to draw when
- * `show` is on. Throws a plain message when the brand was deleted.
+ * `show` is on. Throws a plain message when the brand was deleted. With
+ * `folder` (the run's folder) the logo is copied there, like Remix's
+ * brandMarkForRun, so replacing or deleting it mid-run can't change the run.
  */
-export function brandForJob(id: string, show: boolean | undefined): { name: string; text: string; mark: BrandMarkForEngine | null } {
+export function brandForJob(id: string, show: boolean | undefined, folder?: string): { name: string; text: string; mark: BrandMarkForEngine | null } {
   let brand: BrandIdentity | null = null
   if (isBrandId(id)) {
     try { brand = parseBrand(JSON.parse(readFileSync(join(brandDir(), `${id}.json`), 'utf8'))) } catch { brand = null }
   }
-  if (!brand) throw new Error('That brand identity could not be found. Choose it again on Create.')
+  if (!brand) throw new Error('That brand identity was deleted. Choose another brand, or no brand, and start again.')
   const look = brand.look ?? {}
-  const logo = look.logo ? logoPathOf(look) : null
+  let logo = look.logo ? logoPathOf(look) : null
+  if (show && logo && folder) {
+    const copy = join(folder, '.brand-logo.png')
+    try { mkdirSync(folder, { recursive: true }); copyFileSync(logo, copy); logo = copy } catch { logo = null }
+  }
   const mark = show && (look.handle || logo)
     ? { handle: look.handle ?? '', logo_path: logo, position: look.handlePosition ?? DEFAULT_HANDLE_POSITION }
     : null

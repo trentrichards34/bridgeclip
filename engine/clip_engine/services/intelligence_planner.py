@@ -81,6 +81,8 @@ class ClipPlanSegment:
     subtitle_path: Optional[str] = None
     # Set after rendering when the captions were translated (caption language code).
     caption_language: Optional[str] = None
+    # The language spoken in the source (two-letter code), when transcription detected it.
+    spoken_language: Optional[str] = None
     editorial: Optional[dict] = None
     moment: Optional[dict] = None
     # Paid Creators framework grade (see framework_grader.ClipGrade.to_dict).

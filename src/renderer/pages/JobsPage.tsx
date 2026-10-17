@@ -138,7 +138,7 @@ export function JobsPage({ onNavigate, onViewLibrary }: {
     }
   }
 
-  // More clips from a finished run: reuses its saved transcript (no transcription charge).
+  // More clips from a finished run: reuses its saved transcript when it still matches the video.
   const openMoreClips = async (outputDir: string): Promise<void> => {
     setError(null)
     try {

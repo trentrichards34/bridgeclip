@@ -276,6 +276,10 @@ test('visual-only runs disclose unavailable captions and preserve analysis statu
   assert.equal(output.metrics.visual_frame_count, 12)
   assert.equal(output.metrics.captions_status, 'unavailable_without_transcript')
   assert.match(sourceAnalysisNotice(output), /No speech was detected/)
+  // More clips that had to transcribe again says so; one that reused the transcript says nothing.
+  const more = (reused) => parseJobOutput({ clips: [], metrics: { transcription_status: 'available', planning_source: 'transcript', transcript_reused: reused, requested_settings: { more_clips: true } } })
+  assert.match(sourceAnalysisNotice(more(false)), /transcribed again/)
+  assert.equal(sourceAnalysisNotice(more(true)), null)
 })
 
 test('Twitch VOD links canonicalize while other Twitch pages are rejected', () => {
@@ -352,7 +356,8 @@ test('caption language: original sends nothing; the form says the speech stays a
 test('more clips explains what it reuses and when it can’t run', () => {
   const { reuseSummary, moreClipsBlocked } = form.exports
   const lines = reuseSummary({ source: 'download', transcriptSaved: true, excludedCount: 4 })
-  assert.match(lines.join(' '), /no transcription charge/)
+  assert.match(lines.join(' '), /saved transcript when it still matches this video/)
+  assert.match(reuseSummary({ source: 'original', transcriptSaved: true, excludedCount: 0, note: 'The brand the earlier run used was deleted, so these clips use no brand.' }).join(' '), /use no brand/)
   assert.match(lines.join(' '), /downloaded again/)
   assert.match(lines.join(' '), /Skips the 4 moments already clipped/)
   assert.match(reuseSummary({ source: 'kept', transcriptSaved: true, excludedCount: 1 }).join(' '), /copy of the video kept with this run.*1 moment already/)

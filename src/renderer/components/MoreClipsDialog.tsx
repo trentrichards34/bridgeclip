@@ -16,13 +16,14 @@ import { Switch } from './ui/Switch'
 import { onRadioKeyDown } from './ui/Segmented'
 
 /** What More clips reuses, in plain words, for the dialog. */
-export function reuseSummary(info: Pick<MoreClipsInfo, 'source' | 'transcriptSaved' | 'excludedCount'>): string[] {
+export function reuseSummary(info: Pick<MoreClipsInfo, 'source' | 'transcriptSaved' | 'excludedCount'> & { note?: string }): string[] {
   const lines: string[] = []
-  if (info.transcriptSaved) lines.push('Uses the saved transcript, so there is no transcription charge.')
+  if (info.transcriptSaved) lines.push('Reuses the saved transcript when it still matches this video. If it doesn’t, the video is transcribed again.')
   if (info.source === 'original') lines.push('The video file is still on this computer, so nothing is downloaded.')
   else if (info.source === 'kept') lines.push('Uses the copy of the video kept with this run, so nothing is downloaded.')
-  else if (info.source === 'download') lines.push('The video is downloaded again. The transcript is still reused.')
+  else if (info.source === 'download') lines.push('The video is downloaded again.')
   if (info.excludedCount > 0) lines.push(`Skips the ${info.excludedCount} moment${info.excludedCount === 1 ? '' : 's'} already clipped.`)
+  if (info.note) lines.push(info.note)
   return lines
 }
 
@@ -64,7 +65,7 @@ export function MoreClipsButton({ outputDir, onStarted, className }: { outputDir
   if (!info || !info.transcriptSaved) return null
   const blocked = moreClipsBlocked(info)
   return <>
-    <Button className={className} icon={<Layers className="h-3.5 w-3.5" />} disabled={Boolean(blocked)} title={blocked ?? 'Find new moments in this video without transcribing it again'}
+    <Button className={className} icon={<Layers className="h-3.5 w-3.5" />} disabled={Boolean(blocked)} title={blocked ?? 'Find new moments in this video, reusing its saved transcript when it still matches'}
       onClick={() => setOpen(true)}>
       More clips from this video
     </Button>

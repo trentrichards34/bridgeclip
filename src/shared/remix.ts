@@ -98,7 +98,8 @@ export function brandCtaKeyword(text: string): string {
 /** The line every video ends with (the engine writes the same words). */
 export function ctaLine(keyword: string, offer: string): string {
   const what = offer.replace(/\s+/g, ' ').trim().replace(/[.!? ]+$/, '')
-  return `Comment ${keyword} and I'll send you ${what || 'the full breakdown'}.`
+  // Without an offer nothing is promised (the engine writes the same words).
+  return what ? `Comment ${keyword} and I'll send you ${what}.` : `Comment ${keyword}.`
 }
 
 /** Estimates for the cost preview (OpenRouter prices, October 2026). */

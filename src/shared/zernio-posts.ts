@@ -362,12 +362,13 @@ export function supportsFirstComment(platform: string): boolean {
 
 /**
  * The comment-keyword call to action Remix writes into a post caption
- * ("Comment SALES and I'll send you the checklist."), or null when the
+ * ("Comment SALES and I'll send you the checklist.", or "Comment SALES." alone
+ * on its line when there is no offer), or null when the
  * caption has none. See ctaLine in remix.ts.
  */
 export function keywordCtaLine(caption: string): string | null {
   for (const line of caption.split(/\r?\n/)) {
-    const match = /\bComment [A-Z0-9][A-Z0-9-]{1,19} and I['’]ll send you\b[^\n]*/.exec(line)
+    const match = /\bComment [A-Z0-9][A-Z0-9-]{1,19} and I['’]ll send you\b[^\n]*/.exec(line) ?? /^\s*(Comment [A-Z0-9][A-Z0-9-]{1,19}\.)\s*$/.exec(line)
     if (match) return match[0].trim().slice(0, FIRST_COMMENT_MAX)
   }
   return null

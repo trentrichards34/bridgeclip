@@ -26,6 +26,8 @@ test('the keyword line Remix writes is found in a caption', () => {
   assert.equal(shared.keywordCtaLine('Comment SALES and I’ll send you the checklist.'), 'Comment SALES and I’ll send you the checklist.', 'curly apostrophe too')
   assert.equal(shared.keywordCtaLine('Comment below and tell me what you think'), null, 'no keyword, no line')
   assert.equal(shared.keywordCtaLine('Just a caption'), null)
+  assert.equal(shared.keywordCtaLine('Three ways.\n\nComment SALES.\n\nCredit: @someone'), 'Comment SALES.', 'no offer: the keyword line alone')
+  assert.equal(shared.keywordCtaLine('Comment SALES. It helps the channel.'), null, 'only a line of its own')
 })
 
 test('the first comment goes only to platforms that support it', () => {

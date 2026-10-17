@@ -96,13 +96,19 @@ test('a logo: PNG, JPG or WebP under 5 MB, read as an image, stored as a PNG and
   assert.deepEqual(plain(brands.brandForJob(ID, true).mark), { handle: '', logo_path: stored, position: 'bottom-left' })
   assert.equal(brands.brandForJob(ID, false).mark, null)
   assert.equal(brands.brandForJob(ID, true).text, TEXT)
+  // Create runs get their own copy of the logo in the run folder, like Remix.
+  const createRun = path.join(run, 'create-run')
+  assert.deepEqual(plain(brands.brandForJob(ID, true, createRun).mark), { handle: '', logo_path: path.join(createRun, '.brand-logo.png'), position: 'bottom-left' })
+  assert.deepEqual(fs.readFileSync(path.join(createRun, '.brand-logo.png')), fs.readFileSync(stored))
   // Replacing the logo removes the old file; deleting the brand removes its logo.
   const second = await brands.importBrandLogo(real)
   await brands.saveBrandIdentity({ id: ID, name: 'Pull-Up Lab', text: TEXT, look: { logo: second.logo } })
   assert.equal(fs.existsSync(stored), false)
   await brands.removeBrandIdentity(ID)
   assert.equal(fs.existsSync(second.path), false)
-  assert.throws(() => brands.brandForJob(ID, true), /could not be found/)
+  assert.throws(() => brands.brandForJob(ID, true), /was deleted/)
+  // The run's copy is untouched by the change.
+  assert.ok(fs.existsSync(path.join(createRun, '.brand-logo.png')))
 })
 
 test('picking a brand fills only the fields it sets', () => {
