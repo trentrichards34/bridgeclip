@@ -19,7 +19,8 @@ import { recordToolCheck, reportIssue } from './support-report'
 import { announce, avatarNotice, createNotice, remixNotice } from './job-notifications'
 import { libraryClipForRemix } from './library-source'
 import { dropMissing, type MemberPrefs } from '../shared/member-prefs'
-import { startClipJobRequest } from './job-start'
+import { moreClipsInfo, startClipJobRequest, startClipJobRequests, startMoreClips } from './job-start'
+import { MAX_CREATE_SOURCES } from '../shared/create-sources'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { addCta, applyRunCta, applyRunCtaInLock, listCtas, removeCta, updateCta, withRunLock } from './ctas'
 import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../shared/ctas'
@@ -426,6 +427,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
 
   // Create runs have no cost estimate: the balance check asks for at least $1.
   paid('job:start', 'openrouter', () => null, (config) => startClipJobRequest(config))
+  // Several videos with the same settings: one spending check, then one job per video.
+  paid('job:startMany', 'openrouter', () => null, (requests) => startClipJobRequests(requests))
+  // More clips from a finished run: reuses its saved transcript, so no transcription is paid again.
+  handle('job:moreClipsInfo', (_event, outputDir: unknown) => moreClipsInfo(outputDir))
+  paid('job:moreClips', 'openrouter', () => null, (outputDir, choices) => startMoreClips(outputDir, choices))
 
   handle('job:cancel', (_event, jobId: unknown) => {
     if (typeof jobId !== 'string') return false
@@ -541,6 +547,22 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
 
     if (result.canceled || result.filePaths.length === 0) return null
     return authorizeMedia(result.filePaths[0])
+  })
+
+  // Create: several videos at once (each becomes its own job).
+  handle('dialog:selectVideos', async () => {
+    const window = getMainWindow()
+    if (!window) return []
+    const result = await dialog.showOpenDialog(window, {
+      properties: ['openFile', 'multiSelections'],
+      title: 'Choose videos',
+      filters: [
+        { name: 'Video Files', extensions: ['mp4', 'm4v', 'mkv', 'webm', 'avi', 'mov', 'flv'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+    if (result.canceled) return []
+    return result.filePaths.slice(0, MAX_CREATE_SOURCES).map((path) => authorizeMedia(path))
   })
 
   handle('clips:bulkExport', async (_event, clips: { path: string; name: string }[]) => {

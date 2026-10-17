@@ -19,9 +19,10 @@ import { finishRunRecord, type StoredRunStatus } from './run-history'
 import { resolveBinary } from './tools'
 import { resolveBackground } from './backgrounds'
 import { applyRunCta, readCta } from './ctas'
+import type { ReusePlan } from './more-clips'
 import { readFile } from 'fs/promises'
 
-export type ClipJobConfig = ClipJobRequest & { plannerCapabilities?: OpenRouterModel }
+export type ClipJobConfig = ClipJobRequest & { plannerCapabilities?: OpenRouterModel; reuse?: ReusePlan }
 
 /**
  * Where a run's events go. The job manager passes its own sink so it can track
@@ -505,6 +506,13 @@ export function startClipJob(
     ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook' } : {}),
     ...(config.hookPreview ? { hook_preview: true } : {}),
     quality_bar: config.qualityBar ?? 'b',
+    ...(config.captionLanguage ? { caption_language: config.captionLanguage } : {}),
+    ...(config.reuse ? {
+      reuse_transcript_path: config.reuse.transcriptPath,
+      ...(config.reuse.sourcePath ? { reuse_source_path: config.reuse.sourcePath, reuse_source_meta: config.reuse.sourceMeta } : {}),
+      ...(config.reuse.expectedDurationSeconds ? { reuse_expected_duration_seconds: config.reuse.expectedDurationSeconds } : {}),
+      exclude_ranges_ms: config.reuse.excludeRangesMs
+    } : {}),
     keyterms: vocabularyTerms(settings.customVocabulary),
     start_time_seconds: config.startTimeSeconds,
     end_time_seconds: config.endTimeSeconds,

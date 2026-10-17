@@ -47,7 +47,7 @@ function ipcWithLibrary(library) {
     './spending': SPENDING_STUB,
     '../shared/spending': { friendlyCreditError: (text) => text },
     '../shared/avatars': {},
-    './job-start': {},
+    './job-start': {}, '../shared/create-sources': { MAX_CREATE_SOURCES: 10 },
     './backgrounds': {},
     './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [], cloningInProgress: () => false },
     './avatar-studio': { onAvatarRenderStatus: () => {}, avatarRunBusy: () => null }, './avatar-library': { importLegacyAvatarVideos: async () => 0 },

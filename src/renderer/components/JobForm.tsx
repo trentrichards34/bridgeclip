@@ -26,6 +26,9 @@ import { BackgroundPicker } from './BackgroundPicker'
 import { HeadlineLookPicker } from './HeadlineLookPicker'
 import { CtaPicker } from './CtaPicker'
 import { DEFAULT_HEADLINE_LOOK, HEADLINE_LOOKS } from '../../shared/headline-look'
+import { CAPTION_LANGUAGES, captionLanguageLabel, isCaptionLanguage, type CaptionLanguageChoice } from '../../shared/caption-language'
+import { sourceCountLabel } from '../../shared/create-sources'
+import { Select } from './ui/Select'
 
 const DURATIONS = DURATION_OPTIONS
 
@@ -56,7 +59,7 @@ export const WIZARD_STEPS: { id: WizardStep; label: string; title: string; descr
   { id: 'review', label: 'Review', title: 'Review and generate', description: 'Check the run, then generate. You can queue another video right after.' }
 ]
 
-const QUALITY_BAR_OPTIONS: { id: QualityBar; label: string; hint: string; summary: string }[] = [
+export const QUALITY_BAR_OPTIONS: { id: QualityBar; label: string; hint: string; summary: string }[] = [
   { id: 'b', label: 'B or better', hint: 'Recommended', summary: 'Keep B grades and up' },
   { id: 'a', label: 'Standouts', hint: 'A first, topped up with B', summary: 'Keep A grades, top up with B' },
   { id: 'c', label: 'C or better', hint: 'More clips', summary: 'Keep C grades and up' },
@@ -75,6 +78,19 @@ export function parseTrimRange(enabled: boolean, startText: string, endText: str
   if (Number.isNaN(start) || Number.isNaN(end)) error = 'Use seconds (90) or a timecode (1:30).'
   else if (end != null && end <= (start ?? 0)) error = 'End must be after the start.'
   return { start, end, error }
+}
+
+/** Every video in the draft: the list when several were added, else the one source. */
+export function draftSources(draft: Pick<ClipDraft, 'source' | 'sources'>): string[] {
+  const list = draft.sources ?? []
+  if (list.length > 1 && list[0] === draft.source) return list
+  return draft.source.trim() ? [draft.source] : []
+}
+
+/** One run request per video, all with the same settings. A preferred range only applies to a single video. */
+export function buildJobRequests(draft: ClipDraft, trim: { start: number | null; end: number | null }): ClipJobRequest[] {
+  const sources = draftSources(draft)
+  return sources.map((source) => buildJobRequest({ ...draft, source }, sources.length > 1 ? { start: null, end: null } : trim))
 }
 
 /** The run request for the current draft. */
@@ -104,6 +120,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
     ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
     qualityBar: draft.qualityBar,
+    ...(draft.workflow === 'automatic' && isCaptionLanguage(draft.captionLanguage) ? { captionLanguage: draft.captionLanguage } : {}),
     startTimeSeconds: trim.start,
     endTimeSeconds: trim.end,
     bannerPlatform: null,
@@ -112,7 +129,8 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
 }
 
 interface JobFormProps {
-  onSubmit: (config: ClipJobRequest) => void
+  /** One request per video (several when the member added more than one). */
+  onSubmit: (configs: ClipJobRequest[]) => void
   /** Opens a queued job on the Jobs page. */
   onViewJob?: (jobId: string) => void
   /** Why the job can't start yet (missing keys, tools); disables submit. */
@@ -132,9 +150,12 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, classN
   const draft = useDraftStore()
   const { update, step, setStep } = draft
 
+  const sourceCount = draftSources(draft).length
+  // A preferred range applies to a single video only.
+  const trimOn = draft.trimOpen && sourceCount <= 1
   const trim = useMemo(
-    () => parseTrimRange(draft.trimOpen, draft.trimStart, draft.trimEnd),
-    [draft.trimOpen, draft.trimStart, draft.trimEnd]
+    () => parseTrimRange(trimOn, draft.trimStart, draft.trimEnd),
+    [trimOn, draft.trimStart, draft.trimEnd]
   )
 
   const index = WIZARD_STEPS.findIndex((s) => s.id === step)
@@ -147,7 +168,7 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, classN
   const canSubmit = videoValid && modelsValid && !blockedReason && !submitting && !draft.started
 
   const submit = (): void => {
-    if (canSubmit) onSubmit(buildJobRequest(draft, trim))
+    if (canSubmit) onSubmit(buildJobRequests(draft, trim))
   }
 
   // ⌘↵ / Ctrl+↵ generates only once a video and workflow are chosen.
@@ -199,6 +220,7 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, classN
         {step === 'clips' && <ClipsStep draft={draft} update={update} />}
         {step === 'captions' && <CaptionsStep draft={draft} update={update} />}
         {step === 'review' && <ReviewStep draft={draft} trim={trim} onEdit={goTo} />}
+        {step !== 'video' && sourceCount > 1 && <p className="mt-3 text-2xs text-ink-subtle" data-testid="batch-note">{sourceCountLabel(sourceCount)} with these settings, one job each.</p>}
       </Panel>
 
       {/* Actions stay pinned to the bottom edge on a solid strip. */}
@@ -224,7 +246,7 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, classN
           </div>
         ) : (
           <Button variant="primary" size="lg" icon={<Sparkles className="h-4 w-4" />} onClick={submit} disabled={!canSubmit} loading={submitting}>
-            {draft.workflow === 'review' ? 'Find candidates' : 'Generate clips'}
+            {draft.workflow === 'review' ? 'Find candidates' : sourceCount > 1 ? `Generate clips for ${sourceCount} videos` : 'Generate clips'}
           </Button>
         )}
       </div>
@@ -283,9 +305,11 @@ function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; u
           <h2 id="video-source-heading" className="text-sm font-semibold text-ink">{WIZARD_STEPS[0].title}</h2>
           <p className="mt-0.5 text-xs text-ink-muted">{WIZARD_STEPS[0].description}</p>
         </div>
-        <SourcePicker value={draft.source} onChange={(source) => update({ source })} disabled={disabled} />
+        <SourcePicker value={draft.source} sources={draft.sources} disabled={disabled}
+          onChange={(source) => update({ source, sources: source ? [source] : [] })}
+          onSourcesChange={(sources) => update({ sources, source: sources[0] ?? '' })} />
       </section>
-      <SettingRow
+      {draftSources(draft).length > 1 ? <p className="text-2xs text-ink-subtle">A preferred part of the video applies to one video at a time, so it is off when you clip several.</p> : <><SettingRow
         title="Preferred part of the video"
         description="Suggest where to find clips. The full source is transcribed; boundaries may expand to preserve complete ideas."
         control={<Switch label="Prefer a source range" checked={draft.trimOpen} onChange={(trimOpen) => update({ trimOpen })} />}
@@ -316,7 +340,7 @@ function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; u
             {trimError ?? 'Use seconds (90) or mm:ss (1:30).'}
           </p>
         </div>
-      )}
+      )}</>}
     </div>
   )
 }
@@ -681,7 +705,27 @@ export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Upda
           disabled={!draft.includeCaptions}
         />
       </div>
+      {draft.workflow !== 'review' && <CaptionLanguagePicker value={draft.captionLanguage ?? 'original'} onChange={(captionLanguage) => update({ captionLanguage })} />}
     </div>
+  )
+}
+
+export const CAPTION_LANGUAGE_OPTIONS = [
+  { value: 'original', label: 'Original', detail: 'As spoken, no translation' },
+  ...CAPTION_LANGUAGES.map((language) => ({ value: language.id, label: language.label }))
+]
+
+/** Caption language: Original, or captions translated into another language (the speech stays as recorded). */
+export function CaptionLanguagePicker({ value, onChange, disabled }: { value: CaptionLanguageChoice; onChange: (value: CaptionLanguageChoice) => void; disabled?: boolean }): React.JSX.Element {
+  return (
+    <SettingRow
+      title="Caption language"
+      description={value === 'original'
+        ? 'Captions match what is said. Choose a language to translate them.'
+        : `Captions, title and hook text in ${captionLanguageLabel(value)}. The speech stays in its original language: only the captions are translated. Adds one OpenRouter request per clip.`}
+      control={<Select size="sm" className="w-40" aria-label="Caption language" value={value} options={CAPTION_LANGUAGE_OPTIONS} disabled={disabled}
+        onChange={(next) => onChange(isCaptionLanguage(next) ? next : 'original')} />}
+    />
   )
 }
 
@@ -704,7 +748,9 @@ function ReviewStep({ draft, trim, onEdit }: {
 
   const rows: { step: WizardStep; label: string; value: string }[] = [
     { step: 'video', label: 'Workflow', value: draft.workflow === 'review' ? 'Review & edit · export when ready' : 'Automatic' },
-    { step: 'video', label: 'Video', value: `${sourceLabel(draft.source)}${trimLabel}` },
+    { step: 'video', label: draftSources(draft).length > 1 ? 'Videos' : 'Video', value: draftSources(draft).length > 1
+      ? `${draftSources(draft).length} videos · ${sourceLabel(draft.source)} and ${draftSources(draft).length - 1} more`
+      : `${sourceLabel(draft.source)}${trimLabel}` },
     { step: 'format', label: 'Format', value: `${FORMATS.find((f) => f.id === draft.aspectRatio)?.label ?? draft.aspectRatio} ${draft.aspectRatio} · ${framing}` },
     { step: 'format', label: 'Pacing', value: draft.workflow === 'review' ? 'Manual · choose your own cuts in the editor' : draft.pacing === 'tight' ? 'Cut dead air' : 'Keep pauses' },
     { step: 'format', label: 'Speed', value: `${draft.videoSpeed ?? 1}×${(draft.videoSpeed ?? 1) === 1 ? ' · Normal' : ' · All exported clips'}` },
@@ -715,6 +761,9 @@ function ReviewStep({ draft, trim, onEdit }: {
     { step: 'clips' as const, label: 'Quality bar', value: QUALITY_BAR_OPTIONS.find((option) => option.id === draft.qualityBar)?.summary ?? 'B or better' },
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
+  if (draft.workflow !== 'review' && isCaptionLanguage(draft.captionLanguage)) {
+    rows.push({ step: 'captions', label: 'Language', value: `${captionLanguageLabel(draft.captionLanguage)} captions · speech stays original` })
+  }
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? ((draft.titleStyle ?? 'headline') === 'headline' && draft.aspectRatio === '9:16' && !(draft.backgroundVideo && draft.broll === 'off') ? `Headline: ${(HEADLINE_LOOKS.find((item) => item.id === (draft.headlineLook ?? DEFAULT_HEADLINE_LOOK).look)?.label ?? 'White bar').toLowerCase()}` : 'Title card at the top') : 'Off' })
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Call to action', value: draft.ctaId ? 'Added to the end of every clip' : 'None' })
   if (draft.clippingMode === 'advanced') rows.splice(5, 0,
@@ -739,7 +788,9 @@ function ReviewStep({ draft, trim, onEdit }: {
       </dl>
       <p className="flex items-start gap-2 text-2xs text-ink-subtle">
         <Clock3 className="mt-px h-3.5 w-3.5 shrink-0" />
-        {runningCount >= MAX_PARALLEL_JOBS
+        {draftSources(draft).length > 1
+          ? `${draftSources(draft).length} jobs are queued, one per video. Up to ${MAX_PARALLEL_JOBS} run at once; the rest start automatically.`
+          : runningCount >= MAX_PARALLEL_JOBS
           ? `${runningCount} jobs are running. This one waits in the queue and starts automatically.`
           : active.length > 0
             ? `Runs alongside ${active.length} other job${active.length === 1 ? '' : 's'}. Up to ${MAX_PARALLEL_JOBS} run at once.`
@@ -758,10 +809,15 @@ function StartedPanel({ className, onViewJob }: { className?: string; onViewJob?
       <IconTile tone="success" size="lg">
         <CheckCircle2 />
       </IconTile>
-      <h2 className="mt-3 text-base font-semibold text-ink">{started.queued ? 'Queued' : 'Clipping started'}</h2>
-      <p className="mt-1 max-w-md truncate text-sm text-ink-muted" title={started.source}>{sourceLabel(started.source)}</p>
+      <h2 className="mt-3 text-base font-semibold text-ink">{(started.count ?? 1) > 1 ? `${started.count} videos queued` : started.queued ? 'Queued' : 'Clipping started'}</h2>
+      <p className="mt-1 max-w-md truncate text-sm text-ink-muted" title={started.source}>{(started.count ?? 1) > 1 ? `${sourceLabel(started.source)} and ${(started.count ?? 1) - 1} more` : sourceLabel(started.source)}</p>
+      {started.failed?.length ? <p role="alert" className="mt-2 max-w-md text-xs text-danger">
+        {started.failed.length === 1 ? `${sourceLabel(started.failed[0].videoUrl)} couldn’t start: ${started.failed[0].error}` : `${started.failed.length} videos couldn’t start: ${started.failed.map((item) => sourceLabel(item.videoUrl)).join(', ')}.`}
+      </p> : null}
       <p className="mt-1 max-w-md text-xs text-ink-subtle">
-        {started.queued
+        {(started.count ?? 1) > 1
+          ? `Each video is its own job. Up to ${MAX_PARALLEL_JOBS} run at once; the rest start as slots free up.`
+          : started.queued
           ? `Up to ${MAX_PARALLEL_JOBS} jobs run at once. This one starts as soon as a slot frees up.`
           : 'It keeps running while you queue more videos or use the rest of CreatorClips.'}
       </p>
@@ -771,7 +827,7 @@ function StartedPanel({ className, onViewJob }: { className?: string; onViewJob?
         </Button>
         {onViewJob && (
           <Button icon={<ListVideo className="h-3.5 w-3.5" />} onClick={() => onViewJob(started.jobId)}>
-            View job
+            {(started.count ?? 1) > 1 ? 'View jobs' : 'View job'}
           </Button>
         )}
       </div>

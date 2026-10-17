@@ -20,7 +20,8 @@ import type {
   ZernioStatusCheck
 } from '../shared/zernio'
 import type { ClipMediaInfo, PostClipRequest, PostClipResult, PostProgress, PostRecord, PostsRefreshResult, TikTokCreatorInfo, TikTokLegalLink } from '../shared/zernio-posts'
-import type { ClipJobRequest, JobSnapshot } from '../shared/jobs'
+import type { ClipJobRequest, JobSnapshot, QualityBar } from '../shared/jobs'
+import type { CaptionLanguage } from '../shared/caption-language'
 import type { MetadataEnhancement, AutomationSourceGroup, AutomationBatchResult, AutomationSourceContext, Automation, AutomationUpdate, AutomationTikTokReview, AutomationTikTokReviewUpdate } from '../shared/automations'
 import type { LibraryClipPostingStatus, LibraryEnhancementOptions, LibraryRunPostingCounts } from '../shared/library-posting'
 import type { OpenRouterCatalog } from '../shared/openrouter-models'
@@ -60,6 +61,34 @@ export interface ClipSettings extends JevThresholdSettings {
 }
 
 export type { ClipJobRequest, JobSnapshot } from '../shared/jobs'
+
+export interface StartManyJobsResult {
+  started?: { jobId: string; queued: boolean; job: JobSnapshot; videoUrl: string }[]
+  failed?: { videoUrl: string; error: string }[]
+  error?: string
+}
+
+export interface MoreClipsInfo {
+  runId: string
+  title: string
+  videoUrl: string
+  /** original: the local file is used in place; kept: the copy kept in the run; download: the link is downloaded again; missing: can't clip again. */
+  source: 'original' | 'kept' | 'download' | 'missing'
+  transcriptSaved: boolean
+  excludedCount: number
+  request: ClipJobRequest
+  /** False for runs made before settings were saved: some style choices use defaults. */
+  savedSettings: boolean
+}
+
+export interface MoreClipsChoices {
+  maxClips: number | null
+  autoClipCount: boolean
+  durationRanges: string[] | null
+  qualityBar: QualityBar
+  clipRequest?: string
+  captionLanguage?: CaptionLanguage
+}
 
 export interface HistoryEntry {
   editorProject?: boolean
@@ -236,6 +265,12 @@ export interface BridgeClipAPI {
   job: {
     /** Queues a clipping run; it starts right away when a slot is free (`queued: false`). */
     start: (config: ClipJobRequest) => Promise<{ jobId?: string; queued?: boolean; job?: JobSnapshot; error?: string }>
+    /** Queues one job per video (same settings, up to 10); a video that can't start doesn't stop the rest. */
+    startMany: (configs: ClipJobRequest[]) => Promise<StartManyJobsResult>
+    /** What "More clips from this video" would reuse for a finished Library run. */
+    moreClipsInfo: (outputDir: string) => Promise<MoreClipsInfo>
+    /** Starts More clips: the run's saved transcript is reused (no transcription charge). */
+    moreClips: (outputDir: string, choices: MoreClipsChoices) => Promise<{ jobId?: string; queued?: boolean; job?: JobSnapshot; error?: string }>
     cancel: (jobId: string) => Promise<boolean>
     /** Every job the main process knows about this session, newest first. */
     list: () => Promise<JobSnapshot[]>
@@ -267,6 +302,8 @@ export interface BridgeClipAPI {
   }
   dialog: {
     selectVideo: () => Promise<string | null>
+    /** Several videos at once (up to 10); empty when cancelled. */
+    selectVideos: () => Promise<string[]>
   }
   /** Avatar Studio: avatar library, scripts and video generation. */
   avatars: {
@@ -579,6 +616,9 @@ const api: BridgeClipAPI = {
   },
   job: {
     start: (config) => paid('job:start', config),
+    startMany: (configs) => paid('job:startMany', configs),
+    moreClipsInfo: (outputDir) => ipcRenderer.invoke('job:moreClipsInfo', outputDir),
+    moreClips: (outputDir, choices) => paid('job:moreClips', outputDir, choices),
     cancel: (jobId) => ipcRenderer.invoke('job:cancel', jobId),
     list: () => ipcRenderer.invoke('jobs:list'),
     dismiss: (jobId) => ipcRenderer.invoke('jobs:dismiss', jobId),
@@ -604,7 +644,8 @@ const api: BridgeClipAPI = {
     showItemInFolder: (path) => ipcRenderer.invoke('shell:showItemInFolder', path)
   },
   dialog: {
-    selectVideo: () => ipcRenderer.invoke('dialog:selectVideo')
+    selectVideo: () => ipcRenderer.invoke('dialog:selectVideo'),
+    selectVideos: () => ipcRenderer.invoke('dialog:selectVideos')
   },
   avatars: {
     list: () => ipcRenderer.invoke('avatars:list'),

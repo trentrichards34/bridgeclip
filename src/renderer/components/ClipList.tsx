@@ -1,6 +1,8 @@
 import { SavedStageTimings } from './StageBreakdown'
 import { ClipCtaDialog } from './CtaPicker'
 import { RemixEditDialog } from './RemixEditDialog'
+import { MoreClipsButton } from './MoreClipsDialog'
+import { useJobStore } from '../store/use-job-store'
 import { parseJobOutput } from '../../shared/job-output'
 import { editorProgress } from '../../shared/clip-editor'
 import { ClipEditor } from './ClipEditor'
@@ -347,6 +349,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
             {outputDir && <Button onClick={() => setInspectEdits(true)}>Inspect transcript & edits</Button>}
             {sourceUrl && <Button iconOnly icon={<Youtube className="h-4 w-4" />} aria-label="Open original video on YouTube" title="Open original video on YouTube"
               onClick={() => { setExportError(null); void getApi().shell.openPath(sourceUrl).catch(() => setExportError('Could not open the original video in your browser.')) }} />}
+            {outputDir && onNavigate && <MoreClipsButton outputDir={outputDir} onStarted={(jobId) => { useJobStore.getState().focusJob(jobId); onNavigate('jobs') }} />}
             {outputDir && (
               <Button icon={<FolderOpen className="h-3.5 w-3.5" />} onClick={() => getApi().shell.openPath(outputDir)}>
                 Open folder
@@ -600,7 +603,7 @@ function readCosts(value: unknown): ApiCosts | null {
   if (layoutVision && typeof layoutVision.model === 'string' && validMoney(layoutVision.estimated_cost_usd)) {
     result.layout_vision = layoutVision as unknown as NonNullable<ApiCosts['layout_vision']>
   }
-  for (const key of ['source_context', 'editorial', 'editorial_vision', 'editorial_repair'] as const) {
+  for (const key of ['source_context', 'editorial', 'editorial_vision', 'editorial_repair', 'caption_translation'] as const) {
     const part = section(key)
     if (part && typeof part.provider === 'string' && typeof part.model === 'string' && validMoney(part.estimated_cost_usd)) {
       result[key] = { provider: part.provider, model: part.model, estimated_cost_usd: part.estimated_cost_usd }

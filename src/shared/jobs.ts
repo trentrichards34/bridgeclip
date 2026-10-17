@@ -9,6 +9,7 @@ import type { RunDiagnostics } from './run-diagnostics'
 import type { HeadlineLook } from './headline-look'
 import type { PipelineStage } from './job-progress'
 import type { JobOutput } from './job-output'
+import type { CaptionLanguage } from './caption-language'
 
 /** Options for one clipping run, as the Create wizard submits them. */
 export interface ClipJobRequest {
@@ -48,6 +49,13 @@ export interface ClipJobRequest {
   hookPreview?: boolean
   /** Paid Creators framework grading: keep clips graded at or above this bar, grade but keep all, or skip grading. Defaults to 'b'. */
   qualityBar?: QualityBar
+  /** Translate the captions (and the captions file) into this language. Omitted: the spoken language. */
+  captionLanguage?: CaptionLanguage
+  /**
+   * "More clips from this video": the finished Create run (its ID) whose saved
+   * transcript and source this run reuses, skipping the moments it already clipped.
+   */
+  reuseFrom?: string
   startTimeSeconds: number | null
   endTimeSeconds: number | null
   bannerPlatform: string | null

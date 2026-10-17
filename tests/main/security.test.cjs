@@ -194,7 +194,7 @@ test('the native picker authorizes media and shell opening rejects aliased appli
       './run-history': runHistory,
       './pipeline-runner': {},
       './job-manager': { initJobManager() {}, onJobUpdate() {} }, './member-prefs': {}, './support-report': { recordToolCheck() {} }, './job-notifications': {}, './library-source': {}, '../shared/member-prefs': { dropMissing: (prefs) => prefs },
-      './job-start': {},
+      './job-start': {}, '../shared/create-sources': { MAX_CREATE_SOURCES: 10 },
     './backgrounds': {},
     './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [], cloningInProgress: () => false },
     './avatar-studio': { onAvatarRenderStatus: () => {}, avatarRunBusy: () => null }, './avatar-library': { importLegacyAvatarVideos: async () => 0 },

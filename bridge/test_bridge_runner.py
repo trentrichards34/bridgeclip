@@ -99,6 +99,35 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(failure["message"], "No moments matched what you asked to clip.")
         self.assertIn("What to clip", failure["hint"])
 
+    def test_caption_language_and_more_clips_fields(self):
+        config = bridge.validate_config(self.config(caption_language="es"))
+        self.assertEqual(config["caption_language"], "es")
+        for value in ("xx", "EN", 3, ""):
+            with self.subTest(language=value), self.assertRaises(ValueError):
+                bridge.validate_config(self.config(caption_language=value))
+        with tempfile.TemporaryDirectory() as folder:
+            transcript = os.path.join(folder, "transcript.json")
+            kept = os.path.join(folder, "editor-source.mp4")
+            with open(kept, "w") as handle:
+                handle.write("x")
+            ok = bridge.validate_config(self.config(reuse_transcript_path=transcript, exclude_ranges_ms=[[0, 30000], [60000, 90000]],
+                                                    reuse_expected_duration_seconds=300.5))
+            self.assertEqual(ok["exclude_ranges_ms"], [[0, 30000], [60000, 90000]])
+            # The earlier run's local file is gone; its kept copy is used instead.
+            missing = os.path.join(folder, "gone.mp4")
+            self.assertEqual(bridge.validate_config(self.config(video_url=missing, reuse_source_path=kept,
+                reuse_source_meta={"title": "Talk", "channel": None, "description": "d"}))["video_url"], missing)
+            with self.assertRaises(ValueError):
+                bridge.validate_config(self.config(video_url=missing))
+            for bad in ({"reuse_transcript_path": "transcript.json"}, {"reuse_transcript_path": os.path.join(folder, "other.json")},
+                        {"reuse_source_path": os.path.join(folder, "notes.txt")}, {"reuse_source_meta": {"path": "/x"}},
+                        {"exclude_ranges_ms": [[5, 1]]}, {"exclude_ranges_ms": [[0, 1.5]]}, {"exclude_ranges_ms": [[0, 1]] * 201},
+                        {"reuse_expected_duration_seconds": -1}):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    bridge.validate_config(self.config(**bad))
+        failure = bridge.describe_failure("No new moments were left to clip")
+        self.assertEqual(failure["message"], "Every strong moment in this video has already been clipped.")
+
     def test_video_speed_validation(self):
         for speed in (1, 1.1, 1.25, 1.5, 1.75, 2):
             self.assertEqual(bridge.validate_config(self.config(video_speed=speed))["video_speed"], speed)

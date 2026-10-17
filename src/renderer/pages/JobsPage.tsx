@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Ban, FileText, FolderOpen, ListVideo, Pencil, Plus, RefreshCw, RotateCcw, Search, Wallet, X } from 'lucide-react'
+import { Ban, FileText, FolderOpen, Layers, ListVideo, Pencil, Plus, RefreshCw, RotateCcw, Search, Wallet, X } from 'lucide-react'
+import type { MoreClipsInfo } from '../../preload/index'
+import { MoreClipsDialog, moreClipsBlocked } from '../components/MoreClipsDialog'
 import { requestSettingsSection } from '../lib/settings-focus'
 import type { HistoryEntry } from '../../preload/index'
 import { MAX_PARALLEL_JOBS } from '../../shared/jobs'
@@ -61,6 +63,7 @@ export function JobsPage({ onNavigate, onViewLibrary }: {
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [jobsLoaded, setJobsLoaded] = useState(false)
+  const [moreClips, setMoreClips] = useState<{ outputDir: string; info: MoreClipsInfo } | null>(null)
   const requestId = useRef(0)
 
   const load = useCallback(async (manual = false) => {
@@ -135,6 +138,19 @@ export function JobsPage({ onNavigate, onViewLibrary }: {
     }
   }
 
+  // More clips from a finished run: reuses its saved transcript (no transcription charge).
+  const openMoreClips = async (outputDir: string): Promise<void> => {
+    setError(null)
+    try {
+      const info = await getApi().job.moreClipsInfo(outputDir)
+      const blocked = moreClipsBlocked(info)
+      if (blocked) setError(`Can’t make more clips from this run: ${blocked.charAt(0).toLowerCase()}${blocked.slice(1)}`)
+      else setMoreClips({ outputDir, info })
+    } catch (err) {
+      setError(errorMessage(err, 'Can’t make more clips from this run.'))
+    }
+  }
+
   const openFolder = async (outputDir: string): Promise<void> => {
     try {
       if (!await getApi().shell.openPath(outputDir)) setError('This run folder is unavailable.')
@@ -161,7 +177,9 @@ export function JobsPage({ onNavigate, onViewLibrary }: {
     return <>{errorCallout}<JobCancelled job={focused} leading={back} onRetry={() => { void runAgain(focused) }} /></>
   }
 
-  return (
+  return (<>
+    {moreClips && <MoreClipsDialog outputDir={moreClips.outputDir} info={moreClips.info} onClose={() => setMoreClips(null)}
+      onStarted={(jobId) => { setMoreClips(null); focusJob(jobId); document.getElementById('page-scroll')?.scrollTo({ top: 0 }) }} />}
     <JobsList
       active={active}
       entries={entries}
@@ -184,11 +202,12 @@ export function JobsPage({ onNavigate, onViewLibrary }: {
         } else if (useJobStore.getState().jobs[entry.jobId]) focusJob(entry.jobId)
       }}
       onOpenFolder={(dir) => { void openFolder(dir) }}
+      onMoreClips={(dir) => { void openMoreClips(dir) }}
     />
-  )
+  </>)
 }
 
-function JobsList({ active, entries, filter, query, error, refreshing, onFilter, onQuery, onDismissError, onRefresh, onNew, onSpending, onOpenJob, onCancel, onOpenEntry, onOpenFolder }: {
+function JobsList({ active, entries, filter, query, error, refreshing, onFilter, onQuery, onDismissError, onRefresh, onNew, onSpending, onOpenJob, onCancel, onOpenEntry, onOpenFolder, onMoreClips }: {
   active: Job[]
   entries: HistoryEntry[] | null
   filter: Filter
@@ -205,6 +224,7 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
   onCancel: (job: Job) => void
   onOpenEntry: (entry: HistoryEntry) => void
   onOpenFolder: (dir: string) => void
+  onMoreClips: (dir: string) => void
 }): React.JSX.Element {
   const sessionJobs = useJobStore((s) => s.jobs)
   const liveIds = useMemo(() => new Set(active.map((job) => job.id)), [active])
@@ -335,7 +355,7 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
               ) : (
                 <ul className="divide-y divide-white/[0.05]">
                   {visible.map((entry) => (
-                    <PreviousJobRow key={entry.jobId} entry={entry} hasDetails={Boolean(sessionJobs[entry.jobId])} onOpen={() => onOpenEntry(entry)} onOpenFolder={() => onOpenFolder(entry.outputDir)} />
+                    <PreviousJobRow key={entry.jobId} entry={entry} hasDetails={Boolean(sessionJobs[entry.jobId])} onOpen={() => onOpenEntry(entry)} onOpenFolder={() => onOpenFolder(entry.outputDir)} onMoreClips={() => onMoreClips(entry.outputDir)} />
                   ))}
                 </ul>
               )}
@@ -429,7 +449,7 @@ const STATUS_TEXT: Record<HistoryEntry['status'], string> = {
 }
 
 /** One line per run: status, title, then clips, run time, cost and date in aligned columns. */
-function PreviousJobRow({ entry, hasDetails, onOpen, onOpenFolder }: { entry: HistoryEntry; hasDetails: boolean; onOpen: () => void; onOpenFolder: () => void }): React.JSX.Element {
+function PreviousJobRow({ entry, hasDetails, onOpen, onOpenFolder, onMoreClips }: { entry: HistoryEntry; hasDetails: boolean; onOpen: () => void; onOpenFolder: () => void; onMoreClips: () => void }): React.JSX.Element {
   const [inspecting, setInspecting] = useState(false)
   const [progress, setProgress] = useState<{ outputDir: string; remaining: number } | null>(null)
   const closeInspector = useCallback(() => setInspecting(false), [])
@@ -489,6 +509,7 @@ function PreviousJobRow({ entry, hasDetails, onOpen, onOpenFolder }: { entry: Hi
       )}
       <ActionMenu label={`Actions for ${entry.videoTitle}`} actions={[
         { label: completed ? 'Open in Library' : 'Open job', icon: <ListVideo className="h-3.5 w-3.5" />, disabled: !openable, onSelect: onOpen },
+        ...(completed ? [{ label: 'More clips from this video', icon: <Layers className="h-3.5 w-3.5" />, onSelect: onMoreClips }] : []),
         { label: 'Open folder', icon: <FolderOpen className="h-3.5 w-3.5" />, onSelect: onOpenFolder },
         { label: 'Details', icon: <FileText className="h-3.5 w-3.5" />, onSelect: () => setInspecting(true) }
       ]} />

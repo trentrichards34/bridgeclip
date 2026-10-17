@@ -55,6 +55,10 @@ class ClipArtifact:
     description: Optional[str] = None
     chapters: Optional[list[dict]] = None
     subtitle_url: Optional[str] = None
+    # Local path of the clip's SRT (closed captions for uploads) and the
+    # language its captions were translated into (None: as spoken).
+    captions_srt: Optional[str] = None
+    caption_language: Optional[str] = None
     editorial: Optional[dict] = None
     # Paid Creators framework grade: letter, criteria scores, hook evidence, fix.
     framework: Optional[dict] = None

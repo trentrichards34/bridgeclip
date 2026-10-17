@@ -3,6 +3,19 @@ import { parseStages } from './job-progress'
 import { parseEditorialSummary, type EditorialSummary } from './editorial'
 import { parseFrameworkGrade, type FrameworkGrade } from './framework-grade'
 import type { ClipCta } from './ctas'
+import type { CaptionLanguage } from './caption-language'
+
+// The codes of CAPTION_LANGUAGES (caption-language.ts), kept here so this parser stays dependency-light.
+const CAPTION_LANGUAGE_CODES: readonly string[] = ['en', 'es', 'pt', 'fr', 'de', 'it', 'hi', 'ar', 'ja', 'ko', 'zh']
+const isCaptionLanguage = (value: unknown): value is CaptionLanguage => typeof value === 'string' && CAPTION_LANGUAGE_CODES.includes(value)
+
+/** An absolute local path to an .srt file (POSIX or Windows), or null. */
+export function captionsSrtPath(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 4096 || value.includes('\0') || !/\.srt$/i.test(value)) return null
+  if (!value.startsWith('/') && !/^[a-zA-Z]:[\\/]/.test(value) && !value.startsWith('\\\\')) return null
+  if (value.split(/[\\/]/).includes('..')) return null
+  return value
+}
 
 export interface ClipArtifact {
   editorial?: EditorialSummary | null
@@ -33,6 +46,10 @@ export interface ClipArtifact {
   tags: string[]
   /** Set when smart framing failed and a letterbox fallback produced the clip. */
   render_fallback: string | null
+  /** Local path of the clip's SRT captions file (closed captions for uploads), in its caption language. */
+  captions_srt?: string | null
+  /** The language the captions were translated into; null or missing: as spoken. */
+  caption_language?: CaptionLanguage | null
 }
 
 export interface RemixClipSettings {
@@ -121,6 +138,9 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
     result.transcription_status = value.transcription_status
   }
   if (value.planning_source === 'visual' || value.planning_source === 'transcript') result.planning_source = value.planning_source
+  if (typeof value.transcript_reused === 'boolean') result.transcript_reused = value.transcript_reused
+  if (nonNegative(value.excluded_moment_count)) result.excluded_moment_count = value.excluded_moment_count
+  if (nonNegative(value.caption_translation_failures)) result.caption_translation_failures = value.caption_translation_failures
   if (value.captions_status === 'enabled' || value.captions_status === 'disabled_by_request' ||
       value.captions_status === 'unavailable_without_transcript') result.captions_status = value.captions_status
   if (nonNegative(value.visual_frame_count)) result.visual_frame_count = value.visual_frame_count
@@ -138,6 +158,7 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
     if (requested.pacing === 'tight' || requested.pacing === 'natural') safe.pacing = requested.pacing
     if (typeof requested.video_speed === 'number' && Number.isFinite(requested.video_speed) && requested.video_speed >= 1 && requested.video_speed <= 2) safe.video_speed = requested.video_speed
     if (['a', 'b', 'c', 'all', 'off'].includes(requested.quality_bar as string)) safe.quality_bar = requested.quality_bar
+    if (isCaptionLanguage(requested.caption_language)) safe.caption_language = requested.caption_language
     const grading = requested.framework_grading
     if (record(grading) && typeof grading.enabled === 'boolean' && nonNegative(grading.candidates) && nonNegative(grading.graded) && nonNegative(grading.kept)) {
       safe.framework_grading = { enabled: grading.enabled, candidates: grading.candidates, graded: grading.graded, kept: grading.kept }
@@ -183,7 +204,7 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
   if (record(costs) && finite(costs.total_estimated_cost_usd) && costs.total_estimated_cost_usd >= 0) {
     const safeCosts: Record<string, unknown> = { total_estimated_cost_usd: costs.total_estimated_cost_usd }
     if (typeof costs.cost_incomplete === 'boolean') safeCosts.cost_incomplete = costs.cost_incomplete
-    for (const name of ['transcription', 'planning', 'layout_vision', 'source_context', 'editorial', 'editorial_vision', 'editorial_repair', 'framework_grading', 'editor_hooks']) {
+    for (const name of ['transcription', 'planning', 'layout_vision', 'source_context', 'editorial', 'editorial_vision', 'editorial_repair', 'framework_grading', 'editor_hooks', 'caption_translation']) {
       const section = costs[name]
       if (!record(section)) continue
       const safe: Record<string, unknown> = {}
@@ -236,7 +257,9 @@ export function parseJobOutput(value: unknown): JobOutput | null {
       remix_settings: record(item.editable) ? remixSettings({ ...(record(item.editable.settings) ? item.editable.settings : {}),
         split: typeof item.editable.split_value === 'number' ? item.editable.split_value : record(item.editable.settings) ? item.editable.settings.split : null }) : null,
       tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 50).map((tag) => tag.slice(0, 64)) : [],
-      render_fallback: boundedText(item.render_fallback, 256)
+      render_fallback: boundedText(item.render_fallback, 256),
+      ...(captionsSrtPath(item.captions_srt) ? { captions_srt: captionsSrtPath(item.captions_srt) } : {}),
+      ...(isCaptionLanguage(item.caption_language) ? { caption_language: item.caption_language } : {})
     })
   }
   return {

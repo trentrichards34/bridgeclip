@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
 import type { QualityBar, TitleStyle } from '../../shared/jobs'
+import type { CaptionLanguageChoice } from '../../shared/caption-language'
 
 /** The Create wizard's steps, in order. */
 export type WizardStep = 'video' | 'format' | 'clips' | 'captions' | 'review'
@@ -11,6 +12,9 @@ export interface StartedJob {
   source: string
   /** True when every slot was busy and the job is waiting its turn. */
   queued: boolean
+  /** Several videos: how many jobs were queued, and the videos that couldn't start. */
+  count?: number
+  failed?: { videoUrl: string; error: string }[]
 }
 
 /**
@@ -20,6 +24,8 @@ export interface StartedJob {
 export interface ClipDraft {
   workflow: 'automatic' | 'review' | null
   source: string
+  /** Several videos (one job each, same settings): every chosen source, the first being `source`. Empty or one item: just `source`. */
+  sources: string[]
   clippingMode: 'quality' | 'economy' | 'advanced'
   plannerModel: string
   transcriptionModel: string
@@ -53,6 +59,8 @@ export interface ClipDraft {
   hookPreview: boolean
   /** Framework grading bar: keep clips graded at or above it. */
   qualityBar: QualityBar
+  /** Captions (and the captions file) in another language; the speech stays as recorded. */
+  captionLanguage: CaptionLanguageChoice
   trimOpen: boolean
   trimStart: string
   trimEnd: string
@@ -73,6 +81,7 @@ interface DraftState extends ClipDraft {
 export const useDraftStore = create<DraftState>((set) => ({
   workflow: null,
   source: '',
+  sources: [],
   clippingMode: 'quality',
   plannerModel: '',
   transcriptionModel: '',
@@ -95,6 +104,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   broll: 'off',
   hookPreview: false,
   qualityBar: 'b',
+  captionLanguage: 'original',
   trimOpen: false,
   trimStart: '',
   trimEnd: '',
@@ -102,7 +112,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   started: null,
   update: (patch) => set(patch),
   setStep: (step) => set({ step }),
-  clearSource: () => set({ source: '', trimStart: '', trimEnd: '' }),
+  clearSource: () => set({ source: '', sources: [], trimStart: '', trimEnd: '' }),
   markStarted: (started) => set({ started }),
-  startAnother: () => set({ workflow: null, source: '', clipRequest: '', trimOpen: false, trimStart: '', trimEnd: '', step: 'video', started: null })
+  startAnother: () => set({ workflow: null, source: '', sources: [], clipRequest: '', trimOpen: false, trimStart: '', trimEnd: '', step: 'video', started: null })
 }))
