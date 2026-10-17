@@ -14,6 +14,11 @@ import { allowOnce, assertSpendAllowed, friendlyIpcError, initSpending, metered,
 import { friendlyCreditError, type SpendProvider } from '../shared/spending'
 import { AI_PORTRAIT_CANDIDATES, estimateRecreateCost, estimateRenderCost, PRICES, REACTIONS } from '../shared/avatars'
 import { estimateRemixCost, isRemixHost, MAX_REMIXES } from '../shared/remix'
+import { deletePreset, readMemberPrefs, renamePreset, saveAppPrefs, saveLastStyle, savePreset } from './member-prefs'
+import { recordToolCheck, reportIssue } from './support-report'
+import { announce, avatarNotice, createNotice, remixNotice } from './job-notifications'
+import { libraryClipForRemix } from './library-source'
+import { dropMissing, type MemberPrefs } from '../shared/member-prefs'
 import { startClipJobRequest } from './job-start'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { addCta, applyRunCta, applyRunCtaInLock, listCtas, removeCta, updateCta, withRunLock } from './ctas'
@@ -103,6 +108,32 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('spend:balance', (_event, force: unknown) => openRouterBalance(force === true))
   handle('spend:setLimit', async (_event, value: unknown) => { saveSpendLimit(value); sendToWindow('spend:changed'); return spendOverview() })
   handle('spend:allowOnce', (_event, channel: unknown) => allowOnce(channel))
+  // Remembered styles, saved styles, the support link and notifications (member-prefs.json).
+  // Styles name library items by id: ones deleted since are dropped as they're read.
+  const known = async (prefs: MemberPrefs): Promise<MemberPrefs> => {
+    const [ctas, avatars, brands, backgrounds] = await Promise.all([
+      listCtas().catch(() => []), listAvatars().catch(() => []), listBrandIdentities().catch(() => []), listBackgrounds().catch(() => [])
+    ])
+    return dropMissing(prefs, {
+      ctaIds: new Set(ctas.map((item) => item.id)), avatarIds: new Set(avatars.map((item) => item.id)),
+      brandIds: new Set(brands.map((item) => item.id)), backgrounds: new Set(backgrounds)
+    })
+  }
+  handle('prefs:load', () => known(readMemberPrefs()))
+  handle('prefs:saveLast', (_event, kind: unknown, style: unknown) => { saveLastStyle(kind, style) })
+  handle('prefs:savePreset', (_event, kind: unknown, name: unknown, style: unknown) => known(savePreset(kind, name, style)))
+  handle('prefs:renamePreset', (_event, kind: unknown, id: unknown, name: unknown) => known(renamePreset(kind, id, name)))
+  handle('prefs:deletePreset', (_event, kind: unknown, id: unknown) => known(deletePreset(kind, id)))
+  handle('prefs:saveApp', (_event, update: unknown) => known(saveAppPrefs(update)))
+  // Copy the support report (never the keys); "Report an issue" then opens the member's support link.
+  handle('support:report', (_event, jobId: unknown, open: unknown) => reportIssue(jobId, open === true, [
+    () => { const status = remixStatus(); return status?.phase === 'failed' ? { what: 'Remix', message: status.error, at: null } : null },
+    () => { const status = avatarRenderStatus(); return status?.phase === 'failed' ? { what: 'Avatar Studio', message: status.error, at: status.startedAt } : null }
+  ]))
+  handle('library:remixSource', (_event, outputDir: unknown, clipIndex: unknown) => libraryClipForRemix(outputDir, clipIndex))
+  // A desktop notification when a long job finishes while the app is in the background.
+  onJobUpdate((job) => announce(createNotice(job), getMainWindow))
+
   handle('settings:load', () => {
     return publicSettings(loadSettings())
   })
@@ -315,6 +346,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('voices:sample', (_event, request: unknown) => metered('avatar', 'Voice preview', () => voiceSample(request)))
   onAvatarRenderStatus((status) => {
     trackAvatarStatus(status)
+    announce(avatarNotice(status), getMainWindow)
     sendToWindow('avatars:status', friendlyStatus(status))
   })
 
@@ -370,6 +402,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   onRemixStatus((status) => {
     trackRemixStatus(status)
+    announce(remixNotice(status), getMainWindow)
     sendToWindow('remix:status', friendlyStatus(status))
   })
 
@@ -591,6 +624,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       bridgePath
     }
     logger.info('system.checkTools', result)
+    recordToolCheck(result)
     return result
   })
 }

@@ -75,7 +75,7 @@ test('Advanced models and export speed support keyboard selection, review and su
   await page.getByRole('option', { name: /Google: Gemini/ }).click()
   assert.equal(await app.evaluate(() => globalThis.modelTest.submitted), null, 'Enter must select a model, not submit a job')
   await page.getByRole('radio', { name: /Economy/ }).click()
-  assert.equal(await page.getByRole('combobox').count(), 0)
+  assert.equal(await page.getByRole('combobox', { name: /model/ }).count(), 0)
   await page.getByRole('radio', { name: /Advanced/ }).click()
   assert.equal(await speech.inputValue(), 'OpenAI: Whisper Large V3')
   assert.equal(await planner.inputValue(), 'Google: Gemini 3.8 Flash')

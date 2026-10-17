@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, type ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, ListVideo, Minus, Plus, Sparkles } from 'lucide-react'
 import { cn, MOD_KEY, parseTimecode, sourceLabel } from '../lib/utils'
 import { useDraftStore, type ClipDraft, type WizardStep } from '../store/use-draft-store'
+import { StylePresets } from './StylePresets'
 import { useActiveJobs } from '../store/use-job-store'
 import type { ClipJobRequest, QualityBar, TitleStyle } from '../../shared/jobs'
 import { MAX_PARALLEL_JOBS } from '../../shared/jobs'
@@ -174,6 +175,7 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, classN
 
   return (
     <div className={cn('space-y-3', className)}>
+      <StylePresets kind="create" />
       <Stepper current={step} reachable={videoValid ? WIZARD_STEPS.length - 1 : 0} onSelect={goTo} />
 
       {step === 'captions' && draft.workflow === 'review' && (

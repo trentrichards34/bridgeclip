@@ -28,6 +28,7 @@ import type { UpdateState } from '../shared/updates'
 import type { OutputStorageUsage } from '../shared/output-storage'
 import type { YouTubePreview } from '../shared/youtube-preview'
 import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/avatars'
+import type { MemberPrefs, StyleKind } from '../shared/member-prefs'
 import type { BrandIdentity, RecordingPart, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
 import type {
   AppDataScope,
@@ -124,6 +125,21 @@ export interface BridgeClipAPI {
     onDataChanged: (cb: (scope: AppDataScope) => void) => () => void
     /** The assistant asked the window to show a page. */
     onNavigate: (cb: (target: { page: AssistantNavigationPage; runDir: string | null }) => void) => () => void
+    /** A finished-job notification was clicked: show that page (a Library run or a job, when given). */
+    onOpenPage: (cb: (target: { page: 'library' | 'jobs' | 'remix' | 'avatar'; runDir: string | null; jobId: string | null }) => void) => () => void
+  }
+  /** Remembered styles, saved styles, the support link and notifications. */
+  prefs: {
+    load: () => Promise<MemberPrefs>
+    saveLast: (kind: StyleKind, style: object) => Promise<void>
+    savePreset: (kind: StyleKind, name: string, style: object) => Promise<MemberPrefs>
+    renamePreset: (kind: StyleKind, id: string, name: string) => Promise<MemberPrefs>
+    deletePreset: (kind: StyleKind, id: string) => Promise<MemberPrefs>
+    saveApp: (update: { supportLink?: string; notifyOnFinish?: boolean }) => Promise<MemberPrefs>
+  }
+  support: {
+    /** Copies the support report; with `open`, then opens the member's support link or email. */
+    report: (jobId: string | null, open: boolean) => Promise<{ copied: true; opened: 'email' | 'link' | null }>
   }
   editor: {
     open: (path: string) => Promise<EditorSession>
@@ -318,6 +334,8 @@ export interface BridgeClipAPI {
     recompose: (outputDir: string, clipIndex: number, edit: { headline: string; headlineLook: HeadlineLook; includeCaptions: boolean; captionPreset: string; split: number | null }) => Promise<{ output: JobOutput | null; note: string | null }>
     /** Choose a screenshot for an article-or-post remix. */
     selectImage: () => Promise<string | null>
+    /** Library → "Remix this clip": that clip's video as the source file, and its creator when known. */
+    libraryClip: (outputDir: string, clipIndex: number) => Promise<{ path: string; creator: string }>
     recordings: () => Promise<RemixRecordings>
     recordingBegin: (draftId: number, part: RecordingPart, mime: string) => Promise<string>
     recordingAppend: (token: string, chunk: Uint8Array) => Promise<void>
@@ -447,7 +465,19 @@ const api: BridgeClipAPI = {
   },
   app: {
     onDataChanged: (callback) => subscribe('app:dataChanged', callback),
-    onNavigate: (callback) => subscribe('app:navigate', callback)
+    onNavigate: (callback) => subscribe('app:navigate', callback),
+    onOpenPage: (callback) => subscribe('app:openPage', callback)
+  },
+  prefs: {
+    load: () => ipcRenderer.invoke('prefs:load'),
+    saveLast: (kind, style) => ipcRenderer.invoke('prefs:saveLast', kind, style),
+    savePreset: (kind, name, style) => ipcRenderer.invoke('prefs:savePreset', kind, name, style),
+    renamePreset: (kind, id, name) => ipcRenderer.invoke('prefs:renamePreset', kind, id, name),
+    deletePreset: (kind, id) => ipcRenderer.invoke('prefs:deletePreset', kind, id),
+    saveApp: (update) => ipcRenderer.invoke('prefs:saveApp', update)
+  },
+  support: {
+    report: (jobId, open) => ipcRenderer.invoke('support:report', jobId, open)
   },
   editor: {
     open: (path) => ipcRenderer.invoke('editor:open', path),
@@ -597,6 +627,7 @@ const api: BridgeClipAPI = {
     write: () => paid('remix:write'),
     recompose: (outputDir, clipIndex, edit) => ipcRenderer.invoke('remix:recompose', outputDir, clipIndex, edit),
     selectImage: () => ipcRenderer.invoke('remix:selectImage'),
+    libraryClip: (outputDir, clipIndex) => ipcRenderer.invoke('library:remixSource', outputDir, clipIndex),
     recordings: () => ipcRenderer.invoke('remix:recordings'),
     recordingBegin: (draftId, part, mime) => ipcRenderer.invoke('remix:recordingBegin', draftId, part, mime),
     recordingAppend: (token, chunk) => ipcRenderer.invoke('remix:recordingAppend', token, chunk),

@@ -1,12 +1,13 @@
 import { JevSettings } from '../components/JevSettings'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUpRight, BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, Loader2, RefreshCw, ScrollText, SlidersHorizontal, Sparkles, Wallet } from 'lucide-react'
+import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, Loader2, RefreshCw, ScrollText, SlidersHorizontal, Sparkles, Wallet } from 'lucide-react'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useChangelogStore } from '../store/use-changelog-store'
 import { useApiKeyDrafts } from '../hooks/use-api-key-drafts'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage } from '../lib/utils'
-import { APP_NAME, APP_VERSION, BRIDGEMIND_URL, ISSUES_URL, LICENSE_NAME, PROVIDER_LINKS, REPO_URL } from '../config/brand'
+import { APP_NAME, APP_VERSION, BRIDGEMIND_URL, LICENSE_NAME, PROVIDER_LINKS, REPO_URL } from '../config/brand'
+import { SupportSettings } from '../components/SupportReport'
 import type { ClipSettings, ToolStatus } from '../../preload/index'
 import { ApiKeyInput } from '../components/ApiKeyInput'
 import { BridgeClipLogo } from '../components/brand/BridgeClipLogo'
@@ -331,14 +332,6 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                 <Button
                   size="sm"
                   variant="ghost"
-                  trailingIcon={<ArrowUpRight className="h-3.5 w-3.5" />}
-                  onClick={() => getApi().shell.openPath(ISSUES_URL)}
-                >
-                  Report an issue
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
                   icon={<ScrollText className="h-3.5 w-3.5" />}
                   onClick={() => getApi().diagnostics.openLogFolder()}
                 >
@@ -346,6 +339,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                 </Button>
               </div>
             </div>
+            <SupportSettings />
             <UpdatesRow />
             <OutputStorage outputDirectory={outputDirectory} />
           </Section>

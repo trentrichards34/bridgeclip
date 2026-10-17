@@ -43,7 +43,7 @@ function ipcWithLibrary(library) {
     './file-manager': {},
     './run-history': {},
     './pipeline-runner': {},
-    './job-manager': { initJobManager() {}, onJobUpdate() {} },
+    './job-manager': { initJobManager() {}, onJobUpdate() {} }, './member-prefs': {}, './support-report': { recordToolCheck() {} }, './job-notifications': {}, './library-source': {}, '../shared/member-prefs': { dropMissing: (prefs) => prefs },
     './spending': SPENDING_STUB,
     '../shared/spending': { friendlyCreditError: (text) => text },
     '../shared/avatars': {},
