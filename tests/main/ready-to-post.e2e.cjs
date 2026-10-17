@@ -162,7 +162,8 @@ test('Get set up checklist ticks items off from real state, can be closed and re
   await page.getByRole('button', { name: 'Settings', exact: true }).first().click()
   const inSettings = page.getByTestId('setup-checklist')
   await inSettings.waitFor()
-  assert.equal(await inSettings.locator('[data-setup-item="first-clip"]').getAttribute('data-done'), 'true')
+  // Settings' copy reads the Library again when it opens.
+  await page.waitForFunction(() => document.querySelector('[data-testid="setup-checklist"] [data-setup-item="first-clip"]')?.getAttribute('data-done') === 'true')
   await page.getByLabel('Sample video link').fill('ftp://example.com/v')
   await page.getByLabel('Sample video link').blur()
   await page.getByText('Use a video link that starts with https://.').waitFor()
