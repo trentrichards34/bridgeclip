@@ -677,7 +677,7 @@ async function runStatsPass(force: boolean): Promise<PostStatsRefreshResult> {
       statsUnavailableUntil = 0
       const current = posts().get(post.id)
       if (!current) continue
-      const stamp = new Date().toISOString()
+      const stamp = new Date(Date.now()).toISOString()
       posts().save({ ...current, stats: mergePostStats(current.stats, parsePostAnalytics(body, status, current, stamp)) })
     } catch (error) {
       if (generation !== workspaceGeneration) return list()
@@ -685,7 +685,7 @@ async function runStatsPass(force: boolean): Promise<PostStatsRefreshResult> {
       if (status === 404) {
         // Zernio has no analytics for this post (yet): remember the try so it isn't asked again at once.
         const current = posts().get(post.id)
-        if (current) posts().save({ ...current, stats: mergePostStats(current.stats, { fetchedAt: new Date().toISOString(), updatedAt: null, syncStatus: 'unavailable', total: null, targets: [], message: null }) })
+        if (current) posts().save({ ...current, stats: mergePostStats(current.stats, { fetchedAt: new Date(Date.now()).toISOString(), updatedAt: null, syncStatus: 'unavailable', total: null, targets: [], message: null }) })
         continue
       }
       if (status === 402 || status === 403) {

@@ -80,7 +80,15 @@ function createPostingMock(options = {}) {
     /** Hand out an upload URL on this origin instead of the mock (e.g. 'http://evil.example'). */
     uploadOrigin: options.uploadOrigin ?? null,
     /** Delay (ms) before answering POST /v1/posts, to exercise timeouts. */
-    createDelayMs: 0
+    createDelayMs: 0,
+    /** Answer the next DELETE /v1/posts/{id} with this status (e.g. 500). */
+    failNextDelete: null,
+    /** GET /v1/analytics answers by post id: { status, body } (default: 404, no analytics). */
+    analytics: new Map(),
+    /** Answer every GET /v1/analytics with this status and body instead, e.g. { status: 403, body: {...} }. */
+    analyticsOverride: null,
+    /** Every GET /v1/analytics: { postId, fromDate } */
+    analyticsRequests: []
   }
 
   const view = (ctx, post) => ({
@@ -301,6 +309,11 @@ function createPostingMock(options = {}) {
       method: 'DELETE',
       path: /^\/api\/v1\/posts\/([^/]+)$/,
       handler: (ctx) => {
+        if (state.failNextDelete) {
+          const status = state.failNextDelete
+          state.failNextDelete = null
+          return error(ctx, status, 'Internal error')
+        }
         const post = state.posts.get(ctx.params[0])
         if (!post) return ctx.json(404, { error: 'Post not found', type: 'not_found', code: 'post_not_found' })
         if (post.status === 'published') return error(ctx, 400, 'Published posts cannot be deleted', { code: 'invalid_resource_state' })
@@ -321,6 +334,19 @@ function createPostingMock(options = {}) {
         }
         post.status = aggregate(post.platforms)
         return ctx.json(200, { message: 'Retry successful', post: view(ctx, post) })
+      }
+    },
+    {
+      // GET /v1/analytics?postId=&fromDate= (AnalyticsSinglePostResponse; 202 while syncing, 424 when every platform failed).
+      method: 'GET',
+      path: '/api/v1/analytics',
+      handler: (ctx) => {
+        const postId = ctx.query.get('postId')
+        state.analyticsRequests.push({ postId, fromDate: ctx.query.get('fromDate') })
+        if (state.analyticsOverride) return ctx.json(state.analyticsOverride.status, state.analyticsOverride.body)
+        const answer = postId && state.analytics.get(postId)
+        if (!answer) return ctx.json(404, { error: 'Post not found', code: 'post_not_found' })
+        return ctx.json(answer.status ?? 200, answer.body)
       }
     },
     {
