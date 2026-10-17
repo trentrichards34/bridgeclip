@@ -1,5 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { ArrowUpRight, BarChart3, CalendarClock, Clapperboard, RefreshCw, RotateCcw, Send, X } from 'lucide-react'
+import { getApi } from '../lib/ipc'
+import type { Automation } from '../../shared/automations'
+import { PostCalendar } from '../components/PostCalendar'
+import { Segmented } from '../components/ui/Segmented'
+import { Dialog } from '../components/ui/Dialog'
+import { AUTOMATION_SELECTED_KEY } from './AutomationsPage'
 import { cn, formatRelativeDate, localFileUrl } from '../lib/utils'
 import { loadThumbnail } from '../lib/thumbnails'
 import { usePostsStore } from '../store/use-posts-store'
@@ -21,6 +27,13 @@ const TITLE = 'Posts'
 /** Statuses only change on Zernio's side; the main process decides which posts are worth a request. */
 const POLL_MS = 30_000
 const RECENT_LIMIT = 10
+/** List or calendar, kept for the session (Automations links here with the calendar open). */
+export const POSTS_VIEW_KEY = 'bridgeclip.posts.view'
+type PostsView = 'list' | 'calendar'
+
+function memberTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+}
 
 function toLocalInput(ms: number): string {
   const d = new Date(ms)
@@ -75,6 +88,38 @@ export function PostsPage({ onNavigate }: { onNavigate: (page: Page) => void }):
 function PostsList({ onNavigate }: { onNavigate: (page: Page) => void }): React.JSX.Element {
   const { posts, loaded, refreshing, error, clearError, refresh, refreshStats, statsRefreshing, statsError, insights } = usePostsStore()
   const [showAll, setShowAll] = useState(false)
+  const [view, setView] = useState<PostsView>(() => {
+    try { return sessionStorage.getItem(POSTS_VIEW_KEY) === 'calendar' ? 'calendar' : 'list' } catch { return 'list' }
+  })
+  const [automations, setAutomations] = useState<Automation[]>([])
+  const [automationsError, setAutomationsError] = useState<string | null>(null)
+  const [openPostId, setOpenPostId] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+  const changeView = (next: PostsView): void => {
+    setView(next)
+    try { sessionStorage.setItem(POSTS_VIEW_KEY, next) } catch { /* Remembering the view is a convenience. */ }
+  }
+
+  // The calendar shows automation slots too; they change with the clock and the queues.
+  useEffect(() => {
+    if (view !== 'calendar') return
+    let active = true
+    const load = (): void => {
+      setNow(Date.now())
+      getApi().automations.list()
+        .then((list) => { if (active) { setAutomations(list); setAutomationsError(null) } })
+        .catch(() => { if (active) setAutomationsError('Automation slots couldn’t be loaded. Posts still show.') })
+    }
+    load()
+    const timer = setInterval(load, 60_000)
+    return () => { active = false; clearInterval(timer) }
+  }, [view])
+
+  const openAutomation = (id: string): void => {
+    try { sessionStorage.setItem(AUTOMATION_SELECTED_KEY, id) } catch { /* The page then opens on its first automation. */ }
+    onNavigate('automations')
+  }
+  const openPost = openPostId ? posts.find((post) => post.id === openPostId) ?? null : null
 
   useEffect(() => {
     // Stats come after statuses; main spaces out the requests and skips posts asked about recently.
@@ -107,6 +152,8 @@ function PostsList({ onNavigate }: { onNavigate: (page: Page) => void }): React.
         title={TITLE}
         className="items-center"
         actions={
+          <div className="flex items-center gap-2">
+          <Segmented<PostsView> size="sm" label="Posts view" value={view} onChange={changeView} options={[{ value: 'list', label: 'List' }, { value: 'calendar', label: 'Calendar' }]} />
           <Button
             variant="ghost"
             iconOnly
@@ -116,6 +163,7 @@ function PostsList({ onNavigate }: { onNavigate: (page: Page) => void }): React.
             disabled={refreshing || statsRefreshing}
             icon={<RefreshCw className={cn('h-3.5 w-3.5', (refreshing || statsRefreshing) && 'animate-spin')} />}
           />
+          </div>
         }
       />
 
@@ -140,6 +188,11 @@ function PostsList({ onNavigate }: { onNavigate: (page: Page) => void }): React.
             <p className="text-xs text-ink-muted">Your post history is unavailable right now.</p>
             <Button size="sm" onClick={() => void usePostsStore.getState().load()}>Try again</Button>
           </Panel>
+        ) : view === 'calendar' ? (
+          <>
+            {automationsError && <Callout tone="warning" onDismiss={() => setAutomationsError(null)}>{automationsError}</Callout>}
+            <PostCalendar posts={posts} automations={automations} timeZone={memberTimeZone()} now={now} onOpenPost={(post) => setOpenPostId(post.id)} onOpenAutomation={openAutomation} />
+          </>
         ) : posts.length === 0 ? (
           <EmptyState
             icon={<Send />}
@@ -169,9 +222,31 @@ function PostsList({ onNavigate }: { onNavigate: (page: Page) => void }): React.
           </>
         )}
 
+        {openPost && <PostDetail post={openPost} onClose={() => setOpenPostId(null)} />}
         <p className="px-1 text-2xs text-ink-subtle">Zernio publishes scheduled posts even when CreatorClips is closed. Views and likes come from Zernio, which collects them from each platform from time to time.</p>
       </div>
     </>
+  )
+}
+
+/** One post from the calendar, with the same actions as the list (reschedule, cancel, retry, links). */
+function PostDetail({ post, onClose }: { post: PostRecord; onClose: () => void }): React.JSX.Element {
+  const titleId = useId()
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => { if (event.key === 'Escape') { event.preventDefault(); onClose() } }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+  return (
+    <Dialog aria-labelledby={titleId} onBackdropMouseDown={onClose} panelClassName="max-w-[620px]">
+      <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] px-4 py-3">
+        <h2 id={titleId} className="text-sm font-semibold text-ink">Post</h2>
+        <Button variant="ghost" size="sm" iconOnly aria-label="Close" onClick={onClose} icon={<X className="h-4 w-4" />} />
+      </div>
+      <ul className="py-1">
+        <PostRow post={post} />
+      </ul>
+    </Dialog>
   )
 }
 

@@ -6,6 +6,7 @@
 // "Quick reference" and "Media requirements".
 
 import type { ZernioPlatform } from './zernio'
+import type { PostCover } from './zernio-extras'
 
 /** What ffprobe reports about a clip. Null fields mean "unknown", never "zero". */
 export interface ClipMediaInfo {
@@ -339,6 +340,8 @@ export interface YouTubePostOptions {
   madeForKids: boolean
   categoryId?: string
   tags?: string[]
+  /** Attach the clip's subtitle file as YouTube closed captions, in this language. */
+  subtitles?: { language: string }
 }
 
 // ---- First comment ----------------------------------------------------------
@@ -379,6 +382,8 @@ export function firstCommentError(value: string): string | null {
 export interface PostOptions {
   /** Posted as the first comment on platforms in FIRST_COMMENT_PLATFORMS. */
   firstComment?: string
+  /** A cover for the platforms that take one (see coverSupport in zernio-extras.ts). */
+  cover?: PostCover
   tiktok?: TikTokPostOptions
   youtube?: YouTubePostOptions
   instagram?: { shareToFeed: boolean }

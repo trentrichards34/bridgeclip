@@ -59,6 +59,8 @@ import {
 import {
   cancelPost,
   cancelUpload,
+  clipSubtitlesForPosting,
+  coverImageForPosting,
   dismissPost,
   getTikTokCreatorInfo,
   listPosts,
@@ -193,6 +195,14 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
 
   // Posting clips through Zernio. Uploads and post links stay in the main process.
   handle('zernio:posts:probe', (_event, clipPath: unknown, durationMs: unknown) => probeClipForPosting(clipPath, durationMs))
+  handle('zernio:posts:subtitles', (_event, clipPath: unknown) => clipSubtitlesForPosting(clipPath))
+  handle('zernio:posts:pickCoverImage', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a cover image', filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png'] }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return coverImageForPosting(result.filePaths[0])
+  })
   handle('zernio:posts:tiktokCreatorInfo', (_event, accountId: unknown) => getTikTokCreatorInfo(accountId))
   handle('zernio:posts:publish', (event, request: unknown) => publishClip(request, (progress) => {
     if (!event.sender.isDestroyed()) event.sender.send('zernio:postProgress', progress)

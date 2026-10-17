@@ -19,6 +19,7 @@ import type {
   ZernioSyncResult,
   ZernioStatusCheck
 } from '../shared/zernio'
+import type { ClipSubtitles } from '../shared/zernio-extras'
 import type { ClipMediaInfo, PostClipRequest, PostClipResult, PostProgress, PostRecord, PostsRefreshResult, PostStatsRefreshResult, TikTokCreatorInfo, TikTokLegalLink } from '../shared/zernio-posts'
 import type { PostInsights } from '../shared/post-insights'
 import type { ClipJobRequest, JobSnapshot, QualityBar } from '../shared/jobs'
@@ -252,6 +253,10 @@ export interface BridgeClipAPI {
     posts: {
       probe: (clipPath: string, durationMs: number | null) => Promise<ClipMediaInfo>
       tiktokCreatorInfo: (accountId: string) => Promise<TikTokCreatorInfo>
+      /** Whether the clip has a subtitle file to attach as YouTube captions. */
+      subtitles: (clipPath: string) => Promise<ClipSubtitles>
+      /** Opens a file dialog for a JPG or PNG cover; null when cancelled. */
+      pickCoverImage: () => Promise<{ path: string; sizeBytes: number } | null>
       /** Uploads the clip and creates the post; progress arrives via onProgress. */
       publish: (request: PostClipRequest) => Promise<PostClipResult>
       cancelUpload: (attemptId: string) => Promise<void>
@@ -615,6 +620,8 @@ const api: BridgeClipAPI = {
     posts: {
       probe: (clipPath, durationMs) => ipcRenderer.invoke('zernio:posts:probe', clipPath, durationMs),
       tiktokCreatorInfo: (accountId) => ipcRenderer.invoke('zernio:posts:tiktokCreatorInfo', accountId),
+      subtitles: (clipPath) => ipcRenderer.invoke('zernio:posts:subtitles', clipPath),
+      pickCoverImage: () => ipcRenderer.invoke('zernio:posts:pickCoverImage'),
       publish: (request) => ipcRenderer.invoke('zernio:posts:publish', request),
       cancelUpload: (attemptId) => ipcRenderer.invoke('zernio:posts:cancelUpload', attemptId),
       onProgress: (callback) => subscribe('zernio:postProgress', callback),
