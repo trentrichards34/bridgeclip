@@ -57,6 +57,8 @@ test('Settings → Spending: totals, balance, monthly limit, the check before a 
     })
   }, real)
   await page.reload()
+  // The shortcut is listened for once the app has mounted.
+  await page.getByRole('button', { name: 'Settings', exact: true }).first().waitFor()
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
   // The section list is hidden on narrow windows: scroll to the section itself.
   const section = page.locator('#settings-spending')
