@@ -6,6 +6,8 @@ const os = require('node:os')
 const vm = require('node:vm')
 const ts = require('typescript')
 
+const SPENDING_STUB = { allowOnce() {}, assertSpendAllowed: async () => {}, friendlyIpcError: (error) => error, initSpending() {}, metered: (_kind, _label, work) => work(), meteredAvatarRender: (_fal, start) => start(), onOutOfCredits() {}, onSpendingChange() {}, openRouterBalance: async () => null, spendOverview: async () => ({}), trackAvatarStatus() {}, trackJobSnapshot() {}, trackRemixStatus() {} }
+
 function loadSource(file, mocks = {}, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../src/main', file), 'utf8')
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
@@ -41,7 +43,10 @@ function ipcWithLibrary(library) {
     './file-manager': {},
     './run-history': {},
     './pipeline-runner': {},
-    './job-manager': { initJobManager() {} },
+    './job-manager': { initJobManager() {}, onJobUpdate() {} },
+    './spending': SPENDING_STUB,
+    '../shared/spending': { friendlyCreditError: (text) => text },
+    '../shared/avatars': {},
     './job-start': {},
     './backgrounds': {},
     './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [], cloningInProgress: () => false },

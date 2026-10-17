@@ -23,6 +23,7 @@ import { useDataVersionStore } from './store/use-data-version-store'
 import { usePostsStore } from './store/use-posts-store'
 import { requestSettingsSection } from './lib/settings-focus'
 import { ChangelogDialog } from './components/Changelog'
+import { SpendingAlerts } from './components/spending/SpendingAlerts'
 import { Button } from './components/ui/Button'
 import { getApi } from './lib/ipc'
 
@@ -101,6 +102,11 @@ export default function App(): React.JSX.Element {
     void assistant.init().catch(() => {})
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
   }, [navigateRoot, viewLibraryRun])
+
+  const openSpending = useCallback((): void => {
+    requestSettingsSection('spending')
+    navigateRoot('settings')
+  }, [navigateRoot])
 
   const openAssistantSettings = useCallback((section: 'assistant' | 'keys' = 'assistant'): void => {
     requestSettingsSection(section)
@@ -181,6 +187,7 @@ export default function App(): React.JSX.Element {
         </div>
       )}
       {changelogOpen && <ChangelogDialog onClose={closeChangelog} />}
+      {settingsLoaded && <SpendingAlerts onOpenSpending={openSpending} />}
     </>
   )
 }

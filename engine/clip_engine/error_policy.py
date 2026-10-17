@@ -17,6 +17,9 @@ TWITCH_ERRORS = {
 DISK_FULL_ERRNOS = {errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)}
 DISK_FULL_MARKERS = ("no space left on device", "disk quota exceeded")
 
+OUT_OF_CREDITS_MESSAGE = "OpenRouter account is out of credits"
+OUT_OF_CREDITS_MARKERS = ("out of credits", "insufficient credits")
+
 NO_CLIP_CANDIDATES_MESSAGE = 'The planner returned no clip candidates'
 NO_REQUESTED_MOMENTS_MESSAGE = 'No moments matched the clip request'
 
@@ -47,10 +50,26 @@ def is_disk_full(error: BaseException) -> bool:
     return False
 
 
+def is_out_of_credits(error: BaseException) -> bool:
+    """True when an OpenRouter call in the error's chain answered 402 (no credit left)."""
+    seen = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if type(current).__name__ == "OpenRouterError" and (
+                getattr(current, "status_code", None) == 402
+                or any(marker in str(current).lower() for marker in OUT_OF_CREDITS_MARKERS)):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def safe_processing_error(error: Exception) -> str:
     """Classify an internal exception for API responses and webhooks."""
     if is_disk_full(error):
         return "Not enough disk space to save clips"
+    if is_out_of_credits(error):
+        return OUT_OF_CREDITS_MESSAGE
     if isinstance(error, TimeoutError):
         return "Processing timed out"
     if isinstance(error, NoRequestedMomentsError):
@@ -96,6 +115,8 @@ def safe_failure_code(error: Exception) -> str:
     """Small fixed code suitable for job records and logs; never include raw provider text."""
     if is_disk_full(error):
         return "storage.full"
+    if is_out_of_credits(error):
+        return "openrouter.out_of_credits"
     if isinstance(error, NoClipCandidatesError):
         return 'planning.no_candidates'
     if type(error).__name__ == "VisualPlanningUnsupportedError":
@@ -125,7 +146,7 @@ def safe_job_error_text(error: str | None) -> str | None:
         return None
     if error in (NO_CLIP_CANDIDATES_MESSAGE, NO_REQUESTED_MOMENTS_MESSAGE):
         return error
-    if error in TWITCH_ERRORS.values():
+    if error in TWITCH_ERRORS.values() or error == OUT_OF_CREDITS_MESSAGE:
         return error
     if error in {
         "Processing timed out", "Video download failed", "No clip-worthy moments found",

@@ -7,6 +7,7 @@ import type { HeadlineLook } from '../shared/headline-look'
 import type { CtaSummary } from '../shared/ctas'
 import type { EditAudit } from '../shared/editorial'
 import { contextBridge, ipcRenderer } from 'electron'
+import { decodeSpendGate, type OpenRouterBalance, type SpendGate, type SpendOverview, type SpendProvider } from '../shared/spending'
 import type {
   ZernioConnectOptions,
   ZernioConnectResult,
@@ -373,6 +374,44 @@ export interface BridgeClipAPI {
     /** Help → Changelog asks the window to show the changelog. */
     onShow: (cb: () => void) => () => void
   }
+  /** AI spending: the app's own ledger of what paid runs cost, the OpenRouter balance and the monthly limit. */
+  spending: {
+    overview: () => Promise<SpendOverview>
+    /** null when no OpenRouter key is saved. Cached a few minutes unless `force`. */
+    balance: (force?: boolean) => Promise<OpenRouterBalance | null>
+    /** '' clears the limit. Resolves with the new overview. */
+    setLimit: (value: string) => Promise<SpendOverview>
+    onChange: (cb: () => void) => () => void
+    /** A provider said the credit ran out. */
+    onOutOfCredits: (cb: (provider: SpendProvider) => void) => () => void
+    /**
+     * Shows the spending check before a paid run starts (low balance, monthly limit).
+     * Resolve true for "Start anyway" (offered for a low balance only).
+     */
+    setGateHandler: (handler: ((gate: SpendGate) => Promise<boolean>) | null) => void
+  }
+}
+
+let gateHandler: ((gate: SpendGate) => Promise<boolean>) | null = null
+
+/**
+ * A call that starts paid work. When the main process stops it at the spending
+ * check, the window is asked; "Start anyway" (low balance only) sends it again.
+ */
+async function paid<T>(channel: string, ...args: unknown[]): Promise<T> {
+  try {
+    return await ipcRenderer.invoke(channel, ...args)
+  } catch (error) {
+    const gate = decodeSpendGate((error as Error | null)?.message)
+    if (!gate) throw error
+    let proceed = false
+    try { proceed = gateHandler ? await gateHandler(gate) === true : false } catch { proceed = false }
+    if (!proceed || !gate.canOverride) {
+      throw new Error(gate.reason === 'limit' ? 'Not started: this would go over your monthly AI spending limit (Settings → Spending).' : 'Not started: your OpenRouter balance is low. Add credits, or choose Start anyway.')
+    }
+    await ipcRenderer.invoke('spend:allowOnce', channel)
+    return ipcRenderer.invoke(channel, ...args)
+  }
 }
 
 function subscribe<T>(channel: string, callback: (data: T) => void): () => void {
@@ -486,7 +525,7 @@ const api: BridgeClipAPI = {
     }
   },
   job: {
-    start: (config) => ipcRenderer.invoke('job:start', config),
+    start: (config) => paid('job:start', config),
     cancel: (jobId) => ipcRenderer.invoke('job:cancel', jobId),
     list: () => ipcRenderer.invoke('jobs:list'),
     dismiss: (jobId) => ipcRenderer.invoke('jobs:dismiss', jobId),
@@ -517,22 +556,22 @@ const api: BridgeClipAPI = {
   avatars: {
     list: () => ipcRenderer.invoke('avatars:list'),
     pickPhoto: () => ipcRenderer.invoke('avatars:pickPhoto'),
-    generateFaces: (description) => ipcRenderer.invoke('avatars:generateFaces', description),
-    restyle: (source, look, detail, consent) => ipcRenderer.invoke('avatars:restyle', source, look, detail, consent),
+    generateFaces: (description) => paid('avatars:generateFaces', description),
+    restyle: (source, look, detail, consent) => paid('avatars:restyle', source, look, detail, consent),
     setPortrait: (id, draftId) => ipcRenderer.invoke('avatars:setPortrait', id, draftId),
     usePicture: (id, file) => ipcRenderer.invoke('avatars:usePicture', id, file),
     removePicture: (id, file) => ipcRenderer.invoke('avatars:removePicture', id, file),
     addPhoto: (id) => ipcRenderer.invoke('avatars:addPhoto', id),
-    makeReactions: (id) => ipcRenderer.invoke('avatars:makeReactions', id),
+    makeReactions: (id) => paid('avatars:makeReactions', id),
     uploadReaction: (id, kind) => ipcRenderer.invoke('avatars:uploadReaction', id, kind),
     removeReaction: (id, kind) => ipcRenderer.invoke('avatars:removeReaction', id, kind),
     create: (input) => ipcRenderer.invoke('avatars:create', input),
     update: (id, patch) => ipcRenderer.invoke('avatars:update', id, patch),
     remove: (id) => ipcRenderer.invoke('avatars:remove', id),
-    cloneVoice: (id, consent) => ipcRenderer.invoke('avatars:cloneVoice', id, consent),
+    cloneVoice: (id, consent) => paid('avatars:cloneVoice', id, consent),
     writeScript: (request) => ipcRenderer.invoke('avatars:writeScript', request),
-    render: (request) => ipcRenderer.invoke('avatars:render', request),
-    recreate: (request) => ipcRenderer.invoke('avatars:recreate', request),
+    render: (request) => paid('avatars:render', request),
+    recreate: (request) => paid('avatars:recreate', request),
     cancelRender: () => ipcRenderer.invoke('avatars:cancelRender'),
     renderStatus: () => ipcRenderer.invoke('avatars:renderStatus'),
     onStatus: (callback) => subscribe('avatars:status', callback)
@@ -547,15 +586,15 @@ const api: BridgeClipAPI = {
     importFile: () => ipcRenderer.invoke('brandIdentities:importFile')
   },
   remix: {
-    start: (request) => ipcRenderer.invoke('remix:start', request),
-    render: (edits) => ipcRenderer.invoke('remix:render', edits),
+    start: (request) => paid('remix:start', request),
+    render: (edits) => paid('remix:render', edits),
     discard: () => ipcRenderer.invoke('remix:discard'),
     cancel: () => ipcRenderer.invoke('remix:cancel'),
     status: () => ipcRenderer.invoke('remix:status'),
     onStatus: (callback) => subscribe('remix:status', callback),
     mediaAccess: () => ipcRenderer.invoke('remix:mediaAccess'),
     moment: (draftId) => ipcRenderer.invoke('remix:moment', draftId),
-    write: () => ipcRenderer.invoke('remix:write'),
+    write: () => paid('remix:write'),
     recompose: (outputDir, clipIndex, edit) => ipcRenderer.invoke('remix:recompose', outputDir, clipIndex, edit),
     selectImage: () => ipcRenderer.invoke('remix:selectImage'),
     recordings: () => ipcRenderer.invoke('remix:recordings'),
@@ -600,6 +639,14 @@ const api: BridgeClipAPI = {
   },
   changelog: {
     onShow: (callback) => subscribe('changelog:show', () => callback())
+  },
+  spending: {
+    overview: () => ipcRenderer.invoke('spend:overview'),
+    balance: (force) => ipcRenderer.invoke('spend:balance', force === true),
+    setLimit: (value) => ipcRenderer.invoke('spend:setLimit', value),
+    onChange: (callback) => subscribe('spend:changed', () => callback()),
+    onOutOfCredits: (callback) => subscribe('spend:outOfCredits', callback),
+    setGateHandler: (handler) => { gateHandler = typeof handler === 'function' ? handler : null }
   }
 }
 

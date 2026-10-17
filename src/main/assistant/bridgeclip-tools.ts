@@ -15,6 +15,8 @@ import { loadSettings, publicSettings, savePublicSettings } from '../settings-st
 import { getJobHistory } from '../file-manager'
 import { cancelTrackedJob, getJob, listJobs, liveJobIds, onJobUpdate } from '../job-manager'
 import { startClipJobRequest } from '../job-start'
+import { assertSpendAllowed } from '../spending'
+import { decodeSpendGate } from '../../shared/spending'
 import { authorizeMedia, isWebUrl } from '../security'
 import { getYouTubePreview } from '../youtube-preview'
 import { resolveBinary } from '../tools'
@@ -347,6 +349,10 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
       },
       run: async (input) => {
         const request = clipJobRequestFromInput(input)
+        // The member approved this run in the chat; only their monthly spending limit can still stop it.
+        try { await assertSpendAllowed('job:start', 'openrouter', null, { balance: false }) } catch (error) {
+          throw new AssistantToolError(decodeSpendGate((error as Error)?.message)?.message ?? 'The spending check failed. Try again.')
+        }
         const result = await startClipJobRequest(request)
         if ('error' in result) throw new AssistantToolError(result.error)
         return { ...jobView(result.job), queued: result.queued, summary: result.queued ? 'Queued' : 'Started' }

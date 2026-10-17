@@ -1,6 +1,6 @@
 import { JevSettings } from '../components/JevSettings'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUpRight, BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, Loader2, RefreshCw, ScrollText, SlidersHorizontal, Sparkles } from 'lucide-react'
+import { ArrowUpRight, BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, Loader2, RefreshCw, ScrollText, SlidersHorizontal, Sparkles, Wallet } from 'lucide-react'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useChangelogStore } from '../store/use-changelog-store'
 import { useApiKeyDrafts } from '../hooks/use-api-key-drafts'
@@ -23,8 +23,9 @@ import { OutputStorage } from '../components/OutputStorage'
 import { AssistantSettings } from '../components/assistant/AssistantSettings'
 import { useAssistantStore } from '../store/use-assistant-store'
 import { takeSettingsSection } from '../lib/settings-focus'
+import { SpendingSettings } from '../components/spending/SpendingSettings'
 
-type SectionId = 'keys' | 'assistant' | 'jev' | 'vocabulary' | 'output' | 'system' | 'about'
+type SectionId = 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'output' | 'system' | 'about'
 type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
@@ -65,6 +66,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
 
   const sections: { id: SectionId; label: string; icon: ReactNode; tone: SectionTone }[] = [
     { id: 'keys', label: 'API keys', icon: <KeyRound />, tone: keysMissing ? 'warning' : 'success' },
+    { id: 'spending', label: 'Spending', icon: <Wallet />, tone: 'idle' },
     { id: 'assistant', label: 'Assistant', icon: <Sparkles />, tone: assistantConnected ? 'success' : 'idle' },
     { id: 'jev', label: 'TypeSafe Jev', icon: <SlidersHorizontal />, tone: 'idle' },
     { id: 'vocabulary', label: 'Vocabulary', icon: <BookA />, tone: 'idle' },
@@ -234,6 +236,10 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                 />
               </KeyRow>
             </div>
+          </Section>
+
+          <Section id="spending">
+            <SpendingSettings />
           </Section>
 
           <Section id="assistant">
