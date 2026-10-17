@@ -200,7 +200,8 @@ export function ClipCard({
               Top pick
             </span>
           )}
-          {clip.framework ? <GradeChip grade={clip.framework} className="pointer-events-auto" /> : (
+          {/* Clips made by hand in the editor have no score: show no chip rather than "0.0". */}
+          {clip.framework ? <GradeChip grade={clip.framework} className="pointer-events-auto" /> : clip.virality_score > 0 && (
             <span
               className="glass-chip pointer-events-auto inline-flex h-5 items-center gap-1 rounded-full px-1.5 font-mono text-2xs font-medium tabular text-white"
               title="Virality score"

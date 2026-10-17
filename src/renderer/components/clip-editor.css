@@ -159,3 +159,15 @@
 .editor-caption-words { display:flex; flex-wrap:wrap; justify-content:center; gap:0 .28em; padding:.12em .2em; border-radius:.15em; }
 .editor-subtitle-controls { margin-top:16px; padding:12px; border:1px solid #ffffff14; border-radius:8px; display:grid; gap:10px; }
 .editor-subtitle-controls fieldset:disabled { opacity:.5; }
+/* Transcript line selection for "Make a clip from these lines". */
+.editor-line-select { width:13px; height:13px; flex:none; display:inline-grid; place-items:center; border-radius:3px; border:1px solid rgb(var(--ink-subtle) / .6); color:rgb(var(--accent-ink)); touch-action:none; }
+.editor-line-select:hover { border-color:rgb(var(--accent)); }
+.editor-line-select[aria-pressed="true"] { background:rgb(var(--accent)); border-color:rgb(var(--accent)); }
+.editor-transcript-row.line-selected { background:rgb(var(--accent) / .05); border-color:rgb(var(--accent) / .22); }
+.editor-line-bar { position:sticky; top:0; z-index:2; display:flex; flex-direction:column; gap:6px; padding:10px; border-radius:8px; border:1px solid rgb(var(--accent) / .3); background:rgb(var(--surface)); }
+/* Hook ideas, each with its framework hook grade. */
+.editor-hook-idea { display:flex; flex-direction:column; gap:6px; padding:10px; border-radius:8px; border:1px solid rgb(255 255 255 / .08); }
+.editor-hook-grade { flex:none; width:22px; height:22px; display:grid; place-items:center; border-radius:6px; font:600 11px/1 ui-monospace, monospace; background:rgb(255 255 255 / .08); }
+.editor-hook-grade.grade-a, .editor-hook-grade.grade-b { color:rgb(var(--success)); background:rgb(var(--success) / .12); }
+.editor-hook-grade.grade-c { color:rgb(var(--warning)); background:rgb(var(--warning) / .12); }
+.editor-hook-grade.grade-d, .editor-hook-grade.grade-f { color:rgb(var(--danger)); background:rgb(var(--danger) / .12); }
