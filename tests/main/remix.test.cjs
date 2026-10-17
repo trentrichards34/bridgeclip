@@ -695,3 +695,62 @@ test('re-editing a finished remix: checked, rebuilt from its saved parts, call t
   assert.equal(fs.readFileSync(path.join(folder, 'clip_00.mp4'), 'utf8'), 'NEW VIDEO')
   fs.rmSync(out, { recursive: true, force: true })
 })
+
+test('editing a take in review: held to the same rules, saved on the status, marked as edited, and used when made', async () => {
+  const { EventEmitter } = require('node:events')
+  const childProcess = require('node:child_process')
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'remix-edit-'))
+  const settings = { ...SETTINGS, outputDirectory: out }
+  const configs = []
+  const take = (id, format = 'commentary') => ({ id, format, headline: 'You do not need to lose weight', intro: 'Here is the truth.', close: 'Train the pull first.', beats: [{ text: 'Strength first.', broll: 'gym' }],
+    quote: 'q', post_caption: 'My take.', estimate_usd: 0.03, grade: { letter: 'B', score: 7, verdict: 'ok', fix: 'f' } })
+  const spawn = () => {
+    const child = new EventEmitter()
+    child.pid = 0
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
+    child.stdin = { on() {}, end(text) {
+      const config = JSON.parse(text)
+      configs.push(config)
+      const result = config.mode === 'plan' ? { ok: true, cost_usd: 0.1, drafts: [take(0), { ...take(1, 'silent'), intro: '', close: '', beats: [] }] } : { ok: true, remixes: [] }
+      setImmediate(() => { child.stdout.emit('data', JSON.stringify(result) + '\n'); child.emit('close', 0) })
+    } }
+    return child
+  }
+  const remix = load('main/remix.ts', {
+    electron: { app: { getPath: () => out, isPackaged: true } },
+    child_process: { ...childProcess, spawn },
+    './avatars': { portraitPath: () => '', voiceSamplePath: () => '', readAvatar: () => null, readReactions: () => [] },
+    './logger': { logger: { info() {}, warn() {} } },
+    './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
+    './security': { assertMediaPath: () => {}, authorizeMedia: (p) => p },
+    './settings-store': { loadSettings: () => settings, getSettingsForBridge: () => ({}) },
+    './tools': { resolveBinary: (name) => name }
+  })
+  const seen = []
+  remix.onRemixStatus((status) => seen.push(status))
+  assert.throws(() => remix.editRemixDraft({ id: 0, headline: 'A new hook here' }), /no takes waiting/)
+  await remix.startRemix({ ...base, host: 'voice', voice: 'Brian', avatarId: null })
+  for (let i = 0; i < 100 && remix.remixStatus()?.phase !== 'review'; i++) await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(remix.remixStatus().phase, 'review')
+
+  assert.throws(() => remix.editRemixDraft({ id: 7, headline: 'A new hook here' }), /no longer in this review/)
+  assert.throws(() => remix.editRemixDraft({ id: 0, headline: 'Too short' }), /at least 3 words/)
+  assert.throws(() => remix.editRemixDraft({ id: 0, intro: Array.from({ length: 40 }, () => 'word').join(' ') }), /opening to 35 words/)
+  assert.throws(() => remix.editRemixDraft({ id: 0, beats: [{ text: Array.from({ length: 40 }, () => 'w').join(' '), broll: '' }] }), /beat 1 to 35 words/)
+  // Unchanged: nothing is marked edited or sent.
+  const before = seen.length
+  assert.equal(remix.editRemixDraft({ id: 0, headline: 'You do not need to lose weight' }).grade.edited, false)
+  assert.equal(seen.length, before)
+
+  const saved = remix.editRemixDraft({ id: 0, headline: 'Lose weight first? Not true', beats: [{ text: 'Strength comes first.', broll: 'gym' }] })
+  assert.deepEqual([saved.headline, saved.intro, saved.beats[0].text, saved.grade.edited], ['Lose weight first? Not true', 'Here is the truth.', 'Strength comes first.', true])
+  assert.equal(remix.remixStatus().drafts[0].headline, 'Lose weight first? Not true', 'kept on the status the Remix page shows')
+  assert.equal(seen.at(-1).drafts[0].headline, 'Lose weight first? Not true', 'the page is told')
+  // A silent take only has a headline and caption.
+  assert.equal(remix.editRemixDraft({ id: 1, headline: 'Watch what happens next here', intro: 'ignored' }).intro, '')
+  assert.throws(() => remix.editRemixDraft({ id: 1, postCaption: 'x'.repeat(2001) }), /caption to 2,000/)
+
+  await remix.renderRemix([{ ...remix.remixStatus().drafts[0] }])
+  assert.equal(configs.at(-1).approved[0].headline, 'Lose weight first? Not true')
+  fs.rmSync(out, { recursive: true, force: true })
+})

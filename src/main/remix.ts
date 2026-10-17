@@ -1028,3 +1028,31 @@ export function stopRemixForQuit(): void {
   void dropWriters(null)
   if (recomposeChild) kill(recomposeChild, true, true)
 }
+
+/**
+ * Save an edit to a take waiting for review (headline, lines, caption), held to
+ * the same rules as making it. The Remix page shows it through the status.
+ */
+export function editRemixDraft(value: unknown): RemixDraft {
+  const run = reviewing
+  if (!run || run.status.phase !== 'review') throw new Error('There are no takes waiting for review.')
+  const raw = (value ?? {}) as Record<string, unknown>
+  const draft = run.status.drafts.find((item) => item.id === raw.id)
+  if (!draft) throw new Error('That take is no longer in this review.')
+  // Silent and screenshot takes have no spoken lines to change.
+  const spoken = !headlineOnly(draft.format)
+  const merged = {
+    id: draft.id,
+    headline: raw.headline ?? draft.headline, postCaption: raw.postCaption ?? draft.postCaption,
+    intro: spoken ? raw.intro ?? draft.intro : draft.intro, close: spoken ? raw.close ?? draft.close : draft.close, beats: spoken ? raw.beats ?? draft.beats : draft.beats
+  }
+  const [edit] = parseRemixEdits([merged], new Set([draft.id]), headlineOnly(draft.format) ? new Set([draft.id]) : new Set())
+  const next: RemixDraft = { ...draft, headline: edit.headline, intro: edit.intro, beats: edit.beats, close: edit.close, postCaption: edit.postCaption ?? draft.postCaption }
+  const changed = next.headline !== draft.headline || next.intro !== draft.intro || next.close !== draft.close || next.postCaption !== draft.postCaption ||
+    JSON.stringify(next.beats) !== JSON.stringify(draft.beats)
+  if (!changed) return draft
+  if (next.grade) next.grade = { ...next.grade, edited: true }
+  run.status = { ...run.status, drafts: run.status.drafts.map((item) => item.id === draft.id ? next : item) }
+  notify(run.status)
+  return next
+}
