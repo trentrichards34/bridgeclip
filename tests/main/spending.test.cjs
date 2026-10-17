@@ -296,3 +296,14 @@ test('balance: account credits and key limit, the lower is used; failures never 
   const gateError = new Error(shared.encodeSpendGate({ reason: 'balance', provider: 'openrouter', message: 'insufficient credits', canOverride: true, estimateUsd: null }))
   assert.equal(main.friendlyIpcError(gateError), gateError)
 })
+
+test('every channel that goes through paid() can take "Start anyway"', () => {
+  const { main } = loadMain()
+  const source = fs.readFileSync(path.join(ROOT, 'main/ipc-handlers.ts'), 'utf8')
+  const channels = [...source.matchAll(/\bpaid\(\s*'([^']+)'/g)].map((match) => match[1])
+  assert.ok(channels.length >= 10, 'found the paid channels')
+  for (const channel of channels) {
+    assert.ok(main.GATED_CHANNELS.has(channel), `${channel} is in GATED_CHANNELS`)
+    assert.equal(main.allowOnce(channel), true)
+  }
+})
