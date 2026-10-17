@@ -31,6 +31,8 @@ export interface RemixForm {
   camera: CameraSettings
   /** The look over a screenshot, kept apart so it doesn't change the video kinds. */
   imageCamera: CameraSettings
+  /** Draw the brand's handle or logo in a corner. */
+  showHandle: boolean
 }
 
 interface RemixFormState extends RemixForm {
@@ -49,6 +51,7 @@ export const useRemixForm = create<RemixFormState>((set, get) => ({
   ctaId: null,
   camera: DEFAULT_CAMERA,
   imageCamera: { ...DEFAULT_CAMERA, layout: 'greenscreen', talk: true },
+  showHandle: false,
   update: (patch) => set(patch),
   applyStyle: (style) => set({ ...style, ...(style.format && style.format !== get().format ? { clipRightsAck: false } : {}) }),
   setSourceFile: (path, creator) => {

@@ -13,6 +13,7 @@ import { assertPublicWebUrl } from './network-policy'
 import { validateJobConfig } from './validation'
 import { resolveAdvancedModels } from './openrouter-models'
 import { supportsCaptionFilter } from './tools'
+import { brandForJob } from './brands'
 import type { JobSnapshot } from '../shared/jobs'
 
 /** A passing engine check is reused briefly, so queuing several videos stays quick. */
@@ -43,6 +44,8 @@ export async function startClipJobRequest(request: unknown): Promise<StartJobRes
       assertMediaPath(config.videoUrl, loadSettings().outputDirectory)
     }
     if (config.bannerChannelUrl) await assertPublicWebUrl(config.bannerChannelUrl)
+    // A deleted brand is reported now, not when the run reaches a slot.
+    if (config.brandIdentityId) brandForJob(config.brandIdentityId, false)
   } catch (error) { return { error: error instanceof Error ? error.message : 'Invalid job options' } }
   const settings = loadSettings()
 

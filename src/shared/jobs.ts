@@ -56,6 +56,13 @@ export interface ClipJobRequest {
    * transcript and source this run reuses, skipping the moments it already clipped.
    */
   reuseFrom?: string
+  /** A brand identity whose niche, voice and offer guide titles, hook text and descriptions (advisory). */
+  brandIdentityId?: string
+  /** Comment-keyword call to action (Automatic): the post caption ends with it and "Comment KEYWORD" shows at the end. */
+  ctaKeyword?: string
+  ctaOffer?: string
+  /** Draw the brand's handle or logo in a corner (Automatic, needs a brand). */
+  showHandle?: boolean
   startTimeSeconds: number | null
   endTimeSeconds: number | null
   bannerPlatform: string | null

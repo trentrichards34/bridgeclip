@@ -231,7 +231,7 @@ function startHarness(lib) {
     './settings-store': settings, './file-manager': { ensureOutputDir: () => {} }, './pipeline-runner': runner, './run-history': runHistory,
     './job-manager': manager, './logger': logger, './security': { ...security, authorizeMedia: (p) => { authorized.push(p); return p } },
     './network-policy': { assertPublicWebUrl: async () => {} }, './validation': validation, './openrouter-models': { resolveAdvancedModels: async () => ({}) },
-    './tools': { supportsCaptionFilter: async () => true }, './more-clips': loadMain('more-clips.ts', {
+    './tools': { supportsCaptionFilter: async () => true }, './brands': { brandForJob: () => null }, './more-clips': loadMain('more-clips.ts', {
       './settings-store': settings, './security': security, './validation': validation,
       './file-manager': { getJobOutput: async (run) => { try { return jobOutput.parseJobOutput(JSON.parse(fs.readFileSync(path.join(run, 'job_output.json'), 'utf8'))) } catch { return null } } }
     })

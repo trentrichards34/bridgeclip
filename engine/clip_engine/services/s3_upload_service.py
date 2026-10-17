@@ -62,6 +62,8 @@ class ClipArtifact:
     editorial: Optional[dict] = None
     # Paid Creators framework grade: letter, criteria scores, hook evidence, fix.
     framework: Optional[dict] = None
+    # Ready-to-post caption, set when the run has a comment-keyword call to action.
+    post_caption: Optional[str] = None
 
 
 @dataclass

@@ -61,6 +61,13 @@ export interface ClipDraft {
   qualityBar: QualityBar
   /** Captions (and the captions file) in another language; the speech stays as recorded. */
   captionLanguage: CaptionLanguageChoice
+  /** Brand (optional): its niche, voice and offer guide titles and hook text; choosing one fills its look. */
+  brandIdentityId: string | null
+  /** Comment-keyword call to action (Automatic): ends each post caption and shows at the end of the video. */
+  ctaKeyword: string
+  ctaOffer: string
+  /** Draw the brand's handle or logo in a corner (Automatic). */
+  showHandle: boolean
   trimOpen: boolean
   trimStart: string
   trimEnd: string
@@ -105,6 +112,10 @@ export const useDraftStore = create<DraftState>((set) => ({
   hookPreview: false,
   qualityBar: 'b',
   captionLanguage: 'original',
+  brandIdentityId: null,
+  ctaKeyword: '',
+  ctaOffer: '',
+  showHandle: false,
   trimOpen: false,
   trimStart: '',
   trimEnd: '',

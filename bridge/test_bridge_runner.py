@@ -152,6 +152,15 @@ class BridgeTests(unittest.TestCase):
                 with self.subTest(bad=bad), self.assertRaises(ValueError):
                     bridge.validate_config(self.config(background_video_path=bad))
 
+    def test_brand_fields_are_bounded_and_the_mark_is_checked(self):
+        config = bridge.validate_config(self.config(brand_identity="Voice: plain.", brand_name="Pull-Up Lab", cta_keyword="SALES", cta_offer="my plan",
+                                                    brand_mark={"handle": "@coach", "position": "top-left"}))
+        self.assertEqual(config["brand_mark"], {"handle": "@coach", "logo_path": None, "position": "top-left"})
+        for bad in ({"brand_identity": "x" * 60001}, {"brand_name": 5}, {"cta_keyword": "two words"}, {"cta_keyword": "sales"},
+                    {"cta_offer": "a\0b"}, {"brand_mark": {"handle": "@a", "position": "center"}}, {"brand_mark": "@a"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bridge.validate_config(self.config(**bad))
+
     def test_broll_options_are_booleans_and_exclude_a_background(self):
         bridge.validate_config(self.config(broll_enabled=True, broll_keep_hook=False))
         bridge.validate_config(self.config(hook_preview=True))
@@ -253,7 +262,7 @@ class BridgeTests(unittest.TestCase):
             return True
         with patch.object(sys, "argv", ["bridge_runner.py"]), patch.object(sys, "stdin", io.StringIO(json.dumps(self.config()))), patch.object(bridge, "run", success):
             self.assertEqual(bridge.main(), 0)
-        with patch.object(sys, "argv", ["bridge_runner.py"]), patch.object(sys, "stdin", io.StringIO(" " * 65537)), redirect_stdout(io.StringIO()):
+        with patch.object(sys, "argv", ["bridge_runner.py"]), patch.object(sys, "stdin", io.StringIO(" " * (bridge.MAX_CONFIG_CHARS + 1))), redirect_stdout(io.StringIO()):
             self.assertEqual(bridge.main(), 1)
 
     def test_provider_errors_do_not_disclose_exception_text(self):

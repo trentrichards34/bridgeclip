@@ -278,6 +278,10 @@ class RenderRequest:
     # sliver removal or protected-interval restoration may change these cuts.
     manual_ranges_ms: Optional[list[tuple[int, int]]] = None
     editorial_context: Optional[dict] = None
+    # The member's @handle and/or logo in a corner (see brand_mark), and the comment keyword
+    # shown as "Comment KEYWORD" for the last seconds of the clip.
+    brand_mark: Optional[dict] = None
+    cta_keyword: str = ""
     editorial_service: Optional[JevService] = field(default=None, repr=False)
     coherence_reviewer: Optional[CoherenceReviewer] = field(default=None, repr=False)
 
@@ -735,6 +739,8 @@ class RenderingService:
         )
         graph += self._caption_graph(caption_path, request.caption_suppression_ranges_ms, window_start_ms, time_map)
         overlays = self._overlays(request, out_plan, target_width, target_height, is_landscape, headline=headline)
+        overlays += self._brand_overlays(request, target_width, target_height, is_landscape, bar_h, bool(background),
+                                         time_map.output_ms / 1000)
         # Burn captions and animate framing/overlays on the edited source clock,
         # then speed up the entire composited picture to match the tempo audio.
         filter_complex, extra_inputs = self._compose_overlays(
@@ -877,6 +883,45 @@ class RenderingService:
                 overlays.append((banner[0], "(W-w)/2", per_shot_expr(out_plan, [
                     banner_y(s, src_w, src_h, target_width, target_height) for s in out_plan.shots
                 ])))
+        return overlays
+
+    def _brand_overlays(
+        self, request: RenderRequest, target_width: int, target_height: int, is_landscape: bool,
+        bar_h: int, background: bool, end_s: float,
+    ) -> list[Overlay]:
+        """The member's handle/logo in its corner and the "Comment KEYWORD" tag for the last 4 seconds.
+
+        Times are on the edited clock before the speed-up (like every overlay here). The mark stays below
+        the hook text (or title card) and, in a bottom corner, under the captions."""
+        from clip_engine.services.brand_mark import keyword_tag, mark_image, mark_position
+        overlays: list[Overlay] = []
+        folder = os.path.dirname(request.output_path)
+        stem = f"{request.start_time_ms}-{request.end_time_ms}"
+        title_drawn = request.include_title and bool(request.title_text) and not bar_h
+        if request.brand_mark:
+            path = os.path.join(folder, f"brand-mark-{stem}.png")
+            size = mark_image(request.brand_mark, path, target_width, target_height)
+            if size:
+                if is_landscape:
+                    top_from, captions_to = 0, 0
+                else:
+                    # Under the headline bar, or below a title card near the top (TOP_TITLE_Y plus its height).
+                    top_from = bar_h if bar_h else round(target_height * 0.17) if title_drawn else 0
+                    captions_to = (even(target_height * BACKGROUND_SPLIT) + 120 if background
+                                   else bar_h + round((target_height - bar_h) * HEADLINE_CAPTION_Y) + 110 if bar_h
+                                   else round(target_height * 0.78))
+                x, y = mark_position(request.brand_mark["position"], target_width, target_height, size[0], size[1],
+                                     top_from=top_from, captions_to=captions_to if request.include_captions else 0)
+                overlays.append((path, str(x), str(y)))
+        if request.cta_keyword and end_s > 1:
+            path = os.path.join(folder, f"cta-tag-{stem}.png")
+            scale = target_height / 1920 if not is_landscape else target_height / 1080
+            w, h = keyword_tag(request.cta_keyword, path, target_width, max(24, round(44 * scale)))
+            # Centered, over the upper middle of the frame (clear of the captions and the bottom buttons).
+            y = (bar_h + round(target_height * 0.06)) if bar_h else round(target_height * (0.30 if not is_landscape else 0.12))
+            # The last 4 seconds (the second half of a very short clip).
+            start = max(end_s / 2, end_s - 4.0)
+            overlays.append((path, str((target_width - w) // 2), str(y), f"gte(t,{start:.3f})", "null"))
         return overlays
 
     def _caption_graph(
@@ -1302,6 +1347,8 @@ class RenderingService:
             apply_padding=False, pacing=Pacing.NATURAL, broll_shots=[], longform=False, skip_ranges_ms=[],
             chapters=[], progress_callback=None, manual_plan=None, manual_ranges_ms=None,
             editorial_context=None, editorial_service=None, coherence_reviewer=None, debug_capture=False,
+            # The keyword tag belongs at the clip's end, not the teaser's (the handle stays on).
+            cta_keyword="",
         )
         try:
             teaser = await self.render_clip(teaser_request)

@@ -39,7 +39,9 @@ from clip_engine.services.editorial_context import analyze_reactions, empty_repo
 from clip_engine.services.editorial_vision import EditorialVision
 from clip_engine.services.editorial_review import protect_acknowledgments, review_duplicate_candidates, editorial_summary
 from clip_engine.services.framework_grader import GRADER_MODEL, FrameworkGrader, select_by_grade
+from clip_engine.services.brand_mark import create_post_caption
 from clip_engine.services.intelligence_planner import (
+    MAX_BRAND_IDENTITY_CHARS,
     MAX_CLIP_REQUEST_CHARS,
     ClipPlanResponse,
     ClipPlanSegment,
@@ -161,6 +163,28 @@ class ClippingJobRequest:
         if language_name(self.caption_language) is None:
             self.caption_language = None
         self.exclude_ranges_ms = [list(span) for span in clean_exclusions(self.exclude_ranges_ms)] or None
+        self._post_init_brand()
+
+    # The member's brand identity (niche, voice, offer, proof): advisory context for titles,
+    # hook text and descriptions. Never a source of facts the video doesn't support.
+    brand_identity: str = ''
+    brand_name: str = ''
+    # Comment-keyword call to action (Automatic): ends each clip's post caption, shown at the end of the video.
+    cta_keyword: str = ''
+    cta_offer: str = ''
+    # The member's @handle and/or logo in a corner ({"handle", "logo_path", "position"}; see brand_mark).
+    brand_mark: Optional[dict] = None
+
+    def _post_init_brand(self):
+        self.brand_identity = (self.brand_identity or '').strip()[:MAX_BRAND_IDENTITY_CHARS]
+        self.brand_name = ' '.join((self.brand_name or '').split())[:120]
+        self.cta_keyword = (self.cta_keyword or '').strip().upper()
+        if self.cta_keyword and not re.fullmatch(r"[A-Z0-9][A-Z0-9-]{1,19}", self.cta_keyword):
+            raise ValueError("Invalid call-to-action keyword")
+        self.cta_offer = ' '.join((self.cta_offer or '').split())[:80]
+        if self.workflow == 'review':
+            # The editor's export has its own end card; the keyword tag and mark are Automatic-only for now.
+            self.cta_keyword, self.cta_offer, self.brand_mark = '', '', None
         # Blank means no request, so the run and its no-match error agree with the planner.
         self.clip_request = (self.clip_request or '').strip()[:MAX_CLIP_REQUEST_CHARS] or None
         if self.job_id is None:
@@ -479,6 +503,8 @@ class AIClippingPipeline:
                 clip_request=request.clip_request,
                 **({'exclude_ranges_ms': request.exclude_ranges_ms} if request.exclude_ranges_ms else {}),
                 **({'output_language': language_name(request.caption_language)} if request.caption_language else {}),
+                brand_identity=request.brand_identity or None,
+                brand_name=request.brand_name or None,
             )
             excluded_spans = request.exclude_ranges_ms or []
             def is_new(segment) -> bool:
@@ -845,6 +871,8 @@ class AIClippingPipeline:
                         # Jev reviews exact source intervals; otherwise keep the
                         # usual audio padding around each clip.
                         apply_padding=not jev_enabled,
+                        brand_mark=request.brand_mark,
+                        cta_keyword=request.cta_keyword if not longform else '',
                     )
 
                     render_result = await self.rendering_service.render_clip(render_request)
@@ -966,7 +994,8 @@ class AIClippingPipeline:
                     loop.call_soon_threadsafe(lambda: self._update_progress(job_id, JobStatus.UPLOADING,
                         90 + 5 * done / total, f'Saving clip {done} of {total}', total_clips, total_clips,
                         stage_percent=100 * done / total, completed=done, total=total, unit='clips'))
-                clip_artifacts = await asyncio.to_thread(self._save_clips_locally, job_id, rendered_clips, clip_durations_ms, save_progress)
+                clip_artifacts = await asyncio.to_thread(self._save_clips_locally, job_id, rendered_clips, clip_durations_ms, save_progress,
+                                                       (request.cta_keyword, request.cta_offer))
                 if request.debug_capture:
                     output_dir = self._get_local_output_dir(job_id)
                     preview_status = "available"
@@ -1056,6 +1085,7 @@ class AIClippingPipeline:
                         tags=segment.tags or [],
                         render_fallback=segment.render_fallback,
                         description=segment.description,
+                        post_caption=create_post_caption(segment, request.cta_keyword, request.cta_offer),
                         chapters=self._chapter_dicts(segment),
                         editorial=editorial_summary(segment.editorial),
                         framework=segment.framework,
@@ -1381,6 +1411,7 @@ class AIClippingPipeline:
         rendered_clips: list[tuple[str, ClipPlanSegment]],
         durations_ms: Optional[dict[int, int]] = None,
         progress=None,
+        cta: tuple[str, str] = ('', ''),
     ) -> list[ClipArtifact]:
         """Copy rendered clips to the local output directory."""
         output_dir = self._get_local_output_dir(job_id)
@@ -1428,6 +1459,7 @@ class AIClippingPipeline:
                 tags=segment.tags or [],
                 render_fallback=segment.render_fallback,
                 description=segment.description,
+                post_caption=create_post_caption(segment, *cta),
                 chapters=self._chapter_dicts(segment),
                 subtitle_url=subtitle_url,
                 captions_srt=captions_srt,

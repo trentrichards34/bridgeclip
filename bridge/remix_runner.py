@@ -159,6 +159,7 @@ def parse_config(raw):
         raise ValueError("Invalid camera talk")
     recordings = parse_recordings(raw.get("recordings"), fmt)
     from clip_engine.services.rendering_service import validate_headline_look
+    from clip_engine.services.brand_mark import validate_brand_mark
     headline_look = validate_headline_look(raw.get("headline_look"))
     try:
         keyword = normalize_keyword(raw.get("cta_keyword"))
@@ -175,7 +176,7 @@ def parse_config(raw):
         cta_keyword=keyword, cta_offer=" ".join((raw.get("cta_offer") or "").split())[:80],
         headline_look=headline_look, cta_clip=raw.get("cta_clip") is True,
         camera_layout=layout, camera_backdrop=backdrop, camera_backdrop_color=color.upper(), camera_talk=talk is True,
-        recordings=recordings, image_source=image_source,
+        recordings=recordings, image_source=image_source, brand_mark=validate_brand_mark(raw.get("brand_mark")),
     )
 
 

@@ -4,6 +4,7 @@
  * every model call goes through OpenRouter, stock B-roll through Pexels.
  */
 
+import type { BrandLook } from './brand-kit'
 import type { HeadlineLook } from './headline-look'
 import { PRESET_VOICE_IDS, PRESET_VOICES } from './voices'
 
@@ -132,6 +133,10 @@ export interface BrandIdentity {
   name: string
   /** The identity document as text: beliefs, myths, method, proof, voice. */
   text: string
+  /** The brand kit: visual defaults and the on-video handle or logo (missing on brands saved before it). */
+  look?: BrandLook
+  /** The stored logo, for previews (set by main when the brand has one). */
+  logoPath?: string
   createdAt: string
   updatedAt: string
 }
@@ -165,6 +170,8 @@ export interface RemixRequest {
   ctaId?: string
   /** Me, on camera: how the member appears. */
   camera?: CameraSettings
+  /** Draw the brand's handle or logo in a corner (when the brand has one). */
+  showHandle?: boolean
 }
 
 /** filmed: your real background; cutout: you cut out over a blur or your color; greenscreen: the clip fills the screen behind you. */

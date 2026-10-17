@@ -38,6 +38,7 @@ from PIL import Image, ImageDraw, ImageFont
 from clip_engine.config import get_settings
 from clip_engine.error_policy import is_disk_full
 from clip_engine.services.media_process import run_media
+from clip_engine.services.brand_mark import _font, keyword_tag, mark_image, mark_position, tag_image  # noqa: F401 - re-exported
 from clip_engine.services.openrouter import OpenRouterError, apply_reasoning, chat_completion, json_schema_format, message_text
 from clip_engine.services.transcription_service import TranscriptSegment, TranscriptWord
 
@@ -1061,36 +1062,7 @@ def concat_filter(count: int) -> str:
     return "".join(f"[{i}:v][{i}:a]" for i in range(count)) + f"concat=n={count}:v=1:a=1[v][a]"
 
 
-def _font(size: int) -> ImageFont.FreeTypeFont:
-    for name in ("Montserrat-ExtraBold.ttf", "Montserrat-Black.ttf"):
-        for base in (os.path.join(os.path.dirname(__file__), "..", "..", "assets", "fonts"), "/app/assets/fonts"):
-            path = os.path.join(base, name)
-            if os.path.isfile(path):
-                return ImageFont.truetype(path, size)
-    return ImageFont.load_default()
-
-
-def tag_image(text: str, path: str, size: int = 30, fill: tuple[int, int, int, int] = (0, 0, 0, 165),
-              color: tuple[int, int, int, int] = (255, 255, 255, 255), max_w: int = 0) -> tuple[int, int]:
-    """A rounded tag (credit, AI presenter mark, comment-keyword call to action); dark with white text by default.
-    With max_w, a long text gets a smaller font (down to 2/3 size), then an ellipsis, so the tag fits."""
-    draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    if max_w:
-        smallest = max(14, round(size * 2 / 3))
-        while size > smallest and draw.textlength(text, font=_font(size)) + 2 * round(size * 0.6) > max_w:
-            size -= 1
-        while len(text) > 4 and draw.textlength(text, font=_font(size)) + 2 * round(size * 0.6) > max_w:
-            text = text[:-2].rstrip() + "…"
-    font = _font(size)
-    text_w = int(draw.textlength(text, font=font))
-    pad_x, pad_y = round(size * 0.6), round(size * 0.4)
-    w, h = text_w + pad_x * 2, size + pad_y * 2
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    out = ImageDraw.Draw(img)
-    out.rounded_rectangle([(0, 0), (w - 1, h - 1)], radius=h // 2, fill=fill)
-    out.text((pad_x, pad_y - round(size * 0.08)), text, font=font, fill=color)
-    img.save(path, "PNG")
-    return w, h
+# The tags and their font are shared with Create's render (see brand_mark).
 
 
 def enable_expr(windows: list[tuple[float, float]]) -> str:
@@ -1723,6 +1695,8 @@ class RemixConfig:
     recordings: dict = field(default_factory=dict)
     # React to an article or post (format "image"): the screenshot in the run folder and who it's from.
     image_source: Optional[dict] = None
+    # The member's @handle and/or logo in a corner ({"handle", "logo_path", "position"}; see brand_mark).
+    brand_mark: Optional[dict] = None
 
 
 @dataclass
@@ -2772,6 +2746,16 @@ class Remixer:
                 cta_png = os.path.join(work, "cta.png")
                 w, _ = tag_image(f"Comment {keyword}", cta_png, 44, fill=(255, 255, 255, 240), color=(10, 10, 10, 255), max_w=row_w)
                 overlays.append((cta_png, str((OUT_W - w) // 2), str(cta_y), enable_expr([(max(0.0, total_s - 4.0), total_s)])))
+        mark = self._brand_mark_tag(tags)
+        if mark:
+            # The handle/logo: below the hook text and the top tags, or under the captions.
+            mark_png = os.path.join(work, "brand-mark.png")
+            size = mark_image(mark, mark_png, OUT_W, OUT_H)
+            if size:
+                top_from = clear_h + (24 if tags.get("style") == "silent" else 200)
+                captions_to = (OUT_H - SILENT_CAPTION_FROM_BOTTOM + 90) if anchor == "silent" else bar_h + round(panel_h * 0.72) + 90
+                x, y = mark_position(mark["position"], OUT_W, OUT_H, size[0], size[1], top_from=top_from, captions_to=captions_to)
+                overlays.append((mark_png, str(x), str(y), "1"))
         graph = f"[0:v]{base_filter + ',' if base_filter else ''}pad={OUT_W}:{OUT_H}:0:{bar_h}:color={self._look.pad_color},setsar=1[base]"
         current = "base"
         if caption_path:
@@ -2783,6 +2767,27 @@ class Remixer:
         overlay_inputs = [arg for path, *_ in overlays for arg in ("-i", path)]
         await asyncio.to_thread(ffmpeg, ["-i", assembled, *overlay_inputs, "-filter_complex", graph, "-map", f"[{current}]", "-map", "0:a",
                                          *VIDEO_ARGS, "-c:a", "copy", "-movflags", "+faststart", out])
+
+    def _brand_mark_tag(self, tags: dict) -> Optional[dict]:
+        """The mark to draw: the one kept in the edit bundle's tags (re-making a video), else this run's.
+        A new render records it in `tags` (saved with the bundle) with the logo by its name in the run folder."""
+        root = os.path.realpath(self.config.output_dir or ".")
+        saved = tags.get("brand_mark")
+        if isinstance(saved, dict):
+            logo = saved.get("logo") or ""
+            logo_path = os.path.join(root, logo) if re.fullmatch(r"\.?[\w-]+\.png", logo) else None
+            try:
+                from clip_engine.services.brand_mark import validate_brand_mark
+                return validate_brand_mark({"handle": saved.get("handle") or "", "logo_path": logo_path, "position": saved.get("position")})
+            except ValueError:
+                return None
+        mark = self.config.brand_mark
+        if not mark:
+            return None
+        logo = mark.get("logo_path")
+        inside = bool(logo) and os.path.dirname(os.path.realpath(logo)) == root
+        tags["brand_mark"] = {"handle": mark.get("handle") or "", "logo": os.path.basename(logo) if inside else "", "position": mark["position"]}
+        return mark
 
     def _save_bundle(self, folder: str, *, kind: str, headline: str, total_s: float, files: dict, words: list[TranscriptWord],
                      anchor: str, tags: dict, compose: dict, split_supported: bool, split_value: Optional[float],

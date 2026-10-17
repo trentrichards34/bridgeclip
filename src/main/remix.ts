@@ -11,8 +11,8 @@ import { headlineLookForEngine, parseHeadlineLook } from '../shared/headline-loo
 import { parseCtaChoice } from '../shared/ctas'
 import { applyRunCta, applyRunCtaInLock, originalPath, readCta, withRunLock } from './ctas'
 import {
-  estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput, remixEditProblem,
-  headlineOnly, MAX_IMAGE_TAKE_SECONDS, REMIX_IMAGE_EXTENSIONS, AVATAR_VOICE, DEFAULT_CAMERA, isRecordingPart, normalizeCtaKeyword, parseCameraSettings, partsFor, RECORDING_VIDEO_EXTENSIONS, remixSourceUrl, type BrandIdentity, type RecordingPart, type RemixDraft, type RemixOutput, type RemixRecordings, type RemixRequest, type RemixStatus
+  estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_CTA_OFFER_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput, remixEditProblem,
+  headlineOnly, MAX_IMAGE_TAKE_SECONDS, REMIX_IMAGE_EXTENSIONS, AVATAR_VOICE, DEFAULT_CAMERA, isRecordingPart, normalizeCtaKeyword, parseCameraSettings, partsFor, RECORDING_VIDEO_EXTENSIONS, remixSourceUrl, type RecordingPart, type RemixDraft, type RemixOutput, type RemixRecordings, type RemixRequest, type RemixStatus
 } from '../shared/remix'
 import { presetVoiceId, type Avatar } from '../shared/avatars'
 
@@ -22,92 +22,13 @@ import { logger } from './logger'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
 import { assertMediaPath, authorizeMedia } from './security'
 import { getSettingsForBridge, loadSettings } from './settings-store'
+import { brandMarkForRun, isBrandId, readBrandIdentity } from './brands'
 import { resolveBinary } from './tools'
 
 const execFileAsync = promisify(execFile)
 
-// ---------------------------------------------------------------------------
-// Brand identities: documents describing what a brand believes, imported from
-// outside CreatorClips (e.g. generated in the membership area) or pasted in.
-// ---------------------------------------------------------------------------
-
-export const BRAND_IDENTITY_EXTENSIONS = ['txt', 'md', 'markdown']
-const MAX_IMPORT_BYTES = 1024 * 1024
-
-function brandDir(): string {
-  return join(app.getPath('userData'), 'brand-identities')
-}
-
-function isBrandId(value: unknown): value is string {
-  return typeof value === 'string' && /^[a-f0-9]{16}$/.test(value)
-}
-
-function parseBrand(value: unknown): BrandIdentity | null {
-  if (!value || typeof value !== 'object') return null
-  const raw = value as Record<string, unknown>
-  if (!isBrandId(raw.id) || typeof raw.name !== 'string' || typeof raw.text !== 'string') return null
-  return {
-    id: raw.id, name: raw.name.slice(0, 120), text: raw.text.slice(0, MAX_BRAND_IDENTITY_CHARS),
-    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : '', updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : ''
-  }
-}
-
-export async function listBrandIdentities(): Promise<BrandIdentity[]> {
-  let names: string[] = []
-  try { names = await readdir(brandDir()) } catch { return [] }
-  const items: BrandIdentity[] = []
-  for (const name of names) {
-    if (!/^[a-f0-9]{16}\.json$/.test(name)) continue
-    try {
-      const brand = parseBrand(JSON.parse(await readFile(join(brandDir(), name), 'utf8')))
-      if (brand) items.push(brand)
-    } catch { /* skip unreadable files */ }
-  }
-  return items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-}
-
-export async function readBrandIdentity(id: string): Promise<BrandIdentity> {
-  if (!isBrandId(id)) throw new Error('Choose a brand identity.')
-  try {
-    const brand = parseBrand(JSON.parse(await readFile(join(brandDir(), `${id}.json`), 'utf8')))
-    if (brand) return brand
-  } catch { /* fall through */ }
-  throw new Error('That brand identity could not be found. Choose it again.')
-}
-
-export async function saveBrandIdentity(value: unknown): Promise<BrandIdentity[]> {
-  const raw = (value ?? {}) as Record<string, unknown>
-  const name = typeof raw.name === 'string' ? raw.name.replace(/\s+/g, ' ').trim() : ''
-  const text = typeof raw.text === 'string' ? raw.text.replace(/\r\n/g, '\n').trim() : ''
-  if (name.length < 1 || name.length > 120) throw new Error('Give the brand identity a name (up to 120 characters).')
-  if (text.length < 40) throw new Error('Paste the brand identity: what the brand believes, its method and its proof.')
-  if (text.length > MAX_BRAND_IDENTITY_CHARS) throw new Error(`Keep the brand identity under ${MAX_BRAND_IDENTITY_CHARS.toLocaleString()} characters.`)
-  const now = new Date().toISOString()
-  const existing = raw.id === undefined || raw.id === null ? null : await readBrandIdentity(raw.id as string)
-  const brand: BrandIdentity = { id: existing?.id ?? randomBytes(8).toString('hex'), name, text, createdAt: existing?.createdAt ?? now, updatedAt: now }
-  await mkdir(brandDir(), { recursive: true })
-  const path = join(brandDir(), `${brand.id}.json`)
-  await writeFile(`${path}.tmp`, JSON.stringify(brand, null, 2), 'utf8')
-  await rename(`${path}.tmp`, path)
-  return listBrandIdentities()
-}
-
-export async function removeBrandIdentity(id: unknown): Promise<BrandIdentity[]> {
-  if (!isBrandId(id)) throw new Error('Choose a brand identity.')
-  await rm(join(brandDir(), `${id}.json`), { force: true })
-  return listBrandIdentities()
-}
-
-/** Text of a .txt/.md file the user picked, to fill the editor. */
-export async function readBrandIdentityFile(path: string): Promise<{ name: string; text: string; truncated: boolean }> {
-  const extension = extname(path).slice(1).toLowerCase()
-  if (!BRAND_IDENTITY_EXTENSIONS.includes(extension)) throw new Error('Choose a .txt or .md file, or paste the text.')
-  const info = await stat(path)
-  if (!info.isFile() || info.size > MAX_IMPORT_BYTES) throw new Error('That file is too large. Paste the text instead.')
-  const text = (await readFile(path, 'utf8')).replace(/\r\n/g, '\n').trim()
-  const name = path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '').slice(0, 120) || 'Brand identity'
-  return { name, text: text.slice(0, MAX_BRAND_IDENTITY_CHARS), truncated: text.length > MAX_BRAND_IDENTITY_CHARS }
-}
+// Brand identities live in ./brands (Create and Avatar Studio read them too).
+export { BRAND_IDENTITY_EXTENSIONS, importBrandLogo, listBrandIdentities, readBrandIdentity, readBrandIdentityFile, removeBrandIdentity, saveBrandIdentity } from './brands'
 
 // ---------------------------------------------------------------------------
 // Remix runs: plan (download, transcribe, write and grade takes) → review
@@ -221,6 +142,7 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   if (ctaOffer.length > MAX_CTA_OFFER_CHARS) throw new Error(`Keep “what they get” under ${MAX_CTA_OFFER_CHARS} characters.`)
   const headlineLook = raw.headlineLook === undefined || raw.headlineLook === null ? undefined : parseHeadlineLook(raw.headlineLook)
   const ctaId = parseCtaChoice(raw.ctaId)
+  if (raw.showHandle !== undefined && typeof raw.showHandle !== 'boolean') throw new Error('Choose whether to show your handle.')
   return {
     sourceIsUrl: local.length === 0,
     request: {
@@ -230,7 +152,8 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
       ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : '', format, clipRightsAck: format !== 'commentary',
       ...(headlineLook ? { headlineLook } : {}),
       ...(ctaId ? { ctaId } : {}),
-      ...(camera ? { camera } : {})
+      ...(camera ? { camera } : {}),
+      ...(raw.showHandle === true && brandIdentityId ? { showHandle: true } : {})
     }
   }
 }
@@ -383,6 +306,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         throw new Error('The screenshot could not be copied for the remix. Check that your output folder has free space, then try again.')
       }
     }
+    // The handle or logo in a corner: the run keeps its own copy of the logo (re-making a video later still finds it).
+    const brandMark = await brandMarkForRun(brand, request.showHandle, folder)
     // Only now that the new run can start: it replaces takes waiting for review.
     if (reviewing) await discardRemix()
     await cleanupAbandoned(settings.outputDirectory, folder)
@@ -400,6 +325,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         ...(headlineLookForEngine(request.headlineLook) ? { headline_look: headlineLookForEngine(request.headlineLook) } : {}),
         // Their recorded call to action ends each video, so the presenter doesn't say one too.
         ...(request.ctaId ? { cta_clip: true } : {}),
+        ...(brandMark ? { brand_mark: brandMark } : {}),
         ...(request.camera ? { camera_layout: request.camera.layout, camera_backdrop: request.camera.backdrop,
           camera_backdrop_color: request.camera.backdropColor, camera_talk: request.camera.talk } : {})
       }

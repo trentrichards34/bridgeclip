@@ -87,6 +87,8 @@ async def finish(config):
         raise ValueError('Invalid title style')
     headline = str(config.get('headline_text') or '').strip()[:120] or None
     headline_look = validate_headline_look(config.get('headline_look'))
+    from clip_engine.services.brand_mark import validate_brand_mark
+    brand_mark = validate_brand_mark(config.get('brand_mark'))
     service = RenderingService()
     width, height = await service._get_video_dimensions(video)
     segments, timing = await transcript_segments(config, video, duration_ms) if config.get('include_captions', True) else ([], 'none')
@@ -99,7 +101,7 @@ async def finish(config):
         title_text=title or headline, include_title=bool(config.get('include_title', True)) and (title or headline) is not None,
         title_style=title_style, headline_text=headline, headline_look=headline_look,
         apply_padding=False, aspect_ratio='9:16', layout_style=layout,
-        background_video_path=background, pacing=Pacing.NATURAL,
+        background_video_path=background, pacing=Pacing.NATURAL, brand_mark=brand_mark,
         progress_callback=lambda phase, percent: emit({'type': 'progress', 'phase': str(phase)[:40], 'percent': percent}),
     )
     result = await service.render_clip(request)

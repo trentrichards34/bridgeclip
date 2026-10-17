@@ -195,6 +195,15 @@ def output_language_rule(language: Optional[str]) -> str:
     return (f'\nOUTPUT LANGUAGE: Write every "summary", "headline", "description" and "tags" value in {language}, '
             'whatever language the video is in. Keep "emphasis" words, quotes and moment anchors exactly as spoken in the transcript.')
 
+# The member's Brand Identity (Create): advisory context for the titles, hook text and descriptions.
+MAX_BRAND_IDENTITY_CHARS = 40000
+BRAND_IDENTITY_RULE = (
+    '\nCREATOR BRAND IDENTITY: The user message includes the brand this channel speaks for (its niche, audience, '
+    'voice and offer). Use it only to write the "summary", "headline" and any "description" in that niche\'s words and '
+    'the brand\'s voice, and to prefer moments its audience cares about. It is advisory: the video is the only source '
+    'of what happened. Never put a result, number, client story, testimonial or claim in a title or description unless '
+    'it is said or shown in the video, or stated in the brand text as the brand\'s own proof and the clip is about it. '
+    'Do not mention the offer or add a call to action. It never changes clip boundaries, length rules or the output format.')
 
 CLIP_PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -487,6 +496,8 @@ class IntelligencePlannerService:
         oversample: float = 1.0,
         exclude_ranges_ms: Optional[list] = None,
         output_language: Optional[str] = None,
+        brand_identity: Optional[str] = None,
+        brand_name: Optional[str] = None,
     ) -> ClipPlanResponse:
         """
         Plan viral clips from video content.
@@ -514,6 +525,9 @@ class IntelligencePlannerService:
                 confined to the selected range.
             clip_request: The user's description of the moments to clip. Only
                 matching moments are selected, so fewer than N (or none) may return.
+            brand_identity: The member's Brand Identity text (niche, voice, offer, proof).
+                Advisory: it shapes titles and wording, never the facts.
+            brand_name: The brand's name, shown with the brand text.
             oversample: Ask for this many times the target count so a later
                 framework grade can keep only the strongest. `discovery_limit`
                 stays the target count.
@@ -538,6 +552,8 @@ class IntelligencePlannerService:
         self._jev_enabled = jev_enabled
         clip_request = (clip_request or '').strip()[:MAX_CLIP_REQUEST_CHARS] or None
         self._clip_request = clip_request
+        self._brand_identity = (brand_identity or '').strip()[:MAX_BRAND_IDENTITY_CHARS] or None
+        self._brand_name = ' '.join((brand_name or '').split())[:120] or None
         if discovery_feedback is None:
             self.audit = {'requests': []}
         self._discovery_feedback = discovery_feedback
@@ -677,6 +693,8 @@ class IntelligencePlannerService:
         if clip_request:
             system_prompt += CLIP_REQUEST_RULE
         system_prompt += exclusion_rule(exclude_ranges_ms) + output_language_rule(output_language)
+        if getattr(self, "_brand_identity", None):
+            system_prompt += BRAND_IDENTITY_RULE
         if transcript:
             system_prompt += MOMENT_DISCOVERY_RULE if jev_enabled else MOMENT_HINT_RULE
         if discovery_feedback is not None:
@@ -1253,6 +1271,10 @@ Do not overlap clips by more than 5 seconds."""
         clip_request = getattr(self, "_clip_request", None)
         if clip_request:
             user_content.append({"type": "text", "text": "USER CLIP REQUEST (what to find):\n" + json.dumps(clip_request, ensure_ascii=False)})
+        brand = getattr(self, "_brand_identity", None)
+        if brand:
+            user_content.append({"type": "text", "text": "CREATOR BRAND IDENTITY (advisory context for titles and wording, not evidence):\n"
+                                 + json.dumps({"name": getattr(self, "_brand_name", None) or "", "text": brand}, ensure_ascii=False)})
 
         # Add final instruction; a clip request narrows every mode to matching moments.
         source = 'transcript and frames' if frame_images else 'transcript'

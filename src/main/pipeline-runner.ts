@@ -20,6 +20,7 @@ import { resolveBinary } from './tools'
 import { resolveBackground } from './backgrounds'
 import { applyRunCta, readCta } from './ctas'
 import type { ReusePlan } from './more-clips'
+import { brandForJob } from './brands'
 import { readFile } from 'fs/promises'
 
 export type ClipJobConfig = ClipJobRequest & { plannerCapabilities?: OpenRouterModel; reuse?: ReusePlan }
@@ -474,6 +475,17 @@ export function startClipJob(
     }
   }
 
+  // The brand (optional): advisory text for the planner, and the handle/logo to draw.
+  let brand: ReturnType<typeof brandForJob> | null = null
+  if (config.brandIdentityId) {
+    try { brand = brandForJob(config.brandIdentityId, config.showHandle && config.workflow !== 'review') }
+    catch (error) {
+      reportError({ jobId, message: String((error as Error | null)?.message || 'That brand identity is unavailable.').slice(0, 300) })
+      exitWithoutProcess()
+      return
+    }
+  }
+
   const jobConfig = JSON.stringify({
     contract_version: BRIDGE_CONTRACT_VERSION,
     job_id: jobId,
@@ -513,6 +525,9 @@ export function startClipJob(
       ...(config.reuse.expectedDurationSeconds ? { reuse_expected_duration_seconds: config.reuse.expectedDurationSeconds } : {}),
       exclude_ranges_ms: config.reuse.excludeRangesMs
     } : {}),
+    ...(brand ? { brand_identity: brand.text, brand_name: brand.name } : {}),
+    ...(brand?.mark ? { brand_mark: brand.mark } : {}),
+    ...(config.ctaKeyword && config.workflow !== 'review' ? { cta_keyword: config.ctaKeyword, cta_offer: config.ctaOffer ?? '' } : {}),
     keyterms: vocabularyTerms(settings.customVocabulary),
     start_time_seconds: config.startTimeSeconds,
     end_time_seconds: config.endTimeSeconds,
