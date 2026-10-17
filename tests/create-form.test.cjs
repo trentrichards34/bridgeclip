@@ -7,7 +7,8 @@ const { renderToStaticMarkup } = require('react-dom/server')
 
 const bundled = buildSync({
   stdin: {
-    contents: `export { FormatStep, ClipsStep, CaptionsStep, JobForm, buildJobRequest, parseTrimRange } from './src/renderer/components/JobForm';
+    contents: `export { FormatStep, ClipsStep, CaptionsStep, JobForm, buildJobRequest, buildJobRequests, draftSources, parseTrimRange } from './src/renderer/components/JobForm';
+      export { reuseSummary, moreClipsBlocked } from './src/renderer/components/MoreClipsDialog';
       export { JobProgress } from './src/renderer/components/JobProgress';
       export { SetupCard } from './src/renderer/components/SetupCard';
       export { useSettingsStore } from './src/renderer/store/use-settings-store';
@@ -310,4 +311,52 @@ test('Review & edit shows required Jev review even when automatic review is off'
     assert.match(automatic, /Jev review &amp; repairs off/)
     assert.equal(useSettingsStore.getState().jevEnabled, 'off')
   } finally { initialState.jevEnabled = initialJev; useSettingsStore.setState(original) }
+})
+
+
+test('several videos become one request each with the same settings; a preferred range is for one video only', () => {
+  const { useDraftStore, buildJobRequests, draftSources, SourcePicker } = form.exports
+  const original = useDraftStore.getState()
+  try {
+    const sources = ['https://example.com/a.mp4', 'https://www.youtube.com/watch?v=aaaaaaaaaaa', '/videos/talk.mp4']
+    original.update({ workflow: 'automatic', source: sources[0], sources, captionLanguage: 'es', trimOpen: true, trimStart: '10', trimEnd: '20' })
+    const draft = useDraftStore.getState()
+    assert.deepEqual(draftSources(draft), sources)
+    const requests = buildJobRequests(draft, { start: 10, end: 20 })
+    assert.deepEqual(requests.map((r) => r.videoUrl), sources)
+    assert.ok(requests.every((r) => r.captionLanguage === 'es' && r.startTimeSeconds === null && r.endTimeSeconds === null))
+    // A stale list that no longer starts with the chosen video is ignored.
+    assert.deepEqual(draftSources({ source: 'https://example.com/b.mp4', sources }), ['https://example.com/b.mp4'])
+    const single = buildJobRequests({ ...draft, sources: [] }, { start: 10, end: 20 })
+    assert.equal(single.length, 1)
+    assert.equal(single[0].startTimeSeconds, 10)
+    const html = renderToStaticMarkup(React.createElement(SourcePicker, { value: sources[0], sources, onChange() {}, onSourcesChange() {} }))
+    assert.match(html, /3 videos will be clipped/)
+    assert.match(html, /Remove talk\.mp4/)
+  } finally { useDraftStore.setState(original) }
+})
+
+test('caption language: original sends nothing; the form says the speech stays as recorded', () => {
+  const { CaptionsStep, buildJobRequest } = form.exports
+  const draft = { workflow: 'automatic', source: 'https://example.com/v', clippingMode: 'quality', aspectRatio: '9:16', layoutStyle: 'auto', layoutVision: true,
+    pacing: 'tight', durations: [], autoClipCount: true, maxClips: 5, includeCaptions: true, captionPreset: 'pop', includeTitle: true, captionLanguage: 'original' }
+  assert.equal('captionLanguage' in buildJobRequest(draft, { start: null, end: null }), false)
+  assert.equal(buildJobRequest({ ...draft, captionLanguage: 'ja' }, { start: null, end: null }).captionLanguage, 'ja')
+  // Review & edit exports are not translated.
+  assert.equal(buildJobRequest({ ...draft, workflow: 'review', captionLanguage: 'ja' }, { start: null, end: null }).captionLanguage, undefined)
+  const html = renderToStaticMarkup(React.createElement(CaptionsStep, { draft: { ...draft, captionLanguage: 'ja' }, update() {} }))
+  assert.match(html, /Caption language/)
+  assert.match(html, /The speech stays in its original language: only the captions are translated/)
+})
+
+test('more clips explains what it reuses and when it can’t run', () => {
+  const { reuseSummary, moreClipsBlocked } = form.exports
+  const lines = reuseSummary({ source: 'download', transcriptSaved: true, excludedCount: 4 })
+  assert.match(lines.join(' '), /no transcription charge/)
+  assert.match(lines.join(' '), /downloaded again/)
+  assert.match(lines.join(' '), /Skips the 4 moments already clipped/)
+  assert.match(reuseSummary({ source: 'kept', transcriptSaved: true, excludedCount: 1 }).join(' '), /copy of the video kept with this run.*1 moment already/)
+  assert.equal(moreClipsBlocked({ source: 'original', transcriptSaved: true }), null)
+  assert.match(moreClipsBlocked({ source: 'missing', transcriptSaved: true }), /no longer on this computer/)
+  assert.match(moreClipsBlocked({ source: 'download', transcriptSaved: false }), /no saved transcript/)
 })

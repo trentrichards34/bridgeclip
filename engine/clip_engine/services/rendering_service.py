@@ -169,6 +169,44 @@ LANDSCAPE_BITRATE_MBPS = {1080: 12, 1440: 20, 2160: 45}
 MAX_INLINE_FILTER_GRAPH_BYTES = 8192
 
 
+_SRT_TIME = re.compile(r"(\d{2}):(\d{2}):(\d{2}),(\d{3}) --> (\d{2}):(\d{2}):(\d{2}),(\d{3})")
+
+
+def _srt_cues(text: str) -> list[tuple[int, int, str]]:
+    cues = []
+    for block in re.split(r"\n\s*\n", (text or "").strip()):
+        lines = block.strip().splitlines()
+        timing = next((i for i, line in enumerate(lines) if _SRT_TIME.search(line)), None)
+        if timing is None:
+            continue
+        h1, m1, s1, ms1, h2, m2, s2, ms2 = (int(v) for v in _SRT_TIME.search(lines[timing]).groups())
+        body = "\n".join(lines[timing + 1:]).strip()
+        if body:
+            cues.append(((h1 * 3600 + m1 * 60 + s1) * 1000 + ms1, (h2 * 3600 + m2 * 60 + s2) * 1000 + ms2, body))
+    return cues
+
+
+def _srt_time(ms: int) -> str:
+    ms = max(0, int(ms))
+    return f"{ms // 3_600_000:02d}:{ms // 60_000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"
+
+
+def join_srt(first_path: Optional[str], first_duration_ms: int, second_path: str) -> None:
+    """Rewrite `second_path` as the first file's cues, then its own moved after them."""
+    try:
+        first = _srt_cues(open(first_path, encoding="utf-8").read()) if first_path and os.path.isfile(first_path) else []
+        second = _srt_cues(open(second_path, encoding="utf-8").read())
+        cues = [(s, min(e, first_duration_ms), t) for s, e, t in first if s < first_duration_ms]
+        cues += [(s + first_duration_ms, e + first_duration_ms, t) for s, e, t in second]
+        blocks = [f"{i + 1}\n{_srt_time(s)} --> {_srt_time(e)}\n{t}\n" for i, (s, e, t) in enumerate(cues) if e > s]
+        temporary = second_path + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as f:
+            f.write("\n".join(blocks))
+        os.replace(temporary, second_path)
+    except (OSError, ValueError) as exc:
+        logger.warning(f"Subtitle timing after the hook preview could not be updated: {exc}")
+
+
 @dataclass
 class RenderRequest:
     """Request for rendering a clip."""
@@ -202,6 +240,11 @@ class RenderRequest:
     headline_look: Optional[dict] = None
     # Planner-chosen punch words highlighted in the captions.
     emphasis_words: list[str] = field(default_factory=list)
+    # Caption language: translated text per original transcript line (keyed by
+    # caption_translation.segment_key). Captions and the SRT use it; pacing,
+    # reactions and review keep the original words.
+    caption_translations: dict[str, str] = field(default_factory=dict)
+    caption_language: Optional[str] = None
 
     banner_platform: Optional[str] = None
     banner_channel_url: Optional[str] = None
@@ -226,6 +269,9 @@ class RenderRequest:
     skip_ranges_ms: list[tuple[int, int]] = field(default_factory=list)
     chapters: list[tuple[int, str]] = field(default_factory=list)
     debug_capture: bool = False
+    # SRT sidecar next to the clip (closed captions for uploads): True for
+    # every clip with speech, False never, None for longform clips only.
+    write_subtitles: Optional[bool] = None
     progress_callback: Optional[Callable[[str, Optional[float]], None]] = None
     manual_plan: Optional[ClipLayoutPlan] = None
     # Exact source-time selections from the manual editor; no automatic pacing,
@@ -616,14 +662,25 @@ class RenderingService:
             chapters[0] = (0, chapters[0][1])
         return chapters
 
+    @staticmethod
+    def _caption_segments(request: RenderRequest, window_start_ms: int, time_map: TimeMap) -> list[TranscriptSegment]:
+        """Caption lines on the edited timeline, in the caption language when one was chosen."""
+        segments = request.transcript_segments or []
+        if not request.caption_translations:
+            return remap_segments(segments, window_start_ms, time_map)
+        from clip_engine.services.caption_translation import apply_translations
+        return apply_translations(segments, lambda lines: remap_segments(lines, window_start_ms, time_map),
+                                  request.caption_translations, request.caption_language)
+
     async def _write_subtitles(
         self, request: RenderRequest, window_start_ms: int, time_map: TimeMap,
     ) -> Optional[str]:
-        """SRT sidecar on the edited timeline, for longform uploads."""
-        if not (request.longform and request.transcript_segments):
+        """SRT sidecar on the edited timeline (closed captions for uploads), in the caption language."""
+        wanted = request.longform if request.write_subtitles is None else request.write_subtitles
+        if not (wanted and request.transcript_segments):
             return None
         try:
-            segments = remap_segments(request.transcript_segments, window_start_ms, time_map)
+            segments = self._caption_segments(request, window_start_ms, time_map)
             for segment in segments:
                 for item in [segment, *segment.words]:
                     item.start_time_ms = window_start_ms + scaled_duration_ms(item.start_time_ms - window_start_ms, request.video_speed)
@@ -1091,7 +1148,7 @@ class RenderingService:
         """
         if not (request.include_captions and request.transcript_segments):
             return None
-        segments = remap_segments(request.transcript_segments, window_start_ms, time_map)
+        segments = self._caption_segments(request, window_start_ms, time_map)
         if not segments:
             return None
 
@@ -1264,6 +1321,9 @@ class RenderingService:
             cmd.append(joined_path)
             await self._run_cmd(cmd)
             os.replace(joined_path, result.output_path)
+            if result.subtitle_path:
+                # The clip now opens with the teaser: its captions come first.
+                join_srt(teaser.subtitle_path, teaser.duration_ms, result.subtitle_path)
             return replace(
                 result,
                 duration_ms=result.duration_ms + teaser.duration_ms,
@@ -1277,7 +1337,7 @@ class RenderingService:
             logger.warning(f"Hook preview failed; keeping the clip without it: {exc}")
             return result
         finally:
-            for path in (teaser_path, joined_path):
+            for path in (teaser_path, joined_path, os.path.splitext(teaser_path)[0] + ".srt"):
                 try:
                     os.remove(path)
                 except OSError:

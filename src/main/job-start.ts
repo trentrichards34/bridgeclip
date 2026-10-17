@@ -5,7 +5,10 @@ import { getBridgeRunnerPath, getEnginePath, preflightCheck, resolvePythonPath, 
 import { createRunRecord, finishRunRecord } from './run-history'
 import { enqueueJob } from './job-manager'
 import { logger } from './logger'
-import { assertMediaPath, isWebUrl } from './security'
+import { assertMediaPath, authorizeMedia, isWebUrl } from './security'
+import { MAX_CREATE_SOURCES } from '../shared/create-sources'
+import { moreClipsInfo, moreClipsRequest, parseMoreClipsChoices, resolveReuse, writeCreateRequest } from './more-clips'
+import { join } from 'path'
 import { assertPublicWebUrl } from './network-policy'
 import { validateJobConfig } from './validation'
 import { resolveAdvancedModels } from './openrouter-models'
@@ -30,8 +33,15 @@ export async function startClipJobRequest(request: unknown): Promise<StartJobRes
     if (config.clippingMode === 'advanced') {
       config.plannerCapabilities = await resolveAdvancedModels(config.plannerModel!, config.transcriptionModel!)
     }
+    // More clips: the earlier run's transcript and source are found here, never taken from the renderer.
+    if (config.reuseFrom) config.reuse = await resolveReuse(config.reuseFrom, config.videoUrl)
     if (isWebUrl(config.videoUrl)) await assertPublicWebUrl(config.videoUrl)
-    else assertMediaPath(config.videoUrl, loadSettings().outputDirectory)
+    else if (config.reuse?.source === 'kept') { /* The copy kept in the earlier run is used. */ }
+    else {
+      // The earlier run's own source file may be used again without the file picker.
+      if (config.reuse?.source === 'original') authorizeMedia(config.videoUrl)
+      assertMediaPath(config.videoUrl, loadSettings().outputDirectory)
+    }
     if (config.bannerChannelUrl) await assertPublicWebUrl(config.bannerChannelUrl)
   } catch (error) { return { error: error instanceof Error ? error.message : 'Invalid job options' } }
   const settings = loadSettings()
@@ -82,7 +92,42 @@ export async function startClipJobRequest(request: unknown): Promise<StartJobRes
     try { finishRunRecord(settings.outputDirectory, jobId, 'failed', 'Could not start this run.') } catch { /* Output folder may be unavailable. */ }
     return { error: 'Could not create the clipping run. Check the output folder and retry.' }
   }
+  // Its settings, so "More clips from this video" can start from them later.
+  try { writeCreateRequest(join(settings.outputDirectory, jobId), config, config.reuse?.excludeRangesMs ?? []) }
+  catch { logger.warn('job.start.requestNotSaved', { jobId }) }
   // Starts now when a slot is free; otherwise waits its turn in the queue.
   const job = enqueueJob(jobId, config, settings.outputDirectory)
   return { jobId, queued: job.status === 'queued', job }
+}
+
+export { moreClipsInfo }
+
+export type StartManyResult = { started: { jobId: string; queued: boolean; job: JobSnapshot; videoUrl: string }[]; failed: { videoUrl: string; error: string }[] } | { error: string }
+
+/**
+ * Several videos with the same settings: one job each, queued in order (up to
+ * MAX_PARALLEL_JOBS run at once). A video that can't start doesn't stop the rest.
+ */
+export async function startClipJobRequests(requests: unknown): Promise<StartManyResult> {
+  if (!Array.isArray(requests) || requests.length === 0) return { error: 'Add a video to clip.' }
+  if (requests.length > MAX_CREATE_SOURCES) return { error: `Add up to ${MAX_CREATE_SOURCES} videos at a time.` }
+  const sources = requests.map((request) => (request && typeof request === 'object' ? (request as { videoUrl?: unknown }).videoUrl : undefined))
+  if (sources.some((source) => typeof source !== 'string') || new Set(sources).size !== sources.length) return { error: 'Each video can be added once.' }
+  const started: { jobId: string; queued: boolean; job: JobSnapshot; videoUrl: string }[] = []
+  const failed: { videoUrl: string; error: string }[] = []
+  for (const request of requests) {
+    const videoUrl = (request as { videoUrl: string }).videoUrl
+    const result = await startClipJobRequest(request)
+    if ('error' in result) failed.push({ videoUrl, error: result.error })
+    else started.push({ ...result, videoUrl })
+  }
+  return { started, failed }
+}
+
+/** "More clips from this video" for a finished Library run, with the member's choices. */
+export async function startMoreClips(outputDir: unknown, choices: unknown): Promise<StartJobResult> {
+  let request
+  try { request = moreClipsRequest(await moreClipsInfo(outputDir), parseMoreClipsChoices(choices)) }
+  catch (error) { return { error: String((error as Error | null)?.message || 'Could not start more clips.').slice(0, 300) } }
+  return startClipJobRequest(request)
 }

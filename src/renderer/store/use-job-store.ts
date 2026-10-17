@@ -40,6 +40,8 @@ export interface ApiCosts {
   editor_hooks?: LayoutVisionCost
   editorial_vision?: LayoutVisionCost
   layout_vision?: LayoutVisionCost
+  /** Caption language: one translation request per clip. */
+  caption_translation?: LayoutVisionCost
   total_estimated_cost_usd: number
 }
 

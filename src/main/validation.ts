@@ -8,6 +8,9 @@ import { QUALITY_BARS, TITLE_STYLES, type ClipJobRequest } from '../shared/jobs'
 import { isBackgroundVideoName } from '../shared/backgrounds'
 import { parseHeadlineLook } from '../shared/headline-look'
 import { isCtaId } from '../shared/ctas'
+import { isCaptionLanguage } from '../shared/caption-language'
+
+const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // Trims what Python's str.strip() also treats as whitespace (\x1c-\x1f, \x85),
 // so the bridge never receives a request it considers blank.
@@ -34,6 +37,9 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   if (v.titleStyle !== undefined && !TITLE_STYLES.includes(v.titleStyle)) throw new Error('Invalid title style')
   if (v.clipRequest !== undefined && (typeof v.clipRequest !== 'string' || v.clipRequest.includes('\0') || trimClipRequest(v.clipRequest).length > CLIP_REQUEST_MAX_CHARS)) throw new Error(`Describe what to clip in ${CLIP_REQUEST_MAX_CHARS} characters or fewer`)
   if (v.videoSpeed !== undefined && !isVideoSpeed(v.videoSpeed)) throw new Error('Video speed must be between 1× and 2×')
+  if (v.captionLanguage !== undefined && !isCaptionLanguage(v.captionLanguage)) throw new Error('Choose a caption language from the list')
+  if (v.reuseFrom !== undefined && (typeof v.reuseFrom !== 'string' || !RUN_ID.test(v.reuseFrom))) throw new Error('Choose a finished run in your Library')
+  if (v.reuseFrom !== undefined && v.workflow === 'review') throw new Error('More clips works with the Automatic workflow')
   if (v.workflow !== undefined && !['automatic', 'review'].includes(v.workflow)) throw new Error('Invalid workflow')
   if (v.clippingMode !== undefined && !['quality', 'economy', 'advanced'].includes(v.clippingMode)) throw new Error('Invalid clipping mode')
   if (v.clippingMode === 'advanced' && (!isModelId(v.plannerModel) || !isModelId(v.transcriptionModel))) throw new Error('Choose both models in Advanced mode')
@@ -62,5 +68,5 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
   'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'captionLanguage', 'reuseFrom', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

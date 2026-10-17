@@ -28,7 +28,9 @@ from clip_engine.config import CaptionStyle, LayoutStyle, get_settings, is_longf
 from clip_engine.services.video_speed import validate_video_speed
 from clip_engine.services.broll_service import PexelsKeyRejected, prepare_broll
 from clip_engine.services.hook_preview import pick_teaser
-from clip_engine.error_policy import NoClipCandidatesError, NoRequestedMomentsError, safe_failure_code, safe_processing_error
+from clip_engine.error_policy import NoClipCandidatesError, NoNewMomentsError, NoRequestedMomentsError, safe_failure_code, safe_processing_error
+from clip_engine.services.caption_translation import CaptionTranslator, language_name
+from clip_engine.services.transcript_reuse import load_saved_transcript, reusable_transcript, source_fingerprint
 from clip_engine.services.source_context import SourceContextService, context_for_prompt, transcription_terms
 from clip_engine.services.editorial_evidence import discovery_feedback, overlaps
 from clip_engine.services.jev_service import JevService, MODEL as JEV_MODEL
@@ -42,6 +44,7 @@ from clip_engine.services.intelligence_planner import (
     ClipPlanResponse,
     ClipPlanSegment,
     IntelligencePlannerService,
+    clean_exclusions,
 )
 from clip_engine.services.memory_monitor import (
     force_gc,
@@ -142,9 +145,22 @@ class ClippingJobRequest:
     # Paid Creators framework grading: keep clips graded at or above this bar
     # ("a", "b", "c") or grade everything and keep all ("all"); "off" skips it.
     quality_bar: str = 'b'
+    # Caption language code (see caption_translation.CAPTION_LANGUAGES); None keeps the spoken language.
+    caption_language: Optional[str] = None
+    # "More clips from this video": the earlier run's saved transcript (used only
+    # when it matches this video), a kept local copy of its source to use instead
+    # of downloading, that copy's display metadata, and the earlier clips' ranges.
+    reuse_transcript_path: Optional[str] = None
+    reuse_source_path: Optional[str] = None
+    reuse_source_meta: Optional[dict] = None
+    reuse_expected_duration_seconds: Optional[float] = None
+    exclude_ranges_ms: Optional[list] = None
 
     def __post_init__(self):
         validate_video_speed(self.video_speed)
+        if language_name(self.caption_language) is None:
+            self.caption_language = None
+        self.exclude_ranges_ms = [list(span) for span in clean_exclusions(self.exclude_ranges_ms)] or None
         # Blank means no request, so the run and its no-match error agree with the planner.
         self.clip_request = (self.clip_request or '').strip()[:MAX_CLIP_REQUEST_CHARS] or None
         if self.job_id is None:
@@ -241,6 +257,7 @@ class AIClippingPipeline:
         layout_vision_cost = 0.0
         peak_rss_mb = 0.0
         transcription_status = "available"
+        transcript_reused = False
         visual_frames = []
         saved_local_output: Optional[JobOutput] = None
         current_stage = "setup"
@@ -286,11 +303,20 @@ class AIClippingPipeline:
             self.video_downloader.progress_callback = lambda detail, percent, done, total: loop.call_soon_threadsafe(
                 lambda: self._update_progress(job_id, JobStatus.DOWNLOADING, 5 + (percent or 0) * .06, detail,
                     stage_percent=percent, completed=done, total=total, unit='bytes'))
+            # More clips: a kept copy of the earlier run's source is used in place.
+            reuse_source = request.reuse_source_path if request.reuse_source_path and os.path.isfile(request.reuse_source_path) else None
             try:
                 download_result = await self.video_downloader.download_video(
-                    url=request.video_url, output_dir=work_dir)
+                    url=reuse_source or request.video_url, output_dir=work_dir)
             finally:
                 self.video_downloader.progress_callback = None
+            if reuse_source:
+                meta = request.reuse_source_meta or {}
+                for field_name, key in (('title', 'title'), ('uploader', 'channel'), ('description', 'description')):
+                    if isinstance(meta.get(key), str) and meta[key].strip():
+                        setattr(download_result.metadata, field_name, meta[key][:20000])
+            # A local file (or kept copy) is the same bytes; a link downloaded again may not be.
+            same_bytes = bool(reuse_source) or os.path.isfile(request.video_url)
             stage_timings["download"] = time.perf_counter() - stage_start
             logger.info(f"Downloaded: {download_result.metadata.title}")
 
@@ -331,31 +357,43 @@ class AIClippingPipeline:
                 "Transcribing the full source for context..." if jev_enabled else "Transcribing audio...",
             )
             stage_start = time.perf_counter()
-            previous_transcription_progress = getattr(self.transcription_service, "progress_callback", None)
-            self.transcription_service.progress_callback = lambda message: self._update_progress(
-                job_id, JobStatus.TRANSCRIBING, 15, message,
-            )
-            self.transcription_service.detail_callback = lambda done, total: self._update_progress(
-                job_id, JobStatus.TRANSCRIBING, 15 + 10 * done / total, f'Transcribing audio, part {done + 1} of {total}…',
-                stage_id='transcription', stage_percent=100 * done / total, completed=done, total=total, unit='chunks')
-            try:
-                transcription_result = await self.transcription_service.transcribe(
-                    video_path=download_result.video_path,
-                    work_dir=work_dir,
-                    keyterms=transcription_terms(request.keyterms, source_context) if source_context else request.keyterms,
-                    start_seconds=None if jev_enabled else request.start_time_seconds,
-                    end_seconds=None if jev_enabled else effective_end_time,
-                )
-            except NoAudioTrackError:
-                logger.info("Source has no audio track; trying visual-only planning")
-                transcription_result = TranscriptionResult(segments=[], full_text="", provider="no_audio")
-                transcription_status = "no_speech"
+            saved_transcript = None
+            if request.reuse_transcript_path:
+                saved_transcript = reusable_transcript(
+                    load_saved_transcript(request.reuse_transcript_path), download_result.video_path, video_duration,
+                    request.reuse_expected_duration_seconds, compare_bytes=same_bytes)
+            if saved_transcript:
+                # More clips from this video: no transcription is paid again.
+                self._update_progress(job_id, JobStatus.TRANSCRIBING, 25, "Using the saved transcript (no transcription charge)...")
+                transcription_result = saved_transcript['result']
+                transcription_status = saved_transcript['status']
+                transcript_reused = True
             else:
-                if not transcription_result.segments:
+                previous_transcription_progress = getattr(self.transcription_service, "progress_callback", None)
+                self.transcription_service.progress_callback = lambda message: self._update_progress(
+                    job_id, JobStatus.TRANSCRIBING, 15, message,
+                )
+                self.transcription_service.detail_callback = lambda done, total: self._update_progress(
+                    job_id, JobStatus.TRANSCRIBING, 15 + 10 * done / total, f'Transcribing audio, part {done + 1} of {total}…',
+                    stage_id='transcription', stage_percent=100 * done / total, completed=done, total=total, unit='chunks')
+                try:
+                    transcription_result = await self.transcription_service.transcribe(
+                        video_path=download_result.video_path,
+                        work_dir=work_dir,
+                        keyterms=transcription_terms(request.keyterms, source_context) if source_context else request.keyterms,
+                        start_seconds=None if jev_enabled else request.start_time_seconds,
+                        end_seconds=None if jev_enabled else effective_end_time,
+                    )
+                except NoAudioTrackError:
+                    logger.info("Source has no audio track; trying visual-only planning")
+                    transcription_result = TranscriptionResult(segments=[], full_text="", provider="no_audio")
                     transcription_status = "no_speech"
-            finally:
-                self.transcription_service.progress_callback = previous_transcription_progress
-                self.transcription_service.detail_callback = None
+                else:
+                    if not transcription_result.segments:
+                        transcription_status = "no_speech"
+                finally:
+                    self.transcription_service.progress_callback = previous_transcription_progress
+                    self.transcription_service.detail_callback = None
             stage_timings["transcription"] = time.perf_counter() - stage_start
             logger.info(f"Transcription complete: {len(transcription_result.segments)} segments")
 
@@ -379,6 +417,11 @@ class AIClippingPipeline:
                 "language": transcription_result.language,
                 "status": transcription_status,
                 "captions_available": bool(transcription_result.segments),
+                # Lets "More clips from this video" reuse this transcript for the same video.
+                "source_duration_seconds": video_duration,
+                "source_fingerprint": source_fingerprint(download_result.video_path),
+                "transcribed_range": (saved_transcript or {}).get('range') if transcript_reused
+                    else None if jev_enabled else [request.start_time_seconds, effective_end_time],
             }
 
             if self.local_mode:
@@ -434,7 +477,12 @@ class AIClippingPipeline:
                 aspect_ratio=request.aspect_ratio,
                 jev_enabled=jev_enabled,
                 clip_request=request.clip_request,
+                **({'exclude_ranges_ms': request.exclude_ranges_ms} if request.exclude_ranges_ms else {}),
+                **({'output_language': language_name(request.caption_language)} if request.caption_language else {}),
             )
+            excluded_spans = request.exclude_ranges_ms or []
+            def is_new(segment) -> bool:
+                return not any(overlaps([segment.start_time_ms, segment.end_time_ms], span) for span in excluded_spans)
             longform_plan = is_longform(request.aspect_ratio, resolve_clip_duration_bounds(
                 request.duration_ranges, request.min_clip_duration_seconds, request.max_clip_duration_seconds)[0])
             grading = (request.quality_bar in ('a', 'b', 'c', 'all') and not longform_plan
@@ -445,8 +493,16 @@ class AIClippingPipeline:
             edit_audit['planner'] = getattr(self.intelligence_planner, 'audit', {'requests': []})
             stage_timings["planning"] = time.perf_counter() - stage_start
             logger.info(f"Planned {len(clip_plan.segments)} clips")
+            planned_count = len(clip_plan.segments)
+            if excluded_spans:
+                # Also enforced here for mocked or custom planners.
+                clip_plan.segments = [segment for segment in clip_plan.segments if is_new(segment)]
+                clip_plan.total_clips = len(clip_plan.segments)
+                logger.info(f"Kept {len(clip_plan.segments)} of {planned_count} planned clips that repeat no earlier clip")
             if not clip_plan.segments:
                 edit_audit['outcome'] = 'no_candidates'
+                if excluded_spans and planned_count:
+                    raise NoNewMomentsError()
                 raise NoRequestedMomentsError() if request.clip_request else NoClipCandidatesError()
             framework_state = {'cost': 0.0, 'cost_incomplete': False, 'candidates': 0, 'graded': 0, 'kept': 0}
             keep_all_grades = request.quality_bar == 'all' or bool(request.clip_request)
@@ -583,7 +639,8 @@ class AIClippingPipeline:
                     # Also enforce exclusions at the pipeline boundary, including mocked/custom planners.
                     pending = [c for c in extra.segments[:8]
                         if any(overlaps([c.start_time_ms, c.end_time_ms], span) for span in feedback['search_intervals'])
-                        and not any(overlaps([c.start_time_ms, c.end_time_ms], old['interval']) for old in feedback['previous_candidates'])]
+                        and not any(overlaps([c.start_time_ms, c.end_time_ms], old['interval']) for old in feedback['previous_candidates'])
+                        and is_new(c)]
                     if grading and pending:
                         pending = await grade_segments(pending, 0)
                     edit_audit['discovery']['status'] = 'completed'
@@ -669,6 +726,10 @@ class AIClippingPipeline:
             )
 
             render_semaphore = asyncio.Semaphore(self.settings.max_concurrent_renders)
+            # Caption language: one translation call per clip; the speech stays as recorded.
+            translator = (CaptionTranslator(self.settings)
+                          if request.caption_language and transcription_status == "available" else None)
+            clip_caption_languages: dict[int, str] = {}
             longform = is_longform(request.aspect_ratio, resolve_clip_duration_bounds(
                 request.duration_ranges, request.min_clip_duration_seconds, request.max_clip_duration_seconds,
             )[0])
@@ -720,6 +781,13 @@ class AIClippingPipeline:
                         segment.end_time_ms,
                     )
 
+                    caption_translations: dict[str, str] = {}
+                    if translator is not None and clip_transcript:
+                        render_progress(i, 'Translating captions', None)
+                        caption_translations = await translator.translate(clip_transcript, request.caption_language)
+                        if caption_translations:
+                            clip_caption_languages[i] = request.caption_language
+
                     broll_shots: list[tuple[int, int, str]] = []
                     if request.broll_enabled and not request.background_video_path:
                         render_progress(i, 'Finding B-roll', None)
@@ -755,6 +823,10 @@ class AIClippingPipeline:
                         headline_look=request.headline_look,
                         headline_text=segment.headline,
                         emphasis_words=segment.emphasis_words,
+                        caption_translations=caption_translations,
+                        caption_language=request.caption_language if caption_translations else None,
+                        # Closed captions for uploads (YouTube), in the caption language.
+                        write_subtitles=True,
                         banner_platform=request.banner_platform,
                         banner_channel_url=request.banner_channel_url,
                         aspect_ratio=request.aspect_ratio,
@@ -817,8 +889,14 @@ class AIClippingPipeline:
                 for i, segment in enumerate(clip_plan.segments)
             ]
             stage_start = time.perf_counter()
-            render_results = await asyncio.gather(*render_tasks, return_exceptions=True)
+            try:
+                render_results = await asyncio.gather(*render_tasks, return_exceptions=True)
+            finally:
+                if translator is not None:
+                    await translator.close()
             stage_timings["rendering"] = time.perf_counter() - stage_start
+            for original_index, _, segment in [r for r in render_results if not isinstance(r, BaseException)]:
+                segment.caption_language = clip_caption_languages.get(original_index)
 
             # One bad clip must not sink the whole job: skip failures, and
             # only fail if nothing rendered.
@@ -1060,6 +1138,9 @@ class AIClippingPipeline:
                 api_costs['editorial_vision'] = {'provider': 'openrouter', 'model': self.settings.layout_vision_model,
                     'estimated_cost_usd': editorial_vision.cost_usd, 'attempts': editorial_vision.requests}
                 total_cost += editorial_vision.cost_usd
+            if translator is not None and translator.usage.requests:
+                api_costs['caption_translation'] = translator.usage.as_api_costs(translator.model)
+                total_cost += translator.usage.cost_usd
             if framework_state['candidates']:
                 api_costs['framework_grading'] = {'provider': 'openrouter', 'model': GRADER_MODEL,
                     'estimated_cost_usd': round(framework_state['cost'], 6), 'cost_incomplete': framework_state['cost_incomplete']}
@@ -1094,10 +1175,15 @@ class AIClippingPipeline:
                     "hook_preview": request.hook_preview,
                     "clip_request": request.clip_request,
                     "quality_bar": request.quality_bar,
+                    "caption_language": request.caption_language,
+                    "more_clips": bool(request.reuse_transcript_path),
                     "framework_grading": {"enabled": grading, "candidates": framework_state['candidates'],
                                           "graded": framework_state['graded'], "kept": framework_state['kept']},
                 },
                 "transcription_status": transcription_status,
+                "transcript_reused": transcript_reused,
+                "excluded_moment_count": len(request.exclude_ranges_ms or []),
+                "caption_translation_failures": translator.usage.failures if translator is not None else 0,
                 "planning_source": "visual" if visual_frames else "transcript",
                 "visual_frame_count": len(visual_frames),
                 "captions_status": (
@@ -1319,10 +1405,13 @@ class AIClippingPipeline:
             logger.info(f"Saved clip_{i:02d}.mp4 ({file_size / 1024 / 1024:.1f} MB): {dest}")
 
             subtitle_url = None
+            captions_srt = None
             if segment.subtitle_path and os.path.isfile(segment.subtitle_path):
                 srt_dest = os.path.join(output_dir, f"clip_{i:02d}.srt")
                 shutil.copy2(segment.subtitle_path, srt_dest)
                 subtitle_url = f"file://{os.path.abspath(srt_dest)}"
+                # Closed captions file for uploads, in the clip's caption language.
+                captions_srt = os.path.abspath(srt_dest)
             if segment.description or segment.output_chapters:
                 self._write_upload_notes(os.path.join(output_dir, f"clip_{i:02d}.youtube.txt"), segment)
 
@@ -1341,6 +1430,8 @@ class AIClippingPipeline:
                 description=segment.description,
                 chapters=self._chapter_dicts(segment),
                 subtitle_url=subtitle_url,
+                captions_srt=captions_srt,
+                caption_language=getattr(segment, 'caption_language', None),
                 editorial=editorial_summary(segment.editorial),
                 framework=segment.framework,
             ))

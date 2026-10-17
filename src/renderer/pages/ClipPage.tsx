@@ -28,14 +28,29 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
   const lowDisk = useLowDiskGate()
   const ensureSpace = lowDisk.ensureSpace
 
-  const handleSubmit = useCallback(async (config: ClipJobRequest) => {
-    if (startingRef.current) return
+  const handleSubmit = useCallback(async (configs: ClipJobRequest[]) => {
+    if (startingRef.current || configs.length === 0) return
     startingRef.current = true
     setStarting(true)
     setStartError(null)
     try {
       // A nearly full drive asks first (and offers Free up space).
       if (!(await ensureSpace())) return
+      if (configs.length > 1) {
+        // Several videos: one job each, same settings (one spending check for all).
+        const result = await getApi().job.startMany(configs)
+        if (result.error) { setStartError(result.error); return }
+        const started = result.started ?? []
+        for (const item of started) useJobStore.getState().upsert(item.job)
+        if (!started.length) {
+          setStartError((result.failed ?? []).map((item) => item.error).filter((error, i, all) => all.indexOf(error) === i).join('\n') || 'Could not start these jobs.')
+          return
+        }
+        useDraftStore.getState().markStarted({ jobId: started[0].jobId, source: started[0].videoUrl, queued: started.every((item) => item.queued), count: started.length, failed: result.failed ?? [] })
+        if (configs[0].workflow === 'review') { useJobStore.getState().focusJob(null); onNavigate('jobs') }
+        return
+      }
+      const config = configs[0]
       const result = await getApi().job.start(config)
       if (result.error) setStartError(result.error)
       else if (result.jobId) {
@@ -54,7 +69,8 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
   }, [onNavigate, ensureSpace])
 
   const viewJob = useCallback((jobId: string) => {
-    useJobStore.getState().focusJob(jobId)
+    // Several videos: open the Jobs list, where they all show.
+    useJobStore.getState().focusJob((useDraftStore.getState().started?.count ?? 1) > 1 ? null : jobId)
     onNavigate('jobs')
   }, [onNavigate])
 

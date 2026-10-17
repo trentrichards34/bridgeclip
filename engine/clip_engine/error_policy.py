@@ -22,6 +22,7 @@ OUT_OF_CREDITS_MARKERS = ("out of credits", "insufficient credits")
 
 NO_CLIP_CANDIDATES_MESSAGE = 'The planner returned no clip candidates'
 NO_REQUESTED_MOMENTS_MESSAGE = 'No moments matched the clip request'
+NO_NEW_MOMENTS_MESSAGE = 'No new moments were left to clip'
 
 
 class NoClipCandidatesError(Exception):
@@ -30,6 +31,10 @@ class NoClipCandidatesError(Exception):
 
 class NoRequestedMomentsError(NoClipCandidatesError):
     """The user described what to clip and the planner found nothing that matched."""
+
+
+class NoNewMomentsError(NoClipCandidatesError):
+    """More clips from a video: every candidate repeated a moment already clipped."""
 
 
 def is_disk_full(error: BaseException) -> bool:
@@ -74,6 +79,8 @@ def safe_processing_error(error: Exception) -> str:
         return "Processing timed out"
     if isinstance(error, NoRequestedMomentsError):
         return NO_REQUESTED_MOMENTS_MESSAGE
+    if isinstance(error, NoNewMomentsError):
+        return NO_NEW_MOMENTS_MESSAGE
     if isinstance(error, NoClipCandidatesError):
         return NO_CLIP_CANDIDATES_MESSAGE
     if type(error).__name__ == "VisualPlanningUnsupportedError":

@@ -56,7 +56,7 @@ test('Jobs actions inspect runs and open completed jobs in the shared Library vi
   await completedActions.press('ArrowDown')
   const menu = page.getByRole('menu', { name: 'Actions for Completed test run', exact: true })
   await menu.waitFor()
-  assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), ['Open in Library', 'Open folder', 'Details'])
+  assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), ['Open in Library', 'More clips from this video', 'Open folder', 'Details'])
   assert.equal(await menu.getByRole('menuitem', { name: 'Open in Library' }).evaluate(el => el === document.activeElement), true)
   await menu.press('Escape')
   assert.equal(await completedActions.evaluate(el => el === document.activeElement), true)

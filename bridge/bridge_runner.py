@@ -32,6 +32,8 @@ _protocol = None
 # Mirrors DURATION_OPTIONS in src/shared/job-contract.ts.
 BACKGROUND_VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".webm")
 DURATION_RANGE_IDS = ("xshort", "short", "medium", "long", "xlong", "extended", "feature")
+# Mirrors CAPTION_LANGUAGES in src/shared/caption-language.ts.
+CAPTION_LANGUAGE_CODES = ("en", "es", "pt", "fr", "de", "it", "hi", "ar", "ja", "ko", "zh")
 
 # Known failure classes -> (message, hint). Raw engine errors can contain
 # request URLs, proxy credentials and local paths, so only these fixed strings
@@ -130,6 +132,9 @@ FAILURES = (
     (("no clips passed the coherence review", "clip omitted:"),
      "No clips passed the coherence review.",
      "Inspect transcript & edits in Jobs to see which context, ending, title or cut checks failed. No clip was forced."),
+    (("no new moments were left to clip",),
+     "Every strong moment in this video has already been clipped.",
+     "Try another clip length or describe different moments in What to clip. You can also lower the quality bar."),
     (("no moments matched the clip request",),
      "No moments matched what you asked to clip.",
      "Try describing it more broadly, or leave What to clip blank to get the best moments. Inspect transcript & edits in Jobs shows the planner's explanation."),
@@ -308,6 +313,12 @@ async def run(config: dict) -> bool:
         banner_channel_url=config.get("banner_channel_url"),
         keyterms=config.get("keyterms") or None,
         clip_request=config.get("clip_request"),
+        caption_language=config.get("caption_language"),
+        reuse_transcript_path=config.get("reuse_transcript_path"),
+        reuse_source_path=config.get("reuse_source_path"),
+        reuse_source_meta=config.get("reuse_source_meta"),
+        reuse_expected_duration_seconds=config.get("reuse_expected_duration_seconds"),
+        exclude_ranges_ms=config.get("exclude_ranges_ms"),
     )
 
     emit({
@@ -363,7 +374,10 @@ def validate_config(config: object) -> dict:
     source = config.get("video_url")
     if not isinstance(source, str) or not source.strip() or len(source) > 8192:
         raise ValueError("A video source is required")
-    if not os.path.isfile(source):
+    kept = config.get("reuse_source_path")
+    # More clips: the earlier run's local file may be gone; its kept copy is used instead.
+    kept_copy = isinstance(kept, str) and os.path.isabs(kept) and os.path.isfile(kept) and os.path.isabs(source)
+    if not os.path.isfile(source) and not kept_copy:
         try:
             url = urlsplit(source)
             if url.scheme not in ("https", "http") or not url.hostname or url.username or url.password:
@@ -432,6 +446,36 @@ def validate_config(config: object) -> dict:
         not isinstance(clip_request, str) or not clip_request.strip() or len(clip_request) > 1000 or "\0" in clip_request
     ):
         raise ValueError("Invalid clip request")
+    if config.get("caption_language") is not None and config["caption_language"] not in CAPTION_LANGUAGE_CODES:
+        raise ValueError("Invalid caption language")
+    transcript = config.get("reuse_transcript_path")
+    if transcript is not None and (
+        not isinstance(transcript, str) or "\0" in transcript or not os.path.isabs(transcript)
+        or os.path.basename(transcript) != "transcript.json"
+    ):
+        raise ValueError("Invalid saved transcript")
+    kept = config.get("reuse_source_path")
+    if kept is not None and (
+        not isinstance(kept, str) or "\0" in kept or not os.path.isabs(kept)
+        or os.path.splitext(kept)[1].lower() not in (".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".flv")
+    ):
+        raise ValueError("Invalid kept source")
+    meta = config.get("reuse_source_meta")
+    if meta is not None and (
+        not isinstance(meta, dict) or any(key not in ("title", "channel", "description") for key in meta)
+        or any(value is not None and (not isinstance(value, str) or len(value) > 20000) for value in meta.values())
+    ):
+        raise ValueError("Invalid kept source details")
+    expected = config.get("reuse_expected_duration_seconds")
+    if expected is not None and (type(expected) not in (int, float) or not 0 < expected <= 86400):
+        raise ValueError("Invalid source duration")
+    excluded = config.get("exclude_ranges_ms")
+    if excluded is not None and (
+        not isinstance(excluded, list) or len(excluded) > 200 or any(
+            not isinstance(item, list) or len(item) != 2 or any(type(v) is not int for v in item) or not 0 <= item[0] < item[1]
+            for item in excluded)
+    ):
+        raise ValueError("Invalid excluded moments")
     ranges = config.get("duration_ranges")
     if ranges is not None and (
         not isinstance(ranges, list) or len(ranges) > len(DURATION_RANGE_IDS) or
