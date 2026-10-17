@@ -37,6 +37,8 @@ function draftFor(automation: Automation): AutomationUpdate {
 }
 
 const SELECTED_STORAGE_KEY = 'bridgeclip.automations.selectedId'
+/** The Posts calendar opens an automation by setting this before navigating here. */
+export const AUTOMATION_SELECTED_KEY = SELECTED_STORAGE_KEY
 
 function rememberSelection(id: string | null): void {
   try {
@@ -794,7 +796,10 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
                 </DragDropContext>
               </Panel>
 
-              {upcoming.length > 0 && <Panel padded={false}><UpcomingPosts posts={upcoming} scheduleAhead={selected.scheduleAhead === true} timezone={selected.timezone} now={now} /></Panel>}
+              {upcoming.length > 0 && <Panel padded={false}><UpcomingPosts posts={upcoming} scheduleAhead={selected.scheduleAhead === true} timezone={selected.timezone} now={now} onOpenCalendar={() => {
+                try { sessionStorage.setItem('bridgeclip.posts.view', 'calendar') } catch { /* Posts opens on its list instead. */ }
+                onNavigate('posts')
+              }} /></Panel>}
 
               {dirty && (
                 <div className="glass-thick sticky bottom-3 z-10 flex items-center justify-between gap-3 rounded-full py-1.5 pl-4 pr-1.5 animate-fade-in" role="region" aria-label="Unsaved changes">
@@ -845,10 +850,13 @@ const UPCOMING_STATE: Record<UpcomingPost['state'], { label: string; tone: 'succ
   empty: { label: 'No clip ready', tone: 'warning' }
 }
 
-function UpcomingPosts({ posts, scheduleAhead, timezone, now }: { posts: UpcomingPost[]; scheduleAhead: boolean; timezone: string; now: number }): React.JSX.Element {
+function UpcomingPosts({ posts, scheduleAhead, timezone, now, onOpenCalendar }: { posts: UpcomingPost[]; scheduleAhead: boolean; timezone: string; now: number; onOpenCalendar: () => void }): React.JSX.Element {
   return (
     <section aria-label="Upcoming posts" className="px-3.5 py-2.5">
-      <h3 className="flex items-center gap-1.5 text-xs font-medium text-ink-muted"><CalendarClock aria-hidden className="h-3.5 w-3.5" />Upcoming posts</h3>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-1.5 text-xs font-medium text-ink-muted"><CalendarClock aria-hidden className="h-3.5 w-3.5" />Upcoming posts</h3>
+        <Button size="sm" variant="ghost" onClick={onOpenCalendar}>Open calendar</Button>
+      </div>
       <ul className="mt-1.5 space-y-1">
         {posts.map((post) => {
           const state = UPCOMING_STATE[post.state]

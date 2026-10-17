@@ -11,7 +11,9 @@
 
 const crypto = require('node:crypto')
 
-const PRESIGN_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/mpeg', 'video/quicktime', 'video/avi', 'video/x-msvideo', 'video/webm', 'video/x-m4v'])
+const PRESIGN_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/mpeg', 'video/quicktime', 'video/avi', 'video/x-msvideo', 'video/webm', 'video/x-m4v', 'application/x-subrip', 'text/vtt'])
+const IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp'])
+const SUBTITLE_TYPES = new Set(['application/x-subrip', 'text/vtt'])
 const MAX_UPLOAD = 5 * 1024 * 1024 * 1024
 const REPLAY_WINDOW_MS = 5 * 60_000
 const DEDUP_WINDOW_MS = 24 * 3_600_000
@@ -151,8 +153,36 @@ function createPostingMock(options = {}) {
     }
     const media = Array.isArray(body.mediaItems) ? body.mediaItems : []
     if (media.length === 0) return 'Media is required'
-    for (const item of media) {
-      if (!state.uploads.some((u) => state.presigned.get(u.key)?.publicUrl === item.url)) return `mediaItems url was never uploaded: ${item.url}`
+    // Zernio downloads covers and subtitle files when the post is created.
+    const uploaded = (url, types) => {
+      const upload = state.uploads.find((u) => state.presigned.get(u.key)?.publicUrl === url)
+      return Boolean(upload && (!types || types.has(upload.contentType)))
+    }
+    const checkMedia = (items, where) => {
+      for (const item of items) {
+        if (!uploaded(item.url)) return `${where} url was never uploaded: ${item.url}`
+        if (item.thumbnail !== undefined && !uploaded(item.thumbnail, IMAGE_TYPES)) return `${where} thumbnail is not an uploaded image`
+        if (item.instagramThumbnail !== undefined && !uploaded(item.instagramThumbnail, IMAGE_TYPES)) return `${where} instagramThumbnail is not an uploaded image`
+        if (item.subtitles !== undefined) {
+          if (!Array.isArray(item.subtitles)) return `${where} subtitles must be an array`
+          for (const track of item.subtitles) {
+            if (!/^[a-z]{2}(-[A-Z]{2})?$/.test(track?.language ?? '')) return { status: 400, message: 'Invalid subtitle language', code: 'INVALID_SUBTITLES' }
+            if (!uploaded(track.url, SUBTITLE_TYPES)) return { status: 400, message: 'Subtitle file is unreachable', code: 'INVALID_SUBTITLES' }
+          }
+        }
+      }
+      return null
+    }
+    const mediaProblem = checkMedia(media, 'mediaItems')
+    if (mediaProblem) return mediaProblem
+    for (const [i, target] of body.platforms.entries()) {
+      if (target.customMedia !== undefined) {
+        const problem = checkMedia(target.customMedia, `platforms[${i}].customMedia`)
+        if (problem) return problem
+      }
+      const data = target.platformSpecificData ?? {}
+      const cover = target.platform === 'tiktok' ? data.tiktokSettings?.videoCoverImageUrl : target.platform === 'instagram' ? data.instagramThumbnail : undefined
+      if (cover !== undefined && !uploaded(cover, IMAGE_TYPES)) return `platforms[${i}] cover image was never uploaded`
     }
     if (!body.publishNow) {
       if (typeof body.scheduledFor !== 'string' || !Number.isFinite(Date.parse(body.scheduledFor))) return 'scheduledFor is required'
@@ -231,7 +261,7 @@ function createPostingMock(options = {}) {
         const invalid = validateCreate(ctx, body)
         if (invalid) {
           create.status = typeof invalid === 'object' ? invalid.status : 400
-          return error(ctx, create.status, typeof invalid === 'object' ? invalid.message : invalid, { code: 'invalid_field_value' })
+          return error(ctx, create.status, typeof invalid === 'object' ? invalid.message : invalid, { code: (typeof invalid === 'object' && invalid.code) || 'invalid_field_value' })
         }
         for (const target of body.platforms) {
           const hash = contentHash(target, body)
@@ -249,7 +279,7 @@ function createPostingMock(options = {}) {
           _id: hexId(),
           content: body.content ?? '',
           mediaItems: body.mediaItems,
-          platforms: body.platforms.map((t) => ({ platform: t.platform, accountId: t.accountId, platformSpecificData: t.platformSpecificData, status: 'pending' })),
+          platforms: body.platforms.map((t) => ({ platform: t.platform, accountId: t.accountId, platformSpecificData: t.platformSpecificData, ...(t.customMedia ? { customMedia: t.customMedia } : {}), status: 'pending' })),
           scheduledFor: body.publishNow ? undefined : new Date(Date.parse(body.scheduledFor)).toISOString(),
           timezone: body.timezone ?? 'UTC',
           status: 'scheduled',

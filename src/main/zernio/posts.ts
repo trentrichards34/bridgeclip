@@ -12,10 +12,13 @@ import { logger } from '../logger'
 import { getClient, onZernioReset, readCachedOverview } from './service'
 import { ZernioApiError, ZernioDuplicatePostError, type CreatedPost, type ZernioClient } from './client'
 import { putFile, videoContentType } from './posts-upload'
+import { checkPickedCoverImage, describeClipSubtitles, extractCoverFrame, findClipSubtitles, readCoverImage, readSubtitles, uploadBytes } from './post-extras'
+import { coverFrameError, coverPlatforms, postsAsYouTubeShort, type ClipSubtitles } from '../../shared/zernio-extras'
 import {
   applyZernioPost,
   buildCreatePostBody,
   isPostUrl,
+  type ResolvedCover,
   parsePostClipRequest,
   parseTikTokCreatorInfo,
   tiktokOptionsError
@@ -139,6 +142,17 @@ interface Attempt {
   payloadKey: string | null
   requestStartedAt: number | null
   retryAfterAt: number | null
+  /** The cover image and subtitle file uploaded for this attempt, by what they were made from. */
+  cover?: UploadedExtra | null
+  subtitles?: UploadedExtra | null
+}
+
+interface UploadedExtra { key: string; url: string }
+
+function uploadedExtra(value: unknown): UploadedExtra | null {
+  if (!value || typeof value !== 'object') return null
+  const { key, url } = value as Record<string, unknown>
+  return typeof key === 'string' && key.length <= 8192 && typeof url === 'string' && url.length <= 2048 ? { key, url } : null
 }
 
 /**
@@ -190,7 +204,7 @@ function loadAttempts(): void {
           (value.requestId !== null && typeof value.requestId !== 'string') ||
           (value.payloadKey !== null && typeof value.payloadKey !== 'string') ||
           (value.requestStartedAt !== null && !Number.isFinite(value.requestStartedAt))) continue
-      attempts.set(row[0].slice(0, 128), { ...value, retryAfterAt: Number.isFinite(value.retryAfterAt) ? value.retryAfterAt : null })
+      attempts.set(row[0].slice(0, 128), { ...value, retryAfterAt: Number.isFinite(value.retryAfterAt) ? value.retryAfterAt : null, cover: uploadedExtra(value.cover), subtitles: uploadedExtra(value.subtitles) })
     }
   } catch { quarantineUnbound(path) }
 }
@@ -446,8 +460,12 @@ async function publish(request: PostClipRequest, signal: AbortSignal, notify: (p
     throw new Error('The scheduled time passed while the clip uploaded. Pick a later time and post again; the upload is kept.')
   }
 
+  const extras = await uploadExtras(client, request, media, attempt, signal, generation)
+
   const body = buildCreatePostBody(request, {
     publicUrl: attempt.publicUrl,
+    cover: extras.cover,
+    youtubeSubtitles: extras.youtubeSubtitles,
     tiktokInteractions: Object.fromEntries(tiktokInfos.map((info) => [info.accountId, info.interactions])),
     facebookFormat: request.options.facebook?.format
   })
@@ -527,6 +545,69 @@ async function publish(request: PostClipRequest, signal: AbortSignal, notify: (p
     logger.info('zernio.post.created', { targets: record.targets.length, mode: request.timing.mode, status: record.status, replayed: created.replayed })
     return { post: record, outcome, message, warnings: created.warnings }
   } finally { releaseHistoryReservation() }
+}
+
+const IMAGE_COVER_PLATFORMS = new Set(['facebook', 'linkedin', 'youtube'])
+
+/**
+ * The cover and YouTube captions for this post, uploaded once per attempt:
+ * trying again reuses them while they were made from the same frame, image
+ * or subtitle file, so a retry sends the same request body.
+ */
+async function uploadExtras(client: ZernioClient, request: PostClipRequest, media: ClipMediaInfo, attempt: Attempt, signal: AbortSignal, generation: number): Promise<{ cover: ResolvedCover | null; youtubeSubtitles: { url: string; language: string } | null }> {
+  let cover: ResolvedCover | null = null
+  let youtubeSubtitles: { url: string; language: string } | null = null
+  const reuse = async (slot: 'cover' | 'subtitles', key: string, make: () => Promise<string>): Promise<string> => {
+    const kept = attempt[slot]
+    if (kept && kept.key === key) return kept.url
+    const url = await make()
+    assertWorkspace(generation)
+    attempt[slot] = { key, url }
+    saveAttempts()
+    return url
+  }
+
+  const choice = request.options.cover
+  const platforms = coverPlatforms(request.targets.map((t) => t.platform), postsAsYouTubeShort(media)).supported
+  if (choice && platforms.length > 0) {
+    if (choice.kind === 'frame') {
+      const problem = coverFrameError(choice.atMs, media.durationMs)
+      if (problem) throw new Error(problem)
+      // TikTok and Instagram take the time; the rest need the frame as an image.
+      const imageUrl = platforms.some((p) => IMAGE_COVER_PLATFORMS.has(p))
+        ? await reuse('cover', `frame:${choice.atMs}`, async () => {
+          const frame = await extractCoverFrame(request.clipPath, choice.atMs)
+          try { return await uploadBytes(client, `${basename(request.clipPath).replace(/\.[^.]+$/, '')}-cover.jpg`, 'image/jpeg', frame.bytes, signal) } finally { await frame.cleanup() }
+        })
+        : null
+      cover = { platforms, atMs: choice.atMs, imageUrl, fromImage: false }
+    } else {
+      const image = await readCoverImage(choice.path, loadSettings().outputDirectory)
+      const imageUrl = await reuse('cover', image.key, () => uploadBytes(client, basename(image.path), image.contentType, image.bytes, signal))
+      cover = { platforms, atMs: null, imageUrl, fromImage: true }
+    }
+  }
+
+  const language = request.options.youtube?.subtitles?.language
+  if (language && request.targets.some((t) => t.platform === 'youtube')) {
+    const found = findClipSubtitles(request.clipPath)
+    if (!found) throw new Error('This clip has no subtitle file. Turn off “Add captions to YouTube” and post again.')
+    const file = await readSubtitles(found)
+    const url = await reuse('subtitles', file.key, () => uploadBytes(client, file.fileName, file.contentType, file.bytes, signal))
+    youtubeSubtitles = { url, language }
+  }
+  return { cover, youtubeSubtitles }
+}
+
+/** Whether the clip has a subtitle file the dialog can offer as YouTube captions. */
+export async function clipSubtitlesForPosting(clipPath: unknown): Promise<ClipSubtitles> {
+  assertMediaPath(clipPath, loadSettings().outputDirectory)
+  return describeClipSubtitles(clipPath)
+}
+
+/** An image picked in the cover file dialog: checked, then allowed for preview and posting. */
+export function coverImageForPosting(path: string): Promise<{ path: string; sizeBytes: number }> {
+  return checkPickedCoverImage(path, loadSettings().outputDirectory)
 }
 
 export function cancelUpload(attemptId: unknown): void {
