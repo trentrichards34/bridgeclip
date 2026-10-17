@@ -20,6 +20,7 @@ import { IconTile } from '../components/ui/IconTile'
 import { Callout } from '../components/ui/Callout'
 import { UpdatesRow } from '../components/Updates'
 import { OutputStorage } from '../components/OutputStorage'
+import { useOutputFolderChange } from '../components/OutputFolderChange'
 import { AssistantSettings } from '../components/assistant/AssistantSettings'
 import { useAssistantStore } from '../store/use-assistant-store'
 import { takeSettingsSection } from '../lib/settings-focus'
@@ -54,6 +55,8 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
     }
   }
 
+  // A new output folder asks what to do with the Library runs in the current one.
+  const folderChange = useOutputFolderChange((dir) => commit({ outputDirectory: dir }))
   const lastSaved = Math.max(savedAt ?? 0, keys.savedAt ?? 0)
   const error = saveError ?? keys.error
   const tools = toolRows(toolStatus)
@@ -258,7 +261,8 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
               title="Output"
               description="Every run gets its own folder of clips, transcript and plan."
             />
-            <OutputFolder value={outputDirectory} onCommit={(dir) => commit({ outputDirectory: dir })} />
+            <OutputFolder value={outputDirectory} onCommit={(dir) => { void folderChange.change(dir) }} />
+            {folderChange.dialog}
           </Section>
 
           <Section id="system">

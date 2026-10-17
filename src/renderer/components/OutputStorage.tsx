@@ -1,26 +1,27 @@
 import { useEffect, useState } from 'react'
 import { HardDrive, RefreshCw } from 'lucide-react'
 import type { OutputStorageUsage } from '../../shared/output-storage'
+import { formatBytes as formatSize, type FreeSpace } from '../../shared/library-storage'
 import { getApi } from '../lib/ipc'
 import { Button } from './ui/Button'
-
-function formatSize(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const unit = bytes > 0 ? Math.min(Math.floor(Math.log10(bytes) / 3), units.length - 1) : 0
-  return `${(bytes / 1000 ** unit).toLocaleString(undefined, { maximumFractionDigits: unit === 0 ? 0 : 1 })} ${units[unit]}`
-}
+import { FreeUpSpaceButton } from './FreeUpSpaceDialog'
 
 export function OutputStorage({ outputDirectory }: { outputDirectory: string }): React.JSX.Element {
   const [refresh, setRefresh] = useState(0)
   const [usage, setUsage] = useState<OutputStorageUsage | null>(null)
   const [loading, setLoading] = useState(true)
   const [failure, setFailure] = useState<string | null>(null)
+  const [drive, setDrive] = useState<FreeSpace | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setUsage(null)
     setFailure(null)
+    setDrive(null)
+    if (outputDirectory && typeof getApi().storage?.freeSpace === 'function') {
+      getApi().storage.freeSpace().then((space) => { if (!cancelled) setDrive(space) }).catch(() => {})
+    }
     if (outputDirectory) {
       // A renderer hot update can arrive before Electron restarts its preload.
       // Catch synchronous bridge failures as well as rejected IPC requests.
@@ -53,9 +54,12 @@ export function OutputStorage({ outputDirectory }: { outputDirectory: string }):
           <HardDrive aria-hidden className="h-4 w-4 text-ink-muted" />
           Content storage
         </h3>
+        <div className="flex items-center gap-1.5">
+        <FreeUpSpaceButton size="sm" variant="ghost" onFreed={() => setRefresh((value) => value + 1)} />
         <Button size="sm" variant="ghost" aria-label="Refresh storage usage" loading={loading} icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={() => setRefresh((value) => value + 1)}>
           Refresh
         </Button>
+        </div>
       </div>
       <div role="status" className="mt-2">
         {loading ? <p className="text-xs text-ink-muted">Calculating size…</p> : failure ? (
@@ -68,6 +72,11 @@ export function OutputStorage({ outputDirectory }: { outputDirectory: string }):
             </p>
             {usage.unreadableCount > 0 && <p className="mt-1 text-2xs text-warning">Some files or folders could not be read. Refresh to try again.</p>}
             {usage.truncated && <p className="mt-1 text-2xs text-ink-muted">This folder is very large or deeply nested, so counting stopped early.</p>}
+            {drive?.freeBytes != null && (
+              <p className={drive.low ? 'mt-1 text-2xs text-warning' : 'mt-1 text-2xs text-ink-muted'}>
+                {formatSize(drive.freeBytes)} free on this drive{drive.low ? '. That is low: new runs may fail. Free up space or choose a folder on another drive.' : '.'}
+              </p>
+            )}
           </>
         )}
       </div>

@@ -5,6 +5,7 @@ import type { ClipArtifact, JobOutput } from '../shared/job-output'
 import type { PostRecord } from '../shared/zernio-posts'
 import { clipPostingStatus, MAX_POSTING_SUMMARY_RUNS, type LibraryClipPostingStatus, type LibraryEnhancementOptions, type LibraryRunPostingCounts } from '../shared/library-posting'
 import { loadSettings } from './settings-store'
+import { currentRunPath } from './library-folders'
 import { getJobOutput, isManuallyPosted } from './file-manager'
 import { assertAbsolutePath, assertMediaPath, authorizeMedia, isWithinDirectory, openAuthorizedMedia } from './security'
 import { automationMediaMatcher, listAutomations } from './automations'
@@ -13,7 +14,8 @@ import { completeSourceContext, parseSourceContext, sourceFromOutput } from './a
 import { generateAutomationMetadata, researchAutomationTopic, transcribeAutomationClip } from './automation-metadata'
 
 const mediaPath = (value: string): string => resolve(value.replace(/^file:\/\//, ''))
-const pathKey = (value: string): string => process.platform === 'win32' ? mediaPath(value).toLowerCase() : mediaPath(value)
+// A run moved to a new output folder: posts still name the clip's old path.
+const pathKey = (value: string): string => { const path = mediaPath(currentRunPath(mediaPath(value))); return process.platform === 'win32' ? path.toLowerCase() : path }
 
 async function libraryRun(raw: unknown, library = loadSettings().outputDirectory): Promise<JobOutput> {
   assertAbsolutePath(raw)

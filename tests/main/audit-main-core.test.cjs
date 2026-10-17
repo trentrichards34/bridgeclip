@@ -65,7 +65,9 @@ function ipcWithLibrary(library) {
     './edit-inspector': {},
     './youtube-preview': {},
     './library-posting': {},
-    './library-management': { setRunBusyCheck() {} }
+    './library-management': { setRunBusyCheck() {} },
+    './library-storage': { onOutputFolderChanged() {} },
+    './library-folders': { previousOutputFolders: () => [] }
   })
   ipc.registerIpcHandlers(() => window)
   const event = { sender: contents, senderFrame: frame }

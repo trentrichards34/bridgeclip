@@ -18,6 +18,7 @@ import { cancelQueuedJobsForQuit } from './job-manager'
 import { cancelZernioConnect } from './zernio/service'
 import { isAutomationMedia, startAutomationScheduler } from './automations'
 import { sweepDeletingRuns } from './library-management'
+import { recoverInterruptedMoves } from './library-storage'
 import { registerAssistant, type AssistantRuntime } from './assistant/ipc'
 
 // Catch crashes anywhere in the main process so we get a log line instead
@@ -286,6 +287,8 @@ app.whenReady().then(() => {
   assistant = registerAssistant(() => mainWindow)
   const stopAutomations = startAutomationScheduler()
   void sweepDeletingRuns()
+  // Finish (or undo) a Library move interrupted by a crash or quit.
+  void recoverInterruptedMoves().catch(() => undefined)
   // Remix plans left in review when the app closed: drop their downloads (never finished videos).
   void cleanupAbandoned(loadSettings().outputDirectory)
   app.on('before-quit', stopAutomations)

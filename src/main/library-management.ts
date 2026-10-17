@@ -9,6 +9,7 @@ import { parseJobOutput, type JobOutput } from '../shared/job-output'
 import { parseEditorProject } from '../shared/clip-editor'
 import { dismissJob, liveJobIds } from './job-manager'
 import { loadSettings } from './settings-store'
+import { previousOutputFolders } from './library-folders'
 
 /** Only a completed, immediate child of the configured Library can be changed. */
 /** Other work that rewrites a run's clips (a Remix video being re-made): set by the IPC layer. */
@@ -20,6 +21,9 @@ async function checkedRun(raw: unknown): Promise<{ check: () => string; output: 
   if (typeof raw !== 'string' || !isAbsolute(raw) || raw.includes('\0')) throw new Error('Choose a run in your Library.')
   const library = realpathSync(librarySetting)
   const path = resolve(raw)
+  if (dirname(path) !== resolve(librarySetting) && previousOutputFolders().some((root) => resolve(root) === dirname(path))) {
+    throw new Error('This run is in an earlier output folder. Move it to your current output folder (Library → Earlier output folders) to change it.')
+  }
   const original = lstatSync(path)
   const canonical = realpathSync(path)
   const check = (): string => {

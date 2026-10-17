@@ -32,6 +32,14 @@ export function isWithinDirectory(path: string, directory: string): boolean {
   } catch { return false }
 }
 
+/** Earlier output folders still shown in the Library (set by the IPC layer). Their runs stay viewable. */
+let extraLibraryRoots: () => string[] = () => []
+export function setExtraLibraryRoots(roots: () => string[]): void { extraLibraryRoots = roots }
+/** Inside the output folder, or inside an earlier output folder the Library still shows. */
+export function isWithinLibrary(path: string, outputDirectory: string): boolean {
+  return isWithinDirectory(path, outputDirectory) || extraLibraryRoots().some((root) => isWithinDirectory(path, root))
+}
+
 const mediaExtensions = new Set(['.mp4', '.m4v', '.mkv', '.webm', '.avi', '.mov', '.flv', '.jpg', '.jpeg', '.png', '.webp'])
 const selectedMedia = new Map<string, { dev: number; ino: number }>()
 export function authorizeMedia(path: string): string {
@@ -51,7 +59,7 @@ export function assertMediaPath(path: unknown, outputDirectory: string): asserts
   const file = statSync(canonical)
   const selected = selectedMedia.get(canonical)
   const isSelectedFile = selected?.dev === file.dev && selected.ino === file.ino
-  if (!mediaExtensions.has(extname(canonical).toLowerCase()) || !file.isFile() || (!isSelectedFile && !isWithinDirectory(canonical, outputDirectory))) {
+  if (!mediaExtensions.has(extname(canonical).toLowerCase()) || !file.isFile() || (!isSelectedFile && !isWithinLibrary(canonical, outputDirectory))) {
     throw new Error('Media file is outside the library')
   }
 }
