@@ -30,7 +30,9 @@ import { recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecordi
 import { importLegacyAvatarVideos } from './avatar-library'
 import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, parseRenderRequest, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
-import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
+import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, isWithinLibrary, openAuthorizedMedia, setExtraLibraryRoots } from './security'
+import { cleanupPlan, folderChangeInfo, forgetFolder, freeSpace, listPreviousFolders, moveFolderRuns, onOutputFolderChanged, runCleanup, runSizes } from './library-storage'
+import { previousOutputFolders } from './library-folders'
 import { getModelCatalog } from './openrouter-models'
 import { getYouTubePreview } from './youtube-preview'
 import { resolveBinary, supportsCaptionFilter } from './tools'
@@ -147,8 +149,24 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (typeof settings.outputDirectory !== 'string' || typeof settings.pythonPath !== 'string' || typeof settings.customVocabulary !== 'string') throw new Error('Invalid settings')
     if (settings.outputDirectory !== current.outputDirectory && !selectedOutputDirectories.has(settings.outputDirectory)) throw new Error('Choose the output folder with the folder picker')
     if (app.isPackaged && settings.pythonPath !== current.pythonPath) throw new Error('Runtime paths cannot be changed in packaged builds')
-    return savePublicSettings(settings)
+    const saved = savePublicSettings(settings)
+    // The old folder's runs stay in the Library (as an earlier output folder) instead of disappearing.
+    if (saved.outputDirectory !== current.outputDirectory) onOutputFolderChanged(current.outputDirectory, saved.outputDirectory)
+    return saved
   })
+
+  // Disk space: run sizes, Free up space, earlier output folders, low-disk check.
+  setExtraLibraryRoots(previousOutputFolders)
+  handle('storage:runSizes', (_event, outputDirs: unknown) => runSizes(outputDirs))
+  handle('storage:cleanupPlan', (_event, filters: unknown) => cleanupPlan(filters))
+  handle('storage:cleanup', (_event, groups: unknown, filters: unknown) => runCleanup(groups, filters))
+  handle('storage:freeSpace', () => freeSpace())
+  handle('storage:folderChangeInfo', () => folderChangeInfo())
+  handle('storage:previousFolders', () => listPreviousFolders())
+  handle('storage:forgetFolder', (_event, folder: unknown) => forgetFolder(folder))
+  handle('storage:moveFolder', (event, folder: unknown) => moveFolderRuns(folder, (progress) => {
+    if (!event.sender.isDestroyed()) event.sender.send('storage:moveProgress', progress)
+  }))
 
   handle('settings:replaceApiKey', (_event, key: ApiKeyName, value: string) => {
     const previousZernioKey = key === 'zernioApiKey' ? loadSettings().zernioApiKey : null
@@ -448,8 +466,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('history:enhanceMetadata', (_event, outputDir: unknown, clipIndex: unknown, options: unknown) => enhanceLibraryMetadata(outputDir, clipIndex, options))
   handle('history:getJob', (_event, outputDir: string) => {
     assertAbsolutePath(outputDir)
-    if (!isWithinDirectory(outputDir, loadSettings().outputDirectory)) throw new Error('Job is outside the library')
-    return getJobOutput(outputDir, loadSettings().outputDirectory)
+    const library = loadSettings().outputDirectory
+    if (isWithinDirectory(outputDir, library)) return getJobOutput(outputDir, library)
+    // A run in an earlier output folder the Library still shows.
+    const previous = previousOutputFolders().find((root) => isWithinDirectory(outputDir, root))
+    if (!previous) throw new Error('Job is outside the library')
+    return getJobOutput(outputDir, previous)
   })
 
   handle('editor:open', (_event, path: unknown) => openEditor(path))
@@ -484,7 +506,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (!existsSync(path)) return false
     // Check and open the same canonical name: an alias can hide a .app suffix.
     const canonical = realpathSync(path)
-    if (!isWithinDirectory(canonical, loadSettings().outputDirectory)) assertMediaPath(canonical, loadSettings().outputDirectory)
+    if (!isWithinLibrary(canonical, loadSettings().outputDirectory)) assertMediaPath(canonical, loadSettings().outputDirectory)
     const { statSync } = await import('fs')
     if (statSync(canonical).isDirectory()) {
       // macOS opens these directory packages with Installer, System Settings,
@@ -498,7 +520,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
 
   handle('shell:showItemInFolder', (_event, path: string) => {
     assertAbsolutePath(path)
-    if (!isWithinDirectory(path, loadSettings().outputDirectory)) assertMediaPath(path, loadSettings().outputDirectory)
+    if (!isWithinLibrary(path, loadSettings().outputDirectory)) assertMediaPath(path, loadSettings().outputDirectory)
     if (!existsSync(path)) return false
     shell.showItemInFolder(path)
     return true

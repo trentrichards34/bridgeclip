@@ -14,6 +14,7 @@ import { VoicePreview } from '../components/VoicePreview'
 import { HeadlineLookPicker } from '../components/HeadlineLookPicker'
 import { CtaPicker } from '../components/CtaPicker'
 import { partLabel, RemixRecorder } from '../components/RemixRecorder'
+import { useLowDiskGate } from '../components/LowDiskGate'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Callout } from '../components/ui/Callout'
@@ -63,6 +64,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const [launching, setLaunching] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const lowDisk = useLowDiskGate()
 
   useEffect(() => {
     let live = true
@@ -142,6 +144,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     setError(null)
     setLaunching(true)
     try {
+      // A nearly full drive asks first (and offers Free up space).
+      if (!(await lowDisk.ensureSpace())) return
       const started = await getApi().remix.start({
         sources, creator: sources.length === 1 ? form.creator : '', angle: form.angle, order: form.order, host,
         avatarId: showAvatars ? avatar?.id ?? null : null, voice: form.voice, brandIdentityId: brand?.id ?? null, count: form.count,
@@ -174,6 +178,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         Use Create for straight clips. Remix is for other people's videos: it keeps the borrowed part short, credits the creator, and makes your take the content.
       </Callout>
       {error && <Callout tone="danger" className="mt-4" onDismiss={() => setError(null)}>{error}</Callout>}
+      {lowDisk.element}
 
       {status && (reviewing || busy || status.phase === 'done' || status.phase === 'failed' || status.phase === 'cancelled') && (
         <div className="mt-5">

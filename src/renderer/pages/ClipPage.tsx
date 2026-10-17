@@ -6,6 +6,7 @@ import { errorMessage } from '../lib/utils'
 import { getApi } from '../lib/ipc'
 import type { ClipJobRequest } from '../../shared/jobs'
 import { JobForm } from '../components/JobForm'
+import { useLowDiskGate } from '../components/LowDiskGate'
 import { SetupCard } from '../components/SetupCard'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Page } from '../components/ui/Page'
@@ -23,6 +24,8 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
   const startingRef = useRef(false)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
+  const lowDisk = useLowDiskGate()
+  const ensureSpace = lowDisk.ensureSpace
 
   const handleSubmit = useCallback(async (config: ClipJobRequest) => {
     if (startingRef.current) return
@@ -30,6 +33,8 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
     setStarting(true)
     setStartError(null)
     try {
+      // A nearly full drive asks first (and offers Free up space).
+      if (!(await ensureSpace())) return
       const result = await getApi().job.start(config)
       if (result.error) setStartError(result.error)
       else if (result.jobId) {
@@ -45,7 +50,7 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
       startingRef.current = false
       setStarting(false)
     }
-  }, [onNavigate])
+  }, [onNavigate, ensureSpace])
 
   const viewJob = useCallback((jobId: string) => {
     useJobStore.getState().focusJob(jobId)
@@ -73,6 +78,7 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
       </Callout>
 
       <SetupCard className="mt-4" onOpenSettings={() => onNavigate('settings')} />
+      {lowDisk.element}
 
       {startError && (
         <Callout tone="danger" className="mt-3" onDismiss={() => setStartError(null)}>

@@ -26,6 +26,7 @@ import type { LibraryClipPostingStatus, LibraryEnhancementOptions, LibraryRunPos
 import type { OpenRouterCatalog } from '../shared/openrouter-models'
 import type { UpdateState } from '../shared/updates'
 import type { OutputStorageUsage } from '../shared/output-storage'
+import type { CleanupFilters, CleanupGroupId, CleanupPlan, CleanupResult, FolderChangeInfo, FreeSpace, MoveProgress, MoveResult, RunSize } from '../shared/library-storage'
 import type { YouTubePreview } from '../shared/youtube-preview'
 import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/avatars'
 import type { MemberPrefs, StyleKind } from '../shared/member-prefs'
@@ -408,6 +409,28 @@ export interface BridgeClipAPI {
      */
     setGateHandler: (handler: ((gate: SpendGate) => Promise<boolean>) | null) => void
   }
+  storage: {
+    /** Size on disk of each Library run (cached by main until the run changes). */
+    runSizes: (outputDirs: string[]) => Promise<RunSize[]>
+    cleanupPlan: (filters: CleanupFilters) => Promise<CleanupPlan>
+    /** Removes the chosen groups; main rebuilds the plan itself. */
+    cleanup: (groups: CleanupGroupId[], filters: CleanupFilters) => Promise<CleanupResult>
+    freeSpace: () => Promise<FreeSpace>
+    folderChangeInfo: () => Promise<FolderChangeInfo>
+    previousFolders: () => Promise<PreviousFolder[]>
+    moveFolder: (folder: string) => Promise<MoveResult>
+    forgetFolder: (folder: string) => Promise<void>
+    onMoveProgress: (callback: (progress: MoveProgress) => void) => () => void
+  }
+}
+
+/** An earlier output folder whose runs the Library still shows. */
+export interface PreviousFolder {
+  folder: string
+  exists: boolean
+  runs: HistoryEntry[]
+  /** Other CreatorClips folders there (unfinished runs, Avatar Studio) that a move also brings. */
+  otherFolders: number
 }
 
 let gateHandler: ((gate: SpendGate) => Promise<boolean>) | null = null
@@ -678,6 +701,17 @@ const api: BridgeClipAPI = {
     onChange: (callback) => subscribe('spend:changed', () => callback()),
     onOutOfCredits: (callback) => subscribe('spend:outOfCredits', callback),
     setGateHandler: (handler) => { gateHandler = typeof handler === 'function' ? handler : null }
+  },
+  storage: {
+    runSizes: (outputDirs) => ipcRenderer.invoke('storage:runSizes', outputDirs),
+    cleanupPlan: (filters) => ipcRenderer.invoke('storage:cleanupPlan', filters),
+    cleanup: (groups, filters) => ipcRenderer.invoke('storage:cleanup', groups, filters),
+    freeSpace: () => ipcRenderer.invoke('storage:freeSpace'),
+    folderChangeInfo: () => ipcRenderer.invoke('storage:folderChangeInfo'),
+    previousFolders: () => ipcRenderer.invoke('storage:previousFolders'),
+    moveFolder: (folder) => ipcRenderer.invoke('storage:moveFolder', folder),
+    forgetFolder: (folder) => ipcRenderer.invoke('storage:forgetFolder', folder),
+    onMoveProgress: (callback) => subscribe('storage:moveProgress', callback)
   }
 }
 
