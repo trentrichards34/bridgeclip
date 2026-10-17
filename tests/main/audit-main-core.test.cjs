@@ -41,7 +41,7 @@ function ipcWithLibrary(library) {
     './file-manager': {},
     './run-history': {},
     './pipeline-runner': {},
-    './job-manager': { initJobManager() {} },
+    './job-manager': { initJobManager() {}, onJobUpdate() {} }, './member-prefs': {}, './support-report': { recordToolCheck() {} }, './job-notifications': {}, './library-source': {}, '../shared/member-prefs': { dropMissing: (prefs) => prefs },
     './job-start': {},
     './backgrounds': {},
     './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [], cloningInProgress: () => false },

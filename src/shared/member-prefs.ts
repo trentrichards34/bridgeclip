@@ -1,0 +1,281 @@
+/**
+ * The member's remembered setup: the last style they used on Create and on
+ * Remix, their saved styles ("presets"), and two small app preferences. Kept
+ * by the main process in userData/member-prefs.json. Everything read back is
+ * checked field by field: an unknown or invalid value is dropped, so the form
+ * falls back to its own default for it instead of failing.
+ */
+
+import { isAvatarId } from './avatars'
+import { isBackgroundVideoName } from './backgrounds'
+import { isCaptionPresetId } from './caption-presets'
+import { isCtaId } from './ctas'
+import { parseHeadlineLook, type HeadlineLook } from './headline-look'
+import { DURATION_IDS, isVideoSpeed } from './job-contract'
+import { QUALITY_BARS, TITLE_STYLES, type QualityBar, type TitleStyle } from './jobs'
+import { isModelId } from './openrouter-models'
+import {
+  AVATAR_VOICE, MAX_CTA_OFFER_CHARS, MAX_REMIXES, REMIX_FORMATS, REMIX_VOICES, isRemixAngle, isRemixHost, isRemixOrder, normalizeCtaKeyword, parseCameraSettings,
+  type CameraSettings, type RemixAngle, type RemixFormat, type RemixHost, type RemixOrder
+} from './remix'
+
+export type StyleKind = 'create' | 'remix'
+
+/** Create's style choices (not the video, the clip request or the trim). */
+export interface CreateStyle {
+  clippingMode: 'quality' | 'economy' | 'advanced'
+  plannerModel: string
+  transcriptionModel: string
+  aspectRatio: '9:16' | '16:9'
+  layoutStyle: 'auto' | 'fill' | 'fit'
+  layoutVision: boolean
+  pacing: 'tight' | 'natural'
+  videoSpeed: number
+  durations: string[]
+  autoClipCount: boolean
+  maxClips: number
+  includeCaptions: boolean
+  captionPreset: string
+  includeTitle: boolean
+  titleStyle: TitleStyle
+  headlineLook: HeadlineLook
+  ctaId: string | null
+  backgroundVideo: string | null
+  broll: 'off' | 'after-hook' | 'full'
+  hookPreview: boolean
+  qualityBar: QualityBar
+}
+
+/** Remix's style choices (not the links, the file, the creator name or the permission boxes). */
+export interface RemixFormStyle {
+  format: RemixFormat
+  angle: RemixAngle
+  order: RemixOrder
+  host: RemixHost
+  avatarId: string | null
+  voice: string
+  brandIdentityId: string | null
+  count: number
+  includeCaptions: boolean
+  captionPreset: string
+  headlineLook: HeadlineLook
+  ctaId: string | null
+  ctaKeyword: string
+  ctaOffer: string
+  camera: CameraSettings
+  imageCamera: CameraSettings
+}
+
+export type StyleOf<K extends StyleKind> = K extends 'create' ? CreateStyle : RemixFormStyle
+
+export interface StylePreset<K extends StyleKind = StyleKind> {
+  id: string
+  name: string
+  style: Partial<StyleOf<K>>
+  updatedAt: string
+}
+
+export interface MemberPrefs {
+  create: Partial<CreateStyle>
+  remix: Partial<RemixFormStyle>
+  presets: { create: StylePreset<'create'>[]; remix: StylePreset<'remix'>[] }
+  /** Where "Report an issue" sends the member: an https link or an email address ('' for none). */
+  supportLink: string
+  /** Show a desktop notification when a long job finishes while the app is in the background. */
+  notifyOnFinish: boolean
+}
+
+export const MAX_PRESETS = 30
+export const MAX_PRESET_NAME = 40
+export const MAX_SUPPORT_LINK = 300
+
+export const CREATE_STYLE_KEYS = [
+  'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
+  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar'
+] as const satisfies readonly (keyof CreateStyle)[]
+
+export const REMIX_STYLE_KEYS = [
+  'format', 'angle', 'order', 'host', 'avatarId', 'voice', 'brandIdentityId', 'count', 'includeCaptions', 'captionPreset', 'headlineLook',
+  'ctaId', 'ctaKeyword', 'ctaOffer', 'camera', 'imageCamera'
+] as const satisfies readonly (keyof RemixFormStyle)[]
+
+export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true }
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+const oneOf = <T extends string>(values: readonly T[]) => (value: unknown): value is T => typeof value === 'string' && (values as readonly string[]).includes(value)
+const bool = (value: unknown): value is boolean => typeof value === 'boolean'
+const isBrandId = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{16}$/.test(value)
+const nullOr = (check: (value: unknown) => boolean) => (value: unknown): boolean => value === null || check(value)
+function headlineLook(value: unknown): HeadlineLook | undefined {
+  try { return parseHeadlineLook(value) } catch { return undefined }
+}
+function camera(value: unknown): CameraSettings | undefined {
+  try { return parseCameraSettings(value) } catch { return undefined }
+}
+
+const CREATE_CHECKS: { [K in keyof CreateStyle]: (value: unknown) => boolean } = {
+  clippingMode: oneOf(['quality', 'economy', 'advanced']),
+  plannerModel: (value) => value === '' || isModelId(value),
+  transcriptionModel: (value) => value === '' || isModelId(value),
+  aspectRatio: oneOf(['9:16', '16:9']),
+  layoutStyle: oneOf(['auto', 'fill', 'fit']),
+  layoutVision: bool,
+  pacing: oneOf(['tight', 'natural']),
+  videoSpeed: isVideoSpeed,
+  durations: (value) => Array.isArray(value) && value.length <= DURATION_IDS.length && value.every((item) => DURATION_IDS.includes(item as string)) && new Set(value).size === value.length,
+  autoClipCount: bool,
+  maxClips: (value) => typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 100,
+  includeCaptions: bool,
+  captionPreset: isCaptionPresetId,
+  includeTitle: bool,
+  titleStyle: oneOf(TITLE_STYLES),
+  headlineLook: () => true,
+  ctaId: nullOr(isCtaId),
+  backgroundVideo: nullOr(isBackgroundVideoName),
+  broll: oneOf(['off', 'after-hook', 'full']),
+  hookPreview: bool,
+  qualityBar: oneOf(QUALITY_BARS)
+}
+
+const VOICE_IDS = [AVATAR_VOICE, ...REMIX_VOICES.map((voice) => voice.id)]
+const REMIX_CHECKS: { [K in keyof RemixFormStyle]: (value: unknown) => boolean } = {
+  format: oneOf(REMIX_FORMATS.map((item) => item.id)),
+  angle: isRemixAngle,
+  order: isRemixOrder,
+  host: isRemixHost,
+  avatarId: nullOr(isAvatarId),
+  voice: oneOf(VOICE_IDS),
+  brandIdentityId: nullOr(isBrandId),
+  count: (value) => typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_REMIXES,
+  includeCaptions: bool,
+  captionPreset: isCaptionPresetId,
+  headlineLook: () => true,
+  ctaId: nullOr(isCtaId),
+  ctaKeyword: (value) => typeof value === 'string' && value.length <= 20 && normalizeCtaKeyword(value) !== null,
+  ctaOffer: (value) => typeof value === 'string' && value.length <= MAX_CTA_OFFER_CHARS && !/[\0\r\n]/.test(value),
+  camera: () => true,
+  imageCamera: () => true
+}
+
+/** The valid fields of a saved style; anything else is dropped. */
+function parseStyle<K extends StyleKind>(kind: K, value: unknown): Partial<StyleOf<K>> {
+  if (!record(value)) return {}
+  const checks = (kind === 'create' ? CREATE_CHECKS : REMIX_CHECKS) as Record<string, (value: unknown) => boolean>
+  const keys: readonly string[] = kind === 'create' ? CREATE_STYLE_KEYS : REMIX_STYLE_KEYS
+  const style: Record<string, unknown> = {}
+  for (const key of keys) {
+    if (!(key in value)) continue
+    const raw = value[key]
+    if (key === 'headlineLook') {
+      const look = headlineLook(raw)
+      if (look) style[key] = look
+    } else if (key === 'camera' || key === 'imageCamera') {
+      const parsed = camera(raw)
+      if (parsed) style[key] = parsed
+    } else if (checks[key](raw)) {
+      style[key] = Array.isArray(raw) ? [...raw] : raw
+    }
+  }
+  return style as Partial<StyleOf<K>>
+}
+
+export function parseCreateStyle(value: unknown): Partial<CreateStyle> { return parseStyle('create', value) }
+export function parseRemixStyle(value: unknown): Partial<RemixFormStyle> { return parseStyle('remix', value) }
+export function parseStyleOf<K extends StyleKind>(kind: K, value: unknown): Partial<StyleOf<K>> { return parseStyle(kind, value) }
+
+/** Only the style fields of a form's state (for saving). */
+export function pickStyle<K extends StyleKind>(kind: K, state: object): Partial<StyleOf<K>> {
+  return parseStyle(kind, state)
+}
+
+/** A trimmed preset name of 1-40 characters, or null. */
+export function presetName(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  // eslint-disable-next-line no-control-regex
+  const name = value.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim()
+  return name.length >= 1 && name.length <= MAX_PRESET_NAME ? name : null
+}
+
+const PRESET_ID = /^[a-f0-9]{16}$/
+export function isPresetId(value: unknown): value is string { return typeof value === 'string' && PRESET_ID.test(value) }
+
+function parsePresets<K extends StyleKind>(kind: K, value: unknown): StylePreset<K>[] {
+  if (!Array.isArray(value)) return []
+  const presets: StylePreset<K>[] = []
+  const names = new Set<string>()
+  for (const item of value) {
+    if (!record(item) || !isPresetId(item.id) || presets.some((preset) => preset.id === item.id)) continue
+    const name = presetName(item.name)
+    if (!name || names.has(name.toLowerCase())) continue
+    const updatedAt = typeof item.updatedAt === 'string' && !Number.isNaN(Date.parse(item.updatedAt)) ? item.updatedAt : new Date(0).toISOString()
+    names.add(name.toLowerCase())
+    presets.push({ id: item.id, name, style: parseStyle(kind, item.style), updatedAt })
+    if (presets.length >= MAX_PRESETS) break
+  }
+  return presets
+}
+
+/** An https link or an email address the member typed; null when it's neither. */
+export function supportTarget(value: unknown): { kind: 'email' | 'link'; url: string } | null {
+  if (typeof value !== 'string') return null
+  const text = value.trim()
+  if (!text || text.length > MAX_SUPPORT_LINK || /[\s\0]/.test(text)) return null
+  const email = text.replace(/^mailto:/i, '')
+  if (/^[^@/?#:]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(email)) {
+    return { kind: 'email', url: `mailto:${email}?subject=${encodeURIComponent('CreatorClips support')}` }
+  }
+  try {
+    const url = new URL(text)
+    if (url.protocol !== 'https:' || url.username || url.password || !url.hostname.includes('.')) return null
+    return { kind: 'link', url: url.href }
+  } catch { return null }
+}
+
+/** A support link to save: '' clears it; anything else must be an https link or an email. */
+export function parseSupportLink(value: unknown): string {
+  if (value === '' || (typeof value === 'string' && !value.trim())) return ''
+  if (!supportTarget(value)) throw new Error('Use an https:// link or an email address.')
+  return (value as string).trim()
+}
+
+export function parseMemberPrefs(value: unknown): MemberPrefs {
+  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true }
+  const presets = record(value.presets) ? value.presets : {}
+  return {
+    create: parseCreateStyle(value.create),
+    remix: parseRemixStyle(value.remix),
+    presets: { create: parsePresets('create', presets.create), remix: parsePresets('remix', presets.remix) },
+    supportLink: typeof value.supportLink === 'string' && supportTarget(value.supportLink) ? value.supportLink.trim() : '',
+    notifyOnFinish: value.notifyOnFinish !== false
+  }
+}
+
+/** Library items that still exist; ids pointing anywhere else are dropped from styles. */
+export interface KnownItems { ctaIds: ReadonlySet<string>; avatarIds: ReadonlySet<string>; brandIds: ReadonlySet<string>; backgrounds: ReadonlySet<string> }
+
+function dropMissingFrom<K extends StyleKind>(kind: K, style: Partial<StyleOf<K>>, known: KnownItems): Partial<StyleOf<K>> {
+  const next = { ...style } as Record<string, unknown>
+  if (typeof next.ctaId === 'string' && !known.ctaIds.has(next.ctaId)) next.ctaId = null
+  if (kind === 'create') {
+    if (typeof next.backgroundVideo === 'string' && !known.backgrounds.has(next.backgroundVideo)) next.backgroundVideo = null
+  } else {
+    if (typeof next.avatarId === 'string' && !known.avatarIds.has(next.avatarId)) next.avatarId = null
+    if (typeof next.brandIdentityId === 'string' && !known.brandIds.has(next.brandIdentityId)) next.brandIdentityId = null
+  }
+  return next as Partial<StyleOf<K>>
+}
+
+export function dropMissing(prefs: MemberPrefs, known: KnownItems): MemberPrefs {
+  return {
+    ...prefs,
+    create: dropMissingFrom('create', prefs.create, known),
+    remix: dropMissingFrom('remix', prefs.remix, known),
+    presets: {
+      create: prefs.presets.create.map((preset) => ({ ...preset, style: dropMissingFrom('create', preset.style, known) })),
+      remix: prefs.presets.remix.map((preset) => ({ ...preset, style: dropMissingFrom('remix', preset.style, known) }))
+    }
+  }
+}

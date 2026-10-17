@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, FolderOpen, ImageOff, ListPlus, Megaphone, Play, Send, Trash2, TrendingUp, TriangleAlert, Undo2, Pencil } from 'lucide-react'
+import { Check, FolderOpen, ImageOff, ListPlus, Megaphone, Play, Send, Trash2, TrendingUp, TriangleAlert, Undo2, Pencil, Clapperboard } from 'lucide-react'
 import { cn, formatTimecode, isMac, localFileUrl } from '../lib/utils'
 import { getApi } from '../lib/ipc'
 import { clipFilePath, loadThumbnail } from '../lib/thumbnails'
@@ -40,6 +40,8 @@ interface ClipCardProps {
   onChangeCta?: () => void
   /** Remix videos with saved parts: re-make with new hook text, captions or box size. */
   onEditVideo?: () => void
+  /** Open Remix with this clip's video as the source. */
+  onRemix?: () => void
   actionsDisabled?: boolean
 }
 
@@ -58,6 +60,7 @@ export function ClipCard({
   onDelete,
   onChangeCta,
   onEditVideo,
+  onRemix,
   actionsDisabled
 }: ClipCardProps): React.JSX.Element {
   const filePath = clipFilePath(clip.s3_url)
@@ -224,6 +227,7 @@ export function ClipCard({
               ...(onAddToAutomation ? [{ label: 'Add to automation', icon: <ListPlus className="h-3.5 w-3.5" />, onSelect: onAddToAutomation }] : []),
               ...(onEditVideo ? [{ label: 'Edit hook text & captions', icon: <Pencil className="h-3.5 w-3.5" />, onSelect: onEditVideo }] : []),
               ...(onChangeCta ? [{ label: clip.cta ? 'Change call to action' : 'Add call to action', icon: <Megaphone className="h-3.5 w-3.5" />, onSelect: onChangeCta }] : []),
+              ...(onRemix ? [{ label: 'Remix this clip', icon: <Clapperboard className="h-3.5 w-3.5" />, onSelect: onRemix }] : []),
               ...(onSetPosted && postingStatus && (postingStatus.state !== 'posted' || postingStatus.manuallyPosted) ? [postingStatus.manuallyPosted
                 ? { label: 'Undo manual posted mark', icon: <Undo2 className="h-3.5 w-3.5" />, onSelect: () => { void setPosted(false) } }
                 : { label: 'Mark as posted', icon: <Check className="h-3.5 w-3.5" />, onSelect: () => { void setPosted(true) } }] : []),
