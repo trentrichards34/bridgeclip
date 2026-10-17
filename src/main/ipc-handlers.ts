@@ -40,6 +40,7 @@ import { automationEnhancementGroups, enhanceAutomationBatch, automationContentS
 import { acknowledgeAutomationWarnings, retryAutomationContent, dismissAutomationMetadataError, automationLibraryClip, reorderAutomationContent, reviewAutomationContent, showAutomationContentInFolder } from './automations'
 import { libraryPostingStatus, libraryMetadataSource, enhanceLibraryMetadata } from './library-posting'
 import { libraryPostingSummary } from './library-posting'
+import { readyToPost } from './ready-to-post'
 import { deleteLibraryClips, deleteLibraryRun, setLibraryClipCta, setLibraryFavorite, setLibraryPosted, setRunBusyCheck } from './library-management'
 import {
   cancelZernioConnect,
@@ -458,6 +459,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
 
   handle('history:postingStatus', (_event, outputDir: unknown) => libraryPostingStatus(outputDir))
   handle('history:postingSummary', (_event, outputDirs: unknown) => libraryPostingSummary(outputDirs))
+  handle('history:readyToPost', () => readyToPost())
   handle('history:setPosted', (_event, outputDir: unknown, clipIndex: unknown, posted: unknown) => setLibraryPosted(outputDir, clipIndex, posted))
   handle('history:setFavorite', (_event, outputDir: unknown, favorite: unknown) => setLibraryFavorite(outputDir, favorite))
   handle('history:delete', (_event, outputDir: unknown) => deleteLibraryRun(outputDir))

@@ -213,6 +213,7 @@ test('the native picker authorizes media and shell opening rejects aliased appli
       './zernio/posts': {},
       './automations': {},
       './library-posting': {},
+      './ready-to-post': { readyToPost: async () => ({ clips: [], runs: 0, unreadableRuns: 0, postingHistory: false }) },
       './library-management': { setRunBusyCheck() {} },
       './library-storage': { onOutputFolderChanged() {} },
       './library-folders': { previousOutputFolders: () => [] }

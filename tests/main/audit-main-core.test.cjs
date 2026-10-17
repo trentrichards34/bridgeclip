@@ -70,6 +70,7 @@ function ipcWithLibrary(library) {
     './edit-inspector': {},
     './youtube-preview': {},
     './library-posting': {},
+    './ready-to-post': { readyToPost: async () => ({ clips: [], runs: 0, unreadableRuns: 0, postingHistory: false }) },
     './library-management': { setRunBusyCheck() {} },
     './library-storage': { onOutputFolderChanged() {} },
     './library-folders': { previousOutputFolders: () => [] }

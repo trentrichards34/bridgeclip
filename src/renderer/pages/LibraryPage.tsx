@@ -23,6 +23,7 @@ import { useLibraryMotion } from '../hooks/use-library-motion'
 import { useRunSizes } from '../hooks/use-run-sizes'
 import { FreeUpSpaceButton } from '../components/FreeUpSpaceDialog'
 import { PreviousFolders } from '../components/PreviousFolders'
+import { ReadyToPost } from '../components/ReadyToPost'
 import { Segmented } from '../components/ui/Segmented'
 import { formatBytes } from '../../shared/library-storage'
 import './library.css'
@@ -35,6 +36,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState<{ entry: HistoryEntry; output: JobOutput; clipIndex?: number; earlierFolder?: boolean } | null>(null)
   const [sort, setSort] = useState<'newest' | 'largest'>('newest')
+  const [view, setView] = useState<'runs' | 'ready'>('runs')
   const [storageRevision, setStorageRevision] = useState(0)
   const requestId = useRef(0)
   const openRequestId = useRef(0)
@@ -286,6 +288,18 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
       {configured && postError && <Callout tone="warning" className="mt-4">{postError} Showing saved posting status.</Callout>}
 
       {entries && entries.length > 0 && (
+        <Segmented className="mt-5" label="Library view" value={view} onChange={setView}
+          options={[{ value: 'runs', label: 'Runs' }, { value: 'ready', label: 'Ready to post' }]} />
+      )}
+
+      {view === 'ready' && entries && entries.length > 0 ? (
+        <ReadyToPost onNavigate={onNavigate} onOpenRun={(outputDir) => {
+          const entry = entries.find((item) => item.outputDir === outputDir)
+          if (entry) void openRun(entry)
+          else { setError('This run is no longer in the Library list. Refresh the Library and try again.'); void load() }
+        }} />
+      ) : <>
+      {entries && entries.length > 0 && (
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <TextInput
             className="max-w-sm flex-1 rounded-full"
@@ -365,6 +379,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
         )}
       </div>
       <PreviousFolders revision={storageRevision} onOpen={(entry) => { void openRun(entry, undefined, true) }} onMoved={() => { setStorageRevision((value) => value + 1); void load() }} />
+      </>}
       {confirm && <ConfirmDialog request={confirm} onClose={closeConfirm} />}
     </Page>
   )
