@@ -18,7 +18,8 @@ import type {
   ZernioSyncResult,
   ZernioStatusCheck
 } from '../shared/zernio'
-import type { ClipMediaInfo, PostClipRequest, PostClipResult, PostProgress, PostRecord, PostsRefreshResult, TikTokCreatorInfo, TikTokLegalLink } from '../shared/zernio-posts'
+import type { ClipMediaInfo, PostClipRequest, PostClipResult, PostProgress, PostRecord, PostsRefreshResult, PostStatsRefreshResult, TikTokCreatorInfo, TikTokLegalLink } from '../shared/zernio-posts'
+import type { PostInsights } from '../shared/post-insights'
 import type { ClipJobRequest, JobSnapshot } from '../shared/jobs'
 import type { MetadataEnhancement, AutomationSourceGroup, AutomationBatchResult, AutomationSourceContext, Automation, AutomationUpdate, AutomationTikTokReview, AutomationTikTokReviewUpdate } from '../shared/automations'
 import type { LibraryClipPostingStatus, LibraryEnhancementOptions, LibraryRunPostingCounts } from '../shared/library-posting'
@@ -157,6 +158,8 @@ export interface BridgeClipAPI {
     delete: (id: string) => Promise<Automation[]>
     retryContent: (id: string, contentId: string) => Promise<Automation[]>
     run: (id: string) => Promise<Automation[]>
+    /** Cancels the clip's post scheduled ahead with Zernio and returns it to the front of the queue. */
+    unscheduleContent: (id: string, contentId: string) => Promise<Automation[]>
     addContent: (id: string) => Promise<Automation[]>
     addLibraryClips: (id: string, outputDir: string, clipIndices: number[]) => Promise<Automation[]>
     updateContent: (id: string, contentId: string, update: { title: string; caption: string; returnToQueue?: boolean }) => Promise<Automation[]>
@@ -203,6 +206,10 @@ export interface BridgeClipAPI {
       list: () => Promise<PostRecord[]>
       /** Re-reads posts whose status can still change, a few per call. `force` includes ones refreshed recently. */
       refresh: (force: boolean) => Promise<PostsRefreshResult>
+      /** Fetches views, likes and more from Zernio for published posts, a few at a time and rate-limited. */
+      refreshStats: (force: boolean) => Promise<PostStatsRefreshResult>
+      /** Average views by grade, hook look and caption style, from stats already fetched. */
+      insights: () => Promise<PostInsights>
       cancel: (postId: string) => Promise<PostRecord[]>
       reschedule: (postId: string, scheduledFor: string, timezone: string) => Promise<PostRecord[]>
       retry: (postId: string) => Promise<PostRecord[]>
@@ -437,6 +444,7 @@ const api: BridgeClipAPI = {
     delete: (id) => ipcRenderer.invoke('automations:delete', id),
     retryContent: (id, contentId) => ipcRenderer.invoke('automations:retryContent', id, contentId),
     run: (id) => ipcRenderer.invoke('automations:run', id),
+    unscheduleContent: (id, contentId) => ipcRenderer.invoke('automations:unscheduleContent', id, contentId),
     addContent: (id) => ipcRenderer.invoke('automations:addContent', id),
     addLibraryClips: (id, outputDir, clipIndices) => ipcRenderer.invoke('automations:addLibraryClips', id, outputDir, clipIndices),
     updateContent: (id, contentId, update) => ipcRenderer.invoke('automations:updateContent', id, contentId, update),
@@ -471,6 +479,8 @@ const api: BridgeClipAPI = {
       onProgress: (callback) => subscribe('zernio:postProgress', callback),
       list: () => ipcRenderer.invoke('zernio:posts:list'),
       refresh: (force) => ipcRenderer.invoke('zernio:posts:refresh', force),
+      refreshStats: (force) => ipcRenderer.invoke('zernio:posts:refreshStats', force),
+      insights: () => ipcRenderer.invoke('zernio:posts:insights'),
       cancel: (postId) => ipcRenderer.invoke('zernio:posts:cancel', postId),
       reschedule: (postId, scheduledFor, timezone) => ipcRenderer.invoke('zernio:posts:reschedule', postId, scheduledFor, timezone),
       retry: (postId) => ipcRenderer.invoke('zernio:posts:retry', postId),

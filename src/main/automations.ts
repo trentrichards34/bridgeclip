@@ -12,7 +12,8 @@ import { loadSettings } from './settings-store'
 import { assertMediaPath, authorizeMedia, isWithinDirectory, openAuthorizedMedia } from './security'
 import { getJobOutput } from './file-manager'
 import { getZernioOverview, readCachedOverview } from './zernio/service'
-import { getTikTokCreatorInfo, inspectAutomationPost, probeClipForPosting, publishClip, relinkAutomationPost } from './zernio/posts'
+import { cancelAutomationPost, getPostRecord, getTikTokCreatorInfo, inspectAutomationPost, probeClipForPosting, publishClip, relinkAutomationPost } from './zernio/posts'
+import { upcomingSlots, parseWall, zonedInstant, type UpcomingSlot } from '../shared/schedule-math'
 import type { AutomationReviewResult } from '../shared/automations'
 import { parsePostClipRequest, parseTikTokOptions } from './zernio/posts-payload'
 import { workspaceId } from './zernio/workspace-cache'
@@ -20,7 +21,7 @@ import { logger } from './logger'
 import { generateAutomationMetadata, transcribeAutomationClip, researchAutomationTopic, generateAutomationMetadataBatch, metadataFailureCode, type MetadataBatchClip } from './automation-metadata'
 
 import { completeSourceContext, findLibraryClipForClip, parseSourceContext, recoverSourceContext, sourceFromOutput, sourceResearchKey } from './automation-source'
-import { hasContentWarnings, reorderQueuedContent } from '../shared/automations'
+import { hasContentWarnings, reorderQueuedContent, isScheduledAhead, slotKey, AHEAD_HORIZON_MS, AHEAD_MIN_LEAD_MS, AHEAD_SLOT_COUNT, type AheadSlot } from '../shared/automations'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/
@@ -143,6 +144,14 @@ function validSourceResearchEntry(entry: NonNullable<Automation['sourceResearch'
   } catch { return false }
 }
 
+const SLOT_KEY = /^\d{4}-\d{2}-\d{2}\/(?:[01]\d|2[0-3]):[0-5]\d$/
+
+function validAheadSlot(value: AheadSlot): boolean {
+  return Boolean(value && typeof value === 'object' && typeof value.date === 'string' && typeof value.time === 'string' &&
+    SLOT_KEY.test(`${value.date}/${value.time}`) && typeof value.at === 'string' && value.at.length <= 40 && Number.isFinite(Date.parse(value.at)) &&
+    (value.cancel === undefined || typeof value.cancel === 'boolean'))
+}
+
 /**
  * Optional context attached to an automation or clip. An invalid value is
  * dropped on load rather than making the whole store unreadable; dropping any
@@ -157,6 +166,7 @@ const OPTIONAL_CONTENT_FIELDS: { [K in keyof AutomationContent]?: (value: Automa
   metadataErrorAcknowledged: (value) => value === undefined || typeof value === 'boolean',
   sourceClipPath: (value) => value === undefined || (typeof value === 'string' && value.length <= 8192 && !value.includes('\0')),
   tiktokApproval: (_value, item) => validTikTokApproval(item),
+  aheadSlot: (value) => value == null || validAheadSlot(value),
   tiktokDraftCaption: (value) => value == null || (typeof value === 'string' && !value.includes('\0') && !checkCaption('tiktok', value).error)
 }
 
@@ -169,6 +179,9 @@ function dropInvalidOptionalFields(value: unknown): boolean {
     changed = true
     logger.warn('automation.store.field_dropped', { automationId: typeof automation.id === 'string' ? automation.id.slice(0, 64) : null, contentId: contentId?.slice(0, 64) ?? null, field })
   }
+  if (automation.scheduleAhead !== undefined && typeof automation.scheduleAhead !== 'boolean') { delete automation.scheduleAhead; drop('scheduleAhead') }
+  if (automation.skippedSlots !== undefined && (!Array.isArray(automation.skippedSlots) || automation.skippedSlots.length > 50 ||
+      !automation.skippedSlots.every((key) => typeof key === 'string' && SLOT_KEY.test(key)))) { delete automation.skippedSlots; drop('skippedSlots') }
   if (automation.sourceResearch !== undefined) {
     if (!Array.isArray(automation.sourceResearch)) { delete automation.sourceResearch; drop('sourceResearch') }
     else {
@@ -340,7 +353,9 @@ function validatedUpdate(raw: unknown): AutomationUpdate {
     const settings = loadSettings()
     if (!settings.openrouterApiKey) throw new Error('Add an OpenRouter API key in Settings before enabling automatic metadata.')
   }
-  return { name, enabled: value.enabled, profileId: value.profileId, metadataMode: value.metadataMode, accounts, times, timezone: value.timezone, youtubeVisibility: value.youtubeVisibility, youtubeMadeForKids: value.youtubeMadeForKids }
+  if (value.scheduleAhead !== undefined && typeof value.scheduleAhead !== 'boolean') throw new Error('Invalid automation settings')
+  return { name, enabled: value.enabled, profileId: value.profileId, metadataMode: value.metadataMode, accounts, times, timezone: value.timezone, youtubeVisibility: value.youtubeVisibility, youtubeMadeForKids: value.youtubeMadeForKids,
+    ...(value.scheduleAhead !== undefined ? { scheduleAhead: value.scheduleAhead } : {}) }
 }
 
 function checkProfileAccounts(overview: ZernioOverview, profileId: string, accounts: AutomationAccount[]): void {
@@ -472,13 +487,26 @@ export async function updateAutomation(id: unknown, raw: unknown): Promise<Autom
         JSON.stringify(update.accounts.filter((account) => account.platform === 'tiktok').map((account) => account.accountId).sort())) {
       for (const item of automation.content) if (item.status !== 'posted') clearTikTokReview(item)
     }
+    // Posts already handed to Zernio follow the old settings: mark them for
+    // cancellation before saving, so a crash can't leave them unmarked.
+    const postsChange = !update.enabled || (update.scheduleAhead ?? automation.scheduleAhead) !== true ||
+      automation.profileId !== update.profileId || automation.metadataMode !== update.metadataMode ||
+      JSON.stringify(automation.accounts) !== JSON.stringify(update.accounts) ||
+      automation.youtubeVisibility !== update.youtubeVisibility || automation.youtubeMadeForKids !== update.youtubeMadeForKids
     Object.assign(automation, update, { lastSlots: Object.fromEntries(Object.entries(automation.lastSlots).filter(([time]) => update.times.includes(time))) })
+    const now = Date.now()
+    for (const item of automation.content) {
+      if (item.aheadSlot && isScheduledAhead(item, now) && (postsChange || !aheadSlotStillValid(automation, item.aheadSlot))) item.aheadSlot = { ...item.aheadSlot, cancel: true }
+    }
     save(workspace)
   } catch (error) {
     Object.assign(automation, previous)
     for (const [contentId, review] of previousReviews) if (review) reviews.set(contentId, review)
     throw error
   }
+  aheadDirty.add(automation.id)
+  // Cancel right away when possible; a failure is retried by the scheduler.
+  await settleAheadCancels(automation.id).catch(() => {})
   return listAutomations()
 }
 
@@ -493,6 +521,9 @@ function forgetBankItems(workspace: string, automationId: string, items: readonl
 export function deleteAutomation(id: unknown): Automation[] {
   const { workspace, automation } = find(id)
   if (busy.has(automation.id)) throw new Error('Wait for the current post to finish.')
+  if (automation.content.some((item) => isScheduledAhead(item, Date.now()))) {
+    throw new Error('This automation has posts scheduled with Zernio. Pause it first so they are cancelled, then delete it.')
+  }
   const previous = cached
   cached = cached.filter((item) => item.id !== automation.id)
   // A failed save keeps the automation, so the UI and the scheduler still see it.
@@ -590,7 +621,8 @@ export async function addAutomationContent(id: unknown, paths: string[], titles?
 function pruneHistory(content: readonly AutomationContent[]): AutomationContent[] {
   const excess = content.length - MAX_TOTAL_CONTENT
   if (excess <= 0) return []
-  return content.filter((item) => item.status === 'posted')
+  // A clip scheduled ahead covers its slot until it comes, so it is never pruned before then.
+  return content.filter((item) => item.status === 'posted' && !item.aheadSlot)
     .sort((a, b) => (a.postedAt ?? a.addedAt).localeCompare(b.postedAt ?? b.addedAt))
     .slice(0, excess)
 }
@@ -611,6 +643,7 @@ export function updateAutomationContent(id: unknown, contentId: unknown, raw: un
   if (!item || !raw || typeof raw !== 'object') throw new Error('Clip not found')
   if (item.status === 'posting' || busy.has(automation.id)) throw new Error('Wait for the current post to finish.')
   if (item.metadataDraft) throw new Error('Apply or discard the enhanced draft before editing this clip.')
+  if (isScheduledAhead(item, Date.now())) throw new Error('This clip is scheduled with Zernio. Unschedule it first, then edit it.')
   const update = raw as { title?: unknown; caption?: unknown; returnToQueue?: unknown }
   if (typeof update.title !== 'string' || !update.title.trim() || update.title.length > 500 ||
       typeof update.caption !== 'string' || update.caption.length > 63_206) throw new Error('Enter a title and caption within the allowed lengths.')
@@ -631,6 +664,7 @@ export function updateAutomationContent(id: unknown, contentId: unknown, raw: un
     // The old request ID stays in the attempt journal. Only a person who has
     // checked Zernio may authorize a new post after an uncertain response.
     item.postingAttemptId = randomUUID()
+    item.aheadSlot = null
     clearTikTokReview(item)
     item.status = 'queued'
     item.error = null
@@ -677,6 +711,7 @@ export async function reviewAutomationContent(id: unknown, contentId: unknown, r
       message = 'This post may have published to some accounts, or its status is incomplete. Check Posts and retry only failed accounts there.'
     } else if (returnToQueue) {
       item.postingAttemptId = randomUUID()
+      item.aheadSlot = null
       item.postId = null
       item.postedAt = null
       item.status = 'queued'
@@ -702,6 +737,7 @@ export function removeAutomationContent(id: unknown, contentId: unknown): Automa
   const item = automation.content.find((content) => content.id === contentId)
   if (!item) throw new Error('Clip not found')
   if (item.status === 'posting' || busy.has(automation.id)) throw new Error('Wait for the current post to finish.')
+  if (isScheduledAhead(item, Date.now())) throw new Error('This clip is scheduled with Zernio. Unschedule it first, then remove it.')
   // Removing never re-queues anything. Submitted and held clips leave the
   // bank as history; their posts stay in Zernio and in Posts.
   const previous = automation.content
@@ -1120,8 +1156,19 @@ export async function retryAutomationContent(id: unknown, contentId: unknown): P
 }
 
 export async function runAutomation(id: unknown, slot?: { time: string; date: string }, contentId?: string): Promise<Automation[]> {
+  return postNext(id, slot, contentId)
+}
+
+/**
+ * Posts the next clip now (a due slot, Run now or a retry), or, with `ahead`,
+ * hands it to Zernio as a post scheduled for that upcoming slot.
+ */
+async function postNext(id: unknown, slot?: { time: string; date: string }, contentId?: string, ahead?: UpcomingSlot): Promise<Automation[]> {
   const { workspace, automation } = find(id)
-  if (slot && (!automation.enabled || automation.lastSlots[slot.time] === slot.date)) return listAutomations()
+  if (slot) reconcileAhead(workspace, automation, Date.now())
+  if (slot && (!automation.enabled || automation.lastSlots[slot.time] === slot.date || slotCovered(automation, slot))) return listAutomations()
+  if (ahead && (busy.has(automation.id) || !automation.enabled || automation.scheduleAhead !== true || slotCovered(automation, ahead) ||
+      automation.lastSlots[ahead.time] === ahead.date || !automation.profileId || automation.accounts.length === 0)) return listAutomations()
   if (busy.has(automation.id)) {
     // Keep a due slot instead of dropping it; release() runs it next.
     if (slot) {
@@ -1132,7 +1179,10 @@ export async function runAutomation(id: unknown, slot?: { time: string; date: st
     }
     return listAutomations()
   }
-  const item = contentId === undefined ? nextAutomationContent(automation) : automation.content.find((entry) => entry.id === contentId)
+  const item = contentId !== undefined ? automation.content.find((entry) => entry.id === contentId)
+    : ahead ? nextAheadContent(automation) : nextAutomationContent(automation)
+  // Nothing ready to hand over yet: the slot stays with the app, which warns when it comes due.
+  if (ahead && !item) return listAutomations()
   if (!item) {
     const queued = automation.content.filter((content) => content.status === 'queued')
     const message = queued.some((content) => content.metadataDraft) ? DRAFTS_PENDING : queued.length ? TIKTOK_REVIEW_PENDING : NO_QUEUED_CLIPS
@@ -1182,7 +1232,7 @@ export async function runAutomation(id: unknown, slot?: { time: string; date: st
       targets: automation.accounts.map((account) => {
         const caption = account.platform === 'tiktok' ? item.tiktokApproval?.caption : generated?.find((post) => post.platform === account.platform)?.caption
         return { ...account, ...(caption ? { customContent: caption } : {}) }
-      }), timing: { mode: 'now' },
+      }), timing: ahead ? { mode: 'schedule', scheduledFor: ahead.at, timezone: automation.timezone } : { mode: 'now' },
       options: {
         tiktok: automation.accounts.some((account) => account.platform === 'tiktok') ? item.tiktokApproval?.options : undefined,
         youtube: automation.accounts.some((account) => account.platform === 'youtube')
@@ -1195,10 +1245,17 @@ export async function runAutomation(id: unknown, slot?: { time: string; date: st
       }
     }
     parsePostClipRequest(request)
+    if (ahead) {
+      // Re-checked after the awaits above: the slot must still be free and far enough out.
+      if (slotCovered(automation, ahead) || automation.lastSlots[ahead.time] === ahead.date || !automation.enabled || automation.scheduleAhead !== true ||
+          Date.parse(ahead.at) - Date.now() < AHEAD_MIN_LEAD_MS / 3 || item.status !== 'queued') return listAutomations()
+      // Recorded before the request, so a crash mid-request still covers the slot.
+      item.aheadSlot = { time: ahead.time, date: ahead.date, at: ahead.at }
+    }
     item.status = 'posting'
     item.error = null
     automation.lastRunAt = new Date().toISOString()
-    automation.lastError = null
+    if (!ahead) automation.lastError = null
     save(workspace)
     const result = await publishClip(request, (progress) => {
       if (progress.phase === 'publishing') submissionStarted = true
@@ -1207,18 +1264,25 @@ export async function runAutomation(id: unknown, slot?: { time: string; date: st
     item.postId = result.post?.id ?? null
     if (result.post && !['failed', 'duplicate', 'partial'].includes(result.outcome)) {
       item.status = 'posted'
-      item.postedAt = new Date().toISOString()
+      // A post scheduled ahead counts as submitted when its slot comes (reconcileAhead).
+      item.postedAt = ahead ? null : new Date().toISOString()
+      if (ahead) logger.info('automation.ahead.scheduled', { automationId: automation.id, contentId: item.id })
     } else {
       item.status = 'needs_review'
       item.error = result.outcome === 'partial' ? 'Some accounts failed. Check Posts before returning this clip to the queue.' : result.message
+      // Zernio answered that nothing was scheduled: the slot is free again.
+      if (ahead && result.outcome === 'failed') item.aheadSlot = null
       automation.lastError = item.error
       automation.lastErrorAcknowledged = false
       item.warningsAcknowledged = false
     }
     save(workspace)
   } catch (error) {
+    if (ahead) aheadBackoff.set(automation.id, Date.now() + AHEAD_RETRY_MS)
     if (currentWorkspace() === workspace && cached.includes(automation)) {
       const message = error instanceof Error ? error.message.slice(0, 500) : 'Posting failed. Check Zernio before retrying.'
+      // Nothing reached Zernio: the clip goes back to the queue and frees the slot.
+      if (ahead && item.status === 'posting' && !submissionStarted) item.aheadSlot = null
       // A changed file revokes the exact TikTok review before any upload. Let
       // a fresh review use this due slot; keep reservations for other failures.
       if (slot && hadTikTokApproval && item.tiktokApproval == null && item.status === 'queued' &&
@@ -1237,12 +1301,165 @@ export async function runAutomation(id: unknown, slot?: { time: string; date: st
   return listAutomations()
 }
 
+// ---- Scheduling ahead with Zernio -------------------------------------------
+// With scheduleAhead on, the next few daily slots are created in Zernio as
+// scheduled posts, so they publish even when CreatorClips is closed. Each
+// clip records the slot it covers (aheadSlot) before the request is sent, so
+// a slot is never posted twice: the in-app runner skips covered slots, and a
+// crash mid-request leaves the slot covered and the clip held for review.
+
+/** Automations whose Zernio schedule should be checked on the next tick. */
+const aheadDirty = new Set<string>()
+const lastAheadSync = new Map<string, number>()
+/** After a failed hand-over, wait before trying that automation again. */
+const aheadBackoff = new Map<string, number>()
+/** Clips just unscheduled by a person: not handed over again for a while, so they can be edited. */
+const aheadHold = new Map<string, number>()
+const AHEAD_SYNC_EVERY_MS = 5 * 60_000
+const AHEAD_RETRY_MS = 30 * 60_000
+const AHEAD_HOLD_MS = 30 * 60_000
+
+function slotCovered(automation: Automation, slot: { date: string; time: string }): boolean {
+  const key = slotKey(slot)
+  return automation.content.some((item) => item.aheadSlot && slotKey(item.aheadSlot) === key) || Boolean(automation.skippedSlots?.includes(key))
+}
+
+function nextAheadContent(automation: Automation): AutomationContent | undefined {
+  const now = Date.now()
+  const held = (item: AutomationContent): boolean => (aheadHold.get(item.id) ?? 0) > now
+  // Same order as nextAutomationContent; a clip that failed waits for the app to retry it.
+  return nextAutomationContent({ ...automation, content: automation.content.filter((item) => !held(item) && !item.error) })
+}
+
+/** Whether a slot handed to Zernio still matches the automation's times and time zone. */
+function aheadSlotStillValid(automation: Pick<Automation, 'times' | 'timezone'>, slot: AheadSlot): boolean {
+  if (!automation.times.includes(slot.time)) return false
+  const wall = parseWall(slot.date, slot.time)
+  const at = wall ? zonedInstant(wall, automation.timezone, 'skip') : null
+  return at !== null && at === Date.parse(slot.at)
+}
+
+/**
+ * Brings clips scheduled ahead up to date with time and with Zernio's post:
+ * a slot that has come counts as submitted, and a post cancelled outside the
+ * automation (Posts page, Zernio dashboard) returns its clip to the queue and
+ * leaves that slot empty. Saves when anything changed.
+ */
+function reconcileAhead(workspace: string, automation: Automation, now: number): void {
+  let changed = false
+  for (const item of automation.content) {
+    const slot = item.aheadSlot
+    if (!slot || item.status === 'posting') continue
+    const record = item.postId ? getPostRecord(item.postId) : null
+    if (item.status === 'posted' && !slot.cancel && record && (record.status === 'cancelled' || record.status === 'missing') && Date.parse(slot.at) > now) {
+      automation.skippedSlots = [...(automation.skippedSlots ?? []).filter((key) => key !== slotKey(slot)), slotKey(slot)].slice(-50)
+      Object.assign(item, { status: 'queued', postId: null, postedAt: null, aheadSlot: null, error: null })
+      changed = true
+      logger.info('automation.ahead.cancelled_elsewhere', { automationId: automation.id, contentId: item.id })
+      continue
+    }
+    if (Date.parse(slot.at) > now) continue
+    // The slot has come: Zernio published (or tried) at that time.
+    if (!(automation.lastSlots[slot.time] > slot.date)) automation.lastSlots[slot.time] = slot.date
+    if (item.status === 'posted') item.postedAt ??= slot.at
+    item.aheadSlot = null
+    changed = true
+  }
+  const cutoff = new Date(now - 2 * 86_400_000).toISOString().slice(0, 10)
+  const skipped = automation.skippedSlots?.filter((key) => key.slice(0, 10) >= cutoff)
+  if (skipped && skipped.length !== automation.skippedSlots!.length) { automation.skippedSlots = skipped; changed = true }
+  if (changed) save(workspace)
+}
+
+/** Cancels the Zernio posts marked for cancellation. Throws the first failure after trying them all. */
+async function settleAheadCancels(id: string): Promise<void> {
+  const { workspace, automation } = find(id)
+  const pending = automation.content.filter((item) => item.aheadSlot?.cancel && item.status === 'posted')
+  if (!pending.length || busy.has(automation.id)) return
+  busy.add(automation.id)
+  let failure: unknown = null
+  try {
+    for (const item of pending) {
+      if (!item.postId) { Object.assign(item, { status: 'queued', aheadSlot: null, postedAt: null }); save(workspace); continue }
+      try {
+        const outcome = await cancelAutomationPost(item.postId)
+        if (currentWorkspace() !== workspace || !cached.includes(automation)) return
+        if (outcome === 'cancelled') {
+          // Zernio confirmed nothing will post, so this clip's upload and attempt can be reused.
+          Object.assign(item, { status: 'queued', postId: null, postedAt: null, aheadSlot: null, error: null })
+        } else if (item.aheadSlot) {
+          // Already publishing: it counts as posted in its slot.
+          item.aheadSlot = { ...item.aheadSlot, cancel: false }
+        }
+        save(workspace)
+      } catch (error) {
+        failure ??= error
+      }
+    }
+    if (failure) {
+      const when = pending.find((item) => item.aheadSlot?.cancel)?.aheadSlot
+      automation.lastError = `Couldn’t cancel a post scheduled with Zernio${when ? ` for ${new Date(when.at).toLocaleString('en-US', { timeZone: automation.timezone, weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : ''}. CreatorClips will keep trying; you can also cancel it on the Posts page.`
+      automation.lastErrorAcknowledged = false
+      save(workspace)
+      throw failure
+    }
+  } finally { release(automation.id) }
+}
+
+/**
+ * Makes Zernio's scheduled posts match the automation: cancels the ones
+ * marked for cancellation, then hands over the next free slots (up to
+ * AHEAD_SLOT_COUNT within AHEAD_HORIZON_MS). Safe to call at any time: it
+ * never posts a slot twice and does nothing while another task runs.
+ */
+export async function syncAutomationSchedule(id: unknown): Promise<Automation[]> {
+  const { workspace, automation } = find(id)
+  if (busy.has(automation.id)) return listAutomations()
+  lastAheadSync.set(automation.id, Date.now())
+  aheadDirty.delete(automation.id)
+  reconcileAhead(workspace, automation, Date.now())
+  try { await settleAheadCancels(automation.id) } catch { return listAutomations() }
+  if (!automation.enabled || automation.scheduleAhead !== true || !loadSettings().zernioApiKey) return listAutomations()
+  if ((aheadBackoff.get(automation.id) ?? 0) > Date.now()) return listAutomations()
+  const now = Date.now()
+  const slots = upcomingSlots(automation.times, automation.timezone, now, AHEAD_SLOT_COUNT, AHEAD_HORIZON_MS)
+    .filter((slot) => Date.parse(slot.at) - now >= AHEAD_MIN_LEAD_MS)
+  for (const slot of slots) {
+    if (currentWorkspace() !== workspace || !cached.includes(automation)) break
+    if (slotCovered(automation, slot) || automation.lastSlots[slot.time] === slot.date) continue
+    const before = automation.content.filter((item) => item.aheadSlot).length
+    await postNext(automation.id, undefined, undefined, slot)
+    // Stop at the first slot that couldn't be handed over (nothing ready, or a failure).
+    if (automation.content.filter((item) => item.aheadSlot).length === before) break
+  }
+  return listAutomations()
+}
+
+/** Cancels one clip's post scheduled ahead and returns the clip to the queue, held from scheduling for a while so it can be edited. */
+export async function unscheduleAutomationContent(id: unknown, contentId: unknown): Promise<Automation[]> {
+  const { workspace, automation } = find(id)
+  const item = automation.content.find((entry) => entry.id === contentId)
+  if (!item || !item.aheadSlot || !isScheduledAhead(item, Date.now())) throw new Error('This clip isn’t scheduled with Zernio.')
+  if (busy.has(automation.id)) throw new Error('Wait for the current operation to finish.')
+  const previous = item.aheadSlot
+  item.aheadSlot = { ...item.aheadSlot, cancel: true }
+  try { save(workspace) } catch (error) { item.aheadSlot = previous; throw error }
+  aheadHold.set(item.id, Date.now() + AHEAD_HOLD_MS)
+  await settleAheadCancels(automation.id)
+  return listAutomations()
+}
+
 export function startAutomationScheduler(): () => void {
   const tick = (): void => {
     try {
       if (!loadSettings().zernioApiKey) return
       const now = Date.now()
       for (const automation of listAutomations()) {
+        // Pending cancellations are retried even for paused automations.
+        const wantsSync = (automation.enabled && automation.scheduleAhead === true) || automation.content.some((item) => item.aheadSlot?.cancel)
+        if (wantsSync && (aheadDirty.has(automation.id) || now - (lastAheadSync.get(automation.id) ?? 0) >= AHEAD_SYNC_EVERY_MS)) {
+          void syncAutomationSchedule(automation.id).catch((error) => logger.warn('automation.ahead.failed', { message: error instanceof Error ? error.message : 'Unknown error' }))
+        }
         if (!automation.enabled) continue
         // Distinct automations can post together; one slow upload must not delay another account's slot.
         void (async () => {

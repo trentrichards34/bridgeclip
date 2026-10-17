@@ -341,7 +341,44 @@ export interface YouTubePostOptions {
   tags?: string[]
 }
 
+// ---- First comment ----------------------------------------------------------
+
+/**
+ * Platforms where Zernio posts `platformSpecificData.firstComment` right after
+ * publishing (Zernio API reference: FacebookPlatformData, InstagramPlatformData,
+ * LinkedInPlatformData, ThreadsPlatformData, YouTubePlatformData). TikTok and X
+ * have no first-comment option.
+ */
+export const FIRST_COMMENT_PLATFORMS: readonly ZernioPlatform[] = ['instagram', 'facebook', 'youtube', 'linkedin', 'threads']
+/** Threads' 500-character post limit is the tightest of these; one cap keeps the field simple. */
+export const FIRST_COMMENT_MAX = 500
+
+export function supportsFirstComment(platform: string): boolean {
+  return (FIRST_COMMENT_PLATFORMS as readonly string[]).includes(platform)
+}
+
+/**
+ * The comment-keyword call to action Remix writes into a post caption
+ * ("Comment SALES and I'll send you the checklist."), or null when the
+ * caption has none. See ctaLine in remix.ts.
+ */
+export function keywordCtaLine(caption: string): string | null {
+  for (const line of caption.split(/\r?\n/)) {
+    const match = /\bComment [A-Z0-9][A-Z0-9-]{1,19} and I['’]ll send you\b[^\n]*/.exec(line)
+    if (match) return match[0].trim().slice(0, FIRST_COMMENT_MAX)
+  }
+  return null
+}
+
+export function firstCommentError(value: string): string | null {
+  if (value.includes('\0')) return 'The first comment contains an invalid character.'
+  if (captionLength(value) > FIRST_COMMENT_MAX) return `Keep the first comment to ${FIRST_COMMENT_MAX} characters.`
+  return null
+}
+
 export interface PostOptions {
+  /** Posted as the first comment on platforms in FIRST_COMMENT_PLATFORMS. */
+  firstComment?: string
   tiktok?: TikTokPostOptions
   youtube?: YouTubePostOptions
   instagram?: { shareToFeed: boolean }
@@ -409,6 +446,86 @@ export interface PostRecord {
   /** When the clip reached Zernio's storage; bounds rescheduling (7-day retention). */
   uploadedAt: string
   refreshedAt: string | null
+  /** Views, likes and more from Zernio's GET /v1/analytics, when fetched. */
+  stats?: PostStats | null
+}
+
+// ---- Post performance (GET /v1/analytics?postId=) ---------------------------
+
+/** Counts Zernio reports for a post. Null means the platform didn't report it. */
+export interface PostMetrics {
+  views: number | null
+  likes: number | null
+  comments: number | null
+  shares: number | null
+  saves: number | null
+  impressions: number | null
+  reach: number | null
+}
+
+export const POST_METRIC_KEYS = ['views', 'likes', 'comments', 'shares', 'saves', 'impressions', 'reach'] as const satisfies readonly (keyof PostMetrics)[]
+
+export type StatsSyncStatus = 'synced' | 'pending' | 'partial' | 'unavailable'
+
+export interface PostTargetStats {
+  platform: string
+  accountId: string | null
+  syncStatus: StatsSyncStatus
+  metrics: PostMetrics | null
+  /** Why stats are missing for this account, from Zernio, sanitized. */
+  message: string | null
+}
+
+export interface PostStats {
+  /** When CreatorClips last asked Zernio. */
+  fetchedAt: string
+  /** Zernio's own "last updated" time for the numbers, when it sent one. */
+  updatedAt: string | null
+  syncStatus: StatsSyncStatus
+  /** Totals across accounts, as Zernio adds them up. Null until Zernio has numbers. */
+  total: PostMetrics | null
+  targets: PostTargetStats[]
+  message: string | null
+}
+
+export interface PostStatsRefreshResult {
+  posts: PostRecord[]
+  /** Set when stats could not be fetched; the list is still usable. */
+  error: string | null
+  /** True when Zernio said this workspace can't read analytics. */
+  unavailable: boolean
+}
+
+export function formatCount(value: number): string {
+  if (value < 1000) return String(Math.round(value))
+  if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0).replace(/\.0$/, '')}K`
+  return `${(value / 1_000_000).toFixed(value < 10_000_000 ? 1 : 0).replace(/\.0$/, '')}M`
+}
+
+/** "1.2K views · 85 likes · 4 comments", from the counts Zernio reported. Null when there are none. */
+export function statsLine(metrics: PostMetrics | null | undefined): string | null {
+  if (!metrics) return null
+  const parts: string[] = []
+  const add = (value: number | null, one: string, many: string): void => {
+    if (value !== null) parts.push(`${formatCount(value)} ${value === 1 ? one : many}`)
+  }
+  add(metrics.views, 'view', 'views')
+  add(metrics.likes, 'like', 'likes')
+  add(metrics.comments, 'comment', 'comments')
+  add(metrics.shares, 'share', 'shares')
+  return parts.length ? parts.join(' · ') : null
+}
+
+/** Adds counts from several posts; a metric stays null only when no post reported it. */
+export function sumMetrics(list: (PostMetrics | null | undefined)[]): PostMetrics | null {
+  const present = list.filter((item): item is PostMetrics => Boolean(item))
+  if (!present.length) return null
+  const total = {} as PostMetrics
+  for (const key of POST_METRIC_KEYS) {
+    const values = present.map((item) => item[key]).filter((value): value is number => value !== null)
+    total[key] = values.length ? values.reduce((a, b) => a + b, 0) : null
+  }
+  return total
 }
 
 export type PostOutcome = 'published' | 'scheduled' | 'partial' | 'failed' | 'retrying' | 'publishing' | 'duplicate'

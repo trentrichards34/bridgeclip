@@ -1,5 +1,5 @@
 import type { AutomationAccount, AutomationSourceContext } from './automations'
-import type { FacebookFormat, PostRecord } from './zernio-posts'
+import { sumMetrics, type FacebookFormat, type PostMetrics, type PostRecord } from './zernio-posts'
 
 export interface LibraryClipTarget { outputDir: string; clipIndex: number }
 
@@ -9,6 +9,8 @@ export interface LibraryClipPostingStatus {
   clipIndex: number
   state: LibraryPostingState
   platforms: string[]
+  /** Counts Zernio reported across this clip's posts, when any were fetched. */
+  stats?: { metrics: PostMetrics; posts: number; fetchedAt: string } | null
 }
 /** Posted and not-posted clip counts for one run; null when the run could not be checked. */
 export interface LibraryRunPostingCounts { outputDir: string; counts: { posted: number; notPosted: number } | null }
@@ -31,7 +33,10 @@ export function clipPostingStatus(clipIndex: number, posts: PostRecord[]): Libra
     : posts.some((post) => post.status === 'publishing') ? 'publishing'
     : posts.some((post) => post.status === 'draft' || post.targets.some((target) => target.inbox && target.status === 'published')) ? 'draft'
     : posts.some((post) => post.status === 'failed') ? 'failed' : 'not_posted'
-  return { clipIndex, state, platforms }
+  const withStats = posts.filter((post) => post.stats?.total)
+  const metrics = sumMetrics(withStats.map((post) => post.stats!.total))
+  const fetchedAt = withStats.map((post) => post.stats!.fetchedAt).sort().pop()
+  return { clipIndex, state, platforms, ...(metrics && fetchedAt ? { stats: { metrics, posts: withStats.length, fetchedAt } } : {}) }
 }
 
 export const LIBRARY_POSTING_LABELS: Record<LibraryPostingState, string> = {
