@@ -648,7 +648,11 @@ export function framingProblem(output: JobOutput, vertical: boolean): string | n
 }
 
 export function sourceAnalysisNotice(output: JobOutput): string | null {
-  if (output.metrics?.planning_source !== 'visual') return null
+  // More clips that couldn't use the saved transcript.
+  const requested = output.metrics?.requested_settings as { more_clips?: unknown } | undefined
+  const retranscribed = requested?.more_clips === true && output.metrics?.transcript_reused === false
+    ? 'The saved transcript didn’t match this video or the part of it this run looked at, so the video was transcribed again.' : null
+  if (output.metrics?.planning_source !== 'visual') return retranscribed
   if (output.metrics.transcription_status === 'no_speech') {
     return 'No speech was detected. Clips were selected from sampled video frames, and spoken-word captions are unavailable for this run.'
   }

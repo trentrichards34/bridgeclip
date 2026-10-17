@@ -209,7 +209,7 @@ test('more clips: the member’s choices replace count, length, quality bar, cli
   }
 })
 
-function startHarness(lib) {
+function startHarness(lib, brands = { brandForJob: () => null }) {
   const progress = loadShared('job-progress')
   const starts = []
   const runner = {
@@ -231,7 +231,7 @@ function startHarness(lib) {
     './settings-store': settings, './file-manager': { ensureOutputDir: () => {} }, './pipeline-runner': runner, './run-history': runHistory,
     './job-manager': manager, './logger': logger, './security': { ...security, authorizeMedia: (p) => { authorized.push(p); return p } },
     './network-policy': { assertPublicWebUrl: async () => {} }, './validation': validation, './openrouter-models': { resolveAdvancedModels: async () => ({}) },
-    './tools': { supportsCaptionFilter: async () => true }, './brands': { brandForJob: () => null }, './more-clips': loadMain('more-clips.ts', {
+    './tools': { supportsCaptionFilter: async () => true }, './brands': brands, './more-clips': loadMain('more-clips.ts', {
       './settings-store': settings, './security': security, './validation': validation,
       './file-manager': { getJobOutput: async (run) => { try { return jobOutput.parseJobOutput(JSON.parse(fs.readFileSync(path.join(run, 'job_output.json'), 'utf8'))) } catch { return null } } }
     })
@@ -281,4 +281,76 @@ test('more clips start: the reuse plan rides along to the runner and a local sou
   assert.equal(saved.excludedRangesMs.length, 3)
   assert.equal(saved.request.reuseFrom, RUN)
   assert.match((await start.startMoreClips(path.join(lib, RUN), { autoClipCount: 'x' })).error, /Invalid options/)
+})
+
+test('more clips: an earlier run on part of the video is marked, so an older transcript isn’t reused for more', async () => {
+  const lib = library()
+  makeRun(lib, { request: { ...BASE, startTimeSeconds: 30, endTimeSeconds: 120 } })
+  const more = moreClipsModule(lib)
+  assert.equal((await more.resolveReuse(RUN, BASE.videoUrl)).transcriptPartial, true)
+  makeRun(lib)
+  assert.equal((await more.resolveReuse(RUN, BASE.videoUrl)).transcriptPartial, false)
+  // Runs from before settings were saved: the analyzed length tells.
+  const output = (analyzed) => jobOutput.parseJobOutput({ clips: [], source_video_duration_seconds: 300, metrics: { analysis_duration_seconds: analyzed } })
+  assert.equal(more.earlierRangeWasPartial(output(90), null), true)
+  assert.equal(more.earlierRangeWasPartial(output(299.5), null), false)
+  assert.equal(more.earlierRangeWasPartial(jobOutput.parseJobOutput({ clips: [], source_video_duration_seconds: 300, metrics: {} }), null), false)
+})
+
+test('more clips: the plan is checked again when a queued run starts', async () => {
+  const lib = library()
+  const file = path.join(lib, 'source.mp4')
+  fs.writeFileSync(file, 'video')
+  const run = makeRun(lib, { videoUrl: file, request: { ...BASE, videoUrl: file }, editorSource: true })
+  const keptCopy = path.join(run, 'editor-source.mp4')
+  const more = moreClipsModule(lib)
+  const plan = await more.resolveReuse(RUN, file)
+  assert.equal(plan.source, 'original')
+  assert.deepEqual(plain(more.refreshReusePlan(plan, file)), plain({ plan }))
+  // The original went while the run waited: the kept copy is used, with the earlier title.
+  fs.rmSync(file)
+  const kept = more.refreshReusePlan(plan, file)
+  assert.equal(kept.plan.source, 'kept')
+  assert.equal(kept.plan.sourcePath, keptCopy)
+  assert.equal(kept.plan.sourceMeta.title, 'The talk')
+  // Neither: a clear error.
+  fs.rmSync(keptCopy)
+  assert.match(more.refreshReusePlan(plan, file).error, /no longer on this computer/)
+  // The kept copy went but the original is back: the original is used.
+  fs.writeFileSync(file, 'video')
+  const original = more.refreshReusePlan({ ...plan, source: 'kept', sourcePath: keptCopy }, file)
+  assert.equal(original.plan.source, 'original')
+  assert.equal(original.plan.sourcePath, null)
+  // A link whose kept copy went is downloaded again.
+  const linked = more.refreshReusePlan({ ...plan, source: 'kept', sourcePath: keptCopy }, BASE.videoUrl)
+  assert.equal(linked.plan.source, 'download')
+  assert.equal(linked.plan.sourcePath, null)
+})
+
+test('more clips: a brand deleted since the earlier run is dropped with a note', () => {
+  const lib = library()
+  const more = moreClipsModule(lib)
+  const request = { ...BASE, brandIdentityId: 'a1b2c3d4e5f60718', showHandle: true }
+  assert.deepEqual(plain(more.withoutMissingBrand(request, () => true)), { request: plain(request), note: null })
+  const dropped = more.withoutMissingBrand(request, () => false)
+  assert.equal(dropped.request.brandIdentityId, undefined)
+  assert.equal(dropped.request.showHandle, undefined)
+  assert.match(dropped.note, /deleted.*no brand/)
+  assert.doesNotThrow(() => validation.validateJobConfig(dropped.request))
+})
+
+test('more clips start: a deleted brand is left out with a note instead of failing', async () => {
+  const lib = library()
+  makeRun(lib, { request: { ...BASE, brandIdentityId: 'a1b2c3d4e5f60718', showHandle: true } })
+  const { start, starts } = startHarness(lib, { brandForJob: () => { throw new Error('That brand identity was deleted. Choose another brand, or no brand, and start again.') } })
+  const info = await start.moreClipsInfo(path.join(lib, RUN))
+  assert.match(info.note, /deleted/)
+  assert.equal(info.request.brandIdentityId, undefined)
+  const result = await start.startMoreClips(path.join(lib, RUN), { autoClipCount: true, maxClips: null, durationRanges: null, qualityBar: 'b' })
+  assert.ok(result.jobId, result.error)
+  assert.match(result.note, /no brand/)
+  assert.equal(starts[0].config.brandIdentityId, undefined)
+  assert.equal(starts[0].config.showHandle, undefined)
+  // A new Create run with that brand still can't start.
+  assert.ok((await start.startClipJobRequest({ ...BASE, brandIdentityId: 'a1b2c3d4e5f60718' })).error)
 })

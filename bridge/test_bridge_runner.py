@@ -111,8 +111,9 @@ class BridgeTests(unittest.TestCase):
             with open(kept, "w") as handle:
                 handle.write("x")
             ok = bridge.validate_config(self.config(reuse_transcript_path=transcript, exclude_ranges_ms=[[0, 30000], [60000, 90000]],
-                                                    reuse_expected_duration_seconds=300.5))
+                                                    reuse_expected_duration_seconds=300.5, reuse_transcript_partial=True))
             self.assertEqual(ok["exclude_ranges_ms"], [[0, 30000], [60000, 90000]])
+            self.assertIs(ok["reuse_transcript_partial"], True)
             # The earlier run's local file is gone; its kept copy is used instead.
             missing = os.path.join(folder, "gone.mp4")
             self.assertEqual(bridge.validate_config(self.config(video_url=missing, reuse_source_path=kept,
@@ -122,7 +123,7 @@ class BridgeTests(unittest.TestCase):
             for bad in ({"reuse_transcript_path": "transcript.json"}, {"reuse_transcript_path": os.path.join(folder, "other.json")},
                         {"reuse_source_path": os.path.join(folder, "notes.txt")}, {"reuse_source_meta": {"path": "/x"}},
                         {"exclude_ranges_ms": [[5, 1]]}, {"exclude_ranges_ms": [[0, 1.5]]}, {"exclude_ranges_ms": [[0, 1]] * 201},
-                        {"reuse_expected_duration_seconds": -1}):
+                        {"reuse_expected_duration_seconds": -1}, {"reuse_transcript_partial": "yes"}):
                 with self.subTest(bad=bad), self.assertRaises(ValueError):
                     bridge.validate_config(self.config(**bad))
         failure = bridge.describe_failure("No new moments were left to clip")

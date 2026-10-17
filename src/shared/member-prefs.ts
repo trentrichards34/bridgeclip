@@ -8,6 +8,7 @@
 
 import { isAvatarId } from './avatars'
 import { isBackgroundVideoName } from './backgrounds'
+import { isCaptionLanguage, type CaptionLanguageChoice } from './caption-language'
 import { isCaptionPresetId } from './caption-presets'
 import { isCtaId } from './ctas'
 import { parseHeadlineLook, type HeadlineLook } from './headline-look'
@@ -50,6 +51,8 @@ export interface CreateStyle {
   ctaOffer: string
   /** Draw the brand's handle or logo in a corner. */
   showHandle: boolean
+  /** Captions in another language ('original': as spoken). */
+  captionLanguage: CaptionLanguageChoice
 }
 
 /** Remix's style choices (not the links, the file, the creator name or the permission boxes). */
@@ -107,7 +110,7 @@ export const MAX_SAMPLE_VIDEO_LINK = 2048
 export const CREATE_STYLE_KEYS = [
   'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
   'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar',
-  'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle'
+  'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'captionLanguage'
 ] as const satisfies readonly (keyof CreateStyle)[]
 
 export const REMIX_STYLE_KEYS = [
@@ -160,7 +163,8 @@ const CREATE_CHECKS: { [K in keyof CreateStyle]: (value: unknown) => boolean } =
   brandIdentityId: nullOr(isBrandId),
   ctaKeyword: (value) => isKeyword(value),
   ctaOffer: (value) => isOffer(value),
-  showHandle: bool
+  showHandle: bool,
+  captionLanguage: (value) => value === 'original' || isCaptionLanguage(value)
 }
 
 const VOICE_IDS = [AVATAR_VOICE, ...REMIX_VOICES.map((voice) => voice.id)]

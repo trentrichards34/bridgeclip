@@ -136,8 +136,19 @@ test('subtitle discovery: the run’s captions_srt first, else clip_NN.srt besid
     assert.deepEqual(files.findClipSubtitles(clip), { path: path.join(run, 'clip_01.srt'), format: 'srt', language: null })
     writeOutput({ captions_srt: 'clip_01.txt' })
     assert.equal(files.findClipSubtitles(clip).path, path.join(run, 'clip_01.srt'))
+    // A symlinked subfolder pointing outside the run doesn't count either.
+    fs.mkdirSync(path.join(dir, 'elsewhere'))
+    fs.writeFileSync(path.join(dir, 'elsewhere', 'escape.srt'), SRT)
+    fs.symlinkSync(path.join(dir, 'elsewhere'), path.join(run, 'linked'))
+    writeOutput({ captions_srt: 'linked/escape.srt' })
+    assert.equal(files.findClipSubtitles(clip).path, path.join(run, 'clip_01.srt'))
 
     assert.deepEqual(await files.describeClipSubtitles(clip), { found: true, fileName: 'clip_01.srt', language: null })
+    // Captions as spoken: the language the run detected; a translation's language wins.
+    writeOutput({ spoken_language: 'fr' })
+    assert.equal(files.findClipSubtitles(clip).language, 'fr')
+    writeOutput({ spoken_language: 'fr', caption_language: 'es' })
+    assert.equal(files.findClipSubtitles(clip).language, 'es')
   } finally { cleanup() }
 })
 

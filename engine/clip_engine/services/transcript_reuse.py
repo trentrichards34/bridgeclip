@@ -96,19 +96,56 @@ def load_saved_transcript(path: str) -> Optional[dict]:
         "result": result, "status": "available" if segments else "no_speech",
         "fingerprint": fingerprint if isinstance(fingerprint, str) else None,
         "duration": float(duration) if type(duration) in (int, float) and duration > 0 else None,
-        "range": data.get("transcribed_range") if isinstance(data.get("transcribed_range"), list) else None,
+        "range": _range(data.get("transcribed_range")),
+        # Older transcripts don't say what part of the video they cover.
+        "range_known": "transcribed_range" in data and (data["transcribed_range"] is None or _range(data["transcribed_range"]) is not None),
     }
+
+
+def _range(value: Any) -> Optional[list]:
+    """[start, end] in seconds (either None: open), or None when it isn't one."""
+    if not isinstance(value, list) or len(value) != 2:
+        return None
+    if any(item is not None and (type(item) not in (int, float) or item < 0) for item in value):
+        return None
+    return list(value)
+
+
+def covers(saved_range: Optional[list], window: tuple, duration_seconds: float) -> bool:
+    """Whether a transcript of `saved_range` (None: the whole video) covers the new run's `window`
+    ((start, end) in seconds, None: open)."""
+    if saved_range is None:
+        return True
+    saved_start, saved_end = saved_range
+    start, end = window
+    start_ok = not saved_start or (start is not None and start >= saved_start)
+    end_ok = (saved_end is None or saved_end >= float(duration_seconds) - DURATION_TOLERANCE_SECONDS
+              or (end is not None and end <= saved_end))
+    return start_ok and end_ok
 
 
 def reusable_transcript(saved: Optional[dict], video_path: str, duration_seconds: float,
                         expected_duration_seconds: Optional[float] = None,
-                        fingerprint: Optional[str] = None, compare_bytes: bool = True) -> Optional[dict]:
-    """`saved` when it belongs to this video, otherwise None (transcribe as usual).
+                        fingerprint: Optional[str] = None, compare_bytes: bool = True,
+                        window: Optional[tuple] = None, earlier_partial: bool = False) -> Optional[dict]:
+    """`saved` when it belongs to this video and covers the part the new run looks at, otherwise None
+    (transcribe as usual).
 
     `compare_bytes` is False for a link downloaded again (same link, maybe other bytes).
+    `window` is the new run's (start, end) in seconds ((None, None): the whole video).
+    `earlier_partial`: the earlier run looked at only part of the video, for a transcript
+    that doesn't record what it covers.
     """
     if not saved:
         return None
+    if window is not None:
+        if saved.get("range_known"):
+            if not covers(saved.get("range"), window, duration_seconds):
+                logger.info("Saved transcript not reused: it covers less of the video than this run needs")
+                return None
+        elif earlier_partial:
+            logger.info("Saved transcript not reused: the part of the video it covers isn't recorded")
+            return None
     known_duration = saved.get("duration") or expected_duration_seconds
     if known_duration and abs(float(known_duration) - float(duration_seconds)) > DURATION_TOLERANCE_SECONDS:
         logger.info("Saved transcript not reused: the video's length differs")

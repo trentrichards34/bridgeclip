@@ -12,8 +12,10 @@ import type { JobOutput } from '../shared/job-output'
 
 /**
  * "More clips from this video": a new Create run that reuses a finished run's
- * saved transcript (no transcription is paid again) and its source when it is
- * still on this computer, and skips the moments the run already clipped.
+ * saved transcript when it still matches the video (the engine checks the
+ * length, the file and the part of the video it covers, and transcribes again
+ * otherwise) and its source when it is still on this computer, and skips the
+ * moments the run already clipped.
  */
 
 /** Saved next to each Create run when it starts, so More clips can start from its settings. */
@@ -36,6 +38,8 @@ export interface ReusePlan {
   sourcePath: string | null
   sourceMeta: { title: string; channel: string | null; description: string | null } | null
   expectedDurationSeconds: number | null
+  /** The earlier run looked at only part of the video: a transcript that doesn't record its range isn't reused. */
+  transcriptPartial: boolean
   excludeRangesMs: [number, number][]
 }
 
@@ -52,6 +56,8 @@ export interface MoreClipsInfo {
   request: ClipJobRequest
   /** False for runs made before settings were saved: some style choices use defaults. */
   savedSettings: boolean
+  /** Something the new run does differently from the earlier one (e.g. its brand was deleted). */
+  note?: string
 }
 
 /** What the member can change for the new run. */
@@ -250,10 +256,54 @@ export async function resolveReuse(runId: string, videoUrl: string): Promise<Reu
     transcriptPath,
     source,
     sourcePath: source === 'kept' ? kept : null,
-    sourceMeta: source === 'kept' ? { title: output.source_video_title, channel: output.source_video_channel ?? null, description: output.source_video_description ?? null } : null,
+    // Kept for every source: a run queued on the original file may fall back to the kept copy when it starts.
+    sourceMeta: { title: output.source_video_title, channel: output.source_video_channel ?? null, description: output.source_video_description ?? null },
     expectedDurationSeconds: output.source_video_duration_seconds > 0 ? output.source_video_duration_seconds : null,
+    transcriptPartial: earlierRangeWasPartial(output, saved?.request ?? null),
     excludeRangesMs: exclusionsFor(output, saved?.excludedRangesMs)
   }
+}
+
+/**
+ * Whether the earlier run looked at only part of the video: its saved trim
+ * range, else (runs from before settings were saved) an analyzed length
+ * shorter than the video.
+ */
+export function earlierRangeWasPartial(output: JobOutput, request: ClipJobRequest | null): boolean {
+  if (request) return request.startTimeSeconds != null || request.endTimeSeconds != null
+  const analyzed = (output.metrics as Record<string, unknown> | undefined)?.analysis_duration_seconds
+  const duration = output.source_video_duration_seconds
+  return typeof analyzed === 'number' && duration > 0 && analyzed < duration - 1.5
+}
+
+/**
+ * The plan checked again when the queued run actually starts: files may have
+ * gone since it was queued. A missing kept copy falls back to the original
+ * link or file (and a missing original to a kept copy); with neither, a clear
+ * error. A missing transcript needs no change: the engine transcribes again.
+ */
+export function refreshReusePlan(plan: ReusePlan, videoUrl: string, exists: (path: string) => boolean = fileExists): { plan: ReusePlan } | { error: string } {
+  const run = dirname(plan.transcriptPath)
+  const kept = plan.sourcePath && exists(plan.sourcePath) ? plan.sourcePath : keptSourcePath(run)
+  if (isWebUrl(videoUrl)) {
+    return { plan: kept ? { ...plan, source: 'kept', sourcePath: kept } : { ...plan, source: 'download', sourcePath: null } }
+  }
+  if (plan.source === 'original' && isAbsolute(videoUrl) && exists(videoUrl)) return { plan }
+  if (kept) return { plan: { ...plan, source: 'kept', sourcePath: kept } }
+  if (isAbsolute(videoUrl) && exists(videoUrl)) return { plan: { ...plan, source: 'original', sourcePath: null } }
+  return { error: 'The video for this run is no longer on this computer, and no copy was kept with the earlier run. Choose the video again on Create to clip it.' }
+}
+
+/**
+ * A More clips request whose brand was deleted since the earlier run: the
+ * brand (and its handle) is dropped with a note, instead of failing the run.
+ */
+export function withoutMissingBrand(request: ClipJobRequest, brandExists: (id: string) => boolean): { request: ClipJobRequest; note: string | null } {
+  if (!request.brandIdentityId || brandExists(request.brandIdentityId)) return { request, note: null }
+  const next = { ...request }
+  delete next.brandIdentityId
+  delete next.showHandle
+  return { request: next, note: 'The brand the earlier run used was deleted, so these clips use no brand.' }
 }
 
 /** Check the member's choices for a More clips run. */

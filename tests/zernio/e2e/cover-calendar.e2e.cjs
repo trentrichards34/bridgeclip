@@ -87,9 +87,17 @@ test('cover frame and YouTube captions: pick a frame, schedule, then find and op
   assert.equal(await dialog.getByRole('button', { name: /Use the middle frame/ }).getAttribute('aria-pressed'), 'true')
   await dialog.getByText(/Used on Instagram\./).waitFor()
 
-  // Captions start on because the clip has a subtitle file.
+  // The clip has a subtitle file but its run didn't record the language: captions stay off
+  // until the member picks one, then can be turned on.
   const captions = dialog.getByRole('checkbox', { name: 'Add captions to YouTube (from the clip’s subtitles)' })
   await captions.waitFor()
+  assert.equal(await captions.getAttribute('aria-checked'), 'false')
+  assert.equal(await captions.isDisabled(), true)
+  await dialog.getByText('The clip’s language isn’t known. Choose the language of its subtitles first.').waitFor()
+  await dialog.getByRole('combobox', { name: 'Caption language' }).click()
+  await page.getByRole('listbox').getByRole('option', { name: 'English', exact: true }).click()
+  assert.equal(await captions.getAttribute('aria-checked'), 'false', 'choosing a language does not turn captions on by itself')
+  await captions.click()
   assert.equal(await captions.getAttribute('aria-checked'), 'true')
   await dialog.getByText('Uploads clip_00.srt as closed captions viewers can turn on.').waitFor()
 

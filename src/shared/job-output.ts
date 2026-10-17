@@ -50,6 +50,8 @@ export interface ClipArtifact {
   captions_srt?: string | null
   /** The language the captions were translated into; null or missing: as spoken. */
   caption_language?: CaptionLanguage | null
+  /** The language spoken in the source (two-letter code), when the run detected it. */
+  spoken_language?: string | null
 }
 
 export interface RemixClipSettings {
@@ -159,6 +161,7 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
     if (typeof requested.video_speed === 'number' && Number.isFinite(requested.video_speed) && requested.video_speed >= 1 && requested.video_speed <= 2) safe.video_speed = requested.video_speed
     if (['a', 'b', 'c', 'all', 'off'].includes(requested.quality_bar as string)) safe.quality_bar = requested.quality_bar
     if (isCaptionLanguage(requested.caption_language)) safe.caption_language = requested.caption_language
+    if (typeof requested.more_clips === 'boolean') safe.more_clips = requested.more_clips
     const grading = requested.framework_grading
     if (record(grading) && typeof grading.enabled === 'boolean' && nonNegative(grading.candidates) && nonNegative(grading.graded) && nonNegative(grading.kept)) {
       safe.framework_grading = { enabled: grading.enabled, candidates: grading.candidates, graded: grading.graded, kept: grading.kept }
@@ -259,7 +262,8 @@ export function parseJobOutput(value: unknown): JobOutput | null {
       tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 50).map((tag) => tag.slice(0, 64)) : [],
       render_fallback: boundedText(item.render_fallback, 256),
       ...(captionsSrtPath(item.captions_srt) ? { captions_srt: captionsSrtPath(item.captions_srt) } : {}),
-      ...(isCaptionLanguage(item.caption_language) ? { caption_language: item.caption_language } : {})
+      ...(isCaptionLanguage(item.caption_language) ? { caption_language: item.caption_language } : {}),
+      ...(typeof item.spoken_language === 'string' && /^[a-z]{2}$/.test(item.spoken_language) ? { spoken_language: item.spoken_language } : {})
     })
   }
   return {

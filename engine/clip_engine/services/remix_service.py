@@ -212,8 +212,9 @@ def has_cta(text: str, keyword: str) -> bool:
 
 
 def cta_line(keyword: str, offer: str) -> str:
+    # The same words as brand_mark.cta_line and the app's ctaLine: no offer, no promise.
     offer = " ".join((offer or "").split()).rstrip(".!? ")
-    return f"Comment {keyword} and I'll send you {offer}." if offer else f"Comment {keyword} and I'll send you the full breakdown."
+    return f"Comment {keyword} and I'll send you {offer}." if offer else f"Comment {keyword}."
 
 
 def ensure_cta(close: str, keyword: str, offer: str) -> str:
@@ -268,14 +269,15 @@ def plan_system_prompt(angle: str, count: int, order: str = "moment_first", keyw
         cta = ("CALL TO ACTION: the creator's own recorded call to action plays right after the close, so the close ends on the payoff "
                "and never asks for a comment, follow or click itself.")
         close_rule = "the payoff that lands the take (no call to action: the creator's recorded one follows)."
-        caption_cta = (f'the call to action ("Comment {keyword} and I\'ll send you …")' if keyword
+        caption_cta = (f'the call to action ("{cta_line(keyword, offer)}")' if keyword
                        else "a one-line question that invites comments (or the brand identity's call to action, if it names one)")
     elif keyword:
-        offer_text = f'"{offer}"' if offer else "what the brand identity's call to action offers (or, if it names nothing, \"the full breakdown\")"
-        cta = (f'CALL TO ACTION: every close ENDS with the keyword call to action "Comment {keyword} and I\'ll send you …", where … is {offer_text}. '
+        offer_text = (f'"Comment {keyword} and I\'ll send you …", where … is "{offer}"' if offer
+                      else f'"Comment {keyword}." (add "and I\'ll send you …" only with what the brand identity\'s call to action offers, if it names one; never promise anything else)')
+        cta = (f'CALL TO ACTION: every close ENDS with the keyword call to action {offer_text}. '
                "The payoff comes first, then the call to action; keep the whole close under 30 words including it. Use the same call to action as the caption's last line.")
         close_rule = "the payoff that lands the take, then the call to action below."
-        caption_cta = f'the call to action ("Comment {keyword} and I\'ll send you …")'
+        caption_cta = f'the call to action ({offer_text})'
     else:
         cta = "CALL TO ACTION: a soft one only if the brand identity names one; otherwise end on the payoff."
         close_rule = "the payoff that lands the take, plus a soft call to action only if the brand identity names one."
@@ -599,7 +601,7 @@ SILENT_SCHEMA: dict[str, Any] = {
 
 
 def silent_system_prompt(count: int, kinds: tuple[str, ...], keyword: str = "", offer: str = "", whole_seconds: float = 0) -> str:
-    cta = (f'Last caption line: "Comment {keyword} and I\'ll send you {offer or "the full breakdown"}."' if keyword
+    cta = (f'Last caption line: "{cta_line(keyword, offer)}"' if keyword
            else "Last caption line: a one-line question that invites comments (or the brand identity's call to action, if it names one).")
     if whole_seconds:
         # A reel: the reaction covers the whole video, so there is one take and no moment to pick.
@@ -1337,7 +1339,7 @@ IMAGE_SCHEMA: dict[str, Any] = {
 
 
 def image_system_prompt(keyword: str = "", offer: str = "", with_image: bool = True) -> str:
-    cta = (f'Last caption line: "Comment {keyword} and I\'ll send you {offer or "the full breakdown"}."' if keyword
+    cta = (f'Last caption line: "{cta_line(keyword, offer)}"' if keyword
            else "Last caption line: a one-line question that invites comments (or the brand identity's call to action, if it names one).")
     seen = ("You get the screenshot itself and the creator's words." if with_image else
             "You get the creator's words and who the article or post is from (the screenshot itself is not available, so rely on what they say about it).")

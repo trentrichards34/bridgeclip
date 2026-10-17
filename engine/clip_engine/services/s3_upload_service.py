@@ -59,6 +59,8 @@ class ClipArtifact:
     # language its captions were translated into (None: as spoken).
     captions_srt: Optional[str] = None
     caption_language: Optional[str] = None
+    # The language spoken in the source (a two-letter code from transcription), when known.
+    spoken_language: Optional[str] = None
     editorial: Optional[dict] = None
     # Paid Creators framework grade: letter, criteria scores, hook evidence, fix.
     framework: Optional[dict] = None

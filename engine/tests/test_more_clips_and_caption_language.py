@@ -358,3 +358,71 @@ def test_original_language_makes_no_translation_calls(monkeypatch, tmp_path):
     assert renders[0].caption_translations == {}
     assert "caption_translation" not in result.output.metrics["api_costs"]
     assert result.output.clips[0].caption_language is None
+
+
+def test_saved_transcript_must_cover_the_new_runs_part_of_the_video(tmp_path):
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"a" * 5000)
+    saved_path = tmp_path / "transcript.json"
+    save_transcript(saved_path, str(video))
+    data = json.loads(saved_path.read_text())
+
+    def saved_with(**fields):
+        saved_path.write_text(json.dumps({**data, **fields}), encoding="utf-8")
+        return load_saved_transcript(str(saved_path))
+
+    whole = (None, None)
+    # Recorded: the whole video covers any part; part of it covers only what lies inside.
+    assert reusable_transcript(saved_with(transcribed_range=None), str(video), 300.0, window=(30, 60)) is not None
+    partial = saved_with(transcribed_range=[30, 120])
+    assert reusable_transcript(partial, str(video), 300.0, window=(30, 120)) is partial
+    assert reusable_transcript(partial, str(video), 300.0, window=(40, 100)) is partial
+    assert reusable_transcript(partial, str(video), 300.0, window=whole) is None
+    assert reusable_transcript(partial, str(video), 300.0, window=(0, 120)) is None
+    assert reusable_transcript(partial, str(video), 300.0, window=(30, None)) is None
+    open_end = saved_with(transcribed_range=[None, None])
+    assert reusable_transcript(open_end, str(video), 300.0, window=whole) is open_end
+    # An end past the video counts as its end.
+    assert reusable_transcript(saved_with(transcribed_range=[0, 300.0]), str(video), 300.0, window=whole) is not None
+    # Older transcripts don't record a range: reused unless the earlier run looked at only part of the video.
+    saved_path.write_text(json.dumps(data), encoding="utf-8")
+    older = load_saved_transcript(str(saved_path))
+    assert older["range_known"] is False
+    assert reusable_transcript(older, str(video), 300.0, window=whole) is older
+    assert reusable_transcript(older, str(video), 300.0, window=whole, earlier_partial=True) is None
+    # An unreadable range is treated as unknown.
+    assert saved_with(transcribed_range=["a", 3])["range_known"] is False
+
+
+def test_more_clips_transcribes_again_when_the_earlier_run_covered_less(monkeypatch, tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    saved = tmp_path / "transcript.json"
+    save_transcript(saved, str(source))
+    data = json.loads(saved.read_text())
+    saved.write_text(json.dumps({**data, "transcribed_range": [0, 60]}), encoding="utf-8")
+    calls = []
+
+    async def transcribe(video_path, work_dir, keyterms=None, **_range):
+        calls.append(_range)
+        return TranscriptionResult(segments=[line(60_000, ["fresh", "words"])], full_text="fresh words", language="es")
+
+    async def plan(**kwargs):
+        return ClipPlanResponse(segments=[ClipPlanSegment(59_000, 85_000, 0.8)], total_clips=1)
+
+    request = ClippingJobRequest(video_url=str(source), job_id="job7", quality_bar="off", reuse_transcript_path=str(saved))
+    result, _ = run_pipeline(monkeypatch, tmp_path, request, transcribe, plan)
+    assert result.status == JobStatus.COMPLETED, result.error
+    assert len(calls) == 1
+    assert result.output.metrics["transcript_reused"] is False
+    assert result.output.metrics["requested_settings"]["more_clips"] is True
+    # The spoken language is recorded on each clip, for YouTube captions.
+    assert result.output.clips[0].spoken_language == "es"
+    assert result.output.clips[0].caption_language is None
+
+
+def test_spoken_language_is_a_two_letter_code_or_nothing():
+    assert pipeline_module.spoken_language_code("en") == "en"
+    assert pipeline_module.spoken_language_code(" EN-us ") == "en"
+    for value in (None, "english", "e", "123", "", 7):
+        assert pipeline_module.spoken_language_code(value) is None

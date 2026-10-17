@@ -305,3 +305,39 @@ test('Jev review and web research show as opt-in betas, with thresholds editable
   assert.doesNotMatch(html, /inert|data-open/)
   assert.match(html, /type="range"/)
 })
+
+test('a deleted brand is cleared from Create and Remix once the brand list is read; a failed read clears nothing', async () => {
+  const brands = buildSync({
+    stdin: {
+      contents: `export { useBrands, isStaleBrandId } from './src/renderer/store/use-brand-store';
+        export { useDraftStore } from './src/renderer/store/use-draft-store';
+        export { useRemixForm } from './src/renderer/store/use-remix-form-store';`,
+      resolveDir: path.resolve(__dirname, '..'),
+      loader: 'ts'
+    },
+    bundle: true, platform: 'node', format: 'cjs', packages: 'external', write: false
+  }).outputFiles[0].text
+  let list = async () => { throw new Error('offline') }
+  const module = { exports: {} }
+  vm.runInNewContext(brands, { module, exports: module.exports, require, window: { bridgeclip: { brandIdentities: { list: () => list() } } } })
+  const { useBrands, useDraftStore, useRemixForm, isStaleBrandId } = module.exports
+  const GONE = 'a1b2c3d4e5f60718'
+  const KEPT = 'b1b2c3d4e5f60718'
+  useDraftStore.getState().update({ brandIdentityId: GONE, showHandle: true })
+  useRemixForm.getState().update({ brandIdentityId: GONE, showHandle: true })
+  await useBrands.getState().load()
+  assert.equal(useBrands.getState().listed, false)
+  assert.equal(isStaleBrandId(GONE), false)
+  assert.equal(useDraftStore.getState().brandIdentityId, GONE, 'kept while the list is unknown')
+  list = async () => [{ id: KEPT, name: 'Kept', text: 'x'.repeat(40), updatedAt: '' }]
+  await useBrands.getState().load(true)
+  assert.equal(useDraftStore.getState().brandIdentityId, null)
+  assert.equal(useDraftStore.getState().showHandle, false)
+  assert.equal(useRemixForm.getState().brandIdentityId, null)
+  assert.equal(useRemixForm.getState().showHandle, false)
+  // A brand still in the list stays chosen; one removed later is cleared then.
+  useDraftStore.getState().update({ brandIdentityId: KEPT, showHandle: true })
+  assert.equal(useDraftStore.getState().brandIdentityId, KEPT)
+  useBrands.getState().setBrands([])
+  assert.equal(useDraftStore.getState().brandIdentityId, null)
+})

@@ -103,6 +103,10 @@ test('picking a brand fills the Remix and Create style fields once; re-picking i
   }
 
   await steps.getByRole('button', { name: /Review/ }).click()
+  // Review lists the brand, the keyword line and the handle.
+  await page.getByText('Pull-Up Lab · titles in its voice', { exact: true }).waitFor()
+  await page.getByText('Caption ends with “Comment PULL and I\'ll send you my free plan.”', { exact: true }).waitFor()
+  await page.getByText('@pulluplab · top right', { exact: true }).waitFor()
   await page.getByRole('button', { name: 'Generate clips', exact: true }).click()
   await page.getByRole('button', { name: 'View job' }).waitFor()
   const submitted = await app.evaluate(() => globalThis.brandTest.submitted)

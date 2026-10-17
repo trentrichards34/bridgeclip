@@ -453,7 +453,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   paid('job:start', 'openrouter', () => null, (config) => startClipJobRequest(config))
   // Several videos with the same settings: one spending check, then one job per video.
   paid('job:startMany', 'openrouter', () => null, (requests) => startClipJobRequests(requests))
-  // More clips from a finished run: reuses its saved transcript, so no transcription is paid again.
+  // More clips from a finished run: reuses its saved transcript when it still matches the video.
   handle('job:moreClipsInfo', (_event, outputDir: unknown) => moreClipsInfo(outputDir))
   paid('job:moreClips', 'openrouter', () => null, (outputDir, choices) => startMoreClips(outputDir, choices))
 

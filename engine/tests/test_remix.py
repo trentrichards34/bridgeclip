@@ -544,7 +544,7 @@ class TestCallToActionAndCaption:
         added = remix.ensure_cta("Train the pull, not the scale", "SALES", "my playbook.")
         assert added == "Train the pull, not the scale. Comment SALES and I'll send you my playbook."
         assert remix.ensure_cta(added, "SALES", "my playbook") == added
-        assert remix.ensure_cta("Done!", "SALES", "") == "Done! Comment SALES and I'll send you the full breakdown."
+        assert remix.ensure_cta("Done!", "SALES", "") == "Done! Comment SALES."
         assert remix.ensure_cta("Done.", "", "x") == "Done."
 
     def test_caption_is_kept_checked_and_finalized(self):
@@ -564,7 +564,7 @@ class TestCallToActionAndCaption:
         edit = {"headline": script.headline, "intro": script.intro, "beats": [{"text": b.text} for b in script.beats],
                 "close": "Train the pull.", "post_caption": "We got 500 clients this way."}
         edited = remix.apply_edit(script, edit, "", "", "SALES", "")
-        assert edited.close == "Train the pull. Comment SALES and I'll send you the full breakdown."
+        assert edited.close == "Train the pull. Comment SALES."
         assert edited.post_caption == "We got 500 clients this way." and any("caption has numbers" in n for n in edited.notes)
         assert {c.id: c.ok for c in remix.run_checks(edited, 4000, 30000, True, False, True, "SALES")}["cta"]
         edited.close = "Train the pull."
