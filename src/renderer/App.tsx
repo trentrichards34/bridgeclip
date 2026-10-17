@@ -159,7 +159,7 @@ export default function App(): React.JSX.Element {
         <Layout currentPage={page} onNavigate={navigateRoot}>
           <Fragment key={pageVisit}>
             {page === 'clip' && <ClipPage onNavigate={setPage} />}
-            {page === 'avatar' && <AvatarStudioPage onNavigate={setPage} />}
+            {page === 'avatar' && <AvatarStudioPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'remix' && <RemixPage onNavigate={setPage} />}
             {page === 'library' && <LibraryPage onNavigate={setPage} initialRun={libraryRun?.outputDir} initialClipIndex={libraryRun?.clipIndex} />}
             {page === 'jobs' && <JobsPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
