@@ -202,6 +202,8 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   await page.getByTestId('edit-look-summary').getByText(/Captions: hype/).waitFor()
   await board.getByTestId('style-preview').getByText('15 billion messages are waiting').waitFor()
   await board.evaluate((el) => el.scrollIntoView({ block: 'start' }))
+  await page.waitForTimeout(800)
+  await board.evaluate((el) => el.scrollIntoView({ block: 'start' }))
   await shot(app, 'style-board-edit.png')
   await page.getByRole('heading', { name: 'Review your edit' }).scrollIntoViewIfNeeded()
   await shot(app, 'edit-review.png')
