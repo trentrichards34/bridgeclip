@@ -120,6 +120,16 @@ test('an older run that didn’t save its cuts says so; recorded cuts, a framing
   assert.equal((await audited.module.automaticEditInfo(audited.run)).estimatedCuts, undefined)
   const natural = setup({ metrics: { requested_settings: { pacing: 'natural' } } })
   assert.equal((await natural.module.automaticEditInfo(natural.run)).estimatedCuts, undefined)
+  // Shown at its natural length: no cut to work out.
+  const letterboxed = setup({ metrics: { clip_layouts: [{ clip_index: 0, render_fallback: 'letterbox_natural' }] } })
+  assert.equal((await letterboxed.module.automaticEditInfo(letterboxed.run)).estimatedCuts, undefined)
+  // An unfinished conversion asks the run the same question (its project may hold an older count).
+  const unfinished = setup({ kept: true, metrics: { requested_settings: { pacing: 'natural' } } })
+  fs.writeFileSync(path.join(unfinished.run, 'editor-project.json'), JSON.stringify(project({ automatic: { omitted: [], estimated_cuts: 1 } })))
+  assert.deepEqual([(await unfinished.module.automaticEditInfo(unfinished.run)).state, (await unfinished.module.automaticEditInfo(unfinished.run)).estimatedCuts], ['convert', undefined])
+  const unfinishedOlder = setup({ kept: true })
+  fs.writeFileSync(path.join(unfinishedOlder.run, 'editor-project.json'), JSON.stringify(project()))
+  assert.equal((await unfinishedOlder.module.automaticEditInfo(unfinishedOlder.run)).estimatedCuts, true)
 })
 
 test('Remix, Avatar Studio, running, transcript-less and outside runs are refused with plain words', async () => {

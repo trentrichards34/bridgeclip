@@ -296,7 +296,9 @@ def build_candidates(run, output, settings, segments, w, h, duration_ms, padding
     audit_entries = {e.get('clip_index'): e for e in audit.get('candidates', []) if isinstance(e, dict) and e.get('status') == 'rendered'} \
         if isinstance(audit.get('candidates'), list) else {}
     captions = settings['include_captions'] and metrics.get('captions_status') != 'unavailable_without_transcript'
-    candidates, notes = [], {'estimated': 0, 'natural': 0}
+    # 'estimated': a clip whose cut wasn't saved (a tight-paced clip shown at natural length when it couldn't be worked out
+    # counts too); main's lacksRecordedCuts (edit-automatic.ts) asks the same question before converting.
+    candidates, notes = [], {'estimated': 0}
     clips = sorted((c for c in output.get('clips', []) if isinstance(c, dict) and type(c.get('clip_index')) is int
                     and 0 <= c['clip_index'] <= 999 and _int(c.get('start_time_ms')) and _int(c.get('end_time_ms'))),
                    key=lambda c: c['clip_index'])
@@ -332,8 +334,9 @@ def build_candidates(run, output, settings, segments, w, h, duration_ms, padding
                 validate_candidate(c, duration_ms, len(segments))
             except (ValueError, TypeError, KeyError):
                 continue
-        if how in notes:
-            notes[how] += 1
+        if how == 'estimated' or (how == 'natural' and settings['pacing'] == 'tight'
+                                  and (entry or {}).get('render_fallback') != 'letterbox_natural'):
+            notes['estimated'] += 1
         candidates.append(c)
     return candidates, notes
 
@@ -350,7 +353,7 @@ def build_project(run, settings, source, segments, transcript_rows, output, padd
     if not candidates:
         raise EditorError('invalid_edit', 'No clips could be opened in the editor')
     validate_candidate_list(candidates)
-    automatic = {'omitted': omitted_parts(settings), 'estimated_cuts': notes['estimated'] + notes['natural']}
+    automatic = {'omitted': omitted_parts(settings), 'estimated_cuts': notes['estimated']}
     if settings['brand_mark']:
         automatic['brand_mark'] = settings['brand_mark']
     if settings['cta_keyword']:

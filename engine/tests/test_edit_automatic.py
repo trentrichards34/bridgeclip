@@ -139,6 +139,18 @@ def test_runs_without_a_headline_or_with_card_titles(media, tmp_path):
     assert all(c['hook'] is None and not c['captions'] and [s['layout'] for s in c['scenes']] == ['fill'] for c in project['candidates'])
 
 
+def test_estimated_cuts_count_only_clips_whose_tight_cut_was_not_saved(media, tmp_path):
+    """The editor's note matches what the convert dialog said: natural pacing and letterbox_natural clips have no cut to work out."""
+    run, _ = automatic_run(tmp_path)
+    convert(run, settings=settings(pacing='natural'))
+    assert json.loads((run / 'editor-project.json').read_text())['automatic']['estimated_cuts'] == 0
+    run2, output = automatic_run(tmp_path / 'natural-fallback')
+    output['metrics']['clip_layouts'][2]['render_fallback'] = 'letterbox_natural'
+    (run2 / 'job_output.json').write_text(json.dumps(output))
+    convert(run2)
+    assert json.loads((run2 / 'editor-project.json').read_text())['automatic']['estimated_cuts'] == 1
+
+
 def test_a_missing_transcript_or_a_different_video_is_refused(media, tmp_path):
     run, _ = automatic_run(tmp_path)
     (run / 'transcript.json').unlink()
