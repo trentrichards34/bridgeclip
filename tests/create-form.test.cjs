@@ -66,9 +66,13 @@ test('the wizard opens on the video step with the steps listed in order', () => 
   assert.match(html, /aria-current="step"[^>]*>.*?Video/s)
   assert.match(html, /Choose a video/)
   assert.equal(form.exports.useDraftStore.getState().workflow, null)
-  const radios = html.match(/<button[^>]*role="radio"[^>]*>/g) ?? []
-  assert.equal(radios.length, 2)
+  const allRadios = html.match(/<button[^>]*role="radio"[^>]*>/g) ?? []
+  // The workflow choice (nothing picked yet), then whose video it is (third-person headlines by default).
+  assert.equal(allRadios.length, 4)
+  const radios = allRadios.slice(0, 2)
   assert.ok(radios.every((radio) => radio.includes('aria-checked="false"')))
+  assert.match(html, /Whose video is this\?/)
+  assert.ok(allRadios[2].includes('aria-checked="true"') && allRadios[3].includes('aria-checked="false"'), 'Someone else’s is the default')
   assert.equal(radios.filter((radio) => radio.includes('tabindex="0"')).length, 1)
   assert.match(html, /Beginner friendly/)
   assert.match(html, /For advanced users/)

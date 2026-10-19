@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
-import type { QualityBar, TitleStyle } from '../../shared/jobs'
+import type { HeadlineVoice, QualityBar, TitleStyle } from '../../shared/jobs'
 import type { CaptionLanguageChoice } from '../../shared/caption-language'
 
 /** The Create wizard's steps, in order. */
@@ -59,6 +59,8 @@ export interface ClipDraft {
   hookPreview: boolean
   /** Framework grading bar: keep clips graded at or above it. */
   qualityBar: QualityBar
+  /** Whose video it is: headlines in the creator's own voice, or a clipper's third person. */
+  headlineVoice: HeadlineVoice
   /** Captions (and the captions file) in another language; the speech stays as recorded. */
   captionLanguage: CaptionLanguageChoice
   /** Brand (optional): its niche, voice and offer guide titles and hook text; choosing one fills its look. */
@@ -111,6 +113,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   broll: 'off',
   hookPreview: false,
   qualityBar: 'b',
+  headlineVoice: 'clipper',
   captionLanguage: 'original',
   brandIdentityId: null,
   ctaKeyword: '',

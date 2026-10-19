@@ -49,6 +49,8 @@ export interface ClipJobRequest {
   hookPreview?: boolean
   /** Paid Creators framework grading: keep clips graded at or above this bar, grade but keep all, or skip grading. Defaults to 'b'. */
   qualityBar?: QualityBar
+  /** Whose video it is: 'creator' writes headlines in the speaker's own voice (their own channel), 'clipper' in the third person. Defaults to 'clipper'. */
+  headlineVoice?: HeadlineVoice
   /** Translate the captions (and the captions file) into this language. Omitted: the spoken language. */
   captionLanguage?: CaptionLanguage
   /**
@@ -114,3 +116,6 @@ export interface JobSnapshot {
   startedAt: string | null
   finishedAt: string | null
 }
+
+export const HEADLINE_VOICES = ['creator', 'clipper'] as const
+export type HeadlineVoice = (typeof HEADLINE_VOICES)[number]

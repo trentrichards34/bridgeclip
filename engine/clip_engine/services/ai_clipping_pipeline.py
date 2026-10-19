@@ -182,10 +182,14 @@ class ClippingJobRequest:
     # Comment-keyword call to action (Automatic): ends each clip's post caption, shown at the end of the video.
     cta_keyword: str = ''
     cta_offer: str = ''
+    # Whose voice headlines are in: 'clipper' (third person, someone else's video) or 'creator' (their own video).
+    headline_voice: str = 'clipper'
     # The member's @handle and/or logo in a corner ({"handle", "logo_path", "position"}; see brand_mark).
     brand_mark: Optional[dict] = None
 
     def _post_init_brand(self):
+        if self.headline_voice not in ('creator', 'clipper'):
+            raise ValueError("Invalid headline voice")
         self.brand_identity = (self.brand_identity or '').strip()[:MAX_BRAND_IDENTITY_CHARS]
         self.brand_name = ' '.join((self.brand_name or '').split())[:120]
         self.cta_keyword = (self.cta_keyword or '').strip().upper()
@@ -520,6 +524,7 @@ class AIClippingPipeline:
                 **({'output_language': language_name(request.caption_language)} if request.caption_language else {}),
                 brand_identity=request.brand_identity or None,
                 brand_name=request.brand_name or None,
+                headline_voice=request.headline_voice,
             )
             excluded_spans = request.exclude_ranges_ms or []
             def is_new(segment) -> bool:

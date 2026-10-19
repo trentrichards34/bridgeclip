@@ -153,6 +153,11 @@ class BridgeTests(unittest.TestCase):
                 with self.subTest(bad=bad), self.assertRaises(ValueError):
                     bridge.validate_config(self.config(background_video_path=bad))
 
+    def test_headline_voice_is_creator_or_clipper(self):
+        self.assertEqual(bridge.validate_config(self.config(headline_voice="creator"))["headline_voice"], "creator")
+        with self.assertRaisesRegex(ValueError, "headline voice"):
+            bridge.validate_config(self.config(headline_voice="me"))
+
     def test_brand_fields_are_bounded_and_the_mark_is_checked(self):
         config = bridge.validate_config(self.config(brand_identity="Voice: plain.", brand_name="Pull-Up Lab", cta_keyword="SALES", cta_offer="my plan",
                                                     brand_mark={"handle": "@coach", "position": "top-left"}))

@@ -4,7 +4,7 @@ import type { ClipJobConfig } from './pipeline-runner'
 import { isWebUrl } from './security'
 import { CLIP_REQUEST_MAX_CHARS, DURATION_IDS, isVideoSpeed } from '../shared/job-contract'
 import { isModelId } from '../shared/openrouter-models'
-import { QUALITY_BARS, TITLE_STYLES, type ClipJobRequest } from '../shared/jobs'
+import { HEADLINE_VOICES, QUALITY_BARS, TITLE_STYLES, type ClipJobRequest } from '../shared/jobs'
 import { isBackgroundVideoName } from '../shared/backgrounds'
 import { parseHeadlineLook } from '../shared/headline-look'
 import { isCtaId } from '../shared/ctas'
@@ -35,6 +35,7 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   if (v.hookPreview !== undefined && typeof v.hookPreview !== 'boolean') throw new Error('Invalid hook preview option')
   if (v.hookPreview && v.workflow === 'review') throw new Error('Hook preview works with the Automatic workflow')
   if (v.qualityBar !== undefined && !QUALITY_BARS.includes(v.qualityBar)) throw new Error('Invalid quality bar')
+  if (v.headlineVoice !== undefined && !HEADLINE_VOICES.includes(v.headlineVoice)) throw new Error('Invalid headline voice')
   if (v.titleStyle !== undefined && !TITLE_STYLES.includes(v.titleStyle)) throw new Error('Invalid title style')
   if (v.clipRequest !== undefined && (typeof v.clipRequest !== 'string' || v.clipRequest.includes('\0') || trimClipRequest(v.clipRequest).length > CLIP_REQUEST_MAX_CHARS)) throw new Error(`Describe what to clip in ${CLIP_REQUEST_MAX_CHARS} characters or fewer`)
   if (v.videoSpeed !== undefined && !isVideoSpeed(v.videoSpeed)) throw new Error('Video speed must be between 1× and 2×')
@@ -86,5 +87,5 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
   'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

@@ -322,6 +322,7 @@ async def run(config: dict) -> bool:
         exclude_ranges_ms=config.get("exclude_ranges_ms"),
         brand_identity=config.get("brand_identity") or "",
         brand_name=config.get("brand_name") or "",
+        headline_voice=config.get("headline_voice") or "clipper",
         cta_keyword=config.get("cta_keyword") or "",
         cta_offer=config.get("cta_offer") or "",
         brand_mark=config.get("brand_mark"),
@@ -493,6 +494,8 @@ def validate_config(config: object) -> dict:
         value = config.get(field)
         if value is not None and (not isinstance(value, str) or len(value) > limit or "\0" in value):
             raise ValueError(f"Invalid {field}")
+    if config.get("headline_voice") is not None and config["headline_voice"] not in ("creator", "clipper"):
+        raise ValueError("Invalid headline voice")
     keyword = config.get("cta_keyword")
     if keyword is not None and (not isinstance(keyword, str) or (keyword and not re.fullmatch(r"[A-Z0-9][A-Z0-9-]{1,19}", keyword))):
         raise ValueError("Invalid call-to-action keyword")

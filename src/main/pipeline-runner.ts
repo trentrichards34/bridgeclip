@@ -534,6 +534,7 @@ export function startClipJob(
     ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook' } : {}),
     ...(config.hookPreview ? { hook_preview: true } : {}),
     quality_bar: config.qualityBar ?? 'b',
+    headline_voice: config.headlineVoice ?? 'clipper',
     ...(config.captionLanguage ? { caption_language: config.captionLanguage } : {}),
     ...(reuse ? {
       reuse_transcript_path: reuse.transcriptPath,

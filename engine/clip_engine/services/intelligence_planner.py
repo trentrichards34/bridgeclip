@@ -190,6 +190,23 @@ def exclusion_rule(ranges: Any) -> str:
             'from another part of the video. Return fewer clips rather than repeat one.')
 
 
+HEADLINE_VOICES = ('creator', 'clipper')
+
+# The creator posts their own video: headlines in their voice, never about them.
+CREATOR_VOICE_RULE = (
+    '\nCREATOR\'S OWN VIDEO: The person speaking in this video is posting these clips on their own channel. This replaces the '
+    'third-person instruction in HEADLINE: write every "headline" and any "description" in the creator\'s own voice, never '
+    'about them. Use "I", "my" or "you", or no pronoun at all ("Why you don\'t need to be an expert to sell a tool", '
+    '"I don\'t know what makes great carousels", "My new tool went from $98 to $1,227 in recurring revenue"). Never refer to '
+    'the speaker as "he", "she", "they", "this founder", "this guy" or by their name. Everything else in HEADLINE still applies, '
+    'including using real numbers exactly as said and never claiming what the clip does not show.')
+
+
+def headline_voice_rule(voice: Optional[str]) -> str:
+    """Prompt rule for whose voice headlines are written in ('clipper', the default: third person; 'creator': first person)."""
+    return CREATOR_VOICE_RULE if voice == 'creator' else ''
+
+
 def output_language_rule(language: Optional[str]) -> str:
     """Prompt rule for the on-screen text language (None: the video's own language)."""
     if not language:
@@ -223,7 +240,7 @@ CLIP_PLAN_SCHEMA: dict[str, Any] = {
                     "start_time": {"type": "number", "description": "Clip start, seconds from the start of the video."},
                     "end_time": {"type": "number", "description": "Clip end, seconds from the start of the video."},
                     "summary": {"type": "string", "description": "2-7 word on-screen title."},
-                    "headline": {"type": "string", "description": "4-12 word third-person story headline for the top bar."},
+                    "headline": {"type": "string", "description": "4-12 word story headline for the top bar, in the voice the HEADLINE rules set."},
                     "scores": {
                         "type": "object",
                         "properties": {
@@ -500,6 +517,7 @@ class IntelligencePlannerService:
         output_language: Optional[str] = None,
         brand_identity: Optional[str] = None,
         brand_name: Optional[str] = None,
+        headline_voice: Optional[str] = None,
     ) -> ClipPlanResponse:
         """
         Plan viral clips from video content.
@@ -694,7 +712,7 @@ class IntelligencePlannerService:
         system_prompt += SPONSOR_DISCOVERY_RULE
         if clip_request:
             system_prompt += CLIP_REQUEST_RULE
-        system_prompt += exclusion_rule(exclude_ranges_ms) + output_language_rule(output_language)
+        system_prompt += exclusion_rule(exclude_ranges_ms) + output_language_rule(output_language) + headline_voice_rule(headline_voice)
         if getattr(self, "_brand_identity", None):
             system_prompt += BRAND_IDENTITY_RULE
         if transcript:

@@ -14,7 +14,7 @@ import { isCaptionPresetId } from './caption-presets'
 import { isCtaId } from './ctas'
 import { parseHeadlineLook, type HeadlineLook } from './headline-look'
 import { DURATION_IDS, isVideoSpeed } from './job-contract'
-import { QUALITY_BARS, TITLE_STYLES, type QualityBar, type TitleStyle } from './jobs'
+import { HEADLINE_VOICES, QUALITY_BARS, TITLE_STYLES, type HeadlineVoice, type QualityBar, type TitleStyle } from './jobs'
 import { isModelId } from './openrouter-models'
 import {
   AVATAR_VOICE, MAX_CTA_OFFER_CHARS, MAX_REMIXES, REMIX_FORMATS, REMIX_VOICES, isRemixAngle, isRemixHost, isRemixOrder, normalizeCtaKeyword, parseCameraSettings,
@@ -46,6 +46,7 @@ export interface CreateStyle {
   broll: 'off' | 'after-hook' | 'full'
   hookPreview: boolean
   qualityBar: QualityBar
+  headlineVoice: HeadlineVoice
   /** The brand whose niche, voice and offer guide the titles, and whose handle can be drawn. */
   brandIdentityId: string | null
   ctaKeyword: string
@@ -112,7 +113,7 @@ export const MAX_SAMPLE_VIDEO_LINK = 2048
 
 export const CREATE_STYLE_KEYS = [
   'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
-  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar',
+  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'headlineVoice',
   'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'captionLanguage'
 ] as const satisfies readonly (keyof CreateStyle)[]
 
@@ -163,6 +164,7 @@ const CREATE_CHECKS: { [K in keyof CreateStyle]: (value: unknown) => boolean } =
   broll: oneOf(['off', 'after-hook', 'full']),
   hookPreview: bool,
   qualityBar: oneOf(QUALITY_BARS),
+  headlineVoice: oneOf(HEADLINE_VOICES),
   brandIdentityId: nullOr(isBrandId),
   ctaKeyword: (value) => isKeyword(value),
   ctaOffer: (value) => isOffer(value),

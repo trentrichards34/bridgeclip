@@ -5,7 +5,7 @@ import { cn, MOD_KEY, parseTimecode, sourceLabel } from '../lib/utils'
 import { useDraftStore, type ClipDraft, type WizardStep } from '../store/use-draft-store'
 import { StylePresets } from './StylePresets'
 import { useActiveJobs } from '../store/use-job-store'
-import type { ClipJobRequest, QualityBar, TitleStyle } from '../../shared/jobs'
+import type { ClipJobRequest, HeadlineVoice, QualityBar, TitleStyle } from '../../shared/jobs'
 import { MAX_PARALLEL_JOBS } from '../../shared/jobs'
 import { CaptionPresetPicker, CAPTION_PRESET_NAMES } from './CaptionPresetPicker'
 import { SourcePicker } from './SourcePicker'
@@ -123,6 +123,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
     ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
     qualityBar: draft.qualityBar,
+    headlineVoice: draft.headlineVoice,
     ...(draft.workflow === 'automatic' && isCaptionLanguage(draft.captionLanguage) ? { captionLanguage: draft.captionLanguage } : {}),
     ...brandRequestFields(draft),
     startTimeSeconds: trim.start,
@@ -300,6 +301,34 @@ function Stepper({ current, reachable, onSelect }: { current: WizardStep; reacha
   )
 }
 
+export const HEADLINE_VOICE_OPTIONS: { id: HeadlineVoice; label: string; hint: string; summary: string }[] = [
+  { id: 'clipper', label: 'Someone else’s', hint: 'Headlines about the speaker: “He admits he doesn’t know…”', summary: 'Someone else’s · headlines about the speaker' },
+  { id: 'creator', label: 'My own video', hint: 'Headlines in your voice: “I don’t know what makes great carousels”', summary: 'Your own · headlines in your voice' }
+]
+
+/** Whose video it is decides the headline voice: the creator posting their own clips, or a clipper posting someone else's. */
+function HeadlineVoicePicker({ value, onChange, disabled }: { value: HeadlineVoice; onChange: (value: HeadlineVoice) => void; disabled?: boolean }): React.JSX.Element {
+  return (
+    <div>
+      <p className="text-sm font-medium text-ink" id="headline-voice-label">Whose video is this?</p>
+      <p className="mb-2 mt-0.5 text-2xs text-ink-muted">Sets how titles and headlines talk about the speaker.</p>
+      <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-labelledby="headline-voice-label">
+        {HEADLINE_VOICE_OPTIONS.map((option) => {
+          const selected = value === option.id
+          return (
+            <button key={option.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} disabled={disabled} onKeyDown={onRadioKeyDown}
+              onClick={() => onChange(option.id)}
+              className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+              <span className="block text-xs font-medium">{option.label}</span>
+              <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{option.hint}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; update: Update; trimError: string | null; disabled?: boolean }): React.JSX.Element {
   return (
     <div className="space-y-3">
@@ -313,6 +342,7 @@ function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; u
           onChange={(source) => update({ source, sources: source ? [source] : [] })}
           onSourcesChange={(sources) => update({ sources, source: sources[0] ?? '' })} />
       </section>
+      <HeadlineVoicePicker value={draft.headlineVoice} onChange={(headlineVoice) => update({ headlineVoice })} disabled={disabled} />
       {draftSources(draft).length > 1 ? <p className="text-2xs text-ink-subtle">A preferred part of the video applies to one video at a time, so it is off when you clip several.</p> : <><SettingRow
         title="Preferred part of the video"
         description="Suggest where to find clips. The full source is transcribed; boundaries may expand to preserve complete ideas."
@@ -764,6 +794,7 @@ function ReviewStep({ draft, trim, onEdit }: {
     { step: 'clips', label: 'Clips', value: `${lengths}${(draft.videoSpeed ?? 1) > 1 && draft.durations.length > 0 ? ' of source footage' : ''} · ${draft.autoClipCount ? 'AI decides how many' : `Up to ${draft.maxClips}`}` },
     { step: 'clips', label: 'What to clip', value: draft.clipRequest?.trim() || 'The best moments' },
     ...(draft.workflow !== 'review' && draft.hookPreview ? [{ step: 'clips' as const, label: 'Hook preview', value: 'Opens with the strongest line' }] : []),
+    { step: 'video' as const, label: 'Whose video', value: HEADLINE_VOICE_OPTIONS.find((option) => option.id === draft.headlineVoice)?.summary ?? 'Someone else’s' },
     { step: 'clips' as const, label: 'Quality bar', value: QUALITY_BAR_OPTIONS.find((option) => option.id === draft.qualityBar)?.summary ?? 'B or better' },
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
