@@ -736,12 +736,19 @@ def estimate_speech_seconds(text: str) -> float:
     return max(1.0, len(text.split()) / 2.6)
 
 
-def estimate_remix_cost(script: RemixScript, host: str, voice_model: str = TTS_MODEL) -> float:
+def estimate_remix_cost(script: RemixScript, host: str, voice_model: str = TTS_MODEL, heygen_per_second: Optional[float] = None,
+                        heygen_voice: bool = False) -> float:
+    """A voiced take's estimate. With the HeyGen presenter ("lipsync"), the avatar says the opening and closing lines
+    (every line when it speaks in its HeyGen voice, which then replaces the app's voice) at HeyGen's published price
+    per second (passed by the app; AVATAR_PRICE_PER_SECOND otherwise)."""
     on_camera = estimate_speech_seconds(script.intro) + estimate_speech_seconds(script.close)
     characters = len(script.intro) + len(script.close) + sum(len(b.text) for b in script.beats)
+    if host == "lipsync" and heygen_voice:
+        on_camera += sum(estimate_speech_seconds(b.text) for b in script.beats)
+        characters = 0
     cost = characters / 1000 * TTS_PRICE_PER_1000_CHARS.get(voice_model, TTS_PRICE_PER_1000_CHARS[TTS_MODEL])
     if host == "lipsync":
-        cost += on_camera * AVATAR_PRICE_PER_SECOND
+        cost += on_camera * (AVATAR_PRICE_PER_SECOND if heygen_per_second is None else heygen_per_second)
     return cost
 
 
@@ -1813,6 +1820,12 @@ def moment_box(src_w: int, src_h: int, panel_h: int, lift: int, split: Optional[
     return look, crop_h + 12
 
 
+def moment_box_width(look: str) -> int:
+    """The box's width, read back from moment_box's filter (its white-border pad)."""
+    match = re.search(r"pad=(\d+):(\d+):6:6", look)
+    return int(match.group(1)) if match else OUT_W - 2 * SILENT_MARGIN
+
+
 def image_box_height(panel_h: int, lift: int, split: Optional[float]) -> int:
     if split is None:
         return round((panel_h - lift) * SILENT_BOX_SHARE) // 2 * 2
@@ -1964,6 +1977,13 @@ class RemixConfig:
     broll_items: list = field(default_factory=list)
     broll_stock: bool = False
     broll_plan: Optional[list] = None
+    # "Avatar on camera" (host "lipsync") on HeyGen: the app renders each spoken line with the member's HeyGen avatar
+    # (presenter "heygen"; see Remixer's `presenter`). heygen_voice: the avatar speaks in its HeyGen voice (the app sends
+    # the text) instead of lip-syncing to the app's voice. heygen_usd_per_second: HeyGen's published price, for estimates
+    # (None when HeyGen bills this avatar's engine at a price the app doesn't keep).
+    presenter: str = ""
+    heygen_voice: bool = False
+    heygen_usd_per_second: Optional[float] = None
 
 
 @dataclass
@@ -2056,13 +2076,14 @@ def grade_letter(scores: dict) -> tuple[str, float]:
 # ---------------------------------------------------------------------------
 
 def script_to_draft(script: RemixScript, draft_id: int, source_index: int, meta: dict, host: str,
-                    keyword: str = "", offer: str = "", voice_model: str = TTS_MODEL) -> dict:
+                    keyword: str = "", offer: str = "", voice_model: str = TTS_MODEL, heygen_per_second: Optional[float] = None,
+                    heygen_voice: bool = False) -> dict:
     return {
         "id": draft_id, "source_index": source_index, "source_title": meta.get("title") or "", "creator": meta.get("creator") or "",
         "start_ms": script.start_ms, "end_ms": script.end_ms, "quote": script.moment_quote, "why": script.why_this_moment,
         "style": script.style, "stance": script.stance, "headline": script.headline, "intro": script.intro,
         "beats": [asdict(b) for b in script.beats], "close": script.close, "proof_used": script.proof_used, "notes": script.notes,
-        "grade": script.grade, "estimate_usd": 0.0 if script.format == "silent" or host == "camera" else round(estimate_remix_cost(script, host, voice_model), 3),
+        "grade": script.grade, "estimate_usd": 0.0 if script.format == "silent" or host == "camera" else round(estimate_remix_cost(script, host, voice_model, heygen_per_second, heygen_voice), 3),
         "format": script.format, "cues": script.cues,
         "post_caption": finalize_caption(script.post_caption or fallback_caption(script.headline, script.beats), keyword, offer,
                                          meta.get("creator") or ""),
@@ -2141,15 +2162,20 @@ def _script_from_json(item: dict) -> RemixScript:
 
 class Remixer:
     def __init__(self, config: RemixConfig, progress: Progress = lambda detail, percent: None,
-                 media: Optional[OpenRouterMedia] = None, settings=None):
+                 media: Optional[OpenRouterMedia] = None, settings=None, presenter: Optional[Callable[..., Any]] = None):
         if config.angle not in ANGLES:
             raise RemixError("Choose a remix style.")
         if config.host not in HOSTS:
             raise RemixError("Choose how your presenter appears.")
-        # OpenRouter's video API takes images only, so a lip-synced avatar can't speak our
-        # voice track yet: the presenter is the avatar's photo with the voice until it can.
-        if config.host == "lipsync":
+        # A lip-synced avatar is made on HeyGen by the app (presenter "heygen"); without it the presenter is the
+        # avatar's photo with the voice (OpenRouter's video API takes images only).
+        if config.host == "lipsync" and (config.presenter != "heygen" or config.format != "commentary"):
             config.host = "still"
+        if config.host != "lipsync":
+            config.presenter, config.heygen_voice = "", False
+        # Render: an async callable (keyword arguments key, audio, text, out, label) that returns {"path", ...}
+        # once the app has the HeyGen video; it raises RemixError with HeyGen's plain message when it fails.
+        self.presenter = presenter
         if config.order not in ORDERS:
             raise RemixError("Choose the order of the video.")
         if config.format != "silent" and config.host not in ("voice", "camera") and not (config.avatar_photo and os.path.isfile(config.avatar_photo)):
@@ -2408,7 +2434,7 @@ class Remixer:
                     self.progress(f"{label}finding moments and writing your takes", base + share * 0.5)
                     planned = await self._plan(segments, meta)
                 except Exception as error:  # noqa: BLE001 - keep the other videos
-                    if isinstance(error, RemixError) and ("API key" in str(error) or "credits" in str(error)):
+                    if isinstance(error, RemixError) and ("API key" in str(error) or "credits" in str(error) or getattr(error, "stop_all", False)):
                         raise
                     logger.warning(f"Source {index + 1} failed: {type(error).__name__}: {error}")
                     first_error = first_error or error
@@ -2426,7 +2452,8 @@ class Remixer:
                 raise RemixError("No moments in these videos worked for a remix. Try other videos or a different style.")
             self.progress("Grading your takes", 94)
             await self._grade([s for _, s in scripts])
-            drafts = [script_to_draft(s, i, src, saved_sources[src]["meta"], self.config.host, self.config.cta_keyword, self.config.cta_offer, self.config.voice_model)
+            drafts = [script_to_draft(s, i, src, saved_sources[src]["meta"], self.config.host, self.config.cta_keyword, self.config.cta_offer, self.config.voice_model,
+                                      self.config.heygen_usd_per_second, self.config.heygen_voice)
                       for i, (src, s) in enumerate(scripts)]
             with open(os.path.join(work, PLAN_FILE), "w", encoding="utf-8") as handle:
                 json.dump({"version": 1, "plan_cost_usd": round(self.cost_usd, 4), "sources": saved_sources,
@@ -2669,7 +2696,7 @@ class Remixer:
                     discard_partial(root, f"clip_{index + self._clip_offset:02d}")
                     reason = str(error) if isinstance(error, RemixError) else "an unexpected error (see the log)"
                     self.warnings.append(f"Remix {index + 1} could not be made: {reason}")
-                    if isinstance(error, RemixError) and ("API key" in str(error) or "credits" in str(error)):
+                    if isinstance(error, RemixError) and ("API key" in str(error) or "credits" in str(error) or getattr(error, "stop_all", False)):
                         break  # every remaining remix would fail the same way
                 except BaseException:
                     # Cancelled (or stopped) mid-remix: drop its half-made files; the plan stays for a retry.
@@ -2797,6 +2824,26 @@ class Remixer:
             for (key, _), path in zip(lines, [recording["intro"], *beat_files, recording["close"]]):
                 audio[key] = os.path.join(work, f"{key}-you.mp4")
                 await asyncio.to_thread(normalize_recording, path, audio[key], MAX_LINE_RECORDING_S)
+        heygen = self.config.host == "lipsync"
+        if heygen and self.presenter is None:
+            raise RemixError("the HeyGen avatar isn't connected. Make the video again from Remix.")
+        host_videos: dict[str, Optional[str]] = {"intro": None, "close": None}
+        line_label = lambda key: f"Remix {index + 1} of {total}, " + ("opening line" if key == "intro" else "closing line" if key == "close"  # noqa: E731
+                                                                      else f"line {int(key[4:]) + 2}")
+        if camera:
+            pass
+        elif heygen and self.config.heygen_voice:
+            # The avatar's HeyGen voice says every line: HeyGen makes each one (the app sends the text), and the
+            # picture's own sound is the voice track. The middle lines' pictures only show where B-roll is missing.
+            say("starting your avatar on HeyGen", 0.05)
+            beats = script.beats
+            lines = [("intro", script.intro)] + [(f"beat{i}", b.text) for i, b in enumerate(beats)] + [("close", script.close)]
+            made = await asyncio.gather(*[self._heygen_line(key, None, text, work, line_label(key)) for key, text in lines])
+            host_videos.update(zip([k for k, _ in lines], made))
+            audio = {}
+            for key, path in zip([k for k, _ in lines], made):
+                audio[key] = os.path.join(work, f"{key}.m4a")
+                await asyncio.to_thread(ffmpeg, [*MEDIA_GUARD, "-i", path, "-vn", "-map", "0:a:0", *AUDIO_ARGS, audio[key]])
         else:
             say("recording the voice", 0.05)
             beats = script.beats
@@ -2806,22 +2853,16 @@ class Remixer:
                 self.media.speech(text, os.path.join(work, f"{key}.mp3"), **voice) for key, text in lines
             ])))
 
-        # 2. On-camera lines with the avatar (lip-synced when chosen), in parallel with B-roll.
-        say("animating your avatar" if self.config.host == "lipsync" else "gathering B-roll", 0.2)
-        host_videos: dict[str, Optional[str]] = {"intro": None, "close": None}
+        # 2. On-camera lines with the avatar (lip-synced on HeyGen when chosen), in parallel with B-roll.
+        say("animating your avatar on HeyGen" if heygen else "gathering B-roll", 0.2)
 
-        async def animate(key: str, text: str) -> None:
-            try:
-                host_videos[key] = await self.media.avatar_video(self.config.avatar_photo, audio[key], text, os.path.join(work, f"{key}-avatar.mp4"))
-            except Exception as error:  # noqa: BLE001 - fall back to the avatar's photo
-                logger.warning(f"Avatar video unavailable, using the still: {type(error).__name__}: {error}")
-                reason = str(error) if isinstance(error, RemixError) else "an unexpected error"
-                if not any("avatar's photo instead" in w for w in warnings):
-                    warnings.append(f"The lip-synced avatar could not be made ({reason}) so this remix uses your avatar's photo instead.")
+        async def animate(key: str) -> None:
+            # HeyGen lip-syncs the avatar to this line's voice; a failure stops this remix with HeyGen's plain reason.
+            host_videos[key] = await self._heygen_line(key, audio[key], None, work, line_label(key))
 
         tasks = []
-        if self.config.host == "lipsync":
-            tasks += [animate("intro", script.intro), animate("close", script.close)]
+        if heygen and not self.config.heygen_voice:
+            tasks += [animate("intro"), animate("close")]
         broll_task = self._broll([b.broll for b in beats], os.path.join(root, ".work", "broll"))
         results = await asyncio.gather(broll_task, *tasks)
         broll = results[0]
@@ -2876,6 +2917,13 @@ class Remixer:
                     path = await asyncio.to_thread(video_segment, broll[i], out, OUT_W, panel_h, audio[f"beat{i}"], seconds, True)
                 except RemixError:
                     logger.warning("A B-roll file could not be used; using a still")
+            if not path and host_videos.get(f"beat{i}"):
+                # No B-roll: the avatar saying this line (HeyGen voice), else its photo.
+                try:
+                    path = await asyncio.to_thread(video_segment, host_videos[f"beat{i}"], out, OUT_W, panel_h, audio[f"beat{i}"], seconds)
+                    avatar_parts.add(len(parts))
+                except RemixError:
+                    path = None
             if not path and self.config.host not in ("voice", "camera"):
                 path = await asyncio.to_thread(still_segment, self.config.avatar_photo, audio[f"beat{i}"], out, OUT_W, panel_h, seconds)
                 avatar_parts.add(len(parts))
@@ -2952,10 +3000,10 @@ class Remixer:
             "brand_identity": self.config.brand_name or None, "proof_used": script.proof_used,
             "post_caption": post_caption, "call_to_action": {"keyword": keyword, "offer": self.config.cta_offer} if keyword else None,
             "presenter": ({"mode": "camera", "layout": self.config.camera_layout, "voice": "own", "ai_generated": False} if camera else
-                          {"mode": self.config.host, "voice": "cloned" if self.config.voice_model == CLONE_TTS_MODEL else self.config.voice,
-                           "ai_generated": ai_presenter}),
-            "models": {"plan": self.settings.planner_model, "voice": None if camera else self.config.voice_model,
-                       "avatar": AVATAR_MODEL if self.config.host == "lipsync" else None},
+                          {"mode": self.config.host, "voice": "heygen" if self.config.heygen_voice else "cloned" if self.config.voice_model == CLONE_TTS_MODEL
+                           else self.config.voice, "ai_generated": ai_presenter, **({"provider": "heygen"} if self.config.host == "lipsync" else {})}),
+            "models": {"plan": self.settings.planner_model, "voice": None if camera or self.config.heygen_voice else self.config.voice_model,
+                       "avatar": "heygen" if self.config.host == "lipsync" else None},
             "timeline": [{"part": kind, "start_seconds": round(starts[i], 2), "seconds": round(durations[i], 2)} for i, (kind, _) in enumerate(parts)],
             "checks": [asdict(c) for c in checks], "warnings": warnings, "cost_usd": round(remix_cost, 4), "editable": editable,
         }
@@ -2967,6 +3015,16 @@ class Remixer:
                            round(remix_cost, 4), [asdict(c) for c in checks], warnings, script.style,
                            (script.grade or {}).get("letter"), script.start_ms, script.end_ms, source_meta.get("creator") or "",
                            ai_presenter, index + self._clip_offset, post_caption, camera, "commentary", editable)
+
+    async def _heygen_line(self, key: str, audio: Optional[str], text: Optional[str], work: str, label: str) -> str:
+        """One spoken line made by the app on HeyGen with the member's avatar: lip-synced to `audio` (the app's voice),
+        or speaking `text` in its HeyGen voice. Returns the MP4 (9:16, with the line's sound)."""
+        out = os.path.join(work, f"{key}-heygen.mp4")
+        answer = await self.presenter(key=key, audio=audio, text=text, out=out, label=label)
+        path = answer.get("path") if isinstance(answer, dict) else None
+        if path != out or not os.path.isfile(out):
+            raise RemixError("HeyGen's video for this line could not be read. Try again.")
+        return out
 
     def _camera_line(self, footage: str, out: str, panel_h: int, stage: str, warnings: list[str]) -> str:
         """An on-camera line of a voiced take from the member's normalized recording, in the chosen layout:
@@ -3028,7 +3086,8 @@ class Remixer:
             caption_path = await CaptionGeneratorService().generate_captions(
                 transcript_segments=words_to_segments(words, tags.get("cuts") or ()), clip_start_ms=0, clip_end_ms=round(total_s * 1000),
                 output_path=os.path.join(work, "captions.ass"), caption_style=style, output_width=OUT_W, output_height=OUT_H,
-                anchors=[(10**9, 5, caption_y)],
+                # A layout may move part of the captions (React, then my thoughts: part 1 clear of the face and the box).
+                anchors=[*[(int(until), 5, int(y)) for until, y in tags.get("caption_anchors") or []], (10**9, 5, caption_y)],
             )
         overlays: list[tuple[str, str, str, str]] = []
         if bar_path:
@@ -3038,8 +3097,10 @@ class Remixer:
         if tags.get("style") == "commentary":
             if credit_text:
                 credit_png = os.path.join(work, "credit.png")
-                tag_image(credit_text, credit_png, max_w=OUT_W - 80)
-                overlays.append((credit_png, "40", str(clear_h + 32), enable_expr([tuple(w) for w in tags.get("excerpt_windows") or []])))
+                # Under a box when there is one (credit_y), and never as wide as a box beside it (credit_max_w).
+                tag_image(credit_text, credit_png, max_w=int(tags.get("credit_max_w") or OUT_W - 80))
+                overlays.append((credit_png, "40", str(int(tags.get("credit_y") or clear_h + 32)),
+                                 enable_expr([tuple(w) for w in tags.get("excerpt_windows") or []])))
             if tags.get("ai_presenter"):
                 ai_png = os.path.join(work, "ai.png")
                 w, _ = tag_image("AI presenter", ai_png, 26)
@@ -3174,14 +3235,23 @@ class Remixer:
             else:
                 mw, mh = await asyncio.to_thread(video_size, moment)
                 look, box_h = moment_box(mw, mh, panel_h, lift, split)
-                open_top = lift + SILENT_TOP + box_h
-                # The presenter sits lower so their face shows under the clip; a blurred copy fills above.
-                shift = max(0, round(open_top + SILENT_FACE_SPOT * (panel_h - open_top) - SILENT_FACE_AT * OUT_H))
-                graph = (f"[2:v]{look}[box];" + camera_graph(layout, OUT_W, panel_h, size, matte=matte is not None,
-                                                             backdrop=spec.get("backdrop") or "blur", color=spec.get("color") or "#111111",
-                                                             duration=duration, fg_height=OUT_H, shift=shift)
-                         + f";[camv][box]overlay=x=(W-w)/2:y={lift + SILENT_TOP}:eof_action=pass[v]")
-                info.update(tags_y=clear_h + SILENT_TOP + box_h + 16, split_value=round(box_h / OUT_H, 3))
+                at = spec.get("box_at")
+                if at in ("top", "bottom"):
+                    # React, then my thoughts: the box placed clear of the member's face, the member as filmed.
+                    box_y = int(spec["box_top"]) if at == "top" else int(spec["box_bottom"]) - box_h
+                    camera = camera_graph(layout, OUT_W, panel_h, size, matte=matte is not None, backdrop=spec.get("backdrop") or "blur",
+                                          color=spec.get("color") or "#111111", duration=duration)
+                else:
+                    box_y = lift + SILENT_TOP
+                    open_top = box_y + box_h
+                    # The presenter sits lower so their face shows under the clip; a blurred copy fills above.
+                    shift = max(0, round(open_top + SILENT_FACE_SPOT * (panel_h - open_top) - SILENT_FACE_AT * OUT_H))
+                    camera = camera_graph(layout, OUT_W, panel_h, size, matte=matte is not None, backdrop=spec.get("backdrop") or "blur",
+                                          color=spec.get("color") or "#111111", duration=duration, fg_height=OUT_H, shift=shift)
+                graph = f"[2:v]{look}[box];" + camera + f";[camv][box]overlay=x=(W-w)/2:y={box_y}:eof_action=pass[v]"
+                box_w = int(moment_box_width(look))
+                info.update(tags_y=bar_h + box_y + box_h + 16, split_value=round(box_h / OUT_H, 3),
+                            box=[(OUT_W - box_w) // 2, bar_h + box_y, box_w, box_h])
             graph += ";" + (voice_over_clip("0:a", "2:a", "a") if spec.get("talk") else "[2:a]anull[a]")
         else:
             image = os.path.join(folder, files["image"])
@@ -4112,7 +4182,9 @@ class Remixer:
         tags = {"style": "commentary", "credit_text": f"Original: {creator[:40]}" if creator else "", "ai_presenter": False,
                 "excerpt_windows": [[0.0, round(total_s if pip_on else op, 3)]], "ai_windows": [],
                 "cta_keyword": "" if self.config.cta_clip else keyword,
-                "cta_window": [round(max(op, total_s - 4.0), 3), round(total_s, 3)], "cuts": [round(op, 3)], **({"cta_y": cta_y} if cta_y else {})}
+                "cta_window": [round(max(op, total_s - 4.0), 3), round(total_s, 3)], "cuts": [round(op, 3)], **({"cta_y": cta_y} if cta_y else {}),
+                # With the moment in a box at the top right, the credit stays to its left.
+                **({"credit_max_w": mt.pip_left(OUT_W) - 40 - 24} if pip_on else {})}
         final, manifest_path, editable = await self._finish_panel(service, assembled, work, root, name, script.headline, total_s, words, tags,
                                                                   bar_path, bar_h, clear_h, panel_h, script.format, layout)
 
@@ -4555,12 +4627,23 @@ class Remixer:
             else:
                 layout = "filmed"
         mw, mh = await asyncio.to_thread(video_size, os.path.join(part1, "moment.mp4"))
-        # The box stays clear of the captions' line (low in the frame), so their clip's words read under it.
-        room = bar_h + round(panel_h * 0.72) - 90 - (clear_h + SILENT_TOP)
         compose = {"format": "silent", "layout": layout, "backdrop": self.config.camera_backdrop, "color": self.config.camera_backdrop_color,
                    "talk": False}
-        opener, _ = await self._compose({"dir": part1, "kind": "reaction", "files": files, "compose": compose, "duration": duration},
-                                        rt.box_split(mw, mh, OUT_W, OUT_H, SILENT_MARGIN, room), bar_h, clear_h, part1)
+        # The box goes where it doesn't cover the member's face (found in their part-1 recording): at the top when
+        # their face is low, at the bottom when it's high; no face found, at the top with the member framed lower.
+        caption_line = bar_h + round(panel_h * 0.72)
+        face = await asyncio.to_thread(self._part1_face, cam, bar_h, panel_h)
+        natural = round((OUT_W - 2 * SILENT_MARGIN - 12) * mh / max(1, mw)) + 12
+        place = rt.part1_layout(face, natural, clear_h + SILENT_TOP, OUT_H, caption_line)
+        if place["at"] == "fallback":
+            # The box stays clear of the captions' line (low in the frame), so their clip's words read under it.
+            room = caption_line - 90 - (clear_h + SILENT_TOP)
+            split = rt.box_split(mw, mh, OUT_W, OUT_H, SILENT_MARGIN, room)
+        else:
+            split = round(place["box_h"] / OUT_H, 4)
+            compose.update(box_at=place["at"], box_bottom=place["box_y"] + place["box_h"] - bar_h, box_top=place["box_y"] - bar_h)
+        opener, part1_info = await self._compose({"dir": part1, "kind": "reaction", "files": files, "compose": compose, "duration": duration},
+                                                 split, bar_h, clear_h, part1)
 
         # 3. Part 2: their thoughts, full screen.
         say("preparing your thoughts", 0.35)
@@ -4591,9 +4674,14 @@ class Remixer:
         say("adding captions", 0.8)
         creator = (source_meta.get("creator") or "").strip()
         keyword = self.config.cta_keyword
+        # The credit goes right under their clip's box (never over it); part 1's captions stay off the face and the box.
+        box = part1_info.get("box") or None
         tags = {"style": "commentary", "credit_text": f"Original: {creator[:40]}" if creator else "", "ai_presenter": False,
                 "excerpt_windows": [[0.0, round(op, 3)]], "ai_windows": [], "cta_keyword": "" if self.config.cta_clip else keyword,
-                "cta_window": [round(max(op, total_s - 4.0), 3), round(total_s, 3)], "cuts": [round(op, 3)]}
+                "cta_window": [round(max(op, total_s - 4.0), 3), round(total_s, 3)], "cuts": [round(op, 3)],
+                "credit_y": int(part1_info["tags_y"]),
+                **({"caption_anchors": [[round(op * 1000), int(place["caption_y"])]]} if place["at"] != "fallback" else {}),
+                "part1": {"at": place["at"], "box": box, "face": list(face) if face else None}}
         final, manifest_path, editable = await self._finish_panel(service, assembled, work, root, name, script.headline, total_s, words, tags,
                                                                   bar_path, bar_h, clear_h, panel_h, "react_thoughts", layout)
 
@@ -4627,6 +4715,17 @@ class Remixer:
         return RemixResult(final, manifest_path, script.headline, script.stance, round(op, 2), round(total_s, 2), round(cost, 4),
                            [asdict(c) for c in checks], warnings, script.style, None, start_ms, end_ms, creator, False,
                            index + self._clip_offset, post_caption, True, "react_thoughts", editable)
+
+    @staticmethod
+    def _part1_face(cam: str, bar_h: int, panel_h: int) -> Optional[tuple[int, int, int, int]]:
+        """React, then my thoughts: the member's face in their part-1 recording (already framed for 9:16), in frame
+        pixels as it shows under the hook text; None when no face is found."""
+        from clip_engine.services import react_thoughts as rt
+        try:
+            return rt.face_in_frame(find_face(cam), video_size(cam), OUT_W, panel_h, bar_h)
+        except Exception as error:  # noqa: BLE001 - without a face the box goes at the top, as before
+            logger.warning(f"Finding the face in part 1 failed: {type(error).__name__}: {error}")
+            return None
 
     def _matte(self, footage: str, out: str, warnings: list[str]) -> Optional[str]:
         """The cut-out matte for normalized footage, or None (with a warning) when it can't be made."""

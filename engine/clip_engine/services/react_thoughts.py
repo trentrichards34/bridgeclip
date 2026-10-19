@@ -47,9 +47,21 @@ FALLBACK_SHOT_S = 3.0
 STOCK = "stock"
 ITEM_ID = re.compile(r"^b[0-9a-f]{8}$")
 
-# Part 1: their clip's box at most this share of the frame's height (about the top two-thirds with the hook text).
-BOX_SPLIT_MAX = 0.62
+# Part 1: their clip's box at most this share of the frame's height, so the member's face stays in view.
+BOX_SPLIT_MAX = 0.55
 BOX_SPLIT_MIN = 0.3
+
+# Part 1 around the member's face (frame pixels): the face box found by the detector is grown for hair and chin, then
+# kept FACE_MARGIN clear of their clip's box. The box is at least BOX_MIN_PX tall, its credit tag goes right under it
+# (CREDIT_ROOM), and nothing goes into the bottom BOTTOM_SAFE (the platforms' own buttons and caption).
+FACE_GROW_TOP = 0.3
+FACE_GROW_BOTTOM = 0.2
+FACE_MARGIN = 40
+BOX_MIN_PX = 420
+CREDIT_GAP = 16
+CREDIT_ROOM = 16 + 54 + 16
+BOTTOM_SAFE = 280
+CAPTION_HALF = 80
 
 
 class ReactTemplateError(Exception):
@@ -282,6 +294,67 @@ def box_split(src_w: int, src_h: int, out_w: int, out_h: int, margin: int, room:
         return None
     share = min(BOX_SPLIT_MAX, natural, *([max(BOX_SPLIT_MIN, room / out_h)] if room else []))
     return round(share, 3)
+
+
+def face_in_frame(face: Optional[tuple[float, float, float, float]], cam_size: tuple[int, int], out_w: int, panel_h: int,
+                  bar_h: int, top_bias: float = 0.3) -> Optional[tuple[int, int, int, int]]:
+    """The member's face (x, y, w, h as fractions of their recording) in frame pixels, once the recording covers the
+    out_w x panel_h panel under the hook text (scaled to cover, cropped keeping more of the top, like remix.cover)."""
+    if face is None or cam_size[0] <= 0 or cam_size[1] <= 0:
+        return None
+    cam_w, cam_h = cam_size
+    scale = max(out_w / cam_w, panel_h / cam_h)
+    sw, sh = cam_w * scale, cam_h * scale
+    crop_x, crop_y = (sw - out_w) / 2, (sh - panel_h) * top_bias
+    x, y, w, h = face
+    return (round(x * sw - crop_x), round(y * sh - crop_y + bar_h), round(w * sw), round(h * sh))
+
+
+def part1_layout(face: Optional[tuple[int, int, int, int]], natural_h: int, top_from: int, out_h: int,
+                 default_caption_y: int) -> dict:
+    """Where their clip's box goes in part 1 so it never covers the member's face (frame pixels).
+
+    face: the face box (x, y, w, h), or None when none was found. natural_h: the box's height for the whole clip at the
+    box's full width. top_from: the highest the box may start (under the hook text). A face in the lower half puts the
+    box at the top; a face high in the frame puts it at the bottom; either way the box is at most BOX_SPLIT_MAX of the
+    frame and stays FACE_MARGIN clear of the face (grown for hair and chin), with its credit tag right under it. When
+    neither side has room (or no face), {"at": "fallback"}: the box at the top and the member framed lower, as before.
+
+    Returns {"at": "top"|"bottom", "box_y", "box_h", "credit_y", "caption_y", "caption_clear", "keep_clear": [top, bottom]}
+    or the fallback."""
+    if face is None:
+        return {"at": "fallback"}
+    _, fy, _, fh = face
+    clear_top = fy - round(fh * FACE_GROW_TOP) - FACE_MARGIN
+    clear_bottom = fy + fh + round(fh * FACE_GROW_BOTTOM) + FACE_MARGIN
+    want = min(round(BOX_SPLIT_MAX * out_h), max(2, natural_h))
+    least = min(BOX_MIN_PX, want)
+    lowest = out_h - BOTTOM_SAFE
+    rooms = {"top": clear_top - CREDIT_ROOM - top_from, "bottom": lowest - CREDIT_ROOM - clear_bottom}
+    prefer = "top" if fy + fh / 2 > out_h / 2 else "bottom"
+    for side in (prefer, "bottom" if prefer == "top" else "top"):
+        room = rooms[side]
+        if room < least:
+            continue
+        box_h = max(2, min(want, room) // 2 * 2)
+        box_y = top_from if side == "top" else lowest - CREDIT_ROOM - box_h
+        credit_y = box_y + box_h + CREDIT_GAP
+        credit_bottom = credit_y + 54
+        # Captions: under the face when the box is above it, between the face and the box when it is below; else
+        # in the open space nearest the usual line.
+        if side == "top":
+            options = [clear_bottom + CAPTION_HALF, credit_bottom + CAPTION_HALF]
+            fits = [y for y in options if (y - CAPTION_HALF >= clear_bottom and y + CAPTION_HALF <= lowest)
+                    or (y - CAPTION_HALF >= credit_bottom and y + CAPTION_HALF <= clear_top)]
+        else:
+            options = [(clear_bottom + box_y) // 2, credit_bottom + CAPTION_HALF]
+            fits = [y for y in options if (y - CAPTION_HALF >= clear_bottom and y + CAPTION_HALF <= box_y)
+                    or (y - CAPTION_HALF >= credit_bottom and y + CAPTION_HALF <= out_h - 120)]
+        # No clear space: just under the credit (over the hair or the chin's margin rather than the middle of the face).
+        caption_y = min(fits, key=lambda y: abs(y - default_caption_y)) if fits else min(credit_bottom + CAPTION_HALF, out_h - 120 - CAPTION_HALF)
+        return {"at": side, "box_y": box_y, "box_h": box_h, "credit_y": credit_y, "caption_y": caption_y, "caption_clear": bool(fits),
+                "keep_clear": [clear_top, clear_bottom]}
+    return {"at": "fallback"}
 
 
 def default_trim(seconds: float) -> tuple[int, int]:
