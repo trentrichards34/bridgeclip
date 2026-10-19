@@ -68,13 +68,16 @@ test('Me, on camera: pick the background, film a reaction in sync with the clip,
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
   await page.getByLabel('Video links').fill('https://www.instagram.com/reel/DdurluTvRVB/')
   // A voiced take on camera: one take to record to start with, and the button says what happens next.
-  await page.getByRole('radio', { name: /^Voiced take/ }).click()
-  await page.getByRole('radio', { name: /Me, on camera/ }).click()
+  // You on camera, then the scripted take (the AI writes the lines, you read them).
+  await page.getByRole('radio', { name: /^You on camera/ }).click()
+  await page.getByRole('radio', { name: /^Scripted take/ }).click()
   assert.equal(await page.getByRole('radiogroup', { name: 'Takes per video' }).getByRole('radio', { name: '1', exact: true }).getAttribute('aria-checked'), 'true')
   await page.getByRole('button', { name: 'Write and record', exact: true }).waitFor()
   // Green screen over their video: its own card (React to a clip, you on camera, cut out in front of their moment).
   await page.getByRole('radio', { name: /^Green screen over their video/ }).click()
-  assert.equal(await page.getByRole('radio', { name: /^React to a clip/ }).getAttribute('aria-checked'), 'false')
+  assert.equal(await page.getByRole('radio', { name: /^Scripted take/ }).getAttribute('aria-checked'), 'false')
+  // (React to a clip is an AI presenter card now: not offered on this side.)
+  assert.equal(await page.getByRole('radio', { name: /^React to a clip/ }).count(), 0)
   // No avatar, no AI label, no presenter to choose: it's really you.
   assert.equal(await page.getByText('No avatars yet').count(), 0)
   assert.equal(await page.getByRole('radiogroup', { name: 'Presenter' }).count(), 0)

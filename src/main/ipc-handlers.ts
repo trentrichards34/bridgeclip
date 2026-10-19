@@ -3,6 +3,7 @@ import { mediaAccessStatus, requestMediaAccess } from './media-permissions'
 import { uniqueFileName, writeZip } from './clip-zip'
 import { randomUUID } from 'crypto'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
+import { BROLL_IMAGE_EXTENSIONS, BROLL_PLAN_ESTIMATE_USD, BROLL_VIDEO_EXTENSIONS } from '../shared/react-templates'
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
 import { addEditorCandidate, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorProgress, suggestEditorHooks } from './clip-editor'
 import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
@@ -34,7 +35,7 @@ import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../s
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, readReactions, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
-import { anotherMoment, momentEstimate, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
+import { addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentEstimate, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { importLegacyAvatarVideos } from './avatar-library'
 import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
@@ -462,7 +463,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   paid('remix:start', 'openrouter', (request) => {
     const raw = (request ?? {}) as Record<string, unknown>
-    if (raw.format === 'image' || raw.format === 'pause_react') return estimateRemixCost('camera', 1, 0, raw.format).total
+    if (raw.format === 'image' || raw.format === 'pause_react' || raw.format === 'clip_then_me' || raw.format === 'react_thoughts') return estimateRemixCost('camera', 1, 0, raw.format).total
     if (raw.format === 'moment_take') return momentEstimate(parseMomentRanges((raw.moment as { ranges?: unknown } | undefined)?.ranges)).total
     const sources = Array.isArray(raw.sources) ? Math.max(1, raw.sources.length) : 1
     const count = typeof raw.count === 'number' && Number.isInteger(raw.count) && raw.count >= 1 && raw.count <= MAX_REMIXES ? raw.count : null
@@ -484,8 +485,23 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const format = remixStatus()?.drafts[0]?.format
     // Moment + my take: one short writing call per take (like a screenshot take).
     if (format === 'moment_take') return estimateRemixCost('camera', 1, 0, 'image').total * Math.max(1, Array.isArray(ids) ? ids.length : remixStatus()?.drafts.length ?? 1)
-    return estimateRemixCost('camera', 1, 0, format === 'pause_react' ? 'pause_react' : 'image').total
+    return estimateRemixCost('camera', 1, 0, format === 'pause_react' || format === 'clip_then_me' || format === 'react_thoughts' ? format : 'image').total
   }, (ids) => writeRemix(ids))
+  // React, then my thoughts: your own b-roll (chosen in the file dialog and copied into the run), stock on or off, your
+  // changes to the plan (free), and "Plan my b-roll" (one small planning call, and a transcription if not written yet).
+  handle('remix:brollView', () => brollView())
+  handle('remix:addBroll', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile', 'multiSelections'], title: 'Choose your b-roll clips or pictures',
+      filters: [{ name: 'Videos and pictures', extensions: [...BROLL_VIDEO_EXTENSIONS, ...BROLL_IMAGE_EXTENSIONS] }] })
+    if (result.canceled || !result.filePaths.length) return null
+    return addBroll(result.filePaths)
+  })
+  handle('remix:removeBroll', (_event, id: unknown) => removeBroll(id))
+  handle('remix:brollStock', (_event, on: unknown) => setBrollStock(on))
+  handle('remix:brollPlan', (_event, plan: unknown) => setBrollPlan(plan))
+  paid('remix:planBroll', 'openrouter', () => BROLL_PLAN_ESTIMATE_USD, () => planBroll())
   // Moment + my take: nudge a moment (free), find another one in its range (one planning call), talking points (one small call),
   // and read the time from a screenshot of a player (one small call; before any run, so it's recorded here).
   handle('remix:momentBounds', (_event, draftId: unknown, startMs: unknown, endMs: unknown) => setMomentBounds(draftId, startMs, endMs))

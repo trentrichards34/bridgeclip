@@ -546,3 +546,55 @@ test('Remix on camera: easy starts, a folded look summary, plain errors, the rec
   const unheard = renderToStaticMarkup(React.createElement(PauseEditor, { view: view('start'), disabled: false, onChange: () => {} }))
   assert.match(unheard, /Nudge their video/)
 })
+
+test('Remix: You on camera / AI presenter, setup goals land on the right side, and the two short-clip templates’ review', () => {
+  const React = require('react')
+  const { renderToStaticMarkup } = require('react-dom/server')
+  const code = buildSync({
+    stdin: {
+      contents: `export { useRemixForm } from './src/renderer/store/use-remix-form-store';
+        export { startGoal } from './src/renderer/store/use-onboarding-store';
+        export { remixMode, CAMERA_CARDS, AI_CARDS } from './src/shared/remix';
+        export { partLabel } from './src/renderer/components/RemixRecorder';
+        export { ClipTakeReview } from './src/renderer/components/ClipTakeReview';
+        export { GUIDES } from './src/shared/onboarding';`,
+      resolveDir: path.resolve(__dirname, '..'), loader: 'ts'
+    },
+    bundle: true, platform: 'node', format: 'cjs', packages: 'external', loader: { '.css': 'empty' }, jsx: 'automatic', write: false
+  }).outputFiles[0].text
+  const mod = { exports: {} }
+  vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: {} }, navigator: {} })
+  const { useRemixForm, startGoal, remixMode, CAMERA_CARDS, AI_CARDS, partLabel, ClipTakeReview, GUIDES } = mod.exports
+  const side = () => remixMode(useRemixForm.getState().format, useRemixForm.getState().host)
+
+  // AI reactions land in "AI presenter" even from an on-camera template; on-camera goals land in "You on camera".
+  useRemixForm.getState().update({ format: 'react_thoughts', host: 'camera' })
+  startGoal('ai-reactions')
+  assert.deepEqual([useRemixForm.getState().format, useRemixForm.getState().host, side()], ['commentary', 'still', 'ai'])
+  useRemixForm.getState().update({ format: 'silent', host: 'voice' })
+  startGoal('ai-reactions')
+  assert.deepEqual([useRemixForm.getState().format, side()], ['silent', 'ai'])
+  startGoal('camera-reactions')
+  assert.equal(side(), 'camera')
+  startGoal('article')
+  assert.deepEqual([useRemixForm.getState().format, side()], ['image', 'camera'])
+  assert.ok(CAMERA_CARDS.some((card) => card.id === 'react_thoughts') && !AI_CARDS.some((card) => card.id === 'pause_react'))
+  // The guides name the new templates briefly.
+  const steps = GUIDES['camera-reactions'].steps.join(' ')
+  assert.match(steps, /Their clip, then me/)
+  assert.match(steps, /React, then my thoughts/)
+  assert.match(GUIDES['ai-reactions'].steps.join(' '), /AI presenter \(Beta\)/)
+
+  assert.equal(partLabel('reaction', 'react_thoughts'), 'Part 1 · Watch & react')
+  assert.equal(partLabel('thoughts', 'react_thoughts'), 'Part 2 · Your thoughts')
+  assert.equal(partLabel('reaction', 'clip_then_me'), 'Your take')
+
+  const status = (format) => ({ id: 'r1', phase: 'review', detail: '', percent: 100, folder: '/out/remix-x', estimateUsd: 0, outputs: [], costUsd: 0, warnings: [], error: null, onCamera: true,
+    drafts: [{ id: 0, format, headline: '', intro: '', beats: [], close: '', postCaption: '', quote: '', why: '', startMs: 0, endMs: 15000, sourceIndex: 0, sourceTitle: 'The ad',
+      creator: '@brand', style: 'reaction', stance: 'add_nuance', notes: [], grade: null, estimateUsd: 0, cues: [] }] })
+  const react = renderToStaticMarkup(React.createElement(ClipTakeReview, { status: status('react_thoughts'), onError() {}, onOpenKeys() {} }))
+  for (const heading of ['1 · Their clip', '2 · Part 1 · Watch &amp; react', '3 · Part 2 · Your thoughts', '5 · Hook text and caption']) assert.ok(react.includes(heading), heading)
+  assert.match(react, /credited on screen as @brand/)
+  const clip = renderToStaticMarkup(React.createElement(ClipTakeReview, { status: status('clip_then_me'), onError() {}, onOpenKeys() {} }))
+  assert.ok(clip.includes('2 · Your take') && clip.includes('3 · Hook text and caption') && !clip.includes('b-roll'))
+})

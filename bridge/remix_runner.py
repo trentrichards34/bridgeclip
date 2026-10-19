@@ -54,7 +54,20 @@ def parse_recordings(raw, fmt):
             except PauseReactError:
                 raise ValueError("Invalid recordings") from None
             out[key] = {"reaction": {"path": reaction["path"], "offset_s": 0.0}, "timeline": item["timeline"]}
-        elif fmt in ("silent", "image", "moment_take"):
+        elif fmt == "react_thoughts":
+            # Part 1 (watching their clip; offset unknown for a phone video) and part 2 (their thoughts, from its start).
+            reaction, thoughts = item.get("reaction"), item.get("thoughts")
+            if set(item) != {"reaction", "thoughts"} or not isinstance(reaction, dict) or not set(reaction) <= {"path", "offset_s"} \
+                    or not _abs_path(reaction.get("path")) or not isinstance(thoughts, dict) or not set(thoughts) <= {"path", "offset_s"} \
+                    or not _abs_path(thoughts.get("path")) or thoughts.get("offset_s") not in (None, 0, 0.0):
+                raise ValueError("Invalid recordings")
+            offset = reaction.get("offset_s")
+            if offset is not None and (isinstance(offset, bool) or not isinstance(offset, (int, float)) or not math.isfinite(offset)
+                                       or not 0 <= offset <= MAX_OFFSET_SECONDS):
+                raise ValueError("Invalid recordings")
+            out[key] = {"reaction": {"path": reaction["path"], "offset_s": None if offset is None else float(offset)},
+                        "thoughts": {"path": thoughts["path"], "offset_s": 0.0}}
+        elif fmt in ("silent", "image", "moment_take", "clip_then_me"):
             reaction = item.get("reaction")
             if set(item) != {"reaction"} or not isinstance(reaction, dict) or not set(reaction) <= {"path", "offset_s"} \
                     or not _abs_path(reaction.get("path")):
@@ -151,6 +164,42 @@ def parse_moment_options(raw, fmt, mode):
     return [list(r) for r in ranges], pip, list(ids)
 
 
+CLIP_FORMATS = ("clip_then_me", "react_thoughts")
+
+
+def parse_clip_options(raw, fmt, mode):
+    """Their clip, then me / React, then my thoughts: the part of their video used, and (React, then my thoughts) the
+    member's own b-roll, stock on or off and the b-roll plan as they left it."""
+    import math
+    from clip_engine.services import react_thoughts as rt
+    keys = ("clip_trim", "broll_items", "broll_stock", "broll_plan")
+    if fmt not in CLIP_FORMATS:
+        if any(raw.get(k) not in (None, False) for k in keys):
+            raise ValueError("Invalid format")
+        return None, [], False, None
+    trim = raw.get("clip_trim")
+    if trim is not None:
+        if not isinstance(trim, list) or len(trim) != 2 or any(type(v) is not int or not 0 <= v <= 4 * 3600 * 1000 for v in trim) \
+                or not rt.CLIP_MIN_S * 1000 <= trim[1] - trim[0] <= rt.CLIP_MAX_S * 1000 + 50:
+            raise ValueError("Invalid trim")
+        trim = list(trim)
+    if fmt == "clip_then_me":
+        if any(raw.get(k) not in (None, False, []) for k in keys[1:]):
+            raise ValueError("Invalid format")
+        return trim, [], False, None
+    stock = raw.get("broll_stock", False)
+    if not isinstance(stock, bool):
+        raise ValueError("Invalid b-roll")
+    items = rt.parse_items(raw.get("broll_items"))
+    plan = rt.parse_plan(raw.get("broll_plan"))
+    ids = {i["id"] for i in items}
+    if plan is not None and any(s["item"] is not None and s["item"] not in ids for s in plan):
+        raise ValueError("Invalid b-roll plan")
+    if plan is not None and any(not math.isfinite(s["start"]) or s["start"] < 0 or s["end"] > rt.TAKE_MAX_S + 5 for s in plan):
+        raise ValueError("Invalid b-roll plan")
+    return trim, items, stock, plan
+
+
 def parse_config(raw):
     from clip_engine.services.remix_service import (ANGLES, CAMERA_BACKDROPS, CAMERA_LAYOUTS, DEFAULT_VOICE, IMAGE_EXTENSIONS, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, PAUSE_CAPTIONS,
                                                     PAUSE_LAYOUTS, REACTION_KINDS, TTS_MODEL,
@@ -167,7 +216,7 @@ def parse_config(raw):
         value = raw.get(key)
         if value is not None and (not isinstance(value, str) or len(value) > limit or "\0" in value):
             raise ValueError(f"Invalid {key}")
-    if raw.get("mode", "plan") not in ("plan", "render", "write"):
+    if raw.get("mode", "plan") not in ("plan", "render", "write", "broll"):
         raise ValueError("Invalid mode")
     sources = raw.get("sources") or []
     if raw.get("mode", "plan") == "plan" and (not isinstance(sources, list) or not 1 <= len(sources) <= MAX_SOURCES or any(
@@ -180,7 +229,7 @@ def parse_config(raw):
     photo = raw.get("avatar_photo")
     if photo is not None and not os.path.isabs(photo):
         raise ValueError("Invalid avatar photo")
-    angle = raw.get("angle") or ("reaction" if raw.get("format") in ("image", "pause_react", "moment_take") else None)
+    angle = raw.get("angle") or ("reaction" if raw.get("format") in ("image", "pause_react", "moment_take", *CLIP_FORMATS) else None)
     if angle not in ANGLES or raw.get("host") not in HOSTS:
         raise ValueError("Invalid style")
     count = raw.get("count", 3)
@@ -195,8 +244,12 @@ def parse_config(raw):
     reactions = raw.get("reactions") or {}
     # An article or post: written from the member's recording ("write"), then rendered; never planned.
     mode = raw.get("mode", "plan")
-    if (fmt == "image" and mode == "plan") or (mode == "write" and fmt not in ("image", "pause_react", "moment_take")):
+    if (fmt == "image" and mode == "plan") or (mode == "write" and fmt not in ("image", "pause_react", "moment_take", *CLIP_FORMATS)) \
+            or (mode == "broll" and fmt != "react_thoughts"):
         raise ValueError("Invalid format")
+    if fmt in CLIP_FORMATS and (raw.get("host") != "camera" or (mode == "plan" and len(sources) != 1)):
+        raise ValueError("Invalid format")
+    clip_trim, broll_items, broll_stock, broll_plan = parse_clip_options(raw, fmt, mode)
     if fmt == "moment_take" and (raw.get("host") != "camera" or (mode == "plan" and len(sources) != 1)):
         raise ValueError("Invalid format")
     moment_ranges, moment_pip, write_ids = parse_moment_options(raw, fmt, mode)
@@ -214,7 +267,7 @@ def parse_config(raw):
         image_source = {"path": image_source["path"], "credit": " ".join(credit.split())}
     elif raw.get("image_source") is not None:
         raise ValueError("Invalid image source")
-    if fmt not in ("commentary", "silent", "image", "pause_react", "moment_take") or not isinstance(reactions, dict) or any(
+    if fmt not in ("commentary", "silent", "image", "pause_react", "moment_take", *CLIP_FORMATS) or not isinstance(reactions, dict) or any(
             k not in REACTION_KINDS or not isinstance(v, str) or len(v) > 4096 or "\0" in v or not os.path.isabs(v) for k, v in reactions.items()):
         raise ValueError("Invalid format")
     layout = raw.get("camera_layout") or ("greenscreen" if fmt == "image" else "filmed")
@@ -247,6 +300,7 @@ def parse_config(raw):
         recordings=recordings, image_source=image_source, brand_mark=validate_brand_mark(raw.get("brand_mark")),
         pause_layout=raw.get("pause_layout") or "box", pause_captions=raw.get("pause_captions") or "member",
         moment_ranges=moment_ranges, moment_pip=moment_pip, write_ids=write_ids,
+        clip_trim=clip_trim, broll_items=broll_items, broll_stock=broll_stock, broll_plan=broll_plan,
     )
 
 
@@ -311,6 +365,8 @@ def main():
                 return await remixer.render(approved)
             if raw_request.get("mode") == "write":
                 return await remixer.write()
+            if raw_request.get("mode") == "broll":
+                return await remixer.replan_broll()
             return await remixer.plan()
 
         result = asyncio.run(work())
@@ -321,7 +377,8 @@ def main():
         from bridge_runner import describe_failure
         from clip_engine.services.pause_react import PauseReactError
         from clip_engine.services.moment_take import MomentTakeError
-        if isinstance(error, (RemixError, PauseReactError, MomentTakeError)):
+        from clip_engine.services.react_thoughts import ReactTemplateError
+        if isinstance(error, (RemixError, PauseReactError, MomentTakeError, ReactTemplateError)):
             message = str(error)
         elif isinstance(error, asyncio.CancelledError):
             message = "Cancelled"

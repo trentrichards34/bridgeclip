@@ -40,6 +40,7 @@ import type { BrandLook } from '../shared/brand-kit'
 import type { BrandIdentity, RecordingPart, RemixDraft, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
 import type { EditDecisions, EditSource, EditStartRequest, EditStatus, FilmIdea, FilmIdeasRequest } from '../shared/edit-recording'
 import type { PauseEvent, PauseSettings, PauseView } from '../shared/pause-react'
+import type { BrollShot, BrollView } from '../shared/react-templates'
 import type { TimecodeRead } from '../shared/moment-take'
 import type {
   AppDataScope,
@@ -448,6 +449,16 @@ export interface BridgeClipAPI {
     recordingFinish: (token: string, offsetSeconds: number | null, pause?: { events: PauseEvent[]; durationMs: number }) => Promise<RemixRecordings>
     /** Pause & react: the part of their video to react to (a phone recording's pauses are found again). */
     trim: (draftId: number, startMs: number, endMs: number) => Promise<{ draft: RemixDraft; view: PauseView | null }>
+    /** React, then my thoughts: your b-roll, stock on or off, and the plan (null when it isn't one). */
+    brollView: () => Promise<BrollView | null>
+    /** Opens a file dialog in main (several clips or pictures); null when cancelled. */
+    addBroll: () => Promise<BrollView | null>
+    removeBroll: (id: string) => Promise<BrollView>
+    brollStock: (on: boolean) => Promise<BrollView>
+    /** The plan as you left it (a shot swapped to another clip, or removed). */
+    brollPlan: (plan: BrollShot[]) => Promise<BrollView>
+    /** Plan the b-roll over what you said (one small paid call). */
+    planBroll: () => Promise<BrollView>
     /** Pause & react: the take's timeline and adjustments; null before anything is recorded. */
     pauseView: () => Promise<PauseView | null>
     /** Pause & react, phone recordings: nudge the start, ignore short pauses or plays, flip stretches. */
@@ -819,6 +830,12 @@ const api: BridgeClipAPI = {
     recordingAppend: (token, chunk) => ipcRenderer.invoke('remix:recordingAppend', token, chunk),
     recordingFinish: (token, offsetSeconds, pause) => ipcRenderer.invoke('remix:recordingFinish', token, offsetSeconds, pause),
     trim: (draftId, startMs, endMs) => ipcRenderer.invoke('remix:trim', draftId, startMs, endMs),
+    brollView: () => ipcRenderer.invoke('remix:brollView'),
+    addBroll: () => ipcRenderer.invoke('remix:addBroll'),
+    removeBroll: (id) => ipcRenderer.invoke('remix:removeBroll', id),
+    brollStock: (on) => ipcRenderer.invoke('remix:brollStock', on),
+    brollPlan: (plan) => ipcRenderer.invoke('remix:brollPlan', plan),
+    planBroll: () => paid('remix:planBroll'),
     pauseView: () => ipcRenderer.invoke('remix:pauseView'),
     pauseSettings: (settings) => ipcRenderer.invoke('remix:pauseSettings', settings),
     recordingAbort: (token) => ipcRenderer.invoke('remix:recordingAbort', token),

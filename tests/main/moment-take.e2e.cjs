@@ -94,11 +94,12 @@ test('Moment + my take: two ranges (typed and from a screenshot), two uploaded t
   }, [podcast, screenshot, ...takes])
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
-  // Right after Pause & react, with a plain one-line description.
+  // You on camera: Pause & react first, then the short-clip templates, then Moment + my take, each with a plain one-line description.
+  await page.getByRole('radio', { name: /^You on camera/ }).click()
   const formats = page.getByRole('radiogroup', { name: 'Remix format' }).getByRole('radio')
   const labels = await formats.allInnerTexts()
   const at = labels.findIndex((text) => text.startsWith('Moment + my take'))
-  assert.ok(at > 0 && labels[at - 1].startsWith('Pause & react'), labels.join(' | '))
+  assert.ok(at === 3 && labels[0].startsWith('Pause & react') && labels[1].startsWith('Their clip, then me') && labels[2].startsWith('React, then my thoughts'), labels.join(' | '))
   await page.getByRole('radio', { name: /Moment \+ my take/ }).click()
   await page.getByRole('heading', { name: '2 · The long video and your times' }).waitFor()
   assert.equal(await page.getByRole('radiogroup', { name: 'Presenter' }).count(), 0)

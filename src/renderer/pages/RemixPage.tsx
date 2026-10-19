@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FirstRunGuide } from '../components/FirstRunGuide'
-import { AlertTriangle, Camera, Check, ChevronDown, Image as ImageIcon, Copy, FileText, Film, FolderOpen, Library, MessageCircle, Send, Sparkles, UserRound, Wand2, X } from 'lucide-react'
+import { AlertTriangle, Bot, Camera, Check, ChevronDown, Image as ImageIcon, Copy, FileText, Film, FolderOpen, Library, MessageCircle, Send, Sparkles, UserRound, Wand2, X } from 'lucide-react'
 import type { AvatarSummary } from '../../shared/avatars'
 import { REACTIONS } from '../../shared/avatars'
 import {
   brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_CTA_OFFER_CHARS, MAX_POST_CAPTION_CHARS, MAX_SOURCES,
   closeWithoutCta, normalizeCtaKeyword, AVATAR_VOICE, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
   REMIX_WORD_LIMITS, remixEditProblem, remixSourceUrl, STANCE_LABELS, STYLE_LABELS, wordCount,
-  REMIX_FORMATS, headlineOnly, CAMERA_LAYOUTS, partsFor, AVATAR_REACTIONS_BETA, type CameraSettings, type RemixFormat, type RemixRecordings, type BrandIdentity, type RemixDraft, type RemixEdit, type RemixHost, type RemixOutput, type RemixStatus
+  AI_CARDS, CAMERA_CARDS, clipFormat, remixMode, headlineOnly, CAMERA_LAYOUTS, partsFor, AVATAR_REACTIONS_BETA, type CameraSettings, type FormatCard, type FormatCardId,
+  type RemixFormat, type RemixMode, type RemixRecordings, type BrandIdentity, type RemixDraft, type RemixEdit, type RemixHost, type RemixOutput, type RemixStatus
 } from '../../shared/remix'
 import type { Page as PageName } from '../components/Sidebar'
 import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
@@ -17,6 +18,8 @@ import { CtaPicker } from '../components/CtaPicker'
 import { partLabel, RemixRecorder } from '../components/RemixRecorder'
 import { PauseReactReview } from '../components/PauseReactReview'
 import { MomentTakeReview } from '../components/MomentTakeReview'
+import { ClipTakeReview } from '../components/ClipTakeReview'
+import { CLIP_MAX_SECONDS, longClipNote } from '../../shared/react-templates'
 import { MomentRanges } from '../components/MomentRanges'
 import { formatTimecode, MOMENT_TAKE_MAX_SECONDS, readRanges } from '../../shared/moment-take'
 import { PAUSE_CAPTION_CHOICES, PAUSE_LAYOUTS, PAUSE_REACT_MAX_SECONDS, type PauseLayout } from '../../shared/pause-react'
@@ -55,6 +58,8 @@ import { parseJobOutput } from '../../shared/job-output'
 const COUNTS = [1, 3, 5, 10] as const
 /** "Look & call to action" stays open or closed for the rest of the session once the member chooses. */
 let lookOpenThisSession = false
+/** Switching between "You on camera" and "AI presenter" comes back to the template last picked on each side. */
+const lastPick: { camera: FormatCardId; ai: { format: RemixFormat; host: RemixHost } } = { camera: 'pause_react', ai: { format: 'commentary', host: 'still' } }
 
 /** Links pasted one per line (or separated by spaces). */
 export function parseLinks(value: string): { links: string[]; invalid: string[] } {
@@ -111,21 +116,26 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const reviewing = status?.phase === 'review'
   const { links, invalid } = parseLinks(form.links)
   const silent = form.format === 'silent'
+  // "You on camera" (real-person templates) or "AI presenter" (Beta): the format and presenter decide which.
+  const mode: RemixMode = remixMode(form.format, form.host)
   // Green screen over their video: React to a clip, you on camera, cut out in front of their moment.
-  const greenScreen = silent && form.host === 'camera' && form.camera.layout === 'greenscreen'
+  const greenScreen = silent && form.host === 'camera'
   const image = form.format === 'image'
   // Pause & react: you on camera; their video pauses whenever you talk.
   const pause = form.format === 'pause_react'
   // Moment + my take: one long video, your time ranges, the best moment in each, then you on camera.
   const momentTake = form.format === 'moment_take'
+  // Their clip, then me / React, then my thoughts: one short clip, then you (React, then my thoughts: with your b-roll).
+  const clip = clipFormat(form.format)
   const sources = image ? (form.imagePath ? [form.imagePath] : []) : form.filePath ? [form.filePath] : links
   // A chosen file's length, so ranges past its end are caught here (a link's is checked once it's fetched).
   const [fileSeconds, setFileSeconds] = useState<number | null>(null)
   useEffect(() => { setFileSeconds(null) }, [form.filePath])
+  const longClip = form.format === 'clip_then_me' && form.filePath ? longClipNote(fileSeconds) : null
   const moments = readRanges(form.momentRanges, form.filePath ? fileSeconds : null)
   const rangeMinutes = moments.ranges.reduce((sum, range) => sum + range.endS - range.startS, 0) / 60
   // React to a clip (silent): the avatar's reactions, or the member's own. Over a screenshot, in a pause-and-react and in your take on a moment, it's always you.
-  const host: RemixHost = image || pause || momentTake ? 'camera' : silent ? (form.host === 'camera' ? 'camera' : 'still') : form.host
+  const host: RemixHost = image || pause || momentTake || clip ? 'camera' : silent ? (form.host === 'camera' ? 'camera' : 'still') : form.host
   const onCamera = host === 'camera'
   const needsAvatar = !onCamera && (silent || host !== 'voice')
   // The avatar's own voice (its clone or preset) unless a preset is picked here; voice-only can borrow it too.
@@ -142,7 +152,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         : keyword === null ? 'Use one word for the comment keyword, like SALES'
           : !form.clipRightsAck ? 'Confirm you’re allowed to share this screenshot' : null)
     : sources.length === 0 ? 'Paste a video link or choose a file'
-      : pause && sources.length > 1 ? 'React to one video at a time: paste one link'
+      : (pause || clip) && sources.length > 1 ? 'React to one video at a time: paste one link'
       : momentTake && sources.length > 1 ? 'Use one long video: paste one link'
       : sources.length > MAX_SOURCES ? `Up to ${MAX_SOURCES} videos per run`
         : invalid.length > 0 && !form.filePath ? 'Fix the links that aren’t valid'
@@ -150,7 +160,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             : silent && !onCamera && !avatar ? 'Create an avatar in Avatar Studio first'
             : silent && !onCamera && reactionCount === 0 ? 'Make this avatar’s reactions in Avatar Studio first'
             : silent && !form.clipRightsAck ? 'Confirm you’re allowed to use these clips'
-            : pause && !form.clipRightsAck ? 'Confirm you’re allowed to use this video'
+            : (pause || clip) && !form.clipRightsAck ? 'Confirm you’re allowed to use this video'
             : momentTake && moments.problem ? moments.problem
             : momentTake && !form.clipRightsAck ? 'Confirm you’re allowed to use this video'
             : needsAvatar && !avatar ? 'Create an avatar in Avatar Studio, or use voice only'
@@ -192,11 +202,12 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         sources, creator: sources.length === 1 ? form.creator : '', angle: form.angle, order: form.order, host,
         avatarId: showAvatars ? avatar?.id ?? null : null, voice: form.voice, brandIdentityId: brand?.id ?? null, count: form.count,
         captionPreset: form.captionPreset, includeCaptions: form.includeCaptions, aiLabelAck: form.aiLabelAck,
-        ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : '', format: form.format, clipRightsAck: (silent || image || pause || momentTake) && form.clipRightsAck,
+        ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : '', format: form.format, clipRightsAck: (silent || image || pause || momentTake || clip) && form.clipRightsAck,
         headlineLook: form.headlineLook,
         ...(onCamera ? { camera: image ? { ...form.imageCamera, talk: true } : pause ? { ...form.pauseCamera, layout: form.pauseCamera.layout === 'greenscreen' ? 'filmed' : form.pauseCamera.layout, talk: true }
-          : momentTake ? { ...form.momentCamera, layout: form.momentCamera.layout === 'greenscreen' ? 'filmed' : form.momentCamera.layout, talk: true }
-          : { ...form.camera, talk: silent && form.camera.talk } } : {}),
+          : momentTake || clip ? { ...form.momentCamera, layout: form.momentCamera.layout === 'greenscreen' ? 'filmed' : form.momentCamera.layout, talk: true }
+          // Green screen over their video: always the green screen (React, then my thoughts films you behind a box).
+          : silent ? { ...form.camera, layout: 'greenscreen' as const, talk: form.camera.talk } : { ...form.camera, talk: false } } : {}),
         ...(pause ? { pause: { layout: form.pauseLayout, captions: form.pauseCaptions } } : {}),
         ...(momentTake ? { moment: { ranges: moments.ranges, pip: form.momentPip } } : {}),
         ...(form.ctaId ? { ctaId: form.ctaId } : {}),
@@ -208,13 +219,13 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     finally { setLaunching(false) }
   }
 
-  // The format cards: the five formats, plus the green screen over their video (React to a clip, on camera, green screen).
-  const formatCards: { id: FormatCardId; label: string; detail: string }[] = [
-    ...REMIX_FORMATS.flatMap((item) => item.id === 'silent' ? [item, GREEN_SCREEN_CARD] : [item])
-  ]
-  const formatSelected = (id: FormatCardId): boolean => id === 'greenscreen' ? greenScreen : id === 'silent' ? silent && !greenScreen : form.format === id
+  // The template cards: you on camera (the real-person templates) or the AI presenter's (Beta).
+  const formatCards: readonly FormatCard[] = mode === 'camera' ? CAMERA_CARDS : AI_CARDS
+  const formatSelected = (id: FormatCardId): boolean => id === 'greenscreen' ? greenScreen
+    : id === 'commentary' || id === 'silent' ? form.format === id && (mode === 'camera') === (form.host === 'camera') : form.format === id
   const pickFormat = (id: FormatCardId): void => {
     if (formatSelected(id)) return
+    if (mode === 'camera') lastPick.camera = id
     if (id === 'greenscreen') {
       form.update({ format: 'silent', host: 'camera', camera: { ...form.camera, layout: 'greenscreen', talk: true }, clipRightsAck: silent ? form.clipRightsAck : false })
       return
@@ -223,23 +234,61 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       format: id,
       // Each kind has its own permission promise (clips vs. a screenshot).
       clipRightsAck: id === 'silent' && silent ? form.clipRightsAck : false,
-      // Back from the green screen card: React to a clip keeps you on camera, as filmed.
-      ...(id === 'silent' && greenScreen ? { camera: { ...form.camera, layout: 'filmed' as const } } : {})
+      // A scripted take on camera: you read the lines (one take to record to start with).
+      ...(id === 'commentary' && mode === 'camera' ? { host: 'camera' as const, ...(form.host !== 'camera' ? { count: 1 } : {}) } : {})
     })
+    if (mode === 'ai') lastPick.ai = { format: id as RemixFormat, host: form.host }
+  }
+  const pickMode = (next: RemixMode): void => {
+    if (next === mode) return
+    if (next === 'ai') {
+      lastPick.camera = greenScreen ? 'greenscreen' : form.format
+      const host = lastPick.ai.host === 'camera' || lastPick.ai.host === 'lipsync' ? 'still' : lastPick.ai.host
+      form.update({ format: lastPick.ai.format, host, clipRightsAck: false })
+      return
+    }
+    lastPick.ai = { format: form.format, host: form.host }
+    const card = lastPick.camera
+    if (card === 'greenscreen') form.update({ format: 'silent', host: 'camera', camera: { ...form.camera, layout: 'greenscreen', talk: true }, clipRightsAck: false })
+    else form.update({ format: card, ...(card === 'commentary' ? { host: 'camera' as const, count: 1 } : {}), clipRightsAck: false })
   }
   // On camera, the look and the call to action fold into one section, so the path is: format, source, permission, Continue.
   const folded = onCamera
-  const hostChoice = !image && !pause && !momentTake && !greenScreen
-  const cameraValue = image ? form.imageCamera : pause ? form.pauseCamera : momentTake ? form.momentCamera : form.camera
+  // The AI presenter's voiced take: avatar photo or voice only (its clip reactions are always the avatar's).
+  const hostChoice = mode === 'ai' && !silent
+  const cameraValue = image ? form.imageCamera : pause ? form.pauseCamera : momentTake || clip ? form.momentCamera : form.camera
   const takeWaiting = reviewing && status !== null && (oneTakeRun(status) ? status.drafts.some((draft) => Boolean(draft.quote || draft.headline)) : status.drafts.length > 0)
   // Panel numbers: format, source, then (on camera) the presenter choice and the folded look, or (AI presenter) your take and the presenter; then go.
-  const lookStep = hostChoice ? 4 : 3
+  const lookStep = 3
   const goStep = folded ? lookStep + 1 : 5
+
+  const modePanel = (
+    <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Who is in the video">
+      {([
+        { id: 'camera', label: 'You on camera', detail: 'You react, talk or give your take on camera. Record here or upload a phone video.', icon: <Camera className="h-5 w-5" /> },
+        { id: 'ai', label: 'AI presenter', detail: 'Your avatar or an AI voice presents the take. An early version.', icon: <Bot className="h-5 w-5" /> }
+      ] as const).map((item) => {
+        const selected = mode === item.id
+        return (
+          <button key={item.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+            onClick={() => pickMode(item.id)}
+            className={cn('glass-tile glass-tile-hover flex items-start gap-3 rounded-2xl px-4 py-3.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+            <span className={cn('mt-0.5 shrink-0', selected ? 'text-accent' : 'text-ink-subtle')}>{item.icon}</span>
+            <span className="min-w-0">
+              <span className="flex items-center gap-2 text-base font-semibold">{item.label}{item.id === 'ai' && <Badge tone="warning">Beta</Badge>}</span>
+              <span className={cn('mt-0.5 block text-xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{item.detail}</span>
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
 
   const formatPanel = (
     <Panel>
-      <PanelHeader title="1 · What are you making?" description="Pick the kind of video. You can change it any time before you continue." />
+      <PanelHeader title="1 · What are you making?" description="Pick who is in the video, then the kind of video. You can change both any time before you continue." />
       <div className="mt-4 space-y-4">
+        {modePanel}
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3" role="radiogroup" aria-label="Remix format">
           {formatCards.map((item) => {
             const selected = formatSelected(item.id)
@@ -253,7 +302,15 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             )
           })}
         </div>
-        {momentTake ? (
+        {form.format === 'clip_then_me' ? (
+          <p className="text-2xs text-ink-muted">
+            For a reel, a Short, a TikTok or any short clip. You choose the part (up to {CLIP_MAX_SECONDS / 60} minutes) and record your take, here or on your phone. The video plays their clip first, framed for vertical with its captions, then you full screen. The AI writes the hook text and caption from what you said, and you can edit both.
+          </p>
+        ) : form.format === 'react_thoughts' ? (
+          <p className="text-2xs text-ink-muted">
+            Part 1: their clip plays in a big box with its own sound while you watch and react behind it. Part 2: you share your thoughts full screen, and your own clips and pictures (or stock footage) cut in over what you say. Record both parts here or upload phone videos. The AI writes the hook text and caption from what you said and places your b-roll; you can change all of it.
+          </p>
+        ) : momentTake ? (
           <p className="text-2xs text-ink-muted">
             For each range, the AI listens to just that part and picks its strongest 5–25 second moment, cut on whole sentences. You check it (nudge its start and end, or ask for another), then record your take on it, here or on your phone. Each video opens with the moment, then you. The AI writes the hook text and caption from what you said, and you can edit both.
           </p>
@@ -271,7 +328,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
           </p>
         ) : silent ? (
           <p className="text-2xs text-ink-muted">
-            The AI picks complete 10–45 second moments, writes the hook text above the clip, and writes the caption with your take and call to action. Your avatar’s reactions (watching, nodding, pointing, laughing) are timed to what’s said, or you film your own.
+            The AI picks complete 10–45 second moments, writes the hook text above the clip, and writes the caption with your take and call to action. Your avatar’s reactions (watching, nodding, pointing, laughing) are timed to what’s said. {AVATAR_REACTIONS_BETA}
           </p>
         ) : (<>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3" role="radiogroup" aria-label="Remix style">
@@ -303,8 +360,9 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
 
   const sourcePanel = (
     <Panel>
-      <PanelHeader title={`2 · ${image ? 'The article or post' : pause ? 'The video you react to' : momentTake ? 'The long video and your times' : 'The videos'}`} description={image
+      <PanelHeader title={`2 · ${image ? 'The article or post' : clip ? 'Their clip' : pause ? 'The video you react to' : momentTake ? 'The long video and your times' : 'The videos'}`} description={image
         ? 'A screenshot of the article, post, tweet or headline you want to talk about. A long screenshot scrolls behind you as you talk.'
+        : clip ? `Paste one link to a reel, Short or TikTok (or any video), or choose a file. From the Library, use ⋯ → Remix this clip. You choose the part next, up to ${CLIP_MAX_SECONDS / 60} minutes.`
         : pause ? 'Paste one public video link or choose a file. From the Library, use ⋯ → Remix this clip. You can trim it to the part you react to next.'
         : momentTake ? 'Paste one long video (a podcast or an interview) or choose a file; from the Library, use ⋯ → Remix this clip. Then add the times you noted while listening.'
         : `Any public videos with a moment worth reacting to. Paste one link per line, up to ${MAX_SOURCES}.`} />
@@ -340,9 +398,12 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         {momentTake && (
           <MomentRanges value={form.momentRanges} lengthSeconds={form.filePath ? fileSeconds : null} disabled={busy} onChange={(momentRanges) => form.update({ momentRanges })} />
         )}
-        {momentTake && form.filePath && (
+        {(momentTake || clip) && form.filePath && (
           <video src={localFileUrl(form.filePath)} preload="metadata" muted className="hidden" aria-hidden="true"
             onLoadedMetadata={(e) => { const seconds = e.currentTarget.duration; if (Number.isFinite(seconds) && seconds > 0) setFileSeconds(seconds) }} />
+        )}
+        {longClip && (
+          <Callout tone="info" action={<Button size="sm" variant="secondary" onClick={() => pickFormat('moment_take')}>Use Moment + my take</Button>}>{longClip}</Callout>
         )}
         {momentTake && form.filePath && fileSeconds !== null && <p className="text-2xs text-ink-subtle">This video is {formatTimecode(fileSeconds)} long.</p>}
         {image ? (
@@ -388,7 +449,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       </div>
       {keyword === null ? <p className="text-2xs text-danger">One word: letters, numbers or a dash (2–20 characters).</p>
         : keyword && form.ctaId ? <p className="text-2xs text-ink-muted">Your CTA clip below plays at the end of every video (so the presenter doesn’t say one too), and the caption ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
-        : keyword ? (silent || image || pause || momentTake
+        : keyword ? (silent || image || pause || momentTake || clip
           ? <p className="text-2xs text-ink-muted">“Comment {keyword}” shows on screen at the end, and the caption ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
           : <p className="text-2xs text-ink-muted">Every video ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>)
           : brandKeyword ? (
@@ -425,9 +486,9 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     </div>
   )
 
-  const cameraBlock = onCamera && <CameraOptions mode={image ? 'image' : pause ? 'pause' : momentTake ? 'moment' : silent ? 'silent' : 'take'}
+  const cameraBlock = onCamera && <CameraOptions mode={image ? 'image' : pause ? 'pause' : momentTake || clip ? 'moment' : silent ? 'silent' : 'take'}
     value={cameraValue}
-    onChange={(camera) => form.update(image ? { imageCamera: camera } : pause ? { pauseCamera: camera } : momentTake ? { momentCamera: camera } : { camera })} />
+    onChange={(camera) => form.update(image ? { imageCamera: camera } : pause ? { pauseCamera: camera } : momentTake || clip ? { momentCamera: camera } : { camera })} />
 
   const pipRow = momentTake && (
     <SettingRow title="Keep the moment small on screen while I talk"
@@ -456,18 +517,15 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     </div>
   </>)
 
+  // (You on camera is the other side of the first choice: here, only the AI presenters.)
   const hostCards = hostChoice && (
-    <div className={cn('grid gap-2', silent ? 'sm:grid-cols-2' : 'sm:grid-cols-2 lg:grid-cols-4')} role="radiogroup" aria-label="Presenter">
-      {(silent
-        ? [{ id: 'still' as const, label: 'My avatar’s reactions', detail: 'The reaction clips made in Avatar Studio', unavailable: undefined, beta: AVATAR_REACTIONS_BETA },
-            { id: 'camera' as const, label: 'Me, on camera', detail: 'You film your real reaction while the clip plays, or upload one', unavailable: undefined, beta: undefined }]
-        : REMIX_HOSTS).map((item) => {
-        const selected = (silent ? (form.host === 'camera' ? 'camera' : 'still') : form.host) === item.id
+    <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Presenter">
+      {REMIX_HOSTS.filter((item) => item.id !== 'camera').map((item) => {
+        const selected = form.host === item.id
         return (
           <button key={item.id} type="button" role="radio" aria-checked={selected} aria-disabled={item.unavailable ? true : undefined}
             tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown} disabled={Boolean(item.unavailable)} title={item.unavailable}
-            // A voiced take on camera: one take to record to start with.
-            onClick={() => form.update({ host: item.id, ...(item.id === 'camera' && !silent && form.host !== 'camera' ? { count: 1 } : {}) })}
+            onClick={() => { form.update({ host: item.id }); lastPick.ai = { format: form.format, host: item.id } }}
             className={cn('glass-tile rounded-xl px-3 py-2.5 text-left', item.unavailable ? 'cursor-not-allowed opacity-50' : 'glass-tile-hover',
               selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
             <span className="flex items-center gap-1.5 text-xs font-medium">{item.label}{item.unavailable && <span className="text-2xs font-normal text-ink-subtle">· Coming soon</span>}
@@ -528,6 +586,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       'I’m allowed to share this screenshot, and I’m commenting on it: it’s public, my own, or shared with permission. The video credits where it’s from.')}
     {momentTake && rightsBox(form.clipRightsAck, "I'm allowed to use this video",
       'I’m allowed to use this video and I’m commenting on it: it’s my own, an affiliate’s, or from a creator who allows clips. Each video opens with a short moment of it, with its sound, and credits the creator on screen.')}
+    {clip && rightsBox(form.clipRightsAck, "I'm allowed to use this video",
+      `I’m allowed to use this video and I’m reacting to it: it’s my own, an affiliate’s, or from a creator who allows reactions. ${form.format === 'react_thoughts' ? 'React, then my thoughts' : 'Their clip, then me'} plays the part I choose with its sound, and credits the creator on screen.`)}
     {pause && rightsBox(form.clipRightsAck, "I'm allowed to use this video",
       'I’m allowed to use this video and I’m reacting to it: it’s my own, an affiliate’s, or from a creator who allows reactions. Pause & react plays much of it with its sound, and credits the creator on screen.')}
     {silent && rightsBox(form.clipRightsAck, "I'm allowed to use these clips",
@@ -540,7 +600,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     </div>}
   </>)
 
-  const countRow = !image && !pause && !momentTake && (
+  const countRow = !image && !pause && !momentTake && !clip && (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <span>
         <span className="block text-sm text-ink">Takes per long video</span>
@@ -551,12 +611,14 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     </div>
   )
 
-  const goLabel = image || pause ? 'Continue to recording' : momentTake ? 'Find the moments' : onCamera && !silent ? 'Write and record' : 'Write the takes'
-  const goTitle = image ? 'Record your take' : pause ? 'Record your reaction' : momentTake ? 'Find the moments' : onCamera && !silent ? 'Write and record' : 'Write the takes'
+  const goLabel = image || pause || clip ? 'Continue to recording' : momentTake ? 'Find the moments' : onCamera && !silent ? 'Write and record' : 'Write the takes'
+  const goTitle = image || clip ? 'Record your take' : pause ? 'Record your reaction' : momentTake ? 'Find the moments' : onCamera && !silent ? 'Write and record' : 'Write the takes'
   const goPanel = (
     <Panel>
       <PanelHeader title={`${goStep} · ${goTitle}`} description={momentTake
         ? `Next the AI listens to your ranges${rangeMinutes ? ` (${Math.round(rangeMinutes * 10) / 10} min in all)` : ''} and picks a moment in each, you record your take on each one (up to ${MOMENT_TAKE_MAX_SECONDS / 60} minutes), and the AI writes each video’s hook text and caption from what you said. ${momentCost(cost.perRemixLow * Math.max(1, moments.ranges.length), cost.total)} Reading a time from a screenshot is charged when you add it, and shown there.`
+        : clip
+        ? `Next you choose the part of their clip and record ${form.format === 'react_thoughts' ? 'both parts' : 'your take'} (up to ${CLIP_MAX_SECONDS / 60} minutes each), here or on your phone. Then the AI writes the hook text and caption from what you said${form.format === 'react_thoughts' ? ' and places your b-roll' : ''} (about $${cost.perRemixLow.toFixed(2)}–$${cost.perRemixHigh.toFixed(2)}). You can change it all before the video is made.`
         : image
         ? 'Next you record yourself talking about it, then the AI writes the hook text and caption from your words (about $0.02). You can edit both before the video is made.'
         : pause
@@ -578,11 +640,11 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         )}
         {promises}
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="primary" icon={image || pause ? <Camera className="h-4 w-4" /> : momentTake ? <Sparkles className="h-4 w-4" /> : <Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || busy || blocker !== null}
+          <Button variant="primary" icon={image || pause || clip ? <Camera className="h-4 w-4" /> : momentTake ? <Sparkles className="h-4 w-4" /> : <Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || busy || blocker !== null}
             tooltip={busy ? 'A remix run is in progress' : blocker ?? undefined} onClick={() => void plan()}>
             {goLabel}
           </Button>
-          {takeWaiting && <span className="text-2xs text-ink-subtle">Starting again replaces the {image || pause ? 'take' : momentTake ? 'moments' : 'takes'} waiting for review above.</span>}
+          {takeWaiting && <span className="text-2xs text-ink-subtle">Starting again replaces the {image || pause || clip ? 'take' : momentTake ? 'moments' : 'takes'} waiting for review above.</span>}
         </div>
       </div>
     </Panel>
@@ -590,7 +652,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
 
   const summary = lookSummary({
     pauseLayout: pause ? form.pauseLayout : null, momentPip: momentTake ? form.momentPip : null,
-    background: onCamera ? ((pause || momentTake) && cameraValue.layout === 'greenscreen' ? 'filmed' : cameraValue.layout) : null,
+    background: onCamera ? ((pause || momentTake || clip) && cameraValue.layout === 'greenscreen' ? 'filmed' : greenScreen ? 'greenscreen' : cameraValue.layout) : null,
     talk: silent && onCamera ? form.camera.talk : null,
     includeCaptions: form.includeCaptions, captionPreset: form.captionPreset, headlineLook: form.headlineLook.look,
     brandName: brand?.name ?? null, keyword: keyword || null, ctaClip: Boolean(form.ctaId)
@@ -647,6 +709,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             ? <MomentTakeReview key={status.id} status={status} onError={setError} />
             : reviewing ? (status.drafts.length === 1 && status.drafts[0].format === 'pause_react'
             ? <PauseReactReview key={status.id} status={status} onError={setError} />
+            : status.drafts.length === 1 && clipFormat(status.drafts[0].format)
+            ? <ClipTakeReview key={status.id} status={status} onError={setError} onOpenKeys={openKeys} />
             : <ReviewPanel key={status.id} status={status} onError={setError} />) : (
             <Panel>
               <PanelHeader title={status.phase === 'planning' ? 'Writing your takes' : status.phase === 'rendering' ? 'Making your remixes' : 'Latest run'} />
@@ -670,15 +734,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         )}
         {formatPanel}
         {sourcePanel}
-        {folded ? (<>
-          {hostChoice && (
-            <Panel>
-              <PanelHeader title="3 · Presenter" description={silent ? 'Whose reactions play with the clip.' : 'Who delivers the take.'} />
-              <div className="mt-4 space-y-4">{hostCards}</div>
-            </Panel>
-          )}
-          {lookPanel}
-        </>) : (<>
+        {folded ? lookPanel : (<>
           <Panel>
             <PanelHeader title="3 · Your take" description="Your Brand Identity decides what your presenter believes, so every reaction sounds like your brand and only uses your real proof. Its look fills in the style below." />
             <div className="mt-4 space-y-3">
@@ -687,7 +743,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             </div>
           </Panel>
           <Panel>
-            <PanelHeader title="4 · Presenter" description={silent ? 'Whose reactions play with the clip.' : 'Who delivers the take.'} />
+            <PanelHeader title="4 · Presenter" description={silent ? 'Your avatar’s reactions play with the clip.' : 'Who delivers the take.'} />
             <div className="mt-4 space-y-4">
               {hostCards}
               {avatarBlocks}
@@ -701,15 +757,9 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   )
 }
 
-/** The format cards: the formats, plus the green screen over their video (React to a clip, on camera, green screen). */
-type FormatCardId = RemixFormat | 'greenscreen'
-const GREEN_SCREEN_CARD: { id: FormatCardId; label: string; detail: string } = {
-  id: 'greenscreen', label: 'Green screen over their video', detail: 'Their moment fills the screen with its sound; you’re cut out in front of it, on camera'
-}
-
 /** A run of one-take formats (pause and react, a screenshot): its take waits once it's recorded. */
 function oneTakeRun(status: RemixStatus): boolean {
-  return status.drafts.length > 0 && status.drafts.every((draft) => draft.format === 'pause_react' || draft.format === 'image')
+  return status.drafts.length > 0 && status.drafts.every((draft) => draft.format === 'pause_react' || draft.format === 'image' || clipFormat(draft.format))
 }
 
 /** "Pop captions · White bar · Brand: X · No call to action": the folded look section's choices in one line. */
@@ -745,15 +795,17 @@ function CameraOptions({ mode, value, onChange }: { mode: 'take' | 'silent' | 'i
     : pause ? { filmed: 'Your real room behind you', cutout: 'You cut out, over a blur or your color' }
       : {}
   // Pause & react fills the frame with you: no green screen.
-  const layouts = pause ? CAMERA_LAYOUTS.filter((layout) => layout.id !== 'greenscreen') : CAMERA_LAYOUTS
-  const chosen = pause && value.layout === 'greenscreen' ? 'filmed' : value.layout
+  // Green screen over their video: always the green screen (filmed behind their clip is React, then my thoughts).
+  const layouts = pause ? CAMERA_LAYOUTS.filter((layout) => layout.id !== 'greenscreen') : silent ? [] : CAMERA_LAYOUTS
+  const chosen = pause && value.layout === 'greenscreen' ? 'filmed' : silent ? 'greenscreen' : value.layout
   return (
     <div className="glass-tile space-y-3 rounded-xl p-3">
       <div>
         <span className="flex items-center gap-1.5 text-sm text-ink"><Camera className="h-4 w-4" />Your background</span>
-        <span className="block text-2xs text-ink-subtle">{image || pause ? 'You record here with your camera, or upload a video from your phone.' : 'After the AI writes the takes, you record each one here with your camera, or upload a video from your phone.'}</span>
+        <span className="block text-2xs text-ink-subtle">{silent ? 'Their moment fills the screen behind you, and you’re cut out in front of it. You record each one here, or upload a video from your phone.'
+          : image || pause ? 'You record here with your camera, or upload a video from your phone.' : 'After the AI writes the takes, you record each one here with your camera, or upload a video from your phone.'}</span>
       </div>
-      <div className={cn('grid gap-2', pause ? 'sm:grid-cols-2' : 'sm:grid-cols-3')} role="radiogroup" aria-label="Your background">
+      {layouts.length > 0 && <div className={cn('grid gap-2', pause ? 'sm:grid-cols-2' : 'sm:grid-cols-3')} role="radiogroup" aria-label="Your background">
         {layouts.map((layout) => {
           const selected = chosen === layout.id
           return (
@@ -765,7 +817,7 @@ function CameraOptions({ mode, value, onChange }: { mode: 'take' | 'silent' | 'i
             </button>
           )
         })}
-      </div>
+      </div>}
       {chosen === 'cutout' && (
         <div className="flex flex-wrap items-center gap-3">
           <Segmented label="Behind you" size="sm" value={value.backdrop} onChange={(backdrop) => onChange({ ...value, backdrop: backdrop as CameraSettings['backdrop'] })}
@@ -814,7 +866,7 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
   const total = chosen.reduce((sum, draft) => sum + draft.estimateUsd, 0)
   const problems = new Map(chosen.map((draft) => [draft.id, remixEditProblem(value(draft), draft.format)]))
   const missing = (draft: RemixDraft): string[] => onCamera
-    ? partsFor(draft.format, value(draft).beats.length).filter((part) => !recordings[draft.id]?.[part]).map(partLabel)
+    ? partsFor(draft.format, value(draft).beats.length).filter((part) => !recordings[draft.id]?.[part]).map((part) => partLabel(part, draft.format))
     : []
   const unrecorded = chosen.filter((draft) => missing(draft).length > 0).length
   const blocked = [...problems.values()].some(Boolean) || unrecorded > 0
