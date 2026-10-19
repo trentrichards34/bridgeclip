@@ -343,7 +343,7 @@ test('Moment + my take form: its defaults, typed ranges checked against the file
         export { brandFormPatch } from './src/shared/brand-kit';
         export { REMIX_FORMATS, headlineOnly, oneTake, partsFor, momentMakeNote } from './src/shared/remix';
         export { readRanges } from './src/shared/moment-take';
-        export { MomentRanges } from './src/renderer/components/MomentRanges';
+        export { MomentRanges, screenshotRow } from './src/renderer/components/MomentRanges';
         export { MomentTakeReview } from './src/renderer/components/MomentTakeReview';
         export { momentCost } from './src/renderer/pages/RemixPage';`,
       resolveDir: path.resolve(__dirname, '..'), loader: 'ts'
@@ -353,7 +353,7 @@ test('Moment + my take form: its defaults, typed ranges checked against the file
   const mod = { exports: {} }
   const api = { remix: { recordings: async () => ({}), moment: async () => ({ path: '/v.mp4', startSeconds: 0, endSeconds: 1, kind: 'video' }) } }
   vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: api }, navigator: {} })
-  const { useRemixForm, brandFormPatch, REMIX_FORMATS, headlineOnly, oneTake, partsFor, readRanges, MomentRanges, MomentTakeReview, momentCost, momentMakeNote } = mod.exports
+  const { useRemixForm, brandFormPatch, REMIX_FORMATS, headlineOnly, oneTake, partsFor, readRanges, MomentRanges, MomentTakeReview, momentCost, momentMakeNote, screenshotRow } = mod.exports
   const form = useRemixForm.getState()
   assert.deepEqual(JSON.parse(JSON.stringify([form.momentRanges, form.momentPip, form.momentCamera.layout, form.momentCamera.talk])), [[{ start: '', end: '' }], false, 'filmed', true])
   const at = REMIX_FORMATS.findIndex((item) => item.id === 'moment_take')
@@ -377,6 +377,12 @@ test('Moment + my take form: its defaults, typed ranges checked against the file
   assert.match(ranges, /It starts after the video ends \(40:00\)\./)
   assert.match(ranges, /Add a range/)
   assert.match(ranges, /a range 2:30 either side of it/)
+  // A pasted or dropped screenshot: the row it was dropped on, the first empty row, a new row, or none when all 3 are filled.
+  const row = (start, end) => ({ start, end })
+  assert.equal(screenshotRow([row('1:00', '2:00'), row('', '')], null), 1)
+  assert.equal(screenshotRow([row('1:00', '2:00')], null), 1)
+  assert.equal(screenshotRow([row('1:00', '2:00'), row('3:00', '4:00'), row('5:00', '6:00')], null), null)
+  assert.equal(screenshotRow([row('1:00', '2:00'), row('3:00', '4:00'), row('5:00', '6:00')], 2), 2)
 
   // The review: each moment from its range, nudges, another moment, talking points, record or upload.
   const draft = (id, start, end, extra = {}) => ({ id, sourceIndex: 0, sourceTitle: 'Podcast', creator: '@host', startMs: start, endMs: end, quote: `Moment ${id} words`, why: 'A shocking number.',

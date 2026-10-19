@@ -19,6 +19,19 @@ function imageFrom(items: DataTransferItemList | null, files: FileList | null): 
  * Moment + my take: up to three time ranges in the long video, typed (37:00 to 42:00) or read from a screenshot of
  * the player (pasted, dropped or chosen). A screenshot's time becomes a range 2:30 either side; the member checks it.
  */
+const FULL_RANGES = `All ${MOMENT_MAX_RANGES} ranges are filled. Remove a range first, or drop the screenshot on the range you want to replace.`
+
+/**
+ * Which row a pasted or dropped screenshot fills: the row it was dropped on, else the first empty row, else a new row.
+ * Null when every row is filled and there's no room for another (it is never read then).
+ */
+export function screenshotRow(rows: RangeInput[], index: number | null): number | null {
+  if (index !== null) return index
+  const empty = rows.findIndex((row) => !row.start.trim() && !row.end.trim())
+  if (empty >= 0) return empty
+  return rows.length < MOMENT_MAX_RANGES ? rows.length : null
+}
+
 export function MomentRanges({ value, lengthSeconds, disabled, onChange }: {
   value: RangeInput[]
   /** The video's length when known (a file): ranges past it are flagged. */
@@ -59,8 +72,9 @@ export function MomentRanges({ value, lengthSeconds, disabled, onChange }: {
   /** A pasted or dropped screenshot fills this row (or, from the list, the first empty row or a new one). */
   const take = (index: number | null, file: File | null): boolean => {
     if (!file || disabled || reading !== null) return false
-    const empty = latest.current.findIndex((row) => !row.start.trim() && !row.end.trim())
-    const target = index ?? (empty >= 0 ? empty : latest.current.length < MOMENT_MAX_RANGES ? latest.current.length : latest.current.length - 1)
+    const target = screenshotRow(latest.current, index)
+    // Every range is filled: never overwrite one (reading the screenshot is paid).
+    if (target === null) { setProblem({ row: -1, text: FULL_RANGES }); return true }
     if (target >= latest.current.length) onChange([...latest.current, { start: '', end: '' }])
     void readImage(target, file)
     return true
@@ -86,6 +100,7 @@ export function MomentRanges({ value, lengthSeconds, disabled, onChange }: {
           dragging === -1 && 'border-accent text-ink')}>
         <ImagePlus className="h-3.5 w-3.5" />{reading !== null ? 'Reading the time on your screenshot…' : 'Click here and paste (Ctrl+V or ⌘V), or drop a screenshot of the player, to add a range'}
       </div>
+      {problem?.row === -1 && <p className="text-2xs text-warning" role="alert">{problem.text}</p>}
       {rows.map((row, index) => {
         const start = parseTimecode(row.start), end = parseTimecode(row.end)
         const filled = row.start.trim() || row.end.trim()
