@@ -78,17 +78,18 @@ export const useRemixForm = create<RemixFormState>((set, get) => ({
   }
 }))
 
-/** Longer than this, a Library clip opens in Moment + my take (pick the moments) rather than Pause & react. */
+/** Longer than this, a Library clip opens in Moment + my take (pick the moments) rather than Their clip, then me. */
 export const LONG_CLIP_SECONDS = 10 * 60
 
 /**
  * The format a Library clip opens in. A screenshot format can't use a video; a voiced or
  * silent take with an AI presenter can dead-end with no avatar yet, so it becomes a
- * reaction on camera: Pause & react, or Moment + my take for a long video.
+ * reaction on camera: Their clip, then me (their clip plays, then the member adds context),
+ * or Moment + my take for a long video. A format already on camera is kept.
  */
 export function libraryClipFormat(format: RemixFormat, host: RemixHost, seconds?: number): RemixFormat {
-  const onCameraFormat = format === 'pause_react' || format === 'moment_take'
+  const onCameraFormat = format === 'pause_react' || format === 'moment_take' || format === 'clip_then_me' || format === 'react_thoughts'
   if (onCameraFormat) return format
-  if (format === 'image' || host !== 'camera') return seconds !== undefined && seconds > LONG_CLIP_SECONDS ? 'moment_take' : 'pause_react'
+  if (format === 'image' || host !== 'camera') return seconds !== undefined && seconds > LONG_CLIP_SECONDS ? 'moment_take' : 'clip_then_me'
   return format
 }
