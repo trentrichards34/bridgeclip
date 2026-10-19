@@ -36,6 +36,11 @@ import { voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
 import { anotherMoment, momentEstimate, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { importLegacyAvatarVideos } from './avatar-library'
+import {
+  abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
+  isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate
+} from './edit-recording'
+import { EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
 import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, parseRenderRequest, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, isWithinLibrary, openAuthorizedMedia, setExtraLibraryRoots } from './security'
@@ -314,9 +319,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('ctas:update', (_event, id: unknown, patch: unknown) => updateCta(id, patch))
   handle('ctas:remove', (_event, id: unknown) => removeCta(id))
   // Library changes wait while a Remix video in that run is being re-made, or an avatar video is finishing.
-  setRunBusyCheck((path) => remixRunBusy(path) ?? avatarRunBusy(path))
+  setRunBusyCheck((path) => remixRunBusy(path) ?? avatarRunBusy(path) ?? editRunBusy(path))
   handle('remix:recompose', async (_event, outputDir: unknown, clipIndex: unknown, edit: unknown) => {
-    const note = await recomposeRemix(outputDir, clipIndex, edit)
+    // An edited recording ("Edit my recording") is re-made from its own saved parts the same way.
+    const note = isEditRunFolder(outputDir) ? await recomposeEditRun(outputDir, clipIndex, edit) : await recomposeRemix(outputDir, clipIndex, edit)
     return { output: await getJobOutput(outputDir as string, loadSettings().outputDirectory), note }
   })
   handle('clips:setCta', (_event, outputDir: unknown, clipIndex: unknown, ctaId: unknown) => {
@@ -496,6 +502,41 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     trackRemixStatus(status)
     announce(remixNotice(status), getMainWindow)
     sendToWindow('remix:status', friendlyStatus(status))
+  })
+
+  // Edit my recording: transcribing and planning pass the spending check (making the reel is local); film ideas are one small call.
+  onEditSpend((usd, label, runId, estimated) => recordSpend({ kind: 'edit', provider: 'openrouter', usd, label, runId: runId || undefined, ...(estimated ? { estimated: true } : {}) }))
+  onEditStatus((status) => sendToWindow('edit:status', status))
+  handle('edit:status', () => editStatus())
+  handle('edit:chooseSources', async () => {
+    const window = getMainWindow()
+    if (!window) return []
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile', 'multiSelections'], title: 'Choose your recording (or a few takes of it)', filters: [{ name: 'Video', extensions: EDIT_VIDEO_EXTENSIONS }] })
+    if (result.canceled) return []
+    const sources = []
+    for (const path of result.filePaths.slice(0, EDIT_MAX_SOURCES)) sources.push(await describeSource(authorizeMedia(path)))
+    return sources
+  })
+  paid('edit:start', 'openrouter', (request) => startEstimate(request), (request) => startEdit(request))
+  handle('edit:render', (_event, decisions: unknown) => renderEdit(decisions))
+  handle('edit:cancel', () => cancelEdit())
+  handle('edit:discard', () => discardEdit())
+  handle('edit:mediaAccess', () => requestMediaAccess())
+  handle('edit:recordingBegin', (_event, mime: unknown) => beginEditRecording(mime))
+  handle('edit:recordingAppend', (_event, token: unknown, chunk: unknown) => appendEditRecording(token, chunk))
+  handle('edit:recordingFinish', (_event, token: unknown) => finishEditRecording(token))
+  handle('edit:recordingAbort', (_event, token: unknown) => abortEditRecording(token))
+  paid('edit:ideas', 'openrouter', () => IDEAS_ESTIMATE_USD, async (request) => {
+    try {
+      const result = await filmIdeas(request)
+      if (result.costUsd > 0) void recordSpend({ kind: 'edit', provider: 'openrouter', usd: result.costUsd, label: 'Edit my recording: film ideas' })
+      return result.ideas
+    } catch (error) {
+      // A call that was paid for but gave nothing usable still goes to the ledger.
+      const cost = (error as { costUsd?: unknown } | null)?.costUsd
+      if (typeof cost === 'number' && cost > 0) void recordSpend({ kind: 'edit', provider: 'openrouter', usd: cost, label: 'Edit my recording: film ideas' })
+      throw error
+    }
   })
 
   // Create runs have no cost estimate: the balance check asks for at least $1.

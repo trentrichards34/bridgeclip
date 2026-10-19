@@ -1,0 +1,235 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const http = require('node:http')
+const os = require('node:os')
+const path = require('node:path')
+const { execFileSync } = require('node:child_process')
+const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
+const { editorTools, linkEngine } = require('./editor-e2e-tools.cjs')
+
+// Chromium's stand-in camera and microphone, allowed without a prompt.
+const FAKE_MEDIA = ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream']
+
+/** With BRIDGECLIP_E2E_SHOTS set, a picture of the window (taken in main: the hidden window may not paint for Playwright). */
+async function shot(app, name) {
+  const dir = process.env.BRIDGECLIP_E2E_SHOTS
+  if (!dir) return
+  fs.mkdirSync(dir, { recursive: true })
+  const png = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64')).catch(() => null)
+  if (png) fs.writeFileSync(path.join(dir, name), Buffer.from(png, 'base64'))
+}
+
+/** Words of a line, evenly spaced from `start` seconds (as Scribe returns them, in seconds). */
+function say(text, start, step = 0.32) {
+  return text.split(' ').map((word, i) => ({ word, start: +(start + i * step).toFixed(3), end: +(start + (i + 1) * step - 0.04).toFixed(3), type: 'word' }))
+}
+
+// The raw recording: the member rejects their first take out loud, says it again, an "um", then a strong line.
+const TAKE_1 = [...say('Most coaches lose clients.', 0.5), ...say('No, again.', 2.1), ...say('Most coaches lose so many clients.', 3.0),
+  ...say('Um.', 5.3), ...say('Fifteen billion messages wait.', 5.8)]
+// Their second take, filmed here: the call to action.
+const TAKE_2 = say('Follow me for more.', 0.4)
+
+function multipartFields(body) {
+  const text = body.toString('latin1')
+  const fields = {}
+  for (const match of text.matchAll(/Content-Disposition: form-data; name="([^"]+)"(?:; filename="([^"]+)")?\r\n(?:Content-Type: ([^\r\n]+)\r\n)?\r\n/g)) {
+    const start = match.index + match[0].length
+    const end = text.indexOf('\r\n--', start)
+    const value = match[2] ? { filename: match[2], type: match[3], bytes: end - start } : text.slice(start, end)
+    ;(fields[match[1]] ??= []).push(value)
+  }
+  return fields
+}
+
+test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe words, the plan reviewed and changed, one reel in the Library', { timeout: 600000 }, async (t) => {
+  if (process.platform === 'win32') { t.skip('The stand-in Python wrapper is a shell script'); return }
+  const tools = editorTools(t, { python: true, captions: true })
+  if (!tools) return
+  const { ffmpeg } = tools
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-edit-recording-e2e-'))
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips')
+  fs.mkdirSync(library, { recursive: true })
+  // A landscape recording: a moving test picture, and a tone wherever a word is said.
+  const recording = path.join(root, 'my raw take.mp4')
+  const expr = TAKE_1.map((w) => `between(t,${w.start},${w.end})`).join('+')
+  execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30:d=8', '-f', 'lavfi', '-i', `aevalsrc='0.25*sin(2*PI*300*t)*(${expr})':s=48000:d=8`,
+    ...tools.encoder, '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', recording])
+  const python = path.join(root, 'python-fake-ai')
+  fs.writeFileSync(python, `#!/bin/sh\nPYTHONPATH="${path.join(__dirname, 'fake-ai-edit')}\${PYTHONPATH:+:$PYTHONPATH}" CREATORCLIPS_FAKE_AI=1 exec "${tools.python}" "$@"\n`, { mode: 0o755 })
+  fs.writeFileSync(path.join(userDataDir, 'settings.json'), JSON.stringify({ version: 6, outputDirectory: library, pythonPath: python, openrouterApiKey: '', zernioApiKey: '', customVocabulary: 'Paid Creators' }))
+
+  // A local stand-in for OpenRouter: Scribe v2 transcriptions and the film-ideas call.
+  const scribe = [], chats = []
+  const server = http.createServer((req, res) => {
+    const chunks = []
+    req.on('data', (chunk) => chunks.push(chunk))
+    req.on('end', () => {
+      const body = Buffer.concat(chunks)
+      const reply = (status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)) }
+      if (req.url === '/api/v1/audio/transcriptions') {
+        const fields = multipartFields(body)
+        scribe.push({ contentType: req.headers['content-type'], auth: req.headers.authorization, fields })
+        const words = scribe.length === 1 ? TAKE_1 : TAKE_2
+        reply(200, { text: words.map((w) => w.word).join(' '), language: 'en', words: [...words, { word: ' ', start: 0, end: 0.1, type: 'spacing' }], usage: { cost: 0.0004, seconds: 8 } })
+      } else if (req.url === '/api/v1/chat/completions') {
+        chats.push(JSON.parse(body.toString()))
+        reply(200, { choices: [{ message: { content: JSON.stringify({ ideas: Array.from({ length: 5 }, (_, i) => ({
+          title: ['Silent mistake', 'React to bad advice', 'The follow-up', 'Price with care', 'Keep them longer'][i],
+          hook: i === 0 ? 'Most coaches lose clients to one silent mistake' : `Another hook, ${['two', 'three', 'four', 'five'][i - 1]}`, points: ['Name the mistake', 'Show what it costs', 'Give one fix'],
+          format: i === 1 ? 'pause_react' : 'camera', why: 'Fits coaches who sell programs.' })) }) } }], usage: { cost: 0.0012 } })
+      } else reply(404, { error: { code: 404, message: 'not here' } })
+    })
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${server.address().port}/api/v1`
+
+  const appDir = buildApp(path.join(root, 'app'))
+  linkEngine(appDir)
+  const session = await launchApp({ appDir, userDataDir, args: FAKE_MEDIA, env: { ...tools.appEnv, BRIDGECLIP_E2E_OPENROUTER_MEDIA_URL: base, BRIDGECLIP_E2E_OPENROUTER_URL: `${base}/chat/completions` } })
+  t.after(async () => {
+    server.close()
+    const stop = setTimeout(() => session.app.process().kill('SIGTERM'), 5000)
+    try { await session.close() } finally { clearTimeout(stop); fs.rmSync(root, { recursive: true, force: true }) }
+  })
+  const { app, page } = session
+  page.setDefaultTimeout(20000)
+  const errors = []; page.on('pageerror', (error) => errors.push(error.message))
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1400, 1100))
+  await app.evaluate(({ safeStorage }) => {
+    if (process.platform !== 'linux' || (safeStorage.isEncryptionAvailable() && safeStorage.getSelectedStorageBackend() !== 'basic_text')) return
+    const prefix = 'test:'
+    Object.assign(safeStorage, {
+      isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'mock_for_tests',
+      encryptString: (text) => Buffer.from(prefix + text), decryptString: (bytes) => Buffer.from(bytes).toString().slice(prefix.length)
+    })
+  })
+  await page.evaluate(() => window.bridgeclip.settings.replaceApiKey('openrouterApiKey', 'sk-or-test'))
+  await page.reload()
+  await app.evaluate(({ dialog }, file) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] }) }, recording)
+
+  // The tab sits between Create and Remix.
+  const nav = await page.getByRole('navigation', { name: 'Main' }).getByRole('button').allInnerTexts()
+  const at = nav.findIndex((label) => label.startsWith('Edit my recording'))
+  assert.ok(at > 0 && nav[at - 1].startsWith('Create') && nav[at + 1].startsWith('Remix'), nav.join(' | '))
+  await page.keyboard.press('Control+e')
+  await page.getByRole('heading', { name: 'Edit my recording', level: 1 }).waitFor()
+  const start = page.getByRole('button', { name: 'Edit my recording', exact: true }).last()
+  assert.equal(await start.isDisabled(), true)
+  await page.getByRole('button', { name: 'Choose recordings' }).click()
+  const list = page.getByRole('list', { name: 'Your recordings' })
+  await list.getByText('my raw take.mp4').waitFor()
+  await list.getByText('0:08').waitFor()
+  assert.match(await page.getByTestId('edit-cost').innerText(), /^Listening to 0:08 with ElevenLabs Scribe v2 costs about under \$0\.01, and planning the edit about \$0\.02, through your OpenRouter account\./)
+
+  // What should I film? Five ideas from a topic; the first one is filmed here with its hook and points as a teleprompter.
+  await page.getByRole('button', { name: /What should I film\?/ }).click()
+  await page.getByLabel('Topic').fill('client retention')
+  await page.getByRole('button', { name: 'Give me 5 ideas' }).click()
+  const ideas = page.getByRole('list', { name: 'Video ideas' })
+  await ideas.getByText('“Most coaches lose clients to one silent mistake”').waitFor()
+  assert.equal(await ideas.locator(':scope > li').count(), 5)
+  assert.equal(chats.length, 1)
+  assert.equal(JSON.parse(chats[0].messages[1].content).topic, 'client retention')
+  assert.match(chats[0].messages[0].content, /Never invent facts, numbers, results, clients or testimonials/)
+  await ideas.locator(':scope > li').nth(1).getByRole('button', { name: 'Pause & react is in Remix' }).waitFor()
+  await ideas.locator(':scope > li').first().getByRole('button', { name: 'Film this' }).click()
+  const recorder = page.getByRole('dialog', { name: 'Film yourself' })
+  await recorder.getByLabel('Your teleprompter').getByText('Most coaches lose clients to one silent mistake').waitFor()
+  await recorder.getByText('• Give one fix').waitFor()
+  await recorder.getByRole('button', { name: 'Start recording' }).click()
+  await recorder.getByText(/^REC/).waitFor({ timeout: 10000 })
+  await page.waitForTimeout(3500)
+  await recorder.getByRole('button', { name: 'Stop' }).click()
+  await recorder.getByText(/^Take 1 saved/).waitFor({ timeout: 20000 })
+  await recorder.getByRole('button', { name: 'Done' }).click()
+  await list.getByText(/^Take 2 · recording-.*\.webm$/).waitFor()
+  assert.equal(fs.readdirSync(path.join(library, 'My recordings')).length, 1)
+  await page.getByText('Planned hook: “Most coaches lose clients to one silent mistake”. The edit looks for it first.').waitFor()
+
+  await start.click()
+  await page.getByRole('heading', { name: 'Review your edit' }).waitFor({ timeout: 180000 })
+  // Scribe v2 through OpenRouter, once per take: multipart with word timestamps and the member's words as key terms.
+  assert.equal(scribe.length, 2)
+  for (const call of scribe) {
+    assert.match(call.contentType, /^multipart\/form-data; boundary=/)
+    assert.equal(call.auth, 'Bearer sk-or-test')
+    assert.deepEqual(call.fields.model, ['elevenlabs/scribe-v2'])
+    assert.deepEqual(call.fields.response_format, ['verbose_json'])
+    assert.deepEqual(call.fields['timestamp_granularities[]'], ['word'])
+    assert.deepEqual(call.fields['keyterms[]'], ['Paid Creators'])
+    assert.ok(call.fields.file[0].bytes > 100 && /^audio\//.test(call.fields.file[0].type), JSON.stringify(call.fields.file))
+  }
+  const status = await page.evaluate(() => window.bridgeclip.edit.status())
+  assert.equal(status.transcriber, 'scribe')
+  const words = status.plan.words
+  const index = (text, nth = 0) => words.map((w, i) => [w.text, i]).filter(([w]) => w === text)[nth][1]
+  // The rejected take and the cue are cut, the "um" too; the hook is the number line; the call to action is take 2.
+  const cutText = words.filter((w) => w.cut).map((w) => w.text).join(' ')
+  assert.equal(cutText, 'Most coaches lose clients. No, again. Um.')
+  await page.getByTestId('edit-hook').getByText('“Fifteen billion messages wait.”').waitFor()
+  assert.equal(await page.getByLabel('Hook text on screen').inputValue(), '15 billion messages wait')
+  assert.equal(await page.locator(`[data-word="${index('Um.')}"]`).getAttribute('aria-pressed'), 'false')
+  assert.equal(await page.locator(`[data-word="${index('Fifteen')}"]`).getAttribute('aria-pressed'), 'true')
+  await page.getByText('Take 2 · ').first().waitFor()
+  // Keep the "um" after all, then cut it again; cut "so" from the kept take.
+  await page.locator(`[data-word="${index('Um.')}"]`).click()
+  assert.equal(await page.locator(`[data-word="${index('Um.')}"]`).getAttribute('aria-pressed'), 'true')
+  await page.locator(`[data-word="${index('Um.')}"]`).click()
+  await page.locator(`[data-word="${index('so')}"]`).click()
+  // The other hook the AI found; then back to the number, with the member's own hook text.
+  await page.getByRole('button', { name: 'Use a different hook' }).click()
+  await page.getByRole('radio', { name: /^Most coaches lose so many clients/ }).click()
+  assert.equal(await page.getByLabel('Hook text on screen').inputValue(), 'Most coaches lose so many clients')
+  await page.getByRole('radio', { name: /^15 billion messages wait/ }).click()
+  await page.getByLabel('Hook text on screen').fill('15 billion messages are waiting')
+  // Pop-ups and sounds: the pop-up stays, the pop sound goes.
+  assert.equal(await page.getByRole('switch', { name: 'Pop-up 1' }).getAttribute('aria-checked'), 'true')
+  assert.equal(await page.getByLabel('Pop-up 1 text').inputValue(), '15 billion')
+  await page.getByRole('switch', { name: 'Pop on “billion”' }).click()
+  assert.equal(await page.getByRole('switch', { name: 'Soft whoosh as the hook text appears' }).getAttribute('aria-checked'), 'true')
+  await page.getByRole('switch', { name: 'End on your call to action' }).waitFor()
+  await page.getByRole('button', { name: /^Look/ }).click()
+  await page.getByRole('switch', { name: 'Captions' }).waitFor()
+  await page.getByRole('heading', { name: 'Review your edit' }).scrollIntoViewIfNeeded()
+  await shot(app, 'edit-review.png')
+
+  await page.getByRole('button', { name: 'Make my reel' }).click()
+  await page.getByText('Your reel is ready').waitFor({ timeout: 300000 })
+  const run = fs.readdirSync(library).find((name) => /^edit-[0-9a-f-]{36}$/.test(name))
+  assert.ok(run)
+  const job = JSON.parse(fs.readFileSync(path.join(library, run, 'job_output.json'), 'utf8'))
+  assert.equal(job.clips.length, 1)
+  assert.equal(job.clips[0].headline, '15 billion messages are waiting')
+  assert.equal(job.source_video_title, 'Edited · 15 billion messages are waiting')
+  assert.ok(job.clips[0].editable)
+  const reel = path.join(library, run, 'clip_00.mp4')
+  const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height', '-show_entries', 'format=duration', '-of', 'json', reel]).toString())
+  const video = probe.streams.find((s) => s.codec_type === 'video')
+  assert.deepEqual([video.width, video.height], [1080, 1920])
+  assert.ok(probe.streams.some((s) => s.codec_type === 'audio'))
+  const seconds = Number(probe.format.duration)
+  // The hook (1.3 s), "Most coaches lose many clients." and the call to action (1.3 s), with short pads: about 5 seconds.
+  assert.ok(seconds > 3.5 && seconds < 7, `${seconds}s`)
+  if (process.env.BRIDGECLIP_E2E_SHOTS) {
+    for (const [k, at] of [0.4, 1.0, seconds - 0.6].entries()) execFileSync(ffmpeg, ['-v', 'error', '-y', '-ss', String(at), '-i', reel, '-frames:v', '1', path.join(process.env.BRIDGECLIP_E2E_SHOTS, `edit-reel-${k}.png`)])
+  }
+  // The AI steps went to the spending ledger as "Edit my recording".
+  const ledger = fs.readFileSync(path.join(userDataDir, 'spending', 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.ok(ledger.some((entry) => entry.kind === 'edit' && entry.label === 'Edit my recording: transcript and plan' && Math.abs(entry.usd - (0.0008 + 0.004)) < 1e-6), JSON.stringify(ledger))
+  assert.ok(ledger.some((entry) => entry.kind === 'edit' && entry.label === 'Edit my recording: film ideas' && Math.abs(entry.usd - 0.0012) < 1e-6))
+
+  // In the Library: "Edit hook text & captions" re-makes it from its saved parts.
+  await page.getByRole('button', { name: 'Open in Library' }).click()
+  await page.getByRole('button', { name: /^Actions for “15 billion messages are waiting/ }).first().click()
+  await page.getByRole('menuitem', { name: 'Edit hook text & captions', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Edit this video' })
+  await dialog.getByRole('textbox').first().fill('One mistake costs coaches clients')
+  await dialog.getByRole('button', { name: 'Make it again' }).click()
+  await dialog.waitFor({ state: 'detached', timeout: 120000 })
+  const remade = JSON.parse(fs.readFileSync(path.join(library, run, 'job_output.json'), 'utf8'))
+  assert.equal(remade.clips[0].headline, 'One mistake costs coaches clients')
+  assert.ok(remade.clips[0].edited_at)
+  assert.deepEqual(errors, [])
+})

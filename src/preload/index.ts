@@ -37,6 +37,7 @@ import type { AppPrefsUpdate, MemberPrefs, StyleKind } from '../shared/member-pr
 import type { CreatorProfile } from '../shared/onboarding'
 import type { BrandLook } from '../shared/brand-kit'
 import type { BrandIdentity, RecordingPart, RemixDraft, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
+import type { EditDecisions, EditSource, EditStartRequest, EditStatus, FilmIdea, FilmIdeasRequest } from '../shared/edit-recording'
 import type { PauseEvent, PauseSettings, PauseView } from '../shared/pause-react'
 import type { TimecodeRead } from '../shared/moment-take'
 import type {
@@ -437,6 +438,26 @@ export interface BridgeClipAPI {
     /** Opens a file dialog; null when cancelled. */
     uploadRecording: (draftId: number, part: RecordingPart) => Promise<RemixRecordings | null>
   }
+  /** Edit my recording: one raw recording (or a few takes) in, one finished vertical reel out. */
+  edit: {
+    status: () => Promise<EditStatus | null>
+    onStatus: (callback: (status: EditStatus) => void) => () => void
+    /** Opens a file dialog for one recording or a few takes; [] when cancelled. */
+    chooseSources: () => Promise<EditSource[]>
+    /** Transcribe and plan (paid); the status moves to 'review'. */
+    start: (request: EditStartRequest) => Promise<EditStatus>
+    /** Make the reel from the reviewed edit (local, no AI cost). */
+    render: (decisions: EditDecisions) => Promise<EditStatus>
+    cancel: () => Promise<boolean>
+    discard: () => Promise<boolean>
+    mediaAccess: () => Promise<{ camera: boolean; microphone: boolean }>
+    recordingBegin: (mime: string) => Promise<string>
+    recordingAppend: (token: string, chunk: Uint8Array) => Promise<void>
+    recordingFinish: (token: string) => Promise<EditSource>
+    recordingAbort: (token: string) => Promise<void>
+    /** "What should I film?": five ideas from the brand, goals and pasted material (one small paid call). */
+    ideas: (request: FilmIdeasRequest) => Promise<FilmIdea[]>
+  }
   /** Gameplay background library (file names only). */
   backgrounds: {
     list: () => Promise<string[]>
@@ -774,6 +795,21 @@ const api: BridgeClipAPI = {
     recordingAbort: (token) => ipcRenderer.invoke('remix:recordingAbort', token),
     removeRecording: (draftId, part) => ipcRenderer.invoke('remix:removeRecording', draftId, part),
     uploadRecording: (draftId, part) => ipcRenderer.invoke('remix:uploadRecording', draftId, part)
+  },
+  edit: {
+    status: () => ipcRenderer.invoke('edit:status'),
+    onStatus: (callback) => subscribe('edit:status', callback),
+    chooseSources: () => ipcRenderer.invoke('edit:chooseSources'),
+    start: (request) => paid('edit:start', request),
+    render: (decisions) => ipcRenderer.invoke('edit:render', decisions),
+    cancel: () => ipcRenderer.invoke('edit:cancel'),
+    discard: () => ipcRenderer.invoke('edit:discard'),
+    mediaAccess: () => ipcRenderer.invoke('edit:mediaAccess'),
+    recordingBegin: (mime) => ipcRenderer.invoke('edit:recordingBegin', mime),
+    recordingAppend: (token, chunk) => ipcRenderer.invoke('edit:recordingAppend', token, chunk),
+    recordingFinish: (token) => ipcRenderer.invoke('edit:recordingFinish', token),
+    recordingAbort: (token) => ipcRenderer.invoke('edit:recordingAbort', token),
+    ideas: (request) => paid('edit:ideas', request)
   },
   backgrounds: {
     list: () => ipcRenderer.invoke('backgrounds:list'),

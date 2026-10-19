@@ -43,7 +43,9 @@ export function GuidesPage({ onNavigate }: { onNavigate: (page: Page) => void })
                 </div>
                 {isVideoGoal(id)
                   ? <Button size="sm" variant={mine ? 'primary' : 'secondary'} onClick={() => onNavigate(startGoal(id))} aria-label={`Start: ${guide.title}`}>Start<ArrowRight className="h-3.5 w-3.5" /></Button>
-                  : <Button size="sm" variant={mine ? 'primary' : 'secondary'} onClick={() => onNavigate('accounts')} aria-label={`Open Accounts: ${guide.title}`}>Open Accounts<ArrowRight className="h-3.5 w-3.5" /></Button>}
+                  : id === 'edit-recording'
+                    ? <Button size="sm" variant={mine ? 'primary' : 'secondary'} onClick={() => onNavigate('edit')} aria-label={`Start: ${guide.title}`}>Start<ArrowRight className="h-3.5 w-3.5" /></Button>
+                    : <Button size="sm" variant={mine ? 'primary' : 'secondary'} onClick={() => onNavigate('accounts')} aria-label={`Open Accounts: ${guide.title}`}>Open Accounts<ArrowRight className="h-3.5 w-3.5" /></Button>}
               </div>
               <p className="mt-3 text-xs text-ink-subtle"><span className="font-medium text-ink-muted">You’ll need: </span>{guide.needs.join(' · ')}</p>
               <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-ink">

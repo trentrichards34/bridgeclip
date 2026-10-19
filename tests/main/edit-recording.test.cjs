@@ -1,0 +1,260 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const vm = require('node:vm')
+const ts = require('typescript')
+
+// Edit my recording: the start request, Scribe v2 through OpenRouter (request shape and answers), film ideas, the
+// review's choices, and the spending check. Main-process code runs in a vm with its Electron-side modules stubbed.
+
+const ROOT = path.join(__dirname, '../../src')
+const plain = (value) => JSON.parse(JSON.stringify(value))
+
+function transpile(file) {
+  return ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+}
+
+function load(relative, mocks = {}) {
+  const module = { exports: {} }
+  const dir = path.dirname(path.join(ROOT, relative))
+  vm.runInNewContext(transpile(path.join(ROOT, relative)), {
+    module, exports: module.exports, URL, Buffer, console, setTimeout, clearTimeout, process, FormData, Blob, AbortSignal, AbortController, Response,
+    require: (id) => {
+      if (id in mocks) return mocks[id]
+      if (id.startsWith('.')) return load(path.relative(ROOT, path.join(dir, id)) + '.ts', mocks)
+      return require(id)
+    }
+  })
+  return module.exports
+}
+
+const shared = load('shared/edit-recording.ts')
+const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'edit-recording-test-'))
+const SETTINGS = { openrouterApiKey: 'or-key', outputDirectory: userData, pythonPath: 'python3', customVocabulary: 'CreatorClips, Paid Creators' }
+const selected = new Set()
+const BRAND = { id: 'b'.repeat(16), name: 'Coach Sam', text: 'I help coaches price their offers. Clients went from $500 to $2,000 offers.', createdAt: '', updatedAt: '' }
+const main = load('main/edit-recording.ts', {
+  './brands': { brandMarkForRun: async () => null, isBrandId: (v) => typeof v === 'string' && /^[a-f0-9]{16}$/.test(v), readBrandIdentity: async () => BRAND },
+  './ctas': { applyRunCtaInLock: async () => ({ failed: [] }), originalPath: (p) => p + '.original.mp4', withRunLock: async (_f, work) => work() },
+  './logger': { logger: { info() {}, warn() {} } },
+  './member-prefs': { readMemberPrefs: () => ({ profile: { goals: ['clips', 'edit-recording'], platforms: ['tiktok'] } }) },
+  './openrouter-media': { openRouterBase: () => 'https://openrouter.test/api/v1' },
+  './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
+  './remix': { parseRemixRecompose: (v) => v },
+  './security': { assertMediaPath: (p) => { if (!selected.has(p)) throw new Error('Invalid media path') }, authorizeMedia: (p) => p },
+  './settings-store': { loadSettings: () => SETTINGS, getSettingsForBridge: () => ({}), vocabularyTerms: (v) => v.split(',').map((t) => t.trim()).filter(Boolean) },
+  './tools': { resolveBinary: (name) => name }
+})
+
+test('the start request takes recordings chosen here (or in the Library), a brand and a planned hook', () => {
+  const file = path.join(userData, 'take-1.mp4')
+  selected.add(file)
+  const parsed = main.parseEditStart({ sources: [file, file], brandIdentityId: BRAND.id, hookHint: '  Most   coaches undercharge ' }, userData)
+  assert.deepEqual(plain(parsed), { sources: [file], brandIdentityId: BRAND.id, hookHint: 'Most coaches undercharge' })
+  assert.throws(() => main.parseEditStart({ sources: [] }, userData), /Choose your recording/)
+  assert.throws(() => main.parseEditStart({ sources: ['/etc/passwd'] }, userData), /Choose a video/)
+  assert.throws(() => main.parseEditStart({ sources: ['/elsewhere/secret.mp4'] }, userData), /Choose your recording again/)
+  assert.throws(() => main.parseEditStart({ sources: Array.from({ length: 6 }, (_, i) => `/a/${i}.mp4`) }, userData), /up to 5 takes/)
+  assert.throws(() => main.parseEditStart({ sources: [file], brandIdentityId: '../x' }, userData), /one of your brands/)
+  assert.throws(() => main.parseEditStart({ sources: [file], hookHint: 'x'.repeat(601) }, userData), /too long/)
+  assert.throws(() => main.parseEditStart('nope', userData), /Choose your recording/)
+  // The spending check estimates only from recordings checked here (their length is known).
+  assert.equal(main.startEstimate({ sources: [file] }), null)
+})
+
+function fakeFetch(answer, status = 200) {
+  const calls = []
+  const fetcher = async (url, init) => {
+    calls.push({ url, init })
+    return new Response(typeof answer === 'string' ? answer : JSON.stringify(answer), { status })
+  }
+  return { fetcher, calls }
+}
+
+test('Scribe v2: multipart to OpenRouter with word timestamps and key terms; words in milliseconds, spacing and sound events left out', async () => {
+  const { fetcher, calls } = fakeFetch({
+    text: 'Hello coaches (laughs) welcome.', language: 'en', duration: 3,
+    words: [{ word: 'Hello', start: 0.1, end: 0.45, type: 'word' }, { word: ' ', start: 0.45, end: 0.5, type: 'spacing' },
+      { word: 'coaches', start: 0.5, end: 0.9 }, { word: '(laughs)', start: 1, end: 1.5, type: 'audio_event' }, { word: 'welcome.', start: 1.6, end: 2.1, type: 'word' }],
+    usage: { cost: 0.00009, seconds: 3 }
+  })
+  const result = await main.transcribeWithScribe({ bytes: new Uint8Array([1, 2, 3]), name: 'audio-0.mp3', type: 'audio/mpeg', seconds: 3 }, ['Coach Sam', 'CreatorClips'], 'or-key', { fetch: fetcher })
+  assert.equal(calls.length, 1)
+  const { url, init } = calls[0]
+  assert.equal(url, 'https://openrouter.test/api/v1/audio/transcriptions')
+  assert.equal(init.method, 'POST')
+  assert.equal(init.redirect, 'error')
+  assert.equal(init.headers.Authorization, 'Bearer or-key')
+  const form = init.body
+  assert.equal(form.get('model'), 'elevenlabs/scribe-v2')
+  assert.equal(form.get('response_format'), 'verbose_json')
+  assert.deepEqual(form.getAll('timestamp_granularities[]'), ['word'])
+  assert.deepEqual(form.getAll('keyterms[]'), ['Coach Sam', 'CreatorClips'])
+  const file = form.get('file')
+  assert.equal(file.name, 'audio-0.mp3')
+  assert.equal(file.type, 'audio/mpeg')
+  assert.equal(file.size, 3)
+  assert.deepEqual(plain(result.words), [['Hello', 100, 450], ['coaches', 500, 900], ['welcome.', 1600, 2100]])
+  assert.equal(result.costUsd, 0.00009)
+  assert.equal(result.estimated, false)
+})
+
+test('Scribe v2: no reported cost is estimated from the listed price; a bad key or no credit stops; other failures fall back', async () => {
+  const noCost = fakeFetch({ text: 'Hi.', words: [{ word: 'Hi.', start: 0, end: 0.3 }] })
+  const estimated = await main.transcribeWithScribe({ bytes: new Uint8Array(1), name: 'a.flac', type: 'audio/flac', seconds: 100 }, [], 'k', { fetch: noCost.fetcher })
+  assert.equal(estimated.estimated, true)
+  assert.ok(Math.abs(estimated.costUsd - 100 * shared.SCRIBE_PRICE_PER_SECOND) < 1e-12)
+  assert.equal(noCost.calls[0].init.body.getAll('keyterms[]').length, 0)
+  const statusOf = async (status) => {
+    try { await main.transcribeWithScribe({ bytes: new Uint8Array(1), name: 'a.mp3', type: 'audio/mpeg', seconds: 1 }, [], 'k', { fetch: fakeFetch({}, status).fetcher }); return null } catch (error) { return error }
+  }
+  for (const status of [401, 403, 402]) assert.equal((await statusOf(status)).final, true, `status ${status}`)
+  assert.match((await statusOf(402)).message, /insufficient credits/)
+  for (const status of [400, 404, 429, 500, 503]) assert.equal((await statusOf(status)).final, false, `status ${status}`)
+  // Words missing from a paid answer: it falls back, and what was paid is kept.
+  const noWords = fakeFetch({ text: 'Something was said.', words: [], usage: { cost: 0.002 } })
+  await assert.rejects(main.transcribeWithScribe({ bytes: new Uint8Array(1), name: 'a.mp3', type: 'audio/mpeg', seconds: 5 }, [], 'k', { fetch: noWords.fetcher }),
+    (error) => error.final === false && error.costUsd === 0.002)
+  // No key: final, before anything is sent. Too large for the endpoint: not sent, falls back.
+  await assert.rejects(main.transcribeWithScribe({ bytes: new Uint8Array(1), name: 'a.mp3', type: 'audio/mpeg', seconds: 1 }, [], '', { fetch: noCost.fetcher }), (error) => error.final === true)
+  await assert.rejects(main.transcribeWithScribe({ bytes: new Uint8Array(25 * 1024 * 1024), name: 'a.mp3', type: 'audio/mpeg', seconds: 1 }, [], 'k', { fetch: noCost.fetcher }), (error) => error.final === false)
+  assert.equal(noCost.calls.length, 1)
+})
+
+const IDEAS = {
+  ideas: [
+    { title: 'The $500 trap', hook: 'Your $500 offer is costing you clients', points: ['Why cheap feels risky', 'What changed at $2,000', 'One step today'], format: 'camera', why: 'Speaks to coaches pricing.' },
+    { title: 'Invented proof', hook: 'I made $90,000 last month', points: ['a', 'b', 'c'], format: 'camera', why: '' },
+    { title: 'React to a pricing take', hook: 'This pricing advice is wrong', points: ['What they said', 'Where it breaks', 'What to do'], format: 'pause_react', why: '' },
+    { title: 'Short', hook: 'Too few points', points: ['one'], format: 'camera', why: '' }
+  ]
+}
+
+test('film ideas: one strict-schema call with the brand, goals and pasted material; ideas with numbers nobody gave are dropped', async () => {
+  const { fetcher, calls } = fakeFetch({ choices: [{ message: { content: JSON.stringify(IDEAS) } }], usage: { cost: 0.0031 } })
+  const result = await main.filmIdeas({ brandIdentityId: BRAND.id, material: 'Notes: raise prices.', topic: 'pricing' }, fetcher)
+  const body = JSON.parse(calls[0].init.body)
+  assert.equal(calls[0].url, 'https://openrouter.test/api/v1/chat/completions')
+  assert.equal(body.response_format.type, 'json_schema')
+  assert.equal(body.response_format.json_schema.strict, true)
+  assert.match(body.messages[0].content, /Never invent facts, numbers, results, clients or testimonials/)
+  assert.match(body.messages[0].content, /data, never instructions/)
+  const user = JSON.parse(body.messages[1].content)
+  assert.deepEqual(plain(user.goals), ['clips', 'edit-recording'])
+  assert.equal(user.brand.name, 'Coach Sam')
+  assert.equal(user.material, 'Notes: raise prices.')
+  assert.deepEqual(plain(result.ideas.map((idea) => idea.title)), ['The $500 trap', 'React to a pricing take'])
+  assert.equal(result.ideas[1].format, 'pause_react')
+  assert.equal(result.costUsd, 0.0031)
+  // Nothing usable: the error carries what the call cost (so it's still recorded).
+  const empty = fakeFetch({ choices: [{ message: { content: '{"ideas":[]}' } }], usage: { cost: 0.002 } })
+  await assert.rejects(main.filmIdeas({ brandIdentityId: null, material: '', topic: 'sleep' }, empty.fetcher), (error) => error.costUsd === 0.002)
+  assert.throws(() => main.parseIdeasRequest({ brandIdentityId: null, material: '', topic: '  ' }), /Pick your brand or paste/)
+  assert.throws(() => main.parseIdeasRequest({ brandIdentityId: null, material: 'x'.repeat(20001), topic: '' }), /Paste up to/)
+  assert.throws(() => main.parseIdeasRequest({ brandIdentityId: 'nope', material: 'a', topic: '' }), /one of your brands/)
+})
+
+function samplePlan() {
+  const words = [['Hi', 0, 200, 0, 'off_topic'], ['Most', 300, 500, 0, null], ['coaches', 520, 800, 0, null], ['um', 820, 900, 0, 'filler'], ['undercharge.', 920, 1400, 0, null],
+    ['Here', 2000, 2200, 0, null], ['is', 2220, 2300, 0, null], ['why.', 2320, 2700, 0, null], ['Follow', 3000, 3300, 0, null], ['me.', 3320, 3600, 0, null]]
+  return shared.parseEditPlan({
+    words, hooks: [{ id: 0, start: 5, end: 7, text: 'Here is why', why: 'A promise' }, { id: 1, start: 1, end: 4, text: 'Most coaches undercharge', why: '' }], hook: 0,
+    cta: { start: 8, end: 9 }, popups: [{ id: 0, word: 2, text: 'coaches', kind: 'keyword' }], sounds: [{ id: 0, at: 'title', sound: 'whoosh' }, { id: 1, at: 2, sound: 'pop' }],
+    planned: 'ai', notes: ['Cut 1 filler word.'], warnings: []
+  }, 1)
+}
+
+test('the review: words toggle, a span toggles, another hook comes with its text, and the reel order is hook, body, call to action', () => {
+  const plan = samplePlan()
+  assert.equal(shared.parseEditPlan({ ...plan, words: [['x', 10, 5, 0, null]] }, 1), null)
+  assert.equal(shared.parseEditPlan({ words: [['x', 0, 5, 3, null]] }, 1), null)
+  let decisions = shared.initialDecisions(plan)
+  assert.deepEqual(plain(decisions.cut), [0, 3])
+  assert.equal(decisions.hookText, 'Here is why')
+  assert.deepEqual(plain(shared.reelOrder(plan, decisions)), [5, 6, 7, 1, 2, 4, 8, 9])
+  decisions = shared.toggleWord(decisions, 0)
+  assert.deepEqual(plain(decisions.cut), [3])
+  decisions = shared.toggleSpan(decisions, 4, 1)
+  assert.deepEqual(plain(decisions.cut), [1, 2, 3, 4])
+  decisions = shared.toggleSpan(decisions, 1, 4)
+  assert.deepEqual(plain(decisions.cut), [])
+  decisions = shared.chooseHook(plan, { ...decisions, cut: [2] }, 1)
+  // Its words play again (only filler stays cut), and its title text comes with it.
+  assert.deepEqual(plain(decisions.cut), [])
+  assert.equal(decisions.hookText, 'Most coaches undercharge')
+  const typed = shared.chooseHook(plan, { ...decisions, hookText: 'My own words' }, 0)
+  assert.equal(typed.hookText, 'My own words')
+  assert.deepEqual(plain(shared.reelOrder(plan, { ...decisions, endOnCta: false })), [1, 2, 3, 4, 0, 5, 6, 7, 8, 9])
+  assert.ok(shared.reelSeconds(plan, shared.initialDecisions(plan)) > 2)
+})
+
+test('the review choices are checked against the plan before a reel is made', () => {
+  const plan = samplePlan()
+  const good = { ...shared.initialDecisions(plan), look: { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false } }
+  assert.deepEqual(plain(shared.parseEditDecisions(good, plan).cut), [0, 3])
+  const bad = (patch, pattern) => assert.throws(() => shared.parseEditDecisions({ ...good, ...patch }, plan), pattern)
+  bad({ cut: [99] }, /Choose the words/)
+  bad({ cut: 'all' }, /Choose the words/)
+  bad({ hookId: 7 }, /one of the hooks/)
+  bad({ hookText: 'x'.repeat(91) }, /90 characters/)
+  bad({ hookText: 'Use <b>tags</b>' }, /plain text/)
+  bad({ endOnCta: 'yes' }, /call to action/)
+  bad({ popups: [{ id: 5, on: true, text: 'x' }] }, /pop-ups/)
+  bad({ popups: [{ id: 0, on: true, text: '' }] }, /28 characters/)
+  bad({ sounds: [{ id: 9, on: true }] }, /sounds/)
+  bad({ look: { ...good.look, captionPreset: 'comic-sans' } }, /captions and look/)
+  bad({ cut: [0, 1, 2, 3, 4, 5, 6, 7, 8] }, /Keep a few more words/)
+})
+
+test('film ideas are checked: three talking points, a known format, and only numbers from the member’s own text', () => {
+  const ideas = shared.parseFilmIdeas(IDEAS, 'Clients went from $500 to $2,000 offers.')
+  assert.deepEqual(plain(ideas.map((idea) => idea.title)), ['The $500 trap', 'React to a pricing take'])
+  assert.deepEqual(plain(shared.digitNumbers('From $1,200 to 3.5 and 15.')), ['1200', '3.5', '15'])
+  assert.equal(shared.parseFilmIdeas({ ideas: [{ ...IDEAS.ideas[0], format: 'dance' }] }, '$500 $2,000')[0].format, 'camera')
+  assert.equal(shared.parseFilmIdeas('nope', '').length, 0)
+})
+
+test('estimates use the listed Scribe price and the app’s planning price; transcribing and planning pass the spending check', () => {
+  const minute = shared.editEstimate(60)
+  assert.ok(Math.abs(minute.transcribeUsd - 60 * 0.000061) < 1e-12)
+  assert.ok(Math.abs(minute.planUsd - 0.35 * 0.05) < 1e-12)
+  assert.equal(shared.formatUsd(0.004), 'under $0.01')
+  const spending = fs.readFileSync(path.join(ROOT, 'main/spending.ts'), 'utf8')
+  assert.match(spending, /'edit:start', 'edit:ideas'\]\)/)
+  const handlers = fs.readFileSync(path.join(ROOT, 'main/ipc-handlers.ts'), 'utf8')
+  assert.match(handlers, /paid\('edit:start', 'openrouter'/)
+  assert.match(handlers, /paid\('edit:ideas', 'openrouter', \(\) => IDEAS_ESTIMATE_USD/)
+  // Making the reel is local: not a paid channel.
+  assert.match(handlers, /handle\('edit:render'/)
+  // A paid ideas call that gave nothing usable is still recorded.
+  assert.match(handlers, /const cost = \(error as \{ costUsd\?: unknown \} \| null\)\?\.costUsd/)
+  const preload = fs.readFileSync(path.join(ROOT, 'preload/index.ts'), 'utf8')
+  assert.match(preload, /start: \(request\) => paid\('edit:start', request\)/)
+  assert.match(preload, /ideas: \(request\) => paid\('edit:ideas', request\)/)
+})
+
+test('recordings made here are saved to My recordings, checked, and only video types are accepted', async () => {
+  await assert.rejects(main.beginEditRecording('audio/ogg'), /format isn’t supported/)
+  const token = await main.beginEditRecording('video/webm;codecs=vp9,opus')
+  await assert.rejects(main.beginEditRecording('video/webm'), /already being saved/)
+  await assert.rejects(main.appendEditRecording(token, 'not bytes'), /Invalid recording data/)
+  await assert.rejects(main.appendEditRecording('nope', new Uint8Array(1)), /was stopped/)
+  await main.appendEditRecording(token, new Uint8Array([1, 2, 3]))
+  const folder = path.join(userData, 'My recordings')
+  assert.equal(fs.readdirSync(folder).length, 1)
+  // Not a real video: it can't be read, so it isn't kept.
+  await assert.rejects(main.finishEditRecording(token), /could not be read/)
+  assert.equal(fs.readdirSync(folder).length, 0)
+  const second = await main.beginEditRecording('video/mp4')
+  await main.abortEditRecording(second)
+  assert.equal(fs.readdirSync(folder).length, 0)
+})
+
+test('Library re-makes are only for edited recordings in the output folder', async () => {
+  assert.equal(main.isEditRunFolder(path.join(userData, 'edit-12345678-1234-1234-1234-123456789abc')), true)
+  assert.equal(main.isEditRunFolder(path.join(userData, 'remix-12345678-1234-1234-1234-123456789abc')), false)
+  await assert.rejects(main.recomposeEditRun('/tmp/edit-12345678-1234-1234-1234-123456789abc', 0, {}), /Only edited recordings/)
+  await assert.rejects(main.recomposeEditRun(path.join(userData, 'edit-12345678-1234-1234-1234-123456789abc'), 0, {}), /Only edited recordings/)
+})

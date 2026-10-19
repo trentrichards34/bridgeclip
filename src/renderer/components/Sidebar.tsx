@@ -1,4 +1,4 @@
-import { BookOpen, ChevronRight, Clapperboard, Film, ScanFace, Layers, MessagesSquare, PanelLeftClose, PanelLeftOpen, Send, Settings, UsersRound, WandSparkles, Workflow, type LucideIcon } from 'lucide-react'
+import { BookOpen, ChevronRight, Clapperboard, Film, Scissors, ScanFace, Layers, MessagesSquare, PanelLeftClose, PanelLeftOpen, Send, Settings, UsersRound, WandSparkles, Workflow, type LucideIcon } from 'lucide-react'
 import { cn, MOD_KEY, sourceLabel } from '../lib/utils'
 import { useIsWide, useSidebarExpanded, useSidebarStore } from '../store/use-sidebar-store'
 import { useActiveJobs } from '../store/use-job-store'
@@ -11,10 +11,12 @@ import { STAGE_LABELS } from './JobProgress'
 import { SidebarUpdateButton } from './Updates'
 import { useAssistantStore } from '../store/use-assistant-store'
 
-export type Page = 'clip' | 'remix' | 'avatar' | 'library' | 'jobs' | 'assistant' | 'accounts' | 'posts' | 'automations' | 'guides' | 'settings'
+export type Page = 'clip' | 'edit' | 'remix' | 'avatar' | 'library' | 'jobs' | 'assistant' | 'accounts' | 'posts' | 'automations' | 'guides' | 'settings'
 
 export const NAV_ITEMS: { id: Page; label: string; icon: LucideIcon; shortcut: string; group: 'studio' | 'app' }[] = [
   { id: 'clip', label: 'Create', icon: WandSparkles, shortcut: '1', group: 'studio' },
+  // No number is free: ⌘E (Ctrl+E) for Edit.
+  { id: 'edit', label: 'Edit my recording', icon: Scissors, shortcut: 'E', group: 'studio' },
   { id: 'remix', label: 'Remix', icon: Clapperboard, shortcut: '9', group: 'studio' },
   { id: 'avatar', label: 'Avatar Studio', icon: ScanFace, shortcut: '8', group: 'studio' },
   { id: 'library', label: 'Library', icon: Film, shortcut: '2', group: 'studio' },
@@ -177,7 +179,7 @@ function NavButton({ item, expanded, active, onNavigate }: {
           {badge && (
             <span aria-hidden className="rounded-full bg-accent px-1.5 font-mono text-2xs tabular text-accent-ink group-hover:hidden">{badge}</span>
           )}
-          <kbd className="font-sans text-2xs text-ink-faint opacity-0 transition-opacity group-hover:opacity-100">
+          <kbd className="hidden font-sans text-2xs text-ink-faint group-hover:inline">
             {MOD_KEY}
             {item.shortcut}
           </kbd>

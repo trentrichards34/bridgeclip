@@ -7,10 +7,10 @@
 
 import { ZERNIO_PLATFORMS, type ZernioPlatform } from './zernio'
 
-export type GoalId = 'clips' | 'ai-reactions' | 'camera-reactions' | 'article' | 'avatar-videos' | 'posting'
+export type GoalId = 'clips' | 'edit-recording' | 'ai-reactions' | 'camera-reactions' | 'article' | 'avatar-videos' | 'posting'
 
 /** Where each kind of video is made (renderer page ids). */
-export type GoalPage = 'clip' | 'remix' | 'avatar' | 'accounts'
+export type GoalPage = 'clip' | 'edit' | 'remix' | 'avatar' | 'accounts'
 
 export interface Goal {
   id: GoalId
@@ -21,6 +21,7 @@ export interface Goal {
 
 export const GOALS: readonly Goal[] = [
   { id: 'clips', label: 'Clips from my long videos', detail: 'Turn podcasts, streams and YouTube videos into short clips with captions.', page: 'clip' },
+  { id: 'edit-recording', label: 'Edit my raw recordings', detail: 'Film yourself talking, retakes and all; get back one finished vertical reel.', page: 'edit' },
   { id: 'ai-reactions', label: 'Reactions as my AI self', detail: 'Your avatar and voice react to other videos, with your take. In beta.', page: 'remix' },
   { id: 'camera-reactions', label: 'Reactions on camera', detail: 'Record yourself reacting to other videos, here or on your phone.', page: 'remix' },
   { id: 'article', label: 'Talk over an article or post', detail: 'Green screen yourself over a screenshot; the AI writes the headline.', page: 'remix' },
@@ -28,8 +29,9 @@ export const GOALS: readonly Goal[] = [
   { id: 'posting', label: 'Post and schedule from here', detail: 'Connect your accounts and post or schedule without leaving the app.', page: 'accounts' }
 ]
 
-/** The kinds of video a member makes (every goal but posting). */
-export type VideoGoalId = Exclude<GoalId, 'posting'>
+/** The kinds of video a member makes on Create, Remix and Avatar Studio (their setup steps and first-run guides). */
+// Edit my recording has its own page and guide; it isn't one of the setup's first-video steps.
+export type VideoGoalId = Exclude<GoalId, 'posting' | 'edit-recording'>
 export const VIDEO_GOALS: readonly VideoGoalId[] = ['clips', 'ai-reactions', 'camera-reactions', 'article', 'avatar-videos']
 
 export type OnboardingState = 'new' | 'skipped' | 'done'
@@ -123,6 +125,22 @@ export const GUIDES: Record<GoalId, Guide> = {
       'In the Library, “More clips from this video” finds new moments and reuses the transcript, so you don’t pay to transcribe it again.',
       'Choosing your brand fills in your hook look, caption style and call to action for you.',
       'Edit a clip after it’s made: its framing, the size of each part of a split screen, the hook text, captions and call to action.'
+    ]
+  },
+  'edit-recording': {
+    id: 'edit-recording',
+    title: 'Edit my recording',
+    summary: 'Turn a raw recording of you talking to camera into one finished vertical reel.',
+    needs: ['Your OpenRouter key', 'The system check passing'],
+    steps: [
+      'Open Edit my recording. Choose your recording, or a few takes of the same video. Or choose Film it here to record with your camera.',
+      'Pick your brand, then choose Edit my recording. It listens to every word and plans the edit: the strongest hook first, your last complete take of each line, filler words and false starts cut.',
+      'Review it: click any word to keep or cut it, try another hook, edit the hook text, and switch pop-ups and sounds on or off.',
+      'Choose Make my reel. It lands in your Library, ready to post, and you can still change its hook text and captions there.'
+    ],
+    tips: [
+      'Fluff a line? Say it again, or say “scratch that” and start the line over: the edit keeps your last complete take.',
+      'Not sure what to film? Open What should I film? for five ideas with a hook and talking points, then Film this.'
     ]
   },
   'ai-reactions': {
