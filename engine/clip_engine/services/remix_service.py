@@ -1060,6 +1060,28 @@ def still_segment(image: str, audio: str, out: str, width: int, height: int, dur
     return out
 
 
+def stream_seconds(path: str, kind: str = "v") -> float:
+    """The length of a file's first video (or audio) stream, falling back to the file's."""
+    result = run_media(["ffprobe", "-v", "error", *PROBE_GUARD, "-select_streams", f"{kind}:0", "-show_entries", "stream=duration",
+                        "-of", "default=nw=1:nk=1", path], timeout=60)
+    try:
+        seconds = float((result.stdout or b"").decode().strip().splitlines()[0])
+    except (ValueError, IndexError):
+        seconds = 0.0
+    return seconds if math.isfinite(seconds) and seconds > 0 else media_seconds(path)
+
+
+def moment_panel(video: str, start: float, duration: float, out: str, width: int, height: int) -> str:
+    """A stretch of a video cover-cropped to the panel (centered), with loudness-matched sound or silence."""
+    sound = has_audio(video)
+    args = [*MEDIA_GUARD, "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", video]
+    if not sound:
+        args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+    ffmpeg([*args, "-vf", panel_filter(width, height, 0.5), "-af", LOUDNORM if sound else "anull", "-map", "0:v:0",
+            "-map", "0:a:0" if sound else "1:a:0", "-t", f"{duration:.3f}", *VIDEO_ARGS, *AUDIO_ARGS, out])
+    return out
+
+
 def concat_filter(count: int) -> str:
     return "".join(f"[{i}:v][{i}:a]" for i in range(count)) + f"concat=n={count}:v=1:a=1[v][a]"
 
@@ -1155,7 +1177,7 @@ def camera_recording(raw: Any, fmt: str) -> Optional[dict]:
         except PauseReactError:
             return None
         return {"reaction": {"path": path, "offset_s": 0.0}, "timeline": timeline} if path else None
-    if fmt in ("silent", "image"):
+    if fmt in ("silent", "image", "moment_take"):
         reaction = raw.get("reaction")
         if not isinstance(reaction, dict):
             return None
@@ -1784,6 +1806,11 @@ class RemixConfig:
     pause_captions: str = "member"
     # The member's @handle and/or logo in a corner ({"handle", "logo_path", "position"}; see brand_mark).
     brand_mark: Optional[dict] = None
+    # Moment + my take: the member's time ranges ([start, end] seconds, up to three), whether the moment stays small on
+    # screen during their take, and (writing) which takes to write the hook text and caption for.
+    moment_ranges: list = field(default_factory=list)
+    moment_pip: bool = False
+    write_ids: list = field(default_factory=list)
 
 
 @dataclass
@@ -1893,7 +1920,7 @@ def apply_edit(script: RemixScript, edit: dict, brand_text: str, transcript_text
                offer: str = "") -> RemixScript:
     """The user's edited text, held to the same length limits; their own numbers get a note, not a block.
     With a call-to-action keyword, the close always ends with it (added when an edit removed it)."""
-    if script.format in ("silent", "image", "pause_react"):
+    if script.format in ("silent", "image", "pause_react", "moment_take"):
         headline = _clean_line(edit.get("headline"), 16) if isinstance(edit.get("headline"), str) else script.headline
         if len(headline.split()) < 3:
             raise RemixError("Each remix needs a headline of 3+ words.")
@@ -1989,8 +2016,14 @@ class Remixer:
         self.warnings: list[str] = []
         self._voice_reference: Optional[str] = None
         self._clip_offset = 0
-        if config.format not in ("commentary", "silent", "image", "pause_react"):
+        if config.format not in ("commentary", "silent", "image", "pause_react", "moment_take"):
             raise RemixError("Choose the kind of remix.")
+        if config.format == "moment_take":
+            if config.host != "camera":
+                raise RemixError("Moment + my take needs you on camera.")
+            if config.camera_layout not in ("filmed", "cutout"):
+                raise RemixError("Choose “As filmed” or “Background removed” for Moment + my take.")
+            config.moment_pip = config.moment_pip is True
         if config.format == "pause_react":
             if config.host != "camera":
                 raise RemixError("Pause & react needs you on camera.")
@@ -2183,6 +2216,11 @@ class Remixer:
                 return await self._prepare_pause()
             finally:
                 await self.media.aclose()
+        if self.config.format == "moment_take":
+            try:
+                return await self._plan_moments()
+            finally:
+                await self.media.aclose()
         sources = [s for s in self.config.sources if s][:MAX_SOURCES]
         if not sources:
             raise RemixError("Paste a video link or choose a file.")
@@ -2245,6 +2283,11 @@ class Remixer:
         if self.config.format == "pause_react":
             try:
                 return await self._write_pause()
+            finally:
+                await self.media.aclose()
+        if self.config.format == "moment_take":
+            try:
+                return await self._write_moments()
             finally:
                 await self.media.aclose()
         if self.config.format != "image":
@@ -2417,6 +2460,8 @@ class Remixer:
                 self.warnings.append(f"Skipped “{str(item.get('headline'))[:60]}”: {error}")
                 incomplete = True
                 continue
+            if script.format == "moment_take":
+                script = self._nudged_moment(script, item, edit)
             if self.config.host == "camera":
                 recording = camera_recording(self.config.recordings.get(str(draft_id)), script.format)
                 if recording is None:
@@ -2438,8 +2483,11 @@ class Remixer:
                 try:
                     if not os.path.isfile(source["video"]):
                         raise RemixError("its source video is no longer there (it was moved or deleted). Plan it again.")
-                    render = {"silent": self._one_silent, "image": self._one_image, "pause_react": self._one_pause_react}.get(script.format, self._one)
+                    render = {"silent": self._one_silent, "image": self._one_image, "pause_react": self._one_pause_react,
+                              "moment_take": self._one_moment_take}.get(script.format, self._one)
                     extra = {"recording": recordings[draft_id]} if draft_id in recordings else {}
+                    if script.format == "moment_take":
+                        extra["saved"] = scripts[draft_id]
                     result = await render(index, len(chosen), script, source["video"], segments_by_source[src], source["meta"], root, **extra)
                     results.append(result)
                     # Written after every remix: a cancel or crash keeps the finished ones in the Library.
@@ -2824,7 +2872,8 @@ class Remixer:
                 # The keyword on screen while the presenter says it (the close).
                 cta_png = os.path.join(work, "cta.png")
                 w, _ = tag_image(f"Comment {keyword}", cta_png, 44, fill=(255, 255, 255, 240), color=(10, 10, 10, 255))
-                overlays.append((cta_png, str((OUT_W - w) // 2), str(clear_h + 110), enable_expr([tuple(tags["cta_window"])])))
+                # (Moment + my take with the moment in a box: under the box.)
+                overlays.append((cta_png, str((OUT_W - w) // 2), str(int(tags.get("cta_y") or clear_h + 110)), enable_expr([tuple(tags["cta_window"])])))
         else:
             tags_y = int(tags["tags_y"])
             row_w = OUT_W - 2 * SILENT_MARGIN
@@ -3505,6 +3554,454 @@ class Remixer:
             cost=self.media.cost_usd - cost_before, camera=True,
             bundle={"dir": folder, "kind": "reaction", "files": files, "compose": compose, "split_supported": arrangement == "box",
                     "split_value": info["split_value"] if arrangement == "box" else None})
+
+    # -- Moment + my take ---------------------------------------------------------
+
+    @staticmethod
+    def _limit_error(error: BaseException) -> bool:
+        """A failure every other range or take would hit too (the key, the credits): stop instead of carrying on."""
+        return isinstance(error, (RemixError, OpenRouterError)) and any(sign in str(error) for sign in ("API key", "credits", "(401)", "(403)"))
+
+    async def _plan_moments(self) -> dict:
+        """Fetch the video, then for each of the member's ranges transcribe only that stretch and pick its strongest
+        moment (one planning call per range). A range that fails is reported and the others carry on."""
+        from clip_engine.services import moment_take as mt
+        sources = [s for s in self.config.sources if s][:1]
+        if not sources:
+            raise RemixError("Paste a video link or choose a file.")
+        try:
+            ranges = mt.parse_ranges([list(r) for r in self.config.moment_ranges])
+        except (ValueError, TypeError):
+            raise RemixError("Add up to 3 time ranges inside the video, each 10 seconds to 20 minutes long.") from None
+        root = self.config.output_dir
+        work = os.path.join(root, ".work")
+        source_work = os.path.join(work, "source-1")
+        os.makedirs(source_work, exist_ok=True)
+        self.progress("Getting the video", 3)
+        video, meta = await self._source(sources[0], source_work, single=True)
+        try:
+            seconds = await asyncio.to_thread(media_seconds, video)
+        except RemixError:
+            raise RemixError("This video couldn’t be read. Try another link or file.") from None
+        meta = {**meta, "duration_seconds": round(seconds, 3)}
+        if not (meta.get("creator") or "").strip():
+            self.warnings.append("The original creator's name was not found, so there is no on-screen credit.")
+        total = len(ranges)
+        picked: list[tuple[tuple[int, int], dict]] = []
+        heard: list[TranscriptWord] = []
+        first_error: Optional[BaseException] = None
+        for number, (start, end) in enumerate(ranges, 1):
+            label = f"Range {number} of {total}" if total > 1 else "Your range"
+            base, share = 10 + 85 * (number - 1) / total, 85 / total
+            try:
+                (start, end), note = mt.fit_range(start, end, seconds, number)
+                if note:
+                    self.warnings.append(note)
+                self.progress(f"{label}: listening to {mt.clock(start)}–{mt.clock(end)}", base)
+                found = await self._speech_words(video, start, end - start, work, f"range-{number}", allow_silence=True)
+                offset = round(start * 1000)
+                words = [TranscriptWord(w.word, int(w.start_time_ms) + offset, int(w.end_time_ms) + offset) for w in found if (w.word or "").strip()]
+                if not words:
+                    raise mt.MomentTakeError(f"Range {number} ({mt.clock(start)}–{mt.clock(end)}): no speech was found in it, so there is no moment "
+                                             "to pick. Choose another part of the video.")
+                self.progress(f"{label}: finding the strongest moment", base + share * 0.5)
+                range_ms = (round(start * 1000), round(end * 1000))
+                pick = await self._pick_moment(words, range_ms, meta, [], number)
+            except Exception as error:  # noqa: BLE001 - one range failing keeps the others
+                if self._limit_error(error):
+                    raise RemixError(str(error)) from None
+                logger.warning(f"Moment range {number} failed: {type(error).__name__}: {error}")
+                if isinstance(error, (mt.MomentTakeError, RemixError)):
+                    message = str(error) if str(error).startswith("Range") else f"Range {number}: {error}"
+                    first_error = first_error or RemixError(message)
+                else:
+                    message = f"Range {number} could not be transcribed, so it was skipped."
+                    first_error = first_error or error
+                self.warnings.append(message)
+                continue
+            heard += words
+            picked.append((range_ms, pick))
+        if not picked:
+            # Only the reason (it is also the run's error, so not repeated as a warning).
+            if isinstance(first_error, RemixError):
+                raise first_error
+            raise first_error or RemixError("No moment could be found in your ranges. Try other times.")
+        scripts, drafts = [], []
+        for draft_id, (range_ms, pick) in enumerate(picked):
+            script = RemixScript(pick["start_ms"], pick["end_ms"], pick["quote"], pick["why"], "add_nuance", "", "", [], "", [], [], "reaction",
+                                 None, "", "moment_take")
+            scripts.append({"source_index": 0, **asdict(script), "range": list(range_ms), "tried": [[pick["start_ms"], pick["end_ms"]]]})
+            drafts.append(self._moment_draft(draft_id, scripts[-1], meta))
+        self._save_moment_plan(work, {"version": 1, "plan_cost_usd": round(self.cost_usd, 4),
+                                      "sources": [{"source": sources[0], "video": video, "meta": meta,
+                                                   "segments": _segments_to_json(words_to_segments(sorted(heard, key=lambda w: w.start_time_ms)))}],
+                                      "scripts": scripts})
+        self.progress("Ready for review", 100)
+        return {"drafts": drafts, "cost_usd": round(self.cost_usd, 4), "warnings": self.warnings, "source_seconds": round(seconds, 3),
+                "sources": [{k: meta.get(k) for k in ("url", "title", "creator", "platform")}]}
+
+    @staticmethod
+    def _save_moment_plan(work: str, saved: dict) -> None:
+        path = os.path.join(work, PLAN_FILE)
+        with open(path + ".tmp", "w", encoding="utf-8") as handle:
+            json.dump(saved, handle)
+        os.replace(path + ".tmp", path)
+
+    def _moment_draft(self, draft_id: int, item: dict, meta: dict) -> dict:
+        member = item.get("member") if isinstance(item.get("member"), dict) else {}
+        creator = meta.get("creator") or ""
+        caption = item.get("post_caption") or ""
+        return {
+            "id": draft_id, "format": "moment_take", "headline": item.get("headline") or "",
+            "post_caption": finalize_caption(caption, self.config.cta_keyword, self.config.cta_offer, creator) if caption else "",
+            "quote": item.get("moment_quote") or "", "why": item.get("why_this_moment") or "", "intro": "", "beats": [], "close": "",
+            "start_ms": int(item["start_ms"]), "end_ms": int(item["end_ms"]), "source_index": 0, "source_title": meta.get("title") or "",
+            "creator": creator, "estimate_usd": 0.0, "style": "reaction", "stance": "add_nuance", "notes": list(item.get("notes") or []),
+            "grade": None, "cues": [], "proof_used": [],
+            "moment": {"range_start_ms": int(item["range"][0]), "range_end_ms": int(item["range"][1]), "said": str(member.get("said") or "")[:600],
+                       "picks": len(item.get("tried") or [])},
+        }
+
+    async def _pick_moment(self, words: list[TranscriptWord], range_ms: tuple[int, int], meta: dict, exclude: list[tuple[int, int]],
+                           number: int) -> dict:
+        """One planning call (a second when the first answer can't be used): the strongest moment in the range."""
+        from clip_engine.services import moment_take as mt
+        user = mt.pick_user_prompt(meta, words, (range_ms[0] / 1000, range_ms[1] / 1000), exclude)
+        client = self._client("CreatorClips Remix")
+        try:
+            for attempt in range(2):
+                payload = {
+                    "model": self.settings.planner_model,
+                    "messages": [{"role": "system", "content": mt.pick_system_prompt()}, {"role": "user", "content": user}],
+                    "response_format": json_schema_format("moment_pick", mt.PICK_SCHEMA),
+                    "provider": {"require_parameters": True}, "max_tokens": 6000,
+                }
+                fallbacks = self.settings.get_planner_fallback_models()
+                if fallbacks:
+                    payload["models"] = fallbacks
+                apply_reasoning(payload, "low", temperature=0.4)
+                try:
+                    body, usage = await chat_completion(client, payload)
+                    if usage.get("cost") is not None:
+                        self.cost_usd += usage["cost"]
+                    pick = mt.parse_pick(json.loads(message_text(body)[0] or "{}"), words, range_ms, exclude)
+                except (OpenRouterError, ValueError) as error:
+                    if isinstance(error, OpenRouterError) and not error.retryable:
+                        raise RemixError(str(error)) from None
+                    logger.warning(f"Picking a moment, attempt {attempt + 1} failed: {error}")
+                    continue
+                if pick:
+                    return pick
+        finally:
+            await client.aclose()
+        span = f"{mt.clock(range_ms[0] / 1000)}–{mt.clock(range_ms[1] / 1000)}"
+        raise mt.MomentTakeError(f"Range {number} ({span}): " + ("no other moment stood out in it. Keep the one you have, or choose another part."
+                                                                 if exclude else "no clear moment was found in it. Try again, or choose another part."))
+
+    async def pick_another(self, draft_id: int) -> dict:
+        """"Find another moment in this range": one more planning call that avoids the moments already shown."""
+        from clip_engine.services import moment_take as mt
+        try:
+            saved = self._saved_plan()
+            if type(draft_id) is not int or not 0 <= draft_id < len(saved["scripts"]):
+                raise RemixError("That moment is no longer in this review.")
+            item = saved["scripts"][draft_id]
+            source = saved["sources"][0]
+            range_ms = (int(item["range"][0]), int(item["range"][1]))
+            tried = [(int(a), int(b)) for a, b in item.get("tried") or []][-12:]
+            words = mt.words_in(transcript_words(_segments_from_json(source["segments"])), *range_ms)
+            if not words:
+                raise RemixError("No speech was found in this range.")
+            self.progress("Finding another moment", 20)
+            pick = await self._pick_moment(words, range_ms, source["meta"], tried, draft_id + 1)
+        except mt.MomentTakeError as error:
+            raise RemixError(str(error)) from None
+        finally:
+            await self.media.aclose()
+        item.update(start_ms=pick["start_ms"], end_ms=pick["end_ms"], moment_quote=pick["quote"], why_this_moment=pick["why"],
+                    tried=[*(item.get("tried") or []), [pick["start_ms"], pick["end_ms"]]][-12:])
+        saved["plan_cost_usd"] = round(float(saved.get("plan_cost_usd") or 0) + self.cost_usd, 4)
+        self._save_moment_plan(os.path.join(self.config.output_dir, ".work"), saved)
+        return {"draft": self._moment_draft(draft_id, item, source["meta"]), "cost_usd": round(self.cost_usd, 4)}
+
+    async def _write_moments(self) -> dict:
+        """For each recorded take: transcribe what the member said, then one writing call for its hook text and caption."""
+        from clip_engine.services import moment_take as mt
+        saved = self._saved_plan()
+        scripts, source = saved["scripts"], saved["sources"][0]
+        meta = source["meta"]
+        work = os.path.join(self.config.output_dir, ".work")
+        ids = [i for i in self.config.write_ids if type(i) is int and 0 <= i < len(scripts)] or \
+              [i for i in range(len(scripts)) if str(i) in self.config.recordings]
+        drafts, first_error = [], None
+        for n, draft_id in enumerate(ids):
+            item = scripts[draft_id]
+            label = f"Video {draft_id + 1}"
+            share = 90 / max(1, len(ids))
+            try:
+                recording = camera_recording(self.config.recordings.get(str(draft_id)), "moment_take")
+                if recording is None:
+                    raise RemixError("your recording is missing. Record it again.")
+                reaction = recording["reaction"]
+                self.progress(f"{label}: listening to your take", 5 + share * n)
+                if not await asyncio.to_thread(has_audio, reaction["path"]):
+                    raise RemixError(NO_SPEECH)
+                words = [w for w in await self._speech_words(reaction["path"], 0.0, float(mt.MAX_TAKE_S), work, f"take-{draft_id}")
+                         if (w.word or "").strip()]
+                if not words:
+                    raise RemixError(NO_SPEECH)
+                self.progress(f"{label}: writing your hook text and caption", 5 + share * (n + 0.5))
+                headline, caption, notes = await self._write_moment_text(words_to_segments(words), str(item.get("moment_quote") or ""), meta)
+            except Exception as error:  # noqa: BLE001 - one take failing keeps the others
+                if self._limit_error(error):
+                    raise RemixError(str(error)) from None
+                logger.warning(f"Writing take {draft_id + 1} failed: {type(error).__name__}: {error}")
+                reason = str(error) if isinstance(error, RemixError) else "it could not be transcribed"
+                first_error = first_error or RemixError(reason)
+                self.warnings.append(f"{label}: {reason[:1].upper() + reason[1:]}" if len(ids) > 1 else reason)
+                continue
+            spoken = " ".join(w.word for w in words)
+            item.update(headline=headline, post_caption=caption, notes=notes,
+                        member={"words": [[w.word, int(w.start_time_ms), int(w.end_time_ms)] for w in words], "take": take_identity(reaction),
+                                "said": spoken[:600]})
+            drafts.append(self._moment_draft(draft_id, item, meta))
+        if not drafts:
+            raise first_error or RemixError("Record your take first.")
+        saved["plan_cost_usd"] = round(float(saved.get("plan_cost_usd") or 0) + self.cost_usd, 4)
+        self._save_moment_plan(work, saved)
+        self.progress("Ready for review", 100)
+        # A take that failed was said once (as a warning); with a single take it is the run's error instead.
+        return {"drafts": drafts, "cost_usd": round(self.cost_usd, 4), "warnings": self.warnings}
+
+    async def _write_moment_text(self, member: list[TranscriptSegment], moment: str, meta: dict) -> tuple[str, str, list[str]]:
+        from clip_engine.services import moment_take as mt
+        brand = (self.config.brand_identity or "").strip()[:MAX_BRAND_CHARS]
+        spoken = " ".join(s.text for s in member)
+        keyword, offer = self.config.cta_keyword, self.config.cta_offer
+        cta = (f'Last caption line: "{cta_line(keyword, offer)}"' if keyword
+               else "Last caption line: a one-line question that invites comments (or the brand identity's call to action, if it names one).")
+        text = ("THE OTHER VIDEO (data): " + json.dumps({"title": meta.get("title") or None, "creator": meta.get("creator") or None,
+                                                         "platform": meta.get("platform") or None}, ensure_ascii=False)
+                + "\n\nTHE MOMENT'S WORDS (data)\n" + (moment or "(not available)")
+                + "\n\nBRAND IDENTITY (data" + (f": {self.config.brand_name}" if self.config.brand_name else "") + ")\n"
+                + (brand or NEUTRAL_IDENTITY)
+                + "\n\nTHE CREATOR'S WORDS (data; [start - end] seconds)\n" + format_transcript(member))
+        client = self._client("CreatorClips Remix")
+        try:
+            for attempt in range(2):
+                payload = {
+                    "model": self.settings.planner_model,
+                    "messages": [{"role": "system", "content": mt.write_system_prompt(cta)}, {"role": "user", "content": text}],
+                    "response_format": json_schema_format("moment_take_write", mt.WRITE_SCHEMA),
+                    "provider": {"require_parameters": True}, "max_tokens": 6000,
+                }
+                fallbacks = self.settings.get_planner_fallback_models()
+                if fallbacks:
+                    payload["models"] = fallbacks
+                apply_reasoning(payload, "low", temperature=0.6)
+                try:
+                    body, usage = await chat_completion(client, payload)
+                    if usage.get("cost") is not None:
+                        self.cost_usd += usage["cost"]
+                    raw = json.loads(message_text(body)[0] or "{}")
+                except (OpenRouterError, ValueError) as error:
+                    if isinstance(error, OpenRouterError) and not error.retryable:
+                        raise RemixError(str(error)) from None
+                    logger.warning(f"Writing the moment take, attempt {attempt + 1} failed: {error}")
+                    continue
+                if not isinstance(raw, dict):
+                    continue
+                headline = _clean_line(raw.get("headline"), 16)
+                if len(headline.split()) < 3:
+                    continue
+                caption = clean_caption(raw.get("post_caption")) or headline
+                notes: list[str] = []
+                check = raw.get("self_check") if isinstance(raw.get("self_check"), dict) else {}
+                if check.get("invented_claims") is True or unsupported_numbers(" ".join([headline, caption]), brand, spoken + " " + moment):
+                    notes.append("Check the numbers and facts in the headline and caption against the moment and what you said.")
+                return headline, caption, notes
+        finally:
+            await client.aclose()
+        raise RemixError("the hook text and caption couldn't be written this time. Try again.")
+
+    @staticmethod
+    def _nudged_moment(script: RemixScript, item: dict, edit: dict) -> RemixScript:
+        """The member's start and end for the moment (inside its range, 2-40 s), else the planned ones."""
+        from clip_engine.services import moment_take as mt
+        try:
+            lo, hi = int(item["range"][0]), int(item["range"][1])
+        except (KeyError, TypeError, ValueError, IndexError):
+            return script
+        start, end = edit.get("start_ms"), edit.get("end_ms")
+        if type(start) is not int or type(end) is not int or start < lo - 50 or end > hi + 50 \
+                or not mt.NUDGED_MIN_MS <= end - start <= mt.NUDGED_MAX_MS:
+            return script
+        return replace(script, start_ms=max(lo, start), end_ms=min(hi, end))
+
+    async def _one_moment_take(self, index: int, total: int, script: RemixScript, video: str, segments: list[TranscriptSegment],
+                               source_meta: dict, root: str, recording: Optional[dict] = None, saved: Optional[dict] = None) -> RemixResult:
+        """The moment (framed for 9:16, on whole words) as the opener, then the member's take full screen (optionally
+        with the moment small in a box). One continuous sound track with short fades at the join."""
+        from clip_engine.services import moment_take as mt
+        from clip_engine.services.rendering_service import RenderingService
+
+        base = 2 + 96 * index / total
+        step = 96 / total
+        say = lambda detail, fraction: self.progress(f"Video {index + 1} of {total}: {detail}", base + step * fraction)  # noqa: E731
+        name = f"clip_{index + self._clip_offset:02d}"
+        work = os.path.join(root, ".work", f"remix-{index + 1}")
+        os.makedirs(work, exist_ok=True)
+        warnings: list[str] = list(script.notes)
+        cost_before = self.media.cost_usd
+        reaction = (recording or {}).get("reaction") or {}
+        if not reaction.get("path"):
+            raise RemixError("your recording is missing. Record it again.")
+        saved = saved or {}
+        all_words = transcript_words(segments)
+        # Whole words only: a nudged edge inside a word moves to the word's edge.
+        lo, hi = (int(v) for v in (saved.get("range") or [script.start_ms, script.end_ms]))
+        snapped = mt.snap_moment(all_words, script.start_ms, script.end_ms, lo, hi, min_ms=1000, max_ms=mt.NUDGED_MAX_MS, sentences=False)
+        if snapped:
+            script = replace(script, start_ms=snapped[0], end_ms=snapped[1])
+        source_seconds = await asyncio.to_thread(media_seconds, video)
+        if script.start_ms / 1000 >= source_seconds - 0.5:
+            raise RemixError("the moment is past the end of the video. Find the moments again.")
+        script = replace(script, end_ms=min(script.end_ms, int(source_seconds * 1000)))
+
+        service = RenderingService()
+        bar_path, bar_h, clear_h = self._headline(service, video, work, index, script.headline)
+        panel_h = OUT_H - bar_h
+        lift = clear_h - bar_h
+
+        # 1. The moment, framed for 9:16 like Remix's other moments (centered if that fails).
+        say("cutting the moment", 0.05)
+        opener = os.path.join(work, "p0-moment.mp4")
+        try:
+            await self._excerpt(video, script, OUT_W, panel_h, opener, work, source_meta)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - a plain centered crop still works
+            logger.warning(f"Framing the moment failed, centering it: {type(error).__name__}: {error}")
+            warnings.append("The moment couldn't be framed automatically, so it is centered.")
+            await asyncio.to_thread(moment_panel, video, script.start_ms / 1000, (script.end_ms - script.start_ms) / 1000, opener, OUT_W, panel_h)
+
+        # 2. Their take, as recorded (up to three minutes), full screen.
+        say("preparing your recording", 0.3)
+        normalized = os.path.join(work, "recording.mp4")
+        length = await asyncio.to_thread(normalize_recording, reaction["path"], normalized, float(mt.MAX_TAKE_S))
+        if length < 1.0:
+            raise RemixError("your recording is too short. Record it again.")
+        layout = self.config.camera_layout if self.config.camera_layout in ("filmed", "cutout") else "filmed"
+        if layout == "cutout":
+            say("cutting you out", 0.4)
+        take = await asyncio.to_thread(self._camera_line, normalized, os.path.join(work, "p1-take.mp4"), panel_h, "", warnings)
+        if layout == "cutout" and any("as filmed" in w for w in warnings):
+            layout = "filmed"
+
+        # 3. Joined: picture and sound trimmed to the same length per part, short fades where they meet.
+        say("putting it together", 0.6)
+        op = await asyncio.to_thread(stream_seconds, opener)
+        tk = await asyncio.to_thread(stream_seconds, take)
+        inputs = ["-i", opener, "-i", take]
+        graph = (f"[0:v]trim=duration={op:.3f},setpts=PTS-STARTPTS,fps={FPS},setsar=1,format=yuv420p[v0];"
+                 f"[0:a]apad,atrim=duration={op:.3f},asetpts=PTS-STARTPTS,afade=t=in:d={mt.FADE_IN_S},"
+                 f"afade=t=out:st={max(0.0, op - mt.FADE_OUT_S):.3f}:d={mt.FADE_OUT_S}[a0];"
+                 f"[1:a]apad,atrim=duration={tk:.3f},asetpts=PTS-STARTPTS,afade=t=in:d={mt.TAKE_FADE_IN_S}[a1];")
+        cta_y = None
+        if self.config.moment_pip:
+            # The moment in its own framing, looping without sound in a box while they talk.
+            small = os.path.join(work, "pip.mp4")
+            await asyncio.to_thread(ffmpeg, [*MEDIA_GUARD, "-ss", f"{script.start_ms / 1000:.3f}", "-t", f"{op:.3f}", "-i", video, "-an",
+                                             "-vf", MOMENT_LOOK, *VIDEO_ARGS, small])
+            mw, mh = await asyncio.to_thread(video_size, small)
+            pip, px, py, box_h = mt.pip_filter(mw, mh, OUT_W, lift)
+            inputs += [*MEDIA_GUARD, "-stream_loop", "-1", "-i", small]
+            graph += (pip.replace("[1:v]", "[2:v]") + ";"
+                      f"[1:v]trim=duration={tk:.3f},setpts=PTS-STARTPTS,fps={FPS},setsar=1,format=yuv420p[tv];"
+                      f"[tv][pip]overlay=x={px}:y={py}:shortest=1,format=yuv420p[v1];")
+            cta_y = clear_h + mt.PIP_TOP + box_h + 24
+        else:
+            graph += f"[1:v]trim=duration={tk:.3f},setpts=PTS-STARTPTS,fps={FPS},setsar=1,format=yuv420p[v1];"
+        graph += "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]"
+        assembled = os.path.join(work, "assembled.mp4")
+        await asyncio.to_thread(ffmpeg, [*inputs, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", *VIDEO_ARGS, *AUDIO_ARGS, assembled])
+        total_s = await asyncio.to_thread(media_seconds, assembled)
+
+        # 4. Captions: the moment's words, then the member's (written from them earlier, or transcribed now).
+        moment_words = [TranscriptWord(w.word, w.start_time_ms - script.start_ms, w.end_time_ms - script.start_ms)
+                        for w in all_words if w.start_time_ms >= script.start_ms - 20 and w.end_time_ms <= script.end_ms + 20]
+        member = saved.get("member") if isinstance(saved.get("member"), dict) else None
+        spoken: Optional[list[TranscriptWord]] = None
+        if member and member.get("take") == take_identity(reaction):
+            try:
+                spoken = [TranscriptWord(str(w), int(a), int(b)) for w, a, b in member.get("words") or []]
+            except (TypeError, ValueError):
+                spoken = None
+        if spoken is None:
+            if member:
+                warnings.append("You recorded again after your hook text and caption were written, so they came from an earlier take. Check they still fit.")
+            say("transcribing your words", 0.7)
+            spoken = await self._transcribe_words(take, work, "you") or []
+        shift = round(op * 1000)
+        take_words = [TranscriptWord(w.word, int(w.start_time_ms) + shift, min(int(w.end_time_ms), round(tk * 1000)) + shift)
+                      for w in spoken if w.start_time_ms < tk * 1000]
+        words = moment_words + take_words
+
+        # 5. Hook text, captions, the credit while their moment shows, and the call to action at the end.
+        say("adding captions", 0.8)
+        creator = (source_meta.get("creator") or "").strip()
+        keyword = self.config.cta_keyword
+        tags = {"style": "commentary", "credit_text": f"Original: {creator[:40]}" if creator else "", "ai_presenter": False,
+                "excerpt_windows": [[0.0, round(total_s if self.config.moment_pip else op, 3)]], "ai_windows": [],
+                "cta_keyword": "" if self.config.cta_clip else keyword,
+                "cta_window": [round(max(op, total_s - 4.0), 3), round(total_s, 3)], **({"cta_y": cta_y} if cta_y else {})}
+        os.makedirs(root, exist_ok=True)
+        final = os.path.join(root, f"{name}.mp4")
+        await self._overlay_final(service, assembled, final, work, bar_path=bar_path, bar_h=bar_h, clear_h=clear_h, total_s=total_s,
+                                  words=words, anchor="panel", tags=tags)
+        # Kept for "Edit hook text & captions": the joined video under the hook text.
+        folder = edit_dir(root, name)
+        os.makedirs(folder, exist_ok=True)
+        os.replace(assembled, os.path.join(folder, "panel.mp4"))
+        manifest_path = os.path.join(root, f"{name}.source.json")
+        editable = self._save_bundle(folder, kind="panel", headline=script.headline, total_s=total_s, files={"panel": "panel.mp4"},
+                                     words=words, anchor="panel", tags=tags,
+                                     compose={"format": "moment_take", "layout": layout, "panel_h": panel_h},
+                                     split_supported=False, split_value=None, manifest=os.path.basename(manifest_path), video=os.path.basename(final))
+
+        # 6. Checks and the record of what was borrowed.
+        post_caption = finalize_caption(script.post_caption or script.headline, keyword, self.config.cta_offer, creator)
+        checks = [
+            Check("permission", True, "You confirmed you're allowed to use this video"),
+            Check("credited", bool(tags["credit_text"]), "Original creator credited on screen" if tags["credit_text"] else "No creator credit (add the creator's name)"),
+            Check("moment", True, f"Their moment is {op:.1f}s, then your take ({tk:.0f}s)"),
+        ]
+        if self.config.cta_clip:
+            checks.append(Check("cta", True, "Your call-to-action clip plays at the end"))
+        elif keyword:
+            checks.append(Check("cta", has_cta(post_caption, keyword), f"“Comment {keyword}” on screen and in the caption"))
+        checks.append(Check("presenter", True, "You on camera: no AI label needed for the presenter"))
+        cost = self.media.cost_usd - cost_before
+        manifest = {
+            "version": 1, "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "video": os.path.basename(final),
+            "source": {**source_meta, "excerpt": {"start_seconds": script.start_ms / 1000, "end_seconds": script.end_ms / 1000,
+                                                  "quote": script.moment_quote, "why": script.why_this_moment},
+                       "range": {"start_seconds": lo / 1000, "end_seconds": hi / 1000}},
+            "rights_lane": "permission", "format": "moment_take", "headline": script.headline, "post_caption": post_caption,
+            "call_to_action": {"keyword": keyword, "offer": self.config.cta_offer} if keyword else None,
+            "brand_identity": self.config.brand_name or None,
+            "presenter": {"mode": "camera", "layout": layout, "voice": "own", "ai_generated": False,
+                          "moment_take": {"moment_seconds": round(op, 2), "take_seconds": round(tk, 2), "moment_in_box": self.config.moment_pip}},
+            "models": {"plan": self.settings.planner_model}, "timeline": [{"part": "moment", "start_seconds": 0, "seconds": round(op, 2)},
+                                                                        {"part": "take", "start_seconds": round(op, 2), "seconds": round(tk, 2)}],
+            "checks": [asdict(c) for c in checks], "warnings": warnings, "cost_usd": round(cost, 4), "editable": editable,
+        }
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, ensure_ascii=False)
+        say("done", 1)
+        return RemixResult(final, manifest_path, script.headline, script.stance, round(op, 2), round(total_s, 2), round(cost, 4),
+                           [asdict(c) for c in checks], warnings, script.style, None, script.start_ms, script.end_ms, creator, False,
+                           index + self._clip_offset, post_caption, True, "moment_take", editable)
 
     def _matte(self, footage: str, out: str, warnings: list[str]) -> Optional[str]:
         """The cut-out matte for normalized footage, or None (with a warning) when it can't be made."""
