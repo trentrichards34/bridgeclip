@@ -355,7 +355,7 @@ test('Moment + my take form: its defaults, typed ranges checked against the file
   vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: api }, navigator: {} })
   const { useRemixForm, brandFormPatch, REMIX_FORMATS, headlineOnly, oneTake, partsFor, readRanges, MomentRanges, MomentTakeReview, momentCost, momentMakeNote, screenshotRow } = mod.exports
   const form = useRemixForm.getState()
-  assert.deepEqual(JSON.parse(JSON.stringify([form.momentRanges, form.momentPip, form.momentCamera.layout, form.momentCamera.talk])), [[{ start: '', end: '' }], false, 'filmed', true])
+  assert.deepEqual(JSON.parse(JSON.stringify([form.momentRanges, form.momentPip, form.momentCamera.layout, form.momentCamera.talk])), [[{ start: '', end: '' }], true, 'filmed', true])
   const at = REMIX_FORMATS.findIndex((item) => item.id === 'moment_take')
   assert.deepEqual([REMIX_FORMATS[at - 1].id, REMIX_FORMATS[at].label], ['pause_react', 'Moment + my take'])
   assert.deepEqual([headlineOnly('moment_take'), oneTake('moment_take'), [...partsFor('moment_take', 3)].join()], [true, true, 'reaction'])
@@ -462,4 +462,87 @@ test('opening an Automatic run in the editor: the same moments and headlines; a 
   assert.ok(!recorded.some((line) => /cuts/.test(line)))
   const older = automaticEditSummary({ ...info, estimatedCuts: true })
   assert.equal(older[1], 'This run didn’t save its exact cuts, so they are worked out again and may differ slightly from your clips. Check them before baking.')
+})
+
+test('Remix on camera: easy starts, a folded look summary, plain errors, the recorder frame guide and the pause fine-tune', () => {
+  const React = require('react')
+  const { renderToStaticMarkup } = require('react-dom/server')
+  const code = buildSync({
+    stdin: {
+      contents: `export { useRemixForm, libraryClipFormat, LONG_CLIP_SECONDS } from './src/renderer/store/use-remix-form-store';
+        export { startGoal } from './src/renderer/store/use-onboarding-store';
+        export { REMIX_FORMATS } from './src/shared/remix';
+        export { lookSummary } from './src/renderer/pages/RemixPage';
+        export { friendlyError, FRIENDLY_ERROR } from './src/renderer/lib/friendly-error';
+        export { FriendlyError } from './src/renderer/components/FriendlyError';
+        export { frameGuide } from './src/renderer/components/RemixRecorder';
+        export { PauseEditor } from './src/renderer/components/PauseReactReview';`,
+      resolveDir: path.resolve(__dirname, '..'), loader: 'ts'
+    },
+    bundle: true, platform: 'node', format: 'cjs', packages: 'external', loader: { '.css': 'empty' }, jsx: 'automatic', write: false
+  }).outputFiles[0].text
+  const mod = { exports: {} }
+  vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: {} }, navigator: {} })
+  const { useRemixForm, libraryClipFormat, LONG_CLIP_SECONDS, startGoal, REMIX_FORMATS, lookSummary, friendlyError, FRIENDLY_ERROR, FriendlyError, frameGuide, PauseEditor } = mod.exports
+
+  // "Reactions on camera" opens Pause & react, you on camera.
+  useRemixForm.getState().update({ format: 'commentary', host: 'still' })
+  assert.equal(startGoal('camera-reactions'), 'remix')
+  assert.deepEqual([useRemixForm.getState().format, useRemixForm.getState().host], ['pause_react', 'camera'])
+
+  // Library → Remix this clip: an AI-presenter or screenshot format becomes a reaction on camera; a long video, Moment + my take.
+  assert.equal(LONG_CLIP_SECONDS, 600)
+  assert.equal(libraryClipFormat('commentary', 'still', 40), 'pause_react')
+  assert.equal(libraryClipFormat('silent', 'still', undefined), 'pause_react')
+  assert.equal(libraryClipFormat('image', 'camera', 30), 'pause_react')
+  assert.equal(libraryClipFormat('commentary', 'voice', 1200), 'moment_take')
+  assert.equal(libraryClipFormat('commentary', 'camera', 1200), 'commentary')
+  assert.equal(libraryClipFormat('silent', 'camera', 30), 'silent')
+  assert.equal(libraryClipFormat('moment_take', 'still', 30), 'moment_take')
+  useRemixForm.getState().update({ format: 'commentary', host: 'still', clipRightsAck: true })
+  useRemixForm.getState().setSourceFile('/Users/me/CreatorClips/run/clip_00.mp4', '@coach', 900)
+  assert.deepEqual([useRemixForm.getState().format, useRemixForm.getState().clipRightsAck], ['moment_take', false])
+
+  // The silent format's new name.
+  const silent = REMIX_FORMATS.find((item) => item.id === 'silent')
+  assert.deepEqual([silent.label, silent.detail], ['React to a clip', 'Their moment plays with its sound; you (or your avatar) react on top'])
+
+  // The folded "Look & call to action" says what's chosen.
+  const base = { pauseLayout: null, momentPip: null, background: null, talk: null, includeCaptions: true, captionPreset: 'pop', headlineLook: 'white', brandName: null, keyword: null, ctaClip: false }
+  assert.equal(lookSummary(base), 'Pop captions · White bar · No brand · No call to action')
+  assert.equal(lookSummary({ ...base, pauseLayout: 'box', background: 'filmed', brandName: 'Pull-Up Lab', keyword: 'SALES', ctaClip: true }),
+    'Box at the top · As filmed · Pop captions · White bar · Brand: Pull-Up Lab · Comment SALES + CTA clip')
+  assert.equal(lookSummary({ ...base, momentPip: true, includeCaptions: false, headlineLook: 'none', ctaClip: true }),
+    'Moment small on screen while you talk · No captions · No hook text · No brand · CTA clip')
+
+  const plain_ = (value) => JSON.parse(JSON.stringify(value))
+  // Raw engine text becomes one plain sentence, with the detail kept; the engine's own plain messages pass through.
+  const raw = 'Remix failed: transcribe_audio() missing 1 required positional argument: \'language\''
+  assert.deepEqual(plain_(friendlyError(raw)), { message: FRIENDLY_ERROR, detail: raw })
+  assert.deepEqual(plain_(friendlyError('Traceback (most recent call last):\n  File "x.py", line 3, in <module>\nKeyError: \'a\'')), { message: FRIENDLY_ERROR, detail: 'Traceback (most recent call last):\n  File "x.py", line 3, in <module>\nKeyError: \'a\'' })
+  for (const plain of ['Your disk is full. Free up some space, then try again.', 'your recording is too short. Record it again.', 'The video could not be made again. Try again.']) {
+    assert.deepEqual(plain_(friendlyError(plain)), { message: plain, detail: null })
+  }
+  const shown = renderToStaticMarkup(React.createElement(FriendlyError, { error: raw, suffix: 'Your takes are still here.' }))
+  assert.match(shown, /Something went wrong while making this\. Try again; if it keeps happening, use Report an issue\. Your takes are still here\./)
+  assert.match(shown, /<summary[^>]*>Details<\/summary>/)
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(FriendlyError, { error: 'Your disk is full.' })), /Details/)
+
+  // The recorder's frame guide: 9:16 of a 16:9 camera; Pause & react's box covers the top fifth; 50/50 keeps a wider frame.
+  assert.ok(Math.abs(frameGuide().width - 0.3164) < 0.001)
+  assert.deepEqual([frameGuide('box').covered, frameGuide('split').covered], [0.2, 0])
+  assert.ok(frameGuide('split').width > 0.7)
+  assert.ok(frameGuide(undefined, 'greenscreen').width > 0.6)
+
+  // Pause & react: the summary and the bar stay; nudging and thresholds wait under "Fine-tune" when the sound lined it up.
+  const timeline = { start: 0, end: 10, trimStart: 0, trimEnd: 10, duration: 10, source: 'upload', segments: [{ kind: 'play', start: 0, end: 4, at: 0 }, { kind: 'pause', start: 4, end: 7, at: 4 }, { kind: 'play', start: 7, end: 10, at: 4 }] }
+  const view = (alignedBy) => ({ source: 'upload', timeline, settings: { nudge: 0, minPause: 0.6, minPlay: 0.5, flips: [] }, detection: { offset: 0.5, confidence: 0.9, alignedBy }, recordingPath: '/r.mp4', seconds: 10 })
+  const found = renderToStaticMarkup(React.createElement(PauseEditor, { view: view('sound'), disabled: false, onChange: () => {} }))
+  assert.match(found, /data-testid="pause-summary"/)
+  assert.match(found, /Pauses timeline/)
+  assert.match(found, /Fine-tune \(only if it looks off\)/)
+  assert.match(found, /aria-expanded="false"/)
+  assert.doesNotMatch(found, /Nudge their video|Ignore pauses shorter than/)
+  const unheard = renderToStaticMarkup(React.createElement(PauseEditor, { view: view('start'), disabled: false, onChange: () => {} }))
+  assert.match(unheard, /Nudge their video/)
 })

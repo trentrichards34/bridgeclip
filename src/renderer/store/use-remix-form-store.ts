@@ -49,8 +49,8 @@ interface RemixFormState extends RemixForm {
   update: (patch: Partial<RemixForm>) => void
   /** A saved or remembered style: a different kind of remix needs its permission box ticked again. */
   applyStyle: (style: Partial<RemixFormStyle>) => void
-  /** Library → "Remix this clip": the clip becomes the source file. */
-  setSourceFile: (path: string, creator: string) => void
+  /** Library → "Remix this clip": the clip becomes the source file (its length, when known, picks a format that suits it). */
+  setSourceFile: (path: string, creator: string, seconds?: number) => void
 }
 
 /** The form survives navigating away (e.g. to Settings to add a key); its style is remembered across restarts. */
@@ -66,12 +66,29 @@ export const useRemixForm = create<RemixFormState>((set, get) => ({
   pauseCaptions: DEFAULT_PAUSE_REACT.captions,
   pauseCamera: { ...DEFAULT_CAMERA, talk: true },
   momentRanges: [{ start: '', end: '' }],
-  momentPip: false,
+  // On by default: the moment stays in view while the member talks (a remembered choice wins).
+  momentPip: true,
   momentCamera: { ...DEFAULT_CAMERA, talk: true },
   update: (patch) => set(patch),
   applyStyle: (style) => set({ ...style, ...(style.format && style.format !== get().format ? { clipRightsAck: false } : {}) }),
-  setSourceFile: (path, creator) => {
-    const format = get().format === 'image' ? 'commentary' : get().format
-    set({ filePath: path, links: '', creator, format, ...(format !== get().format ? { clipRightsAck: false } : {}) })
+  setSourceFile: (path, creator, seconds) => {
+    const state = get()
+    const format = libraryClipFormat(state.format, state.host, seconds)
+    set({ filePath: path, links: '', creator, format, ...(format !== state.format ? { clipRightsAck: false } : {}) })
   }
 }))
+
+/** Longer than this, a Library clip opens in Moment + my take (pick the moments) rather than Pause & react. */
+export const LONG_CLIP_SECONDS = 10 * 60
+
+/**
+ * The format a Library clip opens in. A screenshot format can't use a video; a voiced or
+ * silent take with an AI presenter can dead-end with no avatar yet, so it becomes a
+ * reaction on camera: Pause & react, or Moment + my take for a long video.
+ */
+export function libraryClipFormat(format: RemixFormat, host: RemixHost, seconds?: number): RemixFormat {
+  const onCameraFormat = format === 'pause_react' || format === 'moment_take'
+  if (onCameraFormat) return format
+  if (format === 'image' || host !== 'camera') return seconds !== undefined && seconds > LONG_CLIP_SECONDS ? 'moment_take' : 'pause_react'
+  return format
+}

@@ -84,42 +84,44 @@ test('Pause & react: an uploaded video and phone recording, the detected pauses,
   assert.doesNotMatch(await presenters.getByRole('radio', { name: /Me, on camera/ }).innerText(), /Beta/)
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await presenters.scrollIntoViewIfNeeded(); await shot(app, 'remix-presenters-beta.png') }
   await page.getByRole('radio', { name: /Pause & react/ }).click()
-  await page.getByRole('heading', { name: '1 · The video you react to' }).waitFor()
+  await page.getByRole('heading', { name: '2 · The video you react to' }).waitFor()
+  // What you make comes first, then the video, then the look (folded, with a summary), then Continue.
+  const headings = await page.getByRole('heading').allInnerTexts()
+  assert.ok(headings.indexOf('1 · What are you making?') < headings.indexOf('2 · The video you react to'), headings.join(' | '))
+  const look = page.getByRole('button', { name: /3 · Look & call to action/ })
+  assert.equal(await look.getAttribute('aria-expanded'), 'false')
+  assert.equal(await page.getByTestId('look-summary').innerText(), 'Box at the top · As filmed · Pop captions · White bar · No brand · No call to action')
+  assert.equal(await page.getByRole('heading', { name: '4 · Record your reaction' }).count(), 1)
   // No presenter to choose and no AI label: it's really you.
   assert.equal(await page.getByRole('radiogroup', { name: 'Presenter' }).count(), 0)
   assert.equal(await page.getByRole('checkbox', { name: "I'll turn on the AI-content label when I post" }).count(), 0)
-  // No green screen for Pause & react.
-  assert.equal(await page.getByRole('radio', { name: /Green screen/ }).count(), 0)
   const next = page.getByRole('button', { name: 'Continue to recording' })
   assert.equal(await next.isDisabled(), true)
   await page.getByRole('button', { name: 'Or choose a file' }).click()
   await page.getByText('coach-clip.mp4').waitFor()
   await page.getByPlaceholder('e.g. @coachname').fill('@coach')
+  await look.click()
+  // No green screen behind you here: you fill the frame.
+  await page.getByRole('radiogroup', { name: 'Your background' }).getByRole('radio', { name: /As filmed/ }).waitFor()
+  assert.equal(await page.getByRole('radiogroup', { name: 'Your background' }).getByRole('radio', { name: /Green screen/ }).count(), 0)
   await page.getByRole('radio', { name: /Split 50\/50/ }).click()
+  await page.getByTestId('look-summary').getByText(/^Split 50\/50 · /).waitFor()
   await page.getByRole('checkbox', { name: "I'm allowed to use this video" }).check()
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await page.getByRole('radiogroup', { name: 'Remix format' }).scrollIntoViewIfNeeded(); await shot(app, 'pause-react-form.png') }
   await next.click()
 
   // The video is ready (no AI): trim it, then upload the phone recording; the pauses are found from its sound.
-  await page.getByRole('heading', { name: 'Your pause-and-react' }).waitFor({ timeout: 90000 })
+  const reviewHeading = page.getByRole('heading', { name: 'Your pause-and-react' })
+  await reviewHeading.waitFor({ timeout: 90000 })
+  // Continue brings the review into view, with the focus on its heading.
+  await page.waitForFunction(() => document.activeElement?.textContent === 'Your pause-and-react')
   await page.getByLabel('Start of the part').waitFor()
   const make = page.getByRole('button', { name: 'Make the video' })
   assert.equal(await make.isDisabled(), true)
-  await page.getByRole('button', { name: 'Upload', exact: true }).click()
-  const summary = page.getByTestId('pause-summary')
-  await summary.waitFor({ timeout: 90000 })
-  assert.match(await summary.innerText(), /^1 pause ·/)
-  await page.getByText(/Their video starts 1\.\ds into your recording \(found by its sound\)/).waitFor()
-  const bar = page.getByRole('list', { name: 'Pauses timeline' })
-  assert.ok(await bar.getByRole('listitem').count() >= 3)
-  if (process.env.BRIDGECLIP_E2E_SHOTS) { await summary.scrollIntoViewIfNeeded(); await shot(app, 'pause-react-review.png') }
-  // Sync can be nudged, and a stretch switched by clicking it (then put back).
-  await page.getByRole('button', { name: '+0.1s' }).click()
-  await page.getByText('later by 0.1s').waitFor()
-  await page.getByRole('button', { name: 'Back to what was found' }).click()
-  await page.getByText('later by 0.1s').waitFor({ state: 'detached' })
+  // A take is waiting only once it's recorded: no "Starting again replaces…" yet.
+  assert.equal(await page.getByText(/Starting again replaces/).count(), 0)
 
-  // The AI writes the hook text from what they said (stood in for here: it's the paid step).
+  // The AI writes the hook text from what they said, straight after the upload (stood in for here: it's the paid step).
   const status = await page.evaluate(() => window.bridgeclip.remix.status())
   assert.equal(status.drafts[0].format, 'pause_react')
   await app.evaluate(({ ipcMain, BrowserWindow }, current) => {
@@ -130,7 +132,24 @@ test('Pause & react: an uploaded video and phone recording, the detected pauses,
       return { ...current, phase: 'planning', detail: 'Writing your headline and caption from what you said', percent: 5 }
     })
   }, status)
-  await page.getByRole('button', { name: 'Write my headline and caption' }).click()
+  await page.getByRole('button', { name: 'Upload', exact: true }).click()
+  await page.getByLabel('Headline, your pause-and-react').waitFor({ timeout: 90000 })
+  const summary = page.getByTestId('pause-summary')
+  await summary.waitFor({ timeout: 90000 })
+  assert.match(await summary.innerText(), /^1 pause ·/)
+  await page.getByText(/Their video starts 1\.\ds into your recording \(found by its sound\)/).waitFor()
+  const bar = page.getByRole('list', { name: 'Pauses timeline' })
+  assert.ok(await bar.getByRole('listitem').count() >= 3)
+  if (process.env.BRIDGECLIP_E2E_SHOTS) { await summary.scrollIntoViewIfNeeded(); await shot(app, 'pause-react-review.png') }
+  // Sync can be nudged under Fine-tune (folded when the sound lined it up), and put back.
+  assert.equal(await page.getByRole('button', { name: '+0.1s' }).count(), 0)
+  await page.getByRole('button', { name: 'Fine-tune (only if it looks off)' }).click()
+  await page.getByRole('button', { name: '+0.1s' }).click()
+  await page.getByText('later by 0.1s').waitFor()
+  await page.getByRole('button', { name: 'Back to what was found' }).click()
+  await page.getByText('later by 0.1s').waitFor({ state: 'detached' })
+
+  // Written on its own after the upload.
   const headline = page.getByLabel('Headline, your pause-and-react')
   await headline.waitFor()
   assert.equal(await headline.inputValue(), 'This coach says lose weight first. Not so fast')

@@ -58,11 +58,14 @@ test('first launch: the guided setup builds a profile, then Create shows the pat
   const saved = JSON.parse(fs.readFileSync(path.join(userData, 'member-prefs.json'), 'utf8'))
   assert.deepEqual(saved.profile, { goals: ['clips', 'camera-reactions', 'posting'], platforms: ['tiktok', 'youtube'], onboarding: 'done' })
 
-  // Start a first on-camera reaction: Remix opens with Me, on camera and the guide on top.
+  // Start a first on-camera reaction: Remix opens on Pause & react (you on camera) and the guide on top.
   await checklist.getByRole('button', { name: 'Start: Make your first on-camera reaction' }).click()
   const guide = page.getByTestId('first-run-guide')
   await guide.getByRole('heading', { name: 'Reactions on camera' }).waitFor()
-  assert.equal(await page.getByRole('radio', { name: /Me, on camera/ }).getAttribute('aria-checked'), 'true')
+  assert.equal(await page.getByRole('radio', { name: /^Pause & react/ }).getAttribute('aria-checked'), 'true')
+  await page.getByRole('heading', { name: '1 · What are you making?' }).waitFor()
+  await page.getByRole('heading', { name: '2 · The video you react to' }).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Continue to recording' }).count(), 1)
   await guide.getByRole('button', { name: 'Close the guide' }).click()
   await guide.waitFor({ state: 'detached' })
 
