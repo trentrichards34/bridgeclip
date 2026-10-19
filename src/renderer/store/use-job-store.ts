@@ -38,6 +38,8 @@ export interface ApiCosts {
   framework_grading?: LayoutVisionCost
   /** "Suggest hooks" in the clip editor, added up over every request. */
   editor_hooks?: LayoutVisionCost
+  /** "Review" in the clip editor (coherence judgments and frame looks), added up over every review. */
+  editor_review?: LayoutVisionCost
   editorial_vision?: LayoutVisionCost
   layout_vision?: LayoutVisionCost
   /** Caption language: one translation request per clip. */

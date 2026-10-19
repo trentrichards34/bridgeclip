@@ -492,6 +492,29 @@ test('bakes that translate captions are estimated from the run, and their cost r
   } finally { f.cleanup() }
 })
 
+test('a review records what its judgments cost (failed part way or not), and is estimated from earlier ones', async () => {
+  const f = batchSetup()
+  try {
+    const spent = []
+    f.main.onEditorSpend(async (usd, label) => { spent.push({ usd, label }) })
+    f.main.settings.replaceApiKey('openrouterApiKey', 'fixture-key')
+    // Nothing recorded yet: no estimate (the spending check asks for its minimum balance instead).
+    assert.equal(await f.main.editorCallEstimate(f.run, 'review'), null)
+    const failed = f.main.runEditor(f.run, 0, 'candidate-1', 'review')
+    const rejected = assert.rejects(failed)
+    ;(await nextWorker(f.workers, 1)).finish(false, { error: 'review_unavailable', cost_usd: 0.001 })
+    await rejected
+    const done = f.main.runEditor(f.run, 0, 'candidate-1', 'review')
+    ;(await nextWorker(f.workers, 2)).finish(true, { cost_usd: 0.003 })
+    await done
+    assert.deepEqual(spent, [{ usd: 0.001, label: 'Editor review' }, { usd: 0.003, label: 'Editor review' }])
+    const costs = JSON.parse(fs.readFileSync(path.join(f.run, 'job_output.json'))).metrics.api_costs
+    assert.deepEqual([costs.editor_review.estimated_cost_usd, costs.editor_review.attempts], [0.004, 2])
+    assert.equal(await f.main.editorCallEstimate(f.run, 'review'), 0.002)
+    assert.equal(await f.main.editorCallEstimate(f.run, 'suggest-hooks'), null)
+  } finally { f.main.settings.replaceApiKey('openrouterApiKey', ''); f.cleanup() }
+})
+
 test('re-baking an Automatic clip keeps the call to action its Library clip has now, unless it was changed in the editor', async () => {
   const f = batchSetup()
   try {

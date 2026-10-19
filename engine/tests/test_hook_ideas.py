@@ -195,3 +195,31 @@ def test_ideas_follow_the_runs_headline_voice(monkeypatch, voice, present, absen
     asyncio.run(suggest_hooks(settings(), 'Title', CLIP, client=object(), **kwargs))
     system = calls[0]['messages'][0]['content']
     assert system.startswith(hook_ideas.PROMPT) and present in system and absent not in system
+
+
+def test_a_review_reports_what_its_paid_calls_cost_finished_or_not(monkeypatch, tmp_path):
+    """Review: the coherence judgments and frame looks are paid for, so the worker reports them (and main records them)."""
+    from clip_engine.services import manual_editor
+    from clip_engine.services.jev_service import JevService
+    settings = SimpleNamespace(openrouter_api_key='fixture', jev_visual_context=False)
+    monkeypatch.setattr('clip_engine.config.get_settings', lambda: settings)
+    monkeypatch.setattr(manual_editor, 'CoherenceReviewer', lambda service, *a: SimpleNamespace(service=service))
+
+    async def review(c, reviewer):
+        reviewer.service.estimated_cost_usd += 0.0021
+        c['review'] = {'decision': 'passes'}
+    monkeypatch.setattr(manual_editor, 'review_candidate', review)
+    project_dir(tmp_path, [candidate()])
+    config = {'run': str(tmp_path), 'revision': 2, 'candidate_id': 'candidate-1', 'action': 'review'}
+    assert asyncio.run(run_editor(config)) == {'cost_usd': 0.0021, 'cost_incomplete': False}
+    assert json.loads((tmp_path / 'editor-project.json').read_text())['revision'] == 3
+
+    async def broken(c, reviewer):
+        reviewer.service.estimated_cost_usd += 0.001
+        raise ValueError('judgment unreadable')
+    monkeypatch.setattr(manual_editor, 'review_candidate', broken)
+    project_dir(tmp_path, [candidate()])
+    with pytest.raises(ValueError, match='judgment unreadable') as error:
+        asyncio.run(run_editor(config))
+    assert error.value.editor_code == 'review_unavailable' and error.value.usage == {'cost_usd': 0.001, 'cost_incomplete': False}
+    assert isinstance(JevService.from_settings(settings, required=True), JevService)

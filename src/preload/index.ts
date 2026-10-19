@@ -605,7 +605,7 @@ const api: BridgeClipAPI = {
     progress: (path) => ipcRenderer.invoke('editor:progress', path),
     freeMedia: (path, revision) => ipcRenderer.invoke('editor:freeMedia', path, revision),
     addCandidate: (path, revision, candidate, sourceId) => ipcRenderer.invoke('editor:addCandidate', path, revision, candidate, sourceId),
-    suggestHooks: (path, revision, id) => ipcRenderer.invoke('editor:suggestHooks', path, revision, id),
+    suggestHooks: (path, revision, id) => paid('editor:suggestHooks', path, revision, id),
     onSaveBeforeClose: (callback) => subscribe<void>('editor:saveBeforeClose', () => callback()),
     closeReady: (saved) => ipcRenderer.invoke('editor:closeReady', saved),
     automaticInfo: (path) => ipcRenderer.invoke('editor:automaticInfo', path),
