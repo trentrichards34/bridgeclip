@@ -410,16 +410,29 @@ async function cleanRun(plan: RunPlan, groups: Set<CleanupGroupId>, result: Clea
       result.freedBytes += item.bytes; result.removedFiles += item.files
     }
     // Editor media goes through the editor's own "Free editor media" (it records that the media is gone).
+    // Asked again here, under the lock: the run may have been opened in the editor since the plan was made,
+    // and its kept source is then the project's own video.
     const editorItems = items.filter((item) => item.group === 'editorMedia')
-    if (editorItems.length && plan.editorRevision !== null) {
+    let editorRevision = plan.editorRevision
+    let editorSkip: string | null = null
+    if (editorItems.length) {
+      const output = await getJobOutput(plan.run, dirname(plan.run)).catch(() => null)
+      const editor = output?.editor_project ? await readEditorRevision(plan.run) : null
+      if (!output) editorSkip = 'Its editor media was kept: the run’s details could not be read.'
+      else if (output.editor_project && !editor) editorSkip = 'Its editor media was kept: its editor project could not be read.'
+      else if (editor && editor.remaining > 0) editorSkip = 'Its editor media was kept: it still has clips to bake or discard in the editor.'
+      else editorRevision = editor ? editor.revision : null
+    }
+    if (editorSkip) result.skipped.push({ outputDir: plan.run, videoTitle: plan.title, reason: editorSkip })
+    else if (editorItems.length && editorRevision !== null) {
       try {
-        await freeEditorMedia(plan.run, plan.editorRevision)
+        await freeEditorMedia(plan.run, editorRevision)
         for (const item of editorItems) if (!(await lstat(item.path).catch(() => null))) count(item)
       } catch (error) {
         result.skipped.push({ outputDir: plan.run, videoTitle: plan.title, reason: `Editor media was kept: ${(error as Error).message}` })
       }
     }
-    const remaining = items.filter((item) => item.group !== 'editorMedia' || plan.editorRevision === null)
+    const remaining = items.filter((item) => item.group !== 'editorMedia' || (!editorSkip && editorRevision === null))
     // Remix parts: hide "Edit hook text & captions" first, so a half-done removal never offers an edit that can't work.
     const parts = remaining.filter((item) => item.group === 'remixParts' && item.clipIndex !== undefined)
     if (parts.length) {
