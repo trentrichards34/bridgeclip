@@ -54,7 +54,7 @@ function whenText(post: PostRecord): string {
     case 'failed':
       return `Failed ${formatRelativeDate(post.createdAt)}`
     case 'cancelled':
-      return `Cancelled · created ${formatRelativeDate(post.createdAt)}`
+      return `Canceled · created ${formatRelativeDate(post.createdAt)}`
     case 'missing':
       return 'No longer in your Zernio workspace'
     default:

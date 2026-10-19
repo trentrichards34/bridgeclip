@@ -392,7 +392,7 @@ test('Moment + my take form: its defaults, typed ranges checked against the file
     drafts: [draft(0, 2230000, 2241000), draft(1, 2400000, 2410000, { headline: 'He says attention is the new oil', postCaption: 'My take.', moment: { rangeStartMs: 2220000, rangeEndMs: 2520000, said: 'I think so', picks: 2, points: ['Agree?', 'A story', 'A tip'] } })] }
   const review = renderToStaticMarkup(React.createElement(MomentTakeReview, { status, onError: () => {} }))
   assert.match(review, /Your moments · 2/)
-  assert.match(review, /Finding them cost about \$0\.04\./)
+  assert.match(review, /So far this has cost about \$0\.04\./)
   assert.match(review, /From your range 37:00–42:00/)
   assert.match(review, /Starts at 37:10\.0/)
   assert.match(review, /Find another moment in this range/)

@@ -522,7 +522,7 @@ export function deleteAutomation(id: unknown): Automation[] {
   const { workspace, automation } = find(id)
   if (busy.has(automation.id)) throw new Error('Wait for the current post to finish.')
   if (automation.content.some((item) => isScheduledAhead(item, Date.now()))) {
-    throw new Error('This automation has posts scheduled with Zernio. Pause it first so they are cancelled, then delete it.')
+    throw new Error('This automation has posts scheduled with Zernio. Pause it first so they are canceled, then delete it.')
   }
   const previous = cached
   cached = cached.filter((item) => item.id !== automation.id)

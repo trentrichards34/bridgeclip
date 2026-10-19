@@ -370,7 +370,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     // Only now that the new run can start: it replaces takes waiting for review.
     if (reviewing) await discardRemix()
     await cleanupAbandoned(settings.outputDirectory, folder)
-    if (pending.cancelled) { await rm(folder, { recursive: true, force: true }); throw new Error('Cancelled before it started.') }
+    if (pending.cancelled) { await rm(folder, { recursive: true, force: true }); throw new Error('Canceled before it started.') }
     const context: RunContext = {
       request, draftIds: new Set(), planCostUsd: 0,
       config: {
@@ -654,7 +654,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     if (run.cancelled) {
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
       else for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions', '.recordings']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
-      finish(run, { phase: 'cancelled', detail: planning ? 'Cancelled while planning' : 'Cancelled', ...(spent > 0 ? { costUsd: (planning ? 0 : run.context.planCostUsd) + spent } : {}) })
+      finish(run, { phase: 'cancelled', detail: planning ? 'Canceled while planning' : 'Canceled', ...(spent > 0 ? { costUsd: (planning ? 0 : run.context.planCostUsd) + spent } : {}) })
       return
     }
     const warnings = Array.isArray(result?.warnings) ? result.warnings.filter((w): w is string => typeof w === 'string').map((w) => w.slice(0, 400)).slice(0, 12) : []
@@ -680,7 +680,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
             signal: run.ctaAbort.signal,
             onProgress: (done) => { if (done < total && !run.cancelled) publish(run, { detail: `Adding your call to action (${done + 1} of ${total})`, percent: 99 }) }
           })
-          if (cancelled) warnings.push('Cancelled while adding your call to action: the videos are made, and some end without it. Add it from the Library (⋯ → Add call to action).')
+          if (cancelled) warnings.push('Canceled while adding your call to action: the videos are made, and some end without it. Add it from the Library (⋯ → Add call to action).')
           if (failed.length) warnings.push(`The call to action could not be added to ${failed.length} video${failed.length === 1 ? '' : 's'}. Add it from the Library (⋯ → Add call to action).`)
           outputs = await withCtaDurations(run.status.folder, outputs)
         } catch {

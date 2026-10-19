@@ -97,7 +97,7 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
   return (
     <Panel>
       <PanelHeader title={`Your moments · ${drafts.length}`}
-        description={`The AI picked the strongest moment in each of your ranges. Check each one, record your take on it, then make the videos: each moment plays first, then you.${status.costUsd ? ` Finding them cost about $${status.costUsd.toFixed(2)}.` : ''}`} />
+        description={`The AI picked the strongest moment in each of your ranges. Check each one, record your take on it, then make the videos: each moment plays first, then you.${status.costUsd ? ` So far this has cost about $${status.costUsd.toFixed(2)}.` : ''}`} />
       <div className="mt-4 space-y-4">
         {writing && (
           <div className="space-y-1.5" aria-live="polite">

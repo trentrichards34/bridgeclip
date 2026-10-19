@@ -171,7 +171,7 @@ export function cancelTrackedJob(jobId: string): boolean {
     const index = queue.indexOf(jobId)
     if (index !== -1) queue.splice(index, 1)
     try { finishRunRecord(job.outputDirectory, jobId, 'cancelled') } catch { logger.warn('job.history.writeFailed', { jobId }) }
-    finish(jobId, 'cancelled', { step: 'Cancelled' })
+    finish(jobId, 'cancelled', { step: 'Canceled' })
     return true
   }
   // Clips already made, call to action being added: only that step stops, and the
@@ -184,7 +184,7 @@ export function cancelTrackedJob(jobId: string): boolean {
   // The runner records the cancellation and stops the process group; its slot
   // frees when the process actually exits.
   if (!cancelRunningJob(jobId)) return false
-  finish(jobId, 'cancelled', { step: 'Cancelled' })
+  finish(jobId, 'cancelled', { step: 'Canceled' })
   return true
 }
 

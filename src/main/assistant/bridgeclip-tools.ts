@@ -406,7 +406,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
       },
       run: async (input) => {
         if (!cancelTrackedJob(String(input.jobId))) throw new AssistantToolError('That job is not queued or running.')
-        return { cancelled: true, summary: 'Cancelled' }
+        return { cancelled: true, summary: 'Canceled' }
       }
     },
 
@@ -1010,7 +1010,7 @@ export function createBridgeClipTools(host: ToolHost): AssistantToolSpec[] {
       run: async (input) => {
         await cancelPost(input.postId)
         host.dataChanged('posts')
-        return { cancelled: true, summary: 'Post cancelled' }
+        return { cancelled: true, summary: 'Post canceled' }
       }
     },
     {

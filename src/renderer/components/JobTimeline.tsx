@@ -67,7 +67,7 @@ export function JobTimeline({ job }: { job: Job }): React.JSX.Element {
           ? `${bytes(stage.completed)}${stage.total ? ` of ${bytes(stage.total)}` : ' downloaded'}`
           : `${stage.completed}${stage.total ? ` of ${stage.total}` : ''} ${stage.unit ?? ''}`.trim()
         const stateLabel = active ? 'Working' : done ? 'Done' : stage.state === 'skipped' ? 'Not needed'
-          : stage.state === 'failed' ? 'Failed' : stage.state === 'cancelled' ? 'Cancelled' : measured || queued ? 'Queued' : 'Not reported'
+          : stage.state === 'failed' ? 'Failed' : stage.state === 'cancelled' ? 'Canceled' : measured || queued ? 'Queued' : 'Not reported'
         return <li key={stage.id} className="studio-stage" style={stageColor(stage.id)} data-state={active ? 'running' : stage.state} aria-current={active ? 'step' : undefined}>
           <span className="studio-node" aria-hidden="true">{done ? <Check size={13} /> : active ? <span /> : index + 1}</span>
           <span className="studio-stage-name">{LABELS[stage.id]}</span>

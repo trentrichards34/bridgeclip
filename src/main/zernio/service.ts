@@ -323,7 +323,7 @@ export function describeConnectError(platform: ZernioPlatform, params: URLSearch
   switch (code) {
     case 'oauth_denied':
     case 'access_denied_by_user':
-      return plain(`${name} sign-in was cancelled or access wasn't approved. Connect again and approve access to finish.`)
+      return plain(`${name} sign-in was canceled or access wasn't approved. Connect again and approve access to finish.`)
     case 'connection_cancelled':
       return plain('The sign-in window was closed before it finished. Connect again to retry.')
     case 'session_expired':
@@ -436,7 +436,7 @@ export async function connectZernioAccount(
       stage = 'resolve_profile'
       targetProfileId ??= await ensureProfile(client)
     }
-    if (!isCurrent()) throw new Error('This sign-in was cancelled.')
+    if (!isCurrent()) throw new Error('This sign-in was canceled.')
 
     const connect: ZernioPendingConnect = { platform, profileId: targetProfileId, reconnect, startedAt: Date.now(), ...(createdProfile ? { createdProfile: true } : {}) }
     stage = 'callback_server'
@@ -466,11 +466,11 @@ export async function connectZernioAccount(
         } satisfies ZernioConnectResult)
       }
     })
-    if (!isCurrent()) throw new Error('This sign-in was cancelled.')
+    if (!isCurrent()) throw new Error('This sign-in was canceled.')
 
     stage = 'authorize_platform'
     const start = await client.startConnect(platform, targetProfileId, redirectUrl, { force: reconnect })
-    if (!isCurrent()) throw new Error('This sign-in was cancelled.')
+    if (!isCurrent()) throw new Error('This sign-in was canceled.')
     if (start.kind === 'connected') {
       stopCallbackServer()
       logger.info('zernio.connect.withoutBrowser', { platform, reconnect })
@@ -488,7 +488,7 @@ export async function connectZernioAccount(
     await openInBrowser(start.authUrl).catch(() => {
       throw new Error("CreatorClips couldn't open your web browser. Check that a default browser is set, then try again.")
     })
-    if (!isCurrent()) throw new Error('This sign-in was cancelled.')
+    if (!isCurrent()) throw new Error('This sign-in was canceled.')
     logger.info('zernio.connect.start', { platform, reconnect })
     return { status: 'pending', platform, profileId: targetProfileId, ...(createdProfile ? { createdProfile } : {}) }
   } catch (error) {

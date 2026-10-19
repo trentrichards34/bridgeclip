@@ -30,7 +30,7 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'completed', label: 'Completed' },
   { id: 'failed', label: 'Failed' },
-  { id: 'cancelled', label: 'Cancelled' },
+  { id: 'cancelled', label: 'Canceled' },
   { id: 'interrupted', label: 'Interrupted' },
   { id: 'incomplete', label: 'Older unfinished' }
 ]
@@ -39,7 +39,7 @@ const STATUS: Record<HistoryEntry['status'], { label: string; tone: 'success' | 
   completed: { label: 'Completed', tone: 'success' },
   running: { label: 'Running', tone: 'accent' },
   failed: { label: 'Failed', tone: 'danger' },
-  cancelled: { label: 'Cancelled', tone: 'neutral' },
+  cancelled: { label: 'Canceled', tone: 'neutral' },
   interrupted: { label: 'Interrupted', tone: 'warning' },
   incomplete: { label: 'Unfinished', tone: 'warning' }
 }
@@ -522,7 +522,7 @@ function JobCancelled({ job, leading, onRetry }: { job: Job; leading: React.Reac
   return (
     <Page width="focus">
       <div className="mb-3">{leading}</div>
-      <h1 className="text-xl font-semibold tracking-[-0.02em] text-ink">Job cancelled</h1>
+      <h1 className="text-xl font-semibold tracking-[-0.02em] text-ink">Job canceled</h1>
       <p className="mt-1 truncate text-sm text-ink-muted" title={job.request.videoUrl}>{sourceLabel(job.request.videoUrl)}</p>
       <div className="mt-4">
         <Button variant="primary" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={onRetry}>Run again</Button>

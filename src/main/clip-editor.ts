@@ -350,7 +350,7 @@ function batchFailure(batch: EditorBatch, failed: { title: string; error: Error 
     parts.push(`Could not bake ${failed.slice(0, 3).map((f) => quote(f.title)).join(', ')}${failed.length > 3 ? ` and ${failed.length - 3} more` : ''}:`,
       reasons.length === 1 ? reasons[0] : `${reasons[0]} (and other errors)`)
   }
-  if (cancelled) parts.push('Batch cancelled.')
+  if (cancelled) parts.push('Batch canceled.')
   else if (stoppedBy !== undefined) parts.push(`Batch stopped: ${stoppedBy instanceof Error ? stoppedBy.message : 'Export failed.'}`)
   if (batch.completed < batch.total) parts.push('Clips that were not baked are still ready.')
   return new BatchError(parts.join(' '))
@@ -381,7 +381,7 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
       const media = await openAuthorizedMedia(replacement!, loadSettings().outputDirectory)
       operation.abort = new AbortController()
       try {
-        if (operation.cancelled) throw new Error('Source replacement cancelled.')
+        if (operation.cancelled) throw new Error('Source replacement canceled.')
         await pipeline(media.handle.createReadStream({ autoClose: false }), createWriteStream(join(run, `editor-source-${sourceId}.mp4`), { flags: 'wx', mode: 0o600 }), { signal: operation.abort.signal })
       } finally { await media.handle.close() }
       previousMedia = [session.sourcePath, session.previewPath]

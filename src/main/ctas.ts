@@ -220,7 +220,7 @@ export async function renderClipCta(clipPath: string, cta: (StoredCta & { path: 
         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p', '-r', String(fps),
         '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', temp], timeout, signal)
     }
-    if (signal?.aborted) throw new Error('Cancelled')
+    if (signal?.aborted) throw new Error('Canceled')
     const seconds = (await mediaInfo(temp, [])).seconds
     await rename(temp, clipPath)
     if (!cta) await rm(original, { force: true })
@@ -229,7 +229,7 @@ export async function renderClipCta(clipPath: string, cta: (StoredCta & { path: 
     await rm(temp, { force: true })
     // The clip is unchanged: don't leave a copy behind that says it has a call to action.
     if (created) await rm(original, { force: true }).catch(() => undefined)
-    if (signal?.aborted) throw new Error('Cancelled')
+    if (signal?.aborted) throw new Error('Canceled')
     if (error instanceof Error && /no longer|could not be read/.test(error.message)) throw error
     throw new Error('The call to action could not be added to this clip. Try again, or choose another call to action.')
   }

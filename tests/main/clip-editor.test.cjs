@@ -442,7 +442,7 @@ for (const cancelled of [false, true]) test(`batch ${cancelled ? 'cancellation' 
   const f = batchSetup()
   try {
     const pending = f.main.runEditor(f.run, 0, '', 'export-all')
-    const rejected = assert.rejects(pending, cancelled ? /Baked 1 of 2.*cancelled/ : /Baked 1 of 2 ready clips\. Could not bake “[^”]+”: Export stopped or failed.*still ready/)
+    const rejected = assert.rejects(pending, cancelled ? /Baked 1 of 2.*canceled/ : /Baked 1 of 2 ready clips\. Could not bake “[^”]+”: Export stopped or failed.*still ready/)
     ;(await nextWorker(f.workers, 1)).finish()
     const second = await nextWorker(f.workers, 2)
     if (cancelled) f.main.cancelEditor(f.run)
@@ -561,7 +561,7 @@ test('cancelling between batch clips never starts the next worker', async () => 
   const f = batchSetup()
   try {
     const pending = f.main.runEditor(f.run, 0, '', 'export-all')
-    const rejected = assert.rejects(pending, /Baked 1 of 2.*cancelled/)
+    const rejected = assert.rejects(pending, /Baked 1 of 2.*canceled/)
     ;(await nextWorker(f.workers, 1)).finish()
     f.main.cancelEditor(f.run)
     await rejected
@@ -610,7 +610,7 @@ for (const outcome of ['success', 'failure', 'cancelled', 'committed-before-exit
     await assert.rejects(f.main.replaceEditorSource(f.run, 999, replacement), /changed/)
     await assert.rejects(f.main.runEditor(f.run, 0, '', 'replace-source'), /Invalid/)
     const pending = f.main.replaceEditorSource(f.run, 0, replacement)
-    const result = outcome === 'success' ? pending : assert.rejects(pending, outcome === 'failure' ? /different duration/ : outcome === 'cancelled' ? /replacement cancelled\. The previous source is still in use/ : /replacement stopped/)
+    const result = outcome === 'success' ? pending : assert.rejects(pending, outcome === 'failure' ? /different duration/ : outcome === 'cancelled' ? /replacement canceled\. The previous source is still in use/ : /replacement stopped/)
     await entered
     assert.equal(config.action, 'replace-source')
     assert.equal(fs.readFileSync(path.join(f.run, `editor-source-${config.source_id}.mp4`), 'utf8'), 'higher resolution source')
@@ -711,7 +711,7 @@ test('camera scan locks edits, needs no provider key, and cancellation cleans on
   try {
     const before = fs.readFileSync(path.join(f.run, 'editor-project.json'), 'utf8')
     const pending = f.main.runEditor(f.run, 0, 'candidate-1', 'scan-cameras')
-    const rejected = assert.rejects(pending, /Camera scan cancelled\. Your edits and previous markers are saved/)
+    const rejected = assert.rejects(pending, /Camera scan canceled\. Your edits and previous markers are saved/)
     const worker = await nextWorker(f.workers, 1)
     assert.equal(worker.config.action, 'scan-cameras')
     assert.match(worker.config.preview_id, /^[a-f0-9]{32}$/)

@@ -144,7 +144,7 @@ const common: Partial<Record<EditorErrorCode, string>> = {
 export function editorFailureMessage(action: Exclude<EditorOperation, 'save'>, code?: EditorErrorCode): string {
   if (action === 'replace-source') {
     if (code && Object.hasOwn(sourceReplacementErrors, code)) return sourceReplacementErrors[code]
-    return code === 'cancelled' ? 'Source replacement cancelled. The previous source is still in use.'
+    return code === 'cancelled' ? 'Source replacement canceled. The previous source is still in use.'
       : code === 'timeout' ? 'Source replacement took too long and was stopped. The previous source is still in use.'
       : code === 'render_failed' ? `Could not prepare a preview from the replacement video. The previous source is still in use. ${logs}`
       : code && common[code] ? common[code]!
@@ -158,27 +158,27 @@ export function editorFailureMessage(action: Exclude<EditorOperation, 'save'>, c
       : code === 'source_incompatible' ? 'FFmpeg could not read this video. Choose a playable copy of the same video.'
       : code === 'render_failed' ? `Could not prepare the editor preview. Your clips are unchanged. ${logs}`
       : code === 'invalid_edit' ? "This run's clips could not be opened in the editor. Your clips are unchanged."
-      : code === 'cancelled' ? 'Opening the editor was cancelled. Your clips are unchanged.'
+      : code === 'cancelled' ? 'Opening the editor was canceled. Your clips are unchanged.'
       : code === 'timeout' ? 'Preparing the editor took too long and was stopped. Your clips are unchanged.'
       : code && common[code] ? common[code]!
       : `Could not open this run in the editor. Your clips are unchanged. ${logs}`
   }
   if (action === 'scan-cameras') {
     return code === 'scan_too_long' ? 'This clip is too long to scan for camera changes. Try scanning a shorter clip. Your edits and previous markers are saved.'
-      : code === 'cancelled' ? 'Camera scan cancelled. Your edits and previous markers are saved.'
+      : code === 'cancelled' ? 'Camera scan canceled. Your edits and previous markers are saved.'
       : code && common[code] ? `${common[code]} Your edits and previous markers are saved.`
       : 'Camera scan stopped or failed. Your edits and previous markers are saved. Try scanning a shorter clip.'
   }
   if (action === 'suggest-hooks') {
     return code === 'hooks_unavailable' ? 'Could not get hook ideas. Check your OpenRouter key and connection, then try again.'
-      : code === 'cancelled' ? 'Hook ideas cancelled.'
+      : code === 'cancelled' ? 'Hook ideas canceled.'
       : code === 'timeout' ? 'Hook ideas took too long and were stopped. Try again.'
       : code && common[code] ? common[code]!
       : 'Could not get hook ideas. Try again.'
   }
   if (action === 'review') {
     return code === 'review_unavailable' ? 'Jev could not review this edit. Check your OpenRouter key and connection, then try again. Your previous review is preserved.'
-      : code === 'cancelled' ? 'Review cancelled. Your previous review is preserved.'
+      : code === 'cancelled' ? 'Review canceled. Your previous review is preserved.'
       : code && common[code] ? `${common[code]} Your previous review is preserved.`
       : 'Review stopped or failed. Your previous review is preserved. Try again.'
   }
@@ -187,7 +187,7 @@ export function editorFailureMessage(action: Exclude<EditorOperation, 'save'>, c
     : code === 'invalid_edit' ? "This clip has an edit that can't be rendered. Check its cuts, layouts and captions, then try again."
     : code === 'not_ready' ? 'Mark this clip ready before baking it.'
     : code === 'timeout' ? 'Rendering took too long and was stopped. Your edits are saved.'
-    : code === 'cancelled' ? 'Export cancelled.'
+    : code === 'cancelled' ? 'Export canceled.'
     : code && common[code] ? common[code]!
     : `Export stopped or failed. Your edits are saved. Try again. ${logs}`
 }
