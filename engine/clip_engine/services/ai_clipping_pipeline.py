@@ -1250,6 +1250,8 @@ class AIClippingPipeline:
                     "clip_request": request.clip_request,
                     "quality_bar": request.quality_bar,
                     "caption_language": request.caption_language,
+                    # Read back by More clips and the editor when the run's create-request.json is missing.
+                    "headline_voice": request.headline_voice,
                     "more_clips": bool(request.reuse_transcript_path),
                     "framework_grading": {"enabled": grading, "candidates": framework_state['candidates'],
                                           "graded": framework_state['graded'], "kept": framework_state['kept']},

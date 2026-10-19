@@ -144,6 +144,7 @@ export function requestFromOutput(output: JobOutput): ClipJobRequest {
     titleStyle: 'headline',
     qualityBar: QUALITY_BARS.includes(settings.quality_bar as QualityBar) ? settings.quality_bar as QualityBar : 'b',
     ...(isCaptionLanguage(settings.caption_language) ? { captionLanguage: settings.caption_language } : {}),
+    ...(settings.headline_voice === 'creator' || settings.headline_voice === 'clipper' ? { headlineVoice: settings.headline_voice } : {}),
     startTimeSeconds: null,
     endTimeSeconds: null,
     bannerPlatform: null,

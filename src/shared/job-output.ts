@@ -190,6 +190,7 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
     if (typeof requested.video_speed === 'number' && Number.isFinite(requested.video_speed) && requested.video_speed >= 1 && requested.video_speed <= 2) safe.video_speed = requested.video_speed
     if (['a', 'b', 'c', 'all', 'off'].includes(requested.quality_bar as string)) safe.quality_bar = requested.quality_bar
     if (isCaptionLanguage(requested.caption_language)) safe.caption_language = requested.caption_language
+    if (requested.headline_voice === 'creator' || requested.headline_voice === 'clipper') safe.headline_voice = requested.headline_voice
     if (typeof requested.more_clips === 'boolean') safe.more_clips = requested.more_clips
     const grading = requested.framework_grading
     if (record(grading) && typeof grading.enabled === 'boolean' && nonNegative(grading.candidates) && nonNegative(grading.graded) && nonNegative(grading.kept)) {

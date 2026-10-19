@@ -160,6 +160,9 @@ test('the run\'s saved Create settings go to the engine; older runs use what the
   assert.equal(oldSettings.background, true)
   assert.equal(oldSettings.headline_voice, 'clipper')
   assert.equal(oldSettings.brand_mark, null)
+  // A run without create-request.json keeps the headline voice its metrics recorded.
+  const creator = setup({ metrics: { requested_settings: { headline_voice: 'creator' } } })
+  assert.equal(creator.module.editSettings(creator.run, jobOutput.parseJobOutput(read(creator.run, 'job_output.json'))).headline_voice, 'creator')
 })
 
 test('a kept copy converts without a download; the run is marked once the project is committed', async () => {

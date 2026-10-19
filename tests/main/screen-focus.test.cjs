@@ -56,6 +56,13 @@ test('More clips from an older run reads the choice its metrics recorded', () =>
     metrics: { requested_settings: settings } })
   assert.equal(moreClips.requestFromOutput(output({ screen_focus: 'presenter' })).screenFocus, 'presenter')
   assert.equal('screenFocus' in moreClips.requestFromOutput(output({ screen_focus: 'weird' })), false)
+  // The headline voice is read back too (More clips and the editor keep writing in the creator's voice).
+  assert.equal(moreClips.requestFromOutput(output({ headline_voice: 'creator' })).headlineVoice, 'creator')
+  assert.equal('headlineVoice' in moreClips.requestFromOutput(output({ headline_voice: 'first' })), false)
+  const { parseJobOutput } = load('shared/job-output.ts')
+  const kept = parseJobOutput({ ...output({ headline_voice: 'creator' }), metrics: { requested_settings: { headline_voice: 'creator' } } })
+  assert.equal(kept.metrics.requested_settings.headline_voice, 'creator')
+  assert.equal(parseJobOutput(output({ headline_voice: 'third' })).metrics.requested_settings.headline_voice, undefined)
 })
 
 test('job output: each clip’s screen share decision is kept, bounded and checked', () => {
