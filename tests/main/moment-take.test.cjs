@@ -11,15 +11,15 @@ const childProcess = require('node:child_process')
 const ROOT = path.join(__dirname, '../../src')
 const plain = (value) => JSON.parse(JSON.stringify(value))
 
-function load(relative, mocks = {}) {
+function load(relative, mocks = {}, globals = {}) {
   const module = { exports: {} }
   const dir = path.dirname(path.join(ROOT, relative))
   const js = ts.transpileModule(fs.readFileSync(path.join(ROOT, relative), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   vm.runInNewContext(js, {
-    module, exports: module.exports, URL, Buffer, console, setTimeout, clearTimeout, setImmediate, process, AbortSignal, Response,
+    module, exports: module.exports, URL, Buffer, console, setTimeout, clearTimeout, setImmediate, process, AbortSignal, Response, ...globals,
     require: (id) => {
       if (id in mocks) return mocks[id]
-      if (id.startsWith('.')) return load(path.relative(ROOT, path.join(dir, id)) + '.ts', mocks)
+      if (id.startsWith('.')) return load(path.relative(ROOT, path.join(dir, id)) + '.ts', mocks, globals)
       return require(id)
     }
   })
@@ -158,10 +158,12 @@ test('talking points: three short prompts from the moment (and the brand), never
 
 function engineMock() {
   const configs = []
-  const results = { write: null, moment: null, render: { ok: true, remixes: [] } }
+  const results = { write: null, moment: null, render: { ok: true, remixes: [] }, holdMoment: false }
+  const children = []
   const spawn = () => {
     const child = new EventEmitter()
-    child.pid = 0
+    child.pid = 0; child.exitCode = null; child.signalCode = null
+    children.push(child)
     child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
     child.stdin = { on() {}, end(text) {
       const config = JSON.parse(text)
@@ -175,12 +177,16 @@ function engineMock() {
         result = { ok: true, cost_usd: 0.03, source_seconds: 3000, warnings: ['Range 3 (0:45–1:00) starts after the video ends (0:40). Choose a time inside the video.'],
           drafts: [moment(0, 2230000, 2241000, 2220000, 2520000), moment(1, 3910000, 3925000, 3900000, 4050000)] }
       } else if (config.mode === 'write') result = results.write
-      else if (config.mode === 'moment') result = results.moment
+      else if (config.mode === 'moment') {
+        result = results.moment
+        // Still finding it: the test (or a kill) ends it.
+        if (results.holdMoment) { child.pid = 4242; child.config = config; return }
+      }
       setImmediate(() => { child.stdout.emit('data', JSON.stringify(result) + '\n'); child.emit('close', 0) })
     } }
     return child
   }
-  return { configs, results, spawn }
+  return { configs, results, spawn, children }
 }
 
 test('Moment + my take in main: ranges, moments, nudges, another moment, talking points, takes written one by one, then made', async () => {
@@ -320,4 +326,69 @@ test('Moment + my take in main: ranges, moments, nudges, another moment, talking
   assert.ok(statuses.some((item) => item.phase === 'review' && Math.abs(item.costUsd - 0.091) < 1e-9))
   await new Promise((resolve) => setTimeout(resolve, 50))
   fs.rmSync(out, { recursive: true, force: true })
+})
+
+test('Moment + my take: making waits for another moment; Discard stops it first; a cost after closing still reaches the ledger', async () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'remix-moment-close-'))
+  const settings = { openrouterApiKey: 'or-key', outputDirectory: out, pythonPath: 'python3' }
+  const engine = engineMock()
+  const killed = []
+  const fakeProcess = Object.create(process)
+  fakeProcess.kill = (pid, signal) => {
+    const child = engine.children.find((item) => item.pid === -pid)
+    killed.push({ signal, folderThere: child ? fs.existsSync(child.config.output_dir) : null })
+    if (child) setImmediate(() => { child.signalCode = signal; child.emit('close', null, signal) })
+  }
+  let releasePoints
+  const m = load('main/remix.ts', {
+    electron: { app: { getPath: () => out, isPackaged: true } },
+    child_process: { ...childProcess, spawn: engine.spawn },
+    './avatars': { portraitPath: () => '', voiceSamplePath: () => '', readAvatar: () => null, readReactions: () => [] },
+    './logger': { logger: { info() {}, warn() {} } },
+    './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
+    './security': { assertMediaPath: () => undefined, authorizeMedia: (p) => p },
+    './settings-store': { loadSettings: () => settings, getSettingsForBridge: () => ({}) },
+    './tools': { resolveBinary: (name) => name },
+    './moment-take': { ...mt, suggestTalkingPoints: () => new Promise((resolve) => { releasePoints = () => resolve({ points: ['Agree?', 'A story', 'One tip'], costUsd: 0.004 }) }) }
+  }, { process: fakeProcess })
+  const spent = []
+  m.onRemixMomentSpend((usd, label, runId) => spent.push({ usd, label, runId }))
+  const request = {
+    sources: ['https://www.youtube.com/watch?v=podcast'], creator: '', angle: 'reaction', host: 'still', avatarId: null, voice: 'avatar', brandIdentityId: null, count: 5,
+    captionPreset: 'pop', includeCaptions: true, aiLabelAck: false, format: 'moment_take', clipRightsAck: true,
+    camera: { layout: 'cutout', backdrop: 'blur', backdropColor: '#111111', talk: false },
+    moment: { ranges: [{ startS: 2220, endS: 2520 }, { startS: 3900, endS: 4050 }], pip: true }
+  }
+  const wait = async () => { for (let i = 0; i < 100 && m.remixStatus()?.phase !== 'review'; i++) await new Promise((resolve) => setTimeout(resolve, 20)) }
+  try {
+    await m.startRemix(request)
+    await wait()
+    const folder = m.remixStatus().folder
+    engine.results.holdMoment = true
+    const another = m.anotherMoment(1)
+    const anotherDone = assert.rejects(another)
+    await new Promise((resolve) => setImmediate(resolve))
+    await assert.rejects(m.renderRemix([{ id: 0, headline: '', intro: '', close: '', beats: [] }]), /Wait for the moment or talking points you asked for/)
+    assert.equal(engine.configs.filter((config) => config.mode === 'render').length, 0)
+    // Discard: the engine finding a moment is stopped before its folder is removed.
+    assert.equal(await m.discardRemix(), true)
+    await anotherDone
+    assert.deepEqual(killed, [{ signal: 'SIGKILL', folderThere: true }])
+    assert.equal(fs.existsSync(folder), false)
+
+    // Talking points that come back after the review was closed: their cost still reaches the ledger.
+    engine.results.holdMoment = false
+    await m.startRemix(request)
+    await wait()
+    const runId = path.basename(m.remixStatus().folder)
+    const points = m.momentTalkingPoints(0)
+    const pointsDone = assert.rejects(points, /This review was closed/)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(await m.discardRemix(), true)
+    releasePoints()
+    await pointsDone
+    assert.deepEqual(spent, [{ usd: 0.004, label: 'Remix planning', runId }])
+  } finally {
+    fs.rmSync(out, { recursive: true, force: true })
+  }
 })

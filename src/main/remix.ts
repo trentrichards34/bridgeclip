@@ -65,6 +65,8 @@ interface RunContext {
   pause?: { sourceSeconds: number; settings: PauseSettings }
   /** Moment + my take: finding another moment or talking points right now (one at a time). */
   momentWork?: boolean
+  /** The engine finding another moment (it rewrites .work/plan.json): Discard stops it before removing the folder. */
+  momentChild?: ChildProcess
 }
 
 interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null; context: RunContext; ctaAbort?: AbortController }
@@ -454,6 +456,8 @@ export async function renderRemix(value: unknown): Promise<RemixStatus> {
   if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
   const run = reviewing
   if (!run || run.status.phase !== 'review') throw new Error('There is nothing waiting for review. Plan the remixes again.')
+  // Another moment or talking points still coming: the take it changes (and the saved plan) must not move under the render.
+  if (run.context.momentWork) throw new Error('Wait for the moment or talking points you asked for, then make your videos.')
   const edits = parseRemixEdits(value, run.context.draftIds, new Set(run.status.drafts.filter((draft) => headlineOnly(draft.format)).map((draft) => draft.id)))
   if (recordingInProgress(run)) throw new Error('Wait for your recording to finish saving.')
   const recordings = run.context.request.host === 'camera' ? engineRecordings(run, edits) : null
@@ -508,6 +512,7 @@ export async function discardRemix(): Promise<boolean> {
   if (!run) return false
   reviewing = null
   await dropWriters(run)
+  await stopMomentChild(run)
   await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
   finish(run, { phase: 'cancelled', detail: 'Discarded', drafts: [] })
   return true
@@ -1043,6 +1048,33 @@ export function setMomentBounds(draftId: unknown, startMs: unknown, endMs: unkno
   return next
 }
 
+/** Stop the engine finding another moment (it writes into the run's folder) and wait for it to exit. */
+async function stopMomentChild(run: ActiveRemix): Promise<void> {
+  const child = run.context.momentChild
+  if (!child || child.exitCode !== null || child.signalCode !== null) return
+  const closed = new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, 5000)
+    child.once('close', () => { clearTimeout(timer); resolve() })
+  })
+  kill(child, true)
+  await closed
+}
+
+/** Records what a moment call cost (set by the IPC layer, which owns the spending ledger). */
+type MomentSpendRecorder = (usd: number, label: string, runId: string) => unknown
+let recordMomentSpend: MomentSpendRecorder | null = null
+export function onRemixMomentSpend(recorder: MomentSpendRecorder): void { recordMomentSpend = recorder }
+
+/**
+ * After a paid moment call: the cost is added to the run (and so to the ledger) while it is under review.
+ * A review closed meanwhile no longer reports its costs, so the call's cost goes to the ledger directly.
+ */
+function momentCost(run: ActiveRemix, usd: number, label: string): void {
+  if (reviewing === run || !(usd > 0)) return
+  try { void recordMomentSpend?.(usd, label, basename(run.status.folder)) } catch { /* never breaks the caller */ }
+  throw new Error('This review was closed.')
+}
+
 /** One at a time per review: finding another moment or talking points. */
 async function momentWork<T>(run: ActiveRemix, work: () => Promise<T>): Promise<T> {
   if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
@@ -1055,12 +1087,20 @@ async function momentWork<T>(run: ActiveRemix, work: () => Promise<T>): Promise<
 export async function anotherMoment(draftId: unknown): Promise<RemixDraft> {
   const { run, draft } = momentDraft(draftId)
   return momentWork(run, async () => {
-    const result = await runEngineOnce({ mode: 'moment', output_dir: run.status.folder, draft_id: draft.id }, 10 * 60_000, true,
-      'Another moment couldn’t be found this time. Try again.')
+    let result: Record<string, unknown>
+    try {
+      result = await runEngineOnce({ mode: 'moment', output_dir: run.status.folder, draft_id: draft.id }, 10 * 60_000, true,
+        'Another moment couldn’t be found this time. Try again.', (child) => { run.context.momentChild = child })
+    } finally { run.context.momentChild = undefined }
+    const cost = typeof result.cost_usd === 'number' && Number.isFinite(result.cost_usd) && result.cost_usd > 0 ? result.cost_usd : 0
+    momentCost(run, cost, 'Remix planning')
     if (reviewing !== run) throw new Error('This review was closed.')
     const found = parseRemixDraft((result as { draft?: unknown }).draft)
-    if (!found || found.id !== draft.id || found.format !== 'moment_take') throw new Error('Another moment couldn’t be found this time. Try again.')
-    const cost = typeof result.cost_usd === 'number' && Number.isFinite(result.cost_usd) && result.cost_usd > 0 ? result.cost_usd : 0
+    if (!found || found.id !== draft.id || found.format !== 'moment_take') {
+      // Paid for, though nothing usable came back.
+      if (cost > 0) replaceDraft(run, run.status.drafts.find((item) => item.id === draft.id) ?? draft, cost)
+      throw new Error('Another moment couldn’t be found this time. Try again.')
+    }
     // The current draft may have changed meanwhile (talking points, a nudge): only the moment itself is replaced.
     const current = run.status.drafts.find((item) => item.id === draft.id) ?? draft
     const next: RemixDraft = { ...current, startMs: found.startMs, endMs: found.endMs, quote: found.quote, why: found.why,
@@ -1080,6 +1120,7 @@ export async function momentTalkingPoints(draftId: unknown): Promise<RemixDraft>
       quote: draft.quote, title: draft.sourceTitle, creator: draft.creator,
       brandName: typeof config.brand_name === 'string' ? config.brand_name : '', brand: typeof config.brand_identity === 'string' ? config.brand_identity : ''
     }, loadSettings().openrouterApiKey)
+    momentCost(run, costUsd, 'Remix planning')
     if (reviewing !== run) throw new Error('This review was closed.')
     const current = run.status.drafts.find((item) => item.id === draft.id) ?? draft
     const next: RemixDraft = { ...current, moment: { ...(current.moment ?? draft.moment), points } }
@@ -1150,7 +1191,7 @@ async function remixClipRecord(folder: string, clipIndex: number): Promise<Recor
 const taskChildren = new Set<ChildProcess>()
 
 /** Run the engine once outside a remix run (re-editing, finding pauses); resolves with its result line. */
-async function runEngineOnce(config: Record<string, unknown>, limitMs: number, task = false, failure?: string): Promise<Record<string, unknown>> {
+async function runEngineOnce(config: Record<string, unknown>, limitMs: number, task = false, failure?: string, onChild?: (child: ChildProcess) => void): Promise<Record<string, unknown>> {
   const settings = loadSettings(), engine = getEnginePath()
   const env: Record<string, string | undefined> = {
     ...runtimeEnvironment(), ...getSettingsForBridge(settings), LAYOUT_VISION_ENABLED: 'false',
@@ -1163,6 +1204,7 @@ async function runEngineOnce(config: Record<string, unknown>, limitMs: number, t
   })
   if (task) taskChildren.add(child)
   else recomposeChild = child
+  onChild?.(child)
   return new Promise((resolve, reject) => {
     let buffer = '', stderr = '', result: Record<string, unknown> | null = null
     const timer = setTimeout(() => kill(child, true), limitMs)

@@ -202,7 +202,7 @@ test('the native picker authorizes media and shell opening rejects aliased appli
     './media-permissions': { requestMediaAccess: async () => ({ camera: true, microphone: true }), mediaAccessStatus: () => ({ camera: true, microphone: true }) },
     './clip-zip': { writeZip: async () => 0, uniqueFileName: (name, ext) => name + ext },
     './ctas': { addCta: async () => [], applyRunCta: async () => ({ failed: [] }), listCtas: async () => [], removeCta: async () => [], updateCta: async () => [] }, './reactions': { makeReactions: async () => ({}), reactionsInProgress: () => false, uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] }, './moment-take': { readTimecodeScreenshot: async () => ({ read: null, costUsd: 0 }) },
-    './remix': { onRemixStatus: () => {}, remixAvatarInUse: () => null, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
+    './remix': { onRemixStatus: () => {}, onRemixMomentSpend: () => {}, remixAvatarInUse: () => null, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
       './logger': {},
       './security': security,
       './network-policy': {},
