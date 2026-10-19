@@ -234,7 +234,8 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   // Reactions stop by themselves at the end of the moment.
   useEffect(() => {
     const video = clip.current
-    if (!video || !moment) return
+    // (Pause & react keeps recording after their video ends: you can keep talking.)
+    if (!video || !moment || !reaction) return
     const tick = (): void => {
       if (phase !== 'recording') return
       setElapsed(Math.max(0, video.currentTime - moment.startSeconds))
@@ -242,7 +243,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
     }
     video.addEventListener('timeupdate', tick)
     return () => video.removeEventListener('timeupdate', tick)
-  }, [moment, phase, stop])
+  }, [moment, phase, stop, reaction])
 
   // Lines: a running clock while recording.
   useEffect(() => {
@@ -276,6 +277,18 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
     } else video.pause()
   }, [moment])
 
+  // Space pauses and plays their video while recording, wherever the focus is (not on the device menus).
+  useEffect(() => {
+    if (!pauseMode || phase !== 'recording') return
+    const onKey = (event: KeyboardEvent): void => {
+      if ((event.key !== ' ' && event.code !== 'Space') || event.repeat || event.target instanceof HTMLSelectElement || event.target instanceof HTMLInputElement) return
+      event.preventDefault()
+      toggleClip()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [pauseMode, phase, toggleClip])
+
   const upload = async (): Promise<void> => {
     setError(null); setUploading(true)
     try { const list = await getApi().remix.uploadRecording(draft.id, part); if (list) { updateRecordings(list); setReviewing(true) } } catch (err) { setError(errorMessage(err)) }
@@ -293,11 +306,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
 
   return (
     <Dialog ref={dialog} aria-label="Record yourself" onBackdropMouseDown={busy ? undefined : close} panelClassName="max-w-[920px]"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape' && !busy) close()
-        // Space pauses and plays their video while recording (not when typing or on the device menus).
-        if (pauseMode && phase === 'recording' && (e.key === ' ' || e.code === 'Space') && !(e.target instanceof HTMLSelectElement)) { e.preventDefault(); toggleClip() }
-      }}>
+      onKeyDown={(e) => { if (e.key === 'Escape' && !busy) close() }}>
       <div className="space-y-4 overflow-y-auto p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">

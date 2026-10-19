@@ -43,6 +43,10 @@ test('the recorder’s log becomes the timeline: held first frame, plays from wh
   assert.deepEqual(kinds(pr.timelineFromEvents([{ t: 0, o: 12000, kind: 'play' }], 8, 12, 40)), [[0, 8, 'play', 12]])
   assert.deepEqual(kinds(pr.timelineFromEvents([{ t: 0, o: 0, kind: 'play' }, { t: 20000, o: 20000, kind: 'pause' }], 5, 0, 40)), [[0, 5, 'play', 0]])
   assert.deepEqual(kinds(pr.timelineFromEvents([], 5, 3, 40)), [[0, 5, 'pause', 3]])
+  // A tap-tap (a 0.2 s pause) plays through: their video then runs 0.2 s ahead of the log; a 0.1 s play holds instead.
+  const taps = [{ t: 0, o: 0, kind: 'play' }, { t: 2000, o: 2000, kind: 'pause' }, { t: 2200, o: 2000, kind: 'play' }, { t: 4000, o: 3800, kind: 'pause' },
+    { t: 5000, o: 3800, kind: 'play' }, { t: 5100, o: 3900, kind: 'pause' }]
+  assert.deepEqual(kinds(pr.timelineFromEvents(taps, 7, 0, 40)), [[0, 4, 'play', 0], [4, 7, 'pause', 4]])
   // Longer than five minutes: only the first five.
   assert.equal(pr.timelineFromEvents([], 400, 0, 40).end, pr.PAUSE_REACT_MAX_SECONDS)
   // The engine's form.

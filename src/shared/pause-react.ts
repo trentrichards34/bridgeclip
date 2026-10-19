@@ -114,7 +114,36 @@ export function timelineFromEvents(events: PauseEvent[], durationSeconds: number
     current = { start: t, end, kind: event.kind, at }
   }
   if (end > current.start) segments.push({ ...current, end })
-  return { start: 0, end, trimStart, trimEnd, source: 'app', segments: mergeSegments(segments) }
+  return { start: 0, end, trimStart, trimEnd, source: 'app', segments: mergeSegments(tidyTaps(segments, trimEnd)) }
+}
+
+/** A tap-tap on Space: pauses shorter than this between two plays play through. */
+export const MIN_APP_PAUSE = 0.4
+/** And plays shorter than this between two pauses stay paused. */
+export const MIN_APP_PLAY = 0.2
+
+/**
+ * Very short pauses and plays from the recorder, smoothed out: a short pause plays on (their video then runs that
+ * much ahead of the log from there on), a short play holds (that much behind). Everything else keeps the log's times.
+ */
+function tidyTaps(segments: PauseSegment[], trimEnd: number): PauseSegment[] {
+  const out: PauseSegment[] = []
+  let shift = 0
+  segments.forEach((seg, i) => {
+    const prev = out[out.length - 1]
+    const next = segments[i + 1]
+    const length = seg.end - seg.start
+    if (prev && next && seg.kind === 'pause' && prev.kind === 'play' && next.kind === 'play' && length < MIN_APP_PAUSE) {
+      shift += length
+      out.push({ ...seg, kind: 'play', at: round(Math.min(trimEnd, prev.at + (seg.start - prev.start))) })
+    } else if (prev && next && seg.kind === 'play' && prev.kind === 'pause' && next.kind === 'pause' && length < MIN_APP_PLAY) {
+      shift -= length
+      out.push({ ...seg, kind: 'pause', at: prev.at })
+    } else {
+      out.push({ ...seg, at: round(Math.min(trimEnd, Math.max(0, seg.at + shift))) })
+    }
+  })
+  return out
 }
 
 /** Runs of `kind` shorter than `min` seconds (not at the ends, and not before `keepBefore`) take their neighbors' kind. */
