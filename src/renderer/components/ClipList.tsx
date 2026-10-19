@@ -4,8 +4,9 @@ import { RemixEditDialog } from './RemixEditDialog'
 import { MoreClipsButton } from './MoreClipsDialog'
 import { useJobStore } from '../store/use-job-store'
 import { parseJobOutput } from '../../shared/job-output'
-import { editorProgress } from '../../shared/clip-editor'
+import { editorProgress, type AutomaticEditInfo } from '../../shared/clip-editor'
 import { ClipEditor } from './ClipEditor'
+import { EditAutomaticDialog } from './EditAutomaticDialog'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowLeft, Check, ChevronDown, Clapperboard, Download, FileArchive, FolderOpen, ListPlus, Plus, Scissors, Search, Send, Trash2, Youtube } from 'lucide-react'
 import { basename, cn, errorMessage } from '../lib/utils'
@@ -67,13 +68,25 @@ export function ClipList(props: ClipListProps): React.JSX.Element {
   return <ClipRun key={`${props.outputDir ?? ''}:${props.output.job_id}`} {...props} />
 }
 
+/** A run made on Create (Automatic or Review & edit), not Remix or Avatar Studio. */
+export function isCreateOutput(output: JobOutput): boolean {
+  const metrics = output.metrics ?? {}
+  return metrics.remix !== true && typeof metrics.avatar_studio !== 'string'
+}
+
+/** Which clip and tab the editor opens on (from a clip's "Edit headline"). */
+interface EditorTarget { clip?: number; tab?: 'hook' }
+
 function ClipRun(props: ClipListProps): React.JSX.Element {
-  const hasEditor = props.output.editor_project === true && !!props.outputDir
-  const [editing, setEditing] = useState(false)
+  const [output, setOutput] = useState(props.output)
+  const hasEditor = output.editor_project === true && !!props.outputDir
+  // Automatic Create runs open in the editor too: the first time, their clips become an editor project.
+  const canEdit = !!props.outputDir && isCreateOutput(output) && (hasEditor || output.clips.length > 0) && typeof getApi().editor?.automaticInfo === 'function'
+  const [editing, setEditing] = useState<EditorTarget | null>(null)
   const [opening, setOpening] = useState(hasEditor)
   const [remaining, setRemaining] = useState<number | null>(null)
   const [editorError, setEditorError] = useState<string | null>(null)
-  const [output, setOutput] = useState(props.output)
+  const [gate, setGate] = useState<{ info: AutomaticEditInfo; target: EditorTarget } | null>(null)
   useEffect(() => {
     if (!hasEditor) return
     let active = true
@@ -81,30 +94,52 @@ function ClipRun(props: ClipListProps): React.JSX.Element {
       if (!active) return
       const { remaining } = editorProgress(session.project.candidates)
       setRemaining(remaining)
-      setEditing(props.initialClipIndex === undefined && props.output.clips.length === 0 && remaining > 0)
+      if (props.initialClipIndex === undefined && props.output.clips.length === 0 && remaining > 0) setEditing({})
     }).catch((cause) => {
       if (active) setEditorError(errorMessage(cause, 'Could not read editor progress. Open the editor to retry.'))
     }).finally(() => { if (active) setOpening(false) })
     return () => { active = false }
   // Choose the landing view once per run, without interrupting active edits.
-  }, [hasEditor, props.outputDir])
-  if (opening) return <Page width="wide">{props.leading}<p className="mt-4 text-sm text-ink-muted" role="status">Opening clips…</p></Page>
-  if (editing && props.outputDir) return <ClipEditor outputDir={props.outputDir} leading={props.leading} onExports={async () => {
-    const [raw, session] = await Promise.all([getApi().history.getJob(props.outputDir!), getApi().editor.open(props.outputDir!)])
-    const fresh = parseJobOutput(raw)
-    if (!fresh) throw new Error('Could not load the exported clips. Reopen this Library item to retry.')
-    setOutput(fresh); setRemaining(editorProgress(session.project.candidates).remaining)
-    setEditorError(null); setEditing(false)
-  }} />
-  return <GeneratedClipList {...props} output={output} onOutputChanged={(fresh) => {
+  }, [props.outputDir])
+  const refresh = async (): Promise<void> => {
+    const fresh = parseJobOutput(await getApi().history.getJob(props.outputDir!))
+    if (!fresh) throw new Error('Could not load the clips. Reopen this Library item to retry.')
     setOutput(fresh)
-    if (hasEditor) void getApi().editor.open(props.outputDir!).then((session) => setRemaining(editorProgress(session.project.candidates).remaining))
-      .catch((cause) => setEditorError(errorMessage(cause)))
-  }} editor={hasEditor ? { remaining, error: editorError, onOpen: () => setEditing(true) } : undefined} />
+    if (fresh.editor_project) setRemaining(editorProgress((await getApi().editor.open(props.outputDir!)).project.candidates).remaining)
+  }
+  /** Open the editor, first making the run's editor project (or getting its video back) when needed. */
+  const openEditor = async (target: EditorTarget = {}): Promise<void> => {
+    setEditorError(null)
+    if (!canEdit) { if (hasEditor) setEditing(target); return }
+    try {
+      const info = await getApi().editor.automaticInfo(props.outputDir!)
+      if (info.state === 'ready') setEditing(target)
+      else setGate({ info, target })
+    } catch (cause) { setEditorError(errorMessage(cause, 'Could not open the editor.')) }
+  }
+  if (opening) return <Page width="wide">{props.leading}<p className="mt-4 text-sm text-ink-muted" role="status">Opening clips…</p></Page>
+  if (editing && props.outputDir) return <ClipEditor outputDir={props.outputDir} leading={props.leading} initialClip={editing.clip} initialTab={editing.tab}
+    onNeedSource={() => { setEditing(null); void openEditor() }}
+    onExports={async () => {
+      await refresh()
+      setEditorError(null); setEditing(null)
+    }} />
+  return <>
+    <GeneratedClipList {...props} output={output} onOutputChanged={(fresh) => {
+      setOutput(fresh)
+      if (fresh.editor_project) void getApi().editor.open(props.outputDir!).then((session) => setRemaining(editorProgress(session.project.candidates).remaining))
+        .catch((cause) => setEditorError(errorMessage(cause)))
+    }} editor={canEdit || hasEditor ? { remaining: hasEditor ? remaining : null, started: hasEditor, error: editorError, onOpen: (target) => { void openEditor(target) } } : undefined} />
+    {gate && props.outputDir && <EditAutomaticDialog outputDir={props.outputDir} info={gate.info} onClose={() => setGate(null)} onReady={() => {
+      const target = gate.target
+      setGate(null)
+      void refresh().catch(() => {}).finally(() => setEditing(target))
+    }} />}
+  </>
 }
 
 function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip, onNavigate, initialClipIndex, editor, onOutputChanged }: ClipListProps & {
-  editor?: { remaining: number | null; error: string | null; onOpen: () => void }
+  editor?: { remaining: number | null; started: boolean; error: string | null; onOpen: (target?: EditorTarget) => void }
   onOutputChanged: (output: JobOutput) => void
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
@@ -319,6 +354,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
               onDelete={outputDir ? () => confirmDelete([clip.clip_index]) : undefined}
               onChangeCta={outputDir ? () => setCtaClip(clip) : undefined}
               onEditVideo={outputDir && clip.editable ? () => setEditClip(clip) : undefined}
+              onEditHeadline={editor ? () => editor.onOpen({ clip: clip.clip_index, tab: 'hook' }) : undefined}
               onRemix={outputDir && onNavigate ? () => void remixClip(clip) : undefined}
               actionsDisabled={deleting || exporting}
               onSetPosted={outputDir ? async (posted) => {
@@ -342,8 +378,9 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
         description={editor?.remaining ? `${editor.remaining} clip${editor.remaining === 1 ? '' : 's'} left to finish` : undefined}
         actions={
           <>
-            {editor && <Button disabled={deleting} variant={editor.remaining ? 'primary' : 'ghost'} icon={<Scissors className="h-4 w-4" />} onClick={editor.onOpen}>
-              {editor.remaining ? 'Continue editing' : 'Open editor'}
+            {editor && <Button disabled={deleting} variant={editor.remaining ? 'primary' : 'ghost'} icon={<Scissors className="h-4 w-4" />} onClick={() => editor.onOpen()}
+              title={editor.started ? undefined : 'Rewrite or remove headlines, and change cuts, framing and captions. Baking a clip replaces it here.'}>
+              {editor.remaining ? 'Continue editing' : editor.started ? 'Open editor' : 'Edit clips'}
             </Button>}
             {outputDir && <Button onClick={() => setInspectEdits(true)}>Inspect transcript & edits</Button>}
             {sourceUrl && <Button iconOnly icon={<Youtube className="h-4 w-4" />} aria-label="Open original video on YouTube" title="Open original video on YouTube"

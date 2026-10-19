@@ -12,8 +12,8 @@ import { Switch } from './ui/Switch'
 
 /** What each group is, in plain words. Order matches the dialog. */
 const GROUPS: { id: CleanupGroupId; title: string; body: string; warning?: string; defaultOn: boolean }[] = [
-  { id: 'editorMedia', title: 'Editor working copies', defaultOn: true,
-    body: 'The source copy and preview the editor keeps, for runs where every clip is baked or discarded. The same as “Free editor media” in the editor. Those editor projects become read-only.' },
+  { id: 'editorMedia', title: 'Source copies and editor previews', defaultOn: true,
+    body: 'The source video copies and editor previews kept with runs, for runs where every clip is baked or discarded. Review & edit projects become read-only. Clips from Automatic runs can still be edited: the editor downloads the video again, or uses the original file, when you open it.' },
   { id: 'intermediates', title: 'Framing previews and render scraps', defaultOn: true,
     body: 'Framing source previews and unfinished render files the engine left in run folders.' },
   { id: 'leftovers', title: 'Leftover working files', defaultOn: true,

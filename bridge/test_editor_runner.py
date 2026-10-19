@@ -72,6 +72,14 @@ class EditorRunnerTests(unittest.TestCase):
         self.assertIn('hooks_unavailable', editor_runner.ERROR_CODES)
         self.assertIn('suggest-hooks', editor_runner.ACTIONS)
 
+    def test_opening_an_automatic_run_has_its_own_action_and_codes(self):
+        self.assertIn('prepare', editor_runner.ACTIONS)
+        from clip_engine.services.manual_editor import EDITOR_ERROR_CODES
+        for code in ('transcript_missing', 'source_changed', 'download_failed', 'translation_failed'):
+            self.assertIn(code, editor_runner.ERROR_CODES)
+            self.assertIn(code, EDITOR_ERROR_CODES)
+        self.assertEqual(set(EDITOR_ERROR_CODES) | {'cancelled'}, set(editor_runner.ERROR_CODES))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,7 +1,7 @@
 import type { JevThresholdSettings } from '../shared/jev-settings'
 import type { LibraryClipTarget } from '../shared/library-posting'
 import type { AutomationReviewResult } from '../shared/automations'
-import type { CandidateEdit, EditorProgressSummary, EditorSession, HookIdea } from '../shared/clip-editor'
+import type { AutomaticEditInfo, CandidateEdit, EditorProgressSummary, EditorSession, HookIdea } from '../shared/clip-editor'
 import type { JobOutput } from '../shared/job-output'
 import type { HeadlineLook } from '../shared/headline-look'
 import type { CtaSummary } from '../shared/ctas'
@@ -202,6 +202,12 @@ export interface BridgeClipAPI {
     /** Main asks the open editor to save before a close or quit continues. */
     onSaveBeforeClose: (callback: () => void) => () => void
     closeReady: (saved: boolean) => Promise<void>
+    /** What opening an Automatic run (or a project made from one) in the editor involves. */
+    automaticInfo: (path: string) => Promise<AutomaticEditInfo>
+    /** Make the run's editor project from its clips, or get its video back. `localFile`: a video the member chose. */
+    prepareAutomatic: (path: string, localFile?: string) => Promise<AutomaticEditInfo>
+    /** The running editor operation and its progress, also before a run has an editor project. */
+    operationStatus: (path: string) => Promise<{ operation: EditorSession['operation']; progress?: EditorSession['progress'] }>
   }
   edits: { inspect: (outputDir: string) => Promise<EditAudit> }
   models: { list: (refresh?: boolean) => Promise<OpenRouterCatalog> }
@@ -583,7 +589,10 @@ const api: BridgeClipAPI = {
     addCandidate: (path, revision, candidate, sourceId) => ipcRenderer.invoke('editor:addCandidate', path, revision, candidate, sourceId),
     suggestHooks: (path, revision, id) => ipcRenderer.invoke('editor:suggestHooks', path, revision, id),
     onSaveBeforeClose: (callback) => subscribe<void>('editor:saveBeforeClose', () => callback()),
-    closeReady: (saved) => ipcRenderer.invoke('editor:closeReady', saved)
+    closeReady: (saved) => ipcRenderer.invoke('editor:closeReady', saved),
+    automaticInfo: (path) => ipcRenderer.invoke('editor:automaticInfo', path),
+    prepareAutomatic: (path, localFile) => ipcRenderer.invoke('editor:prepareAutomatic', path, localFile),
+    operationStatus: (path) => ipcRenderer.invoke('editor:operationStatus', path)
   },
   edits: { inspect: (outputDir) => ipcRenderer.invoke('edits:inspect', outputDir) },
   models: { list: (refresh = false) => ipcRenderer.invoke('models:list', refresh) },

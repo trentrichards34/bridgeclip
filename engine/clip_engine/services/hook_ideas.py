@@ -49,6 +49,22 @@ For each option:
 
 {HOOK_RUBRIC}"""
 
+# Whose voice the hooks are in: the run's headline voice (see headline_voice_rule in intelligence_planner).
+VOICE_RULES = {
+    "clipper": ("\n\nVOICE: This clip is cut from someone else's video. Write every hook the way a clipper captions the moment, "
+                "about the speaker in the third person or with no pronoun at all. Never write as if you were the speaker "
+                "(no \"I\" or \"my\" for the speaker)."),
+    "creator": ("\n\nVOICE: The speaker is posting this clip on their own channel. Write every hook in the speaker's own voice: "
+                "\"I\", \"my\" or \"you\", or no pronoun at all. Never refer to the speaker as \"he\", \"she\", \"they\", "
+                "\"this founder\", \"this guy\" or by their name."),
+}
+
+
+def voice_rule(voice):
+    """The prompt rule for a headline voice ('clipper' is the default)."""
+    return VOICE_RULES.get(voice, VOICE_RULES["clipper"])
+
+
 RESPONSE_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["hooks"],
     "properties": {"hooks": {"type": "array", "items": {
@@ -152,14 +168,14 @@ class HooksUnavailable(Exception):
     """No ideas could be fetched (no key, no credits, provider down or unreadable output)."""
 
 
-async def suggest_hooks(settings, title, text, client=None):
-    """Return {'hooks': [...], 'cost_usd', 'cost_incomplete', 'model'} for one clip's words."""
+async def suggest_hooks(settings, title, text, client=None, voice="clipper"):
+    """Return {'hooks': [...], 'cost_usd', 'cost_incomplete', 'model'} for one clip's words, in the run's headline voice."""
     if not settings.openrouter_api_key:
         raise HooksUnavailable("No OpenRouter key")
     payload = {
         "model": settings.planner_model,
         "messages": [
-            {"role": "system", "content": PROMPT},
+            {"role": "system", "content": PROMPT + voice_rule(voice)},
             {"role": "user", "content": "CLIP (data)\n" + json.dumps({"current_title": title, "transcript": text}, ensure_ascii=False)},
         ],
         "response_format": json_schema_format("hook_ideas", RESPONSE_SCHEMA),

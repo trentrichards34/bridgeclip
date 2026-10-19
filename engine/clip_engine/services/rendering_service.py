@@ -307,6 +307,21 @@ class RenderResult:
     output_width: int = 0
     output_height: int = 0
     framing_trace_path: Optional[str] = None
+    # Source intervals the clip kept (after pacing cuts and skips), and the
+    # render window's start (layout shot times are relative to it). The editor
+    # rebuilds an Automatic clip's cut from these.
+    kept_source_ms: list[list[int]] = field(default_factory=list)
+    window_start_ms: int = 0
+
+
+def shot_record(shot) -> dict:
+    """A shot's summary for job_output, plus where a talking-head crop centers (the
+    median of its focus path), so the editor can rebuild a saved clip's framing."""
+    record = shot.summary()
+    if shot.focus_path:
+        from statistics import median
+        record["focus"] = [round(median(p[1] for p in shot.focus_path), 4), round(median(p[2] for p in shot.focus_path), 4)]
+    return record
 
 
 class RenderingService:
@@ -629,7 +644,7 @@ class RenderingService:
             duration_ms=scaled_duration_ms(time_map.output_ms, request.video_speed),
             removed_ms=removed_ms,
             layout_type=plan.dominant_layout if smart else "fit",
-            layout_shots=[shot.summary() for shot in plan.shots] if analyzed else [],
+            layout_shots=[shot_record(shot) for shot in plan.shots] if analyzed else [],
             # Vision calls made for the plan are paid for even if a fallback rendered.
             layout_cost_usd=vision_cost,
             render_fallback=render_fallback,
@@ -638,6 +653,8 @@ class RenderingService:
             output_width=target_width,
             output_height=target_height,
             framing_trace_path=trace_path,
+            kept_source_ms=[[round(window_start_ms + a), round(window_start_ms + b)] for a, b in time_map.keeps],
+            window_start_ms=round(window_start_ms),
         )
 
     @staticmethod
