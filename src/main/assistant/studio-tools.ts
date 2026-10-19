@@ -436,7 +436,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
         limits: { videosPerRun: MAX_SOURCES, takesPerVideo: MAX_REMIXES, words: REMIX_WORD_LIMITS, postCaptionChars: MAX_POST_CAPTION_CHARS, ctaOfferChars: MAX_CTA_OFFER_CHARS },
         prices: {
           planningPerHourOfVideo: REMIX_PRICES.sourcePerHour,
-          note: 'Planning (finding moments, writing and grading takes) is charged when a remix starts. Each approved take is charged when it is made (see each draft\'s estimate). Silent react reuses the avatar\'s reactions, so making those is free.'
+          note: 'Planning (finding moments, writing and grading takes) is charged when a remix starts. Each approved take is charged when it is made (see each draft\'s estimate). React to a clip reuses the avatar\'s reactions, so making those is free.'
         }
       })
     },
@@ -494,7 +494,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
             ? 'Making the takes you approve is free: the avatar’s reactions are reused.'
             : `Each take you approve later costs about ${cost.perRemixHigh - cost.perRemixLow < 0.01 ? money(cost.perRemixHigh) : `${money(cost.perRemixLow)}–${money(cost.perRemixHigh)}`} to make (about ${money(cost.total)} if all ${count * videos} are made).`,
           'You confirm you’ll turn on the platform’s AI-content label when you post these.',
-          ...(request.format === 'silent' ? ['You confirm you’re allowed to use these clips: Silent react plays much more of them.'] : []),
+          ...(request.format === 'silent' ? ['You confirm you’re allowed to use these clips: React to a clip plays much more of them.'] : []),
           ...(waiting?.phase === 'review' ? [`This replaces the ${plural(waiting.drafts.length, 'take')} waiting for review.`] : [])
         ]
       },
@@ -569,7 +569,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
         const status = reviewStatus()
         const [draft] = chosenDrafts(status, [input.draftId as number])
         const spoken = ['intro', 'beats', 'close'].filter((key) => input[key] !== undefined)
-        if (draft.format !== 'commentary' && spoken.length) throw new AssistantToolError(`This take has no spoken lines (${draft.format === 'silent' ? 'Silent react' : draft.format === 'pause_react' ? 'Pause & react' : draft.format === 'moment_take' ? 'Moment + my take' : 'Article or post'}): change only its headline or postCaption.`)
+        if (draft.format !== 'commentary' && spoken.length) throw new AssistantToolError(`This take has no spoken lines (${draft.format === 'silent' ? 'React to a clip' : draft.format === 'pause_react' ? 'Pause & react' : draft.format === 'moment_take' ? 'Moment + my take' : 'Article or post'}): change only its headline or postCaption.`)
         if (!['headline', 'postCaption', ...spoken].some((key) => input[key] !== undefined)) throw new AssistantToolError('Nothing to change: give a headline, intro, beats, close or postCaption.')
         // Keep each beat's B-roll search when its line is reworded.
         const beats = input.beats === undefined ? undefined : (input.beats as string[]).map((text, index) => ({ text, broll: draft.beats[index]?.broll ?? '' }))
@@ -666,7 +666,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
     {
       name: 'list_avatars',
       title: 'Checked avatars',
-      description: 'The member\'s avatars (Avatar Studio): name, own likeness or AI person, voice (preset or cloned), saved pictures, which silent reactions are made (Silent react remixes need them), and what each is ready for. Making avatars, pictures, reactions and voice clones is done by the member in Avatar Studio.',
+      description: 'The member\'s avatars (Avatar Studio): name, own likeness or AI person, voice (preset or cloned), saved pictures, which silent reactions are made (React to a clip remixes with an avatar need them), and what each is ready for. Making avatars, pictures, reactions and voice clones is done by the member in Avatar Studio.',
       inputSchema: object({}),
       readOnly: true,
       run: async () => {

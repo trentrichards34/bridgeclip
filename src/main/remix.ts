@@ -142,7 +142,7 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   if (image && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to share this screenshot.')
   if (pause && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use this video: Pause & react plays much of it.')
   if (momentTake && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use this video: each video opens with a moment of it.')
-  if (format === 'silent' && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use these clips: Silent react plays much more of them.')
+  if (format === 'silent' && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use these clips: React to a clip plays much more of them.')
   const onCamera = host === 'camera'
   if (format === 'silent' && !onCamera && !isAvatarId(raw.avatarId)) throw new Error('Choose the avatar whose reactions to use.')
   // On camera it's your own voice; otherwise an avatar's or a preset.
@@ -325,7 +325,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     const { preset, cloned } = silent || onCamera ? { preset: DEFAULT_VOICE_NAME.toLowerCase(), cloned: null } : remixVoice(request.voice, avatar)
     if (cloned && !existsSync(voiceSamplePath(request.avatarId as string))) throw new Error('This avatar’s cloned voice recording is missing. Clone it again in Avatar Studio, or pick a preset voice.')
     const clips = silent && !onCamera ? readReactions(request.avatarId as string) : []
-    if (silent && !onCamera && !clips.length) throw new Error('Make this avatar’s reactions in Avatar Studio first (Reactions for Silent react).')
+    if (silent && !onCamera && !clips.length) throw new Error('Make this avatar’s reactions in Avatar Studio first (Reactions for React to a clip).')
     // `remix-…` (not a bare id): the Library lists it only once it has finished videos.
     const folder = join(settings.outputDirectory, `remix-${randomUUID()}`)
     await preflight(folder)
@@ -395,7 +395,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       cancelled: false, avatarId: request.avatarId, context,
       status: {
         id: randomBytes(6).toString('hex'), phase: 'planning', detail: 'Starting', percent: 1, folder,
-        ...(request.host === 'camera' ? { onCamera: true, cameraTalk: request.camera?.talk === true } : {}),
+        ...(request.host === 'camera' ? { onCamera: true, cameraTalk: request.camera?.talk === true, ...(request.camera ? { cameraLayout: request.camera.layout } : {}) } : {}),
+        ...(request.pause ? { pauseLayout: request.pause.layout } : {}),
         estimateUsd: request.moment ? momentEstimate(request.moment.ranges).total
           : estimateRemixCost(request.host, request.count * request.sources.length, 0.5, request.format).total,
         drafts: [], outputs: [], costUsd: null, warnings: [], error: null

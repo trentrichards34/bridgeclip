@@ -6,7 +6,7 @@ const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
 
-test('Silent react: pick the format, check reactions and permission, review timed reactions, make it', { timeout: 180000 }, async (t) => {
+test('React to a clip (silent): pick the format, check reactions and permission, review timed reactions, make it', { timeout: 180000 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-silent-e2e-'))
   const userData = path.join(root, 'user-data')
   const session = await launchApp({ appDir: buildApp(path.join(root, 'app')), userDataDir: userData })
@@ -42,7 +42,7 @@ test('Silent react: pick the format, check reactions and permission, review time
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
   await page.getByLabel('Video links').fill('https://www.instagram.com/reel/DdurluTvRVB/')
-  await page.getByRole('radio', { name: /Silent react/ }).click()
+  await page.getByRole('radio', { name: /^React to a clip/ }).click()
   // No voiced-take controls for a silent react.
   assert.equal(await page.getByRole('radiogroup', { name: 'Remix style' }).count(), 0)
   // The presenter is the avatar's reactions or the member on camera.

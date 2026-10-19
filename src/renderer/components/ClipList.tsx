@@ -209,7 +209,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
     setExportError(null)
     try {
       const source = await getApi().remix.libraryClip(outputDir, clip.clip_index)
-      useRemixForm.getState().setSourceFile(source.path, source.creator)
+      useRemixForm.getState().setSourceFile(source.path, source.creator, clip.duration_ms > 0 ? clip.duration_ms / 1000 : undefined)
       onNavigate?.('remix')
     } catch (cause) { setExportError(errorMessage(cause, 'This clip could not be opened in Remix.')) }
   }

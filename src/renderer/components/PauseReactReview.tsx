@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Camera, Check, RotateCcw, Scissors, Sparkles, Upload, Wand2, X } from 'lucide-react'
+import { AlertTriangle, Camera, Check, ChevronDown, RotateCcw, Scissors, Sparkles, Upload, Wand2, X } from 'lucide-react'
 import {
   DEFAULT_PAUSE_SETTINGS, flipSegment, formatSeconds, MAX_NUDGE_SECONDS, MIN_PAUSE_CHOICES, MIN_PLAY_CHOICES, PAUSE_REACT_MAX_SECONDS, pauseSummary,
   type PauseSettings, type PauseTimeline, type PauseView
@@ -11,6 +11,7 @@ import { RemixRecorder } from './RemixRecorder'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { Callout } from './ui/Callout'
+import { FriendlyError } from './FriendlyError'
 import { Field, TextArea, TextInput } from './ui/Field'
 import { Panel, PanelHeader } from './ui/Panel'
 import { Segmented } from './ui/Segmented'
@@ -49,10 +50,15 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
     setWorking(kind); onError(null)
     try { await work() } catch (err) { onError(errorMessage(err, fallback)) } finally { setWorking('') }
   }
-  const upload = (): Promise<void> => run('upload', async () => {
-    const list = await getApi().remix.uploadRecording(draft.id, 'reaction')
-    if (list) { setRecordings(list); setView(await getApi().remix.pauseView()) }
-  }, 'Your recording could not be used.')
+  const upload = async (): Promise<void> => {
+    let uploaded = false
+    await run('upload', async () => {
+      const list = await getApi().remix.uploadRecording(draft.id, 'reaction')
+      if (list) { setRecordings(list); setView(await getApi().remix.pauseView()); uploaded = Boolean(list[draft.id]?.reaction) }
+    }, 'Your recording could not be used.')
+    // Like a recording made here: a new upload with no headline yet gets its hook text and caption written straight away.
+    if (uploaded && !draft.headline && !edit?.headline) await write()
+  }
   const remove = (): Promise<void> => run('upload', async () => {
     setRecordings(await getApi().remix.removeRecording(draft.id, 'reaction'))
     setView(null)
@@ -86,7 +92,7 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
     <Panel>
       <PanelHeader title="Your pause-and-react" description="Their video plays in a box and pauses whenever you talk. Choose the part you react to, record yourself, check the pauses, then make it." />
       <div className="mt-4 space-y-4">
-        {status.error && <Callout tone="danger">{status.error} Your recording is still here, so you can try again.</Callout>}
+        {status.error && <Callout tone="danger"><FriendlyError error={status.error} suffix="Your recording is still here, so you can try again." /></Callout>}
         {status.warnings.map((warning, i) => <Callout key={i} tone="warning">{warning}</Callout>)}
 
         <section className="glass-tile space-y-3 rounded-2xl p-4" aria-label="The part you react to">
@@ -162,7 +168,7 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
           </Button>
         </div>
       </div>
-      {recording && <RemixRecorder draft={draft} edit={current} recordings={recordings} talk onRecordings={setRecordings} onClose={closeRecorder} />}
+      {recording && <RemixRecorder draft={draft} edit={current} recordings={recordings} talk pauseLayout={status.pauseLayout} onRecordings={setRecordings} onClose={closeRecorder} />}
     </Panel>
   )
 }
@@ -210,6 +216,8 @@ export function PauseEditor({ view, disabled, onChange }: { view: PauseView; dis
   const upload = view.source === 'upload'
   const detection = view.detection
   const offset = detection ? Math.max(0, detection.offset + settings.nudge) : 0
+  // Fine-tuning opens on its own only when their video couldn't be heard in the recording.
+  const [fineTune, setFineTune] = useState(upload && detection?.alignedBy !== 'sound')
   const nudge = (by: number): void => onChange({ ...settings, nudge: Math.max(-MAX_NUDGE_SECONDS, Math.min(MAX_NUDGE_SECONDS, Math.round((settings.nudge + by) * 10) / 10)) })
   return (
     <div className="space-y-3">
@@ -230,6 +238,10 @@ export function PauseEditor({ view, disabled, onChange }: { view: PauseView; dis
               ? `Their video starts ${formatSeconds(offset)} into your recording (found by its sound).`
               : `Their video couldn’t be heard in your recording, so it starts ${formatSeconds(offset)} in. Watch the preview and nudge it until it lines up.`}
           </p>
+          <button type="button" className="flex items-center gap-1 text-2xs text-accent" aria-expanded={fineTune} onClick={() => setFineTune(!fineTune)}>
+            <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', fineTune && 'rotate-180')} />Fine-tune (only if it looks off)
+          </button>
+          {fineTune && (<>
           <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Nudge their video">
             <span className="mr-1 text-2xs text-ink-subtle">Nudge their video</span>
             {[-1, -0.1, 0.1, 1].map((by) => (
@@ -250,6 +262,7 @@ export function PauseEditor({ view, disabled, onChange }: { view: PauseView; dis
           {(settings.flips.length > 0 || settings.nudge !== 0 || settings.minPause !== DEFAULT_PAUSE_SETTINGS.minPause || settings.minPlay !== DEFAULT_PAUSE_SETTINGS.minPlay) && (
             <Button size="sm" variant="ghost" icon={<RotateCcw className="h-3.5 w-3.5" />} disabled={disabled} onClick={() => onChange(DEFAULT_PAUSE_SETTINGS)}>Back to what was found</Button>
           )}
+          </>)}
         </div>
       ) : (
         <p className="text-2xs text-ink-subtle">Recorded here, so it follows exactly when you paused and played. Record again to change it.</p>

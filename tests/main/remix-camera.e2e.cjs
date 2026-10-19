@@ -67,13 +67,19 @@ test('Me, on camera: pick the background, film a reaction in sync with the clip,
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
   await page.getByLabel('Video links').fill('https://www.instagram.com/reel/DdurluTvRVB/')
-  await page.getByRole('radio', { name: /Silent react/ }).click()
+  // A voiced take on camera: one take to record to start with, and the button says what happens next.
+  await page.getByRole('radio', { name: /^Voiced take/ }).click()
   await page.getByRole('radio', { name: /Me, on camera/ }).click()
-  // No avatar, no AI label: it's really you.
+  assert.equal(await page.getByRole('radiogroup', { name: 'Takes per video' }).getByRole('radio', { name: '1', exact: true }).getAttribute('aria-checked'), 'true')
+  await page.getByRole('button', { name: 'Write and record', exact: true }).waitFor()
+  // Green screen over their video: its own card (React to a clip, you on camera, cut out in front of their moment).
+  await page.getByRole('radio', { name: /^Green screen over their video/ }).click()
+  assert.equal(await page.getByRole('radio', { name: /^React to a clip/ }).getAttribute('aria-checked'), 'false')
+  // No avatar, no AI label, no presenter to choose: it's really you.
   assert.equal(await page.getByText('No avatars yet').count(), 0)
+  assert.equal(await page.getByRole('radiogroup', { name: 'Presenter' }).count(), 0)
   assert.equal(await page.getByRole('checkbox', { name: "I'll turn on the AI-content label when I post" }).count(), 0)
-  await page.getByRole('radio', { name: /Green screen/ }).click()
-  await page.getByRole('switch', { name: 'Talk while reacting' }).click()
+  assert.match(await page.getByTestId('look-summary').innerText(), /^Green screen · You talk over it · /)
   await page.getByRole('checkbox', { name: "I'm allowed to use these clips" }).click()
   await page.getByRole('button', { name: 'Write the takes', exact: true }).click()
   const request = await app.evaluate(() => globalThis.remixRequests[0])
@@ -102,6 +108,8 @@ test('Me, on camera: pick the background, film a reaction in sync with the clip,
   await page.getByRole('button', { name: 'Record', exact: true }).click()
   const recorder = page.getByRole('dialog', { name: 'Record yourself' })
   await recorder.getByText(/Wear headphones/).waitFor()
+  // A frame guide shows what is kept of the camera picture.
+  await recorder.getByTestId('frame-guide').waitFor()
   await recorder.getByRole('button', { name: /Start: the clip plays/ }).click()
   await recorder.getByText(/^REC/).waitFor({ timeout: 10000 })
   // Stops on its own when the moment ends.
@@ -165,14 +173,15 @@ test('Me, on camera: pick the background, film a reaction in sync with the clip,
     BrowserWindow.getAllWindows()[0].webContents.send('remix:status', { id: 'run9', phase: 'done', detail: 'Done', percent: 100, folder: output, estimateUsd: 0, drafts: [], outputs: [], costUsd: 0.1, warnings: [], error: null })
   }, { shot, output })
   await page.getByRole('radio', { name: /Article or post/ }).click()
-  await page.getByRole('heading', { name: '1 · The article or post' }).waitFor()
+  await page.getByRole('heading', { name: '2 · The article or post' }).waitFor()
   const next = page.getByRole('button', { name: 'Continue to recording' })
   assert.equal(await next.isDisabled(), true)
   await page.getByRole('button', { name: 'Choose a screenshot' }).click()
   await page.getByText('article.png').waitFor()
   await page.getByPlaceholder('e.g. The Wall Street Journal or @handle').fill('The Daily Example')
-  // Green screen is the default look for a screenshot.
-  assert.equal(await page.getByRole('radio', { name: /Green screen/ }).getAttribute('aria-checked'), 'true')
+  // Green screen is the default look for a screenshot (in the folded look section).
+  await page.getByRole('button', { name: /3 · Look & call to action/ }).click()
+  assert.equal(await page.getByRole('radiogroup', { name: 'Your background' }).getByRole('radio', { name: /Green screen/ }).getAttribute('aria-checked'), 'true')
   // One promise for the run (it stays ticked from the silent react above).
   await page.getByRole('checkbox', { name: "I'm allowed to share this screenshot" }).check()
   await next.click()
@@ -201,5 +210,29 @@ test('Me, on camera: pick the background, film a reaction in sync with the clip,
   await page.getByRole('button', { name: /^Make 1 remix/ }).click()
   const imageRender = await app.evaluate(() => globalThis.renderRequests[globalThis.renderRequests.length - 1])
   assert.equal(imageRender[0].headline, 'Remote work is over, says this paper')
+
+  // Made: an on-camera video's card has no "Reaction take / Adds nuance" badges (there's no written take).
+  const send = (value) => app.evaluate(({ BrowserWindow }, v) => BrowserWindow.getAllWindows()[0].webContents.send('remix:status', v), value)
+  const finished = { id: 'run3', percent: 100, folder: output, estimateUsd: 0.02, costUsd: 0.02, warnings: [], onCamera: true,
+    drafts: [{ id: 0, sourceIndex: 0, sourceTitle: 'The Daily Example', creator: 'The Daily Example', startMs: 0, endMs: 0, quote: '', why: '', style: 'reaction', stance: 'add_nuance',
+      headline: 'Remote work is over, says this paper', intro: '', beats: [], close: '', notes: [], grade: null, estimateUsd: 0.02, postCaption: '', format: 'image', cues: [] }] }
+  await send({ ...finished, phase: 'done', detail: 'Done', error: null,
+    outputs: [{ path: path.join(output, 'clip_00.mp4'), manifestPath: path.join(output, 'clip_00.source.json'), headline: 'Remote work is over, says this paper', stance: 'add_nuance',
+      excerptSeconds: 0, durationSeconds: 3, costUsd: 0.02, checks: [], warnings: [], style: 'reaction', grade: null, creator: 'The Daily Example', postCaption: '' }] })
+  await page.getByText(/^1 remix ready/).waitFor()
+  assert.equal(await page.getByText('Adds nuance', { exact: true }).count(), 0)
+  assert.equal(await page.getByText('Reaction take', { exact: true }).count(), 0)
+
+  // A raw engine error reads plainly, with the technical text under Details (for Report an issue).
+  const raw = "transcribe_audio() missing 1 required positional argument: 'language'"
+  await send({ ...finished, phase: 'failed', detail: 'Failed', error: raw, outputs: [] })
+  await page.getByText('Something went wrong while making this. Try again; if it keeps happening, use Report an issue.').waitFor()
+  assert.equal(await page.getByText(raw).isVisible(), false)
+  await page.getByText('Details', { exact: true }).click()
+  await page.getByText(raw).waitFor()
+  // The engine's own plain messages are shown as they are.
+  await send({ ...finished, phase: 'failed', detail: 'Failed', error: 'Your disk is full. Free up some space, then try again.', outputs: [] })
+  await page.getByText('Your disk is full. Free up some space, then try again.').waitFor()
+  assert.equal(await page.getByText('Details', { exact: true }).count(), 0)
   assert.deepEqual(errors, [])
 })

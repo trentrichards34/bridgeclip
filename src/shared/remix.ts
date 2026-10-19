@@ -39,7 +39,7 @@ export const REMIX_FORMATS: { id: RemixFormat; label: string; detail: string }[]
   { id: 'pause_react', label: 'Pause & react', detail: 'You on camera. Their video plays in a box and pauses whenever you talk' },
   { id: 'moment_take', label: 'Moment + my take', detail: 'Pick times in a long video. Each becomes its best moment, then you on camera' },
   { id: 'commentary', label: 'Voiced take', detail: 'A few seconds of their moment, then your presenter’s take in your voice' },
-  { id: 'silent', label: 'Silent react', detail: 'Their moment plays with its sound; your avatar reacts behind it without speaking' },
+  { id: 'silent', label: 'React to a clip', detail: 'Their moment plays with its sound; you (or your avatar) react on top' },
   { id: 'image', label: 'Article or post', detail: 'Talk on camera in front of a screenshot, like a green screen; the AI writes the headline from what you say' }
 ]
 
@@ -344,6 +344,10 @@ export interface RemixStatus {
   onCamera?: boolean
   /** Reactions keep the member's voice (so recording asks for headphones). */
   cameraTalk?: boolean
+  /** On camera: as filmed, cut out or green screen (the recorder's frame guide shows what's kept). */
+  cameraLayout?: CameraLayout
+  /** Pause & react: where their video goes (the recorder shades what its box covers). */
+  pauseLayout?: PauseLayout
 }
 
 export function isRunning(status: RemixStatus | null): boolean {

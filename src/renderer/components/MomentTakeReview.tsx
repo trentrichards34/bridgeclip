@@ -10,6 +10,7 @@ import { RemixRecorder } from './RemixRecorder'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { Callout } from './ui/Callout'
+import { FriendlyError } from './FriendlyError'
 import { Checkbox } from './ui/Checkbox'
 import { Field, TextArea, TextInput } from './ui/Field'
 import { Panel, PanelHeader } from './ui/Panel'
@@ -105,7 +106,7 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
             <ProgressBar value={status.percent} />
           </div>
         )}
-        {status.error && <Callout tone="danger">{status.error} Your recordings are still here, so you can try again.</Callout>}
+        {status.error && <Callout tone="danger"><FriendlyError error={status.error} suffix="Your recordings are still here, so you can try again." /></Callout>}
         {status.warnings.map((warning, i) => <Callout key={i} tone="warning">{warning}</Callout>)}
         {drafts.map((draft) => {
           const current = value(draft)

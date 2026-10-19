@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Camera, Check, Circle, Headphones, ListChecks, Mic, Pause, Play, RotateCcw, Square, Upload, X } from 'lucide-react'
-import { partsFor, type RecordingPart, type RemixDraft, type RemixEdit, type RemixRecordings } from '../../shared/remix'
-import { formatSeconds, PAUSE_REACT_MAX_SECONDS, recorderEventKind, type PauseEvent } from '../../shared/pause-react'
+import { partsFor, type CameraLayout, type RecordingPart, type RemixDraft, type RemixEdit, type RemixRecordings } from '../../shared/remix'
+import { formatSeconds, PAUSE_REACT_MAX_SECONDS, recorderEventKind, type PauseEvent, type PauseLayout } from '../../shared/pause-react'
 import { formatTimecode, MOMENT_TAKE_MAX_SECONDS } from '../../shared/moment-take'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
@@ -38,7 +38,21 @@ type Phase = 'idle' | 'countdown' | 'recording' | 'saving'
  * voiced take read from a teleprompter. Anything can be redone, or uploaded
  * from a phone instead.
  */
-export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onClose, points = [] }: {
+/**
+ * The part of a 16:9 camera picture kept in the video, as a share of its width (the full height is kept):
+ * 9:16 for most layouts, a wider frame for Pause & react's 50/50 split (you fill the bottom half).
+ * In the video the frame follows your face, and zooms out a little when you sit close.
+ */
+export function frameGuide(pauseLayout?: PauseLayout, cameraLayout?: CameraLayout): { width: number; covered: number } {
+  const camera = 16 / 9
+  // Green screen: the whole picture, about half the video's height tall, centered (its sides are cut).
+  if (cameraLayout === 'greenscreen' && !pauseLayout) return { width: Math.min(1, 1080 / (1920 * 0.48 * camera)), covered: 0 }
+  if (pauseLayout === 'split') return { width: Math.min(1, (4 / 3) / camera), covered: 0 }
+  // Box at the top: their video's box sits over about the top fifth of your picture.
+  return { width: (9 / 16) / camera, covered: pauseLayout === 'box' ? 0.2 : 0 }
+}
+
+export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onClose, points = [], pauseLayout, cameraLayout }: {
   draft: RemixDraft
   edit: RemixEdit
   recordings: RemixRecordings
@@ -49,6 +63,10 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   onClose: (changed: boolean) => void
   /** Moment + my take: talking points the member asked for (shown over the camera only if they turn them on). */
   points?: string[]
+  /** Pause & react: where their video goes, so the frame guide shades what its box covers. */
+  pauseLayout?: PauseLayout
+  /** How the member appears (the frame guide shows what's kept). */
+  cameraLayout?: CameraLayout
 }): React.JSX.Element {
   const reaction = draft.format === 'silent'
   // Pause & react: their video plays while the camera records; Space pauses it while you talk (the app logs when).
@@ -323,6 +341,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   const busy = phase !== 'idle' || uploading
   const allDone = parts.every((item) => recordings[draft.id]?.[item])
   const line = reaction || image || pauseMode || momentMode ? '' : partText(edit, part)
+  const guide = frameGuide(pauseMode ? pauseLayout ?? 'box' : undefined, cameraLayout)
 
   return (
     <Dialog ref={dialog} aria-label="Record yourself" onBackdropMouseDown={busy ? undefined : close} panelClassName="max-w-[920px]"
@@ -425,7 +444,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
             </div>
           )}
           <div className="space-y-1">
-            <p className="text-2xs text-ink-subtle">{reviewing && saved ? 'Your recording' : 'Your camera'}</p>
+            <p className="text-2xs text-ink-subtle">{reviewing && saved ? 'Your recording' : `Your camera · keep your head and shoulders inside the bright frame${cameraLayout === 'greenscreen' && !pauseMode ? '' : ' (in the video it follows your face)'}`}</p>
             <div className="relative overflow-hidden rounded-xl bg-black">
               {momentMode && showPoints && points.length > 0 && !reviewing && (
                 <ul className="absolute inset-x-0 top-0 z-10 space-y-0.5 bg-black/70 px-4 py-2 text-sm font-medium leading-snug text-white" aria-label="Your talking points">
@@ -437,6 +456,18 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
                 <p className="absolute inset-x-0 top-0 z-10 bg-black/70 px-4 py-3 text-center text-lg font-semibold leading-snug text-white" aria-label="Your line">{line || 'Nothing to say for this part.'}</p>
               )}
               <video ref={preview} muted playsInline className={cn('aspect-video w-full -scale-x-100 object-cover', reviewing && saved && 'hidden')} aria-label="Camera preview" />
+              {!(reviewing && saved) && (
+                // What goes in the video: the frame stays bright, the rest is dimmed.
+                <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex justify-center">
+                  <div data-testid="frame-guide" className="relative h-full rounded-sm border-2 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]" style={{ width: `${(guide.width * 100).toFixed(2)}%` }}>
+                    {guide.covered > 0 && (
+                      <div data-testid="box-shade" className="absolute inset-x-0 top-0 flex items-center justify-center bg-black/60 px-1 text-center text-[10px] font-medium leading-tight text-white" style={{ height: `${guide.covered * 100}%` }}>
+                        Their video’s box covers this
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
               {reviewing && saved && <video key={saved.path} src={localFileUrl(saved.path)} controls playsInline className="aspect-video w-full object-contain" aria-label="Your recording" />}
               {phase === 'countdown' && <span className="absolute inset-0 flex items-center justify-center text-7xl font-black text-white drop-shadow-lg" aria-live="assertive">{count}</span>}
               {phase === 'recording' && <span className="absolute right-2 top-2 z-20 flex items-center gap-1 rounded-full bg-danger px-2 py-0.5 text-2xs font-semibold text-white"><Circle className="h-2 w-2 fill-current" />REC {pauseMode ? `${formatSeconds(elapsed)} of ${PAUSE_REACT_MAX_SECONDS / 60}:00` : momentMode ? `${formatTimecode(elapsed)} of ${formatTimecode(MOMENT_TAKE_MAX_SECONDS)}` : `${elapsed.toFixed(0)}s`}</span>}

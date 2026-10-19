@@ -854,7 +854,7 @@ function PictureLibrary({ avatar, busy, onChange, onError }: {
   )
 }
 
-/** Silent reaction clips for Remix's "Silent react": made once with AI from the picture, or the member's own recordings. */
+/** Silent reaction clips for Remix's "React to a clip": made once with AI from the picture, or the member's own recordings. */
 function ReactionLibrary({ avatar, busy, openrouterConfigured, onChange, onError }: {
   avatar: AvatarSummary; busy: boolean; openrouterConfigured: boolean; onChange: (list: AvatarSummary[]) => void; onError: (message: string | null) => void
 }): React.JSX.Element {
@@ -879,7 +879,7 @@ function ReactionLibrary({ avatar, busy, openrouterConfigured, onChange, onError
   return (
     <div className="glass-tile space-y-3 rounded-xl p-3">
       <div>
-        <p className="flex items-center gap-1.5 text-xs font-medium text-ink"><Film className="h-3.5 w-3.5" />Reactions for Silent react</p>
+        <p className="flex items-center gap-1.5 text-xs font-medium text-ink"><Film className="h-3.5 w-3.5" />Reactions for React to a clip</p>
         <p className="mt-0.5 text-2xs text-ink-subtle">Short silent clips of {avatar.name} watching, nodding and pointing, played behind the viral clip in Remix. Made once, reused in every video.</p>
       </div>
       <div className="grid grid-cols-3 gap-2">

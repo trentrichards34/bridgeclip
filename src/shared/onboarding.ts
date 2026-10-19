@@ -133,7 +133,7 @@ export const GUIDES: Record<GoalId, Guide> = {
     steps: [
       'Make an avatar first: open Avatar Studio and choose Create avatar. Use your photo or an AI person, and pick or clone a voice.',
       'Open Remix and paste links to the videos you want to react to.',
-      'Choose a format. Voiced take plays a few seconds of their moment, then your take in your voice. Silent react plays their moment while your avatar reacts.',
+      'Choose a format. Voiced take plays a few seconds of their moment, then your take in your voice. React to a clip plays their moment while your avatar reacts.',
       'Under Presenter, choose Avatar photo or Voice only, and pick your avatar.',
       'Choose Write the takes. Read them, fix anything marked in red, then make the videos.'
     ],
@@ -152,7 +152,7 @@ export const GUIDES: Record<GoalId, Guide> = {
       'Trim it to the part you react to, then record: their video plays above your camera and Space pauses it while you talk. Or upload a phone recording where you paused it yourself.',
       'Check the pauses, let the AI write the hook text and caption from what you said, then make the video.',
       'From a long video like a podcast: choose Moment + my take, paste the link and add up to 3 time ranges (type them, like 37:00 to 42:00, or paste a screenshot of the player). The AI picks the best moment in each, you record your take on each one, and each becomes its own video: the moment, then you.',
-      'For other styles, choose Voiced take or Silent react with Me, on camera as the presenter, and record each take in the app or upload it.'
+      'For other styles, choose Voiced take or React to a clip with Me, on camera as the presenter, and record each take in the app or upload it. To stand in front of their video, choose Green screen over their video.'
     ],
     tips: [
       'Wear headphones when you record in the app, so their video’s sound stays out of your microphone.',

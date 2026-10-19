@@ -199,9 +199,9 @@ def test_green_screen_scrolls_a_long_article(env, monkeypatch):
     recording = make_reaction_recording(env, env.tmp / "take.webm", 0, 0.0, size=(360, 640), seconds=5)
     run = write_then_render(env, monkeypatch, image, recording, "greenscreen")
     assert run.manifest["presenter"]["image_scrolls"] is True
-    # The masthead (red) at the start, the end of the article (blue) at the end, in the area above the member.
+    # The masthead (red) at the start; at the end, the article's end (blue) reaches the bottom of the frame and holds there.
     start = _mean(env.ffmpeg, run.out["path"], 0.2, "crop=60:60:20:500")
-    end = _mean(env.ffmpeg, run.out["path"], run.seconds - 0.2, "crop=60:60:20:800")
+    end = _mean(env.ffmpeg, run.out["path"], run.seconds - 0.2, "crop=60:60:20:1800")
     assert abs(start - np.array(RED)).max() < 40, start
     assert abs(end - np.array(BLUE)).max() < 40, end
     person = _mean(env.ffmpeg, run.out["path"], 1.0, "crop=40:40:520:1830")
@@ -354,3 +354,38 @@ def test_a_wide_screenshot_offers_no_split_and_is_kept_small(env, monkeypatch):
     assert data["settings"]["split"] is None
     with Image.open(folder / "image.png") as kept:
         assert kept.size == (1080, 608)
+
+
+def _stage_frame(env, inputs, graph, at, size=(1080, 1660)):
+    """One frame of the stage alone (inputs 0 and 1 stand in for the member and the matte)."""
+    raw = subprocess.run([env.ffmpeg, "-v", "error", "-f", "lavfi", "-i", "nullsrc=s=16x16:d=1", "-f", "lavfi", "-i", "nullsrc=s=16x16:d=1",
+                          *inputs, "-filter_complex", f"{graph};[stage]trim=start={at},setpts=PTS-STARTPTS,format=rgb24[o]", "-map", "[o]",
+                          "-frames:v", "1", "-f", "rawvideo", "-"], capture_output=True, check=True, timeout=120).stdout
+    return np.frombuffer(raw, np.uint8).reshape(size[1], size[0], 3).astype(np.int16)
+
+
+def _flat_dark_rows(frame):
+    """Rows that are the old flat #111 fill across the frame."""
+    return [y for y in range(frame.shape[0]) if np.abs(frame[y] - 17).max() <= 3]
+
+
+@pytest.mark.parametrize("height", [1500, 2600, 6000])
+def test_article_stage_never_scrolls_past_its_end(env, height):
+    """Short, a little taller than the frame and tall: late frames are covered by the screenshot or its blurred copy, never a
+    flat dark area, and a tall one ends with its last part (blue) at the bottom of the frame, held."""
+    image = article_png(env.tmp / f"article-{height}.png", 1080, height)
+    duration = 6.0
+    inputs, graph, scrolls, _ = remix.image_stage(image, str(env.tmp), 1080, 1660, 330, 700, duration, 2, "stage")
+    for at in (duration - 1.2, duration - 0.6, duration - 0.05):
+        frame = _stage_frame(env, inputs, graph, at)
+        assert not _flat_dark_rows(frame), (height, at, _flat_dark_rows(frame)[:5])
+        if scrolls:
+            bottom = frame[1600:1650, 20:80].reshape(-1, 3).mean(axis=0)
+            assert abs(bottom - np.array(BLUE)).max() < 40, (height, at, bottom)
+    if scrolls:
+        # Held: the last two late frames are the same picture.
+        assert np.abs(_stage_frame(env, inputs, graph, duration - 0.6) - _stage_frame(env, inputs, graph, duration - 0.05)).mean() < 1
+    else:
+        # A short one sits whole in the clear part, over its own blurred, darkened copy (not a flat color) below.
+        below = frame[1500:1650, :, :]
+        assert below.std() > 1 or abs(below.mean() - 17) > 10
