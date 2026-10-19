@@ -19,7 +19,8 @@ STRING_LIMITS = {"output_dir": 4096, "angle": 32, "host": 16, "voice": 32, "avat
                  "brand_identity": 60000, "brand_name": 120, "creator": 120, "caption_preset": 64, "mode": 8,
                  "cta_keyword": 32, "cta_offer": 200,
                  "voice_model": 64, "voice_reference": 4096, "voice_transcript": 4000, "format": 16,
-                 "camera_layout": 16, "camera_backdrop": 16, "camera_backdrop_color": 16}
+                 "camera_layout": 16, "camera_backdrop": 16, "camera_backdrop_color": 16,
+                 "pause_layout": 8, "pause_captions": 8}
 MAX_RECORDING_DRAFTS = 200
 MAX_RECORDED_BEATS = 4
 MAX_OFFSET_SECONDS = 3600
@@ -41,7 +42,19 @@ def parse_recordings(raw, fmt):
     for key, item in raw.items():
         if not isinstance(key, str) or not re.fullmatch(r"\d{1,4}", key) or not isinstance(item, dict):
             raise ValueError("Invalid recordings")
-        if fmt in ("silent", "image"):
+        if fmt == "pause_react":
+            # One continuous take and the timeline of when the original plays and holds (checked again by the engine).
+            from clip_engine.services.pause_react import PauseReactError, parse_timeline
+            reaction = item.get("reaction")
+            if set(item) != {"reaction", "timeline"} or not isinstance(reaction, dict) or not set(reaction) <= {"path", "offset_s"} \
+                    or not _abs_path(reaction.get("path")) or reaction.get("offset_s") not in (None, 0, 0.0):
+                raise ValueError("Invalid recordings")
+            try:
+                parse_timeline(item["timeline"])
+            except PauseReactError:
+                raise ValueError("Invalid recordings") from None
+            out[key] = {"reaction": {"path": reaction["path"], "offset_s": 0.0}, "timeline": item["timeline"]}
+        elif fmt in ("silent", "image"):
             reaction = item.get("reaction")
             if set(item) != {"reaction"} or not isinstance(reaction, dict) or not set(reaction) <= {"path", "offset_s"} \
                     or not _abs_path(reaction.get("path")):
@@ -94,13 +107,30 @@ def parse_recompose(raw):
                             caption_preset=preset, split=None if split is None else float(split), final_name=final_name)
 
 
+def parse_pauses(raw):
+    """Mode "pauses": work out when the original played and paused in a phone recording (local, no AI)."""
+    import math
+    if not set(raw) <= {"mode", "recording", "source", "trim_start", "trim_end"}:
+        raise ValueError("Invalid request")
+    if not _abs_path(raw.get("recording")) or not _abs_path(raw.get("source")):
+        raise ValueError("Invalid files")
+    numbers = [raw.get("trim_start"), raw.get("trim_end")]
+    if any(isinstance(n, bool) or not isinstance(n, (int, float)) or not math.isfinite(n) or not 0 <= n <= 4 * 3600 for n in numbers) \
+            or numbers[1] - numbers[0] < 0.5:
+        raise ValueError("Invalid trim")
+    return {"recording": raw["recording"], "source": raw["source"], "trim_start": float(numbers[0]), "trim_end": float(numbers[1])}
+
+
 def parse_config(raw):
-    from clip_engine.services.remix_service import (ANGLES, CAMERA_BACKDROPS, CAMERA_LAYOUTS, DEFAULT_VOICE, IMAGE_EXTENSIONS, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, REACTION_KINDS, TTS_MODEL,
+    from clip_engine.services.remix_service import (ANGLES, CAMERA_BACKDROPS, CAMERA_LAYOUTS, DEFAULT_VOICE, IMAGE_EXTENSIONS, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, PAUSE_CAPTIONS,
+                                                    PAUSE_LAYOUTS, REACTION_KINDS, TTS_MODEL,
                                                     TTS_MODELS, VOICES, RemixConfig, normalize_keyword)
     if not isinstance(raw, dict):
         raise ValueError("Invalid request")
     if raw.get("mode") == "recompose":
         return parse_recompose(raw)
+    if raw.get("mode") == "pauses":
+        return parse_pauses(raw)
     for key, limit in STRING_LIMITS.items():
         value = raw.get(key)
         if value is not None and (not isinstance(value, str) or len(value) > limit or "\0" in value):
@@ -118,7 +148,7 @@ def parse_config(raw):
     photo = raw.get("avatar_photo")
     if photo is not None and not os.path.isabs(photo):
         raise ValueError("Invalid avatar photo")
-    angle = raw.get("angle") or ("reaction" if raw.get("format") == "image" else None)
+    angle = raw.get("angle") or ("reaction" if raw.get("format") in ("image", "pause_react") else None)
     if angle not in ANGLES or raw.get("host") not in HOSTS:
         raise ValueError("Invalid style")
     count = raw.get("count", 3)
@@ -133,7 +163,10 @@ def parse_config(raw):
     reactions = raw.get("reactions") or {}
     # An article or post: written from the member's recording ("write"), then rendered; never planned.
     mode = raw.get("mode", "plan")
-    if (fmt == "image" and mode == "plan") or (mode == "write" and fmt != "image"):
+    if (fmt == "image" and mode == "plan") or (mode == "write" and fmt not in ("image", "pause_react")):
+        raise ValueError("Invalid format")
+    if fmt == "pause_react" and (raw.get("host") != "camera" or (mode == "plan" and len(sources) != 1)
+                                 or (raw.get("pause_layout") or "box") not in PAUSE_LAYOUTS or (raw.get("pause_captions") or "member") not in PAUSE_CAPTIONS):
         raise ValueError("Invalid format")
     image_source = None
     if fmt == "image":
@@ -146,7 +179,7 @@ def parse_config(raw):
         image_source = {"path": image_source["path"], "credit": " ".join(credit.split())}
     elif raw.get("image_source") is not None:
         raise ValueError("Invalid image source")
-    if fmt not in ("commentary", "silent", "image") or not isinstance(reactions, dict) or any(
+    if fmt not in ("commentary", "silent", "image", "pause_react") or not isinstance(reactions, dict) or any(
             k not in REACTION_KINDS or not isinstance(v, str) or len(v) > 4096 or "\0" in v or not os.path.isabs(v) for k, v in reactions.items()):
         raise ValueError("Invalid format")
     layout = raw.get("camera_layout") or ("greenscreen" if fmt == "image" else "filmed")
@@ -177,6 +210,7 @@ def parse_config(raw):
         headline_look=headline_look, cta_clip=raw.get("cta_clip") is True,
         camera_layout=layout, camera_backdrop=backdrop, camera_backdrop_color=color.upper(), camera_talk=talk is True,
         recordings=recordings, image_source=image_source, brand_mark=validate_brand_mark(raw.get("brand_mark")),
+        pause_layout=raw.get("pause_layout") or "box", pause_captions=raw.get("pause_captions") or "member",
     )
 
 
@@ -205,6 +239,10 @@ def main():
             if raw_request.get("mode") == "recompose":
                 from clip_engine.services.remix_service import recompose
                 return await recompose(config, progress)
+            if raw_request.get("mode") == "pauses":
+                from clip_engine.services.pause_react import detect_pauses
+                return {"detection": await asyncio.to_thread(detect_pauses, config["recording"], config["source"],
+                                                             config["trim_start"], config["trim_end"])}
             remixer = Remixer(config, progress)
             if raw_request.get("mode") == "render":
                 approved = raw_request.get("approved")
@@ -221,7 +259,8 @@ def main():
     except (Exception, asyncio.CancelledError) as error:
         from clip_engine.services.remix_service import RemixError
         from bridge_runner import describe_failure
-        if isinstance(error, RemixError):
+        from clip_engine.services.pause_react import PauseReactError
+        if isinstance(error, (RemixError, PauseReactError)):
             message = str(error)
         elif isinstance(error, asyncio.CancelledError):
             message = "Cancelled"

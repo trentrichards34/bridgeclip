@@ -31,7 +31,7 @@ import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../s
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, readReactions, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
-import { recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
+import { pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { importLegacyAvatarVideos } from './avatar-library'
 import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, parseRenderRequest, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
@@ -415,7 +415,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   paid('remix:start', 'openrouter', (request) => {
     const raw = (request ?? {}) as Record<string, unknown>
-    if (raw.format === 'image') return estimateRemixCost('camera', 1, 0, 'image').total
+    if (raw.format === 'image' || raw.format === 'pause_react') return estimateRemixCost('camera', 1, 0, raw.format).total
     const sources = Array.isArray(raw.sources) ? Math.max(1, raw.sources.length) : 1
     const count = typeof raw.count === 'number' && Number.isInteger(raw.count) && raw.count >= 1 && raw.count <= MAX_REMIXES ? raw.count : null
     if (!isRemixHost(raw.host) || count === null) return null
@@ -432,7 +432,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // Me, on camera: recordings for the takes under review.
   handle('remix:mediaAccess', () => requestMediaAccess())
   handle('remix:moment', (_event, draftId: unknown) => remixMoment(draftId))
-  paid('remix:write', 'openrouter', () => estimateRemixCost('camera', 1, 0, 'image').total, () => writeRemix())
+  paid('remix:write', 'openrouter', () => estimateRemixCost('camera', 1, 0, remixStatus()?.drafts[0]?.format === 'pause_react' ? 'pause_react' : 'image').total, () => writeRemix())
+  // Pause & react: the part of their video, and when it plays and pauses (finding a phone recording's pauses is local and free).
+  handle('remix:trim', (_event, draftId: unknown, startMs: unknown, endMs: unknown) => setRemixTrim(draftId, startMs, endMs))
+  handle('remix:pauseView', () => pauseView())
+  handle('remix:pauseSettings', (_event, settings: unknown) => setPauseSettings(settings))
   handle('remix:selectImage', async () => {
     const window = getMainWindow()
     if (!window) return null
@@ -443,7 +447,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('remix:recordings', () => remixRecordings())
   handle('remix:recordingBegin', (_event, draftId: unknown, part: unknown, mime: unknown) => beginRecording(draftId, part, mime))
   handle('remix:recordingAppend', (_event, token: unknown, chunk: unknown) => appendRecording(token, chunk))
-  handle('remix:recordingFinish', (_event, token: unknown, offsetSeconds: unknown) => finishRecording(token, offsetSeconds))
+  handle('remix:recordingFinish', (_event, token: unknown, offsetSeconds: unknown, pause: unknown) => finishRecording(token, offsetSeconds, pause))
   handle('remix:recordingAbort', (_event, token: unknown) => abortRecording(token))
   handle('remix:removeRecording', (_event, draftId: unknown, part: unknown) => removeRecording(draftId, part))
   handle('remix:uploadRecording', async (_event, draftId: unknown, part: unknown) => {

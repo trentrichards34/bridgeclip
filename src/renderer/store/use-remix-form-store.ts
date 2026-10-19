@@ -3,6 +3,7 @@ import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
 import { AVATAR_VOICE, DEFAULT_CAMERA, type CameraSettings, type RemixAngle, type RemixFormat, type RemixHost, type RemixOrder } from '../../shared/remix'
 import type { RemixFormStyle } from '../../shared/member-prefs'
+import { DEFAULT_PAUSE_REACT, type PauseCaptions, type PauseLayout } from '../../shared/pause-react'
 
 export interface RemixForm {
   links: string
@@ -33,6 +34,10 @@ export interface RemixForm {
   imageCamera: CameraSettings
   /** Draw the brand's handle or logo in a corner. */
   showHandle: boolean
+  /** Pause & react: where their video goes, whose words are captioned, and how the member appears (as filmed or cut out). */
+  pauseLayout: PauseLayout
+  pauseCaptions: PauseCaptions
+  pauseCamera: CameraSettings
 }
 
 interface RemixFormState extends RemixForm {
@@ -52,6 +57,9 @@ export const useRemixForm = create<RemixFormState>((set, get) => ({
   camera: DEFAULT_CAMERA,
   imageCamera: { ...DEFAULT_CAMERA, layout: 'greenscreen', talk: true },
   showHandle: false,
+  pauseLayout: DEFAULT_PAUSE_REACT.layout,
+  pauseCaptions: DEFAULT_PAUSE_REACT.captions,
+  pauseCamera: { ...DEFAULT_CAMERA, talk: true },
   update: (patch) => set(patch),
   applyStyle: (style) => set({ ...style, ...(style.format && style.format !== get().format ? { clipRightsAck: false } : {}) }),
   setSourceFile: (path, creator) => {

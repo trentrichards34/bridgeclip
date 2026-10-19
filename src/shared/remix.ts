@@ -7,6 +7,7 @@
 import type { BrandLook } from './brand-kit'
 import type { HeadlineLook } from './headline-look'
 import { PRESET_VOICE_IDS, PRESET_VOICES } from './voices'
+import type { PauseCaptions, PauseLayout } from './pause-react'
 
 export type RemixStyle = 'reaction' | 'myth_truth' | 'science' | 'lessons' | 'do_this_instead'
 /** A style, or 'mix': the AI picks a fitting style per moment so the account doesn't repeat one template. */
@@ -29,9 +30,11 @@ export const STYLE_LABELS: Record<RemixStyle, string> = {
  * commentary: the presenter gives a voiced take around a short borrowed moment.
  * silent: the moment plays with its own sound while the avatar reacts silently behind it (green screen).
  * image: the member talks on camera over a screenshot (an article or a post); the AI writes the headline from their words.
+ * pause_react: the member on camera reacts to a video that pauses whenever they talk (see ./pause-react).
  */
-export type RemixFormat = 'commentary' | 'silent' | 'image'
+export type RemixFormat = 'commentary' | 'silent' | 'image' | 'pause_react'
 export const REMIX_FORMATS: { id: RemixFormat; label: string; detail: string }[] = [
+  { id: 'pause_react', label: 'Pause & react', detail: 'You on camera. Their video plays in a box and pauses whenever you talk' },
   { id: 'commentary', label: 'Voiced take', detail: 'A few seconds of their moment, then your presenter’s take in your voice' },
   { id: 'silent', label: 'Silent react', detail: 'Their moment plays with its sound; your avatar reacts behind it without speaking' },
   { id: 'image', label: 'Article or post', detail: 'Talk on camera in front of a screenshot, like a green screen; the AI writes the headline from what you say' }
@@ -42,7 +45,9 @@ export const REMIX_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp']
 /** The longest take over a screenshot. */
 export const MAX_IMAGE_TAKE_SECONDS = 180
 /** Headline-only formats: nothing spoken to edit. */
-export function headlineOnly(format: RemixFormat): boolean { return format === 'silent' || format === 'image' }
+export function headlineOnly(format: RemixFormat): boolean { return format === 'silent' || format === 'image' || format === 'pause_react' }
+/** Formats recorded as one take, with the hook text and caption written from the member's words afterward. */
+export function oneTake(format: RemixFormat): boolean { return format === 'image' || format === 'pause_react' }
 
 /** A silent reaction timed into the moment (seconds from its start). */
 export interface RemixCue { at: number; reaction: string }
@@ -56,13 +61,18 @@ export const REMIX_ORDERS: { id: RemixOrder; label: string; detail: string }[] =
 
 /** lipsync: lip-synced avatar on camera; still: the avatar photo with a slow push-in; voice: voice-over only (cheapest); camera: the member on camera, recorded in the app or uploaded. */
 export type RemixHost = 'lipsync' | 'still' | 'voice' | 'camera'
-export const REMIX_HOSTS: { id: RemixHost; label: string; detail: string; unavailable?: string }[] = [
+/** The AI presenters are an early version, kept and marked Beta: `beta` is the honest line shown with the badge. */
+export const REMIX_HOSTS: { id: RemixHost; label: string; detail: string; unavailable?: string; beta?: string }[] = [
   { id: 'camera', label: 'Me, on camera', detail: 'You react or read your take on camera: record here or upload a phone video' },
   { id: 'lipsync', label: 'Avatar on camera', detail: 'Lip-synced talking head for the opening and closing lines',
     unavailable: 'Coming soon: OpenRouter can’t lip-sync an avatar to your own voice yet' },
-  { id: 'still', label: 'Avatar photo', detail: 'Your avatar’s photo with the voice, no lip-sync' },
-  { id: 'voice', label: 'Voice only', detail: 'Voice-over on B-roll and stills, cheapest' }
+  { id: 'still', label: 'Avatar photo', detail: 'Your avatar’s photo with the voice, no lip-sync',
+    beta: 'Early version: a still picture with voice-over, no lip-sync.' },
+  { id: 'voice', label: 'Voice only', detail: 'Voice-over on B-roll and stills, cheapest',
+    beta: 'Early version: an AI voice over stock clips and stills.' }
 ]
+/** Silent react with the avatar's reaction clips: also an early version. */
+export const AVATAR_REACTIONS_BETA = 'Early version: short AI clips of your avatar, made from a photo.'
 
 /**
  * Remix speaks with the same voices as Avatar Studio: 'avatar' is the chosen
@@ -121,6 +131,8 @@ export function estimateRemixCost(host: RemixHost, count: number, sourceHours = 
   if (format === 'silent') return { perRemixLow: 0, perRemixHigh: 0, total: REMIX_PRICES.sourcePerHour * Math.max(0.1, sourceHours) }
   // A screenshot: one transcription and one short writing call.
   if (format === 'image') return { perRemixLow: 0.01, perRemixHigh: 0.02, total: 0.02 }
+  // Pause & react: transcribing up to five minutes of you and of their video, and one short writing call.
+  if (format === 'pause_react') return { perRemixLow: 0.01, perRemixHigh: 0.07, total: 0.07 }
   const avatar = (seconds: number): number => host === 'lipsync' ? seconds * REMIX_PRICES.avatarPerSecond : 0
   // On camera: your own voice and face, so nothing is voiced (captions come from a cheap transcription).
   const voice = host === 'camera' ? 0.01 : REMIX_PRICES.voicePerRemix
@@ -173,6 +185,8 @@ export interface RemixRequest {
   camera?: CameraSettings
   /** Draw the brand's handle or logo in a corner (when the brand has one). */
   showHandle?: boolean
+  /** Pause & react: where their video goes and whose words are captioned. */
+  pause?: { layout: PauseLayout; captions: PauseCaptions }
 }
 
 /** filmed: your real background; cutout: you cut out over a blur or your color; greenscreen: the clip fills the screen behind you. */
@@ -211,7 +225,7 @@ export function isRecordingPart(value: unknown): value is RecordingPart {
   return typeof value === 'string' && /^(reaction|intro|close|beat[0-3])$/.test(value)
 }
 export function partsFor(format: RemixFormat, beats: number): RecordingPart[] {
-  if (format === 'silent' || format === 'image') return ['reaction']
+  if (format === 'silent' || format === 'image' || format === 'pause_react') return ['reaction']
   return ['intro', ...Array.from({ length: Math.min(4, beats) }, (_, i) => `beat${i}` as RecordingPart), 'close']
 }
 /** A take's recordings, as the app lists them. */
@@ -400,7 +414,7 @@ export function parseRemixDraft(value: unknown): RemixDraft | null {
     headline: text(raw.headline, 200), intro: text(raw.intro, 400), beats, close: text(raw.close, 400),
     notes: Array.isArray(raw.notes) ? raw.notes.filter((n): n is string => typeof n === 'string').map((n) => text(n, 300)).slice(0, 6) : [],
     grade: parseGrade(raw.grade), estimateUsd: number(raw.estimate_usd), postCaption: captionText(raw.post_caption),
-    format: raw.format === 'silent' || raw.format === 'image' ? raw.format : 'commentary',
+    format: raw.format === 'silent' || raw.format === 'image' || raw.format === 'pause_react' ? raw.format : 'commentary',
     cues: Array.isArray(raw.cues) ? raw.cues.flatMap((item): RemixCue[] => {
       const cue = (item ?? {}) as Record<string, unknown>
       return typeof cue.reaction === 'string' && typeof cue.at === 'number' && Number.isFinite(cue.at) ? [{ at: Math.max(0, cue.at), reaction: cue.reaction.slice(0, 20) }] : []

@@ -12,9 +12,13 @@ import { parseCtaChoice } from '../shared/ctas'
 import { applyRunCta, applyRunCtaInLock, originalPath, readCta, withRunLock } from './ctas'
 import {
   estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_CTA_OFFER_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput, remixEditProblem,
-  headlineOnly, MAX_IMAGE_TAKE_SECONDS, REMIX_IMAGE_EXTENSIONS, AVATAR_VOICE, DEFAULT_CAMERA, isRecordingPart, normalizeCtaKeyword, parseCameraSettings, partsFor, RECORDING_VIDEO_EXTENSIONS, remixSourceUrl, type RecordingPart, type RemixDraft, type RemixOutput, type RemixRecordings, type RemixRequest, type RemixStatus
+  headlineOnly, oneTake, MAX_IMAGE_TAKE_SECONDS, REMIX_IMAGE_EXTENSIONS, AVATAR_VOICE, DEFAULT_CAMERA, isRecordingPart, normalizeCtaKeyword, parseCameraSettings, partsFor, RECORDING_VIDEO_EXTENSIONS, remixSourceUrl, type RecordingPart, type RemixDraft, type RemixOutput, type RemixRecordings, type RemixRequest, type RemixStatus
 } from '../shared/remix'
 import { presetVoiceId, type Avatar } from '../shared/avatars'
+import {
+  DEFAULT_PAUSE_REACT, DEFAULT_PAUSE_SETTINGS, isPauseCaptions, isPauseLayout, parsePauseDetection, parsePauseEvents, parsePauseSettings, PAUSE_MAX_TRIM_SECONDS,
+  PAUSE_REACT_MAX_SECONDS, timelineForEngine, timelineFromEvents, uploadTimeline, type PauseDetection, type PauseEvent, type PauseSettings, type PauseTimeline, type PauseView
+} from '../shared/pause-react'
 
 const DEFAULT_VOICE_NAME = 'Brian'
 import { portraitPath, readAvatar, readReactions, voiceSamplePath } from './avatars'
@@ -35,7 +39,13 @@ export { BRAND_IDENTITY_EXTENSIONS, importBrandLogo, listBrandIdentities, readBr
 // (the user edits or drops drafts; nothing paid for yet) → render.
 // ---------------------------------------------------------------------------
 
-interface RecordingFile { path: string; offsetS: number | null; uploaded: boolean; seconds: number }
+interface RecordingFile {
+  path: string; offsetS: number | null; uploaded: boolean; seconds: number
+  /** Pause & react, recorded here: the recorder's log of pauses and plays. */
+  events?: PauseEvent[]
+  /** Pause & react, uploaded: what the engine heard (when it was played and paused). */
+  detection?: PauseDetection
+}
 
 interface RunContext {
   /** Me, on camera: each take's recordings (draft id → part → file in the run's .recordings folder). */
@@ -49,6 +59,8 @@ interface RunContext {
   writing?: boolean
   /** Recordings being saved or copied in right now: writing and making wait for them. */
   savingRecordings?: number
+  /** Pause & react: the original's length and the member's adjustments to a phone recording's pauses. */
+  pause?: { sourceSeconds: number; settings: PauseSettings }
 }
 
 interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null; context: RunContext; ctaAbort?: AbortController }
@@ -90,9 +102,11 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const sources = [...new Set(trimmed.map((item) => remixSourceUrl(item) ?? item))]
   if (sources.length === 0) throw new Error('Paste a video link or choose a file.')
   if (sources.length > MAX_SOURCES) throw new Error(`Add up to ${MAX_SOURCES} videos per run.`)
-  if (raw.format !== undefined && raw.format !== 'silent' && raw.format !== 'commentary' && raw.format !== 'image') throw new Error('Choose the kind of remix.')
-  const format = raw.format === 'silent' || raw.format === 'image' ? raw.format : 'commentary'
+  if (raw.format !== undefined && raw.format !== 'silent' && raw.format !== 'commentary' && raw.format !== 'image' && raw.format !== 'pause_react') throw new Error('Choose the kind of remix.')
+  const format = raw.format === 'silent' || raw.format === 'image' || raw.format === 'pause_react' ? raw.format : 'commentary'
   const image = format === 'image'
+  const pause = format === 'pause_react'
+  if (pause && sources.length > 1) throw new Error('React to one video at a time.')
   const urls = image ? sources.map(() => null) : sources.map(remixSourceUrl)
   const local = sources.filter((_, i) => !urls[i])
   if (image) {
@@ -108,11 +122,12 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   if (!isRemixAngle(raw.angle)) throw new Error('Choose a remix style.')
   const order = raw.order === undefined ? 'moment_first' : raw.order
   if (!isRemixOrder(order)) throw new Error('Choose the order of the video.')
-  if (!image && !isRemixHost(raw.host)) throw new Error('Choose how your presenter appears.')
+  if (!image && !pause && !isRemixHost(raw.host)) throw new Error('Choose how your presenter appears.')
   // Lip-sync to our own voice isn't possible on OpenRouter yet: the avatar's photo presents instead.
-  // A screenshot is always you, on camera.
-  const host = image ? 'camera' : raw.host === 'lipsync' ? 'still' : raw.host as Exclude<RemixRequest['host'], 'lipsync'>
+  // A screenshot, and a pause-and-react, are always you, on camera.
+  const host = image || pause ? 'camera' : raw.host === 'lipsync' ? 'still' : raw.host as Exclude<RemixRequest['host'], 'lipsync'>
   if (image && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to share this screenshot.')
+  if (pause && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use this video: Pause & react plays much of it.')
   if (format === 'silent' && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use these clips: Silent react plays much more of them.')
   const onCamera = host === 'camera'
   if (format === 'silent' && !onCamera && !isAvatarId(raw.avatarId)) throw new Error('Choose the avatar whose reactions to use.')
@@ -124,11 +139,14 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   if (!onCamera && host !== 'voice' && !isAvatarId(avatarId)) throw new Error('Choose an avatar, or switch to voice only.')
   if (voice === AVATAR_VOICE && !isAvatarId(avatarId)) throw new Error('Choose the avatar whose voice to use, or pick a preset voice.')
   const parsedCamera = onCamera ? parseCameraSettings(raw.camera ?? (image ? { ...DEFAULT_CAMERA, layout: 'greenscreen' } : DEFAULT_CAMERA)) : undefined
-  // Over a screenshot you're the only sound, so your voice is always kept.
-  const camera = parsedCamera && image ? { ...parsedCamera, talk: true } : parsedCamera
+  // Pause & react fills the frame with you: as filmed or with the background removed.
+  if (pause && parsedCamera?.layout === 'greenscreen') throw new Error('Choose “As filmed” or “Background removed” for Pause & react.')
+  // Over a screenshot, and when you pause their video to talk, your voice is always kept.
+  const camera = parsedCamera && (image || pause) ? { ...parsedCamera, talk: true } : parsedCamera
+  const pauseChoice = pause ? parsePauseChoice(raw.pause) : undefined
   const brandIdentityId = raw.brandIdentityId === null || raw.brandIdentityId === undefined ? null : raw.brandIdentityId
   if (brandIdentityId !== null && !isBrandId(brandIdentityId)) throw new Error('Choose a brand identity.')
-  if (!image && (typeof raw.count !== 'number' || !Number.isInteger(raw.count) || raw.count < 1 || raw.count > MAX_REMIXES)) throw new Error(`Make between 1 and ${MAX_REMIXES} remixes per video.`)
+  if (!image && !pause && (typeof raw.count !== 'number' || !Number.isInteger(raw.count) || raw.count < 1 || raw.count > MAX_REMIXES)) throw new Error(`Make between 1 and ${MAX_REMIXES} remixes per video.`)
   if (!isCaptionPresetId(raw.captionPreset)) throw new Error('Choose a caption style.')
   const creator = typeof raw.creator === 'string' ? raw.creator.replace(/\s+/g, ' ').trim() : ''
   if (creator.length > 80) throw new Error('Keep the creator name under 80 characters.')
@@ -148,14 +166,25 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
     request: {
       sources: sources.map((source, i) => urls[i] ?? source), creator: sources.length === 1 ? creator : '', angle: raw.angle, order,
       host, avatarId: avatarId as string | null, voice, brandIdentityId,
-      count: image ? 1 : raw.count as number, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: !onCamera,
+      count: image || pause ? 1 : raw.count as number, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: !onCamera,
       ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : '', format, clipRightsAck: format !== 'commentary',
       ...(headlineLook ? { headlineLook } : {}),
       ...(ctaId ? { ctaId } : {}),
       ...(camera ? { camera } : {}),
-      ...(raw.showHandle === true && brandIdentityId ? { showHandle: true } : {})
+      ...(raw.showHandle === true && brandIdentityId ? { showHandle: true } : {}),
+      ...(pauseChoice ? { pause: pauseChoice } : {})
     }
   }
+}
+
+/** Pause & react: where their video goes and whose words are captioned (the defaults when not given). */
+function parsePauseChoice(value: unknown): NonNullable<RemixRequest['pause']> {
+  if (value === undefined || value === null) return { ...DEFAULT_PAUSE_REACT }
+  const raw = value as Record<string, unknown>
+  if (typeof value !== 'object' || Array.isArray(value) || !isPauseLayout(raw.layout ?? 'box') || !isPauseCaptions(raw.captions ?? 'member')) {
+    throw new Error('Choose where their video goes and which words are captioned.')
+  }
+  return { layout: (raw.layout ?? 'box') as NonNullable<RemixRequest['pause']>['layout'], captions: (raw.captions ?? 'member') as NonNullable<RemixRequest['pause']>['captions'] }
 }
 
 async function preflight(folder: string): Promise<void> {
@@ -327,7 +356,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         ...(request.ctaId ? { cta_clip: true } : {}),
         ...(brandMark ? { brand_mark: brandMark } : {}),
         ...(request.camera ? { camera_layout: request.camera.layout, camera_backdrop: request.camera.backdrop,
-          camera_backdrop_color: request.camera.backdropColor, camera_talk: request.camera.talk } : {})
+          camera_backdrop_color: request.camera.backdropColor, camera_talk: request.camera.talk } : {}),
+        ...(request.pause ? { pause_layout: request.pause.layout, pause_captions: request.pause.captions } : {})
       }
     }
     const run: ActiveRemix = {
@@ -365,7 +395,7 @@ function imageDraft(credit: string): RemixDraft {
 export async function writeRemix(): Promise<RemixStatus> {
   if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
   const run = reviewing
-  if (!run || run.status.phase !== 'review' || run.context.request.format !== 'image') throw new Error('There is no screenshot take waiting for review.')
+  if (!run || run.status.phase !== 'review' || !oneTake(run.context.request.format)) throw new Error('There is no take waiting for its headline.')
   if (recordingInProgress(run)) throw new Error('Wait for your recording to finish saving.')
   if (!run.context.recordings?.get(0)?.get('reaction')) throw new Error('Record your take first.')
   const recordings = engineRecordings(run, [{ id: 0, beats: [] }])
@@ -518,7 +548,10 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
       run.context.planCostUsd += written
       if (drafts.length) {
         logger.info('remix.written', { cost: written })
-        finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, drafts: [{ ...drafts[0], format: 'image' }], costUsd: run.context.planCostUsd, error: null })
+        const kept = run.status.drafts[0]
+        // Pause & react: the part of their video stays as the member chose it.
+        const take = request.format === 'pause_react' && kept ? { ...drafts[0], format: 'pause_react' as const, startMs: kept.startMs, endMs: kept.endMs } : { ...drafts[0], format: 'image' as const }
+        finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, drafts: [take], costUsd: run.context.planCostUsd, error: null })
       } else {
         logger.warn('remix.write.failed', { stderr: stderr.slice(-1500) })
         const message = typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : 'The headline could not be written. Try again, or type your own headline.'
@@ -539,6 +572,10 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
       const drafts = (Array.isArray(result.drafts) ? result.drafts : []).map(parseRemixDraft).filter((item): item is RemixDraft => item !== null)
       run.context.draftIds = new Set(drafts.map((draft) => draft.id))
       run.context.planCostUsd = cost ?? 0
+      if (request.format === 'pause_react') {
+        const seconds = typeof result.source_seconds === 'number' && Number.isFinite(result.source_seconds) && result.source_seconds > 0 ? result.source_seconds : (drafts[0]?.endMs ?? 0) / 1000
+        run.context.pause = { sourceSeconds: seconds, settings: DEFAULT_PAUSE_SETTINGS }
+      }
       logger.info('remix.planned', { drafts: drafts.length, cost })
       finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, drafts, warnings: [...warnings, ...await varietyWarnings(drafts)], costUsd: cost })
     } else if (result?.ok === true) {
@@ -685,19 +722,35 @@ export async function appendRecording(token: unknown, chunk: unknown): Promise<v
   await writer.handle.write(chunk as Uint8Array)
 }
 
-/** Finish a recording; offsetSeconds is where the moment started in it (reactions). */
-export async function finishRecording(token: unknown, offsetSeconds: unknown): Promise<RemixRecordings> {
+/**
+ * Finish a recording; offsetSeconds is where the moment started in it (reactions). Pause & react also sends the
+ * recorder's log ({ events, durationMs }): when the original played and paused, on the recording's clock.
+ */
+export async function finishRecording(token: unknown, offsetSeconds: unknown, pause?: unknown): Promise<RemixRecordings> {
   const writer = typeof token === 'string' ? writers.get(token) : undefined
   if (!writer) throw new Error('That recording was stopped.')
+  const pauseTake = writer.run.status.drafts.find((draft) => draft.id === writer.draftId)?.format === 'pause_react'
+  let events: PauseEvent[] | undefined
+  let measured = 0
+  if (pauseTake) {
+    const raw = (pause ?? {}) as Record<string, unknown>
+    try {
+      events = parsePauseEvents(raw.events, (PAUSE_REACT_MAX_SECONDS + 10) * 1000)
+      measured = typeof raw.durationMs === 'number' && Number.isFinite(raw.durationMs) && raw.durationMs > 0 ? Math.min(raw.durationMs, (PAUSE_REACT_MAX_SECONDS + 10) * 1000) / 1000 : 0
+    } catch (error) { await abortRecording(token); throw error }
+  }
   return saving(writer.run, async () => {
     writers.delete(token as string)
     await writer.handle.close()
     if (reviewing !== writer.run) { await rm(writer.file, { force: true }); throw new Error('This review was closed, so the recording wasn’t kept.') }
     // Unknown (null) when the clip never started playing: the engine then lines the reaction up by sound.
     const offset = typeof offsetSeconds === 'number' && Number.isFinite(offsetSeconds) && offsetSeconds >= 0 && offsetSeconds < 600 ? offsetSeconds : null
-    const seconds = await mediaSecondsOf(writer.file)
+    // A webcam recording often has no length in its header: read it from its frames, or the recorder's own clock.
+    const seconds = (pauseTake ? await recordingSecondsOf(writer.file) : await mediaSecondsOf(writer.file)) || measured
     if (writer.bytes < 1000) { await rm(writer.file, { force: true }); throw new Error('Nothing was recorded. Check your camera and microphone, then try again.') }
-    await keep(writer.run, writer.draftId, writer.part, { path: writer.file, offsetS: writer.part === 'reaction' ? offset : null, uploaded: false, seconds })
+    if (pauseTake && seconds < 1) { await rm(writer.file, { force: true }); throw new Error('That recording is too short. Record your reaction again.') }
+    await keep(writer.run, writer.draftId, writer.part, { path: writer.file, offsetS: writer.part === 'reaction' ? offset : null, uploaded: false, seconds,
+      ...(events ? { events } : {}) })
     return remixRecordings()
   })
 }
@@ -730,7 +783,20 @@ export async function uploadRecording(draftId: unknown, part: unknown, source: s
       await rm(file, { force: true })
       throw new Error(`Keep your take to ${MAX_IMAGE_TAKE_SECONDS / 60} minutes. Trim it on your phone, then upload it again.`)
     }
-    await keep(run, checked.draft.id, checked.part, { path: file, offsetS: null, uploaded: true, seconds })
+    let detection: PauseDetection | undefined
+    if (checked.draft.format === 'pause_react') {
+      // A little lead-in is fine (pressing play, settling in); the video itself is at most five minutes.
+      if (seconds > PAUSE_REACT_MAX_SECONDS + 30) {
+        await rm(file, { force: true })
+        throw new Error(`Keep your reaction to ${PAUSE_REACT_MAX_SECONDS / 60} minutes. Trim it on your phone, then upload it again.`)
+      }
+      try {
+        detection = await detectPauses(run, file, checked.draft)
+      } catch (error) { await rm(file, { force: true }); throw error }
+      if (reviewing !== run) await closed()
+    }
+    await keep(run, checked.draft.id, checked.part, { path: file, offsetS: null, uploaded: true, seconds, ...(detection ? { detection } : {}) })
+    if (detection && run.context.pause) run.context.pause.settings = DEFAULT_PAUSE_SETTINGS
     return remixRecordings()
   })
 }
@@ -765,12 +831,122 @@ function engineRecordings(run: ActiveRemix, edits: { id: number; beats: unknown[
     const parts = partsFor(draft.format, edit.beats.length)
     const missing = parts.filter((part) => !takes?.get(part))
     if (missing.length) throw new Error(`Record “${draft.headline.slice(0, 60)}” first (${missing.length === parts.length ? 'nothing recorded yet' : `${missing.length} part${missing.length === 1 ? '' : 's'} left`}).`)
+    if (draft.format === 'pause_react') {
+      out[String(edit.id)] = { reaction: { path: takes!.get('reaction')!.path, offset_s: 0 }, timeline: timelineForEngine(pauseTimeline(run, draft.id)) }
+      continue
+    }
     out[String(edit.id)] = headlineOnly(draft.format)
       // Over a screenshot there's nothing to line up with: the take starts the video.
       ? { reaction: { path: takes!.get('reaction')!.path, offset_s: draft.format === 'image' ? 0 : takes!.get('reaction')!.offsetS } }
       : { intro: takes!.get('intro')!.path, beats: parts.filter((part) => part.startsWith('beat')).map((part) => takes!.get(part)!.path), close: takes!.get('close')!.path }
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// Pause & react: the part of their video, and when it plays and pauses
+// ---------------------------------------------------------------------------
+
+/** A recording's length, from its header or (webcam recordings often have none) its last video frame. */
+async function recordingSecondsOf(path: string): Promise<number> {
+  const header = await mediaSecondsOf(path)
+  if (header) return header
+  try {
+    const { stdout } = await execFileAsync(resolveBinary('ffprobe'), ['-v', 'error', '-protocol_whitelist', 'file,pipe,fd', '-format_whitelist', 'mov,matroska,webm',
+      '-select_streams', 'v:0', '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', path], { timeout: 60_000, maxBuffer: 16 * 1024 * 1024 })
+    const times = String(stdout).split('\n').map((line) => Number(line.trim().split(',')[0])).filter((value) => Number.isFinite(value))
+    return times.length ? Math.max(...times) + 1 / 30 : 0
+  } catch { return 0 }
+}
+
+/** The run's video to react to (saved when it was fetched) and its length. */
+async function pauseSource(run: ActiveRemix): Promise<{ video: string; seconds: number }> {
+  const plan = JSON.parse(await readFile(join(run.status.folder, '.work', 'plan.json'), 'utf8')) as { sources?: { video?: unknown }[] }
+  const video = plan.sources?.[0]?.video
+  if (typeof video !== 'string' || !existsSync(video)) throw new Error('The video you react to is no longer available. Start again.')
+  return { video, seconds: run.context.pause?.sourceSeconds ?? 0 }
+}
+
+/** Ask the engine when the original played and paused in a phone recording (local, nothing paid). */
+async function detectPauses(run: ActiveRemix, recording: string, draft: RemixDraft): Promise<PauseDetection> {
+  const { video } = await pauseSource(run)
+  const result = await runEngineOnce({ mode: 'pauses', recording, source: video, trim_start: draft.startMs / 1000, trim_end: draft.endMs / 1000 }, 10 * 60_000, true)
+  const detection = parsePauseDetection(result.detection)
+  if (!detection) throw new Error('Your recording could not be read. Try an MP4 or MOV from your phone.')
+  logger.info('remix.pauses.detected', { alignedBy: detection.alignedBy, segments: detection.raw.length })
+  return detection
+}
+
+function pauseRecording(run: ActiveRemix, draftId: number): { draft: RemixDraft; file: RecordingFile } {
+  const draft = run.status.drafts.find((item) => item.id === draftId && item.format === 'pause_react')
+  if (!draft) throw new Error('There is no pause-and-react take waiting for review.')
+  const file = run.context.recordings?.get(draftId)?.get('reaction')
+  if (!file) throw new Error('Record or upload your reaction first.')
+  return { draft, file }
+}
+
+/** The take's timeline now: from the recorder's log, or from what was heard plus the member's adjustments. */
+function pauseTimeline(run: ActiveRemix, draftId: number): PauseTimeline {
+  const { draft, file } = pauseRecording(run, draftId)
+  const trimStart = draft.startMs / 1000, trimEnd = draft.endMs / 1000
+  if (file.uploaded) {
+    if (!file.detection) throw new Error('Upload your reaction again so its pauses can be found.')
+    return uploadTimeline(file.detection, run.context.pause?.settings ?? DEFAULT_PAUSE_SETTINGS, trimStart, trimEnd)
+  }
+  if (!file.seconds) throw new Error('Your recording’s length couldn’t be read. Record it again.')
+  return timelineFromEvents(file.events ?? [], file.seconds, trimStart, trimEnd)
+}
+
+function pauseRun(): ActiveRemix {
+  const run = reviewRun()
+  if (run.context.request.format !== 'pause_react') throw new Error('This remix isn’t a pause-and-react.')
+  return run
+}
+
+/** The pause-and-react take's timeline and adjustments for the review; null before anything is recorded. */
+export function pauseView(): PauseView | null {
+  const run = reviewing
+  if (!run || run.status.phase !== 'review' || run.context.request.format !== 'pause_react') return null
+  const file = run.context.recordings?.get(0)?.get('reaction')
+  if (!file) return null
+  const detection = file.detection
+  return {
+    source: file.uploaded ? 'upload' : 'app', timeline: pauseTimeline(run, 0), settings: run.context.pause?.settings ?? DEFAULT_PAUSE_SETTINGS,
+    detection: detection ? { offset: detection.offset, confidence: detection.confidence, alignedBy: detection.alignedBy } : null,
+    recordingPath: authorizeMedia(file.path), seconds: file.seconds
+  }
+}
+
+/** A phone recording's adjustments: nudge the start, ignore short pauses or plays, flip stretches. */
+export function setPauseSettings(value: unknown): PauseView {
+  const run = pauseRun()
+  const settings = parsePauseSettings(value)
+  const { file } = pauseRecording(run, 0)
+  if (!file.uploaded) throw new Error('Pauses recorded here follow what you did while recording.')
+  run.context.pause = { sourceSeconds: run.context.pause?.sourceSeconds ?? 0, settings }
+  return pauseView() as PauseView
+}
+
+/** The part of their video to react to (from startMs to endMs). A phone recording's pauses are found again for it. */
+export async function setRemixTrim(draftId: unknown, startMs: unknown, endMs: unknown): Promise<{ draft: RemixDraft; view: PauseView | null }> {
+  const run = pauseRun()
+  const draft = run.status.drafts.find((item) => item.id === draftId && item.format === 'pause_react')
+  if (!draft) throw new Error('That take is no longer in this review.')
+  if (recordingInProgress(run)) throw new Error('Wait for your recording to finish saving.')
+  const limit = Math.round((run.context.pause?.sourceSeconds ?? draft.endMs / 1000) * 1000)
+  if (typeof startMs !== 'number' || typeof endMs !== 'number' || !Number.isInteger(startMs) || !Number.isInteger(endMs) ||
+      startMs < 0 || endMs > limit + 50 || endMs - startMs < 1000) throw new Error('Choose at least one second of the video.')
+  if (endMs - startMs > PAUSE_MAX_TRIM_SECONDS * 1000) throw new Error(`Choose up to ${PAUSE_MAX_TRIM_SECONDS / 60} minutes of the video.`)
+  const next = { ...draft, startMs, endMs: Math.min(endMs, limit) }
+  const file = run.context.recordings?.get(draft.id)?.get('reaction')
+  if (file?.uploaded) {
+    // Where the original starts in the recording, and its pauses, depend on the part chosen.
+    file.detection = await saving(run, () => detectPauses(run, file.path, next))
+    if (reviewing !== run) throw new Error('This review was closed.')
+  }
+  run.status = { ...run.status, drafts: run.status.drafts.map((item) => item.id === draft.id ? next : item) }
+  notify(run.status)
+  return { draft: next, view: pauseView() }
 }
 
 // ---------------------------------------------------------------------------
@@ -831,8 +1007,11 @@ async function remixClipRecord(folder: string, clipIndex: number): Promise<Recor
   return clip
 }
 
-/** Run the engine once outside a remix run (re-editing); resolves with its result line. */
-async function runEngineOnce(config: Record<string, unknown>, limitMs: number): Promise<Record<string, unknown>> {
+/** Engine runs outside a remix run that aren't re-makes (finding a phone recording's pauses): stopped on quit. */
+const taskChildren = new Set<ChildProcess>()
+
+/** Run the engine once outside a remix run (re-editing, finding pauses); resolves with its result line. */
+async function runEngineOnce(config: Record<string, unknown>, limitMs: number, task = false): Promise<Record<string, unknown>> {
   const settings = loadSettings(), engine = getEnginePath()
   const env: Record<string, string | undefined> = {
     ...runtimeEnvironment(), ...getSettingsForBridge(settings), LAYOUT_VISION_ENABLED: 'false',
@@ -843,7 +1022,8 @@ async function runEngineOnce(config: Record<string, unknown>, limitMs: number): 
   const child = spawn(resolvePythonPath(engine, settings.pythonPath), [join(dirname(getBridgeRunnerPath()), 'remix_runner.py')], {
     cwd: engine, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true
   })
-  recomposeChild = child
+  if (task) taskChildren.add(child)
+  else recomposeChild = child
   return new Promise((resolve, reject) => {
     let buffer = '', stderr = '', result: Record<string, unknown> | null = null
     const timer = setTimeout(() => kill(child, true), limitMs)
@@ -856,13 +1036,14 @@ async function runEngineOnce(config: Record<string, unknown>, limitMs: number): 
       }
     })
     child.stderr.on('data', (chunk) => { stderr = (stderr + String(chunk)).slice(-4000) })
-    child.on('error', () => { clearTimeout(timer); if (recomposeChild === child) recomposeChild = undefined; reject(new Error('The clipping engine could not start. Run Settings → System check.')) })
+    child.on('error', () => { clearTimeout(timer); taskChildren.delete(child); if (recomposeChild === child) recomposeChild = undefined; reject(new Error('The clipping engine could not start. Run Settings → System check.')) })
     child.on('close', () => {
       clearTimeout(timer)
+      taskChildren.delete(child)
       if (recomposeChild === child) recomposeChild = undefined
       if (result?.ok === true) { resolve(result); return }
       logger.warn('remix.recompose.failed', { stderr: stderr.slice(-1500) })
-      reject(new Error(typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : 'The video could not be made again. Try again.'))
+      reject(new Error(typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : task ? 'Your recording could not be read. Try an MP4 or MOV from your phone.' : 'The video could not be made again. Try again.'))
     })
     child.stdin.on('error', () => undefined)
     child.stdin.end(JSON.stringify(config))
@@ -953,6 +1134,7 @@ export function stopRemixForQuit(): void {
   if (active) { active.cancelled = true; kill(active.child, true, true) }
   void dropWriters(null)
   if (recomposeChild) kill(recomposeChild, true, true)
+  for (const child of taskChildren) kill(child, true, true)
 }
 
 /**

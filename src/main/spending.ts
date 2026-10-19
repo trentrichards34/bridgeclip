@@ -354,7 +354,7 @@ export function trackRemixStatus(status: RemixStatus): void {
   if (total <= before + 1e-9) return
   remixRecorded.set(status.id, total)
   if (remixRecorded.size > 50) remixRecorded.delete(remixRecorded.keys().next().value as string)
-  const label = status.phase === 'done' ? 'Remix videos' : status.drafts.some((draft) => draft.format === 'image') ? 'Remix headline' : 'Remix planning'
+  const label = status.phase === 'done' ? 'Remix videos' : status.drafts.some((draft) => draft.format === 'image' || draft.format === 'pause_react') ? 'Remix headline' : 'Remix planning'
   void recordSpend({ kind: 'remix', provider: 'openrouter', usd: total - before, label, runId: basename(status.folder) || undefined })
 }
 

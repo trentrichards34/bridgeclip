@@ -36,7 +36,8 @@ import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/
 import type { AppPrefsUpdate, MemberPrefs, StyleKind } from '../shared/member-prefs'
 import type { CreatorProfile } from '../shared/onboarding'
 import type { BrandLook } from '../shared/brand-kit'
-import type { BrandIdentity, RecordingPart, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
+import type { BrandIdentity, RecordingPart, RemixDraft, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
+import type { PauseEvent, PauseSettings, PauseView } from '../shared/pause-react'
 import type {
   AppDataScope,
   AssistantConversation,
@@ -412,8 +413,14 @@ export interface BridgeClipAPI {
     recordings: () => Promise<RemixRecordings>
     recordingBegin: (draftId: number, part: RecordingPart, mime: string) => Promise<string>
     recordingAppend: (token: string, chunk: Uint8Array) => Promise<void>
-    /** offsetSeconds: where the moment started in the recording (reactions). */
-    recordingFinish: (token: string, offsetSeconds: number | null) => Promise<RemixRecordings>
+    /** offsetSeconds: where the moment started in the recording (reactions). Pause & react: the recorder's log of pauses and plays. */
+    recordingFinish: (token: string, offsetSeconds: number | null, pause?: { events: PauseEvent[]; durationMs: number }) => Promise<RemixRecordings>
+    /** Pause & react: the part of their video to react to (a phone recording's pauses are found again). */
+    trim: (draftId: number, startMs: number, endMs: number) => Promise<{ draft: RemixDraft; view: PauseView | null }>
+    /** Pause & react: the take's timeline and adjustments; null before anything is recorded. */
+    pauseView: () => Promise<PauseView | null>
+    /** Pause & react, phone recordings: nudge the start, ignore short pauses or plays, flip stretches. */
+    pauseSettings: (settings: PauseSettings) => Promise<PauseView>
     recordingAbort: (token: string) => Promise<void>
     removeRecording: (draftId: number, part: RecordingPart) => Promise<RemixRecordings>
     /** Opens a file dialog; null when cancelled. */
@@ -744,7 +751,10 @@ const api: BridgeClipAPI = {
     recordings: () => ipcRenderer.invoke('remix:recordings'),
     recordingBegin: (draftId, part, mime) => ipcRenderer.invoke('remix:recordingBegin', draftId, part, mime),
     recordingAppend: (token, chunk) => ipcRenderer.invoke('remix:recordingAppend', token, chunk),
-    recordingFinish: (token, offsetSeconds) => ipcRenderer.invoke('remix:recordingFinish', token, offsetSeconds),
+    recordingFinish: (token, offsetSeconds, pause) => ipcRenderer.invoke('remix:recordingFinish', token, offsetSeconds, pause),
+    trim: (draftId, startMs, endMs) => ipcRenderer.invoke('remix:trim', draftId, startMs, endMs),
+    pauseView: () => ipcRenderer.invoke('remix:pauseView'),
+    pauseSettings: (settings) => ipcRenderer.invoke('remix:pauseSettings', settings),
     recordingAbort: (token) => ipcRenderer.invoke('remix:recordingAbort', token),
     removeRecording: (draftId, part) => ipcRenderer.invoke('remix:removeRecording', draftId, part),
     uploadRecording: (draftId, part) => ipcRenderer.invoke('remix:uploadRecording', draftId, part)

@@ -306,6 +306,34 @@ test('Jev review and web research show as opt-in betas, with thresholds editable
   assert.match(html, /type="range"/)
 })
 
+test('Pause & react form: its own defaults, kept when a Library clip is remixed, and a brand color reaches its cut-out', () => {
+  const bundle = buildSync({
+    stdin: {
+      contents: `export { useRemixForm } from './src/renderer/store/use-remix-form-store';
+        export { brandFormPatch } from './src/shared/brand-kit';
+        export { REMIX_FORMATS, REMIX_HOSTS, headlineOnly, oneTake, partsFor } from './src/shared/remix';`,
+      resolveDir: path.resolve(__dirname, '..'),
+      loader: 'ts'
+    },
+    bundle: true, platform: 'node', format: 'cjs', packages: 'external', write: false
+  }).outputFiles[0].text
+  const module = { exports: {} }
+  vm.runInNewContext(bundle, { module, exports: module.exports, require })
+  const { useRemixForm, brandFormPatch, REMIX_FORMATS, REMIX_HOSTS, headlineOnly, oneTake, partsFor } = module.exports
+  const form = useRemixForm.getState()
+  assert.deepEqual([form.pauseLayout, form.pauseCaptions, form.pauseCamera.layout, form.pauseCamera.talk], ['box', 'member', 'filmed', true])
+  assert.equal(REMIX_FORMATS[0].id, 'pause_react')
+  assert.equal(REMIX_FORMATS[0].label, 'Pause & react')
+  assert.deepEqual([headlineOnly('pause_react'), oneTake('pause_react'), oneTake('silent'), [...partsFor('pause_react', 3)].join()], [true, true, false, 'reaction'])
+  // The AI presenters are marked beta; you on camera is not.
+  assert.equal(REMIX_HOSTS.filter((host) => host.beta).map((host) => host.id).join(), 'still,voice')
+  form.update({ format: 'pause_react', clipRightsAck: true })
+  useRemixForm.getState().setSourceFile('/Users/me/CreatorClips/run/clip_00.mp4', '@coach')
+  const after = useRemixForm.getState()
+  assert.deepEqual([after.format, after.filePath, after.creator, after.clipRightsAck], ['pause_react', '/Users/me/CreatorClips/run/clip_00.mp4', '@coach', true])
+  assert.equal(brandFormPatch({ color: '#FF8800' }, after).pauseCamera.backdropColor, '#FF8800')
+})
+
 test('a deleted brand is cleared from Create and Remix once the brand list is read; a failed read clears nothing', async () => {
   const brands = buildSync({
     stdin: {
