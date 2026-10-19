@@ -5,6 +5,7 @@ import { NAV_ITEMS, SIDEBAR_SHORTCUT_KEY, type Page } from './components/Sidebar
 import { ClipPage } from './pages/ClipPage'
 import { AvatarStudioPage } from './pages/AvatarStudioPage'
 import { RemixPage } from './pages/RemixPage'
+import { EditRecordingPage } from './pages/EditRecordingPage'
 import { LibraryPage } from './pages/LibraryPage'
 import { JobsPage } from './pages/JobsPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -30,6 +31,7 @@ import { ChangelogDialog } from './components/Changelog'
 import { SpendingAlerts } from './components/spending/SpendingAlerts'
 import { Button } from './components/ui/Button'
 import { getApi } from './lib/ipc'
+import { isMac } from './lib/utils'
 
 export default function App(): React.JSX.Element {
   const [loadError, setLoadError] = useState(false)
@@ -156,7 +158,7 @@ export default function App(): React.JSX.Element {
     useChangelogStore.getState().setOpen(true)
   }), [])
 
-  // ⌘1 Create, ⌘2 Library, ⌘3 Jobs, ⌘4 Accounts, ⌘5 Posts, ⌘6 Automations, ⌘7 Chat, ⌘, Settings,
+  // ⌘1 Create, ⌘E Edit my recording, ⌘2 Library, ⌘3 Jobs, ⌘4 Accounts, ⌘5 Posts, ⌘6 Automations, ⌘7 Chat, ⌘, Settings,
   // ⌘\ collapse or expand the sidebar (Ctrl on Windows/Linux).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
@@ -166,7 +168,9 @@ export default function App(): React.JSX.Element {
         useSidebarStore.getState().toggle()
         return
       }
-      const item = NAV_ITEMS.find((n) => n.shortcut === e.key)
+      // A letter shortcut (⌘E) needs the platform's own modifier: Ctrl+E on a Mac moves to the end of a line in text fields.
+      const letter = (n: (typeof NAV_ITEMS)[number]): boolean => /^[A-Z]$/.test(n.shortcut) && n.shortcut === e.key.toUpperCase() && (isMac ? e.metaKey : e.ctrlKey)
+      const item = NAV_ITEMS.find((n) => n.shortcut === e.key || letter(n))
       if (!item) return
       e.preventDefault()
       navigateRoot(item.id)
@@ -187,6 +191,7 @@ export default function App(): React.JSX.Element {
           <Fragment key={pageVisit}>
             {page === 'clip' && <ClipPage onNavigate={setPage} />}
             {page === 'avatar' && <AvatarStudioPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
+            {page === 'edit' && <EditRecordingPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'remix' && <RemixPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'library' && <LibraryPage onNavigate={setPage} initialRun={libraryRun?.outputDir} initialClipIndex={libraryRun?.clipIndex} />}
             {page === 'jobs' && <JobsPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}

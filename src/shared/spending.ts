@@ -2,12 +2,13 @@
 // (or its own estimate when a provider reports none), plus the checks made
 // before a paid run. Pure functions, shared by the main process and the UI.
 
-export const SPEND_KINDS = ['create', 'remix', 'avatar', 'chat'] as const
+export const SPEND_KINDS = ['create', 'edit', 'remix', 'avatar', 'chat'] as const
 export type SpendKind = (typeof SPEND_KINDS)[number]
 export type SpendProvider = 'openrouter' | 'fal'
 
 export const SPEND_KIND_LABELS: Record<SpendKind, string> = {
   create: 'Create',
+  edit: 'Edit my recording',
   remix: 'Remix',
   avatar: 'Avatar Studio',
   chat: 'Chat'
