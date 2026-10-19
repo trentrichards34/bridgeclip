@@ -151,10 +151,12 @@ export const GUIDES: Record<GoalId, Guide> = {
       'Easiest: open Remix, choose Pause & react and paste one video link (or choose a file, or use ⋯ → Remix this clip in your Library).',
       'Trim it to the part you react to, then record: their video plays above your camera and Space pauses it while you talk. Or upload a phone recording where you paused it yourself.',
       'Check the pauses, let the AI write the hook text and caption from what you said, then make the video.',
+      'From a long video like a podcast: choose Moment + my take, paste the link and add up to 3 time ranges (type them, like 37:00 to 42:00, or paste a screenshot of the player). The AI picks the best moment in each, you record your take on each one, and each becomes its own video: the moment, then you.',
       'For other styles, choose Voiced take or Silent react with Me, on camera as the presenter, and record each take in the app or upload it.'
     ],
     tips: [
       'Wear headphones when you record in the app, so their video’s sound stays out of your microphone.',
+      'Listening on the go? Screenshot the player when something stands out. Later, drop those screenshots into Moment + my take to set your ranges.',
       'Face a window or a lamp and keep your head and shoulders in the frame; the cut-out background works best with good light.',
       'Only remix videos you own or have permission to use.'
     ]

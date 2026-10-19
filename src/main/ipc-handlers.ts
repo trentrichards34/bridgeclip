@@ -14,7 +14,9 @@ import { measureOutputStorage } from './output-storage'
 import { inspectEdits } from './edit-inspector'
 import { getEnginePath, getBridgeRunnerPath, resolvePythonPath, validatePython } from './pipeline-runner'
 import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds, onJobUpdate } from './job-manager'
-import { allowOnce, assertSpendAllowed, friendlyIpcError, initSpending, metered, meteredAvatarRender, onOutOfCredits, onSpendingChange, openRouterBalance, spendOverview, trackAvatarStatus, trackJobSnapshot, trackRemixStatus } from './spending'
+import { allowOnce, assertSpendAllowed, friendlyIpcError, initSpending, metered, meteredAvatarRender, onOutOfCredits, onSpendingChange, openRouterBalance, recordSpend, spendOverview, trackAvatarStatus, trackJobSnapshot, trackRemixStatus } from './spending'
+import { readTimecodeScreenshot } from './moment-take'
+import { parseMomentRanges } from '../shared/moment-take'
 import { friendlyCreditError, type SpendProvider } from '../shared/spending'
 import { AI_PORTRAIT_CANDIDATES, estimateRecreateCost, estimateRenderCost, PRICES, REACTIONS } from '../shared/avatars'
 import { estimateRemixCost, isRemixHost, MAX_REMIXES } from '../shared/remix'
@@ -31,7 +33,7 @@ import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../s
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, readReactions, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
-import { pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
+import { anotherMoment, momentEstimate, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { importLegacyAvatarVideos } from './avatar-library'
 import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, parseRenderRequest, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
@@ -416,6 +418,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   paid('remix:start', 'openrouter', (request) => {
     const raw = (request ?? {}) as Record<string, unknown>
     if (raw.format === 'image' || raw.format === 'pause_react') return estimateRemixCost('camera', 1, 0, raw.format).total
+    if (raw.format === 'moment_take') return momentEstimate(parseMomentRanges((raw.moment as { ranges?: unknown } | undefined)?.ranges)).total
     const sources = Array.isArray(raw.sources) ? Math.max(1, raw.sources.length) : 1
     const count = typeof raw.count === 'number' && Number.isInteger(raw.count) && raw.count >= 1 && raw.count <= MAX_REMIXES ? raw.count : null
     if (!isRemixHost(raw.host) || count === null) return null
@@ -432,7 +435,23 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // Me, on camera: recordings for the takes under review.
   handle('remix:mediaAccess', () => requestMediaAccess())
   handle('remix:moment', (_event, draftId: unknown) => remixMoment(draftId))
-  paid('remix:write', 'openrouter', () => estimateRemixCost('camera', 1, 0, remixStatus()?.drafts[0]?.format === 'pause_react' ? 'pause_react' : 'image').total, () => writeRemix())
+  paid('remix:write', 'openrouter', (ids) => {
+    const format = remixStatus()?.drafts[0]?.format
+    // Moment + my take: one short writing call per take (like a screenshot take).
+    if (format === 'moment_take') return estimateRemixCost('camera', 1, 0, 'image').total * Math.max(1, Array.isArray(ids) ? ids.length : remixStatus()?.drafts.length ?? 1)
+    return estimateRemixCost('camera', 1, 0, format === 'pause_react' ? 'pause_react' : 'image').total
+  }, (ids) => writeRemix(ids))
+  // Moment + my take: nudge a moment (free), find another one in its range (one planning call), talking points (one small call),
+  // and read the time from a screenshot of a player (one small call; before any run, so it's recorded here).
+  handle('remix:momentBounds', (_event, draftId: unknown, startMs: unknown, endMs: unknown) => setMomentBounds(draftId, startMs, endMs))
+  paid('remix:anotherMoment', 'openrouter', () => estimateRemixCost('camera', 1, 0.1, 'moment_take').total - estimateRemixCost('camera', 1, 0, 'image').total,
+    (draftId) => anotherMoment(draftId))
+  paid('remix:talkingPoints', 'openrouter', () => null, (draftId) => momentTalkingPoints(draftId))
+  paid('remix:readTimecode', 'openrouter', () => null, async (bytes) => {
+    const result = await readTimecodeScreenshot(bytes, loadSettings().openrouterApiKey)
+    if (result.costUsd > 0) void recordSpend({ kind: 'remix', provider: 'openrouter', usd: result.costUsd, label: 'Remix: reading a screenshot’s time' })
+    return result.read
+  })
   // Pause & react: the part of their video, and when it plays and pauses (finding a phone recording's pauses is local and free).
   handle('remix:trim', (_event, draftId: unknown, startMs: unknown, endMs: unknown) => setRemixTrim(draftId, startMs, endMs))
   handle('remix:pauseView', () => pauseView())

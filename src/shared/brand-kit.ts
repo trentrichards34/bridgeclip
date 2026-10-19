@@ -139,6 +139,7 @@ export interface BrandFormFields {
   camera?: CameraSettings
   imageCamera?: CameraSettings
   pauseCamera?: CameraSettings
+  momentCamera?: CameraSettings
 }
 
 /**
@@ -162,6 +163,7 @@ export function brandFormPatch(look: BrandLook | undefined, form: BrandFormField
   if (look.color && form.camera) patch.camera = { ...form.camera, backdropColor: look.color }
   if (look.color && form.imageCamera) patch.imageCamera = { ...form.imageCamera, backdropColor: look.color }
   if (look.color && form.pauseCamera) patch.pauseCamera = { ...form.pauseCamera, backdropColor: look.color }
+  if (look.color && form.momentCamera) patch.momentCamera = { ...form.momentCamera, backdropColor: look.color }
   return patch
 }
 

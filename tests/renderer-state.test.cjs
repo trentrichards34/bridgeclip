@@ -334,6 +334,70 @@ test('Pause & react form: its own defaults, kept when a Library clip is remixed,
   assert.equal(brandFormPatch({ color: '#FF8800' }, after).pauseCamera.backdropColor, '#FF8800')
 })
 
+test('Moment + my take form: its defaults, typed ranges checked against the file, a brand color for its cut-out, and the review shows each moment', () => {
+  const React = require('react')
+  const { renderToStaticMarkup } = require('react-dom/server')
+  const code = buildSync({
+    stdin: {
+      contents: `export { useRemixForm } from './src/renderer/store/use-remix-form-store';
+        export { brandFormPatch } from './src/shared/brand-kit';
+        export { REMIX_FORMATS, headlineOnly, oneTake, partsFor } from './src/shared/remix';
+        export { readRanges } from './src/shared/moment-take';
+        export { MomentRanges } from './src/renderer/components/MomentRanges';
+        export { MomentTakeReview } from './src/renderer/components/MomentTakeReview';
+        export { momentCost } from './src/renderer/pages/RemixPage';`,
+      resolveDir: path.resolve(__dirname, '..'), loader: 'ts'
+    },
+    bundle: true, platform: 'node', format: 'cjs', packages: 'external', loader: { '.css': 'empty' }, jsx: 'automatic', write: false
+  }).outputFiles[0].text
+  const mod = { exports: {} }
+  const api = { remix: { recordings: async () => ({}), moment: async () => ({ path: '/v.mp4', startSeconds: 0, endSeconds: 1, kind: 'video' }) } }
+  vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: api }, navigator: {} })
+  const { useRemixForm, brandFormPatch, REMIX_FORMATS, headlineOnly, oneTake, partsFor, readRanges, MomentRanges, MomentTakeReview, momentCost } = mod.exports
+  const form = useRemixForm.getState()
+  assert.deepEqual(JSON.parse(JSON.stringify([form.momentRanges, form.momentPip, form.momentCamera.layout, form.momentCamera.talk])), [[{ start: '', end: '' }], false, 'filmed', true])
+  const at = REMIX_FORMATS.findIndex((item) => item.id === 'moment_take')
+  assert.deepEqual([REMIX_FORMATS[at - 1].id, REMIX_FORMATS[at].label], ['pause_react', 'Moment + my take'])
+  assert.deepEqual([headlineOnly('moment_take'), oneTake('moment_take'), [...partsFor('moment_take', 3)].join()], [true, true, 'reaction'])
+  // Typed ranges; a Library clip keeps the format; a brand color reaches the cut-out.
+  form.update({ format: 'moment_take', clipRightsAck: true, momentRanges: [{ start: '37:00', end: '42:00' }, { start: '1:05:00', end: '1:07:30' }] })
+  useRemixForm.getState().setSourceFile('/Users/me/CreatorClips/run/clip_00.mp4', '@host')
+  const after = useRemixForm.getState()
+  assert.deepEqual([after.format, after.clipRightsAck, after.momentRanges.length], ['moment_take', true, 2])
+  assert.equal(readRanges(after.momentRanges, null).problem, null)
+  assert.equal(readRanges(after.momentRanges, 3000).problem, 'Range 2: It starts after the video ends (50:00).')
+  assert.equal(brandFormPatch({ color: '#FF8800' }, after).momentCamera.backdropColor, '#FF8800')
+  assert.equal(momentCost(0.041, 0.0849), 'About $0.04–$0.08 in all.')
+  assert.equal(momentCost(0.05, 0.051), 'About $0.05 in all.')
+
+  // The ranges: what a screenshot read is shown for the member to check, with its charge; a bad range says why.
+  const ranges = renderToStaticMarkup(React.createElement(MomentRanges, { lengthSeconds: 2400, disabled: false, onChange: () => {},
+    value: [{ start: '34:42', end: '39:42', read: { seconds: 2232, lengthSeconds: null, app: 'YouTube', text: '37:12', costUsd: 0.0004 } }, { start: '41:00', end: '43:00' }] }))
+  assert.match(ranges, /Read 37:12 from your screenshot \(YouTube\), so this range is 34:42–39:42\. Check it matches, and fix it if not\. Reading it cost \$0\.0004\./)
+  assert.match(ranges, /It starts after the video ends \(40:00\)\./)
+  assert.match(ranges, /Add a range/)
+  assert.match(ranges, /a range 2:30 either side of it/)
+
+  // The review: each moment from its range, nudges, another moment, talking points, record or upload.
+  const draft = (id, start, end, extra = {}) => ({ id, sourceIndex: 0, sourceTitle: 'Podcast', creator: '@host', startMs: start, endMs: end, quote: `Moment ${id} words`, why: 'A shocking number.',
+    style: 'reaction', stance: 'add_nuance', headline: '', intro: '', beats: [], close: '', notes: [], grade: null, estimateUsd: 0, postCaption: '', format: 'moment_take', cues: [],
+    moment: { rangeStartMs: 2220000, rangeEndMs: 2520000, said: '', picks: 1, points: [] }, ...extra })
+  const status = { id: 'r1', phase: 'review', detail: 'Ready for review', percent: 100, folder: '/out/remix-x', estimateUsd: 0, outputs: [], costUsd: 0.04, warnings: ['Range 3 (0:45–1:00) starts after the video ends (0:40). Choose a time inside the video.'], error: null,
+    drafts: [draft(0, 2230000, 2241000), draft(1, 2400000, 2410000, { headline: 'He says attention is the new oil', postCaption: 'My take.', moment: { rangeStartMs: 2220000, rangeEndMs: 2520000, said: 'I think so', picks: 2, points: ['Agree?', 'A story', 'A tip'] } })] }
+  const review = renderToStaticMarkup(React.createElement(MomentTakeReview, { status, onError: () => {} }))
+  assert.match(review, /Your moments · 2/)
+  assert.match(review, /Finding them cost about \$0\.04\./)
+  assert.match(review, /From your range 37:00–42:00/)
+  assert.match(review, /Starts at 37:10\.0/)
+  assert.match(review, /Find another moment in this range/)
+  assert.match(review, /Give me talking points/)
+  assert.match(review, /• Agree\?/)
+  assert.match(review, /You said: “I think so”/)
+  assert.match(review, /Upload a phone video/)
+  assert.match(review, /Range 3 \(0:45–1:00\) starts after the video ends/)
+  assert.match(review, /Make 2 videos/)
+})
+
 test('a deleted brand is cleared from Create and Remix once the brand list is read; a failed read clears nothing', async () => {
   const brands = buildSync({
     stdin: {

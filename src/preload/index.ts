@@ -38,6 +38,7 @@ import type { CreatorProfile } from '../shared/onboarding'
 import type { BrandLook } from '../shared/brand-kit'
 import type { BrandIdentity, RecordingPart, RemixDraft, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
 import type { PauseEvent, PauseSettings, PauseView } from '../shared/pause-react'
+import type { TimecodeRead } from '../shared/moment-take'
 import type {
   AppDataScope,
   AssistantConversation,
@@ -402,8 +403,16 @@ export interface BridgeClipAPI {
     /** The take's moment, to play while recording a reaction. */
     /** The take's moment (or screenshot), to show while recording. */
     moment: (draftId: number) => Promise<{ path: string; startSeconds: number; endSeconds: number; kind: 'video' | 'image' }>
-    /** Article or post: write the headline and caption from the recorded take. */
-    write: () => Promise<RemixStatus>
+    /** Write the headline and caption from the recorded take. Moment + my take: for these takes (all recorded ones when omitted). */
+    write: (draftIds?: number[]) => Promise<RemixStatus>
+    /** Moment + my take: the moment's own start and end (inside its range). */
+    momentBounds: (draftId: number, startMs: number, endMs: number) => Promise<RemixDraft>
+    /** Moment + my take: find another moment in this range (one small paid call). */
+    anotherMoment: (draftId: number) => Promise<RemixDraft>
+    /** Moment + my take: three talking points for the take (one small paid call). */
+    talkingPoints: (draftId: number) => Promise<RemixDraft>
+    /** Moment + my take: read the playback time from a screenshot of a player (one small paid call); null when none was read. */
+    readTimecode: (bytes: Uint8Array) => Promise<TimecodeRead | null>
     /** Re-make a finished remix with new hook text, look, captions or box size (no AI cost). */
     recompose: (outputDir: string, clipIndex: number, edit: { headline: string; headlineLook: HeadlineLook; includeCaptions: boolean; captionPreset: string; split: number | null }) => Promise<{ output: JobOutput | null; note: string | null }>
     /** Choose a screenshot for an article-or-post remix. */
@@ -744,7 +753,11 @@ const api: BridgeClipAPI = {
     onStatus: (callback) => subscribe('remix:status', callback),
     mediaAccess: () => ipcRenderer.invoke('remix:mediaAccess'),
     moment: (draftId) => ipcRenderer.invoke('remix:moment', draftId),
-    write: () => paid('remix:write'),
+    write: (draftIds) => paid('remix:write', draftIds),
+    momentBounds: (draftId, startMs, endMs) => ipcRenderer.invoke('remix:momentBounds', draftId, startMs, endMs),
+    anotherMoment: (draftId) => paid('remix:anotherMoment', draftId),
+    talkingPoints: (draftId) => paid('remix:talkingPoints', draftId),
+    readTimecode: (bytes) => paid('remix:readTimecode', bytes),
     recompose: (outputDir, clipIndex, edit) => ipcRenderer.invoke('remix:recompose', outputDir, clipIndex, edit),
     selectImage: () => ipcRenderer.invoke('remix:selectImage'),
     libraryClip: (outputDir, clipIndex) => ipcRenderer.invoke('library:remixSource', outputDir, clipIndex),

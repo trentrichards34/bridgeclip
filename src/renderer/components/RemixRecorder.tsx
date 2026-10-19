@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, Check, Circle, Headphones, Mic, Pause, Play, RotateCcw, Square, Upload, X } from 'lucide-react'
+import { Camera, Check, Circle, Headphones, ListChecks, Mic, Pause, Play, RotateCcw, Square, Upload, X } from 'lucide-react'
 import { partsFor, type RecordingPart, type RemixDraft, type RemixEdit, type RemixRecordings } from '../../shared/remix'
 import { formatSeconds, PAUSE_REACT_MAX_SECONDS, type PauseEvent } from '../../shared/pause-react'
+import { formatTimecode, MOMENT_TAKE_MAX_SECONDS } from '../../shared/moment-take'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { Button } from './ui/Button'
@@ -37,7 +38,7 @@ type Phase = 'idle' | 'countdown' | 'recording' | 'saving'
  * voiced take read from a teleprompter. Anything can be redone, or uploaded
  * from a phone instead.
  */
-export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onClose }: {
+export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onClose, points = [] }: {
   draft: RemixDraft
   edit: RemixEdit
   recordings: RemixRecordings
@@ -46,6 +47,8 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   onRecordings: (recordings: RemixRecordings) => void
   /** changed: a recording was saved, uploaded or deleted while the recorder was open. */
   onClose: (changed: boolean) => void
+  /** Moment + my take: talking points the member asked for (shown over the camera only if they turn them on). */
+  points?: string[]
 }): React.JSX.Element {
   const reaction = draft.format === 'silent'
   // Pause & react: their video plays while the camera records; Space pauses it while you talk (the app logs when).
@@ -53,6 +56,9 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   const needsMic = !reaction || talk
   // Article or post: you talk over a screenshot, in one take.
   const image = draft.format === 'image'
+  // Moment + my take: you say your take in one go, unscripted (the moment plays only if you play it).
+  const momentMode = draft.format === 'moment_take'
+  const [showPoints, setShowPoints] = useState(false)
   const parts = partsFor(draft.format, edit.beats.length)
   const done = recordings[draft.id] ?? {}
   const [part, setPart] = useState<RecordingPart>(() => parts.find((item) => !done[item]) ?? parts[0])
@@ -128,7 +134,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
     // Reset on every mount (React's development mode mounts twice).
     cancelled.current = false
     void openDevices('', '')
-    if (reaction || image || pauseMode) getApi().remix.moment(draft.id).then(setMoment).catch((err) => setError(errorMessage(err)))
+    if (reaction || image || pauseMode || momentMode) getApi().remix.moment(draft.id).then(setMoment).catch((err) => setError(errorMessage(err)))
     dialog.current?.focus()
     return () => {
       cancelled.current = true
@@ -138,7 +144,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
       stream.current?.getTracks().forEach((track) => track.stop())
       detach.current?.()
     }
-  }, [draft.id, reaction, image, pauseMode, openDevices])
+  }, [draft.id, reaction, image, pauseMode, momentMode, openDevices])
 
   // The moment ready at its start, so the reaction lines up with it.
   useEffect(() => {
@@ -221,12 +227,12 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
       detach.current = null
       setClipPlaying(false)
       // A reaction whose clip never started playing has no known offset: the engine lines it up by sound.
-      const list = await getApi().remix.recordingFinish(current, reaction ? offset.current : image ? 0 : null,
+      const list = await getApi().remix.recordingFinish(current, reaction ? offset.current : image || momentMode ? 0 : null,
         pauseMode ? { events: events.current, durationMs: Math.round(performance.now() - startedAt.current) } : undefined)
       updateRecordings(list)
       setReviewing(true)
       // A voiced take moves on to the next line still to record.
-      if (!reaction && !image) {
+      if (!reaction && !image && !momentMode) {
         const next = parts.find((item) => item !== part && !list[draft.id]?.[item])
         if (next) { setPart(next); setReviewing(false) }
       }
@@ -260,9 +266,10 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
       // A take over a screenshot stops at the longest a video can be.
       if (image && moment && seconds >= moment.endSeconds) stop()
       if (pauseMode && seconds >= PAUSE_REACT_MAX_SECONDS) stop()
+      if (momentMode && seconds >= MOMENT_TAKE_MAX_SECONDS) stop()
     }, 250)
     return () => clearInterval(timer)
-  }, [phase, reaction, image, pauseMode, moment, stop])
+  }, [phase, reaction, image, pauseMode, momentMode, moment, stop])
 
   // Pause & react: their video holds at the end of the part you chose; you can keep talking.
   useEffect(() => {
@@ -310,7 +317,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   const saved = (recordings[draft.id] ?? {})[part]
   const busy = phase !== 'idle' || uploading
   const allDone = parts.every((item) => recordings[draft.id]?.[item])
-  const line = reaction || image || pauseMode ? '' : partText(edit, part)
+  const line = reaction || image || pauseMode || momentMode ? '' : partText(edit, part)
 
   return (
     <Dialog ref={dialog} aria-label="Record yourself" onBackdropMouseDown={busy ? undefined : close} panelClassName="max-w-[920px]"
@@ -318,13 +325,13 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
       <div className="space-y-4 overflow-y-auto p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="flex items-center gap-2 text-base font-semibold text-ink"><Camera className="h-4 w-4" />{reaction || pauseMode ? 'React on camera' : image ? 'Talk over the screenshot' : 'Record your take'}</h2>
+            <h2 className="flex items-center gap-2 text-base font-semibold text-ink"><Camera className="h-4 w-4" />{reaction || pauseMode ? 'React on camera' : image ? 'Talk over the screenshot' : momentMode ? 'Your take on this moment' : 'Record your take'}</h2>
             {edit.headline && <p className="mt-0.5 truncate text-xs text-ink-muted">“{edit.headline}”</p>}
           </div>
           <Button size="sm" variant="ghost" icon={<X className="h-4 w-4" />} disabled={busy} onClick={close}>{allDone ? 'Done' : 'Close'}</Button>
         </div>
 
-        {!reaction && !image && !pauseMode && (
+        {!reaction && !image && !pauseMode && !momentMode && (
           <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Parts of the take">
             {parts.map((item) => (
               <button key={item} type="button" role="tab" aria-selected={item === part} disabled={busy} tabIndex={item === part ? 0 : -1}
@@ -349,6 +356,12 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
           </p>
         )}
 
+        {momentMode && (
+          <p className="text-2xs text-ink-muted">
+            Watch the moment if you like, then press Start and say what you think, in your own words: it plays first in the video, and your take follows. Up to {MOMENT_TAKE_MAX_SECONDS / 60} minutes.
+          </p>
+        )}
+
         {pauseMode && (
           <p className="flex items-center gap-1.5 text-2xs text-ink-muted"><Headphones className="h-3.5 w-3.5" />
             Wear headphones so their video’s sound stays out of your microphone. Press Space (or the big button) to pause their video when you talk, and again to play on. Up to {PAUSE_REACT_MAX_SECONDS / 60} minutes.
@@ -361,7 +374,21 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
           </p>
         )}
 
-        <div className={cn('grid gap-3', reaction || image || pauseMode ? 'sm:grid-cols-2' : '')}>
+        <div className={cn('grid gap-3', reaction || image || pauseMode || momentMode ? 'sm:grid-cols-2' : '')}>
+          {momentMode && (
+            <div className="space-y-2">
+              <p className="text-2xs text-ink-subtle">The moment · {moment ? `${formatTimecode(moment.startSeconds)}–${formatTimecode(moment.endSeconds)}` : 'loading…'}</p>
+              {moment
+                ? <MomentClip path={moment.path} start={moment.startSeconds} end={moment.endSeconds} />
+                : <div className="aspect-video w-full rounded-xl bg-black" />}
+              {points.length > 0 && (
+                <label className="flex items-center gap-2 text-2xs text-ink-muted">
+                  <input type="checkbox" checked={showPoints} onChange={(e) => setShowPoints(e.target.checked)} />
+                  <ListChecks className="h-3.5 w-3.5" />Show my talking points over the camera
+                </label>
+              )}
+            </div>
+          )}
           {image && (
             <div className="space-y-1">
               <p className="text-2xs text-ink-subtle">Your screenshot</p>
@@ -395,14 +422,19 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
           <div className="space-y-1">
             <p className="text-2xs text-ink-subtle">{reviewing && saved ? 'Your recording' : 'Your camera'}</p>
             <div className="relative overflow-hidden rounded-xl bg-black">
-              {!reaction && !image && !pauseMode && !reviewing && (
+              {momentMode && showPoints && points.length > 0 && !reviewing && (
+                <ul className="absolute inset-x-0 top-0 z-10 space-y-0.5 bg-black/70 px-4 py-2 text-sm font-medium leading-snug text-white" aria-label="Your talking points">
+                  {points.map((point, i) => <li key={i}>• {point}</li>)}
+                </ul>
+              )}
+              {!reaction && !image && !pauseMode && !momentMode && !reviewing && (
                 // Teleprompter: the line right under the camera, so your eyes stay near the lens.
                 <p className="absolute inset-x-0 top-0 z-10 bg-black/70 px-4 py-3 text-center text-lg font-semibold leading-snug text-white" aria-label="Your line">{line || 'Nothing to say for this part.'}</p>
               )}
               <video ref={preview} muted playsInline className={cn('aspect-video w-full -scale-x-100 object-cover', reviewing && saved && 'hidden')} aria-label="Camera preview" />
               {reviewing && saved && <video key={saved.path} src={localFileUrl(saved.path)} controls playsInline className="aspect-video w-full object-contain" aria-label="Your recording" />}
               {phase === 'countdown' && <span className="absolute inset-0 flex items-center justify-center text-7xl font-black text-white drop-shadow-lg" aria-live="assertive">{count}</span>}
-              {phase === 'recording' && <span className="absolute right-2 top-2 z-20 flex items-center gap-1 rounded-full bg-danger px-2 py-0.5 text-2xs font-semibold text-white"><Circle className="h-2 w-2 fill-current" />REC {pauseMode ? `${formatSeconds(elapsed)} of ${PAUSE_REACT_MAX_SECONDS / 60}:00` : `${elapsed.toFixed(0)}s`}</span>}
+              {phase === 'recording' && <span className="absolute right-2 top-2 z-20 flex items-center gap-1 rounded-full bg-danger px-2 py-0.5 text-2xs font-semibold text-white"><Circle className="h-2 w-2 fill-current" />REC {pauseMode ? `${formatSeconds(elapsed)} of ${PAUSE_REACT_MAX_SECONDS / 60}:00` : momentMode ? `${formatTimecode(elapsed)} of ${formatTimecode(MOMENT_TAKE_MAX_SECONDS)}` : `${elapsed.toFixed(0)}s`}</span>}
             </div>
           </div>
         </div>
@@ -410,8 +442,8 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
         <div className="flex flex-wrap items-center gap-2">
           {phase === 'recording'
             ? <Button variant="danger" icon={<Square className="h-4 w-4" />} onClick={stop}>Stop</Button>
-            : <Button variant="primary" icon={<Circle className="h-4 w-4" />} loading={phase === 'countdown' || phase === 'saving'} disabled={busy || !stream.current || ((reaction || image || pauseMode) && !moment)}
-                onClick={() => void record()}>{saved ? 'Record again' : reaction ? 'Start: the clip plays and you react' : pauseMode ? 'Start: their video plays and you react' : image ? 'Start recording' : `Record ${partLabel(part).toLowerCase()}`}</Button>}
+            : <Button variant="primary" icon={<Circle className="h-4 w-4" />} loading={phase === 'countdown' || phase === 'saving'} disabled={busy || !stream.current || ((reaction || image || pauseMode || momentMode) && !moment)}
+                onClick={() => void record()}>{saved ? 'Record again' : reaction ? 'Start: the clip plays and you react' : pauseMode ? 'Start: their video plays and you react' : image || momentMode ? 'Start recording' : `Record ${partLabel(part).toLowerCase()}`}</Button>}
           {!pauseMode && <Button variant="secondary" icon={<Upload className="h-4 w-4" />} loading={uploading} disabled={busy} onClick={() => void upload()}>{uploading ? 'Copying your video…' : 'Upload a video instead'}</Button>}
           {saved && !busy && <Button variant="ghost" icon={<RotateCcw className="h-4 w-4" />} onClick={() => void redo()}>Delete this recording</Button>}
           {saved && <span className="text-2xs text-success">{saved.uploaded ? 'Uploaded' : 'Recorded'} · {saved.seconds ? `${saved.seconds.toFixed(0)}s` : 'saved'}</span>}
@@ -438,11 +470,22 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
             ? 'Filming on your phone instead? Close this and choose Upload a phone recording: CreatorClips finds the pauses from the sound.'
             : reaction
             ? 'Filming on your phone? Record yourself while the clip plays out loud, then upload it: CreatorClips lines it up with the clip by its sound.'
-            : image ? 'Filming on your phone? Record yourself talking, then upload it here. Keep the phone upright and your whole head in the frame.'
+            : image || momentMode ? 'Filming on your phone? Record yourself talking, then upload it here. Keep the phone upright and your whole head in the frame.'
             : 'Look at the camera and read the line in your own words if you like; captions follow what you actually say. Filming on your phone? Upload each part instead.'}
         </p>
         {error && <p role="alert" className="text-xs text-danger">{error}</p>}
       </div>
     </Dialog>
+  )
+}
+
+/** The moment on its own (it stops at its end; play it again any time). */
+function MomentClip({ path, start, end }: { path: string; start: number; end: number }): React.JSX.Element {
+  const video = useRef<HTMLVideoElement>(null)
+  useEffect(() => { if (video.current) video.current.currentTime = start }, [start])
+  return (
+    <video ref={video} src={localFileUrl(path)} controls playsInline preload="auto" aria-label="The moment" className="aspect-video w-full rounded-xl bg-black object-contain"
+      onPlay={(e) => { if (e.currentTarget.currentTime < start - 0.1 || e.currentTarget.currentTime >= end - 0.05) e.currentTarget.currentTime = start }}
+      onTimeUpdate={(e) => { if (e.currentTarget.currentTime >= end) e.currentTarget.pause() }} />
   )
 }

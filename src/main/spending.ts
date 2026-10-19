@@ -229,7 +229,7 @@ export async function openRouterBalance(force = false, timeoutMs?: number): Prom
 // ---------------------------------------------------------------------------
 
 /** IPC channels that start paid work, and so pass the spending check. */
-export const GATED_CHANNELS = new Set(['job:start', 'job:startMany', 'job:moreClips', 'remix:start', 'remix:write', 'remix:render', 'avatars:render', 'avatars:recreate', 'avatars:generateFaces', 'avatars:restyle', 'avatars:makeReactions', 'avatars:cloneVoice'])
+export const GATED_CHANNELS = new Set(['job:start', 'job:startMany', 'job:moreClips', 'remix:start', 'remix:write', 'remix:render', 'remix:anotherMoment', 'remix:talkingPoints', 'remix:readTimecode', 'avatars:render', 'avatars:recreate', 'avatars:generateFaces', 'avatars:restyle', 'avatars:makeReactions', 'avatars:cloneVoice'])
 const overrides = new Map<string, number>()
 
 /** "Start anyway" after a low-balance warning: the next call on this channel skips the balance check (never the monthly limit). */
@@ -354,7 +354,8 @@ export function trackRemixStatus(status: RemixStatus): void {
   if (total <= before + 1e-9) return
   remixRecorded.set(status.id, total)
   if (remixRecorded.size > 50) remixRecorded.delete(remixRecorded.keys().next().value as string)
-  const label = status.phase === 'done' ? 'Remix videos' : status.drafts.some((draft) => draft.format === 'image' || draft.format === 'pause_react') ? 'Remix headline' : 'Remix planning'
+  const label = status.phase === 'done' ? 'Remix videos' : status.drafts.some((draft) => draft.format === 'image' || draft.format === 'pause_react' ||
+    (draft.format === 'moment_take' && draft.headline)) ? 'Remix headline' : 'Remix planning'
   void recordSpend({ kind: 'remix', provider: 'openrouter', usd: total - before, label, runId: basename(status.folder) || undefined })
 }
 

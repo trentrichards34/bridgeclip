@@ -55,7 +55,7 @@ export interface SetupProfile { goals: readonly GoalId[]; platforms: readonly Ze
 const FIRST_RUNS: Record<VideoGoalId, { id: FirstRunId; title: string; detail: string; count: keyof RunCounts }> = {
   clips: { id: 'first-clip', title: 'Make your first clips', detail: 'Paste a video link on Create and start a run.', count: 'clips' },
   'ai-reactions': { id: 'first-ai-reaction', title: 'Make your first AI reaction', detail: 'Remix a video with your avatar as the presenter.', count: 'aiReactions' },
-  'camera-reactions': { id: 'first-camera-reaction', title: 'Make your first on-camera reaction', detail: 'Pause & react to a video, or remix one with you on camera.', count: 'cameraReactions' },
+  'camera-reactions': { id: 'first-camera-reaction', title: 'Make your first on-camera reaction', detail: 'Pause & react to a video, share a moment with your take, or remix one with you on camera.', count: 'cameraReactions' },
   article: { id: 'first-article', title: 'Make your first article or post video', detail: 'Talk over a screenshot in Remix.', count: 'articles' },
   'avatar-videos': { id: 'first-avatar-video', title: 'Make your first avatar video', detail: 'Write a script in Avatar Studio and generate it.', count: 'avatarVideos' }
 }

@@ -4,6 +4,7 @@ import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-
 import { AVATAR_VOICE, DEFAULT_CAMERA, type CameraSettings, type RemixAngle, type RemixFormat, type RemixHost, type RemixOrder } from '../../shared/remix'
 import type { RemixFormStyle } from '../../shared/member-prefs'
 import { DEFAULT_PAUSE_REACT, type PauseCaptions, type PauseLayout } from '../../shared/pause-react'
+import type { RangeInput } from '../../shared/moment-take'
 
 export interface RemixForm {
   links: string
@@ -38,6 +39,10 @@ export interface RemixForm {
   pauseLayout: PauseLayout
   pauseCaptions: PauseCaptions
   pauseCamera: CameraSettings
+  /** Moment + my take: the time ranges as typed (or read from a screenshot), the box option and how the member appears. */
+  momentRanges: RangeInput[]
+  momentPip: boolean
+  momentCamera: CameraSettings
 }
 
 interface RemixFormState extends RemixForm {
@@ -60,6 +65,9 @@ export const useRemixForm = create<RemixFormState>((set, get) => ({
   pauseLayout: DEFAULT_PAUSE_REACT.layout,
   pauseCaptions: DEFAULT_PAUSE_REACT.captions,
   pauseCamera: { ...DEFAULT_CAMERA, talk: true },
+  momentRanges: [{ start: '', end: '' }],
+  momentPip: false,
+  momentCamera: { ...DEFAULT_CAMERA, talk: true },
   update: (patch) => set(patch),
   applyStyle: (style) => set({ ...style, ...(style.format && style.format !== get().format ? { clipRightsAck: false } : {}) }),
   setSourceFile: (path, creator) => {

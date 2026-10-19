@@ -56,7 +56,7 @@ function ipcWithLibrary(library) {
     './clip-zip': { writeZip: async () => 0, uniqueFileName: (name, ext) => name + ext },
     '../shared/remix': { RECORDING_VIDEO_EXTENSIONS: ['mp4'], REMIX_IMAGE_EXTENSIONS: ['png'] },
     '../shared/brand-kit': { LOGO_EXTENSIONS: ['png', 'jpg', 'jpeg', 'webp'] },
-    '../shared/ctas': { CTA_IMAGE_EXTENSIONS: [], CTA_VIDEO_EXTENSIONS: [], parseCtaChoice: (v) => v ?? null }, './ctas': { addCta: async () => [], applyRunCta: async () => ({ failed: [] }), listCtas: async () => [], removeCta: async () => [], updateCta: async () => [] }, './reactions': { makeReactions: async () => ({}), reactionsInProgress: () => false, uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] },
+    '../shared/ctas': { CTA_IMAGE_EXTENSIONS: [], CTA_VIDEO_EXTENSIONS: [], parseCtaChoice: (v) => v ?? null }, './ctas': { addCta: async () => [], applyRunCta: async () => ({ failed: [] }), listCtas: async () => [], removeCta: async () => [], updateCta: async () => [] }, './reactions': { makeReactions: async () => ({}), reactionsInProgress: () => false, uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] }, './moment-take': { readTimecodeScreenshot: async () => ({ read: null, costUsd: 0 }) }, '../shared/moment-take': { parseMomentRanges: () => [] },
     './remix': { onRemixStatus: () => {}, remixAvatarInUse: () => null, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
     './logger': {},
     './security': security,

@@ -40,6 +40,9 @@ export function createNotice(job: JobSnapshot): JobNotice | null {
 /** A Remix run that reached review, finished or failed (only once per phase). */
 export function remixNotice(status: RemixStatus): JobNotice | null {
   if (status.phase === 'review') {
+    if (status.drafts.some((draft) => draft.format === 'moment_take')) {
+      return { key: `remix:${status.id}:review`, page: 'remix', title: 'Your moments are ready', body: `${plural(status.drafts.length, 'moment', 'moments')} found. Record your take on each.` }
+    }
     const one = status.drafts.length === 1 && (status.drafts[0].format === 'image' || status.drafts[0].format === 'pause_react')
     return { key: `remix:${status.id}:review`, page: 'remix', title: one ? 'Ready for your take' : 'Your takes are ready to review',
       body: !one ? `${plural(status.drafts.length, 'take', 'takes')} to review before anything is made.`
