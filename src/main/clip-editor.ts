@@ -64,12 +64,21 @@ async function addExportCta(run: string, candidateId: string, libraryCta?: strin
     const index = candidate?.exports.at(-1)
     const ctaId = libraryCta !== undefined && index === candidate?.library_clip ? libraryCta
       : candidate?.cta_id === undefined ? await runCtaId(run) : candidate.cta_id
-    if (!candidate || index === undefined || !ctaId) return
-    await applyExportCta(run, ctaId, index)
+    if (!candidate || index === undefined) return
+    if (ctaId) await applyExportCta(run, ctaId, index)
+    // The Library clip now ends as the editor chose: from here on a call to action changed in the Library wins again.
+    if (candidate.cta_edited && index === candidate.library_clip) clearCtaEdited(run, candidateId)
   } catch (error) {
     // The clip stays as rendered; the Library can add the call to action later.
     logger.warn('editor.cta.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
   }
+}
+function clearCtaEdited(run: string, candidateId: string): void {
+  const project = readProject(run)
+  const candidate = project.candidates.find((c) => c.id === candidateId)
+  if (!candidate?.cta_edited) return
+  delete candidate.cta_edited
+  writeProject(run, project)
 }
 export function editorBusy(path: string): boolean { return operations.has(realpathSync(path)) }
 function runPath(path: unknown): string {

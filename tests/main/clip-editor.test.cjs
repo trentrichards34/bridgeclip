@@ -543,6 +543,17 @@ test('re-baking an Automatic clip keeps the call to action its Library clip has 
     ;(await nextWorker(f.workers, 3)).finish()
     await rebake
     assert.deepEqual(applied.at(-1), { ctaId: chosen, index: 0 })
+    // Once baked, the Library clip ends as the editor chose: a later change in the Library wins again.
+    const baked = (await f.main.openEditor(f.run)).project
+    assert.equal(baked.candidates[1].cta_edited, undefined)
+    const later = 'd'.repeat(16)
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify({ job_id: 'review-run', editor_project: true, clips: [clip(0, later), clip(1, null)] }))
+    baked.candidates[1] = { ...baked.candidates[1], status: 'ready' }
+    const ready = await f.main.saveEditor(f.run, baked.revision, baked.candidates)
+    const third = f.main.runEditor(f.run, ready.project.revision, 'candidate-1', 'export')
+    ;(await nextWorker(f.workers, 4)).finish()
+    await third
+    assert.deepEqual(applied.at(-1), { ctaId: later, index: 0 })
   } finally { f.cleanup() }
 })
 
