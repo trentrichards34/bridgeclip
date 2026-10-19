@@ -199,14 +199,14 @@ function loadReport({ log = '', jobs = [], supportLink = '' } = {}) {
   const copied = []
   const opened = []
   const home = os.homedir()
-  const settings = { openrouterApiKey: 'sk-or-v1-abcdef0123456789abcdef', zernioApiKey: 'zk_live_supersecretvalue', pexelsApiKey: '', falApiKey: 'fal-secret-123456',
+  const settings = { openrouterApiKey: 'sk-or-v1-abcdef0123456789abcdef', zernioApiKey: 'zk_live_supersecretvalue', pexelsApiKey: '', falApiKey: 'fal-secret-123456', heygenApiKey: 'hg-secret-654321',
     jevEnabled: 'off', sourceContextWebResearch: 'on', downloadLoginBrowser: 'chrome', outputDirectory: path.join(home, 'CreatorClips') }
   const report = load('main/support-report.ts', {
     electron: { app: { getVersion: () => '0.1.19', getPath: () => path.join(home, '.config', 'CreatorClips') }, clipboard: { writeText: (text) => copied.push(text) }, shell: { openExternal: async (url) => { opened.push(url) } } },
     './logger': { getLogFilePath: () => logFile, logger: { info() {}, warn() {} } },
     './settings-store': {
       loadSettings: () => settings,
-      publicSettings: (s) => ({ openrouterConfigured: Boolean(s.openrouterApiKey), zernioConfigured: Boolean(s.zernioApiKey), pexelsConfigured: Boolean(s.pexelsApiKey), falConfigured: Boolean(s.falApiKey),
+      publicSettings: (s) => ({ openrouterConfigured: Boolean(s.openrouterApiKey), zernioConfigured: Boolean(s.zernioApiKey), pexelsConfigured: Boolean(s.pexelsApiKey), falConfigured: Boolean(s.falApiKey), heygenConfigured: Boolean(s.heygenApiKey),
         jevEnabled: s.jevEnabled, sourceContextWebResearch: s.sourceContextWebResearch, downloadLoginBrowser: s.downloadLoginBrowser, outputDirectory: s.outputDirectory })
     },
     './job-manager': { listJobs: () => jobs },
@@ -245,7 +245,7 @@ test('support report: versions, system check, which keys are saved (never the ke
   assert.match(text, /Recent log \(last 80 lines\)/)
   assert.equal(text.includes('line.22"'), false, 'only the last 80 lines')
   assert.match(text, /line\.23"/)
-  for (const secret of [settings.openrouterApiKey, settings.zernioApiKey, settings.falApiKey, 'abcdefghijklmnopqrstuvwxyz123456', 'trent@example.com', '9f86d081884c7d659a2feaa0c55ad015', home]) {
+  for (const secret of [settings.openrouterApiKey, settings.zernioApiKey, settings.falApiKey, settings.heygenApiKey, 'abcdefghijklmnopqrstuvwxyz123456', 'trent@example.com', '9f86d081884c7d659a2feaa0c55ad015', home]) {
     assert.equal(text.includes(secret), false, `leaked ${secret}`)
   }
   // A specific job is reported when asked.

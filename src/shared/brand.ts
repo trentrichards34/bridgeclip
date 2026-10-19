@@ -14,14 +14,19 @@ export const PROVIDER_LINKS = {
   openrouter: 'https://openrouter.ai/keys',
   zernio: 'https://zernio.com/dashboard/api-keys',
   pexels: 'https://www.pexels.com/api/',
-  fal: 'https://fal.ai/dashboard/keys'
+  fal: 'https://fal.ai/dashboard/keys',
+  heygen: 'https://platform.heygen.com/api-keys'
 } as const
 
 /** Where members see their real bills and add credit (Settings → Spending). */
 export const SPENDING_LINKS = {
   openrouterCredits: 'https://openrouter.ai/settings/credits',
   openrouterActivity: 'https://openrouter.ai/activity',
-  falBilling: 'https://fal.ai/dashboard/billing'
+  falBilling: 'https://fal.ai/dashboard/billing',
+  /** HeyGen's self-serve API plans and credit (from developers.heygen.com/llms.txt). */
+  heygenBilling: 'https://platform.heygen.com/pricing',
+  /** HeyGen's published API prices, the source of the app's HeyGen estimates. */
+  heygenPricing: 'https://developers.heygen.com/docs/pricing'
 } as const
 
 export const ZERNIO_LINKS = {

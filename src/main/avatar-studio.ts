@@ -6,7 +6,7 @@ import { access, constants as fsConstants, copyFile, mkdir, readFile, writeFile 
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
 import {
-  estimateRecreateCost, estimateRenderCost, estimateWordTimings, FAL_MODELS, MAX_SCENE_SECONDS, OPENROUTER_MODELS, overlongScenes, RECREATE_FPS, recreateSeconds, validateRecreateWindow, isAvatarId, MAX_HOOK_CHARS, MAX_SPOKEN_SECONDS, parseAvatarScript,
+  estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, estimateWordTimings, FAL_MODELS, MAX_SCENE_SECONDS, OPENROUTER_MODELS, overlongScenes, RECREATE_FPS, recreateSeconds, validateRecreateWindow, isAvatarId, MAX_HOOK_CHARS, MAX_SPOKEN_SECONDS, parseAvatarScript,
   hookFromScript, postCaptionFromScript, sceneDurations, SCRIPT_LENGTHS, scriptText, wordCount, WORDS_PER_SECOND,
   type AvatarRecreateRequest, type AvatarRenderPhase, type AvatarRenderRequest, type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarScriptRequest, type AvatarVoice
 } from '../shared/avatars'
@@ -17,6 +17,9 @@ import { CLIP_FILE, newAvatarRun, WORK_FOLDER, writeAvatarJobOutput, type Avatar
 import { applyRunCtaInLock, readCta, withRunLock } from './ctas'
 import { isBackgroundVideoName } from '../shared/backgrounds'
 import { openRouterKey, portraitBytes, portraitInput, readAvatar, speechFor } from './avatars'
+import { heygenKey, heygenRenderEstimate, renderHeygenTake } from './heygen-avatar'
+import type { HeygenAvatarLink } from '../shared/heygen'
+import type { SpendProvider } from '../shared/spending'
 import { readBrandIdentity } from './remix'
 import { brandForJob, isBrandId } from './brands'
 import type { BrandMarkForEngine } from '../shared/brand-kit'
@@ -470,40 +473,87 @@ function requireFalKey(): string {
   return key
 }
 
+/** The HeyGen link a render uses: talking-head videos of a HeyGen avatar are lip-synced on HeyGen. */
+function heygenFor(request: Pick<AvatarRenderRequest, 'style'>, avatar: { heygen?: HeygenAvatarLink | null }): HeygenAvatarLink | null {
+  return request.style === 'talking' && avatar.heygen ? avatar.heygen : null
+}
+
+/** True when HeyGen speaks the script itself (no app voiceover). */
+function heygenSpeaks(link: HeygenAvatarLink | null): boolean {
+  return Boolean(link && link.voice === 'heygen' && link.voiceId)
+}
+
+/**
+ * The check before a render: which provider it mainly bills and the estimate
+ * (app voice at list prices plus HeyGen's published per-second price). A
+ * HeyGen render HeyGen can't be priced for has no estimate ("billed by HeyGen").
+ */
+export function renderSpendCheck(value: unknown): { provider: SpendProvider; estimateUsd: number | null } {
+  const request = parseRenderRequest(value)
+  let avatar: { heygen?: HeygenAvatarLink | null; voice?: AvatarVoice } = {}
+  try { avatar = readAvatar(request.avatarId) } catch { /* the render itself reports it */ }
+  const link = heygenFor(request, avatar)
+  const voice = heygenSpeaks(link) ? 0 : estimateRenderCost({ ...request, voiceProvider: avatar.voice?.provider })
+  if (!link) return { provider: 'openrouter', estimateUsd: voice }
+  const heygen = heygenRenderEstimate({ heygen: link }, estimateSpokenSeconds(scriptText(request.script)))
+  return { provider: heygenSpeaks(link) ? 'heygen' : 'openrouter', estimateUsd: heygen === null ? null : Math.round((voice + heygen) * 100) / 100 }
+}
+
 export async function startAvatarRender(value: unknown): Promise<AvatarRenderStatus> {
   assertIdle()
   const request = parseRenderRequest(value)
-  const key = openRouterKey()
   const avatar = readAvatar(request.avatarId)
+  const heygen = heygenFor(request, avatar)
+  if (heygen) heygenKey()
+  // HeyGen speaking in its own voice needs no OpenRouter call; everything else voices with OpenRouter.
+  const key = heygenSpeaks(heygen) ? '' : openRouterKey()
   const background = request.backgroundVideo ? resolveBackground(request.backgroundVideo) : null
   if (request.ctaId) readCta(request.ctaId)
   const brandMark = brandMarkFor(request)
   const folder = newAvatarRun(loadSettings().outputDirectory)
-  return launch(request.avatarId, folder, estimateRenderCost({ ...request, voiceProvider: avatar.voice.provider }), { phase: 'voice', detail: 'Recording the voiceover' },
-    (render) => runRender(render, request, avatar.voice, key, folder, background, avatar.name, brandMark))
+  const estimate = renderSpendCheck(request).estimateUsd ?? estimateRenderCost({ ...request, voiceProvider: avatar.voice.provider })
+  return launch(request.avatarId, folder, estimate, heygenSpeaks(heygen) ? { phase: 'animate', detail: 'Starting your video on HeyGen' } : { phase: 'voice', detail: 'Recording the voiceover' },
+    (render) => runRender(render, request, avatar.voice, key, folder, background, avatar.name, brandMark, heygen))
 }
 
 async function runRender(render: ActiveRender, request: AvatarRenderRequest, voice: AvatarVoice, key: string, folder: string, background: string | null, avatarName: string,
-  brandMark: BrandMarkForEngine | null = null): Promise<void> {
+  brandMark: BrandMarkForEngine | null = null, heygen: HeygenAvatarLink | null = null): Promise<void> {
   const signal = render.abort.signal
   const work = join(folder, WORK_FOLDER)
   const parts = join(work, 'parts')
   await mkdir(parts, { recursive: true })
   const text = scriptText(request.script)
-  await writeFile(join(work, 'script.json'), JSON.stringify({ ...request.script, style: request.style, voice }, null, 2))
+  await writeFile(join(work, 'script.json'), JSON.stringify({ ...request.script, style: request.style, voice, ...(heygen ? { heygen: { voice: heygen.voice } } : {}) }, null, 2))
 
-  // 1. Voiceover.
+  // 1. Voiceover (unless HeyGen speaks the script in its own voice).
   const options = { key, signal }
-  const narrationBytes = await synthesizeSpeech(await speechFor(request.avatarId, voice, text), options)
-  const narration = join(parts, 'narration.mp3')
-  await writeFile(narration, narrationBytes)
-  const seconds = await mediaSeconds(narration)
-  if (seconds > (request.style === 'talking' ? 59.5 : MAX_SPOKEN_SECONDS + 4)) throw new Error('The voiceover runs over a minute. Shorten the script a little and try again.')
-  update(render, 'voice', 'Voiceover ready', 10)
+  let narration = join(parts, 'narration.mp3')
+  let seconds = 0
+  if (!heygenSpeaks(heygen)) {
+    const narrationBytes = await synthesizeSpeech(await speechFor(request.avatarId, voice, text), options)
+    await writeFile(narration, narrationBytes)
+    seconds = await mediaSeconds(narration)
+    if (seconds > (request.style === 'talking' ? 59.5 : MAX_SPOKEN_SECONDS + 4)) throw new Error('The voiceover runs over a minute. Shorten the script a little and try again.')
+    update(render, 'voice', 'Voiceover ready', 10)
+  }
 
   // 2. Picture.
   const assembled = join(parts, 'assembled.mp4')
-  if (request.style === 'talking') {
+  if (heygen) {
+    // A realistic, lip-synced talking head made on HeyGen (9:16, 1080p), then finished here like any other.
+    const take = join(parts, 'heygen.mp4')
+    await renderHeygenTake({
+      avatarId: request.avatarId, outPath: take, signal, title: request.script.title || avatarName,
+      ...(heygenSpeaks(heygen) ? { text, voiceId: heygen.voiceId } : { audioPath: narration }),
+      onStatus: (detail, fraction) => update(render, 'animate', detail, 12 + fraction * 66)
+    })
+    await ffmpeg(['-i', take, '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,format=yuv420p',
+      '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-c:a', 'aac', '-b:a', '192k', assembled], signal)
+    // Caption timing follows the finished video's own sound.
+    narration = assembled
+    seconds = await mediaSeconds(assembled)
+    update(render, 'assemble', 'Talking head ready', 78)
+  } else if (request.style === 'talking') {
     // OpenRouter's video API takes images only, so it can't lip-sync the avatar to this
     // voice yet: the talking head is the avatar's photo with a slow push-in, made locally.
     update(render, 'animate', 'Putting your avatar on screen', 40)

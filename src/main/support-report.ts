@@ -142,6 +142,7 @@ export function collectSupportReport(jobId: unknown, extraFailures: FailureSourc
       'Zernio key saved': visible.zernioConfigured,
       'Pexels key saved': visible.pexelsConfigured,
       'fal.ai key saved': visible.falConfigured,
+      'HeyGen key saved': visible.heygenConfigured === true,
       'Jev review': visible.jevEnabled === 'on',
       'Source research': visible.sourceContextWebResearch === 'on',
       'Browser login for social links': visible.downloadLoginBrowser || 'none',
@@ -151,7 +152,7 @@ export function collectSupportReport(jobId: unknown, extraFailures: FailureSourc
     failure,
     logLines: tailLines(getLogFilePath(), 80)
   }
-  const secrets = [settings.openrouterApiKey, settings.zernioApiKey, settings.pexelsApiKey, settings.falApiKey]
+  const secrets = [settings.openrouterApiKey, settings.zernioApiKey, settings.pexelsApiKey, settings.falApiKey, settings.heygenApiKey].filter((value): value is string => typeof value === 'string')
   let userData = ''
   try { userData = app.getPath('userData') } catch { /* not available */ }
   return buildSupportReport(input, { secrets, home: homedir(), userData })

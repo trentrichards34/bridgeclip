@@ -10,6 +10,7 @@ import { APP_NAME, APP_VERSION, BRIDGEMIND_URL, LICENSE_NAME, PROVIDER_LINKS, RE
 import { SupportSettings } from '../components/SupportReport'
 import type { ClipSettings, ToolStatus } from '../../preload/index'
 import { ApiKeyInput } from '../components/ApiKeyInput'
+import { HeygenKeyCheck } from '../components/HeygenKeyCheck'
 import { BridgeClipLogo } from '../components/brand/BridgeClipLogo'
 import { Page } from '../components/ui/Page'
 import { PageHeader } from '../components/ui/PageHeader'
@@ -37,7 +38,7 @@ type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 const IS_MAC = typeof navigator !== 'undefined' && /Mac/.test(navigator.userAgent)
 
 export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: number; onNavigate?: (page: AppPage) => void }): React.JSX.Element {
-  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, pexelsConfigured, falConfigured, sourceContextWebResearch, downloadLoginBrowser, saving, save, toolStatus, toolError, checkTools, checkingTools } =
+  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, pexelsConfigured, falConfigured, heygenConfigured, sourceContextWebResearch, downloadLoginBrowser, saving, save, toolStatus, toolError, checkTools, checkingTools } =
     useSettingsStore()
   const keys = useApiKeyDrafts()
   const [isPackaged, setIsPackaged] = useState(true)
@@ -246,6 +247,20 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
                   description="Only for Avatar Studio’s Recreate (your avatar takes over someone in a video). Everything else in Avatar Studio runs on your OpenRouter key."
                   getKeyUrl={PROVIDER_LINKS.fal}
                 />
+              </KeyRow>
+              <KeyRow>
+                <ApiKeyInput
+                  label="HeyGen (optional, Beta)"
+                  value={keys.drafts.heygenApiKey}
+                  configured={heygenConfigured}
+                  onChange={(v) => keys.setDraft('heygenApiKey', v)}
+                  onRemove={() => void keys.remove('heygenApiKey')}
+                  onBlur={() => void keys.persist()}
+                  placeholder="Your HeyGen API key"
+                  description="For realistic, lip-synced talking avatars in Avatar Studio: made from a short video or a photo of you, or one of HeyGen’s stock AI people. HeyGen bills your own account."
+                  getKeyUrl={PROVIDER_LINKS.heygen}
+                />
+                <HeygenKeyCheck configured={heygenConfigured} />
               </KeyRow>
             </div>
           </Section>

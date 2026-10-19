@@ -8,6 +8,7 @@
 
 import { PRESET_VOICE_IDS } from './voices'
 import type { HeadlineLook } from './headline-look'
+import type { HeygenAvatarLink } from './heygen'
 
 export { PRESET_VOICES, PRESET_VOICE_IDS } from './voices'
 
@@ -34,6 +35,12 @@ export interface Avatar {
   /** Own-likeness avatars and cloned voices record when consent was confirmed. */
   consentAt: string | null
   createdAt: string
+  /**
+   * Set for a realistic talking avatar on HeyGen (Beta): its talking-head videos
+   * are lip-synced by HeyGen instead of the still-photo method. `provider` is
+   * always 'heygen' here; other avatars have none (null or missing).
+   */
+  heygen?: HeygenAvatarLink | null
 }
 
 /** One of an avatar's saved pictures: the member's own photo or an AI version. */

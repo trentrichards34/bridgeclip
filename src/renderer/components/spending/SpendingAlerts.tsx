@@ -1,14 +1,14 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { ArrowUpRight, Wallet } from 'lucide-react'
 import { SPENDING_LINKS } from '../../config/brand'
-import { formatSpendUsd, LIMIT_WARNING_SHARE, OUT_OF_CREDITS_MESSAGES, type SpendGate, type SpendProvider } from '../../../shared/spending'
+import { formatSpendUsd, LIMIT_WARNING_SHARE, OUT_OF_CREDITS_MESSAGES, SPEND_PROVIDER_LABELS, type SpendGate, type SpendProvider } from '../../../shared/spending'
 import { getApi } from '../../lib/ipc'
 import { useSpendingStore } from '../../store/use-spending-store'
 import { Button } from '../ui/Button'
 import { Callout } from '../ui/Callout'
 import { Dialog, DialogFooter } from '../ui/Dialog'
 
-const creditsLink = (provider: SpendProvider): string => provider === 'fal' ? SPENDING_LINKS.falBilling : SPENDING_LINKS.openrouterCredits
+const creditsLink = (provider: SpendProvider): string => provider === 'fal' ? SPENDING_LINKS.falBilling : provider === 'heygen' ? SPENDING_LINKS.heygenBilling : SPENDING_LINKS.openrouterCredits
 
 function monthKey(): string {
   const now = new Date()
@@ -62,7 +62,7 @@ export function SpendingAlerts({ onOpenSpending }: { onOpenSpending: () => void 
         <div className="no-drag pointer-events-none fixed bottom-4 right-4 z-[80] flex w-[min(420px,calc(100vw-2rem))] flex-col gap-2">
           {outOfCredits && (
             <div className="glass pointer-events-auto rounded-2xl">
-              <Callout tone="danger" title={outOfCredits === 'fal' ? 'fal.ai is out of credit' : 'OpenRouter is out of credits'} stacked onDismiss={() => setOutOfCredits(null)}
+              <Callout tone="danger" title={outOfCredits === 'openrouter' ? 'OpenRouter is out of credits' : `${SPEND_PROVIDER_LABELS[outOfCredits]} is out of credit`} stacked onDismiss={() => setOutOfCredits(null)}
                 action={<Button size="sm" variant="primary" trailingIcon={<ArrowUpRight className="h-3.5 w-3.5" />} onClick={() => void getApi().shell.openPath(creditsLink(outOfCredits))}>
                   Add credits
                 </Button>}>
@@ -101,7 +101,7 @@ function SpendGateDialog({ gate, onAnswer, onOpenSpending }: { gate: SpendGate; 
       <div className="px-5 pb-5 pt-5">
         <h2 id={titleId} className="text-base font-semibold text-ink">{balance ? 'Your OpenRouter balance is low' : 'Over your monthly AI spending limit'}</h2>
         <p className="mt-1.5 text-sm text-ink-muted" data-selectable>{gate.message}</p>
-        <p className="mt-2 text-2xs text-ink-subtle">Amounts are CreatorClips’ estimates. Your actual balance and bills are on {gate.provider === 'fal' ? 'fal.ai' : 'OpenRouter'}.</p>
+        <p className="mt-2 text-2xs text-ink-subtle">Amounts are CreatorClips’ estimates. Your actual balance and bills are on {SPEND_PROVIDER_LABELS[gate.provider]}.</p>
       </div>
       <DialogFooter>
         <Button ref={closeRef} variant="ghost" onClick={() => onAnswer(false)}>Don’t start</Button>

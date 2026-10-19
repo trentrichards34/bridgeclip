@@ -18,6 +18,8 @@ import { CtaPicker } from '../components/CtaPicker'
 import { HeadlineLookPicker } from '../components/HeadlineLookPicker'
 import { PostDialog, type PostableClip } from '../components/PostDialog'
 import { VoicePreview } from '../components/VoicePreview'
+import { heygenPriceNote, HeygenCreateForm, HeygenStatus } from '../components/avatar/HeygenAvatar'
+import { estimateHeygenVideoUsd, heygenEngine, heygenStage, HEYGEN_PRICES } from '../../shared/heygen'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Callout } from '../components/ui/Callout'
@@ -95,6 +97,7 @@ function voiceLabel(voice: AvatarVoice): string {
 export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (page: PageName) => void; onViewLibrary?: (outputDir: string, clipIndex?: number) => void }): React.JSX.Element {
   const falConfigured = useSettingsStore((s) => s.falConfigured)
   const openrouterConfigured = useSettingsStore((s) => s.openrouterConfigured)
+  const heygenConfigured = useSettingsStore((s) => s.heygenConfigured)
   const draft = useStudioDraft()
   const [avatars, setAvatars] = useState<AvatarSummary[]>([])
   const [creating, setCreating] = useState(false)
@@ -134,6 +137,12 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
     : text ? estimateRenderCost({ style: draft.style, lipSync: draft.lipSync, sceneQuality: draft.sceneQuality, script: draft.script, voiceProvider: selected?.voice.provider }) : 0,
   [draft.style, draft.lipSync, draft.sceneQuality, draft.script, text, recreate, selected?.voice.provider])
   const longScenes = draft.style === 'cinematic' && text ? overlongScenes(draft.script) : []
+  // A HeyGen avatar's talking head: lip-synced on HeyGen, priced from HeyGen's published per-second rate.
+  const heygen = draft.style === 'talking' && selected?.heygen ? selected.heygen : null
+  const heygenVoice = Boolean(heygen && heygen.voice === 'heygen' && heygen.voiceId)
+  const heygenUsd = heygen && text ? estimateHeygenVideoUsd(seconds, heygenEngine(heygen.engines)) : null
+  const heygenStep = heygen ? heygenStage(heygen) : null
+  const needsOpenrouter = draft.style !== 'recreate' && !heygenVoice
   const updateRecreate = (patch: Partial<RecreateDraft>): void => draft.update({ recreate: { ...draft.recreate, ...patch } })
 
   const setStyle = (style: StudioStyle): void => {
@@ -226,7 +235,10 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
                   <button key={avatar.id} type="button" role="radio" aria-checked={selected?.id === avatar.id}
                     onClick={() => draft.update({ avatarId: avatar.id })}
                     className={cn('glass-tile glass-tile-hover overflow-hidden rounded-xl text-left', selected?.id === avatar.id && 'glass-selected')}>
-                    <img src={localFileUrl(avatar.portraitPath)} alt="" className="aspect-[9/16] w-full object-cover" />
+                    <span className="relative block">
+                      <img src={localFileUrl(avatar.portraitPath)} alt="" className="aspect-[9/16] w-full object-cover" />
+                      {avatar.heygen && <span className="pointer-events-none absolute left-1 top-1"><Badge tone="neutral">HeyGen</Badge></span>}
+                    </span>
                     <span className="block truncate px-2 py-1.5 text-2xs font-medium text-ink">{avatar.name}</span>
                   </button>
                 ))}
@@ -248,7 +260,7 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
               ]} />
               <p className="text-2xs text-ink-subtle">
                 {draft.style === 'talking'
-                  ? 'Your avatar speaks to camera. Reliable and the cheapest option. Pairs well with a gameplay split.'
+                  ? (heygen ? 'Your HeyGen avatar speaks to camera with realistic lip-sync (Beta). Pairs well with a gameplay split.' : 'Your avatar speaks to camera. Reliable and the cheapest option. Pairs well with a gameplay split.')
                   : draft.style === 'cinematic'
                     ? 'Narrated scenes: your avatar in different settings plus faceless shots. More cinematic, and it costs more.'
                     : `Restage a ${RECREATE_MIN_SECONDS}-${RECREATE_MAX_SECONDS} second clip with your avatar: same motion, timing and camera work, with the original audio.`}
@@ -332,7 +344,9 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
             <PanelHeader title="2 · Look" description="The same caption styles as Create." />
             <div className="mt-4 space-y-4">
               {draft.style === 'talking' && (
-                <p className="text-2xs text-ink-subtle">Your avatar’s photo with a slow push-in, voiced in its voice. Lip-sync is coming: OpenRouter can’t animate a face to your own voice yet.</p>
+                <p className="text-2xs text-ink-subtle">{heygen
+                  ? `Realistic lip-sync on HeyGen (Beta), vertical 1080p, then the captions and hook text below are added here. ${heygenVoice ? 'HeyGen speaks the script in its voice for this avatar.' : 'Voiced in the avatar’s app voice, then HeyGen lip-syncs to it.'}`
+                  : 'Your avatar’s photo with a slow push-in, voiced in its voice. Lip-sync is coming: OpenRouter can’t animate a face to your own voice yet. For realistic lip-sync, make a HeyGen avatar (Beta).'}</p>
               )}
               {draft.style === 'cinematic' && (
                 <Field label="Scene quality">
@@ -385,31 +399,45 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
           <Panel>
             <PanelHeader title="3 · Generate" description={draft.style === 'recreate'
               ? (recreate.sourcePath ? `Estimated cost about $${cost.toFixed(2)} on fal.ai · ${recreateLength.toFixed(1)}s video` : 'Recreate runs on fal.ai. Choose a video to see the estimated cost.')
-              : text ? `Estimated cost about $${cost.toFixed(2)} on OpenRouter · ${seconds}s video` : 'Write a script to see the estimated cost.'} />
+              : !text ? 'Write a script to see the estimated cost.'
+                : heygen ? (heygenUsd !== null
+                  ? `Estimated cost about $${(heygenUsd + (heygenVoice ? 0 : cost)).toFixed(2)}: HeyGen at about $${HEYGEN_PRICES.avatarIvPerSecond.toFixed(2)} a second (${heygenPriceNote()})${heygenVoice ? '' : ' plus the voice on OpenRouter'} · ${seconds}s video`
+                  : `Billed by HeyGen${heygenVoice ? '' : `, plus about $${cost.toFixed(2)} for the voice on OpenRouter`} · ${seconds}s video`)
+                  : `Estimated cost about $${cost.toFixed(2)} on OpenRouter · ${seconds}s video`} />
             <div className="mt-4 space-y-3">
+              {heygen && heygenStep !== 'ready' && !busy && (
+                <Callout tone="warning">{heygenStep === 'training' ? 'HeyGen is still training this avatar. Generate once it’s ready (see the avatar on the left).'
+                  : heygenStep === 'failed' ? 'HeyGen could not make this avatar. See the avatar on the left.'
+                    : 'HeyGen needs your consent recording before this avatar can make videos. Open the consent page from the avatar on the left.'}</Callout>
+              )}
+              {heygen && !heygenConfigured && <Callout tone="info" action={<Button size="sm" onClick={openKeys}>Open API keys</Button>}>This avatar runs on HeyGen. Add your HeyGen key in Settings → API keys.</Callout>}
               {status && <RenderProgress status={status} onNavigate={onNavigate} onViewLibrary={onViewLibrary} />}
               <div className="flex flex-wrap gap-2">
                 {busy ? (
                   <Button variant="secondary" onClick={() => void getApi().avatars.cancelRender()}>Cancel</Button>
                 ) : (
-                  <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || (draft.style === 'recreate' ? !falConfigured : !openrouterConfigured) || !selected || (draft.style === 'recreate' ? !recreateReady : !text || seconds > MAX_SPOKEN_SECONDS || longScenes.length > 0)}
-                    tooltip={draft.style === 'recreate' && !falConfigured ? 'Recreate needs a fal.ai key (Settings → API keys)' : draft.style !== 'recreate' && !openrouterConfigured ? 'Add your OpenRouter key first' : !selected ? 'Create an avatar first' : draft.style === 'recreate' ? (recreateReady ? undefined : 'Choose a video, a 3-30 second range, and confirm your rights') : !text ? 'Write a script first' : undefined} onClick={() => void generate()}>
+                  <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || (draft.style === 'recreate' ? !falConfigured : needsOpenrouter && !openrouterConfigured) || (heygen !== null && (!heygenConfigured || heygenStep !== 'ready')) || !selected || (draft.style === 'recreate' ? !recreateReady : !text || seconds > MAX_SPOKEN_SECONDS || longScenes.length > 0)}
+                    tooltip={draft.style === 'recreate' && !falConfigured ? 'Recreate needs a fal.ai key (Settings → API keys)' : heygen && !heygenConfigured ? 'Add your HeyGen key first' : heygen && heygenStep !== 'ready' ? 'This HeyGen avatar isn’t ready yet' : needsOpenrouter && !openrouterConfigured ? 'Add your OpenRouter key first' : !selected ? 'Create an avatar first' : draft.style === 'recreate' ? (recreateReady ? undefined : 'Choose a video, a 3-30 second range, and confirm your rights') : !text ? 'Write a script first' : undefined} onClick={() => void generate()}>
                     Generate video
                   </Button>
                 )}
               </div>
               <p className="text-2xs text-ink-subtle">
                 Talking-head videos take a few minutes; cinematic and recreated ones up to 10-20. You can leave this page while it works.
-                {busy && ` Cancelling stops what hasn’t started; a step already running on ${draft.style === 'recreate' ? 'fal.ai' : 'OpenRouter'} may still be charged.`}
+                {busy && (heygen ? ' Cancelling stops waiting; HeyGen can’t stop a video it already started, so it may still finish and be billed on your HeyGen account.'
+                  : ` Cancelling stops what hasn’t started; a step already running on ${draft.style === 'recreate' ? 'fal.ai' : 'OpenRouter'} may still be charged.`)}
               </p>
             </div>
           </Panel>
         </div>
       </div>
 
-      {creating && <CreateAvatarDialog openrouterConfigured={openrouterConfigured} onClose={() => setCreating(false)} onCreated={(list) => {
-        setAvatars(list); setCreating(false); if (list[0]) draft.update({ avatarId: list[0].id })
-      }} />}
+      {creating && <CreateAvatarDialog openrouterConfigured={openrouterConfigured} heygenConfigured={heygenConfigured} onOpenKeys={() => { setCreating(false); openKeys() }}
+        onClose={() => setCreating(false)} onCreated={(list, consent) => {
+          setAvatars(list); setCreating(false); if (list[0]) draft.update({ avatarId: list[0].id })
+          // A new video avatar: HeyGen's consent page opens in the browser right away.
+          if (consent && list[0]?.heygen?.source === 'twin') getApi().heygen.openConsent(list[0].id).then(setAvatars).catch((err) => setError(errorMessage(err)))
+        }} />}
     </Page>
   )
 }
@@ -559,7 +587,7 @@ function AvatarDetails({ avatar, busy, openrouterConfigured, onChange, onError }
   }
   return (
     <Panel>
-      <PanelHeader title={avatar.name} description={avatar.kind === 'self' ? 'Your likeness' : 'Fictional AI person'}
+      <PanelHeader title={avatar.name} description={avatar.heygen ? (avatar.heygen.source === 'stock' ? 'HeyGen stock AI person' : 'Your likeness on HeyGen') : avatar.kind === 'self' ? 'Your likeness' : 'Fictional AI person'}
         action={<Badge tone={avatar.kind === 'self' ? 'accent' : 'neutral'}>{voiceLabel(avatar.voice)}</Badge>} />
       <div className="mt-4 space-y-4">
         <Field label="Voice">
@@ -573,8 +601,10 @@ function AvatarDetails({ avatar, busy, openrouterConfigured, onChange, onError }
             <VoicePreview request={{ kind: 'avatar', voice: avatar.voice, avatarId: avatar.id }} name={voiceLabel(avatar.voice)} />
           </div>
         </Field>
-        <PictureLibrary avatar={avatar} busy={busy} onChange={onChange} onError={onError} />
-        {avatar.kind === 'self' && <RestylePortrait avatar={avatar} busy={busy} openrouterConfigured={openrouterConfigured} onChange={onChange} onError={onError} />}
+        <HeygenStatus avatar={avatar} busy={busy} appVoiceLabel={voiceLabel(avatar.voice)} onChange={onChange} onError={onError} />
+        {/* A HeyGen avatar's look lives on HeyGen; its picture here is only for the library. */}
+        {!avatar.heygen && <PictureLibrary avatar={avatar} busy={busy} onChange={onChange} onError={onError} />}
+        {avatar.kind === 'self' && !avatar.heygen && <RestylePortrait avatar={avatar} busy={busy} openrouterConfigured={openrouterConfigured} onChange={onChange} onError={onError} />}
         <ReactionLibrary avatar={avatar} busy={busy} openrouterConfigured={openrouterConfigured} onChange={onChange} onError={onError} />
         <div className="glass-tile space-y-2 rounded-xl p-3">
           <p className="flex items-center gap-1.5 text-xs font-medium text-ink"><Mic className="h-3.5 w-3.5" />Clone a voice</p>
@@ -598,8 +628,12 @@ function AvatarDetails({ avatar, busy, openrouterConfigured, onChange, onError }
   )
 }
 
-function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { openrouterConfigured: boolean; onClose: () => void; onCreated: (list: AvatarSummary[]) => void }): React.JSX.Element {
-  const [kind, setKind] = useState<'self' | 'ai'>(openrouterConfigured ? 'ai' : 'self')
+function CreateAvatarDialog({ openrouterConfigured, heygenConfigured, onClose, onCreated, onOpenKeys }: {
+  openrouterConfigured: boolean; heygenConfigured: boolean; onClose: () => void; onOpenKeys: () => void
+  /** `consent`: a new HeyGen video avatar whose consent page should open now. */
+  onCreated: (list: AvatarSummary[], consent?: boolean) => void
+}): React.JSX.Element {
+  const [kind, setKind] = useState<'self' | 'ai' | 'heygen'>(openrouterConfigured ? 'ai' : 'self')
   const [description, setDescription] = useState('')
   const [drafts, setDrafts] = useState<{ draftId: string; path: string }[]>([])
   const [chosen, setChosen] = useState<string | null>(null)
@@ -614,7 +648,7 @@ function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { open
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => { ref.current?.focus() }, [])
 
-  const switchKind = (next: 'self' | 'ai'): void => { setKind(next); setDrafts([]); setChosen(null); setError(null); setPhoto(null); setPicture('photo') }
+  const switchKind = (next: 'self' | 'ai' | 'heygen'): void => { setKind(next); setDrafts([]); setChosen(null); setError(null); setPhoto(null); setPicture('photo') }
   const attempt = useCallback(async (action: () => Promise<void>): Promise<void> => {
     setWorking(true); setError(null)
     try { await action() } catch (err) { setError(errorMessage(err)) } finally { setWorking(false) }
@@ -632,7 +666,7 @@ function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { open
     if (!chosen) return
     const ownPhoto = kind === 'self' && photo !== null && chosen === photo.draftId
     onCreated(await getApi().avatars.create({
-      draftId: chosen, name, kind, description: kind === 'ai' ? description : '', voice: { provider: 'elevenlabs', voice }, consent,
+      draftId: chosen, name, kind: kind === 'self' ? 'self' : 'ai', description: kind === 'ai' ? description : '', voice: { provider: 'elevenlabs', voice }, consent,
       pictureSource: ownPhoto ? 'photo' : 'ai',
       // An AI version of you: your own photo is kept with the avatar too, so you can switch back.
       ...(kind === 'self' && photo && !ownPhoto ? { keepPhotoDraftId: photo.draftId } : {})
@@ -640,15 +674,30 @@ function CreateAvatarDialog({ openrouterConfigured, onClose, onCreated }: { open
   })
 
   const ready = Boolean(chosen && name.trim() && (kind === 'ai' || consent))
+  const header = (
+    <>
+      <h2 className="text-base font-semibold text-ink">New avatar</h2>
+      <Segmented label="Avatar type" value={kind} onChange={switchKind} options={[
+        { value: 'ai', label: 'Generate an AI person' },
+        { value: 'self', label: 'Use my photo' },
+        { value: 'heygen', label: <span className="inline-flex items-center gap-1.5">Realistic talking avatar (HeyGen, Beta)</span> }
+      ]} />
+    </>
+  )
+  if (kind === 'heygen') {
+    return (
+      <Dialog ref={ref} aria-label="New avatar" onBackdropMouseDown={working ? undefined : onClose} panelClassName="max-w-[680px]"
+        onKeyDown={(e) => { if (e.key === 'Escape' && !working) onClose() }}>
+        <HeygenCreateForm header={header} heygenConfigured={heygenConfigured} onOpenKeys={onOpenKeys} onClose={onClose}
+          onCreated={(list, source) => onCreated(list, source === 'twin')} />
+      </Dialog>
+    )
+  }
   return (
-    <Dialog ref={ref} aria-label="New avatar" onBackdropMouseDown={working ? undefined : onClose} panelClassName="max-w-[560px]"
+    <Dialog ref={ref} aria-label="New avatar" onBackdropMouseDown={working ? undefined : onClose} panelClassName="max-w-[680px]"
       onKeyDown={(e) => { if (e.key === 'Escape' && !working) onClose() }}>
       <div className="space-y-4 overflow-y-auto p-5">
-        <h2 className="text-base font-semibold text-ink">New avatar</h2>
-        <Segmented label="Avatar type" value={kind} onChange={switchKind} options={[
-          { value: 'ai', label: 'Generate an AI person' },
-          { value: 'self', label: 'Use my photo' }
-        ]} />
+        {header}
         {kind === 'ai' ? (
           <Field label="Describe the person" hint={openrouterConfigured ? `Fictional people only. About $${(PRICES.image * AI_PORTRAIT_CANDIDATES).toFixed(2)} for ${AI_PORTRAIT_CANDIDATES} options.` : 'Add your OpenRouter key in Settings → API keys to generate faces.'}>
             <TextArea rows={3} value={description} maxLength={600} onChange={(e) => setDescription(e.target.value)}

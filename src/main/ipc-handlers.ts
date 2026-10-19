@@ -19,7 +19,7 @@ import { allowOnce, assertSpendAllowed, friendlyIpcError, initSpending, metered,
 import { readTimecodeScreenshot } from './moment-take'
 import { MAX_TIMECODE_IMAGE_BYTES, parseMomentRanges, type TimecodeRead } from '../shared/moment-take'
 import { friendlyCreditError, type SpendProvider } from '../shared/spending'
-import { AI_PORTRAIT_CANDIDATES, estimateRecreateCost, estimateRenderCost, PRICES, REACTIONS } from '../shared/avatars'
+import { AI_PORTRAIT_CANDIDATES, estimateRecreateCost, PRICES, REACTIONS } from '../shared/avatars'
 import { estimateRemixCost, isRemixHost, MAX_REMIXES } from '../shared/remix'
 import { deletePreset, readMemberPrefs, renamePreset, saveAppPrefs, saveLastStyle, savePreset, saveProfile } from './member-prefs'
 import { recordToolCheck, reportIssue } from './support-report'
@@ -41,7 +41,10 @@ import {
   isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate
 } from './edit-recording'
 import { EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
-import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, parseRenderRequest, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
+import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, renderSpendCheck, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
+import { createHeygenAvatar, draftTwinVideo, heygenAccount, heygenConsentUrl, refreshHeygenAvatar, saveTwinRecording, setHeygenVoice, stockHeygenAvatars, TWIN_VIDEO_EXTENSIONS } from './heygen-avatar'
+import { isConsentUrl } from './heygen'
+import { HEYGEN_PRICES } from '../shared/heygen'
 import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, isWithinLibrary, openAuthorizedMedia, setExtraLibraryRoots } from './security'
 import { cleanupPlan, folderChangeInfo, forgetFolder, freeSpace, listPreviousFolders, moveFolderRuns, onOutputFolderChanged, runCleanup, runSizes } from './library-storage'
@@ -389,8 +392,13 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return metered('avatar', 'Voice clone', () => cloneVoice(id, result.filePaths[0], consent))
   })
   handle('avatars:writeScript', (_event, request: unknown) => writeAvatarScript(request))
-  paid('avatars:render', 'openrouter', (request) => estimateRenderCost(parseRenderRequest(request)),
-    (request) => meteredAvatarRender(false, () => startAvatarRender(request)))
+  // A HeyGen avatar's talking head is checked against HeyGen's published per-second price (or no estimate when it has none).
+  handle('avatars:render', async (_event, request: unknown) => {
+    let check: { provider: SpendProvider; estimateUsd: number | null } = { provider: 'openrouter', estimateUsd: null }
+    try { check = renderSpendCheck(request) } catch { /* the render itself reports a bad request */ }
+    await assertSpendAllowed('avatars:render', check.provider, check.estimateUsd)
+    return meteredAvatarRender(false, () => startAvatarRender(request))
+  })
   paid('avatars:recreate', 'fal', (request) => {
     const raw = (request ?? {}) as Record<string, unknown>
     if (typeof raw.startSeconds !== 'number' || typeof raw.endSeconds !== 'number' || !['replace', 'move', 'motion'].includes(raw.mode as string)) return null
@@ -398,6 +406,34 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return Number.isFinite(cost) && cost > 0 ? cost : null
   }, (request) => meteredAvatarRender(true, () => startAvatarRecreate(request)))
   handle('avatars:cancelRender', () => cancelAvatarRender())
+  // HeyGen (Beta): realistic talking avatars on the member's own key.
+  handle('heygen:account', () => heygenAccount())
+  handle('heygen:stockAvatars', () => stockHeygenAvatars())
+  handle('heygen:pickVideo', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a video of you talking to the camera (about 2 minutes)', filters: [{ name: 'Video', extensions: TWIN_VIDEO_EXTENSIONS }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return draftTwinVideo(result.filePaths[0])
+  })
+  handle('heygen:saveRecording', (_event, bytes: unknown, mime: unknown) => saveTwinRecording(bytes, mime))
+  // Making a video or photo avatar is billed by HeyGen per call; stock avatars cost nothing to add.
+  handle('heygen:createAvatar', async (_event, input: unknown) => {
+    if ((input as { source?: unknown } | null)?.source !== 'stock') await assertSpendAllowed('heygen:createAvatar', 'heygen', HEYGEN_PRICES.avatarCreation)
+    return createHeygenAvatar(input)
+  })
+  handle('heygen:refresh', (_event, id: unknown) => refreshHeygenAvatar(id))
+  // The consent link comes from HeyGen and is read from the avatar here; the page never passes a URL.
+  handle('heygen:openConsent', async (_event, id: unknown) => {
+    const url = await heygenConsentUrl(id)
+    if (!isConsentUrl(url)) throw new Error('HeyGen returned a consent link that can’t be opened.')
+    await shell.openExternal(url)
+    return listAvatars()
+  })
+  handle('heygen:setVoice', (_event, id: unknown, voice: unknown) => {
+    if (id === avatarInUse() || id === remixAvatarInUse()) throw new Error('This avatar is being used for a video right now. Try again when it finishes.')
+    return setHeygenVoice(id, voice)
+  })
   handle('avatars:renderStatus', () => friendlyStatus(avatarRenderStatus()))
   handle('voices:sample', (_event, request: unknown) => metered('avatar', 'Voice preview', () => voiceSample(request)))
   onAvatarRenderStatus((status) => {

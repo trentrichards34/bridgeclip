@@ -222,7 +222,7 @@ test('estimates use the listed Scribe price and the app’s planning price; tran
   assert.ok(Math.abs(minute.planUsd - 0.35 * 0.05) < 1e-12)
   assert.equal(shared.formatUsd(0.004), 'under $0.01')
   const spending = fs.readFileSync(path.join(ROOT, 'main/spending.ts'), 'utf8')
-  assert.match(spending, /'edit:start', 'edit:ideas'\]\)/)
+  assert.match(spending, /'edit:start', 'edit:ideas'/)
   const handlers = fs.readFileSync(path.join(ROOT, 'main/ipc-handlers.ts'), 'utf8')
   assert.match(handlers, /paid\('edit:start', 'openrouter'/)
   assert.match(handlers, /paid\('edit:ideas', 'openrouter', \(\) => IDEAS_ESTIMATE_USD/)
