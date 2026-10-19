@@ -1289,6 +1289,135 @@ def recording_window(path: str, out: str, start: float, duration: float) -> str:
     return out
 
 
+# A landscape (laptop webcam) recording is reframed to 9:16 around the member's face, head and shoulders: the face
+# is kept near the middle across, and when it would fill more than FACE_MAX of the frame's height (sitting close to
+# a laptop), the picture is zoomed out until it fills FACE_TARGET, over a blurred, darkened copy of itself.
+FACE_MAX, FACE_TARGET = 0.45, 0.40
+# Where the face's middle sits from the top of the frame when the picture is zoomed out.
+FACE_SPOT = 0.40
+FACE_SAMPLES = 6
+FACE_MODEL = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "assets", "models", "face_detection_yunet_2023mar.onnx"))
+
+
+def find_face(path: str, samples: int = FACE_SAMPLES) -> Optional[tuple[float, float, float, float]]:
+    """The member's face (x, y, w, h as fractions of the frame), the median of the biggest face in a few frames
+    spread through the recording, or None when no face is found (or the detector isn't available)."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:  # pragma: no cover - the engine ships both
+        return None
+    if not os.path.isfile(FACE_MODEL):
+        return None
+    capture = cv2.VideoCapture(path)
+    try:
+        count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        boxes = []
+        detector = None
+        for i in range(samples):
+            if count > 0:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, int(count * (i + 0.5) / samples))
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                continue
+            h, w = frame.shape[:2]
+            scale = min(1.0, 640 / max(w, h))
+            small = cv2.resize(frame, (max(1, round(w * scale)), max(1, round(h * scale)))) if scale < 1 else frame
+            sh, sw = small.shape[:2]
+            if detector is None:
+                detector = cv2.FaceDetectorYN.create(FACE_MODEL, "", (sw, sh), 0.7, 0.3, 50)
+            detector.setInputSize((sw, sh))
+            _, faces = detector.detect(small)
+            if faces is None or not len(faces):
+                continue
+            x, y, fw, fh = max(faces, key=lambda f: f[2] * f[3])[:4]
+            boxes.append((x / sw, y / sh, fw / sw, fh / sh))
+    finally:
+        capture.release()
+    if not boxes:
+        return None
+    return tuple(float(v) for v in np.median(np.array(boxes), axis=0))  # type: ignore[return-value]
+
+
+def member_framing(size: tuple[int, int], face: Optional[tuple[float, float, float, float]]) -> Optional[dict]:
+    """How to turn a landscape recording into 9:16 (None: it's already upright). Returns the output size, the
+    zoom (1: the full height is used; above 1: zoomed out over a blurred copy), and where the picture goes."""
+    w, h = size
+    if w <= h * 1.05:
+        return None
+    out_h = min(OUT_H, h // 2 * 2)
+    out_w = round(out_h * 9 / 16) // 2 * 2
+    cx, cy, face_h = (0.5, 0.4, 0.0) if face is None else (face[0] + face[2] / 2, face[1] + face[3] / 2, face[3])
+    zoom = face_h / FACE_TARGET if face_h > FACE_MAX else 1.0
+    # The picture at out_h / zoom tall (always wider than the frame for a landscape recording).
+    pic_h = round(out_h / zoom) // 2 * 2
+    pic_w = round(w * pic_h / h) // 2 * 2
+    if pic_w < out_w:  # a near-square recording zoomed far out: keep the frame covered across
+        pic_w = out_w
+        pic_h = round(h * pic_w / w) // 2 * 2
+    x = round(min(max(0.0, cx * pic_w - out_w / 2), pic_w - out_w))
+    y = 0 if pic_h >= out_h else round(min(max(FACE_SPOT * out_h - cy * pic_h, 0), out_h - pic_h))
+    return {"size": [out_w, out_h], "zoom": round(zoom, 3), "picture": [pic_w, pic_h], "crop_x": x, "y": y,
+            "face": [round(v, 4) for v in face] if face else None}
+
+
+def frame_member(path: str, out: str, layout: str = "filmed") -> Optional[dict]:
+    """Reframe a landscape recording to 9:16 around the member's face (see member_framing). Zooming out over a blurred
+    copy is only for "filmed" (a cut-out is made from this picture afterward, and a green screen sizes the whole
+    person). Writes `out` and returns the framing, or returns None and leaves nothing when it isn't needed."""
+    if layout == "greenscreen":
+        return None
+    size = video_size(path)
+    framing = member_framing(size, find_face(path))
+    if framing is None:
+        return None
+    if layout != "filmed" and framing["zoom"] > 1:
+        framing = member_framing(size, None if framing["face"] is None else (*framing["face"][:3], min(framing["face"][3], FACE_MAX))) or framing
+    out_w, out_h = framing["size"]
+    pic_w, pic_h = framing["picture"]
+    fg = f"scale={pic_w}:{pic_h},crop={out_w}:{min(pic_h, out_h)}:{framing['crop_x']}:{max(0, (pic_h - out_h) // 2)}"
+    if pic_h >= out_h:
+        graph = f"[0:v]{fg},setsar=1,format=yuv420p[v]"
+    else:
+        graph = (f"[0:v]split[a][b];[a]{cover(out_w, out_h, 0.5)},boxblur=24:2,eq=brightness=-0.18[bg];[b]{fg}[fg];"
+                 f"[bg][fg]overlay=x=0:y={framing['y']},setsar=1,format=yuv420p[v]")
+    ffmpeg([*MEDIA_GUARD, "-i", path, "-filter_complex", graph, "-map", "[v]", "-map", "0:a?", *VIDEO_ARGS, "-c:a", "copy", out])
+    return framing
+
+
+def frame_member_in_place(path: str, layout: str, warnings: Optional[list[str]] = None) -> Optional[dict]:
+    """frame_member over the file itself; a failure keeps the recording as it was."""
+    framed = path + ".framed.mp4"
+    try:
+        framing = frame_member(path, framed, layout)
+        if framing is not None:
+            os.replace(framed, path)
+        return framing
+    except Exception as error:  # noqa: BLE001 - the plain centered crop still works
+        logger.warning(f"Framing the recording failed, keeping it centered: {type(error).__name__}: {error}")
+        try:
+            os.remove(framed)
+        except OSError:
+            pass
+        return None
+
+
+# Moment + my take: the chip shown as the video cuts from their moment to the member.
+TAKE_CHIP_TEXT = "My take"
+TAKE_CHIP_S = 1.2
+
+
+def take_chip_colors(look: Optional[dict]) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    """The chip's fill and text: the brand's color (with black or white text, whichever reads) when the member chose a
+    brand with a color, otherwise a dark chip with white text."""
+    color = str((look or {}).get("color") or "").lstrip("#")
+    if re.fullmatch(r"[0-9a-fA-F]{6}", color) and color.upper() not in ("FFFFFF", "000000"):
+        r, g, b = (int(color[i:i + 2], 16) for i in (0, 2, 4))
+        light = 0.2126 * r + 0.7152 * g + 0.0722 * b > 150
+        return (r, g, b, 240), ((10, 10, 10, 255) if light else (255, 255, 255, 255))
+    return (0, 0, 0, 190), (255, 255, 255, 255)
+
+
 def voice_over_clip(voice: str, clip: str, out: str) -> str:
     """The member's mic over the clip's sound: the mic is cleaned up (low rumble cut, normalized, gated so the
     clip bleeding into it between their words stays out), and the clip ducks under their voice."""
@@ -1553,9 +1682,9 @@ def still_stream(index: int) -> str:
 
 def image_stage(image: str, work: str, width: int, height: int, top: int, visible_h: int, duration: float,
                 index: int, label: str) -> tuple[list[str], str, bool, bool]:
-    """The screenshot behind the member (green screen), width x height: a blurred copy of itself fills
-    the frame and the screenshot sits at `top`, fitted to the width. One taller than `visible_h` scrolls
-    top to bottom through the part the member leaves clear.
+    """The screenshot behind the member (green screen), width x height: a blurred, darkened copy of itself fills
+    the frame and the screenshot sits at `top`, fitted to the width. A long one scrolls top to bottom and stops,
+    holding, when its end reaches the bottom of the frame: nothing is ever left uncovered.
     Returns (inputs, filters ending in [label], scrolls, cut: only the top of a very long one is used)."""
     picture = _upright(image)
     back = _blurred_cover(picture, width, height)
@@ -1569,10 +1698,12 @@ def image_stage(image: str, work: str, width: int, height: int, top: int, visibl
         still = os.path.join(work, "stage.png")
         back.save(still, "PNG")
         return ["-i", still], f"{still_stream(index)},setsar=1,format=yuv420p[{label}]", False, False
-    # A long screenshot: a strip at the frame's width, padded so its end reaches the clear part, scrolled.
-    fitted, cut = fit_width(picture, width, MAX_SCROLL_HEIGHT)
-    strip = Image.new("RGB", (width, fitted.height + max(0, area_h - visible_h)), (17, 17, 17))
-    strip.paste(fitted, (0, 0))
+    # A long screenshot: a strip at the frame's width, scrolled until its end meets the bottom of the frame.
+    strip, cut = fit_width(picture, width, MAX_SCROLL_HEIGHT)
+    if strip.height < area_h:  # (only a cut one could be: it then sits on the blurred copy, never a flat color)
+        padded = back.crop((0, top, width, top + area_h))
+        padded.paste(strip, (0, 0))
+        strip = padded
     still, strip_path = os.path.join(work, "stage-back.png"), os.path.join(work, "stage-strip.png")
     back.save(still, "PNG")
     strip.save(strip_path, "PNG", compress_level=1)
@@ -2803,6 +2934,13 @@ class Remixer:
         """An on-camera line of a voiced take from the member's normalized recording, in the chosen layout:
         filmed (cover-cropped), cut out over a blurred copy or brand color, or cut out over the moment (muted, looping)."""
         layout = self.config.camera_layout
+        # A laptop webcam: reframed around the face first (head and shoulders, not too close).
+        framed = out + ".framed.mp4"
+        try:
+            if frame_member(footage, framed, layout) is not None:
+                footage = framed
+        except Exception as error:  # noqa: BLE001 - the plain centered crop still works
+            logger.warning(f"Framing the recording failed, keeping it centered: {type(error).__name__}: {error}")
         matte = self._matte(footage, out + ".matte.mkv", warnings) if layout != "filmed" else None
         if matte is None:
             return video_segment(footage, out, OUT_W, panel_h)
@@ -3229,6 +3367,7 @@ class Remixer:
         script = replace(script, start_ms=0, end_ms=round(duration * 1000))
 
         layout = self.config.camera_layout
+        await asyncio.to_thread(frame_member_in_place, cam, layout)
         files = {"presenter": "presenter.mp4", "image": "image.png"}
         if layout in ("cutout", "greenscreen"):
             say("cutting you out", 0.15)
@@ -3503,6 +3642,7 @@ class Remixer:
 
         # 3. The cut-out, when chosen.
         layout = self.config.camera_layout if self.config.camera_layout in ("filmed", "cutout") else "filmed"
+        await asyncio.to_thread(frame_member_in_place, cam, layout)
         files = {"presenter": "presenter.mp4", "moment": "moment.mp4"}
         if layout == "cutout":
             say("cutting you out", 0.35)
@@ -3922,6 +4062,16 @@ class Remixer:
             cta_y = clear_h + mt.PIP_TOP + box_h + 24
         else:
             graph += f"[1:v]trim=duration={tk:.3f},setpts=PTS-STARTPTS,fps={FPS},setsar=1,format=yuv420p[v1];"
+        # A clean cut to the member: a "My take" chip (in the brand's color when there is one) fades in and out at its start.
+        chip = os.path.join(work, "my-take.png")
+        fill, ink = take_chip_colors(self.config.headline_look if self.config.brand_name else None)
+        await asyncio.to_thread(tag_image, TAKE_CHIP_TEXT, chip, 40, fill, ink)
+        chip_y = (py + box_h + 24) if self.config.moment_pip else lift + 40
+        chip_index = inputs.count("-i")
+        inputs += ["-loop", "1", "-t", f"{TAKE_CHIP_S:.2f}", "-i", chip]
+        graph = graph.replace("format=yuv420p[v1];", "format=yuv420p[v1pre];")
+        graph += (f"[{chip_index}:v]format=rgba,fade=t=in:st=0:d=0.15:alpha=1,fade=t=out:st={TAKE_CHIP_S - 0.25:.2f}:d=0.25:alpha=1,"
+                  f"setpts=PTS-STARTPTS[chip];[v1pre][chip]overlay=x=48:y={chip_y}:eof_action=pass,format=yuv420p[v1];")
         graph += "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]"
         assembled = os.path.join(work, "assembled.mp4")
         await asyncio.to_thread(ffmpeg, [*inputs, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", *VIDEO_ARGS, *AUDIO_ARGS, assembled])
@@ -4083,6 +4233,7 @@ class Remixer:
 
         # 2. The cut-out, when the layout needs one.
         layout = self.config.camera_layout
+        await asyncio.to_thread(frame_member_in_place, cam, layout)
         files = {"presenter": "presenter.mp4", "moment": "moment.mp4"}
         if layout in ("cutout", "greenscreen"):
             say("cutting you out", 0.15)

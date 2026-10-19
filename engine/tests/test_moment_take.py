@@ -295,8 +295,15 @@ def test_render_the_moment_then_the_take_and_edit_the_hook_text(env, monkeypatch
     assert abs(len(frames) - round((op + 5.0) * 30)) <= 2
     diffs = np.abs(np.diff(frames, axis=0)).mean(axis=(1, 2))
     join = round(op * 30)
-    # The moment moves (no frozen frames past the first); the take (a still picture) doesn't; no black frames anywhere.
-    assert np.median(diffs[1:join - 2]) > 1.0 and min(diffs[1:join - 2]) > 0.05 and max(diffs[join + 1:]) < 0.05, diffs
+    # The moment moves (no frozen frames past the first); the take (a still picture) doesn't once the "My take" chip has
+    # faded in and out over its first moments; no black frames anywhere.
+    chip = round(remix.TAKE_CHIP_S * 30)
+    assert np.median(diffs[1:join - 2]) > 1.0 and min(diffs[1:join - 2]) > 0.05 and max(diffs[join + chip + 2:]) < 0.05, diffs
+    assert max(diffs[join + 1:join + chip + 2]) > 0.05, diffs
+    # The chip: on screen early in the take (top left, under the hook text), gone a second later.
+    corner = gray_frames(panel, size=(40, 40), crop="300:400:40:0")
+    early, late = corner[join + 15], corner[join + chip + 10]
+    assert np.abs(early - late).mean() > 5, (early.mean(), late.mean())
     assert frames.mean(axis=(1, 2)).min() > 20
     # Sound: the moment's tone, then the member's voice; quiet right at the join (the fades), picture and sound the same length.
     m1k, m300 = tone_levels(panel, 1.0, 2.0)
@@ -318,7 +325,7 @@ def test_render_the_moment_then_the_take_and_edit_the_hook_text(env, monkeypatch
     assert [c["headline"] for c in job["clips"]] == ["He says 15 billion scam ads run every day", "Attention is the new oil, he says"]
     assert all(c["editable"] and c["description"] == "Original: @podcaster" and c["ai_generated"] is False for c in job["clips"])
     assert job["metrics"]["remix_kinds"] == ["camera"]
-    samples(first["path"], "moment-take", (1.0, 7.5))
+    samples(first["path"], "moment-take", (1.0, 6.0, 7.5))
 
     # Edit hook text & captions: made again from the kept parts, no AI.
     no_ai(monkeypatch)
@@ -363,3 +370,12 @@ def test_bad_requests_are_refused(env, monkeypatch):
     with pytest.raises(remix.RemixError, match="Start again"):
         asyncio.run(remixer(config(env, []), env)[0].pick_another(0))
     assert remix.camera_recording({"reaction": {"path": "/nope.mp4"}}, "moment_take") is None
+
+
+def test_the_my_take_chip_uses_the_brand_color():
+    assert remix.take_chip_colors(None) == ((0, 0, 0, 190), (255, 255, 255, 255))
+    assert remix.take_chip_colors({"look": "white", "color": "#FFFFFF"}) == ((0, 0, 0, 190), (255, 255, 255, 255))
+    fill, ink = remix.take_chip_colors({"look": "brand", "color": "#2563EB"})
+    assert fill == (0x25, 0x63, 0xEB, 240) and ink == (255, 255, 255, 255)
+    fill, ink = remix.take_chip_colors({"look": "brand", "color": "#FFD400"})
+    assert fill[:3] == (0xFF, 0xD4, 0x00) and ink == (10, 10, 10, 255)

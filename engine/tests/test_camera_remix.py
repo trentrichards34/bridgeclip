@@ -565,3 +565,42 @@ def test_a_half_written_matte_is_removed(tmp_path, monkeypatch):
     warnings = []
     assert remixer._matte(str(tmp_path / "you.mp4"), str(out), warnings) is None
     assert not out.exists() and warnings
+
+
+def test_a_laptop_webcam_is_framed_head_and_shoulders():
+    """16:9 to 9:16 around the face: centered across on it, and zoomed out (never in) when it would be too big."""
+    # Sitting close: the face is 60% of the picture's height, so it is zoomed out to 40%, its middle 40% down.
+    close = remix.member_framing((1280, 720), (0.40, 0.10, 0.15, 0.60))
+    assert close["size"] == [404, 720] and close["zoom"] == 1.5
+    pic_w, pic_h = close["picture"]
+    assert abs(0.60 * pic_h / 720 - remix.FACE_TARGET) < 0.01
+    assert abs(close["y"] + 0.40 * pic_h - remix.FACE_SPOT * 720) < 2
+    assert 0 <= close["crop_x"] <= pic_w - 404 and abs(close["crop_x"] + 202 - 0.475 * pic_w) < 2
+    # A comfortable distance: the full height, the frame moved across to the face (kept inside the picture).
+    seated = remix.member_framing((1280, 720), (0.70, 0.30, 0.10, 0.30))
+    assert seated["zoom"] == 1.0 and seated["picture"] == [1280, 720] and seated["y"] == 0
+    assert seated["crop_x"] == round(0.75 * 1280 - 202)
+    right = remix.member_framing((1280, 720), (0.92, 0.30, 0.08, 0.30))
+    assert right["crop_x"] == 1280 - 404
+    # No face found: centered, full height. An upright (phone) recording is left as it is.
+    assert remix.member_framing((1920, 1080), None)["crop_x"] == 960 - 608 // 2
+    assert remix.member_framing((720, 1280), (0.4, 0.2, 0.2, 0.2)) is None
+
+
+def test_frame_member_zooms_out_over_a_blurred_copy(env, monkeypatch):
+    recording = make_line_recording(env, env.tmp / "webcam.mp4", 2, (640, 360), 300)
+    monkeypatch.setattr(remix, "find_face", lambda path, samples=remix.FACE_SAMPLES: (0.40, 0.10, 0.15, 0.60))
+    out = env.tmp / "framed.mp4"
+    framing = remix.frame_member(recording, str(out), "filmed")
+    assert framing["zoom"] == 1.5
+    info = probe(env.ffprobe, str(out))
+    video = next(s for s in info["streams"] if s["codec_type"] == "video")
+    assert (video["width"], video["height"]) == (202, 360) and any(s["codec_type"] == "audio" for s in info["streams"])
+    assert abs(float(info["format"]["duration"]) - 2.0) < 0.1
+    # A cut-out or a green screen isn't zoomed out (the cut-out is made from this picture; a green screen sizes the whole person).
+    assert remix.frame_member(recording, str(env.tmp / "cut.mp4"), "cutout")["zoom"] == 1.0
+    assert remix.frame_member(recording, str(env.tmp / "green.mp4"), "greenscreen") is None
+    # A failure keeps the recording as it was.
+    monkeypatch.setattr(remix, "frame_member", lambda *a, **k: (_ for _ in ()).throw(remix.RemixError("x")))
+    before = os.path.getsize(recording)
+    assert remix.frame_member_in_place(recording, "filmed") is None and os.path.getsize(recording) == before
