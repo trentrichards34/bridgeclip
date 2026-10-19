@@ -96,13 +96,13 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   const added = ctaGroup.getByRole('radio', { name: /Comment PULLUP \(video, 3 seconds\)/ })
   await added.waitFor({ timeout: 30000 })
   assert.equal(await added.getAttribute('aria-checked'), 'true', 'a new CTA is chosen right away')
-  await page.getByText(/Your CTA clip below plays at the end of every video/).waitFor()
+  await page.getByText(/Your CTA clip plays at the end of every video/).waitFor()
 
   // Hook text look: a brand-color bar in the condensed font.
   const looks = page.getByRole('radiogroup', { name: 'Hook text look' })
   assert.equal(await looks.getByRole('radio', { name: /White bar/ }).getAttribute('aria-checked'), 'true')
   await looks.getByRole('radio', { name: /Brand color/ }).click()
-  await page.getByLabel('Bar color').fill('#ff8800')
+  await page.getByLabel('Custom bar color').fill('#ff8800')
   await page.getByRole('radiogroup', { name: 'Hook text font' }).getByRole('radio', { name: 'Bold condensed' }).click()
   if (process.env.BRIDGECLIP_E2E_SHOTS) {
     await looks.scrollIntoViewIfNeeded()

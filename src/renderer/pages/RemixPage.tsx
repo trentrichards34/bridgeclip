@@ -1,20 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FirstRunGuide } from '../components/FirstRunGuide'
-import { AlertTriangle, Bot, Camera, Check, ChevronDown, Image as ImageIcon, Copy, FileText, Film, FolderOpen, Library, MessageCircle, Send, Sparkles, UserRound, Wand2, X } from 'lucide-react'
+import { AlertTriangle, Bot, Camera, Check, ChevronDown, Image as ImageIcon, Copy, FileText, Film, FolderOpen, Library, Send, Sparkles, UserRound, Wand2, X } from 'lucide-react'
 import type { AvatarSummary } from '../../shared/avatars'
 import { REACTIONS } from '../../shared/avatars'
 import {
-  brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_CTA_OFFER_CHARS, MAX_POST_CAPTION_CHARS, MAX_SOURCES,
+  brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_POST_CAPTION_CHARS, MAX_SOURCES,
   closeWithoutCta, normalizeCtaKeyword, AVATAR_VOICE, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
   REMIX_WORD_LIMITS, remixEditProblem, remixSourceUrl, STANCE_LABELS, STYLE_LABELS, wordCount,
   AI_CARDS, CAMERA_CARDS, clipFormat, remixMode, headlineOnly, CAMERA_LAYOUTS, partsFor, AVATAR_REACTIONS_BETA, type CameraSettings, type FormatCard, type FormatCardId,
   type RemixFormat, type RemixMode, type RemixRecordings, type BrandIdentity, type RemixDraft, type RemixEdit, type RemixHost, type RemixOutput, type RemixStatus
 } from '../../shared/remix'
 import type { Page as PageName } from '../components/Sidebar'
-import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
 import { VoicePreview } from '../components/VoicePreview'
-import { HeadlineLookPicker } from '../components/HeadlineLookPicker'
-import { CtaPicker } from '../components/CtaPicker'
+import { previewFrame, StyleBoard } from '../components/StyleBoard'
+import { boardFromLook, LOOK_HOOKS, lookPatch } from '../lib/style-board'
 import { partLabel, RemixRecorder } from '../components/RemixRecorder'
 import { PauseReactReview } from '../components/PauseReactReview'
 import { MomentTakeReview } from '../components/MomentTakeReview'
@@ -420,35 +419,14 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     </Panel>
   )
 
-  const brandBlock = (<>
-    <BrandPicker value={form.brandIdentityId} onChange={chooseBrand} noneDetail="A neutral expert voice, no results or numbers" />
-    {showMark && (
-      <SettingRow title="Show my handle" description={`Puts ${brand?.look?.handle ? `“${brand.look.handle}”` : 'your logo'} small in a corner of every video.`}
-        control={<Switch label="Show my handle" checked={form.showHandle} onChange={(showHandle) => form.update({ showHandle })} />} />
-    )}
-  </>)
+  const brandBlock = <BrandPicker value={form.brandIdentityId} onChange={chooseBrand} noneDetail="A neutral expert voice, no results or numbers" />
 
-  const ctaBlocks = (<>
-    <div className="glass-tile space-y-3 rounded-xl p-3">
-      <div className="flex items-start gap-2">
-        <MessageCircle className="mt-0.5 h-4 w-4 shrink-0 text-ink-muted" />
-        <div>
-          <span className="block text-sm text-ink">Comment-keyword call to action</span>
-          <span className="block text-2xs text-ink-subtle">Turns viewers into DMs: every video ends with it, it shows on screen, and it closes the caption. Deliver what you promise with an auto-DM tool like ManyChat.</span>
-        </div>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-        <Field label="Comment keyword (optional)">
-          <TextInput aria-label="Comment keyword" value={form.ctaKeyword} maxLength={20} placeholder="e.g. SALES"
-            onChange={(e) => form.update({ ctaKeyword: e.target.value.toUpperCase().replace(/\s+/g, '') })} />
-        </Field>
-        <Field label="What they get">
-          <TextInput aria-label="What they get" value={form.ctaOffer} maxLength={MAX_CTA_OFFER_CHARS} disabled={!keyword}
-            placeholder="e.g. my free playbook" onChange={(e) => form.update({ ctaOffer: e.target.value })} />
-        </Field>
-      </div>
+  // What the comment keyword does here, under the board's keyword fields.
+  const keywordHelp = (
+    <div className="space-y-1">
+      <p className="text-2xs text-ink-subtle">Turns viewers into DMs: every video ends with it, it shows on screen, and it closes the caption. Deliver what you promise with an auto-DM tool like ManyChat.</p>
       {keyword === null ? <p className="text-2xs text-danger">One word: letters, numbers or a dash (2–20 characters).</p>
-        : keyword && form.ctaId ? <p className="text-2xs text-ink-muted">Your CTA clip below plays at the end of every video (so the presenter doesn’t say one too), and the caption ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
+        : keyword && form.ctaId ? <p className="text-2xs text-ink-muted">Your CTA clip plays at the end of every video (so the presenter doesn’t say one too), and the caption ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
         : keyword ? (silent || image || pause || momentTake || clip
           ? <p className="text-2xs text-ink-muted">“Comment {keyword}” shows on screen at the end, and the caption ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
           : <p className="text-2xs text-ink-muted">Every video ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>)
@@ -458,14 +436,17 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             </button>
           ) : <p className="text-2xs text-ink-subtle">Leave it empty to end on the payoff (or your Brand Identity’s own call to action).</p>}
     </div>
-    <div className="glass-tile space-y-3 rounded-xl p-3">
-      <div>
-        <span className="block text-sm text-ink">Your call-to-action clip (optional)</span>
-        <span className="block text-2xs text-ink-subtle">A short video of you (or an image) played at the end of every video. It replaces the presenter’s spoken call to action. You can change it on any video afterward in the Library.</span>
-      </div>
-      <CtaPicker value={form.ctaId} onChange={(ctaId) => form.update({ ctaId })} />
-    </div>
-  </>)
+  )
+  // The member's frame behind the board's preview: the screenshot, their file, or a YouTube link's thumbnail.
+  const frame = image ? previewFrame(form.imagePath, 'image') : form.filePath ? previewFrame(form.filePath) : previewFrame(links[0])
+  const styleBoard = (layout?: React.ReactNode): React.JSX.Element => (
+    <StyleBoard value={boardFromLook(form)} onChange={(patch) => form.update(lookPatch(form, patch))}
+      rows={{ hooks: LOOK_HOOKS, handle: true, cta: true, keyword: true }} brand={brand} frame={frame} saveKind="remix"
+      keywordHelp={keywordHelp} keywordLabel="Comment keyword (optional)"
+      ctaHelp="A short video of you (or an image) played at the end of every video. It replaces the presenter’s spoken call to action. You can change it on any video afterward in the Library."
+      onUseBrand={() => { if (brand) form.update({ ...brandFormPatch(brand.look, form), ...(brand.look?.captionPreset ? { includeCaptions: true } : {}) }) }}
+      layout={layout} />
+  )
 
   const pauseLayoutChoice = pause && (
     <div className="space-y-2">
@@ -496,26 +477,17 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       control={<Switch label="Keep the moment small on screen while I talk" checked={form.momentPip} onChange={(momentPip) => form.update({ momentPip })} />} />
   )
 
-  const captionsBlock = (<>
-    <SettingRow title="Captions" description="Word-by-word captions across the whole video."
-      control={<Switch label="Captions" checked={form.includeCaptions} onChange={(includeCaptions) => form.update({ includeCaptions })} />} />
-    {form.includeCaptions && pause && (
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <span>
-          <span className="block text-sm text-ink">Whose words</span>
-          <span className="block text-2xs text-ink-subtle">{PAUSE_CAPTION_CHOICES.find((item) => item.id === form.pauseCaptions)?.detail}</span>
-        </span>
-        <Segmented label="Whose words" size="sm" value={form.pauseCaptions} onChange={(pauseCaptions) => form.update({ pauseCaptions })}
-          options={PAUSE_CAPTION_CHOICES.map((item) => ({ value: item.id, label: item.label }))} />
-      </div>
-    )}
-    {form.includeCaptions && <CaptionPresetPicker value={form.captionPreset} onChange={(captionPreset) => form.update({ captionPreset })} />}
-    <div>
-      <p className="mb-1 text-sm text-ink">Hook text at the top</p>
-      <p className="mb-2.5 text-2xs text-ink-muted">How the headline over each video looks.</p>
-      <HeadlineLookPicker value={form.headlineLook} onChange={(headlineLook) => form.update({ headlineLook })} />
+  // Pause & react: whose words the captions show (a layout choice, under the board).
+  const pauseCaptionsRow = form.includeCaptions && pause && (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <span>
+        <span className="block text-sm text-ink">Whose words</span>
+        <span className="block text-2xs text-ink-subtle">{PAUSE_CAPTION_CHOICES.find((item) => item.id === form.pauseCaptions)?.detail}</span>
+      </span>
+      <Segmented label="Whose words" size="sm" value={form.pauseCaptions} onChange={(pauseCaptions) => form.update({ pauseCaptions })}
+        options={PAUSE_CAPTION_CHOICES.map((item) => ({ value: item.id, label: item.label }))} />
     </div>
-  </>)
+  )
 
   // (You on camera is the other side of the first choice: here, only the AI presenters.)
   const hostCards = hostChoice && (
@@ -632,7 +604,6 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         : `First the AI finds the moments and writes and grades a take for each (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You review and edit them, and only the ones you approve are made: ${cost.perRemixHigh - cost.perRemixLow < 0.01 ? `about $${cost.perRemixHigh.toFixed(2)}` : `about $${cost.perRemixLow.toFixed(2)}–$${cost.perRemixHigh.toFixed(2)}`} each.`} />
       <div className="mt-4 space-y-4">
         {countRow}
-        {!folded && captionsBlock}
         {!pexelsConfigured && !silent && !onCamera && (
           <p className="text-2xs text-ink-subtle">
             Tip: add a free Pexels key in Settings → API keys for stock B-roll under the voice-over. Without it, those beats use stills.
@@ -670,12 +641,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       {lookOpen && (
         <div id="remix-look" className="mt-4 space-y-4">
           <p className="text-2xs text-ink-subtle">Optional. These start from your Brand Identity’s look and your last choices.</p>
-          {pauseLayoutChoice}
-          {cameraBlock}
-          {pipRow}
-          {captionsBlock}
           {brandBlock}
-          {ctaBlocks}
+          {styleBoard(<>{pauseLayoutChoice}{cameraBlock}{pipRow}{pauseCaptionsRow}</>)}
         </div>
       )}
     </Panel>
@@ -739,7 +706,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             <PanelHeader title="3 · Your take" description="Your Brand Identity decides what your presenter believes, so every reaction sounds like your brand and only uses your real proof. Its look fills in the style below." />
             <div className="mt-4 space-y-3">
               {brandBlock}
-              {ctaBlocks}
+              {styleBoard()}
             </div>
           </Panel>
           <Panel>

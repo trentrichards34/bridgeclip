@@ -7,7 +7,7 @@ const { renderToStaticMarkup } = require('react-dom/server')
 
 const bundled = buildSync({
   stdin: {
-    contents: `export { FormatStep, ClipsStep, CaptionsStep, JobForm, buildJobRequest, buildJobRequests, draftSources, parseTrimRange, SCREEN_FOCUS_OPTIONS, ReviewStep } from './src/renderer/components/JobForm';
+    contents: `export { FormatStep, ClipsStep, CaptionsStep, JobForm, createBoardPatch, createBoardStyle, buildJobRequest, buildJobRequests, draftSources, parseTrimRange, SCREEN_FOCUS_OPTIONS, ReviewStep } from './src/renderer/components/JobForm';
       export { screenFocusLabel } from './src/renderer/components/ClipCard';
       export { reuseSummary, moreClipsBlocked } from './src/renderer/components/MoreClipsDialog';
       export { JobProgress } from './src/renderer/components/JobProgress';
@@ -146,15 +146,21 @@ test('the title card is shown by default and can be turned off for automatic run
     assert.equal(original.includeTitle, true)
     original.update({ workflow: 'automatic', source: 'https://example.com/video' })
     const automatic = renderToStaticMarkup(React.createElement(CaptionsStep, { draft: useDraftStore.getState(), update() {} }))
-    assert.match(automatic, /Show title at the top/)
+    // The style board's hook row: the headline looks, the title card, or no hook text (the old "title at the top" switch).
+    assert.match(automatic, /aria-label="Hook text look"/)
+    assert.match(automatic, /role="radio" aria-checked="true" aria-label="White bar"/)
+    assert.match(automatic, /aria-label="No hook text"/)
     assert.equal(buildJobRequest(useDraftStore.getState(), { start: null, end: null }).includeTitle, true)
-    original.update({ includeTitle: false })
+    // Choosing "No hook text" on the board turns the title off.
+    const { createBoardPatch } = form.exports
+    original.update(createBoardPatch(useDraftStore.getState(), { hook: 'none' }))
     assert.equal(buildJobRequest(useDraftStore.getState(), { start: null, end: null }).includeTitle, false)
     original.startAnother()
     assert.equal(useDraftStore.getState().includeTitle, false)
     // Review exports never draw a title card, so the switch is not offered there.
     const review = renderToStaticMarkup(React.createElement(CaptionsStep, { draft: { ...useDraftStore.getState(), workflow: 'review' }, update() {} }))
-    assert.doesNotMatch(review, /Show title at the top/)
+    assert.doesNotMatch(review, /Hook text look/)
+    assert.match(review, /aria-label="Caption style"/)
   } finally { useDraftStore.setState(original) }
 })
 

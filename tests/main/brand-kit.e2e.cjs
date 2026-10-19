@@ -84,7 +84,8 @@ test('picking a brand fills the Remix and Create style fields once; re-picking i
   await page.getByRole('radio', { name: 'Automatic', exact: true }).click()
   const steps = page.getByRole('navigation', { name: 'Create steps' })
   await steps.getByRole('button', { name: /Captions/ }).click()
-  await page.getByRole('radio', { name: /^Headline bar/ }).click()
+  // The style board's hook row: a headline look (the white bar) rather than the title card.
+  await page.getByRole('radiogroup', { name: 'Hook text look' }).getByRole('radio', { name: 'White bar' }).click()
   assert.equal(await page.getByLabel('Comment keyword').inputValue(), '')
   await pickBrand(page, 'Pull-Up Lab')
   assert.equal(await checked(page.getByRole('radiogroup', { name: 'Hook text look' }).getByRole('radio', { name: /^Brand color/ })), true)

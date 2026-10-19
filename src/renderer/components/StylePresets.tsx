@@ -103,6 +103,43 @@ export function StylePresets({ kind, className }: { kind: StyleKind; className?:
   )
 }
 
+/**
+ * "Save as a style" on the style board: names the current settings as a saved
+ * style (the same saved styles the Style bar above applies).
+ */
+export function SaveStyleButton({ kind }: { kind: StyleKind }): React.JSX.Element | null {
+  const presets = useMemberPrefsStore((state) => state.presets[kind])
+  const loaded = useMemberPrefsStore((state) => state.loaded)
+  const current = useStyleJson(kind)
+  const match = presets.find((preset) => JSON.stringify(preset.style) === current) ?? null
+  const [naming, setNaming] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(null), 3000)
+    return () => clearTimeout(timer)
+  }, [notice])
+  if (!loaded) return null
+  const full = presets.length >= MAX_PRESETS && !match
+  return (
+    <>
+      <Button size="sm" variant="ghost" icon={<Save className="h-3.5 w-3.5" />} disabled={full}
+        tooltip={full ? `You can save up to ${MAX_PRESETS} styles. Delete one first.` : match ? `Matches your saved style “${match.name}”` : undefined}
+        onClick={() => setNaming(true)}>
+        Save as a style
+      </Button>
+      {notice && <span role="status" className="text-2xs text-success">{notice}</span>}
+      {naming && <NameDialog kind={kind} mode="save" initial={match?.name ?? ''} taken={presets.map((preset) => preset.name)}
+        onClose={() => setNaming(false)}
+        onSave={async (name) => {
+          await useMemberPrefsStore.getState().savePreset(kind, name)
+          setNotice(`Saved “${name}”`)
+          setNaming(false)
+        }} />}
+    </>
+  )
+}
+
 function NameDialog({ kind, mode, initial, taken, onClose, onSave }: {
   kind: StyleKind; mode: 'save' | 'rename'; initial: string; taken: string[]; onClose: () => void; onSave: (name: string) => Promise<void>
 }): React.JSX.Element {

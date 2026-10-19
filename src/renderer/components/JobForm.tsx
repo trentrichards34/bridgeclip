@@ -5,9 +5,9 @@ import { cn, MOD_KEY, parseTimecode, sourceLabel } from '../lib/utils'
 import { useDraftStore, type ClipDraft, type WizardStep } from '../store/use-draft-store'
 import { StylePresets } from './StylePresets'
 import { useActiveJobs } from '../store/use-job-store'
-import type { ClipJobRequest, HeadlineVoice, QualityBar, ScreenFocus, TitleStyle } from '../../shared/jobs'
+import type { ClipJobRequest, HeadlineVoice, QualityBar, ScreenFocus } from '../../shared/jobs'
 import { MAX_PARALLEL_JOBS } from '../../shared/jobs'
-import { CaptionPresetPicker, CAPTION_PRESET_NAMES } from './CaptionPresetPicker'
+import { CAPTION_PRESET_NAMES } from './CaptionPresetPicker'
 import { SourcePicker } from './SourcePicker'
 import { Panel } from './ui/Panel'
 import { Switch } from './ui/Switch'
@@ -23,9 +23,9 @@ import { useSettingsStore } from '../store/use-settings-store'
 import { ModelPicker } from './ModelPicker'
 import { WorkflowPicker } from './WorkflowPicker'
 import { BackgroundPicker } from './BackgroundPicker'
-import { HeadlineLookPicker } from './HeadlineLookPicker'
-import { CtaPicker } from './CtaPicker'
-import { brandRequestFields, CreateBrandSection } from './CreateBrandSection'
+import { brandRequestFields, CreateBrandSection, CreateKeywordHelp } from './CreateBrandSection'
+import { previewFrame, StyleBoard } from './StyleBoard'
+import type { BoardRows, BoardStyle, HookChoice } from '../lib/style-board'
 import { DEFAULT_HEADLINE_LOOK, HEADLINE_LOOKS } from '../../shared/headline-look'
 import { CAPTION_LANGUAGES, captionLanguageLabel, isCaptionLanguage, type CaptionLanguageChoice } from '../../shared/caption-language'
 import { sourceCountLabel } from '../../shared/create-sources'
@@ -702,74 +702,57 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
   )
 }
 
-const TITLE_STYLE_OPTIONS: { id: TitleStyle; label: string; hint: string }[] = [
-  { id: 'headline', label: 'Headline bar', hint: 'A one-line story above the video, like “A 9-5 mechanic tried to humble Brez”. The format top clipping campaigns use.' },
-  { id: 'card', label: 'Title card', hint: 'A short 2-7 word title in a card over the top of the video.' }
-]
+/** Create's hook text choices: the headline looks and the title card, or only the card where the bar can't be drawn. */
+export function createHooks(draft: Pick<ClipDraft, 'aspectRatio' | 'backgroundVideo' | 'broll'>): HookChoice[] {
+  const headlineUnavailable = draft.aspectRatio !== '9:16' || Boolean(draft.backgroundVideo && draft.broll === 'off')
+  return headlineUnavailable ? ['card', 'none'] : ['white', 'black', 'brand', 'floating', 'card', 'none']
+}
+
+/** The draft's look on the style board. */
+export function createBoardStyle(draft: ClipDraft): BoardStyle {
+  const look = draft.headlineLook ?? DEFAULT_HEADLINE_LOOK
+  const hooks = createHooks(draft)
+  const hook: HookChoice = !draft.includeTitle ? 'none'
+    : !hooks.includes('white') || (draft.titleStyle ?? 'headline') === 'card' ? 'card'
+      : look.look
+  return {
+    captions: draft.includeCaptions, captionPreset: draft.captionPreset, hook, font: look.font, color: look.color,
+    handle: draft.showHandle, ctaId: draft.ctaId ?? null, keyword: draft.ctaKeyword ?? '', offer: draft.ctaOffer ?? ''
+  }
+}
+
+/** A board change as draft fields (the same fields the separate pickers set). */
+export function createBoardPatch(draft: ClipDraft, patch: Partial<BoardStyle>): Partial<ClipDraft> {
+  const out: Partial<ClipDraft> = {}
+  if (patch.captions !== undefined) out.includeCaptions = patch.captions
+  if (patch.captionPreset !== undefined) out.captionPreset = patch.captionPreset
+  let look = draft.headlineLook ?? DEFAULT_HEADLINE_LOOK
+  if (patch.font !== undefined || patch.color !== undefined) look = { ...look, ...(patch.font ? { font: patch.font } : {}), ...(patch.color ? { color: patch.color } : {}) }
+  if (patch.hook === 'none') out.includeTitle = false
+  else if (patch.hook === 'card') { out.includeTitle = true; out.titleStyle = 'card' }
+  else if (patch.hook) { out.includeTitle = true; out.titleStyle = 'headline'; look = { ...look, look: patch.hook } }
+  if (look !== (draft.headlineLook ?? DEFAULT_HEADLINE_LOOK)) out.headlineLook = look
+  if (patch.handle !== undefined) out.showHandle = patch.handle
+  if (patch.ctaId !== undefined) out.ctaId = patch.ctaId
+  if (patch.keyword !== undefined) out.ctaKeyword = patch.keyword
+  if (patch.offer !== undefined) out.ctaOffer = patch.offer
+  return out
+}
 
 export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
-  const titleStyle = draft.titleStyle ?? 'headline'
-  const headlineUnavailable = draft.aspectRatio !== '9:16' || Boolean(draft.backgroundVideo && draft.broll === 'off')
+  const automatic = draft.workflow !== 'review'
+  const brand = useBrands((s) => s.brands.find((item) => item.id === draft.brandIdentityId) ?? null)
+  const hooks = createHooks(draft)
+  const rows: BoardRows = automatic ? { hooks, handle: true, cta: true, keyword: true } : {}
   return (
     <div className="space-y-3">
       <CreateBrandSection draft={draft} update={update} />
-      {draft.workflow !== 'review' && (
-        <SettingRow
-          title="Show title at the top"
-          description="Each clip's hook text at the top. Turn off to leave it out."
-          control={<Switch label="Title at the top" checked={draft.includeTitle} onChange={(includeTitle) => update({ includeTitle })} />}
-        />
-      )}
-      {draft.workflow !== 'review' && draft.includeTitle && (
-        <div>
-          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Title style">
-            {TITLE_STYLE_OPTIONS.map((option) => {
-              const selected = titleStyle === option.id
-              return (
-                <button key={option.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
-                  onClick={() => update({ titleStyle: option.id })}
-                  className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
-                  <span className="block text-xs font-medium">{option.label}</span>
-                  <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{option.hint}</span>
-                </button>
-              )
-            })}
-          </div>
-          {titleStyle === 'headline' && !headlineUnavailable && (
-            <div className="mt-3">
-              <p className="mb-2 text-xs font-medium text-ink">Hook text look</p>
-              <HeadlineLookPicker value={draft.headlineLook ?? DEFAULT_HEADLINE_LOOK} onChange={(headlineLook) => update({ headlineLook })} />
-            </div>
-          )}
-          {titleStyle === 'headline' && headlineUnavailable && (
-            <p className="mt-2 text-2xs text-ink-subtle">
-              {draft.aspectRatio !== '9:16' ? 'The headline bar is for vertical clips; 16:9 clips use the title card.' : 'With a gameplay background the clips use the title card.'}
-            </p>
-          )}
-        </div>
-      )}
-      {draft.workflow !== 'review' && <div>
-        <p className="text-sm font-medium text-ink">Call to action at the end</p>
-        <p className="mb-2.5 mt-0.5 text-2xs text-ink-muted">Add one of your CTA clips to the end of every clip. You can change it on any single clip afterward.</p>
-        <CtaPicker value={draft.ctaId ?? null} onChange={(ctaId) => update({ ctaId })} />
-      </div>}
-      <SettingRow
-        title="Burn in captions"
-        description="Turn off for clips without word-by-word captions."
-        control={<Switch label="Captions" checked={draft.includeCaptions} onChange={(includeCaptions) => update({ includeCaptions })} />}
-      />
-      <div
-        className={cn('transition-[opacity,filter] duration-300 ease-out', !draft.includeCaptions && 'pointer-events-none opacity-35 saturate-50')}
-        aria-disabled={!draft.includeCaptions}
-      >
-        <CaptionPresetPicker
-          showPreview
-          value={draft.captionPreset}
-          onChange={(captionPreset) => update({ captionPreset })}
-          disabled={!draft.includeCaptions}
-        />
-      </div>
-      {draft.workflow !== 'review' && <CaptionLanguagePicker value={draft.captionLanguage ?? 'original'} onChange={(captionLanguage) => update({ captionLanguage })} />}
+      <StyleBoard value={createBoardStyle(draft)} onChange={(patch) => update(createBoardPatch(draft, patch))} rows={rows} brand={brand}
+        frame={previewFrame(draft.source)} aspect={draft.aspectRatio === '16:9' ? '16:9' : '9:16'} saveKind="create"
+        hookNote={!hooks.includes('white') ? (draft.aspectRatio !== '9:16' ? 'The headline bar is for vertical clips; 16:9 clips use the title card.' : 'With a gameplay background the clips use the title card.') : undefined}
+        keywordHelp={<CreateKeywordHelp draft={draft} />}
+        ctaHelp="Add one of your CTA clips to the end of every clip (a video of you up to 15 seconds, or an image). You can change it on any single clip afterward. Added on your computer, so there’s no AI cost." />
+      {automatic && <CaptionLanguagePicker value={draft.captionLanguage ?? 'original'} onChange={(captionLanguage) => update({ captionLanguage })} />}
     </div>
   )
 }

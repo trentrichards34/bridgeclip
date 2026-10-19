@@ -1,22 +1,14 @@
-import { MessageCircle } from 'lucide-react'
-import { brandFormPatch, createCtaLine, hasBrandMark } from '../../shared/brand-kit'
-import { MAX_CTA_OFFER_CHARS, normalizeCtaKeyword, type BrandIdentity } from '../../shared/remix'
-import { useBrands } from '../store/use-brand-store'
+import { brandFormPatch, createCtaLine } from '../../shared/brand-kit'
+import { normalizeCtaKeyword, type BrandIdentity } from '../../shared/remix'
 import type { ClipDraft } from '../store/use-draft-store'
 import { BrandPicker } from './BrandIdentityDialog'
-import { Field, TextInput } from './ui/Field'
-import { SettingRow } from './ui/SettingRow'
-import { Switch } from './ui/Switch'
 
 /**
  * Create's brand: the niche, voice and offer the AI writes titles and hook text
- * for; picking one fills this step's look. Then the comment-keyword call to
- * action and the on-video handle (Automatic clips).
+ * for; picking one fills the style board's look below (its handle and comment
+ * keyword are set on the board).
  */
 export function CreateBrandSection({ draft, update }: { draft: ClipDraft; update: (patch: Partial<ClipDraft>) => void }): React.JSX.Element {
-  const brand = useBrands((s) => s.brands.find((item) => item.id === draft.brandIdentityId) ?? null)
-  const automatic = draft.workflow !== 'review'
-  const keyword = normalizeCtaKeyword(draft.ctaKeyword)
   const choose = (next: BrandIdentity | null): void => {
     if (!next) { update({ brandIdentityId: null, showHandle: false }); return }
     // Only on a change of brand: re-picking the same one never overwrites what the member changed since.
@@ -31,37 +23,22 @@ export function CreateBrandSection({ draft, update }: { draft: ClipDraft; update
         </p>
       </div>
       <BrandPicker value={draft.brandIdentityId} onChange={choose} noneLabel="No brand" noneDetail="Titles in a neutral voice" />
-      {automatic && brand && hasBrandMark(brand.look) && (
-        <SettingRow title="Show my handle" description={`Puts ${brand.look?.handle ? `“${brand.look.handle}”` : 'your logo'} small in a corner of every clip.`}
-          control={<Switch label="Show my handle" checked={draft.showHandle} onChange={(showHandle) => update({ showHandle })} />} />
-      )}
-      {automatic && (
-        <div className="space-y-2 border-t border-white/[0.06] pt-3">
-          <div className="flex items-start gap-2">
-            <MessageCircle className="mt-0.5 h-4 w-4 shrink-0 text-ink-muted" />
-            <div>
-              <span className="block text-sm text-ink">Comment-keyword call to action (optional)</span>
-              <span className="block text-2xs text-ink-subtle">Each clip’s caption ends with it, and “Comment {keyword || 'KEYWORD'}” shows for the last few seconds. Deliver what you promise with an auto-DM tool like ManyChat.</span>
-            </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-            <Field label="Comment keyword">
-              <TextInput aria-label="Comment keyword" value={draft.ctaKeyword} maxLength={20} placeholder="e.g. SALES"
-                onChange={(e) => update({ ctaKeyword: e.target.value.toUpperCase().replace(/\s+/g, '') })} />
-            </Field>
-            <Field label="What they get">
-              <TextInput aria-label="What they get" value={draft.ctaOffer} maxLength={MAX_CTA_OFFER_CHARS} disabled={!keyword}
-                placeholder="e.g. my free playbook" onChange={(e) => update({ ctaOffer: e.target.value })} />
-            </Field>
-          </div>
-          {keyword === null ? <p className="text-2xs text-danger">One word: letters, numbers or a dash (2–20 characters).</p>
-            : keyword && draft.captionLanguage !== 'original'
-              ? <p className="text-2xs text-ink-muted">Captions are in another language, so the post caption leaves this English line out. “Comment {keyword}” still shows at the end of the video.</p>
-              : keyword ? <p className="text-2xs text-ink-muted">The caption ends with: <span className="text-ink">“{createCtaLine(keyword, draft.ctaOffer)}”</span></p>
-                : null}
-        </div>
-      )}
     </section>
+  )
+}
+
+/** What the comment keyword does on Create, under the board's keyword fields. */
+export function CreateKeywordHelp({ draft }: { draft: ClipDraft }): React.JSX.Element {
+  const keyword = normalizeCtaKeyword(draft.ctaKeyword)
+  return (
+    <div className="space-y-1">
+      <p className="text-2xs text-ink-subtle">Each clip’s caption ends with it, and “Comment {keyword || 'KEYWORD'}” shows for the last few seconds. Deliver what you promise with an auto-DM tool like ManyChat.</p>
+      {keyword === null ? <p className="text-2xs text-danger">One word: letters, numbers or a dash (2–20 characters).</p>
+        : keyword && draft.captionLanguage !== 'original'
+          ? <p className="text-2xs text-ink-muted">Captions are in another language, so the post caption leaves this English line out. “Comment {keyword}” still shows at the end of the video.</p>
+          : keyword ? <p className="text-2xs text-ink-muted">The caption ends with: <span className="text-ink">“{createCtaLine(keyword, draft.ctaOffer)}”</span></p>
+            : null}
+    </div>
   )
 }
 
