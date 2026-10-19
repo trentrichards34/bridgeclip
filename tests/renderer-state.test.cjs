@@ -341,7 +341,7 @@ test('Moment + my take form: its defaults, typed ranges checked against the file
     stdin: {
       contents: `export { useRemixForm } from './src/renderer/store/use-remix-form-store';
         export { brandFormPatch } from './src/shared/brand-kit';
-        export { REMIX_FORMATS, headlineOnly, oneTake, partsFor } from './src/shared/remix';
+        export { REMIX_FORMATS, headlineOnly, oneTake, partsFor, momentMakeNote } from './src/shared/remix';
         export { readRanges } from './src/shared/moment-take';
         export { MomentRanges } from './src/renderer/components/MomentRanges';
         export { MomentTakeReview } from './src/renderer/components/MomentTakeReview';
@@ -353,7 +353,7 @@ test('Moment + my take form: its defaults, typed ranges checked against the file
   const mod = { exports: {} }
   const api = { remix: { recordings: async () => ({}), moment: async () => ({ path: '/v.mp4', startSeconds: 0, endSeconds: 1, kind: 'video' }) } }
   vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: api }, navigator: {} })
-  const { useRemixForm, brandFormPatch, REMIX_FORMATS, headlineOnly, oneTake, partsFor, readRanges, MomentRanges, MomentTakeReview, momentCost } = mod.exports
+  const { useRemixForm, brandFormPatch, REMIX_FORMATS, headlineOnly, oneTake, partsFor, readRanges, MomentRanges, MomentTakeReview, momentCost, momentMakeNote } = mod.exports
   const form = useRemixForm.getState()
   assert.deepEqual(JSON.parse(JSON.stringify([form.momentRanges, form.momentPip, form.momentCamera.layout, form.momentCamera.talk])), [[{ start: '', end: '' }], false, 'filmed', true])
   const at = REMIX_FORMATS.findIndex((item) => item.id === 'moment_take')
@@ -396,6 +396,14 @@ test('Moment + my take form: its defaults, typed ranges checked against the file
   assert.match(review, /Upload a phone video/)
   assert.match(review, /Range 3 \(0:45–1:00\) starts after the video ends/)
   assert.match(review, /Make 2 videos/)
+  // Free only when every chosen take's hook text was written from its current recording; otherwise those takes are transcribed.
+  assert.match(review, /transcribes 2 of your takes for the captions/)
+  const take = (written) => ({ reaction: { path: '/t.webm', uploaded: false, seconds: 10, ...(written ? { written: true } : {}) } })
+  assert.match(momentMakeNote([0, 1], { 0: take(true), 1: take(true) }), /^Making the videos is free/)
+  assert.equal(momentMakeNote([0, 1], { 0: take(true), 1: take(false) }),
+    'Making the videos transcribes 1 of your takes for the captions (the hook text wasn’t written from that recording), which costs a little: up to about $0.02.')
+  assert.equal(momentMakeNote([1], { 1: take(false) }),
+    'Making the video transcribes your take for the captions (the hook text wasn’t written from that recording), which costs a little: up to about $0.02.')
 })
 
 test('a deleted brand is cleared from Create and Remix once the brand list is read; a failed read clears nothing', async () => {

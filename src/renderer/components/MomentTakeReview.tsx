@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Camera, Check, ListChecks, Play, RefreshCw, RotateCcw, Sparkles, Upload, Wand2, X } from 'lucide-react'
 import { formatTimecode, MOMENT_TAKE_MAX_SECONDS, momentBoundsProblem } from '../../shared/moment-take'
 import {
-  isRunning, MAX_POST_CAPTION_CHARS, REMIX_WORD_LIMITS, remixEditProblem, wordCount, type RemixDraft, type RemixEdit, type RemixRecordings, type RemixStatus
+  isRunning, MAX_POST_CAPTION_CHARS, momentMakeNote, REMIX_WORD_LIMITS, remixEditProblem, wordCount, type RemixDraft, type RemixEdit, type RemixRecordings, type RemixStatus
 } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
@@ -200,7 +200,7 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
                 {confirmDiscard ? 'Click again to discard' : 'Discard all'}
               </Button>}
         </div>
-        <p className="text-2xs text-ink-subtle">Making the videos is free: the moments are already found and your hook text is written.</p>
+        <p className="text-2xs text-ink-subtle">{momentMakeNote(chosen.map((draft) => draft.id), recordings)}</p>
       </div>
       {recording && <RemixRecorder draft={drafts.find((item) => item.id === recording.id) ?? recording} edit={value(recording)} recordings={recordings} talk
         points={drafts.find((item) => item.id === recording.id)?.moment?.points ?? []} onRecordings={setRecordings} onClose={closeRecorder} />}

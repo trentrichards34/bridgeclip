@@ -301,6 +301,8 @@ test('Moment + my take in main: ranges, moments, nudges, another moment, talking
   status = m.remixStatus()
   assert.deepEqual([status.drafts[0].headline, status.drafts[0].startMs, status.drafts[0].moment.said, status.drafts[0].moment.points.length],
     ['He says 15 billion scam ads a day', 2229500, 'Honestly it scared me', 3])
+  // Take 0's hook text was written from its recording (making it reuses those words); take 1's wasn't yet.
+  assert.deepEqual([m.remixRecordings()[0].reaction.written, m.remixRecordings()[1].reaction.written], [true, undefined])
   assert.equal(status.drafts[1].headline, '')
   // Both, one of which couldn't be heard: the other is written and the problem is named.
   engine.results.write = { ok: true, cost_usd: 0.02, drafts: [{ id: 1, format: 'moment_take', headline: 'Attention is the new oil, he says', intro: '', close: '', beats: [], post_caption: 'Yes.',
@@ -313,6 +315,11 @@ test('Moment + my take in main: ranges, moments, nudges, another moment, talking
   assert.equal(status.drafts[1].headline, 'Attention is the new oil, he says')
   assert.equal(status.drafts[0].headline, 'He says 15 billion scam ads a day', 'the first take keeps its hook text')
   assert.match(status.error, /^Video 1: We couldn’t hear you/)
+  assert.equal(m.remixRecordings()[1].reaction.written, true)
+  // Recording take 1 again: its hook text no longer comes from this recording.
+  await m.uploadRecording(1, 'reaction', take)
+  assert.equal(m.remixRecordings()[1].reaction.written, undefined)
+  assert.equal(m.remixRecordings()[0].reaction.written, true)
 
   // Making them: each approved take carries its moment as left (nudged, or the new one), and the recordings.
   await m.renderRemix([{ id: 0, headline: 'He says 15 billion scam ads a day', intro: '', close: '', beats: [] },

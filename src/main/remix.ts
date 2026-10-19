@@ -65,6 +65,9 @@ interface RunContext {
   pause?: { sourceSeconds: number; settings: PauseSettings }
   /** Moment + my take: finding another moment or talking points right now (one at a time). */
   momentWork?: boolean
+  /** Moment + my take: the recordings a headline is being written from now, and those each take's hook text was written from. */
+  writingTakes?: Map<number, RecordingFile>
+  writtenTakes?: Map<number, RecordingFile>
   /** The engine finding another moment (it rewrites .work/plan.json): Discard stops it before removing the folder. */
   momentChild?: ChildProcess
 }
@@ -441,6 +444,7 @@ export async function writeRemix(draftIds?: unknown): Promise<RemixStatus> {
   if (!momentTake && !recorded.includes(0)) throw new Error('Record your take first.')
   if (!ids.length) throw new Error('Record your take first.')
   const recordings = engineRecordings(run, ids.map((id) => ({ id, beats: [] })))
+  run.context.writingTakes = new Map(ids.flatMap((id) => { const file = run.context.recordings?.get(id)?.get('reaction'); return file ? [[id, file] as const] : [] }))
   reviewing = null
   active = run
   run.cancelled = false
@@ -600,6 +604,9 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
       run.context.planCostUsd += written
       if (drafts.length && momentTake) {
         logger.info('remix.written', { cost: written, takes: drafts.length })
+        // Making these takes reuses the words heard now (until one is recorded again).
+        const writtenTakes = run.context.writtenTakes ??= new Map()
+        for (const take of drafts) { const file = run.context.writingTakes?.get(take.id); if (file) writtenTakes.set(take.id, file) }
         // The moment stays as the member left it; the hook text, caption and what they said are new.
         const merged = run.status.drafts.map((current) => {
           const take = drafts.find((item) => item.id === current.id)
@@ -886,7 +893,10 @@ export function remixRecordings(): RemixRecordings {
   const out: RemixRecordings = {}
   for (const [draftId, takes] of run?.context.recordings ?? []) {
     out[draftId] = {}
-    for (const [part, file] of takes) out[draftId][part] = { path: authorizeMedia(file.path), uploaded: file.uploaded, seconds: file.seconds }
+    for (const [part, file] of takes) {
+      out[draftId][part] = { path: authorizeMedia(file.path), uploaded: file.uploaded, seconds: file.seconds,
+        ...(part === 'reaction' && run?.context.writtenTakes?.get(draftId) === file ? { written: true } : {}) }
+    }
   }
   return out
 }
