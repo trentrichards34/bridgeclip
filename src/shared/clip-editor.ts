@@ -103,6 +103,8 @@ export interface AutomaticEditInfo {
   /** Size of the original file, which is copied into the run. */
   copyBytes?: number
   clipCount: number
+  /** Some clips' cuts weren't saved with the run (older runs): converting works them out again, so they may differ slightly. */
+  estimatedCuts?: boolean
 }
 /** Status counts for Library and Jobs, without sending the project to the renderer. */
 export interface EditorProgressSummary {

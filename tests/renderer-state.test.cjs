@@ -441,3 +441,19 @@ test('a deleted brand is cleared from Create and Remix once the brand list is re
   useBrands.getState().setBrands([])
   assert.equal(useDraftStore.getState().brandIdentityId, null)
 })
+
+test('opening an Automatic run in the editor: the same moments and headlines; a cut note only when the run didn’t save its cuts', () => {
+  const code = buildSync({
+    stdin: { contents: `export { automaticEditSummary } from './src/renderer/components/EditAutomaticDialog';`, resolveDir: path.resolve(__dirname, '..'), loader: 'ts' },
+    bundle: true, platform: 'node', format: 'cjs', packages: 'external', loader: { '.css': 'empty' }, jsx: 'automatic', write: false
+  }).outputFiles[0].text
+  const mod = { exports: {} }
+  vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: {} }, navigator: {} })
+  const { automaticEditSummary } = mod.exports
+  const info = { state: 'convert', source: 'kept', videoLabel: 'talk.mp4', clipCount: 3 }
+  const recorded = automaticEditSummary(info)
+  assert.equal(recorded[0], 'Your 3 clips open in the editor with the same moments and headlines. No AI is used.')
+  assert.ok(!recorded.some((line) => /cuts/.test(line)))
+  const older = automaticEditSummary({ ...info, estimatedCuts: true })
+  assert.equal(older[1], 'This run didn’t save its exact cuts, so they are worked out again and may differ slightly from your clips. Check them before baking.')
+})

@@ -93,7 +93,9 @@ function project(extra = {}) {
 const read = (run, name) => JSON.parse(fs.readFileSync(path.join(run, name), 'utf8'))
 
 test('what opening a run takes: the kept copy, the original file, a download, or nothing', async () => {
-  const kept = setup({ kept: true })
+  // Recorded cuts (the run saved where each clip cut): nothing is worked out again.
+  const recorded = { clip_layouts: [{ clip_index: 0, kept_source_ms: [[0, 12000], [14000, 30000]] }] }
+  const kept = setup({ kept: true, metrics: recorded })
   assert.deepEqual(plain(await kept.module.automaticEditInfo(kept.run)), { videoLabel: 'https://www.youtube.com/watch?v=abcdefghijk', clipCount: 1, state: 'convert', source: 'kept' })
   const link = setup()
   assert.equal((await link.module.automaticEditInfo(link.run)).source, 'download')
@@ -101,9 +103,23 @@ test('what opening a run takes: the kept copy, the original file, a download, or
   const file = path.join(dir, 'talk.mp4')
   fs.writeFileSync(file, 'original bytes')
   const original = setup({ videoUrl: file })
-  assert.deepEqual(plain(await original.module.automaticEditInfo(original.run)), { videoLabel: 'talk.mp4', clipCount: 1, state: 'convert', source: 'original', copyBytes: 14 })
+  assert.deepEqual(plain(await original.module.automaticEditInfo(original.run)), { videoLabel: 'talk.mp4', clipCount: 1, state: 'convert', source: 'original', copyBytes: 14, estimatedCuts: true })
   const gone = setup({ videoUrl: path.join(dir, 'deleted.mp4') })
   assert.equal((await gone.module.automaticEditInfo(gone.run)).source, 'missing')
+})
+
+test('an older run that didn’t save its cuts says so; recorded cuts, a framing record, an audit or natural pacing don’t', async () => {
+  // No cut saved and tight pacing: the cuts are worked out again.
+  const older = setup()
+  assert.equal((await older.module.automaticEditInfo(older.run)).estimatedCuts, true)
+  const framing = setup()
+  fs.writeFileSync(path.join(framing.run, 'clip_00.framing.json'), JSON.stringify({ window: { start_ms: 0 }, keeps: [[0, 9000], [9500, 30000]] }))
+  assert.equal((await framing.module.automaticEditInfo(framing.run)).estimatedCuts, undefined)
+  const audited = setup()
+  fs.writeFileSync(path.join(audited.run, 'edit_audit.json'), JSON.stringify({ candidates: [{ clip_index: 0, status: 'rendered', report: { retained_source: [[0, 30000]] } }] }))
+  assert.equal((await audited.module.automaticEditInfo(audited.run)).estimatedCuts, undefined)
+  const natural = setup({ metrics: { requested_settings: { pacing: 'natural' } } })
+  assert.equal((await natural.module.automaticEditInfo(natural.run)).estimatedCuts, undefined)
 })
 
 test('Remix, Avatar Studio, running, transcript-less and outside runs are refused with plain words', async () => {
