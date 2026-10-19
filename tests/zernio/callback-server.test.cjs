@@ -135,7 +135,7 @@ test('a replacement during loopback bind leaves only the newest server active', 
   const server = load()
   const first = server.startCallbackServer('/cb/first', { onCallback: () => assert.fail('old callback'), onTimeout: () => assert.fail('old timeout') })
   const second = server.startCallbackServer('/cb/second', { onCallback: () => {}, onTimeout: () => {} })
-  await assert.rejects(first, /cancelled/)
+  await assert.rejects(first, /canceled/)
   const url = await second
   assert.equal(server.isCallbackPending(), true)
   assert.equal((await request(url)).status, 200)
