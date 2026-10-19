@@ -58,7 +58,7 @@ function ipcWithLibrary(library) {
     '../shared/react-templates': { BROLL_VIDEO_EXTENSIONS: ['mp4'], BROLL_IMAGE_EXTENSIONS: ['png'], BROLL_PLAN_ESTIMATE_USD: 0.02 },
     '../shared/brand-kit': { LOGO_EXTENSIONS: ['png', 'jpg', 'jpeg', 'webp'] },
     '../shared/ctas': { CTA_IMAGE_EXTENSIONS: [], CTA_VIDEO_EXTENSIONS: [], parseCtaChoice: (v) => v ?? null }, './ctas': { addCta: async () => [], applyRunCta: async () => ({ failed: [] }), listCtas: async () => [], removeCta: async () => [], updateCta: async () => [] }, './reactions': { makeReactions: async () => ({}), reactionsInProgress: () => false, uploadReaction: async () => [], removeReaction: async () => [], REACTION_VIDEO_EXTENSIONS: ['mp4'] }, './moment-take': { readTimecodeScreenshot: async () => ({ read: null, costUsd: 0 }) }, '../shared/moment-take': { parseMomentRanges: () => [] }, '../shared/edit-recording': { EDIT_MAX_SOURCES: 5, EDIT_VIDEO_EXTENSIONS: ['mp4'], IDEAS_ESTIMATE_USD: 0.02 },
-    './remix': { onRemixStatus: () => {}, onRemixMomentSpend: () => {}, remixAvatarInUse: () => null, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
+    './remix': { onRemixStatus: () => {}, onRemixMomentSpend: () => {}, setRemixHeygen: () => {}, remixAvatarInUse: () => null, BRAND_IDENTITY_EXTENSIONS: ['txt', 'md'] },
     './edit-recording': { onEditStatus: () => {}, onEditSpend: () => {}, editRunBusy: () => null, isEditRunFolder: () => false, editStatus: () => null, startEstimate: () => null },
     './logger': {},
     './security': security,

@@ -20,7 +20,7 @@ async function shot(app, name) {
   if (png) fs.writeFileSync(path.join(dir, name), Buffer.from(png, 'base64'))
 }
 
-async function launchRemix(t, tools, name) {
+async function launchRemix(t, tools, name, env = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `bridgeclip-${name}-e2e-`))
   const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips')
   fs.mkdirSync(library, { recursive: true })
@@ -29,7 +29,7 @@ async function launchRemix(t, tools, name) {
   fs.writeFileSync(path.join(userDataDir, 'settings.json'), JSON.stringify({ version: 6, outputDirectory: library, pythonPath: python, openrouterApiKey: '', zernioApiKey: '' }))
   const appDir = buildApp(path.join(root, 'app'))
   linkEngine(appDir)
-  const session = await launchApp({ appDir, userDataDir, env: tools.appEnv })
+  const session = await launchApp({ appDir, userDataDir, env: { ...tools.appEnv, ...env } })
   t.after(async () => {
     const stop = setTimeout(() => session.app.process().kill('SIGTERM'), 5000)
     try { await session.close() } finally { clearTimeout(stop); fs.rmSync(root, { recursive: true, force: true }) }
