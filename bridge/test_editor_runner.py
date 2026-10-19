@@ -61,6 +61,13 @@ class EditorRunnerTests(unittest.TestCase):
         self.assertIn('Editor request failed (unknown)', result.stderr)
         self.assertNotIn('/Users/someone', result.stdout + result.stderr)
 
+    def test_a_failure_reports_what_paid_calls_cost(self):
+        error = RuntimeError('render failed')
+        self.assertEqual(editor_runner.failure_message(error, 'render_failed'), {'ok': False, 'error': 'render_failed'})
+        error.usage = {'cost_usd': 0.002, 'cost_incomplete': False, 'model': 'google/model', 'path': '/private'}
+        self.assertEqual(editor_runner.failure_message(error, 'render_failed'),
+                         {'ok': False, 'error': 'render_failed', 'cost_usd': 0.002, 'model': 'google/model'})
+
     def test_hook_ideas_fit_the_result_line(self):
         self.assertEqual(editor_runner.result_message(None), {'ok': True})
         idea = {'text': '日本語' * 60, 'grade': 'B', 'score': 7, 'hook_type': 'story', 'evidence': '証拠' * 120,

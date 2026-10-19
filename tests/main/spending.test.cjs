@@ -307,3 +307,14 @@ test('every channel that goes through paid() can take "Start anyway"', () => {
     assert.equal(main.allowOnce(channel), true)
   }
 })
+
+test('editor bakes that translate captions pass the spending check and can take "Start anyway"', () => {
+  const { main } = loadMain()
+  const preload = fs.readFileSync(path.join(ROOT, 'preload/index.ts'), 'utf8')
+  const channels = [...preload.matchAll(/\bpaid\(\s*'([^']+)'/g)].map((match) => match[1])
+  assert.ok(channels.includes('editor:run'), 'the editor run goes through the gate dialog')
+  for (const channel of channels) assert.ok(main.GATED_CHANNELS.has(channel), `${channel} is in GATED_CHANNELS`)
+  const handlers = fs.readFileSync(path.join(ROOT, 'main/ipc-handlers.ts'), 'utf8')
+  assert.match(handlers, /assertSpendAllowed\('editor:run', 'openrouter', translating\.estimateUsd\)/)
+  assert.match(handlers, /onEditorSpend\(\(usd, label\) => recordSpend\(\{ kind: 'create'/)
+})

@@ -52,6 +52,8 @@ export interface EditorCandidate extends CandidateEdit {
   library_clip?: number
   /** Captions were translated into this language: a new render translates them again. */
   caption_language?: CaptionLanguage
+  /** Main-owned: the call to action was changed in the editor (an Automatic clip's export then keeps it instead of the Library clip's current one). */
+  cta_edited?: true
 }
 /** What an Automatic run drew that the editor can't make again; shown before a clip is baked again. */
 export type AutomaticOmission = 'broll' | 'hook_preview' | 'background' | 'title_card'
@@ -307,7 +309,7 @@ export function parseEditorProject(value: unknown): EditorProject {
     const library_clip = c.library_clip === undefined ? undefined : Number.isInteger(c.library_clip) ? num(c.library_clip, 0, 999) : fail()
     if (c.caption_language !== undefined && !isCaptionLanguage(c.caption_language)) fail()
     return { ...edit, ...(camera_scan ? { camera_scan } : {}), ...(baked_hash ? { baked_hash } : {}),
-      ...(library_clip !== undefined ? { library_clip } : {}), ...(c.caption_language !== undefined ? { caption_language: c.caption_language as CaptionLanguage } : {}),
+      ...(library_clip !== undefined ? { library_clip } : {}), ...(c.cta_edited === true ? { cta_edited: true as const } : {}), ...(c.caption_language !== undefined ? { caption_language: c.caption_language as CaptionLanguage } : {}),
       requires_visual_context: c.requires_visual_context === true, score: num(c.score, 0, 100), reason: clampText(c.reason, 4000), review,
       exports: arr(c.exports, 1000).map((n) => num(n, 0, 999)) }
   })

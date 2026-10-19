@@ -67,7 +67,7 @@ function ipcWithLibrary(library) {
     './zernio/service': {},
     './zernio/posts': {},
     './automations': {},
-    './clip-editor': { onEditorExportCta() {}, onEditorRunLock() {} }, './edit-automatic': { automaticEditInfo: async () => ({}), prepareAutomaticEditor: async () => ({}) },
+    './clip-editor': { onEditorExportCta() {}, onEditorRunLock() {}, onEditorSpend() {} }, './edit-automatic': { automaticEditInfo: async () => ({}), prepareAutomaticEditor: async () => ({}) },
     './output-storage': {},
     './edit-inspector': {},
     './youtube-preview': {},

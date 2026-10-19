@@ -4,6 +4,7 @@ import { pipeline } from 'stream/promises'
 import { delimiter, dirname, join } from 'path'
 import { createHash, randomUUID } from 'crypto'
 import { EDITOR_REVISION_CONFLICT, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, editorFailureMessage, editorProgress, isEditorErrorCode, parseCandidateEdit, parseEditorProject, parseHookIdeas, renderEditKey, type CandidateEdit, type EditorBatch, type EditorCandidate, type EditorErrorCode, type EditorProgressSummary, type EditorProject, type EditorSession, type HookIdea } from '../shared/clip-editor'
+import { isCaptionLanguage } from '../shared/caption-language'
 import { loadSettings, getSettingsForBridge } from './settings-store'
 import { assertAbsolutePath, assertMediaPath, isWithinDirectory, openAuthorizedMedia } from './security'
 import { getJobOutput } from './file-manager'
@@ -19,6 +20,10 @@ const operations = new Map<string, EditorOperation>()
 type EditorCtaApplier = (run: string, ctaId: string, clipIndex: number) => Promise<void>
 let applyExportCta: EditorCtaApplier | null = null
 export function onEditorExportCta(applier: EditorCtaApplier): void { applyExportCta = applier }
+/** Records what an editor AI call cost in the spending ledger (set by the IPC layer, which owns it). */
+type EditorSpendRecorder = (usd: number, label: string) => Promise<unknown>
+let recordEditorSpend: EditorSpendRecorder | null = null
+export function onEditorSpend(recorder: EditorSpendRecorder): void { recordEditorSpend = recorder }
 /** Exports rewrite the run's clips and job_output.json: they wait for other changes to the run (CTA changes, re-makes). */
 type RunLock = <T>(run: string, work: () => Promise<T>) => Promise<T>
 let runExclusive: RunLock = (_run, work) => work()
@@ -33,13 +38,32 @@ async function runCtaId(run: string): Promise<string | null> {
   } catch { return null }
 }
 
-/** After an export: end the new clip with the candidate's call to action (or the run's). A failure leaves the clip as rendered. */
-async function addExportCta(run: string, candidateId: string): Promise<void> {
+/**
+ * The call to action on the Library clip an Automatic clip's export replaces, read before the
+ * render (which clears it). Undefined when the editor's choice applies: a clip that adds a new
+ * Library clip, a replaced clip that is gone, or a call to action changed in the editor since.
+ */
+async function libraryClipCta(run: string, candidate: EditorCandidate): Promise<string | null | undefined> {
+  if (candidate.library_clip === undefined || candidate.cta_edited) return undefined
+  try {
+    const clip = (await getJobOutput(run))?.clips?.find((x) => x.clip_index === candidate.library_clip)
+    if (!clip) return undefined
+    return typeof clip.cta?.id === 'string' ? clip.cta.id : null
+  } catch { return undefined }
+}
+
+/**
+ * After an export: end the new clip with a call to action. A re-baked Automatic clip keeps the
+ * one its Library clip had (`libraryCta`, null when it was removed there) unless it was changed in the
+ * editor; otherwise the candidate's (or the run's). A failure leaves the clip as rendered.
+ */
+async function addExportCta(run: string, candidateId: string, libraryCta?: string | null): Promise<void> {
   if (!applyExportCta) return
   try {
     const candidate = readProject(run).candidates.find((c) => c.id === candidateId)
     const index = candidate?.exports.at(-1)
-    const ctaId = candidate?.cta_id === undefined ? await runCtaId(run) : candidate.cta_id
+    const ctaId = libraryCta !== undefined && index === candidate?.library_clip ? libraryCta
+      : candidate?.cta_id === undefined ? await runCtaId(run) : candidate.cta_id
     if (!candidate || index === undefined || !ctaId) return
     await applyExportCta(run, ctaId, index)
   } catch (error) {
@@ -162,6 +186,7 @@ export async function readEditorProgress(path: unknown): Promise<EditorProgressS
     ...(operation?.batch ? { batch: { ...operation.batch } } : {}), ...(operation?.progress ? { progress: { ...operation.progress } } : {}) }
 }
 
+const ctaChoice = (id: string | null | undefined): string => id === undefined ? 'run' : id ?? 'none'
 const bakedHash = (c: CandidateEdit): string => createHash('sha256').update(renderEditKey(c)).digest('hex')
 export async function saveEditor(path: unknown, revision: unknown, edits: unknown): Promise<EditorSession> {
   const run = runPath(path)
@@ -178,6 +203,8 @@ export async function saveEditor(path: unknown, revision: unknown, edits: unknow
       const edit = clean.find((e) => e.id === c.id)
       if (!edit) throw new Error('Candidate is missing')
       const next = { ...c, ...edit }
+      // A changed call to action is the member's choice: a re-bake keeps it over the Library clip's.
+      if (ctaChoice(edit.cta_id) !== ctaChoice(c.cta_id)) next.cta_edited = true
       if (edit.status === 'baked') {
         // Unchanged since its render, or restored to the exact render "Refine again" left.
         const unchanged = c.status === 'baked' ? renderEditKey(edit) === renderEditKey(c) : !!c.baked_hash && c.exports.length > 0 && bakedHash(edit) === c.baked_hash
@@ -248,6 +275,8 @@ function safeTail(stderr: string): Record<string, string> {
 const workerLimitMs = (durationMs: number): number => 30 * 60 * 1000 + 3 * durationMs
 
 type WorkerResult = { ok: boolean; error?: unknown } & Record<string, unknown>
+/** A failed worker run, with its result line (it can report what paid calls cost before the failure). */
+class WorkerFailure extends Error { result?: WorkerResult }
 function runWorker(run: string, operation: EditorOperation, action: WorkerAction, env: Record<string, string | undefined>, python: string, limitMs: number, request: Record<string, unknown>): Promise<WorkerResult> {
   const engine = env.PYTHONPATH!
   return new Promise<WorkerResult>((resolve, reject) => {
@@ -293,7 +322,9 @@ function runWorker(run: string, operation: EditorOperation, action: WorkerAction
       if (exitCode === 0 && !protocolFailed && result?.ok === true) return finish()
       const code: EditorErrorCode | undefined = timedOut ? 'timeout' : operation.cancelled ? 'cancelled' : isEditorErrorCode(result?.error) ? result.error : undefined
       logger.warn('editor.worker.failed', { action, code: code ?? 'unknown', exitCode, signal, protocolFailed, ...safeTail(stderr) })
-      finish(new Error(editorFailureMessage(action === 'export-all' ? 'export' : action, code)))
+      const failure = new WorkerFailure(editorFailureMessage(action === 'export-all' ? 'export' : action, code))
+      failure.result = result
+      finish(failure)
     })
     child.stdin.on('error', () => {})
     child.stdin.end(JSON.stringify(request))
@@ -356,15 +387,24 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
     for (const candidate of candidates) {
       if (operation.cancelled) break
       try {
+        const exporting = action === 'export' || action === 'export-all'
         const work = async (): Promise<void> => {
-          const result = await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId })
-          if (action === 'export' || action === 'export-all') {
+          const libraryCta = exporting ? await libraryClipCta(run, candidate) : undefined
+          let result: WorkerResult
+          try {
+            result = await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId })
+          } catch (error) {
+            // A render that failed after its captions were translated still spent that call.
+            if (exporting && (error as WorkerFailure).result) await recordEditorCost(run, (error as WorkerFailure).result!, 'editor_caption_translation', true)
+            throw error
+          }
+          if (exporting) {
             // Translated captions (a clip from an Automatic run in another caption language) cost one OpenRouter call.
             await recordEditorCost(run, result, 'editor_caption_translation', true)
-            if (!operation.cancelled) await addExportCta(run, candidate.id)
+            if (!operation.cancelled) await addExportCta(run, candidate.id, libraryCta)
           }
         }
-        if (action === 'export' || action === 'export-all') await runExclusive(run, work)
+        if (exporting) await runExclusive(run, work)
         else await work()
         if (operation.batch) operation.batch.completed++
       } catch (error) {
@@ -438,12 +478,39 @@ export async function addEditorCandidate(path: unknown, revision: unknown, candi
   return openEditor(run)
 }
 
+/**
+ * Before a bake: how many clips will have their captions translated (one OpenRouter call each),
+ * and an estimate from what this run's translations cost so far (null when none is recorded).
+ */
+export async function editorTranslationEstimate(path: unknown, candidateId: unknown, action: unknown): Promise<{ clips: number; estimateUsd: number | null }> {
+  if (action !== 'export' && action !== 'export-all') return { clips: 0, estimateUsd: null }
+  const run = runPath(path)
+  const project = readProject(run)
+  const chosen = action === 'export-all' ? project.candidates.filter((c) => c.status === 'ready') : project.candidates.filter((c) => c.id === candidateId)
+  const clips = chosen.filter((c) => c.captions && isCaptionLanguage(c.caption_language)).length
+  if (!clips) return { clips: 0, estimateUsd: null }
+  let usd = 0, attempts = 0
+  try {
+    const costs = (await getJobOutput(run))?.metrics?.api_costs as Record<string, unknown> | undefined
+    for (const section of ['caption_translation', 'editor_caption_translation']) {
+      const entry = costs?.[section] as { estimated_cost_usd?: unknown; attempts?: unknown } | undefined
+      const cost = entry?.estimated_cost_usd, count = entry?.attempts
+      if (typeof cost === 'number' && Number.isFinite(cost) && cost > 0 && typeof count === 'number' && Number.isFinite(count) && count > 0) { usd += cost; attempts += count }
+    }
+  } catch { /* no recorded cost: no estimate */ }
+  return { clips, estimateUsd: attempts ? Math.round((usd / attempts) * clips * 1e6) / 1e6 : null }
+}
+
 /** Record what an editor AI call cost in the run's job_output.json (metrics.api_costs[section]). */
 async function recordEditorCost(run: string, result: WorkerResult, section: 'editor_hooks' | 'editor_caption_translation', locked = false): Promise<void> {
   const cost = typeof result.cost_usd === 'number' && Number.isFinite(result.cost_usd) && result.cost_usd >= 0 && result.cost_usd < 1000 ? result.cost_usd : 0
   const incomplete = result.cost_incomplete === true
   const model = typeof result.model === 'string' && /^[\w.:/-]{1,120}$/.test(result.model) ? result.model : undefined
   if (!cost && !incomplete) return
+  if (cost && recordEditorSpend) {
+    // The spending ledger (Settings → Spending), apart from the run's own cost record.
+    try { await recordEditorSpend(cost, section === 'editor_hooks' ? 'Editor hook ideas' : 'Editor caption translation') } catch { /* never breaks the editor */ }
+  }
   const object = (x: unknown): Record<string, unknown> => x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : {}
   try {
     const work = async (): Promise<void> => {

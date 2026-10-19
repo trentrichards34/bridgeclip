@@ -189,7 +189,7 @@ test('the native picker authorizes media and shell opening rejects aliased appli
       './settings-store': { loadSettings: () => ({ outputDirectory: library }) },
       './file-manager': {},
       './output-storage': { measureOutputStorage: async (directory) => ({ outputDirectory: directory, bytes: 0 }) },
-      './clip-editor': { onEditorExportCta() {}, onEditorRunLock() {} }, './edit-automatic': { automaticEditInfo: async () => ({}), prepareAutomaticEditor: async () => ({}) },
+      './clip-editor': { onEditorExportCta() {}, onEditorRunLock() {}, onEditorSpend() {} }, './edit-automatic': { automaticEditInfo: async () => ({}), prepareAutomaticEditor: async () => ({}) },
       './edit-inspector': { inspectEdits: async () => ({}) },
       './run-history': runHistory,
       './pipeline-runner': {},

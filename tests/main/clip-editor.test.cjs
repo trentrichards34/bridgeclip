@@ -377,18 +377,18 @@ function batchSetup() {
     child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough()
     child.stdin.end = (data) => {
       const config = JSON.parse(data)
-      workers.push({ config, write: (data) => child.stdout.write(data), close: (code) => child.emit('close', code), finish(ok = true) {
+      workers.push({ config, write: (data) => child.stdout.write(data), close: (code) => child.emit('close', code), finish(ok = true, extra = {}) {
         if (ok) {
           const file = path.join(f.run, 'editor-project.json')
           const project = JSON.parse(fs.readFileSync(file))
           assert.equal(config.revision, project.revision)
           const candidate = project.candidates.find(c => c.id === config.candidate_id)
           assert.equal(candidate.status, 'ready')
-          candidate.status = 'baked'; candidate.exports.push(project.revision)
+          candidate.status = 'baked'; candidate.exports.push(candidate.library_clip ?? project.revision)
           project.revision++
           fs.writeFileSync(file, JSON.stringify(project))
         }
-        child.stdout.write(JSON.stringify({ ok })); child.emit('close', ok ? 0 : 1)
+        child.stdout.write(JSON.stringify({ ok, ...extra })); child.emit('close', ok ? 0 : 1)
       } })
     }
     return child
@@ -457,6 +457,69 @@ for (const cancelled of [false, true]) test(`batch ${cancelled ? 'cancellation' 
     assert.equal(remaining.config.candidate_id, 'candidate-4')
     remaining.finish()
     await retry
+  } finally { f.cleanup() }
+})
+
+test('bakes that translate captions are estimated from the run, and their cost reaches the ledger even when the render fails', async () => {
+  const f = batchSetup()
+  try {
+    const spent = []
+    f.main.onEditorSpend(async (usd, label) => { spent.push({ usd, label }) })
+    const project = JSON.parse(fs.readFileSync(path.join(f.run, 'editor-project.json')))
+    project.candidates[1].caption_language = 'es'
+    fs.writeFileSync(path.join(f.run, 'editor-project.json'), JSON.stringify(project))
+    // No translation recorded for this run yet: the clip count is known, the cost is not.
+    assert.deepEqual(await f.main.editorTranslationEstimate(f.run, '', 'export-all'), { clips: 1, estimateUsd: null })
+    assert.deepEqual(await f.main.editorTranslationEstimate(f.run, 'candidate-4', 'export'), { clips: 0, estimateUsd: null })
+    assert.deepEqual(await f.main.editorTranslationEstimate(f.run, 'candidate-1', 'review'), { clips: 0, estimateUsd: null })
+    const output = JSON.parse(fs.readFileSync(path.join(f.run, 'job_output.json')))
+    output.metrics = { api_costs: { total_estimated_cost_usd: 0.006, caption_translation: { estimated_cost_usd: 0.006, attempts: 3 } } }
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify(output))
+    assert.deepEqual(await f.main.editorTranslationEstimate(f.run, 'candidate-1', 'export'), { clips: 1, estimateUsd: 0.002 })
+    // The render fails after the translation was paid for: the cost is still recorded.
+    const pending = f.main.runEditor(f.run, 0, 'candidate-1', 'export')
+    const rejected = assert.rejects(pending, /Rendering failed/)
+    ;(await nextWorker(f.workers, 1)).finish(false, { error: 'render_failed', cost_usd: 0.0021, model: 'test/model' })
+    await rejected
+    assert.deepEqual(spent, [{ usd: 0.0021, label: 'Editor caption translation' }])
+    const costs = JSON.parse(fs.readFileSync(path.join(f.run, 'job_output.json'))).metrics.api_costs
+    assert.equal(costs.editor_caption_translation.estimated_cost_usd, 0.0021)
+    // A finished bake records what it cost too.
+    const again = f.main.runEditor(f.run, 0, 'candidate-1', 'export')
+    ;(await nextWorker(f.workers, 2)).finish(true, { cost_usd: 0.0019 })
+    await again
+    assert.deepEqual(spent.at(-1), { usd: 0.0019, label: 'Editor caption translation' })
+  } finally { f.cleanup() }
+})
+
+test('re-baking an Automatic clip keeps the call to action its Library clip has now, unless it was changed in the editor', async () => {
+  const f = batchSetup()
+  try {
+    const applied = []
+    f.main.onEditorExportCta(async (_run, ctaId, index) => { applied.push({ ctaId, index }) })
+    const captured = 'a'.repeat(16), library = 'b'.repeat(16), chosen = 'c'.repeat(16)
+    const project = JSON.parse(fs.readFileSync(path.join(f.run, 'editor-project.json')))
+    Object.assign(project.candidates[1], { library_clip: 0, cta_id: captured })
+    Object.assign(project.candidates[4], { library_clip: 1, cta_id: captured })
+    fs.writeFileSync(path.join(f.run, 'editor-project.json'), JSON.stringify(project))
+    const clip = (index, cta) => ({ clip_index: index, s3_url: path.join(f.run, `clip_0${index}.mp4`), duration_ms: 1000, start_time_ms: 0, end_time_ms: 1000, virality_score: 50, ...(cta ? { cta: { id: cta, name: 'Offer' } } : {}) })
+    // Clip 0's call to action was changed in the Library since conversion; clip 1's was removed there.
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify({ job_id: 'review-run', editor_project: true, clips: [clip(0, library), clip(1, null)] }))
+    const pending = f.main.runEditor(f.run, 0, '', 'export-all')
+    ;(await nextWorker(f.workers, 1)).finish()
+    ;(await nextWorker(f.workers, 2)).finish()
+    await pending
+    assert.deepEqual(applied, [{ ctaId: library, index: 0 }])
+    // Changed in the editor: the editor's choice wins over the Library's.
+    const saved = (await f.main.openEditor(f.run)).project
+    saved.candidates[1] = { ...saved.candidates[1], status: 'ready', cta_id: chosen }
+    const after = await f.main.saveEditor(f.run, saved.revision, saved.candidates)
+    assert.equal(after.project.candidates[1].cta_edited, true)
+    assert.equal(after.project.candidates[4].cta_edited, undefined)
+    const rebake = f.main.runEditor(f.run, after.project.revision, 'candidate-1', 'export')
+    ;(await nextWorker(f.workers, 3)).finish()
+    await rebake
+    assert.deepEqual(applied.at(-1), { ctaId: chosen, index: 0 })
   } finally { f.cleanup() }
 })
 
