@@ -5,7 +5,7 @@ import { cn, MOD_KEY, parseTimecode, sourceLabel } from '../lib/utils'
 import { useDraftStore, type ClipDraft, type WizardStep } from '../store/use-draft-store'
 import { StylePresets } from './StylePresets'
 import { useActiveJobs } from '../store/use-job-store'
-import type { ClipJobRequest, HeadlineVoice, QualityBar, TitleStyle } from '../../shared/jobs'
+import type { ClipJobRequest, HeadlineVoice, QualityBar, ScreenFocus, TitleStyle } from '../../shared/jobs'
 import { MAX_PARALLEL_JOBS } from '../../shared/jobs'
 import { CaptionPresetPicker, CAPTION_PRESET_NAMES } from './CaptionPresetPicker'
 import { SourcePicker } from './SourcePicker'
@@ -15,7 +15,7 @@ import { Button } from './ui/Button'
 import { TextArea, TextInput } from './ui/Field'
 import { IconTile } from './ui/IconTile'
 import { SettingRow } from './ui/SettingRow'
-import { onRadioKeyDown } from './ui/Segmented'
+import { onRadioKeyDown, Segmented } from './ui/Segmented'
 import { CLIP_REQUEST_MAX_CHARS, DURATION_OPTIONS, VIDEO_SPEED_OPTIONS } from '../../shared/job-contract'
 import { isModelId } from '../../shared/openrouter-models'
 import { useModelStore } from '../store/use-model-store'
@@ -45,6 +45,13 @@ const LAYOUT_STYLES = [
   { id: 'fill', label: 'Full frame', hint: 'Follows the speaker' },
   { id: 'fit', label: 'Classic', hint: 'Whole frame, blurred' }
 ] as const
+
+/** Screen share clips under Smart framing (videos with a shared screen and a webcam). */
+export const SCREEN_FOCUS_OPTIONS: { id: ScreenFocus; label: string; hint: string; summary: string }[] = [
+  { id: 'smart', label: 'Smart mix', hint: 'Each clip shows just you, or your screen above you, depending on whether the screen matters to it.', summary: 'Smart mix · just you or split, clip by clip' },
+  { id: 'split', label: 'Split screen', hint: 'Your screen on top and you below in every clip. Long stretches where the screen doesn’t change show just you.', summary: 'Split screen in every clip' },
+  { id: 'presenter', label: 'Presenter only', hint: 'Just you, filling the frame, in every clip. If your webcam is too small to fill it, the split is used.', summary: 'Just you in every clip' }
+]
 
 const BROLL_OPTIONS = [
   { id: 'off', label: 'Off', hint: 'Just the speaker', summary: 'Off' },
@@ -111,6 +118,8 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     aspectRatio: draft.aspectRatio,
     layoutStyle: draft.layoutStyle,
     layoutVision: draft.clippingMode !== 'economy' && draft.aspectRatio === '9:16' && draft.layoutStyle === 'auto' && draft.layoutVision,
+    // Smart framing only; the engine's default is the smart mix.
+    ...(draft.aspectRatio === '9:16' && draft.layoutStyle === 'auto' && draft.screenFocus && draft.screenFocus !== 'smart' ? { screenFocus: draft.screenFocus } : {}),
     pacing: draft.pacing,
     videoSpeed: draft.videoSpeed ?? 1,
     includeCaptions: draft.includeCaptions,
@@ -460,6 +469,26 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
               control={<Switch label="AI vision for smart framing" checked={draft.layoutVision} onChange={(layoutVision) => update({ layoutVision })} />}
             />
           )}
+          {draft.layoutStyle === 'auto' && (
+            <div className="glass-tile mt-2 rounded-xl px-3 py-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-ink">Screen share clips</p>
+                  <p className="mt-0.5 text-2xs text-ink-subtle">For videos of your screen with your webcam. Other videos aren’t affected.</p>
+                </div>
+                <Segmented
+                  size="sm"
+                  label="Screen share clips"
+                  value={draft.screenFocus ?? 'smart'}
+                  onChange={(screenFocus) => update({ screenFocus })}
+                  options={SCREEN_FOCUS_OPTIONS.map((option) => ({ value: option.id, label: option.label }))}
+                />
+              </div>
+              <p className="mt-1.5 text-2xs leading-relaxed text-ink-muted">
+                {(SCREEN_FOCUS_OPTIONS.find((option) => option.id === (draft.screenFocus ?? 'smart')) ?? SCREEN_FOCUS_OPTIONS[0]).hint}
+              </p>
+            </div>
+          )}
         </Group>
       )}
 
@@ -764,7 +793,7 @@ export function CaptionLanguagePicker({ value, onChange, disabled }: { value: Ca
   )
 }
 
-function ReviewStep({ draft, trim, onEdit }: {
+export function ReviewStep({ draft, trim, onEdit }: {
   draft: ClipDraft
   trim: { start: number | null; end: number | null }
   onEdit: (step: WizardStep) => void
@@ -788,6 +817,9 @@ function ReviewStep({ draft, trim, onEdit }: {
       ? `${draftSources(draft).length} videos · ${sourceLabel(draft.source)} and ${draftSources(draft).length - 1} more`
       : `${sourceLabel(draft.source)}${trimLabel}` },
     { step: 'format', label: 'Format', value: `${FORMATS.find((f) => f.id === draft.aspectRatio)?.label ?? draft.aspectRatio} ${draft.aspectRatio} · ${framing}` },
+    ...(draft.aspectRatio === '9:16' && draft.layoutStyle === 'auto'
+      ? [{ step: 'format' as const, label: 'Screen share', value: (SCREEN_FOCUS_OPTIONS.find((option) => option.id === (draft.screenFocus ?? 'smart')) ?? SCREEN_FOCUS_OPTIONS[0]).summary }]
+      : []),
     { step: 'format', label: 'Pacing', value: draft.workflow === 'review' ? 'Manual · choose your own cuts in the editor' : draft.pacing === 'tight' ? 'Cut dead air' : 'Keep pauses' },
     { step: 'format', label: 'Speed', value: `${draft.videoSpeed ?? 1}×${(draft.videoSpeed ?? 1) === 1 ? ' · Normal' : ' · All exported clips'}` },
     { step: 'clips', label: 'Mode', value: draft.clippingMode === 'advanced' ? 'Advanced · custom models' : draft.clippingMode === 'economy' ? 'Economy · lower cost' : 'Quality · higher accuracy' },

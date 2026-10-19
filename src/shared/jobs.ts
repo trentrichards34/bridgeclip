@@ -4,6 +4,12 @@ export const QUALITY_BARS: readonly QualityBar[] = ['a', 'b', 'c', 'all', 'off']
 /** Headline: a story headline above the video (see headline-look.ts for its look). Card: the short title over the video. */
 export type TitleStyle = 'headline' | 'card'
 export const TITLE_STYLES: readonly TitleStyle[] = ['headline', 'card']
+/**
+ * Screen share clips (Smart framing, 9:16): a mix chosen clip by clip (presenter only when the point
+ * stands without the screen, split screen when the screen matters), or one style for every clip.
+ */
+export type ScreenFocus = 'smart' | 'split' | 'presenter'
+export const SCREEN_FOCUS_MODES: readonly ScreenFocus[] = ['smart', 'split', 'presenter']
 
 import type { RunDiagnostics } from './run-diagnostics'
 import type { HeadlineLook } from './headline-look'
@@ -28,6 +34,8 @@ export interface ClipJobRequest {
   aspectRatio: string
   layoutStyle: string
   layoutVision: boolean
+  /** Screen share clips under Smart framing. Older requests: 'smart'. */
+  screenFocus?: ScreenFocus
   pacing: string
   /** Export speed for every clip. Older requests default to normal speed. */
   videoSpeed?: number

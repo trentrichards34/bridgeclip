@@ -6,7 +6,7 @@ import { loadSettings } from './settings-store'
 import { isWebUrl } from './security'
 import { validateJobConfig } from './validation'
 import { CLIP_REQUEST_MAX_CHARS, DURATION_IDS } from '../shared/job-contract'
-import { QUALITY_BARS, type ClipJobRequest, type QualityBar } from '../shared/jobs'
+import { QUALITY_BARS, SCREEN_FOCUS_MODES, type ClipJobRequest, type QualityBar, type ScreenFocus } from '../shared/jobs'
 import { isCaptionLanguage, type CaptionLanguage } from '../shared/caption-language'
 import type { JobOutput } from '../shared/job-output'
 
@@ -135,6 +135,7 @@ export function requestFromOutput(output: JobOutput): ClipJobRequest {
     aspectRatio: settings.aspect_ratio === '16:9' ? '16:9' : '9:16',
     layoutStyle: ['auto', 'fill', 'fit'].includes(settings.layout_style as string) ? settings.layout_style as string : 'auto',
     layoutVision: settings.layout_vision_enabled !== false,
+    ...(SCREEN_FOCUS_MODES.includes(settings.screen_focus as ScreenFocus) ? { screenFocus: settings.screen_focus as ScreenFocus } : {}),
     pacing: settings.pacing === 'natural' ? 'natural' : 'tight',
     videoSpeed: typeof settings.video_speed === 'number' ? settings.video_speed : 1,
     includeCaptions: metrics.captions_status !== 'disabled_by_request',

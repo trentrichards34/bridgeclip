@@ -37,7 +37,7 @@ from clip_engine.services.clip_editor import (
     subtract_intervals,
     window_words,
 )
-from clip_engine.services.layout_analyzer import ClipLayoutPlan, LayoutAnalyzer, LayoutType, ShotLayout, screen_cue_times
+from clip_engine.services.layout_analyzer import ClipLayoutPlan, LayoutAnalyzer, LayoutType, ShotLayout, focus_for_window
 from clip_engine.services.framing_trace import make_trace, save_trace
 from clip_engine.services.editorial_context import window_protection, record_prevented_cuts
 from clip_engine.services.editorial_review import review_retained_clip
@@ -254,6 +254,12 @@ class RenderRequest:
     aspect_ratio: str = "9:16"
     # Framing for 9:16 output: auto (smart per-shot), fill or fit.
     layout_style: str = LayoutStyle.AUTO
+    # Screen share + webcam clips (Smart framing): the member's choice ("smart",
+    # "split" or "presenter") and, in Smart mode, the planner's clip decision
+    # ("presenter", "screen" or "mixed") with its reason (see screen_relevance).
+    screen_focus_mode: str = "smart"
+    screen_focus: Optional[str] = None
+    screen_focus_reason: Optional[str] = None
     # Gameplay / "satisfying" split (9:16 only): the framed speaker fills the
     # top half and this video loops, muted, under it. None renders normally.
     background_video_path: Optional[str] = None
@@ -312,6 +318,8 @@ class RenderResult:
     # rebuilds an Automatic clip's cut from these.
     kept_source_ms: list[list[int]] = field(default_factory=list)
     window_start_ms: int = 0
+    # Screen share + webcam clips: how the clip was framed and why (ClipLayoutPlan.screen_focus).
+    screen_focus: Optional[dict] = None
 
 
 def shot_record(shot) -> dict:
@@ -655,6 +663,7 @@ class RenderingService:
             framing_trace_path=trace_path,
             kept_source_ms=[[round(window_start_ms + a), round(window_start_ms + b)] for a, b in time_map.keeps],
             window_start_ms=round(window_start_ms),
+            screen_focus=plan.screen_focus if analyzed else None,
         )
 
     @staticmethod
@@ -802,10 +811,13 @@ class RenderingService:
         if request.layout_style == LayoutStyle.FIT:
             return None
         try:
+            cues, focus = focus_for_window(request.transcript_segments, window_start_ms, window_ms,
+                                           request.screen_focus_mode, request.screen_focus, request.screen_focus_reason)
             return await self.layout_analyzer.analyze(
                 request.video_path, window_start_ms, window_ms, source_w, source_h, request.layout_style,
                 # Only when the speech points at the screen (keeps the call minimal otherwise).
-                **({"screen_cues_ms": cues} if (cues := screen_cue_times(request.transcript_segments, window_start_ms, window_ms)) else {}),
+                **({"screen_cues_ms": cues} if cues else {}),
+                screen_focus=focus,
                 **({"capture": True} if request.debug_capture else {}),
                 **({'progress': lambda detail, percent: request.progress_callback(
                     detail if percent is None else f'{detail} {percent}%', None)} if request.progress_callback else {}),

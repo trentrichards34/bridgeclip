@@ -523,6 +523,7 @@ export function startClipJob(
     aspect_ratio: config.aspectRatio,
     layout_style: config.layoutStyle || 'auto',
     layout_vision_enabled: config.clippingMode === 'economy' ? false : config.layoutVision,
+    screen_focus: config.screenFocus ?? 'smart',
     pacing: config.pacing || 'tight',
     video_speed: config.videoSpeed ?? 1,
     include_captions: config.includeCaptions,

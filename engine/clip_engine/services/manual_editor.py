@@ -14,7 +14,7 @@ from clip_engine.error_policy import NoClipCandidatesError
 
 from clip_engine.services.coherence_review import CLIP_QUESTIONS, CUT_QUESTIONS, CoherenceReviewer, check_threshold, dialogue
 from clip_engine.services.jev_service import JevService
-from clip_engine.services.layout_analyzer import ClipLayoutPlan, ShotLayout, LayoutType, screen_cue_times
+from clip_engine.services.layout_analyzer import ClipLayoutPlan, ShotLayout, LayoutType, focus_for_window
 from clip_engine.services.layout_renderer import shot_views
 from clip_engine.services.rendering_service import RenderRequest, RenderingService
 from clip_engine.services.transcription_service import TranscriptSegment, TranscriptWord
@@ -230,9 +230,11 @@ async def prepare_project(request, segments, transcript, download, renderer, rev
         # Suggested shot layouts stay editable; no pacing cuts or captions are baked.
         if request.aspect_ratio == '9:16' and request.layout_style != 'fit':
             try:
+                # The same clip-level screen share decision as an Automatic render.
+                cues, focus = focus_for_window(transcript, a, b - a, getattr(request, 'screen_focus', 'smart'),
+                    getattr(segment, 'screen_focus', None), getattr(segment, 'screen_focus_reason', None))
                 plan = await renderer.layout_analyzer.analyze(download.video_path, a, b - a, w, h, request.layout_style,
-                    progress=report_layout,
-                    **({'screen_cues_ms': cues} if (cues := screen_cue_times(transcript, a, b - a)) else {}))
+                    progress=report_layout, screen_focus=focus, **({'screen_cues_ms': cues} if cues else {}))
                 scenes = [scene_for_shot(shot, j, a, w, h, request.aspect_ratio) for j, shot in enumerate(plan.shots[:60])]
                 if not scenes:
                     scenes = [{'at_ms': 0, 'layout': 'fill', 'crops': [default_crop(w, h, aspect)]}]

@@ -294,6 +294,7 @@ async def run(config: dict) -> bool:
         duration_ranges=duration_ranges,
         aspect_ratio=config.get("aspect_ratio", "9:16"),
         layout_style=config.get("layout_style") or "auto",
+        screen_focus=config.get("screen_focus") or "smart",
         background_video_path=config.get("background_video_path"),
         broll_enabled=config.get("broll_enabled", False),
         broll_keep_hook=config.get("broll_keep_hook", True),
@@ -416,6 +417,8 @@ def validate_config(config: object) -> dict:
         raise ValueError("Invalid aspect ratio")
     if config.get("layout_style", "auto") not in ("auto", "fill", "fit"):
         raise ValueError("Invalid layout style")
+    if config.get("screen_focus", "smart") not in ("smart", "split", "presenter"):
+        raise ValueError("Invalid screen share framing")
     background = config.get("background_video_path")
     if background is not None and (
         not isinstance(background, str) or "\0" in background or not os.path.isabs(background)

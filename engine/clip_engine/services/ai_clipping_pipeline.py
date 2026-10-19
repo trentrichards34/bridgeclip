@@ -48,6 +48,7 @@ from clip_engine.services.intelligence_planner import (
     IntelligencePlannerService,
     clean_exclusions,
 )
+from clip_engine.services.screen_relevance import MODES as SCREEN_FOCUS_MODES
 from clip_engine.services.memory_monitor import (
     force_gc,
     log_memory_usage,
@@ -138,6 +139,9 @@ class ClippingJobRequest:
     # The user's description of the moments to clip; None picks the best moments.
     clip_request: Optional[str] = None
     layout_style: str = LayoutStyle.AUTO
+    # Screen share + webcam clips (Smart framing): "smart" mixes presenter-only and split
+    # screen clip by clip; "split" and "presenter" use one style (see screen_relevance).
+    screen_focus: str = 'smart'
     # Gameplay split (9:16): looping background video under the speaker.
     background_video_path: Optional[str] = None
     # B-roll mode: stock footage (Pexels) over the speaker; keep the speaker
@@ -170,6 +174,8 @@ class ClippingJobRequest:
 
     def __post_init__(self):
         validate_video_speed(self.video_speed)
+        if self.screen_focus not in SCREEN_FOCUS_MODES:
+            raise ValueError("Invalid screen share framing")
         if language_name(self.caption_language) is None:
             self.caption_language = None
         self.exclude_ranges_ms = [list(span) for span in clean_exclusions(self.exclude_ranges_ms)] or None
@@ -877,6 +883,9 @@ class AIClippingPipeline:
                         banner_channel_url=request.banner_channel_url,
                         aspect_ratio=request.aspect_ratio,
                         layout_style=request.layout_style,
+                        screen_focus_mode=request.screen_focus,
+                        screen_focus=segment.screen_focus,
+                        screen_focus_reason=segment.screen_focus_reason,
                         background_video_path=request.background_video_path,
                         broll_shots=broll_shots,
                         debug_capture=request.debug_capture,
@@ -927,7 +936,13 @@ class AIClippingPipeline:
                         # The editor rebuilds this clip's cut and framing from these.
                         "window_start_ms": getattr(render_result, "window_start_ms", 0),
                         "kept_source_ms": getattr(render_result, "kept_source_ms", []),
+                        # Screen share clips: presenter, screen or mixed, and why (None for other clips).
+                        "screen_focus": getattr(render_result, "screen_focus", None),
                     })
+                    focus = getattr(render_result, "screen_focus", None)
+                    if focus:
+                        logger.info(f"Clip {i + 1} screen focus: {focus.get('decision')} ({focus.get('source')}"
+                                    + (f": {focus.get('reason')}" if focus.get('reason') else "") + ")")
                     logger.info(
                         f"Rendered clip {i + 1} ({render_result.layout_type}): "
                         f"{render_result.file_size_bytes / 1024 / 1024:.1f} MB"
@@ -1222,6 +1237,7 @@ class AIClippingPipeline:
                     "transcription_model": self.settings.transcription_model,
                     "aspect_ratio": request.aspect_ratio,
                     "layout_style": request.layout_style,
+                    "screen_focus": request.screen_focus,
                     "layout_vision_enabled": self.settings.layout_vision_enabled,
                     "pacing": request.pacing,
                     "video_speed": request.video_speed,

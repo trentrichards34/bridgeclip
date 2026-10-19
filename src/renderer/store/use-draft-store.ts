@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
-import type { HeadlineVoice, QualityBar, TitleStyle } from '../../shared/jobs'
+import type { HeadlineVoice, QualityBar, ScreenFocus, TitleStyle } from '../../shared/jobs'
 import type { CaptionLanguageChoice } from '../../shared/caption-language'
 
 /** The Create wizard's steps, in order. */
@@ -34,6 +34,8 @@ export interface ClipDraft {
   layoutStyle: 'auto' | 'fill' | 'fit'
   /** Paid vision verification for ambiguous shots in Smart framing. */
   layoutVision: boolean
+  /** Screen share clips under Smart framing: a mix (presenter or split, clip by clip), or one style. */
+  screenFocus: ScreenFocus
   /** tight: cut dead air and filler words; natural: original timing. */
   pacing: 'tight' | 'natural'
   videoSpeed: number
@@ -97,6 +99,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   aspectRatio: '9:16',
   layoutStyle: 'auto',
   layoutVision: true,
+  screenFocus: 'smart',
   pacing: 'tight',
   videoSpeed: 1,
   clipRequest: '',

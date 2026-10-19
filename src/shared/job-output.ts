@@ -132,6 +132,27 @@ function safeShot(value: unknown): Record<string, unknown> | null {
   return shot
 }
 
+/** How a screen share clip was framed: presenter only, split screen or a mix, why, and who decided. */
+export interface ClipScreenFocus {
+  decision: 'presenter' | 'screen' | 'mixed'
+  reason: string
+  source: 'planner' | 'speech' | 'mode' | 'default'
+  mode: 'smart' | 'split' | 'presenter'
+  /** False when the webcam was too small to fill the frame, so the split was kept. */
+  person_fits: boolean
+}
+
+function safeScreenFocus(value: unknown): ClipScreenFocus | null {
+  if (!record(value) || !['presenter', 'screen', 'mixed'].includes(value.decision as string)) return null
+  return {
+    decision: value.decision as ClipScreenFocus['decision'],
+    reason: boundedText(value.reason, 200) ?? '',
+    source: ['planner', 'speech', 'mode', 'default'].includes(value.source as string) ? value.source as ClipScreenFocus['source'] : 'default',
+    mode: ['split', 'presenter'].includes(value.mode as string) ? value.mode as ClipScreenFocus['mode'] : 'smart',
+    person_fits: value.person_fits !== false
+  }
+}
+
 function safeMetrics(value: unknown): Record<string, unknown> | null {
   if (!record(value)) return null
   const result: Record<string, unknown> = {}
@@ -163,6 +184,7 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
     }
     if (requested.aspect_ratio === '9:16' || requested.aspect_ratio === '16:9') safe.aspect_ratio = requested.aspect_ratio
     if (['auto', 'fill', 'fit'].includes(requested.layout_style as string)) safe.layout_style = requested.layout_style
+    if (['smart', 'split', 'presenter'].includes(requested.screen_focus as string)) safe.screen_focus = requested.screen_focus
     if (typeof requested.layout_vision_enabled === 'boolean') safe.layout_vision_enabled = requested.layout_vision_enabled
     if (requested.pacing === 'tight' || requested.pacing === 'natural') safe.pacing = requested.pacing
     if (typeof requested.video_speed === 'number' && Number.isFinite(requested.video_speed) && requested.video_speed >= 1 && requested.video_speed <= 2) safe.video_speed = requested.video_speed
@@ -203,6 +225,8 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
       if (nonNegative(entry.pacing_removed_ms)) safe.pacing_removed_ms = entry.pacing_removed_ms
       const fallback = boundedText(entry.render_fallback, 64)
       if (fallback !== null) safe.render_fallback = fallback
+      const focus = safeScreenFocus(entry.screen_focus)
+      if (focus) safe.screen_focus = focus
       if (Array.isArray(entry.shots)) {
         safe.shot_count = entry.shots.length
         safe.shots = entry.shots.slice(0, 256).map(safeShot).filter((shot) => shot !== null)
