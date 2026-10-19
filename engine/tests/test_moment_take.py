@@ -47,8 +47,10 @@ def test_cuts_move_onto_whole_sentences_within_the_limits():
     # Asked for 8.0-11.2 s (mid-sentence): starts where the sentence starts, ends at its end, then on to the next
     # sentence's end to reach five seconds; never reaching into the neighboring words.
     assert mt.snap_moment(SOURCE_WORDS, 8000, 11200, 5000, 35000) == (7250, 12610)
-    # Whole words only (a nudge): an edge inside a word moves to that word's edge.
-    assert mt.snap_moment(SOURCE_WORDS, 7600, 10500, 5000, 35000, min_ms=1000, max_ms=40000, sentences=False) == (7250, 10620)
+    # Whole words only (a nudge): a word is kept when most of it is inside ("Then" mostly isn't; "every" mostly is).
+    assert mt.snap_moment(SOURCE_WORDS, 7600, 10500, 5000, 35000, min_ms=1000, max_ms=40000, sentences=False) == (7740, 10620)
+    # A planned moment stays as it was.
+    assert mt.snap_moment(SOURCE_WORDS, 7250, 12610, 5000, 35000, min_ms=1000, max_ms=40000, sentences=False) == (7250, 12610)
     # Too long for the moment: cut at the last whole word that fits.
     a, b = mt.snap_moment(SOURCE_WORDS, 5500, 27000, 5000, 35000, max_ms=8000)
     assert b - a <= 8000 + mt.LEAD_MS + mt.TAIL_MS and a == 5350

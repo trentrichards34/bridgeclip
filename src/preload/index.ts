@@ -413,6 +413,8 @@ export interface BridgeClipAPI {
     talkingPoints: (draftId: number) => Promise<RemixDraft>
     /** Moment + my take: read the playback time from a screenshot of a player (one small paid call); null when none was read. */
     readTimecode: (bytes: Uint8Array) => Promise<TimecodeRead | null>
+    /** The same from a screenshot chosen in a file dialog; null when none is chosen. */
+    readTimecodeFile: () => Promise<{ read: TimecodeRead | null } | null>
     /** Re-make a finished remix with new hook text, look, captions or box size (no AI cost). */
     recompose: (outputDir: string, clipIndex: number, edit: { headline: string; headlineLook: HeadlineLook; includeCaptions: boolean; captionPreset: string; split: number | null }) => Promise<{ output: JobOutput | null; note: string | null }>
     /** Choose a screenshot for an article-or-post remix. */
@@ -758,6 +760,7 @@ const api: BridgeClipAPI = {
     anotherMoment: (draftId) => paid('remix:anotherMoment', draftId),
     talkingPoints: (draftId) => paid('remix:talkingPoints', draftId),
     readTimecode: (bytes) => paid('remix:readTimecode', bytes),
+    readTimecodeFile: () => paid('remix:readTimecodeFile'),
     recompose: (outputDir, clipIndex, edit) => ipcRenderer.invoke('remix:recompose', outputDir, clipIndex, edit),
     selectImage: () => ipcRenderer.invoke('remix:selectImage'),
     libraryClip: (outputDir, clipIndex) => ipcRenderer.invoke('library:remixSource', outputDir, clipIndex),

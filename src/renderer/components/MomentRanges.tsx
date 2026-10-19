@@ -4,7 +4,7 @@ import {
   formatTimecode, MAX_TIMECODE_IMAGE_BYTES, MOMENT_MAX_RANGES, parseTimecode, rangeAround, rangeProblem, RANGE_PAD_SECONDS, type RangeInput, type TimecodeRead
 } from '../../shared/moment-take'
 import { getApi } from '../lib/ipc'
-import { cn, errorMessage, localFileUrl } from '../lib/utils'
+import { cn, errorMessage } from '../lib/utils'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Field'
 
@@ -36,12 +36,14 @@ export function MomentRanges({ value, lengthSeconds, disabled, onChange }: {
 
   const set = (index: number, patch: Partial<RangeInput>): void => onChange(latest.current.map((row, i) => i === index ? { ...row, ...patch } : row))
 
-  const read = async (index: number, file: Blob): Promise<void> => {
+  /** Ask for the time on a screenshot (one small paid call) and set the range around it. */
+  const read = async (index: number, ask: () => Promise<{ read: TimecodeRead | null } | null>): Promise<void> => {
     setProblem(null)
-    if (file.size > MAX_TIMECODE_IMAGE_BYTES) { setProblem({ row: index, text: 'Use a screenshot under 10 MB.' }); return }
     setReading(index)
     try {
-      const found: TimecodeRead | null = await getApi().remix.readTimecode(new Uint8Array(await file.arrayBuffer()))
+      const result = await ask()
+      if (!result) return
+      const found = result.read
       if (!found) { setProblem({ row: index, text: 'No time could be read from that screenshot. Type it instead, like 37:12.' }); return }
       const range = rangeAround(found.seconds, lengthSeconds ?? found.lengthSeconds)
       set(index, { start: formatTimecode(range.startS), end: formatTimecode(range.endS), read: found })
@@ -49,15 +51,10 @@ export function MomentRanges({ value, lengthSeconds, disabled, onChange }: {
       setProblem({ row: index, text: errorMessage(err, 'That screenshot could not be read. Type the time instead.') })
     } finally { setReading(null) }
   }
-
-  const choose = async (index: number): Promise<void> => {
-    try {
-      const path = await getApi().remix.selectImage()
-      if (!path) return
-      const response = await fetch(localFileUrl(path))
-      await read(index, await response.blob())
-    } catch (err) { setProblem({ row: index, text: errorMessage(err, 'That screenshot could not be opened.') }) }
-  }
+  const readImage = (index: number, file: Blob): Promise<void> => file.size > MAX_TIMECODE_IMAGE_BYTES
+    ? Promise.resolve(setProblem({ row: index, text: 'Use a screenshot under 10 MB.' }))
+    : read(index, async () => ({ read: await getApi().remix.readTimecode(new Uint8Array(await file.arrayBuffer())) }))
+  const choose = (index: number): Promise<void> => read(index, () => getApi().remix.readTimecodeFile())
 
   /** A pasted or dropped screenshot fills this row (or, from the list, the first empty row or a new one). */
   const take = (index: number | null, file: File | null): boolean => {
@@ -65,7 +62,7 @@ export function MomentRanges({ value, lengthSeconds, disabled, onChange }: {
     const empty = latest.current.findIndex((row) => !row.start.trim() && !row.end.trim())
     const target = index ?? (empty >= 0 ? empty : latest.current.length < MOMENT_MAX_RANGES ? latest.current.length : latest.current.length - 1)
     if (target >= latest.current.length) onChange([...latest.current, { start: '', end: '' }])
-    void read(target, file)
+    void readImage(target, file)
     return true
   }
 
@@ -80,6 +77,14 @@ export function MomentRanges({ value, lengthSeconds, disabled, onChange }: {
 (a range {formatTimecode(RANGE_PAD_SECONDS)} either side of it).
           </span>
         </div>
+      </div>
+      <div tabIndex={0} role="button" aria-label="Paste or drop a screenshot of the player"
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const empty = latest.current.findIndex((row) => !row.start.trim() && !row.end.trim()); if (empty >= 0) void choose(empty) } }}
+        onDragOver={(e) => { if (!disabled) { e.preventDefault(); setDragging(-1) } }} onDragLeave={() => setDragging(null)}
+        onDrop={(e) => { e.preventDefault(); setDragging(null); take(null, imageFrom(e.dataTransfer.items, e.dataTransfer.files)) }}
+        className={cn('flex items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 px-3 py-3 text-2xs text-ink-muted outline-none focus-visible:border-accent',
+          dragging === -1 && 'border-accent text-ink')}>
+        <ImagePlus className="h-3.5 w-3.5" />{reading !== null ? 'Reading the time on your screenshot…' : 'Click here and paste (Ctrl+V or ⌘V), or drop a screenshot of the player, to add a range'}
       </div>
       {rows.map((row, index) => {
         const start = parseTimecode(row.start), end = parseTimecode(row.end)

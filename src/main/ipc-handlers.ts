@@ -8,6 +8,7 @@ import { addEditorCandidate, editorCloseReady, editorOperationStatus, freeEditor
 import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
+import { readFile, stat } from 'fs/promises'
 import { loadSettings, publicSettings, replaceApiKey, savePublicSettings, saveSpendLimit, type ApiKeyName, type PublicSettings } from './settings-store'
 import { getJobHistory, getJobOutput, generateThumbnail } from './file-manager'
 import { measureOutputStorage } from './output-storage'
@@ -16,7 +17,7 @@ import { getEnginePath, getBridgeRunnerPath, resolvePythonPath, validatePython }
 import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds, onJobUpdate } from './job-manager'
 import { allowOnce, assertSpendAllowed, friendlyIpcError, initSpending, metered, meteredAvatarRender, onOutOfCredits, onSpendingChange, openRouterBalance, recordSpend, spendOverview, trackAvatarStatus, trackJobSnapshot, trackRemixStatus } from './spending'
 import { readTimecodeScreenshot } from './moment-take'
-import { parseMomentRanges } from '../shared/moment-take'
+import { MAX_TIMECODE_IMAGE_BYTES, parseMomentRanges, type TimecodeRead } from '../shared/moment-take'
 import { friendlyCreditError, type SpendProvider } from '../shared/spending'
 import { AI_PORTRAIT_CANDIDATES, estimateRecreateCost, estimateRenderCost, PRICES, REACTIONS } from '../shared/avatars'
 import { estimateRemixCost, isRemixHost, MAX_REMIXES } from '../shared/remix'
@@ -447,10 +448,21 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   paid('remix:anotherMoment', 'openrouter', () => estimateRemixCost('camera', 1, 0.1, 'moment_take').total - estimateRemixCost('camera', 1, 0, 'image').total,
     (draftId) => anotherMoment(draftId))
   paid('remix:talkingPoints', 'openrouter', () => null, (draftId) => momentTalkingPoints(draftId))
-  paid('remix:readTimecode', 'openrouter', () => null, async (bytes) => {
+  const readTimecode = async (bytes: unknown): Promise<TimecodeRead | null> => {
     const result = await readTimecodeScreenshot(bytes, loadSettings().openrouterApiKey)
     if (result.costUsd > 0) void recordSpend({ kind: 'remix', provider: 'openrouter', usd: result.costUsd, label: 'Remix: reading a screenshot’s time' })
     return result.read
+  }
+  paid('remix:readTimecode', 'openrouter', () => null, (bytes) => readTimecode(bytes))
+  // The same from a screenshot chosen in the file dialog (null when none is chosen).
+  paid('remix:readTimecodeFile', 'openrouter', () => null, async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a screenshot of the player', filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    const info = await stat(result.filePaths[0])
+    if (!info.isFile() || info.size > MAX_TIMECODE_IMAGE_BYTES) throw new Error('Use a screenshot under 10 MB.')
+    return { read: await readTimecode(new Uint8Array(await readFile(result.filePaths[0]))) }
   })
   // Pause & react: the part of their video, and when it plays and pauses (finding a phone recording's pauses is local and free).
   handle('remix:trim', (_event, draftId: unknown, startMs: unknown, endMs: unknown) => setRemixTrim(draftId, startMs, endMs))

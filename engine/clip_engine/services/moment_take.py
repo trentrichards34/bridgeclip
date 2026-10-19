@@ -104,9 +104,15 @@ def snap_moment(words: list[TranscriptWord], start_ms: int, end_ms: int, lo_ms: 
     pool = sorted((w for w in words if w.start_time_ms >= lo_ms and w.end_time_ms <= hi_ms + 50), key=lambda w: w.start_time_ms)
     if not pool:
         return None
-    # The first word that hasn't ended by the start, and the last that has begun by the end.
-    first = next((i for i, w in enumerate(pool) if w.end_time_ms > start_ms), len(pool) - 1)
-    last = max((i for i, w in enumerate(pool) if w.start_time_ms < end_ms), default=first)
+    # The first word that hasn't ended by the start, and the last that has begun by the end. A nudged edge (no sentence
+    # snapping) keeps a word only when most of it is inside, so a small nudge still moves the cut by a word.
+    if sentences:
+        first = next((i for i, w in enumerate(pool) if w.end_time_ms > start_ms), len(pool) - 1)
+        last = max((i for i, w in enumerate(pool) if w.start_time_ms < end_ms), default=first)
+    else:
+        middle = lambda w: (w.start_time_ms + w.end_time_ms) / 2  # noqa: E731
+        first = next((i for i, w in enumerate(pool) if middle(w) >= start_ms), len(pool) - 1)
+        last = max((i for i, w in enumerate(pool) if middle(w) <= end_ms), default=first)
     last = max(last, first)
     if sentences:
         starts = [i for i in range(len(pool)) if (i == 0 or _ends_sentence(pool[i - 1], pool[i]))
