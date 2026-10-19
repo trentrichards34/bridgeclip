@@ -110,6 +110,7 @@ export async function suggestTalkingPoints(input: { quote: string; title: string
   let raw: unknown = null
   try { raw = JSON.parse(content) } catch { raw = null }
   const points = parseTalkingPoints(raw)
-  if (!points.length) throw new Error('No talking points came back this time. Try again, or just say what you think.')
+  // Paid for even so: the error carries what it cost, so it is still recorded.
+  if (!points.length) throw Object.assign(new Error('No talking points came back this time. Try again, or just say what you think.'), { costUsd })
   return { points, costUsd }
 }

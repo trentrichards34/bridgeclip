@@ -297,3 +297,48 @@ class RecomposeMainTest(unittest.TestCase):
         self.assertEqual(seen[0].clip, "clip_00")
         self.assertEqual(sent[-1], {"ok": True, "path": os.path.join(root, "clip_00-edit.mp4"), "duration_seconds": 4.0,
                                     "settings": {"headline": "This creator says reels make no sales"}, "editable": None})
+
+
+class PaidFailureTest(unittest.TestCase):
+    """A run that paid for calls and then failed still says what it cost, so the spending ledger gets it."""
+
+    def run_main(self, mode, fail_with, cost, media_cost=0.0):
+        import io
+        import json
+        from unittest.mock import patch
+        from clip_engine.services import remix_service
+
+        class FakeRemixer:
+            def __init__(self, config, progress):
+                self.cost_usd = 0.0
+                self.media = type("Media", (), {"cost_usd": 0.0})()
+
+            async def fail(self, *args):
+                self.cost_usd += cost
+                self.media.cost_usd += media_cost
+                raise fail_with
+
+            pick_another = plan = write = render = fail
+        raw = {"mode": mode, "output_dir": os.path.abspath("out"), "approved": []}
+        parsed = {"config": None, "draft_id": 0} if mode == "moment" else None
+        sent = []
+        with patch("sys.stdin", io.StringIO(json.dumps(raw))), patch.object(remix_runner, "parse_config", return_value=parsed), \
+                patch.object(remix_service, "Remixer", FakeRemixer), patch("network_guard.install", lambda: None), \
+                patch.object(remix_runner, "reserve_stdout_for_protocol", lambda: None), patch.object(remix_runner, "emit", sent.append):
+            self.assertEqual(remix_runner.main(), 1)
+        return sent[-1]
+
+    def test_another_moment_that_found_nothing_reports_its_cost(self):
+        from clip_engine.services.remix_service import RemixError
+        line = self.run_main("moment", RemixError("Range 1 (0:05–0:35): no other moment stood out in it."), 0.04)
+        self.assertEqual(line, {"ok": False, "error": "Range 1 (0:05–0:35): no other moment stood out in it.", "cost_usd": 0.04})
+
+    def test_failed_plan_write_and_render_report_their_cost(self):
+        from clip_engine.services.remix_service import RemixError
+        self.assertEqual(self.run_main("plan", RemixError("OpenRouter reports insufficient credits."), 0.021)["cost_usd"], 0.021)
+        self.assertEqual(self.run_main("write", RemixError("the hook text and caption couldn't be written"), 0.01)["cost_usd"], 0.01)
+        self.assertEqual(self.run_main("render", RuntimeError("ffmpeg failed"), 0.0, media_cost=0.3)["cost_usd"], 0.3)
+
+    def test_nothing_paid_means_no_cost_on_the_line(self):
+        from clip_engine.services.remix_service import RemixError
+        self.assertNotIn("cost_usd", self.run_main("moment", RemixError("That moment is no longer in this review."), 0.0))

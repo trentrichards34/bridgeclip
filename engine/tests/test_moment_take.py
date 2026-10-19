@@ -222,8 +222,11 @@ def test_another_moment_avoids_the_ones_already_shown(env, monkeypatch):
     assert again["cost_usd"] == pytest.approx(0.04)
     assert "ALREADY SHOWN TO THE CREATOR" in [c for c in calls if c[0] == "chat"][-1][2]["messages"][1]["content"]
     # Nothing else stands out: it says so and keeps the current one.
+    tired = remixer(config(env, []), env)[0]
     with pytest.raises(remix.RemixError, match="no other moment stood out"):
-        asyncio.run(remixer(config(env, []), env)[0].pick_another(0))
+        asyncio.run(tired.pick_another(0))
+    # Both calls were paid for: the runner reports this on the failure line, so the ledger gets it.
+    assert tired.cost_usd == pytest.approx(0.04)
     saved = json.load(open(os.path.join(env.out, ".work", remix.PLAN_FILE)))
     assert saved["scripts"][0]["start_ms"] == 13850 and len(saved["scripts"][0]["tried"]) == 2
 

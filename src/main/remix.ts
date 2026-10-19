@@ -437,7 +437,8 @@ export async function writeRemix(draftIds?: unknown): Promise<RemixStatus> {
   if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
   const run = reviewing
   if (!run || run.status.phase !== 'review' || !oneTake(run.context.request.format)) throw new Error('There is no take waiting for its headline.')
-  if (recordingInProgress(run) || run.context.momentWork) throw new Error('Wait for your recording to finish saving.')
+  if (recordingInProgress(run)) throw new Error('Wait for your recording to finish saving.')
+  if (run.context.momentWork) throw new Error('Wait for the moment or talking points you asked for, then make your videos.')
   const momentTake = run.context.request.format === 'moment_take'
   const recorded = run.status.drafts.filter((draft) => run.context.recordings?.get(draft.id)?.get('reaction')).map((draft) => draft.id)
   const ids = momentTake ? [...new Set(Array.isArray(draftIds) ? draftIds.filter((id): id is number => typeof id === 'number' && recorded.includes(id)) : recorded)] : [0]
@@ -553,6 +554,23 @@ function launch(run: ActiveRemix, config: Record<string, unknown>): void {
   })
 }
 
+/** What an engine line says was paid (a success or a failure line), or 0. */
+function paidUsd(line: Record<string, unknown> | null | undefined): number {
+  const cost = line?.cost_usd
+  return typeof cost === 'number' && Number.isFinite(cost) && cost > 0 && cost < 1e6 ? cost : 0
+}
+
+/** An error that says what was paid before it (an engine failure line, or a model answer that couldn't be used). */
+function paidError(message: string, costUsd: number): Error & { costUsd: number } {
+  return Object.assign(new Error(message), { costUsd })
+}
+
+/** What a failed call paid, from the error it threw (0 when it says nothing). */
+function errorCost(error: unknown): number {
+  const cost = error && typeof error === 'object' ? (error as { costUsd?: unknown }).costUsd : undefined
+  return typeof cost === 'number' && Number.isFinite(cost) && cost > 0 && cost < 1e6 ? cost : 0
+}
+
 async function execute(run: ActiveRemix, config: Record<string, unknown>): Promise<void> {
   const settings = loadSettings(), engine = getEnginePath()
   const env: Record<string, string | undefined> = {
@@ -595,13 +613,14 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     if (!running(run)) return
     if (run.context.writing) {
       run.context.writing = false
+      // What the writing calls cost, written or not (a failure line carries it too): it goes to the run and so to the ledger.
+      const written = paidUsd(result)
+      run.context.planCostUsd += written
       // Cancelled before the headline arrived: back to review as it was (a headline that already arrived is kept: it's paid for).
-      if (run.cancelled && result?.ok !== true) { finish(run, { phase: 'review', detail: 'Ready for review', percent: 100 }); return }
+      if (run.cancelled && result?.ok !== true) { finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, costUsd: run.context.planCostUsd }); return }
       const momentTake = request.format === 'moment_take'
       const drafts = result?.ok === true && Array.isArray(result.drafts) ? result.drafts.map(parseRemixDraft)
         .filter((item): item is RemixDraft => item !== null && (momentTake ? run.context.draftIds.has(item.id) : item.id === 0)) : []
-      const written = typeof result?.cost_usd === 'number' && Number.isFinite(result.cost_usd) ? result.cost_usd : 0
-      run.context.planCostUsd += written
       if (drafts.length && momentTake) {
         logger.info('remix.written', { cost: written, takes: drafts.length })
         // Making these takes reuses the words heard now (until one is recorded again).
@@ -625,15 +644,17 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
       } else {
         logger.warn('remix.write.failed', { stderr: stderr.slice(-1500) })
         const message = typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : 'The headline could not be written. Try again, or type your own headline.'
-        finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, error: message })
+        finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, error: message, costUsd: run.context.planCostUsd })
       }
       return
     }
     const planning = run.status.phase === 'planning'
+    // A failed or canceled run still paid for the calls it made before stopping (the failure line says what).
+    const spent = result?.ok === true ? 0 : paidUsd(result)
     if (run.cancelled) {
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
       else for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions', '.recordings']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
-      finish(run, { phase: 'cancelled', detail: planning ? 'Cancelled while planning' : 'Cancelled' })
+      finish(run, { phase: 'cancelled', detail: planning ? 'Cancelled while planning' : 'Cancelled', ...(spent > 0 ? { costUsd: (planning ? 0 : run.context.planCostUsd) + spent } : {}) })
       return
     }
     const warnings = Array.isArray(result?.warnings) ? result.warnings.filter((w): w is string => typeof w === 'string').map((w) => w.slice(0, 400)).slice(0, 12) : []
@@ -680,12 +701,15 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
         await mkdir(dir, { recursive: true }).then(() => writeFile(join(dir, `remix-${new Date().toISOString().replace(/[:.]/g, '-')}.log`), stderr, { mode: 0o600 })).catch(() => undefined)
       }
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
+      // What was paid before the failure is kept on the run (and so reaches the ledger).
+      if (!planning) run.context.planCostUsd += spent
+      const costUsd = planning ? (spent > 0 ? spent : null) : run.context.planCostUsd
       // Nothing was made but the plan is still there: back to review to retry without planning (and paying) again.
       if (!planning && (request.format === 'image' || existsSync(join(run.status.folder, '.work', 'plan.json')))) {
-        finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, error: message, warnings })
+        finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, error: message, warnings, costUsd })
         return
       }
-      finish(run, { phase: 'failed', error: message })
+      finish(run, { phase: 'failed', error: message, costUsd })
     }
   }
   child.stdin.on('error', () => undefined)
@@ -1085,6 +1109,16 @@ function momentCost(run: ActiveRemix, usd: number, label: string): void {
   throw new Error('This review was closed.')
 }
 
+/** A paid moment call that failed: its cost goes to the run under review, or to the ledger directly when the review is closed. */
+function chargeFailedMoment(run: ActiveRemix, draft: RemixDraft, usd: number, label: string): void {
+  if (!(usd > 0)) return
+  if (reviewing !== run) {
+    try { void recordMomentSpend?.(usd, label, basename(run.status.folder)) } catch { /* never breaks the caller */ }
+    return
+  }
+  replaceDraft(run, run.status.drafts.find((item) => item.id === draft.id) ?? draft, usd)
+}
+
 /** One at a time per review: finding another moment or talking points. */
 async function momentWork<T>(run: ActiveRemix, work: () => Promise<T>): Promise<T> {
   if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
@@ -1101,6 +1135,10 @@ export async function anotherMoment(draftId: unknown): Promise<RemixDraft> {
     try {
       result = await runEngineOnce({ mode: 'moment', output_dir: run.status.folder, draft_id: draft.id }, 10 * 60_000, true,
         'Another moment couldn’t be found this time. Try again.', (child) => { run.context.momentChild = child })
+    } catch (error) {
+      // Nothing usable ("no other moment stood out"), yet the calls were paid for.
+      chargeFailedMoment(run, draft, errorCost(error), 'Remix planning')
+      throw error
     } finally { run.context.momentChild = undefined }
     const cost = typeof result.cost_usd === 'number' && Number.isFinite(result.cost_usd) && result.cost_usd > 0 ? result.cost_usd : 0
     momentCost(run, cost, 'Remix planning')
@@ -1126,10 +1164,18 @@ export async function momentTalkingPoints(draftId: unknown): Promise<RemixDraft>
   const { run, draft } = momentDraft(draftId)
   return momentWork(run, async () => {
     const config = run.context.config
-    const { points, costUsd } = await suggestTalkingPoints({
-      quote: draft.quote, title: draft.sourceTitle, creator: draft.creator,
-      brandName: typeof config.brand_name === 'string' ? config.brand_name : '', brand: typeof config.brand_identity === 'string' ? config.brand_identity : ''
-    }, loadSettings().openrouterApiKey)
+    let answer: Awaited<ReturnType<typeof suggestTalkingPoints>>
+    try {
+      answer = await suggestTalkingPoints({
+        quote: draft.quote, title: draft.sourceTitle, creator: draft.creator,
+        brandName: typeof config.brand_name === 'string' ? config.brand_name : '', brand: typeof config.brand_identity === 'string' ? config.brand_identity : ''
+      }, loadSettings().openrouterApiKey)
+    } catch (error) {
+      // No usable points came back, though the call was paid for.
+      chargeFailedMoment(run, draft, errorCost(error), 'Remix planning')
+      throw error
+    }
+    const { points, costUsd } = answer
     momentCost(run, costUsd, 'Remix planning')
     if (reviewing !== run) throw new Error('This review was closed.')
     const current = run.status.drafts.find((item) => item.id === draft.id) ?? draft
@@ -1234,7 +1280,7 @@ async function runEngineOnce(config: Record<string, unknown>, limitMs: number, t
       if (recomposeChild === child) recomposeChild = undefined
       if (result?.ok === true) { resolve(result); return }
       logger.warn('remix.recompose.failed', { stderr: stderr.slice(-1500) })
-      reject(new Error(typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : failure ?? (task ? 'Your recording could not be read. Try an MP4 or MOV from your phone.' : 'The video could not be made again. Try again.')))
+      reject(paidError(typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : failure ?? (task ? 'Your recording could not be read. Try an MP4 or MOV from your phone.' : 'The video could not be made again. Try again.'), paidUsd(result)))
     })
     child.stdin.on('error', () => undefined)
     child.stdin.end(JSON.stringify(config))
