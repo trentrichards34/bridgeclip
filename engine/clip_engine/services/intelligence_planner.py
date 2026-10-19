@@ -201,14 +201,40 @@ def exclusion_rule(ranges: Any) -> str:
 
 HEADLINE_VOICES = ('creator', 'clipper')
 
-# The creator posts their own video: headlines in their voice, never about them.
+# The creator posts their own video: headlines in their voice, never about them. The examples carry no
+# numbers, so none can be copied into a headline as if the creator had said them.
 CREATOR_VOICE_RULE = (
-    '\nCREATOR\'S OWN VIDEO: The person speaking in this video is posting these clips on their own channel. This replaces the '
-    'third-person instruction in HEADLINE: write every "headline" and any "description" in the creator\'s own voice, never '
-    'about them. Use "I", "my" or "you", or no pronoun at all ("Why you don\'t need to be an expert to sell a tool", '
-    '"I don\'t know what makes great carousels", "My new tool went from $98 to $1,227 in recurring revenue"). Never refer to '
-    'the speaker as "he", "she", "they", "this founder", "this guy" or by their name. Everything else in HEADLINE still applies, '
-    'including using real numbers exactly as said and never claiming what the clip does not show.')
+    '\nCREATOR\'S OWN VIDEO: The person speaking in this video is posting these clips on their own channel. Write every '
+    '"headline" and any "description" in the creator\'s own voice, never about them. Use "I", "my" or "you", or no pronoun '
+    'at all ("Why you don\'t need to be an expert to sell a tool", "I don\'t know what makes great carousels", "The pricing '
+    'mistake I made on my first tool"). Never refer to the speaker as "he", "she", "they", "this founder", "this guy" or by '
+    'their name. Everything else in HEADLINE still applies, including using real numbers exactly as said and never claiming '
+    'what the clip does not show.')
+
+# The HEADLINE section's opening and the output template's placeholder, per voice (the clipper's is the default).
+CLIPPER_HEADLINE_LEAD = (
+    'Write it the way a clipper would caption the moment for someone scrolling past, in the third person:\n'
+    '- Frame the situation, not a quote: "A 9-5 mechanic tried to humble Brez", "TJR finds out people are getting scammed by this", '
+    '"Multi-millionaire reveals shocking study on women", "This debate had everyone picking sides", "How much does the average '
+    'American man make per year?".\n'
+    '- Name the speaker only if their name is said in the transcript or given in the video context; otherwise describe them by role '
+    'or result ("This founder", "A trader who lost $10,000", "This 22-year-old").')
+CREATOR_HEADLINE_LEAD = (
+    'The creator is posting this clip on their own channel. Write it the way they would caption their own moment for someone '
+    'scrolling past, in their own voice ("I", "my", "you", or no pronoun at all):\n'
+    '- Frame the situation, not a quote: "Why you don\'t need to be an expert to sell a tool", "I don\'t know what makes great '
+    'carousels", "The pricing mistake I made on my first tool".\n'
+    '- Never refer to the speaker as "he", "she", "they", "this founder", "this guy" or by their name.')
+
+
+def headline_lead(voice: Optional[str]) -> str:
+    """How the HEADLINE section opens: third person (the default) or the creator's own voice."""
+    return CREATOR_HEADLINE_LEAD if voice == 'creator' else CLIPPER_HEADLINE_LEAD
+
+
+def headline_placeholder(voice: Optional[str]) -> str:
+    """The output template's "headline" placeholder for the voice."""
+    return "<4-12 word story headline in the creator's own voice>" if voice == 'creator' else '<4-12 word third-person story headline>'
 
 
 def headline_voice_rule(voice: Optional[str]) -> str:
@@ -728,6 +754,7 @@ class IntelligencePlannerService:
         self._current_max_duration = max_duration_seconds
         self._current_duration_ranges = duration_ranges
         self._current_transcript = transcript
+        self._headline_voice = headline_voice
         metadata_duration = getattr(video_metadata, "duration_seconds", None)
         self._current_video_duration = float(metadata_duration) if metadata_duration is not None else None
         
@@ -994,6 +1021,7 @@ Do NOT generate clips shorter than {min_duration} seconds or longer than {max_du
 - Clips that violate the duration requirements will be REJECTED
 - Order clips best first"""
 
+        voice = getattr(self, "_headline_voice", None)
         return f"""## YOUR ROLE
 
 {role}
@@ -1095,9 +1123,7 @@ Rules:
 
 ## HEADLINE (top bar)
 
-The "headline" field is the story headline shown in a bar above the video, the format the best performing clips use. Write it the way a clipper would caption the moment for someone scrolling past, in the third person:
-- Frame the situation, not a quote: "A 9-5 mechanic tried to humble Brez", "TJR finds out people are getting scammed by this", "Multi-millionaire reveals shocking study on women", "This debate had everyone picking sides", "How much does the average American man make per year?".
-- Name the speaker only if their name is said in the transcript or given in the video context; otherwise describe them by role or result ("This founder", "A trader who lost $10,000", "This 22-year-old").
+The "headline" field is the story headline shown in a bar above the video, the format the best performing clips use. {headline_lead(voice)}
 - 4-12 words, sentence case, no hashtags, no emoji.
 - Use the real numbers exactly as said. Never claim anything the clip does not show, and do not give away the payoff.
 - Different from the "summary" title: the summary is a short label, the headline is the story.
@@ -1116,7 +1142,7 @@ For each clip, list 2-5 single words, exactly as spoken inside the clip, that ca
       "start_time": <number in seconds>,
       "end_time": <number in seconds>,
       "summary": "<2-7 word title>",
-      "headline": "<4-12 word third-person story headline>",
+      "headline": "{headline_placeholder(voice)}",
       "scores": {{"hook": <0-10>, "standalone": <0-10>, "arc": <0-10>, "quotability": <0-10>, "ending": <0-10>}},
       "tags": ["tag1", "tag2"],
       "emphasis": ["word1", "word2"],

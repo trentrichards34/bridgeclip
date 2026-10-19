@@ -599,7 +599,7 @@ const api: BridgeClipAPI = {
   editor: {
     open: (path) => ipcRenderer.invoke('editor:open', path),
     save: (path, revision, edits) => ipcRenderer.invoke('editor:save', path, revision, edits),
-    run: (path, revision, id, action) => ipcRenderer.invoke('editor:run', path, revision, id, action),
+    run: (path, revision, id, action) => paid('editor:run', path, revision, id, action),
     cancel: (path) => ipcRenderer.invoke('editor:cancel', path),
     replaceSource: (path, revision, replacement) => ipcRenderer.invoke('editor:replaceSource', path, revision, replacement),
     progress: (path) => ipcRenderer.invoke('editor:progress', path),

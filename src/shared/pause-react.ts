@@ -100,6 +100,17 @@ export function mergeSegments(segments: PauseSegment[]): PauseSegment[] {
   return out
 }
 
+/**
+ * What the recorder logs for a media event of their video: a pause, a play, or nothing. A buffering stall
+ * ('waiting') while it plays holds the frame like a pause (the 'playing' that ends it is a play again), so the
+ * frames held then aren't counted as played.
+ */
+export function recorderEventKind(type: 'playing' | 'pause' | 'waiting', last: PauseEvent | undefined): PauseKind | null {
+  if (type === 'playing') return 'play'
+  if (type === 'pause') return 'pause'
+  return last?.kind === 'play' ? 'pause' : null
+}
+
 /** The timeline from the recorder's log. Before the first play the original holds its first frame. */
 export function timelineFromEvents(events: PauseEvent[], durationSeconds: number, trimStart: number, trimEnd: number): PauseTimeline {
   const end = round(Math.min(durationSeconds, PAUSE_REACT_MAX_SECONDS))

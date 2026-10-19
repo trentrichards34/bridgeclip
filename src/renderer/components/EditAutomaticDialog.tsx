@@ -12,7 +12,8 @@ import { ProgressBar } from './ui/ProgressBar'
 export function automaticEditSummary(info: AutomaticEditInfo): string[] {
   const lines: string[] = []
   if (info.state === 'convert') {
-    lines.push(`Your ${info.clipCount === 1 ? 'clip opens' : `${info.clipCount} clips open`} in the editor with the same moments, cuts and headlines. No AI is used.`)
+    lines.push(`Your ${info.clipCount === 1 ? 'clip opens' : `${info.clipCount} clips open`} in the editor with the same moments and headlines. No AI is used.`)
+    if (info.estimatedCuts) lines.push('This run didn’t save its exact cuts, so they are worked out again and may differ slightly from your clips. Check them before baking.')
     lines.push('Baking a clip replaces it in your Library. Clips you don’t bake stay exactly as they are.')
   } else {
     lines.push('The video for this run’s editor was removed to save space. Get it again to keep editing.')

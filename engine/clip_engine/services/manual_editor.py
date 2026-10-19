@@ -701,20 +701,37 @@ async def translated_captions(c, transcript, a, b):
     translator = CaptionTranslator(get_settings())
     try:
         translations = await translator.translate(lines, language)
+    except BaseException as error:
+        # A failed call can still have been charged: the failure carries what it cost.
+        attach_usage(error, translation_usage(translator))
+        raise
     finally:
         await translator.close()
-    usage = {'cost_usd': round(translator.usage.cost_usd, 6), 'cost_incomplete': translator.usage.cost_incomplete, 'model': translator.model}
+    usage = translation_usage(translator)
     if not translations:
-        raise EditorError('translation_failed', 'Captions could not be translated')
+        raise attach_usage(EditorError('translation_failed', 'Captions could not be translated'), usage)
     return translations, usage
+
+
+def translation_usage(translator):
+    return {'cost_usd': round(translator.usage.cost_usd, 6), 'cost_incomplete': translator.usage.cost_incomplete, 'model': translator.model}
+
+
+def attach_usage(error, usage):
+    """Keep what paid calls cost on a failure, so the worker reports it (editor_runner) and main records it."""
+    if usage and getattr(error, 'usage', None) is None:
+        try:
+            error.usage = usage
+        except AttributeError:
+            pass
+    return error
 
 
 async def export_clip(run, project, c, output, source, transcript, replace_index=None):
     """Render one ready candidate: a new Library clip, or (an Automatic run's clip) its replacement in place.
 
-    Returns (clip index, translation usage or None).
+    Returns (clip index, translation usage or None). A failure after a paid translation carries its usage.
     """
-    from clip_engine.config import get_caption_preset
     render_transcript = caption_transcript(transcript, c.get('caption_edits', []))
     if replace_index is None:
         next_index = output.get('next_clip_index', 0)
@@ -736,6 +753,18 @@ async def export_clip(run, project, c, output, source, transcript, replace_index
     hook_options = {'title_style': 'headline', 'headline_text': hook['text'], 'headline_look': hook['look']} if hook else {}
     extras = automatic_extras(run, project)
     translations, usage = await translated_captions(c, render_transcript, a, b)
+    try:
+        return await render_export(run, project, c, output, source, render_transcript, replace_index, index, renderer,
+                                   a, b, hook, hook_options, extras, translations, usage)
+    except BaseException as error:
+        # The translation was paid for even when the render fails or is cancelled.
+        attach_usage(error, usage)
+        raise
+
+
+async def render_export(run, project, c, output, source, render_transcript, replace_index, index, renderer,
+                        a, b, hook, hook_options, extras, translations, usage):
+    from clip_engine.config import get_caption_preset
     language = {'caption_translations': translations, 'caption_language': c['caption_language']} if translations else {}
     path = run / f'clip_{index:02d}.mp4'
     if replace_index is None and (path.exists() or path.is_symlink()):

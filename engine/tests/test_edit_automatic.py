@@ -257,6 +257,19 @@ def test_export_translates_captions_for_a_clip_in_another_language(media, tmp_pa
     with pytest.raises(EditorError) as error:
         asyncio.run(run_editor({**config, 'revision': project['revision']}))
     assert error.value.editor_code == 'translation_failed' and len(seen) == 1
+    assert error.value.usage['cost_usd'] == 0
+    # A render that fails after a paid translation still reports what the translation cost.
+    async def paid(self, lines, language):
+        self.usage.cost_usd += .002
+        return {caption_translation.segment_key(lines[0]): 'Alors il en a testé vingt'}
+    monkeypatch.setattr(caption_translation.CaptionTranslator, 'translate', paid)
+    async def broken(self, request):
+        raise RuntimeError('encoder failed')
+    monkeypatch.setattr(RenderingService, 'render_clip', broken)
+    with pytest.raises(RuntimeError) as failed:
+        asyncio.run(run_editor({**config, 'revision': project['revision']}))
+    assert failed.value.usage['cost_usd'] == .002 and failed.value.editor_code == 'render_failed'
+    assert json.loads((run / 'job_output.json').read_text())['clips'][2]['caption_language'] == 'es'
 
 
 def test_a_deleted_library_clip_is_exported_as_a_new_clip(media, tmp_path, monkeypatch):

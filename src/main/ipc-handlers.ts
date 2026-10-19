@@ -4,7 +4,7 @@ import { uniqueFileName, writeZip } from './clip-zip'
 import { randomUUID } from 'crypto'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
-import { addEditorCandidate, editorCloseReady, editorOperationStatus, freeEditorMedia, onEditorExportCta, onEditorRunLock, readEditorProgress, suggestEditorHooks } from './clip-editor'
+import { addEditorCandidate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorProgress, suggestEditorHooks } from './clip-editor'
 import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
@@ -34,7 +34,7 @@ import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../s
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, readReactions, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
-import { anotherMoment, momentEstimate, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
+import { anotherMoment, momentEstimate, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
 import { importLegacyAvatarVideos } from './avatar-library'
 import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, parseRenderRequest, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { logger, getLogFilePath } from './logger'
@@ -83,6 +83,8 @@ import {
 export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): void {
   // Clips exported from the editor end with their call to action, like the run's.
   onEditorRunLock(withRunLock)
+  // Editor AI calls (caption translation on a bake, hook ideas) join the spending ledger.
+  onEditorSpend((usd, label) => recordSpend({ kind: 'create', provider: 'openrouter', usd, label }))
   // Runs inside the export's run lock (onEditorRunLock), so it uses the in-lock version.
   onEditorExportCta(async (run, ctaId, index) => {
     const { failed } = await applyRunCtaInLock(run, ctaId, [index])
@@ -488,6 +490,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (result.canceled || !result.filePaths[0]) return null
     return uploadRecording(draftId, part, result.filePaths[0])
   })
+  // A moment call that finishes after its review was closed: its cost goes to the ledger directly.
+  onRemixMomentSpend((usd, label, runId) => recordSpend({ kind: 'remix', provider: 'openrouter', usd, label, runId: runId || undefined }))
   onRemixStatus((status) => {
     trackRemixStatus(status)
     announce(remixNotice(status), getMainWindow)
@@ -552,7 +556,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
 
   handle('editor:open', (_event, path: unknown) => openEditor(path))
   handle('editor:save', (_event, path: unknown, revision: unknown, edits: unknown) => saveEditor(path, revision, edits))
-  handle('editor:run', (_event, path: unknown, revision: unknown, id: unknown, action: unknown) => runEditor(path, revision, id, action))
+  // A bake translates the captions of clips in another caption language (one OpenRouter call each): those pass the spending check.
+  handle('editor:run', async (_event, path: unknown, revision: unknown, id: unknown, action: unknown) => {
+    const translating = await editorTranslationEstimate(path, id, action).catch(() => ({ clips: 0, estimateUsd: null }))
+    if (translating.clips) await assertSpendAllowed('editor:run', 'openrouter', translating.estimateUsd)
+    return runEditor(path, revision, id, action)
+  })
   handle('editor:cancel', (_event, path: unknown) => cancelEditor(path))
   handle('editor:replaceSource', (_event, path: unknown, revision: unknown, replacement: unknown) => replaceEditorSource(path, revision, replacement))
   handle('editor:progress', (_event, path: unknown) => readEditorProgress(path))

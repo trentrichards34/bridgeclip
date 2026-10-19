@@ -49,6 +49,21 @@ def result_message(result):
     return message
 
 
+def failure_message(error, code):
+    """The failure line, with what paid calls cost before the failure (a translated export whose render failed)."""
+    message = {'ok': False, 'error': code}
+    usage = getattr(error, 'usage', None)
+    if isinstance(usage, dict):
+        cost = usage.get('cost_usd')
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            message['cost_usd'] = cost
+        if usage.get('cost_incomplete') is True:
+            message['cost_incomplete'] = True
+        if isinstance(usage.get('model'), str):
+            message['model'] = usage['model'][:120]
+    return message
+
+
 def log_failure(action, code, error):
     """Redacted lines for main's bounded log tail (paths, URLs and keys removed).
 
@@ -96,7 +111,7 @@ def main():
             log_failure(action if action in ACTIONS else 'request', code, error)
         except Exception:
             pass  # Logging must never hide the protocol result.
-        emit({'ok': False, 'error': code})
+        emit(failure_message(error, code))
         return 1
 
 

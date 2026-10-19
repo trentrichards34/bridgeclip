@@ -341,9 +341,9 @@ test('Moment + my take form: its defaults, typed ranges checked against the file
     stdin: {
       contents: `export { useRemixForm } from './src/renderer/store/use-remix-form-store';
         export { brandFormPatch } from './src/shared/brand-kit';
-        export { REMIX_FORMATS, headlineOnly, oneTake, partsFor } from './src/shared/remix';
+        export { REMIX_FORMATS, headlineOnly, oneTake, partsFor, momentMakeNote } from './src/shared/remix';
         export { readRanges } from './src/shared/moment-take';
-        export { MomentRanges } from './src/renderer/components/MomentRanges';
+        export { MomentRanges, screenshotRow } from './src/renderer/components/MomentRanges';
         export { MomentTakeReview } from './src/renderer/components/MomentTakeReview';
         export { momentCost } from './src/renderer/pages/RemixPage';`,
       resolveDir: path.resolve(__dirname, '..'), loader: 'ts'
@@ -353,7 +353,7 @@ test('Moment + my take form: its defaults, typed ranges checked against the file
   const mod = { exports: {} }
   const api = { remix: { recordings: async () => ({}), moment: async () => ({ path: '/v.mp4', startSeconds: 0, endSeconds: 1, kind: 'video' }) } }
   vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: api }, navigator: {} })
-  const { useRemixForm, brandFormPatch, REMIX_FORMATS, headlineOnly, oneTake, partsFor, readRanges, MomentRanges, MomentTakeReview, momentCost } = mod.exports
+  const { useRemixForm, brandFormPatch, REMIX_FORMATS, headlineOnly, oneTake, partsFor, readRanges, MomentRanges, MomentTakeReview, momentCost, momentMakeNote, screenshotRow } = mod.exports
   const form = useRemixForm.getState()
   assert.deepEqual(JSON.parse(JSON.stringify([form.momentRanges, form.momentPip, form.momentCamera.layout, form.momentCamera.talk])), [[{ start: '', end: '' }], false, 'filmed', true])
   const at = REMIX_FORMATS.findIndex((item) => item.id === 'moment_take')
@@ -377,6 +377,12 @@ test('Moment + my take form: its defaults, typed ranges checked against the file
   assert.match(ranges, /It starts after the video ends \(40:00\)\./)
   assert.match(ranges, /Add a range/)
   assert.match(ranges, /a range 2:30 either side of it/)
+  // A pasted or dropped screenshot: the row it was dropped on, the first empty row, a new row, or none when all 3 are filled.
+  const row = (start, end) => ({ start, end })
+  assert.equal(screenshotRow([row('1:00', '2:00'), row('', '')], null), 1)
+  assert.equal(screenshotRow([row('1:00', '2:00')], null), 1)
+  assert.equal(screenshotRow([row('1:00', '2:00'), row('3:00', '4:00'), row('5:00', '6:00')], null), null)
+  assert.equal(screenshotRow([row('1:00', '2:00'), row('3:00', '4:00'), row('5:00', '6:00')], 2), 2)
 
   // The review: each moment from its range, nudges, another moment, talking points, record or upload.
   const draft = (id, start, end, extra = {}) => ({ id, sourceIndex: 0, sourceTitle: 'Podcast', creator: '@host', startMs: start, endMs: end, quote: `Moment ${id} words`, why: 'A shocking number.',
@@ -396,6 +402,14 @@ test('Moment + my take form: its defaults, typed ranges checked against the file
   assert.match(review, /Upload a phone video/)
   assert.match(review, /Range 3 \(0:45–1:00\) starts after the video ends/)
   assert.match(review, /Make 2 videos/)
+  // Free only when every chosen take's hook text was written from its current recording; otherwise those takes are transcribed.
+  assert.match(review, /transcribes 2 of your takes for the captions/)
+  const take = (written) => ({ reaction: { path: '/t.webm', uploaded: false, seconds: 10, ...(written ? { written: true } : {}) } })
+  assert.match(momentMakeNote([0, 1], { 0: take(true), 1: take(true) }), /^Making the videos is free/)
+  assert.equal(momentMakeNote([0, 1], { 0: take(true), 1: take(false) }),
+    'Making the videos transcribes 1 of your takes for the captions (the hook text wasn’t written from that recording), which costs a little: up to about $0.02.')
+  assert.equal(momentMakeNote([1], { 1: take(false) }),
+    'Making the video transcribes your take for the captions (the hook text wasn’t written from that recording), which costs a little: up to about $0.02.')
 })
 
 test('a deleted brand is cleared from Create and Remix once the brand list is read; a failed read clears nothing', async () => {
@@ -432,4 +446,20 @@ test('a deleted brand is cleared from Create and Remix once the brand list is re
   assert.equal(useDraftStore.getState().brandIdentityId, KEPT)
   useBrands.getState().setBrands([])
   assert.equal(useDraftStore.getState().brandIdentityId, null)
+})
+
+test('opening an Automatic run in the editor: the same moments and headlines; a cut note only when the run didn’t save its cuts', () => {
+  const code = buildSync({
+    stdin: { contents: `export { automaticEditSummary } from './src/renderer/components/EditAutomaticDialog';`, resolveDir: path.resolve(__dirname, '..'), loader: 'ts' },
+    bundle: true, platform: 'node', format: 'cjs', packages: 'external', loader: { '.css': 'empty' }, jsx: 'automatic', write: false
+  }).outputFiles[0].text
+  const mod = { exports: {} }
+  vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: {} }, navigator: {} })
+  const { automaticEditSummary } = mod.exports
+  const info = { state: 'convert', source: 'kept', videoLabel: 'talk.mp4', clipCount: 3 }
+  const recorded = automaticEditSummary(info)
+  assert.equal(recorded[0], 'Your 3 clips open in the editor with the same moments and headlines. No AI is used.')
+  assert.ok(!recorded.some((line) => /cuts/.test(line)))
+  const older = automaticEditSummary({ ...info, estimatedCuts: true })
+  assert.equal(older[1], 'This run didn’t save its exact cuts, so they are worked out again and may differ slightly from your clips. Check them before baking.')
 })

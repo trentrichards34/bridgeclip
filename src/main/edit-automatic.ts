@@ -103,10 +103,50 @@ export async function automaticEditInfo(path: unknown): Promise<AutomaticEditInf
   if (!output.clips.length) throw new Error('This run has no clips to edit.')
   if (!regularFile(join(run, 'transcript.json'))) throw new Error('This run has no saved transcript, so its clips can’t be opened in the editor.')
   // An unfinished conversion (the project was written, the run not yet marked): finish it with no new video.
-  if (project?.automatic) return { ...base, state: 'convert', source: 'kept' }
+  if (project?.automatic) return { ...base, state: 'convert', source: 'kept', ...(project.automatic.estimated_cuts > 0 ? { estimatedCuts: true } : {}) }
   if (project) throw new Error('This run’s editor project could not be read.')
-  if (regularFile(join(run, KEPT_SOURCE))) return { ...base, state: 'convert', source: 'kept' }
-  return { ...base, state: 'convert', ...fetch() }
+  const cuts = lacksRecordedCuts(run, output) ? { estimatedCuts: true } : {}
+  if (regularFile(join(run, KEPT_SOURCE))) return { ...base, state: 'convert', source: 'kept', ...cuts }
+  return { ...base, state: 'convert', ...fetch(), ...cuts }
+}
+
+/** A JSON file in the run, read raw (null when missing, too big or unreadable). */
+function rawJson(run: string, name: string, limit = MAX_JSON_BYTES): Record<string, unknown> | null {
+  try {
+    const file = join(run, name)
+    const stat = lstatSync(file)
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > limit) return null
+    const value = JSON.parse(readFileSync(file, 'utf8')) as unknown
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+  } catch { return null }
+}
+
+const hasRanges = (value: unknown): boolean => Array.isArray(value) && value.some((range) => Array.isArray(range) && range.length === 2 &&
+  range.every((n) => typeof n === 'number' && Number.isFinite(n)) && (range[1] as number) > (range[0] as number))
+
+/**
+ * Whether some clip's cut wasn't saved with the run, so converting works it out again from the words' timing
+ * (mirrors clip_ranges in the engine's automatic_editor.py: a tight-paced clip with no recorded cut).
+ */
+function lacksRecordedCuts(run: string, output: JobOutput): boolean {
+  if (editSettings(run, output).pacing !== 'tight') return false
+  const metrics = (rawJson(run, 'job_output.json')?.metrics ?? {}) as Record<string, unknown>
+  const layouts = new Map((Array.isArray(metrics.clip_layouts) ? metrics.clip_layouts : [])
+    .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object').map((entry) => [entry.clip_index, entry]))
+  const audit = rawJson(run, 'edit_audit.json', 32 * 1024 * 1024)
+  const retained = new Map((Array.isArray(audit?.candidates) ? audit.candidates : [])
+    .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object' && (entry as Record<string, unknown>).status === 'rendered')
+    .map((entry) => [entry.clip_index, ((entry.report ?? {}) as Record<string, unknown>).retained_source]))
+  return output.clips.some((clip) => {
+    const entry = layouts.get(clip.clip_index)
+    if (hasRanges(entry?.kept_source_ms)) return false
+    const trace = rawJson(run, `clip_${String(clip.clip_index).padStart(2, '0')}.framing.json`, 8 * 1024 * 1024)
+    const window = trace?.window as Record<string, unknown> | undefined
+    if (window && typeof window.start_ms === 'number' && hasRanges(trace?.keeps)) return false
+    if (hasRanges(retained.get(clip.clip_index))) return false
+    // Shown at its natural length (no cut to work out).
+    return entry?.render_fallback !== 'letterbox_natural'
+  })
 }
 
 /** What an older run's metrics recorded about its settings (read raw: the Library's parsed copy keeps only a few). */

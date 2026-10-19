@@ -201,6 +201,7 @@ def test_pipeline_oversamples_grades_and_keeps_the_strong_clips(monkeypatch, tmp
     saved = json.loads((tmp_path / "out" / "graded" / "job_output.json").read_text())
     assert saved["clips"][0]["framework"]["grade"] == "A"
     settings = result.output.metrics["requested_settings"]
+    assert settings["headline_voice"] == "clipper"
     assert settings["quality_bar"] == "b" and settings["framework_grading"] == {"enabled": True, "candidates": 4, "graded": 4, "kept": 2}
 
 

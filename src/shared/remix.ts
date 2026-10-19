@@ -152,6 +152,19 @@ export function estimateRemixCost(host: RemixHost, count: number, sourceHours = 
   return { perRemixLow, perRemixHigh, total: perRemixHigh * count + REMIX_PRICES.sourcePerHour * Math.max(0.1, sourceHours) }
 }
 
+/**
+ * Moment + my take: what making the chosen videos costs. Free when each take's hook text was written from its
+ * current recording; a take typed by hand, or recorded again after writing, is transcribed for its captions
+ * (priced like the render check, estimateRemixCost per take).
+ */
+export function momentMakeNote(chosen: number[], recordings: RemixRecordings): string {
+  const transcribe = chosen.filter((id) => recordings[id]?.reaction?.written !== true).length
+  if (!transcribe) return 'Making the videos is free: the moments are already found and your hook text was written from these takes.'
+  const upTo = estimateRemixCost('camera', 1, 0, 'image').total * transcribe
+  return `Making ${chosen.length === 1 ? 'the video' : 'the videos'} transcribes ${transcribe === 1 ? (chosen.length === 1 ? 'your take' : '1 of your takes') : `${transcribe} of your takes`} for the captions ` +
+    `(the hook text wasn’t written from ${transcribe === 1 ? 'that recording' : 'those recordings'}), which costs a little: up to about $${upTo.toFixed(2)}.`
+}
+
 export interface BrandIdentity {
   id: string
   name: string
@@ -242,7 +255,11 @@ export function partsFor(format: RemixFormat, beats: number): RecordingPart[] {
   return ['intro', ...Array.from({ length: Math.min(4, beats) }, (_, i) => `beat${i}` as RecordingPart), 'close']
 }
 /** A take's recordings, as the app lists them. */
-export interface TakeRecording { path: string; uploaded: boolean; seconds: number }
+export interface TakeRecording {
+  path: string; uploaded: boolean; seconds: number
+  /** Moment + my take: the hook text and caption were written from this recording, so making the video reuses its words (no new transcription). */
+  written?: boolean
+}
 export type RemixRecordings = Record<number, Partial<Record<RecordingPart, TakeRecording>>>
 export const RECORDING_VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'webm']
 
