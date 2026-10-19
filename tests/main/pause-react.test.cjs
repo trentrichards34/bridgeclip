@@ -252,3 +252,20 @@ test('Pause & react in main: fetched, trimmed, recorded here with a log or uploa
   await new Promise((resolve) => setTimeout(resolve, 50))
   fs.rmSync(out, { recursive: true, force: true })
 })
+
+test('a buffering stall while their video plays holds the frame (logged as a pause), and play resumes from where it stalled', () => {
+  // The recorder: 'waiting' counts only while playing; 'playing' after it is a play.
+  assert.equal(pr.recorderEventKind('waiting', { t: 1000, o: 1000, kind: 'play' }), 'pause')
+  assert.equal(pr.recorderEventKind('waiting', { t: 1000, o: 1000, kind: 'pause' }), null)
+  assert.equal(pr.recorderEventKind('waiting', undefined), null)
+  assert.equal(pr.recorderEventKind('playing', { t: 1000, o: 1000, kind: 'pause' }), 'play')
+  assert.equal(pr.recorderEventKind('pause', undefined), 'pause')
+  // Replaying a recorder log: plays at 0, stalls 3-5 s at 3 s in, plays on from 3 s, the member pauses at 8.
+  const log = []
+  const media = [['playing', 0, 0], ['waiting', 3000, 3000], ['playing', 5000, 3000], ['pause', 8000, 6000]]
+  for (const [type, t, o] of media) { const kind = pr.recorderEventKind(type, log[log.length - 1]); if (kind) log.push({ t, o, kind }) }
+  assert.deepEqual(kinds(pr.timelineFromEvents(log, 10, 0, 40)), [[0, 3, 'play', 0], [3, 5, 'pause', 3], [5, 8, 'play', 3], [8, 10, 'pause', 6]])
+  // Before: the stall counted as play, so the original ran on through frames the member never saw while it stalled.
+  const asPlay = media.filter(([type]) => type !== 'waiting').map(([type, t, o]) => ({ t, o, kind: type === 'pause' ? 'pause' : 'play' }))
+  assert.deepEqual(kinds(pr.timelineFromEvents(asPlay, 10, 0, 40)).slice(0, 1), [[0, 5, 'play', 0]])
+})

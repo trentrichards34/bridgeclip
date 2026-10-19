@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Camera, Check, Circle, Headphones, ListChecks, Mic, Pause, Play, RotateCcw, Square, Upload, X } from 'lucide-react'
 import { partsFor, type RecordingPart, type RemixDraft, type RemixEdit, type RemixRecordings } from '../../shared/remix'
-import { formatSeconds, PAUSE_REACT_MAX_SECONDS, type PauseEvent } from '../../shared/pause-react'
+import { formatSeconds, PAUSE_REACT_MAX_SECONDS, recorderEventKind, type PauseEvent } from '../../shared/pause-react'
 import { formatTimecode, MOMENT_TAKE_MAX_SECONDS } from '../../shared/moment-take'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
@@ -188,20 +188,25 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
         events.current = []
         pausedAt.current = null
         setClipEnded(false)
-        const log = (kind: PauseEvent['kind']) => (): void => {
+        const log = (type: 'playing' | 'pause' | 'waiting') => (): void => {
           if (recorder.current?.state !== 'recording') return
+          const kind = recorderEventKind(type, events.current[events.current.length - 1])
+          if (!kind) return
           const event: PauseEvent = { t: Math.round(performance.now() - startedAt.current), o: Math.round(video.currentTime * 1000), kind }
           events.current.push(event)
+          // A buffering stall holds their video (logged as a pause) but is no pause the member chose: the button stays as it is.
+          if (type === 'waiting') return
           setClipPlaying(kind === 'play')
           // The position a pause settles on can be read a moment after the event: the held frame is that one.
           if (kind === 'pause') setTimeout(() => { if (video.paused && events.current[events.current.length - 1] === event) event.o = Math.round(video.currentTime * 1000) }, 150)
           if (kind === 'pause') pausedAt.current = video.currentTime
         }
-        const onPlaying = log('play'), onPause = log('pause')
+        const onPlaying = log('playing'), onPause = log('pause'), onWaiting = log('waiting')
         video.addEventListener('playing', onPlaying)
         video.addEventListener('pause', onPause)
+        video.addEventListener('waiting', onWaiting)
         detach.current?.()
-        detach.current = () => { video.removeEventListener('playing', onPlaying); video.removeEventListener('pause', onPause) }
+        detach.current = () => { video.removeEventListener('playing', onPlaying); video.removeEventListener('pause', onPause); video.removeEventListener('waiting', onWaiting) }
         video.currentTime = moment.startSeconds
         void video.play().catch(() => setError('Their video couldn’t play. Try again.'))
       }
