@@ -567,7 +567,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
         const status = reviewStatus()
         const [draft] = chosenDrafts(status, [input.draftId as number])
         const spoken = ['intro', 'beats', 'close'].filter((key) => input[key] !== undefined)
-        if (draft.format !== 'commentary' && spoken.length) throw new AssistantToolError(`This take has no spoken lines (${draft.format === 'silent' ? 'Silent react' : 'Article or post'}): change only its headline or postCaption.`)
+        if (draft.format !== 'commentary' && spoken.length) throw new AssistantToolError(`This take has no spoken lines (${draft.format === 'silent' ? 'Silent react' : draft.format === 'pause_react' ? 'Pause & react' : 'Article or post'}): change only its headline or postCaption.`)
         if (!['headline', 'postCaption', ...spoken].some((key) => input[key] !== undefined)) throw new AssistantToolError('Nothing to change: give a headline, intro, beats, close or postCaption.')
         // Keep each beat's B-roll search when its line is reworded.
         const beats = input.beats === undefined ? undefined : (input.beats as string[]).map((text, index) => ({ text, broll: draft.beats[index]?.broll ?? '' }))

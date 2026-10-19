@@ -423,3 +423,29 @@ def test_bad_inputs_are_refused(env, monkeypatch):
     # No pause plan saved yet: writing says to start again.
     with pytest.raises(remix.RemixError, match="Start again"):
         asyncio.run(remix.Remixer(config(env), media=FakeMedia(env.ffmpeg), settings=SETTINGS).write())
+
+
+def test_assembly_in_batches_keeps_every_frame_and_the_sound_in_step(env, monkeypatch):
+    # Many short stretches, assembled a few at a time and joined: still exactly the recording's frames and length.
+    monkeypatch.setattr(pr, "VIDEO_BATCH", 3)
+    segments, t, at = [], 0.0, 2.0
+    for i in range(8):
+        kind = "play" if i % 2 == 0 else "pause"
+        segments.append((round(t, 3), round(t + 0.7, 3), kind, round(at, 3)))
+        if kind == "play":
+            at += 0.7
+        t += 0.7
+    parsed = pr.parse_timeline(timeline(segments))
+    work = env.tmp / "assembly"
+    work.mkdir()
+    out = pr.build_original_track(env.source, env.recording, parsed, 20.0, remix.MOMENT_LOOK, str(work / "moment.mp4"), str(work),
+                                  FAST_VIDEO, remix.AUDIO_ARGS, remix.LOUDNORM)
+    frames = gray_frames(out)
+    assert len(frames) == round(parsed.duration * 30) == 168
+    assert abs(remix.media_seconds(out) - parsed.duration) < 0.05
+    diffs = np.abs(np.diff(frames, axis=0)).mean(axis=(1, 2))
+    # Each pause (frames 21-41, 63-83, ...) is held; each play moves; no black frames at the joins.
+    for start in (21, 63, 105, 147):
+        assert max(diffs[start:start + 20]) < 1.0, (start, diffs[start:start + 21])
+    assert min(diffs[1:20]) > 1.0 and frames.mean(axis=(1, 2)).min() > 20
+    assert len(list(work.glob("original-0*.mp4"))) == 3

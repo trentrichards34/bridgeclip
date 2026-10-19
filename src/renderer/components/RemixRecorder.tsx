@@ -69,6 +69,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
   const [clipPlaying, setClipPlaying] = useState(false)
   const [clipEnded, setClipEnded] = useState(false)
   const events = useRef<PauseEvent[]>([])
+  const pausedAt = useRef<number | null>(null)
   const detach = useRef<(() => void) | null>(null)
   const preview = useRef<HTMLVideoElement>(null)
   const clip = useRef<HTMLVideoElement>(null)
@@ -179,11 +180,16 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
       if (pauseMode && video && moment) {
         // Every play and pause of their video, on the recording's clock (milliseconds), with where it was.
         events.current = []
+        pausedAt.current = null
         setClipEnded(false)
         const log = (kind: PauseEvent['kind']) => (): void => {
           if (recorder.current?.state !== 'recording') return
-          events.current.push({ t: Math.round(performance.now() - startedAt.current), o: Math.round(video.currentTime * 1000), kind })
+          const event: PauseEvent = { t: Math.round(performance.now() - startedAt.current), o: Math.round(video.currentTime * 1000), kind }
+          events.current.push(event)
           setClipPlaying(kind === 'play')
+          // The position a pause settles on can be read a moment after the event: the held frame is that one.
+          if (kind === 'pause') setTimeout(() => { if (video.paused && events.current[events.current.length - 1] === event) event.o = Math.round(video.currentTime * 1000) }, 150)
+          if (kind === 'pause') pausedAt.current = video.currentTime
         }
         const onPlaying = log('play'), onPause = log('pause')
         video.addEventListener('playing', onPlaying)
@@ -273,6 +279,8 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
     const video = clip.current
     if (!video || !moment || recorder.current?.state !== 'recording') return
     if (video.paused) {
+      // Play on from the frame it held (some players' clocks drift while paused).
+      if (pausedAt.current !== null && Math.abs(video.currentTime - pausedAt.current) > 0.25) video.currentTime = pausedAt.current
       if (video.currentTime < moment.endSeconds - 0.05) void video.play().catch(() => undefined)
     } else video.pause()
   }, [moment])

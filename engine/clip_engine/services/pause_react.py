@@ -51,8 +51,10 @@ DUCK_APP = 0.35
 # A phone mic also hears the original from the speaker: kept low so it doesn't echo the clean original.
 DUCK_UPLOAD = 0.1
 RAMP_S = 0.02
-# Segments read per FFmpeg call when assembling (each is its own seeked input).
-VIDEO_BATCH = 24
+# Segments read per FFmpeg call when assembling (each is its own seeked input, decoded with at most
+# DECODE_THREADS threads, so a long 4K original doesn't hold dozens of decoders' frames at once).
+VIDEO_BATCH = 10
+DECODE_THREADS = 2
 
 
 class PauseReactError(Exception):
@@ -209,7 +211,7 @@ def assemble_original(video: str, timeline: Timeline, source_seconds: float, loo
             span = frames / FPS if kind == "play" else 0.4
             # Accurate seeking (decoding from the previous keyframe) half a frame early: the first frame is the one at `at`
             # even when `at` is a rounded frame time.
-            inputs += ["-ss", f"{max(0.0, at - 0.5 / FPS):.4f}", "-t", f"{span + 0.25:.4f}", *MEDIA_GUARD, "-i", video]
+            inputs += ["-threads", str(DECODE_THREADS), "-ss", f"{max(0.0, at - 0.5 / FPS):.4f}", "-t", f"{span + 0.25:.4f}", *MEDIA_GUARD, "-i", video]
             if kind == "play":
                 chain = f"fps={FPS},{look},tpad=stop_mode=clone:stop={frames},trim=end_frame={frames}"
             else:
