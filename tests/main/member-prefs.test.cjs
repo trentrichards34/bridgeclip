@@ -67,6 +67,10 @@ test('remembered styles: valid fields are kept, unknown or invalid ones fall bac
   })
   assert.equal(remix.format, 'silent')
   assert.equal(remix.camera.backdropColor, '#00FF00')
+  // Pause & react's choices are part of the style too.
+  const pause = shared.parseRemixStyle({ format: 'pause_react', pauseLayout: 'split', pauseCaptions: 'both', pauseCamera: { layout: 'cutout', backdrop: 'blur', backdropColor: '#123456', talk: true } })
+  assert.deepEqual(plain(pause), { format: 'pause_react', pauseLayout: 'split', pauseCaptions: 'both', pauseCamera: { layout: 'cutout', backdrop: 'blur', backdropColor: '#123456', talk: true } })
+  assert.deepEqual(plain(shared.parseRemixStyle({ pauseLayout: 'side', pauseCaptions: 'theirs', pauseCamera: { layout: 'moon' } })), {})
   for (const key of ['links', 'filePath', 'creator', 'aiLabelAck', 'clipRightsAck', 'imagePath']) assert.equal(key in remix, false, key)
   const badRemix = shared.parseRemixStyle({ format: 'tiktok', host: 'robot', count: 99, voice: 'Nobody', ctaKeyword: 'two words', ctaOffer: 'x'.repeat(81), camera: { layout: 'moon' }, brandIdentityId: 'x' })
   assert.deepEqual(plain(badRemix), {})

@@ -21,7 +21,7 @@ export interface Goal {
 
 export const GOALS: readonly Goal[] = [
   { id: 'clips', label: 'Clips from my long videos', detail: 'Turn podcasts, streams and YouTube videos into short clips with captions.', page: 'clip' },
-  { id: 'ai-reactions', label: 'Reactions as my AI self', detail: 'Your avatar and voice react to other videos, with your take.', page: 'remix' },
+  { id: 'ai-reactions', label: 'Reactions as my AI self', detail: 'Your avatar and voice react to other videos, with your take. In beta.', page: 'remix' },
   { id: 'camera-reactions', label: 'Reactions on camera', detail: 'Record yourself reacting to other videos, here or on your phone.', page: 'remix' },
   { id: 'article', label: 'Talk over an article or post', detail: 'Green screen yourself over a screenshot; the AI writes the headline.', page: 'remix' },
   { id: 'avatar-videos', label: 'AI avatar videos from a script', detail: 'Write a script and your avatar presents it.', page: 'avatar' },
@@ -128,7 +128,7 @@ export const GUIDES: Record<GoalId, Guide> = {
   'ai-reactions': {
     id: 'ai-reactions',
     title: 'Reactions as your AI self',
-    summary: 'Your avatar and voice react to someone else’s video with your take.',
+    summary: 'Your avatar and voice react to someone else’s video with your take. The AI presenter is in beta: a still picture with voice-over, no lip-sync yet.',
     needs: ['Your OpenRouter key', 'An avatar (made in Avatar Studio)'],
     steps: [
       'Make an avatar first: open Avatar Studio and choose Create avatar. Use your photo or an AI person, and pick or clone a voice.',
@@ -148,13 +148,13 @@ export const GUIDES: Record<GoalId, Guide> = {
     summary: 'You react to someone else’s video on camera: record here or upload a phone video.',
     needs: ['Your OpenRouter key', 'Camera and microphone access (or a phone video to upload)'],
     steps: [
-      'Open Remix and paste links to the videos you want to react to.',
-      'Choose Voiced take or Silent react, then choose Me, on camera as the presenter.',
-      'Choose your background: as filmed, cut out with a blur or your brand color, or a green screen.',
-      'Record each take in the app (the teleprompter shows your lines for voiced takes), or upload a video from your phone.',
-      'Check your takes, then make the videos.'
+      'Easiest: open Remix, choose Pause & react and paste one video link (or choose a file, or use ⋯ → Remix this clip in your Library).',
+      'Trim it to the part you react to, then record: their video plays above your camera and Space pauses it while you talk. Or upload a phone recording where you paused it yourself.',
+      'Check the pauses, let the AI write the hook text and caption from what you said, then make the video.',
+      'For other styles, choose Voiced take or Silent react with Me, on camera as the presenter, and record each take in the app or upload it.'
     ],
     tips: [
+      'Wear headphones when you record in the app, so their video’s sound stays out of your microphone.',
       'Face a window or a lamp and keep your head and shoulders in the frame; the cut-out background works best with good light.',
       'Only remix videos you own or have permission to use.'
     ]

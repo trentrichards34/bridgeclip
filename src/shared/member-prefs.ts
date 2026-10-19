@@ -20,6 +20,7 @@ import {
   AVATAR_VOICE, MAX_CTA_OFFER_CHARS, MAX_REMIXES, REMIX_FORMATS, REMIX_VOICES, isRemixAngle, isRemixHost, isRemixOrder, normalizeCtaKeyword, parseCameraSettings,
   type CameraSettings, type RemixAngle, type RemixFormat, type RemixHost, type RemixOrder
 } from './remix'
+import { isPauseCaptions, isPauseLayout, type PauseCaptions, type PauseLayout } from './pause-react'
 
 export type StyleKind = 'create' | 'remix'
 
@@ -76,6 +77,9 @@ export interface RemixFormStyle {
   camera: CameraSettings
   imageCamera: CameraSettings
   showHandle: boolean
+  pauseLayout: PauseLayout
+  pauseCaptions: PauseCaptions
+  pauseCamera: CameraSettings
 }
 
 export type StyleOf<K extends StyleKind> = K extends 'create' ? CreateStyle : RemixFormStyle
@@ -119,7 +123,7 @@ export const CREATE_STYLE_KEYS = [
 
 export const REMIX_STYLE_KEYS = [
   'format', 'angle', 'order', 'host', 'avatarId', 'voice', 'brandIdentityId', 'count', 'includeCaptions', 'captionPreset', 'headlineLook',
-  'ctaId', 'ctaKeyword', 'ctaOffer', 'camera', 'imageCamera', 'showHandle'
+  'ctaId', 'ctaKeyword', 'ctaOffer', 'camera', 'imageCamera', 'showHandle', 'pauseLayout', 'pauseCaptions', 'pauseCamera'
 ] as const satisfies readonly (keyof RemixFormStyle)[]
 
 export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE } }
@@ -190,7 +194,10 @@ const REMIX_CHECKS: { [K in keyof RemixFormStyle]: (value: unknown) => boolean }
   ctaOffer: (value) => isOffer(value),
   camera: () => true,
   imageCamera: () => true,
-  showHandle: bool
+  showHandle: bool,
+  pauseLayout: isPauseLayout,
+  pauseCaptions: isPauseCaptions,
+  pauseCamera: () => true
 }
 
 /** The valid fields of a saved style; anything else is dropped. */
@@ -205,7 +212,7 @@ function parseStyle<K extends StyleKind>(kind: K, value: unknown): Partial<Style
     if (key === 'headlineLook') {
       const look = headlineLook(raw)
       if (look) style[key] = look
-    } else if (key === 'camera' || key === 'imageCamera') {
+    } else if (key === 'camera' || key === 'imageCamera' || key === 'pauseCamera') {
       const parsed = camera(raw)
       if (parsed) style[key] = parsed
     } else if (checks[key](raw)) {

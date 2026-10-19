@@ -40,9 +40,10 @@ export function createNotice(job: JobSnapshot): JobNotice | null {
 /** A Remix run that reached review, finished or failed (only once per phase). */
 export function remixNotice(status: RemixStatus): JobNotice | null {
   if (status.phase === 'review') {
-    const one = status.drafts.length === 1 && status.drafts[0].format === 'image'
+    const one = status.drafts.length === 1 && (status.drafts[0].format === 'image' || status.drafts[0].format === 'pause_react')
     return { key: `remix:${status.id}:review`, page: 'remix', title: one ? 'Ready for your take' : 'Your takes are ready to review',
-      body: one ? 'Record yourself talking about the screenshot.' : `${plural(status.drafts.length, 'take', 'takes')} to review before anything is made.` }
+      body: !one ? `${plural(status.drafts.length, 'take', 'takes')} to review before anything is made.`
+        : status.drafts[0].format === 'pause_react' ? 'Their video is ready. Record your reaction.' : 'Record yourself talking about the screenshot.' }
   }
   if (status.phase === 'done') {
     return { key: `remix:${status.id}:done`, page: 'remix', title: 'Your remixes are ready', body: `${plural(status.outputs.length, 'video', 'videos')} made. They’re in your Library too.` }

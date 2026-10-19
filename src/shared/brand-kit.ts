@@ -138,6 +138,7 @@ export interface BrandFormFields {
   showHandle: boolean
   camera?: CameraSettings
   imageCamera?: CameraSettings
+  pauseCamera?: CameraSettings
 }
 
 /**
@@ -160,6 +161,7 @@ export function brandFormPatch(look: BrandLook | undefined, form: BrandFormField
   if (hasBrandMark(look)) patch.showHandle = true
   if (look.color && form.camera) patch.camera = { ...form.camera, backdropColor: look.color }
   if (look.color && form.imageCamera) patch.imageCamera = { ...form.imageCamera, backdropColor: look.color }
+  if (look.color && form.pauseCamera) patch.pauseCamera = { ...form.pauseCamera, backdropColor: look.color }
   return patch
 }
 

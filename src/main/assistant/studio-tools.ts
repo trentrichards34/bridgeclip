@@ -141,7 +141,7 @@ function remixView(status: RemixStatus | null): Record<string, unknown> {
 }
 
 function recordingFlow(input: Record<string, unknown>): boolean {
-  return input.presenter === 'camera' || input.format === 'image'
+  return input.presenter === 'camera' || input.format === 'image' || input.format === 'pause_react'
 }
 
 interface RemixPlan { request: Record<string, unknown>; sourceLines: string[]; avatar: AvatarSummary | null; ctaName: string | null; brand: BrandIdentity | null }
@@ -426,7 +426,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
       inputSchema: object({}),
       readOnly: true,
       run: async () => ({
-        formats: REMIX_FORMATS.map((item) => ({ id: item.id, label: item.label, detail: item.detail, ...(item.id === 'image' ? { needsMember: 'The member records on camera in the app: open Remix for them.' } : {}) })),
+        formats: REMIX_FORMATS.map((item) => ({ id: item.id, label: item.label, detail: item.detail, ...(item.id === 'image' || item.id === 'pause_react' ? { needsMember: 'The member records on camera in the app: open Remix for them.' } : {}) })),
         styles: REMIX_ANGLES.map((item) => ({ id: item.id, label: item.label, description: item.description })),
         orders: REMIX_ORDERS,
         presenters: REMIX_HOSTS.filter((item) => !item.unavailable).map((item) => ({ id: item.id, label: item.label, detail: item.detail, ...(item.id === 'camera' ? { needsMember: 'The member records each take on camera in the app: open Remix for them.' } : {}) })),
@@ -443,7 +443,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
     {
       name: 'start_remix',
       title: 'Start a remix',
-      description: 'Plan remixes: the member\'s own commentary videos on someone else\'s moment. Give video links (sources, up to 10) or a Library clip (runId and clipIndex). Optional: format (commentary = voiced take, silent = their avatar reacts silently behind the moment), style, order, presenter (still = the avatar\'s photo with its voice; voice = voice-over only), avatarId (default: their newest avatar), voice, brandIdentityId, count (takes per video, default 3), captions, captionStyle, hookLook, ctaKeyword and ctaOffer (the "Comment KEYWORD and I\'ll send you …" line), ctaId (a call to action from list_ctas played at the end), creator (credit; needed for a Library clip without a channel). Planning uses OpenRouter credit, so the app shows the estimate and asks first; nothing else is made until the member approves takes (make_remix_videos). It replaces takes waiting for review. "Me, on camera" (presenter camera) and "Article or post" (format image) need the member at their camera: this opens Remix for them instead.',
+      description: 'Plan remixes: the member\'s own commentary videos on someone else\'s moment. Give video links (sources, up to 10) or a Library clip (runId and clipIndex). Optional: format (commentary = voiced take, silent = their avatar reacts silently behind the moment), style, order, presenter (still = the avatar\'s photo with its voice; voice = voice-over only), avatarId (default: their newest avatar), voice, brandIdentityId, count (takes per video, default 3), captions, captionStyle, hookLook, ctaKeyword and ctaOffer (the "Comment KEYWORD and I\'ll send you …" line), ctaId (a call to action from list_ctas played at the end), creator (credit; needed for a Library clip without a channel). Planning uses OpenRouter credit, so the app shows the estimate and asks first; nothing else is made until the member approves takes (make_remix_videos). It replaces takes waiting for review. "Me, on camera" (presenter camera) and "Article or post" (format image) and "Pause & react" (format pause_react) need the member at their camera: this opens Remix for them instead.',
       inputSchema: object({
         sources: { type: 'array', items: { type: 'string', minLength: 1, maxLength: 8192 }, minItems: 1, maxItems: MAX_SOURCES, description: 'Public video links, one per video.' },
         runId: { ...runIdProperty, description: 'Remix a Library clip: its run.' },
@@ -507,6 +507,8 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
             summary: 'Opened Remix',
             message: input.format === 'image'
               ? '“Article or post” remixes are the member talking on camera over a screenshot they choose. Remix is open: they choose the screenshot and record their take there.'
+              : input.format === 'pause_react'
+              ? '“Pause & react” videos are the member on camera, pausing the other video whenever they talk. Remix is open: they choose the video and record their reaction there.'
               : '“Me, on camera” remixes need the member to record each take on camera. Remix is open: they set it up and record there. You can follow along with get_remix_status.'
           }
         }
