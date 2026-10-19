@@ -425,3 +425,23 @@
   .stage-progress:indeterminate { animation: none; background-position: 50% 0; }
   .stage-progress::-webkit-progress-value { transition: none; }
 }
+
+/* Style board: the preview beside the rows when the board is wide enough, above them when it isn't. */
+.style-board { container-type: inline-size; }
+.style-board-grid { display: grid; gap: 1rem; }
+.style-board-preview { width: 100%; max-width: 210px; margin: 0 auto; }
+.style-board-grid.is-landscape .style-board-preview { max-width: 320px; }
+@container (min-width: 540px) {
+  .style-board-grid { grid-template-columns: minmax(150px, 210px) minmax(0, 1fr); }
+  .style-board-preview { margin: 0; align-self: start; position: sticky; top: 0.5rem; }
+}
+@container (min-width: 760px) {
+  .style-board-grid.is-landscape { grid-template-columns: minmax(0, 300px) minmax(0, 1fr); }
+}
+@container (min-width: 540px) and (max-width: 759px) {
+  .style-board-grid.is-landscape { grid-template-columns: minmax(0, 1fr); }
+  .style-board-grid.is-landscape .style-board-preview { margin: 0 auto; position: static; }
+}
+/* Thin scrollbars under the swatch strips. */
+.style-strip { scrollbar-width: thin; scroll-snap-type: x proximity; }
+.style-strip [role='radio'] { scroll-snap-align: start; }

@@ -8,8 +8,8 @@ import { hasBrandMark } from '../../shared/brand-kit'
 import type { BrandIdentity } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage } from '../lib/utils'
-import { CaptionPresetPicker } from './CaptionPresetPicker'
-import { HeadlineLookPicker } from './HeadlineLookPicker'
+import { boardFromLook, LOOK_HOOKS, lookPatch } from '../lib/style-board'
+import { previewFrame, StyleBoard } from './StyleBoard'
 import { Button } from './ui/Button'
 import { Callout } from './ui/Callout'
 import { TextInput } from './ui/Field'
@@ -61,6 +61,8 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const problem = hookTextProblem(decisions.hookText)
   const showMark = hasBrandMark(brand?.look)
   const sources = status.sources
+  // The preview shows the reel's own opening words.
+  const previewWords = useMemo(() => plan.words.filter((_, i) => !cut.has(i)).slice(0, 8).map((word) => word.text), [plan.words, decisions.cut])
 
   const clickWord = (i: number, shift: boolean): void => {
     if (shift && anchor.current !== null) setDecisions((current) => toggleSpan(current, anchor.current as number, i))
@@ -204,17 +206,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
         {lookOpen && (
           <div id="edit-look" className="mt-3 space-y-4">
             <p className="text-2xs text-ink-subtle">These start from your Brand Identity’s look.</p>
-            <SettingRow title="Captions" description="Word-by-word captions of what you say."
-              control={<Switch label="Captions" checked={look.includeCaptions} onChange={(includeCaptions) => onLook({ ...look, includeCaptions })} />} />
-            {look.includeCaptions && <CaptionPresetPicker value={look.captionPreset} onChange={(captionPreset) => onLook({ ...look, captionPreset })} />}
-            <div>
-              <p className="mb-1 text-sm text-ink">Hook text at the top</p>
-              <HeadlineLookPicker value={look.headlineLook} onChange={(headlineLook) => onLook({ ...look, headlineLook })} />
-            </div>
-            {showMark && (
-              <SettingRow title="Show my handle" description={`Puts ${brand?.look?.handle ? `“${brand.look.handle}”` : 'your logo'} small in a corner.`}
-                control={<Switch label="Show my handle" checked={look.showHandle} onChange={(showHandle) => onLook({ ...look, showHandle })} />} />
-            )}
+            <StyleBoard value={boardFromLook(look)} onChange={(patch) => onLook({ ...look, ...lookPatch(look, patch) })}
+              rows={{ hooks: LOOK_HOOKS, handle: true }} brand={brand} frame={previewFrame(sources[0]?.path, 'video', 0.1)}
+              hookText={decisions.hookText} words={previewWords} />
           </div>
         )}
       </section>

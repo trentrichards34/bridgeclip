@@ -96,7 +96,12 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   const { app, page } = session
   page.setDefaultTimeout(20000)
   const errors = []; page.on('pageerror', (error) => errors.push(error.message))
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1400, 1100))
+  await app.evaluate(({ BrowserWindow }, show) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    window.setSize(1400, 1100)
+    // Screenshots: shown, so the style board's preview paints.
+    if (show) { window.webContents.setBackgroundThrottling(false); window.show() }
+  }, Boolean(process.env.BRIDGECLIP_E2E_SHOTS))
   await app.evaluate(({ safeStorage }) => {
     if (process.platform !== 'linux' || (safeStorage.isEncryptionAvailable() && safeStorage.getSelectedStorageBackend() !== 'basic_text')) return
     const prefix = 'test:'
@@ -191,7 +196,15 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   assert.equal(await page.getByRole('switch', { name: 'Soft whoosh as the hook text appears' }).getAttribute('aria-checked'), 'true')
   await page.getByRole('switch', { name: 'End on your call to action' }).waitFor()
   await page.getByRole('button', { name: /^Look/ }).click()
-  await page.getByRole('switch', { name: 'Captions' }).waitFor()
+  // The style board: its preview shows the reel's own hook text, and a caption style changes the look summary.
+  const board = page.getByTestId('style-board')
+  await board.getByRole('radiogroup', { name: 'Caption style' }).getByRole('radio', { name: 'Hype' }).click()
+  await page.getByTestId('edit-look-summary').getByText(/Captions: hype/).waitFor()
+  await board.getByTestId('style-preview').getByText('15 billion messages are waiting').waitFor()
+  await board.evaluate((el) => el.scrollIntoView({ block: 'start' }))
+  await page.waitForTimeout(800)
+  await board.evaluate((el) => el.scrollIntoView({ block: 'start' }))
+  await shot(app, 'style-board-edit.png')
   await page.getByRole('heading', { name: 'Review your edit' }).scrollIntoViewIfNeeded()
   await shot(app, 'edit-review.png')
 

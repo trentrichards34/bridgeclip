@@ -9,7 +9,7 @@ import { Button } from './ui/Button'
  * plate and karaoke sweep. CreatorClips engine renders with its bundled fonts; the preview
  * uses the same bundled faces, with a system fallback while they load.
  */
-interface CaptionPreset {
+export interface CaptionPreset {
   id: string
   name: string
   description: string
@@ -347,7 +347,7 @@ export function textShadow(p: CaptionPreset, scale = SAMPLE_SCALE): string {
   return layers.join(', ') || 'none'
 }
 
-function CaptionSample({ preset }: { preset: CaptionPreset }): React.JSX.Element {
+export function CaptionSample({ preset }: { preset: CaptionPreset }): React.JSX.Element {
   const [before, active, after] = preset.words
   const base: CSSProperties = {
     color: preset.primary,
@@ -410,7 +410,7 @@ function CaptionSample({ preset }: { preset: CaptionPreset }): React.JSX.Element
 }
 
 /** A stand-in "frame" behind each sample: a flat, dim video-like tone. */
-const SCENE = '#14161d'
+export const SCENE = '#14161d'
 
 // One shared sentence makes timing and word grouping easy to compare across styles.
 const PREVIEW_WORDS = ['This', 'is', 'how', 'your', 'captions', 'come', 'to', 'life.']
