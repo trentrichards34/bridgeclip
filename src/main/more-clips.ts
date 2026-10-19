@@ -150,10 +150,16 @@ export function requestFromOutput(output: JobOutput): ClipJobRequest {
   }
 }
 
-/** The kept editor copy of a Review & edit run's source, or null (none, freed, or unreadable). */
+/** The kept copy of a run's source (Review & edit's editor copy, or the download an Automatic run kept), or null (none, freed, or unreadable). */
 export function keptSourcePath(run: string): string | null {
   const text = readSmallFile(join(run, 'editor-project.json'), MAX_PROJECT_BYTES)
-  if (!text) return null
+  if (!text) {
+    // An Automatic run keeps its download as editor-source.mp4 (until it is opened in the editor or freed).
+    try {
+      const path = join(run, 'editor-source.mp4'), stat = lstatSync(path)
+      return stat.isFile() && !stat.isSymbolicLink() && !existsProject(run) ? path : null
+    } catch { return null }
+  }
   try {
     const project = JSON.parse(text) as { media_freed?: unknown; source_id?: unknown }
     if (project.media_freed === true) return null
@@ -162,6 +168,10 @@ export function keptSourcePath(run: string): string | null {
     const stat = lstatSync(path)
     return stat.isFile() && !stat.isSymbolicLink() ? path : null
   } catch { return null }
+}
+
+function existsProject(run: string): boolean {
+  try { lstatSync(join(run, 'editor-project.json')); return true } catch { return false }
 }
 
 /** The earlier clips' source ranges plus the moments that run skipped, newest last, at most MAX_EXCLUDED_MOMENTS. */

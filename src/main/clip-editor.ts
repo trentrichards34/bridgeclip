@@ -11,7 +11,7 @@ import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironme
 import { resolveBinary } from './tools'
 import { logger } from './logger'
 
-type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source' | 'suggest-hooks'
+type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source' | 'suggest-hooks' | 'prepare'
 interface EditorOperation { progress?: EditorSession['progress']; action: NonNullable<EditorSession['operation']>; child?: ChildProcess; cancelled?: boolean; abort?: AbortController; batch?: EditorBatch }
 const operations = new Map<string, EditorOperation>()
 
@@ -109,6 +109,10 @@ function sweepEditorFiles(run: string, project?: EditorProject): void {
 function mediaSize(paths: string[]): number {
   return paths.reduce((total, file) => { try { return total + statSync(file).size } catch { return total } }, 0)
 }
+/** A regular file (not a link) directly inside the run. */
+function runFile(file: string, run: string): boolean {
+  try { const stat = lstatSync(file); return stat.isFile() && !stat.isSymbolicLink() && isWithinDirectory(file, run) } catch { return false }
+}
 export async function openEditor(path: unknown): Promise<EditorSession> {
   const run = runPath(path)
   if (!(await getJobOutput(run, loadSettings().outputDirectory))?.editor_project) throw new Error('This run has no editor project')
@@ -116,8 +120,10 @@ export async function openEditor(path: unknown): Promise<EditorSession> {
   sweepEditorFiles(run, project)
   const operation = operations.get(run)
   const state = { progress: operation?.progress ? { ...operation.progress } : undefined, operation: operation?.action ?? null, batch: operation?.batch ? { ...operation.batch } : undefined }
-  if (project.media_freed) return { project, sourcePath: '', previewPath: '', mediaBytes: 0, ...state }
+  if (project.media_freed) return { project, sourcePath: '', previewPath: '', mediaBytes: 0, ...state, ...(project.automatic ? { mediaMissing: true } : {}) }
   const sourcePath = join(run, names.source), previewPath = join(run, names.preview)
+  // A project made from an Automatic run gets its video again (download or the original file) instead of failing.
+  if (project.automatic && (!runFile(sourcePath, run) || !runFile(previewPath, run))) return { project, sourcePath: '', previewPath: '', mediaBytes: 0, ...state, mediaMissing: true }
   for (const file of [sourcePath, previewPath]) {
     if (lstatSync(file).isSymbolicLink() || !isWithinDirectory(file, run)) throw new Error('Editor source is missing')
     assertMediaPath(file, loadSettings().outputDirectory)
@@ -256,10 +262,10 @@ function runWorker(run: string, operation: EditorOperation, action: WorkerAction
       try {
         const value = JSON.parse(line)
         if (value?.type === 'progress') {
-          if (action === 'scan-cameras' && (value.phase === 'scan' || value.phase === 'preview') &&
-              typeof value.percent === 'number' && Number.isFinite(value.percent) && value.percent >= 0 && value.percent <= 100) {
+          const phases = action === 'scan-cameras' ? ['scan', 'preview'] : action === 'prepare' ? ['copy', 'download', 'preview'] : []
+          if (phases.includes(value.phase) && typeof value.percent === 'number' && Number.isFinite(value.percent) && value.percent >= 0 && value.percent <= 100) {
             const previous = operation.progress
-            if (!previous || (previous.phase === 'scan' && value.phase === 'preview') ||
+            if (!previous || phases.indexOf(previous.phase) < phases.indexOf(value.phase) ||
                 (previous.phase === value.phase && value.percent >= previous.percent)) {
               operation.progress = { phase: value.phase, percent: Math.floor(value.percent) }
             }
@@ -351,8 +357,12 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
       if (operation.cancelled) break
       try {
         const work = async (): Promise<void> => {
-          await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId })
-          if ((action === 'export' || action === 'export-all') && !operation.cancelled) await addExportCta(run, candidate.id)
+          const result = await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId })
+          if (action === 'export' || action === 'export-all') {
+            // Translated captions (a clip from an Automatic run in another caption language) cost one OpenRouter call.
+            await recordEditorCost(run, result, 'editor_caption_translation', true)
+            if (!operation.cancelled) await addExportCta(run, candidate.id)
+          }
         }
         if (action === 'export' || action === 'export-all') await runExclusive(run, work)
         else await work()
@@ -428,23 +438,23 @@ export async function addEditorCandidate(path: unknown, revision: unknown, candi
   return openEditor(run)
 }
 
-/** Record what "Suggest hooks" cost in the run's job_output.json (metrics.api_costs.editor_hooks). */
-async function recordHookCost(run: string, result: WorkerResult): Promise<void> {
+/** Record what an editor AI call cost in the run's job_output.json (metrics.api_costs[section]). */
+async function recordEditorCost(run: string, result: WorkerResult, section: 'editor_hooks' | 'editor_caption_translation', locked = false): Promise<void> {
   const cost = typeof result.cost_usd === 'number' && Number.isFinite(result.cost_usd) && result.cost_usd >= 0 && result.cost_usd < 1000 ? result.cost_usd : 0
   const incomplete = result.cost_incomplete === true
   const model = typeof result.model === 'string' && /^[\w.:/-]{1,120}$/.test(result.model) ? result.model : undefined
   if (!cost && !incomplete) return
   const object = (x: unknown): Record<string, unknown> => x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : {}
   try {
-    await runExclusive(run, async () => {
+    const work = async (): Promise<void> => {
       const file = join(run, 'job_output.json')
       const stat = lstatSync(file)
       if (!stat.isFile() || stat.size > 64 * 1024 * 1024) throw new Error('Invalid job output')
       const output = object(JSON.parse(readFileSync(file, 'utf8')))
-      const metrics = object(output.metrics), costs = object(metrics.api_costs), section = object(costs.editor_hooks)
+      const metrics = object(output.metrics), costs = object(metrics.api_costs), current = object(costs[section])
       const add = (x: unknown, n: number): number => Math.round(((typeof x === 'number' && Number.isFinite(x) ? x : 0) + n) * 1e6) / 1e6
-      costs.editor_hooks = { ...section, provider: 'openrouter', ...(model ? { model } : {}), estimated_cost_usd: add(section.estimated_cost_usd, cost),
-        attempts: add(section.attempts, 1), ...(incomplete || section.cost_incomplete === true ? { cost_incomplete: true } : {}) }
+      costs[section] = { ...current, provider: 'openrouter', ...(model ? { model } : {}), estimated_cost_usd: add(current.estimated_cost_usd, cost),
+        attempts: add(current.attempts, 1), ...(incomplete || current.cost_incomplete === true ? { cost_incomplete: true } : {}) }
       costs.total_estimated_cost_usd = add(costs.total_estimated_cost_usd, cost)
       if (incomplete) costs.cost_incomplete = true
       metrics.api_costs = costs; output.metrics = metrics
@@ -453,10 +463,13 @@ async function recordHookCost(run: string, result: WorkerResult): Promise<void> 
         writeFileSync(temporary, JSON.stringify(output), { mode: 0o600, flag: 'wx' })
         renameSync(temporary, file)
       } finally { try { unlinkSync(temporary) } catch { /* Already committed. */ } }
-    })
+    }
+    // An export already holds the run's lock.
+    if (locked) await work()
+    else await runExclusive(run, work)
   } catch (error) {
-    // The ideas are still shown; only the cost record is missing.
-    logger.warn('editor.hooks.costNotRecorded', { message: String((error as Error)?.message ?? error).slice(0, 200) })
+    // The result is still used; only the cost record is missing.
+    logger.warn('editor.cost.notRecorded', { message: String((error as Error)?.message ?? error).slice(0, 200) })
   }
 }
 
@@ -476,7 +489,7 @@ export async function suggestEditorHooks(path: unknown, revision: unknown, candi
     const result = await runWorker(run, operation, 'suggest-hooks', env, python, 10 * 60 * 1000,
       { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidateId, action: 'suggest-hooks' })
     if (operation.cancelled) throw new Error(editorFailureMessage('suggest-hooks', 'cancelled'))
-    await recordHookCost(run, result)
+    await recordEditorCost(run, result, 'editor_hooks')
     return { hooks: parseHookIdeas(result.hooks) }
   } finally {
     operation.child = undefined
@@ -494,4 +507,47 @@ export function editorCloseReady(saved: unknown): void {
   const resume = resumeAfterSave
   resumeAfterSave = null
   if (saved === true && resume) setImmediate(resume)
+}
+
+/**
+ * Work that prepares a run for the editor (edit-automatic.ts): while it runs,
+ * the run counts as busy for the editor (no delete, move, cleanup or other
+ * editor operation) and "Cancel" stops it. `worker` runs the engine's
+ * "prepare" action with this operation's progress.
+ */
+export interface EditorPreparation {
+  run: string
+  signal: AbortSignal
+  cancelled: () => boolean
+  setProgress: (progress: NonNullable<EditorSession['progress']>) => void
+  worker: (request: Record<string, unknown>, durationMs: number) => Promise<Record<string, unknown>>
+}
+export async function withEditorPreparation<T>(path: unknown, work: (prep: EditorPreparation) => Promise<T>): Promise<T> {
+  const run = runPath(path)
+  if (operations.has(run) || operations.size >= 2) throw new Error('An editor operation is already running. Try again when it finishes.')
+  const operation: EditorOperation = { action: 'prepare', abort: new AbortController() }
+  operations.set(run, operation)
+  try {
+    return await runExclusive(run, () => work({
+      run, signal: operation.abort!.signal, cancelled: () => !!operation.cancelled,
+      setProgress: (progress) => { operation.progress = { ...progress } },
+      worker: async (request, durationMs) => {
+        if (operation.cancelled) throw new Error(editorFailureMessage('prepare', 'cancelled'))
+        const settings = loadSettings()
+        const { env, python } = workerSetup(settings)
+        try {
+          return await runWorker(run, operation, 'prepare', env, python, workerLimitMs(durationMs),
+            { ...request, run, library: realpathSync(settings.outputDirectory), action: 'prepare' })
+        } finally { operation.child = undefined }
+      }
+    }))
+  } finally {
+    operations.delete(run)
+    try { sweepEditorFiles(run) } catch { /* Cleanup is best effort. */ }
+  }
+}
+/** What a running editor operation is doing (also before a run has an editor project). */
+export function editorOperationStatus(path: unknown): { operation: EditorSession['operation']; progress?: EditorSession['progress'] } {
+  const operation = operations.get(runPath(path))
+  return { operation: operation?.action ?? null, ...(operation?.progress ? { progress: { ...operation.progress } } : {}) }
 }

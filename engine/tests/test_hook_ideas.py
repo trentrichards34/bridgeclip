@@ -137,15 +137,22 @@ def project_dir(tmp_path, candidates):
 def test_run_editor_suggests_hooks_from_the_corrected_clip_without_changing_the_project(monkeypatch, tmp_path):
     project = project_dir(tmp_path, [candidate()])
     seen = {}
-    async def fake(settings, title, text, client=None):
-        seen.update(title=title, text=text)
+    async def fake(settings, title, text, client=None, voice='clipper'):
+        seen.update(title=title, text=text, voice=voice)
         return {'hooks': [{'text': 'x'}], 'cost_usd': 0.01, 'cost_incomplete': False, 'model': 'm'}
     monkeypatch.setattr(hook_ideas, 'suggest_hooks', fake)
     config = {'run': str(tmp_path), 'revision': 2, 'candidate_id': 'candidate-1', 'action': 'suggest-hooks'}
     result = asyncio.run(run_editor(config))
     assert result['cost_usd'] == 0.01
-    assert seen == {'title': 'The result', 'text': 'The corrected event happened. That explains the result.'}
+    assert seen == {'title': 'The result', 'text': 'The corrected event happened. That explains the result.', 'voice': 'clipper'}
     assert json.loads((tmp_path / 'editor-project.json').read_text()) == project
+    # The run's headline voice reaches the ideas.
+    project['headline_voice'] = 'creator'
+    (tmp_path / 'editor-project.json').write_text(json.dumps(project))
+    asyncio.run(run_editor(config))
+    assert seen['voice'] == 'creator'
+    project.pop('headline_voice')
+    (tmp_path / 'editor-project.json').write_text(json.dumps(project))
     async def unavailable(*args, **kwargs):
         raise HooksUnavailable('no')
     monkeypatch.setattr(hook_ideas, 'suggest_hooks', unavailable)
@@ -173,3 +180,18 @@ def test_the_whole_clip_list_is_checked_before_any_clip_is_used(tmp_path, candid
 
 def test_one_hundred_clips_with_unique_ids_pass():
     validate_candidate_list([candidate(id=f'clip-{i}') for i in range(100)])
+
+
+@pytest.mark.parametrize('voice, present, absent', [
+    ('clipper', 'third person', 'own voice'), (None, 'third person', 'own voice'), ('creator', 'own voice', 'third person'),
+])
+def test_ideas_follow_the_runs_headline_voice(monkeypatch, voice, present, absent):
+    calls = []
+    async def fake(client, payload):
+        calls.append(payload)
+        return reply([])
+    monkeypatch.setattr(hook_ideas, 'chat_completion', fake)
+    kwargs = {} if voice is None else {'voice': voice}
+    asyncio.run(suggest_hooks(settings(), 'Title', CLIP, client=object(), **kwargs))
+    system = calls[0]['messages'][0]['content']
+    assert system.startswith(hook_ideas.PROMPT) and present in system and absent not in system

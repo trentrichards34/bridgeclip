@@ -4,7 +4,8 @@ import { uniqueFileName, writeZip } from './clip-zip'
 import { randomUUID } from 'crypto'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
-import { addEditorCandidate, editorCloseReady, freeEditorMedia, onEditorExportCta, onEditorRunLock, readEditorProgress, suggestEditorHooks } from './clip-editor'
+import { addEditorCandidate, editorCloseReady, editorOperationStatus, freeEditorMedia, onEditorExportCta, onEditorRunLock, readEditorProgress, suggestEditorHooks } from './clip-editor'
+import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
 import { loadSettings, publicSettings, replaceApiKey, savePublicSettings, saveSpendLimit, type ApiKeyName, type PublicSettings } from './settings-store'
@@ -524,6 +525,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('editor:addCandidate', (_event, path: unknown, revision: unknown, candidate: unknown, sourceId: unknown) => addEditorCandidate(path, revision, candidate, sourceId))
   handle('editor:suggestHooks', (_event, path: unknown, revision: unknown, id: unknown) => suggestEditorHooks(path, revision, id))
   handle('editor:closeReady', (_event, saved: unknown) => editorCloseReady(saved))
+  // An Automatic Create run opened in the editor: what it takes, doing it, and its progress.
+  handle('editor:automaticInfo', (_event, path: unknown) => automaticEditInfo(path))
+  handle('editor:prepareAutomatic', (_event, path: unknown, localFile: unknown) => prepareAutomaticEditor(path, localFile))
+  handle('editor:operationStatus', (_event, path: unknown) => editorOperationStatus(path))
 
   handle('edits:inspect', (_event, outputDir: string) => inspectEdits(outputDir, loadSettings().outputDirectory))
 

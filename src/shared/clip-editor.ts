@@ -1,5 +1,6 @@
 /** Persisted source-time edits. Media paths and review results are main-process owned. */
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
+import { isCaptionLanguage, type CaptionLanguage } from './caption-language'
 export type Crop = [number, number, number, number]
 export type CropCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 export type EditorRange = [number, number]
@@ -47,6 +48,22 @@ export interface EditorCandidate extends CandidateEdit {
   requires_visual_context?: boolean; score: number; reason: string; review: EditorReview | null; exports: number[]
   /** Main-owned: SHA-256 of the last baked render identity, so undoing "Refine again" can restore Baked. */
   baked_hash?: string
+  /** An Automatic run's clip: exporting replaces this Library clip (same index) instead of adding one. */
+  library_clip?: number
+  /** Captions were translated into this language: a new render translates them again. */
+  caption_language?: CaptionLanguage
+}
+/** What an Automatic run drew that the editor can't make again; shown before a clip is baked again. */
+export type AutomaticOmission = 'broll' | 'hook_preview' | 'background' | 'title_card'
+export const AUTOMATIC_OMISSIONS: readonly AutomaticOmission[] = ['broll', 'hook_preview', 'background', 'title_card']
+/** A project made from an Automatic run's finished clips (not a Review & edit run). */
+export interface AutomaticOrigin {
+  omitted: AutomaticOmission[]
+  /** Clips whose cut was worked out again (older runs didn't save it), not read from the run. */
+  estimated_cuts: number
+  brand_mark?: { handle: string; logo: boolean; position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' }
+  cta_keyword?: string
+  cta_offer?: string
 }
 export interface EditorProject {
   version: 1; revision: number; title: string; duration_ms: number; width: number; height: number
@@ -58,15 +75,32 @@ export interface EditorProject {
   media_freed?: boolean
   aspect_ratio: '9:16' | '16:9'; candidates: EditorCandidate[]
   transcript: { start_ms: number; end_ms: number; text: string }[]
+  /** Whose voice hook ideas are written in (the run's headline voice). Absent: 'clipper'. */
+  headline_voice?: 'clipper' | 'creator'
+  automatic?: AutomaticOrigin
 }
-export interface EditorProgress { phase: 'scan' | 'preview'; percent: number }
-export type EditorOperation = 'save' | 'review' | 'export' | 'export-all' | 'replace-source' | 'scan-cameras' | 'suggest-hooks'
+export interface EditorProgress { phase: 'scan' | 'preview' | 'download' | 'copy'; percent: number }
+export type EditorOperation = 'save' | 'review' | 'export' | 'export-all' | 'replace-source' | 'scan-cameras' | 'suggest-hooks' | 'prepare'
 export interface EditorBatch { completed: number; total: number; failed?: number }
 export interface EditorSession {
   progress?: EditorProgress; project: EditorProject; sourcePath: string; previewPath: string
   operation?: EditorOperation | null; batch?: EditorBatch
   /** Bytes used by the editor's source and preview, freed by "Free editor media". */
   mediaBytes?: number
+  /** A project made from an Automatic run whose video is gone: open it again to get the video back. */
+  mediaMissing?: boolean
+}
+/** How an Automatic run (or a project made from one) gets its video for the editor. */
+export interface AutomaticEditInfo {
+  /** ready: open the editor; convert: make the editor project first; restore: get the project's video again. */
+  state: 'ready' | 'convert' | 'restore'
+  /** kept: the copy saved with the run; original: the file the run was made from; download: the run's link. */
+  source: 'kept' | 'original' | 'download' | 'missing'
+  /** The run's link or file name, for the explanation. */
+  videoLabel: string
+  /** Size of the original file, which is copied into the run. */
+  copyBytes?: number
+  clipCount: number
 }
 /** Status counts for Library and Jobs, without sending the project to the renderer. */
 export interface EditorProgressSummary {
@@ -82,7 +116,7 @@ export const EDITOR_REVISION_CONFLICT = 'This project changed. Reopen it before 
 /** Fixed worker failure codes (see bridge/editor_runner.py); no tool output crosses the bridge. */
 export const editorErrorCodes = ['duration', 'geometry', 'audio', 'invalid', 'project_changed', 'invalid_edit', 'not_ready',
   'source_missing', 'source_incompatible', 'render_failed', 'scan_too_long', 'review_unavailable', 'hooks_unavailable', 'engine_unavailable',
-  'cancelled', 'timeout'] as const
+  'transcript_missing', 'source_changed', 'download_failed', 'translation_failed', 'cancelled', 'timeout'] as const
 export type EditorErrorCode = typeof editorErrorCodes[number]
 export function isEditorErrorCode(value: unknown): value is EditorErrorCode {
   return typeof value === 'string' && (editorErrorCodes as readonly string[]).includes(value)
@@ -112,6 +146,19 @@ export function editorFailureMessage(action: Exclude<EditorOperation, 'save'>, c
       : code && common[code] ? common[code]!
       : 'Source replacement stopped or failed. Reopen the editor to check its current source, then try again.'
   }
+  if (action === 'prepare') {
+    return code === 'download_failed' ? 'Could not download this video again. It may now be private, removed or need a sign-in. If you have the video file, choose it instead.'
+      : code === 'source_changed' ? "That video doesn't match this run: its length is different. Choose the same video the clips were made from."
+      : code === 'transcript_missing' ? "This run has no saved transcript, so its clips can't be opened in the editor."
+      : code === 'source_missing' ? 'The source video for this run is missing. Choose the video file to continue.'
+      : code === 'source_incompatible' ? 'FFmpeg could not read this video. Choose a playable copy of the same video.'
+      : code === 'render_failed' ? `Could not prepare the editor preview. Your clips are unchanged. ${logs}`
+      : code === 'invalid_edit' ? "This run's clips could not be opened in the editor. Your clips are unchanged."
+      : code === 'cancelled' ? 'Opening the editor was cancelled. Your clips are unchanged.'
+      : code === 'timeout' ? 'Preparing the editor took too long and was stopped. Your clips are unchanged.'
+      : code && common[code] ? common[code]!
+      : `Could not open this run in the editor. Your clips are unchanged. ${logs}`
+  }
   if (action === 'scan-cameras') {
     return code === 'scan_too_long' ? 'This clip is too long to scan for camera changes. Try scanning a shorter clip. Your edits and previous markers are saved.'
       : code === 'cancelled' ? 'Camera scan cancelled. Your edits and previous markers are saved.'
@@ -132,6 +179,7 @@ export function editorFailureMessage(action: Exclude<EditorOperation, 'save'>, c
       : 'Review stopped or failed. Your previous review is preserved. Try again.'
   }
   return code === 'render_failed' ? `Rendering failed. Your edits are saved. Try again, or simplify this clip's layouts. ${logs}`
+    : code === 'translation_failed' ? 'Could not translate the captions. Check your OpenRouter key and connection, then try again. Your edits are saved.'
     : code === 'invalid_edit' ? "This clip has an edit that can't be rendered. Check its cuts, layouts and captions, then try again."
     : code === 'not_ready' ? 'Mark this clip ready before baking it.'
     : code === 'timeout' ? 'Rendering took too long and was stopped. Your edits are saved.'
@@ -256,13 +304,32 @@ export function parseEditorProject(value: unknown): EditorProject {
       camera_scan = { start_ms, end_ms, frames, markers }
     }
     const baked_hash = typeof c.baked_hash === 'string' && /^[a-f0-9]{64}$/.test(c.baked_hash) ? c.baked_hash : undefined
-    return { ...edit, ...(camera_scan ? { camera_scan } : {}), ...(baked_hash ? { baked_hash } : {}), requires_visual_context: c.requires_visual_context === true, score: num(c.score, 0, 100), reason: clampText(c.reason, 4000), review,
+    const library_clip = c.library_clip === undefined ? undefined : Number.isInteger(c.library_clip) ? num(c.library_clip, 0, 999) : fail()
+    if (c.caption_language !== undefined && !isCaptionLanguage(c.caption_language)) fail()
+    return { ...edit, ...(camera_scan ? { camera_scan } : {}), ...(baked_hash ? { baked_hash } : {}),
+      ...(library_clip !== undefined ? { library_clip } : {}), ...(c.caption_language !== undefined ? { caption_language: c.caption_language as CaptionLanguage } : {}),
+      requires_visual_context: c.requires_visual_context === true, score: num(c.score, 0, 100), reason: clampText(c.reason, 4000), review,
       exports: arr(c.exports, 1000).map((n) => num(n, 0, 999)) }
   })
   if (!candidates.length) fail()
   return { version: 1, revision: num(v.revision, 0, Number.MAX_SAFE_INTEGER), title: clampText(v.title, 1024), duration_ms: duration,
     width: num(v.width, 2, 16384), height: num(v.height, 2, 16384), aspect_ratio: v.aspect_ratio as EditorProject['aspect_ratio'], candidates,
-    transcript, ...(v.preview_id ? { preview_id: v.preview_id as string } : {}), ...(v.frame_preview === true ? { frame_preview: true } : {}), ...(v.media_freed === true ? { media_freed: true } : {}), ...(v.source_id ? { source_id: v.source_id as string } : {}) }
+    transcript, ...(v.headline_voice === 'creator' || v.headline_voice === 'clipper' ? { headline_voice: v.headline_voice } : {}),
+    ...(v.automatic !== undefined ? { automatic: parseAutomaticOrigin(v.automatic) } : {}),
+    ...(v.preview_id ? { preview_id: v.preview_id as string } : {}), ...(v.frame_preview === true ? { frame_preview: true } : {}), ...(v.media_freed === true ? { media_freed: true } : {}), ...(v.source_id ? { source_id: v.source_id as string } : {}) }
+}
+function parseAutomaticOrigin(value: unknown): AutomaticOrigin {
+  const v = record(value)
+  const omitted = arr(v.omitted, AUTOMATIC_OMISSIONS.length).map((x) => AUTOMATIC_OMISSIONS.includes(x as AutomaticOmission) ? x as AutomaticOmission : fail())
+  const origin: AutomaticOrigin = { omitted: [...new Set(omitted)], estimated_cuts: v.estimated_cuts === undefined ? 0 : Math.round(num(v.estimated_cuts, 0, 1000)) }
+  if (v.brand_mark !== undefined) {
+    const m = record(v.brand_mark)
+    if (!['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(m.position as string) || typeof m.logo !== 'boolean') fail()
+    origin.brand_mark = { handle: str(m.handle, 80), logo: m.logo as boolean, position: m.position as NonNullable<AutomaticOrigin['brand_mark']>['position'] }
+  }
+  if (v.cta_keyword !== undefined) origin.cta_keyword = /^[A-Z0-9][A-Z0-9-]{1,19}$/.test(str(v.cta_keyword, 20)) ? v.cta_keyword as string : fail()
+  if (v.cta_offer !== undefined) origin.cta_offer = str(v.cta_offer, 200)
+  return origin
 }
 export function candidateEdit(c: CandidateEdit): CandidateEdit {
   const { id, title, ranges, scenes, captions, caption_preset, video_speed, status, caption_edits, caption_suppression_ranges = [], dismissed_camera_markers } = c

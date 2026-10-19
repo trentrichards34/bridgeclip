@@ -24,7 +24,7 @@ from clip_engine.services.media_process import MEDIA_INPUT_OPTIONS, PROBE_TIMEOU
 # Fixed failure codes; the only failure detail that crosses the bridge.
 EDITOR_ERROR_CODES = frozenset({'duration', 'geometry', 'audio', 'invalid', 'project_changed', 'invalid_edit', 'not_ready',
     'source_missing', 'source_incompatible', 'render_failed', 'scan_too_long', 'review_unavailable', 'hooks_unavailable',
-    'engine_unavailable'})
+    'engine_unavailable', 'transcript_missing', 'source_changed', 'download_failed', 'translation_failed'})
 # A project's clip limit and id format (MAX_EDITOR_CANDIDATES and parseCandidateEdit in src/shared/clip-editor.ts).
 MAX_CANDIDATES = 100
 CANDIDATE_ID = re.compile(r'[a-zA-Z0-9_-]{1,64}')
@@ -164,6 +164,27 @@ async def review_candidate(c, reviewer):
         'questions': questions(CLIP_QUESTIONS, [attempt.get('judgment'), attempt.get('policy_judgment')], policy=reviewer.policy), 'cuts': cuts}
 
 
+def scene_for_shot(shot, index, window_start, w, h, aspect_ratio):
+    """An editable scene for one analyzed shot (window time), framed as the automatic render frames it."""
+    aspect = 9 / 16 if aspect_ratio == '9:16' else 16 / 9
+    views = shot_views(shot, (shot.start_ms + shot.end_ms) // 2, w, h, 1080, 1920)[:2]
+    # A suggested split keeps the automatic seam (screen + webcam
+    # can sit below the middle for a small webcam).
+    split = None
+    if len(views) == 2:
+        split = round(max(SPLIT_RANGE[0], min(SPLIT_RANGE[1], views[0][1][3] / 1920)), 2)
+    panels = [1920 * split, 1920 * (1 - split)] if split else [1920]
+    normalized = []
+    for ((x, y, cw, ch), _), panel_h in zip(views, panels):
+        target = 1080 / panel_h if aspect_ratio == '9:16' else aspect
+        zoom = max(1, min(4, min(1, h * target / w) / max(.01, cw / w)))
+        base_w, base_h = min(1, h * target / w) / zoom, min(1, w / target / h) / zoom
+        normalized.append([max(0, min(1 - base_w, (x + cw / 2) / w - base_w / 2)), max(0, min(1 - base_h, (y + ch / 2) / h - base_h / 2)), base_w, base_h])
+    return {'at_ms': 0 if index == 0 else window_start + shot.start_ms,
+        'layout': 'split' if len(views) == 2 else 'fit' if shot.layout == LayoutType.SCREEN else 'fill',
+        'crops': normalized, **({'split': split} if split and split != DEFAULT_SPLIT else {})}
+
+
 def default_crop(w, h, aspect, cx=.5):
     cw, ch = min(1, h * aspect / w), min(1, w / aspect / h)
     return [max(0, min(1 - cw, cx - cw / 2)), (1 - ch) / 2, cw, ch]
@@ -177,6 +198,7 @@ async def prepare_project(request, segments, transcript, download, renderer, rev
     aspect = 9 / 16 if request.aspect_ratio == '9:16' else 16 / 9
     project = {'version': 1, 'revision': 0, 'title': utf16_prefix(download.metadata.title or '', 1024), 'width': w, 'height': h,
         'duration_ms': duration, 'aspect_ratio': request.aspect_ratio, 'candidates': [],
+        'headline_voice': 'creator' if getattr(request, 'headline_voice', 'clipper') == 'creator' else 'clipper',
         'transcript': [{'start_ms': max(0, min(duration, s.start_time_ms)), 'end_ms': max(0, min(duration, s.end_time_ms)),
                         'text': utf16_prefix(s.text, 20000)} for s in transcript]}
     loop = asyncio.get_running_loop()
@@ -211,24 +233,7 @@ async def prepare_project(request, segments, transcript, download, renderer, rev
                 plan = await renderer.layout_analyzer.analyze(download.video_path, a, b - a, w, h, request.layout_style,
                     progress=report_layout,
                     **({'screen_cues_ms': cues} if (cues := screen_cue_times(transcript, a, b - a)) else {}))
-                scenes = []
-                for j, shot in enumerate(plan.shots[:60]):
-                    views = shot_views(shot, (shot.start_ms + shot.end_ms) // 2, w, h, 1080, 1920)[:2]
-                    # A suggested split keeps the automatic seam (screen + webcam
-                    # can sit below the middle for a small webcam).
-                    split = None
-                    if len(views) == 2:
-                        split = round(max(SPLIT_RANGE[0], min(SPLIT_RANGE[1], views[0][1][3] / 1920)), 2)
-                    panels = [1920 * split, 1920 * (1 - split)] if split else [1920]
-                    normalized = []
-                    for ((x, y, cw, ch), _), panel_h in zip(views, panels):
-                        target = 1080 / panel_h if request.aspect_ratio == '9:16' else aspect
-                        zoom = max(1, min(4, min(1, h * target / w) / max(.01, cw / w)))
-                        base_w, base_h = min(1, h * target / w) / zoom, min(1, w / target / h) / zoom
-                        normalized.append([max(0, min(1 - base_w, (x + cw / 2) / w - base_w / 2)), max(0, min(1 - base_h, (y + ch / 2) / h - base_h / 2)), base_w, base_h])
-                    scenes.append({'at_ms': 0 if j == 0 else a + shot.start_ms,
-                        'layout': 'split' if len(views) == 2 else 'fit' if shot.layout == LayoutType.SCREEN else 'fill',
-                        'crops': normalized, **({'split': split} if split and split != DEFAULT_SPLIT else {})})
+                scenes = [scene_for_shot(shot, j, a, w, h, request.aspect_ratio) for j, shot in enumerate(plan.shots[:60])]
                 if not scenes:
                     scenes = [{'at_ms': 0, 'layout': 'fill', 'crops': [default_crop(w, h, aspect)]}]
             except asyncio.CancelledError:
@@ -524,6 +529,10 @@ async def run_editor(config, progress=None):
     from clip_engine.config import get_settings
     from clip_engine.services.editorial_vision import EditorialVision
     settings = get_settings()
+    if config['action'] == 'prepare':
+        # An Automatic run opened in the editor (or a converted run's source brought back).
+        from clip_engine.services.automatic_editor import prepare
+        return await prepare(config, progress)
     raw_run = Path(config['run'])
     run = raw_run.resolve(strict=True)
     if raw_run.is_symlink() or ('library' in config and run.parent != Path(config['library']).resolve(strict=True)):
@@ -590,6 +599,7 @@ async def run_editor(config, progress=None):
             return {**item, 'start_time_ms': round(item['start_time_ms']), 'end_time_ms': round(item['end_time_ms'])}
         transcript = [TranscriptSegment(**{**timing(s), 'words': [TranscriptWord(**timing(w)) for w in s.get('words', [])]}) for s in rows]
     action = config['action']
+    usage = None
     if action == 'suggest-hooks':
         from clip_engine.services.hook_ideas import HooksUnavailable, clip_text, suggest_hooks
         text = clip_text(caption_transcript(transcript, c.get('caption_edits', [])), c['ranges'])
@@ -597,7 +607,7 @@ async def run_editor(config, progress=None):
             return {'hooks': []}  # Nothing is said in this clip: no paid request.
         try:
             # Ideas only: the project is not changed, so its revision stays.
-            return await suggest_hooks(settings, c['title'], text)
+            return await suggest_hooks(settings, c['title'], text, voice=project.get('headline_voice', 'clipper'))
         except HooksUnavailable as error:
             raise EditorError('hooks_unavailable', 'Hook ideas unavailable') from error
     if action == 'review':
@@ -617,33 +627,104 @@ async def run_editor(config, progress=None):
             raise EditorError('not_ready', 'Mark this clip ready before baking it')
         if any(edit['segment'] >= len(transcript) for edit in c.get('caption_edits', [])):
             raise EditorError('invalid_edit', 'Caption source changed')
-        output = read_json(run, 'job_output.json')
+        output = read_json(run, 'job_output.json', 64 * 1024 * 1024)
         # job_output.json is committed before editor-project.json. If the worker
         # was killed in between, this exact edit (same revision) is already in
         # the library: finish that commit instead of rendering a duplicate.
+        target = replaced_clip(run, c, output)
         done = next((x for x in output['clips'] if x.get('editor_candidate') == c['id'] and x.get('editor_revision') == project['revision']
-                     and x['clip_index'] not in c['exports'] and (run / f"clip_{x['clip_index']:02d}.mp4").is_file()), None)
-        c['exports'].append(done['clip_index'] if done else await export_clip(run, project, c, output, source, transcript))
+                     and (x['clip_index'] == target if target is not None else x['clip_index'] not in c['exports'])
+                     and (run / f"clip_{x['clip_index']:02d}.mp4").is_file()), None)
+        if done:
+            index = done['clip_index']
+        else:
+            index, usage = await export_clip(run, project, c, output, source, transcript, replace_index=target)
+        if target is None:
+            c.pop('library_clip', None)  # Its Library clip was deleted: this export is a new clip.
+        if index not in c['exports']:
+            c['exports'].append(index)
         c['status'] = 'baked'
         c.pop('baked_hash', None)
     else:
         raise ValueError('Unknown editor action')
     project['revision'] += 1
     atomic_json(run / 'editor-project.json', project)
+    return usage if action == 'export' else None
 
 
-async def export_clip(run, project, c, output, source, transcript):
-    """Render one ready candidate and append it to the library's job output."""
+def replaced_clip(run, c, output):
+    """The Library clip this candidate's export replaces (an Automatic run's clip), or None to add a new clip."""
+    index = c.get('library_clip')
+    if type(index) is not int or not 0 <= index <= 999:
+        return None
+    if not any(x.get('clip_index') == index for x in output['clips']):
+        return None
+    path = run / f'clip_{index:02d}.mp4'
+    return index if path.is_file() and not path.is_symlink() else None
+
+
+def automatic_extras(run, project):
+    """What an Automatic run drew on its clips that the editor draws again: the brand handle/logo and the comment keyword."""
+    from clip_engine.services.brand_mark import validate_brand_mark
+    extras = project.get('automatic')
+    if not isinstance(extras, dict):
+        return {}
+    options = {}
+    mark = extras.get('brand_mark')
+    if isinstance(mark, dict):
+        logo = run / '.brand-logo.png'
+        logo_path = str(logo) if mark.get('logo') is True and logo.is_file() and not logo.is_symlink() else None
+        try:
+            checked = validate_brand_mark({'handle': mark.get('handle') or '', 'logo_path': logo_path, 'position': mark.get('position')})
+        except ValueError:
+            checked = None
+        if checked:
+            options['brand_mark'] = checked
+    keyword = extras.get('cta_keyword')
+    if isinstance(keyword, str) and re.fullmatch(r'[A-Z0-9][A-Z0-9-]{1,19}', keyword):
+        options['cta_keyword'] = keyword
+    return options
+
+
+async def translated_captions(c, transcript, a, b):
+    """The clip's captions in its caption language (one OpenRouter call), and what it cost; ({}, None) when not translated."""
+    from clip_engine.config import get_settings
+    from clip_engine.services.caption_translation import CAPTION_LANGUAGES, CaptionTranslator
+    language = c.get('caption_language')
+    if language not in CAPTION_LANGUAGES or not c['captions']:
+        return {}, None
+    lines = [s for s in transcript if s.start_time_ms < b and s.end_time_ms > a and (s.text or '').strip()]
+    if not lines:
+        return {}, None
+    translator = CaptionTranslator(get_settings())
+    try:
+        translations = await translator.translate(lines, language)
+    finally:
+        await translator.close()
+    usage = {'cost_usd': round(translator.usage.cost_usd, 6), 'cost_incomplete': translator.usage.cost_incomplete, 'model': translator.model}
+    if not translations:
+        raise EditorError('translation_failed', 'Captions could not be translated')
+    return translations, usage
+
+
+async def export_clip(run, project, c, output, source, transcript, replace_index=None):
+    """Render one ready candidate: a new Library clip, or (an Automatic run's clip) its replacement in place.
+
+    Returns (clip index, translation usage or None).
+    """
     from clip_engine.config import get_caption_preset
     render_transcript = caption_transcript(transcript, c.get('caption_edits', []))
-    next_index = output.get('next_clip_index', 0)
-    if type(next_index) is not int or not 0 <= next_index <= 1000:
-        raise EditorError('invalid_edit', 'Invalid export sequence')
-    index = max(next_index, max((x['clip_index'] for x in output['clips']), default=-1) + 1)
-    while (run / f'clip_{index:02d}.mp4').exists() or (run / f'clip_{index:02d}.mp4').is_symlink():
-        index += 1
-    if index > 999:
-        raise EditorError('invalid_edit', 'Too many exports in this project')
+    if replace_index is None:
+        next_index = output.get('next_clip_index', 0)
+        if type(next_index) is not int or not 0 <= next_index <= 1000:
+            raise EditorError('invalid_edit', 'Invalid export sequence')
+        index = max(next_index, max((x['clip_index'] for x in output['clips']), default=-1) + 1)
+        while (run / f'clip_{index:02d}.mp4').exists() or (run / f'clip_{index:02d}.mp4').is_symlink():
+            index += 1
+        if index > 999:
+            raise EditorError('invalid_edit', 'Too many exports in this project')
+    else:
+        index = replace_index
     with failure_code('engine_unavailable'):
         renderer = RenderingService()
     a, b = c['ranges'][0][0], c['ranges'][-1][1]
@@ -651,8 +732,11 @@ async def export_clip(run, project, c, output, source, transcript):
     # original is not recorded for those, so none is drawn, as before.
     hook = parse_hook(c.get('hook')) if project['aspect_ratio'] == '9:16' else None
     hook_options = {'title_style': 'headline', 'headline_text': hook['text'], 'headline_look': hook['look']} if hook else {}
+    extras = automatic_extras(run, project)
+    translations, usage = await translated_captions(c, render_transcript, a, b)
+    language = {'caption_translations': translations, 'caption_language': c['caption_language']} if translations else {}
     path = run / f'clip_{index:02d}.mp4'
-    if path.exists() or path.is_symlink():
+    if replace_index is None and (path.exists() or path.is_symlink()):
         raise ValueError('Export file already exists')
     # Commit complete renders only; failed/cancelled exports do not change the library.
     with tempfile.TemporaryDirectory(prefix='.editor-export-', dir=run) as work, failure_code('render_failed'):
@@ -663,12 +747,39 @@ async def export_clip(run, project, c, output, source, transcript):
             caption_y=c.get('caption_y'),
             apply_padding=False, aspect_ratio=project['aspect_ratio'], pacing='natural', video_speed=c['video_speed'],
             manual_ranges_ms=[tuple(interval) for interval in c['ranges']], manual_plan=manual_plan(project, c, cover=bool(hook)),
-            **hook_options))
-        os.replace(result.output_path, path)
-    output['clips'].append({'clip_index': index, 's3_url': str(path), 'duration_ms': result.duration_ms,
-        'start_time_ms': a, 'end_time_ms': b, 'virality_score': c['score'], 'layout_type': result.layout_type,
-        'summary': c['title'], 'tags': [], 'render_fallback': None,
-        'editor_candidate': c['id'], 'editor_revision': project['revision']})
+            write_subtitles=replace_index is not None, **hook_options, **extras, **language))
+        if replace_index is None:
+            os.replace(result.output_path, path)
+            output['clips'].append({'clip_index': index, 's3_url': str(path), 'duration_ms': result.duration_ms,
+                'start_time_ms': a, 'end_time_ms': b, 'virality_score': c['score'], 'layout_type': result.layout_type,
+                'summary': c['title'], 'tags': [], 'render_fallback': None,
+                'editor_candidate': c['id'], 'editor_revision': project['revision']})
+        else:
+            replace_library_clip(run, output, index, result, c, project, hook, a, b, language.get('caption_language'))
     output['total_clips'] = len(output['clips'])
     atomic_json(run / 'job_output.json', output)
-    return index
+    return index, usage
+
+
+def replace_library_clip(run, output, index, result, c, project, hook, a, b, caption_language=None):
+    """Put a new render in place of an Automatic clip, keeping its index, posts, marks and details."""
+    path = run / f'clip_{index:02d}.mp4'
+    entry = next(x for x in output['clips'] if x.get('clip_index') == index)
+    os.replace(result.output_path, path)
+    # Files that described the previous render: its call-to-action original
+    # (main adds the call to action again) and its framing record.
+    for stale in (f'clip_{index:02d}.original.mp4', f'clip_{index:02d}.framing.json'):
+        try:
+            (run / stale).unlink()
+        except FileNotFoundError:
+            pass
+    srt = run / f'clip_{index:02d}.srt'
+    if result.subtitle_path and os.path.isfile(result.subtitle_path):
+        os.replace(result.subtitle_path, srt)
+        entry.update(subtitle_url=f'file://{srt}', captions_srt=str(srt))
+    entry.update(duration_ms=result.duration_ms, start_time_ms=a, end_time_ms=b, layout_type=result.layout_type,
+                 summary=c['title'], headline=hook['text'] if hook else None, render_fallback=None, cta=None,
+                 caption_language=caption_language,
+                 editor_candidate=c['id'], editor_revision=project['revision'],
+                 # The Library reloads the card's thumbnail when this changes.
+                 edited_at=datetime.now(timezone.utc).isoformat(timespec='seconds'))

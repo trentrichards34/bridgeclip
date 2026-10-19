@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, FolderOpen, ImageOff, ListPlus, Megaphone, Play, Send, Trash2, TrendingUp, TriangleAlert, Undo2, Pencil, Clapperboard } from 'lucide-react'
+import { Check, FolderOpen, Heading, ImageOff, ListPlus, Megaphone, Play, Send, Trash2, TrendingUp, TriangleAlert, Undo2, Pencil, Clapperboard } from 'lucide-react'
 import { cn, formatTimecode, isMac, localFileUrl } from '../lib/utils'
 import { getApi } from '../lib/ipc'
 import { clipFilePath, loadThumbnail } from '../lib/thumbnails'
@@ -41,6 +41,8 @@ interface ClipCardProps {
   onChangeCta?: () => void
   /** Remix videos with saved parts: re-make with new hook text, captions or box size. */
   onEditVideo?: () => void
+  /** Open this clip in the editor on its headline (Hook & CTA). */
+  onEditHeadline?: () => void
   /** Open Remix with this clip's video as the source. */
   onRemix?: () => void
   actionsDisabled?: boolean
@@ -61,6 +63,7 @@ export function ClipCard({
   onDelete,
   onChangeCta,
   onEditVideo,
+  onEditHeadline,
   onRemix,
   actionsDisabled
 }: ClipCardProps): React.JSX.Element {
@@ -228,6 +231,7 @@ export function ClipCard({
               ...(onPost ? [{ label: 'Post or schedule', icon: <Send className="h-3.5 w-3.5" />, onSelect: onPost }] : []),
               ...(onAddToAutomation ? [{ label: 'Add to automation', icon: <ListPlus className="h-3.5 w-3.5" />, onSelect: onAddToAutomation }] : []),
               ...(onEditVideo ? [{ label: 'Edit hook text & captions', icon: <Pencil className="h-3.5 w-3.5" />, onSelect: onEditVideo }] : []),
+              ...(onEditHeadline ? [{ label: 'Edit headline', icon: <Heading className="h-3.5 w-3.5" />, onSelect: onEditHeadline }] : []),
               ...(onChangeCta ? [{ label: clip.cta ? 'Change call to action' : 'Add call to action', icon: <Megaphone className="h-3.5 w-3.5" />, onSelect: onChangeCta }] : []),
               ...(onRemix ? [{ label: 'Remix this clip', icon: <Clapperboard className="h-3.5 w-3.5" />, onSelect: onRemix }] : []),
               ...(onSetPosted && postingStatus && (postingStatus.state !== 'posted' || postingStatus.manuallyPosted) ? [postingStatus.manuallyPosted

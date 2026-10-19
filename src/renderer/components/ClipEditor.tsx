@@ -9,7 +9,8 @@ import { HeadlineLookPicker } from './HeadlineLookPicker'
 import { CtaPicker } from './CtaPicker'
 import { Segmented } from './ui/Segmented'
 import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, headlineBarColor, headlineTextColor } from '../../shared/headline-look'
-import { MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, applyStyleToAll, runHookLook, transcriptClip, transcriptRange, variantOf, type HookIdea, MAX_HOOK_CHARS, SPLIT_RANGE, panelRows, resizeSplit, splitOf, EDITOR_REVISION_CONFLICT, cameraMarkers, snapFrame, stepFrame, candidateEdit, canAnimateScene, defaultCrop, editDuration, editSignature, editorProgress, framingAt, normalizeSceneTransitions, refineEdit, renderEditKey, resizeCrop, retimeScene, sceneAt, trimRange, type CandidateEdit, type Crop, type CropCorner, type EditorCandidate, type EditorQuestion, type EditorRange, type EditorScene, type EditorSession } from '../../shared/clip-editor'
+import { captionLanguageLabel } from '../../shared/caption-language'
+import { type AutomaticOmission, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, applyStyleToAll, runHookLook, transcriptClip, transcriptRange, variantOf, type HookIdea, MAX_HOOK_CHARS, SPLIT_RANGE, panelRows, resizeSplit, splitOf, EDITOR_REVISION_CONFLICT, cameraMarkers, snapFrame, stepFrame, candidateEdit, canAnimateScene, defaultCrop, editDuration, editSignature, editorProgress, framingAt, normalizeSceneTransitions, refineEdit, renderEditKey, resizeCrop, retimeScene, sceneAt, trimRange, type CandidateEdit, type Crop, type CropCorner, type EditorCandidate, type EditorQuestion, type EditorRange, type EditorScene, type EditorSession } from '../../shared/clip-editor'
 import { CameraChanges, CameraScanButton } from './CameraChanges'
 import { ActionMenu } from './ui/ActionMenu'
 import { Button } from './ui/Button'
@@ -40,7 +41,19 @@ function Question({ q }: { q: EditorQuestion }): React.JSX.Element {
   </details>
 }
 
-export function ClipEditor({ outputDir, leading, onExports }: { outputDir: string; leading?: ReactNode; onExports: () => Promise<void> }): React.JSX.Element {
+/** What a re-baked Automatic clip leaves out, in words. */
+const omissionLabels: Record<AutomaticOmission, string> = { broll: 'B-roll', hook_preview: 'hook preview', background: 'background video', title_card: 'title card' }
+function listWords(items: string[]): string {
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} or ${items.at(-1)}`
+}
+
+export function ClipEditor({ outputDir, leading, onExports, initialClip, initialTab, onNeedSource }: {
+  outputDir: string; leading?: ReactNode; onExports: () => Promise<void>
+  /** Library clip to select first (its candidate), and the inspector tab to show. */
+  initialClip?: number; initialTab?: 'hook'
+  /** A project made from an Automatic run lost its video: get it again (download or the original file). */
+  onNeedSource?: () => void
+}): React.JSX.Element {
   const [session, setSession] = useState<EditorSession | null>(null)
   const [edits, setEdits] = useState<EditorCandidate[]>([])
   const editsRef = useRef(edits); editsRef.current = edits
@@ -116,14 +129,19 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
   const load = useCallback(async () => {
     try {
       const s = await getApi().editor.open(outputDir)
-      if (!sessionRef.current) setSelected(editorProgress(s.project.candidates).initialCandidate)
+      if (!sessionRef.current) {
+        const fromClip = initialClip === undefined ? -1 : s.project.candidates.findIndex((c) => c.library_clip === initialClip || c.exports.includes(initialClip))
+        setSelected(fromClip >= 0 ? fromClip : editorProgress(s.project.candidates).initialCandidate)
+        if (initialTab) setTab(initialTab)
+      }
       setSession(s); sessionRef.current = s; setEdits(s.project.candidates); editsRef.current = s.project.candidates
       savedKey.current = JSON.stringify(s.project.candidates.map(candidateEdit))
       keyRef.current = savedKey.current
       setBusy(s.operation ?? null); setBatch(s.batch); setProgress(s.progress); setError(null); setConflict(false)
     } catch (e) { setError(errorMessage(e)) }
-  }, [outputDir])
+  }, [outputDir, initialClip, initialTab])
   useEffect(() => { void load() }, [load])
+  const [originNote, setOriginNote] = useState(true)
   // A reopened window can reconnect to an export/review still owned by main.
   // Poll only progress; reload the project once that operation ends.
   useEffect(() => {
@@ -475,6 +493,10 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
       setSession(s); sessionRef.current = s; setUndo([]); setRedo([])
     } catch (e) { setError(errorMessage(e)) } finally { setBusy(null) }
   }
+  if (session?.mediaMissing) return <div className="p-8 space-y-4">{leading}
+    <p role="status" className="text-sm">This run’s video was removed to save space. Your clips are unchanged. Get the video again to keep editing them.</p>
+    <div className="flex gap-2">{onNeedSource && <Button variant="primary" onClick={onNeedSource}>Get the video again</Button>}<Button onClick={() => { void onExports().catch((e) => setError(errorMessage(e))) }}>View clips</Button></div>
+    {error && <p role="alert" className="text-danger">{error}</p>}</div>
   if (session?.project.media_freed) return <div className="p-8 space-y-4">{leading}
     <p role="status" className="text-sm">Editor media for this project was freed to save disk space. Your exported clips are unchanged; the project is now read-only.</p>
     <Button onClick={() => { void onExports().catch((e) => setError(errorMessage(e))) }}>View exports</Button>{error && <p role="alert" className="text-danger">{error}</p>}</div>
@@ -503,6 +525,9 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
     change({ caption_edits: caption_edits.sort((a, b) => a.segment - b.segment) }, remember)
   }
   const current = reviewCurrent(candidate)
+  // A project made from an Automatic run: a bake replaces the clip in the Library.
+  const automatic = project.automatic
+  const replaces = candidate.library_clip !== undefined
   const full = edits.length >= MAX_EDITOR_CANDIDATES
   const askStyle = (): void => {
     if (editingDisabled) return
@@ -619,14 +644,14 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
       {finished && <Button variant="ghost" size="sm" disabled={!!busy} tooltip="Every clip is baked or discarded. Delete this project's source copy and preview; exports stay in the Library." onClick={() => setConfirmFree(true)}>Free editor media{session.mediaBytes ? ` (${formatBytes(session.mediaBytes)})` : ''}</Button>}
       <Button size="sm" disabled={!!busy} onClick={() => { void save().then(onExports).catch((e) => setError(errorMessage(e))) }}>Exports</Button>
       <div className="editor-bake-actions" role="group" aria-label="Bake clips">
-      <Button variant="primary" size="sm" disabled={!!busy || status !== 'ready'} title={status !== 'ready' ? 'Mark this clip ready after refining it' : 'Render the final clip with your changes'} icon={<Download size={14} />} onClick={() => { void run('export') }}>{candidate.captions ? 'Bake captions' : 'Render clip'}</Button>
+      <Button variant="primary" size="sm" disabled={!!busy || status !== 'ready'} title={status !== 'ready' ? 'Mark this clip ready after refining it' : replaces ? 'Render the clip with your changes and replace it in your Library' : 'Render the final clip with your changes'} icon={<Download size={14} />} onClick={() => { void run('export') }}>{candidate.captions ? 'Bake captions' : 'Render clip'}</Button>
       <ActionMenu label="More bake options" disabled={!!busy || readyCount === 0} icon={<ChevronDown aria-hidden size={14} />} triggerClassName="btn-primary editor-bake-toggle disabled:opacity-100" actions={[{ label: `Bake all ready clips (${readyCount})`, disabled: readyCount === 0, icon: <Download size={14} />, onSelect: () => { void run('export-all') } }]} />
       </div>
     </header>
     <div className="px-[18px]"><SavedStageTimings outputDir={outputDir} /></div>
     <div className="editor-stagebar">
       <span className={cn('editor-status', status)}>{status === 'baked' || status === 'ready' ? <Check size={12} /> : status === 'discarded' ? <Archive size={12} /> : <Pencil size={12} />}{statusLabels[status]}</span>
-      <span className="editor-stage-hint">{status === 'refining' ? 'Review the cut, framing and captions.' : status === 'ready' ? 'Ready for the final render.' : status === 'baked' ? 'Your finished clip is in Exports.' : 'Set aside. Restore it whenever you need.'}</span>
+      <span className="editor-stage-hint">{status === 'refining' ? 'Review the cut, framing and captions.' : status === 'ready' ? 'Ready for the final render.' : status === 'baked' ? replaces ? 'This clip is in your Library. To change it, edit it, mark it ready, then bake to replace it.' : 'Your finished clip is in Exports.' : 'Set aside. Restore it whenever you need.'}</span>
       <div className="ml-auto flex gap-2">
         <Button variant="ghost" size="sm" disabled={!!busy || status === 'discarded' || full} icon={<Copy size={13} />}
           tooltip={full ? `A project can hold up to ${MAX_EDITOR_CANDIDATES} clips.` : 'Make a copy of this clip with the same cut and settings, to test a different hook.'}
@@ -639,10 +664,16 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
     {error && <div role="alert" className="editor-notice text-danger">{conflict ? 'This project changed since the editor opened it, so your latest edits cannot be saved. Reload the project to continue from its saved state.' : error}{conflict
       ? <Button size="sm" variant="ghost" icon={<RotateCcw size={13} />} onClick={() => { setUndo([]); setRedo([]); bakedKeys.current.clear(); void load() }}>Reload project</Button>
       : key !== savedKey.current && <Button size="sm" variant="ghost" onClick={() => { setError(null); void save().catch((e) => setError(errorMessage(e))) }}>Retry save</Button>}</div>}
+    {automatic && originNote && <div role="note" className="editor-notice"><span>These clips were made automatically. Baking a clip replaces it in your Library; clips you don’t bake stay exactly as they are.
+      {automatic.omitted.length > 0 && ` A clip baked again has no ${listWords(automatic.omitted.map((o) => omissionLabels[o]))}.`}
+      {automatic.estimated_cuts > 0 && ` This run didn’t save its exact cuts, so ${automatic.estimated_cuts === 1 ? 'one clip’s cut was' : `${automatic.estimated_cuts} clips’ cuts were`} worked out again and may differ slightly from your clips.`}</span>
+      <Button size="sm" variant="ghost" aria-label="Dismiss note about automatic clips" iconOnly icon={<X size={14} />} onClick={() => setOriginNote(false)} /></div>}
     {notice && !busy && <div role="status" className="editor-notice"><Check size={14} />{notice}<Button size="sm" variant="ghost" tooltip="Hide this completion message." aria-label="Dismiss bake notice" iconOnly icon={<X size={14} />} onClick={() => setNotice(null)} /></div>}
     {confirmFree && <ConfirmDialog onClose={closeFree} request={{
       title: 'Free editor media?', confirmLabel: 'Free media',
-      body: <>Delete this project's copy of the source video and its editor preview{session.mediaBytes ? ` (${formatBytes(session.mediaBytes)})` : ''}?<br /><br />Your exported clips stay in the Library. The project becomes read-only: you won't be able to refine, re-bake or restore its clips again.</>,
+      body: automatic
+        ? <>Delete this run's copy of the source video and its editor preview{session.mediaBytes ? ` (${formatBytes(session.mediaBytes)})` : ''}?<br /><br />Your clips stay in the Library. To edit them again later, CreatorClips downloads the video again, or uses the original file.</>
+        : <>Delete this project's copy of the source video and its editor preview{session.mediaBytes ? ` (${formatBytes(session.mediaBytes)})` : ''}?<br /><br />Your exported clips stay in the Library. The project becomes read-only: you won't be able to refine, re-bake or restore its clips again.</>,
       onConfirm: () => { void freeMedia() }
     }} />}
     {confirmStyle !== null && <ConfirmDialog onClose={closeStyle} request={{
@@ -655,7 +686,7 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
       body: <>Use <strong>{replacement.split(/[\\/]/).pop()}</strong> for every clip in this project?<br /><br />Only recommended for the exact same video at higher quality: identical content, timing, audio and framing. Matching duration alone does not guarantee a match.<br /><br />Your cuts, layouts and caption edits will be kept. Previously baked clips will be ready to bake again. Existing exports will stay in the library.</>,
       onConfirm: () => { void replaceSource(replacement) }
     }} />}
-    {busy && <div role="status" className="editor-notice"><Loader2 size={14} className="animate-spin" />{busy === 'scan-cameras' ? <div className="editor-scan-progress"><span>{progress?.phase === 'preview' ? 'Preparing frame-accurate preview (one-time)' : 'Scanning frames for camera changes'}… {progress?.percent ?? 0}%</span><progress aria-label={progress?.phase === 'preview' ? 'Preview preparation progress' : 'Camera scan progress'} max={100} value={progress?.percent ?? 0} /></div> : busy === 'replace-source' ? 'Replacing source and preparing preview…' : busy === 'export-all' ? `Baking ready clips… ${batch?.completed ?? 0} of ${batch?.total ?? readyCount} complete${batch?.failed ? `, ${batch.failed} failed` : ''}` : busy === 'review' ? 'Jev is reviewing your edit…' : busy === 'suggest-hooks' ? 'Writing hook ideas from this clip’s words…' : busy === 'export' ? 'Baking your final clip…' : 'Saving…'}<Button size="sm" variant="ghost" onClick={() => { void getApi().editor.cancel(outputDir) }}>Cancel</Button></div>}
+    {busy && <div role="status" className="editor-notice"><Loader2 size={14} className="animate-spin" />{busy === 'scan-cameras' ? <div className="editor-scan-progress"><span>{progress?.phase === 'preview' ? 'Preparing frame-accurate preview (one-time)' : 'Scanning frames for camera changes'}… {progress?.percent ?? 0}%</span><progress aria-label={progress?.phase === 'preview' ? 'Preview preparation progress' : 'Camera scan progress'} max={100} value={progress?.percent ?? 0} /></div> : busy === 'replace-source' ? 'Replacing source and preparing preview…' : busy === 'export-all' ? `Baking ready clips… ${batch?.completed ?? 0} of ${batch?.total ?? readyCount} complete${batch?.failed ? `, ${batch.failed} failed` : ''}` : busy === 'review' ? 'Jev is reviewing your edit…' : busy === 'suggest-hooks' ? 'Writing hook ideas from this clip’s words…' : busy === 'export' ? replaces ? 'Baking your clip and replacing it in the Library…' : 'Baking your final clip…' : 'Saving…'}<Button size="sm" variant="ghost" onClick={() => { void getApi().editor.cancel(outputDir) }}>Cancel</Button></div>}
     <div className="editor-workspace">
       <aside className="editor-candidates"><div className="editor-pane-heading">Refine clips <span>{edits.length}</span></div>
         {(['refining', 'ready', 'baked', 'discarded'] as const).map((group) => {
@@ -789,7 +820,7 @@ export function ClipEditor({ outputDir, leading, onExports }: { outputDir: strin
             {sceneIndex > 0 && frames.length > 0 && <div className="flex gap-2 mt-2"><Button size="sm" variant="ghost" disabled={editingDisabled} onClick={() => moveScene(sceneIndex, stepFrame(frames, currentScene.at_ms, -1))}>One frame earlier</Button><Button size="sm" variant="ghost" disabled={editingDisabled} onClick={() => moveScene(sceneIndex, stepFrame(frames, currentScene.at_ms, 1))}>One frame later</Button></div>}
             {sceneIndex + 1 < candidate.scenes.length && <p className="text-2xs text-ink-subtle mt-2">Until {clock(candidate.scenes[sceneIndex + 1].at_ms)}</p>}
           </div><Button size="sm" icon={<Scissors size={13} />} disabled={candidate.scenes.length >= 60 || time <= start || time >= end || candidate.scenes.some((s) => Math.abs(s.at_ms - time) < .01)} onClick={() => newLayout()}>New layout here</Button>{sceneIndex > 0 && <Button size="sm" variant="ghost" onClick={() => change({ scenes: candidate.scenes.filter((_, i) => i !== sceneIndex) })}>Remove layout change</Button>}<Button size="sm" variant="ghost" onClick={() => change({ scenes: [{ ...currentScene, at_ms: 0 }] })}>Use layout for whole clip</Button></div></fieldset>}
-          {tab === 'captions' && <fieldset disabled={editingDisabled} className="space-y-4 mt-4"><div className="flex items-center justify-between text-xs"><span>Burn in captions</span><Switch label="Burn in captions" checked={candidate.captions} onChange={(captions) => change({ captions })} /></div><p className="text-2xs text-ink-subtle">Captions follow your final cuts. Use the placement guide in Transcript to position them before baking.</p><CaptionSuppression key={candidate.id} ranges={suppressedCaptions} cuts={candidate.ranges} time={time} duration={project.duration_ms} disabled={editingDisabled || !candidate.captions} onChange={(caption_suppression_ranges) => { video.current?.pause(); change({ caption_suppression_ranges }) }} seek={seek} />{candidate.captions && <CaptionPresetPicker value={candidate.caption_preset} onChange={(caption_preset) => change({ caption_preset })} />}<label className="editor-label">Export speed<select value={candidate.video_speed} onChange={(e) => change({ video_speed: Number(e.target.value) })}>{[1, 1.1, 1.25, 1.5, 1.75, 2].map((n) => <option key={n} value={n}>{n}×</option>)}</select></label>{styleButton}</fieldset>}
+          {tab === 'captions' && <fieldset disabled={editingDisabled} className="space-y-4 mt-4"><div className="flex items-center justify-between text-xs"><span>Burn in captions</span><Switch label="Burn in captions" checked={candidate.captions} onChange={(captions) => change({ captions })} /></div><p className="text-2xs text-ink-subtle">Captions follow your final cuts. Use the placement guide in Transcript to position them before baking.</p>{candidate.caption_language && candidate.captions && <p className="text-2xs text-ink-subtle">These captions are shown in {captionLanguageLabel(candidate.caption_language)}. Baking translates them again from the transcript (one request on your OpenRouter key).</p>}<CaptionSuppression key={candidate.id} ranges={suppressedCaptions} cuts={candidate.ranges} time={time} duration={project.duration_ms} disabled={editingDisabled || !candidate.captions} onChange={(caption_suppression_ranges) => { video.current?.pause(); change({ caption_suppression_ranges }) }} seek={seek} />{candidate.captions && <CaptionPresetPicker value={candidate.caption_preset} onChange={(caption_preset) => change({ caption_preset })} />}<label className="editor-label">Export speed<select value={candidate.video_speed} onChange={(e) => change({ video_speed: Number(e.target.value) })}>{[1, 1.1, 1.25, 1.5, 1.75, 2].map((n) => <option key={n} value={n}>{n}×</option>)}</select></label>{styleButton}</fieldset>}
           {tab === 'hook' && <div className="space-y-4 mt-4">
             <fieldset disabled={editingDisabled} className="space-y-3">
               <div className="flex items-center justify-between text-xs"><span>Hook text at the top</span>

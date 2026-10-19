@@ -924,6 +924,9 @@ class AIClippingPipeline:
                         "shots": render_result.layout_shots,
                         "pacing_removed_ms": render_result.removed_ms,
                         "render_fallback": render_result.render_fallback,
+                        # The editor rebuilds this clip's cut and framing from these.
+                        "window_start_ms": getattr(render_result, "window_start_ms", 0),
+                        "kept_source_ms": getattr(render_result, "kept_source_ms", []),
                     })
                     logger.info(
                         f"Rendered clip {i + 1} ({render_result.layout_type}): "
@@ -1042,6 +1045,8 @@ class AIClippingPipeline:
                                 self._save_local_json(job_id, f"clip_{index:02d}.framing", trace, compact=True)
                             except (OSError, ValueError):
                                 logger.warning("Framing decisions could not be saved")
+                if request.workflow != 'review':
+                    await asyncio.to_thread(self._keep_source_copy, download_result, self._get_local_output_dir(job_id))
                 stage_timings["local_save"] = time.perf_counter() - stage_start
                 logger.info(f"All {len(clip_artifacts)} clips saved locally")
                 # Commit a usable manifest before optional metrics and cost
@@ -1397,6 +1402,37 @@ class AIClippingPipeline:
             self._current_external_job_id = None
             self._current_owner_user_id = None
 
+
+    @staticmethod
+    def _keep_source_copy(download_result, output_dir: str) -> bool:
+        """Keep a downloaded source next to an Automatic run's clips (editor-source.mp4).
+
+        Opening the run in the editor later then needs no download. Local files
+        are not copied (the editor uses the original while it exists), and a
+        kept copy from an earlier run is never moved. Best effort: a failure
+        leaves the run as it would have been without it.
+        """
+        if getattr(download_result, 'source_type', 'local') == 'local':
+            return False
+        destination = os.path.join(output_dir, 'editor-source.mp4')
+        temporary = os.path.join(output_dir, '.editor-source.partial.mp4')
+        try:
+            if os.path.lexists(destination):
+                return False
+            if os.stat(download_result.video_path).st_dev == os.stat(output_dir).st_dev:
+                os.rename(download_result.video_path, temporary)
+            else:
+                shutil.copyfile(download_result.video_path, temporary)
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, destination)
+            return True
+        except OSError as error:
+            logger.warning("Source video could not be kept with the run (%s)", type(error).__name__)
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            return False
 
     def _get_local_output_dir(self, job_id: str) -> str:
         """Get the local output directory for a job, creating it if needed."""
