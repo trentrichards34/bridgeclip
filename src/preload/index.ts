@@ -421,6 +421,8 @@ export interface BridgeClipAPI {
   }
   clips: {
     bulkExport: (clips: { path: string; name: string }[]) => Promise<{ success: boolean; count: number; failedCount: number; destDir?: string }>
+    /** The clips as one .zip, saved where the member picks (destDir is the .zip's path). */
+    exportZip: (clips: { path: string; name: string }[], zipName: string) => Promise<{ success: boolean; count: number; failedCount: number; destDir?: string }>
     /** Add, switch (an id) or remove (null) the call to action at the end of one clip. */
     setCta: (outputDir: string, clipIndex: number, ctaId: string | null) => Promise<JobOutput>
   }
@@ -745,6 +747,7 @@ const api: BridgeClipAPI = {
   },
   clips: {
     bulkExport: (clips) => ipcRenderer.invoke('clips:bulkExport', clips),
+    exportZip: (clips, zipName) => ipcRenderer.invoke('clips:exportZip', clips, zipName),
     setCta: (outputDir, clipIndex, ctaId) => ipcRenderer.invoke('clips:setCta', outputDir, clipIndex, ctaId)
   },
   ctas: {

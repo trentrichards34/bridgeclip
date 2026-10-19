@@ -1,5 +1,7 @@
 import { openEditor, saveEditor, runEditor, cancelEditor, replaceEditorSource } from './clip-editor'
 import { mediaAccessStatus, requestMediaAccess } from './media-permissions'
+import { uniqueFileName, writeZip } from './clip-zip'
+import { randomUUID } from 'crypto'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
 import { addEditorCandidate, editorCloseReady, freeEditorMedia, onEditorExportCta, onEditorRunLock, readEditorProgress, suggestEditorHooks } from './clip-editor'
@@ -597,6 +599,40 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return result.filePaths.slice(0, MAX_CREATE_SOURCES).map((path) => authorizeMedia(path))
   })
 
+  // The selected clips as one .zip (stored, not recompressed: video is already compressed).
+  handle('clips:exportZip', async (_event, clips: { path: string; name: string }[], zipName: unknown) => {
+    const window = getMainWindow()
+    if (!Array.isArray(clips) || clips.length > 500) throw new Error('Invalid export selection')
+    for (const clip of clips) {
+      if (!clip || typeof clip.name !== 'string' || clip.name.length > 500) throw new Error('Invalid export selection')
+      assertMediaPath(clip.path, loadSettings().outputDirectory)
+    }
+    if (!window || clips.length === 0) return { success: false, count: 0, failedCount: clips.length }
+    const suggested = uniqueFileName(typeof zipName === 'string' && zipName.trim() ? zipName : 'CreatorClips clips', '.zip', new Set())
+    const result = await dialog.showSaveDialog(window, { title: 'Save Clips as .zip', defaultPath: suggested, filters: [{ name: 'Zip archive', extensions: ['zip'] }] })
+    if (result.canceled || !result.filePath) return { success: false, count: 0, failedCount: 0 }
+    const dest = result.filePath.toLowerCase().endsWith('.zip') ? result.filePath : `${result.filePath}.zip`
+    const { open, rm, rename } = await import('fs/promises')
+    const { extname, join, dirname } = await import('path')
+    const sources: Awaited<ReturnType<typeof openAuthorizedMedia>>[] = []
+    const temp = join(dirname(dest), `.creatorclips-${randomUUID()}.zip.part`)
+    try {
+      for (const clip of clips) sources.push(await openAuthorizedMedia(clip.path, loadSettings().outputDirectory))
+      const taken = new Set<string>()
+      const target = await open(temp, 'wx', 0o600)
+      try {
+        await writeZip(target, sources.map((source, index) => ({ name: uniqueFileName(clips[index].name, extname(clips[index].path) || '.mp4', taken), handle: source.handle, size: source.size })))
+      } finally { await target.close() }
+      await rename(temp, dest)
+      return { success: true, count: clips.length, failedCount: 0, destDir: dest }
+    } catch (error) {
+      await rm(temp, { force: true }).catch(() => undefined)
+      throw error
+    } finally {
+      await Promise.all(sources.map((source) => source.handle.close().catch(() => undefined)))
+    }
+  })
+
   handle('clips:bulkExport', async (_event, clips: { path: string; name: string }[]) => {
     const window = getMainWindow()
     if (!Array.isArray(clips) || clips.length > 500) throw new Error('Invalid export selection')
@@ -630,7 +666,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
             let target: Awaited<ReturnType<typeof open>> | undefined
             try {
               target = await open(dest, 'wx', 0o600)
-              await pipeline(source.handle.createReadStream({ autoClose: false }), target.createWriteStream({ autoClose: false }))
+              // Release both streams before closing: a FileHandle with a live write stream never finishes closing,
+              // which stalled the export after its first clip.
+              const reader = source.handle.createReadStream({ autoClose: false })
+              const writer = target.createWriteStream({ autoClose: false })
+              try { await pipeline(reader, writer) } finally { reader.destroy(); writer.destroy() }
               await target.close()
               break
             } catch (error) {

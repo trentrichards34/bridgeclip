@@ -7,7 +7,7 @@ import { parseJobOutput } from '../../shared/job-output'
 import { editorProgress } from '../../shared/clip-editor'
 import { ClipEditor } from './ClipEditor'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowLeft, Check, ChevronDown, Clapperboard, Download, FolderOpen, ListPlus, Plus, Scissors, Search, Send, Trash2, Youtube } from 'lucide-react'
+import { ArrowLeft, Check, ChevronDown, Clapperboard, Download, FileArchive, FolderOpen, ListPlus, Plus, Scissors, Search, Send, Trash2, Youtube } from 'lucide-react'
 import { basename, cn, errorMessage } from '../lib/utils'
 import { getApi } from '../lib/ipc'
 import { clipFilePath } from '../lib/thumbnails'
@@ -265,16 +265,15 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
     })
   }
 
-  const exportSelected = async (): Promise<void> => {
+  const exportSelected = async (asZip = false): Promise<void> => {
     const picked = clips.filter((c) => selected.has(c.clip_index))
     if (picked.length === 0 || exportingRef.current || deletingRef.current) return
     exportingRef.current = true
     setExporting(true)
     setExportError(null)
     try {
-      const result = await getApi().clips.bulkExport(
-        picked.map((c) => ({ path: clipFilePath(c.s3_url), name: c.summary || `Clip ${c.clip_index + 1}` }))
-      )
+      const list = picked.map((c) => ({ path: clipFilePath(c.s3_url), name: c.summary || `Clip ${c.clip_index + 1}` }))
+      const result = asZip ? await getApi().clips.exportZip(list, output.source_video_title || 'CreatorClips clips') : await getApi().clips.bulkExport(list)
       if (result.success) {
         setAddedToBank(false)
         setNotice(`Exported ${result.count} clip${result.count === 1 ? '' : 's'}${result.destDir ? ` to ${basename(result.destDir)}` : ''}${result.failedCount ? `; ${result.failedCount} could not be copied` : ''}`)
@@ -458,9 +457,14 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
                 loading={exporting}
                 disabled={deleting}
                 icon={<Download className="h-3.5 w-3.5" />}
-                onClick={exportSelected}
+                onClick={() => void exportSelected()}
+                title="Copy the selected clips to a folder"
               >
                 Export {selected.size}
+              </Button>
+              <Button size="sm" disabled={deleting || exporting} icon={<FileArchive className="h-3.5 w-3.5" />} onClick={() => void exportSelected(true)}
+                title="Save the selected clips as one .zip file">
+                .zip
               </Button>
               {outputDir && <Button variant="danger" size="sm" iconOnly aria-label="Delete selected clips" title="Delete selected clips"
                 icon={<Trash2 className="h-3.5 w-3.5" />} loading={deleting} disabled={exporting} onClick={() => confirmDelete(clips.filter((clip) => selected.has(clip.clip_index)).map((clip) => clip.clip_index))} />}
