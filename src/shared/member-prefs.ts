@@ -82,6 +82,8 @@ export interface RemixFormStyle {
   pauseLayout: PauseLayout
   pauseCaptions: PauseCaptions
   pauseCamera: CameraSettings
+  momentPip: boolean
+  momentCamera: CameraSettings
 }
 
 export type StyleOf<K extends StyleKind> = K extends 'create' ? CreateStyle : RemixFormStyle
@@ -125,7 +127,8 @@ export const CREATE_STYLE_KEYS = [
 
 export const REMIX_STYLE_KEYS = [
   'format', 'angle', 'order', 'host', 'avatarId', 'voice', 'brandIdentityId', 'count', 'includeCaptions', 'captionPreset', 'headlineLook',
-  'ctaId', 'ctaKeyword', 'ctaOffer', 'camera', 'imageCamera', 'showHandle', 'pauseLayout', 'pauseCaptions', 'pauseCamera'
+  'ctaId', 'ctaKeyword', 'ctaOffer', 'camera', 'imageCamera', 'showHandle', 'pauseLayout', 'pauseCaptions', 'pauseCamera',
+  'momentPip', 'momentCamera'
 ] as const satisfies readonly (keyof RemixFormStyle)[]
 
 export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE } }
@@ -200,7 +203,9 @@ const REMIX_CHECKS: { [K in keyof RemixFormStyle]: (value: unknown) => boolean }
   showHandle: bool,
   pauseLayout: isPauseLayout,
   pauseCaptions: isPauseCaptions,
-  pauseCamera: () => true
+  pauseCamera: () => true,
+  momentPip: bool,
+  momentCamera: () => true
 }
 
 /** The valid fields of a saved style; anything else is dropped. */
@@ -215,7 +220,7 @@ function parseStyle<K extends StyleKind>(kind: K, value: unknown): Partial<Style
     if (key === 'headlineLook') {
       const look = headlineLook(raw)
       if (look) style[key] = look
-    } else if (key === 'camera' || key === 'imageCamera' || key === 'pauseCamera') {
+    } else if (key === 'camera' || key === 'imageCamera' || key === 'pauseCamera' || key === 'momentCamera') {
       const parsed = camera(raw)
       if (parsed) style[key] = parsed
     } else if (checks[key](raw)) {

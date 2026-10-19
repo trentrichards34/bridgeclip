@@ -54,7 +54,7 @@ def parse_recordings(raw, fmt):
             except PauseReactError:
                 raise ValueError("Invalid recordings") from None
             out[key] = {"reaction": {"path": reaction["path"], "offset_s": 0.0}, "timeline": item["timeline"]}
-        elif fmt in ("silent", "image"):
+        elif fmt in ("silent", "image", "moment_take"):
             reaction = item.get("reaction")
             if set(item) != {"reaction"} or not isinstance(reaction, dict) or not set(reaction) <= {"path", "offset_s"} \
                     or not _abs_path(reaction.get("path")):
@@ -121,6 +121,36 @@ def parse_pauses(raw):
     return {"recording": raw["recording"], "source": raw["source"], "trim_start": float(numbers[0]), "trim_end": float(numbers[1])}
 
 
+def parse_moment(raw):
+    """Mode "moment": find another moment in one range of a Moment + my take review (one planning call)."""
+    from clip_engine.services.remix_service import RemixConfig
+    if not set(raw) <= {"mode", "output_dir", "draft_id"}:
+        raise ValueError("Invalid request")
+    if not _abs_path(raw.get("output_dir")):
+        raise ValueError("Invalid output")
+    draft_id = raw.get("draft_id")
+    if type(draft_id) is not int or not 0 <= draft_id < 3:
+        raise ValueError("Invalid moment")
+    return {"config": RemixConfig(output_dir=raw["output_dir"], host="camera", format="moment_take"), "draft_id": draft_id}
+
+
+def parse_moment_options(raw, fmt, mode):
+    """Moment + my take: the ranges (planning), the box option and which takes to write."""
+    from clip_engine.services.moment_take import parse_ranges
+    if fmt != "moment_take":
+        if raw.get("moment_ranges") is not None or raw.get("moment_pip") not in (None, False) or raw.get("write_ids") is not None:
+            raise ValueError("Invalid format")
+        return [], False, []
+    ranges = parse_ranges(raw.get("moment_ranges")) if mode == "plan" else []
+    pip = raw.get("moment_pip", False)
+    if not isinstance(pip, bool):
+        raise ValueError("Invalid format")
+    ids = raw.get("write_ids") or []
+    if not isinstance(ids, list) or len(ids) > 3 or any(type(i) is not int or not 0 <= i < 3 for i in ids):
+        raise ValueError("Invalid format")
+    return [list(r) for r in ranges], pip, list(ids)
+
+
 def parse_config(raw):
     from clip_engine.services.remix_service import (ANGLES, CAMERA_BACKDROPS, CAMERA_LAYOUTS, DEFAULT_VOICE, IMAGE_EXTENSIONS, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, PAUSE_CAPTIONS,
                                                     PAUSE_LAYOUTS, REACTION_KINDS, TTS_MODEL,
@@ -131,6 +161,8 @@ def parse_config(raw):
         return parse_recompose(raw)
     if raw.get("mode") == "pauses":
         return parse_pauses(raw)
+    if raw.get("mode") == "moment":
+        return parse_moment(raw)
     for key, limit in STRING_LIMITS.items():
         value = raw.get(key)
         if value is not None and (not isinstance(value, str) or len(value) > limit or "\0" in value):
@@ -148,7 +180,7 @@ def parse_config(raw):
     photo = raw.get("avatar_photo")
     if photo is not None and not os.path.isabs(photo):
         raise ValueError("Invalid avatar photo")
-    angle = raw.get("angle") or ("reaction" if raw.get("format") in ("image", "pause_react") else None)
+    angle = raw.get("angle") or ("reaction" if raw.get("format") in ("image", "pause_react", "moment_take") else None)
     if angle not in ANGLES or raw.get("host") not in HOSTS:
         raise ValueError("Invalid style")
     count = raw.get("count", 3)
@@ -163,8 +195,11 @@ def parse_config(raw):
     reactions = raw.get("reactions") or {}
     # An article or post: written from the member's recording ("write"), then rendered; never planned.
     mode = raw.get("mode", "plan")
-    if (fmt == "image" and mode == "plan") or (mode == "write" and fmt not in ("image", "pause_react")):
+    if (fmt == "image" and mode == "plan") or (mode == "write" and fmt not in ("image", "pause_react", "moment_take")):
         raise ValueError("Invalid format")
+    if fmt == "moment_take" and (raw.get("host") != "camera" or (mode == "plan" and len(sources) != 1)):
+        raise ValueError("Invalid format")
+    moment_ranges, moment_pip, write_ids = parse_moment_options(raw, fmt, mode)
     if fmt == "pause_react" and (raw.get("host") != "camera" or (mode == "plan" and len(sources) != 1)
                                  or (raw.get("pause_layout") or "box") not in PAUSE_LAYOUTS or (raw.get("pause_captions") or "member") not in PAUSE_CAPTIONS):
         raise ValueError("Invalid format")
@@ -179,7 +214,7 @@ def parse_config(raw):
         image_source = {"path": image_source["path"], "credit": " ".join(credit.split())}
     elif raw.get("image_source") is not None:
         raise ValueError("Invalid image source")
-    if fmt not in ("commentary", "silent", "image", "pause_react") or not isinstance(reactions, dict) or any(
+    if fmt not in ("commentary", "silent", "image", "pause_react", "moment_take") or not isinstance(reactions, dict) or any(
             k not in REACTION_KINDS or not isinstance(v, str) or len(v) > 4096 or "\0" in v or not os.path.isabs(v) for k, v in reactions.items()):
         raise ValueError("Invalid format")
     layout = raw.get("camera_layout") or ("greenscreen" if fmt == "image" else "filmed")
@@ -211,6 +246,7 @@ def parse_config(raw):
         camera_layout=layout, camera_backdrop=backdrop, camera_backdrop_color=color.upper(), camera_talk=talk is True,
         recordings=recordings, image_source=image_source, brand_mark=validate_brand_mark(raw.get("brand_mark")),
         pause_layout=raw.get("pause_layout") or "box", pause_captions=raw.get("pause_captions") or "member",
+        moment_ranges=moment_ranges, moment_pip=moment_pip, write_ids=write_ids,
     )
 
 
@@ -239,6 +275,8 @@ def main():
             if raw_request.get("mode") == "recompose":
                 from clip_engine.services.remix_service import recompose
                 return await recompose(config, progress)
+            if raw_request.get("mode") == "moment":
+                return await Remixer(config["config"], progress).pick_another(config["draft_id"])
             if raw_request.get("mode") == "pauses":
                 from clip_engine.services.pause_react import detect_pauses
                 return {"detection": await asyncio.to_thread(detect_pauses, config["recording"], config["source"],
@@ -260,7 +298,8 @@ def main():
         from clip_engine.services.remix_service import RemixError
         from bridge_runner import describe_failure
         from clip_engine.services.pause_react import PauseReactError
-        if isinstance(error, (RemixError, PauseReactError)):
+        from clip_engine.services.moment_take import MomentTakeError
+        if isinstance(error, (RemixError, PauseReactError, MomentTakeError)):
             message = str(error)
         elif isinstance(error, asyncio.CancelledError):
             message = "Cancelled"

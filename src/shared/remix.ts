@@ -8,6 +8,7 @@ import type { BrandLook } from './brand-kit'
 import type { HeadlineLook } from './headline-look'
 import { PRESET_VOICE_IDS, PRESET_VOICES } from './voices'
 import type { PauseCaptions, PauseLayout } from './pause-react'
+import { parseMomentInfo, type MomentInfo, type MomentRange } from './moment-take'
 
 export type RemixStyle = 'reaction' | 'myth_truth' | 'science' | 'lessons' | 'do_this_instead'
 /** A style, or 'mix': the AI picks a fitting style per moment so the account doesn't repeat one template. */
@@ -31,10 +32,12 @@ export const STYLE_LABELS: Record<RemixStyle, string> = {
  * silent: the moment plays with its own sound while the avatar reacts silently behind it (green screen).
  * image: the member talks on camera over a screenshot (an article or a post); the AI writes the headline from their words.
  * pause_react: the member on camera reacts to a video that pauses whenever they talk (see ./pause-react).
+ * moment_take: the strongest moment inside each time range of a long video, then the member's take on camera (see ./moment-take).
  */
-export type RemixFormat = 'commentary' | 'silent' | 'image' | 'pause_react'
+export type RemixFormat = 'commentary' | 'silent' | 'image' | 'pause_react' | 'moment_take'
 export const REMIX_FORMATS: { id: RemixFormat; label: string; detail: string }[] = [
   { id: 'pause_react', label: 'Pause & react', detail: 'You on camera. Their video plays in a box and pauses whenever you talk' },
+  { id: 'moment_take', label: 'Moment + my take', detail: 'Pick times in a long video. Each becomes its best moment, then you on camera' },
   { id: 'commentary', label: 'Voiced take', detail: 'A few seconds of their moment, then your presenter’s take in your voice' },
   { id: 'silent', label: 'Silent react', detail: 'Their moment plays with its sound; your avatar reacts behind it without speaking' },
   { id: 'image', label: 'Article or post', detail: 'Talk on camera in front of a screenshot, like a green screen; the AI writes the headline from what you say' }
@@ -45,9 +48,9 @@ export const REMIX_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp']
 /** The longest take over a screenshot. */
 export const MAX_IMAGE_TAKE_SECONDS = 180
 /** Headline-only formats: nothing spoken to edit. */
-export function headlineOnly(format: RemixFormat): boolean { return format === 'silent' || format === 'image' || format === 'pause_react' }
-/** Formats recorded as one take, with the hook text and caption written from the member's words afterward. */
-export function oneTake(format: RemixFormat): boolean { return format === 'image' || format === 'pause_react' }
+export function headlineOnly(format: RemixFormat): boolean { return format === 'silent' || format === 'image' || format === 'pause_react' || format === 'moment_take' }
+/** Formats recorded as one take each, with the hook text and caption written from the member's words afterward. */
+export function oneTake(format: RemixFormat): boolean { return format === 'image' || format === 'pause_react' || format === 'moment_take' }
 
 /** A silent reaction timed into the moment (seconds from its start). */
 export interface RemixCue { at: number; reaction: string }
@@ -133,6 +136,14 @@ export function estimateRemixCost(host: RemixHost, count: number, sourceHours = 
   if (format === 'image') return { perRemixLow: 0.01, perRemixHigh: 0.02, total: 0.02 }
   // Pause & react: transcribing up to five minutes of you and of their video, and one short writing call.
   if (format === 'pause_react') return { perRemixLow: 0.01, perRemixHigh: 0.07, total: 0.07 }
+  // Moment + my take (count = ranges, sourceHours = their length): transcribing each range and one planning call for it
+  // (the per-hour price, at least a tenth of an hour per range at the high end), then one short writing call per video.
+  if (format === 'moment_take') {
+    const ranges = Math.max(1, count), hours = Math.max(0, sourceHours)
+    const low = REMIX_PRICES.sourcePerHour * hours + 0.01 * ranges
+    const high = REMIX_PRICES.sourcePerHour * Math.max(hours, 0.1 * ranges) + 0.02 * ranges
+    return { perRemixLow: low / ranges, perRemixHigh: high / ranges, total: high }
+  }
   const avatar = (seconds: number): number => host === 'lipsync' ? seconds * REMIX_PRICES.avatarPerSecond : 0
   // On camera: your own voice and face, so nothing is voiced (captions come from a cheap transcription).
   const voice = host === 'camera' ? 0.01 : REMIX_PRICES.voicePerRemix
@@ -187,6 +198,8 @@ export interface RemixRequest {
   showHandle?: boolean
   /** Pause & react: where their video goes and whose words are captioned. */
   pause?: { layout: PauseLayout; captions: PauseCaptions }
+  /** Moment + my take: the time ranges, and whether the moment stays small on screen while the member talks. */
+  moment?: { ranges: MomentRange[]; pip: boolean }
 }
 
 /** filmed: your real background; cutout: you cut out over a blur or your color; greenscreen: the clip fills the screen behind you. */
@@ -225,7 +238,7 @@ export function isRecordingPart(value: unknown): value is RecordingPart {
   return typeof value === 'string' && /^(reaction|intro|close|beat[0-3])$/.test(value)
 }
 export function partsFor(format: RemixFormat, beats: number): RecordingPart[] {
-  if (format === 'silent' || format === 'image' || format === 'pause_react') return ['reaction']
+  if (format === 'silent' || format === 'image' || format === 'pause_react' || format === 'moment_take') return ['reaction']
   return ['intro', ...Array.from({ length: Math.min(4, beats) }, (_, i) => `beat${i}` as RecordingPart), 'close']
 }
 /** A take's recordings, as the app lists them. */
@@ -269,6 +282,8 @@ export interface RemixDraft {
   format: RemixFormat
   /** Silent react: when each reaction plays. */
   cues: RemixCue[]
+  /** Moment + my take: the range it came from, what the member said and their talking points. */
+  moment?: MomentInfo
 }
 
 /** What the user approves: the draft id and any edited text. */
@@ -414,11 +429,12 @@ export function parseRemixDraft(value: unknown): RemixDraft | null {
     headline: text(raw.headline, 200), intro: text(raw.intro, 400), beats, close: text(raw.close, 400),
     notes: Array.isArray(raw.notes) ? raw.notes.filter((n): n is string => typeof n === 'string').map((n) => text(n, 300)).slice(0, 6) : [],
     grade: parseGrade(raw.grade), estimateUsd: number(raw.estimate_usd), postCaption: captionText(raw.post_caption),
-    format: raw.format === 'silent' || raw.format === 'image' || raw.format === 'pause_react' ? raw.format : 'commentary',
+    format: raw.format === 'silent' || raw.format === 'image' || raw.format === 'pause_react' || raw.format === 'moment_take' ? raw.format : 'commentary',
     cues: Array.isArray(raw.cues) ? raw.cues.flatMap((item): RemixCue[] => {
       const cue = (item ?? {}) as Record<string, unknown>
       return typeof cue.reaction === 'string' && typeof cue.at === 'number' && Number.isFinite(cue.at) ? [{ at: Math.max(0, cue.at), reaction: cue.reaction.slice(0, 20) }] : []
-    }).slice(0, 8) : []
+    }).slice(0, 8) : [],
+    ...(raw.format === 'moment_take' && parseMomentInfo(raw.moment) ? { moment: parseMomentInfo(raw.moment) as MomentInfo } : {})
   }
 }
 

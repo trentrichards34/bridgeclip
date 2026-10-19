@@ -207,6 +207,42 @@ class ParseConfigTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=repr(bad)[:160]):
                 remix_runner.parse_config(bad)
 
+    def moment(self, **over):
+        config = {"mode": "plan", "output_dir": os.path.abspath("out"), "host": "camera", "format": "moment_take",
+                  "sources": ["https://www.youtube.com/watch?v=pod"], "moment_ranges": [[2220, 2520], [60, 90]], "moment_pip": True,
+                  "camera_layout": "cutout"}
+        config.update(over)
+        return config
+
+    def test_moment_take_keys(self):
+        made = remix_runner.parse_config(self.moment())
+        self.assertEqual((made.format, made.angle, made.moment_ranges, made.moment_pip, made.camera_layout),
+                         ("moment_take", "reaction", [[2220.0, 2520.0], [60.0, 90.0]], True, "cutout"))
+        me = os.path.abspath("me.webm")
+        render = remix_runner.parse_config(self.moment(mode="render", sources=[], moment_ranges=None,
+                                                       recordings={"0": {"reaction": {"path": me, "offset_s": 0}}, "1": {"reaction": {"path": me}}}))
+        self.assertEqual(render.recordings["0"], {"reaction": {"path": me, "offset_s": 0.0}})
+        self.assertEqual(render.moment_ranges, [])
+        written = remix_runner.parse_config(self.moment(mode="write", sources=[], moment_ranges=None, write_ids=[0, 2]))
+        self.assertEqual(written.write_ids, [0, 2])
+        another = remix_runner.parse_config({"mode": "moment", "output_dir": os.path.abspath("out"), "draft_id": 1})
+        self.assertEqual((another["draft_id"], another["config"].format), (1, "moment_take"))
+
+    def test_rejects_bad_moment_take_values(self):
+        bads = [
+            self.moment(host="voice"), self.moment(moment_ranges=[]), self.moment(moment_ranges=[[0, 5]]), self.moment(moment_ranges=[[0, 20]] * 4),
+            self.moment(moment_ranges=[[30, 20]]), self.moment(moment_ranges=[["0", 20]]), self.moment(moment_pip="yes"),
+            self.moment(sources=["https://a.example/x", "https://b.example/y"]), self.moment(write_ids=[5]), self.moment(write_ids="0"),
+            self.base(moment_ranges=[[0, 20]]), self.base(write_ids=[0]),
+            self.moment(mode="render", recordings={"0": {"reaction": {"path": "rel.webm"}}}),
+            {"mode": "moment", "output_dir": "out", "draft_id": 0}, {"mode": "moment", "output_dir": os.path.abspath("out"), "draft_id": 3},
+            {"mode": "moment", "output_dir": os.path.abspath("out"), "draft_id": True},
+            {"mode": "moment", "output_dir": os.path.abspath("out"), "draft_id": 0, "exclude": []},
+        ]
+        for bad in bads:
+            with self.assertRaises(ValueError, msg=repr(bad)[:160]):
+                remix_runner.parse_config(bad)
+
 
 if __name__ == "__main__":
     unittest.main()

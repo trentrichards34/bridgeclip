@@ -19,6 +19,8 @@ import {
   DEFAULT_PAUSE_REACT, DEFAULT_PAUSE_SETTINGS, isPauseCaptions, isPauseLayout, parsePauseDetection, parsePauseEvents, parsePauseSettings, PAUSE_MAX_TRIM_SECONDS,
   PAUSE_REACT_MAX_SECONDS, timelineForEngine, timelineFromEvents, uploadTimeline, type PauseDetection, type PauseEvent, type PauseSettings, type PauseTimeline, type PauseView
 } from '../shared/pause-react'
+import { MOMENT_TAKE_MAX_SECONDS, momentBoundsProblem, parseMomentRanges } from '../shared/moment-take'
+import { suggestTalkingPoints } from './moment-take'
 
 const DEFAULT_VOICE_NAME = 'Brian'
 import { portraitPath, readAvatar, readReactions, voiceSamplePath } from './avatars'
@@ -61,6 +63,8 @@ interface RunContext {
   savingRecordings?: number
   /** Pause & react: the original's length and the member's adjustments to a phone recording's pauses. */
   pause?: { sourceSeconds: number; settings: PauseSettings }
+  /** Moment + my take: finding another moment or talking points right now (one at a time). */
+  momentWork?: boolean
 }
 
 interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null; context: RunContext; ctaAbort?: AbortController }
@@ -102,11 +106,15 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const sources = [...new Set(trimmed.map((item) => remixSourceUrl(item) ?? item))]
   if (sources.length === 0) throw new Error('Paste a video link or choose a file.')
   if (sources.length > MAX_SOURCES) throw new Error(`Add up to ${MAX_SOURCES} videos per run.`)
-  if (raw.format !== undefined && raw.format !== 'silent' && raw.format !== 'commentary' && raw.format !== 'image' && raw.format !== 'pause_react') throw new Error('Choose the kind of remix.')
-  const format = raw.format === 'silent' || raw.format === 'image' || raw.format === 'pause_react' ? raw.format : 'commentary'
+  if (raw.format !== undefined && raw.format !== 'silent' && raw.format !== 'commentary' && raw.format !== 'image' && raw.format !== 'pause_react' &&
+      raw.format !== 'moment_take') throw new Error('Choose the kind of remix.')
+  const format = raw.format === 'silent' || raw.format === 'image' || raw.format === 'pause_react' || raw.format === 'moment_take' ? raw.format : 'commentary'
   const image = format === 'image'
   const pause = format === 'pause_react'
+  // Moment + my take: one long video, up to three time ranges, you on camera.
+  const momentTake = format === 'moment_take'
   if (pause && sources.length > 1) throw new Error('React to one video at a time.')
+  if (momentTake && sources.length > 1) throw new Error('Use one long video at a time.')
   const urls = image ? sources.map(() => null) : sources.map(remixSourceUrl)
   const local = sources.filter((_, i) => !urls[i])
   if (image) {
@@ -122,12 +130,13 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   if (!isRemixAngle(raw.angle)) throw new Error('Choose a remix style.')
   const order = raw.order === undefined ? 'moment_first' : raw.order
   if (!isRemixOrder(order)) throw new Error('Choose the order of the video.')
-  if (!image && !pause && !isRemixHost(raw.host)) throw new Error('Choose how your presenter appears.')
+  if (!image && !pause && !momentTake && !isRemixHost(raw.host)) throw new Error('Choose how your presenter appears.')
   // Lip-sync to our own voice isn't possible on OpenRouter yet: the avatar's photo presents instead.
-  // A screenshot, and a pause-and-react, are always you, on camera.
-  const host = image || pause ? 'camera' : raw.host === 'lipsync' ? 'still' : raw.host as Exclude<RemixRequest['host'], 'lipsync'>
+  // A screenshot, a pause-and-react and a moment with your take are always you, on camera.
+  const host = image || pause || momentTake ? 'camera' : raw.host === 'lipsync' ? 'still' : raw.host as Exclude<RemixRequest['host'], 'lipsync'>
   if (image && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to share this screenshot.')
   if (pause && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use this video: Pause & react plays much of it.')
+  if (momentTake && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use this video: each video opens with a moment of it.')
   if (format === 'silent' && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use these clips: Silent react plays much more of them.')
   const onCamera = host === 'camera'
   if (format === 'silent' && !onCamera && !isAvatarId(raw.avatarId)) throw new Error('Choose the avatar whose reactions to use.')
@@ -141,12 +150,14 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const parsedCamera = onCamera ? parseCameraSettings(raw.camera ?? (image ? { ...DEFAULT_CAMERA, layout: 'greenscreen' } : DEFAULT_CAMERA)) : undefined
   // Pause & react fills the frame with you: as filmed or with the background removed.
   if (pause && parsedCamera?.layout === 'greenscreen') throw new Error('Choose “As filmed” or “Background removed” for Pause & react.')
-  // Over a screenshot, and when you pause their video to talk, your voice is always kept.
-  const camera = parsedCamera && (image || pause) ? { ...parsedCamera, talk: true } : parsedCamera
+  if (momentTake && parsedCamera?.layout === 'greenscreen') throw new Error('Choose “As filmed” or “Background removed” for Moment + my take.')
+  // Over a screenshot, when you pause their video to talk, and in your take on a moment, your voice is always kept.
+  const camera = parsedCamera && (image || pause || momentTake) ? { ...parsedCamera, talk: true } : parsedCamera
   const pauseChoice = pause ? parsePauseChoice(raw.pause) : undefined
+  const momentChoice = momentTake ? parseMomentChoice(raw.moment) : undefined
   const brandIdentityId = raw.brandIdentityId === null || raw.brandIdentityId === undefined ? null : raw.brandIdentityId
   if (brandIdentityId !== null && !isBrandId(brandIdentityId)) throw new Error('Choose a brand identity.')
-  if (!image && !pause && (typeof raw.count !== 'number' || !Number.isInteger(raw.count) || raw.count < 1 || raw.count > MAX_REMIXES)) throw new Error(`Make between 1 and ${MAX_REMIXES} remixes per video.`)
+  if (!image && !pause && !momentTake && (typeof raw.count !== 'number' || !Number.isInteger(raw.count) || raw.count < 1 || raw.count > MAX_REMIXES)) throw new Error(`Make between 1 and ${MAX_REMIXES} remixes per video.`)
   if (!isCaptionPresetId(raw.captionPreset)) throw new Error('Choose a caption style.')
   const creator = typeof raw.creator === 'string' ? raw.creator.replace(/\s+/g, ' ').trim() : ''
   if (creator.length > 80) throw new Error('Keep the creator name under 80 characters.')
@@ -166,15 +177,24 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
     request: {
       sources: sources.map((source, i) => urls[i] ?? source), creator: sources.length === 1 ? creator : '', angle: raw.angle, order,
       host, avatarId: avatarId as string | null, voice, brandIdentityId,
-      count: image || pause ? 1 : raw.count as number, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: !onCamera,
+      count: image || pause ? 1 : momentChoice ? momentChoice.ranges.length : raw.count as number, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: !onCamera,
       ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : '', format, clipRightsAck: format !== 'commentary',
       ...(headlineLook ? { headlineLook } : {}),
       ...(ctaId ? { ctaId } : {}),
       ...(camera ? { camera } : {}),
       ...(raw.showHandle === true && brandIdentityId ? { showHandle: true } : {}),
-      ...(pauseChoice ? { pause: pauseChoice } : {})
+      ...(pauseChoice ? { pause: pauseChoice } : {}),
+      ...(momentChoice ? { moment: momentChoice } : {})
     }
   }
+}
+
+/** Moment + my take: the time ranges (checked again against the video's length once it's known) and the box option. */
+function parseMomentChoice(value: unknown): NonNullable<RemixRequest['moment']> {
+  const raw = (value ?? {}) as Record<string, unknown>
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Add a time range, like 37:00 to 42:00.')
+  if (raw.pip !== undefined && typeof raw.pip !== 'boolean') throw new Error('Choose whether the moment stays on screen while you talk.')
+  return { ranges: parseMomentRanges(raw.ranges), pip: raw.pip === true }
 }
 
 /** Pause & react: where their video goes and whose words are captioned (the defaults when not given). */
@@ -287,6 +307,11 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     if (request.ctaId) readCta(request.ctaId)
     const silent = request.format === 'silent'
     const onCamera = request.host === 'camera'
+    if (request.moment && remixSourceUrl(request.sources[0]) === null) {
+      // A file's length is known now: say which range is past its end before anything is fetched or paid for.
+      const seconds = await mediaSecondsOf(request.sources[0])
+      if (seconds > 0) parseMomentRanges(request.moment.ranges, seconds)
+    }
     // Silent react uses neither the photo nor the voice: only the reaction clips. On camera: none of these.
     if (request.avatarId && request.host !== 'voice' && !silent && !onCamera) {
       photo = portraitPath(request.avatarId)
@@ -357,7 +382,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         ...(brandMark ? { brand_mark: brandMark } : {}),
         ...(request.camera ? { camera_layout: request.camera.layout, camera_backdrop: request.camera.backdrop,
           camera_backdrop_color: request.camera.backdropColor, camera_talk: request.camera.talk } : {}),
-        ...(request.pause ? { pause_layout: request.pause.layout, pause_captions: request.pause.captions } : {})
+        ...(request.pause ? { pause_layout: request.pause.layout, pause_captions: request.pause.captions } : {}),
+        ...(request.moment ? { moment_ranges: request.moment.ranges.map((range) => [range.startS, range.endS]), moment_pip: request.moment.pip } : {})
       }
     }
     const run: ActiveRemix = {
@@ -365,7 +391,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       status: {
         id: randomBytes(6).toString('hex'), phase: 'planning', detail: 'Starting', percent: 1, folder,
         ...(request.host === 'camera' ? { onCamera: true, cameraTalk: request.camera?.talk === true } : {}),
-        estimateUsd: estimateRemixCost(request.host, request.count * request.sources.length, 0.5, request.format).total,
+        estimateUsd: request.moment ? momentEstimate(request.moment.ranges).total
+          : estimateRemixCost(request.host, request.count * request.sources.length, 0.5, request.format).total,
         drafts: [], outputs: [], costUsd: null, warnings: [], error: null
       }
     }
@@ -382,6 +409,12 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
   } finally { starting = false; pending = null }
 }
 
+/** Moment + my take: transcribing the ranges and picking a moment in each, then one writing call per video. */
+export function momentEstimate(ranges: { startS: number; endS: number }[]): ReturnType<typeof estimateRemixCost> {
+  const hours = ranges.reduce((sum, range) => sum + Math.max(0, range.endS - range.startS), 0) / 3600
+  return estimateRemixCost('camera', ranges.length, hours, 'moment_take')
+}
+
 /** The one take of an article-or-post remix, before its headline is written. */
 function imageDraft(credit: string): RemixDraft {
   return {
@@ -391,21 +424,28 @@ function imageDraft(credit: string): RemixDraft {
   }
 }
 
-/** Article or post: write the headline and caption from the recorded take, then back to review. */
-export async function writeRemix(): Promise<RemixStatus> {
+/**
+ * Write the headline and caption from the recorded take, then back to review (article or post, Pause & react).
+ * Moment + my take: for the recorded takes in `draftIds` (all recorded ones when not given), one writing call each.
+ */
+export async function writeRemix(draftIds?: unknown): Promise<RemixStatus> {
   if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
   const run = reviewing
   if (!run || run.status.phase !== 'review' || !oneTake(run.context.request.format)) throw new Error('There is no take waiting for its headline.')
-  if (recordingInProgress(run)) throw new Error('Wait for your recording to finish saving.')
-  if (!run.context.recordings?.get(0)?.get('reaction')) throw new Error('Record your take first.')
-  const recordings = engineRecordings(run, [{ id: 0, beats: [] }])
+  if (recordingInProgress(run) || run.context.momentWork) throw new Error('Wait for your recording to finish saving.')
+  const momentTake = run.context.request.format === 'moment_take'
+  const recorded = run.status.drafts.filter((draft) => run.context.recordings?.get(draft.id)?.get('reaction')).map((draft) => draft.id)
+  const ids = momentTake ? [...new Set(Array.isArray(draftIds) ? draftIds.filter((id): id is number => typeof id === 'number' && recorded.includes(id)) : recorded)] : [0]
+  if (!momentTake && !recorded.includes(0)) throw new Error('Record your take first.')
+  if (!ids.length) throw new Error('Record your take first.')
+  const recordings = engineRecordings(run, ids.map((id) => ({ id, beats: [] })))
   reviewing = null
   active = run
   run.cancelled = false
   run.context.writing = true
   run.status = { ...run.status, phase: 'planning', detail: 'Writing your headline and caption from what you said', percent: 5, error: null }
   notify(run.status)
-  launch(run, { ...run.context.config, mode: 'write', recordings })
+  launch(run, { ...run.context.config, mode: 'write', recordings, ...(momentTake ? { write_ids: ids } : {}) })
   return run.status
 }
 
@@ -428,7 +468,12 @@ export async function renderRemix(value: unknown): Promise<RemixStatus> {
   run.status = { ...run.status, phase: 'rendering', detail: 'Starting', percent: 1, error: null,
     estimateUsd: run.status.drafts.filter((draft) => edits.some((edit) => edit.id === draft.id)).reduce((sum, draft) => sum + draft.estimateUsd, 0) }
   notify(run.status)
-  launch(run, { ...run.context.config, mode: 'render', approved: edits, ...(recordings ? { recordings } : {}) })
+  // Moment + my take: the moment as the member left it (nudged or not).
+  const approved = edits.map((edit) => {
+    const draft = run.status.drafts.find((item) => item.id === edit.id)
+    return draft?.format === 'moment_take' ? { ...edit, start_ms: Math.round(draft.startMs), end_ms: Math.round(draft.endMs) } : edit
+  })
+  launch(run, { ...run.context.config, mode: 'render', approved, ...(recordings ? { recordings } : {}) })
   return run.status
 }
 
@@ -543,10 +588,23 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
       run.context.writing = false
       // Cancelled before the headline arrived: back to review as it was (a headline that already arrived is kept: it's paid for).
       if (run.cancelled && result?.ok !== true) { finish(run, { phase: 'review', detail: 'Ready for review', percent: 100 }); return }
-      const drafts = result?.ok === true && Array.isArray(result.drafts) ? result.drafts.map(parseRemixDraft).filter((item): item is RemixDraft => item !== null && item.id === 0) : []
+      const momentTake = request.format === 'moment_take'
+      const drafts = result?.ok === true && Array.isArray(result.drafts) ? result.drafts.map(parseRemixDraft)
+        .filter((item): item is RemixDraft => item !== null && (momentTake ? run.context.draftIds.has(item.id) : item.id === 0)) : []
       const written = typeof result?.cost_usd === 'number' && Number.isFinite(result.cost_usd) ? result.cost_usd : 0
       run.context.planCostUsd += written
-      if (drafts.length) {
+      if (drafts.length && momentTake) {
+        logger.info('remix.written', { cost: written, takes: drafts.length })
+        // The moment stays as the member left it; the hook text, caption and what they said are new.
+        const merged = run.status.drafts.map((current) => {
+          const take = drafts.find((item) => item.id === current.id)
+          return take ? { ...current, headline: take.headline, postCaption: take.postCaption, notes: take.notes,
+            ...(current.moment ? { moment: { ...current.moment, said: take.moment?.said ?? '' } } : {}) } : current
+        })
+        // A take that couldn't be written (no speech heard, say) is named here; the others are written.
+        const missed = (Array.isArray(result?.warnings) ? result.warnings : []).filter((w): w is string => typeof w === 'string').map((w) => w.slice(0, 300)).slice(0, 3)
+        finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, drafts: merged, costUsd: run.context.planCostUsd, error: missed.length ? missed.join(' ') : null })
+      } else if (drafts.length) {
         logger.info('remix.written', { cost: written })
         const kept = run.status.drafts[0]
         // Pause & react: the part of their video stays as the member chose it.
@@ -729,7 +787,10 @@ export async function appendRecording(token: unknown, chunk: unknown): Promise<v
 export async function finishRecording(token: unknown, offsetSeconds: unknown, pause?: unknown): Promise<RemixRecordings> {
   const writer = typeof token === 'string' ? writers.get(token) : undefined
   if (!writer) throw new Error('That recording was stopped.')
-  const pauseTake = writer.run.status.drafts.find((draft) => draft.id === writer.draftId)?.format === 'pause_react'
+  const takeFormat = writer.run.status.drafts.find((draft) => draft.id === writer.draftId)?.format
+  const pauseTake = takeFormat === 'pause_react'
+  // Pause & react and a take on a moment: webcam recordings often have no length in their header.
+  const timedTake = pauseTake || takeFormat === 'moment_take'
   let events: PauseEvent[] | undefined
   let measured = 0
   if (pauseTake) {
@@ -746,9 +807,9 @@ export async function finishRecording(token: unknown, offsetSeconds: unknown, pa
     // Unknown (null) when the clip never started playing: the engine then lines the reaction up by sound.
     const offset = typeof offsetSeconds === 'number' && Number.isFinite(offsetSeconds) && offsetSeconds >= 0 && offsetSeconds < 600 ? offsetSeconds : null
     // A webcam recording often has no length in its header: read it from its frames, or the recorder's own clock.
-    const seconds = (pauseTake ? await recordingSecondsOf(writer.file) : await mediaSecondsOf(writer.file)) || measured
+    const seconds = (timedTake ? await recordingSecondsOf(writer.file) : await mediaSecondsOf(writer.file)) || measured
     if (writer.bytes < 1000) { await rm(writer.file, { force: true }); throw new Error('Nothing was recorded. Check your camera and microphone, then try again.') }
-    if (pauseTake && seconds < 1) { await rm(writer.file, { force: true }); throw new Error('That recording is too short. Record your reaction again.') }
+    if (timedTake && seconds < 1) { await rm(writer.file, { force: true }); throw new Error('That recording is too short. Record your reaction again.') }
     await keep(writer.run, writer.draftId, writer.part, { path: writer.file, offsetS: writer.part === 'reaction' ? offset : null, uploaded: false, seconds,
       ...(events ? { events } : {}) })
     return remixRecordings()
@@ -782,6 +843,10 @@ export async function uploadRecording(draftId: unknown, part: unknown, source: s
     if (checked.draft.format === 'image' && seconds > MAX_IMAGE_TAKE_SECONDS + 1) {
       await rm(file, { force: true })
       throw new Error(`Keep your take to ${MAX_IMAGE_TAKE_SECONDS / 60} minutes. Trim it on your phone, then upload it again.`)
+    }
+    if (checked.draft.format === 'moment_take' && seconds > MOMENT_TAKE_MAX_SECONDS + 1) {
+      await rm(file, { force: true })
+      throw new Error(`Keep your take to ${MOMENT_TAKE_MAX_SECONDS / 60} minutes. Trim it on your phone, then upload it again.`)
     }
     let detection: PauseDetection | undefined
     if (checked.draft.format === 'pause_react') {
@@ -837,7 +902,7 @@ function engineRecordings(run: ActiveRemix, edits: { id: number; beats: unknown[
     }
     out[String(edit.id)] = headlineOnly(draft.format)
       // Over a screenshot there's nothing to line up with: the take starts the video.
-      ? { reaction: { path: takes!.get('reaction')!.path, offset_s: draft.format === 'image' ? 0 : takes!.get('reaction')!.offsetS } }
+      ? { reaction: { path: takes!.get('reaction')!.path, offset_s: draft.format === 'image' || draft.format === 'moment_take' ? 0 : takes!.get('reaction')!.offsetS } }
       : { intro: takes!.get('intro')!.path, beats: parts.filter((part) => part.startsWith('beat')).map((part) => takes!.get(part)!.path), close: takes!.get('close')!.path }
   }
   return out
@@ -950,6 +1015,80 @@ export async function setRemixTrim(draftId: unknown, startMs: unknown, endMs: un
 }
 
 // ---------------------------------------------------------------------------
+// Moment + my take: nudge a moment, find another one in its range, talking points
+// ---------------------------------------------------------------------------
+
+function momentDraft(draftId: unknown): { run: ActiveRemix; draft: RemixDraft & { moment: NonNullable<RemixDraft['moment']> } } {
+  const run = reviewRun()
+  if (run.context.request.format !== 'moment_take') throw new Error('This remix isn’t a Moment + my take.')
+  const draft = run.status.drafts.find((item) => item.id === draftId && item.format === 'moment_take')
+  if (!draft?.moment) throw new Error('That moment is no longer in this review.')
+  return { run, draft: draft as RemixDraft & { moment: NonNullable<RemixDraft['moment']> } }
+}
+
+function replaceDraft(run: ActiveRemix, next: RemixDraft, addedCostUsd = 0): void {
+  run.context.planCostUsd += addedCostUsd
+  run.status = { ...run.status, drafts: run.status.drafts.map((item) => item.id === next.id ? next : item),
+    ...(addedCostUsd > 0 ? { costUsd: (run.status.costUsd ?? 0) + addedCostUsd } : {}) }
+  notify(run.status)
+}
+
+/** The member's own start and end for a moment (inside its range, 2-40 seconds). Free: nothing is made yet. */
+export function setMomentBounds(draftId: unknown, startMs: unknown, endMs: unknown): RemixDraft {
+  const { run, draft } = momentDraft(draftId)
+  const problem = momentBoundsProblem(startMs, endMs, draft.moment)
+  if (problem) throw new Error(problem)
+  const next = { ...draft, startMs: startMs as number, endMs: endMs as number }
+  replaceDraft(run, next)
+  return next
+}
+
+/** One at a time per review: finding another moment or talking points. */
+async function momentWork<T>(run: ActiveRemix, work: () => Promise<T>): Promise<T> {
+  if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
+  if (run.context.momentWork) throw new Error('Wait for the moment you asked for.')
+  run.context.momentWork = true
+  try { return await work() } finally { run.context.momentWork = false }
+}
+
+/** "Find another moment in this range": one planning call that avoids the moments already shown. */
+export async function anotherMoment(draftId: unknown): Promise<RemixDraft> {
+  const { run, draft } = momentDraft(draftId)
+  return momentWork(run, async () => {
+    const result = await runEngineOnce({ mode: 'moment', output_dir: run.status.folder, draft_id: draft.id }, 10 * 60_000, true,
+      'Another moment couldn’t be found this time. Try again.')
+    if (reviewing !== run) throw new Error('This review was closed.')
+    const found = parseRemixDraft((result as { draft?: unknown }).draft)
+    if (!found || found.id !== draft.id || found.format !== 'moment_take') throw new Error('Another moment couldn’t be found this time. Try again.')
+    const cost = typeof result.cost_usd === 'number' && Number.isFinite(result.cost_usd) && result.cost_usd > 0 ? result.cost_usd : 0
+    // The current draft may have changed meanwhile (talking points, a nudge): only the moment itself is replaced.
+    const current = run.status.drafts.find((item) => item.id === draft.id) ?? draft
+    const next: RemixDraft = { ...current, startMs: found.startMs, endMs: found.endMs, quote: found.quote, why: found.why,
+      moment: { ...(current.moment ?? draft.moment), picks: found.moment?.picks ?? draft.moment.picks + 1, points: [] } }
+    logger.info('remix.moment.another', { cost })
+    replaceDraft(run, next, cost)
+    return next
+  })
+}
+
+/** "Give me talking points": three short prompts for the member's take on a moment (one small call). */
+export async function momentTalkingPoints(draftId: unknown): Promise<RemixDraft> {
+  const { run, draft } = momentDraft(draftId)
+  return momentWork(run, async () => {
+    const config = run.context.config
+    const { points, costUsd } = await suggestTalkingPoints({
+      quote: draft.quote, title: draft.sourceTitle, creator: draft.creator,
+      brandName: typeof config.brand_name === 'string' ? config.brand_name : '', brand: typeof config.brand_identity === 'string' ? config.brand_identity : ''
+    }, loadSettings().openrouterApiKey)
+    if (reviewing !== run) throw new Error('This review was closed.')
+    const current = run.status.drafts.find((item) => item.id === draft.id) ?? draft
+    const next: RemixDraft = { ...current, moment: { ...(current.moment ?? draft.moment), points } }
+    replaceDraft(run, next, costUsd)
+    return next
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Re-editing a finished remix: new hook text, look, captions or box size,
 // re-rendered from the parts saved when it was made (.edit/<clip>), no AI cost.
 // ---------------------------------------------------------------------------
@@ -1011,7 +1150,7 @@ async function remixClipRecord(folder: string, clipIndex: number): Promise<Recor
 const taskChildren = new Set<ChildProcess>()
 
 /** Run the engine once outside a remix run (re-editing, finding pauses); resolves with its result line. */
-async function runEngineOnce(config: Record<string, unknown>, limitMs: number, task = false): Promise<Record<string, unknown>> {
+async function runEngineOnce(config: Record<string, unknown>, limitMs: number, task = false, failure?: string): Promise<Record<string, unknown>> {
   const settings = loadSettings(), engine = getEnginePath()
   const env: Record<string, string | undefined> = {
     ...runtimeEnvironment(), ...getSettingsForBridge(settings), LAYOUT_VISION_ENABLED: 'false',
@@ -1043,7 +1182,7 @@ async function runEngineOnce(config: Record<string, unknown>, limitMs: number, t
       if (recomposeChild === child) recomposeChild = undefined
       if (result?.ok === true) { resolve(result); return }
       logger.warn('remix.recompose.failed', { stderr: stderr.slice(-1500) })
-      reject(new Error(typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : task ? 'Your recording could not be read. Try an MP4 or MOV from your phone.' : 'The video could not be made again. Try again.'))
+      reject(new Error(typeof result?.error === 'string' && result.error !== 'failed' ? result.error.slice(0, 400) : failure ?? (task ? 'Your recording could not be read. Try an MP4 or MOV from your phone.' : 'The video could not be made again. Try again.')))
     })
     child.stdin.on('error', () => undefined)
     child.stdin.end(JSON.stringify(config))

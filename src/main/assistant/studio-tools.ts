@@ -141,7 +141,7 @@ function remixView(status: RemixStatus | null): Record<string, unknown> {
 }
 
 function recordingFlow(input: Record<string, unknown>): boolean {
-  return input.presenter === 'camera' || input.format === 'image' || input.format === 'pause_react'
+  return input.presenter === 'camera' || input.format === 'image' || input.format === 'pause_react' || input.format === 'moment_take'
 }
 
 interface RemixPlan { request: Record<string, unknown>; sourceLines: string[]; avatar: AvatarSummary | null; ctaName: string | null; brand: BrandIdentity | null }
@@ -426,7 +426,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
       inputSchema: object({}),
       readOnly: true,
       run: async () => ({
-        formats: REMIX_FORMATS.map((item) => ({ id: item.id, label: item.label, detail: item.detail, ...(item.id === 'image' || item.id === 'pause_react' ? { needsMember: 'The member records on camera in the app: open Remix for them.' } : {}) })),
+        formats: REMIX_FORMATS.map((item) => ({ id: item.id, label: item.label, detail: item.detail, ...(item.id === 'image' || item.id === 'pause_react' || item.id === 'moment_take' ? { needsMember: 'The member records on camera in the app: open Remix for them.' } : {}) })),
         styles: REMIX_ANGLES.map((item) => ({ id: item.id, label: item.label, description: item.description })),
         orders: REMIX_ORDERS,
         presenters: REMIX_HOSTS.filter((item) => !item.unavailable).map((item) => ({ id: item.id, label: item.label, detail: item.detail, ...(item.id === 'camera' ? { needsMember: 'The member records each take on camera in the app: open Remix for them.' } : {}) })),
@@ -509,6 +509,8 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
               ? '“Article or post” remixes are the member talking on camera over a screenshot they choose. Remix is open: they choose the screenshot and record their take there.'
               : input.format === 'pause_react'
               ? '“Pause & react” videos are the member on camera, pausing the other video whenever they talk. Remix is open: they choose the video and record their reaction there.'
+              : input.format === 'moment_take'
+              ? '“Moment + my take” videos open with a moment from a long video, then the member on camera. Remix is open: they paste the video, add their time ranges and record their take on each moment there.'
               : '“Me, on camera” remixes need the member to record each take on camera. Remix is open: they set it up and record there. You can follow along with get_remix_status.'
           }
         }
@@ -567,7 +569,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
         const status = reviewStatus()
         const [draft] = chosenDrafts(status, [input.draftId as number])
         const spoken = ['intro', 'beats', 'close'].filter((key) => input[key] !== undefined)
-        if (draft.format !== 'commentary' && spoken.length) throw new AssistantToolError(`This take has no spoken lines (${draft.format === 'silent' ? 'Silent react' : draft.format === 'pause_react' ? 'Pause & react' : 'Article or post'}): change only its headline or postCaption.`)
+        if (draft.format !== 'commentary' && spoken.length) throw new AssistantToolError(`This take has no spoken lines (${draft.format === 'silent' ? 'Silent react' : draft.format === 'pause_react' ? 'Pause & react' : draft.format === 'moment_take' ? 'Moment + my take' : 'Article or post'}): change only its headline or postCaption.`)
         if (!['headline', 'postCaption', ...spoken].some((key) => input[key] !== undefined)) throw new AssistantToolError('Nothing to change: give a headline, intro, beats, close or postCaption.')
         // Keep each beat's B-roll search when its line is reworded.
         const beats = input.beats === undefined ? undefined : (input.beats as string[]).map((text, index) => ({ text, broll: draft.beats[index]?.broll ?? '' }))
