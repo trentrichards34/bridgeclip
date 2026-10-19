@@ -26,6 +26,7 @@ from functools import lru_cache
 from typing import Any, Callable, Optional
 
 from clip_engine.config import CaptionStyle, get_settings
+from clip_engine.services.spoken_numbers import number_spans
 from clip_engine.services.transcription_service import TranscriptSegment, TranscriptWord
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,25 @@ SRT_LINE_CHARS = 42
 SRT_MAX_CUE_MS = 6000
 SRT_PAUSE_BREAK_MS = 700
 SRT_LINGER_MS = 400
+
+
+def digitize_words(words: list[TranscriptWord]) -> list[TranscriptWord]:
+    """Spoken quantities as digits ("fifteen billion" -> "15 billion"): the words of one number become one
+    caption word spanning their times, so the timing stays the words' own (see spoken_numbers)."""
+    spans = number_spans([w.word for w in words])
+    if not spans:
+        return words
+    out: list[TranscriptWord] = []
+    i = 0
+    for span in spans:
+        out.extend(words[i:span.first])
+        out.append(TranscriptWord(
+            word=span.text, start_time_ms=words[span.first].start_time_ms,
+            end_time_ms=max(w.end_time_ms for w in words[span.first:span.last + 1]),
+        ))
+        i = span.last + 1
+    out.extend(words[i:])
+    return out
 
 
 def _norm(word: str) -> str:
@@ -262,6 +282,7 @@ class CaptionGeneratorService:
             w for w in sorted(words, key=lambda w: w.start_time_ms)
             if w.end_time_ms > clip_start_ms and w.start_time_ms < clip_end_ms and w.word.strip()
         ]
+        words = digitize_words(words)
         if not words:
             return None
 
@@ -340,10 +361,10 @@ class CaptionGeneratorService:
             else:
                 all_words.extend(self._split_segment_into_words(segment))
 
-        clip_words = [
+        clip_words = digitize_words([
             w for w in all_words
             if w.end_time_ms > clip_start_ms and w.start_time_ms < clip_end_ms
-        ]
+        ])
         word_groups = self._group_words(clip_words, style.max_words_per_line)
 
         events: list[str] = []
@@ -373,12 +394,13 @@ class CaptionGeneratorService:
             end_ms = min(clip_end_ms - clip_start_ms, segment.end_time_ms - clip_start_ms)
             if end_ms <= start_ms:
                 continue
+            shown = self._segment_words(segment.text)
             tokens = [
                 _Token(self._display_word(w, style), PAST, self._is_emphasis(w))
-                for w in segment.text.split()
+                for w in shown
             ]
             segment_events = self._layered_events(tokens, start_ms, end_ms, style, entrance=False)
-            events.extend(place(segment_events, segment.text.split()) if place else segment_events)
+            events.extend(place(segment_events, shown) if place else segment_events)
         return events
 
     def _apply_anchors(
@@ -725,7 +747,24 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 
     def _is_emphasis(self, word: str) -> bool:
         key = _norm(word)
-        return bool(key) and (key in self._emphasis or key.rstrip("s") in self._emphasis)
+        if bool(key) and (key in self._emphasis or key.rstrip("s") in self._emphasis):
+            return True
+        # A number shown as one word ("15 billion") is a punch word when any part of it is.
+        parts = word.split()
+        return len(parts) > 1 and any(self._is_emphasis(part) for part in parts)
+
+    @staticmethod
+    def _segment_words(text: str) -> list[str]:
+        """A segment's words without timing, its spoken quantities as digits (one word per number)."""
+        words = text.split()
+        spans = number_spans(words)
+        out: list[str] = []
+        i = 0
+        for span in spans:
+            out.extend(words[i:span.first])
+            out.append(span.text)
+            i = span.last + 1
+        return out + words[i:]
 
     # ------------------------------------------------------------------
     # Word Grouping (punctuation-aware)

@@ -28,6 +28,7 @@ from PIL import Image, ImageDraw
 from clip_engine.services.media_process import run_media
 from clip_engine.services.openrouter import OpenRouterError, apply_reasoning, chat_completion, json_schema_format, message_text
 from clip_engine.services.sound_effects import MIX_LEVEL, SOUNDS, sound_path
+from clip_engine.services.spoken_numbers import SCALES, TENS, UNITS
 from clip_engine.services.transcription_service import TranscriptSegment, TranscriptWord
 
 logger = logging.getLogger(__name__)
@@ -290,10 +291,8 @@ def _mark_inline_restarts(toks: list[tuple[int, str]], marks: list[Optional[str]
 # Numbers said out loud (pop-ups and hook text may only show numbers that were said)
 # ---------------------------------------------------------------------------
 
-_UNITS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
-                                    "fifteen sixteen seventeen eighteen nineteen".split())}
-_TENS = {w: 10 * (i + 2) for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split())}
-_SCALES = {"hundred": 100, "thousand": 1e3, "k": 1e3, "million": 1e6, "m": 1e6, "mil": 1e6, "billion": 1e9, "b": 1e9, "bn": 1e9, "trillion": 1e12}
+# The word tables are shared with the captions (spoken quantities shown as digits).
+_UNITS, _TENS, _SCALES = UNITS, TENS, SCALES
 _NUMBER = re.compile(r"^[$€£]?(\d+(?:[.,]\d+)*)(k|m|b|bn|x|%)?$", re.I)
 
 
