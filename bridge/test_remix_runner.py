@@ -161,6 +161,52 @@ class ParseConfigTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=repr(over)[:120]):
                 remix_runner.parse_config(self.base(host="camera", **over))
 
+    def pause(self, **over):
+        me = os.path.abspath("me.webm")
+        timeline = {"start": 0.0, "end": 6.0, "trim_start": 2.0, "trim_end": 20.0, "source": "app",
+                    "segments": [{"start": 0.0, "end": 2.0, "kind": "play", "at": 2.0}, {"start": 2.0, "end": 6.0, "kind": "pause", "at": 4.0}]}
+        config = {"mode": "render", "output_dir": os.path.abspath("out"), "host": "camera", "format": "pause_react", "sources": [],
+                  "pause_layout": "split", "pause_captions": "both", "camera_layout": "cutout",
+                  "recordings": {"0": {"reaction": {"path": me, "offset_s": 0}, "timeline": timeline}}}
+        config.update(over)
+        return config
+
+    def test_pause_react_keys(self):
+        made = remix_runner.parse_config(self.pause())
+        self.assertEqual((made.format, made.host, made.angle, made.pause_layout, made.pause_captions, made.camera_layout),
+                         ("pause_react", "camera", "reaction", "split", "both", "cutout"))
+        self.assertEqual(made.recordings["0"]["reaction"], {"path": os.path.abspath("me.webm"), "offset_s": 0.0})
+        self.assertEqual(made.recordings["0"]["timeline"]["segments"][1]["kind"], "pause")
+        plan = remix_runner.parse_config(self.pause(mode="plan", sources=[os.path.abspath("clip.mp4")], recordings=None,
+                                                    pause_layout=None, pause_captions=None))
+        self.assertEqual((plan.pause_layout, plan.pause_captions, plan.recordings), ("box", "member", {}))
+        self.assertEqual(remix_runner.parse_config(self.pause(mode="write")).format, "pause_react")
+        pauses = remix_runner.parse_config({"mode": "pauses", "recording": os.path.abspath("phone.mov"), "source": os.path.abspath("clip.mp4"),
+                                            "trim_start": 0, "trim_end": 12.5})
+        self.assertEqual(pauses, {"recording": os.path.abspath("phone.mov"), "source": os.path.abspath("clip.mp4"), "trim_start": 0.0, "trim_end": 12.5})
+
+    def test_rejects_bad_pause_react_values(self):
+        me = os.path.abspath("me.webm")
+        good = self.pause()["recordings"]["0"]
+        gap = dict(good["timeline"], segments=[{"start": 0.0, "end": 2.0, "kind": "play", "at": 2.0}, {"start": 3.0, "end": 6.0, "kind": "pause", "at": 4.0}])
+        bads = [
+            self.pause(host="voice"), self.pause(pause_layout="side"), self.pause(pause_captions="theirs"), self.pause(pause_layout=5),
+            self.pause(mode="plan", sources=[]), self.pause(mode="plan", sources=[os.path.abspath("a.mp4"), os.path.abspath("b.mp4")]),
+            self.pause(recordings={"0": {"reaction": {"path": me}}}),
+            self.pause(recordings={"0": dict(good, timeline=gap)}),
+            self.pause(recordings={"0": dict(good, timeline=dict(good["timeline"], end=400.0))}),
+            self.pause(recordings={"0": dict(good, reaction={"path": "rel.webm"})}),
+            self.pause(recordings={"0": dict(good, reaction={"path": me, "offset_s": 3})}),
+            self.pause(recordings={"0": dict(good, extra=1)}),
+            {"mode": "pauses", "recording": "rel.mov", "source": os.path.abspath("clip.mp4"), "trim_start": 0, "trim_end": 5},
+            {"mode": "pauses", "recording": me, "source": os.path.abspath("clip.mp4"), "trim_start": 3, "trim_end": 3.2},
+            {"mode": "pauses", "recording": me, "source": os.path.abspath("clip.mp4"), "trim_start": True, "trim_end": 5},
+            {"mode": "pauses", "recording": me, "source": os.path.abspath("clip.mp4"), "trim_start": 0, "trim_end": 5, "output_dir": "/x"},
+        ]
+        for bad in bads:
+            with self.assertRaises(ValueError, msg=repr(bad)[:160]):
+                remix_runner.parse_config(bad)
+
 
 if __name__ == "__main__":
     unittest.main()
