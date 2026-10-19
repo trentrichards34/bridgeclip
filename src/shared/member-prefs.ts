@@ -14,7 +14,7 @@ import { isCaptionPresetId } from './caption-presets'
 import { isCtaId } from './ctas'
 import { parseHeadlineLook, type HeadlineLook } from './headline-look'
 import { DURATION_IDS, isVideoSpeed } from './job-contract'
-import { HEADLINE_VOICES, QUALITY_BARS, TITLE_STYLES, type HeadlineVoice, type QualityBar, type TitleStyle } from './jobs'
+import { HEADLINE_VOICES, QUALITY_BARS, SCREEN_FOCUS_MODES, TITLE_STYLES, type HeadlineVoice, type QualityBar, type ScreenFocus, type TitleStyle } from './jobs'
 import { isModelId } from './openrouter-models'
 import {
   AVATAR_VOICE, MAX_CTA_OFFER_CHARS, MAX_REMIXES, REMIX_FORMATS, REMIX_VOICES, isRemixAngle, isRemixHost, isRemixOrder, normalizeCtaKeyword, parseCameraSettings,
@@ -32,6 +32,8 @@ export interface CreateStyle {
   aspectRatio: '9:16' | '16:9'
   layoutStyle: 'auto' | 'fill' | 'fit'
   layoutVision: boolean
+  /** Screen share clips under Smart framing: a mix, or one style. */
+  screenFocus: ScreenFocus
   pacing: 'tight' | 'natural'
   videoSpeed: number
   durations: string[]
@@ -116,7 +118,7 @@ export const MAX_SUPPORT_LINK = 300
 export const MAX_SAMPLE_VIDEO_LINK = 2048
 
 export const CREATE_STYLE_KEYS = [
-  'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
+  'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
   'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'headlineVoice',
   'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'captionLanguage'
 ] as const satisfies readonly (keyof CreateStyle)[]
@@ -153,6 +155,7 @@ const CREATE_CHECKS: { [K in keyof CreateStyle]: (value: unknown) => boolean } =
   aspectRatio: oneOf(['9:16', '16:9']),
   layoutStyle: oneOf(['auto', 'fill', 'fit']),
   layoutVision: bool,
+  screenFocus: oneOf(SCREEN_FOCUS_MODES),
   pacing: oneOf(['tight', 'natural']),
   videoSpeed: isVideoSpeed,
   durations: (value) => Array.isArray(value) && value.length <= DURATION_IDS.length && value.every((item) => DURATION_IDS.includes(item as string)) && new Set(value).size === value.length,

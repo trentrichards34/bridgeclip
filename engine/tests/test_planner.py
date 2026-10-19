@@ -302,6 +302,31 @@ class TestPlanClips:
         assert result.api_costs.estimated_cost_usd == 0.01
         assert result.api_costs.cost_incomplete
 
+    def test_screen_focus_is_asked_for_and_parsed(self, no_sleep):
+        from clip_engine.services.intelligence_planner import clip_plan_schema
+        planner = make_planner()
+        story = {**clip(10, 40), "screen_focus": "presenter", "screen_focus_reason": "  A story about\nquitting ads  "}
+        demo = {**clip(60, 90), "screen_focus": "Screen", "screen_focus_reason": "Walks through the setup"}
+        old = clip(120, 150)  # an older model that ignores the field
+        junk = {**clip(180, 210), "screen_focus": "split", "screen_focus_reason": "x"}
+        planner._http_client = FakeClient([(200, completion(json.dumps({"insights": "x", "clips": [story, demo, old, junk]})))])
+        result = asyncio.run(planner.plan_clips(
+            transcript_result=make_transcript(300), video_metadata=SimpleNamespace(duration_seconds=300),
+            max_clips=4, auto_clip_count=False, min_duration_seconds=15, max_duration_seconds=60,
+        ))
+        by_start = {s.start_time_ms: s for s in result.segments}
+        assert (by_start[10000].screen_focus, by_start[10000].screen_focus_reason) == ("presenter", "A story about quitting ads")
+        assert (by_start[60000].screen_focus, by_start[60000].screen_focus_reason) == ("screen", "Walks through the setup")
+        assert by_start[120000].screen_focus is None and by_start[180000].screen_focus is None
+        system = planner._http_client.payloads[0]["messages"][0]["content"]
+        assert "SCREEN SHARE FRAMING" in system and 'Prefer "presenter" whenever the clip still works as audio only' in system
+        item = CLIP_PLAN_SCHEMA["properties"]["clips"]["items"]
+        assert item["properties"]["screen_focus"]["enum"] == ["presenter", "screen", "mixed"]
+        assert {"screen_focus", "screen_focus_reason"} <= set(item["required"])
+        # Longform edits are 16:9 and framed whole: no screen share framing.
+        longform = clip_plan_schema(True)["properties"]["clips"]["items"]
+        assert "screen_focus" not in longform["properties"] and "screen_focus" not in longform["required"]
+
     def test_headline_is_parsed_and_the_prompt_asks_for_it(self, no_sleep):
         planner = make_planner()
         raw = {**clip(10, 40), "headline": "\u201cThis trader spent $60,000 on breakfast\u201d #trading"}

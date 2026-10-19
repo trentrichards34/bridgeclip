@@ -87,6 +87,17 @@ class BridgeTests(unittest.TestCase):
         with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
             self.assertTrue(asyncio.run(bridge.run(self.config(clip_request="the pricing debate"))))
         self.assertEqual(requests[-1]["clip_request"], "the pricing debate")
+        self.assertEqual(requests[-1]["screen_focus"], "smart")
+        with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
+            self.assertTrue(asyncio.run(bridge.run(self.config(screen_focus="presenter"))))
+        self.assertEqual(requests[-1]["screen_focus"], "presenter")
+
+    def test_screen_focus_is_smart_split_or_presenter(self):
+        for value in ("smart", "split", "presenter"):
+            self.assertEqual(bridge.validate_config(self.config(screen_focus=value))["screen_focus"], value)
+        for bad in ("mixed", "", None, 1, "Presenter"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "screen share framing"):
+                bridge.validate_config(self.config(screen_focus=bad))
 
     def test_clip_request_validation_and_no_match_message(self):
         self.assertEqual(bridge.validate_config(self.config(clip_request="x" * 1000))["clip_request"], "x" * 1000)

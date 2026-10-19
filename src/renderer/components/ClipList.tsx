@@ -3,7 +3,7 @@ import { ClipCtaDialog } from './CtaPicker'
 import { RemixEditDialog } from './RemixEditDialog'
 import { MoreClipsButton } from './MoreClipsDialog'
 import { useJobStore } from '../store/use-job-store'
-import { parseJobOutput } from '../../shared/job-output'
+import { parseJobOutput, type ClipScreenFocus } from '../../shared/job-output'
 import { editorProgress, type AutomaticEditInfo } from '../../shared/clip-editor'
 import { ClipEditor } from './ClipEditor'
 import { EditAutomaticDialog } from './EditAutomaticDialog'
@@ -328,6 +328,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
   const costs = readCosts(output.metrics?.api_costs)
   const framingNotice = framingProblem(output, vertical)
   const analysisNotice = sourceAnalysisNotice(output)
+  const screenFocusByClip = screenFocusByIndex(output)
 
   const renderGrid = (items: ClipArtifact[]): React.JSX.Element => (
         <div
@@ -342,6 +343,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
             <ClipCard
               key={clip.clip_index}
               clip={clip}
+              screenFocus={screenFocusByClip.get(clip.clip_index)}
               postingStatus={statusByClip.get(clip.clip_index)}
               vertical={vertical}
               topPick={clip.clip_index === topIndex && clips.length > 1}
@@ -686,6 +688,19 @@ export function framingProblem(output: JobOutput, vertical: boolean): string | n
     notices.push(`Smart framing kept the whole frame for clip${sorted.length === 1 ? '' : 's'} ${shown}${more}. Review the framing if you expected a closer crop.`)
   }
   return notices.join(' ') || null
+}
+
+/** Screen share clips' framing decisions, by clip index (from the run's clip_layouts). */
+export function screenFocusByIndex(output: JobOutput): Map<number, ClipScreenFocus> {
+  const result = new Map<number, ClipScreenFocus>()
+  const layouts = output.metrics?.clip_layouts
+  if (!Array.isArray(layouts)) return result
+  for (const layout of layouts) {
+    if (layout && typeof layout === 'object' && Number.isSafeInteger(layout.clip_index) && layout.screen_focus && typeof layout.screen_focus === 'object') {
+      result.set(layout.clip_index, layout.screen_focus as ClipScreenFocus)
+    }
+  }
+  return result
 }
 
 export function sourceAnalysisNotice(output: JobOutput): string | null {

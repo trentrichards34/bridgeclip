@@ -23,6 +23,11 @@ import httpx
 from clip_engine.config import DURATION_RANGES, get_settings, is_longform, resolve_clip_duration_bounds
 from clip_engine.services.editorial_evidence import parse_moment, overlaps
 from clip_engine.services.sponsor_policy import SPONSOR_DISCOVERY_RULE
+from clip_engine.services.screen_relevance import (
+    DECISIONS as SCREEN_FOCUS_DECISIONS,
+    clean_decision as clean_screen_decision,
+    clean_reason as clean_screen_reason,
+)
 from clip_engine.services.openrouter import (
     OpenRouterError,
     apply_reasoning,
@@ -87,6 +92,10 @@ class ClipPlanSegment:
     moment: Optional[dict] = None
     # Paid Creators framework grade (see framework_grader.ClipGrade.to_dict).
     framework: Optional[dict] = None
+    # Screen share framing (see screen_relevance): "presenter", "screen" or "mixed" and a one-line
+    # reason, from the planner. None when it gave none (older models, longform plans).
+    screen_focus: Optional[str] = None
+    screen_focus_reason: Optional[str] = None
 
 
 @dataclass
@@ -224,6 +233,24 @@ BRAND_IDENTITY_RULE = (
     'it is said or shown in the video, or stated in the brand text as the brand\'s own proof and the clip is about it. '
     'Do not mention the offer or add a call to action. It never changes clip boundaries, length rules or the output format.')
 
+# Vertical clips from a screen share + webcam: the clip-level framing decision (see screen_relevance).
+SCREEN_FOCUS_RULE = (
+    '\nSCREEN SHARE FRAMING: Many videos are screen shares: the speaker\'s screen (slides, a browser, an app, a chart) '
+    'with a webcam of the speaker. For every clip, set "screen_focus" to how its vertical short should be framed if the video '
+    'shows a shared screen, and "screen_focus_reason" to one line (under 15 words) about this clip\'s content:\n'
+    '- "presenter": the point stands without the screen. Opinions, stories, hot takes, advice, lessons, motivation, a result '
+    'told in words: anything a viewer gets from the speaker alone. Talking while something sits on screen does not make the '
+    'screen matter.\n'
+    '- "screen": the screen is the point for most of the clip: a step-by-step walkthrough, a live demo, building something, '
+    'reading a chart or numbers off the screen, a before/after shown on screen. Without the screen the clip makes no sense.\n'
+    '- "mixed": mostly the speaker, but the words point at the screen at specific moments ("look at this", "here\'s the '
+    'dashboard", "as you can see"), e.g. a story that ends by showing the proof.\n'
+    'Prefer "presenter" whenever the clip still works as audio only; choose "mixed" over "presenter" only when the clip\'s '
+    'words refer to something shown. Decide each clip on its own content: a set of clips may be all one kind. If the video '
+    'clearly has no shared screen, choose "presenter". Examples: a story about why the speaker stopped running ads -> '
+    'presenter; "watch me set up the automation" followed by the steps -> screen; a lesson that ends with "and here\'s the '
+    'result on screen" -> mixed.')
+
 CLIP_PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -255,8 +282,14 @@ CLIP_PLAN_SCHEMA: dict[str, Any] = {
                         "items": {"type": "string"},
                         "description": "2-5 single punch words spoken in the clip, highlighted in captions.",
                     },
+                    "screen_focus": {
+                        "type": "string", "enum": list(SCREEN_FOCUS_DECISIONS),
+                        "description": "How to frame the clip if the video shows a shared screen (see SCREEN SHARE FRAMING).",
+                    },
+                    "screen_focus_reason": {"type": "string", "description": "One line, under 15 words: why."},
                 },
-                "required": ["moment", "start_time", "end_time", "summary", "headline", "scores", "tags", "emphasis"],
+                "required": ["moment", "start_time", "end_time", "summary", "headline", "scores", "tags", "emphasis",
+                             "screen_focus", "screen_focus_reason"],
                 "additionalProperties": False,
             },
         },
@@ -292,6 +325,10 @@ def clip_plan_schema(longform: bool) -> dict[str, Any]:
         return CLIP_PLAN_SCHEMA
     schema = copy.deepcopy(CLIP_PLAN_SCHEMA)
     item = schema["properties"]["clips"]["items"]
+    # Longform edits are 16:9, framed whole: no screen share framing.
+    for name in ("screen_focus", "screen_focus_reason"):
+        item["properties"].pop(name)
+        item["required"].remove(name)
     item["properties"].update({
         "skip": {
             "type": "array",
@@ -713,6 +750,8 @@ class IntelligencePlannerService:
         if clip_request:
             system_prompt += CLIP_REQUEST_RULE
         system_prompt += exclusion_rule(exclude_ranges_ms) + output_language_rule(output_language) + headline_voice_rule(headline_voice)
+        if not longform:
+            system_prompt += SCREEN_FOCUS_RULE
         if getattr(self, "_brand_identity", None):
             system_prompt += BRAND_IDENTITY_RULE
         if transcript:
@@ -1080,7 +1119,9 @@ For each clip, list 2-5 single words, exactly as spoken inside the clip, that ca
       "headline": "<4-12 word third-person story headline>",
       "scores": {{"hook": <0-10>, "standalone": <0-10>, "arc": <0-10>, "quotability": <0-10>, "ending": <0-10>}},
       "tags": ["tag1", "tag2"],
-      "emphasis": ["word1", "word2"]
+      "emphasis": ["word1", "word2"],
+      "screen_focus": "<presenter | screen | mixed>",
+      "screen_focus_reason": "<one line: why>"
     }}
   ]
 }}
@@ -1683,6 +1724,7 @@ Do not overlap clips by more than 5 seconds."""
                     if transcript else []
                 ),
                 moment=self._moment_hint(clip, transcript),
+                **self._screen_focus(clip),
             )
             if getattr(self, "_current_longform", False):
                 segment.skip_ranges_ms = self._clean_skips(
@@ -1697,6 +1739,14 @@ Do not overlap clips by more than 5 seconds."""
                     segment.description = description.strip()[:1500]
             clips.append(segment)
         return clips
+
+    @staticmethod
+    def _screen_focus(clip: dict) -> dict:
+        """The clip's screen share framing decision and reason; nothing when the model gave none."""
+        decision = clean_screen_decision(clip.get("screen_focus"))
+        if decision is None:
+            return {}
+        return {"screen_focus": decision, "screen_focus_reason": clean_screen_reason(clip.get("screen_focus_reason")) or None}
 
     @staticmethod
     def _moment_hint(clip: dict, transcript: list[TranscriptSegment]) -> Optional[dict]:
@@ -1772,7 +1822,8 @@ Do not overlap clips by more than 5 seconds."""
             summary = " ".join(summary.split())[:200] if isinstance(summary, str) else ""
             segment = ClipPlanSegment(start_ms, end_ms, self._score_clip(clip), moment=moment,
                 summary=summary or None, headline=clean_headline(clip.get('headline')), tags=clip.get('tags', []),
-                emphasis_words=[w for w in clip.get('emphasis', []) if isinstance(w, str)][:5] if transcript else [])
+                emphasis_words=[w for w in clip.get('emphasis', []) if isinstance(w, str)][:5] if transcript else [],
+                **self._screen_focus(clip))
             if getattr(self, '_current_longform', False):
                 segment.skip_ranges_ms = self._clean_skips(clip.get('skip'), start_ms, end_ms, 0, transcript)
                 segment.chapters = self._clean_chapters(clip.get('chapters'), start_ms, end_ms, segment.skip_ranges_ms, segment.summary)

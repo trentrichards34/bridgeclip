@@ -92,6 +92,7 @@ test('the worker gets a minimal environment: no proxies, interpreter hooks or in
   assert.ok(!JSON.stringify(spawned.args).includes(SECRET))
   assert.ok(!workerInput.includes(SECRET), 'stdin config carries no key')
   assert.equal(Object.hasOwn(JSON.parse(workerInput), 'clip_request'), false, 'no clip request, no clip_request field')
+  assert.equal(JSON.parse(workerInput).screen_focus, 'smart', 'older requests get the smart mix')
   assert.equal(spawned.options.shell, undefined)
   assert.equal(spawned.options.detached, true)
   assert.equal(spawned.options.cwd, runner.getEnginePath())
@@ -267,4 +268,17 @@ test('a deleted brand fails a Create run but is left out of a More clips run; it
   await tick()
   assert.equal(spawned, 1)
   assert.match(gone.sent.find((event) => event.channel === 'job:error').data.message, /no longer on this computer/)
+})
+
+test('the screen share choice reaches the engine in snake_case', async () => {
+  for (const screenFocus of ['split', 'presenter']) {
+    const child = fakeChild()
+    let input = ''
+    child.stdin.on('data', (chunk) => { input += chunk.toString() })
+    const { runner, window } = startRunner({ child })
+    runner.startClipJob(`screen-${screenFocus}`, { videoUrl: path.join(WORK_HOME, 'video.mp4'), screenFocus }, window)
+    await tick()
+    assert.equal(JSON.parse(input).screen_focus, screenFocus)
+    child.emit('close', 1, null)
+  }
 })

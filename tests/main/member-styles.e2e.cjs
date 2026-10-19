@@ -148,3 +148,60 @@ test('Remix result: Post or schedule opens the post dialog with the Library clip
   assert.equal(await page.getByPlaceholder('e.g. @coachname').inputValue(), 'Coach Example')
   assert.deepEqual(errors, [])
 })
+
+test('Create: the screen share choice shows under Smart framing, is remembered, and goes with the run', { timeout: 240000 }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-screen-share-e2e-'))
+  const userData = path.join(root, 'user-data')
+  const appDir = buildApp(path.join(root, 'app'))
+  let session = await launchApp({ appDir, userDataDir: userData })
+  t.after(async () => { await session.close(); fs.rmSync(root, { recursive: true, force: true }) })
+  const errors = []
+  const mock = async (current) => {
+    await current.app.evaluate(({ ipcMain }, folder) => {
+      globalThis.screenShareTest = []
+      ipcMain.removeHandler('settings:load')
+      ipcMain.handle('settings:load', () => ({ openrouterConfigured: true, zernioConfigured: false, outputDirectory: folder, pythonPath: '', customVocabulary: '' }))
+      ipcMain.removeHandler('system:checkTools')
+      ipcMain.handle('system:checkTools', () => ({ python: true, pythonDeps: true, ffmpeg: true, ffmpegCaptions: true, ffprobe: true, ytdlp: true, engine: true, bridgeRunner: true }))
+      ipcMain.removeHandler('job:start')
+      ipcMain.handle('job:start', (_event, request) => { globalThis.screenShareTest.push(request); return { jobId: 'screen-share-1', queued: false } })
+    }, root)
+    await current.page.reload()
+    current.page.on('pageerror', (error) => errors.push(error.message))
+  }
+  const toFormat = async (page) => {
+    await page.getByRole('radiogroup', { name: 'Workflow', exact: true }).getByRole('radio', { name: 'Automatic', exact: true }).click()
+    await page.getByPlaceholder('YouTube, Twitch VOD or direct video link').fill('https://example.com/video.mp4')
+    await page.getByRole('button', { name: 'Use link', exact: true }).click()
+    await page.getByRole('button', { name: 'Next: Format', exact: true }).click()
+  }
+  const choice = (page, name) => page.getByRole('radiogroup', { name: 'Screen share clips' }).getByRole('radio', { name, exact: true })
+
+  await mock(session)
+  let page = session.page
+  await toFormat(page)
+  assert.equal(await choice(page, 'Smart mix').getAttribute('aria-checked'), 'true', 'the smart mix is the default')
+  await choice(page, 'Presenter only').click()
+  await page.getByText('Just you, filling the frame, in every clip.').waitFor()
+  // Only under Smart framing.
+  await page.getByRole('radiogroup', { name: 'Framing' }).getByRole('radio', { name: /^Classic/ }).click()
+  assert.equal(await page.getByRole('radiogroup', { name: 'Screen share clips' }).count(), 0)
+  await page.getByRole('radiogroup', { name: 'Framing' }).getByRole('radio', { name: /^Smart/ }).click()
+  assert.equal(await choice(page, 'Presenter only').getAttribute('aria-checked'), 'true')
+  await page.waitForTimeout(1200)
+  const file = JSON.parse(fs.readFileSync(path.join(userData, 'member-prefs.json'), 'utf8'))
+  assert.equal(file.create.screenFocus, 'presenter')
+
+  await session.close()
+  session = await launchApp({ appDir, userDataDir: userData })
+  await mock(session)
+  page = session.page
+  await toFormat(page)
+  assert.equal(await choice(page, 'Presenter only').getAttribute('aria-checked'), 'true', 'the choice is remembered')
+  await page.getByRole('navigation', { name: 'Create steps' }).getByRole('button', { name: /Review/ }).click()
+  await page.getByText('Just you in every clip').waitFor()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter')
+  await page.getByRole('button', { name: 'Clip another video' }).waitFor()
+  assert.equal(await session.app.evaluate(() => globalThis.screenShareTest[0].screenFocus), 'presenter')
+  assert.deepEqual(errors, [])
+})

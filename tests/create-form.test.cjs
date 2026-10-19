@@ -7,14 +7,15 @@ const { renderToStaticMarkup } = require('react-dom/server')
 
 const bundled = buildSync({
   stdin: {
-    contents: `export { FormatStep, ClipsStep, CaptionsStep, JobForm, buildJobRequest, buildJobRequests, draftSources, parseTrimRange } from './src/renderer/components/JobForm';
+    contents: `export { FormatStep, ClipsStep, CaptionsStep, JobForm, buildJobRequest, buildJobRequests, draftSources, parseTrimRange, SCREEN_FOCUS_OPTIONS, ReviewStep } from './src/renderer/components/JobForm';
+      export { screenFocusLabel } from './src/renderer/components/ClipCard';
       export { reuseSummary, moreClipsBlocked } from './src/renderer/components/MoreClipsDialog';
       export { JobProgress } from './src/renderer/components/JobProgress';
       export { SetupCard } from './src/renderer/components/SetupCard';
       export { useSettingsStore } from './src/renderer/store/use-settings-store';
       export { useDraftStore } from './src/renderer/store/use-draft-store';
       export { SourcePicker, isValidSourceLink } from './src/renderer/components/SourcePicker';
-      export { framingProblem, sourceAnalysisNotice } from './src/renderer/components/ClipList';
+      export { framingProblem, sourceAnalysisNotice, screenFocusByIndex } from './src/renderer/components/ClipList';
       export { parseJobOutput } from './src/shared/job-output';
       export { twitchVodId, normalizeVideoSource } from './src/shared/video-source';`,
     resolveDir: path.resolve(__dirname, '..'),
@@ -368,4 +369,50 @@ test('more clips explains what it reuses and when it can’t run', () => {
   assert.equal(moreClipsBlocked({ source: 'original', transcriptSaved: true }), null)
   assert.match(moreClipsBlocked({ source: 'missing', transcriptSaved: true }), /no longer on this computer/)
   assert.match(moreClipsBlocked({ source: 'download', transcriptSaved: false }), /no saved transcript/)
+})
+
+test('screen share clips: a choice under Smart framing, sent only when it is not the smart mix, and shown on Review', () => {
+  const { buildJobRequest, useDraftStore, SCREEN_FOCUS_OPTIONS } = form.exports
+  const draft = { workflow: 'automatic', source: 'https://example.com/v', clippingMode: 'quality', aspectRatio: '9:16', layoutStyle: 'auto', layoutVision: true,
+    pacing: 'tight', durations: [], autoClipCount: true, maxClips: 5, includeCaptions: true, captionPreset: 'pop', includeTitle: true, screenFocus: 'smart' }
+  const html = renderToStaticMarkup(React.createElement(FormatStep, { draft, update() {} }))
+  const group = html.match(/role="radiogroup" aria-label="Screen share clips"[^>]*>(.*?)<\/div>/s)?.[1]
+  assert.ok(group, 'the choice is shown under Smart framing')
+  assert.deepEqual([...group.matchAll(/<button[^>]*>(.*?)<\/button>/gs)].map((m) => m[1].replace(/<[^>]+>/g, '')), ['Smart mix', 'Split screen', 'Presenter only'])
+  assert.match(group, /aria-checked="true"[^>]*>(<[^>]+>)*Smart mix/)
+  assert.match(html, /Each clip shows just you, or your screen above you/)
+  assert.match(html, /Other videos aren’t affected/)
+  for (const layoutStyle of ['fill', 'fit']) {
+    assert.doesNotMatch(renderToStaticMarkup(React.createElement(FormatStep, { draft: { ...draft, layoutStyle }, update() {} })), /Screen share clips/)
+  }
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(FormatStep, { draft: { ...draft, aspectRatio: '16:9' }, update() {} })), /Screen share clips/)
+  const trim = { start: null, end: null }
+  assert.equal('screenFocus' in buildJobRequest(draft, trim), false)
+  assert.equal(buildJobRequest({ ...draft, screenFocus: 'presenter' }, trim).screenFocus, 'presenter')
+  assert.equal(buildJobRequest({ ...draft, workflow: 'review', screenFocus: 'split' }, trim).screenFocus, 'split')
+  assert.equal('screenFocus' in buildJobRequest({ ...draft, layoutStyle: 'fill', screenFocus: 'presenter' }, trim), false)
+  assert.equal(useDraftStore.getState().screenFocus, 'smart')
+  assert.deepEqual(SCREEN_FOCUS_OPTIONS.map((option) => option.id), ['smart', 'split', 'presenter'])
+  const { ReviewStep } = form.exports
+  const review = (extra) => renderToStaticMarkup(React.createElement(ReviewStep, { draft: { ...draft, sources: [], headlineVoice: 'clipper', qualityBar: 'b', ...extra }, trim, onEdit() {} }))
+  assert.match(review({ screenFocus: 'presenter' }), /Screen share.*?Just you in every clip/s)
+  assert.match(review({}), /Screen share.*?Smart mix · just you or split, clip by clip/s)
+  assert.doesNotMatch(review({ layoutStyle: 'fit', screenFocus: 'presenter' }), /Screen share/)
+})
+
+test('the Library labels how each screen share clip was framed', () => {
+  const { screenFocusLabel, screenFocusByIndex } = form.exports
+  assert.equal(screenFocusLabel(null), null)
+  const presenter = screenFocusLabel({ decision: 'presenter', reason: 'A story about quitting ads', source: 'planner', mode: 'smart', person_fits: true })
+  assert.deepEqual(presenter, { label: 'Presenter only', title: 'How this screen share clip was framed. Why: A story about quitting ads' })
+  assert.equal(screenFocusLabel({ decision: 'mixed', reason: '', source: 'speech', mode: 'smart', person_fits: true }).label, 'Presenter + screen')
+  assert.match(screenFocusLabel({ decision: 'screen', reason: 'x', source: 'mode', mode: 'split', person_fits: true }).title, /You chose this style/)
+  const small = screenFocusLabel({ decision: 'presenter', reason: '', source: 'mode', mode: 'presenter', person_fits: false })
+  assert.equal(small.label, 'Split screen')
+  assert.match(small.title, /webcam was too small/)
+  const output = parseJobOutput({ job_id: 'j', source_video_url: 'u', source_video_title: 't', source_video_duration_seconds: 60, total_clips: 0, clips: [],
+    metrics: { clip_layouts: [{ clip_index: 1, screen_focus: { decision: 'screen', reason: 'A walkthrough', source: 'planner', mode: 'smart' } }, { clip_index: 2 }] } })
+  const map = screenFocusByIndex(output)
+  assert.deepEqual([...map.keys()], [1])
+  assert.equal(map.get(1).decision, 'screen')
 })

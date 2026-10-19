@@ -4,6 +4,7 @@ import { cn, formatTimecode, isMac, localFileUrl } from '../lib/utils'
 import { getApi } from '../lib/ipc'
 import { clipFilePath, loadThumbnail } from '../lib/thumbnails'
 import type { ClipArtifact } from '../store/use-job-store'
+import type { ClipScreenFocus } from '../../shared/job-output'
 import { Checkbox } from './ui/Checkbox'
 import { Badge } from './ui/Badge'
 import { Skeleton } from './ui/Skeleton'
@@ -22,9 +23,20 @@ const LAYOUT_LABELS: Record<string, string> = {
   center_crop: 'Center crop'
 }
 
+/** How a screen share clip was framed, for the card's details line (label, and why as a tooltip). */
+export function screenFocusLabel(focus: ClipScreenFocus | null | undefined): { label: string; title: string } | null {
+  if (!focus) return null
+  if (!focus.person_fits) return { label: 'Split screen', title: 'The webcam was too small to fill the frame, so the screen and webcam were shown together.' }
+  const label = focus.decision === 'presenter' ? 'Presenter only' : focus.decision === 'screen' ? 'Split screen' : 'Presenter + screen'
+  const why = focus.source === 'mode' ? 'You chose this style for screen share clips.' : focus.reason ? `Why: ${focus.reason}` : ''
+  return { label, title: `How this screen share clip was framed.${why ? ` ${why}` : ''}` }
+}
+
 interface ClipCardProps {
   postingStatus?: LibraryClipPostingStatus
   clip: ClipArtifact
+  /** Screen share clips: how the clip was framed and why (from the run's clip_layouts). */
+  screenFocus?: ClipScreenFocus | null
   vertical: boolean
   topPick?: boolean
   selected: boolean
@@ -50,6 +62,7 @@ interface ClipCardProps {
 
 export function ClipCard({
   clip,
+  screenFocus,
   postingStatus,
   vertical,
   topPick,
@@ -81,6 +94,7 @@ export function ClipCard({
   const layout = clipVertical && Object.prototype.hasOwnProperty.call(LAYOUT_LABELS, clip.layout_type)
     ? LAYOUT_LABELS[clip.layout_type]
     : undefined
+  const focusLabel = clipVertical ? screenFocusLabel(screenFocus) : null
 
   useEffect(() => {
     let cancelled = false
@@ -266,7 +280,9 @@ export function ClipCard({
           <span className="font-mono tabular" title="Position in the source video">
             {formatTimecode(clip.start_time_ms)} – {formatTimecode(clip.end_time_ms)}
           </span>
-          {layout && <span title="How this clip was framed"> · {layout}</span>}
+          {focusLabel
+            ? <span title={focusLabel.title}> · {focusLabel.label}</span>
+            : layout && <span title="How this clip was framed"> · {layout}</span>}
         </p>
         {clip.render_fallback && (
           <Badge
