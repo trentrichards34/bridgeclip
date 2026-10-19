@@ -81,8 +81,12 @@ test('Pause & react: an uploaded video and phone recording, the detected pauses,
   const presenters = page.getByRole('radiogroup', { name: 'Presenter' })
   await presenters.getByRole('radio', { name: /Avatar photo.*Beta.*Early version: a still picture with voice-over, no lip-sync\./ }).waitFor()
   await presenters.getByRole('radio', { name: /Voice only.*Beta/ }).waitFor()
-  assert.doesNotMatch(await presenters.getByRole('radio', { name: /Me, on camera/ }).innerText(), /Beta/)
+  // Two big choices at the top: you on camera (no Beta) or the AI presenter (Beta).
+  assert.doesNotMatch(await page.getByRole('radio', { name: /^You on camera/ }).innerText(), /Beta/)
+  assert.match(await page.getByRole('radio', { name: /^AI presenter/ }).innerText(), /Beta/)
+  assert.equal(await presenters.getByRole('radio', { name: /Me, on camera/ }).count(), 0)
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await presenters.scrollIntoViewIfNeeded(); await shot(app, 'remix-presenters-beta.png') }
+  await page.getByRole('radio', { name: /^You on camera/ }).click()
   await page.getByRole('radio', { name: /Pause & react/ }).click()
   await page.getByRole('heading', { name: '2 · The video you react to' }).waitFor()
   // What you make comes first, then the video, then the look (folded, with a summary), then Continue.
@@ -214,6 +218,7 @@ test('Pause & react recorded here: their video plays over the camera, Space paus
   await page.reload()
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
+  await page.getByRole('radio', { name: /^You on camera/ }).click()
   await page.getByRole('radio', { name: /Pause & react/ }).click()
   await page.getByRole('button', { name: 'Or choose a file' }).click()
   await page.getByPlaceholder('e.g. @coachname').fill('@coach')

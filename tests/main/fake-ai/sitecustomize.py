@@ -40,6 +40,11 @@ if os.environ.get("CREATORCLIPS_FAKE_AI") == "1":
 
         async def chat_completion(client, payload):
             name = payload["response_format"]["json_schema"]["name"]
+            if name == "react_broll_plan":
+                # React, then my thoughts: the member's own clips, in order, over their words (from 2 s, 1.6 s each, a gap between).
+                clips = json.loads(payload["messages"][1]["content"].split("THE CREATOR'S CLIPS (data)\n", 1)[1].split("\n", 1)[0])
+                answer = {"shots": [{"start_seconds": 2.0 + i * 2.8, "end_seconds": 3.6 + i * 2.8, "item": c["id"], "query": "city street"} for i, c in enumerate(clips[:2])]}
+                return {"choices": [{"message": {"content": json.dumps(answer)}}]}, {"cost": 0.004}
             if name == "moment_pick":
                 start = float(re.search(r"THE STRETCH: ([\d.]+)s", payload["messages"][1]["content"]).group(1))
                 answer = {"start_seconds": start + 2.6, "end_seconds": start + 6.2, "quote": "fifteen billion scam ads", "why": "A shocking number."}
