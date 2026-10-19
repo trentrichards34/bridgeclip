@@ -17,7 +17,7 @@ function load(relative, mocks = {}) {
   const module = { exports: {} }
   const dir = path.dirname(path.join(ROOT, relative))
   vm.runInNewContext(transpile(path.join(ROOT, relative)), {
-    module, exports: module.exports, URL, Buffer, console, setTimeout, clearTimeout, process,
+    module, exports: module.exports, URL, Buffer, console, setTimeout, clearTimeout, process, AbortController,
     require: (id) => {
       if (id in mocks) return mocks[id]
       if (id.startsWith('.')) return load(path.relative(ROOT, path.join(dir, id)) + '.ts', mocks)
@@ -90,8 +90,9 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   assert.throws(() => main.parseRemixRequest({ ...base, format: 'silent', clipRightsAck: true, avatarId: null }, userData), /reactions/)
   assert.throws(() => main.parseRemixRequest({ ...base, format: 'dance' }, userData), /kind of remix/)
   assert.equal(main.parseRemixRequest(base, userData).request.format, 'commentary')
-  // Lip-sync isn't available on OpenRouter yet: the avatar's photo presents.
-  assert.equal(main.parseRemixRequest({ ...base, host: 'lipsync' }, userData).request.host, 'still')
+  // Avatar on camera is made on HeyGen for a Voiced take; a clip reaction with it uses the avatar's photo.
+  assert.equal(main.parseRemixRequest({ ...base, host: 'lipsync' }, userData).request.host, 'lipsync')
+  assert.equal(main.parseRemixRequest({ ...base, host: 'lipsync', format: 'silent', clipRightsAck: true }, userData).request.host, 'still')
   assert.throws(() => main.parseRemixRequest({ ...base, voice: 'onyx' }, userData), /voice/)
 
   assert.throws(() => main.parseRemixRequest({ ...base, sources: [] }, userData), /video link/)
@@ -261,7 +262,9 @@ test('the presenter speaks with the avatar’s clone, its preset, or the preset 
 test('cost estimate: the on-camera avatar is the main cost, voice-only is cents', () => {
   const lipsync = shared.estimateRemixCost('lipsync', 1, 0.5)
   const voice = shared.estimateRemixCost('voice', 1, 0.5)
-  assert.ok(lipsync.perRemixLow >= 0.5 && lipsync.perRemixHigh <= 1.25 && lipsync.perRemixHigh > lipsync.perRemixLow)
+  // HeyGen's published Avatar IV price for the opening and closing lines (10-23 seconds), plus the voice.
+  assert.equal(shared.REMIX_PRICES.avatarPerSecond, 0.1)
+  assert.ok(Math.abs(lipsync.perRemixLow - 1.03) < 1e-9 && Math.abs(lipsync.perRemixHigh - 2.33) < 1e-9)
   assert.ok(voice.perRemixHigh < 0.05)
   assert.ok(shared.estimateRemixCost('lipsync', 3, 1).total > lipsync.total)
   assert.equal(shared.remixSourceUrl('ftp://x.com/a'), null)
@@ -752,5 +755,157 @@ test('editing a take in review: held to the same rules, saved on the status, mar
 
   await remix.renderRemix([{ ...remix.remixStatus().drafts[0] }])
   assert.equal(configs.at(-1).approved[0].headline, 'Lose weight first? Not true')
+  fs.rmSync(out, { recursive: true, force: true })
+})
+
+
+test('Avatar on camera (HeyGen): each spoken line is made on HeyGen from main, answered to the engine, gated, priced and cancelable', async () => {
+  const { EventEmitter } = require('node:events')
+  const childProcess = require('node:child_process')
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'remix-heygen-'))
+  const settings = { ...SETTINGS, outputDirectory: out }
+  const avatarDir = path.join(out, 'avatar')
+  fs.mkdirSync(avatarDir)
+  fs.writeFileSync(path.join(avatarDir, 'portrait.jpg'), 'JPEG')
+  const link = { provider: 'heygen', source: 'twin', lookId: 'look_1', groupId: 'g1', status: 'completed', consentStatus: 'accepted', consentUrl: null, consentUrlAt: null,
+    voiceId: 'v1', voice: 'app', engines: [], error: null, checkedAt: null }
+  let avatar = { name: 'Me', voice: { provider: 'elevenlabs', voice: 'Harry' }, clonedVoice: null, heygen: link }
+  const configs = [], answers = [], renders = []
+  // The stand-in engine for a render: `scenario` runs once main has sent the request; `onAnswer` sees each HeyGen answer.
+  let scenario = () => undefined, onAnswer = () => undefined, child = null
+  const reply = (message) => setImmediate(() => child.stdout.emit('data', JSON.stringify(message) + '\n'))
+  const finishEngine = (message, code = 0) => { reply(message); setTimeout(() => child.emit('close', code), 10) }
+  const plan = (config) => {
+    const work = path.join(config.output_dir, '.work')
+    fs.mkdirSync(work, { recursive: true })
+    fs.writeFileSync(path.join(work, 'plan.json'), '{}')
+    return { ok: true, cost_usd: 0.02, drafts: [{ id: 0, source_index: 0, headline: 'He says lose weight first', intro: 'He is wrong.', close: 'Train the pull.',
+      beats: [{ text: 'Strength first.', broll: 'gym' }], start_ms: 1000, end_ms: 4000, estimate_usd: 1.2 }] }
+  }
+  const spawn = () => {
+    child = new EventEmitter()
+    child.pid = 0
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter()
+    const self = child
+    child.stdin = { on() {}, writable: true, destroyed: false,
+      // Plan: the whole request, then closed. Render with HeyGen: one line, then HeyGen's answers.
+      end(text) { if (text) { const config = JSON.parse(text); configs.push(config); setImmediate(() => { self.stdout.emit('data', JSON.stringify(plan(config)) + '\n'); self.emit('close', 0) }) } },
+      write(text) {
+        const message = JSON.parse(text)
+        if (message.type === 'heygen_result') { answers.push(message); onAnswer(message); return true }
+        configs.push(message)
+        setImmediate(() => scenario())
+        return true
+      } }
+    return child
+  }
+  const heygen = {
+    failWith: null,
+    ready: async () => { if (!avatar.heygen) throw new Error('not heygen'); return avatar.heygen },
+    render: async (request) => {
+      renders.push(request)
+      request.onStatus?.('HeyGen is animating your avatar', 0.5)
+      await new Promise((resolve, reject) => {
+        if (request.signal?.aborted) { reject(new Error('aborted')); return }
+        const timer = setTimeout(resolve, request.text === 'slow' ? 5000 : 5)
+        request.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('The operation was aborted')) })
+      })
+      if (heygen.failWith) throw new Error(heygen.failWith)
+      fs.writeFileSync(request.outPath, 'MP4')
+      return { videoId: 'vid', path: request.outPath, seconds: 6, estimatedUsd: 0.6 }
+    }
+  }
+  const m = load('main/remix.ts', {
+    electron: { app: { getPath: () => out, isPackaged: true } },
+    child_process: { ...childProcess, spawn },
+    './avatars': { portraitPath: () => path.join(avatarDir, 'portrait.jpg'), voiceSamplePath: () => '', readAvatar: () => avatar, readReactions: () => [] },
+    './logger': { logger: { info() {}, warn() {} } },
+    './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
+    './security': { assertMediaPath: () => undefined, authorizeMedia: (p) => p },
+    './settings-store': { loadSettings: () => settings, getSettingsForBridge: () => ({}) },
+    './tools': { resolveBinary: (name) => name }
+  })
+  const statuses = []
+  m.onRemixStatus((status) => statuses.push(status))
+  const settle = async (phase) => { for (let i = 0; i < 300 && m.remixStatus()?.phase === phase; i++) await new Promise((resolve) => setTimeout(resolve, 10)) }
+  const request = { ...base, host: 'lipsync', voice: 'avatar' }
+  const edit = { id: 0, headline: 'He says lose weight first', intro: 'He is wrong.', close: 'Train the pull.', beats: [{ text: 'Strength first.', broll: 'gym' }] }
+  const line = (id, extra) => ({ type: 'heygen', id, key: 'intro', audio: null, text: null, label: 'Remix 1 of 1, opening line', ...extra })
+
+  // Not connected, or not a HeyGen avatar: a plain reason, nothing started.
+  await assert.rejects(m.startRemix(request), /HeyGen, which isn’t available/)
+  m.setRemixHeygen(heygen)
+  avatar = { ...avatar, heygen: null }
+  await assert.rejects(m.startRemix(request), /Choose an avatar made with HeyGen/)
+  avatar = { ...avatar, heygen: link }
+
+  // Planned like any Voiced take; the config says HeyGen makes the lines (lip-synced to the app's voice here).
+  await m.startRemix(request)
+  await settle('planning')
+  assert.equal(m.remixStatus().phase, 'review')
+  assert.deepEqual([configs[0].host, configs[0].presenter, configs[0].heygen_voice, configs[0].heygen_usd_per_second], ['lipsync', 'heygen', false, 0.1])
+  let folder = m.remixStatus().folder
+  const work = path.join(folder, '.work', 'remix-1')
+  fs.mkdirSync(work, { recursive: true })
+  fs.writeFileSync(path.join(work, 'intro.mp3'), 'MP3')
+  fs.writeFileSync(path.join(work, 'close.mp3'), 'MP3')
+  // The gate: the takes' estimates (HeyGen's lines included by the engine), billed mostly by OpenRouter (the voice).
+  assert.deepEqual(plain(m.remixRenderCheck([{ id: 0 }])), { provider: 'openrouter', estimateUsd: 1.2 })
+
+  // Making it: the engine asks for the opening and closing lines (and two bad requests); main answers each.
+  scenario = () => {
+    reply(line(1, { audio: path.join(work, 'intro.mp3'), out: path.join(work, 'intro-heygen.mp4') }))
+    reply(line(2, { key: 'close', audio: path.join(work, 'close.mp3'), out: path.join(work, 'close-heygen.mp4'), label: 'Remix 1 of 1, closing line' }))
+    reply(line(3, { audio: '/etc/passwd', out: path.join(work, 'x-heygen.mp4') }))
+    reply(line(4, { audio: path.join(work, 'close.mp3'), out: path.join(out, 'outside.mp4') }))
+  }
+  onAnswer = () => { if (answers.length === 4) finishEngine({ ok: true, cost_usd: 0.05, remixes: [] }) }
+  await m.renderRemix([edit])
+  await settle('rendering')
+  assert.equal(configs[1].mode, 'render')
+  const byId = Object.fromEntries(answers.map((a) => [a.id, a]))
+  assert.deepEqual([byId[1].ok, byId[1].path, byId[2].ok], [true, fs.realpathSync(path.join(work, 'intro-heygen.mp4')), true])
+  assert.deepEqual([byId[3].ok, byId[3].error, byId[4].ok], [false, 'That line could not be sent to HeyGen.', false])
+  assert.equal(renders.length, 2)
+  assert.deepEqual([renders[0].audioPath, renders[0].spendKind, renders[0].text, renders[0].title], [fs.realpathSync(path.join(work, 'intro.mp3')), 'remix', undefined, 'CreatorClips remix: Remix 1 of 1, opening line'])
+  // Progress shows HeyGen's status; the finished run says what HeyGen made and its estimate.
+  assert.ok(statuses.some((s) => s.detail === 'Remix 1 of 1, opening line: HeyGen is animating your avatar'))
+  const final = m.remixStatus()
+  assert.equal(final.phase, 'done')
+  assert.ok(final.warnings.includes('HeyGen made 2 avatar videos for these remixes: about $1.20 on your HeyGen account (estimated at HeyGen’s published price, and recorded in Spending).'), final.warnings)
+
+  // The avatar speaking in its HeyGen voice: the text goes to HeyGen; HeyGen is the main provider.
+  avatar = { ...avatar, heygen: { ...link, voice: 'heygen' } }
+  answers.length = 0; renders.length = 0
+  await m.startRemix(request)
+  await settle('planning')
+  assert.equal(configs[2].heygen_voice, true)
+  assert.deepEqual(plain(m.remixRenderCheck([{ id: 0 }])), { provider: 'heygen', estimateUsd: 1.2 })
+  // A HeyGen failure is answered plainly; one that would repeat stops the rest (stop_all).
+  heygen.failWith = 'Your HeyGen balance is too low for this. Add credit on HeyGen, then try again.'
+  folder = m.remixStatus().folder
+  fs.mkdirSync(path.join(folder, '.work'), { recursive: true })
+  scenario = () => reply(line(1, { text: 'He is wrong.', out: path.join(folder, '.work', 'intro-heygen.mp4') }))
+  onAnswer = (answer) => finishEngine({ ok: false, error: answer.error }, 1)
+  await m.renderRemix([edit])
+  await settle('rendering')
+  assert.deepEqual([answers[0].ok, answers[0].stop_all, renders[0].text, renders[0].audioPath], [false, true, 'He is wrong.', undefined])
+  assert.equal(m.remixStatus().error, 'Your HeyGen balance is too low for this. Add credit on HeyGen, then try again.')
+
+  // Cancel while HeyGen is working: it stops waiting (the signal), and says HeyGen may still bill a video it started.
+  heygen.failWith = null
+  answers.length = 0; renders.length = 0
+  scenario = () => reply(line(1, { text: 'slow', out: path.join(folder, '.work', 'intro-heygen.mp4') }))
+  onAnswer = () => undefined
+  await m.renderRemix([edit])
+  for (let i = 0; i < 200 && !renders.length; i++) await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.equal(m.cancelRemix(), true)
+  assert.equal(renders[0].signal.aborted, true)
+  child.emit('close', null)
+  await settle('rendering')
+  const canceled = m.remixStatus()
+  assert.equal(canceled.phase, 'cancelled')
+  assert.ok(canceled.warnings.includes('HeyGen may still finish an avatar video it had already started and bill it on your HeyGen account.'), canceled.warnings)
+  m.setRemixHeygen(null)
   fs.rmSync(out, { recursive: true, force: true })
 })

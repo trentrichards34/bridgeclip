@@ -358,6 +358,11 @@ def test_the_moment_can_stay_small_on_screen_while_you_talk(env, monkeypatch):
     data = json.load(open(os.path.join(env.out, ".edit", "clip_00", "edit.json")))
     assert data["tags"]["excerpt_windows"] == [[0.0, round(made["duration_seconds"], 3)]] or data["tags"]["excerpt_windows"][0][1] > op + 4
     assert data["tags"]["cta_y"] > mt.PIP_TOP
+    # The "Original: …" credit never reaches the box: it's kept to the box's left.
+    assert 40 + data["tags"]["credit_max_w"] < mt.pip_left(1080)
+    from clip_engine.services.brand_mark import tag_image
+    width, _ = tag_image("Original: " + "A very long creator name for this test", str(env.tmp / "credit.png"), max_w=data["tags"]["credit_max_w"])
+    assert 40 + width < mt.pip_left(1080)
     samples(made["path"], "moment-take-box", (8.0,))
 
 

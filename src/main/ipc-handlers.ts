@@ -35,7 +35,7 @@ import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../s
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, readReactions, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
-import { addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentEstimate, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix } from './remix'
+import { addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentEstimate, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen } from './remix'
 import { importLegacyAvatarVideos } from './avatar-library'
 import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
@@ -43,7 +43,7 @@ import {
 } from './edit-recording'
 import { EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
 import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, renderSpendCheck, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
-import { createHeygenAvatar, draftTwinVideo, heygenAccount, heygenConsentUrl, refreshHeygenAvatar, saveTwinRecording, setHeygenVoice, stockHeygenAvatars, TWIN_VIDEO_EXTENSIONS } from './heygen-avatar'
+import { createHeygenAvatar, draftTwinVideo, heygenAccount, heygenConsentUrl, heygenKey, readyHeygenLink, refreshHeygenAvatar, renderHeygenTake, saveTwinRecording, setHeygenVoice, stockHeygenAvatars, TWIN_VIDEO_EXTENSIONS } from './heygen-avatar'
 import { isConsentUrl } from './heygen'
 import { HEYGEN_PRICES } from '../shared/heygen'
 import { logger, getLogFilePath } from './logger'
@@ -470,11 +470,18 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (!isRemixHost(raw.host) || count === null) return null
     return estimateRemixCost(raw.host, count * sources, 0.5, raw.format === 'silent' ? 'silent' : 'commentary').total
   }, (request) => startRemix(request))
-  paid('remix:render', 'openrouter', (edits) => {
-    const ids = new Set(Array.isArray(edits) ? edits.map((edit) => (edit as { id?: unknown } | null)?.id) : [])
-    const total = (remixStatus()?.drafts ?? []).filter((draft) => ids.has(draft.id)).reduce((sum, draft) => sum + draft.estimateUsd, 0)
-    return total > 0 ? total : null
-  }, (edits) => renderRemix(edits))
+  // Making the approved takes: with Avatar on camera, HeyGen's lines are in the estimate (and HeyGen is the provider when it speaks).
+  handle('remix:render', async (_event, edits: unknown) => {
+    let check: { provider: SpendProvider; estimateUsd: number | null } = { provider: 'openrouter', estimateUsd: null }
+    try { check = remixRenderCheck(edits) } catch { /* the render itself reports a bad request */ }
+    await assertSpendAllowed('remix:render', check.provider, check.estimateUsd)
+    return renderRemix(edits)
+  })
+  // Avatar on camera (HeyGen, Beta): Remix makes each spoken line on HeyGen through these.
+  setRemixHeygen({
+    ready: (avatarId, signal) => readyHeygenLink(avatarId, { key: heygenKey(), signal }),
+    render: (request) => renderHeygenTake(request)
+  })
   handle('remix:discard', () => discardRemix())
   handle('remix:cancel', () => cancelRemix())
   handle('remix:status', () => friendlyStatus(remixStatus()))

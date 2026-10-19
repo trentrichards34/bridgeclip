@@ -56,5 +56,39 @@ if os.environ.get("CREATORCLIPS_FAKE_AI") == "1":
             return {"choices": [{"message": {"content": json.dumps(answer)}}]}, {"cost": 0.01}
 
         remix_service.chat_completion = chat_completion
+
+        # A Voiced take (AI presenter): the long video's words, its plan and grade, and the voice (a tone as long as the line).
+        SOURCE = [ts.TranscriptWord(f"word{n}{'.' if n % 10 == 9 else ''}", n * 400, n * 400 + 350) for n in range(90)]
+
+        async def transcribe(self, video, work, *args, **kwargs):
+            segments = [ts.TranscriptSegment(SOURCE[i].start_time_ms, SOURCE[i + 9].end_time_ms, " ".join(w.word for w in SOURCE[i:i + 10]), "S1",
+                                             list(SOURCE[i:i + 10])) for i in range(0, len(SOURCE), 10)]
+            return ts.TranscriptionResult(segments=segments, full_text=" ".join(s.text for s in segments), api_costs=SimpleNamespace(estimated_cost_usd=0.002))
+
+        ts.TranscriptionService.transcribe = transcribe
+        PLAN = {"start": 4, "end": 8, "moment_quote": "word10 word11", "why_this_moment": "It states the claim.", "stance": "disagree_correct",
+                "headline": "This coach says you must lose weight first", "intro": "He says you need to lose weight first. That is backwards.",
+                "beats": [{"text": "Strength comes first, at any body weight.", "broll": "pull up bar"}],
+                "close": "Train the pull, not the scale.", "proof_used": [],
+                "self_check": {"stands_alone": True, "attacks_person": False, "invented_claims": False}}
+
+        async def voiced_chat(client, payload):
+            name = payload["response_format"]["json_schema"]["name"]
+            if name == "remix_plan":
+                return {"choices": [{"message": {"content": json.dumps({"remixes": [PLAN]})}}]}, {"cost": 0.02}
+            if name == "remix_grades":
+                grade = {"id": 0, "hook": 8, "payoff": 8, "stands_alone": 8, "specificity": 7, "stance": 8, "verdict": "Strong open.", "fix": "Name the drill."}
+                return {"choices": [{"message": {"content": json.dumps({"grades": [grade]})}}]}, {"cost": 0.01}
+            return await chat_completion(client, payload)
+
+        remix_service.chat_completion = voiced_chat
+
+        async def speech(self, text, out_path, *args, **kwargs):
+            seconds = max(1.0, len(text.split()) / 2.6)
+            remix_service.ffmpeg(["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds:.2f}", "-c:a", "libmp3lame", out_path])
+            self.cost_usd += 0.001
+            return out_path
+
+        remix_service.OpenRouterMedia.speech = speech
     except Exception:  # noqa: BLE001 - only the e2e test uses this; a broken stand-in shows up as a failing test
         pass

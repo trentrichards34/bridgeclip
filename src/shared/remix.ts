@@ -9,6 +9,7 @@ import type { HeadlineLook } from './headline-look'
 import { PRESET_VOICE_IDS, PRESET_VOICES } from './voices'
 import type { PauseCaptions, PauseLayout } from './pause-react'
 import { parseMomentInfo, type MomentInfo, type MomentRange } from './moment-take'
+import { HEYGEN_PRICES, heygenStage, type HeygenAvatarLink } from './heygen'
 
 export type RemixStyle = 'reaction' | 'myth_truth' | 'science' | 'lessons' | 'do_this_instead'
 /** A style, or 'mix': the AI picks a fitting style per moment so the account doesn't repeat one template. */
@@ -93,18 +94,33 @@ export const REMIX_ORDERS: { id: RemixOrder; label: string; detail: string }[] =
   { id: 'take_first', label: 'Take first', detail: 'Your presenter opens, then the moment plays as the setup' }
 ]
 
-/** lipsync: lip-synced avatar on camera; still: the avatar photo with a slow push-in; voice: voice-over only (cheapest); camera: the member on camera, recorded in the app or uploaded. */
+/** lipsync: the member's HeyGen avatar on camera, lip-synced (Voiced take); still: the avatar photo with a slow push-in; voice: voice-over only (cheapest); camera: the member on camera, recorded in the app or uploaded. */
 export type RemixHost = 'lipsync' | 'still' | 'voice' | 'camera'
 /** The AI presenters are an early version, kept and marked Beta: `beta` is the honest line shown with the badge. */
 export const REMIX_HOSTS: { id: RemixHost; label: string; detail: string; unavailable?: string; beta?: string }[] = [
   { id: 'camera', label: 'Me, on camera', detail: 'You react or read your take on camera: record here or upload a phone video' },
-  { id: 'lipsync', label: 'Avatar on camera', detail: 'Lip-synced talking head for the opening and closing lines',
-    unavailable: 'Coming soon: OpenRouter can’t lip-sync an avatar to your own voice yet' },
+  { id: 'lipsync', label: 'Avatar on camera (HeyGen, Beta)', detail: 'Your realistic avatar says the take, lip-synced' },
   { id: 'still', label: 'Avatar photo', detail: 'Your avatar’s photo with the voice, no lip-sync',
     beta: 'Early version: a still picture with voice-over, no lip-sync.' },
   { id: 'voice', label: 'Voice only', detail: 'Voice-over on B-roll and stills, cheapest',
     beta: 'Early version: an AI voice over stock clips and stills.' }
 ]
+/**
+ * Why "Avatar on camera (HeyGen, Beta)" can't be used right now, in plain words, and where it's fixed (Settings for
+ * the key, Avatar Studio for the avatar), or null when it can. Only a Voiced take has it.
+ */
+export function lipsyncProblem(heygenConfigured: boolean, avatar: { heygen?: HeygenAvatarLink | null } | null): { reason: string; fix: 'settings' | 'studio' } | null {
+  if (!heygenConfigured) return { reason: 'Add your HeyGen key in Settings → API keys to use a realistic avatar.', fix: 'settings' }
+  const link = avatar?.heygen ?? null
+  if (!link) return { reason: avatar ? 'This avatar isn’t on HeyGen. Choose a HeyGen avatar below, or make one in Avatar Studio.' : 'Make a HeyGen avatar in Avatar Studio first.', fix: 'studio' }
+  const stage = heygenStage(link)
+  if (stage === 'training') return { reason: 'HeyGen is still training this avatar (usually a few minutes). Check it in Avatar Studio.', fix: 'studio' }
+  if (stage === 'consent') return { reason: 'HeyGen needs your consent recording for this avatar. Open it from the avatar in Avatar Studio.', fix: 'studio' }
+  if (stage === 'consent-rejected') return { reason: 'HeyGen didn’t accept the consent recording for this avatar. Record it again in Avatar Studio.', fix: 'studio' }
+  if (stage === 'failed') return { reason: 'HeyGen could not make this avatar. Make a new one in Avatar Studio.', fix: 'studio' }
+  return null
+}
+
 /** Silent react with the avatar's reaction clips: also an early version. */
 export const AVATAR_REACTIONS_BETA = 'Early version: short AI clips of your avatar, made from a photo.'
 
@@ -148,8 +164,8 @@ export function ctaLine(keyword: string, offer: string): string {
 
 /** Estimates for the cost preview (OpenRouter prices, October 2026). */
 export const REMIX_PRICES = {
-  /** HeyGen Avatar IV, per second of on-camera speech. */
-  avatarPerSecond: 0.05,
+  /** HeyGen Avatar IV, per second of on-camera speech (HeyGen's published price; see ./heygen). */
+  avatarPerSecond: HEYGEN_PRICES.avatarIvPerSecond,
   /** The avatar is on camera for the opening and closing lines: about 10-23 seconds per remix. */
   onCameraSecondsLow: 10,
   onCameraSecondsHigh: 23,

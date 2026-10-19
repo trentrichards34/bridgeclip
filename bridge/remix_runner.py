@@ -20,7 +20,7 @@ STRING_LIMITS = {"output_dir": 4096, "angle": 32, "host": 16, "voice": 32, "avat
                  "cta_keyword": 32, "cta_offer": 200,
                  "voice_model": 64, "voice_reference": 4096, "voice_transcript": 4000, "format": 16,
                  "camera_layout": 16, "camera_backdrop": 16, "camera_backdrop_color": 16,
-                 "pause_layout": 8, "pause_captions": 8}
+                 "pause_layout": 8, "pause_captions": 8, "presenter": 8}
 MAX_RECORDING_DRAFTS = 200
 MAX_RECORDED_BEATS = 4
 MAX_OFFSET_SECONDS = 3600
@@ -279,6 +279,7 @@ def parse_config(raw):
     if talk is not None and not isinstance(talk, bool):
         raise ValueError("Invalid camera talk")
     recordings = parse_recordings(raw.get("recordings"), fmt)
+    presenter, heygen_voice, heygen_price = parse_presenter(raw, fmt)
     from clip_engine.services.rendering_service import validate_headline_look
     from clip_engine.services.brand_mark import validate_brand_mark
     headline_look = validate_headline_look(raw.get("headline_look"))
@@ -301,7 +302,78 @@ def parse_config(raw):
         pause_layout=raw.get("pause_layout") or "box", pause_captions=raw.get("pause_captions") or "member",
         moment_ranges=moment_ranges, moment_pip=moment_pip, write_ids=write_ids,
         clip_trim=clip_trim, broll_items=broll_items, broll_stock=broll_stock, broll_plan=broll_plan,
+        presenter=presenter, heygen_voice=heygen_voice, heygen_usd_per_second=heygen_price,
     )
+
+
+def parse_presenter(raw, fmt):
+    """Avatar on camera (host "lipsync") made on HeyGen by the app: presenter "heygen", whether the avatar speaks in its
+    HeyGen voice, and HeyGen's published price per second (or None) for estimates. Voiced takes only."""
+    import math
+    presenter = raw.get("presenter") or ""
+    voice = raw.get("heygen_voice", False)
+    price = raw.get("heygen_usd_per_second")
+    if presenter not in ("", "heygen") or not isinstance(voice, bool):
+        raise ValueError("Invalid presenter")
+    if price is not None and (isinstance(price, bool) or not isinstance(price, (int, float)) or not math.isfinite(price) or not 0 <= price <= 10):
+        raise ValueError("Invalid presenter")
+    if presenter and (raw.get("host") != "lipsync" or fmt != "commentary"):
+        raise ValueError("Invalid presenter")
+    return presenter, voice and bool(presenter), None if price is None else float(price)
+
+
+class HeygenLines:
+    """The app makes HeyGen videos (it holds the key): a request goes out as a protocol line
+    {"type": "heygen", "id", "key", "audio", "text", "out", "label"}, and the app answers on stdin with
+    {"type": "heygen_result", "id", "ok", "path"} or {"ok": false, "error", "stop_all"}. Lines are read on a thread."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.loop = None
+        self.pending = {}
+        self.count = 0
+        self.closed = False
+
+    def start(self, loop):
+        import threading
+        self.loop = loop
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self):
+        for line in self.stream:
+            try:
+                message = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(message, dict) and message.get("type") == "heygen_result" and type(message.get("id")) is int:
+                self.loop.call_soon_threadsafe(self._settle, message["id"], message)
+        self.loop.call_soon_threadsafe(self._close)
+
+    def _settle(self, ident, message):
+        future = self.pending.pop(ident, None)
+        if future is not None and not future.done():
+            future.set_result(message)
+
+    def _close(self):
+        self.closed = True
+        for ident in list(self.pending):
+            self._settle(ident, {"ok": False, "error": "The app stopped waiting for HeyGen."})
+
+    async def __call__(self, *, key, audio, text, out, label):
+        from clip_engine.services.remix_service import RemixError
+        if self.closed:
+            raise RemixError("The app stopped waiting for HeyGen.")
+        self.count += 1
+        ident = self.count
+        future = asyncio.get_running_loop().create_future()
+        self.pending[ident] = future
+        emit({"type": "heygen", "id": ident, "key": str(key)[:16], "audio": audio, "text": text, "out": out, "label": str(label)[:80]})
+        message = await future
+        if message.get("ok") is not True:
+            error = RemixError(str(message.get("error") or "HeyGen could not make this video. Try again.")[:400])
+            error.stop_all = message.get("stop_all") is True
+            raise error
+        return {"path": message.get("path")}
 
 
 def spent_usd(remixers) -> float:
@@ -329,7 +401,8 @@ def main():
     try:
         from clip_engine.logging_safety import install_safe_logging
         install_safe_logging()
-        raw = sys.stdin.read(MAX_REQUEST + 1)
+        # One line (the app keeps stdin open for HeyGen answers when the presenter is on HeyGen), or all of it.
+        raw = sys.stdin.readline(MAX_REQUEST + 1)
         if len(raw) > MAX_REQUEST:
             raise ValueError("Request too large")
         raw_request = json.loads(raw)
@@ -356,7 +429,11 @@ def main():
                 from clip_engine.services.pause_react import detect_pauses
                 return {"detection": await asyncio.to_thread(detect_pauses, config["recording"], config["source"],
                                                              config["trim_start"], config["trim_end"])}
-            remixer = Remixer(config, progress)
+            presenter = None
+            if raw_request.get("mode") == "render" and getattr(config, "presenter", "") == "heygen":
+                presenter = HeygenLines(sys.stdin)
+                presenter.start(asyncio.get_running_loop())
+            remixer = Remixer(config, progress, presenter=presenter)
             remixers.append(remixer)
             if raw_request.get("mode") == "render":
                 approved = raw_request.get("approved")

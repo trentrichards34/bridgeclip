@@ -927,3 +927,94 @@ def test_cancelling_a_render_keeps_the_plan_and_drops_the_half_made_remix(tmp_pa
     assert os.path.isfile(tmp_path / "clip_00.mp4") and os.path.isdir(tmp_path / ".edit" / "clip_00")  # the finished one stays
     assert not os.path.exists(tmp_path / "clip_01.mp4") and not os.path.exists(tmp_path / ".edit" / "clip_01")
     assert [c["clip_index"] for c in json.load(open(tmp_path / "job_output.json"))["clips"]] == [0]
+
+
+@needs_libass
+@pytest.mark.parametrize("heygen_voice", [False, True])
+def test_avatar_on_camera_lines_come_from_the_app_on_heygen(tmp_path, monkeypatch, heygen_voice):
+    """Avatar on camera (HeyGen): the engine asks the app for each spoken line (lip-synced to the app's voice, or every
+    line in the avatar's HeyGen voice) and uses those videos for the presenter instead of the photo."""
+    ffmpeg, ffprobe = FFMPEG_WITH_ASS
+    monkeypatch.setattr(remix, "SHORT_VIDEO_MAX_S", 30)
+    monkeypatch.setenv("PATH", os.path.dirname(ffmpeg) + os.pathsep + os.environ.get("PATH", ""))
+    source = tmp_path / "source.mp4"
+    subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=40:r=30", "-f", "lavfi", "-i",
+                    "sine=frequency=220:duration=40", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(source)], check=True, timeout=120)
+    photo = tmp_path / "portrait.jpg"
+    subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0xcc8844:s=720x1280", "-frames:v", "1", str(photo)], check=True, timeout=60)
+
+    async def plan_layout(self, request, width, height, start, duration):
+        return ClipLayoutPlan([ShotLayout(0, duration, LayoutType.TALKING_HEAD)], width, height)
+    monkeypatch.setattr(RenderingService, "_plan_layout", plan_layout)
+    monkeypatch.setattr(RenderingService, "_video_codec_args", lambda *a: ["-c:v", "mpeg4", "-q:v", "3"])
+    monkeypatch.setattr(remix, "VIDEO_ARGS", ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p", "-r", "30"])
+
+    class FakeTranscription:
+        async def transcribe(self, video, work):
+            return TranscriptionResult(segments=transcript(40, music_at=4000), full_text="")
+
+        async def transcribe_audio(self, path):
+            raise RuntimeError("offline")
+    import clip_engine.services.transcription_service as ts
+    monkeypatch.setattr(ts, "TranscriptionService", FakeTranscription)
+
+    async def fake_chat(client, payload):
+        if payload["response_format"]["json_schema"]["name"] == "remix_grades":
+            return {"choices": [{"message": {"content": json.dumps({"grades": [{"id": 0, "hook": 8, "payoff": 8, "stands_alone": 8, "specificity": 7,
+                                                                                    "stance": 8, "verdict": "Good.", "fix": "None."}]})}}]}, {"cost": 0.01}
+        return {"choices": [{"message": {"content": json.dumps({"remixes": [plan_item(4, 8)]})}}]}, {"cost": 0.05}
+    monkeypatch.setattr(remix, "chat_completion", fake_chat)
+    settings = SimpleNamespace(openrouter_api_key="test", openrouter_base_url="https://example.invalid/api/v1",
+                               planner_model="test/model", get_planner_fallback_models=lambda: [], pexels_api_key=None)
+    asked = []
+
+    async def presenter(*, key, audio, text, out, label):
+        # The app's HeyGen video: green, lip-synced to the voice file, or speaking the text (a 660 Hz stand-in voice).
+        asked.append((key, bool(audio), text, label))
+        sound = ["-i", audio] if audio else ["-f", "lavfi", "-i", f"sine=frequency=660:duration={max(1.0, len(text.split()) / 2.6):.2f}"]
+        subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x22cc44:s=720x1280:r=30", *sound, "-shortest",
+                        "-c:v", "mpeg4", "-q:v", "3", "-c:a", "aac", out], check=True, timeout=60)
+        return {"path": out}
+
+    config = lambda: remix.RemixConfig(sources=[str(source)], output_dir=str(tmp_path / "out"), angle="myth_truth", count=1, host="lipsync",  # noqa: E731
+                                       voice="sarah", avatar_photo=str(photo), creator="Coach Example", presenter="heygen",
+                                       heygen_voice=heygen_voice, heygen_usd_per_second=0.1)
+    media = FakeMedia(ffmpeg)
+    planned = asyncio.run(remix.Remixer(config(), media=media, settings=settings).plan())
+    [draft] = planned["drafts"]
+    script = remix._script_from_json({**draft, "beats": draft["beats"]})
+    assert draft["estimate_usd"] == round(remix.estimate_remix_cost(script, "lipsync", remix.TTS_MODEL, 0.1, heygen_voice), 3)
+    progress = []
+    media = FakeMedia(ffmpeg)
+    result = asyncio.run(remix.Remixer(config(), lambda d, p: progress.append(d), media=media, settings=settings, presenter=presenter).render([{"id": 0}]))
+    [made] = result["remixes"]
+    beats = len(draft["beats"])
+    if heygen_voice:
+        # Every line from HeyGen as text; no app voice was paid for.
+        assert sorted(k for k, *_ in asked) == sorted(["intro", "close", *[f"beat{i}" for i in range(beats)]])
+        assert all(not has_audio and text for _, has_audio, text, _ in asked) and media.speech_calls == []
+    else:
+        assert sorted(k for k, *_ in asked) == ["close", "intro"] and all(has_audio and text is None for _, has_audio, text, _ in asked)
+        assert len(media.speech_calls) == beats + 2
+    assert ("intro", not heygen_voice, None if not heygen_voice else draft["intro"], "Remix 1 of 1, opening line") in asked
+    assert any("animating your avatar on HeyGen" in d for d in progress)
+    manifest = json.load(open(made["manifest_path"]))
+    assert manifest["presenter"]["mode"] == "lipsync" and manifest["presenter"]["provider"] == "heygen" and manifest["models"]["avatar"] == "heygen"
+    assert manifest["presenter"]["voice"] == ("heygen" if heygen_voice else "sarah") and not any("photo" in w for w in made["warnings"])
+    # The presenter on screen is HeyGen's (green), not the photo (orange), during the opening line.
+    host = next(p for p in manifest["timeline"] if p["part"] == "host")
+    raw = subprocess.run([ffmpeg, "-v", "error", "-ss", f"{host['start_seconds'] + host['seconds'] / 2:.2f}", "-i", made["path"], "-frames:v", "1",
+                          "-vf", "crop=100:100:490:1300,scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+    assert raw[1] > 150 and raw[0] < 100, tuple(raw[:3])
+    # A HeyGen failure stops the remix with HeyGen's plain message (and, when it would repeat, the rest too).
+    async def broke(**kw):
+        error = remix.RemixError("Your HeyGen balance is too low for this. Add credit on HeyGen, then try again.")
+        error.stop_all = True
+        raise error
+    asyncio.run(remix.Remixer(config(), media=FakeMedia(ffmpeg), settings=settings).plan())
+    with pytest.raises(remix.RemixError, match="HeyGen balance is too low"):
+        asyncio.run(remix.Remixer(config(), media=FakeMedia(ffmpeg), settings=settings, presenter=broke).render([{"id": 0}]))
+    # Without the app's HeyGen link (or for a clip reaction) it's the avatar's photo, as before.
+    assert remix.Remixer(remix.RemixConfig(output_dir=str(tmp_path), host="lipsync", avatar_photo=str(photo)), settings=settings).config.host == "still"
+    assert remix.Remixer(remix.RemixConfig(output_dir=str(tmp_path), host="lipsync", avatar_photo=str(photo), presenter="heygen", format="silent",
+                                           reactions={"nod": str(photo)}), settings=settings).config.host == "still"

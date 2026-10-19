@@ -5,7 +5,7 @@ import type { AvatarSummary } from '../../shared/avatars'
 import { REACTIONS } from '../../shared/avatars'
 import {
   brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_CTA_OFFER_CHARS, MAX_POST_CAPTION_CHARS, MAX_SOURCES,
-  closeWithoutCta, normalizeCtaKeyword, AVATAR_VOICE, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
+  closeWithoutCta, lipsyncProblem, normalizeCtaKeyword, AVATAR_VOICE, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
   REMIX_WORD_LIMITS, remixEditProblem, remixSourceUrl, STANCE_LABELS, STYLE_LABELS, wordCount,
   AI_CARDS, CAMERA_CARDS, clipFormat, remixMode, headlineOnly, CAMERA_LAYOUTS, partsFor, AVATAR_REACTIONS_BETA, type CameraSettings, type FormatCard, type FormatCardId,
   type RemixFormat, type RemixMode, type RemixRecordings, type BrandIdentity, type RemixDraft, type RemixEdit, type RemixHost, type RemixOutput, type RemixStatus
@@ -74,6 +74,7 @@ const GRADE_TONES: Record<string, string> = {
 export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: PageName) => void; onViewLibrary?: (outputDir: string) => void }): React.JSX.Element {
   const openrouterConfigured = useSettingsStore((s) => s.openrouterConfigured)
   const pexelsConfigured = useSettingsStore((s) => s.pexelsConfigured)
+  const heygenConfigured = useSettingsStore((s) => s.heygenConfigured)
   const form = useRemixForm()
   const [avatars, setAvatars] = useState<AvatarSummary[]>([])
   const brands = useBrands((s) => s.brands)
@@ -141,7 +142,14 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   // The avatar's own voice (its clone or preset) unless a preset is picked here; voice-only can borrow it too.
   const usesAvatarVoice = form.voice === AVATAR_VOICE
   const showAvatars = !onCamera && (needsAvatar || usesAvatarVoice)
-  const avatarVoiceName = avatar ? (avatar.voice.provider === 'clone' ? `${avatar.name}’s cloned voice` : `${avatar.name}’s voice (${avatar.voice.voice})`) : 'Your avatar’s voice'
+  // Avatar on camera (HeyGen, Beta): the chosen avatar must be a ready HeyGen avatar, on the member's HeyGen key.
+  const lipsync = host === 'lipsync'
+  const lipsyncIssue = lipsyncProblem(heygenConfigured, avatar)
+  const readyHeygen = avatars.find((item) => lipsyncProblem(heygenConfigured, item) === null) ?? null
+  // The card is off when no avatar can be used (the reason from the chosen avatar, or the first HeyGen one).
+  const lipsyncOff = readyHeygen ? null : lipsyncProblem(heygenConfigured, avatar?.heygen ? avatar : avatars.find((item) => item.heygen) ?? null)
+  const heygenVoice = lipsync && avatar?.heygen?.voice === 'heygen'
+  const avatarVoiceName = avatar ? (heygenVoice ? `${avatar.name}’s HeyGen voice` : avatar.voice.provider === 'clone' ? `${avatar.name}’s cloned voice` : `${avatar.name}’s voice (${avatar.voice.voice})`) : 'Your avatar’s voice'
   const cost = momentTake ? estimateRemixCost('camera', Math.max(1, moments.ranges.length), rangeMinutes / 60, 'moment_take') : estimateRemixCost(host, form.count, 0.5, form.format)
   const reactionCount = avatar?.reactions?.length ?? 0
   const keyword = normalizeCtaKeyword(form.ctaKeyword)
@@ -163,6 +171,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             : (pause || clip) && !form.clipRightsAck ? 'Confirm you’re allowed to use this video'
             : momentTake && moments.problem ? moments.problem
             : momentTake && !form.clipRightsAck ? 'Confirm you’re allowed to use this video'
+            : lipsync && lipsyncIssue ? lipsyncIssue.reason
             : needsAvatar && !avatar ? 'Create an avatar in Avatar Studio, or use voice only'
               : !onCamera && usesAvatarVoice && !avatar ? 'Create an avatar in Avatar Studio, or pick a preset voice'
               : keyword === null ? 'Use one word for the comment keyword, like SALES'
@@ -243,7 +252,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     if (next === mode) return
     if (next === 'ai') {
       lastPick.camera = greenScreen ? 'greenscreen' : form.format
-      const host = lastPick.ai.host === 'camera' || lastPick.ai.host === 'lipsync' ? 'still' : lastPick.ai.host
+      const host = lastPick.ai.host === 'camera' ? 'still' : lastPick.ai.host
       form.update({ format: lastPick.ai.format, host, clipRightsAck: false })
       return
     }
@@ -522,20 +531,46 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Presenter">
       {REMIX_HOSTS.filter((item) => item.id !== 'camera').map((item) => {
         const selected = form.host === item.id
+        const unavailable = item.id === 'lipsync' && !selected ? lipsyncOff?.reason : undefined
+        // Choosing it picks a ready HeyGen avatar when the chosen one isn't.
+        const choose = (): void => {
+          form.update({ host: item.id, ...(item.id === 'lipsync' && lipsyncIssue && readyHeygen ? { avatarId: readyHeygen.id } : {}) })
+          lastPick.ai = { format: form.format, host: item.id }
+        }
         return (
-          <button key={item.id} type="button" role="radio" aria-checked={selected} aria-disabled={item.unavailable ? true : undefined}
-            tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown} disabled={Boolean(item.unavailable)} title={item.unavailable}
-            onClick={() => { form.update({ host: item.id }); lastPick.ai = { format: form.format, host: item.id } }}
-            className={cn('glass-tile rounded-xl px-3 py-2.5 text-left', item.unavailable ? 'cursor-not-allowed opacity-50' : 'glass-tile-hover',
+          <button key={item.id} type="button" role="radio" aria-checked={selected} aria-disabled={unavailable ? true : undefined}
+            tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown} disabled={Boolean(unavailable)} title={unavailable}
+            onClick={choose}
+            className={cn('glass-tile rounded-xl px-3 py-2.5 text-left', unavailable ? 'cursor-not-allowed opacity-50' : 'glass-tile-hover',
               selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
-            <span className="flex items-center gap-1.5 text-xs font-medium">{item.label}{item.unavailable && <span className="text-2xs font-normal text-ink-subtle">· Coming soon</span>}
-              {item.beta && !item.unavailable && <Badge tone="warning">Beta</Badge>}</span>
-            <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{item.unavailable ?? item.detail}</span>
-            {item.beta && !item.unavailable && <span className="mt-0.5 block text-2xs text-ink-subtle">{item.beta}</span>}
+            <span className="flex items-center gap-1.5 text-xs font-medium">{item.label}
+              {item.beta && <Badge tone="warning">Beta</Badge>}</span>
+            <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{unavailable ?? item.detail}</span>
+            {item.beta && <span className="mt-0.5 block text-2xs text-ink-subtle">{item.beta}</span>}
           </button>
         )
       })}
     </div>
+  )
+  // Why Avatar on camera can't be used (or can't be used with this avatar), with the place it's fixed.
+  const lipsyncIssueShown = lipsync ? lipsyncIssue : lipsyncOff
+  const lipsyncNote = hostChoice && lipsyncIssueShown && (
+    <Callout tone="info" title={lipsync ? 'Avatar on camera needs a ready HeyGen avatar' : 'Avatar on camera (HeyGen, Beta) isn’t ready'}
+      action={lipsyncIssueShown.fix === 'settings'
+        ? <Button size="sm" onClick={openKeys}>Open Settings</Button>
+        : <Button size="sm" onClick={() => onNavigate('avatar')}>Open Avatar Studio</Button>}>
+      {lipsyncIssueShown.reason}
+    </Callout>
+  )
+  // HeyGen makes the avatar's lines on the member's own HeyGen account.
+  const lipsyncCostNote = hostChoice && lipsync && !lipsyncIssue && (
+    <p className="text-2xs text-ink-muted">
+      {heygenVoice && form.voice === AVATAR_VOICE
+        ? 'HeyGen makes every line in your avatar’s HeyGen voice; the opening and closing lines show your avatar on camera.'
+        : 'HeyGen lip-syncs your avatar to the voice for the opening and closing lines.'}{' '}
+      HeyGen bills it on your HeyGen account (estimated here at HeyGen’s published price of ${REMIX_PRICES.avatarPerSecond.toFixed(2)} per second of video).
+      Making a video on HeyGen can take several minutes.
+    </p>
   )
 
   const avatarBlocks = (<>
@@ -549,7 +584,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             onKeyDown={onRadioKeyDown} onClick={() => form.update({ avatarId: item.id })}
             className={cn('glass-tile glass-tile-hover overflow-hidden rounded-xl text-left', avatar?.id === item.id && 'glass-selected')}>
             <img src={localFileUrl(item.portraitPath)} alt="" className="aspect-[9/16] w-full object-cover" />
-            <span className="block truncate px-2 py-1 text-2xs font-medium text-ink">{item.name}</span>
+            <span className="block truncate px-2 py-1 text-2xs font-medium text-ink">{item.name}{lipsync && item.heygen ? ' · HeyGen' : ''}</span>
           </button>
         ))}
       </div>
@@ -563,7 +598,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <Select value={form.voice} searchable onChange={(voice) => form.update({ voice })}
-            options={[{ value: AVATAR_VOICE, label: avatarVoiceName, detail: 'Set in Avatar Studio · clone your voice there' },
+            options={[{ value: AVATAR_VOICE, label: avatarVoiceName, detail: heygenVoice ? 'Set in Avatar Studio · HeyGen speaks your lines' : 'Set in Avatar Studio · clone your voice there' },
               ...REMIX_VOICES.map((voice) => ({ value: voice.id, label: voice.label, detail: voice.detail }))]} />
         </div>
         {(!usesAvatarVoice || avatar) && (
@@ -746,6 +781,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             <PanelHeader title="4 · Presenter" description={silent ? 'Your avatar’s reactions play with the clip.' : 'Who delivers the take.'} />
             <div className="mt-4 space-y-4">
               {hostCards}
+              {lipsyncNote}
+              {lipsyncCostNote}
               {avatarBlocks}
             </div>
           </Panel>

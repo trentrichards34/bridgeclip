@@ -492,9 +492,15 @@ test('Remix on camera: easy starts, a folded look summary, plain errors, the rec
 
   // Library → Remix this clip: an AI-presenter or screenshot format becomes a reaction on camera; a long video, Moment + my take.
   assert.equal(LONG_CLIP_SECONDS, 600)
-  assert.equal(libraryClipFormat('commentary', 'still', 40), 'pause_react')
-  assert.equal(libraryClipFormat('silent', 'still', undefined), 'pause_react')
-  assert.equal(libraryClipFormat('image', 'camera', 30), 'pause_react')
+  // A short Library clip opens in Their clip, then me (their clip, then the member's context); a long one in Moment + my take.
+  assert.equal(libraryClipFormat('commentary', 'still', 40), 'clip_then_me')
+  assert.equal(libraryClipFormat('silent', 'still', undefined), 'clip_then_me')
+  assert.equal(libraryClipFormat('image', 'camera', 30), 'clip_then_me')
+  assert.equal(libraryClipFormat('commentary', 'voice', 600), 'clip_then_me')
+  assert.equal(libraryClipFormat('silent', 'lipsync', 601), 'moment_take')
+  assert.equal(libraryClipFormat('pause_react', 'camera', 30), 'pause_react')
+  assert.equal(libraryClipFormat('clip_then_me', 'camera', 30), 'clip_then_me')
+  assert.equal(libraryClipFormat('react_thoughts', 'camera', 30), 'react_thoughts')
   assert.equal(libraryClipFormat('commentary', 'voice', 1200), 'moment_take')
   assert.equal(libraryClipFormat('commentary', 'camera', 1200), 'commentary')
   assert.equal(libraryClipFormat('silent', 'camera', 30), 'silent')

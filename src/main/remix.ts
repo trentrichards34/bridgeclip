@@ -3,7 +3,7 @@ import { execFile, execFileSync, spawn, type ChildProcess } from 'child_process'
 import { randomBytes, randomUUID } from 'crypto'
 import { existsSync, lstatSync, realpathSync, statSync } from 'fs'
 import { access, constants as fsConstants, copyFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile, type FileHandle } from 'fs/promises'
-import { basename, delimiter, dirname, extname, join } from 'path'
+import { basename, delimiter, dirname, extname, isAbsolute, join, relative, sep } from 'path'
 import { promisify } from 'util'
 import { isAvatarId } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
@@ -25,6 +25,8 @@ import {
   type BrollItem, type BrollShot, type BrollView
 } from '../shared/react-templates'
 import { suggestTalkingPoints } from './moment-take'
+import { estimateHeygenVideoUsd, HEYGEN_PRICES, heygenEngine, type HeygenAvatarLink } from '../shared/heygen'
+import type { SpendProvider } from '../shared/spending'
 
 const DEFAULT_VOICE_NAME = 'Brian'
 import { portraitPath, readAvatar, readReactions, voiceSamplePath } from './avatars'
@@ -78,7 +80,27 @@ interface RunContext {
   broll?: { items: BrollItem[]; stock: boolean; plan: BrollShot[] | null; takeSeconds: number | null }
 }
 
-interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null; context: RunContext; ctaAbort?: AbortController }
+/** Avatar on camera on HeyGen: the lines being made now (canceling stops waiting for them) and what they were estimated at. */
+interface HeygenRun { abort: AbortController; inFlight: number; made: number; usd: number; unpriced: boolean; canceledWhileWaiting?: boolean }
+
+interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null; context: RunContext; ctaAbort?: AbortController; heygen?: HeygenRun }
+
+/**
+ * Avatar on camera (HeyGen, Beta) for a Voiced take: HeyGen is reached from main (it holds the key), so the IPC layer
+ * hands Remix these (./heygen-avatar's readyHeygenLink and renderHeygenTake). The engine asks for each spoken line
+ * as it renders; see execute().
+ */
+export interface RemixHeygen {
+  /** The avatar's HeyGen link once it can make videos; throws a plain message (no key, training, consent) otherwise. */
+  ready: (avatarId: string, signal?: AbortSignal) => Promise<HeygenAvatarLink>
+  render: (request: {
+    avatarId: string; audioPath?: string | null; text?: string | null; voiceId?: string | null; outPath: string; signal?: AbortSignal
+    onStatus?: (detail: string, fraction: number) => void; spendKind?: 'remix'; title?: string
+  }) => Promise<{ videoId: string; path: string; seconds: number; estimatedUsd: number | null }>
+}
+let heygenApi: RemixHeygen | null = null
+export function setRemixHeygen(api: RemixHeygen | null): void { heygenApi = api }
+const NO_HEYGEN = 'Avatar on camera needs HeyGen, which isn’t available right now. Restart the app, or pick Avatar photo.'
 
 let active: ActiveRemix | null = null
 /** A planned run waiting for the user's review (not running, but holds the folder and drafts). */
@@ -146,7 +168,8 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   if (!image && !pause && !momentTake && !isRemixHost(raw.host)) throw new Error('Choose how your presenter appears.')
   // Lip-sync to our own voice isn't possible on OpenRouter yet: the avatar's photo presents instead.
   // A screenshot, a pause-and-react and a moment with your take are always you, on camera.
-  const host = image || pause || momentTake ? 'camera' : raw.host === 'lipsync' ? 'still' : raw.host as Exclude<RemixRequest['host'], 'lipsync'>
+  // Avatar on camera is made on HeyGen for a Voiced take; a clip reaction with it uses the avatar's photo as before.
+  const host = image || pause || momentTake ? 'camera' : raw.host === 'lipsync' && format !== 'commentary' ? 'still' : raw.host as RemixRequest['host']
   if (image && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to share this screenshot.')
   if (clip && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use this video: your video plays it with its sound.')
   if (pause && raw.clipRightsAck !== true) throw new Error('Confirm you’re allowed to use this video: Pause & react plays much of it.')
@@ -321,6 +344,15 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     if (request.ctaId) readCta(request.ctaId)
     const silent = request.format === 'silent'
     const onCamera = request.host === 'camera'
+    // Avatar on camera: a ready HeyGen avatar on the member's key (checked with HeyGen once if it wasn't ready).
+    let heygenLink: HeygenAvatarLink | null = null
+    if (request.host === 'lipsync') {
+      if (!avatar?.heygen) throw new Error('Choose an avatar made with HeyGen for Avatar on camera (make one in Avatar Studio), or pick Avatar photo.')
+      if (!heygenApi) throw new Error(NO_HEYGEN)
+      heygenLink = await heygenApi.ready(request.avatarId as string)
+    }
+    // It speaks in its HeyGen voice when the avatar is set to (and its own voice is chosen here); otherwise it lip-syncs to the app's voice.
+    const heygenVoice = Boolean(heygenLink && request.voice === AVATAR_VOICE && heygenLink.voice === 'heygen' && heygenLink.voiceId)
     if (request.moment && remixSourceUrl(request.sources[0]) === null) {
       // A file's length is known now: say which range is past its end before anything is fetched or paid for.
       const seconds = await mediaSecondsOf(request.sources[0])
@@ -397,7 +429,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         ...(request.camera ? { camera_layout: request.camera.layout, camera_backdrop: request.camera.backdrop,
           camera_backdrop_color: request.camera.backdropColor, camera_talk: request.camera.talk } : {}),
         ...(request.pause ? { pause_layout: request.pause.layout, pause_captions: request.pause.captions } : {}),
-        ...(request.moment ? { moment_ranges: request.moment.ranges.map((range) => [range.startS, range.endS]), moment_pip: request.moment.pip } : {})
+        ...(request.moment ? { moment_ranges: request.moment.ranges.map((range) => [range.startS, range.endS]), moment_pip: request.moment.pip } : {}),
+        ...(heygenLink ? { presenter: 'heygen', heygen_voice: heygenVoice, heygen_usd_per_second: heygenUsdPerSecond(heygenLink) } : {})
       }
     }
     const run: ActiveRemix = {
@@ -422,6 +455,25 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     launch(run, { ...context.config, mode: 'plan' })
     return run.status
   } finally { starting = false; pending = null }
+}
+
+/** HeyGen's published price per second for this avatar's engine, or null when HeyGen bills it at a price the app doesn't keep. */
+function heygenUsdPerSecond(link: HeygenAvatarLink): number | null {
+  return estimateHeygenVideoUsd(1, heygenEngine(link.engines)) === null ? null : HEYGEN_PRICES.avatarIvPerSecond
+}
+
+/**
+ * The spending check before making the approved takes: their estimates (with the avatar's HeyGen lines at HeyGen's
+ * published price when Avatar on camera is chosen; null when HeyGen's price for it isn't known). HeyGen speaking in its
+ * own voice bills mostly HeyGen; otherwise mostly OpenRouter (the voice and the planning).
+ */
+export function remixRenderCheck(edits: unknown): { provider: SpendProvider; estimateUsd: number | null } {
+  const run = reviewing
+  const ids = new Set(Array.isArray(edits) ? edits.map((edit) => (edit as { id?: unknown } | null)?.id) : [])
+  const total = (run?.status.drafts ?? []).filter((draft) => ids.has(draft.id)).reduce((sum, draft) => sum + draft.estimateUsd, 0)
+  const config = run?.context.config
+  if (config?.presenter !== 'heygen') return { provider: 'openrouter', estimateUsd: total > 0 ? total : null }
+  return { provider: config.heygen_voice === true ? 'heygen' : 'openrouter', estimateUsd: config.heygen_usd_per_second === null ? null : total > 0 ? total : null }
 }
 
 /** Moment + my take: transcribing the ranges and picking a moment in each, then one writing call per video. */
@@ -600,6 +652,12 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
   run.child = child
   let buffer = '', stderr = ''
   let result: Record<string, unknown> | null = null
+  // Avatar on camera: the engine asks for each spoken line on stdout, and the answer goes back on stdin.
+  const heygen = config.presenter === 'heygen' && config.mode === 'render'
+  if (heygen) run.heygen = { abort: new AbortController(), inFlight: 0, made: 0, usd: 0, unpriced: false }
+  const answer = (message: Record<string, unknown>): void => {
+    if (!child.stdin.destroyed && child.stdin.writable) child.stdin.write(JSON.stringify(message) + '\n')
+  }
   const timer = setTimeout(() => kill(child, true), 3 * 60 * 60_000)
   child.stdout.on('data', (chunk) => {
     buffer += String(chunk)
@@ -610,6 +668,8 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
         const message = JSON.parse(line) as Record<string, unknown>
         if (message.type === 'progress' && typeof message.percent === 'number') {
           if (!run.cancelled) publish(run, { detail: typeof message.detail === 'string' ? message.detail.slice(0, 160) : run.status.detail, percent: message.percent })
+        } else if (message.type === 'heygen' && heygen) {
+          void heygenLine(run, message).then(answer)
         } else if (typeof message.ok === 'boolean') result = message
       } catch { /* ignore non-protocol output */ }
     }
@@ -622,6 +682,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
   child.on('close', () => { void closed() })
   async function closed(): Promise<void> {
     clearTimeout(timer); run.child = undefined
+    if (heygen) { child.stdin.end(); run.heygen?.abort.abort() }
     if (!running(run)) return
     if (run.context.writing) {
       run.context.writing = false
@@ -668,10 +729,16 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     if (run.cancelled) {
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
       else for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions', '.recordings', '.broll']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
-      finish(run, { phase: 'cancelled', detail: planning ? 'Canceled while planning' : 'Canceled', ...(spent > 0 ? { costUsd: (planning ? 0 : run.context.planCostUsd) + spent } : {}) })
+      // HeyGen has no cancel: a video it had started may still finish there and be billed.
+      const heygenWarnings = [heygenNote(run), run.heygen?.canceledWhileWaiting ? 'HeyGen may still finish an avatar video it had already started and bill it on your HeyGen account.' : null]
+        .filter((note): note is string => Boolean(note))
+      finish(run, { phase: 'cancelled', detail: planning ? 'Canceled while planning' : 'Canceled', ...(spent > 0 ? { costUsd: (planning ? 0 : run.context.planCostUsd) + spent } : {}),
+        ...(heygenWarnings.length ? { warnings: heygenWarnings } : {}) })
       return
     }
     const warnings = Array.isArray(result?.warnings) ? result.warnings.filter((w): w is string => typeof w === 'string').map((w) => w.slice(0, 400)).slice(0, 12) : []
+    const madeOnHeygen = heygenNote(run)
+    if (madeOnHeygen) warnings.push(madeOnHeygen)
     const cost = typeof result?.cost_usd === 'number' && Number.isFinite(result.cost_usd) ? result.cost_usd : null
     if (result?.ok === true && planning) {
       const drafts = (Array.isArray(result.drafts) ? result.drafts : []).map(parseRemixDraft).filter((item): item is RemixDraft => item !== null)
@@ -728,7 +795,74 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     }
   }
   child.stdin.on('error', () => undefined)
-  child.stdin.end(JSON.stringify(config))
+  // One line; with HeyGen lines to make, stdin stays open for their answers (closed when the engine ends).
+  if (heygen) child.stdin.write(JSON.stringify(config) + '\n')
+  else child.stdin.end(JSON.stringify(config))
+}
+
+/** A path the engine named inside the run folder (an existing file, or a new file's folder), or null. */
+function inRunFolder(folder: string, path: unknown, existing: boolean): string | null {
+  if (typeof path !== 'string' || !path || path.length > 4096 || path.includes('\0')) return null
+  try {
+    const real = existing ? realpathSync(path) : join(realpathSync(dirname(path)), basename(path))
+    const rel = relative(realpathSync(folder), real)
+    return rel && !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`) && !rel.startsWith('../') ? real : null
+  } catch { return null }
+}
+
+/** Errors that would repeat for every line and take: the remaining ones aren't tried. */
+const HEYGEN_STOP_ALL = /key|balance|credit|consent|training|could not make this avatar|isn’t available/i
+
+/**
+ * One spoken line of a Voiced take made on HeyGen for the engine: lip-synced to the engine's voice file, or the line's
+ * text in the avatar's HeyGen voice. Progress shows HeyGen's status; the cost goes to the spending ledger (estimated at
+ * HeyGen's published price) as it's made. Answers {type: 'heygen_result', id, ok, path} or ok false with a plain error.
+ */
+async function heygenLine(run: ActiveRemix, message: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const id = message.id
+  const fail = (error: string): Record<string, unknown> => ({ type: 'heygen_result', id, ok: false, error, stop_all: HEYGEN_STOP_ALL.test(error) })
+  const state = run.heygen
+  if (typeof id !== 'number' || !Number.isInteger(id) || !state) return fail('That line could not be sent to HeyGen.')
+  const config = run.context.config
+  const folder = run.status.folder
+  const outPath = inRunFolder(join(folder, '.work'), message.out, false)
+  const text = typeof message.text === 'string' ? message.text.replace(/\s+/g, ' ').trim() : ''
+  const audioPath = message.audio === null || message.audio === undefined ? null : inRunFolder(folder, message.audio, true)
+  const label = typeof message.label === 'string' ? message.label.replace(/[^\p{L}\p{N} ,.'’-]/gu, '').slice(0, 80) : 'Your avatar'
+  if (!outPath || !outPath.endsWith('.mp4') || (message.audio != null && !audioPath)) return fail('That line could not be sent to HeyGen.')
+  const heygenVoice = config.heygen_voice === true
+  if (heygenVoice ? !text || text.length > 5000 : !audioPath) return fail('That line could not be sent to HeyGen.')
+  if (!heygenApi || !run.avatarId) return fail(NO_HEYGEN)
+  if (run.cancelled) return fail('Canceled.')
+  state.inFlight += 1
+  try {
+    const made = await heygenApi.render({
+      avatarId: run.avatarId, outPath, signal: state.abort.signal, spendKind: 'remix', title: `CreatorClips remix: ${label}`.slice(0, 100),
+      ...(heygenVoice ? { text } : { audioPath }),
+      onStatus: (detail) => { if (!run.cancelled) publish(run, { detail: `${label}: ${detail}`.slice(0, 160) }) }
+    })
+    state.made += 1
+    if (made.estimatedUsd === null) state.unpriced = true
+    else state.usd += made.estimatedUsd
+    logger.info('remix.heygen.line', { seconds: Math.round(made.seconds) })
+    return { type: 'heygen_result', id, ok: true, path: outPath }
+  } catch (error) {
+    if (run.cancelled) return fail('Canceled.')
+    const message = (error as { message?: unknown } | null)?.message
+    const reason = typeof message === 'string' && message ? message.slice(0, 300) : 'HeyGen could not make this video. Try again.'
+    logger.warn('remix.heygen.failed', { message: reason.slice(0, 120) })
+    return fail(reason)
+  } finally { state.inFlight -= 1 }
+}
+
+/** What the HeyGen part of a run cost, for the finished (or failed) run's notes; null when nothing was made. */
+function heygenNote(run: ActiveRemix): string | null {
+  const state = run.heygen
+  if (!state || !state.made) return null
+  const lines = `${state.made} avatar video${state.made === 1 ? '' : 's'}`
+  return state.unpriced
+    ? `HeyGen made ${lines} for these remixes, billed on your HeyGen account.`
+    : `HeyGen made ${lines} for these remixes: about $${state.usd.toFixed(2)} on your HeyGen account (estimated at HeyGen’s published price, and recorded in Spending).`
 }
 
 // ---------------------------------------------------------------------------
@@ -1523,6 +1657,8 @@ export function cancelRemix(): boolean {
   if (run.cancelled) return true
   run.cancelled = true
   run.ctaAbort?.abort()
+  // Stops waiting for HeyGen (it has no cancel: a video it already started may still finish and be billed there).
+  if (run.heygen) { run.heygen.canceledWhileWaiting = run.heygen.inFlight > 0; run.heygen.abort.abort() }
   run.status = { ...run.status, detail: 'Cancelling…' }
   notify(run.status)
   kill(run.child)

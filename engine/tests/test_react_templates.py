@@ -425,3 +425,90 @@ def test_react_then_my_thoughts_unplanned_or_changed(env, monkeypatch):
     again = asyncio.run(r2.render([{"id": 0, "headline": "My honest take on this serum"}]))["remixes"][0]
     assert json.load(open(again["manifest_path"]))["presenter"]["react_thoughts"]["broll"] == []
     assert remix.camera_recording({"reaction": {"path": env.watch}}, "react_thoughts") is None
+
+
+# ---------------------------------------------------------------------------
+# Part 1 around the member's face
+# ---------------------------------------------------------------------------
+
+def overlaps(a, b):
+    """Two (x, y, w, h) boxes share any pixel."""
+    return a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]
+
+
+def test_part1_box_never_covers_the_face():
+    out_h, top_from, caption_line = 1920, 300, 1500
+    for natural in (552, 1100, 1700):
+        for fy in range(260, 1700, 40):
+            for fh in (180, 320, 480):
+                if fy + fh > out_h - 20:
+                    continue
+                face = (300, fy, 400, fh)
+                place = rt.part1_layout(face, natural, top_from, out_h, caption_line)
+                if place["at"] == "fallback":
+                    continue
+                grown = (300, fy - round(fh * rt.FACE_GROW_TOP), 400, fh + round(fh * (rt.FACE_GROW_TOP + rt.FACE_GROW_BOTTOM)))
+                box = (60, place["box_y"], 960, place["box_h"])
+                credit = (40, place["credit_y"], 1000, 54)
+                assert place["box_h"] <= rt.BOX_SPLIT_MAX * out_h
+                assert place["box_y"] >= top_from and place["box_y"] + place["box_h"] <= out_h - rt.BOTTOM_SAFE
+                # The face (with hair, chin and a margin) is never under the box or the credit.
+                assert not overlaps(box, (grown[0], grown[1] - rt.FACE_MARGIN + 1, grown[2], grown[3] + 2 * rt.FACE_MARGIN - 2)), (face, place)
+                assert not overlaps(credit, grown) and not overlaps(credit, box), (face, place)
+                # A face low in the frame puts the box at the top; high, at the bottom (when there's room there).
+                if fy + fh / 2 > out_h / 2 and place["at"] == "bottom":
+                    assert fy - round(fh * rt.FACE_GROW_TOP) - rt.FACE_MARGIN - rt.CREDIT_ROOM - top_from < min(rt.BOX_MIN_PX, natural)
+                # Captions don't sit on the face or the box when there's room for them.
+                cap = (40, place["caption_y"] - rt.CAPTION_HALF, 1000, 2 * rt.CAPTION_HALF)
+                assert not overlaps(cap, box), (face, place)
+                if place["caption_clear"]:
+                    assert not overlaps(cap, box) and not overlaps(cap, grown), (face, place)
+    # No face, or no room either side: the box at the top with the member framed lower, as before.
+    assert rt.part1_layout(None, 552, top_from, out_h, caption_line) == {"at": "fallback"}
+    assert rt.part1_layout((300, 500, 400, 900), 552, top_from, out_h, caption_line) == {"at": "fallback"}
+    assert rt.part1_layout((300, 1100, 400, 300), 552, top_from, out_h, caption_line)["at"] == "top"
+    assert rt.part1_layout((300, 360, 400, 300), 552, top_from, out_h, caption_line)["at"] == "bottom"
+
+
+def test_face_in_frame_follows_the_cover_crop():
+    # A 9:16 recording into a 1080 x 1700 panel under a 220 px hook bar: scaled to 1080 x 1920, 30% of the extra cut at the top.
+    assert rt.face_in_frame((0.25, 0.5, 0.5, 0.25), (360, 640), 1080, 1700, 220) == (270, 960 - 66 + 220, 540, 480)
+    assert rt.face_in_frame(None, (360, 640), 1080, 1700, 220) is None
+
+
+@pytest.mark.parametrize("face_top, expect", [(420, "top"), (60, "bottom")])
+def test_react_then_my_thoughts_part1_keeps_the_face_in_view(env, monkeypatch, face_top, expect):
+    """A stand-in face detector reports the skin-colored box drawn into the member's part-1 recording: their clip's box
+    goes where it doesn't cover it, the credit goes under the box, and the face shows in the finished video."""
+    fake_ai(monkeypatch)
+    watch = str(env.tmp / f"watch-{face_top}.mp4")
+    subprocess.run([env.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x305070:s=360x640:d=14:r=30", "-f", "lavfi", "-i",
+                    "sine=frequency=500:duration=14:sample_rate=48000", "-vf", f"drawbox=x=100:y={face_top}:w=160:h=160:color=0xe0b090:t=fill",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", watch], check=True, timeout=120)
+    found = []
+
+    def fake_find_face(path, samples=remix.FACE_SAMPLES):
+        found.append(os.path.basename(path))
+        return (100 / 360, face_top / 640, 160 / 360, 160 / 640) if os.path.basename(path) == "presenter.mp4" else None
+    monkeypatch.setattr(remix, "find_face", fake_find_face)
+    asyncio.run(remixer(config(env, "react_thoughts"), env)[0].plan())
+    recordings = {"0": {"reaction": {"path": watch, "offset_s": 1.0}, "thoughts": {"path": env.take, "offset_s": 0}}}
+    r, _ = remixer(config(env, "react_thoughts", recordings=recordings, trim=[2000, 8000], plan=[]), env)
+    [made] = asyncio.run(r.render([{"id": 0, "headline": "This serum changed her skin in a week? Not mine"}]))["remixes"]
+    assert "presenter.mp4" in found
+    data = json.load(open(os.path.join(env.out, ".edit", "clip_00", "edit.json")))
+    part1 = data["tags"]["part1"]
+    box, face = part1["box"], part1["face"]
+    assert part1["at"] == expect and box and face
+    assert not overlaps(box, (face[0], face[1] - rt.FACE_MARGIN, face[2], face[3] + 2 * rt.FACE_MARGIN)), part1
+    assert box[3] <= rt.BOX_SPLIT_MAX * remix.OUT_H + 1
+    credit_y = data["tags"]["credit_y"]
+    assert credit_y >= box[1] + box[3] and not overlaps((40, credit_y, 1000, 54), face)
+    # In the finished video (part 1), the face's middle is the skin color and the box's middle shows their moving clip.
+    final = made["path"]
+    cx, cy = face[0] + face[2] // 2, face[1] + face[3] // 2
+    skin = rgb_at(final, 2.0, f"20:20:{cx - 10}:{cy - 10}")
+    assert abs(skin[0] - 0xe0) < 40 and abs(skin[1] - 0xb0) < 40 and abs(skin[2] - 0x90) < 40, skin
+    box_mid = gray_frames(final, crop=f"200:200:{box[0] + box[2] // 2 - 100}:{box[1] + box[3] // 2 - 100}")[:150]
+    assert np.median(np.abs(np.diff(box_mid, axis=0)).mean(axis=(1, 2))) > 0.5
+    samples(final, f"react-thoughts-face-{expect}", (2.0,))
