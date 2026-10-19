@@ -9,6 +9,7 @@ import {
   AI_PORTRAIT_CANDIDATES, DEFAULT_VOICE, isAvatarId, isPortraitLook, isReactionId, MAX_AVATAR_PICTURES, REACTIONS, OPENROUTER_MODELS, parseVoice, PORTRAIT_LOOKS,
   type Avatar, type AvatarKind, type AvatarPicture, type AvatarReaction, type AvatarSummary, type AvatarVoice
 } from '../shared/avatars'
+import { parseHeygenLink } from '../shared/heygen'
 import { falInputUrl } from './fal'
 import { generateImage, openRouterBase, OpenRouterMediaError, synthesizeSpeech, type MediaOptions, type SpeechRequest } from './openrouter-media'
 import { authorizeMedia } from './security'
@@ -25,6 +26,7 @@ const execFileAsync = promisify(execFile)
 export const PHOTO_EXTENSIONS = ['jpg', 'jpeg', 'png']
 export const VOICE_SAMPLE_EXTENSIONS = ['mp3', 'wav', 'm4a']
 const DRAFT_ID = /^[a-f0-9]{16}$/
+export function isDraftId(value: unknown): value is string { return typeof value === 'string' && DRAFT_ID.test(value) }
 const MAX_PHOTO_BYTES = 25_000_000
 const MAX_SAMPLE_BYTES = 20_000_000
 const DRAFT_TTL_MS = 24 * 60 * 60_000
@@ -35,11 +37,11 @@ export function avatarsDir(): string {
   return join(app.getPath('userData'), 'avatars')
 }
 
-function draftsDir(): string {
+export function draftsDir(): string {
   return join(avatarsDir(), '.drafts')
 }
 
-function avatarDir(id: string): string {
+export function avatarDir(id: string): string {
   if (!isAvatarId(id)) throw new Error('Invalid avatar')
   return join(avatarsDir(), id)
 }
@@ -81,7 +83,7 @@ export function voiceSamplePath(id: string): string {
   return join(avatarDir(id), 'voice-sample.mp3')
 }
 
-function newId(bytes: number): string {
+export function newId(bytes: number): string {
   return randomBytes(bytes).toString('hex')
 }
 
@@ -114,7 +116,8 @@ function parseAvatar(value: unknown, id: string): Avatar | null {
     const clonedVoice = parseClone(raw.clonedVoice, id)
     return {
       id, name: raw.name.slice(0, 60), kind: raw.kind, description: typeof raw.description === 'string' ? raw.description.slice(0, 600) : '',
-      voice: migrateVoice(raw.voice, clonedVoice), clonedVoice, consentAt: typeof raw.consentAt === 'string' ? raw.consentAt : null, createdAt: raw.createdAt
+      voice: migrateVoice(raw.voice, clonedVoice), clonedVoice, consentAt: typeof raw.consentAt === 'string' ? raw.consentAt : null, createdAt: raw.createdAt,
+      heygen: parseHeygenLink(raw.heygen)
     }
   } catch { return null }
 }
@@ -126,7 +129,7 @@ export function readAvatar(id: string): Avatar {
   return parsed
 }
 
-async function writeAvatar(avatar: Avatar, portraitFile?: string): Promise<void> {
+export async function writeAvatar(avatar: Avatar, portraitFile?: string): Promise<void> {
   const file = join(avatarDir(avatar.id), 'avatar.json')
   const current = portraitFile ?? basename(portraitPath(avatar.id))
   await writeFile(`${file}.tmp`, JSON.stringify({ ...avatar, ...(current !== 'portrait.jpg' ? { portraitFile: current } : {}) }, null, 2), { mode: 0o600 })
@@ -321,7 +324,7 @@ function picturesMeta(id: string): Record<string, { source?: string; createdAt?:
   try { return JSON.parse(readFileSync(join(avatarDir(id), 'pictures.json'), 'utf8')) as Record<string, { source?: string; createdAt?: string }> } catch { return {} }
 }
 
-async function writePicturesMeta(id: string, meta: Record<string, { source?: string; createdAt?: string }>): Promise<void> {
+export async function writePicturesMeta(id: string, meta: Record<string, { source?: string; createdAt?: string }>): Promise<void> {
   const file = join(avatarDir(id), 'pictures.json')
   const temp = `${file}.${newId(4)}.tmp`
   await writeFile(temp, JSON.stringify(meta, null, 2), { mode: 0o600 })

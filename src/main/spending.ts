@@ -151,7 +151,8 @@ export async function spendOverview(now = new Date()): Promise<SpendOverview> {
     summary: summarizeSpend(await loadEntries(), now),
     limitUsd: parseSpendLimit(settings.monthlySpendLimitUsd) ?? null,
     openrouterConfigured: Boolean(settings.openrouterApiKey),
-    falConfigured: Boolean(settings.falApiKey)
+    falConfigured: Boolean(settings.falApiKey),
+    heygenConfigured: Boolean(settings.heygenApiKey)
   }
 }
 
@@ -229,7 +230,7 @@ export async function openRouterBalance(force = false, timeoutMs?: number): Prom
 // ---------------------------------------------------------------------------
 
 /** IPC channels that start paid work, and so pass the spending check. */
-export const GATED_CHANNELS = new Set(['job:start', 'job:startMany', 'job:moreClips', 'remix:start', 'remix:write', 'remix:render', 'remix:anotherMoment', 'remix:talkingPoints', 'remix:readTimecode', 'remix:readTimecodeFile', 'editor:run', 'editor:suggestHooks', 'avatars:render', 'avatars:recreate', 'avatars:generateFaces', 'avatars:restyle', 'avatars:makeReactions', 'avatars:cloneVoice'])
+export const GATED_CHANNELS = new Set(['job:start', 'job:startMany', 'job:moreClips', 'remix:start', 'remix:write', 'remix:render', 'remix:anotherMoment', 'remix:talkingPoints', 'remix:readTimecode', 'remix:readTimecodeFile', 'editor:run', 'editor:suggestHooks', 'avatars:render', 'avatars:recreate', 'avatars:generateFaces', 'avatars:restyle', 'avatars:makeReactions', 'avatars:cloneVoice', 'heygen:createAvatar'])
 const overrides = new Map<string, number>()
 
 /** "Start anyway" after a low-balance warning: the next call on this channel skips the balance check (never the monthly limit). */

@@ -185,7 +185,7 @@ export const GUIDES: Record<GoalId, Guide> = {
       'Under 2 · Look, choose captions, hook text and whether to show your handle.',
       'Under 3 · Generate, check the estimated cost, then generate. The video is saved to your Library.'
     ],
-    tips: ['Recreate swaps your avatar into an existing video. It runs on fal.ai, so it needs a fal.ai key in Settings → API keys.']
+    tips: ['Recreate swaps your avatar into an existing video. It runs on fal.ai, so it needs a fal.ai key in Settings → API keys.', 'Realistic lip-synced avatars use HeyGen (Beta) with your own HeyGen key in Settings → API keys.']
   },
   posting: {
     id: 'posting',

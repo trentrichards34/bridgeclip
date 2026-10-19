@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowUpRight, RefreshCw, Wallet } from 'lucide-react'
 import { SPENDING_LINKS } from '../../config/brand'
-import { formatSpendUsd, LIMIT_WARNING_SHARE, SPEND_KIND_LABELS, SPEND_KINDS, type SpendEntry } from '../../../shared/spending'
+import { formatSpendUsd, LIMIT_WARNING_SHARE, SPEND_KIND_LABELS, SPEND_KINDS, SPEND_PROVIDER_LABELS, type SpendEntry } from '../../../shared/spending'
 import { getApi } from '../../lib/ipc'
 import { cn, errorMessage } from '../../lib/utils'
 import { useSpendingStore } from '../../store/use-spending-store'
@@ -41,7 +41,7 @@ export function SpendingSettings(): React.JSX.Element {
       <PanelHeader
         icon={<IconTile tone="accent"><Wallet /></IconTile>}
         title="Spending"
-        description="What your AI runs cost, as recorded by CreatorClips. These are the app’s estimates from what each provider reported (or from list prices where a provider reports nothing). Your actual bills are on OpenRouter and fal.ai."
+        description="What your AI runs cost, as recorded by CreatorClips. These are the app’s estimates from what each provider reported (or from list prices where a provider reports nothing). Your actual bills are on OpenRouter, fal.ai and HeyGen."
       />
       {loadError && <Callout tone="danger" className="mt-3">{loadError}</Callout>}
 
@@ -109,6 +109,7 @@ export function SpendingSettings(): React.JSX.Element {
       <div className="mt-4 flex flex-wrap gap-1.5 border-t border-white/[0.06] pt-3">
         <Button size="sm" variant="ghost" trailingIcon={<ArrowUpRight className="h-3.5 w-3.5" />} onClick={() => open(SPENDING_LINKS.openrouterActivity)}>OpenRouter usage</Button>
         <Button size="sm" variant="ghost" trailingIcon={<ArrowUpRight className="h-3.5 w-3.5" />} onClick={() => open(SPENDING_LINKS.falBilling)}>fal.ai billing</Button>
+        {overview?.heygenConfigured && <Button size="sm" variant="ghost" trailingIcon={<ArrowUpRight className="h-3.5 w-3.5" />} onClick={() => open(SPENDING_LINKS.heygenBilling)}>HeyGen plans and credit</Button>}
       </div>
     </>
   )
@@ -128,7 +129,7 @@ function EntryRow({ entry }: { entry: SpendEntry }): React.JSX.Element {
     <li className="flex items-center gap-3 px-1 py-1.5 text-sm">
       <span className="w-36 shrink-0 text-2xs text-ink-subtle">{when(entry.at)}</span>
       <span className="min-w-0 flex-1 truncate text-ink">{entry.label}</span>
-      <span className="hidden text-2xs text-ink-subtle sm:inline">{SPEND_KIND_LABELS[entry.kind]} · {entry.provider === 'fal' ? 'fal.ai' : 'OpenRouter'}</span>
+      <span className="hidden text-2xs text-ink-subtle sm:inline">{SPEND_KIND_LABELS[entry.kind]} · {SPEND_PROVIDER_LABELS[entry.provider]}</span>
       {entry.estimated && <Badge>estimate</Badge>}
       <span className="w-16 shrink-0 text-right font-mono tabular text-ink">{formatSpendUsd(entry.usd)}</span>
     </li>

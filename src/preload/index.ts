@@ -33,6 +33,7 @@ import type { OutputStorageUsage } from '../shared/output-storage'
 import type { CleanupFilters, CleanupGroupId, CleanupPlan, CleanupResult, FolderChangeInfo, FreeSpace, MoveProgress, MoveResult, RunSize } from '../shared/library-storage'
 import type { YouTubePreview } from '../shared/youtube-preview'
 import type { AvatarRenderStatus, AvatarScript, AvatarSummary } from '../shared/avatars'
+import type { HeygenAccount, HeygenCreateInput, HeygenStockAvatar, HeygenVideoDraft } from '../shared/heygen'
 import type { AppPrefsUpdate, MemberPrefs, StyleKind } from '../shared/member-prefs'
 import type { CreatorProfile } from '../shared/onboarding'
 import type { BrandLook } from '../shared/brand-kit'
@@ -57,6 +58,7 @@ export interface ClipSettings extends JevThresholdSettings {
   zernioConfigured: boolean
   pexelsConfigured: boolean
   falConfigured: boolean
+  heygenConfigured: boolean
   jevEnabled: string
   jevVisualContext: string
   sourceContextWebResearch: string
@@ -245,7 +247,7 @@ export interface BridgeClipAPI {
     /** Pass true to count again instead of reusing a result from the last few seconds. */
     storageUsage: (fresh?: boolean) => Promise<OutputStorageUsage>
     save: (settings: ClipSettings) => Promise<ClipSettings>
-    replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey' | 'pexelsApiKey' | 'falApiKey', value: string) => Promise<ClipSettings>
+    replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey' | 'pexelsApiKey' | 'falApiKey' | 'heygenApiKey', value: string) => Promise<ClipSettings>
     selectOutputDir: () => Promise<string | null>
   }
   zernio: {
@@ -372,6 +374,23 @@ export interface BridgeClipAPI {
     cancelRender: () => Promise<boolean>
     renderStatus: () => Promise<AvatarRenderStatus | null>
     onStatus: (callback: (status: AvatarRenderStatus) => void) => () => void
+  }
+  /** Realistic talking avatars on the member's own HeyGen key (Beta). */
+  heygen: {
+    /** Checks the key: who it belongs to and what is left on the account. */
+    account: () => Promise<HeygenAccount>
+    /** HeyGen's stock AI people, with local previews. */
+    stockAvatars: () => Promise<HeygenStockAvatar[]>
+    /** Opens a file dialog in main for twin footage; null when cancelled. */
+    pickVideo: () => Promise<HeygenVideoDraft | null>
+    /** A camera recording made on the page (WebM or MP4 bytes). */
+    saveRecording: (bytes: Uint8Array, mime: string) => Promise<HeygenVideoDraft>
+    createAvatar: (input: HeygenCreateInput) => Promise<AvatarSummary[]>
+    /** Asks HeyGen for the avatar's training and consent status. */
+    refresh: (id: string) => Promise<AvatarSummary[]>
+    /** Opens HeyGen's consent page for a video avatar in the browser (a new link when the old one expired). */
+    openConsent: (id: string) => Promise<AvatarSummary[]>
+    setVoice: (id: string, voice: 'heygen' | 'app') => Promise<AvatarSummary[]>
   }
   /** Short voice previews (MP3 bytes), cached after the first play. */
   voices: {
@@ -735,6 +754,16 @@ const api: BridgeClipAPI = {
     cancelRender: () => ipcRenderer.invoke('avatars:cancelRender'),
     renderStatus: () => ipcRenderer.invoke('avatars:renderStatus'),
     onStatus: (callback) => subscribe('avatars:status', callback)
+  },
+  heygen: {
+    account: () => ipcRenderer.invoke('heygen:account'),
+    stockAvatars: () => ipcRenderer.invoke('heygen:stockAvatars'),
+    pickVideo: () => ipcRenderer.invoke('heygen:pickVideo'),
+    saveRecording: (bytes, mime) => ipcRenderer.invoke('heygen:saveRecording', bytes, mime),
+    createAvatar: (input) => paid('heygen:createAvatar', input),
+    refresh: (id) => ipcRenderer.invoke('heygen:refresh', id),
+    openConsent: (id) => ipcRenderer.invoke('heygen:openConsent', id),
+    setVoice: (id, voice) => ipcRenderer.invoke('heygen:setVoice', id, voice)
   },
   voices: {
     sample: (request) => ipcRenderer.invoke('voices:sample', request)

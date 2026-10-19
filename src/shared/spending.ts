@@ -4,7 +4,13 @@
 
 export const SPEND_KINDS = ['create', 'remix', 'avatar', 'chat'] as const
 export type SpendKind = (typeof SPEND_KINDS)[number]
-export type SpendProvider = 'openrouter' | 'fal'
+export type SpendProvider = 'openrouter' | 'fal' | 'heygen'
+export const SPEND_PROVIDERS: readonly SpendProvider[] = ['openrouter', 'fal', 'heygen']
+export const SPEND_PROVIDER_LABELS: Record<SpendProvider, string> = { openrouter: 'OpenRouter', fal: 'fal.ai', heygen: 'HeyGen' }
+
+function isProvider(value: unknown): value is SpendProvider {
+  return typeof value === 'string' && (SPEND_PROVIDERS as readonly string[]).includes(value)
+}
 
 export const SPEND_KIND_LABELS: Record<SpendKind, string> = {
   create: 'Create',
@@ -56,6 +62,7 @@ export interface SpendOverview {
   limitUsd: number | null
   openrouterConfigured: boolean
   falConfigured: boolean
+  heygenConfigured: boolean
 }
 
 export interface SpendGate {
@@ -93,7 +100,7 @@ export function parseSpendEntry(value: unknown): SpendEntry | null {
   const raw = value as Record<string, unknown>
   if (typeof raw.at !== 'string' || raw.at.length > 40 || !Number.isFinite(Date.parse(raw.at))) return null
   if (!(SPEND_KINDS as readonly unknown[]).includes(raw.kind)) return null
-  if (raw.provider !== 'openrouter' && raw.provider !== 'fal') return null
+  if (!isProvider(raw.provider)) return null
   if (!money(raw.usd)) return null
   const entry: SpendEntry = { at: new Date(Date.parse(raw.at)).toISOString(), kind: raw.kind as SpendKind, provider: raw.provider, usd: raw.usd, label: cleanLabel(raw.label) }
   if (typeof raw.runId === 'string' && /^[A-Za-z0-9_.:-]{1,80}$/.test(raw.runId)) entry.runId = raw.runId
@@ -204,7 +211,7 @@ export function decodeSpendGate(message: unknown): SpendGate | null {
   if (at < 0) return null
   try {
     const raw = JSON.parse(message.slice(at + SPEND_GATE_PREFIX.length)) as Record<string, unknown>
-    if ((raw.reason !== 'balance' && raw.reason !== 'limit') || (raw.provider !== 'openrouter' && raw.provider !== 'fal') || typeof raw.message !== 'string') return null
+    if ((raw.reason !== 'balance' && raw.reason !== 'limit') || !isProvider(raw.provider) || typeof raw.message !== 'string') return null
     return {
       reason: raw.reason, provider: raw.provider, message: raw.message.slice(0, 600), canOverride: raw.reason === 'balance' && raw.canOverride === true,
       estimateUsd: typeof raw.estimateUsd === 'number' && Number.isFinite(raw.estimateUsd) ? raw.estimateUsd : null
@@ -214,13 +221,15 @@ export function decodeSpendGate(message: unknown): SpendGate | null {
 
 export const OUT_OF_CREDITS_MESSAGES: Record<SpendProvider, string> = {
   openrouter: 'Your OpenRouter account is out of credits. Add credits on OpenRouter (Settings → Spending has the link), then try again.',
-  fal: 'Your fal.ai balance is empty. Add credits on fal.ai (Settings → Spending has the link), then try again.'
+  fal: 'Your fal.ai balance is empty. Add credits on fal.ai (Settings → Spending has the link), then try again.',
+  heygen: 'Your HeyGen balance is too low for this. Add credit on HeyGen (Settings → Spending has the link), then try again.'
 }
 
 /** Which provider an error says is out of credit, if any. */
 export function creditProblem(text: unknown): SpendProvider | null {
   if (typeof text !== 'string' || !text) return null
   if (/fal\.ai balance|fal\.ai[^.]*\b(?:credits?|balance)\b[^.]*\b(?:empty|insufficient|exhausted|out)\b/i.test(text)) return 'fal'
+  if (/HeyGen balance is too low/i.test(text)) return 'heygen'
   if (/out of credits?|insufficient (?:credits?|funds|balance)|credit limit reached|\bstatus(?: code)?:? ?402\b|\(402\)/i.test(text)) return 'openrouter'
   return null
 }
