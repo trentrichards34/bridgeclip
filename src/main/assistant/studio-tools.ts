@@ -523,7 +523,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
     {
       name: 'get_remix_status',
       title: 'Checked the remix',
-      description: 'The current remix: planning, waiting for review (with how many takes), being made, done (with the finished videos and their Library runId), failed or cancelled; what it has cost so far. waitSeconds waits until it stops planning or making. Planning takes a few minutes; call again while it is still running.',
+      description: 'The current remix: planning, waiting for review (with how many takes), being made, done (with the finished videos and their Library runId), failed or canceled; what it has cost so far. waitSeconds waits until it stops planning or making. Planning takes a few minutes; call again while it is still running.',
       inputSchema: object({ waitSeconds: { type: 'integer', minimum: 0, maximum: 600, description: 'Wait up to this long for planning or making to finish. Default 0.' } }),
       readOnly: true,
       describe: (input) => input.waitSeconds ? 'Waiting for the remix' : 'Checked the remix',

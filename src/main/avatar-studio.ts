@@ -405,7 +405,7 @@ async function launch(avatarId: string, folder: string, estimatedCostUsd: number
   try { await preflight(folder) } finally { starting = false }
   const cancelledEarly = pending?.cancelled
   pending = null
-  if (cancelledEarly) throw new Error('Generation cancelled.')
+  if (cancelledEarly) throw new Error('Generation canceled.')
   if (active) throw new Error('A video is already being generated. Wait for it to finish or cancel it.')
   const render: ActiveRender = {
     abort: new AbortController(), cancelled: false, folder,
@@ -418,7 +418,7 @@ async function launch(avatarId: string, folder: string, estimatedCostUsd: number
     render.status = { ...render.status, phase: 'done', detail: 'Ready', percent: 100 }
   }).catch((error: unknown) => {
     const cancelled = render.cancelled
-    render.status = { ...render.status, phase: cancelled ? 'cancelled' : 'failed', detail: cancelled ? 'Cancelled' : 'Failed',
+    render.status = { ...render.status, phase: cancelled ? 'cancelled' : 'failed', detail: cancelled ? 'Canceled' : 'Failed',
       error: cancelled ? null : renderErrorMessage(error) }
     if (!cancelled) logger.warn('avatar.render.failed', { message: String((error as Error)?.message ?? error).slice(0, 300) })
     render.abort.abort()

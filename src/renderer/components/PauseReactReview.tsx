@@ -57,7 +57,7 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
     setRecordings(await getApi().remix.removeRecording(draft.id, 'reaction'))
     setView(null)
   }, 'Your recording could not be removed.')
-  const write = (): Promise<void> => run('write', () => getApi().remix.write(), 'The headline could not be written.')
+  const write = (): Promise<void> => run('write', () => getApi().remix.write(), 'The hook text could not be written.')
   const make = (): Promise<void> => run('make', () => getApi().remix.render([current]), 'The video could not be started.')
   const trim = (startMs: number, endMs: number): Promise<void> => run('trim', async () => {
     const result = await getApi().remix.trim(draft.id, startMs, endMs)
@@ -79,7 +79,7 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
 
   const blocker = !recorded ? 'Record or upload your reaction first'
     : !current.headline.trim() ? 'Write the headline first'
-      : problem ? 'Fix the headline or caption first' : null
+      : problem ? 'Fix the hook text or caption first' : null
   const busy = working !== ''
 
   return (
@@ -136,14 +136,14 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
           {draft.quote && <p className="line-clamp-3 text-xs italic text-ink-muted">You said: “{draft.quote}”</p>}
           {recorded && (
             <Button size="sm" variant={draft.headline ? 'ghost' : 'primary'} icon={<Sparkles className="h-3.5 w-3.5" />} loading={working === 'write'} disabled={busy}
-              onClick={() => void write()}>{draft.headline ? 'Rewrite from what I said' : 'Write my headline and caption'}</Button>
+              onClick={() => void write()}>{draft.headline ? 'Rewrite from what I said' : 'Write my hook text and caption'}</Button>
           )}
           {!showText && (
-            <button type="button" className="block text-2xs text-accent" onClick={() => setWriteOwn(true)}>Or write the headline and caption yourself</button>
+            <button type="button" className="block text-2xs text-accent" onClick={() => setWriteOwn(true)}>Or write the hook text and caption yourself</button>
           )}
           {showText && <>
-            <Field label="Headline" hint={`${wordCount(current.headline)} / ${REMIX_WORD_LIMITS.headline} words · the hook text at the top and the video’s title in your Library`}>
-              <TextInput aria-label="Headline, your pause-and-react" value={current.headline} maxLength={160} onChange={(e) => setEdit({ ...current, headline: e.target.value })} />
+            <Field label="Hook text" hint={`${wordCount(current.headline)} / ${REMIX_WORD_LIMITS.headline} words · shown at the top and used as the video’s title in your Library`}>
+              <TextInput aria-label="Hook text, your pause-and-react" value={current.headline} maxLength={160} onChange={(e) => setEdit({ ...current, headline: e.target.value })} />
             </Field>
             <Field label="Post caption" hint={`${(current.postCaption ?? '').length.toLocaleString('en-US')} / ${MAX_POST_CAPTION_CHARS.toLocaleString('en-US')} characters · filled in when you post from the Library`}>
               <TextArea aria-label="Post caption, your pause-and-react" rows={6} value={current.postCaption ?? ''} maxLength={MAX_POST_CAPTION_CHARS}

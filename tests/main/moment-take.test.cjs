@@ -153,7 +153,9 @@ test('talking points: three short prompts from the moment (and the brand), never
   const user = JSON.parse(calls[0].body.messages[1].content)
   assert.deepEqual([user.moment, user.video.creator, user.brand.name], ['Fifteen billion scam ads a day.', '@host', 'Safe Money'])
   assert.match(calls[0].body.messages[0].content, /never invent facts/)
-  await assert.rejects(m.suggestTalkingPoints({ quote: 'x', title: '', creator: '', brandName: '', brand: '' }, 'or-key', fetcher), /No talking points/)
+  // Nothing usable came back, though it was paid for: the error says what it cost, so it is still recorded.
+  await assert.rejects(m.suggestTalkingPoints({ quote: 'x', title: '', creator: '', brandName: '', brand: '' }, 'or-key', fetcher),
+    (error) => /No talking points/.test(error.message) && error.costUsd === 0.0004)
 })
 
 function engineMock() {
@@ -169,7 +171,8 @@ function engineMock() {
       const config = JSON.parse(text)
       configs.push(config)
       let result = results.render
-      if (config.mode === 'plan') {
+      if (config.mode === 'plan' && results.plan) result = results.plan
+      else if (config.mode === 'plan') {
         fs.mkdirSync(path.join(config.output_dir, '.work'), { recursive: true })
         fs.writeFileSync(path.join(config.output_dir, '.work', 'plan.json'), JSON.stringify({ sources: [{ video: results.video ?? config.sources[0] }] }))
         const moment = (id, a, b, ra, rb) => ({ id, format: 'moment_take', headline: '', intro: '', close: '', beats: [], start_ms: a, end_ms: b, quote: `Moment ${id}`,
@@ -264,9 +267,11 @@ test('Moment + my take in main: ranges, moments, nudges, another moment, talking
   assert.equal(call.draft_id, 1)
   assert.deepEqual([another.startMs, another.quote, another.moment.picks], [3950000, 'Another one', 2])
   assert.ok(Math.abs(m.remixStatus().costUsd - 0.05) < 1e-9)
-  engine.results.moment = { ok: false, error: 'Range 2 (1:05:00–1:07:30): no other moment stood out in it. Keep the one you have, or choose another part.' }
+  // Nothing else stood out, yet the calls were paid for: the failure line's cost is added too.
+  engine.results.moment = { ok: false, cost_usd: 0.01, error: 'Range 2 (1:05:00–1:07:30): no other moment stood out in it. Keep the one you have, or choose another part.' }
   await assert.rejects(m.anotherMoment(1), /no other moment stood out/)
   assert.equal(m.remixStatus().drafts[1].startMs, 3950000, 'the moment is kept')
+  assert.ok(Math.abs(m.remixStatus().costUsd - 0.06) < 1e-9)
 
   // Talking points: the moment and the brand go to the small call; kept on the moment.
   const pointed = await m.momentTalkingPoints(0)
@@ -329,8 +334,8 @@ test('Moment + my take in main: ranges, moments, nudges, another moment, talking
   assert.deepEqual(render.approved.map((edit) => [edit.id, edit.start_ms, edit.end_ms]), [[0, 2229500, 2242000], [1, 3950000, 3962000]])
   assert.deepEqual([render.recordings[0].reaction.offset_s, render.recordings[1].reaction.offset_s], [0, 0])
   assert.equal(render.moment_pip, true)
-  // Costs reached the status (planning, another moment, talking points, two writes).
-  assert.ok(statuses.some((item) => item.phase === 'review' && Math.abs(item.costUsd - 0.091) < 1e-9))
+  // Costs reached the status (planning, another moment, one that found nothing, talking points, two writes).
+  assert.ok(statuses.some((item) => item.phase === 'review' && Math.abs(item.costUsd - 0.101) < 1e-9))
   await new Promise((resolve) => setTimeout(resolve, 50))
   fs.rmSync(out, { recursive: true, force: true })
 })
@@ -377,6 +382,8 @@ test('Moment + my take: making waits for another moment; Discard stops it first;
     await new Promise((resolve) => setImmediate(resolve))
     await assert.rejects(m.renderRemix([{ id: 0, headline: '', intro: '', close: '', beats: [] }]), /Wait for the moment or talking points you asked for/)
     assert.equal(engine.configs.filter((config) => config.mode === 'render').length, 0)
+    // Writing waits for it too, and says so (not "your recording").
+    await assert.rejects(m.writeRemix(), /Wait for the moment or talking points you asked for/)
     // Discard: the engine finding a moment is stopped before its folder is removed.
     assert.equal(await m.discardRemix(), true)
     await anotherDone
@@ -396,6 +403,73 @@ test('Moment + my take: making waits for another moment; Discard stops it first;
     await pointsDone
     assert.deepEqual(spent, [{ usd: 0.004, label: 'Remix planning', runId }])
   } finally {
+    fs.rmSync(out, { recursive: true, force: true })
+  }
+})
+
+test('Moment + my take: paid calls that fail still reach the run (and so the ledger), or the ledger directly once closed', async () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'remix-moment-paid-'))
+  const settings = { openrouterApiKey: 'or-key', outputDirectory: out, pythonPath: 'python3' }
+  const engine = engineMock()
+  let points = async () => { throw Object.assign(new Error('No talking points came back this time.'), { costUsd: 0.002 }) }
+  const m = load('main/remix.ts', {
+    electron: { app: { getPath: () => out, isPackaged: true } },
+    child_process: { ...childProcess, spawn: engine.spawn },
+    './avatars': { portraitPath: () => '', voiceSamplePath: () => '', readAvatar: () => null, readReactions: () => [] },
+    './logger': { logger: { info() {}, warn() {} } },
+    './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
+    './security': { assertMediaPath: () => undefined, authorizeMedia: (p) => p },
+    './settings-store': { loadSettings: () => settings, getSettingsForBridge: () => ({}) },
+    './tools': { resolveBinary: (name) => name },
+    './moment-take': { ...mt, suggestTalkingPoints: (...args) => points(...args) }
+  })
+  const statuses = [], spent = []
+  m.onRemixStatus((status) => statuses.push(status))
+  m.onRemixMomentSpend((usd, label, runId) => spent.push({ usd, label, runId }))
+  const request = {
+    sources: ['https://www.youtube.com/watch?v=podcast'], creator: '', angle: 'reaction', host: 'still', avatarId: null, voice: 'avatar', brandIdentityId: null, count: 5,
+    captionPreset: 'pop', includeCaptions: true, aiLabelAck: false, format: 'moment_take', clipRightsAck: true,
+    camera: { layout: 'cutout', backdrop: 'blur', backdropColor: '#111111', talk: false },
+    moment: { ranges: [{ startS: 2220, endS: 2520 }, { startS: 3900, endS: 4050 }], pip: true }
+  }
+  const settle = async (phase) => { for (let i = 0; i < 100 && m.remixStatus()?.phase !== phase; i++) await new Promise((resolve) => setTimeout(resolve, 20)) }
+  try {
+    // Planning that stopped on a later range (credits ran out) after paying for the first: the failed run carries that cost.
+    engine.results.plan = { ok: false, cost_usd: 0.021, error: 'OpenRouter reports insufficient credits.' }
+    await m.startRemix(request)
+    await settle('failed')
+    assert.deepEqual([m.remixStatus().phase, m.remixStatus().costUsd], ['failed', 0.021])
+
+    engine.results.plan = null
+    await m.startRemix(request)
+    await settle('review')
+    // Talking points that came back empty: paid for, so added to the run.
+    await assert.rejects(m.momentTalkingPoints(0), /No talking points/)
+    assert.ok(Math.abs(m.remixStatus().costUsd - 0.032) < 1e-9)
+    // Writing that failed after transcribing and one writing call: back to review, with that cost added.
+    const take = path.join(out, 'take.mp4')
+    childProcess.execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=64x64:d=3', '-f', 'lavfi', '-i', 'sine=d=3', '-shortest',
+      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', take])
+    await m.uploadRecording(0, 'reaction', take)
+    engine.results.write = { ok: false, cost_usd: 0.011, error: 'the hook text and caption couldn’t be written this time. Try again.' }
+    await m.writeRemix([0])
+    await settle('review')
+    assert.match(m.remixStatus().error, /hook text and caption/)
+    assert.ok(Math.abs(m.remixStatus().costUsd - 0.043) < 1e-9)
+    assert.deepEqual(spent, [])
+
+    // Once the review is closed, a failed paid call goes to the ledger directly.
+    const runId = path.basename(m.remixStatus().folder)
+    let fail
+    points = () => new Promise((resolve, reject) => { fail = () => reject(Object.assign(new Error('No talking points came back this time.'), { costUsd: 0.003 })) })
+    const pending = assert.rejects(m.momentTalkingPoints(1), /No talking points/)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(await m.discardRemix(), true)
+    fail()
+    await pending
+    assert.deepEqual(spent, [{ usd: 0.003, label: 'Remix planning', runId }])
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 50))
     fs.rmSync(out, { recursive: true, force: true })
   }
 })

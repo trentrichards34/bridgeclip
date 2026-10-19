@@ -360,3 +360,28 @@ test('free space reports the output drive, even before the output folder exists'
   assert.equal(space.low, space.freeBytes < space.thresholdBytes)
   assert.equal(space.thresholdBytes, 2_000_000_000)
 })
+
+test('a run opened in the editor after the plan was made: its kept source goes through the editor, or stays', async (t) => {
+  const f = fixture()
+  t.after(f.cleanup)
+  const done = makeRun(f.library, UUID(1), { title: 'Converted, all baked' })
+  const pending = makeRun(f.library, UUID(2), { title: 'Converted, clips to bake' })
+  for (const run of [done, pending]) write(path.join(run, 'editor-source.mp4'), 600)
+  // The member converts both runs between the plan and the removal (while waiting for the run's lock).
+  const convert = (run, statuses) => {
+    const output = JSON.parse(fs.readFileSync(path.join(run, 'job_output.json'), 'utf8'))
+    fs.writeFileSync(path.join(run, 'job_output.json'), JSON.stringify({ ...output, editor_project: true }))
+    fs.writeFileSync(path.join(run, 'editor-project.json'), JSON.stringify(editorProject(statuses)))
+  }
+  const lock = f.state.locks
+  f.state.locks = { push(run) { lock.push(run); if (run === done) convert(done, ['baked']); if (run === pending) convert(pending, ['baked', 'ready']) } }
+  const result = await f.main.runCleanup(['editorMedia'], {})
+  // Freed through the editor (it records that the media is gone), at the project's revision.
+  assert.deepEqual(f.state.freed, [[done, 7]])
+  assert.ok(!fs.existsSync(path.join(done, 'editor-source.mp4')))
+  // Still being edited: the project's source is kept.
+  assert.ok(fs.existsSync(path.join(pending, 'editor-source.mp4')))
+  assert.deepEqual(result.skipped.map((item) => [item.videoTitle, item.reason]),
+    [['Converted, clips to bake', 'Its editor media was kept: it still has clips to bake or discard in the editor.']])
+  assert.equal(result.freedBytes, 600)
+})

@@ -785,7 +785,7 @@ async function runStatsPass(force: boolean): Promise<PostStatsRefreshResult> {
 export async function cancelPost(id: unknown): Promise<PostRecord[]> {
   const generation = workspaceGeneration
   const post = requirePost(id)
-  if (post.status !== 'scheduled') throw new Error('Only scheduled posts can be cancelled.')
+  if (post.status !== 'scheduled') throw new Error('Only scheduled posts can be canceled.')
   return changePost(post.id, async () => {
     const client = getClient()
     try {
@@ -797,7 +797,7 @@ export async function cancelPost(id: unknown): Promise<PostRecord[]> {
         const remote = await client.getPost(post.id).catch(() => null)
         assertWorkspace(generation)
         if (remote) posts().save(applyZernioPost(post, remote, { now: new Date().toISOString() }))
-        throw new Error('This post has already started publishing, so it can’t be cancelled.')
+        throw new Error('This post has already started publishing, so it can’t be canceled.')
       }
     }
     // A 404 still completes the cancellation; the key may have changed

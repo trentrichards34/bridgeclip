@@ -316,5 +316,10 @@ test('editor bakes that translate captions pass the spending check and can take 
   for (const channel of channels) assert.ok(main.GATED_CHANNELS.has(channel), `${channel} is in GATED_CHANNELS`)
   const handlers = fs.readFileSync(path.join(ROOT, 'main/ipc-handlers.ts'), 'utf8')
   assert.match(handlers, /assertSpendAllowed\('editor:run', 'openrouter', translating\.estimateUsd\)/)
+  // A review and hook ideas are paid too: they pass the check, through the gate dialog.
+  assert.match(handlers, /if \(action === 'review'\) \{\s*await assertSpendAllowed\('editor:run', 'openrouter', await editorCallEstimate\(path, 'review'\)/)
+  assert.match(handlers, /assertSpendAllowed\('editor:suggestHooks', 'openrouter', await editorCallEstimate\(path, 'suggest-hooks'\)/)
+  assert.ok(channels.includes('editor:suggestHooks'), 'hook ideas go through the gate dialog')
+  assert.match(handlers, /recordSpend\(\{ kind: 'create', provider: 'openrouter', usd, label \}\)/)
   assert.match(handlers, /onEditorSpend\(\(usd, label\) => recordSpend\(\{ kind: 'create'/)
 })

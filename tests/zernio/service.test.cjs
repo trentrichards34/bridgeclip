@@ -98,7 +98,7 @@ test('connect: error redirects become friendly, sanitised messages', async (t) =
   const { service, mock, getWindow, results, browse } = await setup(t)
   const profileId = mock.state.profiles[0]._id
   const scenarios = [
-    ['instagram', { error: 'oauth_denied' }, /Instagram sign-in was cancelled/, false],
+    ['instagram', { error: 'oauth_denied' }, /Instagram sign-in was canceled/, false],
     ['tiktok', { error: 'missing_tiktok_permissions' }, /every permission/, false],
     ['twitter', { error: 'payment_required', params: { reason: 'twitter_passthrough', dashboard_url: 'https://zernio.com/x' } }, /payment method on file before it can connect X/, true],
     ['facebook', { error: 'no_facebook_pages' }, /doesn't manage any Pages/, false],

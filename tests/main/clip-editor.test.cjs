@@ -442,7 +442,7 @@ for (const cancelled of [false, true]) test(`batch ${cancelled ? 'cancellation' 
   const f = batchSetup()
   try {
     const pending = f.main.runEditor(f.run, 0, '', 'export-all')
-    const rejected = assert.rejects(pending, cancelled ? /Baked 1 of 2.*cancelled/ : /Baked 1 of 2 ready clips\. Could not bake “[^”]+”: Export stopped or failed.*still ready/)
+    const rejected = assert.rejects(pending, cancelled ? /Baked 1 of 2.*canceled/ : /Baked 1 of 2 ready clips\. Could not bake “[^”]+”: Export stopped or failed.*still ready/)
     ;(await nextWorker(f.workers, 1)).finish()
     const second = await nextWorker(f.workers, 2)
     if (cancelled) f.main.cancelEditor(f.run)
@@ -492,6 +492,29 @@ test('bakes that translate captions are estimated from the run, and their cost r
   } finally { f.cleanup() }
 })
 
+test('a review records what its judgments cost (failed part way or not), and is estimated from earlier ones', async () => {
+  const f = batchSetup()
+  try {
+    const spent = []
+    f.main.onEditorSpend(async (usd, label) => { spent.push({ usd, label }) })
+    f.main.settings.replaceApiKey('openrouterApiKey', 'fixture-key')
+    // Nothing recorded yet: no estimate (the spending check asks for its minimum balance instead).
+    assert.equal(await f.main.editorCallEstimate(f.run, 'review'), null)
+    const failed = f.main.runEditor(f.run, 0, 'candidate-1', 'review')
+    const rejected = assert.rejects(failed)
+    ;(await nextWorker(f.workers, 1)).finish(false, { error: 'review_unavailable', cost_usd: 0.001 })
+    await rejected
+    const done = f.main.runEditor(f.run, 0, 'candidate-1', 'review')
+    ;(await nextWorker(f.workers, 2)).finish(true, { cost_usd: 0.003 })
+    await done
+    assert.deepEqual(spent, [{ usd: 0.001, label: 'Editor review' }, { usd: 0.003, label: 'Editor review' }])
+    const costs = JSON.parse(fs.readFileSync(path.join(f.run, 'job_output.json'))).metrics.api_costs
+    assert.deepEqual([costs.editor_review.estimated_cost_usd, costs.editor_review.attempts], [0.004, 2])
+    assert.equal(await f.main.editorCallEstimate(f.run, 'review'), 0.002)
+    assert.equal(await f.main.editorCallEstimate(f.run, 'suggest-hooks'), null)
+  } finally { f.main.settings.replaceApiKey('openrouterApiKey', ''); f.cleanup() }
+})
+
 test('re-baking an Automatic clip keeps the call to action its Library clip has now, unless it was changed in the editor', async () => {
   const f = batchSetup()
   try {
@@ -520,6 +543,17 @@ test('re-baking an Automatic clip keeps the call to action its Library clip has 
     ;(await nextWorker(f.workers, 3)).finish()
     await rebake
     assert.deepEqual(applied.at(-1), { ctaId: chosen, index: 0 })
+    // Once baked, the Library clip ends as the editor chose: a later change in the Library wins again.
+    const baked = (await f.main.openEditor(f.run)).project
+    assert.equal(baked.candidates[1].cta_edited, undefined)
+    const later = 'd'.repeat(16)
+    fs.writeFileSync(path.join(f.run, 'job_output.json'), JSON.stringify({ job_id: 'review-run', editor_project: true, clips: [clip(0, later), clip(1, null)] }))
+    baked.candidates[1] = { ...baked.candidates[1], status: 'ready' }
+    const ready = await f.main.saveEditor(f.run, baked.revision, baked.candidates)
+    const third = f.main.runEditor(f.run, ready.project.revision, 'candidate-1', 'export')
+    ;(await nextWorker(f.workers, 4)).finish()
+    await third
+    assert.deepEqual(applied.at(-1), { ctaId: later, index: 0 })
   } finally { f.cleanup() }
 })
 
@@ -527,7 +561,7 @@ test('cancelling between batch clips never starts the next worker', async () => 
   const f = batchSetup()
   try {
     const pending = f.main.runEditor(f.run, 0, '', 'export-all')
-    const rejected = assert.rejects(pending, /Baked 1 of 2.*cancelled/)
+    const rejected = assert.rejects(pending, /Baked 1 of 2.*canceled/)
     ;(await nextWorker(f.workers, 1)).finish()
     f.main.cancelEditor(f.run)
     await rejected
@@ -576,7 +610,7 @@ for (const outcome of ['success', 'failure', 'cancelled', 'committed-before-exit
     await assert.rejects(f.main.replaceEditorSource(f.run, 999, replacement), /changed/)
     await assert.rejects(f.main.runEditor(f.run, 0, '', 'replace-source'), /Invalid/)
     const pending = f.main.replaceEditorSource(f.run, 0, replacement)
-    const result = outcome === 'success' ? pending : assert.rejects(pending, outcome === 'failure' ? /different duration/ : outcome === 'cancelled' ? /replacement cancelled\. The previous source is still in use/ : /replacement stopped/)
+    const result = outcome === 'success' ? pending : assert.rejects(pending, outcome === 'failure' ? /different duration/ : outcome === 'cancelled' ? /replacement canceled\. The previous source is still in use/ : /replacement stopped/)
     await entered
     assert.equal(config.action, 'replace-source')
     assert.equal(fs.readFileSync(path.join(f.run, `editor-source-${config.source_id}.mp4`), 'utf8'), 'higher resolution source')
@@ -677,7 +711,7 @@ test('camera scan locks edits, needs no provider key, and cancellation cleans on
   try {
     const before = fs.readFileSync(path.join(f.run, 'editor-project.json'), 'utf8')
     const pending = f.main.runEditor(f.run, 0, 'candidate-1', 'scan-cameras')
-    const rejected = assert.rejects(pending, /Camera scan cancelled\. Your edits and previous markers are saved/)
+    const rejected = assert.rejects(pending, /Camera scan canceled\. Your edits and previous markers are saved/)
     const worker = await nextWorker(f.workers, 1)
     assert.equal(worker.config.action, 'scan-cameras')
     assert.match(worker.config.preview_id, /^[a-f0-9]{32}$/)

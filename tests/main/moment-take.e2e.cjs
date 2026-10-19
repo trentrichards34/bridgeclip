@@ -117,8 +117,9 @@ test('Moment + my take: two ranges (typed and from a screenshot), two uploaded t
   await page.getByLabel('Range 1 start').fill('0:05')
   await page.getByLabel('Range 1 end').fill('0:25')
   // Range 2 from a screenshot of the player: the time read, a range around it (inside the video), the charge shown.
-  await page.getByRole('button', { name: 'Add a range' }).click()
-  await page.getByRole('group', { name: 'Range 2' }).getByRole('button', { name: 'From a screenshot' }).click()
+  // From the keyboard on the paste area, with no empty row: a new row is added and the file dialog opens.
+  await page.getByRole('button', { name: 'Paste or drop a screenshot of the player' }).focus()
+  await page.keyboard.press('Enter')
   await page.getByTestId('range-2-read').waitFor()
   assert.match(await page.getByTestId('range-2-read').innerText(), /^Read 0:40 from your screenshot \(YouTube\), so this range is 0:00–1:00\. Check it matches, and fix it if not\. Reading it cost \$0\.0004\.$/)
   assert.equal(reads.length, 1)

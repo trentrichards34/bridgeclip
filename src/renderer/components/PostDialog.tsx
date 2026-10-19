@@ -1575,7 +1575,7 @@ const TARGET_BADGE: Record<PostRecordTarget['status'], { label: string; tone: 'n
   uploading: { label: 'Uploading', tone: 'accent' },
   published: { label: 'Published', tone: 'neutral' },
   failed: { label: 'Failed', tone: 'danger' },
-  cancelled: { label: 'Cancelled', tone: 'neutral' }
+  cancelled: { label: 'Canceled', tone: 'neutral' }
 }
 
 export function targetBadge(target: PostRecordTarget, postStatus: string): { label: string; tone: 'neutral' | 'accent' | 'danger' } {

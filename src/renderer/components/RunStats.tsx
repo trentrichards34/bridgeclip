@@ -226,6 +226,7 @@ function costParts(costs: ApiCosts): string | null {
     costs.editorial_repair && `edit repair ${formatUsd(costs.editorial_repair.estimated_cost_usd)}`,
     costs.framework_grading && `grading ${formatUsd(costs.framework_grading.estimated_cost_usd)}`,
     costs.editor_hooks && `hook ideas ${formatUsd(costs.editor_hooks.estimated_cost_usd)}`,
+    costs.editor_review && `editor review ${formatUsd(costs.editor_review.estimated_cost_usd)}`,
     costs.caption_translation && `caption translation ${formatUsd(costs.caption_translation.estimated_cost_usd)}`
   ].filter(Boolean)
   return parts.length > 0 ? parts.join(' · ') : null

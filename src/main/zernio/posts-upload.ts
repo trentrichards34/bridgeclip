@@ -15,7 +15,7 @@ export interface UploadOptions {
 
 export class ZernioUploadCancelledError extends ZernioApiError {
   constructor() {
-    super('Upload cancelled.', 0)
+    super('Upload canceled.', 0)
   }
 }
 

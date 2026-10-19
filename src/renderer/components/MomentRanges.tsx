@@ -80,6 +80,15 @@ export function MomentRanges({ value, lengthSeconds, disabled, onChange }: {
     return true
   }
 
+  /** From the keyboard: choose a screenshot for the first empty row, or a new row (never one already filled). */
+  const pick = (): void => {
+    if (disabled || reading !== null) return
+    const target = screenshotRow(latest.current, null)
+    if (target === null) { setProblem({ row: -1, text: FULL_RANGES }); return }
+    if (target >= latest.current.length) onChange([...latest.current, { start: '', end: '' }])
+    void choose(target)
+  }
+
   return (
     <div className="space-y-2.5" onPaste={(e) => { if (take(null, imageFrom(e.clipboardData.items, e.clipboardData.files))) e.preventDefault() }}>
       <div className="flex items-start gap-2">
@@ -93,7 +102,7 @@ export function MomentRanges({ value, lengthSeconds, disabled, onChange }: {
         </div>
       </div>
       <div tabIndex={0} role="button" aria-label="Paste or drop a screenshot of the player"
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const empty = latest.current.findIndex((row) => !row.start.trim() && !row.end.trim()); if (empty >= 0) void choose(empty) } }}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick() } }}
         onDragOver={(e) => { if (!disabled) { e.preventDefault(); setDragging(-1) } }} onDragLeave={() => setDragging(null)}
         onDrop={(e) => { e.preventDefault(); setDragging(null); take(null, imageFrom(e.dataTransfer.items, e.dataTransfer.files)) }}
         className={cn('flex items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 px-3 py-3 text-2xs text-ink-muted outline-none focus-visible:border-accent',

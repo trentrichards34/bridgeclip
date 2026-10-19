@@ -254,7 +254,7 @@ test('post a Library clip now and on a schedule, then cancel the scheduled one',
   await scheduledGroup.waitFor({ state: 'detached', timeout: 15_000 })
   assert.equal(posting.state.posts.has(scheduledId), false, 'DELETE /v1/posts/{id} reached Zernio')
   assert.equal(mock.requestsTo('DELETE', `/api/v1/posts/${scheduledId}`).length, 1)
-  await page.getByText(/^Cancelled · created/).waitFor()
+  await page.getByText(/^Canceled · created/).waitFor()
   await shot(page, '07-cancelled')
 
   const historyPath = path.join(userDataDir, `zernio-posts-${crypto.createHash('sha256').update(KEY).digest('hex')}.json`)

@@ -613,17 +613,23 @@ async def run_editor(config, progress=None):
         except HooksUnavailable as error:
             raise EditorError('hooks_unavailable', 'Hook ideas unavailable') from error
     if action == 'review':
-        with failure_code('review_unavailable'):
-            reviewer = CoherenceReviewer(JevService.from_settings(settings, required=True), settings, transcript, project['duration_ms'])
-            context = run / 'source_context.json'
-            if context.exists():
-                from clip_engine.services.source_context import context_for_prompt
-                # Read the same bounded brief used in discovery; no new web research.
-                reviewer.source_context = context_for_prompt(read_json(run, 'source_context.json'))
-            with tempfile.TemporaryDirectory(prefix='.editor-review-', dir=run) as work:
-                vision = EditorialVision(settings, source, work, project['duration_ms'])
-                reviewer.visual_observer = vision.observe if settings.jev_visual_context else None
-                await review_candidate(c, reviewer)
+        jev, vision = JevService.from_settings(settings, required=True), None
+        try:
+            with failure_code('review_unavailable'):
+                reviewer = CoherenceReviewer(jev, settings, transcript, project['duration_ms'])
+                context = run / 'source_context.json'
+                if context.exists():
+                    from clip_engine.services.source_context import context_for_prompt
+                    # Read the same bounded brief used in discovery; no new web research.
+                    reviewer.source_context = context_for_prompt(read_json(run, 'source_context.json'))
+                with tempfile.TemporaryDirectory(prefix='.editor-review-', dir=run) as work:
+                    vision = EditorialVision(settings, source, work, project['duration_ms'])
+                    reviewer.visual_observer = vision.observe if settings.jev_visual_context else None
+                    await review_candidate(c, reviewer)
+        except BaseException as error:
+            # A review that failed part way still paid for the judgments and frame looks it made.
+            raise attach_usage(error, review_usage(jev, vision))
+        usage = review_usage(jev, vision)
     elif action == 'export':
         if c.get('status', 'refining') != 'ready':
             raise EditorError('not_ready', 'Mark this clip ready before baking it')
@@ -651,7 +657,13 @@ async def run_editor(config, progress=None):
         raise ValueError('Unknown editor action')
     project['revision'] += 1
     atomic_json(run / 'editor-project.json', project)
-    return usage if action == 'export' else None
+    return usage if action in ('export', 'review') else None
+
+
+def review_usage(jev, vision):
+    """What a review's paid calls cost: the coherence judgments (as billed) and any looks at the video's frames."""
+    cost = float(getattr(jev, 'estimated_cost_usd', 0) or 0) + float(getattr(vision, 'cost_usd', 0) or 0)
+    return {'cost_usd': round(cost, 6), 'cost_incomplete': False} if cost > 0 else None
 
 
 def replaced_clip(run, c, output):
@@ -808,6 +820,14 @@ def replace_library_clip(run, output, index, result, c, project, hook, a, b, cap
     if result.subtitle_path and os.path.isfile(result.subtitle_path):
         os.replace(result.subtitle_path, srt)
         entry.update(subtitle_url=f'file://{srt}', captions_srt=str(srt))
+    else:
+        # No closed captions this time (turned off, or they couldn't be written): the old ones no longer match the cut.
+        try:
+            srt.unlink()
+        except FileNotFoundError:
+            pass
+        entry.pop('subtitle_url', None)
+        entry.pop('captions_srt', None)
     entry.update(duration_ms=result.duration_ms, start_time_ms=a, end_time_ms=b, layout_type=result.layout_type,
                  summary=c['title'], headline=hook['text'] if hook else None, render_fallback=None, cta=None,
                  caption_language=caption_language,

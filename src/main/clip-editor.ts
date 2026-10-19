@@ -64,12 +64,21 @@ async function addExportCta(run: string, candidateId: string, libraryCta?: strin
     const index = candidate?.exports.at(-1)
     const ctaId = libraryCta !== undefined && index === candidate?.library_clip ? libraryCta
       : candidate?.cta_id === undefined ? await runCtaId(run) : candidate.cta_id
-    if (!candidate || index === undefined || !ctaId) return
-    await applyExportCta(run, ctaId, index)
+    if (!candidate || index === undefined) return
+    if (ctaId) await applyExportCta(run, ctaId, index)
+    // The Library clip now ends as the editor chose: from here on a call to action changed in the Library wins again.
+    if (candidate.cta_edited && index === candidate.library_clip) clearCtaEdited(run, candidateId)
   } catch (error) {
     // The clip stays as rendered; the Library can add the call to action later.
     logger.warn('editor.cta.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
   }
+}
+function clearCtaEdited(run: string, candidateId: string): void {
+  const project = readProject(run)
+  const candidate = project.candidates.find((c) => c.id === candidateId)
+  if (!candidate?.cta_edited) return
+  delete candidate.cta_edited
+  writeProject(run, project)
 }
 export function editorBusy(path: string): boolean { return operations.has(realpathSync(path)) }
 function runPath(path: unknown): string {
@@ -341,7 +350,7 @@ function batchFailure(batch: EditorBatch, failed: { title: string; error: Error 
     parts.push(`Could not bake ${failed.slice(0, 3).map((f) => quote(f.title)).join(', ')}${failed.length > 3 ? ` and ${failed.length - 3} more` : ''}:`,
       reasons.length === 1 ? reasons[0] : `${reasons[0]} (and other errors)`)
   }
-  if (cancelled) parts.push('Batch cancelled.')
+  if (cancelled) parts.push('Batch canceled.')
   else if (stoppedBy !== undefined) parts.push(`Batch stopped: ${stoppedBy instanceof Error ? stoppedBy.message : 'Export failed.'}`)
   if (batch.completed < batch.total) parts.push('Clips that were not baked are still ready.')
   return new BatchError(parts.join(' '))
@@ -372,7 +381,7 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
       const media = await openAuthorizedMedia(replacement!, loadSettings().outputDirectory)
       operation.abort = new AbortController()
       try {
-        if (operation.cancelled) throw new Error('Source replacement cancelled.')
+        if (operation.cancelled) throw new Error('Source replacement canceled.')
         await pipeline(media.handle.createReadStream({ autoClose: false }), createWriteStream(join(run, `editor-source-${sourceId}.mp4`), { flags: 'wx', mode: 0o600 }), { signal: operation.abort.signal })
       } finally { await media.handle.close() }
       previousMedia = [session.sourcePath, session.previewPath]
@@ -394,10 +403,14 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
           try {
             result = await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId })
           } catch (error) {
-            // A render that failed after its captions were translated still spent that call.
-            if (exporting && (error as WorkerFailure).result) await recordEditorCost(run, (error as WorkerFailure).result!, 'editor_caption_translation', true)
+            // A render that failed after its captions were translated still spent that call; so did a review that failed part way.
+            const failedResult = (error as WorkerFailure).result
+            if (exporting && failedResult) await recordEditorCost(run, failedResult, 'editor_caption_translation', true)
+            if (action === 'review' && failedResult) await recordEditorCost(run, failedResult, 'editor_review')
             throw error
           }
+          // The coherence judgments (and any looks at the video's frames) of a review.
+          if (action === 'review') await recordEditorCost(run, result, 'editor_review')
           if (exporting) {
             // Translated captions (a clip from an Automatic run in another caption language) cost one OpenRouter call.
             await recordEditorCost(run, result, 'editor_caption_translation', true)
@@ -489,27 +502,43 @@ export async function editorTranslationEstimate(path: unknown, candidateId: unkn
   const chosen = action === 'export-all' ? project.candidates.filter((c) => c.status === 'ready') : project.candidates.filter((c) => c.id === candidateId)
   const clips = chosen.filter((c) => c.captions && isCaptionLanguage(c.caption_language)).length
   if (!clips) return { clips: 0, estimateUsd: null }
+  const each = await recordedCostEach(run, ['caption_translation', 'editor_caption_translation'])
+  return { clips, estimateUsd: each === null ? null : Math.round(each * clips * 1e6) / 1e6 }
+}
+
+/**
+ * Before an editor review or hook ideas: an estimate from what this run's earlier ones cost
+ * (null when none is recorded: the spending check then asks for its minimum balance).
+ */
+export async function editorCallEstimate(path: unknown, action: 'review' | 'suggest-hooks'): Promise<number | null> {
+  const each = await recordedCostEach(runPath(path), [action === 'review' ? 'editor_review' : 'editor_hooks'])
+  return each === null ? null : Math.round(each * 1e6) / 1e6
+}
+
+/** The average recorded cost of one call in these job_output cost sections, or null. */
+async function recordedCostEach(run: string, sections: string[]): Promise<number | null> {
   let usd = 0, attempts = 0
   try {
     const costs = (await getJobOutput(run))?.metrics?.api_costs as Record<string, unknown> | undefined
-    for (const section of ['caption_translation', 'editor_caption_translation']) {
+    for (const section of sections) {
       const entry = costs?.[section] as { estimated_cost_usd?: unknown; attempts?: unknown } | undefined
       const cost = entry?.estimated_cost_usd, count = entry?.attempts
       if (typeof cost === 'number' && Number.isFinite(cost) && cost > 0 && typeof count === 'number' && Number.isFinite(count) && count > 0) { usd += cost; attempts += count }
     }
   } catch { /* no recorded cost: no estimate */ }
-  return { clips, estimateUsd: attempts ? Math.round((usd / attempts) * clips * 1e6) / 1e6 : null }
+  return attempts ? usd / attempts : null
 }
 
 /** Record what an editor AI call cost in the run's job_output.json (metrics.api_costs[section]). */
-async function recordEditorCost(run: string, result: WorkerResult, section: 'editor_hooks' | 'editor_caption_translation', locked = false): Promise<void> {
+const EDITOR_SPEND_LABELS = { editor_hooks: 'Editor hook ideas', editor_caption_translation: 'Editor caption translation', editor_review: 'Editor review' } as const
+async function recordEditorCost(run: string, result: WorkerResult, section: keyof typeof EDITOR_SPEND_LABELS, locked = false): Promise<void> {
   const cost = typeof result.cost_usd === 'number' && Number.isFinite(result.cost_usd) && result.cost_usd >= 0 && result.cost_usd < 1000 ? result.cost_usd : 0
   const incomplete = result.cost_incomplete === true
   const model = typeof result.model === 'string' && /^[\w.:/-]{1,120}$/.test(result.model) ? result.model : undefined
   if (!cost && !incomplete) return
   if (cost && recordEditorSpend) {
     // The spending ledger (Settings → Spending), apart from the run's own cost record.
-    try { await recordEditorSpend(cost, section === 'editor_hooks' ? 'Editor hook ideas' : 'Editor caption translation') } catch { /* never breaks the editor */ }
+    try { await recordEditorSpend(cost, EDITOR_SPEND_LABELS[section]) } catch { /* never breaks the editor */ }
   }
   const object = (x: unknown): Record<string, unknown> => x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : {}
   try {
@@ -553,8 +582,16 @@ export async function suggestEditorHooks(path: unknown, revision: unknown, candi
     const settings = loadSettings()
     if (!settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings to get hook ideas.')
     const { env, python } = workerSetup(settings)
-    const result = await runWorker(run, operation, 'suggest-hooks', env, python, 10 * 60 * 1000,
-      { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidateId, action: 'suggest-hooks' })
+    let result: WorkerResult
+    try {
+      result = await runWorker(run, operation, 'suggest-hooks', env, python, 10 * 60 * 1000,
+        { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidateId, action: 'suggest-hooks' })
+    } catch (error) {
+      // Paid before it failed: still recorded.
+      const failedResult = (error as WorkerFailure).result
+      if (failedResult) await recordEditorCost(run, failedResult, 'editor_hooks')
+      throw error
+    }
     if (operation.cancelled) throw new Error(editorFailureMessage('suggest-hooks', 'cancelled'))
     await recordEditorCost(run, result, 'editor_hooks')
     return { hooks: parseHookIdeas(result.hooks) }

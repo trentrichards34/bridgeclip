@@ -4,7 +4,7 @@ import { uniqueFileName, writeZip } from './clip-zip'
 import { randomUUID } from 'crypto'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
-import { addEditorCandidate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorProgress, suggestEditorHooks } from './clip-editor'
+import { addEditorCandidate, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorProgress, suggestEditorHooks } from './clip-editor'
 import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
@@ -557,7 +557,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('editor:open', (_event, path: unknown) => openEditor(path))
   handle('editor:save', (_event, path: unknown, revision: unknown, edits: unknown) => saveEditor(path, revision, edits))
   // A bake translates the captions of clips in another caption language (one OpenRouter call each): those pass the spending check.
+  // A review (coherence judgments, and looks at the video's frames) is paid too: it always does.
   handle('editor:run', async (_event, path: unknown, revision: unknown, id: unknown, action: unknown) => {
+    if (action === 'review') {
+      await assertSpendAllowed('editor:run', 'openrouter', await editorCallEstimate(path, 'review').catch(() => null))
+      return runEditor(path, revision, id, action)
+    }
     const translating = await editorTranslationEstimate(path, id, action).catch(() => ({ clips: 0, estimateUsd: null }))
     if (translating.clips) await assertSpendAllowed('editor:run', 'openrouter', translating.estimateUsd)
     return runEditor(path, revision, id, action)
@@ -567,7 +572,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('editor:progress', (_event, path: unknown) => readEditorProgress(path))
   handle('editor:freeMedia', (_event, path: unknown, revision: unknown) => freeEditorMedia(path, revision))
   handle('editor:addCandidate', (_event, path: unknown, revision: unknown, candidate: unknown, sourceId: unknown) => addEditorCandidate(path, revision, candidate, sourceId))
-  handle('editor:suggestHooks', (_event, path: unknown, revision: unknown, id: unknown) => suggestEditorHooks(path, revision, id))
+  // Hook ideas are one paid call: they pass the spending check (estimated from this run's earlier ones, if any).
+  handle('editor:suggestHooks', async (_event, path: unknown, revision: unknown, id: unknown) => {
+    await assertSpendAllowed('editor:suggestHooks', 'openrouter', await editorCallEstimate(path, 'suggest-hooks').catch(() => null))
+    return suggestEditorHooks(path, revision, id)
+  })
   handle('editor:closeReady', (_event, saved: unknown) => editorCloseReady(saved))
   // An Automatic Create run opened in the editor: what it takes, doing it, and its progress.
   handle('editor:automaticInfo', (_event, path: unknown) => automaticEditInfo(path))

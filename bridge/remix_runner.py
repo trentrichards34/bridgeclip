@@ -250,8 +250,28 @@ def parse_config(raw):
     )
 
 
+def spent_usd(remixers) -> float:
+    """What this run's paid calls cost so far (planning, transcription, writing, voice and video), failed or not."""
+    total = 0.0
+    for remixer in remixers:
+        for cost in (getattr(remixer, "cost_usd", 0), getattr(getattr(remixer, "media", None), "cost_usd", 0)):
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost == cost and 0 < cost < 1e6:
+                total += float(cost)
+    return round(total, 4)
+
+
+def failure_line(message: str, remixers) -> dict:
+    """The failure line, with what paid calls cost before the failure, so it still reaches the spending ledger."""
+    line = {"ok": False, "error": message or "failed"}
+    cost = spent_usd(remixers)
+    if cost > 0:
+        line["cost_usd"] = cost
+    return line
+
+
 def main():
     reserve_stdout_for_protocol()
+    remixers = []
     try:
         from clip_engine.logging_safety import install_safe_logging
         install_safe_logging()
@@ -276,12 +296,14 @@ def main():
                 from clip_engine.services.remix_service import recompose
                 return await recompose(config, progress)
             if raw_request.get("mode") == "moment":
-                return await Remixer(config["config"], progress).pick_another(config["draft_id"])
+                remixers.append(Remixer(config["config"], progress))
+                return await remixers[-1].pick_another(config["draft_id"])
             if raw_request.get("mode") == "pauses":
                 from clip_engine.services.pause_react import detect_pauses
                 return {"detection": await asyncio.to_thread(detect_pauses, config["recording"], config["source"],
                                                              config["trim_start"], config["trim_end"])}
             remixer = Remixer(config, progress)
+            remixers.append(remixer)
             if raw_request.get("mode") == "render":
                 approved = raw_request.get("approved")
                 if not isinstance(approved, list) or len(approved) > 200:
@@ -321,7 +343,7 @@ def main():
             print(f"Remix failed: {type(error).__name__}: {safe_log_text(str(error))[-500:]}", file=sys.stderr)
         except Exception:
             pass
-        emit({"ok": False, "error": message or "failed"})
+        emit(failure_line(message, remixers))
         return 1
 
 

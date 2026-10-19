@@ -102,10 +102,11 @@ export async function automaticEditInfo(path: unknown): Promise<AutomaticEditInf
   }
   if (!output.clips.length) throw new Error('This run has no clips to edit.')
   if (!regularFile(join(run, 'transcript.json'))) throw new Error('This run has no saved transcript, so its clips can’t be opened in the editor.')
-  // An unfinished conversion (the project was written, the run not yet marked): finish it with no new video.
-  if (project?.automatic) return { ...base, state: 'convert', source: 'kept', ...(project.automatic.estimated_cuts > 0 ? { estimatedCuts: true } : {}) }
-  if (project) throw new Error('This run’s editor project could not be read.')
+  // Asked of the run itself, as the engine counts them (an unfinished conversion's project may come from an older count).
   const cuts = lacksRecordedCuts(run, output) ? { estimatedCuts: true } : {}
+  // An unfinished conversion (the project was written, the run not yet marked): finish it with no new video.
+  if (project?.automatic) return { ...base, state: 'convert', source: 'kept', ...cuts }
+  if (project) throw new Error('This run’s editor project could not be read.')
   if (regularFile(join(run, KEPT_SOURCE))) return { ...base, state: 'convert', source: 'kept', ...cuts }
   return { ...base, state: 'convert', ...fetch(), ...cuts }
 }

@@ -271,7 +271,7 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
 
   const unscheduleContent = async (item: AutomationContent): Promise<void> => {
     if (!selected || busy) return
-    await mutate('unschedule', () => getApi().automations.unscheduleContent(selected.id, item.id), 'Cancelled with Zernio. The clip is back in the queue, and won’t be scheduled again for 30 minutes so you can edit it.')
+    await mutate('unschedule', () => getApi().automations.unscheduleContent(selected.id, item.id), 'Canceled with Zernio. The clip is back in the queue, and won’t be scheduled again for 30 minutes so you can edit it.')
   }
 
   const remove = (): void => {
@@ -845,7 +845,7 @@ const UPCOMING_STATE: Record<UpcomingPost['state'], { label: string; tone: 'succ
   zernio: { label: 'Scheduled with Zernio · safe to close the app', tone: 'success' },
   cancelling: { label: 'Cancelling with Zernio…', tone: 'warning' },
   app: { label: 'Waits for CreatorClips · keep the app open', tone: 'neutral' },
-  skipped: { label: 'Skipped · its Zernio post was cancelled', tone: 'neutral' },
+  skipped: { label: 'Skipped · its Zernio post was canceled', tone: 'neutral' },
   uncertain: { label: 'Held · check this clip before its slot', tone: 'warning' },
   empty: { label: 'No clip ready', tone: 'warning' }
 }

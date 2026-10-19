@@ -19,7 +19,7 @@ const POST_STATUS: Record<PostStatus, { label: string; tone: string }> = {
   published: { label: 'Posted', tone: 'text-success' },
   partial: { label: 'Partly posted', tone: 'text-warning' },
   failed: { label: 'Failed', tone: 'text-danger' },
-  cancelled: { label: 'Cancelled', tone: 'text-ink-subtle' },
+  cancelled: { label: 'Canceled', tone: 'text-ink-subtle' },
   missing: { label: 'Missing', tone: 'text-ink-subtle' },
   draft: { label: 'Draft', tone: 'text-ink-subtle' }
 }

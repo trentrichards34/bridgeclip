@@ -139,6 +139,18 @@ def test_runs_without_a_headline_or_with_card_titles(media, tmp_path):
     assert all(c['hook'] is None and not c['captions'] and [s['layout'] for s in c['scenes']] == ['fill'] for c in project['candidates'])
 
 
+def test_estimated_cuts_count_only_clips_whose_tight_cut_was_not_saved(media, tmp_path):
+    """The editor's note matches what the convert dialog said: natural pacing and letterbox_natural clips have no cut to work out."""
+    run, _ = automatic_run(tmp_path)
+    convert(run, settings=settings(pacing='natural'))
+    assert json.loads((run / 'editor-project.json').read_text())['automatic']['estimated_cuts'] == 0
+    run2, output = automatic_run(tmp_path / 'natural-fallback')
+    output['metrics']['clip_layouts'][2]['render_fallback'] = 'letterbox_natural'
+    (run2 / 'job_output.json').write_text(json.dumps(output))
+    convert(run2)
+    assert json.loads((run2 / 'editor-project.json').read_text())['automatic']['estimated_cuts'] == 1
+
+
 def test_a_missing_transcript_or_a_different_video_is_refused(media, tmp_path):
     run, _ = automatic_run(tmp_path)
     (run / 'transcript.json').unlink()
@@ -220,6 +232,18 @@ def test_export_replaces_the_library_clip_in_place(media, tmp_path, monkeypatch)
     assert not (run / 'clip_02.original.mp4').exists()
     output = json.loads((run / 'job_output.json').read_text())
     assert output['clips'][2]['headline'] is None and output['clips'][2]['caption_language'] is None
+    # Baked again with no closed captions made this time: the old ones (for the old cut) go, file and links.
+    async def without_captions(self, request):
+        Path(request.output_path).write_bytes(b'newer render')
+        return RenderResult(request.output_path, 10, 6000, layout_type='talking_head')
+    monkeypatch.setattr(RenderingService, 'render_clip', without_captions)
+    project = json.loads((run / 'editor-project.json').read_text())
+    project['candidates'][0]['status'] = 'ready'
+    (run / 'editor-project.json').write_text(json.dumps(project))
+    asyncio.run(run_editor({**config, 'revision': project['revision']}))
+    clip = json.loads((run / 'job_output.json').read_text())['clips'][0]
+    assert not (run / 'clip_00.srt').exists() and 'captions_srt' not in clip and 'subtitle_url' not in clip
+    assert clip['duration_ms'] == 6000
 
 
 def test_export_translates_captions_for_a_clip_in_another_language(media, tmp_path, monkeypatch):

@@ -130,8 +130,8 @@ test('Pause & react: an uploaded video and phone recording, the detected pauses,
       return { ...current, phase: 'planning', detail: 'Writing your headline and caption from what you said', percent: 5 }
     })
   }, status)
-  await page.getByRole('button', { name: 'Write my headline and caption' }).click()
-  const headline = page.getByLabel('Headline, your pause-and-react')
+  await page.getByRole('button', { name: 'Write my hook text and caption' }).click()
+  const headline = page.getByLabel('Hook text, your pause-and-react')
   await headline.waitFor()
   assert.equal(await headline.inputValue(), 'This coach says lose weight first. Not so fast')
   await page.getByText('You said: “Lose weight first? No.”').waitFor()

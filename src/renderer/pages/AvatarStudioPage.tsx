@@ -533,7 +533,7 @@ function RenderProgress({ status, onNavigate, onViewLibrary }: {
     )
   }
   if (status.phase === 'failed') return <Callout tone="danger">{status.error ?? 'Generation failed.'}</Callout>
-  if (status.phase === 'cancelled') return <Callout tone="info">Generation cancelled.</Callout>
+  if (status.phase === 'cancelled') return <Callout tone="info">Generation canceled.</Callout>
   return (
     <div className="space-y-1.5">
       <div className="flex justify-between text-xs text-ink-muted"><span>{status.detail}</span><span>{status.percent}%</span></div>

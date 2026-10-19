@@ -817,10 +817,10 @@ function RemixProgress({ status, onNavigate, onViewLibrary }: { status: RemixSta
   if (status.phase === 'failed') return <Callout tone="danger">{status.error ?? 'The remix failed.'}</Callout>
   if (status.phase === 'cancelled') {
     if (status.detail === 'Discarded') return <Callout tone="info">Takes discarded. Nothing was made.</Callout>
-    if (status.detail === 'Cancelled while planning') return <Callout tone="info">Cancelled before anything was made.</Callout>
+    if (status.detail === 'Canceled while planning') return <Callout tone="info">Canceled before anything was made.</Callout>
     return (
       <Callout tone="info" action={<Button size="sm" variant="secondary" onClick={() => void getApi().shell.openPath(status.folder)}>Open folder</Button>}>
-        Remix cancelled. Any remixes already finished are in the folder and your Library. Steps already running on OpenRouter may still be charged.
+        Remix canceled. Any remixes already finished are in the folder and your Library. Steps already running on OpenRouter may still be charged.
       </Callout>
     )
   }

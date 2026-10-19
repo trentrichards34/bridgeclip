@@ -1139,7 +1139,7 @@ test('cancelling an upload stops the PUT and leaves no post', () => withPosting(
   const pending = publish({ attemptId: 'attempt-7777-cncl' })
   await mock.waitFor(() => mock.state.requests.some((r) => r.method === 'PUT'))
   main.posts.cancelUpload('attempt-7777-cncl')
-  await assert.rejects(pending, /Upload cancelled/)
+  await assert.rejects(pending, /Upload canceled/)
   release()
   assert.equal(posting.state.creates.length, 0)
   assert.equal(main.posts.listPosts().length, 0)

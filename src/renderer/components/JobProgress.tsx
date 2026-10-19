@@ -25,7 +25,7 @@ export const STAGE_LABELS: Record<string, string> = {
   uploading: 'Saving clips',
   completed: 'Done',
   failed: 'Failed',
-  cancelled: 'Cancelled'
+  cancelled: 'Canceled'
 }
 
 function useElapsed(since: string, running: boolean): number {
