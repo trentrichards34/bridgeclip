@@ -820,6 +820,14 @@ def replace_library_clip(run, output, index, result, c, project, hook, a, b, cap
     if result.subtitle_path and os.path.isfile(result.subtitle_path):
         os.replace(result.subtitle_path, srt)
         entry.update(subtitle_url=f'file://{srt}', captions_srt=str(srt))
+    else:
+        # No closed captions this time (turned off, or they couldn't be written): the old ones no longer match the cut.
+        try:
+            srt.unlink()
+        except FileNotFoundError:
+            pass
+        entry.pop('subtitle_url', None)
+        entry.pop('captions_srt', None)
     entry.update(duration_ms=result.duration_ms, start_time_ms=a, end_time_ms=b, layout_type=result.layout_type,
                  summary=c['title'], headline=hook['text'] if hook else None, render_fallback=None, cta=None,
                  caption_language=caption_language,

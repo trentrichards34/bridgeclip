@@ -232,6 +232,18 @@ def test_export_replaces_the_library_clip_in_place(media, tmp_path, monkeypatch)
     assert not (run / 'clip_02.original.mp4').exists()
     output = json.loads((run / 'job_output.json').read_text())
     assert output['clips'][2]['headline'] is None and output['clips'][2]['caption_language'] is None
+    # Baked again with no closed captions made this time: the old ones (for the old cut) go, file and links.
+    async def without_captions(self, request):
+        Path(request.output_path).write_bytes(b'newer render')
+        return RenderResult(request.output_path, 10, 6000, layout_type='talking_head')
+    monkeypatch.setattr(RenderingService, 'render_clip', without_captions)
+    project = json.loads((run / 'editor-project.json').read_text())
+    project['candidates'][0]['status'] = 'ready'
+    (run / 'editor-project.json').write_text(json.dumps(project))
+    asyncio.run(run_editor({**config, 'revision': project['revision']}))
+    clip = json.loads((run / 'job_output.json').read_text())['clips'][0]
+    assert not (run / 'clip_00.srt').exists() and 'captions_srt' not in clip and 'subtitle_url' not in clip
+    assert clip['duration_ms'] == 6000
 
 
 def test_export_translates_captions_for_a_clip_in_another_language(media, tmp_path, monkeypatch):
