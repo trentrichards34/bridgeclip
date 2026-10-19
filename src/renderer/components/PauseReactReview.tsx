@@ -173,9 +173,12 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
   )
 }
 
-/** Start and end of the part to react to, on a preview of their video. */
-function TrimControl({ source, startMs, endMs, disabled, saving, uploaded, onTrim }: {
+/** Start and end of the part to react to, on a preview of their video (at most `maxSeconds` of it). */
+export function TrimControl({ source, startMs, endMs, disabled, saving, uploaded, onTrim, maxSeconds, note }: {
   source: string; startMs: number; endMs: number; disabled: boolean; saving: boolean; uploaded: boolean; onTrim: (startMs: number, endMs: number) => void
+  maxSeconds?: number
+  /** What changing it means (instead of Pause & react's note). */
+  note?: string
 }): React.JSX.Element {
   const video = useRef<HTMLVideoElement>(null)
   const [duration, setDuration] = useState(endMs / 1000)
@@ -191,13 +194,21 @@ function TrimControl({ source, startMs, endMs, disabled, saving, uploaded, onTri
       <div className="space-y-2.5">
         <label className="block text-2xs text-ink-muted">Start · {formatSeconds(start)}
           <input type="range" aria-label="Start of the part" min={0} max={duration} step={0.1} value={start} disabled={disabled}
-            onChange={(e) => { const value = Math.min(Number(e.target.value), end - 1); setStart(Math.max(0, value)); seek(Math.max(0, value)) }} className="mt-1 w-full accent-[rgb(var(--accent))]" />
+            onChange={(e) => {
+              const value = Math.max(0, Math.min(Number(e.target.value), end - 1))
+              setStart(value); seek(value)
+              // Moving the start past the longest part brings the end along.
+              if (maxSeconds && end - value > maxSeconds) setEnd(Math.min(duration, value + maxSeconds))
+            }} className="mt-1 w-full accent-[rgb(var(--accent))]" />
         </label>
         <label className="block text-2xs text-ink-muted">End · {formatSeconds(end)}
           <input type="range" aria-label="End of the part" min={0} max={duration} step={0.1} value={end} disabled={disabled}
-            onChange={(e) => { const value = Math.max(Number(e.target.value), start + 1); setEnd(Math.min(duration, value)); seek(Math.min(duration, value)) }} className="mt-1 w-full accent-[rgb(var(--accent))]" />
+            onChange={(e) => {
+              const value = Math.min(duration, Math.max(Number(e.target.value), start + 1), maxSeconds ? start + maxSeconds : Infinity)
+              setEnd(value); seek(value)
+            }} className="mt-1 w-full accent-[rgb(var(--accent))]" />
         </label>
-        <p className="text-2xs text-ink-subtle">{formatSeconds(end - start)} of their video. {uploaded ? 'Changing it finds the pauses in your phone recording again.' : 'It plays from the start while you record.'}</p>
+        <p className="text-2xs text-ink-subtle">{formatSeconds(end - start)} of their video{maxSeconds ? ` (up to ${maxSeconds / 60} minutes)` : ''}. {note ?? (uploaded ? 'Changing it finds the pauses in your phone recording again.' : 'It plays from the start while you record.')}</p>
         {changed && (
           <div className="flex gap-2">
             <Button size="sm" variant="primary" loading={saving} disabled={disabled} onClick={() => onTrim(Math.round(start * 1000), Math.round(end * 1000))}>Use this part</Button>

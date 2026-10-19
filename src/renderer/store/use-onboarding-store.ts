@@ -34,8 +34,11 @@ export function goalPage(goal: VideoGoalId): 'clip' | 'remix' | 'avatar' {
  */
 export function startGoal(goal: VideoGoalId): 'clip' | 'remix' | 'avatar' {
   const remix = useRemixForm.getState()
-  if (goal === 'ai-reactions') remix.applyStyle({ format: remix.format === 'image' ? 'commentary' : remix.format, host: remix.host === 'camera' || remix.host === 'lipsync' ? 'still' : remix.host })
-  // On camera starts with Pause & react: the simplest way to film a reaction.
+  // AI reactions land in "AI presenter": a voiced take or a clip reaction, with the avatar's photo or voice only.
+  if (goal === 'ai-reactions') {
+    remix.applyStyle({ format: remix.format === 'silent' ? 'silent' : 'commentary', host: remix.host === 'camera' || remix.host === 'lipsync' ? 'still' : remix.host })
+  }
+  // On camera lands in "You on camera" and starts with Pause & react: the simplest way to film a reaction.
   if (goal === 'camera-reactions') remix.applyStyle({ format: 'pause_react', host: 'camera' })
   if (goal === 'article') remix.applyStyle({ format: 'image' })
   useOnboarding.getState().setGuide(goal)

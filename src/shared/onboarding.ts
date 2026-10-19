@@ -132,7 +132,7 @@ export const GUIDES: Record<GoalId, Guide> = {
     needs: ['Your OpenRouter key', 'An avatar (made in Avatar Studio)'],
     steps: [
       'Make an avatar first: open Avatar Studio and choose Create avatar. Use your photo or an AI person, and pick or clone a voice.',
-      'Open Remix and paste links to the videos you want to react to.',
+      'Open Remix and choose AI presenter (Beta) at the top, then paste links to the videos you want to react to.',
       'Choose a format. Voiced take plays a few seconds of their moment, then your take in your voice. React to a clip plays their moment while your avatar reacts.',
       'Under Presenter, choose Avatar photo or Voice only, and pick your avatar.',
       'Choose Write the takes. Read them, fix anything marked in red, then make the videos.'
@@ -148,11 +148,13 @@ export const GUIDES: Record<GoalId, Guide> = {
     summary: 'You react to someone else’s video on camera: record here or upload a phone video.',
     needs: ['Your OpenRouter key', 'Camera and microphone access (or a phone video to upload)'],
     steps: [
-      'Easiest: open Remix, choose Pause & react and paste one video link (or choose a file, or use ⋯ → Remix this clip in your Library).',
+      'Easiest: open Remix, keep You on camera at the top, choose Pause & react and paste one video link (or choose a file, or use ⋯ → Remix this clip in your Library).',
       'Trim it to the part you react to, then record: their video plays above your camera and Space pauses it while you talk. Or upload a phone recording where you paused it yourself.',
       'Check the pauses, let the AI write the hook text and caption from what you said, then make the video.',
       'From a long video like a podcast: choose Moment + my take, paste the link and add up to 3 time ranges (type them, like 37:00 to 42:00, or paste a screenshot of the player). The AI picks the best moment in each, you record your take on each one, and each becomes its own video: the moment, then you.',
-      'For other styles, choose Voiced take or React to a clip with Me, on camera as the presenter, and record each take in the app or upload it. To stand in front of their video, choose Green screen over their video.'
+      'From a reel, Short or TikTok: choose Their clip, then me. Their clip plays first with its captions, then you give your take, recorded here or uploaded.',
+      'To react while it plays and then talk about it: choose React, then my thoughts. You film yourself watching their clip (it plays in a big box in front of you), then record your thoughts. Add your own clips or pictures as b-roll, or turn on stock footage, and the AI places them over your words. You can swap or remove any shot.',
+      'To stand in front of their video, choose Green screen over their video. To read lines the AI writes, choose Scripted take.'
     ],
     tips: [
       'Wear headphones when you record in the app, so their video’s sound stays out of your microphone.',
@@ -168,7 +170,7 @@ export const GUIDES: Record<GoalId, Guide> = {
     needs: ['Your OpenRouter key', 'Camera and microphone access (or a phone video to upload)'],
     steps: [
       'Take a screenshot of the article, post or tweet you want to talk about.',
-      'Open Remix, choose the Article or post format, then Choose a screenshot.',
+      'Open Remix, keep You on camera at the top, choose Article or post, then Choose a screenshot.',
       'Record your take on camera in front of it (up to 3 minutes), or upload a phone video.',
       'The AI writes the headline and caption from what you said. Check them, then make the video.'
     ],

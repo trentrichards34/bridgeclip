@@ -236,8 +236,11 @@ WRITE_SCHEMA: dict[str, Any] = {
 }
 
 
-def write_system_prompt(cta: str) -> str:
-    return f"""A creator made a short 9:16 video: it opens with a few seconds of someone else's long video (the moment), then the creator gives their own take on camera. You get the moment's words, the other video's details and what the creator said. Write the hook text and the post caption.
+MOMENT_SETUP = "it opens with a few seconds of someone else's long video (the moment), then the creator gives their own take on camera"
+
+
+def write_system_prompt(cta: str, setup: str = MOMENT_SETUP) -> str:
+    return f"""A creator made a short 9:16 video: {setup}. You get the moment's words, the other video's details and what the creator said. Write the hook text and the post caption.
 
 HEADLINE (hook text above the video, 4-14 words, sentence case, no emoji): the moment's claim or surprise plus a hint of the creator's reaction, like "He says 15 billion scam ads run every day. Here's what that means for you". It can be in the creator's voice ("I", "my"). It may quote or describe the moment. Never give away the creator's whole answer.
 

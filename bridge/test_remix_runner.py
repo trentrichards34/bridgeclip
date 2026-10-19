@@ -243,6 +243,49 @@ class ParseConfigTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=repr(bad)[:160]):
                 remix_runner.parse_config(bad)
 
+    def clip(self, fmt="react_thoughts", **over):
+        config = {"mode": "plan", "output_dir": os.path.abspath("out"), "host": "camera", "format": fmt,
+                  "sources": ["https://www.instagram.com/reel/abc"], "camera_layout": "filmed"}
+        config.update(over)
+        return config
+
+    def test_clip_templates_keys(self):
+        made = remix_runner.parse_config(self.clip("clip_then_me"))
+        self.assertEqual((made.format, made.angle, made.clip_trim, made.broll_items, made.broll_plan), ("clip_then_me", "reaction", None, [], None))
+        me, you, car = os.path.abspath("me.webm"), os.path.abspath("you.mp4"), os.path.abspath("car.mp4")
+        items = [{"id": "b0000000a", "path": car, "kind": "video", "name": "car.mp4"}]
+        plan = [{"start": 2, "end": 3.5, "item": "b0000000a", "query": "red car", "words": "the car"}, {"start": 5, "end": 7, "item": None, "query": "sea"}]
+        render = remix_runner.parse_config(self.clip(mode="render", sources=[], clip_trim=[5000, 20000], broll_items=items, broll_stock=True, broll_plan=plan,
+                                                     recordings={"0": {"reaction": {"path": me, "offset_s": 1.25}, "thoughts": {"path": you, "offset_s": 0}}}))
+        self.assertEqual(render.recordings["0"], {"reaction": {"path": me, "offset_s": 1.25}, "thoughts": {"path": you, "offset_s": 0.0}})
+        self.assertEqual((render.clip_trim, render.broll_stock, [s["item"] for s in render.broll_plan]), ([5000, 20000], True, ["b0000000a", None]))
+        # A phone video of you watching: lined up by sound in the engine (no offset).
+        phone = remix_runner.parse_config(self.clip(mode="write", sources=[], recordings={"0": {"reaction": {"path": me}, "thoughts": {"path": you}}}))
+        self.assertEqual(phone.recordings["0"]["reaction"]["offset_s"], None)
+        replan = remix_runner.parse_config(self.clip(mode="broll", sources=[], broll_items=items, broll_stock=False))
+        self.assertEqual((replan.format, replan.broll_items[0]["id"]), ("react_thoughts", "b0000000a"))
+        taken = remix_runner.parse_config(self.clip("clip_then_me", mode="render", sources=[], clip_trim=[0, 9000], recordings={"0": {"reaction": {"path": me, "offset_s": 0}}}))
+        self.assertEqual(taken.recordings["0"], {"reaction": {"path": me, "offset_s": 0.0}})
+
+    def test_rejects_bad_clip_template_values(self):
+        me, car = os.path.abspath("me.webm"), os.path.abspath("car.mp4")
+        item = {"id": "b0000000a", "path": car, "kind": "video"}
+        bads = [
+            self.clip(host="still"), self.clip(sources=["https://a.example/x", "https://b.example/y"]),
+            self.clip(clip_trim=[0, 500]), self.clip(clip_trim=[0, 181000]), self.clip(clip_trim=[0.5, 5000]), self.clip(clip_trim=[0, 5000, 9]),
+            self.clip(broll_items=[dict(item, path="rel.mp4")]), self.clip(broll_items=[dict(item, id="../x")]), self.clip(broll_items=[dict(item, kind="audio")]),
+            self.clip(broll_items=[item, item]), self.clip(broll_stock="yes"),
+            self.clip(broll_items=[item], broll_plan=[{"start": 2, "end": 4, "item": "b0000000b", "query": ""}]),
+            self.clip(broll_plan=[{"start": True, "end": 4, "item": None, "query": ""}]), self.clip(broll_plan=[{"start": 2, "end": 400, "item": None, "query": "x"}]),
+            self.clip("clip_then_me", broll_items=[item]), self.clip("clip_then_me", mode="broll", sources=[]), self.base(clip_trim=[0, 5000]),
+            self.clip(mode="render", recordings={"0": {"reaction": {"path": me}}}),
+            self.clip(mode="render", recordings={"0": {"reaction": {"path": me}, "thoughts": {"path": me, "offset_s": 2}}}),
+            self.clip(mode="render", recordings={"0": {"reaction": {"path": me, "offset_s": -1}, "thoughts": {"path": me}}}),
+        ]
+        for bad in bads:
+            with self.assertRaises(ValueError, msg=repr(bad)[:160]):
+                remix_runner.parse_config(bad)
+
 
 if __name__ == "__main__":
     unittest.main()
