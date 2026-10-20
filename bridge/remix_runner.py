@@ -69,14 +69,22 @@ def parse_recordings(raw, fmt):
                         "thoughts": {"path": thoughts["path"], "offset_s": 0.0}}
         elif fmt in ("silent", "image", "moment_take", "clip_then_me"):
             reaction = item.get("reaction")
-            if set(item) != {"reaction"} or not isinstance(reaction, dict) or not set(reaction) <= {"path", "offset_s"} \
+            # A single take may be trimmed to part of it ([start, end] seconds).
+            keys = {"path", "offset_s", "trim"} if fmt in ("moment_take", "clip_then_me") else {"path", "offset_s"}
+            if set(item) != {"reaction"} or not isinstance(reaction, dict) or not set(reaction) <= keys \
                     or not _abs_path(reaction.get("path")):
                 raise ValueError("Invalid recordings")
             offset = reaction.get("offset_s")
             if offset is not None and (isinstance(offset, bool) or not isinstance(offset, (int, float)) or not math.isfinite(offset)
                                        or not 0 <= offset <= MAX_OFFSET_SECONDS):
                 raise ValueError("Invalid recordings")
-            out[key] = {"reaction": {"path": reaction["path"], "offset_s": None if offset is None else float(offset)}}
+            trim = reaction.get("trim")
+            if trim is not None:
+                from clip_engine.services.remix_service import take_trim
+                if take_trim(trim) is None:
+                    raise ValueError("Invalid recordings")
+            out[key] = {"reaction": {"path": reaction["path"], "offset_s": None if offset is None else float(offset),
+                                     **({"trim": take_trim(trim)} if trim is not None else {})}}
         else:
             beats = item.get("beats")
             if set(item) != {"intro", "beats", "close"} or not _abs_path(item.get("intro")) or not _abs_path(item.get("close")) \
@@ -200,6 +208,31 @@ def parse_clip_options(raw, fmt, mode):
     return trim, items, stock, plan
 
 
+GRAPHIC_FORMATS = ("pause_react", "moment_take", "clip_then_me", "react_thoughts")
+
+
+def parse_graphics(raw, fmt, mode):
+    """Motion graphics on the member's part, drawn by the app: draft id -> [{"file", "at_ms", "duration_ms"}]."""
+    if raw is None:
+        return {}
+    if mode != "render" or fmt not in GRAPHIC_FORMATS or not isinstance(raw, dict) or len(raw) > MAX_RECORDING_DRAFTS:
+        raise ValueError("Invalid graphics")
+    out = {}
+    for key, items in raw.items():
+        if not isinstance(key, str) or not re.fullmatch(r"\d{1,4}", key) or not isinstance(items, list) or len(items) > 8:
+            raise ValueError("Invalid graphics")
+        clean = []
+        for g in items:
+            if not isinstance(g, dict) or set(g) != {"file", "at_ms", "duration_ms"} or not isinstance(g.get("file"), str) \
+                    or not re.fullmatch(r"[a-f0-9]{64}\.mov", g["file"]) or type(g.get("at_ms")) is not int or not 0 <= g["at_ms"] <= 3600 * 1000 \
+                    or type(g.get("duration_ms")) is not int or not 400 <= g["duration_ms"] <= 8000:
+                raise ValueError("Invalid graphics")
+            clean.append(dict(g))
+        if clean:
+            out[key] = sorted(clean, key=lambda g: g["at_ms"])
+    return out
+
+
 def parse_config(raw):
     from clip_engine.services.remix_service import (ANGLES, CAMERA_BACKDROPS, CAMERA_LAYOUTS, DEFAULT_VOICE, IMAGE_EXTENSIONS, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, PAUSE_CAPTIONS,
                                                     PAUSE_LAYOUTS, REACTION_KINDS, TTS_MODEL,
@@ -313,7 +346,7 @@ def parse_config(raw):
         moment_ranges=moment_ranges, moment_pip=moment_pip, write_ids=write_ids,
         clip_trim=clip_trim, broll_items=broll_items, broll_stock=broll_stock, broll_plan=broll_plan, layout=shape,
         presenter=presenter, heygen_voice=heygen_voice, heygen_usd_per_second=heygen_price,
-        look_extras=look_extras, look_extras_color=look_extras_color,
+        look_extras=look_extras, look_extras_color=look_extras_color, graphics=parse_graphics(raw.get("graphics"), fmt, mode),
     )
 
 

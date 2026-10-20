@@ -169,11 +169,19 @@ def parse_request(raw):
         raise ValueError("Invalid pins")
     if raw.get("recipe", "clean") not in RECIPES or not isinstance(raw.get("cutout_intro", False), bool) or not isinstance(raw.get("raw_intro", False), bool):
         raise ValueError("Invalid edit style")
+    # Motion graphics main drew (in the run's .graphics/reel/), each starting as its word is said.
+    graphics = raw.get("graphics") or []
+    if not isinstance(graphics, list) or len(graphics) > 8 or any(
+            not isinstance(g, dict) or set(g) != {"file", "word", "duration_ms"} or not isinstance(g.get("file"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}\.mov", g["file"]) or type(g.get("word")) is not int or not 0 <= g["word"] < len(words)
+            or type(g.get("duration_ms")) is not int or not 400 <= g["duration_ms"] <= 8000 for g in graphics):
+        raise ValueError("Invalid graphics")
     return {"mode": mode, "output_dir": raw["output_dir"], "sources": list(sources), "words": words, "keep": keep,
             "hook": _span(raw.get("hook"), len(words)), "cta": _span(raw.get("cta"), len(words)), "popups": clean_popups,
             "sounds": [dict(s) for s in sounds], "look": _look(raw), "title": " ".join(_text(raw.get("title"), 200, "title").split()),
             "cost_usd": float(cost), "pacing": _pacing(raw.get("pacing")), "recipe": raw.get("recipe", "clean"), "images": images,
-            "pins": [dict(p) for p in pins], "cutout_intro": raw.get("cutout_intro", False), "raw_intro": raw.get("raw_intro", False)}
+            "pins": [dict(p) for p in pins], "cutout_intro": raw.get("cutout_intro", False), "raw_intro": raw.get("raw_intro", False),
+            "graphics": [dict(g) for g in graphics]}
 
 
 def main():

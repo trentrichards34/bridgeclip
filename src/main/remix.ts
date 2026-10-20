@@ -14,14 +14,14 @@ import { parseCtaChoice } from '../shared/ctas'
 import { applyRunCta, applyRunCtaInLock, originalPath, readCta, withRunLock } from './ctas'
 import {
   estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_CTA_OFFER_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput, remixEditProblem,
-  headlineOnly, oneTake, clipFormat, MAX_IMAGE_TAKE_SECONDS, REMIX_IMAGE_EXTENSIONS, AVATAR_VOICE, DEFAULT_CAMERA, isRecordingPart, normalizeCtaKeyword, parseCameraSettings, partsFor, RECORDING_VIDEO_EXTENSIONS, remixSourceUrl, type RecordingPart, type RemixDraft, type RemixOutput, type RemixRecordings, type RemixRequest, type RemixStatus
+  headlineOnly, oneTake, clipFormat, MAX_IMAGE_TAKE_SECONDS, REMIX_IMAGE_EXTENSIONS, AVATAR_VOICE, DEFAULT_CAMERA, isRecordingPart, normalizeCtaKeyword, parseCameraSettings, partsFor, RECORDING_VIDEO_EXTENSIONS, remixSourceUrl, type RecordingPart, type RemixDraft, type RemixEdit, type RemixOutput, type RemixRecordings, type RemixRequest, type RemixStatus
 } from '../shared/remix'
 import { presetVoiceId, type Avatar } from '../shared/avatars'
 import {
   DEFAULT_PAUSE_REACT, DEFAULT_PAUSE_SETTINGS, isPauseCaptions, isPauseLayout, parsePauseDetection, parsePauseEvents, parsePauseSettings, PAUSE_MAX_TRIM_SECONDS,
   PAUSE_REACT_MAX_SECONDS, timelineForEngine, timelineFromEvents, uploadTimeline, type PauseDetection, type PauseEvent, type PauseSettings, type PauseTimeline, type PauseView
 } from '../shared/pause-react'
-import { MOMENT_TAKE_MAX_SECONDS, momentBoundsProblem, parseMomentRanges } from '../shared/moment-take'
+import { MOMENT_TAKE_MAX_SECONDS, NUDGED_MAX_MS, NUDGED_MIN_MS, momentBoundsProblem, parseMomentRanges } from '../shared/moment-take'
 import {
   BROLL_MAX_BYTES, BROLL_MAX_ITEMS, brollKind, CLIP_MAX_SECONDS, CLIP_TAKE_MAX_SECONDS, parseBrollPlan, REACTION_LEAD_SECONDS, readBrollPlan,
   type BrollItem, type BrollShot, type BrollView
@@ -33,6 +33,9 @@ import {
 import { suggestTalkingPoints } from './moment-take'
 import { estimateHeygenVideoUsd, HEYGEN_PRICES, heygenEngine, type HeygenAvatarLink } from '../shared/heygen'
 import type { SpendProvider } from '../shared/spending'
+import { isRemixGraphicFormat, parseRemixGraphics, reelGraphicSpec, remixGraphicFrame, drawableGraphics, type RemixGraphicContext } from '../shared/reel-graphics'
+import type { GraphicJob } from './graphics-render'
+import type { RemixChatFacts } from '../shared/remix-chat'
 
 const DEFAULT_VOICE_NAME = 'Brian'
 import { portraitPath, readAvatar, readReactions, voiceSamplePath } from './avatars'
@@ -59,6 +62,8 @@ interface RecordingFile {
   events?: PauseEvent[]
   /** Pause & react, uploaded: what the engine heard (when it was played and paused). */
   detection?: PauseDetection
+  /** Their clip then me / Moment + my take: the part of the take used (ms into it); a new recording starts whole. */
+  trim?: { startMs: number; endMs: number }
 }
 
 interface RunContext {
@@ -464,6 +469,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         id: randomBytes(6).toString('hex'), phase: 'planning', detail: 'Starting', percent: 1, folder,
         ...(request.host === 'camera' ? { onCamera: true, cameraTalk: request.camera?.talk === true, ...(request.camera ? { cameraLayout: request.camera.layout } : {}) } : {}),
         ...(request.pause ? { pauseLayout: request.pause.layout } : {}),
+        ...(remixGraphicContext(request) ? { graphics: remixGraphicContext(request)! } : {}),
         estimateUsd: request.moment ? momentEstimate(request.moment.ranges).total
           : estimateRemixCost(request.host, request.count * request.sources.length, 0.5, request.format).total,
         drafts: [], outputs: [], costUsd: null, warnings: [], error: null
@@ -566,7 +572,65 @@ export async function writeRemix(draftIds?: unknown): Promise<RemixStatus> {
 }
 
 /** Render the drafts the user approved (with their edits). */
-export async function renderRemix(value: unknown): Promise<RemixStatus> {
+/** What decides where graphics go on this run's videos (null: the format has no member's part for graphics). */
+export function remixGraphicContext(request: RemixRequest): RemixGraphicContext | null {
+  if (request.host !== 'camera' || !isRemixGraphicFormat(request.format)) return null
+  return {
+    format: request.format, pauseLayout: request.pause?.layout ?? 'box', hookAt: request.layout?.hookAt ?? 'top',
+    headlineLook: request.headlineLook ?? null, includeCaptions: request.includeCaptions, momentPip: request.moment?.pip === true
+  }
+}
+
+/** How long the member's part is for a take (ms): their take as recorded, or (Pause & react) the video. Null when not recorded. */
+function memberPartMs(run: ActiveRemix, draft: RemixDraft): number | null {
+  const takes = run.context.recordings?.get(draft.id)
+  if (draft.format === 'pause_react') {
+    if (!takes?.get('reaction')) return null
+    const timeline = pauseTimeline(run, draft.id)
+    return Math.round((timeline.end - timeline.start) * 1000)
+  }
+  const file = takes?.get(draft.format === 'react_thoughts' ? 'thoughts' : 'reaction')
+  return file?.seconds ? Math.round(file.seconds * 1000) : null
+}
+
+/**
+ * The member's graphics for the takes being made, checked and drawn (offscreen, cached in the run's
+ * .graphics/reel/): what the engine lays over each finished video, by draft id.
+ */
+async function drawRemixGraphics(run: ActiveRemix, edits: RemixEdit[], value: unknown): Promise<Record<string, { file: string; at_ms: number; duration_ms: number }[]>> {
+  const context = remixGraphicContext(run.context.request)
+  if (value === undefined || value === null) return {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Your graphics could not be read. Try again.')
+  const entries = Object.entries(value as Record<string, unknown>).filter(([, list]) => Array.isArray(list) && list.length)
+  if (!entries.length) return {}
+  if (!context) throw new Error('Graphics can be added to on-camera remixes only.')
+  const { graphicJob, renderGraphicJobs, REEL_GRAPHICS_DIR } = await import('./graphics-render')
+  const out: Record<string, { file: string; at_ms: number; duration_ms: number }[]> = {}
+  const banner = Boolean(run.context.extras?.banner && run.context.request.ctaKeyword)
+  for (const [key, list] of entries) {
+    const edit = edits.find((item) => String(item.id) === key)
+    if (!edit) continue
+    const draft = run.status.drafts.find((item) => item.id === edit.id)
+    if (!draft || !isRemixGraphicFormat(draft.format)) continue
+    let graphics
+    try { graphics = drawableGraphics(parseRemixGraphics(list, draft.format, memberPartMs(run, draft))) } catch (error) { throw new Error(`Check your graphics: ${(error as Error).message}`) }
+    if (!graphics.length) continue
+    const frame = remixGraphicFrame(context, edit.headline, banner)
+    const jobs = graphics.flatMap((g): GraphicJob[] => {
+      const job = graphicJob(run.status.folder, g.id, reelGraphicSpec(g, frame, g.duration_ms, context.headlineLook), { start_ms: g.at_ms, duration_ms: g.duration_ms })
+      return job ? [job] : []
+    })
+    let drawn
+    try { drawn = await renderGraphicJobs(run.status.folder, jobs, () => run.cancelled, REEL_GRAPHICS_DIR) } catch (error) {
+      logger.warn('remix.graphics.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
+      throw new Error('Your graphics could not be drawn. Try again, or remove a graphic and make the video again.')
+    }
+    out[key] = drawn.map((item) => ({ file: item.file, at_ms: item.start_ms, duration_ms: item.duration_ms }))
+  }
+  return out
+}
+
+export async function renderRemix(value: unknown, graphicsValue?: unknown): Promise<RemixStatus> {
   if (active || starting) throw new Error('A remix is already being made. Wait for it to finish or cancel it.')
   const run = reviewing
   if (!run || run.status.phase !== 'review') throw new Error('There is nothing waiting for review. Plan the remixes again.')
@@ -575,6 +639,13 @@ export async function renderRemix(value: unknown): Promise<RemixStatus> {
   const edits = parseRemixEdits(value, run.context.draftIds, new Set(run.status.drafts.filter((draft) => headlineOnly(draft.format)).map((draft) => draft.id)))
   if (recordingInProgress(run)) throw new Error('Wait for your recording to finish saving.')
   const recordings = run.context.request.host === 'camera' ? engineRecordings(run, edits) : null
+  // The member's graphics are drawn first (nothing else can start meanwhile); the engine lays them over each video.
+  let graphics: Awaited<ReturnType<typeof drawRemixGraphics>> = {}
+  if (graphicsValue !== undefined && graphicsValue !== null) {
+    starting = true
+    try { graphics = await drawRemixGraphics(run, edits, graphicsValue) } finally { starting = false }
+    if (reviewing !== run || run.status.phase !== 'review') throw new Error('This review was closed, so the videos weren’t made.')
+  }
   // Keep the edits on the run, so a failed render comes back to review with them.
   run.status = { ...run.status, drafts: run.status.drafts.map((draft) => {
     const edit = edits.find((item) => item.id === draft.id)
@@ -591,7 +662,8 @@ export async function renderRemix(value: unknown): Promise<RemixStatus> {
     const draft = run.status.drafts.find((item) => item.id === edit.id)
     return draft?.format === 'moment_take' ? { ...edit, start_ms: Math.round(draft.startMs), end_ms: Math.round(draft.endMs) } : edit
   })
-  launch(run, { ...run.context.config, mode: 'render', approved, ...(recordings ? { recordings } : {}), ...clipConfig(run, true) })
+  launch(run, { ...run.context.config, mode: 'render', approved, ...(recordings ? { recordings } : {}), ...clipConfig(run, true),
+    ...(Object.keys(graphics).length ? { graphics } : {}) })
   return run.status
 }
 
@@ -615,6 +687,8 @@ export async function cleanupAbandoned(outputDirectory: string, keep: string | n
       await rm(join(folder, '.recordings'), { recursive: true, force: true })
       await rm(join(folder, '.broll'), { recursive: true, force: true })
       await rm(join(folder, '.layout'), { recursive: true, force: true })
+      // Drawn graphics are only kept for videos that were made (re-makes from the Library use them).
+      if (!existsSync(join(folder, 'job_output.json'))) await rm(join(folder, '.graphics'), { recursive: true, force: true })
       // A re-make interrupted by quitting.
       if (folder !== recomposing) for (const file of await readdir(folder)) if (/^\.recompose-[a-f0-9]{8}\.mp4$/.test(file)) await rm(join(folder, file), { force: true })
       if ((await readdir(folder)).length === 0) await rm(folder, { recursive: true, force: true })
@@ -1136,6 +1210,91 @@ export async function removeRecording(draftId: unknown, part: unknown): Promise<
   return remixRecordings()
 }
 
+type TimedWords = [string, number, number][]
+/** Words saved in plan.json as [word, start_ms, end_ms] (or as transcript word objects), checked. */
+function timedWords(value: unknown, limit = 4000): TimedWords | null {
+  if (!Array.isArray(value)) return null
+  const out: TimedWords = []
+  for (const item of value.slice(0, limit)) {
+    const w = Array.isArray(item) ? { word: item[0], a: item[1], b: item[2] } : item && typeof item === 'object' ? { word: (item as Record<string, unknown>).word, a: (item as Record<string, unknown>).start_time_ms, b: (item as Record<string, unknown>).end_time_ms } : null
+    if (w && typeof w.word === 'string' && typeof w.a === 'number' && typeof w.b === 'number' && Number.isFinite(w.a) && Number.isFinite(w.b)) out.push([w.word.slice(0, 60), Math.round(w.a), Math.round(w.b)])
+  }
+  return out
+}
+
+/**
+ * What the review's Chat panel needs about a take: the facts its tools check against (the part of their video, the
+ * take and its trim, the box and banner) and the words saved when the hook text was written (the member's, and
+ * theirs around the part used).
+ */
+export async function remixChatFacts(draftId: unknown): Promise<{ facts: RemixChatFacts; words: { take: TimedWords | null; theirs: TimedWords | null; quote: string }; runId: string; folder: string }> {
+  const run = reviewRun()
+  const draft = run.status.drafts.find((item) => item.id === draftId)
+  if (!draft) throw new Error('That take is no longer in this review.')
+  if (!isRemixGraphicFormat(draft.format)) throw new Error('The chat works with on-camera remixes (Their clip then me, React then my thoughts, Pause & react and Moment + my take).')
+  const format = draft.format
+  const request = run.context.request
+  const sourceMs = Math.round((run.context.pause?.sourceSeconds ?? 0) * 1000)
+  let theirClip: RemixChatFacts['theirClip'] = null
+  let theirClipNote: string | undefined
+  if (format === 'moment_take' && draft.moment) {
+    theirClip = { startMs: Math.round(draft.startMs), endMs: Math.round(draft.endMs), minMs: NUDGED_MIN_MS, maxMs: NUDGED_MAX_MS, limitStartMs: draft.moment.rangeStartMs, limitEndMs: draft.moment.rangeEndMs }
+  } else if (format === 'pause_react' || format === 'clip_then_me') {
+    theirClip = { startMs: Math.round(draft.startMs), endMs: Math.round(draft.endMs), minMs: 1000, maxMs: (format === 'clip_then_me' ? CLIP_MAX_SECONDS : PAUSE_MAX_TRIM_SECONDS) * 1000,
+      limitStartMs: 0, limitEndMs: Math.max(Math.round(draft.endMs), sourceMs) }
+  } else theirClipNote = 'part 1 was filmed while their clip played, so changing it means recording part 1 again. Change it in step 1 of the review.'
+  const file = run.context.recordings?.get(draft.id)?.get(format === 'react_thoughts' ? 'thoughts' : 'reaction')
+  const extras = run.context.extras
+  const facts: RemixChatFacts = {
+    format, theirClip, ...(theirClipNote ? { theirClipNote } : {}),
+    takeMs: memberPartMs(run, draft), takeTrim: file?.trim ? { ...file.trim } : null, trimmable: format === 'clip_then_me' || format === 'moment_take',
+    boxAt: format === 'react_thoughts' && request.layout?.part1 !== 'phone' ? extras?.boxAt ?? 'auto' : null,
+    banner: format === 'react_thoughts' ? Boolean(extras?.banner) : null, keyword: request.ctaKeyword
+  }
+  let take: TimedWords | null = null, theirs: TimedWords | null = null
+  try {
+    const path = join(run.status.folder, '.work', 'plan.json')
+    const info = await stat(path)
+    if (info.isFile() && info.size < 32 * 1024 * 1024) {
+      const plan = JSON.parse(await readFile(path, 'utf8')) as { scripts?: Record<string, unknown>[]; sources?: { meta?: { member?: { words?: unknown } }; segments?: { start_time_ms?: unknown; end_time_ms?: unknown; words?: unknown }[] }[] }
+      const script = plan.scripts?.[draft.id] as { member?: { words?: unknown }; clip?: { words?: unknown }; source_index?: unknown } | undefined
+      take = timedWords(format === 'pause_react' ? plan.sources?.[0]?.meta?.member?.words : script?.member?.words)
+      theirs = timedWords(script?.clip?.words)
+      if (!theirs?.length) {
+        const source = plan.sources?.[typeof script?.source_index === 'number' ? script.source_index : 0]
+        const from = draft.startMs - 30_000, to = draft.endMs + 30_000
+        theirs = timedWords((source?.segments ?? []).filter((seg) => typeof seg.start_time_ms === 'number' && typeof seg.end_time_ms === 'number' && seg.end_time_ms >= from && seg.start_time_ms <= to)
+          .flatMap((seg) => Array.isArray(seg.words) ? seg.words : []), 3000)
+      }
+    }
+  } catch { /* no words saved yet */ }
+  return { facts, words: { take, theirs, quote: draft.quote }, runId: run.status.id, folder: run.status.folder }
+}
+
+/** The shortest part of a take that can be kept (ms). */
+export const MIN_TAKE_TRIM_MS = 2000
+
+/**
+ * Their clip then me / Moment + my take: use only part of the take (ms into it), or all of it again (null).
+ * Free; the hook text and caption stay as written. A new recording of the take starts whole.
+ */
+export function setTakeTrim(draftId: unknown, startMs: unknown, endMs: unknown): RemixRecordings {
+  const run = reviewRun()
+  const draft = run.status.drafts.find((item) => item.id === draftId)
+  if (!draft) throw new Error('That take is no longer in this review.')
+  if (draft.format !== 'clip_then_me' && draft.format !== 'moment_take') throw new Error('Only a single take (Their clip, then me or Moment + my take) can be trimmed here. Record it again to change it.')
+  const file = run.context.recordings?.get(draft.id)?.get('reaction')
+  if (!file) throw new Error('Record your take first.')
+  if (startMs === null && endMs === null) { delete file.trim; return remixRecordings() }
+  const total = Math.round(file.seconds * 1000)
+  if (typeof startMs !== 'number' || typeof endMs !== 'number' || !Number.isFinite(startMs) || !Number.isFinite(endMs)) throw new Error('Choose where your take starts and ends.')
+  const a = Math.max(0, Math.round(startMs)), b = Math.min(total || Math.round(endMs), Math.round(endMs))
+  if (b - a < MIN_TAKE_TRIM_MS) throw new Error(`Keep at least ${MIN_TAKE_TRIM_MS / 1000} seconds of your take.`)
+  if (a === 0 && b >= total - 50) delete file.trim
+  else file.trim = { startMs: a, endMs: b }
+  return remixRecordings()
+}
+
 /** The recordings so far, by take and part (previewable in the app). */
 export function remixRecordings(): RemixRecordings {
   const run = reviewing
@@ -1144,7 +1303,8 @@ export function remixRecordings(): RemixRecordings {
     out[draftId] = {}
     for (const [part, file] of takes) {
       out[draftId][part] = { path: authorizeMedia(file.path), uploaded: file.uploaded, seconds: file.seconds,
-        ...(part === 'reaction' && run?.context.writtenTakes?.get(draftId) === file ? { written: true } : {}) }
+        ...(part === 'reaction' && run?.context.writtenTakes?.get(draftId) === file ? { written: true } : {}),
+        ...(file.trim ? { trim: { ...file.trim } } : {}) }
     }
   }
   return out
@@ -1171,7 +1331,8 @@ function engineRecordings(run: ActiveRemix, edits: { id: number; beats: unknown[
     }
     out[String(edit.id)] = headlineOnly(draft.format)
       // Over a screenshot there's nothing to line up with: the take starts the video.
-      ? { reaction: { path: takes!.get('reaction')!.path, offset_s: draft.format === 'image' || draft.format === 'moment_take' || draft.format === 'clip_then_me' ? 0 : takes!.get('reaction')!.offsetS } }
+      ? { reaction: { path: takes!.get('reaction')!.path, offset_s: draft.format === 'image' || draft.format === 'moment_take' || draft.format === 'clip_then_me' ? 0 : takes!.get('reaction')!.offsetS,
+        ...(takes!.get('reaction')!.trim && (draft.format === 'moment_take' || draft.format === 'clip_then_me') ? { trim: [takes!.get('reaction')!.trim!.startMs / 1000, takes!.get('reaction')!.trim!.endMs / 1000] } : {}) } }
       : { intro: takes!.get('intro')!.path, beats: parts.filter((part) => part.startsWith('beat')).map((part) => takes!.get(part)!.path), close: takes!.get('close')!.path }
   }
   return out
@@ -1424,6 +1585,8 @@ export function layoutExtrasView(): LayoutExtrasView | null {
     format: run.context.request.format as LayoutExtrasView['format'], part2: extras.part2,
     screen: extras.screen ? { ...extras.screen, path: authorizeMedia(extras.screen.path) } : null,
     banner: extras.banner, circles: extras.circles, keyword: run.context.request.ctaKeyword,
+    // Their clip's box in part 1 can move only when it is a box (not a phone card).
+    ...(run.context.request.format === 'react_thoughts' && run.context.request.layout?.part1 !== 'phone' ? { boxAt: extras.boxAt ?? 'auto' } : {}),
     proofs: extras.proofs.map((proof) => ({ ...proof, path: authorizeMedia(proof.path) }))
   }
 }
@@ -1504,6 +1667,7 @@ export function setLayoutExtras(value: unknown): LayoutExtrasView {
   const extras = run.context.extras
   const patch = parseExtrasPatch(value, run.context.request.format as LayoutExtrasView['format'], new Set(extras.proofs.map((proof) => proof.id)))
   if ((patch.part2 === 'screen' || patch.circles) && !extras.screen) throw new Error('Add your screen recording first.')
+  if (patch.boxAt && patch.boxAt !== 'auto' && run.context.request.layout?.part1 === 'phone') throw new Error('Their clip is a phone card in this layout, so its box can’t be moved.')
   // Screenshots are listed in the order sent (the member may reorder them); every one is still there.
   const proofs = patch.proofs
     ? patch.proofs.map((change) => ({ ...(extras.proofs.find((proof) => proof.id === change.id) as ProofShot), ...change }))
@@ -1511,7 +1675,7 @@ export function setLayoutExtras(value: unknown): LayoutExtrasView {
   if (patch.proofs && proofs.length !== extras.proofs.length) throw new Error('That screenshot list is out of date. Try again.')
   Object.assign(extras, {
     ...(patch.part2 ? { part2: patch.part2 } : {}), ...(patch.banner !== undefined ? { banner: patch.banner } : {}),
-    ...(patch.circles ? { circles: patch.circles } : {}), proofs
+    ...(patch.circles ? { circles: patch.circles } : {}), ...(patch.boxAt ? { boxAt: patch.boxAt } : {}), proofs
   })
   return layoutExtrasView() as LayoutExtrasView
 }

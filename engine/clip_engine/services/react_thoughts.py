@@ -311,7 +311,7 @@ def face_in_frame(face: Optional[tuple[float, float, float, float]], cam_size: t
 
 
 def part1_layout(face: Optional[tuple[int, int, int, int]], natural_h: int, top_from: int, out_h: int,
-                 default_caption_y: int) -> dict:
+                 default_caption_y: int, prefer: Optional[str] = None) -> dict:
     """Where their clip's box goes in part 1 so it never covers the member's face (frame pixels).
 
     face: the face box (x, y, w, h), or None when none was found. natural_h: the box's height for the whole clip at the
@@ -331,7 +331,8 @@ def part1_layout(face: Optional[tuple[int, int, int, int]], natural_h: int, top_
     least = min(BOX_MIN_PX, want)
     lowest = out_h - BOTTOM_SAFE
     rooms = {"top": clear_top - CREDIT_ROOM - top_from, "bottom": lowest - CREDIT_ROOM - clear_bottom}
-    prefer = "top" if fy + fh / 2 > out_h / 2 else "bottom"
+    # The member may ask for a side ("top"/"bottom"); it's used when it has room, else the other side.
+    prefer = prefer if prefer in ("top", "bottom") else "top" if fy + fh / 2 > out_h / 2 else "bottom"
     for side in (prefer, "bottom" if prefer == "top" else "top"):
         room = rooms[side]
         if room < least:

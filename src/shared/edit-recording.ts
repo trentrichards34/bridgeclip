@@ -13,6 +13,7 @@ import { DEFAULT_CAPTION_PRESET, isCaptionPresetId } from './caption-presets'
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
 import { DEFAULT_EDIT_RECIPE, editRecipe, isEditRecipeId, recipeExtras, type EditRecipeId } from './edit-recipes'
 import { parseLookExtras, type LookExtraId } from './look-extras'
+import { parseEditGraphics, type EditGraphic } from './reel-graphics'
 
 export const EDIT_MAX_SOURCES = 5
 /** Per recording, and all takes together. */
@@ -153,6 +154,8 @@ export interface EditDecisions {
   cutoutIntro: boolean
   /** A short opening card: the raw take with what was cut marked, then the reel. */
   rawIntro: boolean
+  /** Motion graphics, each starting as its word is said (missing: none). */
+  graphics?: EditGraphic[]
 }
 
 export interface EditStartRequest {
@@ -198,7 +201,7 @@ export function initialDecisions(plan: EditPlan, look: EditLook = DEFAULT_EDIT_L
     endOnCta: plan.cta !== null,
     popups: plan.popups.map((popup) => ({ id: popup.id, on: true, text: popup.text, ...(popup.card ? { card: copyCard(popup.card) } : {}) })),
     sounds: plan.sounds.map((sound) => ({ id: sound.id, on: true })),
-    look, recipe, lookExtras: [], pins: [], cutoutIntro: false, rawIntro: false
+    look, recipe, lookExtras: [], pins: [], cutoutIntro: false, rawIntro: false, graphics: []
   }, recipe)
 }
 
@@ -288,6 +291,43 @@ export function reelSeconds(plan: EditPlan, decisions: EditDecisions): number {
     } else total += 0.22
   })
   return total
+}
+
+/**
+ * About when each kept word starts in the reel (seconds, without the raw-to-edited opening), like reelSeconds: for
+ * the graphics strip, and to warn about a graphic over a card before the reel is made.
+ */
+export function reelWordStarts(plan: EditPlan, decisions: EditDecisions): Map<number, number> {
+  const order = reelOrder(plan, decisions)
+  const { maxPause, keepPause } = editRecipe(decisions.recipe).pacing
+  const starts = new Map<number, number>()
+  let total = 0
+  order.forEach((i, k) => {
+    const word = plan.words[i]
+    starts.set(i, total)
+    total += (word.endMs - word.startMs) / 1000
+    const next = order[k + 1]
+    if (next === i + 1 && plan.words[next].src === word.src) {
+      const gap = Math.max(0, (plan.words[next].startMs - word.endMs) / 1000)
+      total += gap > maxPause ? keepPause : gap
+    } else total += 0.22
+  })
+  return starts
+}
+
+/** The half-screen cards that will show (start and end seconds on the reel), like the engine places them. */
+export function reelCardWindows(plan: EditPlan, decisions: EditDecisions, starts = reelWordStarts(plan, decisions)): { start: number; end: number; id: number }[] {
+  const total = reelSeconds(plan, decisions) - (decisions.rawIntro ? RAW_INTRO_SECONDS : 0)
+  const out: { start: number; end: number; id: number }[] = []
+  const cards = plan.popups.filter((p) => p.kind === 'card' && decisions.popups.find((d) => d.id === p.id)?.on && starts.has(p.word))
+    .map((p) => ({ id: p.id, at: starts.get(p.word)!, seconds: Math.min(CARD_MAX_SECONDS, Math.max(CARD_MIN_SECONDS, p.seconds ?? 3)) }))
+    .sort((a, b) => a.at - b.at)
+  for (const card of cards) {
+    const start = Math.max(1.2, card.at), end = Math.min(start + card.seconds, total - 0.15)
+    if (out.length && start < out[out.length - 1].end + 0.3) continue
+    if (end - start >= 1.5) out.push({ start, end, id: card.id })
+  }
+  return out
 }
 
 export function hookTextProblem(text: string): string | null {
@@ -426,6 +466,8 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     return { image: raw.image, word: raw.word as number }
   })
   for (const key of ['cutoutIntro', 'rawIntro'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose how your video opens.')
+  let graphics: EditGraphic[]
+  try { graphics = parseEditGraphics(value.graphics, n) } catch (error) { throw new Error(`Check your graphics: ${(error as Error).message}`) }
   if (look.lookExtras !== undefined && !Array.isArray(look.lookExtras)) throw new Error('Choose your extras again.')
   // Extras can come from the edit style chips (decisions) or the look board (look): one list either way.
   const lookExtras = parseLookExtras([...(Array.isArray(value.lookExtras) ? value.lookExtras : []), ...(Array.isArray(look.lookExtras) ? look.lookExtras : [])])
@@ -433,7 +475,7 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     look: { includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: parseHeadlineLook(look.headlineLook), showHandle: look.showHandle,
       ...(lookExtras.length ? { lookExtras } : {}) },
     recipe: isEditRecipeId(value.recipe) ? value.recipe : DEFAULT_EDIT_RECIPE, lookExtras, pins,
-    cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true }
+    cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true, graphics }
   if (reelOrder(plan, decisions).length < 3) throw new Error('Keep a few more words: the reel would be almost empty.')
   return decisions
 }

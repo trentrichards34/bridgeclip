@@ -93,8 +93,8 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir }:
   </div>
 }
 
-const SHORT: Record<GraphicTemplateId, string> = { stat: 'Stat', title: 'Title', list: 'List', lower_third: 'Name', logo: 'Logo', before_after: 'Before/after', checklist: 'Checklist', quote: 'Quote', highlight: 'Arrow/circle' }
-function graphicSummary(g: EditorGraphic): string {
+export const SHORT: Record<GraphicTemplateId, string> = { stat: 'Stat', title: 'Title', list: 'List', lower_third: 'Name', logo: 'Logo', before_after: 'Before/after', checklist: 'Checklist', quote: 'Quote', highlight: 'Arrow/circle' }
+export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): string {
   const f = g.fields
   const words = g.template === 'stat' ? [f.value, f.label] : g.template === 'lower_third' ? [f.name, f.role] : g.template === 'before_after' ? [f.before, f.after]
     : g.template === 'list' || g.template === 'checklist' ? [f.title, (f.items ?? '').split('\n')[0]] : g.template === 'logo' ? [f.caption] : g.template === 'highlight' ? [f.shape === 'arrow' ? 'Arrow' : 'Circle'] : [f.text]
@@ -171,7 +171,7 @@ export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disable
 }
 
 /** Sample words for the picker's previews only (never put in a clip). */
-const SAMPLES: Record<GraphicTemplateId, Record<string, string>> = {
+export const SAMPLES: Record<GraphicTemplateId, Record<string, string>> = {
   stat: { value: '75%', label: 'Sample label' }, title: { text: 'Your big words' }, list: { title: 'Sample list', items: 'First point\nSecond point\nThird point' },
   lower_third: { name: 'Your name', role: 'Your role' }, logo: { caption: 'Your caption' }, before_after: { before: 'Before', after: 'After' },
   checklist: { title: 'Sample checklist', items: 'First item\nSecond item\nThird item' }, quote: { text: 'A short quote goes here.', author: 'Who said it' },
@@ -189,7 +189,7 @@ export function wordsAtPlayhead(template: GraphicTemplateId, line: string | unde
   return {}
 }
 
-const FIELD_LABELS: Record<string, string> = { value: 'Number', label: 'Label', text: 'Words', title: 'Title', items: 'Items (one per line)', name: 'Name', role: 'Role', caption: 'Caption', before: 'Before', after: 'After', author: 'Who said it' }
+export const FIELD_LABELS: Record<string, string> = { value: 'Number', label: 'Label', text: 'Words', title: 'Title', items: 'Items (one per line)', name: 'Name', role: 'Role', caption: 'Caption', before: 'Before', after: 'After', author: 'Who said it' }
 
 /** The Graphics inspector tab: pick a template, then edit the selected graphic's words, place and length. */
 export function GraphicsInspector({ project, candidate, outputDir, time, selected, picking, disabled, onPick, onSelect, onChange, seek, clock }: {

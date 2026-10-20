@@ -17,13 +17,16 @@ from typing import Iterable
 from clip_engine.services.media_process import MEDIA_INPUT_OPTIONS
 
 GRAPHICS_DIR = ".graphics"
+# Renders made for Edit my recording and Remix (the clip editor's sweep leaves this folder alone).
+REEL_DIR = "reel"
 RENDER_FILE = re.compile(r"[a-f0-9]{64}\.mov")
 MAX_GRAPHICS = 12
 MIN_MS = 100
 
 
-def checked_graphics(run: Path, raw: object, clip_ms: int) -> list[dict]:
-    """The graphics main asked for, validated: known render files in the run's .graphics/ folder, inside the clip.
+def checked_graphics(run: Path, raw: object, clip_ms: int, sub: str = "") -> list[dict]:
+    """The graphics main asked for, validated: known render files in the run's .graphics/ folder (or `sub` in it),
+    inside the clip.
 
     A graphic past the clip's end is dropped; one running over it is trimmed.
     """
@@ -31,9 +34,12 @@ def checked_graphics(run: Path, raw: object, clip_ms: int) -> list[dict]:
         return []
     if not isinstance(raw, list) or len(raw) > MAX_GRAPHICS:
         raise ValueError("Invalid graphics")
-    folder = run / GRAPHICS_DIR
-    if folder.is_symlink():
+    if sub not in ("", REEL_DIR):
         raise ValueError("Invalid graphics folder")
+    folder = run / GRAPHICS_DIR
+    if folder.is_symlink() or (sub and (folder / sub).is_symlink()):
+        raise ValueError("Invalid graphics folder")
+    folder = folder / sub if sub else folder
     out = []
     for item in raw:
         if not isinstance(item, dict):
@@ -69,6 +75,25 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "0:a?", "-c:a", "copy", *codec,
             "-movflags", "+faststart", output]
     return cmd
+
+
+def overlay_graphics_file(video: str, graphics: list[dict], width: int, height: int, codec: list[str], run_cmd) -> None:
+    """Replace `video` with a copy that has the graphics laid over it (`run_cmd` runs the FFmpeg command)."""
+    if not graphics:
+        return
+    output = f"{video}.graphics.mp4"
+    try:
+        run_cmd(overlay_command(video, graphics, output, width, height, codec))
+        os.replace(output, video)
+    finally:
+        if os.path.exists(output):
+            os.remove(output)
+
+
+def overlapping(start_ms: int, length_ms: int, windows: Iterable[tuple[float, float]]) -> bool:
+    """Whether [start, start + length) (ms) overlaps any of `windows` (seconds)."""
+    a, b = start_ms / 1000, (start_ms + length_ms) / 1000
+    return any(a < hi and b > lo for lo, hi in windows)
 
 
 async def overlay_graphics(renderer, video: str, graphics: list[dict]) -> None:

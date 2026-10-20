@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Clapperboard, RotateCcw, Sparkles, Wand2 } from 'lucide-react'
+import { ChevronDown, Clapperboard, MessageSquare, RotateCcw, Sparkles, Wand2 } from 'lucide-react'
 import {
   CUT_LABELS, CUTOUT_INTRO_SECONDS, SOUND_LABELS, MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, RAW_INTRO_SECONDS, applyRecipe, cardProblem, chooseHook,
-  formatClock, hookTextProblem, initialDecisions, reelSeconds, toggleSpan, toggleWord, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditStatus
+  formatClock, hookTextProblem, initialDecisions, reelCardWindows, reelSeconds, reelWordStarts, toggleSpan, toggleWord, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditStatus
 } from '../../shared/edit-recording'
+import { EDIT_CHAT_SUGGESTIONS, editPatchValues, mergeEditChatSteps, parseEditChatSteps, type EditChatPatch, type EditChatStep } from '../../shared/edit-chat'
+import { editGraphicFrame, newEditGraphic, patchEditGraphic, type EditGraphic } from '../../shared/reel-graphics'
+import { newGraphic, type GraphicTemplateId } from '../../shared/motion-graphics'
+import { ChatPanel, type ChatApplyOutcome } from './ChatPanel'
+import { wordsAtPlayhead } from './ClipGraphics'
+import { ReelGraphics, type ReelGraphicItem, type ReelGraphicPatch } from './ReelGraphics'
 import { CardEditor, EditStylePicker, MyImages } from './EditExtras'
 import { hasBrandMark } from '../../shared/brand-kit'
 import type { BrandIdentity } from '../../shared/remix'
@@ -70,6 +76,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const inCta = (i: number): boolean => Boolean(decisions.endOnCta && plan.cta && i >= plan.cta.start && i <= plan.cta.end)
   const seconds = reelSeconds(plan, decisions)
   const cutCount = decisions.cut.length
+  const wordWhere = (index: number): string => `“${plan.words[index]?.text.replace(/[.,!?;:]+$/, '') ?? ''}”`
   const spanText = (start: number, end: number): string => plan.words.slice(start, end + 1).filter((_, k) => !cut.has(start + k)).map((word) => word.text).join(' ')
   const problem = hookTextProblem(decisions.hookText)
   const showMark = hasBrandMark(brand?.look)
@@ -77,6 +84,67 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const sources = status.sources
   // The preview shows the reel's own opening words.
   const previewWords = useMemo(() => plan.words.filter((_, i) => !cut.has(i)).slice(0, 8).map((word) => word.text), [plan.words, decisions.cut])
+
+  // Graphics: each starts as its word is said; the strip runs over the reel's kept words (without the raw opening).
+  const starts = useMemo(() => reelWordStarts(plan, decisions), [plan, decisions])
+  const cardWindows = useMemo(() => reelCardWindows(plan, decisions, starts), [plan, decisions, starts])
+  const reelLength = Math.max(1, seconds - (decisions.rawIntro ? RAW_INTRO_SECONDS : 0))
+  const graphicFrame = useMemo(() => editGraphicFrame(decisions.hookText, look), [decisions.hookText, look])
+  const graphics = decisions.graphics ?? []
+  /** The kept word playing at `at` seconds of the reel (the last one starting at or before it). */
+  const wordAt = (at: number): number | null => {
+    let best: number | null = null, bestAt = -1, first: number | null = null, firstAt = Infinity
+    for (const [i, t] of starts) {
+      if (t <= at + 0.05 && t > bestAt) { best = i; bestAt = t }
+      if (t < firstAt) { first = i; firstAt = t }
+    }
+    return best ?? first
+  }
+  const graphicItems: ReelGraphicItem[] = graphics.map((g) => {
+    const at = starts.get(g.word) ?? null
+    const card = at === null ? null : cardWindows.find((w) => at < w.end && at + g.duration_ms / 1000 > w.start)
+    const { word: _word, ...rest } = g
+    void _word
+    return { ...rest, at, where: `on ${wordWhere(g.word)}`,
+      problem: at === null ? 'Its word is cut, so it won’t show. Keep the word or start it on another one.' : card ? 'It plays during a card, so it will be left out. Move it after the card, or turn the card off.' : null }
+  })
+  /** A pop-up on this word would play during a graphic (it gives way to it). */
+  const underGraphic = (word: number): boolean => {
+    const at = starts.get(word)
+    return at !== undefined && graphicItems.some((g) => !g.problem && g.at !== null && at < g.at + g.duration_ms / 1000 && at + 1.6 > g.at)
+  }
+  const setGraphics = (change: (list: EditGraphic[]) => EditGraphic[]): void => setDecisions((current) => ({ ...current, graphics: change(current.graphics ?? []) }))
+  const addGraphic = (template: GraphicTemplateId, at: number): string | null => {
+    const word = wordAt(at)
+    if (word === null) return null
+    const line = lines.find((l) => l.words.includes(word))?.words.filter((i) => i >= word).map((i) => plan.words[i].text).join(' ')
+    const graphic = newEditGraphic(newGraphic(template, 0, { fields: wordsAtPlayhead(template, line), taken: graphics.map((g) => g.id) }), word)
+    setGraphics((list) => [...list, graphic].sort((a, b) => a.word - b.word))
+    return graphic.id
+  }
+  const patchGraphic = (id: string, patch: ReelGraphicPatch): void => {
+    const { at, ...rest } = patch
+    const word = at === undefined ? undefined : wordAt(at) ?? undefined
+    setGraphics((list) => patchEditGraphic(list, id, { ...rest, ...(word !== undefined ? { word } : {}) }))
+  }
+
+  // The Chat panel works on the review's choices with the current look (extras live with the edit style).
+  const chatState: EditDecisions = { ...decisions, look: { ...look, lookExtras: undefined }, graphics }
+  const chatContext = { plan, images }
+  const applyPatch = (patch: EditChatPatch): void => {
+    const { look: nextLook, ...rest } = patch
+    if (Object.keys(rest).length) setDecisions((current) => ({ ...current, ...rest }))
+    if (nextLook) onLook({ ...look, includeCaptions: nextLook.includeCaptions, captionPreset: nextLook.captionPreset, headlineLook: nextLook.headlineLook, showHandle: nextLook.showHandle })
+  }
+  const applyChat = (steps: EditChatStep[]): ChatApplyOutcome<{ before: EditChatPatch }> => {
+    const edits = steps.filter((step) => Object.keys(step.patch).length)
+    if (!edits.length) return { applied: null, length: null }
+    let patch: EditChatPatch
+    try { patch = mergeEditChatSteps(chatState, edits, chatContext) } catch (error) { return { error: (error as Error).message } }
+    const before = editPatchValues(chatState, Object.keys(patch) as (keyof EditChatPatch)[])
+    applyPatch(patch)
+    return { applied: { before }, length: `Your reel is now about ${formatClock(reelSeconds(plan, { ...chatState, ...patch }))} long.` }
+  }
 
   const clickWord = (i: number, shift: boolean): void => {
     if (pinning) {
@@ -96,7 +164,6 @@ export function EditReview({ status, brand, look, onLook, onError }: {
     try { await getApi().edit.render({ ...decisions, look, pins: decisions.pins.filter((pin) => known.has(pin.image)) }) } catch (err) { onError(errorMessage(err, 'Your reel could not be made.')) } finally { setMaking(false) }
   }
 
-  const wordWhere = (index: number): string => `“${plan.words[index]?.text.replace(/[.,!?;:]+$/, '') ?? ''}”`
 
   return (
     <Panel>
@@ -112,6 +179,22 @@ export function EditReview({ status, brand, look, onLook, onError }: {
       <EditStylePicker recipe={decisions.recipe} extras={decisions.lookExtras}
         onRecipe={(id) => { useEditRecordingStore.getState().setRecipe(id); setDecisions((current) => applyRecipe(plan, current, id)) }}
         onExtras={(lookExtras) => setDecisions((current) => ({ ...current, lookExtras }))} />
+
+      <section className="glass-tile mt-4 rounded-2xl p-3" aria-labelledby="edit-chat-title">
+        <h3 id="edit-chat-title" className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-ink"><MessageSquare className="h-4 w-4" aria-hidden />Chat</h3>
+        <ChatPanel<EditChatStep, { before: EditChatPatch }>
+          variant="review" threadKey={`edit\n${status.id}`} label="Chat about your edit"
+          intro="Ask for a change in your own words, like “remove the second retake” or “add a stat card when I say 40%”. Each answer shows what changed, with Keep or Undo."
+          placeholder="Ask for a change to your edit" suggestions={EDIT_CHAT_SUGGESTIONS}
+          disabledReason={making ? 'Your reel is being made.' : null}
+          loadInfo={typeof getApi().edit.chatInfo === 'function' ? () => getApi().edit.chatInfo() : undefined}
+          ask={(message) => getApi().edit.chat(chatState, message)}
+          parseSteps={parseEditChatSteps} isEdit={(step) => Object.keys(step.patch).length > 0}
+          apply={applyChat}
+          undo={(applied) => { applyPatch(applied.before); return null }}
+          onReset={() => { void getApi().edit.chatReset?.().catch(() => {}) }}
+          clearTooltip="Start a new chat about this edit. Your changes stay." />
+      </section>
 
       <section className="mt-4 space-y-2" aria-labelledby="edit-hook-title">
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -216,7 +299,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                   onChange={(on) => setDecisions((current) => ({ ...current, popups: current.popups.map((item) => item.id === popup.id ? { ...item, on } : item) }))} />
                 <TextInput aria-label={`Pop-up ${n + 1} text`} className="w-44" value={choice?.text ?? popup.text} maxLength={MAX_POPUP_TEXT_CHARS} disabled={!choice?.on || removed}
                   onChange={(e) => setDecisions((current) => ({ ...current, popups: current.popups.map((item) => item.id === popup.id ? { ...item, text: e.target.value } : item) }))} />
-                <span className="text-2xs text-ink-subtle">{removed ? 'Its word is cut, so it won’t show.' : `Pops up when you say ${wordWhere(popup.word)}`}</span>
+                <span className="text-2xs text-ink-subtle">{removed ? 'Its word is cut, so it won’t show.' : underGraphic(popup.word) ? `A graphic plays when you say ${wordWhere(popup.word)}, so this pop-up won’t show.` : `Pops up when you say ${wordWhere(popup.word)}`}</span>
               </div>
             )
           })}
@@ -231,6 +314,14 @@ export function EditReview({ status, brand, look, onLook, onError }: {
           })}
         </section>
       )}
+
+      <section className="mt-5">
+        <ReelGraphics label="Graphics" intro="Animated cards over your reel: a stat that counts up, a title, a list and more. Each starts as a word is said, and stays clear of your hook text and captions. A graphic can’t play during a card."
+          items={graphicItems} totalSeconds={reelLength} blocked={cardWindows.map((w) => ({ start: w.start, end: w.end, label: 'A card plays here' }))}
+          frame={graphicFrame} look={look.headlineLook} disabled={making} emptyNote={null}
+          onAdd={addGraphic} onPatch={patchGraphic} onRemove={(id) => setGraphics((list) => list.filter((g) => g.id !== id))}
+          cursorLabel={(at) => { const word = wordAt(at); return word === null ? 'at the start' : `on ${wordWhere(word)} (${formatClock(starts.get(word) ?? 0)})` }} />
+      </section>
 
       <MyImages images={images} pins={decisions.pins} wordText={wordWhere} pinning={pinning} onPinning={setPinning} onError={onError}
         onImages={(next) => { setImages(next); setDecisions((current) => ({ ...current, pins: current.pins.filter((pin) => next.some((image) => image.id === pin.image)) })) }}
