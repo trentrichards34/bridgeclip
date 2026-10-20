@@ -68,10 +68,10 @@ export function ClipList(props: ClipListProps): React.JSX.Element {
   return <ClipRun key={`${props.outputDir ?? ''}:${props.output.job_id}`} {...props} />
 }
 
-/** A run made on Create (Automatic or Review & edit), not Remix or Avatar Studio. */
+/** A run made on Create (Automatic or Review & edit), not Remix, Avatar Studio or Edit my recording. */
 export function isCreateOutput(output: JobOutput): boolean {
   const metrics = output.metrics ?? {}
-  return metrics.remix !== true && typeof metrics.avatar_studio !== 'string'
+  return metrics.remix !== true && typeof metrics.avatar_studio !== 'string' && metrics.edit_recording !== true
 }
 
 /** Which clip and tab the editor opens on (from a clip's "Edit headline"). */

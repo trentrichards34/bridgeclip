@@ -25,6 +25,7 @@ import { getApi } from '../lib/ipc'
 import { requestSettingsSection } from '../lib/settings-focus'
 import { errorMessage, localFileUrl } from '../lib/utils'
 import { useBrands } from '../store/use-brand-store'
+import { useEditRecordingStore } from '../store/use-edit-recording-store'
 import { useSettingsStore } from '../store/use-settings-store'
 
 /** The brand's look as the starting look (captions, hook text, its handle when it has one). */
@@ -46,8 +47,10 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const loadBrands = useBrands((s) => s.load)
   const [status, setStatus] = useState<EditStatus | null>(null)
   const [sources, setSources] = useState<EditSource[]>([])
-  const [brandId, setBrandId] = useState<string | null>(null)
-  const [look, setLook] = useState<EditLook>(DEFAULT_EDIT_LOOK)
+  // The brand and look are kept in a store, so leaving the page and coming back keeps them.
+  const brandId = useEditRecordingStore((s) => s.brandId)
+  const look = useEditRecordingStore((s) => s.look)
+  const setLook = useEditRecordingStore((s) => s.setLook)
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [recorder, setRecorder] = useState<{ hook: string; points: string[] } | null | false>(false)
@@ -94,8 +97,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   }
 
   const chooseBrand = (next: BrandIdentity | null): void => {
-    setBrandId(next?.id ?? null)
-    setLook(lookFromBrand(next))
+    useEditRecordingStore.getState().setBrand(next?.id ?? null, lookFromBrand(next))
   }
 
   const film = (idea: FilmIdea): void => {

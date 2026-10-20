@@ -10,7 +10,7 @@ import { resolveBinary } from './tools'
 import { parseJobOutput, type JobOutput } from '../shared/job-output'
 import { readRunRecord } from './run-history'
 
-export type RunMaker = 'create' | 'remix' | 'avatar'
+export type RunMaker = 'create' | 'remix' | 'avatar' | 'edit'
 export type RemixKind = 'ai' | 'camera' | 'image'
 
 export interface JobHistoryEntry {
@@ -104,7 +104,7 @@ export async function getJobHistory(baseDir: string, activeJobIds: ReadonlySet<s
         const costs = data.metrics?.api_costs
         const costVal = costs && typeof costs === 'object' ? (costs as Record<string, unknown>).total_estimated_cost_usd : null
         const metrics = data.metrics ?? {}
-        const madeWith: RunMaker = metrics.remix === true ? 'remix' : typeof metrics.avatar_studio === 'string' ? 'avatar' : 'create'
+        const madeWith: RunMaker = metrics.remix === true ? 'remix' : typeof metrics.avatar_studio === 'string' ? 'avatar' : metrics.edit_recording === true ? 'edit' : 'create'
         // Remix runs made before the kinds were recorded: a clip with no AI presenter was made on camera.
         const remixKinds: RemixKind[] | undefined = madeWith !== 'remix' ? undefined
           : Array.isArray(metrics.remix_kinds) ? metrics.remix_kinds as RemixKind[]

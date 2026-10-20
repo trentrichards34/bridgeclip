@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Clapperboard, RotateCcw, Sparkles, Wand2 } from 'lucide-react'
 import {
   CUT_LABELS, SOUND_LABELS, MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, chooseHook, formatClock, hookTextProblem, initialDecisions, reelSeconds,
@@ -7,6 +7,7 @@ import {
 import { hasBrandMark } from '../../shared/brand-kit'
 import type { BrandIdentity } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
+import { useEditRecordingStore } from '../store/use-edit-recording-store'
 import { cn, errorMessage } from '../lib/utils'
 import { boardFromLook, LOOK_HOOKS, lookPatch } from '../lib/style-board'
 import { previewFrame, StyleBoard } from './StyleBoard'
@@ -45,7 +46,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   onError: (error: string | null) => void
 }): React.JSX.Element {
   const plan = status.plan
-  const [decisions, setDecisions] = useState<EditDecisions>(() => initialDecisions(plan, look))
+  // Choices made here outlive the page (by run id), so leaving and coming back keeps them.
+  const [decisions, setDecisions] = useState<EditDecisions>(() => useEditRecordingStore.getState().reviewFor(status.id) ?? initialDecisions(plan, look))
+  useEffect(() => { useEditRecordingStore.getState().saveReview(status.id, decisions) }, [status.id, decisions])
   const [hooksOpen, setHooksOpen] = useState(false)
   const [lookOpen, setLookOpen] = useState(false)
   const [making, setMaking] = useState(false)

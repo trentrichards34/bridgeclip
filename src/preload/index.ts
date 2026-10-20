@@ -105,7 +105,7 @@ export interface MoreClipsChoices {
 
 export interface HistoryEntry {
   /** What made a finished run: Create, Remix or Avatar Studio. */
-  madeWith?: 'create' | 'remix' | 'avatar'
+  madeWith?: 'create' | 'remix' | 'avatar' | 'edit'
   /** Remix runs: AI presenter, on camera, or over an article or post. */
   remixKinds?: ('ai' | 'camera' | 'image')[]
   editorProject?: boolean

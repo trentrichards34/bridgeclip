@@ -9,11 +9,15 @@
 import { GOALS, isVideoGoal, type GoalId, type VideoGoalId } from './onboarding'
 import { ZERNIO_PLATFORM_NAMES, type ZernioPlatform } from './zernio'
 
-export type FirstRunId = 'first-clip' | 'first-ai-reaction' | 'first-camera-reaction' | 'first-article' | 'first-avatar-video'
+export type FirstRunId = 'first-clip' | 'first-ai-reaction' | 'first-camera-reaction' | 'first-article' | 'first-avatar-video' | 'first-edited-recording'
 export type SetupItemId = 'openrouter' | 'tools' | 'camera' | 'posting' | 'brand' | 'cta' | 'avatar' | FirstRunId
 
 /** Finished Library runs by what made them. */
-export interface RunCounts { clips: number; aiReactions: number; cameraReactions: number; articles: number; avatarVideos: number }
+export interface RunCounts {
+  clips: number; aiReactions: number; cameraReactions: number; articles: number; avatarVideos: number
+  /** Reels made on Edit my recording (missing: none counted yet). */
+  editedRecordings?: number
+}
 
 export interface SetupFacts {
   openrouter: boolean
@@ -60,6 +64,11 @@ const FIRST_RUNS: Record<VideoGoalId, { id: FirstRunId; title: string; detail: s
   'avatar-videos': { id: 'first-avatar-video', title: 'Make your first avatar video', detail: 'Write a script in Avatar Studio and generate it.', count: 'avatarVideos' }
 }
 
+const FIRST_EDITED_RECORDING = {
+  id: 'first-edited-recording', title: 'Make your first edited recording',
+  detail: 'Open Edit my recording, add a video of you talking, review the edit and make your reel.'
+} as const
+
 export function firstRunGoal(id: SetupItemId): VideoGoalId | null {
   return (Object.keys(FIRST_RUNS) as VideoGoalId[]).find((goal) => FIRST_RUNS[goal].id === id) ?? null
 }
@@ -74,7 +83,7 @@ export function setupItems(facts: SetupFacts, profile: SetupProfile = { goals: [
   const goals = new Set(profile.goals)
   const general = goals.size === 0
   const needsAvatar = goals.has('ai-reactions') || goals.has('avatar-videos')
-  const needsCamera = goals.has('camera-reactions') || goals.has('article')
+  const needsCamera = goals.has('camera-reactions') || goals.has('article') || goals.has('edit-recording')
   const posting = general || goals.has('posting')
   const platforms = profile.platforms
   const missing = platforms.filter((platform) => !facts.connectedPlatforms.includes(platform))
@@ -133,10 +142,16 @@ export function setupItems(facts: SetupFacts, profile: SetupProfile = { goals: [
     why: 'AI reactions and avatar videos are presented by your avatar.',
     how: ['Open Avatar Studio and choose Create avatar.', 'Use your photo as is, make an AI version of it, or generate an AI person.', 'Pick a voice, or clone your own.']
   })
-  const runGoals: VideoGoalId[] = general ? ['clips'] : profile.goals.filter(isVideoGoal)
+  const runGoals: GoalId[] = general ? ['clips'] : profile.goals.filter((goal) => isVideoGoal(goal) || goal === 'edit-recording')
   for (const goal of runGoals) {
+    if (goal === 'edit-recording') {
+      // Its own page, not one of the first-run guides (no `goal`): the step opens Edit my recording.
+      items.push({ ...FIRST_EDITED_RECORDING, done: (facts.runsByKind.editedRecordings ?? 0) > 0 })
+      continue
+    }
+    if (!isVideoGoal(goal)) continue
     const run = FIRST_RUNS[goal]
-    const done = general ? facts.runs > 0 : facts.runsByKind[run.count] > 0
+    const done = general ? facts.runs > 0 : (facts.runsByKind[run.count] ?? 0) > 0
     items.push({ id: run.id, title: general ? 'Make your first clip' : run.title, detail: run.detail, done, goal })
   }
   return items
