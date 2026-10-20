@@ -333,3 +333,129 @@ def test_a_render_cuts_on_words_frames_to_9_16_mixes_sound_effects_and_normalize
 def frame_path(path, t, out):
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(t), "-i", path, "-frames:v", "1", out], check=True)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Edit styles: cards, pacing, punch-in, pinned images and the two openings
+# ---------------------------------------------------------------------------
+
+def card_words():
+    return script(("Here are the three steps.", 0), ("Write the hook, film one take, post at noon.", 1.6),
+                  ("We went from 500 to 2,000 views a day.", 5.0), ("I asked can you cut my retakes and it said done in seconds.", 8.5))
+
+
+def test_cards_are_checked_against_what_was_said_and_numbered_after_the_pop_ups():
+    words = card_words()
+    base = er.analyze_takes(words)
+    raw = {"hooks": [], "cuts": [], "cta": {"present": False, "start": 0, "end": 0},
+           "popups": [{"word": 19, "text": "2,000", "kind": "number"}], "sounds": [],
+           "cards": [
+               {"word": 0, "seconds": 9, "type": "list", "title": "The three steps", "items": ["Write the hook", "Film one take", "Post at noon"]},
+               {"word": 19, "seconds": 3, "type": "stat", "title": "2,000", "items": ["views a day"]},
+               {"word": 20, "seconds": 3, "type": "compare", "title": "", "items": ["500 views", "2,000 views"]},
+               {"word": 35, "seconds": 4, "type": "chat", "title": "ignored", "items": ["Can you cut my retakes?", "Done in seconds."]},
+           ]}
+    plan = er.validate_plan(raw, words, base)
+    cards = [p for p in plan["popups"] if p["kind"] == "card"]
+    # The list (its time clamped to 5 s); the stat at "2,000"; the compare is too close to it; the chat is kept (title dropped).
+    assert [c["card"]["type"] for c in cards] == ["list", "stat", "chat"]
+    assert cards[0]["seconds"] == 5.0 and cards[0]["card"]["items"] == ["Write the hook", "Film one take", "Post at noon"]
+    assert cards[2]["card"] == {"type": "chat", "title": "", "items": ["Can you cut my retakes?", "Done in seconds."]}
+    ids = [p["id"] for p in plan["popups"]]
+    assert len(set(ids)) == len(ids) and cards[0]["id"] == 1
+    review = er.review_of(words, plan, "ai", 0, [])
+    assert sum(1 for p in review["popups"] if p["kind"] == "card") == 3
+    # 10,000 was never said; "growth secrets" and "mystery tactics" were never said; a one-item list isn't a list.
+    assert er._cards([{"word": 22, "seconds": 3, "type": "stat", "title": "10,000", "items": ["views a day"]},
+                      {"word": 24, "seconds": 3, "type": "list", "title": "Growth secrets nobody shares", "items": ["Buy followers", "Mystery tactics"]},
+                      {"word": 26, "seconds": 3, "type": "list", "title": "Only one", "items": ["Write the hook"]}], words, base, 0) == []
+    assert er.clean_card({"type": "stat", "title": "big", "items": ["no number"]}) is None
+    assert er.clean_card({"type": "compare", "title": "", "items": ["<b>x</b>", "y"]})["items"][0] == "b x /b"
+    assert "cards" in er.PLAN_SCHEMA["required"]
+
+
+def test_the_edit_style_sets_how_long_a_pause_may_run():
+    words = say("one two", 0) + say("three four", 1.0) + say("five six", 2.8)
+    calm, _ = er.build_timeline(words, [True] * 6, None, None, max_gap=0.9, short_pause=0.35)
+    fast, timed = er.build_timeline(words, [True] * 6, None, None, max_gap=0.35, short_pause=0.12)
+    assert len(calm) == 2 and len(fast) == 3
+    assert er.reel_seconds(fast) < er.reel_seconds(calm)
+    assert timed[2][1] - timed[1][2] <= 0.12 * 1000 + 40
+
+
+def test_what_the_edit_dropped_from_the_raw_takes():
+    from clip_engine.services import edit_visuals as ev
+    pieces = [er.Piece(0, 1.0, 3.0), er.Piece(0, 5.0, 6.0), er.Piece(1, 0.0, 2.0)]
+    assert ev.dropped_ranges(pieces, [8.0, 4.0]) == [(0.0, 1.0), (3.0, 5.0), (6.0, 8.0), (10.0, 12.0)]
+    windows = er.card_windows([{"card": {}, "start_ms": 200, "seconds": 3}, {"card": {}, "start_ms": 3000, "seconds": 3},
+                               {"card": {}, "start_ms": 6000, "seconds": 5}], 9.0)
+    assert [(a, b) for a, b, _ in windows] == [(1.2, 4.2), (6.0, 8.85)]
+
+
+def mean_rgb(frame, rows, cols=slice(0, 1080)):
+    return frame[rows, cols].reshape(-1, 3).mean(axis=0)
+
+
+@pytest.mark.skipif(not _ffmpeg_ok(), reason="needs FFmpeg")
+def test_a_fast_explainer_render_has_a_raw_opening_a_cut_out_a_half_screen_card_and_a_pinned_logo(tmp_path):
+    from clip_engine.services import segmentation
+    root = str(tmp_path / "edit-run")
+    os.makedirs(root)
+    source = str(tmp_path / "recording.mp4")
+    words = make_recording(source)
+    marks = er.analyze_takes(words)
+    keep = [m is None for m in marks]
+    fifteen = next(i for i, w in enumerate(words) if w.text == "Follow")
+    they = next(i for i, w in enumerate(words) if w.text == "They")
+    logo = str(tmp_path / "logo.png")
+    img = Image.new("RGBA", (300, 300), (0, 0, 0, 0))
+    from PIL import ImageDraw
+    ImageDraw.Draw(img).ellipse((20, 20, 280, 280), fill=(240, 40, 200, 255))
+    img.save(logo)
+    look = er.Look("Most coaches lose clients", {"look": "floating", "color": "#2F5BFF", "font": "clean"}, True, "pop", None, ("progress_bar",))
+    config = {"output_dir": root, "sources": [source], "words": words, "keep": keep, "hook": None, "cta": None,
+              "popups": [{"word": they, "kind": "card", "card": {"type": "list", "title": "They never follow up", "items": ["Follow up", "Messages wait"]},
+                          "seconds": 2.0}],
+              "sounds": [], "look": look, "title": "", "cost_usd": 0, "sound_cache": str(tmp_path / "sounds"),
+              "pacing": {"max_gap": 0.35, "short_pause": 0.12, "punch_on_cuts": True}, "recipe": "fast",
+              "images": [logo], "pins": [{"image": logo, "word": fifteen}], "cutout_intro": True, "raw_intro": True}
+    result = asyncio.run(er.render_edit(config, lambda *_: None))
+    out = result["path"]
+    pieces, timed = er.build_timeline(words, keep, None, None, 0.35, 0.12)
+    total = er.reel_seconds(pieces)
+    seconds = float(json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", out],
+                                              capture_output=True, check=True).stdout)["format"]["duration"])
+    # The raw opening (3.5 s) comes first, then the reel.
+    assert abs(seconds - (total + er.RAW_INTRO_SECONDS)) < 0.25, (seconds, total)
+    intro = frame_at(out, 3.2, str(tmp_path / "intro.png"))
+    wave = intro[1290:1520, 90:990]
+    red = ((wave[..., 0] > 180) & (wave[..., 1] < 90) & (wave[..., 2] < 90)).sum()
+    assert red > 200, "the dropped stretches are marked red on the waveform"
+    assert intro[:200].mean() < 40, "a dark card"
+    # The card: the top half is the light card while it shows; the speaker is in the bottom half.
+    at = er.RAW_INTRO_SECONDS + max(er.CARD_EARLIEST_S, timed[[i for *_, i in timed].index(they)][1] / 1000) + 1.0
+    card = frame_at(out, at, str(tmp_path / "card.png"))
+    assert mean_rgb(card, slice(300, 900)).mean() > 200
+    assert mean_rgb(card, slice(1100, 1500)).mean() < 200
+    # The pinned logo pops up, centered, on "Follow".
+    pin_t = er.RAW_INTRO_SECONDS + timed[[i for *_, i in timed].index(fifteen)][1] / 1000 + 0.35
+    pinned = frame_at(out, pin_t, str(tmp_path / "pin.png"))
+    center = pinned[700:840, 470:610]
+    assert ((center[..., 0] > 200) & (center[..., 1] < 90) & (center[..., 2] > 160)).mean() > 0.5
+    bundle = json.load(open(os.path.join(root, ".edit", "clip_00", "edit.json")))
+    assert bundle["recipe"] == "fast" and bundle["look_extras"] == ["progress_bar"]
+    assert len(bundle["cards"]) == 1 and len(bundle["pins"]) == 1 and bundle["raw_intro"] == "raw-intro.mp4"
+    if segmentation.available():
+        assert bundle["cutout"]["seconds"] == er.CUTOUT_SECONDS
+    # Re-made with new hook text: the opening, card and logo are kept.
+    again = os.path.join(root, ".recompose-test.mp4")
+    remade = asyncio.run(er.recompose_edit({"output_dir": root, "output_path": again, "headline": "New words",
+                                             "headline_look": None, "include_captions": False, "caption_preset": "pop"}, lambda *_: None))
+    assert abs(remade["duration_seconds"] - seconds) < 0.25
+    card2 = frame_at(again, at, str(tmp_path / "card2.png"))
+    assert mean_rgb(card2, slice(300, 900)).mean() > 200
+    shots = os.environ.get("EDIT_RECORDING_SHOTS")
+    if shots:
+        os.makedirs(shots, exist_ok=True)
+        for k, t in enumerate((1.0, 3.2, er.RAW_INTRO_SECONDS + 0.8, at, pin_t)):
+            frame_path(out, t, os.path.join(shots, f"recipe-{k}.png"))

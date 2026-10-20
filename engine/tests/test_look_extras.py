@@ -368,7 +368,8 @@ def test_edit_my_recording_reel_with_extras_and_remade_with_them(tmp_path):
     words = timed_words("I tested every Claude video skill so you don't have to. The free one beat the paid ones twice. Comment below.", 200)
     timed = [[w.word, w.start_time_ms, w.end_time_ms, i] for i, w in enumerate(words)]
     extras = lx.look_extras(["punch_zoom", "accent_words", "progress_bar", "comment_box", "proof_underline"], "#2F6BFF", "LIST")
-    look = er.Look("I tested every video skill for you", {"look": "brand", "color": "#2F6BFF", "font": "clean"}, True, "pop", None, extras)
+    look = er.Look("I tested every video skill for you", {"look": "brand", "color": "#2F6BFF", "font": "clean"}, True, "pop", None, extras.ids,
+                   extras.color, extras.keyword)
     out = str(tmp_path / "reel.mp4")
     asyncio.run(er.overlay_reel(str(base), out, str(tmp_path / "work"), look, timed, [{"text": "2x faster", "kind": "number", "start_ms": 3000}],
                                 8.8, str(tmp_path)))
@@ -391,12 +392,13 @@ def test_edit_my_recording_reel_with_extras_and_remade_with_them(tmp_path):
     folder.mkdir(parents=True)
     shutil.copy(base, folder / "base.mp4")
     er.write_bundle(str(root), {"version": er.EDIT_VERSION, "words": timed, "popups": [], "duration": 8.8,
-                                "settings": er.settings_of(look), "brand_mark": None, "look_extras": extras.record()})
+                                "settings": er.settings_of(look), "brand_mark": None, "look_extras": list(extras.ids),
+                                "look_extras_color": extras.color, "look_extras_keyword": extras.keyword, "punched": [[1.0, 4.0]]})
     seen = []
     original = er.overlay_reel
 
     async def spy(base_path, out_path, work, look_again, *rest):
-        seen.append(look_again.look_extras)
+        seen.append((look_again.look_extras, look_again.look_extras_color, look_again.look_extras_keyword, look_again.punched))
         return await original(base_path, out_path, work, look_again, *rest)
     er.overlay_reel = spy
     try:
@@ -404,7 +406,7 @@ def test_edit_my_recording_reel_with_extras_and_remade_with_them(tmp_path):
                                        "headline_look": None, "include_captions": True, "caption_preset": "pop"}, lambda *_: None))
     finally:
         er.overlay_reel = original
-    assert seen == [extras]
+    assert seen == [(extras.ids, "#2F6BFF", "LIST", ((1.0, 4.0),))]
 
 
 @needs_libass
@@ -492,18 +494,16 @@ def test_remix_commentary_final_tags_broll_and_punches_only_on_the_presenter(tmp
     assert not again._look_extras_tag({"style": "silent"})
 
 
-def test_edit_runner_reads_the_extras_for_a_render_only():
+def test_edit_runner_reads_the_extras_color_and_keyword_for_a_render():
     import edit_runner
-    from clip_engine.services.edit_recording import Look  # noqa: F401
     raw = {"mode": "render", "headline": "Hook", "include_captions": True, "caption_preset": "pop",
-           "look_extras": ["comment_box", "glow", "progress_bar"], "look_extras_color": "#2f6bff", "cta_keyword": "list"}
+           "look_extras": ["comment_box", "progress_bar"], "look_extras_color": "#2f6bff", "cta_keyword": "list"}
     look = edit_runner._look(raw)
-    assert (look.look_extras.ids, look.look_extras.color, look.look_extras.keyword) == (("progress_bar", "comment_box"), "#2F6BFF", "LIST")
-    assert not edit_runner._look({**raw, "look_extras": None}).look_extras
+    assert (look.look_extras_color, look.look_extras_keyword) == ("#2F6BFF", "LIST")
     with pytest.raises(ValueError):
-        edit_runner._look({**raw, "look_extras": "progress_bar"})
+        edit_runner._look({**raw, "look_extras_color": "blue"})
     # Re-making reads them from the saved bundle instead.
-    assert edit_runner._look({**raw, "mode": "recompose"}).look_extras is None
+    assert edit_runner._look({**raw, "mode": "recompose"}).look_extras_color is None
 
 
 def test_create_request_keeps_extras_for_automatic_runs_only():

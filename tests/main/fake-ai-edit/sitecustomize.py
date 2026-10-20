@@ -32,6 +32,7 @@ if os.environ.get("CREATORCLIPS_FAKE_AI") == "1":
                 "cta": {"present": True, "start": first("Follow"), "end": first("more.")},
                 "popups": [{"word": first("billion"), "text": "15 billion", "kind": "number"}],
                 "sounds": [{"word": first("billion"), "sound": "pop"}],
+                "cards": [{"word": first("messages"), "seconds": 2.5, "type": "stat", "title": "15 billion", "items": ["messages wait"]}],
             }
             return {"choices": [{"message": {"content": json.dumps(plan)}}]}, {"cost": 0.004}
 

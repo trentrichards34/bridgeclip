@@ -41,6 +41,8 @@ test('the first screen: choose or film a recording, a brand, the cost line, and 
   assert.match(html, /Edit my recording/)
   assert.match(html, /Add your OpenRouter key to start/)
   assert.match(html, /Choose recordings/)
+  assert.match(html, /data-testid="edit-sources-drop"/)
+  assert.match(html, /You can also drop recordings here\./)
   assert.match(html, /Film it here/)
   assert.match(html, /What should I film\?/)
   assert.match(html, /reviewing and making the reel are free/)
@@ -114,4 +116,34 @@ test('an Edit my recording reel is not a Create run, so the Library offers no Ed
   assert.equal(isCreateOutput({ clips: [], metrics: { edit_recording: true } }), false)
   assert.equal(isCreateOutput({ clips: [], metrics: { remix: true } }), false)
   assert.equal(isCreateOutput({ clips: [], metrics: {} }), true)
+})
+
+test('the review: an edit style, half-screen cards to edit or switch off, my images to pin, and two openings (off by default)', () => {
+  useEditRecordingStore.setState({ review: null, recipe: 'fast' })
+  const plan = parseEditPlan({
+    words: [['Here', 0, 200, 0, null], ['are', 220, 400, 0, null], ['three', 420, 700, 0, null], ['steps.', 720, 1100, 0, null], ['Write', 1500, 1800, 0, null], ['hooks.', 1820, 2200, 0, null]],
+    hooks: [], hook: null, cta: null, sounds: [], planned: 'ai', notes: [], warnings: [],
+    popups: [{ id: 0, word: 2, text: 'three', kind: 'keyword' }, { id: 1, word: 4, kind: 'card', seconds: 3, card: { type: 'list', title: 'Three steps', items: ['Write hooks', 'Film once'] } }]
+  }, 1)
+  const status = {
+    id: 'run-cards', phase: 'review', detail: '', percent: 100, folder: '/out/edit-2', plan, transcriber: 'scribe', output: null, costUsd: 0, estimateUsd: 0, error: null, warnings: [],
+    sources: [{ path: '/a/take.mp4', name: 'take.mp4', seconds: 3 }], images: [{ id: 'aaaaaaaaaaaa', name: 'logo.png', path: '/out/edit-2/images/aaaaaaaaaaaa.png' }]
+  }
+  const look = { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'white', color: '#FFFFFF', font: 'clean' }, showHandle: false }
+  const html = staticRender(React.createElement(EditReview, { status, brand: null, look, onLook: () => {}, onError: () => {} }))
+  assert.match(html, /Edit style/)
+  // The last style picked is used: Fast explainer, with its extras on.
+  assert.match(html, /role="radio" aria-checked="true"[^>]*>(?:(?!<\/button>).)*Fast explainer/s)
+  assert.match(html, /aria-pressed="true"[^>]*>Keyword pill</)
+  assert.match(html, /aria-pressed="false"[^>]*>Zoom punch</)
+  assert.match(html, /Card 1 · List/)
+  assert.match(html, /Fills the top half for 3 s when you say “Write”/)
+  assert.match(html, /value="Three steps"/)
+  assert.match(html, /My images/)
+  assert.match(html, /logo\.png/)
+  assert.match(html, /Pin to a word/)
+  assert.match(html, /data-testid="edit-images-drop"/)
+  assert.match(html, /Cut-out opening/)
+  assert.match(html, /role="switch" aria-checked="false" aria-label="Raw-to-edited opening"/)
+  useEditRecordingStore.setState({ recipe: 'clean' })
 })

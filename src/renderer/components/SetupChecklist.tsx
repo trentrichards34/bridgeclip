@@ -57,7 +57,8 @@ function useSetupFacts(): { facts: SetupFacts; refresh: () => void } {
           cameraReactions: kinds((entry) => entry.madeWith === 'remix' && (entry.remixKinds ?? []).includes('camera')),
           articles: kinds((entry) => entry.madeWith === 'remix' && (entry.remixKinds ?? []).includes('image')),
           avatarVideos: kinds((entry) => entry.madeWith === 'avatar'),
-          editedRecordings: kinds((entry) => entry.madeWith === 'edit')
+          editedRecordings: kinds((entry) => entry.madeWith === 'edit'),
+          listicles: kinds((entry) => entry.madeWith === 'listicle')
         } : current.runsByKind
       }))
     })
@@ -156,6 +157,7 @@ export function SetupChecklist({ onNavigate, inSettings = false, className }: {
     'first-camera-reaction': { label: 'Start', run: () => start(items.find((item) => item.id === 'first-camera-reaction')!) },
     'first-article': { label: 'Start', run: () => start(items.find((item) => item.id === 'first-article')!) },
     'first-avatar-video': { label: 'Start', run: () => start(items.find((item) => item.id === 'first-avatar-video')!) },
+    'first-listicle': { label: 'Start', run: () => start(items.find((item) => item.id === 'first-listicle')!) },
     'first-edited-recording': { label: 'Start', run: () => onNavigate('edit') }
   }
   const openProfile = (): void => useOnboarding.getState().setOpen(true)

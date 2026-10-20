@@ -50,7 +50,7 @@ function ipcWithLibrary(library) {
     './job-start': {}, '../shared/create-sources': { MAX_CREATE_SOURCES: 10 },
     './backgrounds': {},
     './avatars': { PHOTO_EXTENSIONS: [], VOICE_SAMPLE_EXTENSIONS: [], cloningInProgress: () => false },
-    './avatar-studio': { onAvatarRenderStatus: () => {}, avatarRunBusy: () => null }, './heygen-avatar': { TWIN_VIDEO_EXTENSIONS: ['mp4'] }, './heygen': { isConsentUrl: () => false }, './avatar-library': { importLegacyAvatarVideos: async () => 0 },
+    './avatar-studio': { onAvatarRenderStatus: () => {}, avatarRunBusy: () => null }, './heygen-avatar': { TWIN_VIDEO_EXTENSIONS: ['mp4'] }, './heygen': { isConsentUrl: () => false }, './avatar-library': { importLegacyAvatarVideos: async () => 0 }, './listicle': { LISTICLE_SCRIPT_ESTIMATE_USD: 0.01, onListicleStatus: () => {}, listicleRunBusy: () => null, listicleStatus: () => null, cancelListicleRender: () => false, listicleSpendCheck: () => null, startListicleRender: async () => null, saveListicleRecording: async () => '', writeListicleScript: async () => ({}), stopListicleForQuit: () => {} },
     './voice-samples': { voiceSample: async () => new Uint8Array() },
     './media-permissions': { requestMediaAccess: async () => ({ camera: true, microphone: true }), mediaAccessStatus: () => ({ camera: true, microphone: true }) },
     './clip-zip': { writeZip: async () => 0, uniqueFileName: (name, ext) => name + ext },

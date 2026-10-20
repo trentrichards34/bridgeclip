@@ -51,11 +51,37 @@ def _look(raw):
     if not isinstance(captions, bool) or preset not in presets:
         raise ValueError("Invalid captions")
     mark = validate_brand_mark(raw.get("brand_mark")) if raw.get("mode") == "render" else None
-    extras = None
-    if raw.get("mode") == "render":
-        from clip_engine.services.look_extras import look_extras
-        extras = look_extras(raw.get("look_extras"), raw.get("look_extras_color"), raw.get("cta_keyword") or "")
-    return Look(headline, validate_headline_look(raw.get("headline_look")), captions, preset, mark, extras)
+    extras = raw.get("look_extras") or []
+    if not isinstance(extras, list) or len(extras) > 20 or any(not isinstance(x, str) or not re.fullmatch(r"[a-z_]{1,40}", x) for x in extras):
+        raise ValueError("Invalid look extras")
+    look = Look(headline, validate_headline_look(raw.get("headline_look")), captions, preset, mark, tuple(dict.fromkeys(extras)))
+    if raw.get("mode") == "render" and look.look_extras:
+        # Their color (the brand's) and the keyword the comment box types; re-making reads them from the bundle.
+        from clip_engine.services.look_extras import look_extras, parse_color
+        look.look_extras_color = parse_color(raw.get("look_extras_color"))
+        look.look_extras_keyword = look_extras(["comment_box"], None, raw.get("cta_keyword") or "").keyword
+    return look
+
+
+RECIPES = ("clean", "fast", "story", "tutorial")
+
+
+def _pacing(raw):
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or set(raw) != {"max_gap", "short_pause", "punch_on_cuts"} or not isinstance(raw["punch_on_cuts"], bool):
+        raise ValueError("Invalid pacing")
+    gap, pause = raw["max_gap"], raw["short_pause"]
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in (gap, pause)) \
+            or not 0.2 <= gap <= 1.5 or not 0.05 <= pause <= min(0.5, gap):
+        raise ValueError("Invalid pacing")
+    return {"max_gap": float(gap), "short_pause": float(pause), "punch_on_cuts": raw["punch_on_cuts"]}
+
+
+def _image_path(value):
+    if not _abs_path(value) or os.path.splitext(value)[1].lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+        raise ValueError("Invalid image")
+    return value
 
 
 def parse_request(raw):
@@ -76,7 +102,7 @@ def parse_request(raw):
         return {"mode": mode, "output_dir": raw["output_dir"], "source": raw["source"], "src": src, "keyterms": keyterms}
     if mode == "recompose":
         out = raw.get("output_path")
-        if not set(raw) <= {"mode", "output_dir", "output_path", "headline", "headline_look", "include_captions", "caption_preset"}:
+        if not set(raw) <= {"mode", "output_dir", "output_path", "headline", "headline_look", "include_captions", "caption_preset", "look_extras"}:
             raise ValueError("Invalid request")
         # The new file goes straight into the run's folder.
         if not _abs_path(out) or not out.lower().endswith(".mp4") or os.path.dirname(os.path.realpath(out)) != os.path.realpath(raw["output_dir"]):
@@ -104,8 +130,17 @@ def parse_request(raw):
     popups = raw.get("popups") or []
     if not isinstance(popups, list) or len(popups) > 20:
         raise ValueError("Invalid pop-ups")
+    from clip_engine.services.edit_recording import CARD_MAX_S, CARD_MIN_S, MAX_PINS, clean_card
     clean_popups = []
     for item in popups:
+        if isinstance(item, dict) and item.get("kind") == "card":
+            seconds = item.get("seconds", 3)
+            card = clean_card(item.get("card"))
+            if not set(item) <= {"word", "kind", "card", "seconds"} or type(item.get("word")) is not int or not 0 <= item["word"] < len(words) \
+                    or card is None or isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not CARD_MIN_S <= seconds <= CARD_MAX_S:
+                raise ValueError("Invalid card")
+            clean_popups.append({"word": item["word"], "kind": "card", "card": card, "seconds": float(seconds)})
+            continue
         if not isinstance(item, dict) or not set(item) <= {"word", "text", "kind"} or type(item.get("word")) is not int \
                 or not 0 <= item["word"] < len(words) or item.get("kind", "keyword") not in ("number", "keyword"):
             raise ValueError("Invalid pop-ups")
@@ -123,10 +158,22 @@ def parse_request(raw):
         raise ValueError("Invalid cost")
     if len(words) > MAX_WORDS:
         raise ValueError("Invalid words")
+    images = raw.get("images") or []
+    if not isinstance(images, list) or len(images) > 8:
+        raise ValueError("Invalid images")
+    images = [_image_path(path) for path in images]
+    pins = raw.get("pins") or []
+    if not isinstance(pins, list) or len(pins) > MAX_PINS or any(
+            not isinstance(p, dict) or set(p) != {"image", "word"} or p.get("image") not in images or type(p.get("word")) is not int
+            or not 0 <= p["word"] < len(words) for p in pins):
+        raise ValueError("Invalid pins")
+    if raw.get("recipe", "clean") not in RECIPES or not isinstance(raw.get("cutout_intro", False), bool) or not isinstance(raw.get("raw_intro", False), bool):
+        raise ValueError("Invalid edit style")
     return {"mode": mode, "output_dir": raw["output_dir"], "sources": list(sources), "words": words, "keep": keep,
             "hook": _span(raw.get("hook"), len(words)), "cta": _span(raw.get("cta"), len(words)), "popups": clean_popups,
             "sounds": [dict(s) for s in sounds], "look": _look(raw), "title": " ".join(_text(raw.get("title"), 200, "title").split()),
-            "cost_usd": float(cost)}
+            "cost_usd": float(cost), "pacing": _pacing(raw.get("pacing")), "recipe": raw.get("recipe", "clean"), "images": images,
+            "pins": [dict(p) for p in pins], "cutout_intro": raw.get("cutout_intro", False), "raw_intro": raw.get("raw_intro", False)}
 
 
 def main():

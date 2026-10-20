@@ -7,9 +7,11 @@ import { promisify } from 'util'
 import {
   EDIT_MAX_SOURCE_SECONDS, EDIT_MAX_SOURCES, EDIT_MAX_TOTAL_SECONDS, EDIT_MIN_SOURCE_SECONDS, EDIT_RECORDER_MAX_SECONDS,
   EDIT_VIDEO_EXTENSIONS, MAX_HOOK_HINT_CHARS, MAX_IDEA_MATERIAL_CHARS, MAX_IDEA_TOPIC_CHARS, SCRIBE_MODEL, SCRIBE_PRICE_PER_SECOND,
-  editEstimate, parseEditDecisions, parseEditPlan, parseFilmIdeas, FILM_IDEA_COUNT,
-  type EditPlan, type EditSource, type EditStatus, type FilmIdea
+  EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGE_BYTES, EDIT_MAX_IMAGES, CARD_MAX_SECONDS, CARD_MIN_SECONDS,
+  editEstimate, livePins, parseEditDecisions, parseEditPlan, parseFilmIdeas, FILM_IDEA_COUNT,
+  type EditImage, type EditPlan, type EditSource, type EditStatus, type FilmIdea
 } from '../shared/edit-recording'
+import { editRecipe, pacingForEngine } from '../shared/edit-recipes'
 import { headlineLookForEngine } from '../shared/headline-look'
 import { lookExtrasForEngine } from '../shared/look-extras-engine'
 import type { BrandIdentity } from '../shared/remix'
@@ -333,7 +335,7 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
       cancelled: false, brand, hookHint: request.hookHint, recordedUsd: 0,
       status: {
         id: randomBytes(6).toString('hex'), phase: 'transcribing', detail: 'Starting', percent: 1, sources, folder, plan: null, transcriber: null,
-        output: null, costUsd: 0, estimateUsd: editEstimate(total).total, error: null, warnings: []
+        output: null, costUsd: 0, estimateUsd: editEstimate(total).total, error: null, warnings: [], images: []
       }
     }
     run = current
@@ -414,7 +416,8 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
   const current = run
   if (!current || current.status.phase !== 'review' || !current.status.plan) throw new Error('There is no edit waiting for review. Start again with your recording.')
   const plan: EditPlan = current.status.plan
-  const decisions = parseEditDecisions(value, plan)
+  const images = current.status.images ?? []
+  const decisions = parseEditDecisions(value, plan, images)
   const cut = new Set(decisions.cut)
   const hook = plan.hooks.find((item) => item.id === decisions.hookId) ?? null
   // Rendering from here on (before the first await), so a second click, Start over or a new run can't slip in.
@@ -434,20 +437,33 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     return current.status
   }
   const look = headlineLookForEngine(decisions.look.headlineLook)
+  const extrasColor = lookExtrasForEngine(decisions.lookExtras, current.brand?.look?.color, decisions.look.headlineLook).look_extras_color
   const config = {
     mode: 'render', output_dir: current.status.folder, sources: current.status.sources.map((source) => source.path),
     words: plan.words.map((word) => [word.text, word.startMs, word.endMs, word.src]), keep: plan.words.map((_, i) => !cut.has(i)),
     hook: hook ? { start: hook.start, end: hook.end } : null, cta: decisions.endOnCta && plan.cta ? { start: plan.cta.start, end: plan.cta.end } : null,
-    popups: decisions.popups.filter((item) => item.on).flatMap((item) => {
+    popups: decisions.popups.filter((item) => item.on).flatMap((item): Record<string, unknown>[] => {
       const popup = plan.popups.find((p) => p.id === item.id)
-      return popup && !cut.has(popup.word) ? [{ word: popup.word, text: item.text, kind: popup.kind }] : []
+      if (!popup || cut.has(popup.word)) return []
+      if (popup.kind === 'card') {
+        const card = item.card ?? popup.card
+        if (!card) return []
+        const seconds = Math.min(CARD_MAX_SECONDS, Math.max(CARD_MIN_SECONDS, popup.seconds ?? 3))
+        return [{ word: popup.word, kind: 'card', card: { type: card.type, title: card.title, items: card.items.filter((line) => line.trim()) }, seconds }]
+      }
+      return [{ word: popup.word, text: item.text, kind: popup.kind }]
     }),
+    // The edit style's pacing, the extras the member left on, their images and the openings.
+    recipe: decisions.recipe, pacing: pacingForEngine(editRecipe(decisions.recipe).pacing), look_extras: decisions.lookExtras,
+    images: images.map((image) => image.path),
+    pins: livePins(decisions).flatMap((pin) => { const image = images.find((item) => item.id === pin.image); return image ? [{ image: image.path, word: pin.word }] : [] }),
+    cutout_intro: decisions.cutoutIntro, raw_intro: decisions.rawIntro,
     sounds: decisions.sounds.filter((item) => item.on).flatMap((item) => { const sound = plan.sounds.find((s) => s.id === item.id); return sound ? [{ at: sound.at, sound: sound.sound }] : [] }),
     headline: decisions.hookText, ...(look ? { headline_look: look } : {}), include_captions: decisions.look.includeCaptions, caption_preset: decisions.look.captionPreset,
     ...(brandMark ? { brand_mark: brandMark } : {}),
-    // Extras; the comment box types the brand's comment keyword (none: it is left out).
-    ...lookExtrasForEngine(decisions.look.lookExtras, current.brand?.look?.color, decisions.look.headlineLook),
-    ...(decisions.look.lookExtras?.includes('comment_box') && current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}),
+    // The extras' color (the brand's), and the keyword the comment box types (none: the box is left out).
+    ...(extrasColor ? { look_extras_color: extrasColor } : {}),
+    ...(decisions.lookExtras.includes('comment_box') && current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}),
     title: decisions.hookText || current.status.sources[0]?.name.replace(/\.[^.]+$/, '') || '', cost_usd: current.status.costUsd
   }
   void (async () => {
@@ -465,6 +481,69 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     } finally { current.child = undefined }
   })()
   return current.status
+}
+
+// ---------------------------------------------------------------------------
+// "My images" on the review screen: copied into the run folder (images/), checked by their bytes
+// ---------------------------------------------------------------------------
+
+/** The picture type from its first bytes (PNG, JPEG or WebP), or null. */
+export function imageKind(bytes: Uint8Array): 'png' | 'jpg' | 'webp' | null {
+  const at = (i: number, ...values: number[]): boolean => values.every((v, k) => bytes[i + k] === v)
+  if (bytes.byteLength >= 8 && at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'png'
+  if (bytes.byteLength >= 3 && at(0, 0xff, 0xd8, 0xff)) return 'jpg'
+  if (bytes.byteLength >= 12 && at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return 'webp'
+  return null
+}
+
+function reviewRun(): EditRun {
+  const current = run
+  if (!current || current.status.phase !== 'review') throw new Error('Add images while you review your edit.')
+  return current
+}
+
+/** One picture the member dropped or chose: checked, copied into the run folder, listed with the run. */
+export async function addEditImage(name: unknown, data: unknown): Promise<EditImage[]> {
+  const current = reviewRun()
+  if (typeof name !== 'string' || name.length > 255 || name.includes('\0')) throw new Error('That picture has an unusual name. Rename it and try again.')
+  if (Object.prototype.toString.call(data) !== '[object Uint8Array]') throw new Error('That picture could not be read.')
+  const bytes = data as Uint8Array
+  if (bytes.byteLength > EDIT_MAX_IMAGE_BYTES) throw new Error(`Use pictures under ${EDIT_MAX_IMAGE_BYTES / 1024 / 1024} MB.`)
+  const kind = imageKind(bytes)
+  if (!kind) throw new Error('Use a PNG, JPEG or WebP picture.')
+  const images = current.status.images ?? []
+  if (images.length >= EDIT_MAX_IMAGES) throw new Error(`Add up to ${EDIT_MAX_IMAGES} images.`)
+  const id = randomBytes(6).toString('hex')
+  const folder = join(current.status.folder, 'images')
+  await mkdir(folder, { recursive: true })
+  const path = join(folder, `${id}.${kind}`)
+  await writeFile(path, bytes, { mode: 0o600, flag: 'wx' })
+  if (run !== current || current.status.phase !== 'review') { await rm(path, { force: true }); throw new Error('Add images while you review your edit.') }
+  // eslint-disable-next-line no-control-regex
+  const clean = basename(name).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 80) || `image.${kind}`
+  publish(current, { images: [...(current.status.images ?? []), { id, name: clean, path }] })
+  return current.status.images ?? []
+}
+
+/** Pictures chosen in the file dialog (in main): read and added like dropped ones. */
+export async function addEditImageFiles(paths: string[]): Promise<EditImage[]> {
+  reviewRun()
+  for (const path of paths.slice(0, EDIT_MAX_IMAGES)) {
+    if (!EDIT_IMAGE_EXTENSIONS.includes(extname(path).slice(1).toLowerCase())) throw new Error('Use a PNG, JPEG or WebP picture.')
+    const size = statSync(path).size
+    if (size > EDIT_MAX_IMAGE_BYTES) throw new Error(`Use pictures under ${EDIT_MAX_IMAGE_BYTES / 1024 / 1024} MB.`)
+    await addEditImage(basename(path), new Uint8Array(await readFile(path)))
+  }
+  return run?.status.images ?? []
+}
+
+export async function removeEditImage(id: unknown): Promise<EditImage[]> {
+  const current = reviewRun()
+  const image = (current.status.images ?? []).find((item) => item.id === id)
+  if (!image) return current.status.images ?? []
+  await rm(image.path, { force: true }).catch(() => undefined)
+  publish(current, { images: (current.status.images ?? []).filter((item) => item.id !== id) })
+  return current.status.images ?? []
 }
 
 export function cancelEdit(): boolean {

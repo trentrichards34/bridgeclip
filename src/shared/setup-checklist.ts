@@ -9,7 +9,7 @@
 import { GOALS, isVideoGoal, type GoalId, type VideoGoalId } from './onboarding'
 import { ZERNIO_PLATFORM_NAMES, type ZernioPlatform } from './zernio'
 
-export type FirstRunId = 'first-clip' | 'first-ai-reaction' | 'first-camera-reaction' | 'first-article' | 'first-avatar-video' | 'first-edited-recording'
+export type FirstRunId = 'first-clip' | 'first-ai-reaction' | 'first-camera-reaction' | 'first-article' | 'first-avatar-video' | 'first-listicle' | 'first-edited-recording'
 export type SetupItemId = 'openrouter' | 'tools' | 'camera' | 'posting' | 'brand' | 'cta' | 'avatar' | FirstRunId
 
 /** Finished Library runs by what made them. */
@@ -17,6 +17,8 @@ export interface RunCounts {
   clips: number; aiReactions: number; cameraReactions: number; articles: number; avatarVideos: number
   /** Reels made on Edit my recording (missing: none counted yet). */
   editedRecordings?: number
+  /** Top list videos (missing: none counted yet). */
+  listicles?: number
 }
 
 export interface SetupFacts {
@@ -61,7 +63,8 @@ const FIRST_RUNS: Record<VideoGoalId, { id: FirstRunId; title: string; detail: s
   'ai-reactions': { id: 'first-ai-reaction', title: 'Make your first AI reaction', detail: 'In Remix, choose AI presenter and remix a video with your avatar.', count: 'aiReactions' },
   'camera-reactions': { id: 'first-camera-reaction', title: 'Make your first on-camera reaction', detail: 'In Remix, choose You on camera: Pause & react, Their clip then me, React then my thoughts, or a moment from a long video.', count: 'cameraReactions' },
   article: { id: 'first-article', title: 'Make your first article or post video', detail: 'Talk over a screenshot in Remix.', count: 'articles' },
-  'avatar-videos': { id: 'first-avatar-video', title: 'Make your first avatar video', detail: 'Write a script in Avatar Studio and generate it.', count: 'avatarVideos' }
+  'avatar-videos': { id: 'first-avatar-video', title: 'Make your first avatar video', detail: 'Write a script in Avatar Studio and generate it.', count: 'avatarVideos' },
+  listicle: { id: 'first-listicle', title: 'Make your first top list', detail: 'In Avatar Studio, choose Top list, add your items and make the video.', count: 'listicles' }
 }
 
 const FIRST_EDITED_RECORDING = {
