@@ -110,7 +110,8 @@ test('Edit my recording: a chat request cuts a word and adds a stat graphic, Und
   await page.reload()
   await app.evaluate(({ dialog }, file) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] }) }, recording)
 
-  await page.keyboard.press('Control+e')
+  // After the reload, open the page from the sidebar once it's there (the shortcut can land before the app is ready).
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /^Edit my recording/ }).click()
   await page.getByRole('heading', { name: 'Edit my recording', level: 1 }).waitFor()
   await page.getByRole('button', { name: 'Choose recordings' }).click()
   await page.getByRole('list', { name: 'Your recordings' }).getByText('my take.mp4').waitFor()
