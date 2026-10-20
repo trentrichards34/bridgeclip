@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronRight, ListChecks, PlayCircle, UserRoundCog, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, ChevronUp, ListChecks, PlayCircle, UserRoundCog, X } from 'lucide-react'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage } from '../lib/utils'
 import { requestSettingsSection, type SettingsSection } from '../lib/settings-focus'
@@ -14,6 +14,7 @@ import { goalLabels, remainingSetup, setupItems, type RunCounts, type SetupFacts
 import { startGoal, useOnboarding } from '../store/use-onboarding-store'
 import { useBrands } from '../store/use-brand-store'
 import { BrandIdentityDialog } from './BrandIdentityDialog'
+import { OpenRouterKeyField } from './SetupCard'
 import { Button } from './ui/Button'
 import { IconTile } from './ui/IconTile'
 import { Field, TextInput } from './ui/Field'
@@ -81,6 +82,8 @@ function useSetupFacts(): { facts: SetupFacts; refresh: () => void } {
  * made for the member's goals when their profile has some. Items tick
  * themselves off from real state; each one says why it matters, how to do it
  * and what it costs, and links to where it's done. It never blocks anything.
+ * On Create, the first row asks for the OpenRouter key right there; once the key
+ * is saved the checklist folds into a one-line progress bar that opens again.
  */
 export function SetupChecklist({ onNavigate, inSettings = false, className }: {
   onNavigate: (page: Page) => void
@@ -95,6 +98,7 @@ export function SetupChecklist({ onNavigate, inSettings = false, className }: {
   const sampleLink = useMemberPrefsStore((state) => sampleVideoTarget(state.sampleVideoLink))
   const [error, setError] = useState<string | null>(null)
   const [brandOpen, setBrandOpen] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const items = setupItems(facts, profile)
   const left = remainingSetup(items)
   const done = items.filter((item) => item.done).length
@@ -138,7 +142,8 @@ export function SetupChecklist({ onNavigate, inSettings = false, className }: {
   }
 
   const actions: Record<SetupItemId, { label: string; run: () => void } | null> = {
-    openrouter: { label: 'Add key', run: () => goSettings('keys') },
+    // On Create the key is typed into the row itself.
+    openrouter: inSettings ? { label: 'Add key', run: () => goSettings('keys') } : null,
     tools: { label: 'Open system check', run: () => goSettings('system') },
     camera: { label: 'Allow camera', run: () => void allowCamera() },
     posting: facts.zernioKey ? { label: 'Connect accounts', run: () => onNavigate('accounts') } : { label: 'Add Zernio key', run: () => goSettings('keys') },
@@ -152,6 +157,30 @@ export function SetupChecklist({ onNavigate, inSettings = false, className }: {
     'first-avatar-video': { label: 'Start', run: () => start(items.find((item) => item.id === 'first-avatar-video')!) }
   }
   const openProfile = (): void => useOnboarding.getState().setOpen(true)
+  const closeButton = !inSettings && <Button variant="ghost" size="sm" iconOnly aria-label="Close the setup checklist" title="Close. You can open it again in Settings."
+    icon={<X className="h-4 w-4" />} onClick={() => dismiss(true)} />
+
+  // With the key saved, Create shows one line of progress instead of the whole list.
+  if (!inSettings && facts.openrouter && !expanded) {
+    const percent = items.length ? Math.round((done / items.length) * 100) : 100
+    return (
+      <section aria-label="Get set up" className={cn('glass flex items-center gap-3 rounded-2xl py-1.5 pl-3.5 pr-1.5 animate-fade-in', className)} data-testid="setup-checklist" data-compact="true">
+        <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-full', left ? 'text-accent' : 'bg-success text-black')} aria-hidden>
+          {left ? <ListChecks className="h-4 w-4" /> : <Check className="h-3 w-3" strokeWidth={3} />}
+        </span>
+        <div className="h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-white/[0.08]" role="progressbar" aria-label="Setup progress" aria-valuemin={0} aria-valuemax={items.length} aria-valuenow={done}>
+          <div className={cn('h-full rounded-full', left ? 'bg-accent' : 'bg-success')} style={{ width: `${percent}%` }} />
+        </div>
+        <p className="min-w-0 flex-1 truncate text-xs text-ink-muted" role="status">
+          <span className="font-medium text-ink">{done} of {items.length} set up</span>{left ? '' : ' · You’re all set'}
+        </p>
+        <Button variant="ghost" size="sm" aria-expanded={false} onClick={() => setExpanded(true)}>
+          {left ? 'Continue setup' : 'Show steps'}<ChevronDown className="h-3.5 w-3.5" />
+        </Button>
+        {closeButton}
+      </section>
+    )
+  }
 
   return (
     <section aria-label="Get set up" className={cn(!inSettings && 'glass rounded-3xl p-3.5 animate-fade-in', className)} data-testid="setup-checklist">
@@ -166,12 +195,15 @@ export function SetupChecklist({ onNavigate, inSettings = false, className }: {
         <Button variant="ghost" size="sm" icon={<UserRoundCog className="h-3.5 w-3.5" />} onClick={openProfile}>
           {profile.goals.length ? 'Edit profile' : 'Set up your profile'}
         </Button>
-        {!inSettings && <Button variant="ghost" size="sm" iconOnly aria-label="Close the setup checklist" title="Close. You can open it again in Settings."
-          icon={<X className="h-4 w-4" />} onClick={() => dismiss(true)} />}
+        {!inSettings && facts.openrouter && <Button variant="ghost" size="sm" aria-expanded onClick={() => setExpanded(false)}>
+          Show less<ChevronUp className="h-3.5 w-3.5" />
+        </Button>}
+        {closeButton}
       </div>
       <ol className="mt-3 space-y-1">
         {items.map((item) => <ChecklistRow key={item.id} item={item} action={actions[item.id]}
-          extra={item.id === 'first-clip' && !item.done && sampleLink ? <Button size="sm" icon={<PlayCircle className="h-3.5 w-3.5" />} onClick={trySample}>Try it with a sample video</Button> : null} />)}
+          extra={item.id === 'first-clip' && !item.done && sampleLink ? <Button size="sm" icon={<PlayCircle className="h-3.5 w-3.5" />} onClick={trySample}>Try it with a sample video</Button> : null}
+          body={item.id === 'openrouter' && !item.done && !inSettings ? <OpenRouterKeyField className="ml-8 mt-2 max-w-xl" /> : null} />)}
       </ol>
       {error && <p role="alert" className="mt-2 px-1 text-xs text-danger">{error}</p>}
       {inSettings && <SetupChecklistSettings onShow={dismiss} />}
@@ -180,7 +212,7 @@ export function SetupChecklist({ onNavigate, inSettings = false, className }: {
   )
 }
 
-function ChecklistRow({ item, action, extra }: { item: SetupItem; action: { label: string; run: () => void } | null; extra: React.ReactNode }): React.JSX.Element {
+function ChecklistRow({ item, action, extra, body }: { item: SetupItem; action: { label: string; run: () => void } | null; extra: React.ReactNode; body?: React.ReactNode }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const howId = `setup-how-${item.id}`
   const hasHow = !item.done && (item.why || item.how?.length || item.cost)
@@ -208,6 +240,7 @@ function ChecklistRow({ item, action, extra }: { item: SetupItem; action: { labe
           </Button>}
         </div>}
       </div>
+      {body}
       {hasHow && open && (
         <div id={howId} className="ml-8 mt-2 space-y-1.5 rounded-xl bg-white/[0.03] px-3 py-2 text-xs text-ink-muted">
           {item.why && <p><span className="font-medium text-ink">Why: </span>{item.why}</p>}

@@ -36,6 +36,8 @@ test('video speed supports keyboard selection, review, submission and reuse in E
   await page.getByRole('radio', { name: 'Automatic', exact: true }).click()
   const steps = page.getByRole('navigation', { name: 'Create steps' })
   await steps.getByRole('button', { name: /Format/ }).click()
+  // Speed is one of the options under Customize.
+  await page.getByTestId('format-summary').getByRole('button', { name: 'Customize' }).click()
   const speeds = page.getByRole('radiogroup', { name: 'Video speed' })
   const normal = speeds.getByRole('radio', { name: '1× (Normal)', exact: true })
   assert.equal(await normal.getAttribute('aria-checked'), 'true')
@@ -62,6 +64,8 @@ test('video speed supports keyboard selection, review, submission and reuse in E
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
   if (artifacts) await page.screenshot({ path: path.join(artifacts, 'video-speed-compact.png') })
   await steps.getByRole('button', { name: /Clips/ }).click()
+  await page.getByTestId('clips-summary').getByText(/30–60s clips \(of source footage\)/).waitFor()
+  await page.getByTestId('clips-summary').getByRole('button', { name: 'Customize' }).click()
   await page.getByText(/60 seconds becomes about 40 seconds/).waitFor()
   await steps.getByRole('button', { name: /Review/ }).click()
   await page.getByText('1.5× · All exported clips', { exact: true }).waitFor()
@@ -77,6 +81,8 @@ test('video speed supports keyboard selection, review, submission and reuse in E
   await page.getByRole('button', { name: 'Use link', exact: true }).click()
   await page.getByRole('radio', { name: 'Automatic', exact: true }).click()
   await steps.getByRole('button', { name: /Format/ }).click()
+  // A changed speed keeps the options open and is named in the summary.
+  await page.getByTestId('format-changed').getByText(/1.5× speed/).waitFor()
   assert.equal(await chosen.getAttribute('aria-checked'), 'true')
   assert.deepEqual(errors, [])
 })

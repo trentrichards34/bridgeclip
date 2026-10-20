@@ -7,7 +7,7 @@ const { renderToStaticMarkup } = require('react-dom/server')
 
 const bundled = buildSync({
   stdin: {
-    contents: `export { FormatStep, ClipsStep, CaptionsStep, JobForm, createBoardPatch, createBoardStyle, buildJobRequest, buildJobRequests, draftSources, parseTrimRange, SCREEN_FOCUS_OPTIONS, ReviewStep } from './src/renderer/components/JobForm';
+    contents: `export { FormatStep, ClipsStep, CaptionsStep, JobForm, formatSummary, clipsSummary, createBoardPatch, createBoardStyle, buildJobRequest, buildJobRequests, draftSources, parseTrimRange, SCREEN_FOCUS_OPTIONS, ReviewStep } from './src/renderer/components/JobForm';
       export { screenFocusLabel } from './src/renderer/components/ClipCard';
       export { reuseSummary, moreClipsBlocked } from './src/renderer/components/MoreClipsDialog';
       export { JobProgress } from './src/renderer/components/JobProgress';
@@ -61,7 +61,7 @@ test('trim validation matches main process bounds, including an end at zero', ()
 
 test('the wizard opens on the video step with the steps listed in order', () => {
   const html = renderToStaticMarkup(React.createElement(JobForm, { onSubmit() {} }))
-  const labels = [...html.matchAll(/aria-label="Create steps">(.*?)<\/nav>/gs)][0]?.[1] ?? ''
+  const labels = [...html.matchAll(/aria-label="Create steps"[^>]*>(.*?)<\/nav>/gs)][0]?.[1] ?? ''
   const order = ['Video', 'Format', 'Clips', 'Captions', 'Review'].map((label) => labels.indexOf(label))
   assert.ok(order.every((index, i) => index > -1 && (i === 0 || index > order[i - 1])))
   assert.match(html, /aria-current="step"[^>]*>.*?Video/s)
@@ -130,8 +130,17 @@ test('clipping mode is selectable and economy disables paid vision in the submit
     includeCaptions: true, captionPreset: 'pop'
   }
   const html = renderToStaticMarkup(React.createElement(ClipsStep, { draft, update() {} }))
+  // Lower cost differs from the defaults, so the options start open, and the help describes the selected mode.
   assert.match(html, /aria-label="Clipping mode"/)
-  assert.match(html, /Economy/)
+  assert.match(html, /Lower cost/)
+  assert.match(html, /data-testid="clipping-mode-help"[^>]*>Uses lower-cost AI/)
+  assert.doesNotMatch(html, /Uses the most accurate AI/)
+  const quality = renderToStaticMarkup(React.createElement(ClipsStep, { draft: { ...draft, clippingMode: 'quality' }, update() {}, customize: true }))
+  assert.match(quality, /data-testid="clipping-mode-help"[^>]*>Uses the most accurate AI/)
+  assert.doesNotMatch(quality, /lower-cost AI/)
+  // Model names only under Details.
+  assert.doesNotMatch(quality.replace(/<details.*?<\/details>/s, ''), /GPT-6|GLM|Whisper|MAI Transcribe|Jev/)
+  assert.match(quality, /<details[^>]*><summary[^>]*>Details<\/summary><p[^>]*>Planning: GPT-6 Sol/)
   const request = buildJobRequest(draft, { start: null, end: null })
   assert.equal(request.clippingMode, 'economy')
   assert.equal(Object.hasOwn(request, 'debugCapture'), false)
@@ -200,7 +209,7 @@ test('a running job shows what the user asked to clip', () => {
 
 test('format and framing radio groups each expose one keyboard tab stop', () => {
   const draft = { aspectRatio: '9:16', layoutStyle: 'auto', layoutVision: true, pacing: 'tight' }
-  const html = renderToStaticMarkup(React.createElement(FormatStep, { draft, update() {} }))
+  const html = renderToStaticMarkup(React.createElement(FormatStep, { draft, update() {}, customize: true }))
   for (const label of ['Format', 'Framing', 'Video speed']) {
     const group = html.match(new RegExp(`role="radiogroup" aria-label="${label}"[^>]*>(.*?)<\\/div>`, 's'))?.[1]
     assert.ok(group)
@@ -216,7 +225,7 @@ test('speed survives navigation and another job, and appears in the submitted re
     original.update({ workflow: 'automatic', source: 'https://example.com/video', videoSpeed: 1.5 })
     original.setStep('review')
     assert.equal(useDraftStore.getState().step, 'review')
-    const lengths = renderToStaticMarkup(React.createElement(ClipsStep, { draft: useDraftStore.getState(), update() {} }))
+    const lengths = renderToStaticMarkup(React.createElement(ClipsStep, { draft: useDraftStore.getState(), update() {}, customize: true }))
     assert.match(lengths, /60 seconds becomes about 40 seconds/)
     assert.equal(buildJobRequest(useDraftStore.getState(), { start: 10, end: 70 }).videoSpeed, 1.5)
     original.startAnother()
@@ -241,6 +250,7 @@ test('advanced selections travel with the job while presets ignore retained cust
     durations: ['short'], autoClipCount: true, maxClips: 5, includeCaptions: true, captionPreset: 'pop'
   }
   const html = renderToStaticMarkup(React.createElement(ClipsStep, { draft, update() {} }))
+  // Advanced differs from the defaults: the options start open.
   assert.match(html, /Clip planning model/)
   assert.match(html, /Transcription model/)
   assert.equal((html.match(/role="combobox"/g) ?? []).length, 2)
@@ -310,7 +320,7 @@ test('Twitch VOD links canonicalize while other Twitch pages are rejected', () =
 })
 
 
-test('Review & edit shows required Jev review even when automatic review is off', () => {
+test('Review & edit shows the quality check as required even when automatic review is off', () => {
   const { ClipsStep, useDraftStore, useSettingsStore } = form.exports
   const original = useSettingsStore.getState()
   const initialState = useSettingsStore.getInitialState()
@@ -319,11 +329,13 @@ test('Review & edit shows required Jev review even when automatic review is off'
     useSettingsStore.setState({ jevEnabled: 'off' })
     initialState.jevEnabled = 'off'
     const draft = useDraftStore.getState()
-    const review = renderToStaticMarkup(React.createElement(ClipsStep, { draft: { ...draft, workflow: 'review' }, update() {} }))
-    const automatic = renderToStaticMarkup(React.createElement(ClipsStep, { draft: { ...draft, workflow: 'automatic' }, update() {} }))
-    assert.match(review, /Jev review required/)
-    assert.doesNotMatch(review, /Jev review &amp; repairs off/)
-    assert.match(automatic, /Jev review &amp; repairs off/)
+    const review = renderToStaticMarkup(React.createElement(ClipsStep, { draft: { ...draft, workflow: 'review' }, update() {}, customize: true }))
+    const automatic = renderToStaticMarkup(React.createElement(ClipsStep, { draft: { ...draft, workflow: 'automatic' }, update() {}, customize: true }))
+    assert.match(review, /A quality check reviews every candidate before you edit/)
+    assert.match(review, /Quality check: Jev \(required\)/)
+    assert.doesNotMatch(review, /Jev \(off\)/)
+    assert.match(automatic, /The quality check for automatic clips is off/)
+    assert.match(automatic, /Quality check: Jev \(off\)/)
     assert.equal(useSettingsStore.getState().jevEnabled, 'off')
   } finally { initialState.jevEnabled = initialJev; useSettingsStore.setState(original) }
 })
@@ -381,7 +393,7 @@ test('screen share clips: a choice under Smart framing, sent only when it is not
   const { buildJobRequest, useDraftStore, SCREEN_FOCUS_OPTIONS } = form.exports
   const draft = { workflow: 'automatic', source: 'https://example.com/v', clippingMode: 'quality', aspectRatio: '9:16', layoutStyle: 'auto', layoutVision: true,
     pacing: 'tight', durations: [], autoClipCount: true, maxClips: 5, includeCaptions: true, captionPreset: 'pop', includeTitle: true, screenFocus: 'smart' }
-  const html = renderToStaticMarkup(React.createElement(FormatStep, { draft, update() {} }))
+  const html = renderToStaticMarkup(React.createElement(FormatStep, { draft, update() {}, customize: true }))
   const group = html.match(/role="radiogroup" aria-label="Screen share clips"[^>]*>(.*?)<\/div>/s)?.[1]
   assert.ok(group, 'the choice is shown under Smart framing')
   assert.deepEqual([...group.matchAll(/<button[^>]*>(.*?)<\/button>/gs)].map((m) => m[1].replace(/<[^>]+>/g, '')), ['Smart mix', 'Split screen', 'Presenter only'])
@@ -389,9 +401,9 @@ test('screen share clips: a choice under Smart framing, sent only when it is not
   assert.match(html, /Each clip shows just you, or your screen above you/)
   assert.match(html, /Other videos aren’t affected/)
   for (const layoutStyle of ['fill', 'fit']) {
-    assert.doesNotMatch(renderToStaticMarkup(React.createElement(FormatStep, { draft: { ...draft, layoutStyle }, update() {} })), /Screen share clips/)
+    assert.doesNotMatch(renderToStaticMarkup(React.createElement(FormatStep, { draft: { ...draft, layoutStyle }, update() {}, customize: true })), /Screen share clips/)
   }
-  assert.doesNotMatch(renderToStaticMarkup(React.createElement(FormatStep, { draft: { ...draft, aspectRatio: '16:9' }, update() {} })), /Screen share clips/)
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(FormatStep, { draft: { ...draft, aspectRatio: '16:9' }, update() {}, customize: true })), /Screen share clips/)
   const trim = { start: null, end: null }
   assert.equal('screenFocus' in buildJobRequest(draft, trim), false)
   assert.equal(buildJobRequest({ ...draft, screenFocus: 'presenter' }, trim).screenFocus, 'presenter')
@@ -421,4 +433,73 @@ test('the Library labels how each screen share clip was framed', () => {
   const map = screenFocusByIndex(output)
   assert.deepEqual([...map.keys()], [1])
   assert.equal(map.get(1).decision, 'screen')
+})
+
+test('Format and Clips open on a recommended summary; changed options start open and are named', () => {
+  const { FormatStep, ClipsStep, useDraftStore, formatSummary, clipsSummary } = form.exports
+  const defaults = { ...useDraftStore.getInitialState(), workflow: 'automatic', source: 'https://example.com/v' }
+  const format = renderToStaticMarkup(React.createElement(FormatStep, { draft: defaults, update() {} }))
+  assert.match(format, /data-testid="format-summary".*?Recommended.*?AI checks tricky shots, dead air cut, normal speed, no B-roll\./s)
+  assert.match(format, /aria-expanded="false"[^>]*>Customize/)
+  assert.match(format, /aria-label="Format"/)
+  assert.match(format, /aria-label="Framing"/)
+  for (const hidden of ['Video speed', 'Screen share clips', 'B-roll', 'Cut dead air']) assert.doesNotMatch(format, new RegExp(`aria-label="${hidden}`))
+  const clips = renderToStaticMarkup(React.createElement(ClipsStep, { draft: defaults, update() {} }))
+  assert.match(clips, /aria-label="What to clip"/)
+  assert.match(clips, /Recommended.*?Best quality, 30–60s clips, B grade or better, AI decides how many\./s)
+  assert.doesNotMatch(clips, /aria-label="Clipping mode"/)
+  assert.doesNotMatch(clips, /aria-label="Quality bar"/)
+  // Changed from the defaults: the options start open and the summary names the change.
+  const fast = renderToStaticMarkup(React.createElement(FormatStep, { draft: { ...defaults, videoSpeed: 1.5, pacing: 'natural' }, update() {} }))
+  assert.match(fast, /Your settings/)
+  assert.match(fast, /data-testid="format-changed"[^>]*>Changed from recommended: (<!-- -->)?pauses kept, 1.5× speed/)
+  assert.match(fast, /aria-expanded="true"[^>]*>Hide options/)
+  assert.match(fast, /aria-label="Video speed"/)
+  // The member's own choice wins either way.
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(FormatStep, { draft: { ...defaults, videoSpeed: 1.5 }, update() {}, customize: false })), /aria-label="Video speed"/)
+  assert.ok(formatSummary(defaults).every((part) => !part.changed))
+  assert.ok(clipsSummary(defaults).every((part) => !part.changed))
+  assert.deepEqual(clipsSummary({ ...defaults, clippingMode: 'economy', durations: [], autoClipCount: false, maxClips: 3 }).filter((p) => p.changed).map((p) => p.text), ['Lower cost', 'any length', 'up to 3 clips'])
+  assert.deepEqual(formatSummary({ ...defaults, broll: 'full' }).filter((p) => p.changed).map((p) => p.text), ['B-roll: pexels footage for the whole clip'])
+  assert.deepEqual(formatSummary({ ...defaults, backgroundVideo: 'gameplay.mp4' }).filter((p) => p.changed).map((p) => p.text), ['gameplay.mp4 under the speaker'])
+})
+
+test('a valid link left in the video field counts: Next is enabled and uses it', () => {
+  const { JobForm, useDraftStore } = form.exports
+  const original = useDraftStore.getState()
+  // Server rendering reads the store's initial state.
+  const initial = useDraftStore.getInitialState()
+  const kept = { workflow: initial.workflow, pendingLink: initial.pendingLink }
+  try {
+    Object.assign(initial, { workflow: 'automatic', pendingLink: 'not a link' })
+    const blocked = renderToStaticMarkup(React.createElement(JobForm, { onSubmit() {} }))
+    assert.match(blocked, /<button[^>]*disabled=""[^>]*>Next: Format/)
+    initial.pendingLink = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+    const ready = renderToStaticMarkup(React.createElement(JobForm, { onSubmit() {} }))
+    assert.doesNotMatch(ready, /<button[^>]*disabled=""[^>]*>Next: Format/)
+    assert.match(ready, /Next: Format/)
+    // Format and the later steps can be reached too.
+    assert.doesNotMatch(ready, /<button type="button" disabled=""[^>]*>.*?Format<\/span>/)
+    useDraftStore.setState({ pendingLink: 'https://example.com/v.mp4' })
+    useDraftStore.getState().startAnother()
+    assert.equal(useDraftStore.getState().pendingLink, '')
+  } finally { Object.assign(initial, kept); useDraftStore.setState(original) }
+})
+
+test('the Video step explains whose video in one line and points to Remix for reactions', () => {
+  const { JobForm, useDraftStore } = form.exports
+  const original = useDraftStore.getState()
+  try {
+    const html = renderToStaticMarkup(React.createElement(JobForm, { onSubmit() {}, onOpenRemix() {} }))
+    assert.match(html, /id="headline-voice-help"[^>]*>Headlines talk about the speaker when it’s someone else’s video, or speak in your voice when it’s yours\./)
+    assert.match(html, /data-testid="remix-note".*?Use Remix/s)
+    assert.doesNotMatch(renderToStaticMarkup(React.createElement(JobForm, { onSubmit() {} })), /remix-note/)
+  } finally { useDraftStore.setState(original) }
+})
+
+test('the setup card leaves the key to the checklist when asked', () => {
+  const { SetupCard, useSettingsStore } = form.exports
+  useSettingsStore.setState({ openrouterConfigured: false })
+  assert.equal(renderToStaticMarkup(React.createElement(SetupCard, { onOpenSettings() {}, askForKey: false })), '')
+  assert.match(renderToStaticMarkup(React.createElement(SetupCard, { onOpenSettings() {} })), /OpenRouter key/)
 })

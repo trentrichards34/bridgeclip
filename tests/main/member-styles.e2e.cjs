@@ -174,6 +174,9 @@ test('Create: the screen share choice shows under Smart framing, is remembered, 
     await page.getByPlaceholder('YouTube, Twitch VOD or direct video link').fill('https://example.com/video.mp4')
     await page.getByRole('button', { name: 'Use link', exact: true }).click()
     await page.getByRole('button', { name: 'Next: Format', exact: true }).click()
+    // Screen share is under Customize, open already when it was changed.
+    const customize = page.getByTestId('format-summary').getByRole('button', { name: /^(Customize|Hide options)/ })
+    if (await customize.getAttribute('aria-expanded') === 'false') await customize.click()
   }
   const choice = (page, name) => page.getByRole('radiogroup', { name: 'Screen share clips' }).getByRole('radio', { name, exact: true })
 
