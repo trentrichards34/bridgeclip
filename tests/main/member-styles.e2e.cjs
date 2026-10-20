@@ -25,8 +25,12 @@ test('saved styles: save the Remix style, restart, the last style comes back and
   let page = session.page
   await openRemix(page)
   await page.getByText('Style', { exact: true }).first().waitFor()
-  await radio(page, 'Remix style', 'Myth vs. truth').click()
+  // (A first visit opens on You on camera: the voiced take is on the AI presenter side.)
+  await radio(page, 'Who is in the video', 'AI presenter').click()
+  await radio(page, 'Style of your take', 'Myth vs. truth').click()
   await page.getByRole('radiogroup', { name: 'Takes per video' }).getByRole('radio', { name: '5', exact: true }).click()
+  // The look and call to action are folded (with a summary line) until opened.
+  await page.getByRole('button', { name: /4 · Look & call to action/ }).click()
   await page.getByLabel('Comment keyword').fill('sales')
   await page.getByLabel('What they get').fill('my free playbook')
   await page.getByLabel('Video links').fill('https://www.youtube.com/watch?v=abcdefghijk')
@@ -50,7 +54,7 @@ test('saved styles: save the Remix style, restart, the last style comes back and
   }
 
   // Then a different last-used style, which is what the next start opens with.
-  await radio(page, 'Remix style', 'Lessons from this').click()
+  await radio(page, 'Style of your take', 'Lessons from this').click()
   await page.getByRole('radiogroup', { name: 'Takes per video' }).getByRole('radio', { name: '1', exact: true }).click()
   await page.waitForTimeout(1200)
   const file = JSON.parse(fs.readFileSync(path.join(userData, 'member-prefs.json'), 'utf8'))
@@ -64,15 +68,16 @@ test('saved styles: save the Remix style, restart, the last style comes back and
   page.on('pageerror', (error) => errors.push(error.message))
   await openRemix(page)
   await page.getByText('Style', { exact: true }).first().waitFor()
-  assert.equal(await radio(page, 'Remix style', 'Lessons from this').getAttribute('aria-checked'), 'true', 'the last style is remembered')
+  assert.equal(await radio(page, 'Style of your take', 'Lessons from this').getAttribute('aria-checked'), 'true', 'the last style is remembered')
   assert.equal(await page.getByRole('radiogroup', { name: 'Takes per video' }).getByRole('radio', { name: '1', exact: true }).getAttribute('aria-checked'), 'true')
   assert.equal(await page.getByLabel('Video links').inputValue(), '', 'links start empty')
+  await page.getByRole('button', { name: /4 · Look & call to action/ }).click()
   assert.equal(await page.getByLabel('Comment keyword').inputValue(), 'SALES')
 
   await page.getByRole('combobox', { name: 'Saved style' }).click()
   await page.getByRole('option', { name: 'Daily myths' }).click()
   await page.getByText('Applied “Daily myths”').waitFor()
-  assert.equal(await radio(page, 'Remix style', 'Myth vs. truth').getAttribute('aria-checked'), 'true')
+  assert.equal(await radio(page, 'Style of your take', 'Myth vs. truth').getAttribute('aria-checked'), 'true')
   assert.equal(await page.getByRole('radiogroup', { name: 'Takes per video' }).getByRole('radio', { name: '5', exact: true }).getAttribute('aria-checked'), 'true')
   assert.equal(await page.getByLabel('What they get').inputValue(), 'my free playbook')
 
@@ -145,7 +150,7 @@ test('Remix result: Post or schedule opens the post dialog with the Library clip
   await page.getByRole('menuitem', { name: 'Remix this clip' }).click()
   await page.getByRole('heading', { name: 'Remix', exact: true }).waitFor()
   await page.getByText(path.basename(video), { exact: true }).waitFor()
-  assert.equal(await page.getByPlaceholder('e.g. @coachname').inputValue(), 'Coach Example')
+  assert.equal(await page.getByPlaceholder('e.g. @theircreator').inputValue(), 'Coach Example')
   assert.deepEqual(errors, [])
 })
 

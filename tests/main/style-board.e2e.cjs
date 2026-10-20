@@ -238,12 +238,13 @@ test('the style board picks the look in one place, previews it and sends the sam
   await remixBoard.getByRole('heading', { name: 'Layout' }).evaluate((el) => el.scrollIntoView({ block: 'center' }))
   await shot(app, 'style-board-remix-camera-layout.png')
 
-  // AI presenter: the same board in "Your take".
+  // AI presenter: the same board in the same fold (still open: the choice holds for the session), after the presenter.
   await page.getByRole('radio', { name: /AI presenter/ }).click()
-  await page.getByText('3 · Your take').waitFor()
+  const aiFold = page.getByRole('button', { name: /4 · Look & call to action/ })
+  assert.equal(await aiFold.getAttribute('aria-expanded'), 'true')
   await page.getByTestId('style-board').waitFor()
   assert.equal(await checked(page.getByRole('radiogroup', { name: 'Hook text look' }).getByRole('radio', { name: 'Black bar' })), true)
-  await page.getByText('3 · Your take').evaluate((el) => el.scrollIntoView({ block: 'start' }))
+  await aiFold.evaluate((el) => el.scrollIntoView({ block: 'start' }))
   await shot(app, 'style-board-remix-ai.png')
 
   assert.deepEqual(errors, [])

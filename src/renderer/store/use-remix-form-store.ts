@@ -5,6 +5,7 @@ import { AVATAR_VOICE, DEFAULT_CAMERA, type CameraSettings, type RemixAngle, typ
 import type { RemixFormStyle } from '../../shared/member-prefs'
 import { DEFAULT_PAUSE_REACT, type PauseCaptions, type PauseLayout } from '../../shared/pause-react'
 import type { RangeInput } from '../../shared/moment-take'
+import type { GoalId } from '../../shared/onboarding'
 
 export interface RemixForm {
   links: string
@@ -55,8 +56,9 @@ interface RemixFormState extends RemixForm {
 
 /** The form survives navigating away (e.g. to Settings to add a key); its style is remembered across restarts. */
 export const useRemixForm = create<RemixFormState>((set, get) => ({
-  links: '', filePath: null, imagePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'still', avatarId: null, voice: AVATAR_VOICE,
-  count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false, ctaKeyword: '', ctaOffer: '', format: 'commentary', clipRightsAck: false,
+  // A first visit opens on "You on camera" (Pause & react): it needs no avatar. remixStartStyle can open the AI presenter instead.
+  links: '', filePath: null, imagePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'camera', avatarId: null, voice: AVATAR_VOICE,
+  count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false, ctaKeyword: '', ctaOffer: '', format: 'pause_react', clipRightsAck: false,
   headlineLook: DEFAULT_HEADLINE_LOOK,
   ctaId: null,
   camera: DEFAULT_CAMERA,
@@ -92,4 +94,13 @@ export function libraryClipFormat(format: RemixFormat, host: RemixHost, seconds?
   if (onCameraFormat) return format
   if (format === 'image' || host !== 'camera') return seconds !== undefined && seconds > LONG_CLIP_SECONDS ? 'moment_take' : 'clip_then_me'
   return format
+}
+
+/**
+ * Where Remix opens when the member hasn't chosen yet (no remembered format or presenter): "You on camera", unless
+ * the setup profile's only Remix goal is reactions as their AI self, which opens the AI presenter's Voiced take.
+ */
+export function remixStartStyle(goals: readonly GoalId[]): Partial<Pick<RemixForm, 'format' | 'host'>> {
+  const aiOnly = goals.includes('ai-reactions') && !goals.includes('camera-reactions') && !goals.includes('article')
+  return aiOnly ? { format: 'commentary', host: 'still' } : {}
 }

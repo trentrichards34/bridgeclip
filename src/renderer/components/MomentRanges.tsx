@@ -121,10 +121,10 @@ export function MomentRanges({ value, lengthSeconds, disabled, onChange }: {
             className={cn('glass-tile space-y-2 rounded-xl p-2.5', dragging === index && 'ring-2 ring-accent')}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="w-16 text-2xs font-medium text-ink-muted">Range {index + 1}</span>
-              <TextInput aria-label={`Range ${index + 1} start`} value={row.start} placeholder="37:00" maxLength={12} disabled={disabled} className="w-24"
+              <TextInput aria-label={`Range ${index + 1} start`} value={row.start} placeholder="mm:ss" maxLength={12} disabled={disabled} className="w-24"
                 onChange={(e) => set(index, { start: e.target.value, read: null })} />
               <span className="text-2xs text-ink-subtle">to</span>
-              <TextInput aria-label={`Range ${index + 1} end`} value={row.end} placeholder="42:00" maxLength={12} disabled={disabled} className="w-24"
+              <TextInput aria-label={`Range ${index + 1} end`} value={row.end} placeholder="mm:ss" maxLength={12} disabled={disabled} className="w-24"
                 onChange={(e) => set(index, { end: e.target.value, read: null })} />
               <Button size="sm" variant="ghost" icon={<ImagePlus className="h-3.5 w-3.5" />} loading={reading === index} disabled={disabled || reading !== null}
                 onClick={() => void choose(index)}>{reading === index ? 'Reading the time…' : 'From a screenshot'}</Button>

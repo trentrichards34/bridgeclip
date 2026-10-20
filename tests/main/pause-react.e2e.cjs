@@ -77,9 +77,16 @@ test('Pause & react: an uploaded video and phone recording, the detected pauses,
   }, [original, phone])
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
-  // The AI presenters are marked Beta, with one honest line; you on camera isn't.
+  // A first visit opens on You on camera (it needs no avatar); the AI presenter says it needs one, with the way to make it.
+  assert.equal(await page.getByRole('radio', { name: /^You on camera/ }).getAttribute('aria-checked'), 'true')
+  assert.equal(await page.getByTestId('ai-needs-avatar').innerText(), 'Needs an avatar · Make one')
+  await page.getByRole('radio', { name: /^AI presenter/ }).click()
+  // The AI presenters are marked Beta, with one honest line; you on camera isn't. With no avatar yet, Voice only (with a
+  // preset voice) is chosen, not Avatar photo or "Your avatar's voice".
   const presenters = page.getByRole('radiogroup', { name: 'Presenter' })
-  await presenters.getByRole('radio', { name: /Avatar photo.*Beta.*Early version: a still picture with voice-over, no lip-sync\./ }).waitFor()
+  await presenters.getByRole('radio', { name: /Avatar photo.*Beta.*Early version: a still picture with voice-over\./ }).waitFor()
+  assert.equal(await presenters.getByRole('radio', { name: /^Voice only/ }).getAttribute('aria-checked'), 'true')
+  assert.equal(await page.getByText('Your avatar’s voice', { exact: true }).count(), 0)
   await presenters.getByRole('radio', { name: /Voice only.*Beta/ }).waitFor()
   // Two big choices at the top: you on camera (no Beta) or the AI presenter (Beta).
   assert.doesNotMatch(await page.getByRole('radio', { name: /^You on camera/ }).innerText(), /Beta/)
@@ -103,7 +110,7 @@ test('Pause & react: an uploaded video and phone recording, the detected pauses,
   assert.equal(await next.isDisabled(), true)
   await page.getByRole('button', { name: 'Or choose a file' }).click()
   await page.getByText('coach-clip.mp4').waitFor()
-  await page.getByPlaceholder('e.g. @coachname').fill('@coach')
+  await page.getByPlaceholder('e.g. @theircreator').fill('@coach')
   await look.click()
   // No green screen behind you here: you fill the frame.
   await page.getByRole('radiogroup', { name: 'Your background' }).getByRole('radio', { name: /As filmed/ }).waitFor()
@@ -221,7 +228,7 @@ test('Pause & react recorded here: their video plays over the camera, Space paus
   await page.getByRole('radio', { name: /^You on camera/ }).click()
   await page.getByRole('radio', { name: /Pause & react/ }).click()
   await page.getByRole('button', { name: 'Or choose a file' }).click()
-  await page.getByPlaceholder('e.g. @coachname').fill('@coach')
+  await page.getByPlaceholder('e.g. @theircreator').fill('@coach')
   await page.getByRole('checkbox', { name: "I'm allowed to use this video" }).check()
   await page.getByRole('button', { name: 'Continue to recording' }).click()
   await page.getByRole('heading', { name: 'Your pause-and-react' }).waitFor({ timeout: 90000 })

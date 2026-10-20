@@ -51,8 +51,22 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
   await page.getByRole('heading', { name: 'Remix', exact: true }).waitFor()
+  // A first visit opens on You on camera; this member has an avatar, so the AI presenter needs nothing more.
+  assert.equal(await page.getByRole('radio', { name: /^You on camera/ }).getAttribute('aria-checked'), 'true')
+  assert.equal(await page.getByTestId('ai-needs-avatar').count(), 0)
+  await page.getByRole('radio', { name: /^AI presenter/ }).click()
   const make = page.getByRole('button', { name: 'Write the takes', exact: true })
   assert.equal(await make.isDisabled(), true, 'needs a video first')
+  // Why it's off is said next to the button, with a way to the field.
+  const blocker = page.getByTestId('remix-blocker')
+  assert.match(await blocker.innerText(), /Paste a video link or choose a file\.\s*Show me/)
+  await blocker.getByRole('button', { name: 'Show me' }).click()
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Video links')
+  // The take's style is its own labeled choice; the look and call to action fold here too.
+  await page.getByRole('radiogroup', { name: 'Style of your take' }).waitFor()
+  const look = page.getByRole('button', { name: /4 · Look & call to action/ })
+  assert.equal(await look.getAttribute('aria-expanded'), 'false')
+  await look.click()
 
   await page.getByLabel('Video links').fill('https://www.youtube.com/watch?v=abcdefghijk\nhttps://www.youtube.com/watch?v=bcdefghijkl')
   await page.getByText('2 videos', { exact: true }).waitFor()
@@ -111,6 +125,8 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
 
   await page.getByRole('radio', { name: /Myth vs\. truth/ }).click()
   assert.equal(await make.isDisabled(), true, 'needs the AI-label promise')
+  assert.match(await blocker.innerText(), /Confirm you’ll turn on the AI label when you post\./)
+  assert.match(await page.getByTestId('price-note').innerText(), /^All prices here are estimates: OpenRouter prices checked October 2026\./)
   await page.getByRole('checkbox', { name: "I'll turn on the AI-content label when I post" }).click()
   await make.click()
 

@@ -271,6 +271,25 @@ test('cost estimate: the on-camera avatar is the main cost, voice-only is cents'
   assert.equal(shared.remixSourceUrl('https://localhost/a'), null)
 })
 
+test('prices are labeled as estimates once, with when each was checked; HeyGen states have a short status', () => {
+  assert.equal(shared.remixPriceNote(false), 'All prices here are estimates: OpenRouter prices checked October 2026. What your accounts bill is what counts.')
+  assert.equal(shared.remixPriceNote(true),
+    'All prices here are estimates: OpenRouter prices checked October 2026, HeyGen’s $0.10 per second checked October 19, 2026. What your accounts bill is what counts.')
+  const link = (status, consentStatus = null, source = 'photo') => ({ provider: 'heygen', source, lookId: 'l', groupId: 'g', status, consentStatus, consentUrl: null, consentUrlAt: null, voiceId: null, voice: 'app', engines: [], error: null, checkedAt: '' })
+  assert.equal(shared.lipsyncProblem(false, null).status, 'Needs a HeyGen key')
+  assert.equal(shared.lipsyncProblem(true, { heygen: null }).status, 'Needs a HeyGen avatar')
+  assert.equal(shared.lipsyncProblem(true, { heygen: link('processing') }).status, 'Training')
+  assert.equal(shared.lipsyncProblem(true, { heygen: link('pending_consent', null, 'twin') }).status, 'Needs consent')
+  assert.equal(shared.lipsyncProblem(true, { heygen: link('completed') }), null)
+  assert.deepEqual([link('processing'), link('pending_consent', null, 'twin'), link('failed'), link('completed'), null].map(shared.heygenBadge), ['Training', 'Needs consent', 'Failed', null, null])
+  // The Avatar photo card says "no lip-sync" once; on camera, the take's style and order speak to "you".
+  const still = shared.REMIX_HOSTS.find((host) => host.id === 'still')
+  assert.equal(`${still.detail} ${still.beta}`.match(/no lip-sync/g).length, 1)
+  assert.equal(shared.REMIX_ANGLES.find((angle) => angle.id === 'myth_truth').cameraDescription, 'The moment states a common belief; you break it down and give the truth.')
+  for (const angle of shared.REMIX_ANGLES) assert.doesNotMatch(angle.cameraDescription ?? angle.description, /presenter/)
+  for (const order of shared.REMIX_ORDERS) assert.doesNotMatch(order.cameraDetail, /presenter/i)
+})
+
 test('Me, on camera: requests need no avatar or AI label; the background choice is checked', () => {
   const camera = main.parseRemixRequest({ ...base, host: 'camera', avatarId: null, aiLabelAck: false, camera: { layout: 'cutout', backdrop: 'brand', backdropColor: '#ff8800' } }, userData).request
   assert.deepEqual([camera.host, camera.avatarId], ['camera', null])
