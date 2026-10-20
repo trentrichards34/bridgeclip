@@ -58,8 +58,8 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   assert.equal(main.parseRemixRequest({ ...base, ctaKeyword: '', ctaOffer: 'ignored without a keyword' }, userData).request.ctaOffer, '')
   assert.throws(() => main.parseRemixRequest({ ...base, ctaKeyword: 'two words' }, userData), /one word/)
   // Skills and "Say what it's for".
-  const extra = main.parseRemixRequest({ ...base, music: true, musicTrack: 'lofi', voiceCleanup: true, purpose: ' TikTok take on  pricing ', referenceImage: 'd'.repeat(24) }, userData).request
-  assert.deepEqual([extra.music, extra.musicTrack, extra.voiceCleanup, extra.purpose, extra.referenceImage], [true, 'lofi', true, 'TikTok take on pricing', 'd'.repeat(24)])
+  const extra = main.parseRemixRequest({ ...base, music: true, musicTrack: 'lofi-beat', voiceCleanup: true, purpose: ' TikTok take on  pricing ', referenceImage: 'd'.repeat(24) }, userData).request
+  assert.deepEqual([extra.music, extra.musicTrack, extra.voiceCleanup, extra.purpose, extra.referenceImage], [true, 'lofi-beat', true, 'TikTok take on pricing', 'd'.repeat(24)])
   assert.deepEqual(['music', 'voiceCleanup', 'purpose', 'referenceImage'].filter((key) => key in request), [])
   assert.throws(() => main.parseRemixRequest({ ...base, purpose: 'x'.repeat(201) }, userData), /200 characters/)
   assert.throws(() => main.parseRemixRequest({ ...base, referenceImage: '/tmp/a.png' }, userData), /reference image/)

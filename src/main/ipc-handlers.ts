@@ -34,6 +34,7 @@ import { dropMissing, type MemberPrefs } from '../shared/member-prefs'
 import { moreClipsInfo, startClipJobRequest, startClipJobRequests, startMoreClips } from './job-start'
 import { MAX_CREATE_SOURCES } from '../shared/create-sources'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
+import { addMusic, listMusic, musicPreview, removeMusic, saveMusicSettings } from './music'
 import { addCta, applyRunCta, applyRunCtaInLock, listCtas, removeCta, updateCta, withRunLock } from './ctas'
 import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../shared/ctas'
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, readReactions, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
@@ -318,6 +319,23 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     })
     if (result.canceled) return listBackgrounds()
     return addBackgrounds(result.filePaths)
+  })
+
+  // Background music: the dialog opens here, so the renderer never names a file; tracks are named by id.
+  handle('music:list', () => listMusic())
+  handle('music:remove', (_event, id: unknown) => removeMusic(id))
+  handle('music:preview', (_event, id: unknown) => musicPreview(id))
+  handle('music:saveSettings', (_event, value: unknown) => saveMusicSettings(value))
+  handle('music:add', async () => {
+    const window = getMainWindow()
+    if (!window) return { library: await listMusic(), added: [], skipped: [] }
+    const result = await dialog.showOpenDialog(window, {
+      properties: ['openFile', 'multiSelections'],
+      title: 'Add your own music',
+      filters: [{ name: 'Music', extensions: ['mp3', 'wav', 'm4a'] }]
+    })
+    if (result.canceled) return { library: await listMusic(), added: [], skipped: [] }
+    return addMusic(result.filePaths.slice(0, 20))
   })
 
   // Call-to-action library: the dialog opens here, so the renderer never names a file.

@@ -19,12 +19,13 @@ import math
 import os
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from typing import Any, Callable, Optional
 
 from PIL import Image, ImageDraw
 
+from clip_engine.services.audio_finish import AudioPlan, finish_audio, finish_in_place
 from clip_engine.services.media_process import run_media
 from clip_engine.services.openrouter import OpenRouterError, apply_reasoning, chat_completion, json_schema_format, message_text
 from clip_engine.services.sound_effects import MIX_LEVEL, SOUNDS, sound_path
@@ -967,6 +968,19 @@ def cut_piece(source: str, piece: Piece, out: str, zoom: float = 1.0) -> None:
             "-map", "0:v:0", "-map", "0:a:0", "-frames:v", str(frames), *VIDEO_ARGS, "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2", out])
 
 
+def _clean_voice(assembled: str, work: str, warnings: list[str]) -> str:
+    """The cut recording with its voice cleaned up (lossless, for the mix that follows); the original when it fails."""
+    cleaned = os.path.join(work, "assembled-clean.mkv")
+    try:
+        finish_audio(assembled, cleaned, AudioPlan(voice_cleanup=True, target_lufs=None), os.path.join(work, "audio"),
+                     audio_args=["-c:a", "pcm_s16le"])
+        return cleaned
+    except Exception as error:  # noqa: BLE001 - the reel is still good with the voice as recorded
+        logger.warning(f"Voice cleanup skipped: {type(error).__name__}: {error}")
+        warnings.append("Your voice couldn't be cleaned up this time, so the video keeps the sound as recorded.")
+        return assembled
+
+
 def sound_events(sounds: list[dict], timed: list[tuple[str, int, int, int]], has_title: bool) -> list[tuple[str, float]]:
     """(sound, seconds into the reel) for the sounds that are on and whose word is in the reel."""
     starts = {i: s / 1000 for _, s, _, i in timed}
@@ -1540,6 +1554,11 @@ async def render_edit(config: dict, progress: Progress) -> dict:
         handle.writelines(f"file '{os.path.basename(f)}'\n" for f in files)
     assembled = os.path.join(work, "assembled.mkv")
     await asyncio.to_thread(ffmpeg, ["-f", "concat", "-safe", "0", *MEDIA_GUARD, "-i", listing, "-c", "copy", assembled])
+    audio = config.get("audio")
+    if audio is not None and audio.voice_cleanup:
+        # The voice alone is cleaned up (before the sound effects go in); the loudness pass below evens it out.
+        progress("Cleaning up your voice", 58)
+        assembled = await asyncio.to_thread(_clean_voice, assembled, work, warnings)
     progress("Mixing the sound", 60)
     has_title = bool(look.headline) and (look.headline_look or {}).get("look") != "none"
     events = sound_events(config["sounds"], timed, has_title)
@@ -1553,6 +1572,11 @@ async def render_edit(config: dict, progress: Progress) -> dict:
     await asyncio.to_thread(ffmpeg, [*MEDIA_GUARD, "-i", assembled, *sfx_inputs, "-filter_complex", graph + f";[mix]{loudnorm_filter(measured)}[a]",
                                      "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
                                      "-movflags", "+faststart", base])
+    if audio is not None and audio.music is not None:
+        # Music under the finished voice (and sound effects), ducking while they talk. Kept in base.mp4, so a new hook
+        # text or caption style (recompose) keeps it.
+        progress("Adding the music", 64)
+        await asyncio.to_thread(finish_in_place, base, replace(audio, voice_cleanup=False, target_lufs=None), os.path.join(work, "audio"), warnings)
     starts = {i: s for _, s, _, i in timed}
     popups = [{"text": p["text"], "kind": p.get("kind", "keyword"), "start_ms": starts[p["word"]]} for p in config["popups"]
               if p["word"] in starts and p.get("kind") != "card"]

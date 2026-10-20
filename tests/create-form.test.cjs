@@ -146,9 +146,9 @@ test('Skills on Create (Automatic): one list over the draft’s own fields, with
     original.update(createBoardPatch(useDraftStore.getState(), { captions: false }))
     assert.match(renderToStaticMarkup(React.createElement(CaptionsStep, { draft: useDraftStore.getState(), update() {} })), /aria-checked="false" aria-label="Captions"/)
     // Requests: audio skills for Automatic only, purpose and the picture's id for both.
-    original.update({ music: true, musicTrack: 'lofi', voiceCleanup: true, purpose: '  Instagram reel  selling my call ', reference: { id: 'a'.repeat(24), name: 'look.png', path: '/x/look.png', width: 10, height: 10, bytes: 99 } })
+    original.update({ music: true, musicTrack: 'lofi-beat', voiceCleanup: true, purpose: '  Instagram reel  selling my call ', reference: { id: 'a'.repeat(24), name: 'look.png', path: '/x/look.png', width: 10, height: 10, bytes: 99 } })
     let request = buildJobRequest(useDraftStore.getState(), trim)
-    assert.deepEqual([request.music, request.musicTrack, request.voiceCleanup, request.purpose, request.referenceImage], [true, 'lofi', true, 'Instagram reel selling my call', 'a'.repeat(24)])
+    assert.deepEqual([request.music, request.musicTrack, request.voiceCleanup, request.purpose, request.referenceImage], [true, 'lofi-beat', true, 'Instagram reel selling my call', 'a'.repeat(24)])
     request = buildJobRequest({ ...useDraftStore.getState(), workflow: 'review' }, trim)
     assert.deepEqual([request.music, request.voiceCleanup, request.purpose], [undefined, undefined, 'Instagram reel selling my call'])
     // "Use colors from my reference": the color on the hook bar and the caption style.

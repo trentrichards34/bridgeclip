@@ -100,16 +100,18 @@ test('Remix: captions, zoom, music and voice cleanup over the form’s fields', 
 })
 
 test('audio skills on a request: booleans, a safe track id only with music, off left out', () => {
-  assert.deepEqual(plain(skills.parseAudioSkills({ music: true, musicTrack: 'calm_piano', voiceCleanup: true })), { music: true, musicTrack: 'calm_piano', voiceCleanup: true })
-  assert.deepEqual(plain(skills.parseAudioSkills({ music: false, musicTrack: 'calm_piano' })), {})
+  assert.deepEqual(plain(skills.parseAudioSkills({ music: true, musicTrack: 'calm-pad', voiceCleanup: true })), { music: true, musicTrack: 'calm-pad', voiceCleanup: true })
+  assert.deepEqual(plain(skills.parseAudioSkills({ music: false, musicTrack: 'calm-pad' })), {})
   assert.deepEqual(plain(skills.parseAudioSkills({})), {})
   assert.throws(() => skills.parseAudioSkills({ music: 'yes' }), /music/)
-  assert.throws(() => skills.parseAudioSkills({ voiceCleanup: 1 }), /voice cleanup/)
-  assert.throws(() => skills.parseAudioSkills({ music: true, musicTrack: '../song.mp3' }), /track/)
+  assert.throws(() => skills.parseAudioSkills({ voiceCleanup: 1 }), /voice/)
+  assert.throws(() => skills.parseAudioSkills({ music: true, musicTrack: '../song.mp3' }), /music/)
+  // Music on without a pick: the first built-in track.
+  assert.deepEqual(plain(skills.parseAudioSkills({ music: true })), { music: true, musicTrack: 'calm-pad' })
 })
 
 test('music and voice cleanup are remembered with Create and Remix styles', () => {
-  assert.deepEqual(plain(prefs.parseCreateStyle({ music: true, musicTrack: 'lofi', voiceCleanup: true })), { music: true, musicTrack: 'lofi', voiceCleanup: true })
+  assert.deepEqual(plain(prefs.parseCreateStyle({ music: true, musicTrack: 'lofi-beat', voiceCleanup: true })), { music: true, musicTrack: 'lofi-beat', voiceCleanup: true })
   assert.deepEqual(plain(prefs.parseRemixStyle({ music: true, musicTrack: '', voiceCleanup: false })), { music: true, musicTrack: '', voiceCleanup: false })
   assert.deepEqual(plain(prefs.parseCreateStyle({ music: 'on', musicTrack: '../x', voiceCleanup: null })), {})
   // The purpose and the picture belong to one video: never remembered.

@@ -14,6 +14,7 @@ import {
 import { editRecipe, pacingForEngine } from '../shared/edit-recipes'
 import { headlineLookForEngine } from '../shared/headline-look'
 import { lookExtrasForEngine } from '../shared/look-extras-engine'
+import { audioForEngine } from './music'
 import { drawableGraphics, editGraphicFrame, reelGraphicSpec } from '../shared/reel-graphics'
 import type { BrandIdentity } from '../shared/remix'
 import { brandMarkForRun, isBrandId, readBrandIdentity } from './brands'
@@ -488,6 +489,13 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     ...(decisions.lookExtras.includes('comment_box') && current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}),
     title: decisions.hookText || current.status.sources[0]?.name.replace(/\.[^.]+$/, '') || '', cost_usd: current.status.costUsd
   }
+  // Voice cleanup and music (a member's own track must still be in their music folder).
+  let audio: Record<string, unknown> | undefined
+  try { audio = audioForEngine(decisions) } catch (error) {
+    publish(current, { phase: 'review', detail: 'Ready for review', percent: 100, error: null })
+    throw error
+  }
+  if (audio) Object.assign(config, { audio })
   // Motion graphics on words still in the reel: drawn here (offscreen, cached in the run), layered by the engine.
   const graphics = drawableGraphics(decisions.graphics ?? []).filter((g) => !cut.has(g.word))
   void (async () => {

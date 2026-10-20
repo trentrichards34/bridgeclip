@@ -50,6 +50,7 @@ import type { PauseEvent, PauseSettings, PauseView } from '../shared/pause-react
 import type { BrollShot, BrollView } from '../shared/react-templates'
 import type { LayoutExtrasPatch, LayoutExtrasView } from '../shared/remix-layouts'
 import type { TimecodeRead } from '../shared/moment-take'
+import type { MusicLibrary } from '../shared/music'
 import type {
   AppDataScope,
   AssistantConversation,
@@ -560,6 +561,16 @@ export interface BridgeClipAPI {
     add: () => Promise<string[]>
     remove: (name: string) => Promise<string[]>
   }
+  /** Background music: the built-in tracks, the member's own (copied into the app) and the music settings. */
+  music: {
+    list: () => Promise<MusicLibrary>
+    /** Opens a file dialog (MP3, WAV or M4A up to 30 MB each); `added` are the new tracks' ids, `skipped` the files left out. */
+    add: () => Promise<{ library: MusicLibrary; added: string[]; skipped: string[] }>
+    remove: (id: string) => Promise<MusicLibrary>
+    /** The track's audio, for the play button. */
+    preview: (id: string) => Promise<{ mime: string; data: Uint8Array }>
+    saveSettings: (settings: MusicLibrary['settings']) => Promise<MusicLibrary>
+  }
   clips: {
     bulkExport: (clips: { path: string; name: string }[]) => Promise<{ success: boolean; count: number; failedCount: number; destDir?: string }>
     /** The clips as one .zip, saved where the member picks (destDir is the .zip's path). */
@@ -960,6 +971,13 @@ const api: BridgeClipAPI = {
     list: () => ipcRenderer.invoke('backgrounds:list'),
     add: () => ipcRenderer.invoke('backgrounds:add'),
     remove: (name) => ipcRenderer.invoke('backgrounds:remove', name)
+  },
+  music: {
+    list: () => ipcRenderer.invoke('music:list'),
+    add: () => ipcRenderer.invoke('music:add'),
+    remove: (id) => ipcRenderer.invoke('music:remove', id),
+    preview: (id) => ipcRenderer.invoke('music:preview', id),
+    saveSettings: (settings) => ipcRenderer.invoke('music:saveSettings', settings)
   },
   clips: {
     bulkExport: (clips) => ipcRenderer.invoke('clips:bulkExport', clips),

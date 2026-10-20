@@ -227,11 +227,11 @@ test('the review choices are checked against the plan before a reel is made', ()
   assert.deepEqual(plain(shared.parseEditDecisions({ ...good, look: { ...good.look, lookExtras: ['comment_box', 'punch_zoom', 'glitter'] } }, plan).look.lookExtras),
     ['punch_zoom', 'comment_box'])
   // Skills on the look: music (a track only with music) and voice cleanup; off is left out.
-  const audio = shared.parseEditDecisions({ ...good, look: { ...good.look, music: true, musicTrack: 'upbeat', voiceCleanup: true } }, plan).look
-  assert.deepEqual([audio.music, audio.musicTrack, audio.voiceCleanup], [true, 'upbeat', true])
-  assert.deepEqual(['music', 'musicTrack', 'voiceCleanup'].filter((key) => key in shared.parseEditDecisions({ ...good, look: { ...good.look, music: false, musicTrack: 'upbeat' } }, plan).look), [])
+  const audio = shared.parseEditDecisions({ ...good, look: { ...good.look, music: true, musicTrack: 'upbeat-pulse', voiceCleanup: true } }, plan).look
+  assert.deepEqual([audio.music, audio.musicTrack, audio.voiceCleanup], [true, 'upbeat-pulse', true])
+  assert.deepEqual(['music', 'musicTrack', 'voiceCleanup'].filter((key) => key in shared.parseEditDecisions({ ...good, look: { ...good.look, music: false, musicTrack: 'upbeat-pulse' } }, plan).look), [])
   bad({ look: { ...good.look, music: 'yes' } }, /music/)
-  bad({ look: { ...good.look, voiceCleanup: 1 } }, /voice cleanup/)
+  bad({ look: { ...good.look, voiceCleanup: 1 } }, /voice/)
   bad({ cut: [0, 1, 2, 3, 4, 5, 6, 7, 8] }, /Keep a few more words/)
 })
 
@@ -407,6 +407,29 @@ test('making the reel can only start once: a second click, Start over or Cancel 
   await edit.renderEdit(decisions)
   await waitFor(() => edit.editStatus()?.phase === 'done', 'the reel')
   assert.deepEqual(state.engineModes, ['plan', 'render'])
+  fs.rmSync(edit.editStatus().folder, { recursive: true, force: true })
+})
+
+test('voice cleanup and music: on the decisions (or the look), checked, and sent to the engine as one "audio" option', async () => {
+  const plan = samplePlan()
+  const good = { ...shared.initialDecisions(plan), look: { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false } }
+  const parsed = shared.parseEditDecisions({ ...good, voiceCleanup: true, music: true, musicTrack: 'calm-pad' }, plan)
+  assert.deepEqual([parsed.voiceCleanup, parsed.music, parsed.musicTrack], [true, true, 'calm-pad'])
+  const fromLook = shared.parseEditDecisions({ ...good, look: { ...good.look, voiceCleanup: true, music: true, musicTrack: 'my:theme.mp3' } }, plan)
+  assert.deepEqual([fromLook.voiceCleanup, fromLook.music, fromLook.musicTrack], [true, true, 'my:theme.mp3'])
+  assert.equal('music' in shared.parseEditDecisions(good, plan), false)
+  // Music switched on without a pick (the Skills panel) gets the first built-in track.
+  assert.equal(shared.parseEditDecisions({ ...good, music: true }, plan).look.musicTrack, 'calm-pad')
+
+  const { main: edit, state } = runHarness()
+  await edit.startEdit({ sources: [path.join(userData, 'music-take.mp4')] })
+  await waitFor(() => edit.editStatus()?.phase === 'review', 'the review')
+  const review = edit.editStatus().plan
+  const decisions = { ...shared.initialDecisions(review), look: good.look, voiceCleanup: true, music: true, musicTrack: 'lofi-beat' }
+  await edit.renderEdit(decisions)
+  await waitFor(() => edit.editStatus()?.phase === 'done', 'the reel')
+  const render = state.configs.find((config) => config.mode === 'render')
+  assert.deepEqual(render.audio, { voice_cleanup: true, music: { track: 'lofi-beat' }, music_level_db: -20 })
   fs.rmSync(edit.editStatus().folder, { recursive: true, force: true })
 })
 

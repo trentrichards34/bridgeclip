@@ -19,6 +19,7 @@ import type { OpenRouterModel } from '../shared/openrouter-models'
 import { finishRunRecord, type StoredRunStatus } from './run-history'
 import { resolveBinary } from './tools'
 import { resolveBackground } from './backgrounds'
+import { audioForEngine } from './music'
 import { applyRunCta, readCta } from './ctas'
 import { applyRunGraphics, graphicsNotice } from './auto-graphics'
 import { refreshReusePlan, type ReusePlan } from './more-clips'
@@ -473,6 +474,14 @@ export function startClipJob(
       return
     }
   }
+  // Voice cleanup and music: a member's own track must still be in their music folder.
+  let audio: Record<string, unknown> | undefined
+  try { audio = audioForEngine(config) }
+  catch (error) {
+    reportError({ jobId, message: String((error as Error | null)?.message || 'That music is unavailable.').slice(0, 300) })
+    exitWithoutProcess()
+    return
+  }
   if (config.ctaId) {
     try { readCta(config.ctaId) }
     catch (error) {
@@ -545,6 +554,7 @@ export function startClipJob(
     ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook' } : {}),
     ...(config.hookPreview ? { hook_preview: true } : {}),
     ...(config.motionGraphics && config.workflow !== 'review' ? { motion_graphics: true } : {}),
+    ...(audio ? { audio } : {}),
     quality_bar: config.qualityBar ?? 'b',
     headline_voice: config.headlineVoice ?? 'clipper',
     ...(config.captionLanguage ? { caption_language: config.captionLanguage } : {}),

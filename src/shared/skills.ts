@@ -10,6 +10,7 @@
  */
 
 import { parseLookExtras, type LookExtraId } from './look-extras'
+import { isMusicTrackId, MUSIC_TRACKS, parseAudioChoice } from './music'
 
 export const SKILL_IDS = ['rough_cut', 'captions', 'motion_graphics', 'zoom', 'broll', 'sound_effects', 'music', 'voice_cleanup'] as const
 export type SkillId = (typeof SKILL_IDS)[number]
@@ -202,20 +203,16 @@ export function remixSkillPatch(fields: RemixSkillFields, id: SkillId, on: boole
 // Music and voice cleanup: the request fields (the engine side reads these names)
 // ---------------------------------------------------------------------------
 
-const TRACK_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/
 
-export function isMusicTrackId(value: unknown): value is string {
-  return typeof value === 'string' && TRACK_ID.test(value)
-}
+export { isMusicTrackId }
 
 /** The audio fields of a request, checked (missing or false: off; a track only with music on). Throws with a plain message. */
 export function parseAudioSkills(value: Record<string, unknown>): { music?: true; musicTrack?: string; voiceCleanup?: true } {
-  if (value.music !== undefined && typeof value.music !== 'boolean') throw new Error('Invalid music option')
-  if (value.voiceCleanup !== undefined && typeof value.voiceCleanup !== 'boolean') throw new Error('Invalid voice cleanup option')
-  if (value.musicTrack !== undefined && !isMusicTrackId(value.musicTrack)) throw new Error('Choose a music track from the list.')
+  // Music switched on from the Skills panel without a pick yet: the first built-in track.
+  const withTrack = value.music === true && (value.musicTrack === undefined || value.musicTrack === null) ? { ...value, musicTrack: MUSIC_TRACKS[0].id } : value
+  const choice = parseAudioChoice(withTrack)
   return {
-    ...(value.music === true ? { music: true as const } : {}),
-    ...(value.music === true && typeof value.musicTrack === 'string' ? { musicTrack: value.musicTrack } : {}),
-    ...(value.voiceCleanup === true ? { voiceCleanup: true as const } : {})
+    ...(choice.music ? { music: true as const, musicTrack: choice.musicTrack } : {}),
+    ...(choice.voiceCleanup ? { voiceCleanup: true as const } : {})
   }
 }

@@ -163,6 +163,11 @@ export interface EditDecisions {
   rawIntro: boolean
   /** Motion graphics, each starting as its word is said (missing: none). */
   graphics?: EditGraphic[]
+  /** Reduce background noise and room echo on the voice and even its level (missing: off). */
+  voiceCleanup?: boolean
+  /** Background music under the reel, ducking while they talk; `musicTrack` is the track (see music.ts). */
+  music?: boolean
+  musicTrack?: string
 }
 
 export interface EditStartRequest {
@@ -480,15 +485,18 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
   let graphics: EditGraphic[]
   try { graphics = parseEditGraphics(value.graphics, n) } catch (error) { throw new Error(`Check your graphics: ${(error as Error).message}`) }
   if (look.lookExtras !== undefined && !Array.isArray(look.lookExtras)) throw new Error('Choose your extras again.')
-  // Skills: music and voice cleanup (off unless on; a track only with music).
-  const audio = parseAudioSkills(look)
   // Extras can come from the edit style chips (decisions) or the look board (look): one list either way.
   const lookExtras = parseLookExtras([...(Array.isArray(value.lookExtras) ? value.lookExtras : []), ...(Array.isArray(look.lookExtras) ? look.lookExtras : [])])
+  // Voice cleanup and music: on the decisions, or (from the look board) on the look.
+  // (Music switched on from the Skills panel without a pick gets the first built-in track.)
+  const audio = parseAudioSkills({
+    voiceCleanup: value.voiceCleanup ?? look.voiceCleanup, music: value.music ?? look.music, musicTrack: value.musicTrack ?? look.musicTrack
+  })
   const decisions: EditDecisions = { cut, hookId: value.hookId as number | null, hookText, endOnCta: value.endOnCta, popups, sounds,
     look: { includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: parseHeadlineLook(look.headlineLook), showHandle: look.showHandle,
       ...(lookExtras.length ? { lookExtras } : {}), ...audio },
     recipe: isEditRecipeId(value.recipe) ? value.recipe : DEFAULT_EDIT_RECIPE, lookExtras, pins,
-    cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true, graphics }
+    cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true, graphics, ...audio }
   if (reelOrder(plan, decisions).length < 3) throw new Error('Keep a few more words: the reel would be almost empty.')
   return decisions
 }
