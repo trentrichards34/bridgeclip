@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
+import type { LookExtraId } from '../../shared/look-extras'
 import type { HeadlineVoice, QualityBar, ScreenFocus, TitleStyle } from '../../shared/jobs'
 import type { CaptionLanguageChoice } from '../../shared/caption-language'
 
@@ -51,6 +52,8 @@ export interface ClipDraft {
   titleStyle: TitleStyle
   /** How the headline bar looks: color or floating text, and font. */
   headlineLook: HeadlineLook
+  /** Extras on top of the look (keyword pill, progress bar, ...). */
+  lookExtras: LookExtraId[]
   /** A call to action from the library, added to the end of every clip (null: none). */
   ctaId: string | null
   /** Gameplay split (9:16, Automatic): background-library file under the speaker. */
@@ -113,6 +116,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   includeTitle: true,
   titleStyle: 'headline',
   headlineLook: DEFAULT_HEADLINE_LOOK,
+  lookExtras: [],
   ctaId: null,
   backgroundVideo: null,
   broll: 'off',

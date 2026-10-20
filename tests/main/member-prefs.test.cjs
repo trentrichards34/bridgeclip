@@ -414,3 +414,27 @@ test('Library → Remix: a clip in a Library run becomes an authorized source fi
   fs.rmSync(library, { recursive: true, force: true })
   fs.rmSync(outside, { recursive: true, force: true })
 })
+
+test('look extras: remembered on Create and Remix and in saved styles; unknown ids dropped; Create requests checked', () => {
+  assert.ok(shared.CREATE_STYLE_KEYS.includes('lookExtras'))
+  assert.ok(shared.REMIX_STYLE_KEYS.includes('lookExtras'))
+  assert.deepEqual(plain(shared.parseCreateStyle({ lookExtras: ['progress_bar', 'keyword_pill', 'confetti', 'keyword_pill'] })), { lookExtras: ['keyword_pill', 'progress_bar'] })
+  assert.deepEqual(plain(shared.parseRemixStyle({ lookExtras: [] })), { lookExtras: [] })
+  assert.deepEqual(plain(shared.parseRemixStyle({ lookExtras: 'keyword_pill' })), {})
+  assert.deepEqual(plain(shared.pickStyle('remix', { lookExtras: ['comment_box'], links: 'x' })), { lookExtras: ['comment_box'] })
+  const prefs = shared.parseMemberPrefs({ presets: { create: [{ id: 'a'.repeat(16), name: 'Reels', style: { lookExtras: ['accent_words'] }, updatedAt: '2026-10-01T00:00:00.000Z' }] } })
+  assert.deepEqual(plain(prefs.presets.create[0].style), { lookExtras: ['accent_words'] })
+  // The new hook fonts are remembered too.
+  assert.equal(shared.parseCreateStyle({ headlineLook: { look: 'floating', color: '#FFFFFF', font: 'marker' } }).headlineLook.font, 'marker')
+
+  const { validateJobConfig } = load('main/validation.ts', { './security': { isWebUrl: (url) => /^https?:\/\//.test(url) } })
+  const base = {
+    workflow: 'automatic', videoUrl: 'https://example.com/v', maxClips: null, autoClipCount: true, durationRanges: null, aspectRatio: '9:16', layoutStyle: 'auto',
+    layoutVision: false, pacing: 'tight', includeCaptions: true, captionPreset: 'pop', startTimeSeconds: null, endTimeSeconds: null, bannerPlatform: null, bannerChannelUrl: null
+  }
+  assert.deepEqual(plain(validateJobConfig({ ...base, lookExtras: ['comment_box', 'keyword_pill', 'nope'] }).lookExtras), ['keyword_pill', 'comment_box'])
+  assert.equal('lookExtras' in validateJobConfig({ ...base, lookExtras: [] }), false)
+  assert.equal('lookExtras' in validateJobConfig(base), false)
+  assert.throws(() => validateJobConfig({ ...base, lookExtras: 'keyword_pill' }), /extras/)
+  assert.equal(validateJobConfig({ ...base, headlineLook: { look: 'black', color: '#FFFFFF', font: 'sans_serif_accent' } }).headlineLook.font, 'sans_serif_accent')
+})

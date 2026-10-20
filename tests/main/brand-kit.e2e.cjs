@@ -101,7 +101,10 @@ test('picking a brand fills the Remix and Create style fields once; re-picking i
   await page.getByText('“Comment PULL and I\'ll send you my 4-week plan.”').waitFor()
   assert.equal(await checked(page.getByRole('switch', { name: 'Show my handle' })), true)
   await page.getByLabel('What they get').fill('my free plan')
+  // Extras aren't part of a brand: picking it again keeps them.
+  await page.getByRole('group', { name: 'Extras: pick as many as you like' }).getByRole('checkbox', { name: 'Accent words' }).click()
   await pickBrand(page, 'Pull-Up Lab')
+  assert.equal(await checked(page.getByRole('group', { name: 'Extras: pick as many as you like' }).getByRole('checkbox', { name: 'Accent words' })), true)
   assert.equal(await page.getByLabel('What they get').inputValue(), 'my free plan')
 
   const shots = process.env.BRIDGECLIP_E2E_SHOTS
@@ -121,6 +124,7 @@ test('picking a brand fills the Remix and Create style fields once; re-picking i
   assert.deepEqual([submitted.brandIdentityId, submitted.ctaKeyword, submitted.ctaOffer, submitted.showHandle], [KIT, 'PULL', 'my free plan', true])
   assert.deepEqual(submitted.headlineLook, { look: 'brand', color: '#FF8800', font: 'serif' })
   assert.equal(submitted.captionPreset, 'boxed')
+  assert.deepEqual(submitted.lookExtras, ['accent_words'])
 
   // The choice is remembered with the Create style.
   await page.waitForTimeout(1200)

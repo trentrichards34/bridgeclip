@@ -13,6 +13,7 @@ import { isCaptionLanguage, type CaptionLanguageChoice } from './caption-languag
 import { isCaptionPresetId } from './caption-presets'
 import { isCtaId } from './ctas'
 import { parseHeadlineLook, type HeadlineLook } from './headline-look'
+import { parseLookExtras, type LookExtraId } from './look-extras'
 import { DURATION_IDS, isVideoSpeed } from './job-contract'
 import { HEADLINE_VOICES, QUALITY_BARS, SCREEN_FOCUS_MODES, TITLE_STYLES, type HeadlineVoice, type QualityBar, type ScreenFocus, type TitleStyle } from './jobs'
 import { isModelId } from './openrouter-models'
@@ -44,6 +45,8 @@ export interface CreateStyle {
   includeTitle: boolean
   titleStyle: TitleStyle
   headlineLook: HeadlineLook
+  /** Extras on top of the look (look-extras.ts). */
+  lookExtras: LookExtraId[]
   ctaId: string | null
   backgroundVideo: string | null
   broll: 'off' | 'after-hook' | 'full'
@@ -73,6 +76,8 @@ export interface RemixFormStyle {
   includeCaptions: boolean
   captionPreset: string
   headlineLook: HeadlineLook
+  /** Extras on top of the look (look-extras.ts). */
+  lookExtras: LookExtraId[]
   ctaId: string | null
   ctaKeyword: string
   ctaOffer: string
@@ -121,12 +126,12 @@ export const MAX_SAMPLE_VIDEO_LINK = 2048
 
 export const CREATE_STYLE_KEYS = [
   'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
-  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'headlineVoice',
+  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'headlineVoice',
   'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'captionLanguage'
 ] as const satisfies readonly (keyof CreateStyle)[]
 
 export const REMIX_STYLE_KEYS = [
-  'format', 'angle', 'order', 'host', 'avatarId', 'voice', 'brandIdentityId', 'count', 'includeCaptions', 'captionPreset', 'headlineLook',
+  'format', 'angle', 'order', 'host', 'avatarId', 'voice', 'brandIdentityId', 'count', 'includeCaptions', 'captionPreset', 'headlineLook', 'lookExtras',
   'ctaId', 'ctaKeyword', 'ctaOffer', 'camera', 'imageCamera', 'showHandle', 'pauseLayout', 'pauseCaptions', 'pauseCamera',
   'momentPip', 'momentCamera'
 ] as const satisfies readonly (keyof RemixFormStyle)[]
@@ -148,6 +153,8 @@ function camera(value: unknown): CameraSettings | undefined {
   try { return parseCameraSettings(value) } catch { return undefined }
 }
 
+/** A list of extras (unknown ids are dropped by parseLookExtras when read). */
+const isExtras = (value: unknown): boolean => Array.isArray(value)
 const isKeyword = (value: unknown): boolean => typeof value === 'string' && value.length <= 20 && normalizeCtaKeyword(value) !== null
 const isOffer = (value: unknown): boolean => typeof value === 'string' && value.length <= MAX_CTA_OFFER_CHARS && !/[\0\r\n]/.test(value)
 
@@ -169,6 +176,7 @@ const CREATE_CHECKS: { [K in keyof CreateStyle]: (value: unknown) => boolean } =
   includeTitle: bool,
   titleStyle: oneOf(TITLE_STYLES),
   headlineLook: () => true,
+  lookExtras: isExtras,
   ctaId: nullOr(isCtaId),
   backgroundVideo: nullOr(isBackgroundVideoName),
   broll: oneOf(['off', 'after-hook', 'full']),
@@ -195,6 +203,7 @@ const REMIX_CHECKS: { [K in keyof RemixFormStyle]: (value: unknown) => boolean }
   includeCaptions: bool,
   captionPreset: isCaptionPresetId,
   headlineLook: () => true,
+  lookExtras: isExtras,
   ctaId: nullOr(isCtaId),
   ctaKeyword: (value) => isKeyword(value),
   ctaOffer: (value) => isOffer(value),
@@ -220,6 +229,8 @@ function parseStyle<K extends StyleKind>(kind: K, value: unknown): Partial<Style
     if (key === 'headlineLook') {
       const look = headlineLook(raw)
       if (look) style[key] = look
+    } else if (key === 'lookExtras') {
+      if (isExtras(raw)) style[key] = parseLookExtras(raw)
     } else if (key === 'camera' || key === 'imageCamera' || key === 'pauseCamera' || key === 'momentCamera') {
       const parsed = camera(raw)
       if (parsed) style[key] = parsed

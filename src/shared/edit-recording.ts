@@ -126,6 +126,8 @@ export interface EditLook {
   headlineLook: HeadlineLook
   /** The brand's handle or logo in a corner. */
   showHandle: boolean
+  /** Extras on top of the look (keyword pill, progress bar, ...): look-extras.ts. Missing: none. */
+  lookExtras?: LookExtraId[]
 }
 
 export const DEFAULT_EDIT_LOOK: EditLook = { includeCaptions: true, captionPreset: DEFAULT_CAPTION_PRESET, headlineLook: DEFAULT_HEADLINE_LOOK, showHandle: false }
@@ -424,9 +426,13 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     return { image: raw.image, word: raw.word as number }
   })
   for (const key of ['cutoutIntro', 'rawIntro'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose how your video opens.')
+  if (look.lookExtras !== undefined && !Array.isArray(look.lookExtras)) throw new Error('Choose your extras again.')
+  // Extras can come from the edit style chips (decisions) or the look board (look): one list either way.
+  const lookExtras = parseLookExtras([...(Array.isArray(value.lookExtras) ? value.lookExtras : []), ...(Array.isArray(look.lookExtras) ? look.lookExtras : [])])
   const decisions: EditDecisions = { cut, hookId: value.hookId as number | null, hookText, endOnCta: value.endOnCta, popups, sounds,
-    look: { includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: parseHeadlineLook(look.headlineLook), showHandle: look.showHandle },
-    recipe: isEditRecipeId(value.recipe) ? value.recipe : DEFAULT_EDIT_RECIPE, lookExtras: parseLookExtras(value.lookExtras), pins,
+    look: { includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: parseHeadlineLook(look.headlineLook), showHandle: look.showHandle,
+      ...(lookExtras.length ? { lookExtras } : {}) },
+    recipe: isEditRecipeId(value.recipe) ? value.recipe : DEFAULT_EDIT_RECIPE, lookExtras, pins,
     cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true }
   if (reelOrder(plan, decisions).length < 3) throw new Error('Keep a few more words: the reel would be almost empty.')
   return decisions

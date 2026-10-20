@@ -14,7 +14,11 @@ const bundled = buildSync({
       export { onRadioKeyDown } from './src/renderer/components/ui/Segmented';
       export { createBoardPatch, createBoardStyle, createHooks, buildJobRequest } from './src/renderer/components/JobForm';
       export { useDraftStore } from './src/renderer/store/use-draft-store';
-      export { CAPTION_PRESETS } from './src/shared/caption-presets';`,
+      export { CAPTION_PRESETS } from './src/shared/caption-presets';
+      export { StylePreview } from './src/renderer/components/StylePreview';
+      export { LookFrame } from './src/renderer/components/LookFrame';
+      export { HEADLINE_FONTS, accentWordIndex, parseHeadlineLook } from './src/shared/headline-look';
+      export { LOOK_EXTRAS } from './src/shared/look-extras';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
   },
@@ -30,13 +34,22 @@ const mod = { exports: {} }
 new Function('module', 'exports', 'require', bundled)(mod, mod.exports, require)
 const m = mod.exports
 
+/** A radio group's (or checkbox group's) markup: from its opening tag to the next group. */
+function group(html, label) {
+  const start = html.indexOf(`aria-label="${label}"`)
+  if (start < 0) return null
+  const rest = html.slice(start + 1)
+  const next = rest.search(/role="(radiogroup|group)"/)
+  return next < 0 ? rest : rest.slice(0, next)
+}
+
 function staticRender(element) {
   const original = React.useSyncExternalStore
   React.useSyncExternalStore = (_subscribe, getSnapshot) => getSnapshot()
   try { return renderToStaticMarkup(element) } finally { React.useSyncExternalStore = original }
 }
 
-const BASE = { captions: true, captionPreset: 'pop', hook: 'white', font: 'clean', color: '#FFFFFF', handle: false, ctaId: null, keyword: '', offer: '' }
+const BASE = { captions: true, captionPreset: 'pop', hook: 'white', font: 'clean', color: '#FFFFFF', handle: false, ctaId: null, keyword: '', offer: '', extras: [] }
 const ALL_ROWS = { hooks: m.LOOK_HOOKS, handle: true, cta: true, keyword: true }
 const BRAND = { id: 'b1', name: 'Pull-Up Lab', text: 'x', createdAt: '', updatedAt: '',
   look: { color: '#FF8800', headlineLook: { look: 'brand', color: '#FF8800', font: 'serif' }, captionPreset: 'boxed', ctaKeyword: 'PULL', ctaOffer: 'my plan', handle: '@pulluplab', handlePosition: 'top-right' } }
@@ -101,7 +114,7 @@ test('Shuffle only ever picks a curated combo, never the one already showing, an
   for (const combo of m.CURATED_COMBOS) {
     assert.ok(presets.has(combo.captionPreset), combo.id)
     assert.ok(['white', 'black', 'brand', 'floating'].includes(combo.hook), combo.id)
-    assert.ok(['clean', 'serif', 'condensed'].includes(combo.font), combo.id)
+    assert.ok(['clean', 'serif', 'condensed', 'marker', 'sans_serif_accent'].includes(combo.font), combo.id)
     assert.match(combo.color, /^#[0-9A-F]{6}$/, combo.id)
   }
   assert.equal(new Set(m.CURATED_COMBOS.map((combo) => combo.id)).size, m.CURATED_COMBOS.length)
@@ -151,8 +164,8 @@ test('the summary line names each choice', () => {
 
 test('every swatch row is a radio group with one tab stop, and the arrow keys move and choose', () => {
   const html = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook: 'brand', color: '#FF8800', handle: true }, onChange() {}, rows: ALL_ROWS, brand: BRAND }))
-  const groups = [...html.matchAll(/<div role="radiogroup" aria-label="([^"]+)"[^>]*>(.*?)<\/div>(?=<button|<label|<p|<\/div>)/gs)]
-  const names = groups.map((group) => group[1])
+  const names = [...html.matchAll(/role="radiogroup" aria-label="([^"]+)"/g)].map((match) => match[1])
+  const groups = names.map((name) => [null, name, group(html, name)])
   for (const name of ['Caption style', 'Hook text look', 'Hook text font', 'Bar color', 'Handle corner', 'Call to action']) assert.ok(names.includes(name), name)
   for (const [, name, body] of groups) {
     const radios = body.match(/<button[^>]*role="radio"[^>]*>/g) ?? []
@@ -189,7 +202,7 @@ test('rows a page doesn’t use are left out, and the font waits for a hook look
   for (const name of ['Hook text look', 'Hook text font', 'Bar color', 'Handle corner', 'Call to action', 'Comment keyword']) assert.doesNotMatch(html, new RegExp(`aria-label="${name}"`))
   // A title card has no font choice: the font radios are disabled (and have no tab stop).
   const card = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook: 'card' }, onChange() {}, rows: { hooks: ['white', 'card', 'none'] }, brand: null }))
-  const fonts = card.match(/aria-label="Hook text font"[^>]*>(.*?)<\/div>/s)[1].match(/<button[^>]*>/g)
+  const fonts = group(card, 'Hook text font').match(/<button[^>]*role="radio"[^>]*>/g)
   assert.ok(fonts.every((radio) => radio.includes('disabled') && radio.includes('tabindex="-1"')))
   // Without a brand mark there is no handle switch, just how to add one.
   const plain = staticRender(React.createElement(m.StyleBoard, { value: BASE, onChange() {}, rows: { handle: true }, brand: { ...BRAND, look: {} } }))
@@ -211,14 +224,14 @@ test('without a brand, "Set up my brand" replaces a greyed-out "Use my brand", a
 test('rows wrap (no sideways strips); captions show a first set with "Show all"', () => {
   const html = staticRender(React.createElement(m.StyleBoard, { value: BASE, onChange() {}, rows: ALL_ROWS, brand: BRAND }))
   assert.doesNotMatch(html, /overflow-x-auto/)
-  const captions = html.match(/aria-label="Caption style"[^>]*>(.*?)<\/div><button/s)[1]
+  const captions = group(html, 'Caption style')
   const radios = captions.match(/role="radio"/g)
   assert.equal(radios.length, 10, 'No captions and the first nine')
   assert.match(html, new RegExp(`aria-expanded="false"[^>]*>Show all ${m.CAPTION_PRESETS.length + 1}`))
   assert.doesNotMatch(captions, /aria-label="Vintage"/)
   // A chosen style past the first set is still shown (and chosen).
   const later = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, captionPreset: 'vintage' }, onChange() {}, rows: ALL_ROWS, brand: BRAND }))
-  assert.match(later.match(/aria-label="Caption style"[^>]*>(.*?)<\/div><button/s)[1], /aria-checked="true" aria-label="Vintage"/)
+  assert.match(group(later, 'Caption style'), /aria-checked="true" aria-label="Vintage"/)
 })
 
 test('the color row only shows for a Brand color bar, the one look it changes', () => {
@@ -265,4 +278,109 @@ test('the preview’s measurements follow the engine', () => {
   assert.equal(m.captionsBottom(1920, 348, true, 1), 348 + Math.round(1572 * 0.7) + 110)
   assert.equal(m.captionsBottom(1920, 0, true, 1), Math.round(1920 * 0.78))
   assert.equal(m.captionsBottom(1920, 348, false, 1), 0)
+})
+
+test('extras: toggled in app order, named in the summary, and kept in each page\'s fields and requests', () => {
+  assert.deepEqual(m.toggleExtra([], 'progress_bar'), ['progress_bar'])
+  assert.deepEqual(m.toggleExtra(['progress_bar'], 'keyword_pill'), ['keyword_pill', 'progress_bar'], 'app order, not click order')
+  assert.deepEqual(m.toggleExtra(['keyword_pill', 'progress_bar'], 'keyword_pill'), ['progress_bar'])
+  assert.equal(m.extrasName([]), 'None')
+  assert.equal(m.extrasName(['comment_box', 'keyword_pill']), 'Keyword pill, Comment box')
+  assert.equal(m.styleSummary({ ...BASE, extras: ['keyword_pill', 'progress_bar'] }, { ...ALL_ROWS, extras: true }),
+    'Pop captions · White bar · Clean font · No CTA clip · Extras: Keyword pill, Progress bar')
+  assert.equal(m.styleSummary({ ...BASE, extras: ['keyword_pill'] }, ALL_ROWS), 'Pop captions · White bar · Clean font · No CTA clip', 'no Extras row, no extras')
+  // Remix / Edit my recording fields.
+  const form = { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'white', color: '#FFFFFF', font: 'clean' }, showHandle: false }
+  assert.deepEqual(m.boardFromLook({ ...form, lookExtras: ['tag', 'progress_bar'] }).extras, ['progress_bar'], 'unknown ids dropped')
+  assert.deepEqual(m.lookPatch(form, { extras: ['comment_box'] }), { lookExtras: ['comment_box'] })
+  // Create: the draft field and the request (Automatic only).
+  const draft = { ...m.useDraftStore.getState(), workflow: 'automatic', source: 'https://example.com/v', aspectRatio: '9:16' }
+  assert.deepEqual(m.useDraftStore.getState().lookExtras, [])
+  assert.deepEqual(m.createBoardPatch(draft, { extras: ['accent_words'] }), { lookExtras: ['accent_words'] })
+  assert.deepEqual(m.createBoardStyle({ ...draft, lookExtras: ['broll_tags'] }).extras, ['broll_tags'])
+  assert.deepEqual(m.buildJobRequest({ ...draft, lookExtras: ['keyword_pill', 'comment_box'] }, { start: null, end: null }).lookExtras, ['keyword_pill', 'comment_box'])
+  assert.equal('lookExtras' in m.buildJobRequest(draft, { start: null, end: null }), false, 'none: left out')
+  assert.equal('lookExtras' in m.buildJobRequest({ ...draft, workflow: 'review', lookExtras: ['keyword_pill'] }, { start: null, end: null }), false, 'Manual clips have no look')
+})
+
+test('the Extras row is a checkbox group of tiles; the board starts with a choice of how to start', () => {
+  const html = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, extras: ['progress_bar'] }, onChange() {}, rows: { ...ALL_ROWS, extras: true }, brand: BRAND }))
+  const extras = group(html, 'Extras: pick as many as you like')
+  const boxes = extras.match(/<button[^>]*role="checkbox"[^>]*>/g)
+  assert.equal(boxes.length, m.LOOK_EXTRAS.length)
+  assert.ok(boxes.every((box) => !box.includes('tabindex="-1"')), 'every checkbox is a tab stop')
+  assert.equal(boxes.filter((box) => box.includes('aria-checked="true"')).length, 1)
+  assert.match(extras, /aria-checked="true" aria-label="Progress bar"/)
+  assert.match(html, /data-testid="style-row-extras-current"[^>]*>Progress bar</)
+  // Each tile is the member's frame with the effect drawn on it.
+  const drawn = { keyword_pill: 'data-extra="pill"', accent_words: 'data-extra="accent"' }
+  for (const extra of m.LOOK_EXTRAS) assert.ok(extras.includes(drawn[extra.id] ?? `data-testid="look-extra-${extra.id}"`), extra.id)
+  // How to start: build my own (the rows) by default.
+  assert.match(group(html, 'How to start'), /aria-checked="true"[^>]*>.*?Build my own/s)
+  assert.match(html, /aria-label="Caption style"/)
+  assert.doesNotMatch(html, /aria-label="Ready-made look"/)
+  // Pages without the row don't show it.
+  assert.doesNotMatch(staticRender(React.createElement(m.StyleBoard, { value: BASE, onChange() {}, rows: ALL_ROWS, brand: BRAND })), /role="checkbox"/)
+})
+
+test('"Start from a ready-made look" shows the curated looks as tiles of the member\'s frame (remembered per viewer)', () => {
+  const stored = new Map([['creatorclips.styleBoard.start', 'ready']])
+  globalThis.localStorage = { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) }
+  try {
+    const html = staticRender(React.createElement(m.StyleBoard, { value: BASE, onChange() {}, rows: { ...ALL_ROWS, extras: true }, brand: BRAND, frame: m.previewFrame('https://youtu.be/abcdefghijk') }))
+    const looks = group(html, 'Ready-made look')
+    assert.equal((looks.match(/role="radio"/g) ?? []).length, m.CURATED_COMBOS.length)
+    assert.match(looks, /aria-checked="true" aria-label="Classic"/)
+    assert.match(looks, /src="https:\/\/i\.ytimg\.com\/vi\/abcdefghijk\/hqdefault\.jpg"/, 'the member\'s own frame')
+    assert.doesNotMatch(html, /aria-label="Caption style"/, 'the rows wait behind Build my own')
+    assert.match(html, />Change anything</)
+    assert.match(html, /aria-label="Extras: pick as many as you like"/, 'extras stay')
+  } finally { delete globalThis.localStorage }
+})
+
+test('option tiles: the member\'s frame (or a stand-in) with the option on it, captions in their preset and fonts on the hook', () => {
+  const html = staticRender(React.createElement(m.StyleBoard, { value: BASE, onChange() {}, rows: ALL_ROWS, brand: BRAND, frame: { kind: 'image', src: 'https://i.ytimg.com/vi/x/hqdefault.jpg' } }))
+  const captions = group(html, 'Caption style')
+  assert.equal((captions.match(/data-look-tile/g) ?? []).length, 10)
+  assert.match(captions, /data-caption-preset="impact"/)
+  const fonts = group(html, 'Hook text font')
+  for (const font of m.HEADLINE_FONTS) assert.match(fonts, new RegExp(`aria-label="${font.label.replace('+', '\\+')}"`), font.id)
+  assert.match(fonts, /Caveat Brush/, 'Marker draws in its font')
+  assert.match(fonts, /data-hook-accent/, 'one word in the italic serif')
+  assert.match(group(html, 'Hook text look'), /data-look-tile/)
+  // No frame: the neutral stand-in, never a broken image.
+  const plain = staticRender(React.createElement(m.StyleBoard, { value: BASE, onChange() {}, rows: ALL_ROWS, brand: BRAND }))
+  assert.doesNotMatch(group(plain, 'Caption style'), /<img/)
+})
+
+test('new hook fonts: Marker and Sans + italic serif, valid end to end; the accent word matches the engine', () => {
+  assert.deepEqual(m.HEADLINE_FONTS.map((font) => font.id), ['clean', 'serif', 'condensed', 'marker', 'sans_serif_accent'])
+  assert.equal(m.parseHeadlineLook({ look: 'black', color: '#FFFFFF', font: 'marker' }).font, 'marker')
+  assert.equal(m.parseHeadlineLook({ look: 'white', color: '#FFFFFF', font: 'sans_serif_accent' }).font, 'sans_serif_accent')
+  assert.throws(() => m.parseHeadlineLook({ font: 'comic' }))
+  // Same cases as engine/tests/test_headline_look.py.
+  assert.equal(m.accentWordIndex('Make your videos look different.'.split(' ')), 4)
+  assert.equal(m.accentWordIndex('Two: onetake'.split(' ')), 1)
+  assert.equal(m.accentWordIndex('This is it'.split(' ')), 0)
+  assert.equal(m.accentWordIndex('a b'.split(' ')), 1)
+  assert.equal(m.fontName('marker'), 'Marker')
+})
+
+test('the live preview draws the chosen extras', () => {
+  const render = (extras, rows = { ...ALL_ROWS, extras: true }) => staticRender(React.createElement(m.StylePreview, { value: { ...BASE, extras }, rows, frame: null, brand: null, label: 'Preview' }))
+  const all = render(['punch_zoom', 'keyword_pill', 'accent_words', 'progress_bar', 'broll_tags', 'proof_underline'])
+  assert.match(all, /data-extras="punch_zoom keyword_pill accent_words progress_bar broll_tags proof_underline"/)
+  assert.match(all, /data-extra="pill"[^>]*>captions</, 'the punch word in the pill')
+  assert.match(all, /data-extra="accent"[^>]*>come</, 'the next word in the italic serif')
+  for (const id of ['progress_bar', 'broll_tags', 'proof_underline']) assert.match(all, new RegExp(`data-testid="look-extra-${id}"`), id)
+  assert.match(all, /scale\(1\.35\)|data-extras/)
+  // The comment box waits for the end of the loop (not shown on the paused first frame).
+  assert.doesNotMatch(render(['comment_box']), /look-extra-comment_box/)
+  // A page without the Extras row draws none.
+  assert.doesNotMatch(render(['progress_bar'], ALL_ROWS), /look-extra-progress_bar/)
+  // The comment box itself types the keyword.
+  const box = staticRender(React.createElement('div', null, React.createElement(m.LookFrame, { value: { ...BASE, extras: ['comment_box'] }, rows: {}, background: null, width: 200,
+    time: 4800, loop: 4900, ending: true, extras: ['comment_box'], keyword: 'GUIDE' })))
+  assert.match(box, /data-testid="look-extra-comment_box"/)
+  assert.match(box, />GUI/)
 })

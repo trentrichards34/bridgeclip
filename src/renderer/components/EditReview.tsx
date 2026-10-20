@@ -10,7 +10,7 @@ import type { BrandIdentity } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
 import { useEditRecordingStore } from '../store/use-edit-recording-store'
 import { cn, errorMessage } from '../lib/utils'
-import { boardFromLook, LOOK_HOOKS, lookPatch } from '../lib/style-board'
+import { boardFromLook, extrasName, LOOK_HOOKS, lookPatch } from '../lib/style-board'
 import { previewFrame, StyleBoard } from './StyleBoard'
 import { Button } from './ui/Button'
 import { Callout } from './ui/Callout'
@@ -249,7 +249,8 @@ export function EditReview({ status, brand, look, onLook, onError }: {
           <span>
             <span className="block text-sm font-semibold text-ink">Look</span>
             <span className="block text-2xs text-ink-muted" data-testid="edit-look-summary">
-              {[look.includeCaptions ? `Captions: ${look.captionPreset}` : 'No captions', `Hook text: ${look.headlineLook.look}`, showMark && look.showHandle ? 'Your handle' : ''].filter(Boolean).join(' · ')}
+              {[look.includeCaptions ? `Captions: ${look.captionPreset}` : 'No captions', `Hook text: ${look.headlineLook.look}`, showMark && look.showHandle ? 'Your handle' : '',
+                decisions.lookExtras?.length ? `Extras: ${extrasName(decisions.lookExtras)}` : ''].filter(Boolean).join(' · ')}
             </span>
           </span>
           <ChevronDown className={cn('mt-0.5 h-4 w-4 shrink-0 text-ink-muted transition-transform', lookOpen && 'rotate-180')} />
@@ -257,8 +258,14 @@ export function EditReview({ status, brand, look, onLook, onError }: {
         {lookOpen && (
           <div id="edit-look" className="mt-3 space-y-4">
             <p className="text-2xs text-ink-subtle">These start from your Brand Identity’s look.</p>
-            <StyleBoard value={boardFromLook(look)} onChange={(patch) => onLook({ ...look, ...lookPatch(look, patch) })}
-              rows={{ hooks: LOOK_HOOKS, handle: true }} brand={brand} frame={previewFrame(sources[0]?.path, 'video', 0.1)}
+            <StyleBoard value={boardFromLook({ ...look, lookExtras: decisions.lookExtras })} onChange={(patch) => {
+              // Extras live with the edit style (one list for both pickers); the rest is the look.
+              if (patch.extras) { const lookExtras = patch.extras; setDecisions((current) => ({ ...current, lookExtras })) }
+              const { extras: _extras, ...rest } = patch
+              void _extras
+              onLook({ ...look, ...lookPatch(look, rest) })
+            }}
+              rows={{ hooks: LOOK_HOOKS, handle: true, extras: true }} brand={brand} frame={previewFrame(sources[0]?.path, 'video', 0.1)}
               hookText={decisions.hookText} words={previewWords} />
           </div>
         )}
