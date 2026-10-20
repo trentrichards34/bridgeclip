@@ -213,6 +213,8 @@ export interface BridgeClipAPI {
     /** Main asks the open editor to save before a close or quit continues. */
     onSaveBeforeClose: (callback: () => void) => () => void
     closeReady: (saved: boolean) => Promise<void>
+    /** Choose a picture for a Logo pop graphic; it is copied into the run. Returns its name (the graphic's `image`), or null. */
+    graphicImage: (path: string) => Promise<string | null>
     /** What opening an Automatic run (or a project made from one) in the editor involves. */
     automaticInfo: (path: string) => Promise<AutomaticEditInfo>
     /** Make the run's editor project from its clips, or get its video back. `localFile`: a video the member chose. */
@@ -695,6 +697,7 @@ const api: BridgeClipAPI = {
     suggestHooks: (path, revision, id) => paid('editor:suggestHooks', path, revision, id),
     onSaveBeforeClose: (callback) => subscribe<void>('editor:saveBeforeClose', () => callback()),
     closeReady: (saved) => ipcRenderer.invoke('editor:closeReady', saved),
+    graphicImage: (path) => ipcRenderer.invoke('editor:graphicImage', path),
     automaticInfo: (path) => ipcRenderer.invoke('editor:automaticInfo', path),
     prepareAutomatic: (path, localFile) => ipcRenderer.invoke('editor:prepareAutomatic', path, localFile),
     operationStatus: (path) => ipcRenderer.invoke('editor:operationStatus', path),

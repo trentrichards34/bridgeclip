@@ -342,11 +342,13 @@ function parseAutomaticOrigin(value: unknown): AutomaticOrigin {
 export function candidateEdit(c: CandidateEdit): CandidateEdit {
   const { id, title, ranges, scenes, captions, caption_preset, video_speed, status, caption_edits, caption_suppression_ranges = [], dismissed_camera_markers } = c
   return { id, title, ranges, scenes, captions, caption_preset, video_speed, status, caption_edits, caption_suppression_ranges, caption_y: c.caption_y ?? null,
-    ...(dismissed_camera_markers ? { dismissed_camera_markers } : {}), ...(c.hook !== undefined ? { hook: c.hook } : {}), ...(c.cta_id !== undefined ? { cta_id: c.cta_id } : {}), ...(c.graphics !== undefined ? { graphics: c.graphics } : {}) }
+    ...(dismissed_camera_markers ? { dismissed_camera_markers } : {}), ...(c.hook !== undefined ? { hook: c.hook } : {}), ...(c.cta_id !== undefined ? { cta_id: c.cta_id } : {}),
+    // Kept even when empty, so removing a clip's last graphic saves (main merges edits over the stored clip).
+    ...(c.graphics !== undefined ? { graphics: c.graphics } : {}) }
 }
 export function renderEditKey(c: CandidateEdit): string {
   // The call to action is added after rendering, so changing it doesn't need a new render.
-  return JSON.stringify({ ...candidateEdit(c), status: undefined, dismissed_camera_markers: undefined, cta_id: undefined })
+  return JSON.stringify({ ...candidateEdit(c), status: undefined, dismissed_camera_markers: undefined, cta_id: undefined, graphics: c.graphics?.length ? c.graphics : undefined })
 }
 export function refineEdit<T extends CandidateEdit>(c: T, patch: Partial<CandidateEdit>): T {
   const next = { ...c, ...patch }

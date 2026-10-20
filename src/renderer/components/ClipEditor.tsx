@@ -22,6 +22,8 @@ import { Switch } from './ui/Switch'
 import { Select } from './ui/Select'
 import { EditInspector } from './EditInspector'
 import { ClipChat, type ChatApplied, type ChatApplyResult } from './ClipChat'
+import { GraphicsInspector, GraphicsOverlay, GraphicsTrack } from './ClipGraphics'
+import type { EditorGraphic } from '../../shared/motion-graphics'
 import { clipLengthNote, mergeChatSteps, patchValues, type ChatPatch, type ChatStep } from '../../shared/clip-chat'
 
 const labels: Record<string, string> = { not_sponsored: 'Not sponsored', opening_context: 'Opening context', self_contained: 'Self contained', complete_ending: 'Complete ending', logical_flow: 'Logical flow', faithful_to_source: 'Faithful to source', title_supported: 'Title supported', evidence: 'Enough evidence', removal_safe: 'Safe to remove', join_logical: 'Natural join' }
@@ -77,10 +79,14 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   const [replacement, setReplacement] = useState<string | null>(null)
   const closeReplacement = useCallback(() => setReplacement(null), [])
   const [selected, setSelected] = useState(0)
-  const [tab, setTab] = useState<'review' | 'framing' | 'captions' | 'hook' | 'transcript' | 'chat'>('review')
+  const [tab, setTab] = useState<'review' | 'framing' | 'captions' | 'hook' | 'transcript' | 'chat' | 'graphics'>('review')
   // "Choose" picked but no call to action chosen yet (the clip still uses the run's until one is).
   const [ctaPicking, setCtaPicking] = useState(false)
   useEffect(() => setCtaPicking(false), [selected])
+  // Motion graphics: the one selected in the Graphics row or tab, and whether the template picker is open.
+  const [graphicId, setGraphicId] = useState<string | null>(null)
+  const [graphicPicking, setGraphicPicking] = useState(false)
+  useEffect(() => { setGraphicId(null); setGraphicPicking(false) }, [selected])
   const [time, setTime] = useState(0)
   const timeRef = useRef(time); timeRef.current = time
   const [playing, setPlaying] = useState(false)
@@ -513,6 +519,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   // Older editor sessions omit this field; treat them like legacy projects.
   const suppressedCaptions = candidate.caption_suppression_ranges ?? []
   const captionPosition = candidate.caption_y ?? captionAnchor(project, candidate, time).y
+  const setGraphics = (graphics: EditorGraphic[], remember = true): void => change({ graphics }, remember)
   const moveCaption = (y: number, remember = true): void => { video.current?.pause(); change({ caption_y: Math.round(y * 1000) / 1000 }, remember) }
   const status = candidate.status ?? 'refining'
   const readyCount = edits.filter((c) => c.status === 'ready').length
@@ -802,6 +809,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           <div className="editor-output-monitor">
             <div className="editor-pane-heading">Output <span>{candidate.captions && suppressedCaptions.some(([a, b]) => a <= time && time < b) ? 'Captions suppressed' : project.aspect_ratio}</span></div>
             <canvas ref={canvas} width={aspect < 1 ? 360 : 640} height={aspect < 1 ? 640 : 360} style={{ aspectRatio: aspect }} />
+            <GraphicsOverlay canvas={canvas} project={project} candidate={candidate} time={time} outputDir={outputDir} />
             {showSubtitlePreview && (tab === 'transcript' || tab === 'captions') && <EditorCaptionPreview canvas={canvas} project={project} candidate={candidate} time={time} disabled={editingDisabled} onMove={moveCaption} onDrag={active => { dragging.current = active; if (active) video.current?.pause() }} />}
           </div>
         </div>
@@ -845,6 +853,10 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
               }} />)}
             {time >= viewStart && time <= viewEnd && <div className="editor-playhead" style={{ left: `${(time - viewStart) / (viewEnd - viewStart) * 100}%` }} />}
           </div>
+          <GraphicsTrack candidate={candidate} viewStart={viewStart} viewEnd={viewEnd} selected={graphicId} disabled={editingDisabled} clock={clock}
+            onSelect={(id) => { setGraphicId(id); setGraphicPicking(false); setTab('graphics') }} onChange={setGraphics}
+            onDrag={(active) => { dragging.current = active; if (active) { video.current?.pause(); setDragWindow([viewStart, viewEnd]) } else setDragWindow(null) }}
+            onAdd={() => { video.current?.pause(); setGraphicPicking(true); setTab('graphics') }} />
           {suppressedCaptions.length > 0 && <div className={cn('editor-caption-track', !candidate.captions && 'opacity-40')} aria-label="Caption-free sections">
             {suppressedCaptions.map(([a, b], i) => b > viewStart && a < viewEnd && <button key={i}
               aria-label={`Caption-free section ${i + 1}: ${clock(a)} to ${clock(b)}`} title={`Captions suppressed ${clock(a)} – ${clock(b)}`}
@@ -865,7 +877,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           </div>
         </div>
       </div>
-      <aside className="editor-inspector"><div className="editor-tabs">{(['review', 'framing', 'captions', 'hook', 'transcript', 'chat'] as const).map((t) => <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)} className={cn(tab === t && 'selected')}>{t === 'review' ? 'Jev' : t === 'hook' ? 'Hook & CTA' : t[0].toUpperCase() + t.slice(1)}</button>)}</div>
+      <aside className="editor-inspector"><div className="editor-tabs">{(['review', 'framing', 'captions', 'hook', 'transcript', 'graphics', 'chat'] as const).map((t) => <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)} className={cn(tab === t && 'selected')}>{t === 'review' ? 'Jev' : t === 'hook' ? 'Hook & CTA' : t[0].toUpperCase() + t.slice(1)}</button>)}</div>
         <div ref={transcriptPanel} className="editor-inspector-body"><label className="editor-label" htmlFor="editor-title">Title</label><textarea id="editor-title" value={candidate.title} maxLength={200} disabled={editingDisabled} rows={2} onChange={(e) => { if (e.target.value.trim()) change({ title: e.target.value }) }} />
           {tab === 'review' && <div className="space-y-3 mt-4"><div className="flex items-center justify-between"><span className={cn('text-xs', current ? candidate.review?.decision === 'passes' ? 'text-success' : 'text-warning' : 'text-ink-muted')}>{!current ? 'Review out of date' : candidate.review?.decision === 'passes' ? 'Checks passed' : 'Consider before baking'}</span><Button size="sm" disabled={editingDisabled} onClick={() => { void run('review') }}>Review again</Button></div><p className="text-2xs text-ink-subtle">{current ? 'Review the questions, then adjust the cut and framing. You decide when the clip is ready.' : 'These results describe an earlier edit. Run Jev again to check your changes.'}</p>{candidate.review?.questions.map((q) => <Question key={q.id} q={q} />)}{!candidate.review && <p>No review is available yet. Run Jev to evaluate this candidate.</p>}{candidate.review?.cuts.map((cut, i) => <div key={i}><p className="editor-label">Removed {clock(cut.interval[0])} – {clock(cut.interval[1])}</p>{cut.questions.map((q) => <Question key={q.id} q={q} />)}</div>)}</div>}
           {tab === 'framing' && <fieldset disabled={editingDisabled} className="space-y-4 mt-4"><div className="editor-layouts">{(['fill', 'split', 'fit'] as const).map((l) => <button key={l} className={cn(currentScene.layout === l && 'selected')} onClick={() => setLayout(l)}>{l === 'fill' ? 'Full frame' : l === 'split' ? 'Split' : 'Fit'}</button>)}</div>{currentScene.layout === 'split' && <><div className="flex gap-2">{['Top', 'Bottom'].map((name, i) => <Button key={i} size="sm" variant={panel === i ? 'primary' : 'secondary'} onClick={() => setPanel(i)}>{name}</Button>)}</div>
@@ -969,6 +981,8 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           })}{!project.transcript.length && <p>No spoken transcript is available for this source.</p>}</div>}
           {tab === 'chat' && <ClipChat outputDir={outputDir} candidate={candidate} apply={applyChat} undo={undoChat} play={(at, seconds) => playMoment(at, seconds, true)}
             disabledReason={busy ? 'Wait for the current task to finish to chat about this clip.' : status === 'discarded' ? 'Restore this clip to chat about it.' : null} />}
+          {tab === 'graphics' && <GraphicsInspector project={project} candidate={candidate} outputDir={outputDir} time={time} selected={graphicId} picking={graphicPicking}
+            disabled={editingDisabled} onPick={setGraphicPicking} onSelect={setGraphicId} onChange={setGraphics} seek={seek} clock={clock} />}
 
         </div>
       </aside>

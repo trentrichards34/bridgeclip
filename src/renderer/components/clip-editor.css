@@ -196,3 +196,41 @@
 .editor-chat-input { display:flex; align-items:flex-end; gap:6px; min-width:0; }
 .editor-chat-input textarea { flex:1; min-width:0; resize:none; }
 .editor-chat-input textarea::placeholder { color:rgb(var(--ink-subtle)); }
+
+/* Motion graphics: the Graphics row, the Graphics tab and the Output overlay (ClipGraphics.tsx). */
+/* Seven tabs: they wrap onto two rows rather than cutting their names short. */
+.editor-tabs { flex-wrap:wrap; }
+.editor-tabs button { padding:10px 8px 8px; }
+.editor-graphics-row { margin:8px 8px 0; }
+.editor-graphics-label { display:flex; align-items:center; gap:6px; font-size:10px; font-weight:500; color:rgb(var(--ink-muted)); margin-bottom:4px; }
+.editor-graphics-label > span { margin-right:auto; }
+.editor-graphics-track { position:relative; height:30px; border-radius:5px; background:rgb(var(--editor-well)); }
+.editor-graphics-track.stacked { height:46px; }
+.editor-graphics-empty { position:absolute; inset:0; display:grid; place-items:center; font-size:10px; color:rgb(var(--ink-subtle)); pointer-events:none; }
+.editor-graphic-block { position:absolute; top:3px; bottom:3px; min-width:8px; display:flex; border-radius:4px; overflow:hidden; background:#c084fc33; border:1px solid #c084fc99; }
+.editor-graphic-block.lane-1 { bottom:auto; height:19px; }
+.editor-graphic-block.lane-2 { top:auto; height:19px; }
+.editor-graphic-block.selected { background:#c084fc66; border-color:#e9d5ff; box-shadow:0 0 0 1px #e9d5ff66; }
+.editor-graphic-block.cut-out { opacity:.45; border-style:dashed; }
+.editor-graphic-block.empty { background:#ffffff14; border-color:#ffffff40; border-style:dashed; }
+.editor-graphic-body { flex:1; min-width:0; display:flex; align-items:center; gap:6px; padding:0 5px; font-size:10px; color:rgb(var(--ink)); cursor:grab; touch-action:none; overflow:hidden; white-space:nowrap; }
+.editor-graphic-body:active { cursor:grabbing; }
+.editor-graphic-kind { font-weight:600; flex-shrink:0; }
+.editor-graphic-words { overflow:hidden; text-overflow:ellipsis; color:rgb(var(--ink-muted)); }
+.editor-graphic-edge { flex-shrink:0; width:7px; cursor:ew-resize; touch-action:none; background:#c084fc55; }
+.editor-graphic-edge:hover { background:#e9d5ff; }
+.editor-graphics-overlay { position:absolute; pointer-events:none; overflow:hidden; }
+.editor-graphics-overlay .editor-graphic-view { position:absolute; inset:0; }
+.editor-graphic-view { position:relative; overflow:hidden; flex-shrink:0; }
+.editor-graphics-panel { margin-top:16px; display:flex; flex-direction:column; gap:10px; min-width:0; }
+.editor-graphic-picker { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; }
+.editor-graphic-tile { display:flex; flex-direction:column; align-items:center; gap:6px; padding:6px 4px 8px; border-radius:8px; border:1px solid #ffffff14; background:rgb(var(--editor-well)); font-size:10px; color:rgb(var(--ink-muted)); min-width:0; }
+.editor-graphic-tile .editor-graphic-view { border-radius:5px; background:#3a4256; }
+.editor-graphic-tile:hover:not(:disabled), .editor-graphic-tile:focus-visible { border-color:rgb(var(--accent) / .6); color:rgb(var(--ink)); }
+.editor-graphic-tile span { text-align:center; line-height:1.2; }
+.editor-graphic-list { display:flex; flex-wrap:wrap; gap:4px; }
+.editor-graphic-list button { display:flex; gap:6px; padding:4px 8px; border-radius:999px; font-size:10px; background:#ffffff0a; border:1px solid transparent; }
+.editor-graphic-list button.selected { border-color:#c084fc99; background:#c084fc26; }
+.editor-graphic-input { width:100%; padding:7px 8px; font-size:12px; border:1px solid #ffffff14; border-radius:6px; background:rgb(var(--editor-well)); color:rgb(var(--ink)); margin-top:4px; }
+.editor-graphic-thumb { width:44px; height:44px; object-fit:contain; border-radius:6px; background:white; }
+.editor-graphic-color { width:28px; height:22px; padding:0; border:0; background:transparent; cursor:pointer; }

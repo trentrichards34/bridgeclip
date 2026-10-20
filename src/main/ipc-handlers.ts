@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
 import { BROLL_IMAGE_EXTENSIONS, BROLL_PLAN_ESTIMATE_USD, BROLL_VIDEO_EXTENSIONS } from '../shared/react-templates'
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
-import { addEditorCandidate, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorProgress, suggestEditorHooks } from './clip-editor'
+import { addEditorCandidate, addEditorGraphicImage, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorProgress, suggestEditorHooks } from './clip-editor'
 import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
 import { chatEstimateUsd, chatInfo, chatModel, editorChat, resetChat } from './clip-chat'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
@@ -766,6 +766,14 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('editor:chatReset', async (_event, path: unknown, candidateId: unknown) => {
     await openEditor(path)
     resetChat(realpathSync(path as string), candidateId)
+  })
+  // A picture for a Logo pop graphic: chosen here (never a path from the page), checked and copied into the run.
+  handle('editor:graphicImage', async (_event, path: unknown) => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose an image for the graphic', filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return addEditorGraphicImage(path, result.filePaths[0])
   })
   handle('editor:closeReady', (_event, saved: unknown) => editorCloseReady(saved))
   // An Automatic Create run opened in the editor: what it takes, doing it, and its progress.
