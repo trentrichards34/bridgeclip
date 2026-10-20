@@ -34,3 +34,28 @@
 .reel-graphic-picker button { display:flex; flex-direction:column; align-items:center; gap:4px; padding:6px; border-radius:8px; border:1px solid #ffffff12; font-size:11px; color:rgb(var(--ink-muted)); }
 .reel-graphic-picker button:hover:not(:disabled) { color:rgb(var(--ink)); border-color:rgb(var(--accent) / .5); }
 .reel-graphic-picker button:disabled { opacity:.5; }
+
+/* Point at the preview: the layer over a preview, its pins, the chips over the message box, and the small frame on review screens. */
+.chat-point-layer { position:absolute; inset:0; pointer-events:none; z-index:3; }
+.chat-point-layer.pointing { pointer-events:auto; cursor:crosshair; z-index:6; touch-action:none; box-shadow:inset 0 0 0 2px rgb(var(--accent)); background:rgb(var(--accent) / .06); }
+.chat-point-prompt { position:absolute; left:50%; top:12px; transform:translateX(-50%); padding:5px 10px; border-radius:999px; font-size:11px; white-space:nowrap; color:white; background:rgb(0 0 0 / .72); pointer-events:none; }
+.chat-point-pin { display:grid; place-items:center; width:20px; height:20px; border-radius:50%; font-size:11px; font-weight:700; line-height:1; color:white; background:rgb(var(--accent)); box-shadow:0 0 0 2px white, 0 2px 6px rgb(0 0 0 / .5); pointer-events:none; }
+.chat-point-pin.at { position:absolute; transform:translate(-50%, -50%); }
+.chat-point-box { position:absolute; border:2px solid rgb(var(--accent)); border-radius:4px; background:rgb(var(--accent) / .12); box-shadow:0 0 0 1px rgb(0 0 0 / .5); pointer-events:none; }
+.chat-point-box .chat-point-pin { position:absolute; left:-10px; top:-10px; }
+.chat-point-box.drawing { border-style:dashed; }
+.chat-point-chips { display:flex; flex-wrap:wrap; gap:4px; }
+.chat-point-chips li { display:inline-flex; align-items:center; gap:5px; padding:3px 4px 3px 8px; border-radius:999px; font-size:11px; line-height:1.2; color:rgb(var(--ink)); background:rgb(var(--accent) / .16); border:1px solid rgb(var(--accent) / .45); }
+.chat-point-chips li svg { color:rgb(var(--accent)); flex-shrink:0; }
+.chat-point-chips button { display:grid; place-items:center; width:16px; height:16px; border-radius:50%; color:rgb(var(--ink-muted)); }
+.chat-point-chips button:hover, .chat-point-chips button:focus-visible { color:rgb(var(--ink)); background:rgb(255 255 255 / .1); }
+.chat-point-sent { display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:4px; font-size:10.5px; color:rgb(var(--ink-muted)); }
+.chat-point-sent li { display:inline-flex; align-items:center; gap:3px; }
+.chat-point-pad { position:relative; align-self:flex-start; width:120px; aspect-ratio:9 / 16; border-radius:8px; overflow:hidden; background:#000; border:1px solid rgb(255 255 255 / .1); }
+.chat-point-pad video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.chat-point-pad-grid { position:absolute; inset:0; background:
+  linear-gradient(rgb(255 255 255 / .08), rgb(255 255 255 / .08)) 33.33% 0 / 1px 100% no-repeat,
+  linear-gradient(rgb(255 255 255 / .08), rgb(255 255 255 / .08)) 66.66% 0 / 1px 100% no-repeat,
+  linear-gradient(rgb(255 255 255 / .08), rgb(255 255 255 / .08)) 0 33.33% / 100% 1px no-repeat,
+  linear-gradient(rgb(255 255 255 / .08), rgb(255 255 255 / .08)) 0 66.66% / 100% 1px no-repeat, #0b0d12; }
+.chat-point-pad .chat-point-prompt { top:auto; bottom:8px; font-size:10px; white-space:normal; width:max-content; max-width:90%; text-align:center; }

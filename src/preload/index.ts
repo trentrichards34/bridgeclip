@@ -3,6 +3,7 @@ import type { LibraryClipTarget } from '../shared/library-posting'
 import type { AutomationReviewResult } from '../shared/automations'
 import type { AutomaticEditInfo, CandidateEdit, EditorProgressSummary, EditorSession, HookIdea } from '../shared/clip-editor'
 import type { ChatInfo, ChatReply } from '../shared/clip-chat'
+import type { ChatPoint } from '../shared/chat-point'
 import type { JobOutput } from '../shared/job-output'
 import type { HeadlineLook } from '../shared/headline-look'
 import type { CtaSummary } from '../shared/ctas'
@@ -227,7 +228,7 @@ export interface BridgeClipAPI {
     /** Whether the Chat tab can be used, its model and cost note. */
     chatInfo: () => Promise<ChatInfo>
     /** One chat message about a clip (its current, maybe unsaved, edit). Uses the OpenRouter key; main checks every edit. */
-    chat: (path: string, candidate: CandidateEdit, message: string) => Promise<ChatReply>
+    chat: (path: string, candidate: CandidateEdit, message: string, points?: ChatPoint[]) => Promise<ChatReply>
     /** Forget this clip's chat. */
     chatReset: (path: string, candidateId: string) => Promise<void>
   }
@@ -482,7 +483,7 @@ export interface BridgeClipAPI {
     /** Whether the review's Chat panel can be used, its model and cost note. */
     chatInfo: () => Promise<ChatInfo>
     /** One chat message about a take (its hook text, caption and graphics as they are now). Uses the OpenRouter key; main checks every change. */
-    chat: (state: RemixChatState, message: string) => Promise<RemixChatReply>
+    chat: (state: RemixChatState, message: string, points?: ChatPoint[]) => Promise<RemixChatReply>
     /** Forget a take's chat. */
     chatReset: (draftId: number) => Promise<void>
     /** React, then my thoughts: your b-roll, stock on or off, and the plan (null when it isn't one). */
@@ -539,7 +540,7 @@ export interface BridgeClipAPI {
     /** Whether the review's Chat panel can be used, its model and cost note. */
     chatInfo: () => Promise<ChatInfo>
     /** One chat message about the edit in review (its current choices). Uses the OpenRouter key; main checks every change. */
-    chat: (decisions: EditDecisions, message: string) => Promise<EditChatReply>
+    chat: (decisions: EditDecisions, message: string, points?: ChatPoint[]) => Promise<EditChatReply>
     /** Forget the review's chat. */
     chatReset: () => Promise<void>
   }
@@ -719,7 +720,7 @@ const api: BridgeClipAPI = {
     prepareAutomatic: (path, localFile) => ipcRenderer.invoke('editor:prepareAutomatic', path, localFile),
     operationStatus: (path) => ipcRenderer.invoke('editor:operationStatus', path),
     chatInfo: () => ipcRenderer.invoke('editor:chatInfo'),
-    chat: (path, candidate, message) => paid('editor:chat', path, candidate, message),
+    chat: (path, candidate, message, points) => paid('editor:chat', path, candidate, message, points ?? []),
     chatReset: (path, candidateId) => ipcRenderer.invoke('editor:chatReset', path, candidateId)
   },
   edits: { inspect: (outputDir) => ipcRenderer.invoke('edits:inspect', outputDir) },
@@ -900,7 +901,7 @@ const api: BridgeClipAPI = {
     trim: (draftId, startMs, endMs) => ipcRenderer.invoke('remix:trim', draftId, startMs, endMs),
     takeTrim: (draftId, startMs, endMs) => ipcRenderer.invoke('remix:takeTrim', draftId, startMs, endMs),
     chatInfo: () => ipcRenderer.invoke('remix:chatInfo'),
-    chat: (state, message) => paid('remix:chat', state, message),
+    chat: (state, message, points) => paid('remix:chat', state, message, points ?? []),
     chatReset: (draftId) => ipcRenderer.invoke('remix:chatReset', draftId),
     brollView: () => ipcRenderer.invoke('remix:brollView'),
     addBroll: () => ipcRenderer.invoke('remix:addBroll'),
@@ -937,7 +938,7 @@ const api: BridgeClipAPI = {
     recordingAbort: (token) => ipcRenderer.invoke('edit:recordingAbort', token),
     ideas: (request) => paid('edit:ideas', request),
     chatInfo: () => ipcRenderer.invoke('edit:chatInfo'),
-    chat: (decisions, message) => paid('edit:chat', decisions, message),
+    chat: (decisions, message, points) => paid('edit:chat', decisions, message, points ?? []),
     chatReset: () => ipcRenderer.invoke('edit:chatReset')
   },
   backgrounds: {

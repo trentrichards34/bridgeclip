@@ -17,6 +17,7 @@
  * Logo pop needs a picture copied into the run: it is only in the clip editor.
  */
 import { chatFail as fail, chatPlainText } from './chat-core'
+import { checkHighlightFields } from './chat-point'
 import { graphicBox, GRAPHIC_DEFAULT_COLOR, outputSize, type GraphicFrame } from './graphic-layout'
 import { HEADLINE_FONTS, isHexColor, type HeadlineLook } from './headline-look'
 import { GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHICS_PER_CLIP, clampGraphicMs, templateInfo, graphicHasContent, parseGraphics, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from './motion-graphics'
@@ -188,7 +189,7 @@ export function graphicFields(template: GraphicTemplateId, current: Record<strin
       fields[key] = key === 'items' ? text.split('\n').map((line) => chatPlainText(line, MAX_GRAPHIC_FIELD_CHARS)).filter(Boolean).slice(0, 5).join('\n') : chatPlainText(text, limit)
     }
   }
-  if (template === 'highlight') { fields.shape ??= 'circle'; fields.x ??= '0.5'; fields.y ??= '0.45' }
+  if (template === 'highlight') { fields.shape ??= 'circle'; fields.x ??= '0.5'; fields.y ??= '0.45'; checkHighlightFields(fields) }
   if (!info.fields.some((f) => fields[f])) fail(`Give the ${template} graphic its text: ${info.fields.join(', ')}.`)
   return fields
 }

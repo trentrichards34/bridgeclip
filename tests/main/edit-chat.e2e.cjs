@@ -159,6 +159,20 @@ test('Edit my recording: a chat request cuts a word and adds a stat graphic, Und
   await second.getByText('Undone', { exact: true }).waitFor()
   assert.equal(await page.getByRole('switch', { name: 'Raw-to-edited opening' }).getAttribute('aria-checked'), 'false')
   assert.equal(chats.length, 4)
+  // Point: the review has no live preview, so a small frame of the take opens to point on; the pin waits as a chip.
+  const pointButton = chat.getByRole('button', { name: 'Point', exact: true })
+  await pointButton.click()
+  assert.equal(await pointButton.getAttribute('aria-pressed'), 'true')
+  const pad = chat.getByTestId('point-layer')
+  const padBox = await pad.boundingBox()
+  await page.mouse.click(padBox.x + padBox.width * 0.2, padBox.y + padBox.height * 0.15)
+  const pins = chat.getByRole('list', { name: 'Pins for your next message' })
+  await pins.getByText('Pin 1 · top-left', { exact: true }).waitFor()
+  for (const chip of ['Put an arrow here', 'Circle this', 'Move the graphic here']) await chat.getByRole('button', { name: chip, exact: true }).waitFor()
+  await chat.scrollIntoViewIfNeeded()
+  await shot(app, 'edit-review-point.png')
+  await pins.getByRole('button', { name: 'Remove pin 1' }).click()
+  assert.equal(await pins.count(), 0)
 
   // The reel: the hook ("Fifteen billion messages wait.") plays first, with the stat graphic over it.
   await page.getByRole('button', { name: 'Make my reel' }).click()

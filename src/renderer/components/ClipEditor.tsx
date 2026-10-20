@@ -21,9 +21,10 @@ import { captionAnchor } from '../lib/caption-preview'
 import { Switch } from './ui/Switch'
 import { Select } from './ui/Select'
 import { EditInspector } from './EditInspector'
-import { ClipChat, type ChatApplied, type ChatApplyResult } from './ClipChat'
+import { ClipChat, clipChatThread, type ChatApplied, type ChatApplyResult } from './ClipChat'
+import { PointButton, PointLayer } from './ChatPoints'
 import { GraphicsInspector, GraphicsOverlay, GraphicsTrack } from './ClipGraphics'
-import type { EditorGraphic } from '../../shared/motion-graphics'
+import { nearestOutputTime, type EditorGraphic } from '../../shared/motion-graphics'
 import { clipLengthNote, mergeChatSteps, patchValues, type ChatPatch, type ChatStep } from '../../shared/clip-chat'
 
 const labels: Record<string, string> = { not_sponsored: 'Not sponsored', opening_context: 'Opening context', self_contained: 'Self contained', complete_ending: 'Complete ending', logical_flow: 'Logical flow', faithful_to_source: 'Faithful to source', title_supported: 'Title supported', evidence: 'Enough evidence', removal_safe: 'Safe to remove', join_logical: 'Natural join' }
@@ -807,9 +808,11 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
             <p className="editor-monitor-hint">{tab === 'framing' ? 'Drag inside to move · Drag a corner to resize' : 'Space to play · I / O to trim · S to split'} · 1 / 2 / 3 for speed</p>
           </div>
           <div className="editor-output-monitor">
-            <div className="editor-pane-heading">Output <span>{candidate.captions && suppressedCaptions.some(([a, b]) => a <= time && time < b) ? 'Captions suppressed' : project.aspect_ratio}</span></div>
+            <div className="editor-pane-heading">Output <span className="flex items-center gap-2">{candidate.captions && suppressedCaptions.some(([a, b]) => a <= time && time < b) ? 'Captions suppressed' : project.aspect_ratio}
+              <PointButton thread={clipChatThread(outputDir, candidate.id)} disabled={!!busy || status === 'discarded'} onStart={() => { video.current?.pause(); setTab('chat') }} /></span></div>
             <canvas ref={canvas} width={aspect < 1 ? 360 : 640} height={aspect < 1 ? 640 : 360} style={{ aspectRatio: aspect }} />
             <GraphicsOverlay canvas={canvas} project={project} candidate={candidate} time={time} outputDir={outputDir} />
+            <PointLayer thread={clipChatThread(outputDir, candidate.id)} canvas={canvas} outMs={() => Math.round(nearestOutputTime(candidate, timeRef.current))} />
             {showSubtitlePreview && (tab === 'transcript' || tab === 'captions') && <EditorCaptionPreview canvas={canvas} project={project} candidate={candidate} time={time} disabled={editingDisabled} onMove={moveCaption} onDrag={active => { dragging.current = active; if (active) video.current?.pause() }} />}
           </div>
         </div>

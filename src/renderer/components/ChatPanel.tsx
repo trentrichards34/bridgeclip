@@ -5,11 +5,14 @@
  * supplies how to ask (a paid IPC call), how to apply the checked steps through
  * its own setters, and how to undo them.
  */
-import { useEffect, useRef, useState } from 'react'
-import { Check, Loader2, MessageSquare, Play, RotateCcw, Send, Undo2 } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Check, Loader2, MapPin, MessageSquare, Play, RotateCcw, Send, Undo2 } from 'lucide-react'
 import { cn, errorMessage } from '../lib/utils'
 import { Button } from './ui/Button'
 import { CHAT_MAX_MESSAGE_CHARS, type ChatInfo, type ChatStepBase } from '../../shared/chat-core'
+import { pointLabel, type ChatPoint } from '../../shared/chat-point'
+import { useChatPointsStore, useThreadPoints } from '../store/use-chat-points-store'
+import { PointButton, PointChips } from './ChatPoints'
 
 export type ChatApplyOutcome<Applied> = { applied: Applied | null; length: string | null } | { error: string }
 
@@ -22,7 +25,7 @@ interface ChatCard<Applied> {
   /** A moment the answer played, to play again. */
   replay?: { at: number; seconds: number }
 }
-interface ChatEntry<Applied> { id: number; role: 'member' | 'assistant' | 'error'; text: string; card?: ChatCard<Applied> }
+interface ChatEntry<Applied> { id: number; role: 'member' | 'assistant' | 'error'; text: string; card?: ChatCard<Applied>; pins?: string[] }
 
 // Each thread's conversation for this app session (main keeps the model's side the same way).
 const threads = new Map<string, ChatEntry<unknown>[]>()
@@ -41,7 +44,8 @@ export interface ChatPanelProps<Step extends ChatStepBase, Applied> {
   /** Why editing is off right now (busy, discarded), or null. */
   disabledReason: string | null
   loadInfo: (() => Promise<ChatInfo>) | undefined
-  ask: (message: string) => Promise<{ reply: string; steps: unknown; error?: string }>
+  /** `points`: the pins the member put on the preview for this message (cleared once it is sent). */
+  ask: (message: string, points: ChatPoint[]) => Promise<{ reply: string; steps: unknown; error?: string }>
   parseSteps: (value: unknown) => Step[]
   /** Steps that change something (others, like play, only show). */
   isEdit: (step: Step) => boolean
@@ -54,6 +58,15 @@ export interface ChatPanelProps<Step extends ChatStepBase, Applied> {
   clearTooltip: string
   /** Shown when the answer comes back after the member moved to another thread. */
   switchedMessage?: string
+  /** Pointing at the preview: pins are kept per thread and go with the next message. */
+  point?: {
+    /** Suggestions shown while there are pins ("Put an arrow here"). */
+    suggestions: readonly string[]
+    /** A frame to point on in the panel (a review screen with no live preview); with it the panel has its own Point button. */
+    pad?: ReactNode
+    /** How to point when the preview is elsewhere (the clip editor's Output preview). */
+    hint?: string
+  }
 }
 
 export function ChatPanel<Step extends ChatStepBase, Applied>(props: ChatPanelProps<Step, Applied>): React.JSX.Element {
@@ -70,6 +83,15 @@ export function ChatPanel<Step extends ChatStepBase, Applied>(props: ChatPanelPr
   // The answer arrives later: apply it to the state as it is then, not as it was when asked.
   const latest = useRef(props); latest.current = props
   const keyLatest = useRef(key); keyLatest.current = key
+  const points = useThreadPoints(props.point ? key : undefined)
+  const pointing = useChatPointsStore((s) => !!props.point && s.pointing === key)
+  const input = useRef<HTMLTextAreaElement>(null)
+  // A new pin: the message box is next.
+  const pinCount = useRef(points.length)
+  useEffect(() => {
+    if (points.length > pinCount.current) input.current?.focus({ preventScroll: true })
+    pinCount.current = points.length
+  }, [points.length])
 
   useEffect(() => { setEntries(read(key)); setDraft('') }, [key])
   useEffect(() => {
@@ -93,11 +115,14 @@ export function ChatPanel<Step extends ChatStepBase, Applied>(props: ChatPanelPr
     const message = text.trim()
     if (!message || disabled) return
     const thread = key
+    const pins = latest.current.point ? useChatPointsStore.getState().points[thread] ?? [] : []
     pendingKey.current = thread
     setPending(true); setDraft('')
-    update(thread, (list) => [...list, { id: nextId++, role: 'member', text: message }])
+    update(thread, (list) => [...list, { id: nextId++, role: 'member', text: message, ...(pins.length ? { pins: pins.map((p) => `Pin ${p.n} · ${pointLabel(p)}`) } : {}) }])
+    // Pins go with this message only.
+    if (latest.current.point) useChatPointsStore.getState().clear(thread)
     try {
-      const result = await latest.current.ask(message)
+      const result = await latest.current.ask(message, pins)
       const steps = latest.current.parseSteps(result.steps)
       let card: ChatCard<Applied> | undefined
       const added: ChatEntry<Applied>[] = []
@@ -148,6 +173,7 @@ export function ChatPanel<Step extends ChatStepBase, Applied>(props: ChatPanelPr
       {!entries.length && !pending && <p className="text-2xs text-ink-subtle flex items-center gap-1.5"><MessageSquare size={12} />No messages yet.</p>}
       {entries.map((entry) => <div key={entry.id} className={cn(c('-message'), entry.role)}>
         {entry.text && <p>{entry.text}</p>}
+        {entry.pins && <ul className="chat-point-sent" aria-label="Pins sent">{entry.pins.map((pin) => <li key={pin}><MapPin size={10} aria-hidden />{pin}</li>)}</ul>}
         {entry.card && <div className={cn(c('-card'), entry.card.state)} role="group" aria-label="Chat changes">
           <ul>{entry.card.lines.map((line, i) => <li key={i}>{line}</li>)}</ul>
           {entry.card.length && <p className="text-ink-subtle">{entry.card.length}</p>}
@@ -166,16 +192,23 @@ export function ChatPanel<Step extends ChatStepBase, Applied>(props: ChatPanelPr
       <div ref={end} />
     </div>
     <div className={c('-compose')}>
+      {props.point?.pad && <div className="flex flex-wrap items-center gap-2">
+        <PointButton thread={key} disabled={!!reason || pending} />
+        <span className="text-2xs text-ink-subtle">{pointing ? 'Click or drag on the frame below. Esc cancels.' : 'Show where on the video, then ask, like “put an arrow here”.'}</span>
+      </div>}
+      {props.point?.pad && (pointing || points.length > 0) && props.point.pad}
+      {props.point && <PointChips thread={key} />}
       <div className={c('-chips')} role="group" aria-label="Suggestions">
-        {props.suggestions.map((s) => <button key={s} type="button" disabled={disabled} onClick={() => { void send(s) }}>{s}</button>)}
+        {(props.point && points.length ? props.point.suggestions : props.suggestions).map((s) => <button key={s} type="button" disabled={disabled} onClick={() => { void send(s) }}>{s}</button>)}
       </div>
       <form className={c('-input')} onSubmit={(e) => { e.preventDefault(); void send(draft) }}>
-        <textarea aria-label="Message" rows={2} maxLength={CHAT_MAX_MESSAGE_CHARS} value={draft} disabled={!!reason || !info}
+        <textarea ref={input} aria-label="Message" rows={2} maxLength={CHAT_MAX_MESSAGE_CHARS} value={draft} disabled={!!reason || !info}
           placeholder={props.placeholder}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(draft) } }} />
         <Button type="submit" size="sm" variant="primary" iconOnly icon={<Send size={13} />} aria-label="Send" tooltip="Send (Enter). Shift+Enter adds a line." disabled={disabled || !draft.trim()} />
       </form>
+      {props.point?.hint && !points.length && <p className="text-2xs text-ink-subtle">{props.point.hint}</p>}
       {info && <p className="text-2xs text-ink-subtle">{info.costNote} Model: {info.model}.</p>}
     </div>
   </section>

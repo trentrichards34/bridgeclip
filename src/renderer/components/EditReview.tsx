@@ -4,10 +4,11 @@ import {
   CUT_LABELS, CUTOUT_INTRO_SECONDS, SOUND_LABELS, MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, RAW_INTRO_SECONDS, applyRecipe, cardProblem, chooseHook,
   formatClock, hookTextProblem, initialDecisions, reelCardWindows, reelSeconds, reelWordStarts, toggleSpan, toggleWord, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditStatus
 } from '../../shared/edit-recording'
-import { EDIT_CHAT_SUGGESTIONS, editPatchValues, mergeEditChatSteps, parseEditChatSteps, type EditChatPatch, type EditChatStep } from '../../shared/edit-chat'
+import { EDIT_CHAT_POINT_SUGGESTIONS, EDIT_CHAT_SUGGESTIONS, editPatchValues, mergeEditChatSteps, parseEditChatSteps, type EditChatPatch, type EditChatStep } from '../../shared/edit-chat'
 import { editGraphicFrame, newEditGraphic, patchEditGraphic, type EditGraphic } from '../../shared/reel-graphics'
 import { newGraphic, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { ChatPanel, type ChatApplyOutcome } from './ChatPanel'
+import { PointPad } from './ChatPoints'
 import { wordsAtPlayhead } from './ClipGraphics'
 import { ReelGraphics, type ReelGraphicItem, type ReelGraphicPatch } from './ReelGraphics'
 import { CardEditor, EditStylePicker, MyImages } from './EditExtras'
@@ -188,7 +189,8 @@ export function EditReview({ status, brand, look, onLook, onError }: {
           placeholder="Ask for a change to your edit" suggestions={EDIT_CHAT_SUGGESTIONS}
           disabledReason={making ? 'Your reel is being made.' : null}
           loadInfo={typeof getApi().edit.chatInfo === 'function' ? () => getApi().edit.chatInfo() : undefined}
-          ask={(message) => getApi().edit.chat(chatState, message)}
+          ask={(message, points) => getApi().edit.chat(chatState, message, points)}
+          point={{ suggestions: EDIT_CHAT_POINT_SUGGESTIONS, pad: <PointPad thread={`edit\n${status.id}`} video={sources[0]?.path} /> }}
           parseSteps={parseEditChatSteps} isEdit={(step) => Object.keys(step.patch).length > 0}
           apply={applyChat}
           undo={(applied) => { applyPatch(applied.before); return null }}
