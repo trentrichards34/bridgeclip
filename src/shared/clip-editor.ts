@@ -46,8 +46,29 @@ export interface CandidateEdit {
   /** Motion graphics on the clip (motion-graphics.ts). Absent = none. */
   graphics?: EditorGraphic[]
 }
+/**
+ * What an Automatic run's pass did to a clip, saved when the run is opened in the editor
+ * (engine automatic_editor.py), so "What changed" can list it and put pieces back.
+ * Main-owned: never sent back in edits. Older projects have none.
+ */
+export interface AutoEditBaseline {
+  /** The moment the planner picked (source ms), before the cut and any boundary change. Absent when unknown. */
+  moment?: EditorRange
+  /** The cut as the run made it. Absent when the run didn't save its cut (it was worked out again). */
+  ranges?: EditorRange[]
+  /** Up to 4 words said in the part left out before the start / after the end (from the transcript's word timing). */
+  before_words?: string
+  after_words?: string
+  /** The hook text the run drew, or null for none. */
+  hook: string | null
+  captions: boolean
+  caption_preset: string
+  /** Source times of the split-screen layouts the run used. */
+  split_at: number[]
+}
 export interface EditorCandidate extends CandidateEdit {
   camera_scan?: CameraScan
+  auto?: AutoEditBaseline
   requires_visual_context?: boolean; score: number; reason: string; review: EditorReview | null; exports: number[]
   /** Main-owned: SHA-256 of the last baked render identity, so undoing "Refine again" can restore Baked. */
   baked_hash?: string
@@ -311,10 +332,11 @@ export function parseEditorProject(value: unknown): EditorProject {
       if (markers.some((m, i) => !times.has(m.at_ms) || (i > 0 && m.at_ms <= markers[i - 1].at_ms))) fail()
       camera_scan = { start_ms, end_ms, frames, markers }
     }
+    const auto = c.auto === undefined ? undefined : parseAutoBaseline(c.auto, duration)
     const baked_hash = typeof c.baked_hash === 'string' && /^[a-f0-9]{64}$/.test(c.baked_hash) ? c.baked_hash : undefined
     const library_clip = c.library_clip === undefined ? undefined : Number.isInteger(c.library_clip) ? num(c.library_clip, 0, 999) : fail()
     if (c.caption_language !== undefined && !isCaptionLanguage(c.caption_language)) fail()
-    return { ...edit, ...(camera_scan ? { camera_scan } : {}), ...(baked_hash ? { baked_hash } : {}),
+    return { ...edit, ...(camera_scan ? { camera_scan } : {}), ...(auto ? { auto } : {}), ...(baked_hash ? { baked_hash } : {}),
       ...(library_clip !== undefined ? { library_clip } : {}), ...(c.cta_edited === true ? { cta_edited: true as const } : {}), ...(c.caption_language !== undefined ? { caption_language: c.caption_language as CaptionLanguage } : {}),
       requires_visual_context: c.requires_visual_context === true, score: num(c.score, 0, 100), reason: clampText(c.reason, 4000), review,
       exports: arr(c.exports, 1000).map((n) => num(n, 0, 999)) }
@@ -325,6 +347,28 @@ export function parseEditorProject(value: unknown): EditorProject {
     transcript, ...(v.headline_voice === 'creator' || v.headline_voice === 'clipper' ? { headline_voice: v.headline_voice } : {}),
     ...(v.automatic !== undefined ? { automatic: parseAutomaticOrigin(v.automatic) } : {}),
     ...(v.preview_id ? { preview_id: v.preview_id as string } : {}), ...(v.frame_preview === true ? { frame_preview: true } : {}), ...(v.media_freed === true ? { media_freed: true } : {}), ...(v.source_id ? { source_id: v.source_id as string } : {}) }
+}
+/** A saved baseline, or undefined when it is malformed (the clip then just shows fewer "What changed" lines). */
+function parseAutoBaseline(value: unknown, duration: number): AutoEditBaseline | undefined {
+  try {
+    const v = record(value)
+    const range = (x: unknown): EditorRange => {
+      const a = arr(x, 2); if (a.length !== 2) fail()
+      const r: EditorRange = [Math.round(num(a[0], 0, duration)), Math.round(num(a[1], 0, duration))]
+      return r[1] > r[0] ? r : fail()
+    }
+    const words = (x: unknown): string | undefined => x === undefined ? undefined : clampText(x, 120).replace(/\s+/g, ' ').trim() || undefined
+    const ranges = v.ranges === undefined ? undefined : arr(v.ranges, 24).map(range)
+    if (ranges && (!ranges.length || ranges.some(([a], i) => i > 0 && a < ranges[i - 1][1]))) fail()
+    const before_words = words(v.before_words), after_words = words(v.after_words)
+    return {
+      ...(v.moment === undefined ? {} : { moment: range(v.moment) }), ...(ranges ? { ranges } : {}),
+      ...(before_words ? { before_words } : {}), ...(after_words ? { after_words } : {}),
+      hook: v.hook === null || v.hook === undefined ? null : clampText(v.hook, MAX_HOOK_CHARS),
+      captions: v.captions === true, caption_preset: /^[a-z0-9_-]{1,64}$/i.test(str(v.caption_preset, 64)) ? v.caption_preset as string : fail(),
+      split_at: arr(v.split_at ?? [], 60).map((t) => Math.round(num(t, 0, duration)))
+    }
+  } catch { return undefined }
 }
 function parseAutomaticOrigin(value: unknown): AutomaticOrigin {
   const v = record(value)

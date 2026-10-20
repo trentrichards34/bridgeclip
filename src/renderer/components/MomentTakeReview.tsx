@@ -8,6 +8,7 @@ import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { RemixRecorder } from './RemixRecorder'
 import { RemixChatSection, RemixGraphicsSection, TakeTrimNote, type TakeText } from './RemixReviewExtras'
+import { RemixEditLog } from './EditLog'
 import type { EditorGraphic } from '../../shared/motion-graphics'
 import { Segmented } from './ui/Segmented'
 import { Badge } from './ui/Badge'
@@ -137,6 +138,7 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
                 {range && <Badge>From your range {formatTimecode(range.rangeStartMs / 1000)}–{formatTimecode(range.rangeEndMs / 1000)}</Badge>}
                 <Badge>{((draft.endMs - draft.startMs) / 1000).toFixed(1)}s</Badge>
               </div>
+              <RemixEditLog draft={draft} recordings={recordings} headline={current.headline} disabled={busy} onRecordings={setRecordings} onError={onError} />
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
                 {source ? <MomentPreview source={source} startMs={draft.startMs} endMs={draft.endMs} label={`Moment ${draft.id + 1}`} />
                   : <div className="aspect-video w-full rounded-xl bg-black" />}

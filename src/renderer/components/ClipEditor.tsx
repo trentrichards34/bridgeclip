@@ -23,6 +23,8 @@ import { Select } from './ui/Select'
 import { EditInspector } from './EditInspector'
 import { ClipChat, type ChatApplied, type ChatApplyResult } from './ClipChat'
 import { GraphicsInspector, GraphicsOverlay, GraphicsTrack } from './ClipGraphics'
+import { EditLog } from './EditLog'
+import { clipEditLog } from '../../shared/edit-log'
 import type { EditorGraphic } from '../../shared/motion-graphics'
 import { clipLengthNote, mergeChatSteps, patchValues, type ChatPatch, type ChatStep } from '../../shared/clip-chat'
 
@@ -877,7 +879,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           </div>
         </div>
       </div>
-      <aside className="editor-inspector"><div className="editor-tabs">{(['review', 'framing', 'captions', 'hook', 'transcript', 'graphics', 'chat'] as const).map((t) => <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)} className={cn(tab === t && 'selected')}>{t === 'review' ? 'Jev' : t === 'hook' ? 'Hook & CTA' : t[0].toUpperCase() + t.slice(1)}</button>)}</div>
+      <aside className="editor-inspector">{automatic && <EditLog variant="strip" lines={clipEditLog(project, candidate)} disabled={editingDisabled}
+        onRestore={(line) => { if (line.restore) change(line.restore) }}
+        note={candidate.auto ? 'Undo takes back a Restore.' : 'This clip was opened in the editor before the app kept a record of its cut, so only the graphics it added are listed.'} />}<div className="editor-tabs">{(['review', 'framing', 'captions', 'hook', 'transcript', 'graphics', 'chat'] as const).map((t) => <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)} className={cn(tab === t && 'selected')}>{t === 'review' ? 'Jev' : t === 'hook' ? 'Hook & CTA' : t[0].toUpperCase() + t.slice(1)}</button>)}</div>
         <div ref={transcriptPanel} className="editor-inspector-body"><label className="editor-label" htmlFor="editor-title">Title</label><textarea id="editor-title" value={candidate.title} maxLength={200} disabled={editingDisabled} rows={2} onChange={(e) => { if (e.target.value.trim()) change({ title: e.target.value }) }} />
           {tab === 'review' && <div className="space-y-3 mt-4"><div className="flex items-center justify-between"><span className={cn('text-xs', current ? candidate.review?.decision === 'passes' ? 'text-success' : 'text-warning' : 'text-ink-muted')}>{!current ? 'Review out of date' : candidate.review?.decision === 'passes' ? 'Checks passed' : 'Consider before baking'}</span><Button size="sm" disabled={editingDisabled} onClick={() => { void run('review') }}>Review again</Button></div><p className="text-2xs text-ink-subtle">{current ? 'Review the questions, then adjust the cut and framing. You decide when the clip is ready.' : 'These results describe an earlier edit. Run Jev again to check your changes.'}</p>{candidate.review?.questions.map((q) => <Question key={q.id} q={q} />)}{!candidate.review && <p>No review is available yet. Run Jev to evaluate this candidate.</p>}{candidate.review?.cuts.map((cut, i) => <div key={i}><p className="editor-label">Removed {clock(cut.interval[0])} – {clock(cut.interval[1])}</p>{cut.questions.map((q) => <Question key={q.id} q={q} />)}</div>)}</div>}
           {tab === 'framing' && <fieldset disabled={editingDisabled} className="space-y-4 mt-4"><div className="editor-layouts">{(['fill', 'split', 'fit'] as const).map((l) => <button key={l} className={cn(currentScene.layout === l && 'selected')} onClick={() => setLayout(l)}>{l === 'fill' ? 'Full frame' : l === 'split' ? 'Split' : 'Fit'}</button>)}</div>{currentScene.layout === 'split' && <><div className="flex gap-2">{['Top', 'Bottom'].map((name, i) => <Button key={i} size="sm" variant={panel === i ? 'primary' : 'secondary'} onClick={() => setPanel(i)}>{name}</Button>)}</div>

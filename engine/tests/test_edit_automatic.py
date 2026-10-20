@@ -391,3 +391,30 @@ def test_automatic_runs_keep_a_downloaded_source(tmp_path):
     other = tmp_path / 'out2'; other.mkdir()
     assert AIClippingPipeline._keep_source_copy(SimpleNamespace(source_type='local', video_path=str(tmp_path / 'mine.mp4')), str(other)) is False
     assert (tmp_path / 'mine.mp4').exists() and not (other / 'editor-source.mp4').exists()
+
+
+def test_each_clip_keeps_what_the_automatic_pass_did_for_the_edit_log(media, tmp_path):
+    """"What changed" in the editor: the picked moment, the run's cut, hook, captions and split layouts, saved per clip."""
+    run, _ = automatic_run(tmp_path)
+    (run / 'edit_audit.json').write_text(json.dumps({'candidates': [
+        {'candidate_index': 0, 'clip_index': 0, 'status': 'rendered', 'original_interval': [400, 12400], 'report': {}}]}))
+    convert(run)
+    first, second, third = json.loads((run / 'editor-project.json').read_text())['candidates']
+    auto = first['auto']
+    assert auto['moment'] == [400, 12400] and auto['ranges'] == [[1000, 4700], [8000, 11000]]
+    assert auto['hook'] == first['hook']['text'] and (auto['captions'], auto['caption_preset']) == (True, 'pop')
+    assert auto['split_at'] == [5500]
+    # Nothing was said in the parts left out, so nothing is quoted.
+    assert 'before_words' not in auto and 'after_words' not in auto
+    # A cut worked out again (older runs) isn't what the run did: no cut or moment, the rest is kept.
+    assert 'ranges' not in second['auto'] and 'moment' not in second['auto'] and second['auto']['hook'] == second['hook']['text']
+    assert third['auto']['split_at'] == []
+    for c in (first, second, third):
+        validate_candidate(c, 30000, 3)
+
+
+def test_left_out_words_are_quoted_from_the_transcript_only():
+    assert automatic_editor.span_words(segments(), 1000, 2200) == 'He admits he'
+    assert automatic_editor.span_words(segments(), 1000, 4700) == 'He admits he does…'
+    assert automatic_editor.span_words(segments(), 4700, 8000) is None  # a pause: no words
+    assert automatic_editor.span_words(segments(), 1000, 1300) is None  # too short to list

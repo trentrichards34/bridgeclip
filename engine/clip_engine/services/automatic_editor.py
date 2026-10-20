@@ -288,6 +288,56 @@ def _json_file(run, name, limit=32 * 1024 * 1024):
         return None
 
 
+# A start or end moved by less than this is the cut snapping to words (edit-log.ts EDGE_MIN_MS): no words are quoted.
+EDGE_MIN_MS = 400
+QUOTE_WORDS = 4
+
+
+def span_words(segments, start_ms, end_ms):
+    """Up to QUOTE_WORDS words said between start_ms and end_ms (a word counts when its middle is inside), '…' when there are more."""
+    if end_ms - start_ms < EDGE_MIN_MS:
+        return None
+    words = []
+    for segment in segments:
+        if segment.end_time_ms <= start_ms or segment.start_time_ms >= end_ms:
+            continue
+        for word in segment.words or []:
+            middle = (word.start_time_ms + word.end_time_ms) / 2
+            text = ' '.join(str(word.word or '').split())
+            if start_ms <= middle < end_ms and text and not any(ord(c) < 32 for c in text):
+                words.append(text)
+    if not words:
+        return None
+    return utf16_prefix(' '.join(words[:QUOTE_WORDS]) + ('…' if len(words) > QUOTE_WORDS else ''), 120)
+
+
+def auto_baseline(clip, audit_entry, ranges, how, segments, candidate, duration_ms):
+    """What the run's automatic pass did to this clip, for the editor's "What changed" list (edit-log.ts).
+
+    The cut is only recorded when the run saved it (not worked out again), and the
+    picked moment is the planner's interval before Jev moved its edges (edit_audit.json),
+    else the clip's own start and end.
+    """
+    baseline = {'hook': candidate['hook']['text'] if candidate.get('hook') else None, 'captions': bool(candidate['captions']),
+                'caption_preset': candidate['caption_preset'],
+                'split_at': [s['at_ms'] for s in candidate['scenes'] if s.get('layout') == 'split']}
+    if how != 'recorded':
+        return baseline
+    baseline['ranges'] = [list(r) for r in ranges]
+    interval = (audit_entry or {}).get('original_interval')
+    if not (isinstance(interval, list) and len(interval) == 2 and all(_int(n) for n in interval)):
+        interval = [clip['start_time_ms'], clip['end_time_ms']]
+    a, b = max(0, round(interval[0])), min(duration_ms, round(interval[1]))
+    if b - a < MIN_RANGE_MS:
+        return baseline
+    baseline['moment'] = [a, b]
+    if (before := span_words(segments, a, ranges[0][0])):
+        baseline['before_words'] = before
+    if (after := span_words(segments, ranges[-1][1], b)):
+        baseline['after_words'] = after
+    return baseline
+
+
 def build_candidates(run, output, settings, segments, w, h, duration_ms, padding):
     """One baked candidate per saved clip (at most 100), in clip order."""
     from clip_engine.services.caption_translation import CAPTION_LANGUAGES
@@ -337,6 +387,7 @@ def build_candidates(run, output, settings, segments, w, h, duration_ms, padding
                 validate_candidate(c, duration_ms, len(segments))
             except (ValueError, TypeError, KeyError):
                 continue
+        c['auto'] = auto_baseline(clip, audit_entries.get(index), ranges, how, segments, c, duration_ms)
         if how == 'estimated' or (how == 'natural' and settings['pacing'] == 'tight'
                                   and (entry or {}).get('render_fallback') != 'letterbox_natural'):
             notes['estimated'] += 1
