@@ -51,6 +51,8 @@ export interface CreateStyle {
   backgroundVideo: string | null
   broll: 'off' | 'after-hook' | 'full'
   hookPreview: boolean
+  /** Motion graphics: Auto (Automatic runs). Off until the member turns it on once. */
+  motionGraphics: boolean
   qualityBar: QualityBar
   headlineVoice: HeadlineVoice
   /** The brand whose niche, voice and offer guide the titles, and whose handle can be drawn. */
@@ -126,7 +128,7 @@ export const MAX_SAMPLE_VIDEO_LINK = 2048
 
 export const CREATE_STYLE_KEYS = [
   'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
-  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'headlineVoice',
+  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'motionGraphics', 'qualityBar', 'headlineVoice',
   'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'captionLanguage'
 ] as const satisfies readonly (keyof CreateStyle)[]
 
@@ -181,6 +183,7 @@ const CREATE_CHECKS: { [K in keyof CreateStyle]: (value: unknown) => boolean } =
   backgroundVideo: nullOr(isBackgroundVideoName),
   broll: oneOf(['off', 'after-hook', 'full']),
   hookPreview: bool,
+  motionGraphics: bool,
   qualityBar: oneOf(QUALITY_BARS),
   headlineVoice: oneOf(HEADLINE_VOICES),
   brandIdentityId: nullOr(isBrandId),

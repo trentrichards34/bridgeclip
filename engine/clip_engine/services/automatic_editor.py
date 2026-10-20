@@ -23,6 +23,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from clip_engine.services.auto_graphics import checked_saved
 from clip_engine.services.manual_editor import (
     MAX_HOOK_CHARS, EditorError, atomic_json, default_crop, failure_code, local_file, media_name, read_json,
     scene_for_shot, source_info, utf16_prefix, validate_candidate, validate_candidate_list,
@@ -324,7 +325,9 @@ def build_candidates(run, output, settings, segments, w, h, duration_ms, padding
              'captions': captions, 'caption_preset': settings['caption_preset'], 'video_speed': settings['video_speed'],
              'exports': [index], 'review': None, 'status': 'baked', 'caption_edits': [], 'caption_suppression_ranges': [],
              'hook': hook, 'cta_id': cta['id'] if cta and isinstance(cta.get('id'), str) and CTA_ID.fullmatch(cta['id']) else None,
-             'library_clip': index, **({'caption_language': language} if language else {})}
+             'library_clip': index, **({'caption_language': language} if language else {}),
+             # Motion graphics the run drew on the clip (Motion graphics: Auto), editable in the Graphics row.
+             **({'graphics': graphics} if (graphics := checked_saved((entry or {}).get('graphics'), duration_ms)) else {})}
         try:
             validate_candidate(c, duration_ms, len(segments))
         except (ValueError, TypeError, KeyError):

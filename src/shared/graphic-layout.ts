@@ -6,7 +6,9 @@
  * Rule: a graphic never covers the hook at the top or the captions. "Top" sits
  * just under the hook; "Bottom" sits just above the captions (or near the
  * bottom of the frame when captions are off or high up); "Middle" is centered
- * in the free space between them.
+ * in the free space between them. The member's handle (an Automatic run's
+ * brand mark) is kept clear too: a top corner pushes "Top" down, a bottom
+ * corner pushes "Bottom" up.
  */
 import { sceneAt, type CandidateEdit, type EditorProject } from './clip-editor'
 import { HEADLINE_FONTS, isHexColor } from './headline-look'
@@ -48,15 +50,20 @@ export interface GraphicFrame {
   hook: number
   /** The captions' anchor, or null when captions are off. */
   captions: { y: number; bottom: boolean } | null
+  /** The member's handle in a top or bottom corner (absent: none). */
+  handle?: 'top' | 'bottom' | null
 }
+
+/** Share of the height a corner handle takes, with its margin (brand_mark.py: about 4% tall). */
+const HANDLE_SHARE = .06
 
 /** The vertical band (fractions of the height) a graphic with this placement sits in. */
 export function graphicBox(placement: GraphicPlacement, frame: GraphicFrame): { top: number; bottom: number } {
   const wide = frame.aspect === '16:9'
   const h = wide ? .4 : frame.aspect === '1:1' ? .34 : .27
   // Platform buttons and captions sit along the very top and bottom of the screen.
-  const topSafe = frame.hook ? frame.hook + .02 : wide ? .06 : .08
-  const bottomSafe = wide ? .94 : .86
+  const topSafe = (frame.hook ? frame.hook + .02 : wide ? .06 : .08) + (frame.handle === 'top' ? HANDLE_SHARE : 0)
+  const bottomSafe = (wide ? .94 : .86) - (frame.handle === 'bottom' ? HANDLE_SHARE : 0)
   let free: [number, number][] = [[topSafe, bottomSafe]]
   if (frame.captions) {
     const c = frame.captions
@@ -85,17 +92,27 @@ export function graphicStyle(candidate: Pick<CandidateEdit, 'hook'>, graphic?: P
   return { color, font }
 }
 
+/** Where an Automatic run's handle sits (top or bottom corner), or null. */
+export function handleEdge(project: Pick<EditorProject, 'automatic'>): 'top' | 'bottom' | null {
+  const mark = project.automatic?.brand_mark
+  return mark ? mark.position.startsWith('top') ? 'top' : 'bottom' : null
+}
+
 /**
  * What to draw for one graphic on this clip, or null when the cut leaves it
  * (almost) nothing on screen. `image` is filled by the caller (it knows how
- * the page may load the file).
+ * the page may load the file). `extra.top`: something else drawn at the top
+ * the project doesn't describe (an Automatic run's title card), as a share of
+ * the height; the graphic stays below it.
  */
-export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width' | 'height'>, candidate: CandidateEdit, graphic: EditorGraphic): GraphicRenderSpec | null {
+export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width' | 'height' | 'automatic'>, candidate: CandidateEdit, graphic: EditorGraphic, extra: { top?: number } = {}): GraphicRenderSpec | null {
   const window = graphicWindow(candidate, graphic)
   if (!window) return null
   const { width, height } = outputSize(project.aspect_ratio)
   const at = Math.max(graphic.at_ms, candidate.ranges[0][0])
-  const frame: GraphicFrame = { aspect: project.aspect_ratio, hook: hookShare(candidate, project.aspect_ratio), captions: candidate.captions ? captionAnchorAt(project, candidate, at) : null }
+  const top = Math.max(0, Math.min(.4, extra.top ?? 0))
+  const frame: GraphicFrame = { aspect: project.aspect_ratio, hook: Math.max(hookShare(candidate, project.aspect_ratio), top),
+    captions: candidate.captions ? captionAnchorAt(project, candidate, at) : null, handle: handleEdge(project) }
   const fields = { ...graphic.fields }
   delete fields.image
   delete fields.color

@@ -96,6 +96,9 @@ class ClipPlanSegment:
     # reason, from the planner. None when it gave none (older models, longform plans).
     screen_focus: Optional[str] = None
     screen_focus_reason: Optional[str] = None
+    # Motion graphics: Auto (see auto_graphics): the planner's suggested card moments for the clip (source ms,
+    # shape-checked only). The words are checked against the transcript after rendering.
+    graphics: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -345,12 +348,20 @@ _CHAPTER_SCHEMA: dict[str, Any] = {
 }
 
 
-def clip_plan_schema(longform: bool) -> dict[str, Any]:
-    """Planner output schema; longform clips also carry skips, chapters and a description."""
-    if not longform:
+def clip_plan_schema(longform: bool, graphics: bool = False) -> dict[str, Any]:
+    """Planner output schema; longform clips also carry skips, chapters and a description.
+
+    With motion graphics on (Automatic runs), every clip also lists 0-3 card moments (auto_graphics)."""
+    if not longform and not graphics:
         return CLIP_PLAN_SCHEMA
     schema = copy.deepcopy(CLIP_PLAN_SCHEMA)
     item = schema["properties"]["clips"]["items"]
+    if graphics:
+        from clip_engine.services.auto_graphics import graphics_schema
+        item["properties"]["graphics"] = graphics_schema()
+        item["required"] = [*item["required"], "graphics"]
+    if not longform:
+        return schema
     # Longform edits are 16:9, framed whole: no screen share framing.
     for name in ("screen_focus", "screen_focus_reason"):
         item["properties"].pop(name)
@@ -581,6 +592,7 @@ class IntelligencePlannerService:
         brand_identity: Optional[str] = None,
         brand_name: Optional[str] = None,
         headline_voice: Optional[str] = None,
+        motion_graphics: bool = False,
     ) -> ClipPlanResponse:
         """
         Plan viral clips from video content.
@@ -618,6 +630,8 @@ class IntelligencePlannerService:
                 ([start_ms, end_ms] pairs); new clips must not repeat them.
             output_language: Write titles, headlines, descriptions and tags in
                 this language (captions are translated separately).
+            motion_graphics: Also suggest 0-3 motion graphic moments per clip
+                (Automatic runs with "Motion graphics: Auto"), in the same call.
 
         Returns:
             ClipPlanResponse with identified clips
@@ -735,6 +749,8 @@ class IntelligencePlannerService:
                 logger.info(f"Oversampling candidates for framework grading: {clip_count} -> {requested}")
                 clip_count = requested
         self._current_longform = longform
+        # Card moments need the words said: only with a transcript.
+        self._motion_graphics = bool(motion_graphics) and bool(transcript)
         if longform:
             logger.info("Planning longform edits (16:9, 5+ minute clips)")
 
@@ -779,6 +795,9 @@ class IntelligencePlannerService:
         system_prompt += exclusion_rule(exclude_ranges_ms) + output_language_rule(output_language) + headline_voice_rule(headline_voice)
         if not longform:
             system_prompt += SCREEN_FOCUS_RULE
+        if self._motion_graphics:
+            from clip_engine.services.auto_graphics import MOTION_GRAPHICS_RULE
+            system_prompt += MOTION_GRAPHICS_RULE
         if getattr(self, "_brand_identity", None):
             system_prompt += BRAND_IDENTITY_RULE
         if transcript:
@@ -1407,7 +1426,7 @@ Do not overlap clips by more than 5 seconds."""
             "messages": messages,
             "max_tokens": self.settings.planner_max_output_tokens,
             "response_format": json_schema_format(
-                "clip_plan", clip_plan_schema(getattr(self, "_current_longform", False)),
+                "clip_plan", clip_plan_schema(getattr(self, "_current_longform", False), getattr(self, "_motion_graphics", False)),
             ),
             # Repairs near-miss JSON (trailing commas, stray fences) server-side.
             "plugins": [{"id": "response-healing"}],
@@ -1752,6 +1771,7 @@ Do not overlap clips by more than 5 seconds."""
                 moment=self._moment_hint(clip, transcript),
                 **self._screen_focus(clip),
             )
+            segment.graphics = self._graphics(clip, start_time_ms, end_time_ms)
             if getattr(self, "_current_longform", False):
                 segment.skip_ranges_ms = self._clean_skips(
                     clip.get("skip"), start_time_ms, end_time_ms, min_duration * 1000, transcript,
@@ -1765,6 +1785,13 @@ Do not overlap clips by more than 5 seconds."""
                     segment.description = description.strip()[:1500]
             clips.append(segment)
         return clips
+
+    def _graphics(self, clip: dict, start_ms: int, end_ms: int) -> list[dict]:
+        """The clip's suggested motion graphic moments (only when they were asked for), shape-checked."""
+        if not getattr(self, '_motion_graphics', False):
+            return []
+        from clip_engine.services.auto_graphics import parse_planned
+        return parse_planned(clip.get('graphics'), start_ms, end_ms)
 
     @staticmethod
     def _screen_focus(clip: dict) -> dict:
@@ -1850,6 +1877,7 @@ Do not overlap clips by more than 5 seconds."""
                 summary=summary or None, headline=clean_headline(clip.get('headline')), tags=clip.get('tags', []),
                 emphasis_words=[w for w in clip.get('emphasis', []) if isinstance(w, str)][:5] if transcript else [],
                 **self._screen_focus(clip))
+            segment.graphics = self._graphics(clip, start_ms, end_ms)
             if getattr(self, '_current_longform', False):
                 segment.skip_ranges_ms = self._clean_skips(clip.get('skip'), start_ms, end_ms, 0, transcript)
                 segment.chapters = self._clean_chapters(clip.get('chapters'), start_ms, end_ms, segment.skip_ranges_ms, segment.summary)

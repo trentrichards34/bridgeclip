@@ -20,6 +20,7 @@ import { finishRunRecord, type StoredRunStatus } from './run-history'
 import { resolveBinary } from './tools'
 import { resolveBackground } from './backgrounds'
 import { applyRunCta, readCta } from './ctas'
+import { applyRunGraphics, graphicsNotice } from './auto-graphics'
 import { refreshReusePlan, type ReusePlan } from './more-clips'
 import { brandForJob } from './brands'
 import { readFile } from 'fs/promises'
@@ -535,6 +536,7 @@ export function startClipJob(
     ...(backgroundPath ? { background_video_path: backgroundPath } : {}),
     ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook' } : {}),
     ...(config.hookPreview ? { hook_preview: true } : {}),
+    ...(config.motionGraphics && config.workflow !== 'review' ? { motion_graphics: true } : {}),
     quality_bar: config.qualityBar ?? 'b',
     headline_voice: config.headlineVoice ?? 'clipper',
     ...(config.captionLanguage ? { caption_language: config.captionLanguage } : {}),
@@ -616,6 +618,8 @@ export function startClipJob(
   let pendingOutput: JobOutput | null = null
   /** Shown when the run's call to action couldn't be added to every clip. */
   let ctaNotice: string | null = null
+  /** Shown when some motion graphics couldn't be drawn. */
+  let graphicsNote: string | null = null
   const startedAt = Date.now()
 
   const MAX_BRIDGE_LINE_BYTES = 1024 * 1024
@@ -743,14 +747,38 @@ export function startClipJob(
   child.on('close', (code, signal) => {
     engineLog.close()
     const ctaId = config.ctaId
-    if (!ctaId || code !== 0 || !pendingOutput || errored || cancelledJobs.has(jobId)) { finishClose(code, signal); return }
-    // The run's call to action goes on every clip before the run is shown as done
+    const graphics = config.motionGraphics === true && config.workflow !== 'review'
+    if ((!ctaId && !graphics) || code !== 0 || !pendingOutput || errored || cancelledJobs.has(jobId)) { finishClose(code, signal); return }
+    // Motion graphics, then the run's call to action, go on the clips before the run is shown as done
     // (it stays live meanwhile, so nothing else can change these clips).
     void (async () => {
       const run = join(settings.outputDirectory, jobId)
-      // Cancel stops the CTA step too (see cancelJob): the clip in progress is dropped, the rest stay as made.
+      // Cancel stops these steps too (see cancelJob): the clip in progress is left as made.
       const abort = new AbortController()
       ctaSteps.set(jobId, abort)
+      if (graphics) {
+        try {
+          const step = (text: string, done: number, total: number): void => send('job:progress', { type: 'progress', jobId, status: 'rendering',
+            step: text, stages: [], percent: 99, clips_done: done, clips_total: total })
+          const result = await applyRunGraphics(run, {
+            python: pythonPath, script: join(dirname(bridgePath), 'graphics_runner.py'), cwd: enginePath, library: settings.outputDirectory,
+            env: { ...runtimeEnvironment(), PYTHONPATH: enginePath, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1', PATH: spawnEnv.PATH }
+          }, { signal: abort.signal, onProgress: (phase, done, total) => {
+            if (total && done < total) step(phase === 'draw' ? `Drawing motion graphics (${done + 1} of ${total})` : `Adding motion graphics to clip ${done + 1} of ${total}`, done, total)
+          } })
+          graphicsNote = graphicsNotice(result)
+          if (result.clips) logger.info('job.graphics.done', { jobId, clips: result.clips, applied: result.applied, failed: result.failed.length, cancelled: result.cancelled })
+        } catch (error) {
+          logger.warn('job.graphics.skipped', { jobId, message: String((error as Error)?.message ?? error).slice(0, 200) })
+          graphicsNote = 'Done, without motion graphics: they could not be added. Add graphics to any clip in the editor.'
+        }
+      }
+      if (!ctaId || abort.signal.aborted) {
+        if (ctaId) ctaNotice = 'Done. You stopped before the call to action was added. Add it from the Library (⋯ → Add call to action).'
+        ctaSteps.delete(jobId)
+        finishClose(code, signal)
+        return
+      }
       try {
         const total = pendingOutput?.clips.length ?? 0
         const progress = (done: number): void => send('job:progress', { type: 'progress', jobId, status: 'rendering',
@@ -796,7 +824,8 @@ export function startClipJob(
     if (code === 0 && pendingOutput) {
       completed = true
       finishHistory('completed')
-      send('job:complete', { type: 'result', status: 'completed', jobId, job_id: jobId, output: pendingOutput, ...(ctaNotice ? { step: ctaNotice } : {}) })
+      const note = [graphicsNote, ctaNotice].filter(Boolean).join(' ').replace(/(?<=\.) Done[.,] /g, ' ')
+      send('job:complete', { type: 'result', status: 'completed', jobId, job_id: jobId, output: pendingOutput, ...(note ? { step: note } : {}) })
       return
     }
 

@@ -62,6 +62,8 @@ export interface ClipDraft {
   broll: 'off' | 'after-hook' | 'full'
   /** Hook preview (Automatic): open with the clip's strongest line. */
   hookPreview: boolean
+  /** Motion graphics: Auto (Automatic): up to 3 animated cards per clip from what's said. Off until turned on (then remembered). */
+  motionGraphics: boolean
   /** Framework grading bar: keep clips graded at or above it. */
   qualityBar: QualityBar
   /** Whose video it is: headlines in the creator's own voice, or a clipper's third person. */
@@ -121,6 +123,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   backgroundVideo: null,
   broll: 'off',
   hookPreview: false,
+  motionGraphics: false,
   qualityBar: 'b',
   headlineVoice: 'clipper',
   captionLanguage: 'original',
