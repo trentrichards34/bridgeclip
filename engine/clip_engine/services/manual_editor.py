@@ -643,10 +643,16 @@ async def run_editor(config, progress=None):
         done = next((x for x in output['clips'] if x.get('editor_candidate') == c['id'] and x.get('editor_revision') == project['revision']
                      and (x['clip_index'] == target if target is not None else x['clip_index'] not in c['exports'])
                      and (run / f"clip_{x['clip_index']:02d}.mp4").is_file()), None)
+        # Motion graphics main rendered for this clip (checked again against the finished length).
+        graphics = config.get('graphics')
+        if graphics is not None:
+            from clip_engine.services.graphics_overlay import checked_graphics
+            with failure_code('invalid_edit'):
+                checked_graphics(run, graphics, 10 ** 9)
         if done:
             index = done['clip_index']
         else:
-            index, usage = await export_clip(run, project, c, output, source, transcript, replace_index=target)
+            index, usage = await export_clip(run, project, c, output, source, transcript, replace_index=target, graphics=graphics)
         if target is None:
             c.pop('library_clip', None)  # Its Library clip was deleted: this export is a new clip.
         if index not in c['exports']:
@@ -739,7 +745,7 @@ def attach_usage(error, usage):
     return error
 
 
-async def export_clip(run, project, c, output, source, transcript, replace_index=None):
+async def export_clip(run, project, c, output, source, transcript, replace_index=None, graphics=None):
     """Render one ready candidate: a new Library clip, or (an Automatic run's clip) its replacement in place.
 
     Returns (clip index, translation usage or None). A failure after a paid translation carries its usage.
@@ -767,7 +773,7 @@ async def export_clip(run, project, c, output, source, transcript, replace_index
     translations, usage = await translated_captions(c, render_transcript, a, b)
     try:
         return await render_export(run, project, c, output, source, render_transcript, replace_index, index, renderer,
-                                   a, b, hook, hook_options, extras, translations, usage)
+                                   a, b, hook, hook_options, extras, translations, usage, graphics)
     except BaseException as error:
         # The translation was paid for even when the render fails or is cancelled.
         attach_usage(error, usage)
@@ -775,7 +781,7 @@ async def export_clip(run, project, c, output, source, transcript, replace_index
 
 
 async def render_export(run, project, c, output, source, render_transcript, replace_index, index, renderer,
-                        a, b, hook, hook_options, extras, translations, usage):
+                        a, b, hook, hook_options, extras, translations, usage, graphics=None):
     from clip_engine.config import get_caption_preset
     language = {'caption_translations': translations, 'caption_language': c['caption_language']} if translations else {}
     path = run / f'clip_{index:02d}.mp4'
@@ -791,6 +797,9 @@ async def render_export(run, project, c, output, source, render_transcript, repl
             apply_padding=False, aspect_ratio=project['aspect_ratio'], pacing='natural', video_speed=c['video_speed'],
             manual_ranges_ms=[tuple(interval) for interval in c['ranges']], manual_plan=manual_plan(project, c, cover=bool(hook)),
             write_subtitles=replace_index is not None, **hook_options, **extras, **language))
+        if graphics:
+            from clip_engine.services.graphics_overlay import checked_graphics, overlay_graphics
+            await overlay_graphics(renderer, result.output_path, checked_graphics(run, graphics, result.duration_ms))
         if replace_index is None:
             os.replace(result.output_path, path)
             output['clips'].append({'clip_index': index, 's3_url': str(path), 'duration_ms': result.duration_ms,

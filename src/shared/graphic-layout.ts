@@ -68,11 +68,11 @@ export function graphicBox(placement: GraphicPlacement, frame: GraphicFrame): { 
   const pool = roomy.length ? roomy : free
   if (placement === 'top') { const [a, b] = pool[0]; return { top: a, bottom: Math.min(b, a + h) } }
   if (placement === 'bottom') { const [a, b] = pool[pool.length - 1]; return { top: Math.max(a, b - h), bottom: b } }
-  // Middle: the free space overlapping the frame's middle most, centered as near the middle as it allows.
+  // Middle: centered in the free space that overlaps the frame's middle most.
   const overlap = ([a, b]: [number, number]): number => Math.min(b, .5 + h / 2) - Math.max(a, .5 - h / 2)
   const [a, b] = [...pool].sort((x, y) => overlap(y) - overlap(x) || (y[1] - y[0]) - (x[1] - x[0]))[0]
   if (b - a <= h) return { top: a, bottom: b }
-  const center = Math.max(a + h / 2, Math.min(b - h / 2, .5))
+  const center = (a + b) / 2
   return { top: center - h / 2, bottom: center + h / 2 }
 }
 

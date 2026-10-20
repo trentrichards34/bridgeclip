@@ -11,6 +11,7 @@ import { getJobOutput } from './file-manager'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment } from './pipeline-runner'
 import { resolveBinary } from './tools'
 import { logger } from './logger'
+import { importGraphicImage, renderCandidateGraphics, sweepGraphicRenders, type RenderedGraphic } from './graphics-render'
 
 type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source' | 'suggest-hooks' | 'prepare'
 interface EditorOperation { progress?: EditorSession['progress']; action: NonNullable<EditorSession['operation']>; child?: ChildProcess; cancelled?: boolean; abort?: AbortController; batch?: EditorBatch }
@@ -212,6 +213,8 @@ export async function saveEditor(path: unknown, revision: unknown, edits: unknow
       const edit = clean.find((e) => e.id === c.id)
       if (!edit) throw new Error('Candidate is missing')
       const next = { ...c, ...edit }
+      // Graphics absent from the edit means none (undo back to before the first one): don't keep the stored ones.
+      if (edit.graphics === undefined) delete next.graphics
       // A changed call to action is the member's choice: a re-bake keeps it over the Library clip's.
       if (ctaChoice(edit.cta_id) !== ctaChoice(c.cta_id)) next.cta_edited = true
       if (edit.status === 'baked') {
@@ -399,9 +402,19 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
         const exporting = action === 'export' || action === 'export-all'
         const work = async (): Promise<void> => {
           const libraryCta = exporting ? await libraryClipCta(run, candidate) : undefined
+          // Motion graphics are drawn first (offscreen, cached in the run's .graphics/), then layered by the engine.
+          let graphics: RenderedGraphic[] = []
+          if (exporting && candidate.graphics?.length) {
+            try { graphics = await renderCandidateGraphics(run, session.project, candidate, () => !!operation.cancelled) } catch (error) {
+              if (operation.cancelled) throw new Error(editorFailureMessage('export', 'cancelled'))
+              logger.warn('editor.graphics.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
+              throw new Error("Could not draw this clip's graphics. Your edits are saved. Try again, or remove a graphic and bake again.")
+            }
+          }
           let result: WorkerResult
           try {
-            result = await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId })
+            result = await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId,
+              ...(graphics.length ? { graphics: graphics.map(({ file, start_ms, duration_ms }) => ({ file, start_ms, duration_ms })) } : {}) })
           } catch (error) {
             // A render that failed after its captions were translated still spent that call; so did a review that failed part way.
             const failedResult = (error as WorkerFailure).result
@@ -415,6 +428,8 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
             // Translated captions (a clip from an Automatic run in another caption language) cost one OpenRouter call.
             await recordEditorCost(run, result, 'editor_caption_translation', true)
             if (!operation.cancelled) await addExportCta(run, candidate.id, libraryCta)
+            // Renders no clip uses any more are removed (they are made again if undo brings a graphic back).
+            if (graphics.length) { try { sweepGraphicRenders(run, readProject(run)) } catch { /* best effort */ } }
           }
         }
         if (exporting) await runExclusive(run, work)
@@ -599,6 +614,17 @@ export async function suggestEditorHooks(path: unknown, revision: unknown, candi
     operation.child = undefined
     operations.delete(run)
   }
+}
+
+/**
+ * A picture for a graphic (Logo pop), chosen in main's file dialog: checked and
+ * copied into the run's .graphics/images/. Returns its name for the graphic's
+ * `image` field.
+ */
+export function addEditorGraphicImage(path: unknown, file: unknown): string {
+  const run = runPath(path)
+  assertAbsolutePath(file)
+  return importGraphicImage(run, file)
 }
 
 // Keep IPC's editable surface narrow; no media paths, reviews or export records come from React.

@@ -1,0 +1,226 @@
+// Motion graphics: the shared contract's helpers (source → output time, parsing, layout) and main's offscreen
+// render (sandboxed window options, cache by content, image import checks).
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const { execFileSync } = require('node:child_process')
+const { loadMain, tempDir, fakeElectron } = require('../zernio/support/load-main.cjs')
+const fixture = require('../fixtures/editor/project.json')
+
+const mg = loadMain("export * from './src/shared/motion-graphics'; export * from './src/shared/graphic-layout'; export { parseCandidateEdit, candidateEdit, renderEditKey, refineEdit } from './src/shared/clip-editor'")
+const clip = (over = {}) => ({ ...structuredClone(fixture.candidates[0]), ...over })
+
+test('source time maps through the cuts and the export speed; cut-out parts of a graphic are dropped', () => {
+  // Cuts [1000,5000] and [7000,10000] at 1.25×.
+  const c = clip()
+  assert.equal(mg.outputTime(c, 1000), 0)
+  assert.equal(mg.outputTime(c, 3500), 2000)
+  assert.equal(mg.outputTime(c, 6000), null)
+  assert.equal(mg.outputTime(c, 7000), 3200)
+  // Inside one cut.
+  assert.deepEqual(mg.graphicWindow(c, { at_ms: 2000, duration_ms: 2500 }), { start_ms: 800, duration_ms: 2000 })
+  // Across the gap: 4000–5000 and 7000–8000 are kept and play back to back.
+  assert.deepEqual(mg.graphicWindow(c, { at_ms: 4000, duration_ms: 4000 }), { start_ms: 2400, duration_ms: 1600 })
+  // Starts in the gap: begins where the next cut does.
+  assert.deepEqual(mg.graphicWindow(c, { at_ms: 6000, duration_ms: 2000 }), { start_ms: 3200, duration_ms: 800 })
+  // Wholly cut out, or under 0.4 s left: dropped.
+  assert.equal(mg.graphicWindow(c, { at_ms: 5200, duration_ms: 1500 }), null)
+  assert.equal(mg.graphicWindow(c, { at_ms: 4700, duration_ms: 1000 }), null)
+  assert.deepEqual(mg.graphicWindow({ ...c, video_speed: 1 }, { at_ms: 4500, duration_ms: 1000 }), { start_ms: 3500, duration_ms: 500 })
+  assert.equal(mg.graphicWindow({ ...c, video_speed: 1 }, { at_ms: 4700, duration_ms: 1000 }), null)
+  assert.deepEqual(mg.graphicWindow({ ...c, video_speed: 1 }, { at_ms: 4500, duration_ms: 3000 }), { start_ms: 3500, duration_ms: 1000 })
+  // How far into its animation a graphic is at a source time.
+  const g = { at_ms: 4000, duration_ms: 4000 }
+  assert.equal(mg.graphicLocalMs(c, g, 4000), 0)
+  assert.equal(mg.graphicLocalMs(c, g, 7500), 1200)
+  assert.equal(mg.graphicLocalMs(c, g, 6000), null)
+  assert.equal(mg.graphicLocalMs(c, g, 8100), null)
+})
+
+test('graphics parse with the clip, save when removed, and send a clip back to refining', () => {
+  const g = mg.newGraphic('stat', 2000, { fields: { value: '$1,200/month', label: 'a month' } })
+  assert.match(g.id, /^g-[a-f0-9]{10}$/)
+  assert.deepEqual([g.duration_ms, g.placement, g.origin], [3500, 'top', 'member'])
+  const c = clip({ graphics: [g] })
+  const parsed = mg.parseCandidateEdit(c, 12000)
+  assert.deepEqual(parsed.graphics, [g])
+  assert.deepEqual(mg.candidateEdit({ ...parsed, graphics: [] }).graphics, [])
+  // Legacy clips keep their render key; an empty list is the same render as none.
+  const legacy = clip()
+  assert.equal(mg.renderEditKey({ ...legacy, graphics: [] }), mg.renderEditKey(legacy))
+  assert.notEqual(mg.renderEditKey(c), mg.renderEditKey(legacy))
+  assert.equal(mg.refineEdit({ ...legacy, status: 'ready' }, { graphics: [g] }).status, 'refining')
+  for (const bad of [[{ ...g, template: 'confetti' }], [{ ...g, duration_ms: 100 }], [{ ...g, id: 'X' }], [g, g], [{ ...g, fields: { image: '../x.png' } }]]) {
+    assert.throws(() => mg.parseCandidateEdit(clip({ graphics: bad }), 12000))
+  }
+})
+
+test('helpers keep graphics inside the clip, merge field edits and respect the limit', () => {
+  const c = clip({ graphics: [] })
+  let list = mg.withGraphic(c, mg.newGraphic('title', 50, { fields: { text: 'Hello there' } }))
+  assert.equal(list[0].at_ms, 1000) // moved to the clip's start
+  list = mg.withGraphic({ ...c, graphics: list }, mg.newGraphic('quote', 9900, { duration_ms: 3000 }))
+  assert.deepEqual([list[1].at_ms, list[1].duration_ms], [7000, 3000])
+  const id = list[0].id
+  list = mg.updateGraphic({ ...c, graphics: list }, id, { duration_ms: 99999, fields: { text: 'New words', color: '#ff0000' } })
+  assert.deepEqual([list[0].duration_ms, list[0].fields.text, list[0].fields.color], [8000, 'New words', '#ff0000'])
+  assert.equal(mg.removeGraphic({ graphics: list }, id).length, 1)
+  const full = { ...c, graphics: Array.from({ length: 12 }, (_, i) => mg.newGraphic('title', 1000 + i)) }
+  assert.throws(() => mg.withGraphic(full, mg.newGraphic('title', 2000)), /up to 12/)
+  assert.equal(mg.graphicHasContent({ template: 'stat', fields: {} }), false)
+  assert.equal(mg.graphicHasContent({ template: 'list', fields: { items: '\n  \nOne' } }), true)
+  assert.deepEqual(mg.graphicItems('a\n\n b \nc\nd\ne\nf'), ['a', 'b', 'c', 'd', 'e'])
+})
+
+test('stat values count up keeping their prefix, separators, decimals and unit', () => {
+  const money = mg.parseStatValue('$1,200/month')
+  assert.deepEqual(money, { prefix: '$', number: 1200, decimals: 0, commas: true, suffix: '/month' })
+  assert.equal(mg.formatStatValue(money, 0), '$0/month')
+  assert.equal(mg.formatStatValue(money, .5), '$600/month')
+  assert.equal(mg.formatStatValue(money, 1), '$1,200/month')
+  assert.equal(mg.formatStatValue(mg.parseStatValue('15 billion'), .4), '6 billion')
+  assert.equal(mg.formatStatValue(mg.parseStatValue('25%'), 1), '25%')
+  assert.equal(mg.formatStatValue(mg.parseStatValue('3.5x faster'), .5), '1.8x faster')
+  assert.equal(mg.formatStatValue(mg.parseStatValue('12,500,000 views'), 1), '12,500,000 views')
+  assert.equal(mg.parseStatValue('No number here'), null)
+})
+
+test('graphic bands stay clear of the hook and the captions', () => {
+  const frame = { aspect: '9:16', hook: .19, captions: { y: 1340 / 1920, bottom: false } }
+  const top = mg.graphicBox('top', frame), middle = mg.graphicBox('middle', frame), bottom = mg.graphicBox('bottom', frame)
+  for (const box of [top, middle, bottom]) {
+    assert.ok(box.top >= .21 - 1e-9, `below the hook: ${JSON.stringify(box)}`)
+    assert.ok(box.bottom <= 1340 / 1920 - .075, `above the captions: ${JSON.stringify(box)}`)
+  }
+  assert.ok(top.top < middle.top && middle.top < bottom.top)
+  // Captions off: the bottom band sits near the bottom of the frame.
+  assert.ok(mg.graphicBox('bottom', { ...frame, captions: null }).bottom > .8)
+  // Captions moved to the top: the top band goes under them.
+  assert.ok(mg.graphicBox('top', { ...frame, captions: { y: .3, bottom: false } }).top >= .375)
+  // Landscape: no hook, captions at the bottom.
+  const wide = mg.graphicBox('bottom', { aspect: '16:9', hook: 0, captions: { y: 1 - 100 / 1080, bottom: true } })
+  assert.ok(wide.bottom <= 1 - 100 / 1080 - .13 && wide.top > .3)
+})
+
+test('a render spec uses the clip\'s output time, size, band, brand color and hook font', () => {
+  const project = { aspect_ratio: '9:16', width: 1920, height: 1080 }
+  const g = mg.newGraphic('stat', 2000, { fields: { value: '25%', color: 'nope' } })
+  const c = clip({ graphics: [g], hook: { text: 'A two line hook for this clip', look: { look: 'brand', color: '#16a34a', font: 'condensed' } } })
+  const spec = mg.graphicSpec(project, c, g)
+  assert.deepEqual([spec.width, spec.height, spec.duration_ms, spec.color, spec.font, spec.fields.color], [1080, 1920, 2400, '#16A34A', 'condensed', undefined])
+  assert.equal(mg.graphicSpec(project, c, { ...g, at_ms: 5100, duration_ms: 1500 }), null)
+  assert.equal(mg.graphicStyle(clip(), { fields: { color: '#abcdef' } }).color, '#ABCDEF')
+  assert.equal(mg.graphicStyle(clip()).color, mg.GRAPHIC_DEFAULT_COLOR)
+})
+
+function renderModule(t, dir) {
+  const windows = []
+  class FakeWindow {
+    constructor(options) { this.options = options; this.destroyed = false; windows.push(this); this.events = {}
+      this.webContents = {
+        setFrameRate: () => {}, setWindowOpenHandler: (fn) => { this.openHandler = fn }, on: (name, fn) => { this.events[name] = fn },
+        executeJavaScript: async (code) => code.startsWith('window.__graphic.load') ? true : true,
+        capturePage: async () => ({ getSize: () => ({ width: 1080, height: 1920 }), toPNG: () => PNG })
+      } }
+    setContentSize(w, h) { this.size = [w, h] }
+    async loadFile(file) { this.loaded = file }
+    async loadURL(url) { this.loaded = url }
+    isDestroyed() { return this.destroyed }
+    destroy() { this.destroyed = true }
+  }
+  const requests = []
+  const session = { webRequest: { onBeforeRequest: (fn) => { session.filter = fn } }, setPermissionRequestHandler: (fn) => { session.permission = fn }, setPermissionCheckHandler: (fn) => { session.check = fn } }
+  const { electron } = fakeElectron(dir, { isPackaged: true })
+  electron.BrowserWindow = FakeWindow
+  electron.session = { fromPartition: (name) => { requests.push(name); return session } }
+  const mod = loadMain("export * from './src/main/graphics-render'", { electron, './tools': { resolveBinary: () => 'ffmpeg' } })
+  return { mod, windows, session, partitions: requests }
+}
+// A 1080×1920 transparent PNG with a red square.
+const PNG = (() => {
+  try { return execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=red@0.0:s=1080x1920,format=rgba,drawbox=x=100:y=100:w=200:h=200:color=red@1:t=fill', '-frames:v', '1', '-f', 'image2pipe', '-c:v', 'png', '-']) } catch { return null }
+})()
+
+test('graphics render offscreen in a sandboxed window and are cached by what they draw', { skip: !PNG && 'needs FFmpeg' }, async (t) => {
+  const { dir, cleanup } = tempDir('bridgeclip-graphics-')
+  t.after(cleanup)
+  const { mod, windows, session, partitions } = renderModule(t, dir)
+  const options = mod.offscreenWindowOptions(1080, 1920)
+  assert.equal(options.show, false)
+  assert.equal(options.transparent, true)
+  for (const [key, value] of Object.entries({ offscreen: true, sandbox: true, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false, webSecurity: true, webviewTag: false, devTools: false, partition: 'graphics-render' })) {
+    assert.equal(options.webPreferences[key], value, key)
+  }
+  assert.ok(!options.webPreferences.partition.startsWith('persist:'))
+  assert.equal(options.webPreferences.preload, undefined)
+  // Only the app's own page and data URLs load.
+  const base = 'file:///app/out/renderer/'
+  assert.equal(mod.graphicsRequestAllowed('file:///app/out/renderer/graphics.html', base), true)
+  assert.equal(mod.graphicsRequestAllowed('file:///app/out/renderer/assets/a.ttf', base), true)
+  assert.equal(mod.graphicsRequestAllowed('data:image/png;base64,AAAA', base), true)
+  assert.equal(mod.graphicsRequestAllowed('file:///etc/passwd', base), false)
+  assert.equal(mod.graphicsRequestAllowed('https://example.com/x.js', base), false)
+  assert.equal(mod.graphicsRequestAllowed('http://localhost:5173/graphics.html', 'http://localhost:5173/'), true)
+  assert.equal(mod.graphicsRequestAllowed('http://localhost:9999/x', 'http://localhost:5173/'), false)
+
+  const run = path.join(dir, 'run'); fs.mkdirSync(run)
+  const project = { ...structuredClone(fixture), candidates: [] }
+  const g = { id: 'g-0000000001', template: 'stat', at_ms: 2000, duration_ms: 1500, placement: 'top', fields: { value: '25%', label: 'of people' } }
+  const empty = { id: 'g-0000000002', template: 'title', at_ms: 3000, duration_ms: 1500, placement: 'middle', fields: {} }
+  const c = { ...clip(), graphics: [g, empty] }
+  project.candidates = [c]
+  const first = await mod.renderCandidateGraphics(run, project, c)
+  assert.equal(first.length, 1) // the graphic without words is skipped
+  assert.match(first[0].file, /^[a-f0-9]{64}\.mov$/)
+  assert.deepEqual([first[0].start_ms, first[0].duration_ms], [800, 1200])
+  const out = path.join(run, '.graphics', first[0].file)
+  const probe = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name,pix_fmt,width,height,nb_frames', '-of', 'csv=p=0', out]).toString().trim()
+  assert.equal(probe, 'qtrle,1080,1920,argb,36')
+  assert.equal(windows.length, 1)
+  assert.equal(windows[0].destroyed, true)
+  assert.deepEqual(windows[0].size, [1080, 1920])
+  assert.ok(windows[0].loaded.endsWith('graphics.html'))
+  assert.deepEqual(partitions, ['graphics-render'])
+  // The session refuses permissions and other URLs.
+  let refused; session.permission(null, 'media', (ok) => { refused = ok }); assert.equal(refused, false)
+  let cancelled; session.filter({ url: 'https://example.com/' }, (r) => { cancelled = r.cancel }); assert.equal(cancelled, true)
+  assert.deepEqual(windows[0].openHandler(), { action: 'deny' })
+  // Same graphic again: reused from the cache, no new window.
+  const again = await mod.renderCandidateGraphics(run, project, c)
+  assert.deepEqual(again, first)
+  assert.equal(windows.length, 1)
+  // Different words: a new render; the unused one is swept.
+  const changed = { ...c, graphics: [{ ...g, fields: { ...g.fields, value: '30%' } }] }
+  const second = await mod.renderCandidateGraphics(run, { ...project, candidates: [changed] }, changed)
+  assert.notEqual(second[0].file, first[0].file)
+  mod.sweepGraphicRenders(run, { ...project, candidates: [changed] })
+  assert.deepEqual(fs.readdirSync(path.join(run, '.graphics')).sort(), [second[0].file])
+  // The cache key covers what changes the pixels.
+  const spec = mg.graphicSpec(project, changed, changed.graphics[0])
+  const key = mod.graphicCacheKey(spec)
+  assert.equal(mod.graphicCacheKey({ ...spec, fields: { label: spec.fields.label, value: spec.fields.value } }), key)
+  for (const other of [{ ...spec, color: '#000000' }, { ...spec, font: 'serif' }, { ...spec, width: 1920, height: 1080 }, { ...spec, duration_ms: 1300 }, { ...spec, box: { top: .3, bottom: .5 } }]) assert.notEqual(mod.graphicCacheKey(other), key)
+  assert.notEqual(mod.graphicCacheKey(spec, 'a'.repeat(64)), key)
+})
+
+test('images for a graphic are checked by their bytes and copied into the run under a content name', async (t) => {
+  const { dir, cleanup } = tempDir('bridgeclip-graphic-image-')
+  t.after(cleanup)
+  const { mod } = renderModule(t, dir)
+  const run = path.join(dir, 'run'); fs.mkdirSync(run)
+  const png = path.join(dir, 'logo.png')
+  fs.writeFileSync(png, Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(100)]))
+  const name = mod.importGraphicImage(run, png)
+  assert.match(name, /^[a-f0-9]{16}\.png$/)
+  assert.ok(fs.statSync(path.join(run, '.graphics', 'images', name)).isFile())
+  assert.equal(mod.importGraphicImage(run, png), name)
+  assert.match(mod.graphicImageData(run, name).url, /^data:image\/png;base64,/)
+  assert.equal(mod.graphicImageData(run, '../../logo.png'), null)
+  const fake = path.join(dir, 'fake.png'); fs.writeFileSync(fake, 'not a picture')
+  assert.throws(() => mod.importGraphicImage(run, fake), /PNG, JPEG or WebP/)
+  const gif = path.join(dir, 'a.gif'); fs.writeFileSync(gif, 'GIF89a')
+  assert.throws(() => mod.importGraphicImage(run, gif), /PNG, JPEG or WebP/)
+  const big = path.join(dir, 'big.png'); fs.writeFileSync(big, Buffer.alloc(12 * 1024 * 1024 + 1))
+  assert.throws(() => mod.importGraphicImage(run, big), /under 12 MB/)
+})
