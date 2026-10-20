@@ -4,14 +4,21 @@
 # this list against `engine-bin/ffmpeg -hide_banner -filters` when staged.
 # Add a name only after confirming it in that output. GPL-only filters
 # (perspective, boxblur, eq, ...) and drawtext (no libfreetype build) are absent.
+acompressor
 aeval
 afade
+afftdn
 aformat
+agate
+alimiter
+amerge
 amix
 anull
 anullsrc
 apad
 aresample
+asendcmd
+asetnsamples
 asetpts
 asettb
 asplit
@@ -21,13 +28,16 @@ atrim
 avgblur
 concat
 crop
+deesser
 drawbox
 fade
 format
 fps
 gblur
+highpass
 hstack
 loudnorm
+lowpass
 lutyuv
 metadata
 null
@@ -39,6 +49,7 @@ setdar
 setpts
 setsar
 settb
+sidechaincompress
 split
 subtitles
 tpad

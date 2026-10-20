@@ -300,6 +300,7 @@ async def run(config: dict) -> bool:
         broll_keep_hook=config.get("broll_keep_hook", True),
         hook_preview=config.get("hook_preview", False),
         motion_graphics=config.get("motion_graphics", False) and config.get("workflow", "automatic") != "review",
+        audio=config.get("audio"),
         quality_bar=config.get("quality_bar", "b"),
         debug_capture=config.get("debug_capture", False),
         pacing=config.get("pacing") or "tight",
@@ -407,6 +408,10 @@ def validate_config(config: object) -> dict:
             raise ValueError(f"{field} must be a boolean")
     if config.get('title_style', 'card') not in ('card', 'headline'):
         raise ValueError('Invalid title style')
+    if config.get("audio") is not None:
+        # Voice cleanup and music: main sends a bundled track's id or a file it copied into the app's music folder.
+        from clip_engine.services.audio_finish import parse_audio
+        parse_audio(config["audio"])
     from clip_engine.services.rendering_service import validate_headline_look
     validate_headline_look(config.get('headline_look'))
     if config.get('quality_bar', 'b') not in ('a', 'b', 'c', 'all', 'off'):

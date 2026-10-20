@@ -91,6 +91,24 @@ class BridgeTests(unittest.TestCase):
         with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
             self.assertTrue(asyncio.run(bridge.run(self.config(screen_focus="presenter"))))
         self.assertEqual(requests[-1]["screen_focus"], "presenter")
+        self.assertIsNone(requests[-1]["audio"])
+        audio = {"voice_cleanup": True, "music": {"track": "calm-pad"}, "music_level_db": -24}
+        with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
+            self.assertTrue(asyncio.run(bridge.run(self.config(audio=audio))))
+        self.assertEqual(requests[-1]["audio"], audio)
+
+    def test_voice_cleanup_and_music_are_checked(self):
+        bridge.validate_config(self.config(audio={"voice_cleanup": True}))
+        bridge.validate_config(self.config(audio={"music": {"track": "lofi-beat"}, "music_level_db": -12}))
+        with tempfile.TemporaryDirectory() as folder:
+            song = os.path.join(folder, "song.mp3")
+            with open(song, "wb") as handle:
+                handle.write(b"x")
+            bridge.validate_config(self.config(audio={"music": {"path": song}}))
+            for bad in ({"voice_cleanup": "yes"}, {"music": {"track": "not-a-track"}}, {"music": {"path": os.path.join(folder, "gone.mp3")}},
+                        {"music": {"path": "song.mp3"}}, {"music_level_db": 3}, "on"):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    bridge.validate_config(self.config(audio=bad))
 
     def test_look_extras_are_checked_and_passed_on(self):
         checked = bridge.validate_config(self.config(look_extras=["progress_bar", "glow", "punch_zoom"], look_extras_color="#2f6bff"))

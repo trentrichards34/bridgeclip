@@ -81,6 +81,12 @@ export interface ClipJobRequest {
   ctaOffer?: string
   /** Draw the brand's handle or logo in a corner (Automatic, needs a brand). */
   showHandle?: boolean
+  /** Reduce background noise and room echo on the speaker's voice and even its level (local, free). Missing: off. */
+  voiceCleanup?: boolean
+  /** Background music under every clip, ducking while someone talks (see music.ts). Needs `musicTrack`. */
+  music?: boolean
+  /** A built-in track's id or `my:<file name>` for the member's own music. */
+  musicTrack?: string
   startTimeSeconds: number | null
   endTimeSeconds: number | null
   bannerPlatform: string | null

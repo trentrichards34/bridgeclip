@@ -2028,6 +2028,9 @@ class RemixConfig:
     # Motion graphics on the member's part (drawn by the app into .graphics/reel/): draft id (string) ->
     # [{"file", "at_ms", "duration_ms"}], at_ms into their take as recorded (Pause & react: into the video).
     graphics: dict = field(default_factory=dict)
+    # Voice cleanup on the member's own recordings and background music (see audio_finish.parse_audio), or None.
+    # The other creator's clip keeps its sound as it is; music plays under it only with "music_during_clip".
+    audio: Optional[dict] = None
 
 
 @dataclass
@@ -2734,6 +2737,16 @@ class Remixer:
             raise RemixError("Choose at least one remix to render.")
         results: list[RemixResult] = []
         first_error: Optional[BaseException] = None
+        from clip_engine.services.audio_finish import parse_audio, save_run_audio
+        try:
+            audio = parse_audio(self.config.audio)
+            if audio is not None:
+                # Kept with the run: re-making a video with a new hook (recompose) applies it again.
+                await asyncio.to_thread(save_run_audio, root, audio)
+        except (ValueError, OSError) as error:
+            logger.warning(f"Voice cleanup and music left out: {error}")
+            self.warnings.append("Your music or voice cleanup couldn't be used this time (choose the music again).")
+            audio = None
         try:
             for index, (draft_id, src, script) in enumerate(chosen):
                 source = sources[src]
@@ -2751,6 +2764,10 @@ class Remixer:
                     if self.config.graphics.get(str(draft_id)):
                         self.progress(f"Video {index + 1} of {len(chosen)}: adding your graphics", 2 + 96 * (index + 0.97) / len(chosen))
                         await asyncio.to_thread(self._member_graphics, result, self.config.graphics[str(draft_id)], recordings.get(draft_id) or {}, root)
+                    if audio is not None:
+                        self.progress(f"Video {index + 1} of {len(chosen)}: {'cleaning up your voice' if audio.voice_cleanup else 'adding the music'}",
+                                      2 + 96 * (index + 0.98) / len(chosen))
+                        await asyncio.to_thread(finish_remix_sound, result, audio, recordings.get(draft_id) or {}, root)
                     results.append(result)
                     # Written after every remix: a cancel or crash keeps the finished ones in the Library.
                     write_job_output(root, results, sources, plan_cost + self.cost_usd + self.media.cost_usd, previous)
@@ -5386,6 +5403,7 @@ async def recompose(request: RecomposeRequest, progress: Progress = lambda detai
                                      base_filter=base_filter, headline=headline)
         # The member's motion graphics, as placed when it was made (their renders are kept in the run).
         saved_graphics = [g for g in data.get("graphics") or [] if isinstance(g, dict)]
+        sound = data.get("audio") if isinstance(data.get("audio"), dict) else None
         if saved_graphics:
             from pathlib import Path
             from clip_engine.services.graphics_overlay import REEL_DIR, checked_graphics, overlay_graphics_file
@@ -5397,6 +5415,10 @@ async def recompose(request: RecomposeRequest, progress: Progress = lambda detai
             if checked:
                 progress("Adding your graphics", 90)
                 await asyncio.to_thread(overlay_graphics_file, partial, checked, OUT_W, OUT_H, VIDEO_ARGS, lambda cmd: ffmpeg(cmd[1:]))
+        if sound:
+            # The voice cleanup and music it was made with (the joined video under the hook text has the sound before them).
+            progress("Adding the sound", 95)
+            await asyncio.to_thread(reapply_remix_sound, partial, sound, root, work)
         os.replace(partial, out)
     except (RemixError, OSError) as error:
         # The bundle was checked above: what fails now is making the video (FFmpeg, the disk), not the bundle.
@@ -5427,6 +5449,79 @@ async def recompose(request: RecomposeRequest, progress: Progress = lambda detai
     progress("Done", 100)
     return {"path": out, "duration_seconds": round(await asyncio.to_thread(media_seconds, out), 2), "settings": data["settings"],
             "editable": editable}
+
+
+# ---------------------------------------------------------------------------
+# Voice cleanup and music (audio_finish): the member's part only; the other creator's clip keeps its sound
+# ---------------------------------------------------------------------------
+
+THEIR_PARTS = ("excerpt", "moment", "clip")
+
+
+def their_windows(result: "RemixResult", recording: dict) -> list:
+    """Where the other creator's clip plays in the finished video (seconds): from the manifest's timeline, or (Pause &
+    react) the recording's "play" stretches. Silent react is their clip throughout."""
+    total = float(result.duration_seconds) + 1.0
+    if result.format == "silent":
+        return [(0.0, total)]
+    timeline = recording.get("timeline")
+    if result.format == "pause_react" and timeline is not None:
+        return [(round(seg.start - timeline.start, 3), round(seg.end - timeline.start, 3)) for seg in timeline.segments if seg.kind == "play"]
+    try:
+        with open(result.manifest_path, encoding="utf-8") as handle:
+            parts = json.load(handle).get("timeline") or []
+        return [(float(p["start_seconds"]), float(p["start_seconds"]) + float(p["seconds"])) for p in parts
+                if isinstance(p, dict) and p.get("part") in THEIR_PARTS]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return []
+
+
+def remix_sound_plan(plan: Any, result: "RemixResult", keep: list) -> Any:
+    """The run's choices for one video: cleanup only on the member's own voice (on camera), no music under their clip
+    unless chosen, and the video's own loudness kept."""
+    from dataclasses import replace as replaced
+    whole = result.format == "silent"
+    return replaced(plan, voice_cleanup=plan.voice_cleanup and result.camera and not whole, keep_windows=keep,
+                    quiet_windows=[] if plan.music_during_clip else keep,
+                    music=None if whole and not plan.music_during_clip else plan.music, target_lufs=None)
+
+
+def finish_remix_sound(result: "RemixResult", plan: Any, recording: dict, root: str) -> None:
+    """Clean up the member's voice and/or add music under a finished remix; recorded in its edit bundle."""
+    from clip_engine.services.audio_finish import finish_in_place
+    keep = their_windows(result, recording)
+    own = remix_sound_plan(plan, result, keep)
+    if not own.active:
+        return
+    done = finish_in_place(result.path, own, os.path.join(root, ".work", "audio"), result.warnings)
+    if not (done["voice_cleanup"] or done["music"]):
+        return
+    folder = edit_dir(root, os.path.splitext(os.path.basename(result.path))[0])
+    try:
+        with open(os.path.join(folder, "edit.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        data["audio"] = {"voice_cleanup": done["voice_cleanup"], "music": bool(done["music"]), "keep": [list(w) for w in keep]}
+        write_edit_bundle(folder, data)
+    except (OSError, ValueError):
+        logger.warning("The sound settings could not be kept with the remix's edit bundle")
+
+
+def reapply_remix_sound(path: str, saved: dict, root: str, work: str) -> None:
+    """Recompose: the same voice cleanup and music again, from the run's saved choices and the video's windows."""
+    from dataclasses import replace as replaced
+    from clip_engine.services.audio_finish import finish_in_place, load_run_audio
+    plan = load_run_audio(root)
+    if plan is None:
+        return
+    try:
+        keep = [(float(a), float(b)) for a, b in saved.get("keep") or []]
+    except (TypeError, ValueError):
+        keep = []
+    plan = replaced(plan, voice_cleanup=plan.voice_cleanup and saved.get("voice_cleanup") is True,
+                    music=plan.music if saved.get("music") is True else None, keep_windows=keep,
+                    quiet_windows=[] if plan.music_during_clip else keep, target_lufs=None)
+    if plan.active:
+        finish_in_place(path, plan, os.path.join(work, "audio"))
 
 
 def previous_clips(root: str) -> list[dict]:

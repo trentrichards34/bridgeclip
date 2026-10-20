@@ -1,0 +1,18 @@
+CreatorClips built-in background music
+
+calm-pad.ogg, upbeat-pulse.ogg, lofi-beat.ogg and cinematic-swell.ogg are original
+works made for CreatorClips by scripts/music/generate_tracks.py. Every sound in them
+is synthesized from plain math (sine waves, sums of sine waves and shaped noise from
+fixed random seeds). No samples, recordings, loops or other third-party audio were
+used, and no melody or arrangement was copied from an existing work.
+
+Copyright (c) 2026 Wealthery.
+
+Permission is hereby granted, free of charge, to anyone using CreatorClips to use,
+copy, modify, publish and distribute these tracks as part of videos they make,
+including commercial videos and videos posted to social media platforms (TikTok,
+Instagram, YouTube, Facebook and others), without attribution and without paying
+royalties. The tracks are also covered by the MIT license of the CreatorClips engine
+(see ../../LICENSE) when distributed as part of the engine.
+
+THE TRACKS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.

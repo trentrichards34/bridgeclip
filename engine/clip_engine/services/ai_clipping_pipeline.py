@@ -42,6 +42,7 @@ from clip_engine.services.editorial_review import protect_acknowledgments, revie
 from clip_engine.services.framework_grader import GRADER_MODEL, FrameworkGrader, select_by_grade
 from clip_engine.services.brand_mark import create_post_caption
 from clip_engine.services.look_extras import look_extras
+from clip_engine.services.audio_finish import finish_in_place, parse_audio, save_run_audio
 from clip_engine.services.intelligence_planner import (
     MAX_BRAND_IDENTITY_CHARS,
     MAX_CLIP_REQUEST_CHARS,
@@ -155,6 +156,8 @@ class ClippingJobRequest:
     # Motion graphics: Auto (Automatic): the planner also picks 0-3 card moments per clip (auto_graphics);
     # main draws them over the finished clips after the run.
     motion_graphics: bool = False
+    # Voice cleanup and background music on every clip (see audio_finish.parse_audio), or None for neither.
+    audio: Optional[dict] = None
     debug_capture: bool = False
     # "tight" cuts dead air and filler words; "natural" keeps original timing.
     pacing: str = "tight"
@@ -617,6 +620,10 @@ class AIClippingPipeline:
             if request.workflow == 'review':
                 if not self.local_mode:
                     raise ValueError('Review projects require local mode')
+                # Voice cleanup and music go on as each clip is exported from the editor.
+                review_audio = parse_audio(request.audio)
+                if review_audio is not None:
+                    await asyncio.to_thread(save_run_audio, self._get_local_output_dir(job_id), review_audio)
                 from clip_engine.services.manual_editor import prepare_project
                 project = await prepare_project(request, clip_plan.segments, transcription_result.segments,
                     download_result, self.rendering_service, reviewer, self._get_local_output_dir(job_id),
@@ -782,6 +789,10 @@ class AIClippingPipeline:
             current_stage = "rendering"
             clips_dir = os.path.join(work_dir, "clips")
             os.makedirs(clips_dir, exist_ok=True)
+            # Voice cleanup and music: checked again here, and kept with the run (the editor makes clips again with them).
+            audio_plan = parse_audio(request.audio)
+            if audio_plan is not None:
+                await asyncio.to_thread(save_run_audio, self._get_local_output_dir(job_id), audio_plan)
 
             total_clips = len(clip_plan.segments)
             self._update_progress(
@@ -926,6 +937,11 @@ class AIClippingPipeline:
                         teaser = await pick_teaser(clip_transcript, segment.start_time_ms, segment.end_time_ms)
                         if teaser:
                             render_result = await self.rendering_service.prepend_teaser(render_request, render_result, *teaser)
+                    audio_done = None
+                    if audio_plan is not None:
+                        render_progress(i, 'Cleaning up the sound' if audio_plan.voice_cleanup else 'Adding the music', None)
+                        audio_done = await asyncio.to_thread(finish_in_place, render_result.output_path, audio_plan,
+                                                             os.path.join(work_dir, 'audio'))
                     graphics = []
                     if segment.graphics:
                         # The planner's card moments that survive the finished cut, with words actually said.
@@ -965,6 +981,8 @@ class AIClippingPipeline:
                         # Motion graphics: Auto (source time, editor graphics), drawn by main after the run; the
                         # hook preview's length shifts them in the finished file.
                         **({"graphics": graphics, "teaser_ms": max(0, render_result.duration_ms - body_ms)} if graphics else {}),
+                        # Voice cleanup and music as applied ({"voice_cleanup", "music"}; both off when they failed).
+                        **({"audio": audio_done} if audio_done is not None else {}),
                     })
                     focus = getattr(render_result, "screen_focus", None)
                     if focus:
@@ -1275,6 +1293,8 @@ class AIClippingPipeline:
                     "broll": {"enabled": request.broll_enabled, "keep_hook": request.broll_keep_hook},
                     "hook_preview": request.hook_preview,
                     "motion_graphics": request.motion_graphics,
+                    "voice_cleanup": bool((request.audio or {}).get("voice_cleanup")),
+                    "music": ((request.audio or {}).get("music") or {}).get("track") or ("own" if (request.audio or {}).get("music") else None),
                     "clip_request": request.clip_request,
                     "quality_bar": request.quality_bar,
                     "caption_language": request.caption_language,

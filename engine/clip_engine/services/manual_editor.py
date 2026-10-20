@@ -800,6 +800,11 @@ async def render_export(run, project, c, output, source, render_transcript, repl
         if graphics:
             from clip_engine.services.graphics_overlay import checked_graphics, overlay_graphics
             await overlay_graphics(renderer, result.output_path, checked_graphics(run, graphics, result.duration_ms))
+        # The run's voice cleanup and music (Create), the same as on its other clips.
+        from clip_engine.services.audio_finish import finish_in_place, load_run_audio
+        audio = load_run_audio(run)
+        if audio is not None:
+            await asyncio.to_thread(finish_in_place, result.output_path, audio, str(Path(work) / 'audio'))
         if replace_index is None:
             os.replace(result.output_path, path)
             output['clips'].append({'clip_index': index, 's3_url': str(path), 'duration_ms': result.duration_ms,

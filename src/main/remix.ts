@@ -45,6 +45,8 @@ import { assertMediaPath, authorizeMedia } from './security'
 import { getSettingsForBridge, loadSettings } from './settings-store'
 import { brandMarkForRun, isBrandId, readBrandIdentity } from './brands'
 import { resolveBinary } from './tools'
+import { audioForEngine } from './music'
+import { parseAudioChoice } from '../shared/music'
 
 const execFileAsync = promisify(execFile)
 
@@ -234,6 +236,7 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const ctaId = parseCtaChoice(raw.ctaId)
   if (raw.showHandle !== undefined && typeof raw.showHandle !== 'boolean') throw new Error('Choose whether to show your handle.')
   const imageHighlight = image ? parseImageHighlight(raw.imageHighlight) : undefined
+  const audio = parseAudioChoice(raw)
   return {
     sourceIsUrl: local.length === 0,
     request: {
@@ -249,7 +252,8 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
       ...(pauseChoice ? { pause: pauseChoice } : {}),
       ...(layoutChoice ? { layout: layoutChoice } : {}),
       ...(momentChoice ? { moment: momentChoice } : {}),
-      ...(imageHighlight ? { imageHighlight } : {})
+      ...(imageHighlight ? { imageHighlight } : {}),
+      ...audio
     }
   }
 }
@@ -370,6 +374,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     let photo: string | null = null
     const avatar = request.avatarId ? readAvatar(request.avatarId) : null
     if (request.ctaId) readCta(request.ctaId)
+    // Voice cleanup and music (a member's own track must still be in their music folder).
+    const audio = audioForEngine(request, true)
     const silent = request.format === 'silent'
     const onCamera = request.host === 'camera'
     // Avatar on camera: a ready HeyGen avatar on the member's key (checked with HeyGen once if it wasn't ready).
@@ -460,7 +466,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         ...(request.pause ? { pause_layout: request.pause.layout, pause_captions: request.pause.captions } : {}),
         ...(request.layout ? { layout: engineLayout(request.layout) } : {}),
         ...(request.moment ? { moment_ranges: request.moment.ranges.map((range) => [range.startS, range.endS]), moment_pip: request.moment.pip } : {}),
-        ...(heygenLink ? { presenter: 'heygen', heygen_voice: heygenVoice, heygen_usd_per_second: heygenUsdPerSecond(heygenLink) } : {})
+        ...(heygenLink ? { presenter: 'heygen', heygen_voice: heygenVoice, heygen_usd_per_second: heygenUsdPerSecond(heygenLink) } : {}),
+        ...(audio ? { audio } : {})
       }
     }
     const run: ActiveRemix = {

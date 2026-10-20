@@ -1,6 +1,6 @@
 import { JevSettings } from '../components/JevSettings'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, ListChecks, Loader2, RefreshCw, ScrollText, ShieldCheck, Sparkles, Wallet } from 'lucide-react'
+import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, ListChecks, Loader2, Music, RefreshCw, ScrollText, ShieldCheck, Sparkles, Wallet } from 'lucide-react'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useChangelogStore } from '../store/use-changelog-store'
 import { useApiKeyDrafts } from '../hooks/use-api-key-drafts'
@@ -29,9 +29,10 @@ import { useAssistantStore } from '../store/use-assistant-store'
 import { takeSettingsSection } from '../lib/settings-focus'
 import { SpendingSettings } from '../components/spending/SpendingSettings'
 import { SetupChecklist } from '../components/SetupChecklist'
+import { MusicSettingsPanel } from '../components/MusicPicker'
 import type { Page as AppPage } from '../components/Sidebar'
 
-type SectionId = 'setup' | 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'output' | 'system' | 'about'
+type SectionId = 'setup' | 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'music' | 'output' | 'system' | 'about'
 type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
@@ -79,6 +80,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
     { id: 'assistant', label: 'Assistant', icon: <Sparkles />, tone: assistantConnected ? 'success' : 'idle' },
     { id: 'jev', label: 'Quality check', icon: <ShieldCheck />, tone: 'idle' },
     { id: 'vocabulary', label: 'Vocabulary', icon: <BookA />, tone: 'idle' },
+    { id: 'music', label: 'My music', icon: <Music />, tone: 'idle' },
     { id: 'output', label: 'Output', icon: <FolderOpen />, tone: 'idle' },
     { id: 'system', label: 'System check', icon: <Cpu />, tone: !toolsChecked ? 'idle' : toolsMissing ? 'danger' : 'success' },
     { id: 'about', label: 'About', icon: <Info />, tone: 'idle' }
@@ -285,6 +287,15 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
               action={vocabularyTerms > 0 && <Badge className="font-mono tabular">{vocabularyTerms} term{vocabularyTerms === 1 ? '' : 's'}</Badge>}
             />
             <VocabularyField value={customVocabulary} onCommit={(value) => commit({ customVocabulary: value })} />
+          </Section>
+
+          <Section id="music">
+            <PanelHeader
+              icon={<IconTile><Music /></IconTile>}
+              title="My music"
+              description="Your own tracks for background music, and how loud music sits under your voice. Pick music in Create, Edit my recording and Remix."
+            />
+            <MusicSettingsPanel />
           </Section>
 
           <Section id="output">

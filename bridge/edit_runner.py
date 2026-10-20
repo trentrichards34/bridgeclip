@@ -176,12 +176,15 @@ def parse_request(raw):
             or not re.fullmatch(r"[a-f0-9]{64}\.mov", g["file"]) or type(g.get("word")) is not int or not 0 <= g["word"] < len(words)
             or type(g.get("duration_ms")) is not int or not 400 <= g["duration_ms"] <= 8000 for g in graphics):
         raise ValueError("Invalid graphics")
+    # Voice cleanup and background music (audio_finish.parse_audio): checked here, applied while the sound is mixed.
+    from clip_engine.services.audio_finish import parse_audio
+    audio = parse_audio(raw.get("audio"))
     return {"mode": mode, "output_dir": raw["output_dir"], "sources": list(sources), "words": words, "keep": keep,
             "hook": _span(raw.get("hook"), len(words)), "cta": _span(raw.get("cta"), len(words)), "popups": clean_popups,
             "sounds": [dict(s) for s in sounds], "look": _look(raw), "title": " ".join(_text(raw.get("title"), 200, "title").split()),
             "cost_usd": float(cost), "pacing": _pacing(raw.get("pacing")), "recipe": raw.get("recipe", "clean"), "images": images,
             "pins": [dict(p) for p in pins], "cutout_intro": raw.get("cutout_intro", False), "raw_intro": raw.get("raw_intro", False),
-            "graphics": [dict(g) for g in graphics]}
+            "graphics": [dict(g) for g in graphics], "audio": audio}
 
 
 def main():

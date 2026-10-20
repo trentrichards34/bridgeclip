@@ -396,6 +396,28 @@ test('making the reel can only start once: a second click, Start over or Cancel 
   fs.rmSync(edit.editStatus().folder, { recursive: true, force: true })
 })
 
+test('voice cleanup and music: on the decisions (or the look), checked, and sent to the engine as one "audio" option', async () => {
+  const plan = samplePlan()
+  const good = { ...shared.initialDecisions(plan), look: { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false } }
+  const parsed = shared.parseEditDecisions({ ...good, voiceCleanup: true, music: true, musicTrack: 'calm-pad' }, plan)
+  assert.deepEqual([parsed.voiceCleanup, parsed.music, parsed.musicTrack], [true, true, 'calm-pad'])
+  const fromLook = shared.parseEditDecisions({ ...good, look: { ...good.look, voiceCleanup: true, music: true, musicTrack: 'my:theme.mp3' } }, plan)
+  assert.deepEqual([fromLook.voiceCleanup, fromLook.music, fromLook.musicTrack], [true, true, 'my:theme.mp3'])
+  assert.equal('music' in shared.parseEditDecisions(good, plan), false)
+  assert.throws(() => shared.parseEditDecisions({ ...good, music: true }, plan), /Choose the music/)
+
+  const { main: edit, state } = runHarness()
+  await edit.startEdit({ sources: [path.join(userData, 'music-take.mp4')] })
+  await waitFor(() => edit.editStatus()?.phase === 'review', 'the review')
+  const review = edit.editStatus().plan
+  const decisions = { ...shared.initialDecisions(review), look: good.look, voiceCleanup: true, music: true, musicTrack: 'lofi-beat' }
+  await edit.renderEdit(decisions)
+  await waitFor(() => edit.editStatus()?.phase === 'done', 'the reel')
+  const render = state.configs.find((config) => config.mode === 'render')
+  assert.deepEqual(render.audio, { voice_cleanup: true, music: { track: 'lofi-beat' }, music_level_db: -20 })
+  fs.rmSync(edit.editStatus().folder, { recursive: true, force: true })
+})
+
 // ---------------------------------------------------------------------------
 // Edit styles, cards, my images and the openings
 // ---------------------------------------------------------------------------

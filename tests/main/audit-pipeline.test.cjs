@@ -41,7 +41,7 @@ function fakeChild() {
   return child
 }
 
-function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { applyRunCta: async () => ({ failed: [] }), readCta: () => ({}) }, brands = { brandForJob: () => { throw new Error('That brand identity was deleted. Choose another brand, or no brand, and start again.') } }, moreClips = { refreshReusePlan: (plan) => ({ plan }) }, graphics = { applyRunGraphics: async () => ({ clips: 0, applied: 0, failed: [], cancelled: false }), graphicsNotice: () => null } }) {
+function startRunner({ child, env = process.env, onSpawn = () => {}, music = { audioForEngine: () => undefined }, ctas = { applyRunCta: async () => ({ failed: [] }), readCta: () => ({}) }, brands = { brandForJob: () => { throw new Error('That brand identity was deleted. Choose another brand, or no brand, and start again.') } }, moreClips = { refreshReusePlan: (plan) => ({ plan }) }, graphics = { applyRunGraphics: async () => ({ clips: 0, applied: 0, failed: [], cancelled: false }), graphicsNotice: () => null } }) {
   const sent = []
   const signals = []
   const settings = { openrouterApiKey: SECRET, outputDirectory: WORK_HOME, pythonPath: '/opt/python3', enginePath: WORK_HOME }
@@ -63,7 +63,8 @@ function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { ap
     './ctas': ctas,
     './brands': brands,
     './more-clips': moreClips,
-    './auto-graphics': graphics
+    './auto-graphics': graphics,
+    './music': music
   }, {
     process: { ...process, platform: 'darwin', env, kill: (pid, signal) => { signals.push({ pid, signal }) } }
   })
@@ -283,6 +284,36 @@ test('the screen share choice reaches the engine in snake_case', async () => {
     assert.equal(JSON.parse(input).screen_focus, screenFocus)
     child.emit('close', 1, null)
   }
+})
+
+test('voice cleanup and music reach the engine as one "audio" option; a music file that is gone stops the run before it starts', async () => {
+  const child = fakeChild()
+  let input = ''
+  child.stdin.on('data', (chunk) => { input += chunk.toString() })
+  const seen = []
+  const music = { audioForEngine: (config) => { seen.push(config); return { voice_cleanup: true, music: { track: 'lofi-beat' }, music_level_db: -20 } } }
+  const { runner, window } = startRunner({ child, music })
+  runner.startClipJob('audio-job', { videoUrl: path.join(WORK_HOME, 'video.mp4'), voiceCleanup: true, music: true, musicTrack: 'lofi-beat' }, window)
+  await tick()
+  assert.deepEqual(JSON.parse(input).audio, { voice_cleanup: true, music: { track: 'lofi-beat' }, music_level_db: -20 })
+  assert.equal(seen[0].musicTrack, 'lofi-beat')
+  child.emit('close', 1, null)
+  // None chosen: no "audio" option at all.
+  const plain = fakeChild()
+  let plainInput = ''
+  plain.stdin.on('data', (chunk) => { plainInput += chunk.toString() })
+  const second = startRunner({ child: plain })
+  second.runner.startClipJob('plain-job', { videoUrl: path.join(WORK_HOME, 'video.mp4') }, second.window)
+  await tick()
+  assert.equal('audio' in JSON.parse(plainInput), false)
+  plain.emit('close', 1, null)
+  // Their own track was deleted: the run fails with the reason, and nothing is spawned.
+  let spawned = false
+  const gone = startRunner({ child: fakeChild(), onSpawn: () => { spawned = true }, music: { audioForEngine: () => { throw new Error('The music "song" is no longer in your music. Choose another track.') } } })
+  gone.runner.startClipJob('gone-job', { videoUrl: path.join(WORK_HOME, 'video.mp4'), music: true, musicTrack: 'my:song.mp3' }, gone.window)
+  await tick()
+  assert.equal(spawned, false)
+  assert.match(JSON.stringify(gone.sent), /no longer in your music/)
 })
 
 test('Motion graphics: Auto reaches the engine, and its graphics go on before the call to action; a failure is a note, not a failed run', async () => {

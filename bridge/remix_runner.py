@@ -233,6 +233,13 @@ def parse_graphics(raw, fmt, mode):
     return out
 
 
+def parse_audio_options(raw):
+    """Voice cleanup and music (audio_finish.parse_audio): checked here, passed on as sent."""
+    from clip_engine.services.audio_finish import parse_audio
+    parse_audio(raw)
+    return raw if isinstance(raw, dict) else None
+
+
 def parse_config(raw):
     from clip_engine.services.remix_service import (ANGLES, CAMERA_BACKDROPS, CAMERA_LAYOUTS, DEFAULT_VOICE, IMAGE_EXTENSIONS, HOSTS, MAX_REMIXES, MAX_SOURCES, ORDERS, PAUSE_CAPTIONS,
                                                     PAUSE_LAYOUTS, REACTION_KINDS, TTS_MODEL,
@@ -347,6 +354,7 @@ def parse_config(raw):
         clip_trim=clip_trim, broll_items=broll_items, broll_stock=broll_stock, broll_plan=broll_plan, layout=shape,
         presenter=presenter, heygen_voice=heygen_voice, heygen_usd_per_second=heygen_price,
         look_extras=look_extras, look_extras_color=look_extras_color, graphics=parse_graphics(raw.get("graphics"), fmt, mode),
+        audio=parse_audio_options(raw.get("audio")),
     )
 
 

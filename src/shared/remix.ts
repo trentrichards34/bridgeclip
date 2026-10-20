@@ -296,6 +296,11 @@ export interface RemixRequest {
   imageHighlight?: ImageHighlight
   /** Pause & react, Their clip then me, React then my thoughts: their captions, where the hook text sits, part 1's look. */
   layout?: RemixLayoutChoice
+  /** Clean up the member's own recordings (their clip's sound is left as it is). Missing: off. */
+  voiceCleanup?: boolean
+  /** Background music in the final mix, ducking under all speech (see music.ts); `musicTrack` is the track. */
+  music?: boolean
+  musicTrack?: string
 }
 
 /** filmed: your real background; cutout: you cut out over a blur or your color; greenscreen: the clip fills the screen behind you. */
