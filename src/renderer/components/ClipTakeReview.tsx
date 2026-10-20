@@ -12,6 +12,7 @@ import { Part2Look, ProofScreenshots } from './ClipLayoutSections'
 import type { BoxAt, LayoutExtrasView } from '../../shared/remix-layouts'
 import type { EditorGraphic } from '../../shared/motion-graphics'
 import { RemixChatSection, RemixGraphicsSection, TakeTrimNote, type TakeText } from './RemixReviewExtras'
+import { RemixEditLog } from './EditLog'
 import { Segmented } from './ui/Segmented'
 import { TrimControl } from './PauseReactReview'
 import { Button } from './ui/Button'
@@ -147,6 +148,7 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
       <div className="mt-4 space-y-4">
         {status.error && <Callout tone="danger"><FriendlyError error={status.error} suffix="Your recordings are still here, so you can try again." /></Callout>}
         {status.warnings.map((warning, i) => <Callout key={i} tone="warning">{warning}</Callout>)}
+        <RemixEditLog draft={draft} recordings={recordings} headline={current.headline} disabled={busy} onRecordings={setRecordings} onError={onError} />
 
         <section className="glass-tile space-y-3 rounded-2xl p-4" aria-label="Their clip">
           <h3 className="flex items-center gap-2 text-sm font-medium text-ink"><Scissors className="h-4 w-4" />1 · Their clip</h3>

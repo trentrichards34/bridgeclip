@@ -12,6 +12,8 @@ import { PointPad } from './ChatPoints'
 import { wordsAtPlayhead } from './ClipGraphics'
 import { ReelGraphics, type ReelGraphicItem, type ReelGraphicPatch } from './ReelGraphics'
 import { CardEditor, EditStylePicker, MyImages } from './EditExtras'
+import { EditLog } from './EditLog'
+import { editRecordingLog } from '../../shared/edit-log'
 import { hasBrandMark } from '../../shared/brand-kit'
 import type { BrandIdentity } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
@@ -66,6 +68,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   useEffect(() => { setImages(status.images ?? []) }, [status.images])
   const [pinning, setPinning] = useState<string | null>(null)
   useEffect(() => { useEditRecordingStore.getState().saveReview(status.id, decisions) }, [status.id, decisions])
+  // "What changed": the choices before the last Restore, so it can be taken back.
+  const [beforeRestore, setBeforeRestore] = useState<EditDecisions | null>(null)
+  const logLines = useMemo(() => editRecordingLog(plan, decisions), [plan, decisions])
   const [hooksOpen, setHooksOpen] = useState(false)
   const [lookOpen, setLookOpen] = useState(false)
   const [making, setMaking] = useState(false)
@@ -176,6 +181,10 @@ export function EditReview({ status, brand, look, onLook, onError }: {
         </p>
       )}
       {status.warnings.map((warning) => <Callout key={warning} tone="warning" className="mt-3">{warning}</Callout>)}
+
+      <EditLog className="mt-4" lines={logLines} disabled={making}
+        onRestore={(line) => { if (!line.restore) return; setBeforeRestore(decisions); setDecisions((current) => ({ ...current, ...line.restore })) }}
+        onUndo={beforeRestore ? () => { setDecisions(beforeRestore); setBeforeRestore(null) } : undefined} />
 
       <EditStylePicker recipe={decisions.recipe} extras={decisions.lookExtras}
         onRecipe={(id) => { useEditRecordingStore.getState().setRecipe(id); setDecisions((current) => applyRecipe(plan, current, id)) }}
