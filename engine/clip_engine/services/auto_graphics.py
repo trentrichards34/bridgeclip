@@ -17,6 +17,7 @@ Graphics row when the clip is opened, editable like any other graphic.
 """
 from __future__ import annotations
 
+import os
 import math
 import re
 import secrets
@@ -374,6 +375,24 @@ def run_settings(request) -> dict:
     })
 
 
+def _clip_face(output: dict, clip_index: Any) -> Optional[list[float]]:
+    """The speaker's face in the finished clip (x, y, w, h as fractions of its frame), so main can place
+    cards where they cover it least; None when there's no clip file or no face is found."""
+    clip = next((c for c in output.get('clips') or [] if isinstance(c, dict) and c.get('clip_index') == clip_index), None)
+    url = str((clip or {}).get('s3_url') or '')
+    path = url[len('file://'):] if url.startswith('file://') else url
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        from clip_engine.services.remix_service import find_face
+        face = find_face(path)
+    except Exception:  # noqa: BLE001 - placement is a nicety; never fail the plan over it
+        return None
+    if not face:
+        return None
+    return [round(min(1.0, max(0.0, float(v))), 4) for v in face]
+
+
 def write_graphics_plan(run, output: dict, request, segments, metadata, video_duration: float) -> Optional[dict]:
     """Write auto-graphics.json: the run's clips that have cards, as editor candidates (cut, framing, hook,
     captions and graphics, exactly as the editor will open them), plus what the editor can't know (a hook
@@ -404,6 +423,9 @@ def write_graphics_plan(run, output: dict, request, segments, metadata, video_du
         teaser = entry.get('teaser_ms')
         clips[c['id']] = {'offset_ms': teaser if type(teaser) is int and 0 <= teaser <= 60_000 else 0,
                           'top': TITLE_CARD_SHARE if title_card else 0}
+        face = _clip_face(output, c['library_clip'])
+        if face:
+            clips[c['id']]['face'] = face
     if not kept:
         return None
     automatic = {'omitted': [], 'estimated_cuts': 0, **({'brand_mark': settings['brand_mark']} if settings['brand_mark'] else {})}

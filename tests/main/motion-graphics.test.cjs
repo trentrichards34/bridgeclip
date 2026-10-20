@@ -224,3 +224,19 @@ test('images for a graphic are checked by their bytes and copied into the run un
   const big = path.join(dir, 'big.png'); fs.writeFileSync(big, Buffer.alloc(12 * 1024 * 1024 + 1))
   assert.throws(() => mod.importGraphicImage(run, big), /under 12 MB/)
 })
+
+test('automatic cards move off the speaker’s face: the placement covering the face least wins', () => {
+  const project = { aspect_ratio: '9:16', width: 1920, height: 1080 }
+  const c = clip({ captions: true, caption_y: 0.75, hook: { text: 'We made fifteen thousand in a month', look: { look: 'white', color: '#FFFFFF', font: 'clean' } } })
+  const g = { id: 'auto-1', template: 'list', at_ms: 2000, duration_ms: 3000, placement: 'middle', fields: { title: 'Three steps', items: 'a\nb\nc' } }
+  // A close-up: the face fills the middle of the frame.
+  const face = [0.2, 0.4, 0.6, 0.3]
+  const box = (p) => mg.graphicBox(p, { aspect: '9:16', hook: mg.hookShare(c, '9:16'), captions: mg.captionAnchorAt(project, c, 2000), handle: null })
+  const cover = (p) => Math.max(0, Math.min(box(p).bottom, 0.7) - Math.max(box(p).top, 0.4))
+  const chosen = mg.placementAvoidingFace(project, c, g, face)
+  assert.notEqual(chosen, 'middle')
+  assert.ok(cover(chosen) < cover('middle'), `${chosen} covers ${cover(chosen)} vs middle ${cover('middle')}`)
+  // No face found, or the chosen placement is already clear: kept.
+  assert.equal(mg.placementAvoidingFace(project, c, g, null), 'middle')
+  assert.equal(mg.placementAvoidingFace(project, c, { ...g, placement: 'top' }, [0.3, 0.75, 0.3, 0.05]), 'top')
+})

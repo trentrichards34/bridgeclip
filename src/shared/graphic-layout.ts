@@ -105,6 +105,32 @@ export function handleEdge(project: Pick<EditorProject, 'automatic'>): 'top' | '
  * the project doesn't describe (an Automatic run's title card), as a share of
  * the height; the graphic stays below it.
  */
+/** The face's vertical span (fractions of the height) a placement's box covers. */
+function faceCover(box: { top: number; bottom: number }, face: { top: number; bottom: number }): number {
+  return Math.max(0, Math.min(box.bottom, face.bottom) - Math.max(box.top, face.top))
+}
+
+/**
+ * For automatic graphics: the placement that covers the speaker's face least
+ * (face = x, y, w, h as fractions of the finished clip's frame). The chosen
+ * placement is kept while it covers under a fifth of the face; otherwise the
+ * one covering least wins (ties keep the order top, bottom, middle).
+ */
+export function placementAvoidingFace(project: Pick<EditorProject, 'aspect_ratio' | 'width' | 'height' | 'automatic'>, candidate: CandidateEdit, graphic: EditorGraphic,
+  face: readonly [number, number, number, number] | null | undefined, extra: { top?: number } = {}): GraphicPlacement {
+  if (!face || graphic.template === 'highlight') return graphic.placement
+  const span = { top: face[1], bottom: face[1] + face[3] }
+  if (!(span.bottom > span.top)) return graphic.placement
+  const at = Math.max(graphic.at_ms, candidate.ranges[0][0])
+  const top = Math.max(0, Math.min(.4, extra.top ?? 0))
+  const frame: GraphicFrame = { aspect: project.aspect_ratio, hook: Math.max(hookShare(candidate, project.aspect_ratio), top),
+    captions: candidate.captions ? captionAnchorAt(project, candidate, at) : null, handle: handleEdge(project) }
+  const cover = (p: GraphicPlacement): number => faceCover(graphicBox(p, frame), span)
+  const height = span.bottom - span.top
+  if (cover(graphic.placement) < height / 5) return graphic.placement
+  return (['top', 'bottom', 'middle'] as const).reduce((best, p) => cover(p) < cover(best) - .005 ? p : best, graphic.placement)
+}
+
 export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width' | 'height' | 'automatic'>, candidate: CandidateEdit, graphic: EditorGraphic, extra: { top?: number } = {}): GraphicRenderSpec | null {
   const window = graphicWindow(candidate, graphic)
   if (!window) return null

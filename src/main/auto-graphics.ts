@@ -28,6 +28,7 @@ import { randomUUID } from 'crypto'
 import { join } from 'path'
 import { parseEditorProject, type EditorCandidate, type EditorProject } from '../shared/clip-editor'
 import { renderCandidateGraphics, type RenderedGraphic } from './graphics-render'
+import { placementAvoidingFace } from '../shared/graphic-layout'
 import { withRunLock } from './ctas'
 import { logger } from './logger'
 
@@ -38,7 +39,8 @@ const MAX_JSON_BYTES = 64 * 1024 * 1024
 export interface GraphicsPlan {
   project: EditorProject
   /** Per candidate id: the hook preview's length before the clip (output ms) and a title card's share of the top. */
-  clips: Record<string, { offset_ms: number; top: number }>
+  /** face: the speaker's face in the finished clip (x, y, w, h as fractions), when the engine found one. */
+  clips: Record<string, { offset_ms: number; top: number; face?: [number, number, number, number] }>
 }
 
 export interface RunGraphicsWorker {
@@ -84,7 +86,10 @@ export function readGraphicsPlan(run: string): GraphicsPlan | null {
       const e = extras[c.id] as Record<string, unknown> | undefined
       const offset = e && Number.isInteger(e.offset_ms) && (e.offset_ms as number) >= 0 && (e.offset_ms as number) <= 60_000 ? e.offset_ms as number : 0
       const top = e && typeof e.top === 'number' && Number.isFinite(e.top) ? Math.max(0, Math.min(.4, e.top)) : 0
-      clips[c.id] = { offset_ms: offset, top }
+      const rawFace = e?.face
+      const face = Array.isArray(rawFace) && rawFace.length === 4 && rawFace.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1)
+        ? rawFace as [number, number, number, number] : undefined
+      clips[c.id] = { offset_ms: offset, top, ...(face ? { face } : {}) }
     }
     if (project.candidates.some((c) => c.library_clip === undefined)) return null
     return { project, clips }
@@ -201,7 +206,9 @@ async function applyNow(run: string, worker: RunGraphicsWorker, options: RunGrap
     const index = c.library_clip as number
     const extra = plan.clips[c.id] ?? { offset_ms: 0, top: 0 }
     const rendered: RenderedGraphic[] = []
-    for (const g of c.graphics ?? []) {
+    // Cards go where they cover the speaker's face least (the planner can't see the picture).
+    c.graphics = (c.graphics ?? []).map((g) => ({ ...g, placement: placementAvoidingFace(plan.project, c, g, extra.face, { top: extra.top }) }))
+    for (const g of c.graphics) {
       if (signal?.aborted) { cancelled = true; break }
       try {
         // One card at a time: a card that can't be drawn leaves only itself out.
