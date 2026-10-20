@@ -188,6 +188,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
         onRestore={(line) => { if (!line.restore) return; setBeforeRestore(decisions); setDecisions((current) => ({ ...current, ...line.restore })) }}
         onUndo={beforeRestore ? () => { setDecisions(beforeRestore); setBeforeRestore(null) } : undefined} />
       <SkillsPanel className="mt-4" rows={editSkillRows(plan, { ...decisions, look })}
+        music={{ track: look.musicTrack ?? null, onChange: (track) => onLook({ ...look, musicTrack: track ?? undefined }) }}
         onToggle={(id, on) => {
           const patch = editSkillPatch(plan, { ...decisions, look }, id, on)
           if (patch.decisions) { const next = patch.decisions; setDecisions((current) => ({ ...current, ...next })) }

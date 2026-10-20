@@ -882,6 +882,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
           <p className="text-2xs text-ink-subtle">{onCamera ? 'Optional. These start from your Brand Identity’s look and your last choices.'
             : 'Optional. Your Brand Identity decides what your presenter believes, so every take sounds like your brand and only uses your real proof. Its look fills in the style below.'}</p>
           {onCamera && <SkillsPanel rows={remixSkillRows(form)} onToggle={(id, on) => form.update(remixSkillPatch(form, id, on))}
+            music={{ track: form.musicTrack || null, onChange: (track) => form.update({ musicTrack: track ?? '' }) }}
             onMore={(id) => id === 'captions' || id === 'zoom' ? () => document.getElementById('remix-style-board')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }) : undefined} />}
           {brandBlock}
           <div id="remix-style-board" className="scroll-mt-4" />

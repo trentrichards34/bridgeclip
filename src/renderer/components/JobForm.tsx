@@ -933,7 +933,8 @@ export function CaptionsStep({ draft, update, onOpenFormat }: { draft: ClipDraft
         : id === 'motion_graphics' ? reveal('create-motion-graphics') : undefined
   return (
     <div className="space-y-3">
-      {automatic && <SkillsPanel rows={skills} onToggle={(id, on) => update(createSkillPatch(draft, id, on))} onMore={more} />}
+      {automatic && <SkillsPanel rows={skills} onToggle={(id, on) => update(createSkillPatch(draft, id, on))} onMore={more}
+        music={{ track: draft.musicTrack || null, onChange: (track) => update({ musicTrack: track ?? '' }) }} />}
       <div className="glass-tile rounded-2xl p-3">
         <PurposeFields purpose={draft.purpose ?? ''} onPurpose={(purpose) => update({ purpose })} reference={draft.reference ?? null}
           onReference={(reference) => update({ reference })} model={{ clippingMode: draft.clippingMode, ...(draft.clippingMode === 'advanced' ? { plannerModel: draft.plannerModel } : {}) }}

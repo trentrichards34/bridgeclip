@@ -209,7 +209,8 @@ export { isMusicTrackId }
 /** The audio fields of a request, checked (missing or false: off; a track only with music on). Throws with a plain message. */
 export function parseAudioSkills(value: Record<string, unknown>): { music?: true; musicTrack?: string; voiceCleanup?: true } {
   // Music switched on from the Skills panel without a pick yet: the first built-in track.
-  const withTrack = value.music === true && (value.musicTrack === undefined || value.musicTrack === null) ? { ...value, musicTrack: MUSIC_TRACKS[0].id } : value
+  const noTrack = value.musicTrack === undefined || value.musicTrack === null || value.musicTrack === ''
+  const withTrack = value.music === true && noTrack ? { ...value, musicTrack: MUSIC_TRACKS[0].id } : noTrack ? { ...value, musicTrack: undefined } : value
   const choice = parseAudioChoice(withTrack)
   return {
     ...(choice.music ? { music: true as const, musicTrack: choice.musicTrack } : {}),

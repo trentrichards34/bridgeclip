@@ -174,3 +174,8 @@ test('a suggested look from the picture: its strongest common color, and light o
   assert.equal(purpose.deriveReferenceLook(pixels([[[100, 100, 100], 10]])).color, '#646464')
   assert.equal(purpose.deriveReferenceLook(new Uint8ClampedArray(0)), null)
 })
+
+test('music with an empty track (a fresh form) gets the first built-in track; music off with an empty track is fine', () => {
+  assert.deepEqual(plain(skills.parseAudioSkills({ music: true, musicTrack: '' })), { music: true, musicTrack: 'calm-pad' })
+  assert.deepEqual(plain(skills.parseAudioSkills({ music: false, musicTrack: '' })), {})
+})
