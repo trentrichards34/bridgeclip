@@ -1,6 +1,6 @@
 import { twitchSourceError, twitchVodId, youtubeSourceUrl } from '../../shared/video-source'
 import { MAX_CREATE_SOURCES, isValidSourceLink, mergeSources, parseSourceText, sourceCountLabel } from '../../shared/create-sources'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { FileVideo, FolderOpen, Link2, Plus, UploadCloud, X, Youtube, Twitch } from 'lucide-react'
 import { basename, cn, formatTimecode, isUrl, localFileUrl, sourceLabel, youtubeId } from '../lib/utils'
 import { getApi } from '../lib/ipc'
@@ -22,6 +22,8 @@ interface SourcePickerProps {
    */
   sources?: string[]
   onSourcesChange?: (sources: string[]) => void
+  /** What's typed in the empty link field and not used yet ('' once used or cleared), so Next can use a valid link. */
+  onPendingChange?: (text: string) => void
   disabled?: boolean
 }
 
@@ -43,7 +45,7 @@ function addNotice(invalid: string[], overLimit: number, duplicates: number): st
   return parts.length ? parts.join(' ') : null
 }
 
-export function SourcePicker({ value, onChange, sources, onSourcesChange, disabled }: SourcePickerProps): React.JSX.Element {
+export function SourcePicker({ value, onChange, sources, onSourcesChange, onPendingChange, disabled }: SourcePickerProps): React.JSX.Element {
   const [pickerError, setPickerError] = useState<string | null>(null)
   const multi = Boolean(onSourcesChange)
   const list = multi && sources && sources.length > 1 && sources[0] === value ? sources : value ? [value] : []
@@ -106,15 +108,19 @@ export function SourcePicker({ value, onChange, sources, onSourcesChange, disabl
     </>
   }
   return <>
-    <DropZone multi={multi} onAdd={(added, invalid) => { setPickerError(add(added, invalid)); return null }} onBrowse={browse} disabled={disabled} />
+    <DropZone multi={multi} onAdd={(added, invalid) => { setPickerError(add(added, invalid)); return null }} onBrowse={browse} disabled={disabled} onPendingChange={onPendingChange} />
     {error}
   </>
 }
 
 type AddSources = (sources: string[], invalid: string[]) => string | null
 
-/** A link field shared by the drop zone and the "add another video" row. */
-function useLinkEntry(onAdd: AddSources): {
+/**
+ * A link field shared by the drop zone and the "add another video" row. A link
+ * is used on paste, Enter or leaving the field; `onDraftChange` hears the text
+ * that hasn't been used yet.
+ */
+function useLinkEntry(onAdd: AddSources, onDraftChange?: (text: string) => void): {
   draft: string
   error: string | null
   setDraft: (value: string) => void
@@ -122,6 +128,11 @@ function useLinkEntry(onAdd: AddSources): {
 } {
   const [draft, setDraftState] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const report = useRef(onDraftChange)
+  report.current = onDraftChange
+  // Nothing typed is left pending once the field goes away (a video was chosen another way).
+  useEffect(() => () => report.current?.(''), [])
+  const setText = (value: string): void => { setDraftState(value); report.current?.(value) }
   const submit = (text: string): boolean => {
     if (!text.trim()) return false
     const { links, invalid } = parseSourceText(text)
@@ -129,27 +140,29 @@ function useLinkEntry(onAdd: AddSources): {
       setError(twitchSourceError(invalid[0] ?? text) ?? 'Paste a valid HTTP(S) link without a username or password.')
       return false
     }
+    setText('')
     setError(onAdd(links, invalid))
-    setDraftState('')
     return true
   }
-  return { draft, error, setDraft: (value) => { setDraftState(value); if (error) setError(null) }, submit }
+  return { draft, error, setDraft: (value) => { setText(value); if (error) setError(null) }, submit }
 }
 
 function DropZone({
   multi,
   onAdd,
   onBrowse,
+  onPendingChange,
   disabled
 }: {
   multi: boolean
   onAdd: AddSources
   onBrowse: () => void
+  onPendingChange?: (text: string) => void
   disabled?: boolean
 }): React.JSX.Element {
   const [dragging, setDragging] = useState(false)
   const [dropError, setDropError] = useState<string | null>(null)
-  const entry = useLinkEntry(onAdd)
+  const entry = useLinkEntry(onAdd, onPendingChange)
   const error = dropError ?? entry.error
   // dragenter/dragleave fire for every child; count them to know when the
   // pointer has really left the zone.
@@ -269,9 +282,12 @@ function LinkField({ entry, size, disabled, multi, primary = false }: { entry: R
       onKeyDown={(e) => {
         if (e.key === 'Enter') entry.submit(entry.draft)
       }}
+      // Leaving the field uses the link too, so there's nothing extra to click.
+      onBlur={() => { if (entry.draft.trim()) entry.submit(entry.draft) }}
       trailing={
         entry.draft.trim() ? (
-          <Button size="sm" variant="primary" className="mr-0.5 animate-fade-in" onClick={() => entry.submit(entry.draft)} disabled={disabled}>
+          // Keeps focus in the field, so the click (not the blur) uses the link.
+          <Button size="sm" variant="primary" className="mr-0.5 animate-fade-in" onMouseDown={(e) => e.preventDefault()} onClick={() => entry.submit(entry.draft)} disabled={disabled}>
             {primary ? 'Use link' : 'Add'}
           </Button>
         ) : undefined

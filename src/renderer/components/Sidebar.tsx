@@ -229,9 +229,12 @@ function SetupStatus({ expanded, onOpenSettings }: { expanded: boolean; onOpenSe
 
   let tone: 'success' | 'warning' | 'danger' | 'idle' = 'success'
   let label = 'Ready to clip'
+  // Short enough for the sidebar; the full name is in the tooltip and for screen readers.
+  let fullLabel: string | null = null
   if (missingKeys.length > 0) {
     tone = 'warning'
-    label = missingKeys.length === 2 ? 'Add API keys' : `Add ${missingKeys[0]} key`
+    label = missingKeys.length > 1 ? 'Add your keys' : 'Add your key'
+    fullLabel = missingKeys.length > 1 ? `Add your ${missingKeys.join(' and ')} keys` : `Add your ${missingKeys[0]} key`
   } else if (toolsOk === false) {
     tone = 'danger'
     label = 'System check failed'
@@ -243,8 +246,8 @@ function SetupStatus({ expanded, onOpenSettings }: { expanded: boolean; onOpenSe
   return (
     <button
       onClick={onOpenSettings}
-      aria-label={label}
-      title={expanded ? undefined : label}
+      aria-label={fullLabel ?? label}
+      title={fullLabel ?? (expanded ? undefined : label)}
       className={cn(
         'flex h-8 min-w-0 items-center gap-2 rounded-full text-xs transition-colors hover:bg-white/[0.06]',
         expanded ? 'flex-1 justify-start px-3' : 'w-9 justify-center',

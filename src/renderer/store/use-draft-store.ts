@@ -80,6 +80,8 @@ export interface ClipDraft {
 interface DraftState extends ClipDraft {
   step: WizardStep
   started: StartedJob | null
+  /** Text typed into the empty video link field, not yet used: Next uses it when it's a valid link. */
+  pendingLink: string
   update: (patch: Partial<ClipDraft>) => void
   setStep: (step: WizardStep) => void
   clearSource: () => void
@@ -127,9 +129,10 @@ export const useDraftStore = create<DraftState>((set) => ({
   trimEnd: '',
   step: 'video',
   started: null,
+  pendingLink: '',
   update: (patch) => set(patch),
   setStep: (step) => set({ step }),
-  clearSource: () => set({ source: '', sources: [], trimStart: '', trimEnd: '' }),
+  clearSource: () => set({ source: '', sources: [], trimStart: '', trimEnd: '', pendingLink: '' }),
   markStarted: (started) => set({ started }),
-  startAnother: () => set({ workflow: null, source: '', sources: [], clipRequest: '', trimOpen: false, trimStart: '', trimEnd: '', step: 'video', started: null })
+  startAnother: () => set({ workflow: null, source: '', sources: [], pendingLink: '', clipRequest: '', trimOpen: false, trimStart: '', trimEnd: '', step: 'video', started: null })
 }))

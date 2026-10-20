@@ -1,6 +1,6 @@
 import { normalizeVideoSource, twitchSourceError } from '../../shared/video-source'
-import { useCallback, useEffect, useMemo, type ReactNode } from 'react'
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock3, ListVideo, Minus, Plus, Sparkles } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, Clock3, ListVideo, Minus, Plus, Sparkles } from 'lucide-react'
 import { cn, MOD_KEY, parseTimecode, sourceLabel } from '../lib/utils'
 import { useDraftStore, type ClipDraft, type WizardStep } from '../store/use-draft-store'
 import { StylePresets } from './StylePresets'
@@ -28,7 +28,7 @@ import { previewFrame, StyleBoard } from './StyleBoard'
 import type { BoardRows, BoardStyle, HookChoice } from '../lib/style-board'
 import { DEFAULT_HEADLINE_LOOK, HEADLINE_LOOKS } from '../../shared/headline-look'
 import { CAPTION_LANGUAGES, captionLanguageLabel, isCaptionLanguage, type CaptionLanguageChoice } from '../../shared/caption-language'
-import { sourceCountLabel } from '../../shared/create-sources'
+import { mergeSources, parseSourceText, sourceCountLabel } from '../../shared/create-sources'
 import { Select } from './ui/Select'
 import { useBrands } from '../store/use-brand-store'
 import { createCtaLine, DEFAULT_HANDLE_POSITION, HANDLE_POSITIONS, hasBrandMark } from '../../shared/brand-kit'
@@ -60,6 +60,16 @@ const BROLL_OPTIONS = [
 ] as const
 
 const MAX_CLIPS = 100
+
+/** The Create defaults the Format and Clips summaries compare against. */
+const DEFAULTS = useDraftStore.getInitialState()
+
+/** Clipping modes, by outcome; the models behind each are under Details. */
+export const CLIPPING_MODE_OPTIONS = [
+  { id: 'quality', label: 'Best quality', hint: 'Most accurate picks and captions', summary: 'Best quality' },
+  { id: 'economy', label: 'Lower cost', hint: 'Cheaper, may be less accurate', summary: 'Lower cost' },
+  { id: 'advanced', label: 'Choose models', hint: 'Pick your own OpenRouter models', summary: 'Your own models' }
+] as const
 
 export const WIZARD_STEPS: { id: WizardStep; label: string; title: string; description: string }[] = [
   { id: 'video', label: 'Video', title: 'Choose a video', description: 'A local file, YouTube link or Twitch VOD link. Optionally suggest where to find clips.' },
@@ -150,6 +160,8 @@ interface JobFormProps {
   /** Why the job can't start yet (missing keys, tools); disables submit. */
   blockedReason?: ReactNode
   submitting?: boolean
+  /** Opens Remix (the Video step's note for reacting to someone else's video). */
+  onOpenRemix?: () => void
   className?: string
 }
 
@@ -160,9 +172,18 @@ type Update = (patch: Partial<ClipDraft>) => void
  * one compact panel with Back/Next pinned below it. After Generate the job is
  * queued and the wizard offers the next video, so several runs can go at once.
  */
-export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, className }: JobFormProps): React.JSX.Element {
+/** Links typed in the empty video field and not used yet (none if any part isn't a valid link). */
+function pendingLinks(draft: Pick<ClipDraft, 'source'> & { pendingLink: string }): string[] {
+  if (draft.source.trim() || !draft.pendingLink.trim()) return []
+  const { links, invalid } = parseSourceText(draft.pendingLink)
+  return invalid.length ? [] : mergeSources([], links).sources
+}
+
+export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, onOpenRemix, className }: JobFormProps): React.JSX.Element {
   const draft = useDraftStore()
   const { update, step, setStep } = draft
+  // Customize on Format and Clips: unset until the member opens or closes it (then each step starts open only when something differs from the defaults).
+  const [customize, setCustomize] = useState<Partial<Record<'format' | 'clips', boolean>>>({})
 
   const sourceCount = draftSources(draft).length
   // A preferred range applies to a single video only.
@@ -175,14 +196,24 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, classN
   const index = WIZARD_STEPS.findIndex((s) => s.id === step)
   const meta = WIZARD_STEPS[index]
   const sourceError = twitchSourceError(draft.source)
-  const hasSource = Boolean(draft.source.trim()) && !sourceError
+  // A valid link still in the field counts: Next and Generate use it.
+  const pending = pendingLinks(draft)
+  const hasSource = (Boolean(draft.source.trim()) && !sourceError) || pending.length > 0
   const videoValid = hasSource && draft.workflow !== null && !trim.error
   const modelsValid = draft.clippingMode !== 'advanced' || (isModelId(draft.plannerModel) && isModelId(draft.transcriptionModel))
   const stepValid = videoValid && (step !== 'clips' || modelsValid)
   const canSubmit = videoValid && modelsValid && !blockedReason && !submitting && !draft.started
 
+  /** Uses a valid link still in the field as the video; returns the draft with it. */
+  const takePendingLink = (): ClipDraft => {
+    if (!pending.length) return draft
+    const patch = { source: pending[0], sources: pending }
+    useDraftStore.setState({ ...patch, pendingLink: '' })
+    return { ...draft, ...patch }
+  }
+
   const submit = (): void => {
-    if (canSubmit) onSubmit(buildJobRequests(draft, trim))
+    if (canSubmit) onSubmit(buildJobRequests(takePendingLink(), trim))
   }
 
   // ⌘↵ / Ctrl+↵ generates only once a video and workflow are chosen.
@@ -202,8 +233,10 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, classN
   }
 
   const goTo = (target: WizardStep): void => {
+    takePendingLink()
     setStep(target)
-    document.getElementById('page-scroll')?.scrollTo({ top: 0 })
+    // Bring the step bar (and the top of the new step) into view, below the setup notes above it.
+    requestAnimationFrame(() => document.getElementById('create-steps')?.scrollIntoView({ block: 'start' }))
   }
   const next = WIZARD_STEPS[index + 1]
   const back = WIZARD_STEPS[index - 1]
@@ -226,12 +259,12 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, classN
       <Panel className="p-4 xl:p-5">
         {step !== 'video' && <div className="mb-3">
           <h2 className="text-sm font-semibold text-ink">{step === 'review' && draft.workflow === 'review' ? 'Ready to find candidates' : meta.title}</h2>
-          <p className="mt-0.5 text-xs text-ink-muted">{step === 'review' && draft.workflow === 'review' ? 'Jev reviews each candidate before the editor opens for your final cut.' : meta.description}</p>
+          <p className="mt-0.5 text-xs text-ink-muted">{step === 'review' && draft.workflow === 'review' ? 'A quality check reviews each candidate before the editor opens for your final cut.' : meta.description}</p>
         </div>}
         {sourceError && <p role="alert" className="text-sm text-danger">{sourceError}</p>}
-        {step === 'video' && <VideoStep draft={draft} update={update} trimError={trim.error} disabled={submitting} />}
-        {step === 'format' && <FormatStep draft={draft} update={update} />}
-        {step === 'clips' && <ClipsStep draft={draft} update={update} />}
+        {step === 'video' && <VideoStep draft={draft} update={update} trimError={trim.error} disabled={submitting} onOpenRemix={onOpenRemix} />}
+        {step === 'format' && <FormatStep draft={draft} update={update} customize={customize.format} onCustomize={(format) => setCustomize((value) => ({ ...value, format }))} />}
+        {step === 'clips' && <ClipsStep draft={draft} update={update} customize={customize.clips} onCustomize={(clips) => setCustomize((value) => ({ ...value, clips }))} />}
         {step === 'captions' && <CaptionsStep draft={draft} update={update} />}
         {step === 'review' && <ReviewStep draft={draft} trim={trim} onEdit={goTo} />}
         {step !== 'video' && sourceCount > 1 && <p className="mt-3 text-2xs text-ink-subtle" data-testid="batch-note">{sourceCountLabel(sourceCount)} with these settings, one job each.</p>}
@@ -271,7 +304,7 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, classN
 function Stepper({ current, reachable, onSelect }: { current: WizardStep; reachable: number; onSelect: (step: WizardStep) => void }): React.JSX.Element {
   const currentIndex = WIZARD_STEPS.findIndex((s) => s.id === current)
   return (
-    <nav aria-label="Create steps">
+    <nav aria-label="Create steps" id="create-steps" className="scroll-mt-4">
       <ol className="flex items-center gap-1.5">
         {WIZARD_STEPS.map((s, i) => {
           const active = i === currentIndex
@@ -320,8 +353,8 @@ function HeadlineVoicePicker({ value, onChange, disabled }: { value: HeadlineVoi
   return (
     <div>
       <p className="text-sm font-medium text-ink" id="headline-voice-label">Whose video is this?</p>
-      <p className="mb-2 mt-0.5 text-2xs text-ink-muted">Sets how titles and headlines talk about the speaker.</p>
-      <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-labelledby="headline-voice-label">
+      <p className="mb-2 mt-0.5 text-2xs text-ink-muted" id="headline-voice-help">Headlines talk about the speaker when it’s someone else’s video, or speak in your voice when it’s yours.</p>
+      <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-labelledby="headline-voice-label" aria-describedby="headline-voice-help">
         {HEADLINE_VOICE_OPTIONS.map((option) => {
           const selected = value === option.id
           return (
@@ -338,7 +371,7 @@ function HeadlineVoicePicker({ value, onChange, disabled }: { value: HeadlineVoi
   )
 }
 
-function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; update: Update; trimError: string | null; disabled?: boolean }): React.JSX.Element {
+function VideoStep({ draft, update, trimError, disabled, onOpenRemix }: { draft: ClipDraft; update: Update; trimError: string | null; disabled?: boolean; onOpenRemix?: () => void }): React.JSX.Element {
   return (
     <div className="space-y-3">
       <WorkflowPicker value={draft.workflow} onChange={(workflow) => update({ workflow })} disabled={disabled} />
@@ -349,9 +382,14 @@ function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; u
         </div>
         <SourcePicker value={draft.source} sources={draft.sources} disabled={disabled}
           onChange={(source) => update({ source, sources: source ? [source] : [] })}
-          onSourcesChange={(sources) => update({ sources, source: sources[0] ?? '' })} />
+          onSourcesChange={(sources) => update({ sources, source: sources[0] ?? '' })}
+          onPendingChange={(pendingLink) => useDraftStore.setState({ pendingLink })} />
       </section>
       <HeadlineVoicePicker value={draft.headlineVoice} onChange={(headlineVoice) => update({ headlineVoice })} disabled={disabled} />
+      {onOpenRemix && <p className="flex flex-wrap items-center gap-x-1 text-2xs text-ink-subtle" data-testid="remix-note">
+        Want to react to someone else’s video with your own take?
+        <button type="button" onClick={onOpenRemix} className="rounded font-medium text-accent hover:underline focus-visible:underline">Use Remix</button>
+      </p>}
       {draftSources(draft).length > 1 ? <p className="text-2xs text-ink-subtle">A preferred part of the video applies to one video at a time, so it is off when you clip several.</p> : <><SettingRow
         title="Preferred part of the video"
         description="Suggest where to find clips. The full source is transcribed; boundaries may expand to preserve complete ideas."
@@ -388,10 +426,96 @@ function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; u
   )
 }
 
+/** One part of a step's summary; `changed` when it differs from the defaults. */
+export interface SummaryPart { text: string; changed: boolean }
+
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1)
+}
+
+/** What the Format step's options will do, in a few words each (framing and format are shown as choices). */
+export function formatSummary(draft: Pick<ClipDraft, 'aspectRatio' | 'layoutStyle' | 'clippingMode' | 'layoutVision' | 'screenFocus' | 'pacing' | 'videoSpeed' | 'workflow' | 'broll' | 'backgroundVideo'>): SummaryPart[] {
+  const parts: SummaryPart[] = []
+  const smart = draft.aspectRatio === '9:16' && draft.layoutStyle === 'auto'
+  if (smart && draft.clippingMode !== 'economy') parts.push(draft.layoutVision === false ? { text: 'no AI shot checks', changed: true } : { text: 'AI checks tricky shots', changed: false })
+  const focus = draft.screenFocus ?? 'smart'
+  if (smart && focus !== DEFAULTS.screenFocus) parts.push({ text: lowerFirst(SCREEN_FOCUS_OPTIONS.find((option) => option.id === focus)?.summary ?? focus), changed: true })
+  parts.push(draft.pacing === 'natural' ? { text: 'pauses kept', changed: true } : { text: 'dead air cut', changed: false })
+  const speed = draft.videoSpeed ?? 1
+  parts.push(speed === DEFAULTS.videoSpeed ? { text: 'normal speed', changed: false } : { text: `${speed}× speed`, changed: true })
+  if (draft.workflow !== 'review') {
+    const broll = draft.broll ?? 'off'
+    if (broll !== 'off') parts.push({ text: `B-roll: ${lowerFirst(BROLL_OPTIONS.find((option) => option.id === broll)?.summary ?? broll)}`, changed: true })
+    else if (draft.aspectRatio === '9:16' && draft.backgroundVideo) parts.push({ text: `${draft.backgroundVideo} under the speaker`, changed: true })
+    else parts.push({ text: 'no B-roll', changed: false })
+  }
+  return parts
+}
+
+/** What the Clips step's options will do (what to clip is shown as a field). */
+export function clipsSummary(draft: Pick<ClipDraft, 'clippingMode' | 'durations' | 'qualityBar' | 'autoClipCount' | 'maxClips' | 'hookPreview' | 'workflow' | 'videoSpeed'>): SummaryPart[] {
+  const parts: SummaryPart[] = []
+  const mode = CLIPPING_MODE_OPTIONS.find((option) => option.id === draft.clippingMode) ?? CLIPPING_MODE_OPTIONS[0]
+  parts.push({ text: mode.summary, changed: mode.id !== DEFAULTS.clippingMode })
+  const durations = draft.durations ?? []
+  const sameLengths = durations.length === DEFAULTS.durations.length && DEFAULTS.durations.every((id) => durations.includes(id))
+  parts.push(durations.length === 0
+    ? { text: 'any length', changed: true }
+    // Lengths are of the original footage; a faster speed makes the clips shorter.
+    : { text: `${DURATIONS.filter((d) => durations.includes(d.id)).map((d) => d.range).join(', ')} clips${(draft.videoSpeed ?? 1) > 1 ? ' (of source footage)' : ''}`, changed: !sameLengths })
+  const bar = QUALITY_BAR_OPTIONS.find((option) => option.id === (draft.qualityBar ?? DEFAULTS.qualityBar)) ?? QUALITY_BAR_OPTIONS[0]
+  parts.push(bar.id === DEFAULTS.qualityBar ? { text: 'B grade or better', changed: false } : { text: lowerFirst(bar.summary), changed: true })
+  parts.push(draft.autoClipCount === false ? { text: `up to ${draft.maxClips} clip${draft.maxClips === 1 ? '' : 's'}`, changed: true } : { text: 'AI decides how many', changed: false })
+  if (draft.workflow !== 'review' && draft.hookPreview) parts.push({ text: 'hook preview on', changed: true })
+  return parts
+}
+
+/**
+ * A step's options in one or two lines, with Customize to show them. Anything
+ * changed from the defaults is named, so nothing is hidden silently.
+ */
+function RecommendedSummary({ id, parts, open, onToggle }: { id: string; parts: SummaryPart[]; open: boolean; onToggle: () => void }): React.JSX.Element {
+  const changed = parts.filter((part) => part.changed)
+  const sentence = parts.map((part) => part.text).join(', ')
+  return (
+    <div className="glass-tile flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl px-3 py-2.5" data-testid={`${id}-summary`}>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-ink">{changed.length ? 'Your settings' : 'Recommended'}</p>
+        <p className="mt-0.5 text-xs text-ink-muted">{sentence.charAt(0).toUpperCase() + sentence.slice(1)}.</p>
+        {changed.length > 0 && <p className="mt-0.5 text-2xs text-ink-subtle" data-testid={`${id}-changed`}>
+          Changed from recommended: {changed.map((part) => part.text).join(', ')}.
+        </p>}
+      </div>
+      <Button size="sm" variant="ghost" aria-expanded={open} aria-controls={`${id}-options`} onClick={onToggle}>
+        {open ? 'Hide options' : 'Customize'}<ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} />
+      </Button>
+    </div>
+  )
+}
+
+/** Customize's open state: the caller's choice, else open at first when something differs from the defaults. */
+function useCustomize(parts: SummaryPart[], customize: boolean | undefined, onCustomize?: (open: boolean) => void): [boolean, () => void] {
+  const [initial] = useState(() => parts.some((part) => part.changed))
+  const [local, setLocal] = useState<boolean | undefined>(undefined)
+  const open = customize ?? local ?? initial
+  return [open, () => (onCustomize ?? setLocal)(!open)]
+}
+
+interface StepProps {
+  draft: ClipDraft
+  update: Update
+  /** Customize open (true) or closed (false); unset: open only when something differs from the defaults. */
+  customize?: boolean
+  onCustomize?: (open: boolean) => void
+}
+
 /** Format, framing and pacing. Exported for the keyboard-navigation test. */
-export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
+export function FormatStep({ draft, update, customize, onCustomize }: StepProps): React.JSX.Element {
   const setBackground = useCallback((backgroundVideo: string | null) => update(backgroundVideo ? { backgroundVideo, broll: 'off' } : { backgroundVideo }), [update])
   const pexelsConfigured = useSettingsStore((s) => s.pexelsConfigured)
+  const jevEnabled = useSettingsStore((s) => s.jevEnabled === 'on')
+  const parts = formatSummary(draft)
+  const [open, toggle] = useCustomize(parts, customize, onCustomize)
   return (
     <div className="space-y-4">
       <Group label="Format">
@@ -458,19 +582,25 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
               )
             })}
           </div>
-          {draft.layoutStyle === 'auto' && draft.clippingMode === 'economy' && (
-            <p className="mt-2 text-2xs text-ink-subtle">AI vision checks are off in Economy mode.</p>
+        </Group>
+      )}
+
+      <RecommendedSummary id="format" parts={parts} open={open} onToggle={toggle} />
+
+      {open && <div id="format-options" className="space-y-4 animate-fade-in">
+      {draft.aspectRatio === '9:16' && draft.layoutStyle === 'auto' && (
+        <Group label="Smart framing">
+          {draft.clippingMode === 'economy' && (
+            <p className="text-2xs text-ink-subtle">AI checks of tricky shots are off with Lower cost.</p>
           )}
-          {draft.layoutStyle === 'auto' && draft.clippingMode !== 'economy' && (
+          {draft.clippingMode !== 'economy' && (
             <SettingRow
-              className="mt-2"
               title="Check tricky shots with AI vision"
               description="Checks uncertain shots. May add OpenRouter charges."
               control={<Switch label="AI vision for smart framing" checked={draft.layoutVision} onChange={(layoutVision) => update({ layoutVision })} />}
             />
           )}
-          {draft.layoutStyle === 'auto' && (
-            <div className="glass-tile mt-2 rounded-xl px-3 py-2.5">
+          <div className="glass-tile mt-2 rounded-xl px-3 py-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-ink">Screen share clips</p>
@@ -488,7 +618,6 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
                 {(SCREEN_FOCUS_OPTIONS.find((option) => option.id === (draft.screenFocus ?? 'smart')) ?? SCREEN_FOCUS_OPTIONS[0]).hint}
               </p>
             </div>
-          )}
         </Group>
       )}
 
@@ -536,7 +665,7 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
       <Group label="Pacing">
         <SettingRow
           title="Cut dead air"
-          description="Proposes pause and filler cuts. When enabled, Jev checks each removal."
+          description={`Removes long pauses and filler words.${draft.workflow === 'review' || jevEnabled ? ' The quality check approves each cut.' : ''}`}
           control={
             <Switch label="Cut dead air and filler words" checked={draft.pacing === 'tight'} onChange={(on) => update({ pacing: on ? 'tight' : 'natural' })} />
           }
@@ -561,13 +690,18 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
         </div>
         <p id="video-speed-help" className="mt-2 text-2xs text-ink-subtle">Speeds up every exported clip, keeping voice pitch natural and captions in sync. Faster clips are shorter.</p>
       </Group>
+      </div>}
     </div>
   )
 }
 
-export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
+export function ClipsStep({ draft, update, customize, onCustomize }: StepProps): React.JSX.Element {
   const jevEnabled = useSettingsStore((s) => s.jevEnabled === 'on')
   const openrouterConfigured = useSettingsStore((s) => s.openrouterConfigured)
+  const parts = clipsSummary(draft)
+  const [open, toggle] = useCustomize(parts, customize, onCustomize)
+  // The quality check (Jev): always on for Review & edit, a Settings choice for automatic clips.
+  const check = draft.workflow === 'review' ? 'required' : jevEnabled ? 'on' : 'off'
   const toggleDuration = (id: string): void => {
     update({ durations: draft.durations.includes(id) ? draft.durations.filter((d) => d !== id) : [...draft.durations, id] })
   }
@@ -585,6 +719,8 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
         />
         <p id="clip-request-help" className="mt-2 text-2xs text-ink-subtle">Only matching moments are clipped, so you may get fewer clips, or none. Leave blank for the best moments.</p>
       </Group>
+      <RecommendedSummary id="clips" parts={parts} open={open} onToggle={toggle} />
+      {open && <div id="clips-options" className="space-y-4 animate-fade-in">
       {draft.workflow !== 'review' && (
         <SettingRow
           title="Hook preview"
@@ -594,11 +730,7 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
       )}
       <Group label="Clipping mode">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Clipping mode">
-          {([
-            { id: 'quality', label: 'Quality', hint: `GPT-6 Sol planning · ${draft.workflow === 'review' ? 'Jev review required' : `Jev review & repairs ${jevEnabled ? 'enabled' : 'off'}`} · MAI Transcribe 2` },
-            { id: 'economy', label: 'Economy', hint: 'GLM 5.3 Flash planning · Whisper Turbo' },
-            { id: 'advanced', label: 'Advanced', hint: 'Choose your OpenRouter models' }
-          ] as const).map((mode) => {
+          {CLIPPING_MODE_OPTIONS.map((mode) => {
             const selected = draft.clippingMode === mode.id
             return <button key={mode.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1}
               onKeyDown={onRadioKeyDown} onClick={() => update({ clippingMode: mode.id })}
@@ -608,8 +740,25 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
             </button>
           })}
         </div>
-        {draft.clippingMode === 'advanced' ? <AdvancedModels draft={draft} update={update} /> :
-          <p className="mt-2 text-2xs text-ink-subtle">Economy uses lower-cost models and skips paid vision checks. Transcription retries temporary errors and can fall back to Whisper Large V3, then MAI Transcribe 2. Clip choices and captions may be less accurate.</p>}
+        {draft.clippingMode === 'advanced' ? <AdvancedModels draft={draft} update={update} /> : <>
+          <p className="mt-2 text-2xs text-ink-subtle" data-testid="clipping-mode-help">
+            {draft.clippingMode === 'economy'
+              ? 'Uses lower-cost AI and skips paid vision checks. If transcription fails, it tries other models. Clip choices and captions may be less accurate.'
+              : 'Uses the most accurate AI to transcribe and pick moments.'}
+            {check === 'required' ? ' A quality check reviews every candidate before you edit.'
+              : check === 'on' ? ' A quality check reviews each clip and fixes problems, using extra OpenRouter credit.'
+                : draft.clippingMode === 'economy' ? '' : ' The quality check for automatic clips is off; you can turn it on in Settings.'}
+          </p>
+          <details className="mt-1.5 text-2xs text-ink-subtle" data-testid="clipping-mode-details">
+            <summary className="cursor-pointer select-none hover:text-ink-muted">Details</summary>
+            <p className="mt-1 leading-relaxed">
+              {draft.clippingMode === 'economy'
+                ? 'Planning: GLM 5.3 Flash. Transcription: Whisper Turbo, then Whisper Large V3 and MAI Transcribe 2 if it fails.'
+                : 'Planning: GPT-6 Sol. Transcription: MAI Transcribe 2.'}
+              {` Quality check: Jev (${check}).`}
+            </p>
+          </details>
+        </>}
       </Group>
       <Group label="Clip length" aside={draft.durations.length === 0 ? 'Any length' : `${draft.durations.length} selected`}>
         <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-7" role="group" aria-label="Clip length options">
@@ -698,6 +847,7 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
           </div>
         )}
       </Group>
+      </div>}
     </div>
   )
 }
@@ -805,7 +955,7 @@ export function ReviewStep({ draft, trim, onEdit }: {
       : []),
     { step: 'format', label: 'Pacing', value: draft.workflow === 'review' ? 'Manual · choose your own cuts in the editor' : draft.pacing === 'tight' ? 'Cut dead air' : 'Keep pauses' },
     { step: 'format', label: 'Speed', value: `${draft.videoSpeed ?? 1}×${(draft.videoSpeed ?? 1) === 1 ? ' · Normal' : ' · All exported clips'}` },
-    { step: 'clips', label: 'Mode', value: draft.clippingMode === 'advanced' ? 'Advanced · custom models' : draft.clippingMode === 'economy' ? 'Economy · lower cost' : 'Quality · higher accuracy' },
+    { step: 'clips', label: 'Mode', value: draft.clippingMode === 'advanced' ? 'Your own models' : draft.clippingMode === 'economy' ? 'Lower cost · may be less accurate' : 'Best quality' },
     { step: 'clips', label: 'Clips', value: `${lengths}${(draft.videoSpeed ?? 1) > 1 && draft.durations.length > 0 ? ' of source footage' : ''} · ${draft.autoClipCount ? 'AI decides how many' : `Up to ${draft.maxClips}`}` },
     { step: 'clips', label: 'What to clip', value: draft.clipRequest?.trim() || 'The best moments' },
     ...(draft.workflow !== 'review' && draft.hookPreview ? [{ step: 'clips' as const, label: 'Hook preview', value: 'Opens with the strongest line' }] : []),

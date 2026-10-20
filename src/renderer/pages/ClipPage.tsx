@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { useSetupState } from '../store/use-settings-store'
 import { useDraftStore } from '../store/use-draft-store'
+import { useMemberPrefsStore } from '../store/use-member-prefs-store'
 import { useJobStore } from '../store/use-job-store'
 import { errorMessage } from '../lib/utils'
 import { getApi } from '../lib/ipc'
@@ -13,11 +14,11 @@ import { FirstRunGuide } from '../components/FirstRunGuide'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Page } from '../components/ui/Page'
 import { Callout } from '../components/ui/Callout'
-import { Button } from '../components/ui/Button'
 import type { Page as PageId } from '../components/Sidebar'
 
 /**
- * Create: the setup card (until the OpenRouter key exists) and the clipping wizard. Runs go
+ * Create: the setup checklist (which asks for the OpenRouter key in its first
+ * row, or the setup card when the checklist is closed) and the clipping wizard. Runs go
  * to the main process's queue and are followed on the Jobs page, so this page
  * is always ready for the next video.
  */
@@ -28,6 +29,8 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
   const [startError, setStartError] = useState<string | null>(null)
   const lowDisk = useLowDiskGate()
   const ensureSpace = lowDisk.ensureSpace
+  // The checklist asks for the key itself; the key card only when it isn't showing.
+  const checklistShown = useMemberPrefsStore((state) => state.loaded && !state.setupChecklistDismissed)
 
   const handleSubmit = useCallback(async (configs: ClipJobRequest[]) => {
     if (startingRef.current || configs.length === 0) return
@@ -87,15 +90,10 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
       <PageHeader
         eyebrow="Studio"
         title="Create clips"
-        description="Straight clips from your own videos, or ones you have permission to use. CreatorClips finds the strongest moments and cuts them into captioned clips."
+        description="Clips from your videos or ones you have permission to use. CreatorClips finds the strongest moments and cuts them into captioned clips."
       />
 
-      <Callout tone="info" className="mt-4" title="Someone else's video?"
-        action={<Button size="sm" variant="secondary" onClick={() => onNavigate('remix')}>Open Remix</Button>}>
-        Make reaction clips instead: a few seconds of their moment, then your take in your brand's voice, with the creator credited.
-      </Callout>
-
-      <SetupCard className="mt-4" onOpenSettings={() => onNavigate('settings')} />
+      <SetupCard className="mt-4" askForKey={!checklistShown} onOpenSettings={() => onNavigate('settings')} />
       <SetupChecklist className="mt-4" onNavigate={onNavigate} />
       <FirstRunGuide page="clip" />
       {lowDisk.element}
@@ -106,7 +104,7 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
         </Callout>
       )}
 
-      <JobForm className="mt-4" onSubmit={handleSubmit} onViewJob={viewJob} blockedReason={blockedReason} submitting={starting} />
+      <JobForm className="mt-4" onSubmit={handleSubmit} onViewJob={viewJob} blockedReason={blockedReason} submitting={starting} onOpenRemix={() => onNavigate('remix')} />
     </Page>
   )
 }
