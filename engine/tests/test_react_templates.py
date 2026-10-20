@@ -315,7 +315,8 @@ def test_their_clip_then_me_written_and_made_from_the_trimmed_clip(env, monkeypa
     assert data["tags"]["excerpt_windows"] == [[0.0, op]] and data["tags"]["credit_text"] == "Original: @skincoach" and data["tags"]["cuts"] == [op]
     manifest = json.load(open(made["manifest_path"]))
     assert manifest["format"] == "clip_then_me" and manifest["source"]["trim"] == {"start_seconds": 0.3, "end_seconds": 7.3}
-    assert manifest["presenter"]["clip_then_me"] == {"clip_seconds": 7.0, "take_seconds": 12.0}
+    # (A busy test pattern isn't taken for captions: the clip's own words are captioned.)
+    assert manifest["presenter"]["clip_then_me"] == {"clip_seconds": 7.0, "take_seconds": 12.0, "their_captions": False, "proofs": []}
     assert {c["id"]: c["ok"] for c in made["checks"]} == {"permission": True, "credited": True, "moment": True, "cta": True, "presenter": True}
     assert made["checks"][2]["label"] == "Their clip is 7.0s, then your take (12s)"
     job = json.load(open(os.path.join(env.out, "job_output.json")))
