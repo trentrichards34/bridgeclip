@@ -266,6 +266,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         captionPreset: form.captionPreset, includeCaptions: form.includeCaptions, aiLabelAck: form.aiLabelAck,
         ctaKeyword: keyword ?? '', ctaOffer: keyword ? form.ctaOffer.trim() : '', format: form.format, clipRightsAck: (silent || image || pause || momentTake || clip) && form.clipRightsAck,
         headlineLook: form.headlineLook,
+        ...(form.lookExtras.length ? { lookExtras: form.lookExtras } : {}),
         ...(onCamera ? { camera: image ? { ...form.imageCamera, talk: true } : pause ? { ...form.pauseCamera, layout: form.pauseCamera.layout === 'greenscreen' ? 'filmed' : form.pauseCamera.layout, talk: true }
           : momentTake || clip ? { ...form.momentCamera, layout: form.momentCamera.layout === 'greenscreen' ? 'filmed' : form.momentCamera.layout, talk: true }
           // Green screen over their video: always the green screen (React, then my thoughts films you behind a box).
@@ -554,7 +555,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const frame = image ? previewFrame(form.imagePath, 'image') : form.filePath ? previewFrame(form.filePath) : previewFrame(links[0])
   const styleBoard = (layout?: React.ReactNode): React.JSX.Element => (
     <StyleBoard value={boardFromLook(form)} onChange={(patch) => form.update(lookPatch(form, patch))}
-      rows={{ hooks: LOOK_HOOKS, handle: true, cta: true, keyword: true }} brand={brand} frame={frame} saveKind="remix"
+      rows={{ hooks: LOOK_HOOKS, handle: true, cta: true, keyword: true, extras: true }} brand={brand} frame={frame} saveKind="remix"
       keywordHelp={keywordHelp} keywordLabel="Comment keyword (optional)"
       ctaHelp="A short video of you (or an image) played at the end of every video. It replaces the presenter’s spoken call to action. You can change it on any video afterward in the Library."
       onUseBrand={() => { if (brand) form.update({ ...brandFormPatch(brand.look, form), ...(brand.look?.captionPreset ? { includeCaptions: true } : {}) }) }}

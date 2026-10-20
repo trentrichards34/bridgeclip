@@ -1,20 +1,21 @@
-import { useMemo, useState, type ReactNode } from 'react'
-import { Ban, Check, ChevronDown, ChevronLeft, ChevronRight, Image as ImageIcon, MessageCircle, Plus, Shuffle, Sparkles, Video } from 'lucide-react'
+import { memo, useMemo, useState, type ReactNode } from 'react'
+import { Ban, Check, ChevronDown, ChevronLeft, ChevronRight, Image as ImageIcon, LayoutGrid, MessageCircle, Plus, Shuffle, SlidersHorizontal, Sparkles, Video } from 'lucide-react'
 import { CAPTION_PRESETS } from '../../shared/caption-presets'
 import { DEFAULT_HANDLE_POSITION, HANDLE_POSITIONS, hasBrandMark, type HandlePosition } from '../../shared/brand-kit'
-import { HEADLINE_FONTS, headlineBarColor, headlineTextColor, isHexColor, type HeadlineFont } from '../../shared/headline-look'
+import { HEADLINE_FONTS, isHexColor } from '../../shared/headline-look'
+import { LOOK_EXTRAS, type LookExtraId } from '../../shared/look-extras'
 import { MAX_CTA_OFFER_CHARS, normalizeCtaKeyword, type BrandIdentity } from '../../shared/remix'
 import type { StyleKind } from '../../shared/member-prefs'
 import {
-  BAR_HOOKS, COLOR_PRESETS, HOOK_HINTS, HOOK_LABELS, brandBoardPatch, captionName, colorName, colorPatch, comboPatch, cornerName, fontName,
-  hookPatch, shuffleCombo, styleSummary, type BoardRows, type BoardStyle, type HookChoice
+  COLOR_PRESETS, CURATED_COMBOS, HOOK_HINTS, HOOK_LABELS, brandBoardPatch, captionName, colorName, colorPatch, comboPatch, cornerName, extrasName, fontName,
+  hookPatch, matchingCombo, shuffleCombo, styleSummary, toggleExtra, type BoardRows, type BoardStyle, type CuratedCombo, type HookChoice
 } from '../lib/style-board'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, youtubeId } from '../lib/utils'
 import { useBrands } from '../store/use-brand-store'
 import { BrandIdentityDialog } from './BrandIdentityDialog'
-import { CaptionSample, captionPreviewPreset, SCENE } from './CaptionPresetPicker'
 import { CTA_HELP, CtaDetails, CtaThumb, useCtaLibrary } from './CtaPicker'
+import { FrameStill, LINGER_MS, LookFrame, SAMPLE_WORDS, STILL_MS, WORD_MS, useNearScreen } from './LookFrame'
 import { SaveStyleButton } from './StylePresets'
 import { StylePreview, type StyleFrame } from './StylePreview'
 import { Button } from './ui/Button'
@@ -110,25 +111,106 @@ function SwatchRow<T extends string>({ title, groupLabel, current, options, valu
 /** Caption styles shown before "Show all": No captions and the first nine (two even rows on a typical board). */
 const CAPTIONS_FIRST = 10
 
-/** A small 9:16 tile with the hook look at the top. */
-function HookSwatch({ hook, color, font }: { hook: HookChoice; color: string; font: HeadlineFont }): React.JSX.Element {
-  const look = { look: hook === 'card' ? 'white' as const : hook, color, font }
-  const bar = BAR_HOOKS.includes(hook) ? headlineBarColor(look) : null
-  const ink = hook === 'floating' ? '#FFFFFF' : headlineTextColor(look)
+/** The Extras row: a checkbox per effect (pick as many as you like), each a tile of the effect on the member's frame. */
+function ExtrasRow({ value, onChange, options, wide }: {
+  value: readonly LookExtraId[]; onChange: (extras: LookExtraId[]) => void
+  options: { id: LookExtraId; name: string; description: string; content: ReactNode }[]; wide: boolean
+}): React.JSX.Element {
   return (
-    <span aria-hidden className="relative block h-[60px] w-[34px] overflow-hidden rounded-md bg-gradient-to-b from-slate-500 via-slate-700 to-slate-900">
-      {bar && <span className="absolute inset-x-0 top-0 h-[34%]" style={{ background: bar }} />}
-      {(bar || hook === 'floating') && <>
-        <span className="absolute left-[18%] right-[18%] top-[13%] h-[3px] rounded-full" style={{ background: ink, boxShadow: hook === 'floating' ? '0 0 2px #000' : undefined }} />
-        <span className="absolute left-[28%] right-[28%] top-[22%] h-[3px] rounded-full" style={{ background: ink, boxShadow: hook === 'floating' ? '0 0 2px #000' : undefined }} />
-      </>}
-      {hook === 'card' && (
-        <span className="absolute left-[14%] right-[14%] top-[9%] flex h-[16%] flex-col justify-center gap-[2px] rounded-[3px] bg-white/95 px-1">
-          <span className="h-[2px] rounded-full bg-black/80" /><span className="mx-1 h-[2px] rounded-full bg-black/80" />
+    <div className="space-y-1.5" role="group" aria-labelledby="style-row-extras">
+      <div className="flex min-h-7 items-center gap-2">
+        <span id="style-row-extras" className="shrink-0 text-xs font-semibold text-ink">Extras</span>
+        <span className="min-w-0 flex-1 truncate text-2xs text-ink-muted" data-testid="style-row-extras-current">
+          {value.length ? extrasName(value) : 'Pick as many as you like'}
         </span>
+        {value.length > 0 && <Button size="sm" variant="ghost" aria-label="Clear extras" onClick={() => onChange([])}>Clear</Button>}
+      </div>
+      <div role="group" aria-label="Extras: pick as many as you like" className="grid gap-1.5" style={{ gridTemplateColumns: wide ? TILE_GRID_WIDE : TILE_GRID }}>
+        {options.map((option) => {
+          const on = value.includes(option.id)
+          return (
+            <button key={option.id} type="button" role="checkbox" aria-checked={on} aria-label={option.name} title={option.description}
+              data-extra={option.id} onClick={() => onChange(toggleExtra(value, option.id))}
+              className={cn('glass-tile glass-tile-hover relative flex min-w-0 flex-col items-center gap-1 rounded-xl p-1 text-center',
+                on ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+              {option.content}
+              <span aria-hidden className={cn('absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-[5px] shadow-[0_0_0_1px_rgb(255_255_255/0.35)]',
+                on ? 'bg-accent text-accent-ink' : 'bg-black/40')}>
+                {on && <Check className="h-2.5 w-2.5" strokeWidth={3.5} />}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      <p className="text-2xs text-ink-subtle">Effects on top of your look. Each tile shows it on your video.</p>
+    </div>
+  )
+}
+
+type StartChoice = 'ready' | 'build'
+const START_KEY = 'creatorclips.styleBoard.start'
+function readStart(): StartChoice {
+  try { return globalThis.localStorage?.getItem(START_KEY) === 'ready' ? 'ready' : 'build' } catch { return 'build' }
+}
+function saveStart(choice: StartChoice): void {
+  try { globalThis.localStorage?.setItem(START_KEY, choice) } catch { /* a convenience only */ }
+}
+
+const START_OPTIONS: { id: StartChoice; title: string; detail: string; icon: ReactNode }[] = [
+  { id: 'ready', title: 'Start from a ready-made look', detail: 'Pick a complete look, then change anything.', icon: <LayoutGrid className="h-4 w-4" /> },
+  { id: 'build', title: 'Build my own', detail: 'Choose captions, hook text, font and color one by one.', icon: <SlidersHorizontal className="h-4 w-4" /> }
+]
+
+/** The hook text on tiles when the page has none of its own (short, so it reads at tile size). */
+const TILE_HOOK = 'Why nobody watches your videos'
+/** Tile widths in pixels (9:16 and 16:9). */
+const TILE_W = 84
+const TILE_W_WIDE = 128
+/** Tile columns: as many as fit, each at least a tile wide. */
+const TILE_GRID = `repeat(auto-fill, minmax(${TILE_W + 10}px, 1fr))`
+const TILE_GRID_WIDE = `repeat(auto-fill, minmax(${TILE_W_WIDE + 10}px, 1fr))`
+
+/** How a tile looks: the board's look with one option applied, and how big its text is drawn. */
+interface TileLook {
+  value: BoardStyle
+  rows: BoardRows
+  extras?: readonly LookExtraId[]
+  textScale: number
+  forceCaptions?: boolean
+}
+
+/** What every tile on the board shares: the member's frame, the page's words and the shape. */
+interface TileScene { frame: StyleFrame | null; aspect: '9:16' | '16:9'; hookText?: string; words?: string[]; keyword: string | null }
+
+/**
+ * One option as a small still of the member's own frame with that option
+ * applied (LookFrame, not playing). It draws once it comes near the screen.
+ */
+const LookTile = memo(function LookTile({ look, scene }: { look: TileLook; scene: TileScene }): React.JSX.Element {
+  const [ref, near] = useNearScreen<HTMLSpanElement>()
+  const wide = scene.aspect === '16:9'
+  const width = wide ? TILE_W_WIDE : TILE_W
+  const lineWords = scene.words?.length ? scene.words.slice(0, 8) : SAMPLE_WORDS
+  return (
+    <span ref={ref} aria-hidden data-look-tile className={cn('relative block shrink-0 overflow-hidden rounded-lg bg-black shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]', wide ? 'aspect-video' : 'aspect-[9/16]')}
+      style={{ width }}>
+      {near && (
+        <LookFrame value={look.value} rows={look.rows} background={<FrameStill frame={scene.frame} />} aspect={scene.aspect}
+          hookText={scene.hookText?.trim() ? scene.hookText : TILE_HOOK} words={scene.words} keyword={scene.keyword} width={width}
+          time={STILL_MS} loop={lineWords.length * WORD_MS + LINGER_MS} ending={false} extras={look.extras ?? []}
+          textScale={look.textScale} tile forceCaptions={look.forceCaptions} />
       )}
-      {hook === 'none' && <Ban className="absolute left-1/2 top-[18%] h-3 w-3 -translate-x-1/2 text-white/60" />}
     </span>
+  )
+})
+
+/** A tile and its name under it. */
+function TileOption({ look, scene, name }: { look: TileLook; scene: TileScene; name: string }): React.JSX.Element {
+  return (
+    <>
+      <LookTile look={look} scene={scene} />
+      <span className="w-full truncate px-0.5 text-2xs font-medium leading-tight">{name}</span>
+    </>
   )
 }
 
@@ -219,22 +301,53 @@ export function StyleBoard({
     } catch (err) { setCornerError(errorMessage(err, 'The corner could not be saved to your brand.')) } finally { setSavingCorner(false) }
   }
 
+  // Everything the tiles share. The frame is keyed by its file so a page's fresh object doesn't redraw every tile.
+  const frameKey = frame ? `${frame.kind}:${frame.src}:${frame.seek ?? ''}` : ''
+  const tileFrame = useMemo(() => frame, [frameKey])
+  const wordsKey = words?.join(' ') ?? ''
+  const tileKeyword = keyword || null
+  const scene = useMemo<TileScene>(() => ({ frame: tileFrame, aspect, hookText, words, keyword: tileKeyword }), [tileFrame, aspect, hookText, wordsKey, tileKeyword])
+  const wide = aspect === '16:9'
+  const tileGrid = wide ? TILE_GRID_WIDE : TILE_GRID
+  // A neutral look each row's option is applied to: the board's own font and colors, nothing else drawn.
+  const plain: BoardStyle = useMemo(() => ({ ...value, captions: false, hook: 'none', handle: false, extras: [] }), [value.font, value.color])
+  const hookRows = useMemo<BoardRows>(() => ({ hooks }), [hooks.join(' ')])
+  const NO_ROWS = useMemo<BoardRows>(() => ({}), [])
+
   const captionOptions = useMemo<SwatchOption<string>[]>(() => [
-    { id: 'off', name: 'No captions', description: 'No word-by-word captions', content: (
-      <>
-        <span aria-hidden className="flex h-[52px] w-[84px] items-center justify-center rounded-lg text-ink-subtle" style={{ background: SCENE }}><Ban className="h-4 w-4" /></span>
-        <span className="px-0.5 text-2xs font-medium">Off</span>
-      </>
-    ) },
+    { id: 'off', name: 'No captions', description: 'No word-by-word captions', content: <TileOption name="Off" scene={scene} look={{ value: plain, rows: NO_ROWS, textScale: 1.9 }} /> },
     ...CAPTION_PRESETS.map((preset) => ({ id: preset.id as string, name: preset.name, description: preset.description, content: (
-      <>
-        <span aria-hidden className="flex h-[52px] w-[84px] items-end justify-center overflow-hidden rounded-lg px-1 pb-2 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.06)]" style={{ background: SCENE }}>
-          <CaptionSample preset={captionPreviewPreset(preset.id)} />
-        </span>
-        <span className="px-0.5 text-2xs font-medium">{preset.name}</span>
-      </>
+      <TileOption name={preset.name} scene={scene} look={{ value: { ...plain, captions: true, captionPreset: preset.id }, rows: NO_ROWS, textScale: 1.9 }} />
     ) }))
-  ], [])
+  ], [scene, plain, NO_ROWS])
+
+  const hookColor = (hook: HookChoice): string => hook === 'brand' && value.color.toUpperCase() === '#FFFFFF' ? brandColor ?? COLOR_PRESETS[0].color : value.color
+  const hookOptions = useMemo<SwatchOption<HookChoice>[]>(() => hooks.map((hook) => ({ id: hook, name: HOOK_LABELS[hook], description: HOOK_HINTS[hook], content: (
+    <TileOption name={HOOK_LABELS[hook]} scene={scene} look={{ value: { ...plain, hook, color: hookColor(hook) }, rows: hookRows, textScale: 1.6 }} />
+  ) })), [scene, plain, hookRows, brandColor])
+
+  // Fonts on the hook look in use (a white bar when there's none to show).
+  const fontHook: HookChoice = value.hook === 'none' || value.hook === 'card' ? 'white' : value.hook
+  const fontOptions = useMemo<SwatchOption<BoardStyle['font']>[]>(() => HEADLINE_FONTS.map((font) => ({ id: font.id, name: font.label, content: (
+    <TileOption name={font.label} scene={scene} look={{ value: { ...plain, hook: fontHook, font: font.id }, rows: { hooks: ['white'] }, textScale: 2 }} />
+  ) })), [scene, plain, fontHook])
+
+  const comboOptions = useMemo<SwatchOption<string>[]>(() => CURATED_COMBOS.map((combo: CuratedCombo) => ({
+    id: combo.id, name: combo.name, description: `${captionName(combo.captionPreset)} captions · ${HOOK_LABELS[combo.hook]} · ${fontName(combo.font)} font`, content: (
+      <TileOption name={combo.name} scene={scene} look={{ value: { ...plain, ...comboPatch(combo, hooks) }, rows: hookRows, textScale: 1.5 }} />
+    ) })), [scene, plain, hookRows])
+
+  // Extras on the board's captions (an extra on the caption line needs one, so it's drawn even when captions are off).
+  const extrasBase: BoardStyle = useMemo(() => ({ ...plain, captions: value.captions, captionPreset: value.captions ? value.captionPreset : 'pop' }), [plain, value.captions, value.captionPreset])
+  const extraOptions = useMemo(() => LOOK_EXTRAS.map((extra) => ({ id: extra.id, name: extra.label, description: extra.detail, content: (
+    <TileOption name={extra.label} scene={scene} look={{ value: extrasBase, rows: NO_ROWS, extras: [extra.id], textScale: 1.6,
+      forceCaptions: extra.id === 'keyword_pill' || extra.id === 'accent_words' }} />
+  ) })), [scene, extrasBase, NO_ROWS])
+
+  const [start, setStart] = useState<StartChoice>(readStart)
+  const chooseStart = (choice: StartChoice): void => { setStart(choice); saveStart(choice) }
+  const combo = matchingCombo(value)
+  const lookRows = hooks.length > 0
 
   return (
     <section aria-label={title} className={cn('style-board space-y-3', className)} data-testid="style-board">
@@ -251,6 +364,25 @@ export function StyleBoard({
         {saveKind && <SaveStyleButton kind={saveKind} />}
       </div>
 
+      {lookRows && (
+        <div role="radiogroup" aria-label="How to start" className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,13rem),1fr))] gap-1.5" data-testid="style-board-start">
+          {START_OPTIONS.map((option) => {
+            const selected = start === option.id
+            return (
+              <button key={option.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+                onClick={() => chooseStart(option.id)}
+                className={cn('glass-tile glass-tile-hover flex min-w-0 items-start gap-2 rounded-xl px-3 py-2 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+                <span aria-hidden className={cn('mt-0.5 shrink-0', selected ? 'text-accent' : 'text-ink-subtle')}>{option.icon}</span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-semibold">{option.title}</span>
+                  <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{option.detail}</span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {/* Side by side when the board is wide enough, stacked (preview first) when it isn't: a container query in globals.css. */}
       <div className={cn('style-board-grid', aspect === '16:9' && 'is-landscape')}>
         <div className="style-board-preview">
@@ -259,43 +391,44 @@ export function StyleBoard({
         </div>
 
         <div className="min-w-0 space-y-3">
-          <SwatchRow title="Captions" groupLabel="Caption style" current={value.captions ? captionName(value.captionPreset) : 'Off'}
-            options={captionOptions} value={value.captions ? value.captionPreset : 'off'} first={CAPTIONS_FIRST} grid="repeat(auto-fill, minmax(92px, 1fr))"
-            onSelect={(id) => onChange(id === 'off' ? { captions: false } : { captions: true, captionPreset: id })} />
+          {lookRows && start === 'ready' ? (
+            <SwatchRow title="Ready-made looks" groupLabel="Ready-made look" current={combo ? combo.name : 'Your own mix'}
+              options={comboOptions} value={combo?.id ?? null} grid={tileGrid}
+              onSelect={(id) => { const picked = CURATED_COMBOS.find((item) => item.id === id); if (picked) onChange(comboPatch(picked, hooks)) }}
+              note={<p className="text-2xs text-ink-subtle">
+                Captions, hook text, font and color that go together.{' '}
+                <button type="button" onClick={() => chooseStart('build')} className="font-medium text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Change anything</button>
+              </p>} />
+          ) : <>
+            <SwatchRow title="Captions" groupLabel="Caption style" current={value.captions ? captionName(value.captionPreset) : 'Off'}
+              options={captionOptions} value={value.captions ? value.captionPreset : 'off'} first={CAPTIONS_FIRST} grid={tileGrid}
+              onSelect={(id) => onChange(id === 'off' ? { captions: false } : { captions: true, captionPreset: id })} />
 
-          {hooks.length > 0 && <SwatchRow title="Hook text" groupLabel="Hook text look" current={HOOK_LABELS[value.hook]}
-            options={hooks.map((hook) => ({ id: hook, name: HOOK_LABELS[hook], description: HOOK_HINTS[hook], content: (
-              <>
-                <HookSwatch hook={hook} color={hook === 'brand' && value.color.toUpperCase() === '#FFFFFF' ? brandColor ?? COLOR_PRESETS[0].color : value.color} font={value.font} />
-                <span className="w-[64px] text-2xs font-medium leading-tight">{HOOK_LABELS[hook]}</span>
-              </>
-            ) }))}
-            value={value.hook} onSelect={(hook) => onChange(hookPatch(value, hook, brandColor ?? undefined))}
-            note={<p className="text-2xs text-ink-subtle">{hookNote ?? HOOK_HINTS[value.hook]}</p>} />}
+            {lookRows && <SwatchRow title="Hook text" groupLabel="Hook text look" current={HOOK_LABELS[value.hook]}
+              options={hookOptions} grid={tileGrid}
+              value={value.hook} onSelect={(hook) => onChange(hookPatch(value, hook, brandColor ?? undefined))}
+              note={<p className="text-2xs text-ink-subtle">{hookNote ?? HOOK_HINTS[value.hook]}</p>} />}
 
-          {hooks.length > 0 && <SwatchRow title="Font" groupLabel="Hook text font" current={fontApplies ? fontName(value.font) : `${fontName(value.font)} · for the hook text`}
-            disabled={!fontApplies}
-            options={HEADLINE_FONTS.map((font) => ({ id: font.id, name: font.label, content: (
-              <>
-                <span aria-hidden className="flex h-[34px] w-[64px] items-center justify-center rounded-lg bg-black/25 text-lg text-ink" style={{ fontFamily: font.family, fontWeight: font.id === 'clean' ? 800 : 400 }}>{font.upper ? 'AA' : 'Aa'}</span>
-                <span className="px-0.5 text-2xs font-medium">{font.label}</span>
-              </>
-            ) }))}
-            value={value.font} onSelect={(font) => onChange({ font })} />}
+            {lookRows && <SwatchRow title="Font" groupLabel="Hook text font" current={fontApplies ? fontName(value.font) : `${fontName(value.font)} · for the hook text`}
+              disabled={!fontApplies} options={fontOptions} grid={tileGrid}
+              value={value.font} onSelect={(font) => onChange({ font })} />}
 
-          {value.hook === 'brand' && hooks.includes('brand') && <SwatchRow title="Color" groupLabel="Bar color" current={colorName(value.color, brandColor)}
-            options={[...(brandColor ? [{ id: 'brand', name: 'Brand', color: brandColor }] : []), ...COLOR_PRESETS.filter((item) => item.color.toUpperCase() !== brandColor)].map((item) => ({
-              id: item.color.toUpperCase(), name: item.name, label: `${item.name} ${item.color.toUpperCase()}`, content: (
-                <span aria-hidden className="block h-7 w-7 rounded-full shadow-[inset_0_0_0_1px_rgb(255_255_255/0.25)]" style={{ background: item.color }} />
-              ) }))}
-            value={value.color.toUpperCase()} onSelect={(color) => onChange(colorPatch(color, hooks))}
-            after={<label title="Custom color" className="glass-tile glass-tile-hover flex cursor-pointer items-center gap-1.5 rounded-xl p-1 pr-2.5 text-ink-muted hover:text-ink">
-              <input type="color" aria-label="Custom bar color" value={(isHexColor(value.color) ? value.color : COLOR_PRESETS[0].color).toLowerCase()}
-                onChange={(e) => { if (isHexColor(e.target.value)) onChange(colorPatch(e.target.value, hooks)) }}
-                className="h-7 w-7 cursor-pointer rounded-full border-0 bg-transparent p-0" />
-              <span className="text-2xs font-medium">Custom</span>
-            </label>}
-            note={<p className="text-2xs text-ink-subtle">The color of the hook text bar. The text turns black or white to stay readable.</p>} />}
+            {value.hook === 'brand' && hooks.includes('brand') && <SwatchRow title="Color" groupLabel="Bar color" current={colorName(value.color, brandColor)}
+              options={[...(brandColor ? [{ id: 'brand', name: 'Brand', color: brandColor }] : []), ...COLOR_PRESETS.filter((item) => item.color.toUpperCase() !== brandColor)].map((item) => ({
+                id: item.color.toUpperCase(), name: item.name, label: `${item.name} ${item.color.toUpperCase()}`, content: (
+                  <span aria-hidden className="block h-7 w-7 rounded-full shadow-[inset_0_0_0_1px_rgb(255_255_255/0.25)]" style={{ background: item.color }} />
+                ) }))}
+              value={value.color.toUpperCase()} onSelect={(color) => onChange(colorPatch(color, hooks))}
+              after={<label title="Custom color" className="glass-tile glass-tile-hover flex cursor-pointer items-center gap-1.5 rounded-xl p-1 pr-2.5 text-ink-muted hover:text-ink">
+                <input type="color" aria-label="Custom bar color" value={(isHexColor(value.color) ? value.color : COLOR_PRESETS[0].color).toLowerCase()}
+                  onChange={(e) => { if (isHexColor(e.target.value)) onChange(colorPatch(e.target.value, hooks)) }}
+                  className="h-7 w-7 cursor-pointer rounded-full border-0 bg-transparent p-0" />
+                <span className="text-2xs font-medium">Custom</span>
+              </label>}
+              note={<p className="text-2xs text-ink-subtle">The color of the hook text bar. The text turns black or white to stay readable.</p>} />}
+          </>}
+
+          {rows.extras && <ExtrasRow value={value.extras} onChange={(extras) => onChange({ extras })} options={extraOptions} wide={wide} />}
 
           {rows.handle && (hasMark ? (
             <SwatchRow title="Handle" groupLabel="Handle corner" current={value.handle ? `${look?.handle || 'Your logo'} · ${cornerName(corner).toLowerCase()}` : 'Off'}

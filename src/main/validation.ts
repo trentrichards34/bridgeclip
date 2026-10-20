@@ -7,9 +7,9 @@ import { isModelId } from '../shared/openrouter-models'
 import { HEADLINE_VOICES, QUALITY_BARS, SCREEN_FOCUS_MODES, TITLE_STYLES, type ClipJobRequest } from '../shared/jobs'
 import { isBackgroundVideoName } from '../shared/backgrounds'
 import { parseHeadlineLook } from '../shared/headline-look'
+import { parseLookExtras } from '../shared/look-extras'
 import { isCtaId } from '../shared/ctas'
 import { isCaptionLanguage } from '../shared/caption-language'
-import { parseLookExtrasField } from '../shared/look-extras-engine'
 
 const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 import { MAX_CTA_OFFER_CHARS, normalizeCtaKeyword } from '../shared/remix'
@@ -65,6 +65,12 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   // Only known fields continue: a misspelled option must not ride along in the job record.
   const known = Object.fromEntries(JOB_REQUEST_FIELDS.filter((key) => v[key] !== undefined).map((key) => [key, v[key]])) as unknown as ClipJobConfig
   if (known.headlineLook !== undefined) known.headlineLook = parseHeadlineLook(known.headlineLook)
+  if (known.lookExtras !== undefined) {
+    if (!Array.isArray(known.lookExtras)) throw new Error('Invalid extras')
+    const extras = parseLookExtras(known.lookExtras)
+    if (extras.length) known.lookExtras = extras
+    else delete known.lookExtras
+  }
   if (known.ctaId !== undefined && !isCtaId(known.ctaId)) throw new Error('Choose a call to action from your library.')
   if (known.brandIdentityId !== undefined && (typeof known.brandIdentityId !== 'string' || !/^[a-f0-9]{16}$/.test(known.brandIdentityId))) throw new Error('Choose a brand identity.')
   if (known.showHandle !== undefined && typeof known.showHandle !== 'boolean') throw new Error('Invalid handle option')
@@ -84,14 +90,12 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   }
   if (!known.showHandle) delete known.showHandle
   // Extras are drawn on Automatic renders; the review editor exports without them.
-  const extras = parseLookExtrasField(known.lookExtras)
-  if (extras.length && v.workflow !== 'review') known.lookExtras = extras
-  else delete known.lookExtras
+  if (v.workflow === 'review') delete known.lookExtras
   return { ...known, videoUrl: normalizeVideoSource(v.videoUrl), videoSpeed: v.videoSpeed ?? 1, includeTitle: v.includeTitle ?? true, clipRequest, plannerCapabilities: undefined }
 }
 
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
   'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'lookExtras', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

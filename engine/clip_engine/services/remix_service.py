@@ -1955,7 +1955,7 @@ class RemixConfig:
     include_captions: bool = True
     cta_keyword: str = ""
     cta_offer: str = ""
-    # The hook text's look: {"look": white|black|brand|floating, "color": "#RRGGBB", "font": clean|serif|condensed}.
+    # The hook text's look: {"look": white|black|brand|floating, "color": "#RRGGBB", "font": clean|serif|condensed|marker|sans_serif_accent}.
     headline_look: Optional[dict] = None
     # The member's recorded call to action is added after rendering (by the app): no spoken or on-screen one.
     cta_clip: bool = False

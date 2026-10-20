@@ -72,6 +72,12 @@ test('remix requests: links or chosen files, a style, a presenter, a voice, and 
   for (const headlineLook of [{ look: 'neon' }, { font: 'comic' }, { color: 'red' }, { look: 'white', extra: 1 }, 'white']) {
     assert.throws(() => main.parseRemixRequest({ ...base, headlineLook }, userData), /headline look/)
   }
+  // Extras: optional, known ids only (app order, no repeats), left out when none.
+  assert.equal('lookExtras' in main.parseRemixRequest(base, userData).request, false)
+  assert.equal('lookExtras' in main.parseRemixRequest({ ...base, lookExtras: [] }, userData).request, false)
+  assert.deepEqual(plain(main.parseRemixRequest({ ...base, lookExtras: ['progress_bar', 'keyword_pill', 'progress_bar', 'sparkles'] }, userData).request.lookExtras),
+    ['keyword_pill', 'progress_bar'])
+  assert.throws(() => main.parseRemixRequest({ ...base, lookExtras: 'keyword_pill' }, userData), /extras/)
   const many = main.parseRemixRequest({ ...base, creator: 'X', sources: ['https://a.com/1', ' https://a.com/1 ', 'https://b.com/2'] }, userData).request
   assert.deepEqual(plain(many.sources), ['https://a.com/1', 'https://b.com/2'])
   assert.equal(main.parseRemixRequest({ ...base, sources: ['https://a.com', 'https://a.com/'] }, userData).request.sources.length, 1)

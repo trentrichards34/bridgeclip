@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
+import type { LookExtraId } from '../../shared/look-extras'
 import { AVATAR_VOICE, DEFAULT_CAMERA, type CameraSettings, type RemixAngle, type RemixFormat, type RemixHost, type RemixOrder } from '../../shared/remix'
 import type { RemixFormStyle } from '../../shared/member-prefs'
 import { DEFAULT_PAUSE_REACT, type PauseCaptions, type PauseLayout } from '../../shared/pause-react'
@@ -28,6 +29,8 @@ export interface RemixForm {
   ctaKeyword: string
   ctaOffer: string
   headlineLook: HeadlineLook
+  /** Extras on top of the look (keyword pill, progress bar, ...). */
+  lookExtras: LookExtraId[]
   /** A recorded call to action from the library, played at the end of every video. */
   ctaId: string | null
   /** How the member appears when they record themselves ("Me, on camera"). */
@@ -60,6 +63,7 @@ export const useRemixForm = create<RemixFormState>((set, get) => ({
   links: '', filePath: null, imagePath: null, creator: '', angle: 'reaction', order: 'moment_first', brandIdentityId: null, host: 'camera', avatarId: null, voice: AVATAR_VOICE,
   count: 3, captionPreset: DEFAULT_CAPTION_PRESET, includeCaptions: true, aiLabelAck: false, ctaKeyword: '', ctaOffer: '', format: 'pause_react', clipRightsAck: false,
   headlineLook: DEFAULT_HEADLINE_LOOK,
+  lookExtras: [],
   ctaId: null,
   camera: DEFAULT_CAMERA,
   imageCamera: { ...DEFAULT_CAMERA, layout: 'greenscreen', talk: true },

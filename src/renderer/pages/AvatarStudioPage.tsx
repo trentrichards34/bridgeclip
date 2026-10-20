@@ -198,7 +198,7 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
     captions: captionsOn, captionPreset: draft.captionPreset,
     hook: !draft.includeTitle || draft.headlineLook.look === 'none' ? 'none' : hookIsCard ? 'card' : draft.headlineLook.look,
     font: draft.headlineLook.font, color: draft.headlineLook.color, handle: handleBrand !== null,
-    ctaId: draft.ctaId, keyword: '', offer: ''
+    ctaId: draft.ctaId, keyword: '', offer: '', extras: []
   }
   const changeLook = (patch: Partial<BoardStyle>): void => {
     const next: Partial<Omit<StudioDraft, 'update'>> = {}

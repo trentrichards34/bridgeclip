@@ -69,12 +69,41 @@ def test_floating_text_has_no_bar(tmp_path):
 
 def test_fonts_change_the_text(tmp_path):
     images = {}
-    for font in ("clean", "serif", "condensed"):
+    for font in ("clean", "serif", "condensed", "marker", "sans_serif_accent"):
         (tmp_path / font).mkdir()
         path, _ = _bar(tmp_path / font, {"look": "black", "font": font})
         with Image.open(path) as img:
             images[font] = img.convert("L").tobytes()
-    assert len(set(images.values())) == 3
+    assert len(set(images.values())) == 5
+
+
+def test_new_fonts_are_bundled_and_validated():
+    for font in ("marker", "sans_serif_accent"):
+        assert validate_headline_look({"look": "white", "font": font})["font"] == font
+        assert os.path.isfile(RenderingService()._headline_font_path(font))
+        assert os.path.basename(RenderingService()._headline_font_path(font)) == module.HEADLINE_FONTS[font]
+    assert os.path.isfile(RenderingService()._headline_font_path("sans_serif_accent", module.HEADLINE_ACCENT_FONT))
+    fonts = os.path.join(os.path.dirname(module.__file__), "..", "..", "assets", "fonts")
+    assert os.path.isfile(os.path.join(fonts, "CaveatBrush-OFL.txt"))
+
+
+def test_accent_word_is_the_last_real_word():
+    assert module.headline_accent_index("Make your videos look different.".split()) == 4
+    assert module.headline_accent_index("Two: onetake".split()) == 1
+    assert module.headline_accent_index("This is it".split()) == 0
+    assert module.headline_accent_index("a b".split()) == 1
+
+
+def test_accent_word_changes_only_one_word(tmp_path):
+    images = {}
+    for font in ("clean", "sans_serif_accent"):
+        (tmp_path / font).mkdir()
+        path, bar_h = _bar(tmp_path / font, {"look": "black", "font": font})
+        with Image.open(path) as img:
+            images[font] = (bar_h, img.convert("L"))
+    assert images["clean"][0] == images["sans_serif_accent"][0]
+    clean, accent = images["clean"][1], images["sans_serif_accent"][1]
+    assert clean.tobytes() != accent.tobytes()
 
 
 def test_pad_takes_the_bar_color_and_floating_does_not_pad():

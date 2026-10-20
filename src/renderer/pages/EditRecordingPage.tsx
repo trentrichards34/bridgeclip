@@ -100,7 +100,9 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   }
 
   const chooseBrand = (next: BrandIdentity | null): void => {
-    useEditRecordingStore.getState().setBrand(next?.id ?? null, lookFromBrand(next))
+    // The extras aren't part of a brand: they stay as picked.
+    const extras = useEditRecordingStore.getState().look.lookExtras
+    useEditRecordingStore.getState().setBrand(next?.id ?? null, { ...lookFromBrand(next), ...(extras?.length ? { lookExtras: extras } : {}) })
   }
 
   const film = (idea: FilmIdea): void => {

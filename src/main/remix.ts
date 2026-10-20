@@ -8,7 +8,8 @@ import { promisify } from 'util'
 import { isAvatarId } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
 import { headlineLookForEngine, parseHeadlineLook } from '../shared/headline-look'
-import { lookExtrasForEngine, parseImageHighlight, parseLookExtrasField } from '../shared/look-extras-engine'
+import { lookExtrasForEngine, parseImageHighlight } from '../shared/look-extras-engine'
+import { parseLookExtras } from '../shared/look-extras'
 import { parseCtaChoice } from '../shared/ctas'
 import { applyRunCta, applyRunCtaInLock, originalPath, readCta, withRunLock } from './ctas'
 import {
@@ -214,9 +215,10 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const ctaOffer = typeof raw.ctaOffer === 'string' ? raw.ctaOffer.replace(/\s+/g, ' ').trim() : ''
   if (ctaOffer.length > MAX_CTA_OFFER_CHARS) throw new Error(`Keep “what they get” under ${MAX_CTA_OFFER_CHARS} characters.`)
   const headlineLook = raw.headlineLook === undefined || raw.headlineLook === null ? undefined : parseHeadlineLook(raw.headlineLook)
+  if (raw.lookExtras !== undefined && raw.lookExtras !== null && !Array.isArray(raw.lookExtras)) throw new Error('Choose your extras again.')
+  const lookExtras = parseLookExtras(raw.lookExtras)
   const ctaId = parseCtaChoice(raw.ctaId)
   if (raw.showHandle !== undefined && typeof raw.showHandle !== 'boolean') throw new Error('Choose whether to show your handle.')
-  const lookExtras = parseLookExtrasField(raw.lookExtras)
   const imageHighlight = image ? parseImageHighlight(raw.imageHighlight) : undefined
   return {
     sourceIsUrl: local.length === 0,
@@ -226,12 +228,12 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
       count: image || pause ? 1 : momentChoice ? momentChoice.ranges.length : raw.count as number, captionPreset: raw.captionPreset, includeCaptions: raw.includeCaptions !== false, aiLabelAck: !onCamera,
       ctaKeyword, ctaOffer: ctaKeyword ? ctaOffer : '', format, clipRightsAck: format !== 'commentary',
       ...(headlineLook ? { headlineLook } : {}),
+      ...(lookExtras.length ? { lookExtras } : {}),
       ...(ctaId ? { ctaId } : {}),
       ...(camera ? { camera } : {}),
       ...(raw.showHandle === true && brandIdentityId ? { showHandle: true } : {}),
       ...(pauseChoice ? { pause: pauseChoice } : {}),
       ...(momentChoice ? { moment: momentChoice } : {}),
-      ...(lookExtras.length ? { lookExtras } : {}),
       ...(imageHighlight ? { imageHighlight } : {})
     }
   }

@@ -33,6 +33,9 @@ test('saved styles: save the Remix style, restart, the last style comes back and
   await page.getByRole('button', { name: /4 · Look & call to action/ }).click()
   await page.getByLabel('Comment keyword').fill('sales')
   await page.getByLabel('What they get').fill('my free playbook')
+  // Extras are part of the style.
+  const extras = (page) => page.getByRole('group', { name: 'Extras: pick as many as you like' })
+  await extras(page).getByRole('checkbox', { name: 'Keyword pill' }).click()
   await page.getByLabel('Video links').fill('https://www.youtube.com/watch?v=abcdefghijk')
 
   await page.getByRole('button', { name: 'Save current as…' }).click()
@@ -60,6 +63,7 @@ test('saved styles: save the Remix style, restart, the last style comes back and
   const file = JSON.parse(fs.readFileSync(path.join(userData, 'member-prefs.json'), 'utf8'))
   assert.equal(file.remix.angle, 'lessons')
   assert.equal(file.presets.remix[0].name, 'Daily myths')
+  assert.deepEqual(file.presets.remix[0].style.lookExtras, ['keyword_pill'])
   assert.equal(JSON.stringify(file).includes('youtube.com'), false, 'pasted links are never saved')
 
   await session.close()
@@ -73,6 +77,8 @@ test('saved styles: save the Remix style, restart, the last style comes back and
   assert.equal(await page.getByLabel('Video links').inputValue(), '', 'links start empty')
   await page.getByRole('button', { name: /4 · Look & call to action/ }).click()
   assert.equal(await page.getByLabel('Comment keyword').inputValue(), 'SALES')
+  assert.equal(await extras(page).getByRole('checkbox', { name: 'Keyword pill' }).getAttribute('aria-checked'), 'true', 'extras are remembered')
+  await extras(page).getByRole('checkbox', { name: 'Keyword pill' }).click()
 
   await page.getByRole('combobox', { name: 'Saved style' }).click()
   await page.getByRole('option', { name: 'Daily myths' }).click()
@@ -80,6 +86,7 @@ test('saved styles: save the Remix style, restart, the last style comes back and
   assert.equal(await radio(page, 'Style of your take', 'Myth vs. truth').getAttribute('aria-checked'), 'true')
   assert.equal(await page.getByRole('radiogroup', { name: 'Takes per video' }).getByRole('radio', { name: '5', exact: true }).getAttribute('aria-checked'), 'true')
   assert.equal(await page.getByLabel('What they get').inputValue(), 'my free playbook')
+  assert.equal(await extras(page).getByRole('checkbox', { name: 'Keyword pill' }).getAttribute('aria-checked'), 'true', 'the saved style brings its extras back')
 
   // Rename and delete from the style's menu.
   await page.getByRole('button', { name: 'Actions for style “Daily myths”' }).click()

@@ -4,10 +4,10 @@
  * every model call goes through OpenRouter, stock B-roll through Pexels.
  */
 
-import type { LookExtraId } from './look-extras'
 import type { ImageHighlight } from './look-extras-engine'
 import type { BrandLook } from './brand-kit'
 import type { HeadlineLook } from './headline-look'
+import type { LookExtraId } from './look-extras'
 import { PRESET_VOICE_IDS, PRESET_VOICES } from './voices'
 import type { PauseCaptions, PauseLayout } from './pause-react'
 import { parseMomentInfo, type MomentInfo, type MomentRange } from './moment-take'
@@ -278,6 +278,8 @@ export interface RemixRequest {
   clipRightsAck: boolean
   /** How the hook text at the top looks; missing means the white bar. */
   headlineLook?: HeadlineLook
+  /** Extras on top of the look (keyword pill, progress bar, ...): look-extras.ts. Missing: none. */
+  lookExtras?: LookExtraId[]
   /** A call to action from the member's library, played at the end of every video (it replaces the spoken one). */
   ctaId?: string
   /** Me, on camera: how the member appears. */
@@ -288,8 +290,6 @@ export interface RemixRequest {
   pause?: { layout: PauseLayout; captions: PauseCaptions }
   /** Moment + my take: the time ranges, and whether the moment stays small on screen while the member talks. */
   moment?: { ranges: MomentRange[]; pip: boolean }
-  /** Look extras: motion effects on top of the look. Older requests: none. */
-  lookExtras?: LookExtraId[]
   /** React to an article or post: a box around the key number on the screenshot (shares of the picture), for the proof underline. */
   imageHighlight?: ImageHighlight
 }

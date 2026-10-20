@@ -48,6 +48,8 @@ export interface ClipJobRequest {
   titleStyle?: TitleStyle
   /** How the headline looks (bar color or floating text, and font). Older requests: the white bar. */
   headlineLook?: HeadlineLook
+  /** Extras on top of the look (keyword pill, progress bar, ...): look-extras.ts. Missing: none. */
+  lookExtras?: LookExtraId[]
   /** A call to action from the member's library, added to the end of every clip. */
   ctaId?: string
   /** Gameplay split (9:16): a background-library file looped under the speaker. */
@@ -74,8 +76,6 @@ export interface ClipJobRequest {
   ctaOffer?: string
   /** Draw the brand's handle or logo in a corner (Automatic, needs a brand). */
   showHandle?: boolean
-  /** Look extras: motion effects on top of the look (Automatic). Older requests: none. */
-  lookExtras?: LookExtraId[]
   startTimeSeconds: number | null
   endTimeSeconds: number | null
   bannerPlatform: string | null

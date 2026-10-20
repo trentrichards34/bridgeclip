@@ -25,8 +25,9 @@ import { WorkflowPicker } from './WorkflowPicker'
 import { BackgroundPicker } from './BackgroundPicker'
 import { brandRequestFields, CreateBrandSection, CreateKeywordHelp } from './CreateBrandSection'
 import { previewFrame, StyleBoard } from './StyleBoard'
-import type { BoardRows, BoardStyle, HookChoice } from '../lib/style-board'
+import { extrasName, type BoardRows, type BoardStyle, type HookChoice } from '../lib/style-board'
 import { DEFAULT_HEADLINE_LOOK, HEADLINE_LOOKS } from '../../shared/headline-look'
+import { parseLookExtras } from '../../shared/look-extras'
 import { CAPTION_LANGUAGES, captionLanguageLabel, isCaptionLanguage, type CaptionLanguageChoice } from '../../shared/caption-language'
 import { mergeSources, parseSourceText, sourceCountLabel } from '../../shared/create-sources'
 import { Select } from './ui/Select'
@@ -137,6 +138,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     includeTitle: draft.includeTitle,
     titleStyle: draft.titleStyle ?? 'headline',
     headlineLook: draft.headlineLook ?? DEFAULT_HEADLINE_LOOK,
+    ...(draft.workflow !== 'review' && parseLookExtras(draft.lookExtras).length ? { lookExtras: parseLookExtras(draft.lookExtras) } : {}),
     ...(draft.ctaId && draft.workflow !== 'review' ? { ctaId: draft.ctaId } : {}),
     ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo && draft.broll === 'off' ? { backgroundVideo: draft.backgroundVideo } : {}),
     ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
@@ -867,7 +869,7 @@ export function createBoardStyle(draft: ClipDraft): BoardStyle {
       : look.look
   return {
     captions: draft.includeCaptions, captionPreset: draft.captionPreset, hook, font: look.font, color: look.color,
-    handle: draft.showHandle, ctaId: draft.ctaId ?? null, keyword: draft.ctaKeyword ?? '', offer: draft.ctaOffer ?? ''
+    handle: draft.showHandle, ctaId: draft.ctaId ?? null, keyword: draft.ctaKeyword ?? '', offer: draft.ctaOffer ?? '', extras: parseLookExtras(draft.lookExtras)
   }
 }
 
@@ -886,6 +888,7 @@ export function createBoardPatch(draft: ClipDraft, patch: Partial<BoardStyle>): 
   if (patch.ctaId !== undefined) out.ctaId = patch.ctaId
   if (patch.keyword !== undefined) out.ctaKeyword = patch.keyword
   if (patch.offer !== undefined) out.ctaOffer = patch.offer
+  if (patch.extras !== undefined) out.lookExtras = [...patch.extras]
   return out
 }
 
@@ -893,7 +896,7 @@ export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Upda
   const automatic = draft.workflow !== 'review'
   const brand = useBrands((s) => s.brands.find((item) => item.id === draft.brandIdentityId) ?? null)
   const hooks = createHooks(draft)
-  const rows: BoardRows = automatic ? { hooks, handle: true, cta: true, keyword: true } : {}
+  const rows: BoardRows = automatic ? { hooks, handle: true, cta: true, keyword: true, extras: true } : {}
   return (
     <div className="space-y-3">
       <CreateBrandSection draft={draft} update={update} />
@@ -967,6 +970,7 @@ export function ReviewStep({ draft, trim, onEdit }: {
     rows.push({ step: 'captions', label: 'Language', value: `${captionLanguageLabel(draft.captionLanguage)} captions · speech stays original` })
   }
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? ((draft.titleStyle ?? 'headline') === 'headline' && draft.aspectRatio === '9:16' && !(draft.backgroundVideo && draft.broll === 'off') ? `Headline: ${(HEADLINE_LOOKS.find((item) => item.id === (draft.headlineLook ?? DEFAULT_HEADLINE_LOOK).look)?.label ?? 'White bar').toLowerCase()}` : 'Title card at the top') : 'Off' })
+  if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Extras', value: extrasName(parseLookExtras(draft.lookExtras)) })
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Call to action', value: draft.ctaId ? 'Added to the end of every clip' : 'None' })
   // The brand, comment keyword and handle, as they'll be sent (see brandRequestFields).
   const brandFields = brandRequestFields(draft)

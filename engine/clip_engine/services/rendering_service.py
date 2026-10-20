@@ -92,7 +92,28 @@ class TitleStyle:
 # How the headline (hook text) looks: a bar in white, black or a brand color,
 # or floating text over the top of the video; and its font.
 HEADLINE_LOOKS = ("white", "black", "brand", "floating", "none")
-HEADLINE_FONTS = {"clean": "Montserrat-ExtraBold.ttf", "serif": "Fraunces72pt-Black.ttf", "condensed": "Anton-Regular.ttf"}
+HEADLINE_FONTS = {
+    "clean": "Montserrat-ExtraBold.ttf", "serif": "Fraunces72pt-Black.ttf", "condensed": "Anton-Regular.ttf",
+    # Hand-drawn marker capitals (Caveat Brush, OFL).
+    "marker": "CaveatBrush-Regular.ttf",
+    # Bold sans with one accent word in an italic serif (HEADLINE_ACCENT_FONT).
+    "sans_serif_accent": "Montserrat-ExtraBold.ttf",
+}
+# Fonts drawn in capitals, and their size against the clean font.
+HEADLINE_UPPER_FONTS = ("condensed", "marker")
+HEADLINE_FONT_SCALE = {"condensed": 1.18, "marker": 1.12}
+HEADLINE_ACCENT_FONT = "InstrumentSerif-Italic.ttf"
+# Instrument Serif is small on the em: the accent word is drawn this much bigger.
+HEADLINE_ACCENT_SCALE = 1.25
+_ACCENT_LETTERS = re.compile(r"[^\W_]", re.UNICODE)
+
+
+def headline_accent_index(words: list[str]) -> int:
+    """The word drawn in the italic serif: the last one with 3+ letters (the renderer's accentWordIndex)."""
+    for index in range(len(words) - 1, -1, -1):
+        if len(_ACCENT_LETTERS.findall(words[index])) >= 3:
+            return index
+    return len(words) - 1
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
@@ -1104,15 +1125,16 @@ class RenderingService:
         if style.look == "none":
             # No hook text: nothing drawn, and the video keeps the whole frame.
             return None
-        if style.font == "condensed":
+        if style.font in HEADLINE_UPPER_FONTS:
             text = text.upper()
         unit = target_height / 1920
         pad_x = round(target_width * HEADLINE_PAD_X)
         max_w = target_width - 2 * pad_x
         draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        scale = HEADLINE_FONT_SCALE.get(style.font, 1)
         for size in HEADLINE_FONT_SIZES:
             try:
-                font = ImageFont.truetype(self._headline_font_path(style.font), round(size * (1.18 if style.font == "condensed" else 1) * unit))
+                font = ImageFont.truetype(self._headline_font_path(style.font), round(size * scale * unit))
             except Exception:
                 font = ImageFont.load_default()
             lines = self._headline_lines(draw, text, font, max_w)
@@ -1149,10 +1171,27 @@ class RenderingService:
                 sy += line_h
             img = Image.alpha_composite(img, shadow.filter(ImageFilter.GaussianBlur(round(8 * unit))))
             out = ImageDraw.Draw(img)
+        accent = self._headline_accent(style.font, font)
+        accent_at = headline_accent_index(text.split()) if accent else -1
+        word_at = 0
         for line in lines:
-            w = out.textlength(line, font=font)
-            out.text(((target_width - w) / 2, y), line, font=font, fill=(*style.text, 255),
-                     stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
+            if not accent:
+                w = out.textlength(line, font=font)
+                out.text(((target_width - w) / 2, y), line, font=font, fill=(*style.text, 255),
+                         stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
+            else:
+                # One word in the italic serif, on the same baseline as the sans words.
+                words = line.split()
+                faces = [accent if word_at + i == accent_at else font for i in range(len(words))]
+                space = out.textlength(" ", font=font)
+                widths = [out.textlength(word, font=face) for word, face in zip(words, faces)]
+                x = (target_width - sum(widths) - space * (len(words) - 1)) / 2
+                baseline = y + font.getmetrics()[0]
+                for word, face, width in zip(words, faces, widths):
+                    out.text((x, baseline), word, font=face, anchor="ls", fill=(*style.text, 255),
+                             stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
+                    x += width + space
+                word_at += len(words)
             y += line_h
         path = os.path.join(
             os.path.dirname(request.output_path), f"headline-{request.start_time_ms}-{request.end_time_ms}.png",
@@ -1160,9 +1199,19 @@ class RenderingService:
         img.save(path, "PNG")
         return path, (bar_h if bg else 0)
 
-    def _headline_font_path(self, font: str = "clean") -> str:
+    def _headline_accent(self, font_id: str, font: Any) -> Any:
+        """The italic serif for the accent word (sans + italic serif look only), at the base font's size."""
+        if font_id != "sans_serif_accent" or not hasattr(font, "size"):
+            return None
+        path = self._headline_font_path(font_id, HEADLINE_ACCENT_FONT)
+        try:
+            return ImageFont.truetype(path, round(font.size * HEADLINE_ACCENT_SCALE))
+        except Exception:
+            return None
+
+    def _headline_font_path(self, font: str = "clean", name: Optional[str] = None) -> str:
         """The look's font (clean: Montserrat ExtraBold, a bold-not-black caption face); fall back to the title font."""
-        name = HEADLINE_FONTS.get(font, HEADLINE_FONTS["clean"])
+        name = name or HEADLINE_FONTS.get(font, HEADLINE_FONTS["clean"])
         for p in (
             os.path.join(os.path.dirname(__file__), "..", "..", "assets", "fonts", name),
             os.path.join("/app", "assets", "fonts", name),
