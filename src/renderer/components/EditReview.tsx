@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Clapperboard, RotateCcw, Sparkles, Wand2 } from 'lucide-react'
 import {
-  CUT_LABELS, SOUND_LABELS, MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, chooseHook, formatClock, hookTextProblem, initialDecisions, reelSeconds,
-  toggleSpan, toggleWord, type EditDecisions, type EditLook, type EditPlan, type EditStatus
+  CUT_LABELS, CUTOUT_INTRO_SECONDS, SOUND_LABELS, MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, RAW_INTRO_SECONDS, applyRecipe, cardProblem, chooseHook,
+  formatClock, hookTextProblem, initialDecisions, reelSeconds, toggleSpan, toggleWord, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditStatus
 } from '../../shared/edit-recording'
+import { CardEditor, EditStylePicker, MyImages } from './EditExtras'
 import { hasBrandMark } from '../../shared/brand-kit'
 import type { BrandIdentity } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
@@ -47,7 +48,16 @@ export function EditReview({ status, brand, look, onLook, onError }: {
 }): React.JSX.Element {
   const plan = status.plan
   // Choices made here outlive the page (by run id), so leaving and coming back keeps them.
-  const [decisions, setDecisions] = useState<EditDecisions>(() => useEditRecordingStore.getState().reviewFor(status.id) ?? initialDecisions(plan, look))
+  const [decisions, setDecisions] = useState<EditDecisions>(() => {
+    const fresh = initialDecisions(plan, look, useEditRecordingStore.getState().recipe)
+    const saved = useEditRecordingStore.getState().reviewFor(status.id)
+    // Saved choices win; anything they don't have (a newer field) starts from the plan.
+    return saved ? { ...fresh, ...saved } : fresh
+  })
+  // Images can be added or removed (here, or by main); kept in step with the status.
+  const [images, setImages] = useState<EditImage[]>(status.images ?? [])
+  useEffect(() => { setImages(status.images ?? []) }, [status.images])
+  const [pinning, setPinning] = useState<string | null>(null)
   useEffect(() => { useEditRecordingStore.getState().saveReview(status.id, decisions) }, [status.id, decisions])
   const [hooksOpen, setHooksOpen] = useState(false)
   const [lookOpen, setLookOpen] = useState(false)
@@ -63,11 +73,18 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const spanText = (start: number, end: number): string => plan.words.slice(start, end + 1).filter((_, k) => !cut.has(start + k)).map((word) => word.text).join(' ')
   const problem = hookTextProblem(decisions.hookText)
   const showMark = hasBrandMark(brand?.look)
+  const cardTrouble = decisions.popups.some((item) => item.on && item.card && !cut.has(plan.popups.find((p) => p.id === item.id)?.word ?? -1) && cardProblem(item.card) !== null)
   const sources = status.sources
   // The preview shows the reel's own opening words.
   const previewWords = useMemo(() => plan.words.filter((_, i) => !cut.has(i)).slice(0, 8).map((word) => word.text), [plan.words, decisions.cut])
 
   const clickWord = (i: number, shift: boolean): void => {
+    if (pinning) {
+      const image = pinning
+      setDecisions((current) => current.pins.some((pin) => pin.image === image && pin.word === i) ? current : { ...current, pins: [...current.pins, { image, word: i }] })
+      setPinning(null)
+      return
+    }
     if (shift && anchor.current !== null) setDecisions((current) => toggleSpan(current, anchor.current as number, i))
     else setDecisions((current) => toggleWord(current, i))
     anchor.current = i
@@ -75,7 +92,8 @@ export function EditReview({ status, brand, look, onLook, onError }: {
 
   const make = async (): Promise<void> => {
     setMaking(true); onError(null)
-    try { await getApi().edit.render({ ...decisions, look }) } catch (err) { onError(errorMessage(err, 'Your reel could not be made.')) } finally { setMaking(false) }
+    const known = new Set(images.map((image) => image.id))
+    try { await getApi().edit.render({ ...decisions, look, pins: decisions.pins.filter((pin) => known.has(pin.image)) }) } catch (err) { onError(errorMessage(err, 'Your reel could not be made.')) } finally { setMaking(false) }
   }
 
   const wordWhere = (index: number): string => `“${plan.words[index]?.text.replace(/[.,!?;:]+$/, '') ?? ''}”`
@@ -90,6 +108,10 @@ export function EditReview({ status, brand, look, onLook, onError }: {
         </p>
       )}
       {status.warnings.map((warning) => <Callout key={warning} tone="warning" className="mt-3">{warning}</Callout>)}
+
+      <EditStylePicker recipe={decisions.recipe} extras={decisions.lookExtras}
+        onRecipe={(id) => { useEditRecordingStore.getState().setRecipe(id); setDecisions((current) => applyRecipe(plan, current, id)) }}
+        onExtras={(lookExtras) => setDecisions((current) => ({ ...current, lookExtras }))} />
 
       <section className="mt-4 space-y-2" aria-labelledby="edit-hook-title">
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -131,7 +153,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
             <h3 id="edit-transcript-title" className="text-sm font-semibold text-ink">Your words</h3>
-            <p className="text-2xs text-ink-subtle">Struck-through words are cut. Click a word to keep or cut it; Shift-click another word to keep or cut everything between them.</p>
+            <p className="text-2xs text-ink-subtle">{pinning ? 'Click the word where your image should pop up.' : 'Struck-through words are cut. Click a word to keep or cut it; Shift-click another word to keep or cut everything between them.'}</p>
           </div>
           <Button size="sm" variant="ghost" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => setDecisions((current) => ({ ...current, cut: initialDecisions(plan).cut }))}>Back to the AI’s cut</Button>
         </div>
@@ -146,12 +168,15 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                   const word = plan.words[i]
                   const isCut = cut.has(i)
                   const reason = isCut ? (word.cut ?? 'member') : null
+                  const pinned = decisions.pins.some((pin) => pin.word === i)
                   return (
-                    <button key={i} type="button" data-word={i} aria-pressed={!isCut} title={reason ? `${CUT_LABELS[reason]}. Click to keep it.` : 'Click to cut it.'}
+                    <button key={i} type="button" data-word={i} aria-pressed={!isCut} data-pinned={pinned || undefined}
+                      title={pinning ? 'Pin your image here.' : reason ? `${CUT_LABELS[reason]}. Click to keep it.` : 'Click to cut it.'}
                       onClick={(e) => clickWord(i, e.shiftKey)}
                       className={cn('mr-1 rounded px-0.5 transition-colors hover:bg-white/10',
                         isCut ? 'text-ink-faint line-through decoration-danger/70' : 'text-ink',
-                        !isCut && inHook(i) && 'bg-accent/15 text-accent', !isCut && inCta(i) && 'underline decoration-accent decoration-2 underline-offset-4')}>
+                        !isCut && inHook(i) && 'bg-accent/15 text-accent', !isCut && inCta(i) && 'underline decoration-accent decoration-2 underline-offset-4',
+                        pinned && 'ring-1 ring-accent/70', pinning && 'cursor-copy')}>
                       {word.text}
                     </button>
                   )
@@ -170,8 +195,19 @@ export function EditReview({ status, brand, look, onLook, onError }: {
 
       {(plan.popups.length > 0 || plan.sounds.length > 0) && (
         <section className="mt-5 space-y-2" aria-labelledby="edit-extras-title">
-          <h3 id="edit-extras-title" className="text-sm font-semibold text-ink">Pop-ups and sounds</h3>
-          {plan.popups.map((popup, n) => {
+          <h3 id="edit-extras-title" className="text-sm font-semibold text-ink">{plan.popups.some((p) => p.kind === 'card') ? 'Cards, pop-ups and sounds' : 'Pop-ups and sounds'}</h3>
+          {plan.popups.filter((popup) => popup.kind === 'card').map((popup, n) => {
+            const choice = decisions.popups.find((item) => item.id === popup.id)
+            const card = choice?.card ?? popup.card
+            if (!card) return null
+            const update = (patch: Partial<{ on: boolean; card: typeof card }>): void =>
+              setDecisions((current) => ({ ...current, popups: current.popups.map((item) => item.id === popup.id ? { ...item, ...patch } : item) }))
+            return (
+              <CardEditor key={`c${popup.id}`} index={n} card={card} on={Boolean(choice?.on)} removed={cut.has(popup.word)} where={wordWhere(popup.word)}
+                seconds={popup.seconds ?? 3} onChange={(next) => update({ card: next })} onToggle={(on) => update({ on })} />
+            )
+          })}
+          {plan.popups.filter((popup) => popup.kind !== 'card').map((popup, n) => {
             const choice = decisions.popups.find((item) => item.id === popup.id)
             const removed = cut.has(popup.word)
             return (
@@ -196,6 +232,18 @@ export function EditReview({ status, brand, look, onLook, onError }: {
         </section>
       )}
 
+      <MyImages images={images} pins={decisions.pins} wordText={wordWhere} pinning={pinning} onPinning={setPinning} onError={onError}
+        onImages={(next) => { setImages(next); setDecisions((current) => ({ ...current, pins: current.pins.filter((pin) => next.some((image) => image.id === pin.image)) })) }}
+        onUnpin={(gone) => setDecisions((current) => ({ ...current, pins: current.pins.filter((pin) => pin.image !== gone.image || pin.word !== gone.word) }))} />
+
+      <section className="mt-5 space-y-2" aria-labelledby="edit-openings-title">
+        <h3 id="edit-openings-title" className="text-sm font-semibold text-ink">How it opens</h3>
+        <SettingRow title="Cut-out opening" description={`For the first ${CUTOUT_INTRO_SECONDS} seconds your background is removed and you stand in front of a blurred collage of your images (or stills of your video).`}
+          control={<Switch label="Cut-out opening" checked={decisions.cutoutIntro} onChange={(cutoutIntro) => setDecisions((current) => ({ ...current, cutoutIntro }))} />} />
+        <SettingRow title="Raw-to-edited opening" description={`A ${RAW_INTRO_SECONDS}-second card first shows your raw take, with the pauses and retakes that were cut marked in red, then your reel starts.`}
+          control={<Switch label="Raw-to-edited opening" checked={decisions.rawIntro} onChange={(rawIntro) => setDecisions((current) => ({ ...current, rawIntro }))} />} />
+      </section>
+
       <section className="mt-5 rounded-2xl bg-white/[0.03] p-3">
         <button type="button" className="flex w-full items-start justify-between gap-3 text-left" aria-expanded={lookOpen} aria-controls="edit-look" onClick={() => setLookOpen(!lookOpen)}>
           <span>
@@ -218,7 +266,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
 
       <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
         <Button variant="ghost" disabled={making} onClick={() => void getApi().edit.discard().catch((err: unknown) => onError(errorMessage(err)))}>Start over</Button>
-        <Button variant="primary" size="lg" icon={<Clapperboard className="h-4 w-4" />} loading={making} disabled={making || problem !== null || seconds < 1.5}
+        <Button variant="primary" size="lg" icon={<Clapperboard className="h-4 w-4" />} loading={making} disabled={making || problem !== null || seconds < 1.5 || cardTrouble}
           onClick={() => void make()}>Make my reel</Button>
       </div>
     </Panel>

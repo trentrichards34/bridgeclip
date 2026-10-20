@@ -282,7 +282,7 @@ function loadWithGlobals(relative, mocks, globals) {
 
 /** An edit-recording module whose FFmpeg extraction waits for `extract` and whose engine answers from `engine`. */
 function runHarness({ brandMark = async () => null } = {}) {
-  const state = { extractions: [], fetches: 0, engineModes: [], statuses: [] }
+  const state = { extractions: [], fetches: 0, engineModes: [], statuses: [], configs: [] }
   const execFile = (bin, args, options, callback) => {
     if (typeof options === 'function') { callback = options; options = {} }
     if (bin === 'ffprobe') { callback(null, { stdout: '10\n', stderr: '' }); return }
@@ -301,6 +301,7 @@ function runHarness({ brandMark = async () => null } = {}) {
     child.stdin = { on() {}, end(text) {
       const config = JSON.parse(text)
       state.engineModes.push(config.mode)
+      state.configs.push(config)
       const answer = config.mode === 'plan'
         ? { ok: true, cost_usd: 0.01, words: [['Most', 0, 400, 0, null], ['coaches', 450, 900, 0, null], ['undercharge.', 950, 1500, 0, null], ['Here', 2000, 2200, 0, null], ['is', 2250, 2400, 0, null], ['why.', 2450, 2900, 0, null]],
           hooks: [{ id: 0, start: 3, end: 5, text: 'Here is why', why: '' }], hook: 0, cta: null, popups: [], sounds: [], planned: 'ai', notes: [], warnings: [] }
@@ -378,5 +379,109 @@ test('making the reel can only start once: a second click, Start over or Cancel 
   await edit.renderEdit(decisions)
   await waitFor(() => edit.editStatus()?.phase === 'done', 'the reel')
   assert.deepEqual(state.engineModes, ['plan', 'render'])
+  fs.rmSync(edit.editStatus().folder, { recursive: true, force: true })
+})
+
+// ---------------------------------------------------------------------------
+// Edit styles, cards, my images and the openings
+// ---------------------------------------------------------------------------
+
+function cardPlan() {
+  const plan = samplePlan()
+  return shared.parseEditPlan({
+    ...plan, words: plan.words.map((w) => [w.text, w.startMs, w.endMs, w.src, w.cut]),
+    popups: [{ id: 0, word: 2, text: 'coaches', kind: 'keyword' }, { id: 1, word: 4, text: '3x', kind: 'number' },
+      { id: 2, word: 5, kind: 'card', seconds: 9, card: { type: 'list', title: 'Why coaches undercharge', items: ['Fear', 'Habit'] } },
+      { id: 3, word: 8, kind: 'card', card: { type: 'stat', title: '<b>', items: ['x'] } },
+      { id: 4, word: 7, kind: 'card', card: { type: 'compare', title: '', items: ['Before'] } }]
+  }, 1)
+}
+
+test('edit styles: each sets its pacing and extras, and which pop-ups and cards start on; typed text stays', () => {
+  const recipes = load('shared/edit-recipes.ts')
+  assert.deepEqual(plain(recipes.EDIT_RECIPES.map((r) => r.id)), ['clean', 'fast', 'story', 'tutorial'])
+  for (const recipe of recipes.EDIT_RECIPES) {
+    assert.ok(recipe.detail.length > 20 && recipe.pacing.keepPause < recipe.pacing.maxPause)
+    assert.ok(!/[A-Z][a-z]+ [A-Z][a-z]+'s/.test(recipe.label), 'not named after a person')
+  }
+  const plan = cardPlan()
+  // A card with markup or a compare missing a side is dropped; the list's time is held to 5 seconds.
+  assert.deepEqual(plain(plan.popups.map((p) => p.kind)), ['keyword', 'number', 'card'])
+  assert.equal(plan.popups[2].seconds, 5)
+  let decisions = shared.initialDecisions(plan)
+  assert.equal(decisions.recipe, 'clean')
+  assert.deepEqual(plain(decisions.popups.map((p) => p.on)), [true, true, false])
+  assert.deepEqual(plain(decisions.lookExtras), [])
+  decisions = { ...decisions, popups: decisions.popups.map((p) => p.id === 0 ? { ...p, text: 'Coaches!' } : p) }
+  const story = shared.applyRecipe(plan, decisions, 'story')
+  assert.deepEqual(plain(story.popups.map((p) => [p.on, p.text])), [[true, 'Coaches!'], [true, '3x'], [true, 'Why coaches undercharge']])
+  assert.deepEqual(plain(story.lookExtras), ['accent_words'])
+  const fast = shared.applyRecipe(plan, decisions, 'fast')
+  assert.deepEqual(plain(fast.lookExtras), ['keyword_pill', 'progress_bar'])
+  // Fast pacing tightens pauses more than the clean style; the raw opening adds its seconds.
+  const asRecorded = (d) => ({ ...d, hookId: null, endOnCta: false })
+  assert.ok(shared.reelSeconds(plan, asRecorded(fast)) < shared.reelSeconds(plan, asRecorded(story)))
+  assert.ok(Math.abs(shared.reelSeconds(plan, { ...fast, rawIntro: true }) - shared.reelSeconds(plan, fast) - shared.RAW_INTRO_SECONDS) < 1e-9)
+})
+
+test('cards, pins and openings on the review are checked before a reel is made', () => {
+  const plan = cardPlan()
+  const look = { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false }
+  const images = [{ id: 'aaaaaaaaaaaa', name: 'logo.png', path: '/out/edit-1/images/aaaaaaaaaaaa.png' }]
+  const good = { ...shared.applyRecipe(plan, shared.initialDecisions(plan), 'fast'), look, pins: [{ image: 'aaaaaaaaaaaa', word: 6 }], rawIntro: true }
+  const parsed = shared.parseEditDecisions(good, plan, images)
+  assert.equal(parsed.recipe, 'fast')
+  assert.deepEqual(plain(parsed.pins), [{ image: 'aaaaaaaaaaaa', word: 6 }])
+  assert.equal(parsed.rawIntro, true)
+  assert.equal(parsed.cutoutIntro, false)
+  assert.deepEqual(plain(parsed.popups[2].card), { type: 'list', title: 'Why coaches undercharge', items: ['Fear', 'Habit'] })
+  const card = (patch) => ({ ...good, popups: good.popups.map((p) => p.id === 2 ? { ...p, ...patch } : p) })
+  const bad = (value, pattern) => assert.throws(() => shared.parseEditDecisions(value, plan, images), pattern)
+  bad(card({ card: { type: 'list', title: 'Why', items: ['Only one'] } }), /at least two items/)
+  bad(card({ card: { type: 'stat', title: '5', items: ['x'] } }), /pop-ups|card text/)
+  bad(card({ card: { type: 'list', title: 'x'.repeat(49), items: ['a', 'b'] } }), /card text plain and short/)
+  bad(card({ card: { type: 'list', title: 'Why <script>', items: ['a', 'b'] } }), /card text plain and short/)
+  // An unfinished card that's off is fine.
+  assert.equal(shared.parseEditDecisions(card({ on: false, card: { type: 'list', title: '', items: ['a'] } }), plan, images).popups[2].on, false)
+  bad({ ...good, pins: [{ image: 'bbbbbbbbbbbb', word: 6 }] }, /Pin each image/)
+  bad({ ...good, pins: [{ image: 'aaaaaaaaaaaa', word: 99 }] }, /Pin each image/)
+  bad({ ...good, recipe: 'viral' }, /edit styles/)
+  bad({ ...good, rawIntro: 'yes' }, /how your video opens/)
+  // Unknown extras are dropped.
+  assert.deepEqual(plain(shared.parseEditDecisions({ ...good, lookExtras: ['glow', 'progress_bar'] }, plan, images).lookExtras), ['progress_bar'])
+})
+
+test('my images: pictures are checked by their bytes and kept in the run; the render gets the style, cards, pins and openings', async () => {
+  const { main: edit, state } = runHarness()
+  assert.equal(edit.imageKind(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0])), 'png')
+  assert.equal(edit.imageKind(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), 'jpg')
+  assert.equal(edit.imageKind(new TextEncoder().encode('RIFF....WEBPVP8 ')), 'webp')
+  assert.equal(edit.imageKind(new TextEncoder().encode('<svg>')), null)
+  await assert.rejects(edit.addEditImage('logo.png', new Uint8Array([0x89, 0x50])), /while you review/)
+  await edit.startEdit({ sources: [path.join(userData, 'images-take.mp4')] })
+  await waitFor(() => edit.editStatus()?.phase === 'review', 'the review')
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
+  await assert.rejects(edit.addEditImage('fake.png', new TextEncoder().encode('<svg onload=x>')), /PNG, JPEG or WebP/)
+  await assert.rejects(edit.addEditImage('../x.png', 'not bytes'), /could not be read/)
+  const images = await edit.addEditImage('../../My Logo.png', png)
+  assert.equal(images.length, 1)
+  assert.equal(images[0].name, 'My Logo.png')
+  assert.equal(path.dirname(images[0].path), path.join(edit.editStatus().folder, 'images'))
+  assert.ok(images[0].path.endsWith('.png') && fs.readFileSync(images[0].path).equals(Buffer.from(png)))
+  assert.equal(edit.editStatus().images.length, 1)
+  const plan = edit.editStatus().plan
+  const decisions = { ...shared.applyRecipe(plan, shared.initialDecisions(plan), 'tutorial'),
+    look: { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false },
+    pins: [{ image: images[0].id, word: 1 }], cutoutIntro: true, rawIntro: true }
+  await edit.renderEdit(decisions)
+  await waitFor(() => edit.editStatus()?.phase === 'done', 'the reel')
+  const config = state.configs.find((c) => c.mode === 'render')
+  assert.equal(config.recipe, 'tutorial')
+  assert.deepEqual(config.pacing, { max_gap: 0.5, short_pause: 0.2, punch_on_cuts: false })
+  assert.deepEqual(config.look_extras, ['progress_bar', 'broll_tags'])
+  assert.deepEqual(config.images, [images[0].path])
+  assert.deepEqual(config.pins, [{ image: images[0].path, word: 1 }])
+  assert.equal(config.cutout_intro, true)
+  assert.equal(config.raw_intro, true)
   fs.rmSync(edit.editStatus().folder, { recursive: true, force: true })
 })

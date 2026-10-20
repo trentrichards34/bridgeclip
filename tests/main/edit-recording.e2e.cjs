@@ -195,6 +195,26 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   await page.getByRole('switch', { name: 'Pop on “billion”' }).click()
   assert.equal(await page.getByRole('switch', { name: 'Soft whoosh as the hook text appears' }).getAttribute('aria-checked'), 'true')
   await page.getByRole('switch', { name: 'End on your call to action' }).waitFor()
+  // The edit style: Fast explainer switches its card on and its extras; the card's words can be changed.
+  assert.equal(await page.getByRole('switch', { name: 'Card 1' }).getAttribute('aria-checked'), 'false')
+  await page.getByRole('radiogroup', { name: 'Edit style' }).getByRole('radio', { name: /^Fast explainer/ }).click()
+  assert.equal(await page.getByRole('switch', { name: 'Card 1' }).getAttribute('aria-checked'), 'true')
+  assert.equal(await page.getByRole('group', { name: 'Extras' }).getByRole('button', { name: 'Progress bar' }).getAttribute('aria-pressed'), 'true')
+  assert.equal(await page.getByLabel('Card 1 the number').inputValue(), '15 billion')
+  await page.getByLabel('Card 1 what it is').fill('messages are waiting')
+  // My images: a logo dropped on the page (its bytes are checked in main), pinned to "Most".
+  const logo = execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=0xF028C8:s=240x240:d=0.1', '-frames:v', '1', '-f', 'image2pipe', '-c:v', 'png', '-'])
+  await page.getByTestId('edit-images-drop').evaluate((zone, bytes) => {
+    const data = new DataTransfer()
+    data.items.add(new File([new Uint8Array(bytes)], 'my logo.png', { type: 'image/png' }))
+    zone.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }))
+  }, [...logo])
+  await page.getByRole('list', { name: 'My images' }).getByText('my logo.png').waitFor()
+  await page.getByRole('button', { name: 'Pin to a word' }).click()
+  await page.locator(`[data-word="${index('Most', 1)}"]`).click()
+  await page.getByText('on “Most”').waitFor()
+  assert.equal(await page.locator(`[data-word="${index('Most', 1)}"]`).getAttribute('aria-pressed'), 'true', 'pinning doesn’t cut the word')
+  await page.getByRole('switch', { name: 'Raw-to-edited opening' }).click()
   await page.getByRole('button', { name: /^Look/ }).click()
   // The style board: its preview shows the reel's own hook text, and a caption style changes the look summary.
   const board = page.getByTestId('style-board')
@@ -223,10 +243,16 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   assert.deepEqual([video.width, video.height], [1080, 1920])
   assert.ok(probe.streams.some((s) => s.codec_type === 'audio'))
   const seconds = Number(probe.format.duration)
-  // The hook (1.3 s), "Most coaches lose many clients." and the call to action (1.3 s), with short pads: about 5 seconds.
-  assert.ok(seconds > 3.5 && seconds < 7, `${seconds}s`)
+  // The raw opening (3.5 s), then the hook (1.3 s), "Most coaches lose many clients." and the call to action (1.3 s), with short pads.
+  assert.ok(seconds > 7 && seconds < 10.5, `${seconds}s`)
+  const bundle = JSON.parse(fs.readFileSync(path.join(library, run, '.edit', 'clip_00', 'edit.json'), 'utf8'))
+  assert.equal(bundle.recipe, 'fast')
+  assert.deepEqual(bundle.cards.map((c) => c.card), [{ type: 'stat', title: '15 billion', items: ['messages are waiting'] }])
+  assert.equal(bundle.pins.length, 1)
+  assert.equal(bundle.raw_intro, 'raw-intro.mp4')
+  assert.ok(fs.existsSync(path.join(library, run, 'images')))
   if (process.env.BRIDGECLIP_E2E_SHOTS) {
-    for (const [k, at] of [0.4, 1.0, seconds - 0.6].entries()) execFileSync(ffmpeg, ['-v', 'error', '-y', '-ss', String(at), '-i', reel, '-frames:v', '1', path.join(process.env.BRIDGECLIP_E2E_SHOTS, `edit-reel-${k}.png`)])
+    for (const [k, at] of [0.4, 3.0, 4.0, 5.2, seconds - 0.6].entries()) execFileSync(ffmpeg, ['-v', 'error', '-y', '-ss', String(at), '-i', reel, '-frames:v', '1', path.join(process.env.BRIDGECLIP_E2E_SHOTS, `edit-reel-${k}.png`)])
   }
   // The AI steps went to the spending ledger as "Edit my recording".
   const ledger = fs.readFileSync(path.join(userDataDir, 'spending', 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
