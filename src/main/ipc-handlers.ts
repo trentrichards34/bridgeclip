@@ -39,9 +39,9 @@ import { addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStoc
 import { importLegacyAvatarVideos } from './avatar-library'
 import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
-  isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate
+  isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate, addEditImage, addEditImageFiles, removeEditImage
 } from './edit-recording'
-import { EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
+import { EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGES, EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
 import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, renderSpendCheck, SCRIPT_ESTIMATE_USD, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { createHeygenAvatar, draftTwinVideo, heygenAccount, heygenConsentUrl, heygenKey, readyHeygenLink, refreshHeygenAvatar, renderHeygenTake, saveTwinRecording, setHeygenVoice, stockHeygenAvatars, TWIN_VIDEO_EXTENSIONS } from './heygen-avatar'
 import { isConsentUrl } from './heygen'
@@ -580,6 +580,16 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   paid('edit:start', 'openrouter', (request) => startEstimate(request), (request) => startEdit(request))
   handle('edit:render', (_event, decisions: unknown) => renderEdit(decisions))
+  // My images: chosen in the file dialog (here), or dropped on the page (their bytes, checked like any picture).
+  handle('edit:chooseImages', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile', 'multiSelections'], title: 'Choose your images (logos, product shots)', filters: [{ name: 'Images', extensions: EDIT_IMAGE_EXTENSIONS }] })
+    if (result.canceled) return null
+    return addEditImageFiles(result.filePaths.slice(0, EDIT_MAX_IMAGES))
+  })
+  handle('edit:addImage', (_event, name: unknown, data: unknown) => addEditImage(name, data))
+  handle('edit:removeImage', (_event, id: unknown) => removeEditImage(id))
   handle('edit:cancel', () => cancelEdit())
   handle('edit:discard', () => discardEdit())
   handle('edit:mediaAccess', () => requestMediaAccess())

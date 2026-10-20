@@ -11,6 +11,8 @@
 
 import { DEFAULT_CAPTION_PRESET, isCaptionPresetId } from './caption-presets'
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
+import { DEFAULT_EDIT_RECIPE, editRecipe, isEditRecipeId, recipeExtras, type EditRecipeId } from './edit-recipes'
+import { parseLookExtras, type LookExtraId } from './look-extras'
 
 export const EDIT_MAX_SOURCES = 5
 /** Per recording, and all takes together. */
@@ -50,7 +52,32 @@ export const CUT_LABELS: Record<CutReason, string> = {
 export interface EditWord { text: string; startMs: number; endMs: number; src: number; cut: CutReason | null }
 export interface EditSpan { start: number; end: number }
 export interface EditHook extends EditSpan { id: number; text: string; why: string }
-export interface EditPopup { id: number; word: number; text: string; kind: 'number' | 'keyword' }
+/**
+ * A half-screen explainer card: the top half of the frame for a few seconds (the speaker moves to the bottom half),
+ * drawn from text only. list: title + 2-4 items; stat: title is the big number, items[0] what it is; compare: items are
+ * [before, after] (title optional); chat: items are [the question, the reply].
+ */
+export const CARD_TYPES = ['list', 'stat', 'compare', 'chat'] as const
+export type EditCardType = (typeof CARD_TYPES)[number]
+export const CARD_TYPE_LABELS: Record<EditCardType, string> = { list: 'List', stat: 'Big number', compare: 'Before and after', chat: 'Chat' }
+export interface EditCard { type: EditCardType; title: string; items: string[] }
+export const MAX_CARD_TITLE_CHARS = 48
+export const MAX_CARD_ITEM_CHARS = 60
+export const MAX_CARD_ITEMS = 4
+export const CARD_MIN_SECONDS = 2
+export const CARD_MAX_SECONDS = 5
+
+export interface EditPopup { id: number; word: number; text: string; kind: 'number' | 'keyword' | 'card'; card?: EditCard; seconds?: number }
+
+/** The member's own pictures (logos, product shots), copied into the run folder, popped up on words they pin them to. */
+export interface EditImage { id: string; name: string; path: string }
+export const EDIT_MAX_IMAGES = 8
+export const EDIT_MAX_PINS = 12
+export const EDIT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp']
+export const EDIT_MAX_IMAGE_BYTES = 12 * 1024 * 1024
+/** The cut-out opening and the raw-to-edited opening, in seconds. */
+export const CUTOUT_INTRO_SECONDS = 3
+export const RAW_INTRO_SECONDS = 3.5
 export interface EditSound { id: number; at: number | 'title'; sound: EditSoundName }
 
 export interface EditPlan {
@@ -89,6 +116,8 @@ export interface EditStatus {
   estimateUsd: number | null
   error: string | null
   warnings: string[]
+  /** "My images" added on the review screen. */
+  images?: EditImage[]
 }
 
 export interface EditLook {
@@ -109,9 +138,19 @@ export interface EditDecisions {
   hookText: string
   /** End on the call to action they said (moved to the end). */
   endOnCta: boolean
-  popups: { id: number; on: boolean; text: string }[]
+  popups: { id: number; on: boolean; text: string; card?: EditCard }[]
   sounds: { id: number; on: boolean }[]
   look: EditLook
+  /** The edit style: pacing, and what starts switched on. */
+  recipe: EditRecipeId
+  /** Motion extras on top of the look (see look-extras.ts; the engine draws them). */
+  lookExtras: LookExtraId[]
+  /** My images pinned to words: each pops up, centered, as the word is said. */
+  pins: { image: string; word: number }[]
+  /** For the first seconds, the speaker cut out over a blurred collage of their images. */
+  cutoutIntro: boolean
+  /** A short opening card: the raw take with what was cut marked, then the reel. */
+  rawIntro: boolean
 }
 
 export interface EditStartRequest {
@@ -148,17 +187,45 @@ export function formatClock(seconds: number): string {
 // The review: start from the plan, toggle words, read the result
 // ---------------------------------------------------------------------------
 
-export function initialDecisions(plan: EditPlan, look: EditLook = DEFAULT_EDIT_LOOK): EditDecisions {
+export function initialDecisions(plan: EditPlan, look: EditLook = DEFAULT_EDIT_LOOK, recipe: EditRecipeId = DEFAULT_EDIT_RECIPE): EditDecisions {
   const hook = plan.hooks.find((item) => item.id === plan.hook) ?? null
-  return {
+  return applyRecipe(plan, {
     cut: plan.words.flatMap((word, i) => (word.cut ? [i] : [])),
     hookId: hook?.id ?? null,
     hookText: hook?.text ?? '',
     endOnCta: plan.cta !== null,
-    popups: plan.popups.map((popup) => ({ id: popup.id, on: true, text: popup.text })),
+    popups: plan.popups.map((popup) => ({ id: popup.id, on: true, text: popup.text, ...(popup.card ? { card: copyCard(popup.card) } : {}) })),
     sounds: plan.sounds.map((sound) => ({ id: sound.id, on: true })),
-    look
+    look, recipe, lookExtras: [], pins: [], cutoutIntro: false, rawIntro: false
+  }, recipe)
+}
+
+function copyCard(card: EditCard): EditCard {
+  return { type: card.type, title: card.title, items: [...card.items] }
+}
+
+/**
+ * Pick an edit style: its extras, and which pop-ups and cards start on (the first ones it allows, in the order they
+ * play). Text the member typed into pop-ups and cards is kept.
+ */
+export function applyRecipe(plan: EditPlan, decisions: EditDecisions, id: EditRecipeId): EditDecisions {
+  const recipe = editRecipe(id)
+  let texts = 0, cards = 0
+  const on = new Map<number, boolean>()
+  for (const popup of [...plan.popups].sort((a, b) => a.word - b.word)) {
+    if (popup.kind === 'card') on.set(popup.id, cards++ < recipe.cards)
+    else on.set(popup.id, texts++ < recipe.popups)
   }
+  return {
+    ...decisions, recipe: recipe.id, lookExtras: recipeExtras(recipe.id),
+    popups: decisions.popups.map((item) => ({ ...item, on: on.get(item.id) ?? item.on }))
+  }
+}
+
+/** The member's images that are pinned to a word still in the reel. */
+export function livePins(decisions: EditDecisions): { image: string; word: number }[] {
+  const cut = new Set(decisions.cut)
+  return decisions.pins.filter((pin) => !cut.has(pin.word))
 }
 
 /** Cut or keep one word. */
@@ -207,14 +274,15 @@ export function reelOrder(plan: EditPlan, decisions: EditDecisions): number[] {
 /** About how long the reel will be: the kept words, with long pauses tightened like the render does. */
 export function reelSeconds(plan: EditPlan, decisions: EditDecisions): number {
   const order = reelOrder(plan, decisions)
-  let total = 0
+  const { maxPause, keepPause } = editRecipe(decisions.recipe).pacing
+  let total = decisions.rawIntro ? RAW_INTRO_SECONDS : 0
   order.forEach((i, k) => {
     const word = plan.words[i]
     total += (word.endMs - word.startMs) / 1000
     const next = order[k + 1]
     if (next === i + 1 && plan.words[next].src === word.src) {
       const gap = Math.max(0, (plan.words[next].startMs - word.endMs) / 1000)
-      total += gap > 0.6 ? 0.25 : gap
+      total += gap > maxPause ? keepPause : gap
     } else total += 0.22
   })
   return total
@@ -258,8 +326,15 @@ export function parseEditPlan(value: unknown, sources: number): EditPlan | null 
     hooks.push({ ...s, id: raw.id as number, text: (text(raw.text, MAX_HOOK_TEXT_CHARS) ?? '').trim(), why: (text(raw.why, 240) ?? '').trim() })
   }
   const popups: EditPopup[] = []
-  for (const raw of Array.isArray(value.popups) ? value.popups.slice(0, 10) : []) {
+  for (const raw of Array.isArray(value.popups) ? value.popups.slice(0, 12) : []) {
     if (!record(raw) || !int(raw.id, 0, 50) || !int(raw.word, 0, n - 1)) continue
+    if (raw.kind === 'card') {
+      const card = parseCard(raw.card)
+      if (!card) continue
+      const seconds = typeof raw.seconds === 'number' && Number.isFinite(raw.seconds) ? Math.min(CARD_MAX_SECONDS, Math.max(CARD_MIN_SECONDS, raw.seconds)) : 3
+      popups.push({ id: raw.id as number, word: raw.word as number, text: cardSummary(card), kind: 'card', card, seconds })
+      continue
+    }
     const label = text(raw.text, MAX_POPUP_TEXT_CHARS)
     if (!label?.trim()) continue
     popups.push({ id: raw.id as number, word: raw.word as number, text: label.trim(), kind: raw.kind === 'number' ? 'number' : 'keyword' })
@@ -275,8 +350,40 @@ export function parseEditPlan(value: unknown, sources: number): EditPlan | null 
   return { words, hooks, hook, cta: span(value.cta), popups, sounds, planned: value.planned === 'basic' ? 'basic' : 'ai', notes: lines(value.notes, 6), warnings: lines(value.warnings, 4) }
 }
 
-/** The review screen's choices from the page, checked against the plan; throws with a plain message. */
-export function parseEditDecisions(value: unknown, plan: EditPlan): EditDecisions {
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f]/
+const cleanLine = (value: unknown, max: number): string | null => {
+  if (typeof value !== 'string') return null
+  const line = value.replace(/\s+/g, ' ').trim()
+  return line.length <= max && !CONTROL.test(line) && !/[<>{}\\]/.test(line) ? line : null
+}
+
+/** A card from another process (or the page), checked: null when it isn't one. */
+export function parseCard(raw: unknown): EditCard | null {
+  if (!record(raw) || !(CARD_TYPES as readonly unknown[]).includes(raw.type) || !Array.isArray(raw.items) || raw.items.length > MAX_CARD_ITEMS) return null
+  const title = cleanLine(raw.title ?? '', MAX_CARD_TITLE_CHARS)
+  const items = raw.items.map((item) => cleanLine(item, MAX_CARD_ITEM_CHARS))
+  if (title === null || items.some((item) => item === null)) return null
+  const card: EditCard = { type: raw.type as EditCardType, title, items: items as string[] }
+  return cardProblem(card) ? null : card
+}
+
+/** What a card is missing to be drawn, in plain words (null when it's fine). */
+export function cardProblem(card: EditCard): string | null {
+  const filled = card.items.filter((item) => item.trim()).length
+  if (card.type === 'list') return !card.title.trim() || filled < 2 ? 'A list card needs a title and at least two items.' : null
+  if (card.type === 'stat') return !card.title.trim() || !card.items[0]?.trim() ? 'A big-number card needs the number and what it is.' : null
+  return card.items.length < 2 || !card.items[0]?.trim() || !card.items[1]?.trim()
+    ? card.type === 'compare' ? 'A before-and-after card needs both sides.' : 'A chat card needs the question and the reply.' : null
+}
+
+/** One line for a card (its title, or its first line). */
+export function cardSummary(card: EditCard): string {
+  return (card.title || card.items[0] || '').slice(0, MAX_CARD_TITLE_CHARS)
+}
+
+/** The review screen's choices from the page, checked against the plan (and the run's images); throws with a plain message. */
+export function parseEditDecisions(value: unknown, plan: EditPlan, images: readonly EditImage[] = []): EditDecisions {
   if (!record(value)) throw new Error('Review your edit, then make the reel.')
   const n = plan.words.length
   if (!Array.isArray(value.cut) || value.cut.length > n || !value.cut.every((i) => int(i, 0, n - 1))) throw new Error('Choose the words to keep from the transcript.')
@@ -289,7 +396,16 @@ export function parseEditDecisions(value: unknown, plan: EditPlan): EditDecision
   if (typeof value.endOnCta !== 'boolean') throw new Error('Choose whether to end on your call to action.')
   if (!Array.isArray(value.popups) || !Array.isArray(value.sounds)) throw new Error('Choose which pop-ups and sounds to keep.')
   const popups = value.popups.map((raw) => {
-    if (!record(raw) || typeof raw.on !== 'boolean' || !plan.popups.some((popup) => popup.id === raw.id)) throw new Error('Choose which pop-ups to keep.')
+    const planned = record(raw) ? plan.popups.find((popup) => popup.id === raw.id) : undefined
+    if (!record(raw) || typeof raw.on !== 'boolean' || !planned) throw new Error('Choose which pop-ups to keep.')
+    if (planned.kind === 'card') {
+      const card = record(raw.card) ? { type: raw.card.type, title: raw.card.title, items: raw.card.items } : null
+      const checked = card && card.type === planned.card?.type ? parseCardLoose(card) : null
+      if (!checked) throw new Error(`Keep card text plain and short (a title up to ${MAX_CARD_TITLE_CHARS} characters, items up to ${MAX_CARD_ITEM_CHARS}).`)
+      const missing = raw.on ? cardProblem(checked) : null
+      if (missing) throw new Error(missing)
+      return { id: raw.id as number, on: raw.on, text: cardSummary(checked), card: checked }
+    }
     const label = typeof raw.text === 'string' ? raw.text.replace(/\s+/g, ' ').trim() : ''
     // eslint-disable-next-line no-control-regex
     if ((raw.on && !label) || label.length > MAX_POPUP_TEXT_CHARS || /[\u0000-\u001f\u007f]/.test(label)) throw new Error(`Keep each pop-up to ${MAX_POPUP_TEXT_CHARS} characters.`)
@@ -301,10 +417,28 @@ export function parseEditDecisions(value: unknown, plan: EditPlan): EditDecision
   })
   const look = record(value.look) ? value.look : null
   if (!look || typeof look.includeCaptions !== 'boolean' || !isCaptionPresetId(look.captionPreset) || typeof look.showHandle !== 'boolean') throw new Error('Choose your captions and look.')
+  if (value.recipe !== undefined && !isEditRecipeId(value.recipe)) throw new Error('Choose one of the edit styles.')
+  if (value.pins !== undefined && (!Array.isArray(value.pins) || value.pins.length > EDIT_MAX_PINS)) throw new Error(`Pin up to ${EDIT_MAX_PINS} images.`)
+  const pins = (Array.isArray(value.pins) ? value.pins : []).map((raw) => {
+    if (!record(raw) || typeof raw.image !== 'string' || !images.some((image) => image.id === raw.image) || !int(raw.word, 0, n - 1)) throw new Error('Pin each image to a word in your video.')
+    return { image: raw.image, word: raw.word as number }
+  })
+  for (const key of ['cutoutIntro', 'rawIntro'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose how your video opens.')
   const decisions: EditDecisions = { cut, hookId: value.hookId as number | null, hookText, endOnCta: value.endOnCta, popups, sounds,
-    look: { includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: parseHeadlineLook(look.headlineLook), showHandle: look.showHandle } }
+    look: { includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: parseHeadlineLook(look.headlineLook), showHandle: look.showHandle },
+    recipe: isEditRecipeId(value.recipe) ? value.recipe : DEFAULT_EDIT_RECIPE, lookExtras: parseLookExtras(value.lookExtras), pins,
+    cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true }
   if (reelOrder(plan, decisions).length < 3) throw new Error('Keep a few more words: the reel would be almost empty.')
   return decisions
+}
+
+/** A card the member is editing: same checks as parseCard, but an unfinished card (missing a line) is allowed while it's off. */
+function parseCardLoose(raw: { type: unknown; title: unknown; items: unknown }): EditCard | null {
+  if (!(CARD_TYPES as readonly unknown[]).includes(raw.type) || !Array.isArray(raw.items) || raw.items.length > MAX_CARD_ITEMS) return null
+  const title = cleanLine(raw.title ?? '', MAX_CARD_TITLE_CHARS)
+  const items = raw.items.map((item) => cleanLine(item, MAX_CARD_ITEM_CHARS))
+  if (title === null || items.some((item) => item === null)) return null
+  return { type: raw.type as EditCardType, title, items: items as string[] }
 }
 
 // ---------------------------------------------------------------------------

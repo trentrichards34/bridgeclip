@@ -23,7 +23,7 @@ import { Panel, PanelHeader } from '../components/ui/Panel'
 import { ProgressBar } from '../components/ui/ProgressBar'
 import { getApi } from '../lib/ipc'
 import { requestSettingsSection } from '../lib/settings-focus'
-import { errorMessage, localFileUrl } from '../lib/utils'
+import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { useBrands } from '../store/use-brand-store'
 import { useEditRecordingStore } from '../store/use-edit-recording-store'
 import { useSettingsStore } from '../store/use-settings-store'
@@ -57,6 +57,8 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const [hookHint, setHookHint] = useState('')
   const lowDisk = useLowDiskGate()
   const startRef = useRef<HTMLDivElement>(null)
+  const [dragging, setDragging] = useState(false)
+  const dragDepth = useRef(0)
   const brand = brands.find((item) => item.id === brandId) ?? null
 
   useEffect(() => {
@@ -162,6 +164,13 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
 
       {!busy && !reviewing && status?.phase !== 'done' && (
         <div className="mt-5 space-y-4" ref={startRef}>
+          <div data-testid="edit-sources-drop"
+            onDragEnter={(e) => { e.preventDefault(); dragDepth.current += 1; if (sources.length < EDIT_MAX_SOURCES) setDragging(true) }}
+            onDragOver={(e) => e.preventDefault()}
+            onDragLeave={() => { dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragging(false) }}
+            // A dropped file can't grant access to itself: the file dialog opens (in main), as everywhere else in the app.
+            onDrop={(e) => { e.preventDefault(); dragDepth.current = 0; setDragging(false); if (e.dataTransfer.files?.length && sources.length < EDIT_MAX_SOURCES) void choose() }}
+            className={cn('rounded-2xl transition-shadow', dragging && 'shadow-[0_0_0_2px_rgb(var(--accent)/0.7)]')}>
           <Panel>
             <PanelHeader title="1 · Your recording" description="One recording, or a few takes of the same video. Fluffed lines, retakes and “let me say that again” are fine: the edit keeps your last complete take of each line." />
             <div className="mt-3 flex flex-wrap gap-2">
@@ -184,7 +193,9 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
             )}
             {hookHint && sources.length > 0 && <p className="mt-2 text-2xs text-ink-muted">Planned hook: “{hookHint}”. The edit looks for it first.</p>}
             {tooLong && <p className="mt-2 text-2xs text-danger">Your takes add up to over {EDIT_MAX_TOTAL_SECONDS / 60} minutes. Use fewer or shorter takes.</p>}
+            <p className="mt-2 text-2xs text-ink-subtle">{dragging ? 'Drop to choose this recording in the file picker.' : 'You can also drop recordings here.'}</p>
           </Panel>
+          </div>
 
           <Panel>
             <PanelHeader title="2 · Your brand" description="The edit reads your brand to know your offer and voice, and your words are listened for by name. Its look sets your captions and hook text (change them on the review screen)." />

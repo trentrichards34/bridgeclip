@@ -38,7 +38,7 @@ import type { AppPrefsUpdate, MemberPrefs, StyleKind } from '../shared/member-pr
 import type { CreatorProfile } from '../shared/onboarding'
 import type { BrandLook } from '../shared/brand-kit'
 import type { BrandIdentity, RecordingPart, RemixDraft, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
-import type { EditDecisions, EditSource, EditStartRequest, EditStatus, FilmIdea, FilmIdeasRequest } from '../shared/edit-recording'
+import type { EditDecisions, EditImage, EditSource, EditStartRequest, EditStatus, FilmIdea, FilmIdeasRequest } from '../shared/edit-recording'
 import type { PauseEvent, PauseSettings, PauseView } from '../shared/pause-react'
 import type { BrollShot, BrollView } from '../shared/react-templates'
 import type { TimecodeRead } from '../shared/moment-take'
@@ -478,6 +478,10 @@ export interface BridgeClipAPI {
     start: (request: EditStartRequest) => Promise<EditStatus>
     /** Make the reel from the reviewed edit (local, no AI cost). */
     render: (decisions: EditDecisions) => Promise<EditStatus>
+    /** My images: a file dialog (null when cancelled), a dropped picture's bytes, or remove one. Each returns the run's images. */
+    chooseImages: () => Promise<EditImage[] | null>
+    addImage: (name: string, data: Uint8Array) => Promise<EditImage[]>
+    removeImage: (id: string) => Promise<EditImage[]>
     cancel: () => Promise<boolean>
     discard: () => Promise<boolean>
     mediaAccess: () => Promise<{ camera: boolean; microphone: boolean }>
@@ -848,6 +852,9 @@ const api: BridgeClipAPI = {
     chooseSources: () => ipcRenderer.invoke('edit:chooseSources'),
     start: (request) => paid('edit:start', request),
     render: (decisions) => ipcRenderer.invoke('edit:render', decisions),
+    chooseImages: () => ipcRenderer.invoke('edit:chooseImages'),
+    addImage: (name, data) => ipcRenderer.invoke('edit:addImage', name, data),
+    removeImage: (id) => ipcRenderer.invoke('edit:removeImage', id),
     cancel: () => ipcRenderer.invoke('edit:cancel'),
     discard: () => ipcRenderer.invoke('edit:discard'),
     mediaAccess: () => ipcRenderer.invoke('edit:mediaAccess'),
