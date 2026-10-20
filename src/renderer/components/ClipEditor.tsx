@@ -833,7 +833,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
                 <textarea id="editor-hook" aria-label="Hook text" rows={3} maxLength={MAX_HOOK_CHARS} value={candidate.hook.text}
                   onChange={(e) => { const text = e.target.value.replace(/\s+/g, ' '); if (text.trim() && candidate.hook) change({ hook: { ...candidate.hook, text } }) }} />
                 {candidate.hook.text.trim().split(/\s+/).length < 2 && <p className="text-2xs text-warning">Use at least two words: a single word isn’t drawn.</p>}
-                <HeadlineLookPicker value={candidate.hook.look} onChange={(look) => candidate.hook && change({ hook: { ...candidate.hook, look } })} />
+                <HeadlineLookPicker compact value={candidate.hook.look} onChange={(look) => candidate.hook && change({ hook: { ...candidate.hook, look } })} />
                 <p className="text-2xs text-ink-subtle">The Output preview shows roughly where it sits. Bake the clip again to apply it.</p>
               </>}
             </fieldset>

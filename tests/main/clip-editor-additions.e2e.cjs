@@ -73,7 +73,12 @@ test('"Make a clip from these lines" adds a whole-line clip that saves and undoe
   // A variant of the new clip.
   await page.getByRole('button', { name: 'Duplicate as variant', exact: true }).click()
   await page.getByText(/^Made a copy of this clip\./).waitFor()
-  if (shots) { await page.getByRole('button', { name: 'Hook & CTA', exact: true }).click(); await page.screenshot({ path: path.join(shots, 'editor-hook-tab.png') }) }
+  // The Hook & CTA panel fits its column: nothing spills past the right edge.
+  await page.getByRole('button', { name: 'Hook & CTA', exact: true }).click()
+  await page.getByRole('radiogroup', { name: 'Hook text look' }).waitFor()
+  const overflow = await page.locator('.editor-inspector-body').evaluate((el) => el.scrollWidth - el.clientWidth)
+  assert.ok(overflow <= 1, `the Hook & CTA panel spills ${overflow}px sideways`)
+  if (shots) await page.screenshot({ path: path.join(shots, 'editor-hook-tab.png') })
   assert.equal(await title.inputValue(), 'The event happened. That explains the result. (variant B)')
   assert.deepEqual(saved().candidates[3].ranges, [[3000, 8000]])
 })

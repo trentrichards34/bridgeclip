@@ -34,10 +34,11 @@ function LookPreview({ look }: { look: HeadlineLook }): React.JSX.Element {
 }
 
 /** Choose how the hook text at the top looks: bar color or floating, and font. */
-export function HeadlineLookPicker({ value, onChange }: { value: HeadlineLook; onChange: (look: HeadlineLook) => void }): React.JSX.Element {
+/** `compact`: for narrow side panels (the clip editor's inspector): three tiles per row and fonts that wrap, never wider than the panel. */
+export function HeadlineLookPicker({ value, onChange, compact = false }: { value: HeadlineLook; onChange: (look: HeadlineLook) => void; compact?: boolean }): React.JSX.Element {
   return (
     <div className="space-y-2.5">
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-5" role="radiogroup" aria-label="Hook text look">
+      <div className={cn('grid grid-cols-3 gap-2', !compact && 'sm:grid-cols-5')} role="radiogroup" aria-label="Hook text look">
         {HEADLINE_LOOKS.map((option) => {
           const selected = value.look === option.id
           const look: HeadlineLook = { ...value, look: option.id, color: option.id === 'brand' && value.look !== 'brand' && value.color === '#FFFFFF' ? DEFAULT_BRAND_COLOR : value.color }
@@ -54,7 +55,20 @@ export function HeadlineLookPicker({ value, onChange }: { value: HeadlineLook; o
       </div>
       <p className="text-2xs text-ink-subtle">{HEADLINE_LOOKS.find((item) => item.id === value.look)?.hint}</p>
       <div className="flex flex-wrap items-center gap-3">
-        {value.look !== 'none' && <Segmented
+        {value.look !== 'none' && compact && (
+          <div className="flex min-w-0 flex-wrap gap-1.5" role="radiogroup" aria-label="Hook text font">
+            {HEADLINE_FONTS.map((font) => {
+              const selected = value.font === font.id
+              return (
+                <button key={font.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+                  onClick={() => onChange({ ...value, font: font.id })}
+                  className={cn('rounded-lg px-2.5 py-1 text-xs', selected ? 'bg-white/15 text-ink' : 'bg-white/[0.04] text-ink-muted hover:text-ink')}
+                  style={{ fontFamily: font.family }}>{font.label}</button>
+              )
+            })}
+          </div>
+        )}
+        {value.look !== 'none' && !compact && <Segmented
           label="Hook text font"
           size="sm"
           value={value.font}
