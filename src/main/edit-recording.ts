@@ -14,9 +14,11 @@ import {
 import { editRecipe, pacingForEngine } from '../shared/edit-recipes'
 import { headlineLookForEngine } from '../shared/headline-look'
 import { lookExtrasForEngine } from '../shared/look-extras-engine'
+import { drawableGraphics, editGraphicFrame, reelGraphicSpec } from '../shared/reel-graphics'
 import type { BrandIdentity } from '../shared/remix'
 import { brandMarkForRun, isBrandId, readBrandIdentity } from './brands'
 import { applyRunCtaInLock, originalPath, withRunLock } from './ctas'
+import { graphicJob, renderGraphicJobs, REEL_GRAPHICS_DIR, type GraphicJob } from './graphics-render'
 import { logger } from './logger'
 import { readMemberPrefs } from './member-prefs'
 import { openRouterBase } from './openrouter-media'
@@ -466,8 +468,26 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     ...(decisions.lookExtras.includes('comment_box') && current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}),
     title: decisions.hookText || current.status.sources[0]?.name.replace(/\.[^.]+$/, '') || '', cost_usd: current.status.costUsd
   }
+  // Motion graphics on words still in the reel: drawn here (offscreen, cached in the run), layered by the engine.
+  const graphics = drawableGraphics(decisions.graphics ?? []).filter((g) => !cut.has(g.word))
   void (async () => {
     try {
+      if (graphics.length) {
+        publish(current, { detail: 'Drawing your graphics', percent: 2 })
+        const frame = editGraphicFrame(decisions.hookText, decisions.look)
+        const jobs = graphics.flatMap((g): GraphicJob[] => {
+          const job = graphicJob(current.status.folder, g.id, reelGraphicSpec(g, frame, g.duration_ms, decisions.look.headlineLook), { start_ms: 0, duration_ms: g.duration_ms })
+          return job ? [job] : []
+        })
+        let drawn
+        try { drawn = await renderGraphicJobs(current.status.folder, jobs, () => current.cancelled, REEL_GRAPHICS_DIR) } catch (error) {
+          if (current.cancelled) throw error
+          logger.warn('edit.graphics.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
+          throw new Error('Your graphics could not be drawn. Try again, or remove a graphic and make the reel again.')
+        }
+        if (current.cancelled) throw new Error('Canceled.')
+        Object.assign(config, { graphics: drawn.map((item) => ({ file: item.file, word: graphics.find((g) => g.id === item.id)!.word, duration_ms: item.duration_ms })) })
+      }
       const result = await runEngine(config, 2 * 60 * 60_000, (detail, percent) => { if (!current.cancelled) publish(current, { detail, percent }) }, (child) => { current.child = child })
       const path = join(current.status.folder, 'clip_00.mp4')
       const seconds = typeof result.duration_seconds === 'number' ? result.duration_seconds : 0

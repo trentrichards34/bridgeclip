@@ -207,20 +207,14 @@ export async function openGraphicRenderer(): Promise<GraphicRenderer> {
 }
 
 /** The render spec and cache key of every drawable graphic on a clip (nothing is rendered). */
-export function candidateGraphicJobs(run: string, project: EditorProject, candidate: EditorCandidate): { id: string; spec: GraphicRenderSpec; key: string; start_ms: number; duration_ms: number }[] {
-  const jobs: ReturnType<typeof candidateGraphicJobs> = []
+export function candidateGraphicJobs(run: string, project: EditorProject, candidate: EditorCandidate): GraphicJob[] {
+  const jobs: GraphicJob[] = []
   for (const g of candidate.graphics ?? []) {
     if (!graphicHasContent(g)) continue
     const spec = graphicSpec(project, candidate, g), window = graphicWindow(candidate, g)
     if (!spec || !window) continue
-    let imageHash: string | undefined
-    if (g.template === 'logo') {
-      const image = graphicImageData(run, g.fields.image)
-      if (!image) continue
-      spec.image = image.url
-      imageHash = image.hash
-    }
-    jobs.push({ id: g.id, spec, key: graphicCacheKey(spec, imageHash), start_ms: window.start_ms, duration_ms: window.duration_ms })
+    const job = graphicJob(run, g.id, spec, window, g.fields.image)
+    if (job) jobs.push(job)
   }
   return jobs
 }
@@ -230,19 +224,41 @@ let makeRenderer: RendererFactory = openGraphicRenderer
 /** Tests swap the offscreen window for a fake. */
 export function setGraphicRendererFactory(factory: RendererFactory | null): void { makeRenderer = factory ?? openGraphicRenderer }
 
+/** One graphic to draw: what it shows, its cache name and where it plays (output ms). */
+export interface GraphicJob { id: string; spec: GraphicRenderSpec; key: string; start_ms: number; duration_ms: number }
+
+/** Renders made outside the clip editor (Edit my recording, Remix) are kept in .graphics/reel/: the editor's sweep never removes them. */
+export const REEL_GRAPHICS_DIR = 'reel'
+
+/** A job for a graphic drawn from `spec` (Logo pop: its picture is loaded from the run; null when it's missing). */
+export function graphicJob(run: string, id: string, spec: GraphicRenderSpec, window: { start_ms: number; duration_ms: number }, image?: string): GraphicJob | null {
+  let imageHash: string | undefined
+  if (spec.template === 'logo') {
+    const data = graphicImageData(run, image)
+    if (!data) return null
+    spec = { ...spec, image: data.url }
+    imageHash = data.hash
+  }
+  return { id, spec, key: graphicCacheKey(spec, imageHash), start_ms: window.start_ms, duration_ms: window.duration_ms }
+}
+
 /**
- * Render (or reuse) every graphic on a clip, before its bake. Returns what the
- * engine layers over the clip; graphics left without words, image or screen
- * time are skipped.
+ * Render (or reuse) graphics into the run's .graphics/ folder (or a folder in
+ * it). Returns what the engine layers over the video, in the jobs' order.
  */
-export async function renderCandidateGraphics(run: string, project: EditorProject, candidate: EditorCandidate, cancelled: () => boolean = () => false): Promise<RenderedGraphic[]> {
-  const jobs = candidateGraphicJobs(run, project, candidate)
+export async function renderGraphicJobs(run: string, jobs: GraphicJob[], cancelled: () => boolean = () => false, sub?: typeof REEL_GRAPHICS_DIR): Promise<RenderedGraphic[]> {
   if (!jobs.length) return []
-  const dir = graphicsDir(run, true)
+  let dir = graphicsDir(run, true)
+  if (sub) {
+    dir = join(dir, sub)
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    if (lstatSync(dir).isSymbolicLink()) throw new Error('Graphics folder is invalid')
+  }
   let renderer: GraphicRenderer | null = null
   const done: RenderedGraphic[] = []
   try {
     for (const job of jobs) {
+      if (cancelled()) throw new Error('Export canceled.')
       const file = `${job.key}.mov`, path = join(dir, file)
       if (!regularFile(path) || statSync(path).size < 64) {
         renderer ??= await makeRenderer()
@@ -258,6 +274,15 @@ export async function renderCandidateGraphics(run: string, project: EditorProjec
     }
   } finally { renderer?.close() }
   return done
+}
+
+/**
+ * Render (or reuse) every graphic on a clip, before its bake. Returns what the
+ * engine layers over the clip; graphics left without words, image or screen
+ * time are skipped.
+ */
+export async function renderCandidateGraphics(run: string, project: EditorProject, candidate: EditorCandidate, cancelled: () => boolean = () => false): Promise<RenderedGraphic[]> {
+  return renderGraphicJobs(run, candidateGraphicJobs(run, project, candidate), cancelled)
 }
 
 /** Remove cached renders no clip uses any more (images are kept: undo can bring their graphic back). */

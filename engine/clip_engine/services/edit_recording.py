@@ -1450,6 +1450,50 @@ def _saved_layers(layers: Layers) -> dict:
                        "seconds": layers.cutout["seconds"]} if layers.cutout else None}
 
 
+def place_graphics(raw: Any, starts: dict, cards: list[dict], total_s: float, warnings: list[str]) -> list[dict]:
+    """The member's motion graphics on the reel's clock: each starts as its word is said. One whose word was cut, or
+    that would play during a half-screen card, is left out (with a warning)."""
+    windows = [(a, b) for a, b, _ in card_windows(cards, total_s)]
+    placed: list[dict] = []
+    cut = during = 0
+    for g in raw or []:
+        start = starts.get(g["word"])
+        if start is None:
+            cut += 1
+            continue
+        length = min(int(g["duration_ms"]), round(total_s * 1000) - start)
+        if length < 400:
+            cut += 1
+            continue
+        if any(start / 1000 < b and (start + length) / 1000 > a for a, b in windows):
+            during += 1
+            continue
+        placed.append({"file": g["file"], "start_ms": int(start), "duration_ms": int(length)})
+    if cut:
+        warnings.append(f"{cut} graphic{'s were' if cut != 1 else ' was'} left out: {'their words were' if cut != 1 else 'its word was'} cut or came right at the end.")
+    if during:
+        warnings.append(f"{during} graphic{'s were' if during != 1 else ' was'} left out: {'they' if during != 1 else 'it'} came during a card. Move {'them' if during != 1 else 'it'} off the card to show {'them' if during != 1 else 'it'}.")
+    return sorted(placed, key=lambda g: g["start_ms"])
+
+
+def _graphic_paths(root: str, graphics: list[dict], total_s: float) -> list[dict]:
+    """The placed graphics' renders, checked (in the run's .graphics/reel/); none when they're missing."""
+    from pathlib import Path
+    from clip_engine.services.graphics_overlay import REEL_DIR, checked_graphics
+    if not graphics:
+        return []
+    try:
+        return checked_graphics(Path(root), graphics, round(total_s * 1000), REEL_DIR)
+    except ValueError as error:
+        logger.warning(f"Graphics left out: {error}")
+        return []
+
+
+def _layer_graphics(video: str, checked: list[dict]) -> None:
+    from clip_engine.services.graphics_overlay import overlay_graphics_file
+    overlay_graphics_file(video, checked, OUT_W, OUT_H, VIDEO_ARGS, lambda cmd: ffmpeg(cmd[1:]))
+
+
 async def render_edit(config: dict, progress: Progress) -> dict:
     """Mode "render": the reel from the member's reviewed edit."""
     root = config["output_dir"]
@@ -1513,6 +1557,19 @@ async def render_edit(config: dict, progress: Progress) -> dict:
     cards = [{"card": p["card"], "start_ms": starts[p["word"]], "seconds": p.get("seconds") or 3.0} for p in config["popups"]
              if p["word"] in starts and p.get("kind") == "card"]
     layers = Layers(cards, _pin_layers(config, starts, folder, warnings), None)
+    # Motion graphics: never during a card; pop-ups and pinned images that would play during one give way to it.
+    graphics = place_graphics(config.get("graphics"), starts, cards, total, warnings)
+    if graphics:
+        busy = [(g["start_ms"] / 1000, (g["start_ms"] + g["duration_ms"]) / 1000) for g in graphics]
+        def free(start_ms: int, seconds: float) -> bool:
+            return not any(start_ms / 1000 < b and start_ms / 1000 + seconds > a for a, b in busy)
+        kept_popups = [p for p in popups if free(p["start_ms"], POPUP_SECONDS)]
+        kept_pins = [p for p in layers.pins if free(p["start_ms"], PIN_SECONDS)]
+        gave_way = len(popups) - len(kept_popups) + len(layers.pins) - len(kept_pins)
+        if gave_way:
+            warnings.append(f"{gave_way} pop-up{'s' if gave_way != 1 else ''} or pinned image{'s' if gave_way != 1 else ''} left out: "
+                            f"{'they' if gave_way != 1 else 'it'} came during a graphic.")
+        popups, layers.pins = kept_popups, kept_pins
     if config.get("cutout_intro"):
         progress("Cutting you out for the opening", 68)
         layers.cutout = await asyncio.to_thread(_cutout_layer, config, base, folder, work, total, warnings)
@@ -1525,6 +1582,9 @@ async def render_edit(config: dict, progress: Progress) -> dict:
     final = os.path.join(root, "clip_00.mp4")
     partial = os.path.join(root, ".clip_00.partial.mp4")
     await overlay_reel(base, partial, work, look, timed_list, popups, total, root, layers, warnings)
+    if graphics:
+        progress("Adding your graphics", 92)
+        await asyncio.to_thread(_layer_graphics, partial, _graphic_paths(root, graphics, total))
     if raw_intro:
         joined = os.path.join(root, ".clip_00.joined.mp4")
         await asyncio.to_thread(prepend_intro, raw_intro, partial, joined)
@@ -1534,7 +1594,7 @@ async def render_edit(config: dict, progress: Progress) -> dict:
     write_bundle(root, {"version": EDIT_VERSION, "words": timed_list, "popups": popups, "duration": round(total, 3),
                         "settings": settings_of(look), "brand_mark": _saved_mark(look.brand_mark, root),
                         "sounds": [name for name, _ in events], **_saved_layers(layers),
-                        "raw_intro": os.path.basename(raw_intro) if raw_intro else None,
+                        "raw_intro": os.path.basename(raw_intro) if raw_intro else None, "graphics": graphics,
                         "recipe": config.get("recipe") or "clean", "look_extras": list(look.look_extras),
                         **({"look_extras_color": look.look_extras_color, "look_extras_keyword": look.look_extras_keyword,
                             "punched": [list(w) for w in look.punched]} if look.look_extras else {})})
@@ -1587,8 +1647,13 @@ async def recompose_edit(config: dict, progress: Progress) -> dict:
         raw_path = os.path.join(folder, raw_intro) if isinstance(raw_intro, str) and re.fullmatch(r"[\w.-]+\.mp4", raw_intro) \
             and os.path.isfile(os.path.join(folder, raw_intro)) else None
         target = os.path.join(work, "reel.mp4") if raw_path else out
-        await overlay_reel(os.path.join(folder, "base.mp4"), target, work, look, data["words"], popups, float(data.get("duration") or 0)
-                           or probe_seconds(os.path.join(folder, "base.mp4")), root, layers_of(data, folder))
+        total = float(data.get("duration") or 0) or probe_seconds(os.path.join(folder, "base.mp4"))
+        await overlay_reel(os.path.join(folder, "base.mp4"), target, work, look, data["words"], popups, total, root, layers_of(data, folder))
+        # The member's graphics, as placed when it was made (from their renders kept in the run).
+        saved_graphics = [g for g in data.get("graphics") or [] if isinstance(g, dict)]
+        if saved_graphics:
+            progress("Adding your graphics", 80)
+            await asyncio.to_thread(_layer_graphics, target, _graphic_paths(root, saved_graphics, total))
         if raw_path:
             await asyncio.to_thread(prepend_intro, raw_path, target, out)
         data["settings"] = settings_of(look)

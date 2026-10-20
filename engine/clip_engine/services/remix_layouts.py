@@ -28,6 +28,8 @@ THEIR_CAPTIONS = ("auto", "yes", "no")
 HOOK_AT = ("top", "seam", "beside")
 PART1 = ("box", "phone")
 PART2 = ("camera", "screen")
+# React, then my thoughts, part 1 with their clip in a box: where the box goes ("auto": clear of the member's face).
+BOX_AT = ("auto", "top", "bottom")
 CLIP_FORMATS = ("clip_then_me", "react_thoughts")
 LAYOUT_FORMATS = ("pause_react", *CLIP_FORMATS)
 MAX_PROOFS = 6
@@ -119,7 +121,7 @@ def clean_label(value: Any) -> str:
 
 def default_layout() -> dict:
     return {"their_captions": "auto", "hook_at": "top", "part1": "box", "part2": "camera", "screen": None, "banner": False,
-            "circles": [], "proofs": []}
+            "circles": [], "proofs": [], "box_at": "auto"}
 
 
 def parse_layout(raw: Any, fmt: str) -> dict:
@@ -148,6 +150,9 @@ def parse_layout(raw: Any, fmt: str) -> dict:
         raise ValueError("Invalid layout")
     banner = raw.get("banner", False)
     if not isinstance(banner, bool):
+        raise ValueError("Invalid layout")
+    box_at = raw.get("box_at", "auto")
+    if box_at not in BOX_AT or (box_at != "auto" and (not react or part1 != "box")):
         raise ValueError("Invalid layout")
     screen = raw.get("screen")
     if screen is not None:
@@ -181,7 +186,7 @@ def parse_layout(raw: Any, fmt: str) -> dict:
         cards.append({"id": pid, "path": proof["path"], "at": None if at is None else round(float(at), 2),
                       "label": clean_label(proof.get("label")), "highlight": parse_highlight(proof.get("highlight"))})
     out.update(their_captions=their, hook_at=hook, part1=part1, part2=part2, screen=screen, banner=banner and react,
-               circles=sorted(marks, key=lambda c: c["at"]) if part2 == "screen" else [], proofs=cards)
+               circles=sorted(marks, key=lambda c: c["at"]) if part2 == "screen" else [], proofs=cards, box_at=box_at)
     return out
 
 

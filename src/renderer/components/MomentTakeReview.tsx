@@ -7,6 +7,9 @@ import {
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { RemixRecorder } from './RemixRecorder'
+import { RemixChatSection, RemixGraphicsSection, TakeTrimNote, type TakeText } from './RemixReviewExtras'
+import type { EditorGraphic } from '../../shared/motion-graphics'
+import { Segmented } from './ui/Segmented'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { Callout } from './ui/Callout'
@@ -40,6 +43,9 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
   const [writeOwn, setWriteOwn] = useState<Set<number>>(new Set())
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const [source, setSource] = useState<string | null>(null)
+  // Graphics per take, and which take the Graphics and Chat sections are on.
+  const [graphics, setGraphics] = useState<Record<number, EditorGraphic[]>>({})
+  const [focus, setFocus] = useState<number>(drafts[0]?.id ?? 0)
   // Hook text that just arrived from the AI replaces what was typed for that take before.
   const headlines = useRef<Record<number, string>>({})
   useEffect(() => {
@@ -93,7 +99,14 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
   const problems = chosen.map((draft) => !recorded(draft) ? `Record your take on moment ${draft.id + 1}`
     : !value(draft).headline.trim() ? `Write the hook text for moment ${draft.id + 1}` : remixEditProblem(value(draft), 'moment_take') ? `Fix the hook text or caption of moment ${draft.id + 1}` : null)
   const blocker = chosen.length === 0 ? 'Choose at least one video to make' : problems.find(Boolean) ?? null
-  const make = (): Promise<void> => run('make', () => getApi().remix.render(chosen.map(value)), 'The videos could not be started.')
+  const chosenGraphics = Object.fromEntries(chosen.filter((draft) => graphics[draft.id]?.length).map((draft) => [draft.id, graphics[draft.id]]))
+  const make = (): Promise<void> => run('make', () => getApi().remix.render(chosen.map(value), Object.keys(chosenGraphics).length ? chosenGraphics : undefined), 'The videos could not be started.')
+  const focused = drafts.find((draft) => draft.id === focus) ?? drafts[0]
+  const focusText = (draft: RemixDraft): TakeText => ({ headline: value(draft).headline, postCaption: value(draft).postCaption ?? '', graphics: graphics[draft.id] ?? [] })
+  const onText = (draft: RemixDraft, patch: Partial<TakeText>): void => {
+    if (patch.graphics) { const next = patch.graphics; setGraphics((current) => ({ ...current, [draft.id]: next })) }
+    if (patch.headline !== undefined || patch.postCaption !== undefined) change(draft, { ...(patch.headline !== undefined ? { headline: patch.headline } : {}), ...(patch.postCaption !== undefined ? { postCaption: patch.postCaption } : {}) })
+  }
 
   return (
     <Panel>
@@ -161,6 +174,7 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
                   <Button size="sm" variant="ghost" icon={<ListChecks className="h-3.5 w-3.5" />} loading={working === `points-${draft.id}`} disabled={busy}
                     onClick={() => void points(draft)}>Give me talking points</Button>
                 )}
+                <TakeTrimNote draft={draft} recordings={recordings} disabled={busy} onRecordings={setRecordings} onError={onError} />
               </div>
 
               <div className="space-y-2">
@@ -188,6 +202,21 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
             </section>
           )
         })}
+        {focused && <>
+          {drafts.length > 1 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-2xs text-ink-muted">Graphics and chat for</span>
+              <Segmented<string> label="Graphics and chat for" size="sm" value={String(focused.id)} onChange={(id) => setFocus(Number(id))}
+                options={drafts.map((draft) => ({ value: String(draft.id), label: `Moment ${draft.id + 1}` }))} />
+            </div>
+          )}
+          <RemixGraphicsSection key={`g${focused.id}`} status={status} draft={focused} text={focusText(focused)} recordings={recordings} banner={false} disabled={busy}
+            onGraphics={(change) => setGraphics((current) => ({ ...current, [focused.id]: change(current[focused.id] ?? []) }))}
+            partMs={recordings[focused.id]?.reaction?.seconds ? Math.round(recordings[focused.id]!.reaction!.seconds * 1000) : null} />
+          <RemixChatSection key={`c${focused.id}`} runId={status.id} draft={focused} text={focusText(focused)} onText={(patch) => onText(focused, patch)}
+            afterMain={async () => { setRecordings(await getApi().remix.recordings()) }} label={drafts.length > 1 ? `Chat · moment ${focused.id + 1}` : 'Chat'}
+            disabledReason={busy ? 'Wait for what’s running to finish.' : recording ? 'Close the recorder to chat.' : null} />
+        </>}
         <div className="flex flex-wrap items-center gap-2">
           {unwritten.length > 1 && (
             <Button variant="secondary" icon={<Sparkles className="h-4 w-4" />} loading={working.startsWith('write-') && working.includes(',')} disabled={busy}

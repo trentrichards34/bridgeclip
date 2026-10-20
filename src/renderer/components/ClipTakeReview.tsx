@@ -9,7 +9,10 @@ import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { partLabel, RemixRecorder } from './RemixRecorder'
 import { Part2Look, ProofScreenshots } from './ClipLayoutSections'
-import type { LayoutExtrasView } from '../../shared/remix-layouts'
+import type { BoxAt, LayoutExtrasView } from '../../shared/remix-layouts'
+import type { EditorGraphic } from '../../shared/motion-graphics'
+import { RemixChatSection, RemixGraphicsSection, TakeTrimNote, type TakeText } from './RemixReviewExtras'
+import { Segmented } from './ui/Segmented'
 import { TrimControl } from './PauseReactReview'
 import { Button } from './ui/Button'
 import { Callout } from './ui/Callout'
@@ -38,6 +41,7 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const [broll, setBroll] = useState<BrollView | null>(null)
   const [layout, setLayout] = useState<LayoutExtrasView | null>(null)
+  const [graphics, setGraphics] = useState<EditorGraphic[]>([])
   const parts = partsFor(draft.format, 0)
   const recorded = (part: RecordingPart): boolean => Boolean(recordings[draft.id]?.[part])
   const allRecorded = parts.every(recorded)
@@ -79,7 +83,16 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
     // (React, then my thoughts: part 1 was filmed with the old part playing, so it's recorded again.)
     await refresh()
   }, 'That part of their video could not be used.')
-  const make = (): Promise<void> => run('make', () => getApi().remix.render([current]), 'The video could not be started.')
+  const make = (): Promise<void> => run('make', () => getApi().remix.render([current], graphics.length ? { [draft.id]: graphics } : undefined), 'The video could not be started.')
+  // The hook text, caption and graphics the Graphics and Chat sections change.
+  const text: TakeText = { headline: current.headline, postCaption: current.postCaption ?? '', graphics }
+  const onText = (patch: Partial<TakeText>): void => {
+    if (patch.graphics) setGraphics(patch.graphics)
+    if (patch.headline !== undefined || patch.postCaption !== undefined) {
+      setEdit((before) => ({ ...(before ?? current), ...(patch.headline !== undefined ? { headline: patch.headline } : {}), ...(patch.postCaption !== undefined ? { postCaption: patch.postCaption } : {}) }))
+    }
+  }
+  const setBoxAt = (boxAt: BoxAt): Promise<void> => run('layout', async () => setLayout(await getApi().remix.setLayout({ boxAt })), 'Their clip could not be moved.')
   const discard = async (): Promise<void> => {
     if (!confirmDiscard) { setConfirmDiscard(true); return }
     await run('discard', () => getApi().remix.discard(), 'It could not be discarded.')
@@ -142,6 +155,13 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
             saving={working === 'trim'} uploaded={false} maxSeconds={CLIP_MAX_SECONDS} onTrim={(a, b) => void trim(a, b)}
             note={react ? 'It plays while you film part 1: changing it after means recording part 1 again.' : 'All of it plays before your take, with its captions.'} />
             : <div className="aspect-video w-full max-w-md rounded-xl bg-black" />}
+          {react && layout?.boxAt && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-2xs text-ink-muted">Their clip’s box while you react</span>
+              <Segmented<BoxAt> label="Where their clip’s box goes" size="sm" value={layout.boxAt} onChange={(value) => void setBoxAt(value)}
+                options={[{ value: 'auto', label: 'Clear of my face' }, { value: 'top', label: 'Top' }, { value: 'bottom', label: 'Bottom' }]} />
+            </div>
+          )}
         </section>
 
         {react ? (<>
@@ -154,8 +174,11 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
           {layoutProps && <Part2Look {...layoutProps} step={lookStep} />}
           {broll && <BrollSection view={broll} step={brollStep} busy={busy} working={working} canPlan={recorded('thoughts') && recorded('reaction')}
             onView={setBroll} onError={onError} setWorking={setWorking} onPlan={setPlan} onOpenKeys={onOpenKeys} />}
-        </>) : recorder('reaction', 'Your take',
-          `Watch their clip, then say what you think of it, in your own words, up to ${CLIP_TAKE_MAX_SECONDS / 60} minutes. Record here, or upload a phone video.`, 2)}
+        </>) : <>
+          {recorder('reaction', 'Your take',
+            `Watch their clip, then say what you think of it, in your own words, up to ${CLIP_TAKE_MAX_SECONDS / 60} minutes. Record here, or upload a phone video.`, 2)}
+          <TakeTrimNote draft={draft} recordings={recordings} disabled={busy} onRecordings={setRecordings} onError={onError} />
+        </>}
         {layoutProps && <ProofScreenshots {...layoutProps} step={proofStep} takeSeconds={takeSeconds} />}
 
         <section className="glass-tile space-y-3 rounded-2xl p-4" aria-label="Hook text and caption">
@@ -180,6 +203,11 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
           </>}
           {draft.notes.map((note, i) => <p key={i} className="text-2xs text-warning"><AlertTriangle className="mr-1 inline h-3 w-3" />{note}</p>)}
         </section>
+
+        <RemixGraphicsSection status={status} draft={draft} text={text} onGraphics={(change) => setGraphics(change)} recordings={recordings}
+          partMs={takeSeconds ? Math.round(takeSeconds * 1000) : null} banner={Boolean(layout?.banner && layout.keyword)} disabled={busy} step={step + 1} />
+        <RemixChatSection runId={status.id} draft={draft} text={text} onText={onText} afterMain={async () => { await refresh() }}
+          disabledReason={busy ? 'Wait for what’s running to finish.' : recording ? 'Close the recorder to chat.' : null} />
 
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={working === 'make'} disabled={busy || blocker !== null} tooltip={blocker ?? undefined}

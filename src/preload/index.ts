@@ -41,6 +41,9 @@ import type { BrandLook } from '../shared/brand-kit'
 import type { BrandIdentity, RecordingPart, RemixDraft, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
 import type { ListicleScript, ListicleScriptRequest, ListicleStatus } from '../shared/listicle'
 import type { EditDecisions, EditImage, EditSource, EditStartRequest, EditStatus, FilmIdea, FilmIdeasRequest } from '../shared/edit-recording'
+import type { EditChatReply } from '../shared/edit-chat'
+import type { RemixChatReply, RemixChatState } from '../shared/remix-chat'
+import type { EditorGraphic } from '../shared/motion-graphics'
 import type { PauseEvent, PauseSettings, PauseView } from '../shared/pause-react'
 import type { BrollShot, BrollView } from '../shared/react-templates'
 import type { LayoutExtrasPatch, LayoutExtrasView } from '../shared/remix-layouts'
@@ -437,8 +440,8 @@ export interface BridgeClipAPI {
   remix: {
     /** Plans the remixes; the status moves to 'review' with drafts to approve. */
     start: (request: RemixRequest) => Promise<RemixStatus>
-    /** Renders the approved drafts (with edits). */
-    render: (edits: RemixEdit[]) => Promise<RemixStatus>
+    /** Renders the approved drafts (with edits), and the graphics on each take's part (by draft id). */
+    render: (edits: RemixEdit[], graphics?: Record<number, EditorGraphic[]>) => Promise<RemixStatus>
     /** Drops the plan waiting for review. */
     discard: () => Promise<boolean>
     cancel: () => Promise<boolean>
@@ -474,6 +477,14 @@ export interface BridgeClipAPI {
     recordingFinish: (token: string, offsetSeconds: number | null, pause?: { events: PauseEvent[]; durationMs: number }) => Promise<RemixRecordings>
     /** Pause & react: the part of their video to react to (a phone recording's pauses are found again). */
     trim: (draftId: number, startMs: number, endMs: number) => Promise<{ draft: RemixDraft; view: PauseView | null }>
+    /** Their clip then me / Moment + my take: use only part of the take (ms into it), or all of it again (nulls). */
+    takeTrim: (draftId: number, startMs: number | null, endMs: number | null) => Promise<RemixRecordings>
+    /** Whether the review's Chat panel can be used, its model and cost note. */
+    chatInfo: () => Promise<ChatInfo>
+    /** One chat message about a take (its hook text, caption and graphics as they are now). Uses the OpenRouter key; main checks every change. */
+    chat: (state: RemixChatState, message: string) => Promise<RemixChatReply>
+    /** Forget a take's chat. */
+    chatReset: (draftId: number) => Promise<void>
     /** React, then my thoughts: your b-roll, stock on or off, and the plan (null when it isn't one). */
     brollView: () => Promise<BrollView | null>
     /** Opens a file dialog in main (several clips or pictures); null when cancelled. */
@@ -525,6 +536,12 @@ export interface BridgeClipAPI {
     recordingAbort: (token: string) => Promise<void>
     /** "What should I film?": five ideas from the brand, goals and pasted material (one small paid call). */
     ideas: (request: FilmIdeasRequest) => Promise<FilmIdea[]>
+    /** Whether the review's Chat panel can be used, its model and cost note. */
+    chatInfo: () => Promise<ChatInfo>
+    /** One chat message about the edit in review (its current choices). Uses the OpenRouter key; main checks every change. */
+    chat: (decisions: EditDecisions, message: string) => Promise<EditChatReply>
+    /** Forget the review's chat. */
+    chatReset: () => Promise<void>
   }
   /** Gameplay background library (file names only). */
   backgrounds: {
@@ -860,7 +877,7 @@ const api: BridgeClipAPI = {
   },
   remix: {
     start: (request) => paid('remix:start', request),
-    render: (edits) => paid('remix:render', edits),
+    render: (edits, graphics) => paid('remix:render', edits, graphics),
     discard: () => ipcRenderer.invoke('remix:discard'),
     cancel: () => ipcRenderer.invoke('remix:cancel'),
     status: () => ipcRenderer.invoke('remix:status'),
@@ -881,6 +898,10 @@ const api: BridgeClipAPI = {
     recordingAppend: (token, chunk) => ipcRenderer.invoke('remix:recordingAppend', token, chunk),
     recordingFinish: (token, offsetSeconds, pause) => ipcRenderer.invoke('remix:recordingFinish', token, offsetSeconds, pause),
     trim: (draftId, startMs, endMs) => ipcRenderer.invoke('remix:trim', draftId, startMs, endMs),
+    takeTrim: (draftId, startMs, endMs) => ipcRenderer.invoke('remix:takeTrim', draftId, startMs, endMs),
+    chatInfo: () => ipcRenderer.invoke('remix:chatInfo'),
+    chat: (state, message) => paid('remix:chat', state, message),
+    chatReset: (draftId) => ipcRenderer.invoke('remix:chatReset', draftId),
     brollView: () => ipcRenderer.invoke('remix:brollView'),
     addBroll: () => ipcRenderer.invoke('remix:addBroll'),
     removeBroll: (id) => ipcRenderer.invoke('remix:removeBroll', id),
@@ -914,7 +935,10 @@ const api: BridgeClipAPI = {
     recordingAppend: (token, chunk) => ipcRenderer.invoke('edit:recordingAppend', token, chunk),
     recordingFinish: (token) => ipcRenderer.invoke('edit:recordingFinish', token),
     recordingAbort: (token) => ipcRenderer.invoke('edit:recordingAbort', token),
-    ideas: (request) => paid('edit:ideas', request)
+    ideas: (request) => paid('edit:ideas', request),
+    chatInfo: () => ipcRenderer.invoke('edit:chatInfo'),
+    chat: (decisions, message) => paid('edit:chat', decisions, message),
+    chatReset: () => ipcRenderer.invoke('edit:chatReset')
   },
   backgrounds: {
     list: () => ipcRenderer.invoke('backgrounds:list'),

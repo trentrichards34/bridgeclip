@@ -11,6 +11,7 @@ import type { HeadlineLook } from './headline-look'
 import type { LookExtraId } from './look-extras'
 import { PRESET_VOICE_IDS, PRESET_VOICES } from './voices'
 import type { PauseCaptions, PauseLayout } from './pause-react'
+import type { RemixGraphicContext } from './reel-graphics'
 import { parseMomentInfo, type MomentInfo, type MomentRange } from './moment-take'
 import { HEYGEN_PRICES, heygenStage, type HeygenAvatarLink } from './heygen'
 
@@ -343,6 +344,8 @@ export interface TakeRecording {
   path: string; uploaded: boolean; seconds: number
   /** Moment + my take: the hook text and caption were written from this recording, so making the video reuses its words (no new transcription). */
   written?: boolean
+  /** Their clip then me / Moment + my take: only this part of the take is used (ms into it). */
+  trim?: { startMs: number; endMs: number }
 }
 export type RemixRecordings = Record<number, Partial<Record<RecordingPart, TakeRecording>>>
 export const RECORDING_VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'webm']
@@ -437,6 +440,8 @@ export interface RemixStatus {
   cameraLayout?: CameraLayout
   /** Pause & react: where their video goes (the recorder shades what its box covers). */
   pauseLayout?: PauseLayout
+  /** On-camera remixes: what decides where graphics go on the member's part (missing: no graphics). */
+  graphics?: RemixGraphicContext
 }
 
 export function isRunning(status: RemixStatus | null): boolean {

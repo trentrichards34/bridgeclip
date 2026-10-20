@@ -2,55 +2,30 @@
 // member's key) with the clip's state, the words around it and its loud
 // moments as context. The model edits through the tools in shared/clip-chat;
 // every call is checked against a copy of the clip and an invalid one goes back
-// to the model as an error. Main never writes the project: the renderer applies
-// the returned steps through the editor's own change() path (undo, autosave
-// and Bake work unchanged).
+// to the model as an error (the generic loop is in chat-engine.ts). Main never
+// writes the project: the renderer applies the returned steps through the
+// editor's own change() path (undo, autosave and Bake work unchanged).
 
 import { spawn } from 'child_process'
 import { constants, statSync } from 'fs'
 import { open } from 'fs/promises'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
-import { CHAT_MAX_MESSAGE_CHARS, CHAT_MAX_TOOL_CALLS, CHAT_MAX_TURNS, CHAT_TOOLS, ChatToolError, applyChatTool, chatClock, chatPlainText, chatCostNote, clipLengthNote, type ChatInfo, type ChatProject, type ChatReply, type ChatStep } from '../shared/clip-chat'
+import { CHAT_TOOLS, applyChatTool, chatClock, chatPlainText, clipLengthNote, type ChatInfo, type ChatProject, type ChatReply, type ChatStep } from '../shared/clip-chat'
 import { editDuration, parseCandidateEdit, type CandidateEdit, type EditorProject } from '../shared/clip-editor'
 import { parseGraphics } from '../shared/motion-graphics'
-import { isModelId, type OpenRouterModel } from '../shared/openrouter-models'
-import { runOpenRouterTurn, type OpenRouterMessage } from './assistant/openrouter-agent'
+import type { OpenRouterModel } from '../shared/openrouter-models'
+import type { OpenRouterMessage } from './assistant/openrouter-agent'
+import { CHAT_TIMEOUT_MS, ChatMemory, DEFAULT_CHAT_MODEL, chatEstimateUsd, chatInfoFor, chatMessage, chatModel, runToolChat } from './chat-engine'
 import { isWithinDirectory } from './security'
 
-/** Used when the member hasn't chosen a planning model in Advanced mode: quick, cheap and good with tools. */
-export const DEFAULT_CHAT_MODEL = 'google/gemini-3.8-flash'
+export { DEFAULT_CHAT_MODEL, chatEstimateUsd, chatModel }
 /** Words around the clip the model sees, each side. */
 export const CHAT_CONTEXT_MS = 60_000
 const MAX_CONTEXT_CHARS = 48_000
-const MAX_HISTORY_CHARS = 30_000
-const MAX_REPLY_CHARS = 2_000
-const CHAT_TIMEOUT_MS = 120_000
-/** Rough tokens per message for the price note: context and history in, a short answer and tool calls out, over two steps. */
-const ESTIMATE_INPUT_TOKENS = 2 * 9_000
-const ESTIMATE_OUTPUT_TOKENS = 700
-
-/** The planning model the member chose in Advanced mode, else the default. */
-export function chatModel(create: { clippingMode?: unknown; plannerModel?: unknown } | undefined): string {
-  return create?.clippingMode === 'advanced' && isModelId(create.plannerModel) ? create.plannerModel : DEFAULT_CHAT_MODEL
-}
-
-/** A per-message estimate from the model's listed token prices, or null when they're unknown. */
-export function chatEstimateUsd(model: OpenRouterModel | undefined): number | null {
-  if (!model || model.inputPrice === null || model.outputPrice === null) return null
-  const usd = ESTIMATE_INPUT_TOKENS * model.inputPrice + ESTIMATE_OUTPUT_TOKENS * model.outputPrice
-  return Number.isFinite(usd) && usd > 0 ? usd : null
-}
 
 export function chatInfo(input: { apiKey: boolean; model: string; catalogModel?: OpenRouterModel; modelName?: string }): ChatInfo {
-  const estimateUsd = chatEstimateUsd(input.catalogModel)
-  return {
-    ready: input.apiKey,
-    ...(input.apiKey ? {} : { reason: 'Add your OpenRouter key in Settings → API keys to chat about this clip.' }),
-    model: input.catalogModel?.name ?? input.model,
-    costNote: chatCostNote(estimateUsd),
-    estimateUsd
-  }
+  return chatInfoFor(input, 'this clip')
 }
 
 // ── Transcript words ──────────────────────────────────────────────────────
@@ -228,54 +203,30 @@ export async function runClipChat(input: ChatTurnInput): Promise<ChatReply> {
   let context = buildChatContext(input.project, input.candidate, input.segments, input.loud)
   if (context.length > MAX_CONTEXT_CHARS) context = buildChatContext(input.project, input.candidate, input.segments, input.loud, CHAT_CONTEXT_MS / 2)
   if (context.length > MAX_CONTEXT_CHARS) context = `${context.slice(0, MAX_CONTEXT_CHARS)}\n(trimmed)`
-  let working = input.candidate, calls = 0, reply = ''
-  const steps: ChatStep[] = []
+  let working = input.candidate
   const newId = input.newId ?? (() => `chat-${randomBytes(4).toString('hex')}`)
-  const error = await runOpenRouterTurn({
-    apiKey: input.apiKey, model: input.model, signal: input.signal, url: input.url, fetch: input.fetch,
+  return runToolChat<ChatStep>({
+    apiKey: input.apiKey, model: input.model, signal: input.signal, url: input.url, fetch: input.fetch, onCost: input.onCost,
     systemPrompt: `${SYSTEM_PROMPT}\n\nThe clip right now:\n${context}`,
-    history: input.history, prompt: input.message, tools: CHAT_TOOLS,
-    onText: (text, newParagraph) => { if (reply.length < MAX_REPLY_CHARS) reply += `${newParagraph && reply ? '\n\n' : ''}${text}` },
-    onActivity: () => {},
-    onCost: input.onCost,
-    callTool: async (name, args) => {
-      if (++calls > CHAT_MAX_TOOL_CALLS) return { text: 'Too many changes for one message. Stop and tell the member what you did.', isError: true }
-      try {
-        const { step, candidate } = applyChatTool(working, name, args, input.project, newId)
-        working = candidate
-        steps.push(step)
-        const length = clipLengthNote(working)
-        return { text: JSON.stringify({ ok: true, done: step.summary, sections: working.ranges, clip: length }) }
-      } catch (e) {
-        return { text: e instanceof ChatToolError ? e.message : 'That change could not be made.', isError: true }
-      }
+    history: input.history, message: input.message, tools: CHAT_TOOLS,
+    apply: (name, args) => {
+      const { step, candidate } = applyChatTool(working, name, args, input.project, newId)
+      working = candidate
+      return { step, result: { sections: working.ranges, clip: clipLengthNote(working) } }
     }
   })
-  const text = reply.replace(/\n{3,}/g, '\n\n').trim().slice(0, MAX_REPLY_CHARS)
-  if (input.signal.aborted) return { reply: text, steps, error: 'The chat took too long and was stopped. Try again.' }
-  // Edits without words are still an answer: the change card says what changed.
-  const silent = !text && steps.length > 0 && error?.startsWith('The model ended without replying')
-  return { reply: text, steps, ...(error && !silent ? { error } : {}) }
 }
 
 // ── Per-clip conversations (this app session only) ───────────────────────
-const conversations = new Map<string, OpenRouterMessage[]>()
-const inFlight = new Set<string>()
+const memory = new ChatMemory()
 
 export function rememberTurn(key: string, message: string, result: ChatReply): void {
-  const history = conversations.get(key) ?? []
-  const applied = result.steps.filter((s) => s.tool !== 'play').map((s) => s.summary)
-  history.push({ role: 'user', content: message },
-    { role: 'assistant', content: `${result.reply || '(no answer)'}${applied.length ? `\n[Edits made: ${applied.join(' ')}]` : ''}` })
-  while (history.length > CHAT_MAX_TURNS * 2 || (history.length > 2 && history.reduce((n, m) => n + (m.content?.length ?? 0), 0) > MAX_HISTORY_CHARS)) history.splice(0, 2)
-  conversations.delete(key)
-  conversations.set(key, history)
-  if (conversations.size > 200) conversations.delete(conversations.keys().next().value!)
+  memory.remember(key, message, result, (s) => s.tool !== 'play')
 }
-export const chatHistory = (key: string): OpenRouterMessage[] => [...(conversations.get(key) ?? [])]
+export const chatHistory = (key: string): OpenRouterMessage[] => memory.history(key)
 export function resetChat(run: string, candidateId: unknown): void {
   if (typeof candidateId !== 'string' || candidateId.length > 64) throw new Error('Invalid clip')
-  conversations.delete(`${run}\n${candidateId}`)
+  memory.reset(`${run}\n${candidateId}`)
 }
 
 export interface EditorChatDeps {
@@ -293,7 +244,7 @@ export async function editorChat(candidate: unknown, message: unknown, deps: Edi
   const { run, project } = deps.session
   if (project.media_freed) throw new Error('Editor media was freed. This project is read-only.')
   if (!deps.apiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about this clip.')
-  if (typeof message !== 'string' || !message.trim() || message.length > CHAT_MAX_MESSAGE_CHARS) throw new Error(`Write a message of up to ${CHAT_MAX_MESSAGE_CHARS} characters.`)
+  const text = chatMessage(message)
   let clip: CandidateEdit
   try {
     clip = parseCandidateEdit(candidate, project.duration_ms, project.transcript.length)
@@ -303,16 +254,13 @@ export async function editorChat(candidate: unknown, message: unknown, deps: Edi
   if (!project.candidates.some((c) => c.id === clip.id)) throw new Error('This clip is no longer in the project. Reopen the editor.')
   if (clip.status === 'discarded') throw new Error('Restore this clip to edit it.')
   const key = `${run}\n${clip.id}`
-  if (inFlight.has(key)) throw new Error('Wait for the answer to your last message.')
-  inFlight.add(key)
-  try {
+  return memory.exclusive(key, async () => {
     const start = clip.ranges[0][0], end = clip.ranges[clip.ranges.length - 1][1]
     const from = Math.max(0, start - CHAT_CONTEXT_MS), to = Math.min(project.duration_ms, end + CHAT_CONTEXT_MS)
     const [segments, loud] = await Promise.all([
       readChatTranscript(run, from, to),
       deps.session.sourcePath ? loudMoments(deps.session.sourcePath, deps.ffmpeg, from, to).catch(() => null) : Promise.resolve(null)
     ])
-    const text = message.trim()
     const result = await runClipChat({
       apiKey: deps.apiKey, model: deps.model, url: deps.url, onCost: deps.onCost,
       project: { duration_ms: project.duration_ms, width: project.width, height: project.height, aspect_ratio: project.aspect_ratio, transcriptCount: project.transcript.length, title: project.title, transcript: project.transcript },
@@ -320,5 +268,5 @@ export async function editorChat(candidate: unknown, message: unknown, deps: Edi
     })
     rememberTurn(key, text, result)
     return result
-  } finally { inFlight.delete(key) }
+  })
 }

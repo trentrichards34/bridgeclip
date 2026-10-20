@@ -11,11 +11,9 @@ import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_LOOKS, parseHeadlineLoo
 import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHICS_PER_CLIP, isGraphicTemplate, parseGraphics, type EditorGraphic, type GraphicPlacement } from './motion-graphics'
 import { MAX_HOOK_CHARS, SPLIT_RANGE, TRANSCRIPT_CLIP_MS, defaultCrop, editDuration, framingAt, normalizeSceneTransitions, parseCandidateEdit, parseHook, type CandidateEdit, type EditorRange, type EditorScene } from './clip-editor'
 
-export const CHAT_MAX_MESSAGE_CHARS = 1000
-/** Turns (a member message and its answer) the model remembers per clip. */
-export const CHAT_MAX_TURNS = 20
-/** Tool calls one message may make (edits and play requests). */
-export const CHAT_MAX_TOOL_CALLS = 12
+import { CHAT_MAX_TOOL_CALLS, chatClock, chatFail as fail, chatReason as reasonOf, chatSeconds, chatSentence as sentence, chatText as text, type ChatReplyOf } from './chat-core'
+
+export { CHAT_MAX_MESSAGE_CHARS, CHAT_MAX_TOOL_CALLS, CHAT_MAX_TURNS, ChatToolError, chatClock, chatCostNote, chatPlainText, chatSeconds, type ChatInfo } from './chat-core'
 export const CHAT_SUGGESTIONS = ['Start earlier', 'Cut the pauses', 'Punchier hook', 'Add a stat graphic'] as const
 const MAX_CUTS = 24
 const MAX_SCENES = 60
@@ -40,65 +38,21 @@ export interface ChatStep {
   play_seconds: number
 }
 
-export interface ChatReply {
-  /** The model's short answer. */
-  reply: string
-  steps: ChatStep[]
-  /** Set when the request failed; steps made before the failure are still valid. */
-  error?: string
-}
-
-export interface ChatInfo {
-  ready: boolean
-  /** Why the chat can't be used, in plain words. */
-  reason?: string
-  model: string
-  /** A cost note based on the model's listed price, or the plain credit note. */
-  costNote: string
-  /** Per-message estimate in USD, when the model's price is known. */
-  estimateUsd: number | null
-}
+export type ChatReply = ChatReplyOf<ChatStep>
 
 /** The project facts the tools need. */
 export interface ChatProject {
   duration_ms: number; width: number; height: number; aspect_ratio: '9:16' | '16:9'; transcriptCount: number
 }
 
-/** A tool call the model should fix; its message goes back to the model. */
-export class ChatToolError extends Error {}
-
-const fail = (message: string): never => { throw new ChatToolError(message) }
-export const chatSeconds = (ms: number): string => `${(Math.round(ms / 100) / 10).toFixed(1)}s`
-export function chatClock(ms: number): string {
-  const total = Math.max(0, ms) / 1000, m = Math.floor(total / 60), s = total - m * 60
-  return `${m}:${s.toFixed(1).padStart(4, '0')}`
-}
 /** "Clip is now 37.7s." after the steps are applied. */
 export const clipLengthNote = (c: Pick<CandidateEdit, 'ranges' | 'video_speed'>): string => `Clip is now ${chatSeconds(editDuration(c as CandidateEdit))}.`
 
-/** One line of plain text: control characters become spaces, runs of space collapse. */
-export function chatPlainText(value: string, max: number): string {
-  return value.split('').map((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 ? ' ' : char).join('').replace(/\s+/g, ' ').trim().slice(0, max)
-}
 function ms(value: unknown, name: string, project: ChatProject): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) fail(`${name} must be a number of milliseconds.`)
   const n = Math.round(value as number)
   if (n < 0 || n > project.duration_ms) fail(`${name} must be between 0 and ${project.duration_ms} (the source video's length in ms).`)
   return n
-}
-function text(value: unknown, name: string, max: number): string {
-  if (typeof value !== 'string') fail(`${name} must be text.`)
-  const clean = chatPlainText(value as string, max + 1)
-  if (!clean) fail(`${name} can't be empty.`)
-  if (clean.length > max) fail(`${name} must be at most ${max} characters.`)
-  return clean
-}
-/** Ends a sentence once, after a closing quote if there is one. */
-const sentence = (s: string): string => /[.!?]["'”’]?$/.test(s) ? s : `${s}.`
-const reasonOf = (args: Record<string, unknown>): string => {
-  if (typeof args.reason !== 'string') return ''
-  const r = chatPlainText(args.reason, 120).replace(/[.\s]+$/, '')
-  return r ? ` ${/^(to|so|for|because|and)\b/i.test(r) ? r : `(${r})`}` : ''
 }
 
 /** Sorted, merged, every piece at least 0.1 s. */
@@ -378,12 +332,3 @@ export const CHAT_TOOLS: { name: ChatToolName; description: string; parameters: 
   { name: 'update_graphic', description: 'Change a graphic on the clip by id. Give only what changes.', parameters: { type: 'object', properties: { id: { type: 'string' }, at_ms: msProp('Source ms.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, reason }, required: ['id'], additionalProperties: false } },
   { name: 'remove_graphic', description: 'Remove a graphic from the clip by id.', parameters: { type: 'object', properties: { id: { type: 'string' }, reason }, required: ['id'], additionalProperties: false } }
 ]
-
-/** "About 1¢ per message" from a per-message estimate. */
-export function chatCostNote(estimateUsd: number | null): string {
-  if (estimateUsd === null || !Number.isFinite(estimateUsd) || estimateUsd <= 0) return 'Each message uses your OpenRouter credit.'
-  const cents = estimateUsd * 100
-  if (cents < 0.5) return 'Each message costs less than a cent of your OpenRouter credit.'
-  if (cents < 99.5) return `Each message costs about ${Math.round(cents)}¢ of your OpenRouter credit.`
-  return `Each message costs about $${estimateUsd.toFixed(2)} of your OpenRouter credit.`
-}

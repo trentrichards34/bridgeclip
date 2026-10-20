@@ -48,6 +48,8 @@ export interface GraphicFrame {
   hook: number
   /** The captions' anchor, or null when captions are off. */
   captions: { y: number; bottom: boolean } | null
+  /** Other bands to keep clear (shares of the height): a box with their clip, a split line, a banner. */
+  blocked?: [number, number][]
 }
 
 /** The vertical band (fractions of the height) a graphic with this placement sits in. */
@@ -57,15 +59,22 @@ export function graphicBox(placement: GraphicPlacement, frame: GraphicFrame): { 
   // Platform buttons and captions sit along the very top and bottom of the screen.
   const topSafe = frame.hook ? frame.hook + .02 : wide ? .06 : .08
   const bottomSafe = wide ? .94 : .86
-  let free: [number, number][] = [[topSafe, bottomSafe]]
-  if (frame.captions) {
-    const c = frame.captions
-    const [ct, cb] = c.bottom ? [c.y - .13, c.y] : [c.y - .075, c.y + .075]
-    free = free.flatMap(([a, b]): [number, number][] => cb <= a || ct >= b ? [[a, b]] : [[a, ct - .01], [cb + .01, b]]).filter(([a, b]) => b - a > .01)
+  const cut = (list: [number, number][], [t, b]: [number, number]): [number, number][] =>
+    list.flatMap(([a, z]): [number, number][] => b <= a || t >= z ? [[a, z]] : [[a, t - .01], [b + .01, z]]).filter(([a, z]) => z - a > .01)
+  const roomy = (list: [number, number][]): boolean => list.some(([a, b]) => b - a >= Math.min(h, .15))
+  const base: [number, number][] = [[topSafe, bottomSafe]]
+  const c = frame.captions
+  let free = c ? cut(base, c.bottom ? [c.y - .13, c.y] : [c.y - .075, c.y + .075]) : base
+  if (frame.blocked?.length) {
+    // Bands with something else on screen (their clip's box, a split line) are never covered; in a layout that leaves
+    // no room besides, the graphic may sit over the captions' line instead.
+    const clear = frame.blocked.reduce(cut, free)
+    const over = frame.blocked.reduce(cut, base)
+    free = roomy(clear) || !roomy(over) ? (clear.length ? clear : over.length ? over : free) : over
   }
   if (!free.length) free = [[topSafe, Math.max(topSafe + .1, bottomSafe)]]
-  const roomy = free.filter(([a, b]) => b - a >= Math.min(h, .15))
-  const pool = roomy.length ? roomy : free
+  const big = free.filter(([a, b]) => b - a >= Math.min(h, .15))
+  const pool = big.length ? big : free
   if (placement === 'top') { const [a, b] = pool[0]; return { top: a, bottom: Math.min(b, a + h) } }
   if (placement === 'bottom') { const [a, b] = pool[pool.length - 1]; return { top: Math.max(a, b - h), bottom: b } }
   // Middle: centered in the free space that overlaps the frame's middle most.

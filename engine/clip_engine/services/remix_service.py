@@ -1204,6 +1204,14 @@ def _recording_path(value: Any) -> Optional[str]:
     return value
 
 
+def take_trim(raw: Any) -> Optional[list]:
+    """The part of a take the member kept ([start, end] seconds into it), or None for all of it."""
+    if raw is None or not isinstance(raw, list) or len(raw) != 2 or any(type(v) not in (int, float) or not math.isfinite(v) for v in raw):
+        return None
+    start, end = float(raw[0]), float(raw[1])
+    return [round(start, 3), round(end, 3)] if 0 <= start < end <= 3600 and end - start >= 1.0 else None
+
+
 def camera_recording(raw: Any, fmt: str) -> Optional[dict]:
     """The member's recordings for one draft, checked; None when missing or unusable."""
     if not isinstance(raw, dict):
@@ -1233,7 +1241,8 @@ def camera_recording(raw: Any, fmt: str) -> Optional[dict]:
             if isinstance(offset, bool) or not isinstance(offset, (int, float)) or not math.isfinite(offset) or offset < 0:
                 return None
             offset = float(offset)
-        return {"reaction": {"path": path, "offset_s": offset}} if path else None
+        trim = take_trim(reaction.get("trim")) if fmt in ("moment_take", "clip_then_me") else None
+        return {"reaction": {"path": path, "offset_s": offset, **({"trim": trim} if trim else {})}} if path else None
     beats_raw = raw.get("beats") if isinstance(raw.get("beats"), list) else []
     intro, close = _recording_path(raw.get("intro")), _recording_path(raw.get("close"))
     beats = [_recording_path(b) for b in beats_raw[:4]]
@@ -2016,6 +2025,9 @@ class RemixConfig:
     # video's edit bundle (tags["look_extras"]), so re-making it keeps them.
     look_extras: list = field(default_factory=list)
     look_extras_color: Optional[str] = None
+    # Motion graphics on the member's part (drawn by the app into .graphics/reel/): draft id (string) ->
+    # [{"file", "at_ms", "duration_ms"}], at_ms into their take as recorded (Pause & react: into the video).
+    graphics: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -2736,6 +2748,9 @@ class Remixer:
                     if script.format in ("moment_take", "clip_then_me", "react_thoughts"):
                         extra["saved"] = scripts[draft_id]
                     result = await render(index, len(chosen), script, source["video"], segments_by_source[src], source["meta"], root, **extra)
+                    if self.config.graphics.get(str(draft_id)):
+                        self.progress(f"Video {index + 1} of {len(chosen)}: adding your graphics", 2 + 96 * (index + 0.97) / len(chosen))
+                        await asyncio.to_thread(self._member_graphics, result, self.config.graphics[str(draft_id)], recordings.get(draft_id) or {}, root)
                     results.append(result)
                     # Written after every remix: a cancel or crash keeps the finished ones in the Library.
                     write_job_output(root, results, sources, plan_cost + self.cost_usd + self.media.cost_usd, previous)
@@ -2767,6 +2782,60 @@ class Remixer:
             if results and not incomplete and len(results) == len(chosen):
                 import shutil
                 shutil.rmtree(work, ignore_errors=True)
+
+    def _member_graphics(self, result: "RemixResult", graphics: list, recording: dict, root: str) -> None:
+        """The member's motion graphics over the finished video, on their part's clock: from where their take starts
+        (its trimmed start, for a trimmed take) to its end. One that plays during a proof screenshot, or outside their
+        part, is left out with a warning. Kept in the edit bundle, so re-making the video keeps them."""
+        from pathlib import Path
+        from clip_engine.services.graphics_overlay import REEL_DIR, checked_graphics, overlay_graphics_file, overlapping
+        try:
+            with open(result.manifest_path, encoding="utf-8") as handle:
+                manifest = json.load(handle)
+        except (OSError, ValueError):
+            manifest = {}
+        total_ms = round(result.duration_seconds * 1000)
+        part = next((p for p in manifest.get("timeline") or [] if isinstance(p, dict) and p.get("part") in ("take", "thoughts")), None)
+        offset_ms = round(float(part["start_seconds"]) * 1000) if part else 0
+        part_end = offset_ms + round(float(part["seconds"]) * 1000) if part else total_ms
+        trim = (recording.get("reaction") or {}).get("trim") if result.format in ("clip_then_me", "moment_take") else None
+        from_ms = round(trim[0] * 1000) if trim else 0
+        details = (manifest.get("presenter") or {}).get(result.format) or {}
+        proofs = [(float(p["start_seconds"]), float(p["start_seconds"]) + float(p["seconds"])) for p in details.get("proofs") or []
+                  if isinstance(p, dict) and all(type(p.get(k)) in (int, float) for k in ("start_seconds", "seconds"))]
+        placed, outside, during = [], 0, 0
+        for g in graphics:
+            start = offset_ms + g["at_ms"] - from_ms
+            length = min(g["duration_ms"], part_end - start)
+            if g["at_ms"] < from_ms or start < offset_ms or length < 400:
+                outside += 1
+                continue
+            if overlapping(start, length, proofs):
+                during += 1
+                continue
+            placed.append({"file": g["file"], "start_ms": int(start), "duration_ms": int(length)})
+        if outside:
+            result.warnings.append(f"{outside} graphic{'s were' if outside != 1 else ' was'} left out: {'they' if outside != 1 else 'it'} came outside the part of your take that's used.")
+        if during:
+            result.warnings.append(f"{during} graphic{'s were' if during != 1 else ' was'} left out: {'they' if during != 1 else 'it'} came while a proof screenshot shows.")
+        if not placed:
+            return
+        try:
+            checked = checked_graphics(Path(root), placed, total_ms, REEL_DIR)
+        except ValueError as error:
+            logger.warning(f"Graphics left out: {error}")
+            result.warnings.append("Your graphics couldn't be added this time. Make the video again to try.")
+            return
+        overlay_graphics_file(result.path, checked, OUT_W, OUT_H, VIDEO_ARGS, lambda cmd: ffmpeg(cmd[1:]))
+        stem = os.path.splitext(os.path.basename(result.path))[0]
+        folder = edit_dir(root, stem)
+        try:
+            with open(os.path.join(folder, "edit.json"), encoding="utf-8") as handle:
+                data = json.load(handle)
+            data["graphics"] = placed
+            write_edit_bundle(folder, data)
+        except (OSError, ValueError):
+            logger.warning("The graphics could not be kept with the remix's edit bundle")
 
     def _voice(self) -> dict:
         """How every line is spoken: the preset, or the cloned voice with its recording inline."""
@@ -4323,7 +4392,15 @@ class Remixer:
         # 2. Their take, as recorded (up to three minutes), full screen.
         say("preparing your recording", 0.3)
         normalized = os.path.join(work, "recording.mp4")
-        length = await asyncio.to_thread(normalize_recording, reaction["path"], normalized, float(mt.MAX_TAKE_S))
+        trim = reaction.get("trim")
+        length = await asyncio.to_thread(normalize_recording, reaction["path"], normalized, float(mt.MAX_TAKE_S) + (trim[0] if trim else 0.0))
+        if trim:
+            # Only the part of the take the member kept.
+            if trim[0] >= length - 0.5:
+                raise RemixError("the part of your take you kept is past its end. Choose it again.")
+            normalized = await asyncio.to_thread(recording_window, normalized, os.path.join(work, "recording-trim.mp4"), trim[0],
+                                                 min(trim[1], length) - trim[0])
+            length = min(trim[1], length) - trim[0]
         if length < 1.0:
             raise RemixError("your recording is too short. Record it again.")
         layout = self.config.camera_layout if self.config.camera_layout in ("filmed", "cutout") else "filmed"
@@ -4348,7 +4425,7 @@ class Remixer:
         moment_words = [] if their_captions else [
             TranscriptWord(w.word, w.start_time_ms - script.start_ms, w.end_time_ms - script.start_ms)
             for w in all_words if w.start_time_ms >= script.start_ms - 20 and w.end_time_ms <= script.end_ms + 20]
-        spoken = await self._member_words(saved, reaction, take, work, warnings, say)
+        spoken = await self._member_words(saved, reaction, take, work, warnings, say, trim)
         words = moment_words + self._shift_take_words(spoken, op, tk)
 
         # 5. Hook text, captions, the credit while their moment shows, and the call to action at the end.
@@ -4440,13 +4517,19 @@ class Remixer:
         await asyncio.to_thread(ffmpeg, [*inputs, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", *VIDEO_ARGS, *AUDIO_ARGS, assembled])
         return assembled, op, tk, cta_y
 
-    async def _member_words(self, saved: dict, recording: dict, take: str, work: str, warnings: list[str], say: Callable) -> list[TranscriptWord]:
-        """What the member said in their take: the words heard when the hook text was written from this very recording,
-        otherwise transcribed now (from the prepared take)."""
+    async def _member_words(self, saved: dict, recording: dict, take: str, work: str, warnings: list[str], say: Callable,
+                            trim: Optional[list] = None) -> list[TranscriptWord]:
+        """What the member said in their take: the words heard when the hook text was written from this very recording
+        (moved to the part of it kept, when trimmed), otherwise transcribed now (from the prepared take)."""
         member = saved.get("member") if isinstance(saved.get("member"), dict) else None
-        if member and member.get("take") == take_identity(recording):
+        identity = take_identity({k: v for k, v in recording.items() if k != "trim"})
+        if member and member.get("take") == identity:
             try:
-                return [TranscriptWord(str(w), int(a), int(b)) for w, a, b in member.get("words") or []]
+                heard = [TranscriptWord(str(w), int(a), int(b)) for w, a, b in member.get("words") or []]
+                if not trim:
+                    return heard
+                lo, hi = round(trim[0] * 1000), round(trim[1] * 1000)
+                return [TranscriptWord(w.word, w.start_time_ms - lo, w.end_time_ms - lo) for w in heard if w.start_time_ms >= lo and w.end_time_ms <= hi + 50]
             except (TypeError, ValueError):
                 pass
         if member:
@@ -4970,7 +5053,9 @@ class Remixer:
             # The box goes where it doesn't cover the member's face (found in their part-1 recording): at the top when
             # their face is low, at the bottom when it's high; no face found, at the top with the member framed lower.
             natural = round((OUT_W - 2 * SILENT_MARGIN - 12) * mh / max(1, mw)) + 12
-            place = rt.part1_layout(face, natural, clear_h + SILENT_TOP, OUT_H, caption_line)
+            place = rt.part1_layout(face, natural, clear_h + SILENT_TOP, OUT_H, caption_line, prefer=shape.get("box_at"))
+            if shape.get("box_at") in ("top", "bottom") and place["at"] not in (shape["box_at"], "fallback") and face is not None:
+                warnings.append(f"There wasn’t room for their clip at the {shape['box_at']} without covering your face, so it went to the {place['at']}.")
             if place["at"] == "fallback":
                 # The box stays clear of the captions' line (low in the frame), so their clip's words read under it.
                 room = caption_line - 90 - (clear_h + SILENT_TOP)
@@ -5299,6 +5384,19 @@ async def recompose(request: RecomposeRequest, progress: Progress = lambda detai
         await remixer._overlay_final(service, assembled, partial, work, bar_path=bar_path, bar_h=bar_h, clear_h=clear_h,
                                      total_s=float(data["duration"]), words=words, anchor=data.get("anchor") or "silent", tags=tags,
                                      base_filter=base_filter, headline=headline)
+        # The member's motion graphics, as placed when it was made (their renders are kept in the run).
+        saved_graphics = [g for g in data.get("graphics") or [] if isinstance(g, dict)]
+        if saved_graphics:
+            from pathlib import Path
+            from clip_engine.services.graphics_overlay import REEL_DIR, checked_graphics, overlay_graphics_file
+            try:
+                checked = checked_graphics(Path(root), saved_graphics, round(float(data["duration"]) * 1000), REEL_DIR)
+            except ValueError as error:
+                logger.warning(f"Graphics left out of the re-make: {error}")
+                checked = []
+            if checked:
+                progress("Adding your graphics", 90)
+                await asyncio.to_thread(overlay_graphics_file, partial, checked, OUT_W, OUT_H, VIDEO_ARGS, lambda cmd: ffmpeg(cmd[1:]))
         os.replace(partial, out)
     except (RemixError, OSError) as error:
         # The bundle was checked above: what fails now is making the video (FFmpeg, the disk), not the bundle.

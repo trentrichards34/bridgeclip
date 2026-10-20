@@ -8,6 +8,8 @@ import { MAX_POST_CAPTION_CHARS, REMIX_WORD_LIMITS, remixEditProblem, wordCount,
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { RemixRecorder } from './RemixRecorder'
+import { RemixChatSection, RemixGraphicsSection, type TakeText } from './RemixReviewExtras'
+import type { EditorGraphic } from '../../shared/motion-graphics'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { Callout } from './ui/Callout'
@@ -30,6 +32,7 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
   const [edit, setEdit] = useState<RemixEdit | null>(null)
   const [writeOwn, setWriteOwn] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const [graphics, setGraphics] = useState<EditorGraphic[]>([])
   const recorded = recordings[draft.id]?.reaction
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -64,7 +67,14 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
     setView(null)
   }, 'Your recording could not be removed.')
   const write = (): Promise<void> => run('write', () => getApi().remix.write(), 'The hook text could not be written.')
-  const make = (): Promise<void> => run('make', () => getApi().remix.render([current]), 'The video could not be started.')
+  const make = (): Promise<void> => run('make', () => getApi().remix.render([current], graphics.length ? { [draft.id]: graphics } : undefined), 'The video could not be started.')
+  const text: TakeText = { headline: current.headline, postCaption: current.postCaption ?? '', graphics }
+  const onText = (patch: Partial<TakeText>): void => {
+    if (patch.graphics) setGraphics(patch.graphics)
+    if (patch.headline !== undefined || patch.postCaption !== undefined) {
+      setEdit((before) => ({ ...(before ?? current), ...(patch.headline !== undefined ? { headline: patch.headline } : {}), ...(patch.postCaption !== undefined ? { postCaption: patch.postCaption } : {}) }))
+    }
+  }
   const trim = (startMs: number, endMs: number): Promise<void> => run('trim', async () => {
     const result = await getApi().remix.trim(draft.id, startMs, endMs)
     setView(result.view)
@@ -159,6 +169,11 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
           </>}
           {draft.notes.map((note, i) => <p key={i} className="text-2xs text-warning"><AlertTriangle className="mr-1 inline h-3 w-3" />{note}</p>)}
         </section>
+
+        <RemixGraphicsSection status={status} draft={draft} text={text} onGraphics={(change) => setGraphics(change)} recordings={recordings}
+          partMs={view ? Math.round((view.timeline.end - view.timeline.start) * 1000) : null} banner={false} disabled={busy} step={view ? 5 : 4} />
+        <RemixChatSection runId={status.id} draft={draft} text={text} onText={onText} afterMain={refresh}
+          disabledReason={busy ? 'Wait for what’s running to finish.' : recording ? 'Close the recorder to chat.' : null} />
 
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={working === 'make'} disabled={busy || blocker !== null} tooltip={blocker ?? undefined}

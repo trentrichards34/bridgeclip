@@ -8,6 +8,7 @@ import { LOGO_EXTENSIONS } from '../shared/brand-kit'
 import { addEditorCandidate, addEditorGraphicImage, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorProgress, suggestEditorHooks } from './clip-editor'
 import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
 import { chatEstimateUsd, chatInfo, chatModel, editorChat, resetChat } from './clip-chat'
+import { editChatInfo, editRecordingChat, resetEditChat } from './edit-chat'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
 import { readFile, stat } from 'fs/promises'
@@ -37,7 +38,8 @@ import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePi
 import { SAMPLE_ESTIMATE_USD, voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
 import { PROOF_EXTENSIONS, SCREEN_EXTENSIONS } from '../shared/remix-layouts'
-import { addProofs, addScreenRecording, layoutExtrasView, removeLayoutItem, setLayoutExtras, addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStartEstimate, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen } from './remix'
+import { addProofs, addScreenRecording, layoutExtrasView, removeLayoutItem, setLayoutExtras, addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStartEstimate, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen, remixChatFacts, setTakeTrim } from './remix'
+import { remixChat, remixChatInfo, resetRemixChat } from './remix-chat'
 import { importLegacyAvatarVideos } from './avatar-library'
 import { cancelListicleRender, LISTICLE_SCRIPT_ESTIMATE_USD, listicleRunBusy, listicleSpendCheck, listicleStatus, onListicleStatus, saveListicleRecording, startListicleRender, writeListicleScript } from './listicle'
 import {
@@ -497,12 +499,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   paid('remix:start', 'openrouter', (request) => remixStartEstimate(request), (request) => startRemix(request))
   // Making the approved takes: with Avatar on camera, HeyGen's lines are in the estimate (and HeyGen is the provider when it speaks).
-  handle('remix:render', async (_event, edits: unknown) => {
+  handle('remix:render', async (_event, edits: unknown, graphics: unknown) => {
     let check: { provider: SpendProvider; estimateUsd: number | null; openrouterUsd?: number | null } = { provider: 'openrouter', estimateUsd: null }
     try { check = remixRenderCheck(edits) } catch { /* the render itself reports a bad request */ }
     // The monthly limit counts every provider's share; the OpenRouter balance only OpenRouter's (HeyGen bills its own account).
     await assertSpendAllowed('remix:render', check.provider, check.estimateUsd, check.openrouterUsd !== undefined ? { balanceEstimateUsd: check.openrouterUsd } : {})
-    return renderRemix(edits)
+    return renderRemix(edits, graphics)
   })
   // Avatar on camera (HeyGen, Beta): Remix makes each spoken line on HeyGen through these.
   setRemixHeygen({
@@ -581,6 +583,29 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   // Pause & react: the part of their video, and when it plays and pauses (finding a phone recording's pauses is local and free).
   handle('remix:trim', (_event, draftId: unknown, startMs: unknown, endMs: unknown) => setRemixTrim(draftId, startMs, endMs))
+  // The part of a single take used (Their clip then me, Moment + my take): free.
+  handle('remix:takeTrim', (_event, draftId: unknown, startMs: unknown, endMs: unknown) => setTakeTrim(draftId, startMs, endMs))
+  // The review's Chat panel: one paid OpenRouter turn per message (the member's key and planning model). Main checks every
+  // change the model makes; the review applies them through its own setters (Keep or Undo on each answer).
+  handle('remix:chatInfo', async () => {
+    const model = chatModel(readMemberPrefs().create)
+    return remixChatInfo({ apiKey: Boolean(loadSettings().openrouterApiKey), model, catalogModel: await chatCatalogModel(model) })
+  })
+  handle('remix:chat', async (_event, state: unknown, message: unknown) => {
+    const settings = loadSettings()
+    if (!settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about your video.')
+    const model = chatModel(readMemberPrefs().create)
+    await assertSpendAllowed('remix:chat', 'openrouter', chatEstimateUsd(await chatCatalogModel(model)))
+    let runId: string | undefined
+    return remixChat(state, message, {
+      facts: async (draftId) => { const found = await remixChatFacts(draftId); runId = found.folder.split(/[\\/]/).pop(); return found },
+      apiKey: settings.openrouterApiKey, model,
+      url: app.isPackaged ? undefined : process.env.BRIDGECLIP_E2E_OPENROUTER_URL || undefined,
+      // Recorded with OpenRouter's reported cost, also when the turn fails part way.
+      onCost: (usd) => { void recordSpend({ kind: 'remix', provider: 'openrouter', usd, label: 'Remix: chat', ...(runId ? { runId } : {}) }).catch(() => {}) }
+    })
+  })
+  handle('remix:chatReset', async (_event, draftId: unknown) => { const status = remixStatus(); if (status) resetRemixChat(status.id, draftId) })
   handle('remix:pauseView', () => pauseView())
   handle('remix:pauseSettings', (_event, settings: unknown) => setPauseSettings(settings))
   handle('remix:selectImage', async () => {
@@ -626,6 +651,26 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   paid('edit:start', 'openrouter', (request) => startEstimate(request), (request) => startEdit(request))
   handle('edit:render', (_event, decisions: unknown) => renderEdit(decisions))
+  // The review's Chat panel: one paid OpenRouter turn per message (the member's key and planning model). Main checks every
+  // change the model makes; the review applies them through its own setters (Keep or Undo on each answer).
+  handle('edit:chatInfo', async () => {
+    const model = chatModel(readMemberPrefs().create)
+    return editChatInfo({ apiKey: Boolean(loadSettings().openrouterApiKey), model, catalogModel: await chatCatalogModel(model) })
+  })
+  handle('edit:chat', async (_event, decisions: unknown, message: unknown) => {
+    const settings = loadSettings()
+    if (!settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about your edit.')
+    const model = chatModel(readMemberPrefs().create)
+    await assertSpendAllowed('edit:chat', 'openrouter', chatEstimateUsd(await chatCatalogModel(model)))
+    const status = editStatus()
+    return editRecordingChat(decisions, message, {
+      status, apiKey: settings.openrouterApiKey, model,
+      url: app.isPackaged ? undefined : process.env.BRIDGECLIP_E2E_OPENROUTER_URL || undefined,
+      // Recorded with OpenRouter's reported cost, also when the turn fails part way.
+      onCost: (usd) => { void recordSpend({ kind: 'edit', provider: 'openrouter', usd, label: 'Edit my recording: chat', ...(status ? { runId: status.folder.split(/[\\/]/).pop() } : {}) }).catch(() => {}) }
+    })
+  })
+  handle('edit:chatReset', () => { const status = editStatus(); if (status) resetEditChat(status.id) })
   // My images: chosen in the file dialog (here), or dropped on the page (their bytes, checked like any picture).
   handle('edit:chooseImages', async () => {
     const window = getMainWindow()

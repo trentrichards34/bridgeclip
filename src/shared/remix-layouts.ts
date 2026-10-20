@@ -15,6 +15,9 @@ export type TheirCaptions = 'auto' | 'yes' | 'no'
 export type HookAt = 'top' | 'seam' | 'beside'
 export type Part1Layout = 'box' | 'phone'
 export type Part2Layout = 'camera' | 'screen'
+/** React, then my thoughts, part 1 in a big box: where their clip's box goes ('auto': clear of the member's face). */
+export type BoxAt = 'auto' | 'top' | 'bottom'
+export const BOX_AT_CHOICES: readonly BoxAt[] = ['auto', 'top', 'bottom']
 
 export interface RemixLayoutChoice { theirCaptions: TheirCaptions; hookAt: HookAt; part1: Part1Layout }
 
@@ -44,6 +47,8 @@ export interface LayoutExtrasView {
   proofs: ProofShot[]
   /** The comment keyword (the banner shows it), '' for none. */
   keyword: string
+  /** React, then my thoughts (big box): where their clip's box goes in part 1. Missing: 'auto'. */
+  boxAt?: BoxAt
 }
 
 export const MAX_PROOFS = 6
@@ -146,11 +151,12 @@ export interface LayoutExtrasPatch {
   banner?: boolean
   circles?: ScreenCircle[]
   proofs?: { id: string; at: number | null; label: string; highlight: HighlightRect | null }[]
+  boxAt?: BoxAt
 }
 
 export function parseExtrasPatch(value: unknown, format: LayoutExtrasView['format'], proofIds: ReadonlySet<string>): LayoutExtrasPatch {
   const raw = (value ?? {}) as Record<string, unknown>
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(raw).some((key) => !['part2', 'banner', 'circles', 'proofs'].includes(key))) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(raw).some((key) => !['part2', 'banner', 'circles', 'proofs', 'boxAt'].includes(key))) {
     throw new Error('That change could not be read. Try again.')
   }
   const react = format === 'react_thoughts'
@@ -162,6 +168,10 @@ export function parseExtrasPatch(value: unknown, format: LayoutExtrasView['forma
   if (raw.banner !== undefined) {
     if (!react || typeof raw.banner !== 'boolean') throw new Error('Choose whether the comment banner shows.')
     patch.banner = raw.banner
+  }
+  if (raw.boxAt !== undefined) {
+    if (!react || !(BOX_AT_CHOICES as readonly unknown[]).includes(raw.boxAt)) throw new Error('Choose where their clip goes.')
+    patch.boxAt = raw.boxAt as BoxAt
   }
   if (raw.circles !== undefined) {
     if (!react || !Array.isArray(raw.circles) || raw.circles.length > MAX_CIRCLES) throw new Error(`Add up to ${MAX_CIRCLES} circles.`)
@@ -203,6 +213,7 @@ export function engineLayout(choice: RemixLayoutChoice, extras?: Omit<LayoutExtr
       part2: extras.part2 === 'screen' && extras.screen ? 'screen' : 'camera',
       ...(extras.part2 === 'screen' && extras.screen ? { screen: { path: extras.screen.path }, circles: extras.circles } : {}),
       banner: extras.banner,
+      ...(extras.boxAt && extras.boxAt !== 'auto' && choice.part1 === 'box' ? { box_at: extras.boxAt } : {}),
       proofs: extras.proofs.map((proof) => ({ id: proof.id, path: proof.path, at: proof.at, label: proof.label, highlight: proof.highlight }))
     } : {})
   }

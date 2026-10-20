@@ -35,9 +35,17 @@ const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'edit-recording-test-'))
 const SETTINGS = { openrouterApiKey: 'or-key', outputDirectory: userData, pythonPath: 'python3', customVocabulary: 'CreatorClips, Paid Creators' }
 const selected = new Set()
 const BRAND = { id: 'b'.repeat(16), name: 'Coach Sam', text: 'I help coaches price their offers. Clients went from $500 to $2,000 offers.', createdAt: '', updatedAt: '' }
+// The offscreen graphics render (Electron) is stood in for: each job "renders" to a name from its cache key.
+const drawnGraphics = []
+const graphicsRender = {
+  REEL_GRAPHICS_DIR: 'reel',
+  graphicJob: (_run, id, spec, window) => ({ id, spec, key: 'a'.repeat(63) + String(drawnGraphics.length % 10), ...window }),
+  renderGraphicJobs: async (_run, jobs, _cancelled, sub) => jobs.map((job) => { drawnGraphics.push({ ...job, sub }); return { id: job.id, file: `${job.key}.mov`, start_ms: job.start_ms, duration_ms: job.duration_ms } })
+}
 const main = load('main/edit-recording.ts', {
   './brands': { brandMarkForRun: async () => null, isBrandId: (v) => typeof v === 'string' && /^[a-f0-9]{16}$/.test(v), readBrandIdentity: async () => BRAND },
   './ctas': { applyRunCtaInLock: async () => ({ failed: [] }), originalPath: (p) => p + '.original.mp4', withRunLock: async (_f, work) => work() },
+  './graphics-render': graphicsRender,
   './logger': { logger: { info() {}, warn() {} } },
   './member-prefs': { readMemberPrefs: () => ({ profile: { goals: ['clips', 'edit-recording'], platforms: ['tiktok'] } }) },
   './openrouter-media': { openRouterBase: () => 'https://openrouter.test/api/v1' },
@@ -324,6 +332,7 @@ function runHarness({ brandMark = async () => null } = {}) {
     util: { promisify },
     './brands': { brandMarkForRun: brandMark, isBrandId: () => false, readBrandIdentity: async () => null },
     './ctas': { applyRunCtaInLock: async () => ({ failed: [] }), originalPath: (p) => p + '.original.mp4', withRunLock: async (_f, work) => work() },
+    './graphics-render': graphicsRender,
     './logger': { logger: { info() {}, warn() {} } },
     './member-prefs': { readMemberPrefs: () => ({ profile: { goals: [], platforms: [] } }) },
     './openrouter-media': { openRouterBase: () => 'https://openrouter.test/api/v1' },
