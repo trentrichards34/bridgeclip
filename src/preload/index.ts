@@ -38,6 +38,7 @@ import type { AppPrefsUpdate, MemberPrefs, StyleKind } from '../shared/member-pr
 import type { CreatorProfile } from '../shared/onboarding'
 import type { BrandLook } from '../shared/brand-kit'
 import type { BrandIdentity, RecordingPart, RemixDraft, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
+import type { ListicleScript, ListicleScriptRequest, ListicleStatus } from '../shared/listicle'
 import type { EditDecisions, EditImage, EditSource, EditStartRequest, EditStatus, FilmIdea, FilmIdeasRequest } from '../shared/edit-recording'
 import type { PauseEvent, PauseSettings, PauseView } from '../shared/pause-react'
 import type { BrollShot, BrollView } from '../shared/react-templates'
@@ -105,7 +106,9 @@ export interface MoreClipsChoices {
 
 export interface HistoryEntry {
   /** What made a finished run: Create, Remix or Avatar Studio. */
-  madeWith?: 'create' | 'remix' | 'avatar' | 'edit'
+  madeWith?: 'create' | 'remix' | 'avatar' | 'edit' | 'listicle'
+  /** Create runs: the video's link or file. */
+  sourceUrl?: string
   /** Remix runs: AI presenter, on camera, or over an article or post. */
   remixKinds?: ('ai' | 'camera' | 'image')[]
   editorProject?: boolean
@@ -376,6 +379,18 @@ export interface BridgeClipAPI {
     cancelRender: () => Promise<boolean>
     renderStatus: () => Promise<AvatarRenderStatus | null>
     onStatus: (callback: (status: AvatarRenderStatus) => void) => () => void
+  }
+  /** Top list videos (Avatar Studio → Top list). */
+  listicle: {
+    writeScript: (request: ListicleScriptRequest) => Promise<ListicleScript>
+    /** Opens a file dialog in main; null when cancelled. */
+    pickImage: () => Promise<string | null>
+    /** Saves one in-app voice recording; returns its path. */
+    saveRecording: (bytes: Uint8Array, mime: string) => Promise<string>
+    render: (request: unknown) => Promise<ListicleStatus>
+    cancel: () => Promise<boolean>
+    status: () => Promise<ListicleStatus | null>
+    onStatus: (callback: (status: ListicleStatus) => void) => () => void
   }
   /** Realistic talking avatars on the member's own HeyGen key (Beta). */
   heygen: {
@@ -790,6 +805,15 @@ const api: BridgeClipAPI = {
     cancelRender: () => ipcRenderer.invoke('avatars:cancelRender'),
     renderStatus: () => ipcRenderer.invoke('avatars:renderStatus'),
     onStatus: (callback) => subscribe('avatars:status', callback)
+  },
+  listicle: {
+    writeScript: (request) => paid('listicle:writeScript', request),
+    pickImage: () => ipcRenderer.invoke('listicle:pickImage'),
+    saveRecording: (bytes, mime) => ipcRenderer.invoke('listicle:saveRecording', bytes, mime),
+    render: (request) => paid('listicle:render', request),
+    cancel: () => ipcRenderer.invoke('listicle:cancel'),
+    status: () => ipcRenderer.invoke('listicle:status'),
+    onStatus: (callback) => subscribe('listicle:status', callback)
   },
   heygen: {
     account: () => ipcRenderer.invoke('heygen:account'),

@@ -3,7 +3,7 @@ import { FirstRunGuide } from '../components/FirstRunGuide'
 import { create } from 'zustand'
 import { hasBrandMark } from '../../shared/brand-kit'
 import { useBrands } from '../store/use-brand-store'
-import { AudioLines, Clapperboard, Film, FolderOpen, ListVideo, Mic, Plus, Repeat2, Send, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
+import { AudioLines, Clapperboard, Film, FolderOpen, ListOrdered, ListVideo, Mic, Plus, Repeat2, Send, Sparkles, Trash2, UserRound, Wand2, X } from 'lucide-react'
 import {
   estimateRecreateCost, estimateRenderCost, estimateSpokenSeconds, firstLine, MAX_HOOK_CHARS, MAX_SCENES, MAX_SCENE_SECONDS, overlongScenes, type SceneQuality, RECREATE_MAX_SECONDS, RECREATE_MIN_SECONDS, type RecreateMode, MAX_SPOKEN_SECONDS, PRESET_VOICES, PRICES, AI_PORTRAIT_CANDIDATES, PORTRAIT_LOOKS, type PortraitLook, REACTIONS, scriptText, SCRIPT_LENGTHS,
   MAX_AVATAR_PICTURES, type AvatarRenderStatus, type AvatarScene, type AvatarScript, type AvatarSummary, type AvatarVideoStyle, type AvatarVoice, type LipSyncModel, type ScriptLength
@@ -39,6 +39,8 @@ import { requestSettingsSection } from '../lib/settings-focus'
 import { clipFilePath } from '../lib/thumbnails'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { useSettingsStore } from '../store/use-settings-store'
+import { useStudioMode, type StudioMode } from '../store/use-listicle-store'
+import { ListicleStudio } from '../components/avatar/ListicleStudio'
 
 /** The video draft survives navigating away (e.g. to Settings to add a key). */
 type StudioStyle = AvatarVideoStyle | 'recreate'
@@ -102,6 +104,8 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
   const openrouterConfigured = useSettingsStore((s) => s.openrouterConfigured)
   const heygenConfigured = useSettingsStore((s) => s.heygenConfigured)
   const draft = useStudioDraft()
+  const studioMode = useStudioMode((s) => s.mode)
+  const setStudioMode = useStudioMode((s) => s.setMode)
   const loadedAvatars = useAvatarList((s) => s.avatars)
   const avatars = loadedAvatars ?? []
   /** Loaded, and there are none yet: the script steps wait for an avatar. */
@@ -245,7 +249,7 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
       <PageHeader
         eyebrow="Studio"
         title="Avatar Studio"
-        description="Make an avatar of yourself, or an AI presenter, once. Then turn scripts into ready-to-post vertical videos."
+        description="Make an avatar of yourself, or an AI presenter, once. Then turn scripts into ready-to-post vertical videos. Or make a Top list video with no avatar or camera."
       />
       <FirstRunGuide page="avatar" />
 
@@ -257,6 +261,15 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
       )}
       {error && <Callout tone="danger" className="mt-4" onDismiss={() => setError(null)}>{error}</Callout>}
 
+      {/* Two sides: videos with an avatar, or a faceless Top list (no avatar needed). */}
+      <Segmented<StudioMode> className="mt-5" label="What to make" value={studioMode} onChange={setStudioMode} options={[
+        { value: 'avatar', label: <span className="flex items-center gap-1.5"><UserRound className="h-3.5 w-3.5" />Avatar video</span> },
+        { value: 'listicle', label: <span className="flex items-center gap-1.5"><ListOrdered className="h-3.5 w-3.5" />Top list, no camera</span> }
+      ]} />
+
+      {studioMode === 'listicle' ? (
+        <ListicleStudio avatars={avatars} openrouterConfigured={openrouterConfigured} onNavigate={onNavigate} onViewLibrary={onViewLibrary} onOpenKeys={openKeys} />
+      ) : (
       <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(280px,360px)_1fr]">
         <div className="space-y-5">
           <Panel>
@@ -465,6 +478,7 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
         </div>
         )}
       </div>
+      )}
 
       {creating && <CreateAvatarDialog initialKind={creating} openrouterConfigured={openrouterConfigured} heygenConfigured={heygenConfigured} onOpenKeys={() => { setCreating(null); openKeys() }}
         onClose={() => setCreating(null)} onCreated={(list, consent) => {

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { VideoGoalId } from '../../shared/onboarding'
 import { useRemixForm } from './use-remix-form-store'
+import { useStudioMode } from './use-listicle-store'
 
 /**
  * The guided setup ("Set up your CreatorClips profile") and the first-run
@@ -25,7 +26,7 @@ export const useOnboarding = create<OnboardingState>((set) => ({
 
 /** The page each kind of video is made on. */
 export function goalPage(goal: VideoGoalId): 'clip' | 'remix' | 'avatar' {
-  return goal === 'clips' ? 'clip' : goal === 'avatar-videos' ? 'avatar' : 'remix'
+  return goal === 'clips' ? 'clip' : goal === 'avatar-videos' || goal === 'listicle' ? 'avatar' : 'remix'
 }
 
 /**
@@ -41,6 +42,8 @@ export function startGoal(goal: VideoGoalId): 'clip' | 'remix' | 'avatar' {
   // On camera lands in "You on camera" and starts with Pause & react: the simplest way to film a reaction.
   if (goal === 'camera-reactions') remix.applyStyle({ format: 'pause_react', host: 'camera' })
   if (goal === 'article') remix.applyStyle({ format: 'image' })
+  // Top lists are made on Avatar Studio's Top list side; avatar videos on its avatar side.
+  if (goal === 'listicle' || goal === 'avatar-videos') useStudioMode.getState().setMode(goal === 'listicle' ? 'listicle' : 'avatar')
   useOnboarding.getState().setGuide(goal)
   return goalPage(goal)
 }

@@ -143,7 +143,7 @@ async function backfillOnce(): Promise<void> {
       if (run.status !== 'completed' || typeof run.totalCostUsd !== 'number' || run.totalCostUsd <= 0) continue
       // Avatar Studio runs are recorded without a run id, so they can't be matched: never backfilled.
       // A run already recorded under any kind (an Edit my recording run, say) is not added again.
-      if (run.jobId.startsWith('avatar-') || recordedRunIds.has(run.jobId)) continue
+      if (run.jobId.startsWith('avatar-') || run.jobId.startsWith('listicle-') || recordedRunIds.has(run.jobId)) continue
       const kind: SpendKind = run.jobId.startsWith('remix-') ? 'remix' : run.jobId.startsWith('edit-') ? 'edit' : 'create'
       await recordSpend({
         kind, provider: 'openrouter', usd: run.totalCostUsd, label: kind === 'remix' ? 'Remix videos (earlier run)' : kind === 'edit' ? 'Edit my recording (earlier run)' : 'Create run (earlier run)',
@@ -247,7 +247,7 @@ export async function openRouterBalance(force = false, timeoutMs?: number): Prom
 // ---------------------------------------------------------------------------
 
 /** IPC channels that start paid work, and so pass the spending check. */
-export const GATED_CHANNELS = new Set(['automations:enhance', 'automations:enhanceBatch', 'history:enhanceMetadata', 'avatars:writeScript', 'voices:sample', 'job:start', 'job:startMany', 'job:moreClips', 'remix:start', 'remix:write', 'remix:render', 'remix:anotherMoment', 'remix:talkingPoints', 'remix:readTimecode', 'remix:readTimecodeFile', 'editor:run', 'editor:suggestHooks', 'avatars:render', 'avatars:recreate', 'avatars:generateFaces', 'avatars:restyle', 'avatars:makeReactions', 'avatars:cloneVoice', 'edit:start', 'edit:ideas', 'heygen:createAvatar', 'remix:planBroll'])
+export const GATED_CHANNELS = new Set(['automations:enhance', 'automations:enhanceBatch', 'history:enhanceMetadata', 'avatars:writeScript', 'voices:sample', 'job:start', 'job:startMany', 'job:moreClips', 'remix:start', 'remix:write', 'remix:render', 'remix:anotherMoment', 'remix:talkingPoints', 'remix:readTimecode', 'remix:readTimecodeFile', 'editor:run', 'editor:suggestHooks', 'avatars:render', 'avatars:recreate', 'avatars:generateFaces', 'avatars:restyle', 'avatars:makeReactions', 'avatars:cloneVoice', 'edit:start', 'edit:ideas', 'heygen:createAvatar', 'remix:planBroll', 'listicle:writeScript', 'listicle:render'])
 const overrides = new Map<string, number>()
 
 /** "Start anyway" after a low-balance warning: the next call on this channel skips the balance check (never the monthly limit). */

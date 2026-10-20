@@ -37,6 +37,7 @@ import { SAMPLE_ESTIMATE_USD, voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
 import { addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStartEstimate, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen } from './remix'
 import { importLegacyAvatarVideos } from './avatar-library'
+import { cancelListicleRender, LISTICLE_SCRIPT_ESTIMATE_USD, listicleRunBusy, listicleSpendCheck, listicleStatus, onListicleStatus, saveListicleRecording, startListicleRender, writeListicleScript } from './listicle'
 import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
   isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate, addEditImage, addEditImageFiles, removeEditImage
@@ -329,7 +330,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('ctas:update', (_event, id: unknown, patch: unknown) => updateCta(id, patch))
   handle('ctas:remove', (_event, id: unknown) => removeCta(id))
   // Library changes wait while a Remix video in that run is being re-made, or an avatar video is finishing.
-  setRunBusyCheck((path) => remixRunBusy(path) ?? avatarRunBusy(path) ?? editRunBusy(path))
+  setRunBusyCheck((path) => remixRunBusy(path) ?? avatarRunBusy(path) ?? editRunBusy(path) ?? listicleRunBusy(path))
   handle('remix:recompose', async (_event, outputDir: unknown, clipIndex: unknown, edit: unknown) => {
     // An edited recording ("Edit my recording") is re-made from its own saved parts the same way.
     const note = isEditRunFolder(outputDir) ? await recomposeEditRun(outputDir, clipIndex, edit) : await recomposeRemix(outputDir, clipIndex, edit)
@@ -451,6 +452,28 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     announce(avatarNotice(status), getMainWindow)
     sendToWindow('avatars:status', friendlyStatus(status))
   })
+
+  // Top list videos (Avatar Studio → Top list): the script, pictures and in-app voice recordings, then the render.
+  paid('listicle:writeScript', 'openrouter', () => LISTICLE_SCRIPT_ESTIMATE_USD, (request) => metered('avatar', 'Top list script', () => writeListicleScript(request)))
+  handle('listicle:pickImage', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a screenshot or picture', filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return authorizeMedia(result.filePaths[0])
+  })
+  handle('listicle:saveRecording', (_event, bytes: unknown, mime: unknown) => saveListicleRecording(bytes, mime))
+  // Your own recordings cost nothing; a voice is checked against its estimate first.
+  handle('listicle:render', async (_event, request: unknown) => {
+    let estimate: number | null = null
+    let paidVoice = true
+    try { estimate = listicleSpendCheck(request); paidVoice = estimate !== null } catch { /* the render itself reports a bad request */ }
+    if (paidVoice) await assertSpendAllowed('listicle:render', 'openrouter', estimate)
+    return startListicleRender(request, { meter: (work) => metered('avatar', 'Top list video', work) })
+  })
+  handle('listicle:cancel', () => cancelListicleRender())
+  handle('listicle:status', () => friendlyStatus(listicleStatus()))
+  onListicleStatus((status) => sendToWindow('listicle:status', friendlyStatus(status)))
 
   handle('brandIdentities:list', () => listBrandIdentities())
   handle('brandIdentities:save', (_event, input: unknown) => saveBrandIdentity(input))
