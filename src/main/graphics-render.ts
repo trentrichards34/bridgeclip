@@ -207,11 +207,11 @@ export async function openGraphicRenderer(): Promise<GraphicRenderer> {
 }
 
 /** The render spec and cache key of every drawable graphic on a clip (nothing is rendered). */
-export function candidateGraphicJobs(run: string, project: EditorProject, candidate: EditorCandidate): { id: string; spec: GraphicRenderSpec; key: string; start_ms: number; duration_ms: number }[] {
+export function candidateGraphicJobs(run: string, project: EditorProject, candidate: EditorCandidate, extra: { top?: number } = {}): { id: string; spec: GraphicRenderSpec; key: string; start_ms: number; duration_ms: number }[] {
   const jobs: ReturnType<typeof candidateGraphicJobs> = []
   for (const g of candidate.graphics ?? []) {
     if (!graphicHasContent(g)) continue
-    const spec = graphicSpec(project, candidate, g), window = graphicWindow(candidate, g)
+    const spec = graphicSpec(project, candidate, g, extra), window = graphicWindow(candidate, g)
     if (!spec || !window) continue
     let imageHash: string | undefined
     if (g.template === 'logo') {
@@ -235,8 +235,8 @@ export function setGraphicRendererFactory(factory: RendererFactory | null): void
  * engine layers over the clip; graphics left without words, image or screen
  * time are skipped.
  */
-export async function renderCandidateGraphics(run: string, project: EditorProject, candidate: EditorCandidate, cancelled: () => boolean = () => false): Promise<RenderedGraphic[]> {
-  const jobs = candidateGraphicJobs(run, project, candidate)
+export async function renderCandidateGraphics(run: string, project: EditorProject, candidate: EditorCandidate, cancelled: () => boolean = () => false, extra: { top?: number } = {}): Promise<RenderedGraphic[]> {
+  const jobs = candidateGraphicJobs(run, project, candidate, extra)
   if (!jobs.length) return []
   const dir = graphicsDir(run, true)
   let renderer: GraphicRenderer | null = null

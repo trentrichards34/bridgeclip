@@ -143,6 +143,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo && draft.broll === 'off' ? { backgroundVideo: draft.backgroundVideo } : {}),
     ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
     ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
+    ...(draft.workflow === 'automatic' && draft.motionGraphics ? { motionGraphics: true } : {}),
     qualityBar: draft.qualityBar,
     headlineVoice: draft.headlineVoice,
     ...(draft.workflow === 'automatic' && isCaptionLanguage(draft.captionLanguage) ? { captionLanguage: draft.captionLanguage } : {}),
@@ -905,8 +906,29 @@ export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Upda
         hookNote={!hooks.includes('white') ? (draft.aspectRatio !== '9:16' ? 'The headline bar is for vertical clips; 16:9 clips use the title card.' : 'With a gameplay background the clips use the title card.') : undefined}
         keywordHelp={<CreateKeywordHelp draft={draft} />}
         ctaHelp="Add one of your CTA clips to the end of every clip (a video of you up to 15 seconds, or an image). You can change it on any single clip afterward. Added on your computer, so there’s no AI cost." />
+      {automatic && <MotionGraphicsPicker value={draft.motionGraphics} onChange={(motionGraphics) => update({ motionGraphics })} />}
       {automatic && <CaptionLanguagePicker value={draft.captionLanguage ?? 'original'} onChange={(captionLanguage) => update({ captionLanguage })} />}
     </div>
+  )
+}
+
+/** One line for the Review step and the picker: what Auto does. */
+export const MOTION_GRAPHICS_SUMMARY = 'Auto · up to 3 cards per clip, from what’s said'
+
+/**
+ * Motion graphics: Auto or Off (Automatic runs). Off until the member turns it on once; then it's
+ * remembered with their style. The cards are picked in the same AI call that plans the clips.
+ */
+export function MotionGraphicsPicker({ value, onChange }: { value: boolean; onChange: (value: boolean) => void }): React.JSX.Element {
+  return (
+    <SettingRow
+      title="Motion graphics"
+      description={value
+        ? 'Adds up to 3 animated cards to each clip (a number, a list, a name) using only words said in it. Picked when the clips are planned. Change or remove them in the editor.'
+        : 'Off. Choose Auto to add animated cards for numbers, lists and names said in each clip.'}
+      control={<Segmented size="sm" label="Motion graphics" value={value ? 'auto' : 'off'}
+        options={[{ value: 'auto', label: 'Auto' }, { value: 'off', label: 'Off' }]} onChange={(next) => onChange(next === 'auto')} />}
+    />
   )
 }
 
@@ -971,6 +993,7 @@ export function ReviewStep({ draft, trim, onEdit }: {
   }
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? ((draft.titleStyle ?? 'headline') === 'headline' && draft.aspectRatio === '9:16' && !(draft.backgroundVideo && draft.broll === 'off') ? `Headline: ${(HEADLINE_LOOKS.find((item) => item.id === (draft.headlineLook ?? DEFAULT_HEADLINE_LOOK).look)?.label ?? 'White bar').toLowerCase()}` : 'Title card at the top') : 'Off' })
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Extras', value: extrasName(parseLookExtras(draft.lookExtras)) })
+  if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Graphics', value: draft.motionGraphics ? MOTION_GRAPHICS_SUMMARY : 'Off' })
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Call to action', value: draft.ctaId ? 'Added to the end of every clip' : 'None' })
   // The brand, comment keyword and handle, as they'll be sent (see brandRequestFields).
   const brandFields = brandRequestFields(draft)

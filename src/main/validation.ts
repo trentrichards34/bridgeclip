@@ -35,6 +35,8 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   if (v.broll !== undefined && v.workflow === 'review') throw new Error('B-roll works with the Automatic workflow')
   if (v.hookPreview !== undefined && typeof v.hookPreview !== 'boolean') throw new Error('Invalid hook preview option')
   if (v.hookPreview && v.workflow === 'review') throw new Error('Hook preview works with the Automatic workflow')
+  if (v.motionGraphics !== undefined && typeof v.motionGraphics !== 'boolean') throw new Error('Invalid motion graphics option')
+  if (v.motionGraphics && v.workflow === 'review') throw new Error('Automatic motion graphics work with the Automatic workflow')
   if (v.qualityBar !== undefined && !QUALITY_BARS.includes(v.qualityBar)) throw new Error('Invalid quality bar')
   if (v.headlineVoice !== undefined && !HEADLINE_VOICES.includes(v.headlineVoice)) throw new Error('Invalid headline voice')
   if (v.titleStyle !== undefined && !TITLE_STYLES.includes(v.titleStyle)) throw new Error('Invalid title style')
@@ -89,6 +91,7 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
     delete known.ctaOffer
   }
   if (!known.showHandle) delete known.showHandle
+  if (!known.motionGraphics) delete known.motionGraphics
   // Extras are drawn on Automatic renders; the review editor exports without them.
   if (v.workflow === 'review') delete known.lookExtras
   return { ...known, videoUrl: normalizeVideoSource(v.videoUrl), videoSpeed: v.videoSpeed ?? 1, includeTitle: v.includeTitle ?? true, clipRequest, plannerCapabilities: undefined }
@@ -97,5 +100,5 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
   'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'motionGraphics', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

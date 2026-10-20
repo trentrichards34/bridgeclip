@@ -41,7 +41,7 @@ function fakeChild() {
   return child
 }
 
-function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { applyRunCta: async () => ({ failed: [] }), readCta: () => ({}) }, brands = { brandForJob: () => { throw new Error('That brand identity was deleted. Choose another brand, or no brand, and start again.') } }, moreClips = { refreshReusePlan: (plan) => ({ plan }) } }) {
+function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { applyRunCta: async () => ({ failed: [] }), readCta: () => ({}) }, brands = { brandForJob: () => { throw new Error('That brand identity was deleted. Choose another brand, or no brand, and start again.') } }, moreClips = { refreshReusePlan: (plan) => ({ plan }) }, graphics = { applyRunGraphics: async () => ({ clips: 0, applied: 0, failed: [], cancelled: false }), graphicsNotice: () => null } }) {
   const sent = []
   const signals = []
   const settings = { openrouterApiKey: SECRET, outputDirectory: WORK_HOME, pythonPath: '/opt/python3', enginePath: WORK_HOME }
@@ -62,7 +62,8 @@ function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { ap
     './backgrounds': { resolveBackground: (name) => '/library/' + name },
     './ctas': ctas,
     './brands': brands,
-    './more-clips': moreClips
+    './more-clips': moreClips,
+    './auto-graphics': graphics
   }, {
     process: { ...process, platform: 'darwin', env, kill: (pid, signal) => { signals.push({ pid, signal }) } }
   })
@@ -282,4 +283,58 @@ test('the screen share choice reaches the engine in snake_case', async () => {
     assert.equal(JSON.parse(input).screen_focus, screenFocus)
     child.emit('close', 1, null)
   }
+})
+
+test('Motion graphics: Auto reaches the engine, and its graphics go on before the call to action; a failure is a note, not a failed run', async () => {
+  const child = fakeChild()
+  let input = ''
+  child.stdin.on('data', (chunk) => { input += chunk.toString() })
+  const order = []
+  const run = path.join(WORK_HOME, 'graphics-job')
+  fs.mkdirSync(run, { recursive: true })
+  const clip = { clip_index: 0, s3_url: `file://${run}/clip_00.mp4`, duration_ms: 3000, start_time_ms: 0, end_time_ms: 3000, virality_score: 1 }
+  let worker = null
+  const { runner, window, sent } = startRunner({
+    child,
+    ctas: { readCta: (id) => ({ id }), applyRunCta: async () => { order.push('cta'); return { failed: [] } } },
+    graphics: {
+      applyRunGraphics: async (dir, setup, { onProgress }) => {
+        order.push('graphics'); worker = { dir, ...setup }
+        onProgress('draw', 0, 2)
+        return { clips: 1, applied: 0, failed: [0], cancelled: false }
+      },
+      graphicsNotice: (result) => result.failed.length ? 'Done. Some motion graphics couldn’t be drawn on 1 clip, so it was made without them. Add graphics to any clip in the editor.' : null
+    }
+  })
+  runner.startClipJob('graphics-job', { videoUrl: path.join(WORK_HOME, 'video.mp4'), ctaId: 'a1b2c3d4e5f60718', motionGraphics: true }, window)
+  await tick()
+  assert.equal(JSON.parse(input).motion_graphics, true)
+  child.stdout.write(JSON.stringify({ type: 'result', status: 'completed', job_id: 'graphics-job', output: { job_id: 'graphics-job', clips: [clip] } }) + '\n')
+  await tick()
+  child.emit('close', 0, null)
+  for (let i = 0; i < 20 && !sent.some((event) => event.channel === 'job:complete'); i++) await new Promise((r) => setTimeout(r, 10))
+  assert.deepEqual(order, ['graphics', 'cta'])
+  assert.equal(worker.dir, run)
+  assert.match(worker.script, /graphics_runner\.py$/)
+  assert.equal(worker.library, WORK_HOME)
+  assert.equal(worker.env.OPENROUTER_API_KEY, undefined, 'the overlay worker gets no keys')
+  assert.ok(sent.some((event) => event.channel === 'job:progress' && event.data.step === 'Drawing motion graphics (1 of 2)'))
+  const done = sent.find((event) => event.channel === 'job:complete')
+  assert.equal(done.data.status, 'completed')
+  assert.match(done.data.step, /^Done\. Some motion graphics couldn’t be drawn on 1 clip/)
+
+  // Off (or a Review & edit run): nothing is asked for and no step runs.
+  const plain = fakeChild()
+  let plainInput = ''
+  plain.stdin.on('data', (chunk) => { plainInput += chunk.toString() })
+  let ran = false
+  const second = startRunner({ child: plain, graphics: { applyRunGraphics: async () => { ran = true; return { clips: 0, applied: 0, failed: [], cancelled: false } }, graphicsNotice: () => null } })
+  second.runner.startClipJob('graphics-off', { videoUrl: path.join(WORK_HOME, 'video.mp4'), workflow: 'review', motionGraphics: true }, second.window)
+  await tick()
+  assert.equal(JSON.parse(plainInput).motion_graphics, undefined)
+  plain.stdout.write(JSON.stringify({ type: 'result', status: 'completed', job_id: 'graphics-off', output: { job_id: 'graphics-off', clips: [] } }) + '\n')
+  await tick()
+  plain.emit('close', 0, null)
+  await tick()
+  assert.equal(ran, false)
 })

@@ -28,6 +28,7 @@ from clip_engine.config import CaptionStyle, LayoutStyle, get_settings, is_longf
 from clip_engine.services.video_speed import validate_video_speed
 from clip_engine.services.broll_service import PexelsKeyRejected, prepare_broll
 from clip_engine.services.hook_preview import pick_teaser
+from clip_engine.services.auto_graphics import fit_to_clip, write_graphics_plan
 from clip_engine.error_policy import NoClipCandidatesError, NoNewMomentsError, NoRequestedMomentsError, safe_failure_code, safe_processing_error
 from clip_engine.services.caption_translation import CaptionTranslator, language_name
 from clip_engine.services.transcript_reuse import load_saved_transcript, reusable_transcript, source_fingerprint
@@ -151,6 +152,9 @@ class ClippingJobRequest:
     broll_keep_hook: bool = True
     # Hook preview: open each clip with its strongest line, then play it.
     hook_preview: bool = False
+    # Motion graphics: Auto (Automatic): the planner also picks 0-3 card moments per clip (auto_graphics);
+    # main draws them over the finished clips after the run.
+    motion_graphics: bool = False
     debug_capture: bool = False
     # "tight" cuts dead air and filler words; "natural" keeps original timing.
     pacing: str = "tight"
@@ -539,6 +543,7 @@ class AIClippingPipeline:
                 brand_identity=request.brand_identity or None,
                 brand_name=request.brand_name or None,
                 headline_voice=request.headline_voice,
+                **({'motion_graphics': True} if request.motion_graphics and request.workflow != 'review' else {}),
             )
             excluded_spans = request.exclude_ranges_ms or []
             def is_new(segment) -> bool:
@@ -915,11 +920,20 @@ class AIClippingPipeline:
                     )
 
                     render_result = await self.rendering_service.render_clip(render_request)
+                    body_ms = render_result.duration_ms
                     if request.hook_preview and not longform:
                         render_progress(i, 'Adding the hook preview', None)
                         teaser = await pick_teaser(clip_transcript, segment.start_time_ms, segment.end_time_ms)
                         if teaser:
                             render_result = await self.rendering_service.prepend_teaser(render_request, render_result, *teaser)
+                    graphics = []
+                    if segment.graphics:
+                        # The planner's card moments that survive the finished cut, with words actually said.
+                        try:
+                            graphics = fit_to_clip(segment.graphics, transcription_result.segments,
+                                                   getattr(render_result, "kept_source_ms", []) or [], request.video_speed)
+                        except Exception as exc:
+                            logger.warning(f"Motion graphics skipped for clip {i + 1}: {exc}")
                     if getattr(render_result, "framing_trace_path", None):
                         clip_trace_paths[i] = render_result.framing_trace_path
                     segment.layout_type = render_result.layout_type
@@ -948,6 +962,9 @@ class AIClippingPipeline:
                         "kept_source_ms": getattr(render_result, "kept_source_ms", []),
                         # Screen share clips: presenter, screen or mixed, and why (None for other clips).
                         "screen_focus": getattr(render_result, "screen_focus", None),
+                        # Motion graphics: Auto (source time, editor graphics), drawn by main after the run; the
+                        # hook preview's length shifts them in the finished file.
+                        **({"graphics": graphics, "teaser_ms": max(0, render_result.duration_ms - body_ms)} if graphics else {}),
                     })
                     focus = getattr(render_result, "screen_focus", None)
                     if focus:
@@ -1257,6 +1274,7 @@ class AIClippingPipeline:
                     "background_video": os.path.basename(request.background_video_path) if request.background_video_path else None,
                     "broll": {"enabled": request.broll_enabled, "keep_hook": request.broll_keep_hook},
                     "hook_preview": request.hook_preview,
+                    "motion_graphics": request.motion_graphics,
                     "clip_request": request.clip_request,
                     "quality_bar": request.quality_bar,
                     "caption_language": request.caption_language,
@@ -1318,6 +1336,13 @@ class AIClippingPipeline:
 
             if self.local_mode:
                 self._save_local_json(job_id, "job_output", asdict(job_output))
+                if any(entry.get("graphics") for entry in clip_layouts):
+                    # What main needs to draw the cards (the clips as editor candidates). Never fails the run.
+                    try:
+                        await asyncio.to_thread(write_graphics_plan, self._get_local_output_dir(job_id), asdict(job_output), request,
+                                                transcription_result.segments, download_result.metadata, video_duration)
+                    except Exception as exc:
+                        logger.warning(f"Motion graphics plan could not be saved: {exc}")
             else:
                 await self.s3_upload_service.upload_job_output(job_output)
 

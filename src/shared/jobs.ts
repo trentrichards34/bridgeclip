@@ -58,6 +58,11 @@ export interface ClipJobRequest {
   broll?: 'after-hook' | 'full'
   /** Hook preview: open each clip with its strongest line, then play it from the start. */
   hookPreview?: boolean
+  /**
+   * Motion graphics: Auto (Automatic): the clip planner also picks up to 3 moments per clip for an animated
+   * card (a number, a list, a name said in the clip), drawn over the finished clips and editable in the editor.
+   */
+  motionGraphics?: boolean
   /** Paid Creators framework grading: keep clips graded at or above this bar, grade but keep all, or skip grading. Defaults to 'b'. */
   qualityBar?: QualityBar
   /** Whose video it is: 'creator' writes headlines in the speaker's own voice (their own channel), 'clipper' in the third person. Defaults to 'clipper'. */

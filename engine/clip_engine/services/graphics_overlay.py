@@ -84,3 +84,39 @@ async def overlay_graphics(renderer, video: str, graphics: list[dict]) -> None:
     finally:
         if os.path.exists(output):
             os.remove(output)
+
+
+async def overlay_run_clips(run: Path, clips: list, progress=None) -> dict:
+    """Motion graphics: Auto, after a Create run: lay each clip's rendered graphics over its finished file.
+
+    `clips` is [{clip_index, graphics: [{file, start_ms, duration_ms}]}] from main (start times are the
+    finished clip's own). A clip that fails keeps its file as made; the others go on. Returns the clip
+    indices done and failed.
+    """
+    from clip_engine.services.manual_editor import source_info
+    from clip_engine.services.rendering_service import RenderingService
+    if not isinstance(clips, list) or len(clips) > 100:
+        raise ValueError("Invalid clips")
+    renderer = RenderingService()
+    done, failed, seen = [], [], set()
+    for n, item in enumerate(clips):
+        index = item.get("clip_index") if isinstance(item, dict) else None
+        if type(index) is not int or not 0 <= index <= 999 or index in seen:
+            raise ValueError("Invalid clip")
+        seen.add(index)
+        video = run / f"clip_{index:02d}.mp4"
+        ok = False
+        try:
+            if video.is_symlink() or not video.is_file():
+                raise ValueError("The clip is missing")
+            clip_ms = round(source_info(video)["duration"])
+            await overlay_graphics(renderer, str(video), checked_graphics(run, item.get("graphics"), clip_ms))
+            done.append(index)
+            ok = True
+        except Exception as error:  # noqa: BLE001 - one clip's graphics never stop the others
+            import logging
+            logging.getLogger(__name__).warning("Graphics could not be laid over clip %s (%s)", index + 1, type(error).__name__)
+            failed.append(index)
+        if progress:
+            progress(index, ok, n + 1, len(clips))
+    return {"done": done, "failed": failed}
