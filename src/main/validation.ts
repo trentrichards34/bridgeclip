@@ -10,6 +10,8 @@ import { parseHeadlineLook } from '../shared/headline-look'
 import { parseLookExtras } from '../shared/look-extras'
 import { isCtaId } from '../shared/ctas'
 import { isCaptionLanguage } from '../shared/caption-language'
+import { parseAudioSkills } from '../shared/skills'
+import { isReferenceId, parsePurpose } from '../shared/purpose'
 
 const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 import { MAX_CTA_OFFER_CHARS, normalizeCtaKeyword } from '../shared/remix'
@@ -91,6 +93,14 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
     delete known.ctaOffer
   }
   if (!known.showHandle) delete known.showHandle
+  // Skills: music and voice cleanup (off unless on; a track only with music).
+  delete known.music; delete known.musicTrack; delete known.voiceCleanup
+  Object.assign(known, parseAudioSkills(v as unknown as Record<string, unknown>))
+  // "Say what it's for": the line, and the reference picture's id (main finds the file).
+  const purpose = parsePurpose(v.purpose)
+  if (purpose) known.purpose = purpose
+  else delete known.purpose
+  if (known.referenceImage !== undefined && !isReferenceId(known.referenceImage)) throw new Error('Choose your reference image again.')
   if (!known.motionGraphics) delete known.motionGraphics
   // Extras are drawn on Automatic renders; the review editor exports without them.
   if (v.workflow === 'review') delete known.lookExtras
@@ -100,5 +110,5 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
   'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'motionGraphics', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'motionGraphics', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'music', 'musicTrack', 'voiceCleanup', 'purpose', 'referenceImage', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

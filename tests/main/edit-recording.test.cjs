@@ -60,7 +60,15 @@ test('the start request takes recordings chosen here (or in the Library), a bran
   const file = path.join(userData, 'take-1.mp4')
   selected.add(file)
   const parsed = main.parseEditStart({ sources: [file, file], brandIdentityId: BRAND.id, hookHint: '  Most   coaches undercharge ' }, userData)
-  assert.deepEqual(plain(parsed), { sources: [file], brandIdentityId: BRAND.id, hookHint: 'Most coaches undercharge' })
+  assert.deepEqual(plain(parsed), { sources: [file], brandIdentityId: BRAND.id, hookHint: 'Most coaches undercharge', purpose: '', referenceImage: null })
+  // "Say what it's for": one plain line of up to 200 characters, and a reference picture's id.
+  const REF = 'a'.repeat(24)
+  const withPurpose = main.parseEditStart({ sources: [file], brandIdentityId: null, purpose: '  Instagram reel   selling my call ', referenceImage: REF }, userData)
+  assert.deepEqual([withPurpose.purpose, withPurpose.referenceImage], ['Instagram reel selling my call', REF])
+  assert.throws(() => main.parseEditStart({ sources: [file], purpose: 'x'.repeat(201) }, userData), /200 characters/)
+  assert.throws(() => main.parseEditStart({ sources: [file], purpose: 'a <script>' }, userData), /plain words/)
+  assert.throws(() => main.parseEditStart({ sources: [file], purpose: 7 }, userData), /short line/)
+  assert.throws(() => main.parseEditStart({ sources: [file], referenceImage: '../../x.png' }, userData), /reference image again/)
   assert.throws(() => main.parseEditStart({ sources: [] }, userData), /Choose your recording/)
   assert.throws(() => main.parseEditStart({ sources: ['/etc/passwd'] }, userData), /Choose a video/)
   assert.throws(() => main.parseEditStart({ sources: ['/elsewhere/secret.mp4'] }, userData), /Choose your recording again/)
@@ -218,6 +226,12 @@ test('the review choices are checked against the plan before a reel is made', ()
   assert.equal('lookExtras' in shared.parseEditDecisions(good, plan).look, false)
   assert.deepEqual(plain(shared.parseEditDecisions({ ...good, look: { ...good.look, lookExtras: ['comment_box', 'punch_zoom', 'glitter'] } }, plan).look.lookExtras),
     ['punch_zoom', 'comment_box'])
+  // Skills on the look: music (a track only with music) and voice cleanup; off is left out.
+  const audio = shared.parseEditDecisions({ ...good, look: { ...good.look, music: true, musicTrack: 'upbeat', voiceCleanup: true } }, plan).look
+  assert.deepEqual([audio.music, audio.musicTrack, audio.voiceCleanup], [true, 'upbeat', true])
+  assert.deepEqual(['music', 'musicTrack', 'voiceCleanup'].filter((key) => key in shared.parseEditDecisions({ ...good, look: { ...good.look, music: false, musicTrack: 'upbeat' } }, plan).look), [])
+  bad({ look: { ...good.look, music: 'yes' } }, /music/)
+  bad({ look: { ...good.look, voiceCleanup: 1 } }, /voice cleanup/)
   bad({ cut: [0, 1, 2, 3, 4, 5, 6, 7, 8] }, /Keep a few more words/)
 })
 

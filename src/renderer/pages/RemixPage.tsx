@@ -13,6 +13,9 @@ import {
 import type { Page as PageName } from '../components/Sidebar'
 import { VoicePreview } from '../components/VoicePreview'
 import { previewFrame, StyleBoard } from '../components/StyleBoard'
+import { SkillsPanel } from '../components/SkillsPanel'
+import { PurposeFields } from '../components/PurposeFields'
+import { remixSkillPatch, remixSkillRows } from '../../shared/skills'
 import { boardFromLook, LOOK_HOOKS, lookPatch } from '../lib/style-board'
 import { partLabel, RemixRecorder } from '../components/RemixRecorder'
 import { PauseReactReview } from '../components/PauseReactReview'
@@ -283,7 +286,13 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         ...(layoutChoice ? { layout: layoutChoice } : {}),
         ...(momentTake ? { moment: { ranges: moments.ranges, pip: form.momentPip } } : {}),
         ...(form.ctaId ? { ctaId: form.ctaId } : {}),
-        ...(brand && showMark && form.showHandle ? { showHandle: true } : {})
+        ...(brand && showMark && form.showHandle ? { showHandle: true } : {}),
+        // Skills (you on camera): music and voice cleanup.
+        ...(onCamera && form.music ? { music: true, ...(form.musicTrack ? { musicTrack: form.musicTrack } : {}) } : {}),
+        ...(onCamera && form.voiceCleanup ? { voiceCleanup: true } : {}),
+        // "Say what it's for".
+        ...(form.purpose.trim() ? { purpose: form.purpose.replace(/\s+/g, ' ').trim() } : {}),
+        ...(form.reference ? { referenceImage: form.reference.id } : {})
       })
       setStatus((previous) => previous?.id === started.id && previous.phase !== 'planning' ? previous : started)
       setRevealReview(true)
@@ -817,6 +826,11 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         ? `The AI finds the moments, writes the hook text and caption, and times the reactions (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You review them, and making them is free: your reactions are reused.`
         : `First the AI finds the moments and writes and grades a take for each (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You review and edit them, and only the ones you approve are made: ${cost.perRemixHigh - cost.perRemixLow < 0.01 ? `about $${cost.perRemixHigh.toFixed(2)}` : `about $${cost.perRemixLow.toFixed(2)}–$${cost.perRemixHigh.toFixed(2)}`} each.`} />
       <div className="mt-4 space-y-4">
+        <div className="glass-tile rounded-2xl p-3">
+          <PurposeFields purpose={form.purpose} onPurpose={(purpose) => form.update({ purpose })} reference={form.reference} onReference={(reference) => form.update({ reference })}
+            disabled={launching} purposeHelp="The AI uses it to write the hook text and caption. It’s never shown in the video."
+            onUseLook={(picked) => form.update({ captionPreset: picked.captionPreset, includeCaptions: true, headlineLook: { ...form.headlineLook, color: picked.color, look: 'brand' } })} />
+        </div>
         {countRow}
         {!pexelsConfigured && !silent && !onCamera && (
           <p className="text-2xs text-ink-subtle">
@@ -867,7 +881,10 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         <div id="remix-look" className="mt-4 space-y-4">
           <p className="text-2xs text-ink-subtle">{onCamera ? 'Optional. These start from your Brand Identity’s look and your last choices.'
             : 'Optional. Your Brand Identity decides what your presenter believes, so every take sounds like your brand and only uses your real proof. Its look fills in the style below.'}</p>
+          {onCamera && <SkillsPanel rows={remixSkillRows(form)} onToggle={(id, on) => form.update(remixSkillPatch(form, id, on))}
+            onMore={(id) => id === 'captions' || id === 'zoom' ? () => document.getElementById('remix-style-board')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }) : undefined} />}
           {brandBlock}
+          <div id="remix-style-board" className="scroll-mt-4" />
           {styleBoard(onCamera ? <>{pauseLayoutChoice}{part1Choice}{hookPlaceRow}{clipHookNote}{cameraBlock}{pipRow}{pauseCaptionsRow}{theirCaptionsRow}</> : undefined)}
         </div>
       )}

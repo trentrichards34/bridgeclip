@@ -186,6 +186,17 @@ class BridgeTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 bridge.validate_config(self.config(**bad))
 
+    def test_purpose_and_reference_image_are_checked(self):
+        with tempfile.TemporaryDirectory() as folder:
+            picture = os.path.join(folder, "reference.jpg")
+            with open(picture, "wb") as handle:
+                handle.write(b"\xff\xd8\xff")
+            bridge.validate_config(self.config(purpose="Instagram reel selling my coaching call", reference_image_path=picture))
+            for bad in ({"purpose": "x" * 201}, {"purpose": 3}, {"reference_image_path": "reference.jpg"},
+                        {"reference_image_path": os.path.join(folder, "gone.png")}, {"reference_image_path": os.path.join(folder, "notes.txt")}):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    bridge.validate_config(self.config(**bad))
+
     def test_broll_options_are_booleans_and_exclude_a_background(self):
         bridge.validate_config(self.config(broll_enabled=True, broll_keep_hook=False))
         bridge.validate_config(self.config(hook_preview=True, motion_graphics=True))

@@ -155,6 +155,9 @@ class ClippingJobRequest:
     # Motion graphics: Auto (Automatic): the planner also picks 0-3 card moments per clip (auto_graphics);
     # main draws them over the finished clips after the run.
     motion_graphics: bool = False
+    # "Say what it's for": the member's purpose line, and a reference picture (sent only when the planner accepts images).
+    purpose: Optional[str] = None
+    reference_image_path: Optional[str] = None
     debug_capture: bool = False
     # "tight" cuts dead air and filler words; "natural" keeps original timing.
     pacing: str = "tight"
@@ -544,6 +547,8 @@ class AIClippingPipeline:
                 brand_name=request.brand_name or None,
                 headline_voice=request.headline_voice,
                 **({'motion_graphics': True} if request.motion_graphics and request.workflow != 'review' else {}),
+                **({'purpose': request.purpose} if request.purpose else {}),
+                **({'reference_image': request.reference_image_path} if request.reference_image_path else {}),
             )
             excluded_spans = request.exclude_ranges_ms or []
             def is_new(segment) -> bool:

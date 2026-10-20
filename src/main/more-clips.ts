@@ -344,6 +344,8 @@ export function moreClipsRequest(info: Pick<MoreClipsInfo, 'runId' | 'request'>,
   const base: ClipJobRequest = { ...info.request }
   delete base.clipRequest
   delete base.captionLanguage
+  // The reference picture was for that run (its copy stays in that run's folder); the purpose line still applies.
+  delete base.referenceImage
   // The new run uses Automatic clipping; Review-only options don't apply.
   return {
     ...base,

@@ -1973,6 +1973,10 @@ class RemixConfig:
     avatar_photo: Optional[str] = None
     brand_identity: str = ""
     brand_name: str = ""
+    # "Say what it's for": the member's purpose line, and a reference picture in the run folder (the app sends it only
+    # when the writing model accepts images). Both steer the hook text and caption; neither is a fact.
+    purpose: str = ""
+    reference_image: Optional[str] = None
     creator: str = ""
     caption_preset: str = "pop"
     include_captions: bool = True
@@ -2306,6 +2310,16 @@ class Remixer:
         if config.format == "commentary" and config.host != "camera" and config.voice_model == CLONE_TTS_MODEL and not config.voice_reference:
             raise RemixError("Your avatar's cloned voice recording is missing. Clone the voice again in Avatar Studio.")
 
+    def _purpose_rules(self, with_reference: bool = True) -> str:
+        """System-prompt rules for "Say what it's for" ('' when the member gave neither)."""
+        from clip_engine.services.purpose_context import system_rules
+        return system_rules(self.config.purpose, with_reference and bool(self.config.reference_image))
+
+    def _with_purpose(self, content: Any, with_reference: bool = True) -> Any:
+        """A writing call's user content with the purpose line and (when the app allowed it) the reference picture."""
+        from clip_engine.services.purpose_context import with_context
+        return with_context(content, self.config.purpose, self.config.reference_image if with_reference else None)
+
     def _client(self, title: str) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             base_url=self.settings.openrouter_base_url, timeout=httpx.Timeout(300.0, connect=30.0),
@@ -2369,7 +2383,7 @@ class Remixer:
                                           self.config.cta_clip))
         payload = {
             "model": self.settings.planner_model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "messages": [{"role": "system", "content": system + self._purpose_rules()}, {"role": "user", "content": self._with_purpose(user)}],
             "response_format": json_schema_format("remix_plan", SILENT_SCHEMA if silent else PLAN_SCHEMA),
             "provider": {"require_parameters": True},
             "max_tokens": 16000,
@@ -2633,8 +2647,9 @@ class Remixer:
                                 if with_image else text)
                 payload = {
                     "model": self.settings.planner_model,
-                    "messages": [{"role": "system", "content": image_system_prompt(self.config.cta_keyword, self.config.cta_offer, with_image)},
-                                 {"role": "user", "content": content}],
+                    "messages": [{"role": "system", "content": image_system_prompt(self.config.cta_keyword, self.config.cta_offer, with_image)
+                                  + self._purpose_rules(with_image)},
+                                 {"role": "user", "content": self._with_purpose(content, with_image)}],
                     "response_format": json_schema_format("image_take", IMAGE_SCHEMA),
                     "provider": {"require_parameters": True}, "max_tokens": 6000,
                 }
@@ -3901,8 +3916,8 @@ class Remixer:
             for attempt in range(2):
                 payload = {
                     "model": self.settings.planner_model,
-                    "messages": [{"role": "system", "content": pause_system_prompt(self.config.cta_keyword, self.config.cta_offer)},
-                                 {"role": "user", "content": text}],
+                    "messages": [{"role": "system", "content": pause_system_prompt(self.config.cta_keyword, self.config.cta_offer) + self._purpose_rules()},
+                                 {"role": "user", "content": self._with_purpose(text)}],
                     "response_format": json_schema_format("pause_react_take", PAUSE_SCHEMA),
                     "provider": {"require_parameters": True}, "max_tokens": 6000,
                 }
@@ -4284,7 +4299,8 @@ class Remixer:
             for attempt in range(2):
                 payload = {
                     "model": self.settings.planner_model,
-                    "messages": [{"role": "system", "content": mt.write_system_prompt(cta, setup or mt.MOMENT_SETUP)}, {"role": "user", "content": text}],
+                    "messages": [{"role": "system", "content": mt.write_system_prompt(cta, setup or mt.MOMENT_SETUP) + self._purpose_rules()},
+                                 {"role": "user", "content": self._with_purpose(text)}],
                     "response_format": json_schema_format("moment_take_write", mt.WRITE_SCHEMA),
                     "provider": {"require_parameters": True}, "max_tokens": 6000,
                 }

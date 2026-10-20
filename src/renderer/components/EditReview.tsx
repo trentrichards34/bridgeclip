@@ -14,6 +14,8 @@ import { ReelGraphics, type ReelGraphicItem, type ReelGraphicPatch } from './Ree
 import { CardEditor, EditStylePicker, MyImages } from './EditExtras'
 import { EditLog } from './EditLog'
 import { editRecordingLog } from '../../shared/edit-log'
+import { SkillsPanel } from './SkillsPanel'
+import { editSkillPatch, editSkillRows } from '../../shared/skills'
 import { hasBrandMark } from '../../shared/brand-kit'
 import type { BrandIdentity } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
@@ -185,6 +187,15 @@ export function EditReview({ status, brand, look, onLook, onError }: {
       <EditLog className="mt-4" lines={logLines} disabled={making}
         onRestore={(line) => { if (!line.restore) return; setBeforeRestore(decisions); setDecisions((current) => ({ ...current, ...line.restore })) }}
         onUndo={beforeRestore ? () => { setDecisions(beforeRestore); setBeforeRestore(null) } : undefined} />
+      <SkillsPanel className="mt-4" rows={editSkillRows(plan, { ...decisions, look })}
+        onToggle={(id, on) => {
+          const patch = editSkillPatch(plan, { ...decisions, look }, id, on)
+          if (patch.decisions) { const next = patch.decisions; setDecisions((current) => ({ ...current, ...next })) }
+          if (patch.look) onLook({ ...look, ...patch.look })
+        }}
+        onMore={(id) => id === 'captions' || id === 'zoom' ? () => { setLookOpen(true); requestAnimationFrame(() => document.getElementById('edit-look')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })) }
+          : id === 'sound_effects' ? () => document.getElementById('edit-extras-title')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+            : id === 'rough_cut' ? () => document.getElementById('edit-transcript-title')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }) : undefined} />
 
       <EditStylePicker recipe={decisions.recipe} extras={decisions.lookExtras}
         onRecipe={(id) => { useEditRecordingStore.getState().setRecipe(id); setDecisions((current) => applyRecipe(plan, current, id)) }}

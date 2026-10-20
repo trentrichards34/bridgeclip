@@ -25,7 +25,12 @@ import { refreshReusePlan, type ReusePlan } from './more-clips'
 import { brandForJob } from './brands'
 import { readFile } from 'fs/promises'
 
-export type ClipJobConfig = ClipJobRequest & { plannerCapabilities?: OpenRouterModel; reuse?: ReusePlan }
+export type ClipJobConfig = ClipJobRequest & {
+  plannerCapabilities?: OpenRouterModel
+  reuse?: ReusePlan
+  /** Set in main when the run starts: the reference picture in the run folder, only when the planning model accepts images. */
+  referenceImagePath?: string
+}
 
 /**
  * Where a run's events go. The job manager passes its own sink so it can track
@@ -519,6 +524,9 @@ export function startClipJob(
       planner_output_price: config.plannerCapabilities?.outputPrice ?? null
     } : {}),
     ...(config.clipRequest ? { clip_request: config.clipRequest } : {}),
+    // "Say what it's for": the purpose line, and the reference picture when the planner can look at it.
+    ...(config.purpose ? { purpose: config.purpose } : {}),
+    ...(config.referenceImagePath ? { reference_image_path: config.referenceImagePath } : {}),
     max_clips: config.maxClips,
     auto_clip_count: config.autoClipCount,
     duration_ranges: config.durationRanges,

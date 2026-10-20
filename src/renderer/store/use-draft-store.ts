@@ -3,6 +3,7 @@ import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-
 import type { LookExtraId } from '../../shared/look-extras'
 import type { HeadlineVoice, QualityBar, ScreenFocus, TitleStyle } from '../../shared/jobs'
 import type { CaptionLanguageChoice } from '../../shared/caption-language'
+import type { ReferenceImage } from '../../shared/purpose'
 
 /** The Create wizard's steps, in order. */
 export type WizardStep = 'video' | 'format' | 'clips' | 'captions' | 'review'
@@ -77,6 +78,14 @@ export interface ClipDraft {
   ctaOffer: string
   /** Draw the brand's handle or logo in a corner (Automatic). */
   showHandle: boolean
+  /** Skills: background music (its track, '' for the default) and voice cleanup. Off until turned on (then remembered). */
+  music: boolean
+  musicTrack: string
+  voiceCleanup: boolean
+  /** "What's this video for?" (optional, this video only). */
+  purpose: string
+  /** "A look you like" (optional, this video only): the picture chosen with reference:choose. */
+  reference: ReferenceImage | null
   trimOpen: boolean
   trimStart: string
   trimEnd: string
@@ -131,6 +140,11 @@ export const useDraftStore = create<DraftState>((set) => ({
   ctaKeyword: '',
   ctaOffer: '',
   showHandle: false,
+  music: false,
+  musicTrack: '',
+  voiceCleanup: false,
+  purpose: '',
+  reference: null,
   trimOpen: false,
   trimStart: '',
   trimEnd: '',
@@ -141,5 +155,5 @@ export const useDraftStore = create<DraftState>((set) => ({
   setStep: (step) => set({ step }),
   clearSource: () => set({ source: '', sources: [], trimStart: '', trimEnd: '', pendingLink: '' }),
   markStarted: (started) => set({ started }),
-  startAnother: () => set({ workflow: null, source: '', sources: [], pendingLink: '', clipRequest: '', trimOpen: false, trimStart: '', trimEnd: '', step: 'video', started: null })
+  startAnother: () => set({ workflow: null, source: '', sources: [], pendingLink: '', clipRequest: '', purpose: '', reference: null, trimOpen: false, trimStart: '', trimEnd: '', step: 'video', started: null })
 }))

@@ -7,7 +7,7 @@ const { renderToStaticMarkup } = require('react-dom/server')
 
 const bundled = buildSync({
   stdin: {
-    contents: `export { FormatStep, ClipsStep, CaptionsStep, JobForm, formatSummary, clipsSummary, createBoardPatch, createBoardStyle, buildJobRequest, buildJobRequests, draftSources, parseTrimRange, SCREEN_FOCUS_OPTIONS, ReviewStep } from './src/renderer/components/JobForm';
+    contents: `export { FormatStep, ClipsStep, CaptionsStep, JobForm, formatSummary, clipsSummary, createBoardPatch, createBoardStyle, createReferencePatch, buildJobRequest, buildJobRequests, draftSources, parseTrimRange, SCREEN_FOCUS_OPTIONS, ReviewStep } from './src/renderer/components/JobForm';
       export { screenFocusLabel } from './src/renderer/components/ClipCard';
       export { reuseSummary, moreClipsBlocked } from './src/renderer/components/MoreClipsDialog';
       export { JobProgress } from './src/renderer/components/JobProgress';
@@ -123,6 +123,42 @@ test('B-roll and a background video are sent only for Automatic jobs, never toge
     assert.equal(request.hookPreview, undefined)
     assert.equal(request.motionGraphics, undefined)
     assert.equal(request.backgroundVideo, undefined)
+  } finally { useDraftStore.setState(original) }
+})
+
+test('Skills on Create (Automatic): one list over the draft’s own fields, with purpose and reference sent along', () => {
+  const { CaptionsStep, useDraftStore, buildJobRequest, createBoardPatch, createReferencePatch } = form.exports
+  const original = useDraftStore.getState()
+  const trim = { start: null, end: null }
+  try {
+    original.update({ source: 'https://example.com/video', workflow: 'automatic', aspectRatio: '9:16' })
+    const html = renderToStaticMarkup(React.createElement(CaptionsStep, { draft: useDraftStore.getState(), update() {} }))
+    assert.match(html, /data-testid="skills-panel"/)
+    for (const name of ['Rough cut', 'Captions', 'Motion graphics', 'Zoom', 'B-roll', 'Music', 'Voice cleanup']) assert.match(html, new RegExp(`aria-label="${name}"`))
+    assert.equal((html.match(/>Beta</g) ?? []).length, 2)
+    assert.match(html, /What’s this video for\?/)
+    assert.match(html, /A look you like/)
+    // Review & edit has no Skills list (its look is set in the editor), but can still say what it's for.
+    const review = renderToStaticMarkup(React.createElement(CaptionsStep, { draft: { ...useDraftStore.getState(), workflow: 'review' }, update() {} }))
+    assert.doesNotMatch(review, /data-testid="skills-panel"/)
+    assert.match(review, /What’s this video for\?/)
+    // The style board's captions switch and the Skills switch are the same field.
+    original.update(createBoardPatch(useDraftStore.getState(), { captions: false }))
+    assert.match(renderToStaticMarkup(React.createElement(CaptionsStep, { draft: useDraftStore.getState(), update() {} })), /aria-checked="false" aria-label="Captions"/)
+    // Requests: audio skills for Automatic only, purpose and the picture's id for both.
+    original.update({ music: true, musicTrack: 'lofi', voiceCleanup: true, purpose: '  Instagram reel  selling my call ', reference: { id: 'a'.repeat(24), name: 'look.png', path: '/x/look.png', width: 10, height: 10, bytes: 99 } })
+    let request = buildJobRequest(useDraftStore.getState(), trim)
+    assert.deepEqual([request.music, request.musicTrack, request.voiceCleanup, request.purpose, request.referenceImage], [true, 'lofi', true, 'Instagram reel selling my call', 'a'.repeat(24)])
+    request = buildJobRequest({ ...useDraftStore.getState(), workflow: 'review' }, trim)
+    assert.deepEqual([request.music, request.voiceCleanup, request.purpose], [undefined, undefined, 'Instagram reel selling my call'])
+    // "Use colors from my reference": the color on the hook bar and the caption style.
+    const patch = createReferencePatch(useDraftStore.getState(), { color: '#DC1E28', light: true, captionPreset: 'paper' })
+    assert.equal(patch.captionPreset, 'paper')
+    assert.equal(patch.headlineLook.color, '#DC1E28')
+    assert.equal(patch.headlineLook.look, 'brand')
+    // Clip another video: the purpose and picture belong to the last one.
+    useDraftStore.getState().startAnother()
+    assert.deepEqual([useDraftStore.getState().purpose, useDraftStore.getState().reference, useDraftStore.getState().music], ['', null, true])
   } finally { useDraftStore.setState(original) }
 })
 

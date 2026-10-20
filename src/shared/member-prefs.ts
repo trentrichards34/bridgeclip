@@ -21,6 +21,7 @@ import {
   AVATAR_VOICE, MAX_CTA_OFFER_CHARS, MAX_REMIXES, REMIX_FORMATS, REMIX_VOICES, isRemixAngle, isRemixHost, isRemixOrder, normalizeCtaKeyword, parseCameraSettings,
   type CameraSettings, type RemixAngle, type RemixFormat, type RemixHost, type RemixOrder
 } from './remix'
+import { isMusicTrackId } from './skills'
 import { isPauseCaptions, isPauseLayout, type PauseCaptions, type PauseLayout } from './pause-react'
 
 export type StyleKind = 'create' | 'remix'
@@ -63,6 +64,10 @@ export interface CreateStyle {
   showHandle: boolean
   /** Captions in another language ('original': as spoken). */
   captionLanguage: CaptionLanguageChoice
+  /** Skills: background music (and its track, '' for the default) and voice cleanup. */
+  music: boolean
+  musicTrack: string
+  voiceCleanup: boolean
 }
 
 /** Remix's style choices (not the links, the file, the creator name or the permission boxes). */
@@ -91,6 +96,10 @@ export interface RemixFormStyle {
   pauseCamera: CameraSettings
   momentPip: boolean
   momentCamera: CameraSettings
+  /** Skills: background music (and its track, '' for the default) and voice cleanup. */
+  music: boolean
+  musicTrack: string
+  voiceCleanup: boolean
 }
 
 export type StyleOf<K extends StyleKind> = K extends 'create' ? CreateStyle : RemixFormStyle
@@ -129,13 +138,13 @@ export const MAX_SAMPLE_VIDEO_LINK = 2048
 export const CREATE_STYLE_KEYS = [
   'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
   'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'motionGraphics', 'qualityBar', 'headlineVoice',
-  'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'captionLanguage'
+  'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'captionLanguage', 'music', 'musicTrack', 'voiceCleanup'
 ] as const satisfies readonly (keyof CreateStyle)[]
 
 export const REMIX_STYLE_KEYS = [
   'format', 'angle', 'order', 'host', 'avatarId', 'voice', 'brandIdentityId', 'count', 'includeCaptions', 'captionPreset', 'headlineLook', 'lookExtras',
   'ctaId', 'ctaKeyword', 'ctaOffer', 'camera', 'imageCamera', 'showHandle', 'pauseLayout', 'pauseCaptions', 'pauseCamera',
-  'momentPip', 'momentCamera'
+  'momentPip', 'momentCamera', 'music', 'musicTrack', 'voiceCleanup'
 ] as const satisfies readonly (keyof RemixFormStyle)[]
 
 export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE } }
@@ -190,7 +199,10 @@ const CREATE_CHECKS: { [K in keyof CreateStyle]: (value: unknown) => boolean } =
   ctaKeyword: (value) => isKeyword(value),
   ctaOffer: (value) => isOffer(value),
   showHandle: bool,
-  captionLanguage: (value) => value === 'original' || isCaptionLanguage(value)
+  captionLanguage: (value) => value === 'original' || isCaptionLanguage(value),
+  music: bool,
+  musicTrack: (value) => value === '' || isMusicTrackId(value),
+  voiceCleanup: bool
 }
 
 const VOICE_IDS = [AVATAR_VOICE, ...REMIX_VOICES.map((voice) => voice.id)]
@@ -217,7 +229,10 @@ const REMIX_CHECKS: { [K in keyof RemixFormStyle]: (value: unknown) => boolean }
   pauseCaptions: isPauseCaptions,
   pauseCamera: () => true,
   momentPip: bool,
-  momentCamera: () => true
+  momentCamera: () => true,
+  music: bool,
+  musicTrack: (value) => value === '' || isMusicTrackId(value),
+  voiceCleanup: bool
 }
 
 /** The valid fields of a saved style; anything else is dropped. */

@@ -81,6 +81,16 @@ export interface ClipJobRequest {
   ctaOffer?: string
   /** Draw the brand's handle or logo in a corner (Automatic, needs a brand). */
   showHandle?: boolean
+  /** Background music under the clips (Skills). Missing: off. */
+  music?: boolean
+  /** The music track (an id from the track list); only with music on. */
+  musicTrack?: string
+  /** Clean up the speaker's voice (Skills). Missing: off. */
+  voiceCleanup?: boolean
+  /** What the video is for, in the member's words (up to 200 characters): steers hooks, titles and graphics. */
+  purpose?: string
+  /** A reference image ("A look you like"): the id of a picture chosen with reference:choose. */
+  referenceImage?: string
   startTimeSeconds: number | null
   endTimeSeconds: number | null
   bannerPlatform: string | null

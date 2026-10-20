@@ -14,6 +14,8 @@ import { EditRecorder } from '../components/EditRecorder'
 import { EditReview } from '../components/EditReview'
 import { FilmIdeas } from '../components/FilmIdeas'
 import { FriendlyError } from '../components/FriendlyError'
+import { PurposeFields } from '../components/PurposeFields'
+import type { ReferenceImage } from '../../shared/purpose'
 import { useLowDiskGate } from '../components/LowDiskGate'
 import { Button } from '../components/ui/Button'
 import { Callout } from '../components/ui/Callout'
@@ -56,6 +58,9 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const [starting, setStarting] = useState(false)
   const [recorder, setRecorder] = useState<{ hook: string; points: string[] } | null | false>(false)
   const [hookHint, setHookHint] = useState('')
+  // "Say what it's for" (this recording only).
+  const [purpose, setPurpose] = useState('')
+  const [reference, setReference] = useState<ReferenceImage | null>(null)
   const lowDisk = useLowDiskGate()
   const startRef = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState(false)
@@ -95,14 +100,16 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
     if (!(await lowDisk.ensureSpace())) return
     setStarting(true); setError(null)
     try {
-      setStatus(await getApi().edit.start({ sources: sources.map((source) => source.path), brandIdentityId: brandId, ...(hookHint ? { hookHint } : {}) }))
+      setStatus(await getApi().edit.start({ sources: sources.map((source) => source.path), brandIdentityId: brandId, ...(hookHint ? { hookHint } : {}),
+        ...(purpose.trim() ? { purpose: purpose.replace(/\s+/g, ' ').trim() } : {}), ...(reference ? { referenceImage: reference.id } : {}) }))
     } catch (err) { setError(errorMessage(err)) } finally { setStarting(false) }
   }
 
   const chooseBrand = (next: BrandIdentity | null): void => {
-    // The extras aren't part of a brand: they stay as picked.
-    const extras = useEditRecordingStore.getState().look.lookExtras
-    useEditRecordingStore.getState().setBrand(next?.id ?? null, { ...lookFromBrand(next), ...(extras?.length ? { lookExtras: extras } : {}) })
+    // The extras and the audio skills aren't part of a brand: they stay as picked.
+    const { lookExtras: extras, music, musicTrack, voiceCleanup } = useEditRecordingStore.getState().look
+    useEditRecordingStore.getState().setBrand(next?.id ?? null, { ...lookFromBrand(next), ...(extras?.length ? { lookExtras: extras } : {}),
+      ...(music ? { music, ...(musicTrack ? { musicTrack } : {}) } : {}), ...(voiceCleanup ? { voiceCleanup } : {}) })
   }
 
   const film = (idea: FilmIdea): void => {
@@ -116,7 +123,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   }, [])
 
   const startOver = (): void => {
-    setSources([]); setHookHint(''); setStatus(null)
+    setSources([]); setHookHint(''); setPurpose(''); setReference(null); setStatus(null)
     void getApi().edit.discard().catch(() => undefined)
   }
 
@@ -214,7 +221,12 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
 
           <Panel>
             <PanelHeader title="3 · Edit it" />
-            <p className="mt-1 text-xs text-ink-muted" data-testid="edit-cost">
+            <div className="mt-3">
+              <PurposeFields purpose={purpose} onPurpose={setPurpose} reference={reference} onReference={setReference} disabled={starting}
+                purposeHelp="The AI uses it to choose your hook, title and pop-ups. It’s never shown in the video."
+                onUseLook={(picked) => setLook({ ...look, captionPreset: picked.captionPreset, headlineLook: { ...look.headlineLook, color: picked.color, look: 'brand' } })} />
+            </div>
+            <p className="mt-3 text-xs text-ink-muted" data-testid="edit-cost">
               {sources.length
                 ? `Listening to ${formatClock(total)} with ElevenLabs Scribe v2 costs about ${formatUsd(estimate.transcribeUsd)}, and planning the edit about ${formatUsd(estimate.planUsd)}, through your OpenRouter account. Your custom vocabulary is sent as key terms, which may cost a little extra. Reviewing and making the reel are free.`
                 : 'Add your recording first. Transcribing and planning go through your OpenRouter account; reviewing and making the reel are free.'}

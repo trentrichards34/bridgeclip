@@ -17,6 +17,8 @@ import { lookExtrasForEngine } from '../shared/look-extras-engine'
 import { drawableGraphics, editGraphicFrame, reelGraphicSpec } from '../shared/reel-graphics'
 import type { BrandIdentity } from '../shared/remix'
 import { brandMarkForRun, isBrandId, readBrandIdentity } from './brands'
+import { referenceForRun, referencePath } from './reference-image'
+import { DEFAULT_PLANNER_MODEL, isReferenceId, parsePurpose } from '../shared/purpose'
 import { applyRunCtaInLock, originalPath, withRunLock } from './ctas'
 import { graphicJob, renderGraphicJobs, REEL_GRAPHICS_DIR, type GraphicJob } from './graphics-render'
 import { logger } from './logger'
@@ -48,6 +50,9 @@ interface EditRun {
   abort?: AbortController
   brand: BrandIdentity | null
   hookHint: string
+  /** "Say what it's for": the purpose line ('' for none), and the reference picture to show the planner (null: none or skipped). */
+  purpose: string
+  reference: string | null
   /** What has already gone to the spending ledger for this run. */
   recordedUsd: number
 }
@@ -136,7 +141,7 @@ export async function describeSource(path: string): Promise<EditSource> {
   return { path, name: basename(path), seconds: Math.round(seconds * 100) / 100 }
 }
 
-export interface ParsedEditStart { sources: string[]; brandIdentityId: string | null; hookHint: string }
+export interface ParsedEditStart { sources: string[]; brandIdentityId: string | null; hookHint: string; purpose: string; referenceImage: string | null }
 
 /** The start request from the page, checked: recordings the member chose here (or ones in the Library). */
 export function parseEditStart(value: unknown, outputDirectory: string): ParsedEditStart {
@@ -152,7 +157,10 @@ export function parseEditStart(value: unknown, outputDirectory: string): ParsedE
   }
   if (raw.brandIdentityId !== null && raw.brandIdentityId !== undefined && !isBrandId(raw.brandIdentityId)) throw new Error('Choose one of your brands.')
   if (raw.hookHint !== undefined && (typeof raw.hookHint !== 'string' || raw.hookHint.length > MAX_HOOK_HINT_CHARS)) throw new Error('That hook is too long.')
-  return { sources, brandIdentityId: (raw.brandIdentityId as string | null | undefined) ?? null, hookHint: typeof raw.hookHint === 'string' ? raw.hookHint.replace(/\s+/g, ' ').trim() : '' }
+  const purpose = parsePurpose(raw.purpose)
+  if (raw.referenceImage !== undefined && raw.referenceImage !== null && !isReferenceId(raw.referenceImage)) throw new Error('Choose your reference image again.')
+  return { sources, brandIdentityId: (raw.brandIdentityId as string | null | undefined) ?? null, hookHint: typeof raw.hookHint === 'string' ? raw.hookHint.replace(/\s+/g, ' ').trim() : '',
+    purpose, referenceImage: isReferenceId(raw.referenceImage) ? raw.referenceImage : null }
 }
 
 /** The spending check's estimate for starting (null when the recordings weren't checked here first). */
@@ -328,16 +336,27 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
     const total = sources.reduce((sum, source) => sum + source.seconds, 0)
     if (total > EDIT_MAX_TOTAL_SECONDS + 1) throw new Error(`Your takes add up to over ${EDIT_MAX_TOTAL_SECONDS / 60} minutes. Use fewer or shorter takes.`)
     const brand = request.brandIdentityId ? await readBrandIdentity(request.brandIdentityId) : null
+    if (request.referenceImage) referencePath(request.referenceImage)
     const folder = join(settings.outputDirectory, `edit-${randomUUID()}`)
     await preflight(folder)
+    // The reference picture: kept in the run folder; shown to the planner only when its model can look at images.
+    let reference: string | null = null
+    const warnings: string[] = []
+    if (request.referenceImage) {
+      try {
+        const kept = await referenceForRun(request.referenceImage, folder, DEFAULT_PLANNER_MODEL)
+        reference = kept.send
+        if (kept.note) warnings.push(kept.note)
+      } catch (error) { warnings.push(`${(error as Error)?.message || 'Your reference image could not be used.'} The edit goes ahead without it.`) }
+    }
     // A plan waiting for review (or a failed one) is replaced by this run.
     await dropUnfinished()
     await cleanupAbandonedEdits(settings.outputDirectory, folder)
     const current: EditRun = {
-      cancelled: false, brand, hookHint: request.hookHint, recordedUsd: 0,
+      cancelled: false, brand, hookHint: request.hookHint, purpose: request.purpose, reference, recordedUsd: 0,
       status: {
         id: randomBytes(6).toString('hex'), phase: 'transcribing', detail: 'Starting', percent: 1, sources, folder, plan: null, transcriber: null,
-        output: null, costUsd: 0, estimateUsd: editEstimate(total).total, error: null, warnings: [], images: []
+        output: null, costUsd: 0, estimateUsd: editEstimate(total).total, error: null, warnings, images: []
       }
     }
     run = current
@@ -365,7 +384,8 @@ async function prepare(current: EditRun): Promise<void> {
     publish(current, { phase: 'planning', detail: 'Planning your edit', percent: 70 })
     const result = await runEngine({
       mode: 'plan', output_dir: current.status.folder, words: words.slice(0, 8000), sources_count: sources.length, names: sources.map((source) => source.name),
-      brand_identity: current.brand?.text ?? '', brand_name: current.brand?.name ?? '', hook_hint: current.hookHint
+      brand_identity: current.brand?.text ?? '', brand_name: current.brand?.name ?? '', hook_hint: current.hookHint,
+      ...(current.purpose ? { purpose: current.purpose } : {}), ...(current.reference ? { reference_image: current.reference } : {})
     }, 15 * 60_000, (detail, percent) => { if (!current.cancelled) publish(current, { detail: detail || 'Planning your edit', percent: 70 + percent * 0.29 }) },
     (child) => { current.child = child })
     spend(current, typeof result.cost_usd === 'number' ? result.cost_usd : 0)
@@ -373,7 +393,7 @@ async function prepare(current: EditRun): Promise<void> {
     if (!plan) throw new Error('The plan for your edit came back unreadable. Try again.')
     if (current.cancelled) throw new Error('Canceled.')
     logger.info('edit.planned', { words: plan.words.length, planned: plan.planned, transcriber: current.status.transcriber })
-    publish(current, { phase: 'review', detail: 'Ready for review', percent: 100, plan, warnings: plan.warnings })
+    publish(current, { phase: 'review', detail: 'Ready for review', percent: 100, plan, warnings: [...current.status.warnings, ...plan.warnings].slice(0, 6) })
   } catch (error) {
     spend(current, errorCost(error))
     const cancelled = current.cancelled
