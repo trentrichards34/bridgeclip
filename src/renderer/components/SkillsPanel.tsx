@@ -1,11 +1,27 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Music2, Wand2 } from 'lucide-react'
-import { MUSIC_TRACKS, musicTrackLabel } from '../../shared/music'
+import { MUSIC_TRACKS, musicTrackLabel, OWN_MUSIC_PREFIX } from '../../shared/music'
 import { MusicPicker } from './MusicPicker'
 import type { SkillId, SkillRow } from '../../shared/skills'
 import { cn } from '../lib/utils'
+import { getApi } from '../lib/ipc'
 import { Badge } from './ui/Badge'
 import { Switch } from './ui/Switch'
+
+/**
+ * A pick in the Skills music picker as ONE update: None (or the member's own track removed elsewhere) switches
+ * Music off; a track picks it. Two updates in a row would each start from the same stale settings, and the
+ * second would undo the first.
+ */
+export function pickSkillsMusic(track: string | null, onToggle: (id: SkillId, on: boolean) => void, onChange: (track: string) => void): void {
+  if (track === null) onToggle('music', false)
+  else onChange(track)
+}
+
+/** The chosen track is one of the member's own that no longer exists (null until their music is loaded). */
+export function musicTrackMissing(track: string | null, own: readonly { id: string }[] | null): boolean {
+  return Boolean(track && own && track.startsWith(OWN_MUSIC_PREFIX) && !own.some((item) => item.id === track))
+}
 
 /**
  * Skills: one on/off list over settings that already exist (see shared/skills.ts). Each switch writes the same
@@ -23,6 +39,16 @@ export function SkillsPanel({ rows, onToggle, onMore, intro, className, music }:
 }): React.JSX.Element {
   const [picking, setPicking] = useState(false)
   const musicOn = rows.some((row) => row.id === 'music' && row.on)
+  const ownTrack = Boolean(music?.track?.startsWith(OWN_MUSIC_PREFIX))
+  // The member's own tracks, to tell when the chosen one was removed (Settings → My music).
+  const [own, setOwn] = useState<{ id: string }[] | null>(null)
+  useEffect(() => {
+    if (!musicOn || !ownTrack) return
+    let live = true
+    getApi().music.list().then((list) => { if (live) setOwn(list.own) }).catch(() => { /* shown as chosen */ })
+    return () => { live = false }
+  }, [musicOn, ownTrack, picking])
+  const missing = musicTrackMissing(music?.track ?? null, own)
   return (
     <section aria-labelledby="skills-title" className={cn('glass-tile rounded-2xl p-3', className)} data-testid="skills-panel">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
@@ -55,13 +81,13 @@ export function SkillsPanel({ rows, onToggle, onMore, intro, className, music }:
         <div className="mt-2 rounded-xl bg-white/[0.03] px-3 py-2" data-testid="skills-music">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="flex min-w-0 items-center gap-1.5 text-2xs text-ink-muted"><Music2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-              Music: <span className="truncate font-medium text-ink">{musicTrackLabel(music.track ?? MUSIC_TRACKS[0].id)}</span></p>
+              Music: <span className="truncate font-medium text-ink">{missing ? 'Your track was removed. Choose another.' : musicTrackLabel(music.track ?? MUSIC_TRACKS[0].id)}</span></p>
             <button type="button" aria-expanded={picking} onClick={() => setPicking(!picking)} className="rounded text-2xs font-medium text-accent hover:underline focus-visible:underline">
-              {picking ? 'Done' : 'Change music'}
+              {picking ? 'Done' : missing ? 'Choose music' : 'Change music'}
             </button>
           </div>
-          {picking && <MusicPicker className="mt-2" value={music.track ?? MUSIC_TRACKS[0].id}
-            onChange={(track) => { if (track === null) onToggle('music', false); music.onChange(track); if (track === null) setPicking(false) }} />}
+          {picking && <MusicPicker className="mt-2" value={missing ? null : music.track ?? MUSIC_TRACKS[0].id}
+            onChange={(track) => { pickSkillsMusic(track, onToggle, music.onChange); if (track === null) setPicking(false) }} />}
         </div>
       )}
     </section>

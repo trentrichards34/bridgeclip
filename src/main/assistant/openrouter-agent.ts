@@ -43,6 +43,13 @@ export interface OpenRouterTurnOptions {
   callTool: (name: string, args: Record<string, unknown>) => Promise<{ text: string; isError?: boolean }>
   /** What OpenRouter reported this message cost in all (its steps added up), once the turn ends. */
   onCost?: (usd: number) => void
+  /**
+   * Model round trips for this message (default 24). When set, the last one is text-only (the model can't call
+   * a tool), so the turn ends with an answer instead of an error.
+   */
+  maxSteps?: number
+  /** True once no more tool calls will be accepted: the next round trip is the last, text-only. */
+  toolsDone?: () => boolean
 }
 
 /** A failure to show the user as is. */
@@ -98,7 +105,7 @@ async function errorBody(response: Response): Promise<string | null> {
 }
 
 /** One streamed completion: its text and the tool calls it asked for. */
-async function complete(options: OpenRouterTurnOptions, messages: OpenRouterMessage[], newParagraph: boolean, spent: { usd: number }): Promise<{ text: string; calls: PendingCall[] }> {
+async function complete(options: OpenRouterTurnOptions, messages: OpenRouterMessage[], newParagraph: boolean, spent: { usd: number }, textOnly = false): Promise<{ text: string; calls: PendingCall[] }> {
   let response: Response
   try {
     response = await (options.fetch ?? fetch)(options.url ?? OPENROUTER_CHAT_URL, {
@@ -116,7 +123,7 @@ async function complete(options: OpenRouterTurnOptions, messages: OpenRouterMess
         model: options.model,
         messages,
         tools: options.tools.map((tool) => ({ type: 'function', function: tool })),
-        tool_choice: 'auto',
+        tool_choice: textOnly ? 'none' : 'auto',
         stream: true,
         // Only route to providers that support tool calling for this model.
         provider: { require_parameters: true }
@@ -204,10 +211,13 @@ export async function runOpenRouterTurn(options: OpenRouterTurnOptions): Promise
   let wroteText = false
   const spent = { usd: 0 }
   try {
-    for (let step = 0; step < MAX_STEPS; step++) {
-      const { text, calls } = await complete(options, messages, wroteText, spent)
+    const steps = options.maxSteps ?? MAX_STEPS
+    for (let step = 0; step < steps; step++) {
+      const textOnly = options.maxSteps !== undefined && (step === steps - 1 || options.toolsDone?.() === true)
+      const { text, calls } = await complete(options, messages, wroteText, spent, textOnly)
       if (text) wroteText = true
-      if (calls.length === 0) {
+      // The last round trip: tool calls (a model that ignores tool_choice) aren't run.
+      if (calls.length === 0 || textOnly) {
         return wroteText ? null : 'The model ended without replying. Try again or choose another model.'
       }
       const toolCalls = calls.map((call, index) => ({
@@ -225,7 +235,7 @@ export async function runOpenRouterTurn(options: OpenRouterTurnOptions): Promise
         messages.push({ role: 'tool', tool_call_id: call.id, content: result.isError ? `Error: ${result.text}` : result.text })
       }
     }
-    return `The model took more than ${MAX_STEPS} steps without finishing, so it was stopped. Ask again with a narrower request.`
+    return `The model took more than ${steps} steps without finishing, so it was stopped. Ask again with a narrower request.`
   } catch (error) {
     if (options.signal.aborted) return null
     if (error instanceof OpenRouterError) return error.message

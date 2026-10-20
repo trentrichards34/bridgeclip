@@ -106,6 +106,23 @@ def test_numbers_in_digits_and_words():
     assert er.unsupported_numbers("$50 a day", "he said fifteen billion") == [50]
 
 
+def test_numbers_in_decimals_halves_and_a_hundred():
+    assert er.numbers_in("three point five") == [3.5]
+    assert er.numbers_in("one point two million") == [1.2e6]
+    assert er.numbers_in("three point one four") == [3.14]
+    assert er.numbers_in("one and a half million") == [1.5e6]
+    assert er.numbers_in("half a million views") == [5e5]
+    assert er.numbers_in("a hundred") == [100]
+    assert er.numbers_in("a thousand people and a million views") == [1000, 1e6]
+    assert er.numbers_in("two hundred and fifty") == [250]
+    # Words that only look like part of a number stay out.
+    assert er.numbers_in("the point is five") == [5]
+    assert er.numbers_in("it was a big deal") == []
+    assert er.numbers_in("one and then two") == [1, 2]
+    assert er.unsupported_numbers("3.5 million", "it hit three point five million") == []
+    assert er.unsupported_numbers("1.5M", "one and a half million") == []
+
+
 # ---------------------------------------------------------------------------
 # The model's plan, checked against the words
 # ---------------------------------------------------------------------------

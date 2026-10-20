@@ -29,6 +29,7 @@ import { join } from 'path'
 import { parseEditorProject, type EditorCandidate, type EditorProject } from '../shared/clip-editor'
 import { renderCandidateGraphics, type RenderedGraphic } from './graphics-render'
 import { placementAvoidingFace } from '../shared/graphic-layout'
+import type { GraphicPlacement } from '../shared/motion-graphics'
 import { withRunLock } from './ctas'
 import { logger } from './logger'
 
@@ -153,8 +154,12 @@ function layGraphics(run: string, worker: RunGraphicsWorker, clips: LayRequest[]
   })
 }
 
-/** Record in job_output.json only the cards that are now in each clip (temp file + rename; the caller holds the run's lock). */
-function recordDrawn(run: string, drawn: Map<number, Set<string>>): void {
+/**
+ * Record in job_output.json only the cards that are now in each clip, each where it was laid (a card may have
+ * been moved off the speaker's face), so the editor shows and re-bakes what the clip has (temp file + rename;
+ * the caller holds the run's lock). `drawn`: per clip index, card id to the placement it was drawn with.
+ */
+function recordDrawn(run: string, drawn: Map<number, Map<string, GraphicPlacement>>): void {
   const file = join(run, 'job_output.json')
   if (!regularFile(file, MAX_JSON_BYTES)) return
   const raw = JSON.parse(readFileSync(file, 'utf8')) as { metrics?: { clip_layouts?: unknown } }
@@ -165,8 +170,12 @@ function recordDrawn(run: string, drawn: Map<number, Set<string>>): void {
     if (!entry || typeof entry !== 'object' || !Array.isArray((entry as Record<string, unknown>).graphics)) continue
     const e = entry as Record<string, unknown>
     const ids = drawn.get(e.clip_index as number)
-    const kept = ids ? (e.graphics as { id?: unknown }[]).filter((g) => typeof g?.id === 'string' && ids.has(g.id)) : []
+    const kept = ids ? (e.graphics as { id?: unknown; placement?: unknown }[]).filter((g) => typeof g?.id === 'string' && ids.has(g.id)) : []
     if (kept.length !== (e.graphics as unknown[]).length) changed = true
+    for (const g of kept) {
+      const placement = ids?.get(g.id as string)
+      if (placement && g.placement !== placement) { g.placement = placement; changed = true }
+    }
     if (kept.length) e.graphics = kept
     else { delete e.graphics; delete e.teaser_ms }
   }
@@ -199,7 +208,7 @@ async function applyNow(run: string, worker: RunGraphicsWorker, options: RunGrap
   const total = candidates.reduce((n, c) => n + (c.graphics?.length ?? 0), 0)
   const failed = new Set<number>()
   const requests: LayRequest[] = []
-  const ids = new Map<number, Set<string>>()
+  const ids = new Map<number, Map<string, GraphicPlacement>>()
   let drawnCount = 0, cancelled = false
   options.onProgress?.('draw', 0, total)
   for (const c of candidates) {
@@ -225,14 +234,15 @@ async function applyNow(run: string, worker: RunGraphicsWorker, options: RunGrap
     if (rendered.length < (c.graphics?.length ?? 0)) failed.add(index)
     if (rendered.length) {
       requests.push({ clip_index: index, graphics: rendered.map((g) => ({ file: g.file, start_ms: g.start_ms + extra.offset_ms, duration_ms: g.duration_ms })) })
-      ids.set(index, new Set(rendered.map((g) => g.id)))
+      const placements = new Map((c.graphics ?? []).map((g) => [g.id, g.placement] as const))
+      ids.set(index, new Map(rendered.flatMap((g) => placements.has(g.id) ? [[g.id, placements.get(g.id) as GraphicPlacement] as const] : [])))
     }
   }
-  const applied = new Map<number, Set<string>>()
+  const applied = new Map<number, Map<string, GraphicPlacement>>()
   if (requests.length && !cancelled) {
     const result = await layGraphics(run, worker, requests, options)
     cancelled = result.cancelled
-    for (const index of result.done) applied.set(index, ids.get(index) ?? new Set())
+    for (const index of result.done) applied.set(index, ids.get(index) ?? new Map())
   }
   try { recordDrawn(run, applied) } catch (error) { logger.warn('job.graphics.recordFailed', { message: String((error as Error)?.message ?? error).slice(0, 200) }) }
   removePlan(run)

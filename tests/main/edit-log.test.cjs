@@ -160,3 +160,17 @@ test('wording: plain, and numbers come from the data', () => {
   assert.equal(log.logClock(864000), '14:24')
   assert.equal(log.graphicPhrase({ template: 'title', fields: { text: 'Raise your prices now please everyone' } }), '“Raise your prices now p…” title')
 })
+
+test('Undo after a Restore takes back only what the Restore changed, and edits made since stay', () => {
+  const decisions = { cut: [1, 2, 3], endOnCta: true, hookText: 'Old hook', popups: [] }
+  const { state, undo } = log.applyRestore(decisions, { endOnCta: false })
+  assert.equal(state.endOnCta, false)
+  // An edit after the Restore, to a field it didn't set.
+  const later = { ...state, cut: [1, 2, 3, 9], hookText: 'New hook' }
+  assert.deepEqual(plain(log.undoRestore(later, undo)), { cut: [1, 2, 3, 9], endOnCta: true, hookText: 'New hook', popups: [] })
+  // The field the Restore set was changed again: Undo is no longer offered (it would throw that change away).
+  const changed = { ...later, endOnCta: true }
+  assert.equal(log.restoreStillApplied(changed, undo), false)
+  assert.equal(log.undoRestore(changed, undo), null)
+  assert.equal(log.restoreStillApplied(later, undo), true)
+})

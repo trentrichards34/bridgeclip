@@ -2,6 +2,7 @@ import { execFile } from 'child_process'
 import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync } from 'fs'
 import { dirname, isAbsolute, join, resolve } from 'path'
 import { promisify } from 'util'
+import { randomUUID } from 'crypto'
 import { getJobOutput } from './file-manager'
 import { loadSettings } from './settings-store'
 import { assertMediaPath, authorizeMedia, isWithinDirectory } from './security'
@@ -36,9 +37,15 @@ export function keptSource(run: string): string | null {
 async function cleanMoment(run: string, source: string, clipIndex: number, startMs: number, endMs: number): Promise<string> {
   const folder = join(run, '.remix-sources')
   mkdirSync(folder, { recursive: true, mode: 0o700 })
+  // Only a real folder in the run: a link put there could point the cut anywhere.
+  const kind = lstatSync(folder)
+  if (kind.isSymbolicLink() || !kind.isDirectory()) throw new Error('The clean copy\'s folder is not usable.')
+  startMs = Math.max(0, startMs)
+  if (!(endMs - startMs >= 500)) throw new Error('The moment is too short.')
   const target = join(folder, `clip_${String(clipIndex).padStart(2, '0')}-${Math.round(startMs)}-${Math.round(endMs)}.mp4`)
   try { if (runFile(target, folder) && statSync(target).mtimeMs >= statSync(source).mtimeMs && statSync(target).size > 0) return target } catch { /* Make it again. */ }
-  const partial = `${target}.partial.mp4`
+  // Its own partial file: two cuts of the same moment at once never write one file.
+  const partial = join(folder, `.${randomUUID()}.partial.mp4`)
   try {
     await execFileAsync(resolveBinary('ffmpeg'), ['-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
       '-ss', (startMs / 1000).toFixed(3), '-i', source, '-t', ((endMs - startMs) / 1000).toFixed(3),

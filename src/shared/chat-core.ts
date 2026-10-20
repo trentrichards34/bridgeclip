@@ -11,6 +11,8 @@ export const CHAT_MAX_MESSAGE_CHARS = 1000
 export const CHAT_MAX_TURNS = 20
 /** Tool calls one message may make (edits and play requests). */
 export const CHAT_MAX_TOOL_CALLS = 12
+/** Model round trips one message may take (each batch of tool calls is one; the last is text-only). */
+export const CHAT_MAX_STEPS = 6
 
 /** One checked change: a plain sentence for the change card, plus what the place needs to apply it. */
 export interface ChatStepBase { tool: string; summary: string }
@@ -69,13 +71,21 @@ export function chatText(value: unknown, name: string, max: number): string {
   return clean
 }
 
-/** "About 1¢ per message" from a per-message estimate. */
-export function chatCostNote(estimateUsd: number | null): string {
+function chatPrice(usd: number): string {
+  const cents = usd * 100
+  return cents < 0.5 ? 'less than a cent' : cents < 99.5 ? `about ${Math.round(cents)}¢` : `about $${usd.toFixed(2)}`
+}
+
+/**
+ * "About 1¢ per message" from a per-message estimate; with `mostUsd` (a message that uses every round trip it
+ * may), also what one can cost at most when that reads differently.
+ */
+export function chatCostNote(estimateUsd: number | null, mostUsd?: number | null): string {
   if (estimateUsd === null || !Number.isFinite(estimateUsd) || estimateUsd <= 0) return 'Each message uses your OpenRouter credit.'
-  const cents = estimateUsd * 100
-  if (cents < 0.5) return 'Each message costs less than a cent of your OpenRouter credit.'
-  if (cents < 99.5) return `Each message costs about ${Math.round(cents)}¢ of your OpenRouter credit.`
-  return `Each message costs about $${estimateUsd.toFixed(2)} of your OpenRouter credit.`
+  const typical = chatPrice(estimateUsd)
+  const most = typeof mostUsd === 'number' && Number.isFinite(mostUsd) && mostUsd > estimateUsd ? chatPrice(mostUsd).replace(/^about /, '') : null
+  const start = typical === 'less than a cent' ? 'Each message costs less than a cent' : `Each message costs ${typical}`
+  return most && most !== typical.replace(/^about /, '') ? `${start} of your OpenRouter credit, up to ${most} when it makes many changes.` : `${start} of your OpenRouter credit.`
 }
 
 /** Steps from another process: each with a tool name and summary (the place checks what they change before use). */

@@ -13,7 +13,7 @@ import { wordsAtPlayhead } from './ClipGraphics'
 import { ReelGraphics, type ReelGraphicItem, type ReelGraphicPatch } from './ReelGraphics'
 import { CardEditor, EditStylePicker, MyImages } from './EditExtras'
 import { EditLog } from './EditLog'
-import { editRecordingLog } from '../../shared/edit-log'
+import { applyRestore, editRecordingLog, restoreStillApplied, undoRestore, type RestoreUndo } from '../../shared/edit-log'
 import { SkillsPanel } from './SkillsPanel'
 import { editSkillPatch, editSkillRows } from '../../shared/skills'
 import { hasBrandMark } from '../../shared/brand-kit'
@@ -70,8 +70,10 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   useEffect(() => { setImages(status.images ?? []) }, [status.images])
   const [pinning, setPinning] = useState<string | null>(null)
   useEffect(() => { useEditRecordingStore.getState().saveReview(status.id, decisions) }, [status.id, decisions])
-  // "What changed": the choices before the last Restore, so it can be taken back.
-  const [beforeRestore, setBeforeRestore] = useState<EditDecisions | null>(null)
+  // "What changed": what the last Restore changed, so it (and only it) can be taken back.
+  const [lastRestore, setLastRestore] = useState<RestoreUndo<EditDecisions> | null>(null)
+  // A field the Restore set changed again since: Undo would throw that away, so it's no longer offered.
+  useEffect(() => { if (lastRestore && !restoreStillApplied(decisions, lastRestore)) setLastRestore(null) }, [decisions, lastRestore])
   const logLines = useMemo(() => editRecordingLog(plan, decisions), [plan, decisions])
   const [hooksOpen, setHooksOpen] = useState(false)
   const [lookOpen, setLookOpen] = useState(false)
@@ -185,8 +187,8 @@ export function EditReview({ status, brand, look, onLook, onError }: {
       {status.warnings.map((warning) => <Callout key={warning} tone="warning" className="mt-3">{warning}</Callout>)}
 
       <EditLog className="mt-4" lines={logLines} disabled={making}
-        onRestore={(line) => { if (!line.restore) return; setBeforeRestore(decisions); setDecisions((current) => ({ ...current, ...line.restore })) }}
-        onUndo={beforeRestore ? () => { setDecisions(beforeRestore); setBeforeRestore(null) } : undefined} />
+        onRestore={(line) => { if (!line.restore) return; const { state, undo } = applyRestore(decisions, line.restore); setLastRestore(undo); setDecisions(state) }}
+        onUndo={lastRestore ? () => { const back = undoRestore(decisions, lastRestore); if (back) setDecisions(back); setLastRestore(null) } : undefined} />
       <SkillsPanel className="mt-4" rows={editSkillRows(plan, { ...decisions, look })}
         music={{ track: look.musicTrack ?? null, onChange: (track) => onLook({ ...look, musicTrack: track ?? undefined }) }}
         onToggle={(id, on) => {

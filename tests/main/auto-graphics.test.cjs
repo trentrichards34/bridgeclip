@@ -164,3 +164,21 @@ test('bands stay clear of an Automatic run’s handle and title card', () => {
   assert.equal(layout.handleEdge({ automatic: { brand_mark: { position: 'bottom-right' } } }), 'bottom')
   assert.equal(layout.handleEdge({}), null)
 })
+
+test('a card moved off the speaker’s face is recorded where it was drawn, so the editor matches the clip', async (t) => {
+  const { dir, cleanup } = tempDir('bridgeclip-auto-graphics-')
+  t.after(cleanup)
+  const run = makeRun(dir)
+  const planFile = path.join(run, 'auto-graphics.json')
+  const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'))
+  // The face fills the top of clip 0's picture, where both cards were planned.
+  plan.clips['clip-000'] = { offset_ms: 0, top: 0, face: [0.25, 0.02, 0.5, 0.4] }
+  fs.writeFileSync(planFile, JSON.stringify(plan))
+  const { mod } = load()
+  await mod.applyRunGraphics(run, WORKER)
+  const layouts = JSON.parse(fs.readFileSync(path.join(run, 'job_output.json'), 'utf8')).metrics.clip_layouts
+  assert.equal(layouts[0].graphics.length, 2)
+  for (const g of layouts[0].graphics) assert.notEqual(g.placement, 'top', 'recorded where it was laid, not where it was planned')
+  // A clip without a face keeps its planned placement.
+  assert.deepEqual(layouts[1].graphics.map((g) => g.placement), ['top'])
+})
