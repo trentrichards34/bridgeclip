@@ -8,6 +8,7 @@
 import { CAPTION_PRESETS } from '../../shared/caption-presets'
 import { DEFAULT_HANDLE_POSITION, HANDLE_POSITIONS, hasBrandMark, type BrandLook, type HandlePosition } from '../../shared/brand-kit'
 import { DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, isHexColor, type HeadlineFont, type HeadlineLook, type HeadlineLookStyle } from '../../shared/headline-look'
+import { LOOK_EXTRAS, LOOK_EXTRA_IDS, parseLookExtras, type LookExtraId } from '../../shared/look-extras'
 
 /** The hook text choices: the engine's headline looks, plus Create's title card. */
 export type HookChoice = HeadlineLookStyle | 'card'
@@ -23,6 +24,8 @@ export interface BoardStyle {
   ctaId: string | null
   keyword: string
   offer: string
+  /** Extras on top of the look (look-extras.ts), in app order. */
+  extras: LookExtraId[]
 }
 
 export const HOOK_LABELS: Record<HookChoice, string> = {
@@ -74,7 +77,9 @@ export const CURATED_COMBOS: readonly CuratedCombo[] = [
   { id: 'sunset-retro', name: 'Sunset retro', captionPreset: 'retro', hook: 'brand', font: 'serif', color: '#FF7A1A' },
   { id: 'clean-card', name: 'Clean card', captionPreset: 'paper', hook: 'white', font: 'serif', color: '#6D28D9' },
   { id: 'high-energy', name: 'High energy', captionPreset: 'hype', hook: 'black', font: 'condensed', color: '#39FF6A' },
-  { id: 'old-print', name: 'Old print', captionPreset: 'vintage', hook: 'brand', font: 'serif', color: '#FFB547' }
+  { id: 'old-print', name: 'Old print', captionPreset: 'vintage', hook: 'brand', font: 'serif', color: '#FFB547' },
+  { id: 'hand-drawn', name: 'Hand-drawn', captionPreset: 'pop', hook: 'floating', font: 'marker', color: '#FFFFFF' },
+  { id: 'magazine', name: 'Magazine', captionPreset: 'sweep', hook: 'black', font: 'sans_serif_accent', color: '#FFFFFF' }
 ]
 
 export function comboPatch(combo: CuratedCombo, hooks: readonly HookChoice[] = ['white', 'black', 'brand', 'floating']): Partial<BoardStyle> {
@@ -145,6 +150,20 @@ export function colorName(color: string, brandColor?: string | null): string {
   return preset ? `${preset.name} ${upper}` : `Custom ${upper}`
 }
 
+/** Turns one extra on or off (the list stays in app order). */
+export function toggleExtra(extras: readonly LookExtraId[], id: LookExtraId): LookExtraId[] {
+  const next = new Set(extras)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  return LOOK_EXTRA_IDS.filter((item) => next.has(item))
+}
+
+/** "Keyword pill, Progress bar" (or "None"). */
+export function extrasName(extras: readonly LookExtraId[]): string {
+  const names = LOOK_EXTRAS.filter((extra) => extras.includes(extra.id)).map((extra) => extra.label)
+  return names.length ? names.join(', ') : 'None'
+}
+
 export function cornerName(position: HandlePosition | undefined): string {
   return HANDLE_POSITIONS.find((item) => item.id === (position ?? DEFAULT_HANDLE_POSITION))?.label ?? 'Bottom right'
 }
@@ -156,6 +175,8 @@ export interface BoardRows {
   handle?: boolean
   cta?: boolean
   keyword?: boolean
+  /** The "Extras" row (pick as many as you like). */
+  extras?: boolean
 }
 
 /** "Pop captions · White bar · Clean font · Handle top right · Ends with Free guide · Comment SALES" */
@@ -169,6 +190,7 @@ export function styleSummary(value: BoardStyle, rows: BoardRows, extra: { brandC
   if (rows.handle && extra.hasMark) parts.push(value.handle ? `Handle ${cornerName(extra.corner).toLowerCase()}` : 'No handle')
   if (rows.cta) parts.push(value.ctaId ? `Ends with ${extra.ctaName ?? 'your CTA clip'}` : 'No CTA clip')
   if (rows.keyword && value.keyword.trim()) parts.push(`Comment ${value.keyword.trim()}`)
+  if (rows.extras && value.extras.length) parts.push(`Extras: ${extrasName(value.extras)}`)
   return parts.join(' · ')
 }
 
@@ -263,13 +285,14 @@ export interface LookFields {
   ctaId?: string | null
   ctaKeyword?: string
   ctaOffer?: string
+  lookExtras?: LookExtraId[]
 }
 
 export function boardFromLook(form: LookFields): BoardStyle {
   return {
     captions: form.includeCaptions, captionPreset: form.captionPreset, hook: hookFromLook(form.headlineLook, LOOK_HOOKS),
     font: form.headlineLook.font, color: form.headlineLook.color, handle: form.showHandle,
-    ctaId: form.ctaId ?? null, keyword: form.ctaKeyword ?? '', offer: form.ctaOffer ?? ''
+    ctaId: form.ctaId ?? null, keyword: form.ctaKeyword ?? '', offer: form.ctaOffer ?? '', extras: parseLookExtras(form.lookExtras)
   }
 }
 
@@ -290,5 +313,6 @@ export function lookPatch(form: LookFields, patch: Partial<BoardStyle>): Partial
   if (patch.ctaId !== undefined) out.ctaId = patch.ctaId
   if (patch.keyword !== undefined) out.ctaKeyword = patch.keyword
   if (patch.offer !== undefined) out.ctaOffer = patch.offer
+  if (patch.extras !== undefined) out.lookExtras = [...patch.extras]
   return out
 }

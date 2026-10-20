@@ -13,6 +13,7 @@ export const SCREEN_FOCUS_MODES: readonly ScreenFocus[] = ['smart', 'split', 'pr
 
 import type { RunDiagnostics } from './run-diagnostics'
 import type { HeadlineLook } from './headline-look'
+import type { LookExtraId } from './look-extras'
 import type { PipelineStage } from './job-progress'
 import type { JobOutput } from './job-output'
 import type { CaptionLanguage } from './caption-language'
@@ -47,6 +48,8 @@ export interface ClipJobRequest {
   titleStyle?: TitleStyle
   /** How the headline looks (bar color or floating text, and font). Older requests: the white bar. */
   headlineLook?: HeadlineLook
+  /** Extras on top of the look (keyword pill, progress bar, ...): look-extras.ts. Missing: none. */
+  lookExtras?: LookExtraId[]
   /** A call to action from the member's library, added to the end of every clip. */
   ctaId?: string
   /** Gameplay split (9:16): a background-library file looped under the speaker. */

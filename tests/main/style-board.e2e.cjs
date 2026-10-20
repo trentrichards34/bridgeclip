@@ -12,7 +12,7 @@ const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
 const KIT = 'a1b2c3d4e5f60718'
 const TEXT = 'Core promise: pull-ups for busy parents. Voice: plain and warm.'
 // The curated combos' caption names (src/renderer/lib/style-board.ts CURATED_COMBOS).
-const COMBO_CAPTIONS = ['Pop', 'Headline', 'Spotlight', 'Impact', 'Editorial', 'Glow', 'Neon', 'Lime', 'Retro', 'Paper', 'Hype', 'Vintage']
+const COMBO_CAPTIONS = ['Pop', 'Headline', 'Spotlight', 'Impact', 'Editorial', 'Glow', 'Neon', 'Lime', 'Retro', 'Paper', 'Hype', 'Vintage', 'Sweep']
 
 function ffmpegPath() {
   for (const candidate of [process.env.FFMPEG_PATH, 'ffmpeg']) {
@@ -26,6 +26,7 @@ function ffmpegPath() {
 async function shot(app, name) {
   const dir = process.env.BRIDGECLIP_E2E_SHOTS
   if (!dir) return
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('document.fonts.ready.then(() => true)')).catch(() => null)
   fs.mkdirSync(dir, { recursive: true })
   await new Promise((resolve) => setTimeout(resolve, 900))
   const png = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64')).catch(() => null)
@@ -38,6 +39,7 @@ const checked = async (locator) => (await locator.getAttribute('aria-checked')) 
 const noSidewaysRows = (page) => page.evaluate(() => {
   const board = document.querySelector('[data-testid="style-board"]')?.getBoundingClientRect()
   return [...document.querySelectorAll('[data-testid="style-board"] [role="radiogroup"]')]
+    .concat([...document.querySelectorAll('[data-testid="style-board"] [role="group"][aria-label^="Extras"]')])
     .filter((group) => group.scrollWidth > group.clientWidth + 1 || [...group.children].some((tile) => tile.getBoundingClientRect().right > board.right + 1))
     .map((group) => group.getAttribute('aria-label'))
 })
@@ -141,8 +143,52 @@ test('the style board picks the look in one place, previews it and sends the sam
   await page.getByRole('radiogroup', { name: 'Hook text font' }).getByRole('radio', { name: 'Bold condensed' }).click()
   assert.match(await summary.innerText(), /Brand color · Bold condensed font · Violet #7C5CFF/)
   // A title card or no hook text leaves the font for later.
+  // The new fonts: hand-drawn marker capitals, and a bold sans with one word in an italic serif.
+  const fonts = page.getByRole('radiogroup', { name: 'Hook text font' })
+  await fonts.getByRole('radio', { name: 'Marker' }).click()
+  assert.match(await summary.innerText(), /Marker font/)
+  assert.match(await board.getByTestId('style-preview-bar').locator('span').first().evaluate((el) => getComputedStyle(el).fontFamily), /Caveat Brush/)
+  assert.equal(await page.evaluate(() => document.fonts.load('40px "Caveat Brush"').then((list) => list.length > 0)), true, 'the bundled font loads')
+  await fonts.getByRole('radio', { name: 'Sans + italic serif' }).click()
+  assert.equal(await board.getByTestId('style-preview-bar').locator('[data-hook-accent]').innerText(), 'video')
+  // Every option tile is the member's own frame: the video's still, drawn once and copied into each tile.
+  await page.waitForFunction(() => [...document.querySelectorAll('[aria-label="Hook text font"] [data-look-tile] canvas')].some((canvas) => canvas.width > 0 && canvas.width !== 300))
+  assert.equal(await page.locator('[aria-label="Caption style"] [data-look-tile]').count(), 10)
   await hooks.getByRole('radio', { name: 'Title card' }).click()
   assert.equal(await page.getByRole('radiogroup', { name: 'Hook text font' }).getByRole('radio', { name: 'Clean' }).isDisabled(), true)
+
+  // Start from a ready-made look: the curated looks as tiles; pick one, then "Change anything" goes back to the rows.
+  const start = page.getByRole('radiogroup', { name: 'How to start' })
+  assert.equal(await checked(start.getByRole('radio', { name: /Build my own/ })), true)
+  await start.getByRole('radio', { name: /Start from a ready-made look/ }).click()
+  const looks = page.getByRole('radiogroup', { name: 'Ready-made look' })
+  await looks.getByRole('radio', { name: 'Magazine' }).click()
+  assert.match(await summary.innerText(), /^Sweep captions · Black bar · Sans \+ italic serif font/)
+  assert.equal(await page.getByRole('radiogroup', { name: 'Caption style' }).count(), 0)
+  await page.evaluate(() => { document.querySelector('[data-testid="style-board"]')?.scrollIntoView({ block: 'start' }); document.getElementById('page-scroll')?.scrollBy(0, -56) })
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 800))
+  await shot(app, 'look-1280x800-ready-made.png')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1024, 700))
+  await shot(app, 'look-1024x700-ready-made.png')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 1000))
+  await board.getByRole('button', { name: 'Change anything' }).click()
+  assert.equal(await checked(start.getByRole('radio', { name: /Build my own/ })), true)
+  await captions.waitFor()
+
+  // Extras: pick as many as you like (checkboxes); the summary, the preview and the request carry them.
+  const extras = page.getByRole('group', { name: 'Extras: pick as many as you like' })
+  await extras.getByRole('checkbox', { name: 'Progress bar' }).click()
+  await extras.getByRole('checkbox', { name: 'Keyword pill' }).click()
+  // Keyboard: Space toggles a focused tile.
+  await extras.getByRole('checkbox', { name: 'Comment box' }).focus()
+  await page.keyboard.press('Space')
+  assert.equal(await checked(extras.getByRole('checkbox', { name: 'Comment box' })), true)
+  await page.keyboard.press('Space')
+  assert.equal(await checked(extras.getByRole('checkbox', { name: 'Comment box' })), false)
+  assert.match(await summary.innerText(), /Extras: Keyword pill, Progress bar$/)
+  assert.equal(await preview.getAttribute('data-extras'), 'keyword_pill progress_bar')
+  await preview.getByTestId('look-extra-progress_bar').waitFor()
+  await preview.locator('[data-extra="pill"]').first().waitFor()
 
   // Shuffle only lands on curated combos.
   for (let i = 0; i < 4; i++) {
@@ -206,6 +252,16 @@ test('the style board picks the look in one place, previews it and sends the sam
   await board.scrollIntoViewIfNeeded()
   await page.evaluate(() => { document.querySelector('[data-testid="style-board"]')?.scrollIntoView({ block: 'start' }); document.getElementById('page-scroll')?.scrollBy(0, -56) })
   await shot(app, 'style-board-create.png')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 800))
+  await shot(app, 'look-1280x800-build.png')
+  await page.getByRole('group', { name: 'Extras: pick as many as you like' }).evaluate((el) => el.scrollIntoView({ block: 'center' }))
+  await shot(app, 'look-1280x800-extras.png')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1024, 700))
+  await page.evaluate(() => { document.querySelector('[data-testid="style-board"]')?.scrollIntoView({ block: 'start' }); document.getElementById('page-scroll')?.scrollBy(0, -56) })
+  await shot(app, 'look-1024x700-build.png')
+  await page.getByRole('group', { name: 'Extras: pick as many as you like' }).evaluate((el) => el.scrollIntoView({ block: 'center' }))
+  await shot(app, 'look-1024x700-extras.png')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 1000))
   if (process.env.BRIDGECLIP_E2E_SHOTS) {
     // The preview held still on the punch word (reduced motion), to set beside an engine render of the same look.
     await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -226,7 +282,7 @@ test('the style board picks the look in one place, previews it and sends the sam
   await page.getByText('Saved “Pull-up look”').first().waitFor()
   assert.equal(await page.getByRole('combobox', { name: 'Saved style' }).innerText(), 'Pull-up look')
 
-  // At 1024 wide every row still wraps inside the board.
+  // At 1024 wide every row still wraps inside the board (the extras too).
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1024, 700))
   await hooks.getByRole('radio', { name: 'Brand color' }).click()
   await board.getByRole('button', { name: /^Show all \d+/ }).click()
@@ -249,6 +305,7 @@ test('the style board picks the look in one place, previews it and sends the sam
 
   // The request: the same fields the separate pickers used to set.
   await steps.getByRole('button', { name: /Review/ }).click()
+  await page.getByText('Keyword pill, Progress bar').first().waitFor()
   await page.getByRole('button', { name: 'Generate clips', exact: true }).click()
   await page.getByRole('button', { name: 'View job' }).waitFor()
   const request = await app.evaluate(() => globalThis.styleTest.submitted)
@@ -262,6 +319,7 @@ test('the style board picks the look in one place, previews it and sends the sam
   assert.equal(request.ctaKeyword, 'PLAN')
   assert.equal(request.ctaOffer, 'my free plan')
   assert.equal(request.brandIdentityId, KIT)
+  assert.deepEqual(request.lookExtras, ['keyword_pill', 'progress_bar'])
 
   // Remix, you on camera: the board fills the folded "Look & call to action", with the template's layout under it.
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()

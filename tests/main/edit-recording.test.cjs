@@ -205,6 +205,11 @@ test('the review choices are checked against the plan before a reel is made', ()
   bad({ popups: [{ id: 0, on: true, text: '' }] }, /28 characters/)
   bad({ sounds: [{ id: 9, on: true }] }, /sounds/)
   bad({ look: { ...good.look, captionPreset: 'comic-sans' } }, /captions and look/)
+  bad({ look: { ...good.look, lookExtras: 'keyword_pill' } }, /extras/)
+  // Extras ride along with the look: known ids only, left out when none.
+  assert.equal('lookExtras' in shared.parseEditDecisions(good, plan).look, false)
+  assert.deepEqual(plain(shared.parseEditDecisions({ ...good, look: { ...good.look, lookExtras: ['comment_box', 'punch_zoom', 'glitter'] } }, plan).look.lookExtras),
+    ['punch_zoom', 'comment_box'])
   bad({ cut: [0, 1, 2, 3, 4, 5, 6, 7, 8] }, /Keep a few more words/)
 })
 

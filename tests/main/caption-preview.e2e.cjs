@@ -89,6 +89,21 @@ test('caption styles preview word progression in the style board, pause and play
     await page.screenshot({ path: path.join(shots, 'caption-preview.png') })
   }
 
+  // Extras on the caption line: the punch word in the keyword pill, the next word in an italic serif.
+  await presets.getByRole('radio', { name: 'Pop', exact: true }).click()
+  await board.getByRole('button', { name: 'Pause the preview' }).click()
+  const extras = page.getByRole('group', { name: 'Extras: pick as many as you like' })
+  await extras.getByRole('checkbox', { name: 'Keyword pill' }).click()
+  await extras.getByRole('checkbox', { name: 'Accent words' }).click()
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await preview.locator('[data-extra="pill"]', { hasText: /captions/i }).waitFor()
+  assert.equal(await preview.locator('[data-extra="pill"]').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(47, 107, 255)')
+  assert.match(await preview.locator('[data-extra="accent"]').evaluate((el) => getComputedStyle(el).fontFamily), /Instrument Serif/)
+  assert.equal(await preview.locator('[data-extra="accent"]').textContent(), 'come')
+  await extras.getByRole('checkbox', { name: 'Keyword pill' }).click()
+  await extras.getByRole('checkbox', { name: 'Accent words' }).click()
+
   // No captions: the preview has no caption line.
   await presets.getByRole('radio', { name: 'No captions' }).click()
   assert.equal(await preview.locator('[data-caption-preset]').count(), 0)

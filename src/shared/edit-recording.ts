@@ -11,6 +11,7 @@
 
 import { DEFAULT_CAPTION_PRESET, isCaptionPresetId } from './caption-presets'
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
+import { parseLookExtras, type LookExtraId } from './look-extras'
 
 export const EDIT_MAX_SOURCES = 5
 /** Per recording, and all takes together. */
@@ -97,6 +98,8 @@ export interface EditLook {
   headlineLook: HeadlineLook
   /** The brand's handle or logo in a corner. */
   showHandle: boolean
+  /** Extras on top of the look (keyword pill, progress bar, ...): look-extras.ts. Missing: none. */
+  lookExtras?: LookExtraId[]
 }
 
 export const DEFAULT_EDIT_LOOK: EditLook = { includeCaptions: true, captionPreset: DEFAULT_CAPTION_PRESET, headlineLook: DEFAULT_HEADLINE_LOOK, showHandle: false }
@@ -301,8 +304,11 @@ export function parseEditDecisions(value: unknown, plan: EditPlan): EditDecision
   })
   const look = record(value.look) ? value.look : null
   if (!look || typeof look.includeCaptions !== 'boolean' || !isCaptionPresetId(look.captionPreset) || typeof look.showHandle !== 'boolean') throw new Error('Choose your captions and look.')
+  if (look.lookExtras !== undefined && !Array.isArray(look.lookExtras)) throw new Error('Choose your extras again.')
+  const lookExtras = parseLookExtras(look.lookExtras)
   const decisions: EditDecisions = { cut, hookId: value.hookId as number | null, hookText, endOnCta: value.endOnCta, popups, sounds,
-    look: { includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: parseHeadlineLook(look.headlineLook), showHandle: look.showHandle } }
+    look: { includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: parseHeadlineLook(look.headlineLook), showHandle: look.showHandle,
+      ...(lookExtras.length ? { lookExtras } : {}) } }
   if (reelOrder(plan, decisions).length < 3) throw new Error('Keep a few more words: the reel would be almost empty.')
   return decisions
 }
