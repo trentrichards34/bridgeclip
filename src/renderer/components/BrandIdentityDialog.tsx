@@ -125,7 +125,7 @@ export function BrandIdentityDialog({ brand, onClose, onSaved }: { brand: BrandI
 
           <Field label="Caption style">
             <Select value={captionPreset} onChange={setCaptionPreset}
-              options={[{ value: '', label: 'Keep the form’s choice' }, ...CAPTION_PRESETS.map((preset) => ({ value: preset.id, label: preset.name, detail: preset.description }))]} />
+              options={[{ value: '', label: 'Pick each time I make a video' }, ...CAPTION_PRESETS.map((preset) => ({ value: preset.id, label: preset.name, detail: preset.description }))]} />
           </Field>
 
           <div>

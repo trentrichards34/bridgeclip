@@ -65,12 +65,12 @@ function whenText(post: PostRecord): string {
 export function PostsPage({ onNavigate }: { onNavigate: (page: Page) => void }): React.JSX.Element {
   const configured = useSettingsStore((s) => s.zernioConfigured)
   return (
-    <PageColumn width="narrow">
+    <PageColumn width="default">
       {configured ? (
         <PostsList onNavigate={onNavigate} />
       ) : (
         <>
-          <PageHeader title={TITLE} />
+          <PageHeader eyebrow="Workspace" title={TITLE} description="Clips you’ve posted or scheduled, and how they’re doing." />
           <EmptyState
             className="mt-4"
             icon={<Send />}
@@ -149,8 +149,9 @@ function PostsList({ onNavigate }: { onNavigate: (page: Page) => void }): React.
   return (
     <>
       <PageHeader
+        eyebrow="Workspace"
         title={TITLE}
-        className="items-center"
+        description="Clips you’ve posted or scheduled, and how they’re doing."
         actions={
           <div className="flex items-center gap-2">
           <Segmented<PostsView> size="sm" label="Posts view" value={view} onChange={changeView} options={[{ value: 'list', label: 'List' }, { value: 'calendar', label: 'Calendar' }]} />

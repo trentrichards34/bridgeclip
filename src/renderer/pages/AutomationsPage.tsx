@@ -404,8 +404,8 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
 
   if (!configured) {
     return (
-      <Page width="narrow">
-        <PageHeader title="Automations" description="Post the next clip from a content bank at set times each day." />
+      <Page width="default">
+        <PageHeader eyebrow="Workspace" title="Automations" description="Post the next clip from a content bank at set times each day." />
         <EmptyState
           className="mt-4"
           icon={<Workflow />}
@@ -448,8 +448,9 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
   ].filter((step): step is string => Boolean(step)) : []
 
   return (
-    <Page width="narrow">
+    <Page width="default">
       <PageHeader
+        eyebrow="Workspace"
         title="Automations"
         description="Post the next clip from a content bank at set times each day."
         actions={automations.length > 0 && <>

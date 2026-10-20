@@ -9,6 +9,7 @@ const { renderToStaticMarkup } = require('react-dom/server')
 const bundled = buildSync({
   stdin: {
     contents: `export { AvatarStudioPage } from './src/renderer/pages/AvatarStudioPage';
+      export { useAvatarList } from './src/renderer/pages/AvatarStudioPage';
       export { useSettingsStore } from './src/renderer/store/use-settings-store';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
@@ -23,10 +24,13 @@ const pending = () => new Promise(() => {})
 globalThis.window = { bridgeclip: { avatars: { list: pending, renderStatus: pending, onStatus: () => () => {} }, backgrounds: { list: pending }, settings: { load: pending } } }
 const mod = { exports: {} }
 new Function('module', 'exports', 'require', bundled)(mod, mod.exports, require)
-const { AvatarStudioPage, useSettingsStore } = mod.exports
+const { AvatarStudioPage, useAvatarList, useSettingsStore } = mod.exports
 
-function render(state) {
+const MAYA = { id: 'abcdef1234567890', name: 'Maya', kind: 'ai', description: '', portraitPath: '/tmp/maya.jpg', pictures: [], reactions: [], voice: { provider: 'elevenlabs', voice: 'Brian' }, clonedVoice: null, consentAt: null, createdAt: '2026-10-01T00:00:00.000Z' }
+
+function render(state, avatars = null) {
   useSettingsStore.setState(state)
+  useAvatarList.setState({ avatars })
   // Static rendering reads zustand's server snapshot; use the live state under test.
   const original = React.useSyncExternalStore
   React.useSyncExternalStore = (_subscribe, getSnapshot) => getSnapshot()
@@ -43,7 +47,26 @@ test('without an OpenRouter key the page explains what to add and disables gener
 })
 
 test('an OpenRouter key alone is enough; fal.ai is only for Recreate', () => {
-  const html = render({ falConfigured: false, openrouterConfigured: true })
+  const html = render({ falConfigured: false, openrouterConfigured: true }, [])
   assert.doesNotMatch(html, /Add your (OpenRouter|fal\.ai) key to start/)
   assert.match(html, /No avatars yet/)
+})
+
+test('with no avatar yet, the page leads to making one before the script steps', () => {
+  const html = render({ falConfigured: false, openrouterConfigured: true }, [])
+  assert.match(html, /<button[^>]*>.*?Create your avatar<\/button>/s)
+  assert.match(html, /Make an avatar first/)
+  assert.doesNotMatch(html, /1 · Script|Generate video/)
+  assert.doesNotMatch(html, /faceless channels/)
+})
+
+test('with an avatar, the look is the shared Style board, and lip-sync points to HeyGen', () => {
+  const html = render({ falConfigured: false, openrouterConfigured: true, heygenConfigured: false }, [MAYA])
+  for (const step of ['1 · Script', '2 · Look', '3 · Generate']) assert.ok(html.includes(step), step)
+  assert.match(html, /data-testid="style-board"/)
+  assert.match(html, /aria-label="Caption style"/)
+  assert.match(html, /aria-label="Hook text look"/)
+  assert.doesNotMatch(html, /Lip-sync is coming/)
+  assert.match(html, /make a HeyGen avatar \(Beta\)/)
+  assert.match(html, /Add HeyGen key/)
 })

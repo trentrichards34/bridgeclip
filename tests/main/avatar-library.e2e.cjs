@@ -79,7 +79,8 @@ test('a finished avatar video is in the Library with its hook text, ready to pos
   const hook = page.getByRole('textbox', { name: 'Hook text', exact: true })
   assert.equal(await hook.getAttribute('placeholder'), 'Stop buying coffee every morning.')
   await hook.fill('Stop buying coffee')
-  await page.getByRole('switch', { name: 'Captions' }).click()
+  // The same Style board as Create and Remix: captions off from its caption row.
+  await page.getByRole('radiogroup', { name: 'Caption style' }).getByRole('radio', { name: 'No captions' }).click()
   await page.getByRole('radiogroup', { name: 'Hook text look' }).getByRole('radio', { name: /Black bar/ }).click()
   await page.getByRole('radiogroup', { name: 'Call to action' }).waitFor()
   await page.getByRole('button', { name: 'Generate video' }).click()

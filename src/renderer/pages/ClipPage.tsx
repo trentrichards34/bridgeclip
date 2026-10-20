@@ -83,7 +83,7 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
         : !setup.ready ? 'Checking required tools…' : undefined
 
   return (
-    <Page width="narrow">
+    <Page width="default">
       <PageHeader
         eyebrow="Studio"
         title="Create clips"

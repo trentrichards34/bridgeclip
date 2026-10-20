@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, ExternalLink, KeyRound, LogIn, RefreshCw, Sparkles } from 'lucide-react'
+import { Check, ChevronRight, Copy, ExternalLink, KeyRound, LogIn, RefreshCw, Sparkles } from 'lucide-react'
 import {
   ASSISTANT_CLI_PROVIDERS,
   ASSISTANT_MODELS,
@@ -26,6 +26,22 @@ export function AssistantSettings(): React.JSX.Element {
   const store = useAssistantStore()
   const { statuses, checking, preferences, signIn, error } = store
   const preferred = chosenProvider(store)
+  // OpenRouter needs only a key, so it leads. Claude Code and Codex need a Terminal install;
+  // until one is installed it sits under a developer disclosure.
+  const notInstalled = ASSISTANT_CLI_PROVIDERS.filter((id) => statuses[id]?.state === 'not-installed')
+  const installed = ASSISTANT_CLI_PROVIDERS.filter((id) => !notInstalled.includes(id))
+  const providerRow = (id: AssistantCliProviderId): React.JSX.Element => (
+    <ProviderRow
+      key={id}
+      id={id}
+      status={statuses[id]}
+      signIn={signIn[id]}
+      preferred={preferred === id}
+      model={preferences.models[id] ?? ''}
+      onPrefer={() => void store.setPreferences({ provider: id })}
+      onModel={(model) => void store.setPreferences({ models: { ...preferences.models, [id]: model } })}
+    />
+  )
 
   useEffect(() => {
     void useAssistantStore.getState().init()
@@ -37,7 +53,7 @@ export function AssistantSettings(): React.JSX.Element {
       <PanelHeader
         icon={<IconTile tone="accent"><Sparkles /></IconTile>}
         title="Assistant"
-        description="Chat with CreatorClips using your Claude or ChatGPT subscription, or any OpenRouter model. CreatorClips runs Claude Code or Codex on this computer (your sign-in stays with them), or calls OpenRouter with your API key."
+        description="Chat with CreatorClips on your OpenRouter key, or on your Claude or ChatGPT subscription through Claude Code or Codex on this computer (your sign-in stays with them)."
         action={
           <Button size="sm" variant="ghost" icon={<RefreshCw className={cn('h-3.5 w-3.5', checking && 'animate-spin')} />} onClick={() => void store.refreshStatus(true)} disabled={checking}>
             Check again
@@ -45,18 +61,6 @@ export function AssistantSettings(): React.JSX.Element {
         }
       />
       <div className="mt-4 space-y-2">
-        {ASSISTANT_CLI_PROVIDERS.map((id) => (
-          <ProviderRow
-            key={id}
-            id={id}
-            status={statuses[id]}
-            signIn={signIn[id]}
-            preferred={preferred === id}
-            model={preferences.models[id] ?? ''}
-            onPrefer={() => void store.setPreferences({ provider: id })}
-            onModel={(model) => void store.setPreferences({ models: { ...preferences.models, [id]: model } })}
-          />
-        ))}
         <OpenRouterRow
           status={statuses.openrouter}
           preferred={preferred === 'openrouter'}
@@ -64,7 +68,17 @@ export function AssistantSettings(): React.JSX.Element {
           onPrefer={() => void store.setPreferences({ provider: 'openrouter' })}
           onModel={(model) => void store.setPreferences({ models: { ...preferences.models, openrouter: model } })}
         />
+        {installed.map(providerRow)}
       </div>
+      {notInstalled.length > 0 && (
+        <details className="group mt-3">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 px-1 text-xs text-ink-muted hover:text-ink [&::-webkit-details-marker]:hidden">
+            <ChevronRight aria-hidden className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+            Advanced, for developers: use {notInstalled.map((id) => ASSISTANT_PROVIDER_INFO[id].name).join(' or ')} with your subscription
+          </summary>
+          <div className="mt-2 space-y-2">{notInstalled.map(providerRow)}</div>
+        </details>
+      )}
       {error && <Callout tone="danger" className="mt-3" onDismiss={store.clearError}>{error}</Callout>}
       <p className="mt-3 px-1 text-2xs text-ink-subtle">
         The assistant gets CreatorClips’s own tools plus web search and page reading (to find videos and look things up): no shell or files. Anything that posts, deletes or uses your OpenRouter credit for clipping asks you in the chat first. Chatting on an OpenRouter model, and its web searches, are billed to your key.
