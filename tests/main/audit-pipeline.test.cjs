@@ -54,6 +54,7 @@ function startRunner({ child, env = process.env, onSpawn = () => {}, ctas = { ap
     '../shared/job-output': jobOutput,
     '../shared/run-diagnostics': loadShared('run-diagnostics.ts'),
     '../shared/headline-look': loadShared('headline-look.ts'),
+    '../shared/look-extras-engine': loadShared('look-extras-engine.ts'),
     '../shared/job-progress': loadShared('job-progress.ts'),
     './run-history': runHistory,
     '../shared/job-contract': jobContract,

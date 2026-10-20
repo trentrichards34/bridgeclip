@@ -13,10 +13,10 @@ export const SCREEN_FOCUS_MODES: readonly ScreenFocus[] = ['smart', 'split', 'pr
 
 import type { RunDiagnostics } from './run-diagnostics'
 import type { HeadlineLook } from './headline-look'
-import type { LookExtraId } from './look-extras'
 import type { PipelineStage } from './job-progress'
 import type { JobOutput } from './job-output'
 import type { CaptionLanguage } from './caption-language'
+import type { LookExtraId } from './look-extras'
 
 /** Options for one clipping run, as the Create wizard submits them. */
 export interface ClipJobRequest {

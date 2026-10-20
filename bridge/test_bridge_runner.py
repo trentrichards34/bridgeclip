@@ -92,6 +92,14 @@ class BridgeTests(unittest.TestCase):
             self.assertTrue(asyncio.run(bridge.run(self.config(screen_focus="presenter"))))
         self.assertEqual(requests[-1]["screen_focus"], "presenter")
 
+    def test_look_extras_are_checked_and_passed_on(self):
+        checked = bridge.validate_config(self.config(look_extras=["progress_bar", "glow", "punch_zoom"], look_extras_color="#2f6bff"))
+        self.assertEqual((checked["look_extras"], checked["look_extras_color"]), (["punch_zoom", "progress_bar"], "#2F6BFF"))
+        self.assertEqual((bridge.validate_config(self.config())["look_extras"], bridge.validate_config(self.config())["look_extras_color"]), ([], None))
+        for bad in ({"look_extras": "punch_zoom"}, {"look_extras": ["progress_bar"], "look_extras_color": "blue"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bridge.validate_config(self.config(**bad))
+
     def test_screen_focus_is_smart_split_or_presenter(self):
         for value in ("smart", "split", "presenter"):
             self.assertEqual(bridge.validate_config(self.config(screen_focus=value))["screen_focus"], value)

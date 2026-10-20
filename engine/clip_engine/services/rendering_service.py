@@ -42,6 +42,8 @@ from clip_engine.services.framing_trace import make_trace, save_trace
 from clip_engine.services.editorial_context import window_protection, record_prevented_cuts
 from clip_engine.services.editorial_review import review_retained_clip
 from clip_engine.services.jev_service import JevService
+from clip_engine.services import look_extras as extras_module
+from clip_engine.services.look_extras import LookExtras
 from clip_engine.services.coherence_review import CoherenceReviewer, CoherenceRejected
 from clip_engine.services.media_process import MEDIA_INPUT_OPTIONS, PROBE_TIMEOUT_SECONDS, media_process, run_media, validate_video_dimensions
 from clip_engine.services.layout_renderer import (
@@ -309,6 +311,8 @@ class RenderRequest:
     # shown as "Comment KEYWORD" for the last seconds of the clip.
     brand_mark: Optional[dict] = None
     cta_keyword: str = ""
+    # Look extras (see look_extras.LookExtras): motion effects on top of the look; None or empty for none.
+    look_extras: Optional[Any] = None
     editorial_service: Optional[JevService] = field(default=None, repr=False)
     coherence_reviewer: Optional[CoherenceReviewer] = field(default=None, repr=False)
 
@@ -769,11 +773,16 @@ class RenderingService:
             video_speed=request.video_speed,
         )
         looped_inputs: list[str] = []
+        extras = request.look_extras or LookExtras()
+        broll = [] if background else self._broll_windows(request, time_map, window_start_ms)
+        if extras.has("punch_zoom") and not background:
+            graph = extras_module.create_punch(
+                graph, extras, plan, remap_plan(plan, time_map), time_map, self._extras_words(request, window_start_ms, time_map),
+                target_width, speaker_h, [(a, b) for _, a, b in broll])
         if background:
             graph = self._stack_background(graph, target_width, target_height - speaker_h, fps)
             looped_inputs = [background]
         else:
-            broll = self._broll_windows(request, time_map, window_start_ms)
             if broll:
                 graph = self._overlay_broll(graph, broll, target_width, speaker_h, fps)
                 looped_inputs = [path for path, _, _ in broll]
@@ -788,6 +797,10 @@ class RenderingService:
         overlays = self._overlays(request, out_plan, target_width, target_height, is_landscape, headline=headline)
         overlays += self._brand_overlays(request, target_width, target_height, is_landscape, bar_h, bool(background),
                                          time_map.output_ms / 1000)
+        overlays += extras_module.create_layers(
+            extras, request, out_plan, os.path.dirname(request.output_path), target_width, target_height, bar_h,
+            time_map.output_ms / 1000, broll, is_landscape, under=parse_headline_look(request.headline_look).background,
+            plan=plan, time_map=time_map, background=bool(background))
         # Burn captions and animate framing/overlays on the edited source clock,
         # then speed up the entire composited picture to match the tempo audio.
         filter_complex, extra_inputs = self._compose_overlays(
@@ -963,7 +976,9 @@ class RenderingService:
                 x, y = mark_position(request.brand_mark["position"], target_width, target_height, size[0], size[1],
                                      top_from=top_from, captions_to=captions_to if request.include_captions else 0)
                 overlays.append((path, str(x), str(y)))
-        if request.cta_keyword and end_s > 1:
+        # (The comment box extra types the keyword instead.)
+        comment_box = bool(request.look_extras and request.look_extras.has("comment_box"))
+        if request.cta_keyword and end_s > 1 and not comment_box:
             path = os.path.join(folder, f"cta-tag-{stem}.png")
             scale = target_height / 1920 if not is_landscape else target_height / 1080
             w, h = keyword_tag(request.cta_keyword, path, target_width, max(24, round(44 * scale)))
@@ -1027,6 +1042,15 @@ class RenderingService:
         if not os.path.isfile(path):
             raise RenderingError("The background video is missing. Choose it again in Format.")
         return path
+
+    def _extras_words(self, request: RenderRequest, window_start_ms: int, time_map: TimeMap) -> list[tuple[float, float, str]]:
+        """Spoken words on the edited clock (seconds), for the zoom punch's phrase boundaries."""
+        try:
+            segments = remap_segments(request.transcript_segments or [], window_start_ms, time_map)
+        except Exception:  # noqa: BLE001 - without words the punch cuts on its own rhythm
+            return []
+        return [((w.start_time_ms - window_start_ms) / 1000, (w.end_time_ms - window_start_ms) / 1000, w.word)
+                for seg in segments for w in (seg.words or [])]
 
     @staticmethod
     def _broll_windows(
@@ -1309,6 +1333,8 @@ class RenderingService:
         style = request.caption_style
         if is_landscape:
             style = self._landscape_caption_style(style or self.settings.get_caption_style(), target_height)
+        if request.look_extras:
+            style = extras_module.caption_style(style or self.settings.get_caption_style(), request.look_extras)
         return await self.caption_generator.generate_captions(
             transcript_segments=segments,
             clip_start_ms=window_start_ms,

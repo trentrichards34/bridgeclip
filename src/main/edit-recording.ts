@@ -13,6 +13,7 @@ import {
 } from '../shared/edit-recording'
 import { editRecipe, pacingForEngine } from '../shared/edit-recipes'
 import { headlineLookForEngine } from '../shared/headline-look'
+import { lookExtrasForEngine } from '../shared/look-extras-engine'
 import type { BrandIdentity } from '../shared/remix'
 import { brandMarkForRun, isBrandId, readBrandIdentity } from './brands'
 import { applyRunCtaInLock, originalPath, withRunLock } from './ctas'
@@ -436,6 +437,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     return current.status
   }
   const look = headlineLookForEngine(decisions.look.headlineLook)
+  const extrasColor = lookExtrasForEngine(decisions.lookExtras, current.brand?.look?.color, decisions.look.headlineLook).look_extras_color
   const config = {
     mode: 'render', output_dir: current.status.folder, sources: current.status.sources.map((source) => source.path),
     words: plan.words.map((word) => [word.text, word.startMs, word.endMs, word.src]), keep: plan.words.map((_, i) => !cut.has(i)),
@@ -458,7 +460,11 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     cutout_intro: decisions.cutoutIntro, raw_intro: decisions.rawIntro,
     sounds: decisions.sounds.filter((item) => item.on).flatMap((item) => { const sound = plan.sounds.find((s) => s.id === item.id); return sound ? [{ at: sound.at, sound: sound.sound }] : [] }),
     headline: decisions.hookText, ...(look ? { headline_look: look } : {}), include_captions: decisions.look.includeCaptions, caption_preset: decisions.look.captionPreset,
-    ...(brandMark ? { brand_mark: brandMark } : {}), title: decisions.hookText || current.status.sources[0]?.name.replace(/\.[^.]+$/, '') || '', cost_usd: current.status.costUsd
+    ...(brandMark ? { brand_mark: brandMark } : {}),
+    // The extras' color (the brand's), and the keyword the comment box types (none: the box is left out).
+    ...(extrasColor ? { look_extras_color: extrasColor } : {}),
+    ...(decisions.lookExtras.includes('comment_box') && current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}),
+    title: decisions.hookText || current.status.sources[0]?.name.replace(/\.[^.]+$/, '') || '', cost_usd: current.status.costUsd
   }
   void (async () => {
     try {

@@ -89,6 +89,8 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
     delete known.ctaOffer
   }
   if (!known.showHandle) delete known.showHandle
+  // Extras are drawn on Automatic renders; the review editor exports without them.
+  if (v.workflow === 'review') delete known.lookExtras
   return { ...known, videoUrl: normalizeVideoSource(v.videoUrl), videoSpeed: v.videoSpeed ?? 1, includeTitle: v.includeTitle ?? true, clipRequest, plannerCapabilities: undefined }
 }
 

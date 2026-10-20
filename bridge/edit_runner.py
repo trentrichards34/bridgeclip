@@ -54,7 +54,13 @@ def _look(raw):
     extras = raw.get("look_extras") or []
     if not isinstance(extras, list) or len(extras) > 20 or any(not isinstance(x, str) or not re.fullmatch(r"[a-z_]{1,40}", x) for x in extras):
         raise ValueError("Invalid look extras")
-    return Look(headline, validate_headline_look(raw.get("headline_look")), captions, preset, mark, tuple(dict.fromkeys(extras)))
+    look = Look(headline, validate_headline_look(raw.get("headline_look")), captions, preset, mark, tuple(dict.fromkeys(extras)))
+    if raw.get("mode") == "render" and look.look_extras:
+        # Their color (the brand's) and the keyword the comment box types; re-making reads them from the bundle.
+        from clip_engine.services.look_extras import look_extras, parse_color
+        look.look_extras_color = parse_color(raw.get("look_extras_color"))
+        look.look_extras_keyword = look_extras(["comment_box"], None, raw.get("cta_keyword") or "").keyword
+    return look
 
 
 RECIPES = ("clean", "fast", "story", "tutorial")
