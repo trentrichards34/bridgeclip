@@ -28,7 +28,10 @@ test('React, then my thoughts: both parts uploaded, your b-roll added, planned, 
     '-vf', 'drawbox=x=120:y=180:w=120:h=200:color=0xe0b090:t=fill', ...tools.encoder, '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest'])
   const car = make('red-car.mp4', ['-f', 'lavfi', '-i', 'color=c=0xd02020:s=640x360:r=30:d=1', ...tools.encoder, '-pix_fmt', 'yuv420p'])
   const cream = make('cream.png', ['-f', 'lavfi', '-i', 'color=c=0xe6c81e:s=400x300:d=1', '-frames:v', '1'])
-  await dialogs([ad, watching, thoughts, [car, cream]])
+  // A screen recording of the tool for part 2 (a voiceover over it), and a proof screenshot.
+  const screen = make('tool-demo.mp4', ['-f', 'lavfi', '-i', 'color=c=0xf0f0f0:s=640x360:r=30:d=6', '-vf', 'drawbox=x=40:y=40:w=200:h=60:color=0x2050d0:t=fill', ...tools.encoder, '-pix_fmt', 'yuv420p'])
+  const result = make('result.png', ['-f', 'lavfi', '-i', 'color=c=0x1ec8dc:s=900x500:d=1', '-frames:v', '1'])
+  await dialogs([ad, watching, thoughts, [car, cream], screen, [result]])
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
   await page.getByRole('radiogroup', { name: 'Who is in the video' }).getByRole('radio', { name: /^You on camera/ }).click()
@@ -39,6 +42,10 @@ test('React, then my thoughts: both parts uploaded, your b-roll added, planned, 
   await page.getByText('serum-ad.mp4').waitFor()
   await page.getByPlaceholder('e.g. @theircreator').fill('@serumbrand')
   await page.getByRole('checkbox', { name: "I'm allowed to use this video" }).check()
+  // Part 1 as a phone card: you fill the frame, their clip floats in the lower right, the hook text beside you.
+  await page.getByRole('button', { name: /Look & call to action/ }).click()
+  await page.getByRole('radiogroup', { name: 'While you react' }).getByRole('radio', { name: /^Phone card/ }).click()
+  assert.equal(await page.getByRole('radiogroup', { name: 'Where the hook text goes' }).getByRole('radio', { name: 'Beside me' }).getAttribute('aria-checked'), 'true')
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await page.getByRole('radiogroup', { name: 'Who is in the video' }).scrollIntoViewIfNeeded(); await shot(app, 'remix-top-react-thoughts.png') }
   await page.getByRole('button', { name: 'Continue to recording' }).click()
 
@@ -79,6 +86,21 @@ test('React, then my thoughts: both parts uploaded, your b-roll added, planned, 
   await broll.getByRole('button', { name: 'Add it in Settings → API keys' }).waitFor({ state: 'detached' })
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await broll.scrollIntoViewIfNeeded(); await shot(app, 'react-thoughts-review.png') }
 
+  // Part 2 as a voiceover over a screen recording, with a circle at 1 s; a proof screenshot labeled "Result".
+  const part2Look = page.getByRole('region', { name: 'How part 2 looks' })
+  await part2Look.getByRole('radio', { name: 'Voiceover over a screen recording' }).click()
+  await part2Look.getByText('tool-demo.mp4').waitFor()
+  await part2Look.getByText(/Only your voice is used|Your screen recording fills the screen/).first().waitFor()
+  await page.evaluate(() => window.bridgeclip.remix.setLayout({ circles: [{ at: 1, x: 0.2, y: 0.2 }] }))
+  const proofs = page.getByRole('region', { name: 'Proof screenshots' })
+  await proofs.getByRole('button', { name: 'Add screenshots' }).click()
+  await proofs.getByText('result.png').waitFor()
+  await proofs.getByLabel('Label for result.png').selectOption('Result')
+  await proofs.getByLabel('Time for result.png').fill('5')
+  await proofs.getByLabel('Time for result.png').blur()
+  await page.waitForFunction(() => window.bridgeclip.remix.layoutView().then((view) => view?.proofs[0]?.at === 5 && view.proofs[0].label === 'Result'))
+  if (process.env.BRIDGECLIP_E2E_SHOTS) { await part2Look.scrollIntoViewIfNeeded(); await shot(app, 'react-thoughts-part2-look.png') }
+
   await hook.fill('This serum changed her skin in a week? Not mine')
   await makeButton.click()
   await page.getByText(/^1 remix ready/).waitFor({ timeout: 300000 })
@@ -91,13 +113,14 @@ test('React, then my thoughts: both parts uploaded, your b-roll added, planned, 
   const info = manifest.presenter.react_thoughts
   assert.deepEqual(info.broll.map((shot) => [shot.source, shot.name, shot.seconds]), [['yours', 'red-car.mp4', 1.6]])
   assert.ok(Math.abs(info.clip_seconds - 8) < 0.1 && Math.abs(info.thoughts_seconds - 10) < 0.2, JSON.stringify(info))
+  assert.deepEqual([info.part1, info.part2, info.circles, info.proofs.map((item) => item.label)], ['phone', 'screen', 1, ['Result']])
   // The run's copies of the b-roll are gone once it's made.
   assert.equal(fs.existsSync(path.join(library, run, '.broll')), false)
   const file = path.join(library, run, 'clip_00.mp4')
   const seconds = Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).toString())
   assert.ok(Math.abs(seconds - 18) < 0.4, `their 8 s clip, then 10 s of thoughts (${seconds}s)`)
   if (process.env.BRIDGECLIP_E2E_SHOTS) {
-    for (const at of [3, 8 + 1, 8 + 5.5]) execFileSync(ffmpeg, ['-v', 'error', '-y', '-ss', String(at), '-i', file, '-frames:v', '1', path.join(process.env.BRIDGECLIP_E2E_SHOTS, `react-thoughts-${at}s.png`)])
+    for (const at of [3, 8 + 1.5, 8 + 5.5]) execFileSync(ffmpeg, ['-v', 'error', '-y', '-ss', String(at), '-i', file, '-frames:v', '1', path.join(process.env.BRIDGECLIP_E2E_SHOTS, `react-thoughts-${at}s.png`)])
   }
   await page.getByRole('button', { name: /^Library/ }).first().click()
   await page.getByRole('button', { name: /^Open Remix · serum-ad/ }).first().click()

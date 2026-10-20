@@ -117,6 +117,10 @@ test('Pause & react: an uploaded video and phone recording, the detected pauses,
   assert.equal(await page.getByRole('radiogroup', { name: 'Your background' }).getByRole('radio', { name: /Green screen/ }).count(), 0)
   await page.getByRole('radio', { name: /Split 50\/50/ }).click()
   await page.getByTestId('look-summary').getByText(/^Split 50\/50 · /).waitFor()
+  // Split: the hook text sits on the line between the halves (a white box), unless the member puts it at the top.
+  const hookPlace = page.getByRole('radiogroup', { name: 'Where the hook text goes' })
+  assert.equal(await hookPlace.getByRole('radio', { name: 'On the split line' }).getAttribute('aria-checked'), 'true')
+  await page.getByText('A white box with bold black text, right where the two halves meet.').waitFor()
   await page.getByRole('checkbox', { name: "I'm allowed to use this video" }).check()
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await page.getByRole('radiogroup', { name: 'Remix format' }).scrollIntoViewIfNeeded(); await shot(app, 'pause-react-form.png') }
   await next.click()
@@ -181,6 +185,8 @@ test('Pause & react: an uploaded video and phone recording, the detected pauses,
   assert.equal(manifest.presenter.pause_react.arrangement, 'split')
   assert.equal(manifest.presenter.pause_react.timeline_from, 'upload')
   assert.equal(manifest.presenter.pause_react.pauses, 1)
+  assert.equal(manifest.presenter.pause_react.hook, 'seam')
+  if (process.env.BRIDGECLIP_E2E_SHOTS) execFileSync('ffmpeg', ['-v', 'error', '-y', '-ss', '3', '-i', path.join(library, run, 'clip_00.mp4'), '-frames:v', '1', path.join(process.env.BRIDGECLIP_E2E_SHOTS, 'pause-react-seam.png')])
 
   // In the Library: "Edit hook text & captions" is there.
   await page.getByRole('button', { name: /^Library/ }).first().click()

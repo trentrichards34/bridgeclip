@@ -6,6 +6,7 @@ import type { RemixFormStyle } from '../../shared/member-prefs'
 import { DEFAULT_PAUSE_REACT, type PauseCaptions, type PauseLayout } from '../../shared/pause-react'
 import type { RangeInput } from '../../shared/moment-take'
 import type { GoalId } from '../../shared/onboarding'
+import type { Part1Layout, TheirCaptions } from '../../shared/remix-layouts'
 
 export interface RemixForm {
   links: string
@@ -44,6 +45,13 @@ export interface RemixForm {
   momentRanges: RangeInput[]
   momentPip: boolean
   momentCamera: CameraSettings
+  /** Their clip already has captions (null: as the link suggests: yes for Instagram and TikTok, else checked). */
+  theirCaptions: TheirCaptions | null
+  /** Pause & react, split: the hook text on the line between the halves, or at the top. */
+  splitHook: 'seam' | 'top'
+  /** React, then my thoughts: part 1 as a big box or a phone card, and (phone card) the hook text beside you or at the top. */
+  reactPart1: Part1Layout
+  phoneHook: 'beside' | 'top'
 }
 
 interface RemixFormState extends RemixForm {
@@ -71,6 +79,10 @@ export const useRemixForm = create<RemixFormState>((set, get) => ({
   // On by default: the moment stays in view while the member talks (a remembered choice wins).
   momentPip: true,
   momentCamera: { ...DEFAULT_CAMERA, talk: true },
+  theirCaptions: null,
+  splitHook: 'seam',
+  reactPart1: 'box',
+  phoneHook: 'beside',
   update: (patch) => set(patch),
   applyStyle: (style) => set({ ...style, ...(style.format && style.format !== get().format ? { clipRightsAck: false } : {}) }),
   setSourceFile: (path, creator, seconds) => {
