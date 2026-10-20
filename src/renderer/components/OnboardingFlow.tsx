@@ -107,7 +107,8 @@ export function OnboardingFlow({ onNavigate }: { onNavigate: (page: 'clip') => v
   }
 
   return (
-    <Dialog ref={ref} aria-labelledby="onboarding-title" panelClassName="max-w-[760px]" data-testid="onboarding"
+    // One height for every step (the body scrolls), so the footer never jumps.
+    <Dialog ref={ref} aria-labelledby="onboarding-title" panelClassName="h-[680px] max-w-[760px]" data-testid="onboarding"
       onKeyDown={(e) => {
         // Escape inside a dialog opened from here (a brand) belongs to that dialog.
         if (e.key === 'Escape' && !working && ref.current?.contains(e.target as Node)) void close('skipped')
@@ -125,7 +126,7 @@ export function OnboardingFlow({ onNavigate }: { onNavigate: (page: 'clip') => v
             ))}
           </ol>
         </div>
-        <Button variant="ghost" size="sm" disabled={working} onClick={() => void close('skipped')}>Skip for now</Button>
+        {step !== 'path' && <Button variant="ghost" size="sm" disabled={working} onClick={() => void close('skipped')}>Skip for now</Button>}
         <Button variant="ghost" size="sm" iconOnly aria-label="Close" disabled={working} icon={<X className="h-4 w-4" />} onClick={() => void close('skipped')} />
       </div>
 
@@ -139,7 +140,9 @@ export function OnboardingFlow({ onNavigate }: { onNavigate: (page: 'clip') => v
                   onChange={(on) => { setError(null); setGoals((list) => toggle(list, goal.id, on)) }} />
               ))}
             </div>
-            <Button variant="ghost" size="sm" onClick={() => { setError(null); setGoals(GOALS.map((goal) => goal.id)) }}>Not sure yet: show me everything</Button>
+            <ChoiceCard title="Not sure yet: show me everything" detail="Picks all of the above. You can narrow it down anytime."
+              checked={GOALS.every((goal) => goals.includes(goal.id))}
+              onChange={(on) => { setError(null); setGoals(on ? GOALS.map((goal) => goal.id) : []) }} />
           </>
         )}
 
@@ -172,7 +175,7 @@ export function OnboardingFlow({ onNavigate }: { onNavigate: (page: 'clip') => v
             <section aria-labelledby="onboarding-cta" className="space-y-2 border-t border-white/[0.06] pt-4">
               <h3 id="onboarding-cta" className="text-sm font-medium text-ink">Call to action</h3>
               <p className="text-xs text-ink-subtle">A short video or image added to the end of your videos, like “Follow for more”.</p>
-              <CtaPicker value={ctaId} onChange={chooseCta} />
+              <CtaPicker value={ctaId} onChange={chooseCta} compact />
             </section>
           </>
         )}
@@ -209,17 +212,18 @@ function PathSummary({ goals, platforms }: { goals: GoalId[]; platforms: ZernioP
     openrouter, toolsOk: null, camera: null, zernioKey, postingAccounts: 0, connectedPlatforms: [], brandIdentities: useBrands.getState().brands.length,
     ctas: 0, avatars: 0, runs: 0, runsByKind: { clips: 0, aiReactions: 0, cameraReactions: 0, articles: 0, avatarVideos: 0 }
   }
-  const items = setupItems(facts, { goals, platforms }).filter((item) => item.id !== 'tools')
+  // The same steps, in the same order, as the setup path on Create.
+  const items = setupItems(facts, { goals, platforms })
   return (
     <>
       <StepHeading title="Your setup path" detail={`Made for: ${goalLabels(goals).join(' · ')}. It sits at the top of Create and ticks itself off as you go, and each step has a short how-to.`} />
-      <ol className="space-y-1.5" aria-label="Your setup path">
+      <ol className="grid gap-1.5 sm:grid-cols-2" aria-label="Your setup path" data-testid="onboarding-path">
         {items.map((item, i) => (
-          <li key={item.id} className="glass-tile flex items-start gap-3 rounded-xl px-3 py-2">
-            <span aria-hidden className="mt-0.5 w-5 shrink-0 text-center text-xs font-semibold text-ink-subtle">{i + 1}</span>
+          <li key={item.id} data-setup-item={item.id} className="glass-tile flex items-start gap-2.5 rounded-xl px-3 py-2">
+            <span aria-hidden className="mt-px w-4 shrink-0 text-center text-xs font-semibold text-ink-subtle">{i + 1}</span>
             <span className="min-w-0">
-              <span className="block text-sm font-medium text-ink">{item.title}{item.optional && <span className="ml-1.5 text-2xs font-normal text-ink-subtle">Optional</span>}</span>
-              <span className="mt-0.5 block text-xs text-ink-subtle">{item.why ?? item.detail}</span>
+              <span className="block text-sm font-medium leading-snug text-ink">{item.title}{item.optional && <span className="ml-1.5 text-2xs font-normal text-ink-subtle">Optional</span>}</span>
+              <span className="mt-0.5 line-clamp-2 text-2xs text-ink-subtle" title={item.why ?? item.detail}>{item.why ?? item.detail}</span>
             </span>
           </li>
         ))}

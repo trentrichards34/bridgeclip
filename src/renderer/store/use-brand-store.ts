@@ -15,6 +15,13 @@ interface BrandState {
   load: (force?: boolean) => Promise<void>
   /** A list main just returned (after a save or delete). */
   setBrands: (brands: BrandIdentity[]) => void
+  /**
+   * A brand just added from somewhere other than the page's brand picker (the
+   * style board): the picker on screen picks it, the same way choosing it there does.
+   */
+  pickRequest: { id: string; at: number } | null
+  requestPick: (id: string) => void
+  clearPick: () => void
 }
 
 /** The member's brand identities, shared by Create, Remix and Avatar Studio. */
@@ -28,8 +35,14 @@ export const useBrands = create<BrandState>((set, get) => ({
     try { set({ brands: await getApi().brandIdentities.list(), loaded: true, listed: true, error: null }) }
     catch (err) { set({ error: errorMessage(err), loaded: true }) }
   },
-  setBrands: (brands) => set({ brands, loaded: true, listed: true, error: null })
+  setBrands: (brands) => set({ brands, loaded: true, listed: true, error: null }),
+  pickRequest: null,
+  requestPick: (id) => set({ pickRequest: { id, at: Date.now() } }),
+  clearPick: () => set({ pickRequest: null })
 }))
+
+/** How long a pick request waits for a brand picker to take it (none on screen: it lapses). */
+export const PICK_REQUEST_MS = 3000
 
 /** An id that a successfully read list no longer has (the brand was deleted). */
 export function isStaleBrandId(id: string | null | undefined, state: Pick<BrandState, 'brands' | 'listed'> = useBrands.getState()): boolean {

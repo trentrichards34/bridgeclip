@@ -104,20 +104,23 @@ export const CTA_HELP = 'A short video of you asking for the comment, follow or 
  * Choose a call to action (or none) and manage the library: add a video or
  * image, rename, set how long an image shows, remove.
  */
-export function CtaPicker({ value, onChange, disabled, onMissing }: {
+export function CtaPicker({ value, onChange, disabled, onMissing, compact }: {
   value: string | null; onChange: (id: string | null) => void; disabled?: boolean
+  /** Short tiles in a row (the guided setup), instead of tall 9:16 cards. */
+  compact?: boolean
   /** The chosen CTA was deleted from the library (default: clear the choice). */
   onMissing?: () => void
 }): React.JSX.Element {
   const library = useCtaLibrary(value, onChange, onMissing)
   const { ctas, adding } = library
+  const tile = compact ? 'h-[104px]' : 'aspect-[9/16]'
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4" role="radiogroup" aria-label="Call to action">
+      <div className={cn('grid gap-2', compact ? 'grid-cols-[repeat(auto-fill,minmax(112px,1fr))]' : 'grid-cols-3 sm:grid-cols-4')} role="radiogroup" aria-label="Call to action">
         <button type="button" role="radio" aria-checked={value === null} tabIndex={value === null ? 0 : -1} onKeyDown={onRadioKeyDown} disabled={disabled}
           onClick={() => onChange(null)}
-          className={cn('glass-tile glass-tile-hover flex aspect-[9/16] flex-col items-center justify-center gap-1 rounded-xl p-2 text-center', value === null ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+          className={cn('glass-tile glass-tile-hover flex flex-col items-center justify-center gap-1 rounded-xl p-2 text-center', tile, value === null ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
           <span className="text-xs font-medium">None</span>
           <span className="text-2xs text-ink-subtle">Clips end as made</span>
         </button>
@@ -126,7 +129,7 @@ export function CtaPicker({ value, onChange, disabled, onMissing }: {
           return (
             <button key={cta.id} type="button" role="radio" aria-checked={isOn} tabIndex={isOn ? 0 : -1} onKeyDown={onRadioKeyDown} disabled={disabled}
               onClick={() => onChange(cta.id)} aria-label={`${cta.name} (${cta.kind === 'video' ? 'video' : 'image'}, ${cta.seconds} seconds)`}
-              className={cn('glass-tile glass-tile-hover relative flex aspect-[9/16] flex-col overflow-hidden rounded-xl text-left', isOn ? 'glass-selected' : '')}>
+              className={cn('glass-tile glass-tile-hover relative flex flex-col overflow-hidden rounded-xl text-left', tile, isOn ? 'glass-selected' : '')}>
               <div className="min-h-0 flex-1 bg-black"><CtaThumb cta={cta} /></div>
               <div className="flex items-center gap-1 px-2 py-1.5">
                 {cta.kind === 'video' ? <Video className="h-3 w-3 shrink-0 text-ink-subtle" /> : <ImageIcon className="h-3 w-3 shrink-0 text-ink-subtle" />}
@@ -138,7 +141,7 @@ export function CtaPicker({ value, onChange, disabled, onMissing }: {
           )
         })}
         <button type="button" disabled={disabled || adding || ctas === null} onClick={() => void library.add()}
-          className="glass-tile glass-tile-hover flex aspect-[9/16] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/15 p-2 text-center text-ink-muted hover:text-ink disabled:opacity-50">
+          className={cn('glass-tile glass-tile-hover flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/15 p-2 text-center text-ink-muted hover:text-ink disabled:opacity-50', tile)}>
           <Plus className="h-4 w-4" />
           <span className="text-xs font-medium">{adding ? 'Adding…' : 'Add CTA'}</span>
           <span className="text-2xs text-ink-subtle">Video or image</span>

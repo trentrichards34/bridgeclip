@@ -142,7 +142,8 @@ export function setupItems(facts: SetupFacts, profile: SetupProfile = { goals: [
     why: 'AI reactions and avatar videos are presented by your avatar.',
     how: ['Open Avatar Studio and choose Create avatar.', 'Use your photo as is, make an AI version of it, or generate an AI person.', 'Pick a voice, or clone your own.']
   })
-  const runGoals: GoalId[] = general ? ['clips'] : profile.goals.filter((goal) => isVideoGoal(goal) || goal === 'edit-recording')
+  // In the app's order, whatever order the goals were picked in.
+  const runGoals: GoalId[] = general ? ['clips'] : GOALS.map((goal) => goal.id).filter((id) => goals.has(id) && (isVideoGoal(id) || id === 'edit-recording'))
   for (const goal of runGoals) {
     if (goal === 'edit-recording') {
       // Its own page, not one of the first-run guides (no `goal`): the step opens Edit my recording.

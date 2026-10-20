@@ -8,7 +8,7 @@ import { DEFAULT_BRAND_COLOR, DEFAULT_HEADLINE_LOOK, isHexColor, type HeadlineLo
 import { BRAND_IDENTITY_TEMPLATE, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, normalizeCtaKeyword, type BrandIdentity } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
 import { errorMessage, localFileUrl } from '../lib/utils'
-import { useBrands } from '../store/use-brand-store'
+import { PICK_REQUEST_MS, useBrands } from '../store/use-brand-store'
 import { CtaPicker } from './CtaPicker'
 import { HeadlineLookPicker } from './HeadlineLookPicker'
 import { Button } from './ui/Button'
@@ -21,7 +21,11 @@ import { SettingRow } from './ui/SettingRow'
 import { Switch } from './ui/Switch'
 
 /** Add or edit a brand identity: its text, and the look it fills forms with. */
-export function BrandIdentityDialog({ brand, onClose, onSaved }: { brand: BrandIdentity | null; onClose: () => void; onSaved: (list: BrandIdentity[], id: string) => void }): React.JSX.Element {
+export function BrandIdentityDialog({ brand, onClose, onSaved, focus }: {
+  brand: BrandIdentity | null; onClose: () => void; onSaved: (list: BrandIdentity[], id: string) => void
+  /** Opens on the handle field (from the style board's "Add a handle"). */
+  focus?: 'handle'
+}): React.JSX.Element {
   const [name, setName] = useState(brand?.name ?? '')
   const [text, setText] = useState(brand?.text ?? '')
   const start = brand?.look ?? {}
@@ -38,7 +42,13 @@ export function BrandIdentityDialog({ brand, onClose, onSaved }: { brand: BrandI
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => { ref.current?.focus() }, [])
+  const handleInput = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (focus === 'handle' && handleInput.current) {
+      handleInput.current.scrollIntoView({ block: 'center' })
+      handleInput.current.focus()
+    } else ref.current?.focus()
+  }, [focus])
   const keyword = normalizeCtaKeyword(ctaKeyword)
 
   const importFile = async (): Promise<void> => {
@@ -152,7 +162,7 @@ export function BrandIdentityDialog({ brand, onClose, onSaved }: { brand: BrandI
               <p className="mt-0.5 text-2xs text-ink-muted">Drawn small and see-through in a corner, clear of the hook text and captions, when “Show my handle” is on.</p>
             </div>
             <Field label="Handle" hint={`Up to ${MAX_HANDLE_CHARS} characters.`}>
-              <TextInput aria-label="Handle" value={handle} maxLength={MAX_HANDLE_CHARS} placeholder="e.g. @coachname" onChange={(e) => setHandle(e.target.value)} />
+              <TextInput ref={handleInput} aria-label="Handle" value={handle} maxLength={MAX_HANDLE_CHARS} placeholder="e.g. @coachname" onChange={(e) => setHandle(e.target.value)} />
             </Field>
             <div className="flex flex-wrap items-center gap-3">
               {logo ? (
@@ -191,11 +201,21 @@ export function BrandIdentityDialog({ brand, onClose, onSaved }: { brand: BrandI
 export function BrandPicker({ value, onChange, noneLabel = 'No brand identity', noneDetail }: {
   value: string | null; onChange: (brand: BrandIdentity | null) => void; noneLabel?: string; noneDetail?: string
 }): React.JSX.Element {
-  const { brands, load, setBrands, error: loadError } = useBrands()
+  const { brands, load, setBrands, error: loadError, pickRequest } = useBrands()
   const [editing, setEditing] = useState<BrandIdentity | 'new' | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => { void load() }, [load])
+  // A brand added from the style board: picked here, so the page fills its look the usual way.
+  useEffect(() => {
+    if (!pickRequest) return
+    // An old request (no picker was on screen then) never picks a brand later.
+    if (Date.now() - pickRequest.at > PICK_REQUEST_MS) { useBrands.getState().clearPick(); return }
+    const picked = brands.find((item) => item.id === pickRequest.id)
+    if (!picked) return
+    useBrands.getState().clearPick()
+    if (picked.id !== value) onChange(picked)
+  }, [pickRequest, brands, value, onChange])
   const brand = brands.find((item) => item.id === value) ?? null
   const choose = (id: string): void => {
     setConfirmDelete(false)

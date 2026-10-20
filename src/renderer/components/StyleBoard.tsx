@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Ban, Check, ChevronLeft, ChevronRight, Image as ImageIcon, MessageCircle, Plus, Shuffle, Sparkles, Video } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { Ban, Check, ChevronDown, ChevronLeft, ChevronRight, Image as ImageIcon, MessageCircle, Plus, Shuffle, Sparkles, Video } from 'lucide-react'
 import { CAPTION_PRESETS } from '../../shared/caption-presets'
 import { DEFAULT_HANDLE_POSITION, HANDLE_POSITIONS, hasBrandMark, type HandlePosition } from '../../shared/brand-kit'
 import { HEADLINE_FONTS, headlineBarColor, headlineTextColor, isHexColor, type HeadlineFont } from '../../shared/headline-look'
@@ -12,6 +12,7 @@ import {
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, youtubeId } from '../lib/utils'
 import { useBrands } from '../store/use-brand-store'
+import { BrandIdentityDialog } from './BrandIdentityDialog'
 import { CaptionSample, captionPreviewPreset, SCENE } from './CaptionPresetPicker'
 import { CTA_HELP, CtaDetails, CtaThumb, useCtaLibrary } from './CtaPicker'
 import { SaveStyleButton } from './StylePresets'
@@ -42,12 +43,16 @@ interface SwatchOption<T extends string> {
   content: ReactNode
 }
 
-/** One row of the board: its name and current choice, then a strip of visual swatches (a radio group). */
-function SwatchRow<T extends string>({ title, groupLabel, current, options, value, onSelect, note, after, controls, disabled }: {
+/** One row of the board: its name and current choice, then its visual swatches (a radio group) wrapped onto as many lines as they need. */
+function SwatchRow<T extends string>({ title, groupLabel, current, options, value, onSelect, note, after, controls, disabled, first, grid }: {
   title: string; groupLabel: string; current: string; options: SwatchOption<T>[]; value: T | null; onSelect: (id: T) => void
   note?: ReactNode; after?: ReactNode; controls?: ReactNode; disabled?: boolean
+  /** Show only this many at first (plus the chosen one), with a "Show all" toggle. */
+  first?: number
+  /** Even columns (same-size tiles) instead of a wrapped line. */
+  grid?: string
 }): React.JSX.Element {
-  const strip = useRef<HTMLDivElement>(null)
+  const [all, setAll] = useState(false)
   const enabled = disabled ? [] : options.filter((option) => !option.disabled)
   const selectedEnabled = enabled.some((option) => option.id === value)
   const step = (delta: number): void => {
@@ -55,14 +60,8 @@ function SwatchRow<T extends string>({ title, groupLabel, current, options, valu
     const at = enabled.findIndex((option) => option.id === value)
     onSelect(enabled[(at + delta + enabled.length) % enabled.length].id)
   }
-  // Keep the chosen swatch in view as it changes (Shuffle, the arrows, a brand).
-  useEffect(() => {
-    const chosen = strip.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')
-    const box = strip.current
-    if (!chosen || !box) return
-    const left = chosen.offsetLeft - box.offsetLeft
-    if (left < box.scrollLeft || left + chosen.offsetWidth > box.scrollLeft + box.clientWidth) box.scrollTo?.({ left: Math.max(0, left - 16), behavior: 'smooth' })
-  }, [value])
+  const folds = first !== undefined && options.length > first + 1
+  const shown = !folds || all ? options : options.filter((option, i) => i < first || option.id === value)
   const id = `style-row-${groupLabel.replace(/\W+/g, '-').toLowerCase()}`
   return (
     <div className="space-y-1.5" role="group" aria-labelledby={id}>
@@ -75,33 +74,41 @@ function SwatchRow<T extends string>({ title, groupLabel, current, options, valu
           <Button size="sm" variant="ghost" iconOnly aria-label={`Next ${title.toLowerCase()}`} icon={<ChevronRight className="h-3.5 w-3.5" />} onClick={() => step(1)} />
         </>}
       </div>
-      <div ref={strip} className="style-strip -mx-1 flex items-stretch gap-1.5 overflow-x-auto px-1 pb-1.5 pt-0.5">
-        <div role="radiogroup" aria-label={groupLabel} className="flex items-stretch gap-1.5">
-          {options.map((option) => {
-            const selected = option.id === value
-            const tabbable = selected ? !(disabled || option.disabled) : !selectedEnabled && option === enabled[0]
-            return (
-              <button key={option.id} type="button" role="radio" aria-checked={selected} aria-label={option.label ?? option.name}
-                tabIndex={tabbable ? 0 : -1} disabled={disabled || option.disabled} title={option.description ?? option.name} onKeyDown={onRadioKeyDown}
-                onClick={() => onSelect(option.id)}
-                className={cn('glass-tile glass-tile-hover relative flex shrink-0 flex-col items-center gap-1 rounded-xl p-1 text-center disabled:cursor-not-allowed disabled:opacity-40',
-                  selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
-                {option.content}
-                {selected && (
-                  <span aria-hidden className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-accent text-accent-ink shadow-[0_0_0_1px_rgb(var(--accent)/0.6)]">
-                    <Check className="h-2.5 w-2.5" strokeWidth={3.5} />
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </div>
+      <div role="radiogroup" aria-label={groupLabel} className={cn('gap-1.5', grid ? 'grid' : 'flex flex-wrap items-stretch')} style={grid ? { gridTemplateColumns: grid } : undefined}>
+        {shown.map((option) => {
+          const selected = option.id === value
+          const tabbable = selected ? !(disabled || option.disabled) : !selectedEnabled && option === enabled[0]
+          return (
+            <button key={option.id} type="button" role="radio" aria-checked={selected} aria-label={option.label ?? option.name}
+              tabIndex={tabbable ? 0 : -1} disabled={disabled || option.disabled} title={option.description ?? option.name} onKeyDown={onRadioKeyDown}
+              onClick={() => onSelect(option.id)}
+              className={cn('glass-tile glass-tile-hover relative flex min-w-0 flex-col items-center gap-1 rounded-xl p-1 text-center disabled:cursor-not-allowed disabled:opacity-40',
+                selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+              {option.content}
+              {selected && (
+                <span aria-hidden className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-accent text-accent-ink shadow-[0_0_0_1px_rgb(var(--accent)/0.6)]">
+                  <Check className="h-2.5 w-2.5" strokeWidth={3.5} />
+                </span>
+              )}
+            </button>
+          )
+        })}
         {after}
       </div>
+      {folds && (
+        <button type="button" aria-expanded={all} onClick={() => setAll(!all)}
+          className="inline-flex items-center gap-1 rounded-md px-1 text-2xs font-medium text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+          {all ? 'Show fewer' : `Show all ${options.length}`}
+          <ChevronDown aria-hidden className={cn('h-3 w-3 transition-transform', all && 'rotate-180')} />
+        </button>
+      )}
       {note}
     </div>
   )
 }
+
+/** Caption styles shown before "Show all": No captions and the first nine (two even rows on a typical board). */
+const CAPTIONS_FIRST = 10
 
 /** A small 9:16 tile with the hook look at the top. */
 function HookSwatch({ hook, color, font }: { hook: HookChoice; color: string; font: HeadlineFont }): React.JSX.Element {
@@ -147,6 +154,7 @@ export interface StyleBoardProps {
   hookNote?: ReactNode
   /** The page's own explanation under the keyword fields. */
   keywordHelp?: ReactNode
+  /** @deprecated The row is headed "Comment keyword"; its field is labeled "Keyword". */
   keywordLabel?: string
   ctaHelp?: string
   /** Puts back the brand's look (default: the brand kit's fields on the board). */
@@ -166,7 +174,7 @@ export interface StyleBoardProps {
  * brand" puts back the brand kit. Pages map the board to their own fields.
  */
 export function StyleBoard({
-  value, onChange, rows, brand, frame = null, aspect = '9:16', hookText, words, hookNote, keywordHelp, keywordLabel = 'Comment keyword (optional)',
+  value, onChange, rows, brand, frame = null, aspect = '9:16', hookText, words, hookNote, keywordHelp,
   ctaHelp = CTA_HELP, onUseBrand, saveKind, layout, title = 'Your look', className
 }: StyleBoardProps): React.JSX.Element {
   const hooks = rows.hooks ?? []
@@ -177,17 +185,28 @@ export function StyleBoard({
   const keyword = normalizeCtaKeyword(value.keyword)
   const [cornerError, setCornerError] = useState<string | null>(null)
   const [savingCorner, setSavingCorner] = useState(false)
+  // The brand dialog, opened from the board: a new brand, or this one at its handle.
+  const [brandDialog, setBrandDialog] = useState<'new' | 'handle' | null>(null)
   const library = useCtaLibrary(rows.cta ? value.ctaId : null, (ctaId) => onChange({ ctaId }))
   const ctaName = rows.cta && value.ctaId ? library.selected?.name ?? null : null
   const summary = styleSummary(value, rows, { brandColor, corner, hasMark, ctaName })
-  const hookIsBar = BAR_HOOKS.includes(value.hook)
   const fontApplies = value.hook !== 'none' && value.hook !== 'card' && hooks.some((hook) => hook !== 'none' && hook !== 'card')
 
   const shuffle = (): void => onChange(comboPatch(shuffleCombo(value), hooks))
   const useBrand = (): void => {
-    if (!brand) return
+    if (!brand) { setBrandDialog('new'); return }
     if (onUseBrand) onUseBrand()
     else onChange(brandBoardPatch(look, value, hooks))
+  }
+  const brandSaved = (list: BrandIdentity[], id: string): void => {
+    const kind = brandDialog
+    setBrandDialog(null)
+    useBrands.getState().setBrands(list)
+    const saved = list.find((item) => item.id === id)
+    if (!saved) return
+    // A new brand is picked on the page (its look fills the board); a handle just added turns on.
+    if (kind === 'new') useBrands.getState().requestPick(saved.id)
+    else if (hasBrandMark(saved.look) && !value.handle) onChange({ handle: true })
   }
   // The handle's corner belongs to the brand: choosing one saves it there.
   const chooseCorner = async (position: HandlePosition): Promise<void> => {
@@ -225,8 +244,10 @@ export function StyleBoard({
           <p className="mt-0.5 truncate text-2xs text-ink-muted" data-testid="style-board-summary" title={summary}>{summary}</p>
         </div>
         <Button size="sm" variant="secondary" icon={<Shuffle className="h-3.5 w-3.5" />} onClick={shuffle} tooltip="Try a ready-made mix of captions, hook text, font and color">Shuffle</Button>
-        <Button size="sm" variant="ghost" disabled={!brand} onClick={useBrand}
-          tooltip={brand ? `Put back ${brand.name}’s look` : 'Pick a brand first'}>Use my brand</Button>
+        {brand
+          ? <Button size="sm" variant="ghost" onClick={useBrand} tooltip={`Put back ${brand.name}’s look`}>Use my brand</Button>
+          : <Button size="sm" variant="ghost" icon={<Plus className="h-3.5 w-3.5" />} onClick={useBrand}
+            tooltip="Add your brand: your voice, offer and proof, plus your color, caption style and handle. Its look fills this board.">Set up my brand</Button>}
         {saveKind && <SaveStyleButton kind={saveKind} />}
       </div>
 
@@ -239,7 +260,7 @@ export function StyleBoard({
 
         <div className="min-w-0 space-y-3">
           <SwatchRow title="Captions" groupLabel="Caption style" current={value.captions ? captionName(value.captionPreset) : 'Off'}
-            options={captionOptions} value={value.captions ? value.captionPreset : 'off'}
+            options={captionOptions} value={value.captions ? value.captionPreset : 'off'} first={CAPTIONS_FIRST} grid="repeat(auto-fill, minmax(92px, 1fr))"
             onSelect={(id) => onChange(id === 'off' ? { captions: false } : { captions: true, captionPreset: id })} />
 
           {hooks.length > 0 && <SwatchRow title="Hook text" groupLabel="Hook text look" current={HOOK_LABELS[value.hook]}
@@ -262,22 +283,19 @@ export function StyleBoard({
             ) }))}
             value={value.font} onSelect={(font) => onChange({ font })} />}
 
-          {hooks.includes('brand') && <SwatchRow title="Color" groupLabel="Bar color" current={value.hook === 'brand' ? colorName(value.color, brandColor) : value.color.toUpperCase() === '#FFFFFF' ? 'For a Brand color bar' : `${colorName(value.color, brandColor)} · for a Brand color bar`}
+          {value.hook === 'brand' && hooks.includes('brand') && <SwatchRow title="Color" groupLabel="Bar color" current={colorName(value.color, brandColor)}
             options={[...(brandColor ? [{ id: 'brand', name: 'Brand', color: brandColor }] : []), ...COLOR_PRESETS.filter((item) => item.color.toUpperCase() !== brandColor)].map((item) => ({
               id: item.color.toUpperCase(), name: item.name, label: `${item.name} ${item.color.toUpperCase()}`, content: (
-                <>
-                  <span aria-hidden className="block h-7 w-7 rounded-full shadow-[inset_0_0_0_1px_rgb(255_255_255/0.25)]" style={{ background: item.color }} />
-                  <span className="w-11 truncate text-2xs font-medium">{item.name}</span>
-                </>
+                <span aria-hidden className="block h-7 w-7 rounded-full shadow-[inset_0_0_0_1px_rgb(255_255_255/0.25)]" style={{ background: item.color }} />
               ) }))}
             value={value.color.toUpperCase()} onSelect={(color) => onChange(colorPatch(color, hooks))}
-            after={<label className="glass-tile glass-tile-hover flex shrink-0 cursor-pointer flex-col items-center gap-1 rounded-xl p-1 text-center text-ink-muted hover:text-ink">
+            after={<label title="Custom color" className="glass-tile glass-tile-hover flex cursor-pointer items-center gap-1.5 rounded-xl p-1 pr-2.5 text-ink-muted hover:text-ink">
               <input type="color" aria-label="Custom bar color" value={(isHexColor(value.color) ? value.color : COLOR_PRESETS[0].color).toLowerCase()}
                 onChange={(e) => { if (isHexColor(e.target.value)) onChange(colorPatch(e.target.value, hooks)) }}
                 className="h-7 w-7 cursor-pointer rounded-full border-0 bg-transparent p-0" />
               <span className="text-2xs font-medium">Custom</span>
             </label>}
-            note={!hookIsBar && value.hook !== 'none' ? <p className="text-2xs text-ink-subtle">Picking a color puts your hook text on a bar in that color.</p> : null} />}
+            note={<p className="text-2xs text-ink-subtle">The color of the hook text bar. The text turns black or white to stay readable.</p>} />}
 
           {rows.handle && (hasMark ? (
             <SwatchRow title="Handle" groupLabel="Handle corner" current={value.handle ? `${look?.handle || 'Your logo'} · ${cornerName(corner).toLowerCase()}` : 'Off'}
@@ -294,9 +312,19 @@ export function StyleBoard({
                 {cornerError && <p role="alert" className="text-2xs text-danger">{cornerError}</p>}
               </>} />
           ) : (
-            <div className="space-y-1">
-              <span className="text-xs font-semibold text-ink">Handle</span>
-              <p className="text-2xs text-ink-subtle">{brand ? `Add a handle or logo to ${brand.name} to show it in a corner.` : 'Pick a brand with a handle or logo to show it in a corner.'}</p>
+            <div className="space-y-1.5" role="group" aria-labelledby="style-row-handle">
+              <div className="flex min-h-7 items-center gap-2">
+                <span id="style-row-handle" className="text-xs font-semibold text-ink">Handle</span>
+                <span className="min-w-0 flex-1 truncate text-2xs text-ink-muted">Off</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <Button size="sm" variant="secondary" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setBrandDialog(brand ? 'handle' : 'new')}>
+                  {brand ? 'Add a handle' : 'Set up my brand'}
+                </Button>
+                <p className="min-w-0 flex-1 basis-56 text-2xs text-ink-subtle">
+                  {brand ? `Add your handle or logo to ${brand.name} to show it small in a corner of every video.` : 'Add a brand with your handle or logo to show it small in a corner of every video.'}
+                </p>
+              </div>
             </div>
           ))}
 
@@ -319,7 +347,7 @@ export function StyleBoard({
             ]}
             value={value.ctaId ?? ''} onSelect={(id) => onChange({ ctaId: id || null })}
             after={<button type="button" disabled={library.adding || library.ctas === null} onClick={() => void library.add()}
-              className="glass-tile glass-tile-hover flex shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-white/15 p-1 text-center text-ink-muted hover:text-ink disabled:opacity-50">
+              className="glass-tile glass-tile-hover flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-white/15 p-1 text-center text-ink-muted hover:text-ink disabled:opacity-50">
               <span aria-hidden className="flex h-[64px] w-[36px] items-center justify-center"><Plus className="h-4 w-4" /></span>
               <span className="w-[52px] text-2xs font-medium">{library.adding ? 'Adding…' : 'Add CTA'}</span>
             </button>}
@@ -332,11 +360,11 @@ export function StyleBoard({
           {rows.keyword && (
             <div className="space-y-1.5" role="group" aria-label="Comment-keyword call to action">
               <div className="flex min-h-7 items-center gap-2">
-                <span className="flex items-center gap-1.5 text-xs font-semibold text-ink"><MessageCircle className="h-3.5 w-3.5 text-ink-muted" />Comment keyword</span>
-                <span className="min-w-0 flex-1 truncate text-2xs text-ink-muted">{keyword ? `Comment ${keyword}` : 'None'}</span>
+                <span id="style-row-keyword" className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-ink"><MessageCircle className="h-3.5 w-3.5 text-ink-muted" />Comment keyword</span>
+                <span className="min-w-0 flex-1 truncate text-2xs text-ink-muted">{keyword ? `Comment ${keyword}` : 'Optional'}</span>
               </div>
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-                <Field label={keywordLabel}>
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-start gap-3">
+                <Field label="Keyword">
                   <TextInput aria-label="Comment keyword" value={value.keyword} maxLength={20} placeholder="e.g. SALES"
                     onChange={(e) => onChange({ keyword: e.target.value.toUpperCase().replace(/\s+/g, '') })} />
                 </Field>
@@ -350,6 +378,9 @@ export function StyleBoard({
           )}
         </div>
       </div>
+
+      {brandDialog && <BrandIdentityDialog brand={brandDialog === 'handle' ? brand : null} focus={brandDialog === 'handle' ? 'handle' : undefined}
+        onClose={() => setBrandDialog(null)} onSaved={brandSaved} />}
 
       {layout && (
         <section aria-labelledby="style-board-layout" className="space-y-3 border-t border-white/[0.06] pt-3">

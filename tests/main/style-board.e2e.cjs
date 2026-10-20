@@ -34,6 +34,14 @@ async function shot(app, name) {
 
 const checked = async (locator) => (await locator.getAttribute('aria-checked')) === 'true'
 
+/** Board rows that scroll sideways or spill past the board (none should). */
+const noSidewaysRows = (page) => page.evaluate(() => {
+  const board = document.querySelector('[data-testid="style-board"]')?.getBoundingClientRect()
+  return [...document.querySelectorAll('[data-testid="style-board"] [role="radiogroup"]')]
+    .filter((group) => group.scrollWidth > group.clientWidth + 1 || [...group.children].some((tile) => tile.getBoundingClientRect().right > board.right + 1))
+    .map((group) => group.getAttribute('aria-label'))
+})
+
 test('the style board picks the look in one place, previews it and sends the same request fields', { timeout: 300000 }, async (t) => {
   const ffmpeg = ffmpegPath()
   if (!ffmpeg) { t.skip('ffmpeg is needed for the source video'); return }
@@ -114,11 +122,19 @@ test('the style board picks the look in one place, previews it and sends the sam
   await board.getByRole('button', { name: 'Next captions' }).click()
   assert.equal(await checked(captions.getByRole('radio', { name: 'Pop', exact: true })), true)
 
-  // Hook text, font and color: a color puts the hook on a bar in that color.
+  // Captions show a first set; "Show all" opens the rest.
+  assert.equal(await captions.getByRole('radio', { name: 'Neon' }).count(), 0)
+  await board.getByRole('button', { name: /^Show all \d+/ }).click()
+  await captions.getByRole('radio', { name: 'Neon' }).waitFor()
+  await board.getByRole('button', { name: 'Show fewer' }).click()
+
+  // Hook text, font and color: the color row is only there for a Brand color bar, the one look it changes.
   const hooks = page.getByRole('radiogroup', { name: 'Hook text look' })
   await hooks.getByRole('radio', { name: 'Black bar' }).click()
   assert.equal(await preview.getAttribute('data-hook'), 'black')
   assert.equal(await board.getByTestId('style-preview-bar').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(14, 14, 14)')
+  assert.equal(await page.getByRole('radiogroup', { name: 'Bar color' }).count(), 0)
+  await hooks.getByRole('radio', { name: 'Brand color' }).click()
   await page.getByRole('radiogroup', { name: 'Bar color' }).getByRole('radio', { name: 'Violet #7C5CFF' }).click()
   assert.equal(await checked(hooks.getByRole('radio', { name: 'Brand color' })), true)
   assert.equal(await board.getByTestId('style-preview-bar').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(124, 92, 255)')
@@ -135,6 +151,26 @@ test('the style board picks the look in one place, previews it and sends the sam
     assert.ok(COMBO_CAPTIONS.some((name) => text.startsWith(`${name} captions · `)), text)
   }
 
+  // No brand yet: "Set up my brand" adds one right from the board, and it's picked for this run.
+  assert.equal(await board.getByRole('button', { name: 'Use my brand' }).count(), 0)
+  await board.getByRole('button', { name: 'Set up my brand' }).first().click()
+  const addBrand = page.getByRole('dialog', { name: 'Add brand identity' })
+  await addBrand.getByPlaceholder('e.g. Pull-Up Lab').fill('Side Project')
+  await addBrand.locator('textarea').fill('Core promise: calm mornings for new parents. Voice: short and kind.')
+  await addBrand.getByRole('button', { name: 'Save', exact: true }).click()
+  await addBrand.waitFor({ state: 'detached' })
+  await page.waitForFunction(() => document.querySelector('[aria-label="Brand identity"]')?.textContent?.includes('Side Project'))
+  await board.getByRole('button', { name: 'Use my brand' }).waitFor()
+  // No handle on it: "Add a handle" opens the brand at its handle field, and saving one turns it on.
+  await board.getByRole('button', { name: 'Add a handle' }).click()
+  const editBrand = page.getByRole('dialog', { name: 'Edit brand identity' })
+  await editBrand.waitFor()
+  assert.equal(await editBrand.getByLabel('Handle', { exact: true }).evaluate((el) => el === document.activeElement), true)
+  await editBrand.getByLabel('Handle', { exact: true }).fill('@sideproject')
+  await editBrand.getByRole('button', { name: 'Save', exact: true }).click()
+  await editBrand.waitFor({ state: 'detached' })
+  assert.equal(await checked(page.getByRole('switch', { name: 'Show my handle' })), true)
+
   // A brand: its look fills the board; the handle shows in its corner; "Use my brand" puts it back after changes.
   await page.getByRole('combobox', { name: 'Brand identity' }).click()
   await page.getByRole('option', { name: /^Pull-Up Lab/ }).click()
@@ -142,8 +178,9 @@ test('the style board picks the look in one place, previews it and sends the sam
   assert.equal(await checked(hooks.getByRole('radio', { name: 'Brand color' })), true)
   assert.equal(await checked(page.getByRole('switch', { name: 'Show my handle' })), true)
   assert.equal(await board.getByTestId('style-preview-handle').getAttribute('data-corner'), 'top-right')
-  await captions.getByRole('radio', { name: 'Neon' }).click()
+  await captions.getByRole('radio', { name: 'Spotlight' }).click()
   await hooks.getByRole('radio', { name: 'Floating text' }).click()
+  assert.equal(await page.getByRole('radiogroup', { name: 'Bar color' }).count(), 0)
   await board.getByRole('button', { name: 'Use my brand' }).click()
   assert.equal(await checked(captions.getByRole('radio', { name: 'Boxed' })), true)
   assert.equal(await checked(hooks.getByRole('radio', { name: 'Brand color' })), true)
@@ -189,6 +226,14 @@ test('the style board picks the look in one place, previews it and sends the sam
   await page.getByText('Saved “Pull-up look”').first().waitFor()
   assert.equal(await page.getByRole('combobox', { name: 'Saved style' }).innerText(), 'Pull-up look')
 
+  // At 1024 wide every row still wraps inside the board.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1024, 700))
+  await hooks.getByRole('radio', { name: 'Brand color' }).click()
+  await board.getByRole('button', { name: /^Show all \d+/ }).click()
+  await page.waitForTimeout(300)
+  assert.deepEqual(await noSidewaysRows(page), [])
+  await board.getByRole('button', { name: 'Show fewer' }).click()
+
   // Narrow window: the board stacks (the preview above the rows).
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(720, 1000))
   await page.waitForFunction(() => {
@@ -197,6 +242,7 @@ test('the style board picks the look in one place, previews it and sends the sam
     return preview && rows && rows.top > preview.bottom
   })
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'no sideways scroll')
+  assert.deepEqual(await noSidewaysRows(page), [])
   await page.evaluate(() => { document.querySelector('[data-testid="style-board"]')?.scrollIntoView({ block: 'start' }); document.getElementById('page-scroll')?.scrollBy(0, -56) })
   await shot(app, 'style-board-create-narrow.png')
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 1000))

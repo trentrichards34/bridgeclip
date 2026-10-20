@@ -442,6 +442,3 @@
   .style-board-grid.is-landscape { grid-template-columns: minmax(0, 1fr); }
   .style-board-grid.is-landscape .style-board-preview { margin: 0 auto; position: static; }
 }
-/* Thin scrollbars under the swatch strips. */
-.style-strip { scrollbar-width: thin; scroll-snap-type: x proximity; }
-.style-strip [role='radio'] { scroll-snap-align: start; }
