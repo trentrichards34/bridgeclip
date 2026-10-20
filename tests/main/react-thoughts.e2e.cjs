@@ -37,7 +37,7 @@ test('React, then my thoughts: both parts uploaded, your b-roll added, planned, 
   await page.getByText(/^Part 1: their clip plays in a big box/).waitFor()
   await page.getByRole('button', { name: 'Or choose a file' }).click()
   await page.getByText('serum-ad.mp4').waitFor()
-  await page.getByPlaceholder('e.g. @coachname').fill('@serumbrand')
+  await page.getByPlaceholder('e.g. @theircreator').fill('@serumbrand')
   await page.getByRole('checkbox', { name: "I'm allowed to use this video" }).check()
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await page.getByRole('radiogroup', { name: 'Who is in the video' }).scrollIntoViewIfNeeded(); await shot(app, 'remix-top-react-thoughts.png') }
   await page.getByRole('button', { name: 'Continue to recording' }).click()

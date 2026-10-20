@@ -48,7 +48,7 @@ test('Their clip, then me: You on camera, a short clip trimmed, an uploaded take
   assert.equal(await next.isDisabled(), true)
   await page.getByRole('button', { name: 'Or choose a file' }).click()
   await page.getByText('skincare-reel.mp4').waitFor()
-  await page.getByPlaceholder('e.g. @coachname').fill('@skincoach')
+  await page.getByPlaceholder('e.g. @theircreator').fill('@skincoach')
   await page.getByRole('checkbox', { name: "I'm allowed to use this video" }).check()
   await next.click()
 

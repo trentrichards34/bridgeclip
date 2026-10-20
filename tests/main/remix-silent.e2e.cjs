@@ -43,10 +43,10 @@ test('React to a clip (silent): pick the format, check reactions and permission,
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
   await page.getByLabel('Video links').fill('https://www.instagram.com/reel/DdurluTvRVB/')
   // The AI presenter side (Beta): React to a clip with the avatar's reactions.
-  assert.equal(await page.getByRole('radio', { name: /^AI presenter/ }).getAttribute('aria-checked'), 'true')
+  await page.getByRole('radio', { name: /^AI presenter/ }).click()
   await page.getByRole('radio', { name: /^React to a clip/ }).click()
   // No voiced-take controls for a silent react, and no presenter choice: the avatar's reactions play.
-  assert.equal(await page.getByRole('radiogroup', { name: 'Remix style' }).count(), 0)
+  assert.equal(await page.getByRole('radiogroup', { name: 'Style of your take' }).count(), 0)
   assert.equal(await page.getByRole('radiogroup', { name: 'Presenter' }).count(), 0)
   await page.getByText(/Your avatar’s reactions play with the clip/).waitFor()
   await page.getByText('Maya has no reactions yet').waitFor()

@@ -108,12 +108,14 @@ test('Moment + my take: two ranges (typed and from a screenshot), two uploaded t
   await page.getByRole('button', { name: 'Or choose a file' }).click()
   await page.getByText('podcast-episode.mp4').waitFor()
   await page.getByText('This video is 1:00 long.').waitFor()
-  await page.getByPlaceholder('e.g. @coachname').fill('@podcaster')
+  await page.getByPlaceholder('e.g. @theircreator').fill('@podcaster')
 
   // Range 1 typed: first past the end (said plainly), then fixed.
   await page.getByLabel('Range 1 start').fill('1:10')
   await page.getByLabel('Range 1 end').fill('1:20')
-  await page.getByText('It starts after the video ends (1:00).').waitFor()
+  await page.getByText('It starts after the video ends (1:00).').first().waitFor()
+  // (Said by the range, and again next to the button, with the way back to it.)
+  assert.match(await page.getByTestId('remix-blocker').innerText(), /It starts after the video ends \(1:00\)\.\s*Show me/)
   await page.getByLabel('Range 1 start').fill('0:05')
   await page.getByLabel('Range 1 end').fill('0:25')
   // Range 2 from a screenshot of the player: the time read, a range around it (inside the video), the charge shown.

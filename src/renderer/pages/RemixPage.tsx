@@ -5,7 +5,7 @@ import type { AvatarSummary } from '../../shared/avatars'
 import { REACTIONS } from '../../shared/avatars'
 import {
   brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_POST_CAPTION_CHARS, MAX_SOURCES,
-  closeWithoutCta, lipsyncProblem, normalizeCtaKeyword, AVATAR_VOICE, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES,
+  closeWithoutCta, heygenBadge, lipsyncProblem, normalizeCtaKeyword, AVATAR_VOICE, REMIX_ANGLES, REMIX_HOSTS, REMIX_ORDERS, REMIX_PRICES, REMIX_VOICES, remixPriceNote,
   REMIX_WORD_LIMITS, remixEditProblem, remixSourceUrl, STANCE_LABELS, STYLE_LABELS, wordCount,
   AI_CARDS, CAMERA_CARDS, clipFormat, remixMode, headlineOnly, CAMERA_LAYOUTS, partsFor, AVATAR_REACTIONS_BETA, type CameraSettings, type FormatCard, type FormatCardId,
   type RemixFormat, type RemixMode, type RemixRecordings, type BrandIdentity, type RemixDraft, type RemixEdit, type RemixHost, type RemixOutput, type RemixStatus
@@ -44,7 +44,7 @@ import { getApi } from '../lib/ipc'
 import { requestSettingsSection } from '../lib/settings-focus'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { useSettingsStore } from '../store/use-settings-store'
-import { useRemixForm } from '../store/use-remix-form-store'
+import { useRemixForm, type RemixForm } from '../store/use-remix-form-store'
 import { useBrands } from '../store/use-brand-store'
 import { BrandPicker } from '../components/BrandIdentityDialog'
 import { brandFormPatch, hasBrandMark } from '../../shared/brand-kit'
@@ -60,11 +60,28 @@ let lookOpenThisSession = false
 /** Switching between "You on camera" and "AI presenter" comes back to the template last picked on each side. */
 const lastPick: { camera: FormatCardId; ai: { format: RemixFormat; host: RemixHost } } = { camera: 'pause_react', ai: { format: 'commentary', host: 'still' } }
 
+/** Arrow keys across a radio group whose radios sit inside their own card (onRadioKeyDown looks only at siblings). */
+function onGroupRadioKeyDown(event: React.KeyboardEvent<HTMLButtonElement>): void {
+  const radios = Array.from(event.currentTarget.closest('[role="radiogroup"]')?.querySelectorAll<HTMLButtonElement>('[role="radio"]:not(:disabled)') ?? [])
+  const current = radios.indexOf(event.currentTarget)
+  if (current < 0) return
+  const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? radios.length - 1 : step ? (current + step + radios.length) % radios.length : -1
+  if (next < 0) return
+  event.preventDefault()
+  radios[next].focus()
+  radios[next].click()
+}
+
 /** Links pasted one per line (or separated by spaces). */
 export function parseLinks(value: string): { links: string[]; invalid: string[] } {
   const items = [...new Set(value.split(/\s+/).map((item) => item.trim()).filter(Boolean))]
   return { links: items.filter((item) => remixSourceUrl(item)), invalid: items.filter((item) => !remixSourceUrl(item)) }
 }
+
+/** Where a missing piece is filled in: "Show me" scrolls there and marks it. */
+type FieldTarget = 'keys' | 'source' | 'creator' | 'ranges' | 'promises' | 'presenter' | 'look'
+interface Blocker { text: string; target: FieldTarget }
 
 const GRADE_TONES: Record<string, string> = {
   A: 'bg-emerald-400 text-black', B: 'bg-lime-300 text-black', C: 'bg-amber-300 text-black', D: 'bg-orange-400 text-black', F: 'bg-red-500 text-white'
@@ -76,6 +93,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const heygenConfigured = useSettingsStore((s) => s.heygenConfigured)
   const form = useRemixForm()
   const [avatars, setAvatars] = useState<AvatarSummary[]>([])
+  // The avatar list has been read (an empty list then means "no avatars yet", not "still loading").
+  const [avatarsLoaded, setAvatarsLoaded] = useState(false)
   const brands = useBrands((s) => s.brands)
   const loadBrands = useBrands((s) => s.load)
   const [status, setStatus] = useState<RemixStatus | null>(null)
@@ -91,7 +110,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
 
   useEffect(() => {
     let live = true
-    getApi().avatars.list().then((list) => { if (live) setAvatars(list) }).catch(() => undefined)
+    getApi().avatars.list().then((list) => { if (live) { setAvatars(list); setAvatarsLoaded(true) } }).catch(() => undefined)
     void loadBrands(true)
     getApi().remix.status().then((current) => { if (live && current) setStatus(current) }).catch(() => undefined)
     const off = getApi().remix.onStatus((next) => setStatus(next))
@@ -127,6 +146,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const momentTake = form.format === 'moment_take'
   // Their clip, then me / React, then my thoughts: one short clip, then you (React, then my thoughts: with your b-roll).
   const clip = clipFormat(form.format)
+  // Formats that use one video: the link box asks for one.
+  const singleVideo = pause || momentTake || clip
   const sources = image ? (form.imagePath ? [form.imagePath] : []) : form.filePath ? [form.filePath] : links
   // A chosen file's length, so ranges past its end are caught here (a link's is checked once it's fetched).
   const [fileSeconds, setFileSeconds] = useState<number | null>(null)
@@ -153,28 +174,52 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const reactionCount = avatar?.reactions?.length ?? 0
   const keyword = normalizeCtaKeyword(form.ctaKeyword)
   const brandKeyword = brand ? brandCtaKeyword(brand.text) : ''
-  const blocker = !openrouterConfigured ? 'Add your OpenRouter key in Settings first'
-    : image ? (!form.imagePath ? 'Choose a screenshot of the article or post'
-      : !form.creator.trim() ? 'Add where the screenshot is from, for the credit'
-        : keyword === null ? 'Use one word for the comment keyword, like SALES'
-          : !form.clipRightsAck ? 'Confirm you’re allowed to share this screenshot' : null)
-    : sources.length === 0 ? 'Paste a video link or choose a file'
-      : (pause || clip) && sources.length > 1 ? 'React to one video at a time: paste one link'
-      : momentTake && sources.length > 1 ? 'Use one long video: paste one link'
-      : sources.length > MAX_SOURCES ? `Up to ${MAX_SOURCES} videos per run`
-        : invalid.length > 0 && !form.filePath ? 'Fix the links that aren’t valid'
-          : form.filePath && !form.creator.trim() ? 'Add the original creator’s name for the credit'
-            : silent && !onCamera && !avatar ? 'Create an avatar in Avatar Studio first'
-            : silent && !onCamera && reactionCount === 0 ? 'Make this avatar’s reactions in Avatar Studio first'
-            : silent && !form.clipRightsAck ? 'Confirm you’re allowed to use these clips'
-            : (pause || clip) && !form.clipRightsAck ? 'Confirm you’re allowed to use this video'
-            : momentTake && moments.problem ? moments.problem
-            : momentTake && !form.clipRightsAck ? 'Confirm you’re allowed to use this video'
-            : lipsync && lipsyncIssue ? lipsyncIssue.reason
-            : needsAvatar && !avatar ? 'Create an avatar in Avatar Studio, or use voice only'
-              : !onCamera && usesAvatarVoice && !avatar ? 'Create an avatar in Avatar Studio, or pick a preset voice'
-              : keyword === null ? 'Use one word for the comment keyword, like SALES'
-              : !onCamera && !form.aiLabelAck ? 'Confirm you’ll turn on the AI label when you post' : null
+  const block = (text: string, target: FieldTarget): Blocker => ({ text, target })
+  const blocker: Blocker | null = !openrouterConfigured ? block('Add your OpenRouter key in Settings first', 'keys')
+    : image ? (!form.imagePath ? block('Choose a screenshot of the article or post', 'source')
+      : !form.creator.trim() ? block('Add where the screenshot is from, for the credit', 'creator')
+        : keyword === null ? block('Use one word for the comment keyword, like SALES', 'look')
+          : !form.clipRightsAck ? block('Confirm you’re allowed to share this screenshot', 'promises') : null)
+    : sources.length === 0 ? block('Paste a video link or choose a file', 'source')
+      : (pause || clip) && sources.length > 1 ? block('React to one video at a time: paste one link', 'source')
+      : momentTake && sources.length > 1 ? block('Use one long video: paste one link', 'source')
+      : sources.length > MAX_SOURCES ? block(`Up to ${MAX_SOURCES} videos per run`, 'source')
+        : invalid.length > 0 && !form.filePath ? block('Fix the links that aren’t valid', 'source')
+          : form.filePath && !form.creator.trim() ? block('Add the original creator’s name for the credit', 'creator')
+            : silent && !onCamera && !avatar ? block('Create an avatar in Avatar Studio first', 'presenter')
+            : silent && !onCamera && reactionCount === 0 ? block('Make this avatar’s reactions in Avatar Studio first', 'presenter')
+            : silent && !form.clipRightsAck ? block('Confirm you’re allowed to use these clips', 'promises')
+            : (pause || clip) && !form.clipRightsAck ? block('Confirm you’re allowed to use this video', 'promises')
+            : momentTake && moments.problem ? block(moments.problem, 'ranges')
+            : momentTake && !form.clipRightsAck ? block('Confirm you’re allowed to use this video', 'promises')
+            : lipsync && lipsyncIssue ? block(lipsyncIssue.reason, 'presenter')
+            : needsAvatar && !avatar ? block('Create an avatar in Avatar Studio, or use voice only', 'presenter')
+              : !onCamera && usesAvatarVoice && !avatar ? block('Create an avatar in Avatar Studio, or pick a preset voice', 'presenter')
+              : keyword === null ? block('Use one word for the comment keyword, like SALES', 'look')
+              : !onCamera && !form.aiLabelAck ? block('Confirm you’ll turn on the AI label when you post', 'promises') : null
+
+  // "Show me": bring the field that needs filling into view, focus it and mark it for a moment.
+  const [attention, setAttention] = useState<FieldTarget | null>(null)
+  useEffect(() => {
+    if (!attention) return
+    const timer = setTimeout(() => setAttention(null), 2000)
+    return () => clearTimeout(timer)
+  }, [attention])
+  const revealField = (target: FieldTarget): void => {
+    if (target === 'keys') { openKeys(); return }
+    if (target === 'look') setLookOpen(true)
+    setAttention(target)
+    // After the look section has opened.
+    requestAnimationFrame(() => {
+      const box = document.querySelector<HTMLElement>(`[data-remix-field="${target}"]`)
+      if (!box) return
+      box.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+      const field = (target === 'look' ? box.querySelector<HTMLElement>('input[aria-label^="Comment keyword"]') : null)
+        ?? box.querySelector<HTMLElement>('input:not([type="hidden"]):not(:disabled), textarea:not(:disabled), button[role="checkbox"], [role="radio"][aria-checked="true"]:not(:disabled), button:not(:disabled)')
+      field?.focus({ preventScroll: true })
+    })
+  }
+  const marked = (target: FieldTarget): string => cn('rounded-xl transition-shadow duration-300', attention === target && 'ring-2 ring-warning/70 ring-offset-4 ring-offset-canvas')
 
   const openKeys = (): void => { requestSettingsSection('keys'); onNavigate('settings') }
 
@@ -243,7 +288,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       // Each kind has its own permission promise (clips vs. a screenshot).
       clipRightsAck: id === 'silent' && silent ? form.clipRightsAck : false,
       // A scripted take on camera: you read the lines (one take to record to start with).
-      ...(id === 'commentary' && mode === 'camera' ? { host: 'camera' as const, ...(form.host !== 'camera' ? { count: 1 } : {}) } : {})
+      ...(id === 'commentary' && mode === 'camera' ? { host: 'camera' as const, ...(form.host !== 'camera' || form.format !== 'commentary' ? { count: 1 } : {}) } : {})
     })
     if (mode === 'ai') lastPick.ai = { format: id as RemixFormat, host: form.host }
   }
@@ -260,15 +305,25 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     if (card === 'greenscreen') form.update({ format: 'silent', host: 'camera', camera: { ...form.camera, layout: 'greenscreen', talk: true }, clipRightsAck: false })
     else form.update({ format: card, ...(card === 'commentary' ? { host: 'camera' as const, count: 1 } : {}), clipRightsAck: false })
   }
-  // On camera, the look and the call to action fold into one section, so the path is: format, source, permission, Continue.
-  const folded = onCamera
+  // The AI presenter with no avatar yet: Avatar photo and "Your avatar's voice" can't be used, so it starts on
+  // Voice only with a preset voice (only when the side opens, so a choice made here stays).
+  const noAvatars = avatarsLoaded && avatars.length === 0
+  useEffect(() => {
+    if (!noAvatars || mode !== 'ai') return
+    const current = useRemixForm.getState()
+    const patch: Partial<RemixForm> = {
+      ...(current.host === 'still' || current.host === 'lipsync' ? { host: 'voice' as const } : {}),
+      ...(current.voice === AVATAR_VOICE ? { voice: REMIX_VOICES[0].id } : {})
+    }
+    if (Object.keys(patch).length) current.update(patch)
+  }, [noAvatars, mode])
   // The AI presenter's voiced take: avatar photo or voice only (its clip reactions are always the avatar's).
   const hostChoice = mode === 'ai' && !silent
   const cameraValue = image ? form.imageCamera : pause ? form.pauseCamera : momentTake || clip ? form.momentCamera : form.camera
   const takeWaiting = reviewing && status !== null && (oneTakeRun(status) ? status.drafts.some((draft) => Boolean(draft.quote || draft.headline)) : status.drafts.length > 0)
-  // Panel numbers: format, source, then (on camera) the presenter choice and the folded look, or (AI presenter) your take and the presenter; then go.
-  const lookStep = 3
-  const goStep = folded ? lookStep + 1 : 5
+  // Panel numbers: format, source, (AI presenter) the presenter, the folded look and call to action, then go.
+  const lookStep = onCamera ? 3 : 4
+  const goStep = lookStep + 1
 
   const modePanel = (
     <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Who is in the video">
@@ -277,16 +332,26 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         { id: 'ai', label: 'AI presenter', detail: 'Your avatar or an AI voice presents the take. An early version.', icon: <Bot className="h-5 w-5" /> }
       ] as const).map((item) => {
         const selected = mode === item.id
+        // With no avatar yet, the AI presenter says so on its card, with the way to make one.
+        const needsAvatarNote = item.id === 'ai' && noAvatars
         return (
-          <button key={item.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
-            onClick={() => pickMode(item.id)}
-            className={cn('glass-tile glass-tile-hover flex items-start gap-3 rounded-2xl px-4 py-3.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
-            <span className={cn('mt-0.5 shrink-0', selected ? 'text-accent' : 'text-ink-subtle')}>{item.icon}</span>
-            <span className="min-w-0">
-              <span className="flex items-center gap-2 text-base font-semibold">{item.label}{item.id === 'ai' && <Badge tone="warning">Beta</Badge>}</span>
-              <span className={cn('mt-0.5 block text-xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{item.detail}</span>
-            </span>
-          </button>
+          <div key={item.id} className={cn('glass-tile glass-tile-hover flex flex-col rounded-2xl', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+            <button type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onGroupRadioKeyDown}
+              onClick={() => pickMode(item.id)}
+              className={cn('flex flex-1 items-start gap-3 rounded-2xl px-4 text-left', needsAvatarNote ? 'pb-1.5 pt-3.5' : 'py-3.5')}>
+              <span className={cn('mt-0.5 shrink-0', selected ? 'text-accent' : 'text-ink-subtle')}>{item.icon}</span>
+              <span className="min-w-0">
+                <span className="flex items-center gap-2 text-base font-semibold">{item.label}{item.id === 'ai' && <Badge tone="warning">Beta</Badge>}</span>
+                <span className={cn('mt-0.5 block text-xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{item.detail}</span>
+              </span>
+            </button>
+            {needsAvatarNote && (
+              <p className="pb-3 pl-12 pr-4 text-2xs text-warning" data-testid="ai-needs-avatar">
+                Needs an avatar ·{' '}
+                <button type="button" className="font-medium text-accent hover:underline" onClick={() => onNavigate('avatar')}>Make one</button>
+              </p>
+            )}
+          </div>
         )
       })}
     </div>
@@ -338,30 +403,37 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
           <p className="text-2xs text-ink-muted">
             The AI picks complete 10–45 second moments, writes the hook text above the clip, and writes the caption with your take and call to action. Your avatar’s reactions (watching, nodding, pointing, laughing) are timed to what’s said. {AVATAR_REACTIONS_BETA}
           </p>
-        ) : (<>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3" role="radiogroup" aria-label="Remix style">
-            {REMIX_ANGLES.map((angle) => {
-              const selected = form.angle === angle.id
-              return (
-                <button key={angle.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
-                  onClick={() => form.update({ angle: angle.id })}
-                  className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
-                  <span className="block text-sm font-medium">{angle.label}</span>
-                  <span className={cn('mt-0.5 block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{angle.description}</span>
-                  <span className="mt-1 block text-2xs italic text-ink-subtle">{angle.example}</span>
-                </button>
-              )
-            })}
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        ) : (
+          // The style of the written take: a choice inside the format, so it's labeled and kept quieter than the format cards.
+          <div className="space-y-2.5 border-t border-white/[0.06] pt-4">
             <div>
-              <span className="block text-sm text-ink">Order</span>
-              <span className="block text-2xs text-ink-subtle">{REMIX_ORDERS.find((order) => order.id === form.order)?.detail}</span>
+              <span className="block text-sm font-medium text-ink" id="remix-take-style">Style of your take</span>
+              <span className="block text-2xs text-ink-subtle">How the AI writes {onCamera ? 'your lines' : 'the take'}. You can edit every line before anything is made.</span>
             </div>
-            <Segmented label="Order" size="sm" value={form.order} onChange={(order) => form.update({ order })}
-              options={REMIX_ORDERS.map((order) => ({ value: order.id, label: order.label }))} />
+            <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3" role="radiogroup" aria-labelledby="remix-take-style">
+              {REMIX_ANGLES.map((angle) => {
+                const selected = form.angle === angle.id
+                return (
+                  <button key={angle.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+                    onClick={() => form.update({ angle: angle.id })} title={angle.example}
+                    className={cn('rounded-lg border px-2.5 py-1.5 text-left transition-colors',
+                      selected ? 'border-accent/50 bg-accent/10 text-ink' : 'border-white/[0.06] bg-white/[0.02] text-ink-muted hover:border-white/[0.12] hover:text-ink')}>
+                    <span className="block text-xs font-medium">{angle.label}</span>
+                    <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{onCamera ? angle.cameraDescription ?? angle.description : angle.description}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <span className="block text-xs font-medium text-ink">Order</span>
+                <span className="block text-2xs text-ink-subtle">{(() => { const order = REMIX_ORDERS.find((item) => item.id === form.order); return onCamera ? order?.cameraDetail : order?.detail })()}</span>
+              </div>
+              <Segmented label="Order" size="sm" value={form.order} onChange={(order) => form.update({ order })}
+                options={REMIX_ORDERS.map((order) => ({ value: order.id, label: order.label }))} />
+            </div>
           </div>
-        </>)}
+        )}
       </div>
     </Panel>
   )
@@ -375,6 +447,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         : momentTake ? 'Paste one long video (a podcast or an interview) or choose a file; from the Library, use ⋯ → Remix this clip. Then add the times you noted while listening.'
         : `Any public videos with a moment worth reacting to. Paste one link per line, up to ${MAX_SOURCES}.`} />
       <div className="mt-4 space-y-3">
+        <div data-remix-field="source" className={marked('source')}>
         {image ? (
           form.imagePath ? (
             <div className="glass-tile flex items-center gap-3 rounded-xl px-3 py-2.5">
@@ -393,18 +466,25 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
           </div>
         ) : (
           <div className="space-y-2">
-            <TextArea rows={3} value={form.links} aria-label="Video links" placeholder={'https://www.youtube.com/watch?v=…\nhttps://www.youtube.com/shorts/…'}
+            {/* One-video formats ask for one link; the others take a list. */}
+            <TextArea rows={singleVideo ? 1 : 3} value={form.links} aria-label="Video links"
+              placeholder={singleVideo ? 'https://www.youtube.com/watch?v=…' : 'https://www.youtube.com/watch?v=…\nhttps://www.youtube.com/shorts/…'}
               onChange={(e) => form.update({ links: e.target.value })} />
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className={cn('text-2xs', invalid.length ? 'text-danger' : 'text-ink-subtle')}>
-                {invalid.length ? `Not a full link: ${invalid[0].slice(0, 60)}${invalid.length > 1 ? ` and ${invalid.length - 1} more` : ''}` : `${links.length} video${links.length === 1 ? '' : 's'}`}
+              <span className={cn('text-2xs', invalid.length || (singleVideo && links.length > 1) ? 'text-danger' : 'text-ink-subtle')} data-testid="link-count">
+                {invalid.length ? `Not a full link: ${invalid[0].slice(0, 60)}${invalid.length > 1 ? ` and ${invalid.length - 1} more` : ''}`
+                  : singleVideo ? (links.length === 0 ? 'One video link' : links.length === 1 ? '1 video' : `${links.length} links: this kind uses one video`)
+                  : links.length === 0 ? `One link per line, up to ${MAX_SOURCES}` : `${links.length} video${links.length === 1 ? '' : 's'}`}
               </span>
               <Button size="sm" variant="secondary" icon={<Film className="h-3.5 w-3.5" />} disabled={busy} onClick={() => void chooseFile()}>Or choose a file</Button>
             </div>
           </div>
         )}
+        </div>
         {momentTake && (
-          <MomentRanges value={form.momentRanges} lengthSeconds={form.filePath ? fileSeconds : null} disabled={busy} onChange={(momentRanges) => form.update({ momentRanges })} />
+          <div data-remix-field="ranges" className={marked('ranges')}>
+            <MomentRanges value={form.momentRanges} lengthSeconds={form.filePath ? fileSeconds : null} disabled={busy} onChange={(momentRanges) => form.update({ momentRanges })} />
+          </div>
         )}
         {(momentTake || clip) && form.filePath && (
           <video src={localFileUrl(form.filePath)} preload="metadata" muted className="hidden" aria-hidden="true"
@@ -415,14 +495,19 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         )}
         {momentTake && form.filePath && fileSeconds !== null && <p className="text-2xs text-ink-subtle">This video is {formatTimecode(fileSeconds)} long.</p>}
         {image ? (
-          <Field label="Where it’s from" hint="Shown on screen as “Source: …” and in the caption, e.g. the publication or the account.">
-            <TextInput value={form.creator} maxLength={80} placeholder="e.g. The Wall Street Journal or @handle" onChange={(e) => form.update({ creator: e.target.value })} />
-          </Field>
+          <div data-remix-field="creator" className={marked('creator')}>
+            <Field label="Where it’s from" hint="Required. Shown on screen as “Source: …” and in the caption, e.g. the publication or the account.">
+              <TextInput value={form.creator} maxLength={80} placeholder="e.g. The Wall Street Journal or @handle" onChange={(e) => form.update({ creator: e.target.value })} />
+            </Field>
+          </div>
         ) : sources.length <= 1 && (
-          <Field label={form.filePath ? 'Original creator' : 'Original creator (optional)'}
-            hint={form.filePath ? 'Shown on screen while their moment plays.' : 'Shown on screen while their moment plays. Filled in from the link when left blank.'}>
-            <TextInput value={form.creator} maxLength={80} placeholder="e.g. @coachname" onChange={(e) => form.update({ creator: e.target.value })} />
-          </Field>
+          // A link fills in its creator; a file can't, so then it's required (and says so).
+          <div data-remix-field="creator" className={marked('creator')}>
+            <Field label={form.filePath ? 'Original creator (required)' : 'Original creator (optional)'}
+              hint={form.filePath ? 'Required: who made this video. A file doesn’t say, and their name is shown on screen while their moment plays.' : 'Shown on screen while their moment plays. Filled in from the link when left blank.'}>
+              <TextInput value={form.creator} maxLength={80} placeholder="e.g. @theircreator" aria-label="Original creator" onChange={(e) => form.update({ creator: e.target.value })} />
+            </Field>
+          </div>
         )}
       </div>
     </Panel>
@@ -503,7 +588,9 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Presenter">
       {REMIX_HOSTS.filter((item) => item.id !== 'camera').map((item) => {
         const selected = form.host === item.id
-        const unavailable = item.id === 'lipsync' && !selected ? lipsyncOff?.reason : undefined
+        // Off: the reason is said once, in the note under the cards (with its button); the card gets a short status.
+        const off = item.id === 'lipsync' && !selected ? lipsyncOff : null
+        const unavailable = off?.reason
         // Choosing it picks a ready HeyGen avatar when the chosen one isn't.
         const choose = (): void => {
           form.update({ host: item.id, ...(item.id === 'lipsync' && lipsyncIssue && readyHeygen ? { avatarId: readyHeygen.id } : {}) })
@@ -515,9 +602,9 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             onClick={choose}
             className={cn('glass-tile rounded-xl px-3 py-2.5 text-left', unavailable ? 'cursor-not-allowed opacity-50' : 'glass-tile-hover',
               selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
-            <span className="flex items-center gap-1.5 text-xs font-medium">{item.label}
-              {item.beta && <Badge tone="warning">Beta</Badge>}</span>
-            <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{unavailable ?? item.detail}</span>
+            <span className="flex flex-wrap items-center gap-1.5 text-xs font-medium">{item.label}
+              {item.beta && <Badge tone="warning">Beta</Badge>}{off && <Badge>{off.status}</Badge>}</span>
+            <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{item.detail}</span>
             {item.beta && <span className="mt-0.5 block text-2xs text-ink-subtle">{item.beta}</span>}
           </button>
         )
@@ -551,14 +638,21 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         action={<Button size="sm" onClick={() => onNavigate('avatar')}>Open Avatar Studio</Button>} />
     ) : (
       <div className="grid grid-cols-4 gap-2 sm:grid-cols-6" role="radiogroup" aria-label="Avatar">
-        {avatars.map((item) => (
-          <button key={item.id} type="button" role="radio" aria-checked={avatar?.id === item.id} tabIndex={avatar?.id === item.id ? 0 : -1}
-            onKeyDown={onRadioKeyDown} onClick={() => form.update({ avatarId: item.id })}
-            className={cn('glass-tile glass-tile-hover overflow-hidden rounded-xl text-left', avatar?.id === item.id && 'glass-selected')}>
-            <img src={localFileUrl(item.portraitPath)} alt="" className="aspect-[9/16] w-full object-cover" />
-            <span className="block truncate px-2 py-1 text-2xs font-medium text-ink">{item.name}{lipsync && item.heygen ? ' · HeyGen' : ''}</span>
-          </button>
-        ))}
+        {avatars.map((item) => {
+          // A HeyGen avatar still training (or waiting on consent) says so, and can't present a lip-synced take yet.
+          const badge = heygenBadge(item.heygen)
+          const off = lipsync && lipsyncProblem(heygenConfigured, item) !== null
+          return (
+            <button key={item.id} type="button" role="radio" aria-checked={avatar?.id === item.id} tabIndex={avatar?.id === item.id ? 0 : -1}
+              onKeyDown={onRadioKeyDown} onClick={() => form.update({ avatarId: item.id })} disabled={off} aria-disabled={off || undefined}
+              title={off ? lipsyncProblem(heygenConfigured, item)?.reason : undefined}
+              className={cn('glass-tile relative overflow-hidden rounded-xl text-left', off ? 'cursor-not-allowed opacity-50' : 'glass-tile-hover', avatar?.id === item.id && 'glass-selected')}>
+              <img src={localFileUrl(item.portraitPath)} alt="" className="aspect-[9/16] w-full object-cover" />
+              {badge && <span className="absolute left-1.5 top-1.5 rounded-full bg-black/70"><Badge tone="warning">{badge}</Badge></span>}
+              <span className="block truncate px-2 py-1 text-2xs font-medium text-ink">{item.name}{lipsync && item.heygen ? ' · HeyGen' : ''}</span>
+            </button>
+          )
+        })}
       </div>
     ))}
     {silent && !onCamera && avatar && (reactionCount > 0
@@ -588,7 +682,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       <span aria-hidden="true" className="cursor-pointer select-none text-xs text-ink-muted" onClick={() => form.update({ clipRightsAck: !form.clipRightsAck })}>{text}</span>
     </div>
   )
-  const promises = (<>
+  const promises = (<div data-remix-field="promises" className={cn('space-y-4', marked('promises'))}>
     {image && rightsBox(form.clipRightsAck, "I'm allowed to share this screenshot",
       'I’m allowed to share this screenshot, and I’m commenting on it: it’s public, my own, or shared with permission. The video credits where it’s from.')}
     {momentTake && rightsBox(form.clipRightsAck, "I'm allowed to use this video",
@@ -605,7 +699,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         I’ll turn on the platform’s AI-content label when I post these. TikTok, YouTube and Instagram require it for AI presenters and voices.
       </span>
     </div>}
-  </>)
+  </div>)
 
   const countRow = !image && !pause && !momentTake && !clip && (
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -645,13 +739,24 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
           </p>
         )}
         {promises}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <Button variant="primary" icon={image || pause || clip ? <Camera className="h-4 w-4" /> : momentTake ? <Sparkles className="h-4 w-4" /> : <Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || busy || blocker !== null}
-            tooltip={busy ? 'A remix run is in progress' : blocker ?? undefined} onClick={() => void plan()}>
+            tooltip={busy ? 'A remix run is in progress' : blocker?.text} onClick={() => void plan()}>
             {goLabel}
           </Button>
+          {/* What's still missing, said next to the button (not only in its tooltip), with the way to it. */}
+          {blocker && !busy && (
+            <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-ink-muted" data-testid="remix-blocker" role="status">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+              <span>{/[.!?]$/.test(blocker.text) ? blocker.text : `${blocker.text}.`}</span>
+              <button type="button" className="font-medium text-accent hover:underline" onClick={() => revealField(blocker.target)}>
+                {blocker.target === 'keys' ? 'Open API keys' : 'Show me'}
+              </button>
+            </p>
+          )}
           {takeWaiting && <span className="text-2xs text-ink-subtle">Starting again replaces the {image || pause || clip ? 'take' : momentTake ? 'moments' : 'takes'} waiting for review above.</span>}
         </div>
+        <p className="text-2xs text-ink-subtle" data-testid="price-note">{remixPriceNote(lipsync && hostChoice)}</p>
       </div>
     </Panel>
   )
@@ -664,7 +769,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     brandName: brand?.name ?? null, keyword: keyword || null, ctaClip: Boolean(form.ctaId)
   })
   const lookPanel = (
-    <Panel>
+    <Panel data-remix-field="look" className={marked('look')}>
       <button type="button" className="flex w-full items-start justify-between gap-3 text-left" aria-expanded={lookOpen} aria-controls="remix-look"
         onClick={() => setLookOpen(!lookOpen)}>
         <span className="min-w-0">
@@ -675,9 +780,10 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       </button>
       {lookOpen && (
         <div id="remix-look" className="mt-4 space-y-4">
-          <p className="text-2xs text-ink-subtle">Optional. These start from your Brand Identity’s look and your last choices.</p>
+          <p className="text-2xs text-ink-subtle">{onCamera ? 'Optional. These start from your Brand Identity’s look and your last choices.'
+            : 'Optional. Your Brand Identity decides what your presenter believes, so every take sounds like your brand and only uses your real proof. Its look fills in the style below.'}</p>
           {brandBlock}
-          {styleBoard(<>{pauseLayoutChoice}{cameraBlock}{pipRow}{pauseCaptionsRow}</>)}
+          {styleBoard(onCamera ? <>{pauseLayoutChoice}{cameraBlock}{pipRow}{pauseCaptionsRow}</> : undefined)}
         </div>
       )}
     </Panel>
@@ -688,7 +794,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       <PageHeader
         eyebrow="Studio"
         title="Remix"
-        description="Turn any viral moment into your own take. Their moment hooks the viewer; your presenter's take, in your brand's voice, is the video."
+        description="Turn any viral moment into your own take. Their moment hooks the viewer; your take, in your brand's voice, is the video."
       />
       <FirstRunGuide page="remix" />
 
@@ -736,16 +842,10 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         )}
         {formatPanel}
         {sourcePanel}
-        {folded ? lookPanel : (<>
-          <Panel>
-            <PanelHeader title="3 · Your take" description="Your Brand Identity decides what your presenter believes, so every reaction sounds like your brand and only uses your real proof. Its look fills in the style below." />
-            <div className="mt-4 space-y-3">
-              {brandBlock}
-              {styleBoard()}
-            </div>
-          </Panel>
-          <Panel>
-            <PanelHeader title="4 · Presenter" description={silent ? 'Your avatar’s reactions play with the clip.' : 'Who delivers the take.'} />
+        {/* The AI presenter's own choice comes first; the look and call to action fold the same way on both sides. */}
+        {!onCamera && (
+          <Panel data-remix-field="presenter" className={marked('presenter')}>
+            <PanelHeader title="3 · Presenter" description={silent ? 'Your avatar’s reactions play with the clip.' : 'Who delivers the take.'} />
             <div className="mt-4 space-y-4">
               {hostCards}
               {lipsyncNote}
@@ -753,7 +853,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
               {avatarBlocks}
             </div>
           </Panel>
-        </>)}
+        )}
+        {lookPanel}
         {goPanel}
       </div>
 

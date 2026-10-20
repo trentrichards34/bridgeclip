@@ -3,7 +3,7 @@ import { pickStyle, type AppPrefsUpdate, type CreateStyle, type MemberPrefs, typ
 import { DEFAULT_PROFILE, type CreatorProfile } from '../../shared/onboarding'
 import { getApi } from '../lib/ipc'
 import { useDraftStore } from './use-draft-store'
-import { useRemixForm } from './use-remix-form-store'
+import { remixStartStyle, useRemixForm } from './use-remix-form-store'
 
 /**
  * The member's setup that sticks: the last Create and Remix style (saved in
@@ -83,6 +83,8 @@ export const useMemberPrefsStore = create<MemberPrefsState>((set) => {
       loading ??= getApi().prefs.load().then((prefs) => {
         applyStyle('create', prefs.create)
         applyStyle('remix', prefs.remix)
+        // Never chosen before: open where the setup profile points (a remembered choice wins).
+        if (prefs.remix.format === undefined && prefs.remix.host === undefined) applyStyle('remix', remixStartStyle(prefs.profile?.goals ?? []))
         take(prefs)
         startPersisting()
       }).catch((error) => { loading = null; throw error })

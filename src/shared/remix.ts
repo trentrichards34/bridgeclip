@@ -15,9 +15,10 @@ export type RemixStyle = 'reaction' | 'myth_truth' | 'science' | 'lessons' | 'do
 /** A style, or 'mix': the AI picks a fitting style per moment so the account doesn't repeat one template. */
 export type RemixAngle = RemixStyle | 'mix'
 
-export const REMIX_ANGLES: { id: RemixAngle; label: string; description: string; example: string }[] = [
+/** `cameraDescription`: the same, said to the member when they're on camera themselves ("you", not "your presenter"). */
+export const REMIX_ANGLES: { id: RemixAngle; label: string; description: string; cameraDescription?: string; example: string }[] = [
   { id: 'reaction', label: 'Reaction take', description: 'Agree and add to it, disagree and correct it, or add the missing nuance, in your brand’s voice.', example: '“He’s half right. Here’s what he left out…”' },
-  { id: 'myth_truth', label: 'Myth vs. truth', description: 'The moment states a common belief; your presenter breaks it down and gives the truth.', example: '“You don’t need to lose weight first. Here’s why.”' },
+  { id: 'myth_truth', label: 'Myth vs. truth', description: 'The moment states a common belief; your presenter breaks it down and gives the truth.', cameraDescription: 'The moment states a common belief; you break it down and give the truth.', example: '“You don’t need to lose weight first. Here’s why.”' },
   { id: 'science', label: 'The science behind it', description: 'Explain why what happens in the moment works, or why it fails, in plain language.', example: '“Here’s why that actually works…”' },
   { id: 'lessons', label: 'Lessons from this', description: 'Two or three practical lessons your audience can take from the moment.', example: '“3 things this teaches you about…”' },
   { id: 'do_this_instead', label: 'Do this instead', description: 'What they did, why it falls short, and the better way you teach.', example: '“Don’t do that. Do this instead.”' },
@@ -89,9 +90,9 @@ export interface RemixCue { at: number; reaction: string }
 
 /** moment_first: the borrowed moment is the hook, then the presenter reacts. take_first: the presenter opens. */
 export type RemixOrder = 'moment_first' | 'take_first'
-export const REMIX_ORDERS: { id: RemixOrder; label: string; detail: string }[] = [
-  { id: 'moment_first', label: 'Moment first', detail: 'Their viral moment hooks the viewer, then your presenter reacts' },
-  { id: 'take_first', label: 'Take first', detail: 'Your presenter opens, then the moment plays as the setup' }
+export const REMIX_ORDERS: { id: RemixOrder; label: string; detail: string; cameraDetail: string }[] = [
+  { id: 'moment_first', label: 'Moment first', detail: 'Their viral moment hooks the viewer, then your presenter reacts', cameraDetail: 'Their viral moment hooks the viewer, then you react' },
+  { id: 'take_first', label: 'Take first', detail: 'Your presenter opens, then the moment plays as the setup', cameraDetail: 'You open, then the moment plays as the setup' }
 ]
 
 /** lipsync: the member's HeyGen avatar on camera, lip-synced (Voiced take); still: the avatar photo with a slow push-in; voice: voice-over only (cheapest); camera: the member on camera, recorded in the app or uploaded. */
@@ -101,7 +102,7 @@ export const REMIX_HOSTS: { id: RemixHost; label: string; detail: string; unavai
   { id: 'camera', label: 'Me, on camera', detail: 'You react or read your take on camera: record here or upload a phone video' },
   { id: 'lipsync', label: 'Avatar on camera (HeyGen, Beta)', detail: 'Your realistic avatar says the take, lip-synced' },
   { id: 'still', label: 'Avatar photo', detail: 'Your avatar’s photo with the voice, no lip-sync',
-    beta: 'Early version: a still picture with voice-over, no lip-sync.' },
+    beta: 'Early version: a still picture with voice-over.' },
   { id: 'voice', label: 'Voice only', detail: 'Voice-over on B-roll and stills, cheapest',
     beta: 'Early version: an AI voice over stock clips and stills.' }
 ]
@@ -109,16 +110,23 @@ export const REMIX_HOSTS: { id: RemixHost; label: string; detail: string; unavai
  * Why "Avatar on camera (HeyGen, Beta)" can't be used right now, in plain words, and where it's fixed (Settings for
  * the key, Avatar Studio for the avatar), or null when it can. Only a Voiced take has it.
  */
-export function lipsyncProblem(heygenConfigured: boolean, avatar: { heygen?: HeygenAvatarLink | null } | null): { reason: string; fix: 'settings' | 'studio' } | null {
-  if (!heygenConfigured) return { reason: 'Add your HeyGen key in Settings → API keys to use a realistic avatar.', fix: 'settings' }
+export function lipsyncProblem(heygenConfigured: boolean, avatar: { heygen?: HeygenAvatarLink | null } | null): { reason: string; fix: 'settings' | 'studio'; status: string } | null {
+  if (!heygenConfigured) return { reason: 'Add your HeyGen key in Settings → API keys to use a realistic avatar.', fix: 'settings', status: 'Needs a HeyGen key' }
   const link = avatar?.heygen ?? null
-  if (!link) return { reason: avatar ? 'This avatar isn’t on HeyGen. Choose a HeyGen avatar below, or make one in Avatar Studio.' : 'Make a HeyGen avatar in Avatar Studio first.', fix: 'studio' }
+  if (!link) return { reason: avatar ? 'This avatar isn’t on HeyGen. Choose a HeyGen avatar below, or make one in Avatar Studio.' : 'Make a HeyGen avatar in Avatar Studio first.', fix: 'studio', status: 'Needs a HeyGen avatar' }
   const stage = heygenStage(link)
-  if (stage === 'training') return { reason: 'HeyGen is still training this avatar (usually a few minutes). Check it in Avatar Studio.', fix: 'studio' }
-  if (stage === 'consent') return { reason: 'HeyGen needs your consent recording for this avatar. Open it from the avatar in Avatar Studio.', fix: 'studio' }
-  if (stage === 'consent-rejected') return { reason: 'HeyGen didn’t accept the consent recording for this avatar. Record it again in Avatar Studio.', fix: 'studio' }
-  if (stage === 'failed') return { reason: 'HeyGen could not make this avatar. Make a new one in Avatar Studio.', fix: 'studio' }
+  if (stage === 'training') return { reason: 'HeyGen is still training this avatar (usually a few minutes). Check it in Avatar Studio.', fix: 'studio', status: 'Training' }
+  if (stage === 'consent') return { reason: 'HeyGen needs your consent recording for this avatar. Open it from the avatar in Avatar Studio.', fix: 'studio', status: 'Needs consent' }
+  if (stage === 'consent-rejected') return { reason: 'HeyGen didn’t accept the consent recording for this avatar. Record it again in Avatar Studio.', fix: 'studio', status: 'Needs consent' }
+  if (stage === 'failed') return { reason: 'HeyGen could not make this avatar. Make a new one in Avatar Studio.', fix: 'studio', status: 'Failed' }
   return null
+}
+
+/** The badge on a HeyGen avatar that can't say a take yet ("Training", "Needs consent", "Failed"), or null (ready, or not on HeyGen). */
+export function heygenBadge(link: HeygenAvatarLink | null | undefined): string | null {
+  if (!link) return null
+  const stage = heygenStage(link)
+  return stage === 'training' ? 'Training' : stage === 'consent' || stage === 'consent-rejected' ? 'Needs consent' : stage === 'failed' ? 'Failed' : null
 }
 
 /** Silent react with the avatar's reaction clips: also an early version. */
@@ -162,7 +170,9 @@ export function ctaLine(keyword: string, offer: string): string {
   return what ? `Comment ${keyword} and I'll send you ${what}.` : `Comment ${keyword}.`
 }
 
-/** Estimates for the cost preview (OpenRouter prices, October 2026). */
+/** When the OpenRouter prices behind REMIX_PRICES were read (HeyGen's has its own date: HEYGEN_PRICES.checkedOn). */
+export const REMIX_PRICES_CHECKED = 'October 2026'
+/** Estimates for the cost preview (OpenRouter prices, REMIX_PRICES_CHECKED). */
 export const REMIX_PRICES = {
   /** HeyGen Avatar IV, per second of on-camera speech (HeyGen's published price; see ./heygen). */
   avatarPerSecond: HEYGEN_PRICES.avatarIvPerSecond,
@@ -173,6 +183,18 @@ export const REMIX_PRICES = {
   voicePerRemix: 0.03,
   /** Transcribing and planning, per hour of source video. */
   sourcePerHour: 0.35
+}
+
+/**
+ * The one line under Remix's cost that says every price is an estimate and when each was checked
+ * (HeyGen's only when its avatar is used).
+ */
+export function remixPriceNote(heygen: boolean): string {
+  const [year, month, day] = HEYGEN_PRICES.checkedOn.split('-').map(Number)
+  const heygenDate = new Date(Date.UTC(year, month - 1, day)).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+  return `All prices here are estimates: OpenRouter prices checked ${REMIX_PRICES_CHECKED}` +
+    (heygen ? `, HeyGen’s $${REMIX_PRICES.avatarPerSecond.toFixed(2)} per second checked ${heygenDate}` : '') +
+    '. What your accounts bill is what counts.'
 }
 
 /** Per-remix range (the avatar's speaking time varies) and the total at the high end. */

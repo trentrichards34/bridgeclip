@@ -610,3 +610,74 @@ test('Remix: You on camera / AI presenter, setup goals land on the right side, a
   const clip = renderToStaticMarkup(React.createElement(ClipTakeReview, { status: status('clip_then_me'), onError() {}, onOpenKeys() {} }))
   assert.ok(clip.includes('2 · Your take') && clip.includes('3 · Hook text and caption') && !clip.includes('b-roll'))
 })
+
+test('Remix first visit: opens on You on camera (the AI presenter only for an AI-only profile), says what is missing next to the button, labels the take style and folds the look on both sides', () => {
+  const React = require('react')
+  const { renderToStaticMarkup } = require('react-dom/server')
+  const code = buildSync({
+    stdin: {
+      contents: `export { useRemixForm, remixStartStyle } from './src/renderer/store/use-remix-form-store';
+        export { useSettingsStore } from './src/renderer/store/use-settings-store';
+        export { RemixPage } from './src/renderer/pages/RemixPage';
+        export { MomentRanges } from './src/renderer/components/MomentRanges';`,
+      resolveDir: path.resolve(__dirname, '..'), loader: 'ts'
+    },
+    bundle: true, platform: 'node', format: 'cjs', packages: 'external', loader: { '.css': 'empty' }, jsx: 'automatic', write: false
+  }).outputFiles[0].text
+  const mod = { exports: {} }
+  vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: {} }, navigator: {}, requestAnimationFrame: (fn) => fn() })
+  const { useRemixForm, remixStartStyle, useSettingsStore, RemixPage, MomentRanges } = mod.exports
+  // (Server rendering reads a store's initial state, so a change goes there too.)
+  const set = (store, patch) => { store.setState(patch); Object.assign(store.getInitialState(), patch) }
+  const render = () => renderToStaticMarkup(React.createElement(RemixPage, { onNavigate() {} }))
+  const text = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;|&#39;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ')
+
+  // No remembered choice: You on camera, Pause & react. Only a profile whose Remix goal is AI reactions alone opens the AI presenter.
+  assert.deepEqual([useRemixForm.getState().format, useRemixForm.getState().host], ['pause_react', 'camera'])
+  assert.deepEqual(JSON.parse(JSON.stringify(remixStartStyle([]))), {})
+  assert.deepEqual(JSON.parse(JSON.stringify(remixStartStyle(['clips', 'ai-reactions']))), { format: 'commentary', host: 'still' })
+  assert.deepEqual(JSON.parse(JSON.stringify(remixStartStyle(['ai-reactions', 'camera-reactions']))), {})
+  assert.deepEqual(JSON.parse(JSON.stringify(remixStartStyle(['ai-reactions', 'article']))), {})
+
+  let html = render()
+  assert.match(html, /role="radio" aria-checked="true"[^>]*>(?:(?!<\/button>).)*You on camera/)
+  // Why the button is off, said next to it (not only in a tooltip), with the way to fix it.
+  assert.match(text(html), /Add your OpenRouter key in Settings first\. Open API keys/)
+  assert.match(text(html), /All prices here are estimates: OpenRouter prices checked October 2026\. What your accounts bill is what counts\./)
+  // One-video formats ask for one link; the creator's handle placeholder isn't the member's own.
+  assert.match(html, /placeholder="https:\/\/www\.youtube\.com\/watch\?v=…"/)
+  assert.match(text(html), /One video link/)
+  assert.match(html, /placeholder="e\.g\. @theircreator"/)
+  assert.doesNotMatch(html, /@coachname/)
+
+  // A chosen file makes the creator required, and says so.
+  set(useSettingsStore, { openrouterConfigured: true })
+  set(useRemixForm, { filePath: '/Users/me/their video.mp4' })
+  html = text(render())
+  assert.match(html, /Original creator \(required\)/)
+  assert.match(html, /Required: who made this video\./)
+  assert.match(html, /Add the original creator’s name for the credit\. Show me/)
+  set(useRemixForm, { creator: '@coach' })
+  assert.match(text(render()), /Confirm you’re allowed to use this video\. Show me/)
+
+  // Scripted take on camera: the take's style is labeled and says "you".
+  set(useRemixForm, { format: 'commentary', host: 'camera', filePath: null, creator: '' })
+  html = text(render())
+  assert.match(html, /Style of your take/)
+  assert.match(html, /you break it down and give the truth/)
+  assert.match(html, /Their viral moment hooks the viewer, then you react/)
+  assert.doesNotMatch(html, /your presenter/i)
+  assert.match(html, /One link per line, up to 10/)
+  assert.match(html, /3 · Look & call to action/)
+
+  // The AI presenter: the presenter, then the same folded look (closed, with its summary line).
+  set(useRemixForm, { format: 'commentary', host: 'voice' })
+  const ai = render()
+  assert.match(text(ai), /3 · Presenter .*4 · Look & call to action Pop captions · White bar · No brand · No call to action .*5 · Write the takes/)
+  assert.match(ai, /aria-expanded="false" aria-controls="remix-look"/)
+
+  // Moment + my take: times that are clearly placeholders.
+  const ranges = renderToStaticMarkup(React.createElement(MomentRanges, { value: [{ start: '', end: '' }], lengthSeconds: null, disabled: false, onChange() {} }))
+  assert.equal(ranges.match(/placeholder="mm:ss"/g).length, 2)
+  assert.doesNotMatch(ranges, /placeholder="37:00"/)
+})

@@ -99,7 +99,7 @@ test('Remix: a Voiced take with my HeyGen avatar on camera, lip-synced on HeyGen
   await page.getByRole('radiogroup', { name: 'Remix format' }).getByRole('radio', { name: /^Voiced take/ }).click()
   await page.getByRole('button', { name: 'Or choose a file' }).click()
   await page.getByText('coach-podcast.mp4').waitFor()
-  await page.getByPlaceholder('e.g. @coachname').fill('Coach Example')
+  await page.getByPlaceholder('e.g. @theircreator').fill('Coach Example')
   const presenter = page.getByRole('radiogroup', { name: 'Presenter' })
   const onCamera = presenter.getByRole('radio', { name: /Avatar on camera \(HeyGen, Beta\)/ })
   assert.equal(await onCamera.isDisabled(), false, 'a ready HeyGen avatar and a key: available')
@@ -107,6 +107,9 @@ test('Remix: a Voiced take with my HeyGen avatar on camera, lip-synced on HeyGen
   await page.getByText('Your realistic avatar says the take, lip-synced').waitFor()
   await page.getByText(/HeyGen lip-syncs your avatar to the voice for the opening and closing lines\. HeyGen bills it on your HeyGen account/).waitFor()
   await page.getByRole('radiogroup', { name: 'Avatar' }).getByText('Me on HeyGen · HeyGen').waitFor()
+  // Every price is an estimate, with the date each was checked (HeyGen's own, once it's used).
+  assert.equal(await page.getByTestId('price-note').innerText(),
+    'All prices here are estimates: OpenRouter prices checked October 2026, HeyGen’s $0.10 per second checked October 19, 2026. What your accounts bill is what counts.')
   await page.getByRole('checkbox', { name: "I'll turn on the AI-content label when I post" }).click()
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await presenter.scrollIntoViewIfNeeded(); await shot(app, 'remix-heygen-presenter.png') }
   await page.getByRole('button', { name: 'Write the takes', exact: true }).click()
