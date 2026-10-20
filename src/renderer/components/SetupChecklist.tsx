@@ -55,7 +55,8 @@ function useSetupFacts(): { facts: SetupFacts; refresh: () => void } {
           aiReactions: kinds((entry) => entry.madeWith === 'remix' && (entry.remixKinds ?? []).includes('ai')),
           cameraReactions: kinds((entry) => entry.madeWith === 'remix' && (entry.remixKinds ?? []).includes('camera')),
           articles: kinds((entry) => entry.madeWith === 'remix' && (entry.remixKinds ?? []).includes('image')),
-          avatarVideos: kinds((entry) => entry.madeWith === 'avatar')
+          avatarVideos: kinds((entry) => entry.madeWith === 'avatar'),
+          editedRecordings: kinds((entry) => entry.madeWith === 'edit')
         } : current.runsByKind
       }))
     })
@@ -149,7 +150,8 @@ export function SetupChecklist({ onNavigate, inSettings = false, className }: {
     'first-ai-reaction': { label: 'Start', run: () => start(items.find((item) => item.id === 'first-ai-reaction')!) },
     'first-camera-reaction': { label: 'Start', run: () => start(items.find((item) => item.id === 'first-camera-reaction')!) },
     'first-article': { label: 'Start', run: () => start(items.find((item) => item.id === 'first-article')!) },
-    'first-avatar-video': { label: 'Start', run: () => start(items.find((item) => item.id === 'first-avatar-video')!) }
+    'first-avatar-video': { label: 'Start', run: () => start(items.find((item) => item.id === 'first-avatar-video')!) },
+    'first-edited-recording': { label: 'Start', run: () => onNavigate('edit') }
   }
   const openProfile = (): void => useOnboarding.getState().setOpen(true)
 

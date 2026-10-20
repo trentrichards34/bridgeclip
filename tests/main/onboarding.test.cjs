@@ -28,6 +28,14 @@ test('profile: stored values are read leniently, updates strictly, and a new pro
     assert.ok(shared.GUIDES[goal.id].steps.length >= 3, goal.id)
     assert.ok(!/\d+%|\$\d/.test(JSON.stringify(shared.GUIDES[goal.id])), `${goal.id}: the guide states no made-up numbers`)
   }
+  // The AI reactions guide names all three AI presenters, and what HeyGen's needs.
+  const ai = JSON.stringify(shared.GUIDES['ai-reactions'])
+  assert.match(ai, /Avatar photo/)
+  assert.match(ai, /Voice only/)
+  assert.match(ai, /Avatar on camera \(HeyGen, Beta\)/)
+  assert.match(ai, /HeyGen key/)
+  assert.match(ai, /HeyGen avatar/)
+  assert.match(ai, /bills it on your HeyGen account/)
 })
 
 test('member prefs keep the profile and saveProfile validates it', () => {
@@ -76,9 +84,18 @@ test('setup path: only the steps the goals need, a first-run step per kind of vi
   // Camera: unknown and refused aren't done.
   assert.equal(setupItems(facts({ camera: false }), { goals: ['article'], platforms: [] }).find((item) => item.id === 'camera').done, false)
   assert.equal(remainingSetup(setupItems(facts({ openrouter: true, camera: true, brandIdentities: 1, ctas: 1, runsByKind: { ...NO_RUNS, articles: 1 } }), { goals: ['article'], platforms: [] })), 0)
+
+  // Edit my recording: films with the camera, and has its own first-run step, counted from its own reels.
+  assert.deepEqual(ids({ goals: ['clips', 'edit-recording'], platforms: [] }), ['openrouter', 'tools', 'camera', 'brand', 'cta', 'first-clip', 'first-edited-recording'])
+  const edited = (runsByKind) => setupItems(facts({ runs: 1, runsByKind: { ...NO_RUNS, ...runsByKind } }), { goals: ['edit-recording'], platforms: [] }).find((item) => item.id === 'first-edited-recording')
+  assert.equal(edited({}).title, 'Make your first edited recording')
+  assert.match(edited({}).detail, /Edit my recording/)
+  assert.equal(edited({ clips: 1 }).done, false, 'a Create run is not an edited recording')
+  assert.equal(edited({ editedRecordings: 1 }).done, true)
+  assert.equal(firstRunGoal('first-edited-recording'), null, 'it opens its own page, not a first-run guide')
 })
 
-test('Library runs say what made them: Create, Remix (and which kind) or Avatar Studio', async () => {
+test('Library runs say what made them: Create, Remix (and which kind), Avatar Studio or Edit my recording', async () => {
   const temp = tempDir('bridgeclip-made-with-')
   try {
     const library = path.join(temp.dir, 'library')
@@ -94,6 +111,7 @@ test('Library runs say what made them: Create, Remix (and which kind) or Avatar 
     write('remix-new', { remix: true, remix_kinds: ['image', 'bogus'] })
     write('remix-old', { remix: true }, [{ ai_generated: false }, { ai_generated: true }])
     write('avatar', { avatar_studio: 'script' })
+    write('edited', { api_costs: { total_estimated_cost_usd: 0.02 }, edit_recording: true })
     const { electron } = fakeElectron(temp.dir)
     const { getJobHistory } = loadMain("export * from './src/main/file-manager'", { electron })
     const entries = Object.fromEntries((await getJobHistory(library)).map((entry) => [entry.videoTitle, entry]))
@@ -103,5 +121,6 @@ test('Library runs say what made them: Create, Remix (and which kind) or Avatar 
     assert.deepEqual(plain(entries['remix-new'].remixKinds), ['image'])
     assert.deepEqual(plain(entries['remix-old'].remixKinds).sort(), ['ai', 'camera'], 'older remix runs: on camera when there is no AI presenter')
     assert.equal(entries.avatar.madeWith, 'avatar')
+    assert.equal(entries.edited.madeWith, 'edit', 'an Edit my recording reel is not counted as first clips')
   } finally { temp.cleanup() }
 })

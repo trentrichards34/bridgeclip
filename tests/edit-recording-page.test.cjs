@@ -11,7 +11,9 @@ const bundled = buildSync({
     contents: `export { EditRecordingPage, lookFromBrand } from './src/renderer/pages/EditRecordingPage';
       export { EditReview, transcriptLines } from './src/renderer/components/EditReview';
       export { parseEditPlan } from './src/shared/edit-recording';
-      export { useSettingsStore } from './src/renderer/store/use-settings-store';`,
+      export { useSettingsStore } from './src/renderer/store/use-settings-store';
+      export { useEditRecordingStore } from './src/renderer/store/use-edit-recording-store';
+      export { isCreateOutput } from './src/renderer/components/ClipList';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
   },
@@ -25,7 +27,7 @@ const pending = () => new Promise(() => {})
 globalThis.window = { bridgeclip: { edit: { status: pending, onStatus: () => () => {} }, brandIdentities: { list: pending }, settings: { load: pending } } }
 const mod = { exports: {} }
 new Function('module', 'exports', 'require', bundled)(mod, mod.exports, require)
-const { EditRecordingPage, EditReview, lookFromBrand, transcriptLines, parseEditPlan, useSettingsStore } = mod.exports
+const { EditRecordingPage, EditReview, lookFromBrand, transcriptLines, parseEditPlan, useSettingsStore, useEditRecordingStore, isCreateOutput } = mod.exports
 
 function staticRender(element) {
   const original = React.useSyncExternalStore
@@ -81,4 +83,35 @@ test('transcript lines split at sentence ends and take changes; a brand’s look
   const look = lookFromBrand({ id: 'b', name: 'B', text: '', createdAt: '', updatedAt: '', look: { color: '#FF8800', captionPreset: 'impact', handle: '@sam' } })
   assert.deepEqual(look, { includeCaptions: true, captionPreset: 'impact', headlineLook: { look: 'white', color: '#FF8800', font: 'clean' }, showHandle: true })
   assert.equal(lookFromBrand(null).captionPreset, 'pop')
+})
+
+test('leaving the page keeps the brand, look and the review’s choices (by run), so coming back restores them', () => {
+  const fs = require('node:fs')
+  const page = fs.readFileSync(path.join(__dirname, '../src/renderer/pages/EditRecordingPage.tsx'), 'utf8')
+  assert.doesNotMatch(page, /useState<EditLook>/, 'the look is not page state')
+  assert.doesNotMatch(page, /\[brandId, setBrandId\] = useState/, 'the brand is not page state')
+  const look = { includeCaptions: false, captionPreset: 'impact', headlineLook: { look: 'black', color: '#FF8800', font: 'serif' }, showHandle: false }
+  useEditRecordingStore.getState().setBrand('b'.repeat(16), look)
+  assert.equal(useEditRecordingStore.getState().brandId, 'b'.repeat(16))
+  assert.deepEqual(useEditRecordingStore.getState().look, look)
+
+  const status = {
+    id: 'run-a', phase: 'review', detail: '', percent: 100, folder: '/out/edit-1', plan: PLAN, transcriber: 'scribe', output: null, costUsd: 0, estimateUsd: 0, error: null, warnings: [],
+    sources: [{ path: '/a/take-1.mp4', name: 'take-1.mp4', seconds: 2 }, { path: '/a/take-2.mp4', name: 'take-2.mp4', seconds: 4 }]
+  }
+  const render = (id) => staticRender(React.createElement(EditReview, { status: { ...status, id }, brand: null, look, onLook: () => {}, onError: () => {} }))
+  assert.match(render('run-a'), /2 words cut/)
+  // The member kept every word and switched the pop-up off, then left the page.
+  assert.equal(useEditRecordingStore.getState().reviewFor('run-a'), null)
+  useEditRecordingStore.getState().saveReview('run-a', { cut: [], hookId: 0, hookText: 'Here is why', endOnCta: false, popups: [{ id: 0, on: false, text: 'coaches' }], sounds: [{ id: 0, on: true }], look })
+  const back = render('run-a')
+  assert.match(back, /0 words cut/)
+  // Another run starts fresh.
+  assert.match(render('run-b'), /2 words cut/)
+})
+
+test('an Edit my recording reel is not a Create run, so the Library offers no Edit clips button for it', () => {
+  assert.equal(isCreateOutput({ clips: [], metrics: { edit_recording: true } }), false)
+  assert.equal(isCreateOutput({ clips: [], metrics: { remix: true } }), false)
+  assert.equal(isCreateOutput({ clips: [], metrics: {} }), true)
 })

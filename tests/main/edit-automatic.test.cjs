@@ -134,9 +134,14 @@ test('an older run that didn’t save its cuts says so; recorded cuts, a framing
 
 test('Remix, Avatar Studio, running, transcript-less and outside runs are refused with plain words', async () => {
   const remix = setup({ metrics: { remix: true } })
-  await assert.rejects(remix.module.automaticEditInfo(remix.run), /Remix and Avatar Studio videos are edited from their own menus/)
+  await assert.rejects(remix.module.automaticEditInfo(remix.run), /Remix, Avatar Studio and edited recordings are changed from their own menus/)
   const avatar = setup({ metrics: { avatar_studio: 'v1' } })
   await assert.rejects(avatar.module.automaticEditInfo(avatar.run), /own menus/)
+  // An Edit my recording reel isn't a Create run (it has no saved transcript for the clip editor).
+  const reel = setup({ metrics: { edit_recording: true } })
+  await assert.rejects(reel.module.automaticEditInfo(reel.run), /own menus/)
+  assert.equal(reel.module.isCreateRun(jobOutput.parseJobOutput({ clips: [], metrics: { edit_recording: true } })), false)
+  assert.equal(reel.module.isCreateRun(jobOutput.parseJobOutput({ clips: [], metrics: {} })), true)
   const live = setup({ live: true })
   await assert.rejects(live.module.automaticEditInfo(live.run), /Wait for this run to finish/)
   const bare = setup({ transcript: false })

@@ -56,10 +56,10 @@ function readProjectFile(run: string): EditorProject | null {
   try { return parseEditorProject(JSON.parse(readFileSync(file, 'utf8'))) } catch { throw new Error('This run’s editor project could not be read.') }
 }
 
-/** A run made on Create (not Remix, not Avatar Studio). */
+/** A run made on Create (not Remix, Avatar Studio or Edit my recording). */
 export function isCreateRun(output: JobOutput): boolean {
   const metrics = (output.metrics ?? {}) as Record<string, unknown>
-  return metrics.remix !== true && typeof metrics.avatar_studio !== 'string'
+  return metrics.remix !== true && typeof metrics.avatar_studio !== 'string' && metrics.edit_recording !== true
 }
 
 /** The project's own video files are in place (a project made from a kept copy uses editor-source.mp4). */
@@ -80,7 +80,7 @@ async function readRun(path: unknown): Promise<{ run: string; library: string; o
   const { run, library } = runFolder(path)
   const output = await getJobOutput(run, library)
   if (!output) throw new Error('This run is no longer in your Library.')
-  if (!isCreateRun(output)) throw new Error('Remix and Avatar Studio videos are edited from their own menus.')
+  if (!isCreateRun(output)) throw new Error('Remix, Avatar Studio and edited recordings are changed from their own menus.')
   if (liveJobIds().has(basename(run))) throw new Error('Wait for this run to finish before editing it.')
   const project = readProjectFile(run)
   if (output.editor_project && !project) throw new Error('This run’s editor project could not be read.')

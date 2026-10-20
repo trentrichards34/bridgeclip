@@ -229,14 +229,18 @@ function hasMp3Encoder(): Promise<boolean> {
   return encoderCheck
 }
 
-async function extractAudio(source: string, folder: string, index: number): Promise<{ path: string; type: string }> {
+async function extractAudio(source: string, folder: string, index: number, signal?: AbortSignal): Promise<{ path: string; type: string }> {
   const mp3 = await hasMp3Encoder()
   const path = join(folder, '.work', `audio-${index}.${mp3 ? 'mp3' : 'flac'}`)
   await mkdir(dirname(path), { recursive: true })
+  if (signal?.aborted) throw new Error('Canceled.')
   try {
     await execFileAsync(resolveBinary('ffmpeg'), ['-nostdin', '-v', 'error', '-y', '-i', source, '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
-      ...(mp3 ? ['-c:a', 'libmp3lame', '-b:a', '48k'] : ['-c:a', 'flac']), path], { timeout: 10 * 60_000 })
-  } catch { throw new Error(`No sound could be read from “${basename(source)}”. Check that it has audio.`) }
+      ...(mp3 ? ['-c:a', 'libmp3lame', '-b:a', '48k'] : ['-c:a', 'flac']), path], { timeout: 10 * 60_000, ...(signal ? { signal } : {}) })
+  } catch {
+    if (signal?.aborted) throw new Error('Canceled.')
+    throw new Error(`No sound could be read from “${basename(source)}”. Check that it has audio.`)
+  }
   return { path, type: mp3 ? 'audio/mpeg' : 'audio/flac' }
 }
 
@@ -378,11 +382,14 @@ async function prepare(current: EditRun): Promise<void> {
 async function transcribe(current: EditRun, source: EditSource, index: number, keyterms: string[]): Promise<[string, number, number][]> {
   const settings = loadSettings()
   try {
-    const audio = await extractAudio(source.path, current.status.folder, index)
+    // Made before the audio is read out, so canceling then stops FFmpeg and the paid transcription never starts.
+    const abort = new AbortController()
+    current.abort = abort
+    const audio = await extractAudio(source.path, current.status.folder, index, abort.signal)
     const bytes = new Uint8Array(await readFile(audio.path))
     await rm(audio.path, { force: true }).catch(() => undefined)
-    current.abort = new AbortController()
-    const result = await transcribeWithScribe({ bytes, name: basename(audio.path), type: audio.type, seconds: source.seconds }, keyterms, settings.openrouterApiKey, { signal: current.abort.signal })
+    if (current.cancelled || abort.signal.aborted) throw new Error('Canceled.')
+    const result = await transcribeWithScribe({ bytes, name: basename(audio.path), type: audio.type, seconds: source.seconds }, keyterms, settings.openrouterApiKey, { signal: abort.signal })
     spend(current, result.costUsd)
     current.status = { ...current.status, transcriber: 'scribe' }
     return result.words
@@ -409,7 +416,22 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
   const decisions = parseEditDecisions(value, plan)
   const cut = new Set(decisions.cut)
   const hook = plan.hooks.find((item) => item.id === decisions.hookId) ?? null
-  const brandMark = await brandMarkForRun(current.brand, decisions.look.showHandle, current.status.folder)
+  // Rendering from here on (before the first await), so a second click, Start over or a new run can't slip in.
+  current.cancelled = false
+  publish(current, { phase: 'rendering', detail: 'Starting', percent: 1, error: null })
+  let brandMark: Awaited<ReturnType<typeof brandMarkForRun>>
+  try {
+    brandMark = await brandMarkForRun(current.brand, decisions.look.showHandle, current.status.folder)
+  } catch (error) {
+    publish(current, { phase: 'review', detail: 'Ready for review', percent: 100, error: null })
+    if (current.cancelled) return current.status
+    throw error
+  }
+  if (run !== current) return current.status
+  if (current.cancelled) {
+    publish(current, { phase: 'review', detail: 'Ready for review', percent: 100, error: null })
+    return current.status
+  }
   const look = headlineLookForEngine(decisions.look.headlineLook)
   const config = {
     mode: 'render', output_dir: current.status.folder, sources: current.status.sources.map((source) => source.path),
@@ -423,8 +445,6 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     headline: decisions.hookText, ...(look ? { headline_look: look } : {}), include_captions: decisions.look.includeCaptions, caption_preset: decisions.look.captionPreset,
     ...(brandMark ? { brand_mark: brandMark } : {}), title: decisions.hookText || current.status.sources[0]?.name.replace(/\.[^.]+$/, '') || '', cost_usd: current.status.costUsd
   }
-  current.cancelled = false
-  publish(current, { phase: 'rendering', detail: 'Starting', percent: 1, error: null })
   void (async () => {
     try {
       const result = await runEngine(config, 2 * 60 * 60_000, (detail, percent) => { if (!current.cancelled) publish(current, { detail, percent }) }, (child) => { current.child = child })

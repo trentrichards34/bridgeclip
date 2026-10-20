@@ -146,13 +146,13 @@ export const GUIDES: Record<GoalId, Guide> = {
   'ai-reactions': {
     id: 'ai-reactions',
     title: 'Reactions as your AI self',
-    summary: 'Your avatar and voice react to someone else’s video with your take. The AI presenter is in beta: a still picture with voice-over, no lip-sync yet.',
-    needs: ['Your OpenRouter key', 'An avatar (made in Avatar Studio)'],
+    summary: 'Your avatar and voice react to someone else’s video with your take. The AI presenters are in beta: a still picture with voice-over, voice only, or a realistic lip-synced avatar through your own HeyGen account.',
+    needs: ['Your OpenRouter key', 'An avatar (made in Avatar Studio)', 'For Avatar on camera: a HeyGen key and a HeyGen avatar'],
     steps: [
       'Make an avatar first: open Avatar Studio and choose Create avatar. Use your photo or an AI person, and pick or clone a voice.',
       'Open Remix and choose AI presenter (Beta) at the top, then paste links to the videos you want to react to.',
       'Choose a format. Voiced take plays a few seconds of their moment, then your take in your voice. React to a clip plays their moment while your avatar reacts.',
-      'Under Presenter, choose Avatar photo or Voice only, and pick your avatar.',
+      'Under Presenter, choose Avatar photo or Voice only, and pick your avatar. With Voiced take you can also choose Avatar on camera (HeyGen, Beta): your realistic avatar says the take, lip-synced. It needs your HeyGen key in Settings → API keys and a HeyGen avatar made in Avatar Studio, and HeyGen bills it on your HeyGen account.',
       'Choose Write the takes. Read them, fix anything marked in red, then make the videos.'
     ],
     tips: [

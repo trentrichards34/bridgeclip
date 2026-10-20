@@ -169,6 +169,8 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
     if (kinds.length) result.remix_kinds = [...new Set(kinds)]
   }
   if (typeof value.avatar_studio === 'string' && value.avatar_studio.length <= 32) result.avatar_studio = value.avatar_studio
+  // Edit my recording's reel (it has no saved transcript for the clip editor).
+  if (value.edit_recording === true) result.edit_recording = true
   if (nonNegative(value.excluded_moment_count)) result.excluded_moment_count = value.excluded_moment_count
   if (nonNegative(value.caption_translation_failures)) result.caption_translation_failures = value.caption_translation_failures
   if (value.captions_status === 'enabled' || value.captions_status === 'disabled_by_request' ||
