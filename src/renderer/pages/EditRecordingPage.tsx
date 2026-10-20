@@ -27,6 +27,7 @@ import { errorMessage, localFileUrl } from '../lib/utils'
 import { useBrands } from '../store/use-brand-store'
 import { useEditRecordingStore } from '../store/use-edit-recording-store'
 import { useSettingsStore } from '../store/use-settings-store'
+import { useDailyPlan } from '../store/use-daily-plan-store'
 
 /** The brand's look as the starting look (captions, hook text, its handle when it has one). */
 export function lookFromBrand(brand: BrandIdentity | null): EditLook {
@@ -104,6 +105,11 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
     setHookHint(idea.hook)
     setRecorder({ hook: idea.hook, points: idea.points })
   }
+  // Today's 3 → "Film this": open the recorder with that idea as the teleprompter.
+  useEffect(() => {
+    const idea = useDailyPlan.getState().takePendingIdea()
+    if (idea) film(idea)
+  }, [])
 
   const startOver = (): void => {
     setSources([]); setHookHint(''); setStatus(null)

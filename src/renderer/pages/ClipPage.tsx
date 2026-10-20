@@ -11,6 +11,7 @@ import { useLowDiskGate } from '../components/LowDiskGate'
 import { SetupCard } from '../components/SetupCard'
 import { SetupChecklist } from '../components/SetupChecklist'
 import { FirstRunGuide } from '../components/FirstRunGuide'
+import { TodaysPlan } from '../components/TodaysPlan'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Page } from '../components/ui/Page'
 import { Callout } from '../components/ui/Callout'
@@ -22,7 +23,7 @@ import type { Page as PageId } from '../components/Sidebar'
  * to the main process's queue and are followed on the Jobs page, so this page
  * is always ready for the next video.
  */
-export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void }): React.JSX.Element {
+export function ClipPage({ onNavigate, onViewLibrary }: { onNavigate: (page: PageId) => void; onViewLibrary?: (outputDir: string) => void }): React.JSX.Element {
   const setup = useSetupState()
   const startingRef = useRef(false)
   const [starting, setStarting] = useState(false)
@@ -95,6 +96,7 @@ export function ClipPage({ onNavigate }: { onNavigate: (page: PageId) => void })
 
       <SetupCard className="mt-4" askForKey={!checklistShown} onOpenSettings={() => onNavigate('settings')} />
       <SetupChecklist className="mt-4" onNavigate={onNavigate} />
+      <TodaysPlan className="mt-4" onNavigate={onNavigate} onViewLibrary={onViewLibrary} />
       <FirstRunGuide page="clip" />
       {lowDisk.element}
 
