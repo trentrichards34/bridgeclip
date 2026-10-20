@@ -2,7 +2,7 @@
 // (or its own estimate when a provider reports none), plus the checks made
 // before a paid run. Pure functions, shared by the main process and the UI.
 
-export const SPEND_KINDS = ['create', 'edit', 'remix', 'avatar', 'chat'] as const
+export const SPEND_KINDS = ['create', 'edit', 'remix', 'avatar', 'posting', 'chat'] as const
 export type SpendKind = (typeof SPEND_KINDS)[number]
 export type SpendProvider = 'openrouter' | 'fal' | 'heygen'
 export const SPEND_PROVIDERS: readonly SpendProvider[] = ['openrouter', 'fal', 'heygen']
@@ -17,6 +17,7 @@ export const SPEND_KIND_LABELS: Record<SpendKind, string> = {
   edit: 'Edit my recording',
   remix: 'Remix',
   avatar: 'Avatar Studio',
+  posting: 'Post captions',
   chat: 'Chat'
 }
 
@@ -33,6 +34,11 @@ export interface SpendEntry {
   estimated?: boolean
   /** Added from an older run's saved cost when the ledger was first created. */
   backfilled?: boolean
+  /**
+   * One paid item recorded in steps: a later entry with the same ref replaces the
+   * earlier one (an estimate recorded when a HeyGen video starts, then its final figure).
+   */
+  ref?: string
 }
 
 export interface SpendSummary {
@@ -107,7 +113,27 @@ export function parseSpendEntry(value: unknown): SpendEntry | null {
   if (typeof raw.runId === 'string' && /^[A-Za-z0-9_.:-]{1,80}$/.test(raw.runId)) entry.runId = raw.runId
   if (raw.estimated === true) entry.estimated = true
   if (raw.backfilled === true) entry.backfilled = true
+  if (typeof raw.ref === 'string' && SPEND_REF.test(raw.ref)) entry.ref = raw.ref
   return entry
+}
+
+const SPEND_REF = /^[A-Za-z0-9_.:-]{1,100}$/
+
+/** Entries with a ref keep only their latest figure (in the earlier one's place); a replaced item at $0 is dropped. */
+export function latestByRef(entries: readonly SpendEntry[]): SpendEntry[] {
+  const last = new Map<string, number>()
+  entries.forEach((entry, index) => { if (entry.ref) last.set(entry.ref, index) })
+  if (!last.size) return [...entries]
+  const result: SpendEntry[] = []
+  const placed = new Set<string>()
+  for (const entry of entries) {
+    if (!entry.ref) { result.push(entry); continue }
+    if (placed.has(entry.ref)) continue
+    placed.add(entry.ref)
+    const latest = entries[last.get(entry.ref) as number]
+    if (latest.usd > 0) result.push(latest)
+  }
+  return result
 }
 
 /** Entries from the JSON-lines ledger; broken or unknown lines are skipped. */
@@ -121,7 +147,7 @@ export function parseLedger(text: string): SpendEntry[] {
       if (entry) entries.push(entry)
     } catch { /* a torn or hand-edited line */ }
   }
-  return entries
+  return latestByRef(entries)
 }
 
 /** The calendar month an instant falls in, on this computer's clock (local time). */
@@ -177,8 +203,12 @@ export function spendGateDecision(input: {
   monthUsd: number
   limitUsd: number | null
   balanceUsd: number | null
+  /** The part of the estimate billed on OpenRouter, when only part is (the rest is billed elsewhere, such as HeyGen). */
+  balanceEstimateUsd?: number | null
 }): SpendGate | null {
   const estimate = input.estimateUsd !== null && Number.isFinite(input.estimateUsd) && input.estimateUsd > 0 ? input.estimateUsd : null
+  const share = input.balanceEstimateUsd === undefined ? estimate
+    : input.balanceEstimateUsd !== null && Number.isFinite(input.balanceEstimateUsd) && input.balanceEstimateUsd > 0 ? input.balanceEstimateUsd : null
   if (input.limitUsd !== null && (estimate === null ? input.monthUsd >= input.limitUsd : input.monthUsd + estimate > input.limitUsd)) {
     return {
       reason: 'limit', provider: input.provider, canOverride: false, estimateUsd: estimate,
@@ -188,12 +218,12 @@ export function spendGateDecision(input: {
     }
   }
   if (input.provider === 'openrouter' && input.balanceUsd !== null && Number.isFinite(input.balanceUsd)) {
-    const needed = estimate ?? MIN_BALANCE_USD
+    const needed = share ?? MIN_BALANCE_USD
     if (input.balanceUsd < needed) {
       return {
-        reason: 'balance', provider: 'openrouter', canOverride: true, estimateUsd: estimate,
+        reason: 'balance', provider: 'openrouter', canOverride: true, estimateUsd: share,
         message: `Your OpenRouter balance is about ${formatSpendUsd(Math.max(0, input.balanceUsd))}, ` +
-          `${estimate !== null ? `less than this run’s estimate of about ${formatSpendUsd(estimate)}` : `under ${formatSpendUsd(MIN_BALANCE_USD)}`}. ` +
+          `${share !== null ? `less than this run’s estimate of about ${formatSpendUsd(share)}${share !== estimate ? ' on OpenRouter' : ''}` : `under ${formatSpendUsd(MIN_BALANCE_USD)}`}. ` +
           'It may stop partway when the credit runs out. Add credits on OpenRouter first, or start anyway.'
       }
     }

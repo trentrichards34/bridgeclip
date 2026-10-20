@@ -149,8 +149,12 @@ test('Remix: a Voiced take with my HeyGen avatar on camera, lip-synced on HeyGen
 
   // Spending: each HeyGen line at HeyGen's published price, as Remix, marked as estimates.
   const ledger = fs.readFileSync(path.join(userDataDir, 'spending', 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
-  const lines = ledger.filter((entry) => entry.provider === 'heygen')
+  // Each video is recorded when HeyGen accepts it, then replaced by its final figure (the same ref): two videos, not four charges.
+  const raw = ledger.filter((entry) => entry.provider === 'heygen')
+  assert.equal(raw.length, 4)
+  const lines = [...new Map(raw.map((entry) => [entry.ref, entry])).values()]
   assert.equal(lines.length, 2)
+  assert.ok(lines.every((entry) => /^heygen:/.test(entry.ref)))
   assert.ok(lines.every((entry) => entry.kind === 'remix' && entry.label === 'HeyGen avatar video' && entry.estimated === true && entry.usd > 0))
   await page.getByText(/HeyGen made 2 avatar videos for these remixes: about \$\d+\.\d\d on your HeyGen account/).waitFor()
   if (process.env.BRIDGECLIP_E2E_SHOTS) await shot(app, 'remix-heygen-done.png')

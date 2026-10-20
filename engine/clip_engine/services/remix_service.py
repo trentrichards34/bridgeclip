@@ -736,19 +736,29 @@ def estimate_speech_seconds(text: str) -> float:
     return max(1.0, len(text.split()) / 2.6)
 
 
+def estimate_heygen_cost(script: RemixScript, heygen_per_second: Optional[float] = None, heygen_voice: bool = False) -> Optional[float]:
+    """The HeyGen part of a take made with the HeyGen presenter ("lipsync"): the avatar says the opening and closing
+    lines (every line when it speaks in its HeyGen voice) at HeyGen's published price per second, passed by the app.
+    None when the app has no price for this avatar's engine: HeyGen bills it at a price the app doesn't know."""
+    if heygen_per_second is None:
+        return None
+    on_camera = estimate_speech_seconds(script.intro) + estimate_speech_seconds(script.close)
+    if heygen_voice:
+        on_camera += sum(estimate_speech_seconds(b.text) for b in script.beats)
+    return on_camera * heygen_per_second
+
+
 def estimate_remix_cost(script: RemixScript, host: str, voice_model: str = TTS_MODEL, heygen_per_second: Optional[float] = None,
                         heygen_voice: bool = False) -> float:
-    """A voiced take's estimate. With the HeyGen presenter ("lipsync"), the avatar says the opening and closing lines
-    (every line when it speaks in its HeyGen voice, which then replaces the app's voice) at HeyGen's published price
-    per second (passed by the app; AVATAR_PRICE_PER_SECOND otherwise)."""
-    on_camera = estimate_speech_seconds(script.intro) + estimate_speech_seconds(script.close)
+    """A voiced take's estimate: the app's voice (none when the avatar speaks in its HeyGen voice), plus, with the
+    HeyGen presenter ("lipsync"), the HeyGen part when its price is known (estimate_heygen_cost; left out otherwise,
+    never guessed: the draft's heygen_estimate_usd is then None)."""
     characters = len(script.intro) + len(script.close) + sum(len(b.text) for b in script.beats)
     if host == "lipsync" and heygen_voice:
-        on_camera += sum(estimate_speech_seconds(b.text) for b in script.beats)
         characters = 0
     cost = characters / 1000 * TTS_PRICE_PER_1000_CHARS.get(voice_model, TTS_PRICE_PER_1000_CHARS[TTS_MODEL])
     if host == "lipsync":
-        cost += on_camera * (AVATAR_PRICE_PER_SECOND if heygen_per_second is None else heygen_per_second)
+        cost += estimate_heygen_cost(script, heygen_per_second, heygen_voice) or 0.0
     return cost
 
 
@@ -2084,6 +2094,9 @@ def script_to_draft(script: RemixScript, draft_id: int, source_index: int, meta:
         "style": script.style, "stance": script.stance, "headline": script.headline, "intro": script.intro,
         "beats": [asdict(b) for b in script.beats], "close": script.close, "proof_used": script.proof_used, "notes": script.notes,
         "grade": script.grade, "estimate_usd": 0.0 if script.format == "silent" or host == "camera" else round(estimate_remix_cost(script, host, voice_model, heygen_per_second, heygen_voice), 3),
+        # The HeyGen share of estimate_usd (billed on HeyGen, not OpenRouter); None when HeyGen's price isn't known.
+        **({"heygen_estimate_usd": None if (part := estimate_heygen_cost(script, heygen_per_second, heygen_voice)) is None else round(part, 3)}
+           if host == "lipsync" and script.format != "silent" else {}),
         "format": script.format, "cues": script.cues,
         "post_caption": finalize_caption(script.post_caption or fallback_caption(script.headline, script.beats), keyword, offer,
                                          meta.get("creator") or ""),

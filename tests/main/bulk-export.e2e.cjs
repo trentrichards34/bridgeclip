@@ -51,5 +51,50 @@ test('Library: select all, then Export copies every clip to a folder and .zip sa
   assert.equal(listing.length, 13)
   assert.ok(listing.includes('Clip title 0 (1).mp4'))
   assert.equal(fs.readdirSync(root).filter((name) => name.endsWith('.part')).length, 0, 'no partial file left behind')
+
+  // A clip deleted since the Library was read is skipped and counted, never a raw file error naming paths.
+  fs.rmSync(path.join(run, 'clip_03.mp4'))
+  const again = path.join(root, 'again')
+  fs.mkdirSync(again)
+  await app.evaluate(({ dialog }, { again, root }) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [again] })
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: `${root}/Missing one.zip` })
+  }, { again, root })
+  await page.getByRole('button', { name: 'Export 13' }).click()
+  await page.getByText('Exported 12 clips to again; 1 could not be copied').waitFor()
+  assert.equal(fs.readdirSync(again).length, 12)
+  await page.getByRole('button', { name: '.zip' }).click()
+  await page.getByText('Exported 12 clips to Missing one.zip; 1 could not be copied').waitFor()
+  const partial = JSON.parse(execFileSync('python3', ['-c', 'import json,sys,zipfile; print(json.dumps(zipfile.ZipFile(sys.argv[1]).namelist()))', path.join(root, 'Missing one.zip')], { encoding: 'utf8' }))
+  assert.equal(partial.length, 12)
+  const body = await page.locator('body').innerText()
+  assert.ok(!/ENOENT|realpath|\/tmp\//.test(body), 'no raw file-system error or path on the page')
   assert.deepEqual(errors, [])
+})
+
+test('Library: when every selected clip is missing, export says so in plain words', { timeout: 120000 }, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-bulk-missing-'))
+  const userDataDir = path.join(root, 'user-data'), library = path.join(userDataDir, 'CreatorClips'), run = path.join(library, '33333333-3333-4333-8333-333333333333')
+  fs.mkdirSync(run, { recursive: true })
+  const clips = [0, 1].map((clip_index) => ({ clip_index, summary: `Gone ${clip_index}`, headline: `Gone ${clip_index}`, s3_url: `file://${path.join(run, `clip_0${clip_index}.mp4`)}`,
+    start_time_ms: 0, end_time_ms: 1000, duration_ms: 1000, virality_score: 0.5 }))
+  fs.writeFileSync(path.join(run, 'job_output.json'), JSON.stringify({ job_id: path.basename(run), source_video_title: 'Missing test', source_video_url: 'https://example.com/v',
+    source_video_duration_seconds: 20, clips, total_clips: clips.length }))
+  const session = await launchApp({ appDir: buildApp(path.join(root, 'app')), userDataDir })
+  t.after(async () => { await session.close(); fs.rmSync(root, { recursive: true, force: true }) })
+  const { app, page } = session
+  page.setDefaultTimeout(15000)
+  await app.evaluate(({ BrowserWindow, dialog }, { root }) => {
+    BrowserWindow.getAllWindows()[0].setSize(1400, 900)
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [root] })
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: `${root}/x.zip` })
+  }, { root })
+  await page.getByRole('button', { name: 'Library', exact: true }).click()
+  await page.getByRole('button', { name: 'Open Missing test', exact: true }).click()
+  await page.getByRole('checkbox', { name: /Select all/ }).click()
+  await page.getByRole('button', { name: '.zip' }).click()
+  await page.getByText('2 clips are missing from the Library (deleted or moved), so they can’t be exported.').waitFor()
+  const body = await page.locator('body').innerText()
+  assert.ok(!/ENOENT|realpath/.test(body), 'no raw file-system error on the page')
+  assert.ok(!fs.existsSync(path.join(root, 'x.zip')))
 })

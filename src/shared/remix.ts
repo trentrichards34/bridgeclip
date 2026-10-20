@@ -369,6 +369,11 @@ export interface RemixDraft {
   notes: string[]
   grade: RemixGrade | null
   estimateUsd: number
+  /**
+   * Avatar on camera: the HeyGen share of estimateUsd (billed on HeyGen, not OpenRouter), or null when HeyGen's price
+   * for the avatar isn't known (estimateUsd then leaves it out). Absent for takes HeyGen isn't part of.
+   */
+  heygenEstimateUsd?: number | null
   /** The caption for the post: takeaways, the call to action and the credit. */
   postCaption: string
   format: RemixFormat
@@ -525,6 +530,7 @@ export function parseRemixDraft(value: unknown): RemixDraft | null {
     headline: text(raw.headline, 200), intro: text(raw.intro, 400), beats, close: text(raw.close, 400),
     notes: Array.isArray(raw.notes) ? raw.notes.filter((n): n is string => typeof n === 'string').map((n) => text(n, 300)).slice(0, 6) : [],
     grade: parseGrade(raw.grade), estimateUsd: number(raw.estimate_usd), postCaption: captionText(raw.post_caption),
+    ...('heygen_estimate_usd' in raw ? { heygenEstimateUsd: raw.heygen_estimate_usd === null ? null : Math.max(0, Math.min(number(raw.heygen_estimate_usd), number(raw.estimate_usd))) } : {}),
     format: raw.format === 'silent' || raw.format === 'image' || raw.format === 'pause_react' || raw.format === 'moment_take' || raw.format === 'clip_then_me' ||
       raw.format === 'react_thoughts' ? raw.format : 'commentary',
     cues: Array.isArray(raw.cues) ? raw.cues.flatMap((item): RemixCue[] => {

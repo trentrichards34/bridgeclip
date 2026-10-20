@@ -35,6 +35,8 @@ let entries: SpendEntry[] | null = null
 let loading: Promise<SpendEntry[]> | null = null
 let writes: Promise<void> = Promise.resolve()
 const recordedRuns = new Set<string>()
+/** Run ids recorded under any kind (the backfill skips them). */
+const recordedRunIds = new Set<string>()
 const changeListeners = new Set<() => void>()
 const creditListeners = new Set<(provider: SpendProvider) => void>()
 
@@ -68,7 +70,7 @@ async function loadEntries(): Promise<SpendEntry[]> {
       if (info.size > MAX_LEDGER_BYTES) text = text.slice(-MAX_LEDGER_BYTES)
     } catch { /* no ledger yet */ }
     const parsed = parseLedger(text)
-    for (const entry of parsed) if (entry.runId) recordedRuns.add(runKey(entry.kind, entry.runId))
+    for (const entry of parsed) if (entry.runId) { recordedRuns.add(runKey(entry.kind, entry.runId)); recordedRunIds.add(entry.runId) }
     entries = parsed
     return parsed
   })().finally(() => { loading = null })
@@ -86,19 +88,30 @@ export interface SpendInput {
   estimated?: boolean
   backfilled?: boolean
   at?: string
+  /** Replaces the entry recorded earlier with the same ref (its estimate); $0 removes it. */
+  ref?: string
 }
 
-/** Append one entry. Zero, negative and unreadable amounts are skipped; a run is recorded once per kind when `once` is set. */
+/**
+ * Append one entry. Zero, negative and unreadable amounts are skipped (except $0 with a ref, which
+ * removes that item); a run is recorded once per kind when `once` is set.
+ */
 export async function recordSpend(input: SpendInput, once = false): Promise<SpendEntry | null> {
   const entry = parseSpendEntry({ ...input, at: input.at ?? new Date().toISOString(), label: cleanLabel(input.label) })
-  if (!entry || entry.usd <= 0) return null
+  if (!entry || (entry.usd <= 0 && !entry.ref)) return null
   const list = await loadEntries()
+  if (entry.ref) {
+    const earlier = list.findIndex((item) => item.ref === entry.ref)
+    if (earlier < 0 && entry.usd <= 0) return null
+    if (earlier >= 0) list.splice(earlier, 1)
+  }
   if (once && entry.runId) {
     const key = runKey(entry.kind, entry.runId)
     if (recordedRuns.has(key)) return null
     recordedRuns.add(key)
   } else if (entry.runId) recordedRuns.add(runKey(entry.kind, entry.runId))
-  list.push(entry)
+  if (entry.runId) recordedRunIds.add(entry.runId)
+  if (entry.usd > 0) list.push(entry)
   const line = JSON.stringify(entry) + '\n'
   writes = writes.then(async () => {
     await mkdir(dir(), { recursive: true, mode: 0o700 })
@@ -125,11 +138,15 @@ async function backfillOnce(): Promise<void> {
   const outputDirectory = loadSettings().outputDirectory
   try {
     const history = await getJobHistory(outputDirectory)
+    await loadEntries()
     for (const run of history) {
       if (run.status !== 'completed' || typeof run.totalCostUsd !== 'number' || run.totalCostUsd <= 0) continue
-      const remix = run.jobId.startsWith('remix-')
+      // Avatar Studio runs are recorded without a run id, so they can't be matched: never backfilled.
+      // A run already recorded under any kind (an Edit my recording run, say) is not added again.
+      if (run.jobId.startsWith('avatar-') || recordedRunIds.has(run.jobId)) continue
+      const kind: SpendKind = run.jobId.startsWith('remix-') ? 'remix' : run.jobId.startsWith('edit-') ? 'edit' : 'create'
       await recordSpend({
-        kind: remix ? 'remix' : 'create', provider: 'openrouter', usd: run.totalCostUsd, label: remix ? 'Remix videos (earlier run)' : 'Create run (earlier run)',
+        kind, provider: 'openrouter', usd: run.totalCostUsd, label: kind === 'remix' ? 'Remix videos (earlier run)' : kind === 'edit' ? 'Edit my recording (earlier run)' : 'Create run (earlier run)',
         runId: run.jobId, backfilled: true, at: run.finishedAt ?? run.date
       }, true)
     }
@@ -230,7 +247,7 @@ export async function openRouterBalance(force = false, timeoutMs?: number): Prom
 // ---------------------------------------------------------------------------
 
 /** IPC channels that start paid work, and so pass the spending check. */
-export const GATED_CHANNELS = new Set(['job:start', 'job:startMany', 'job:moreClips', 'remix:start', 'remix:write', 'remix:render', 'remix:anotherMoment', 'remix:talkingPoints', 'remix:readTimecode', 'remix:readTimecodeFile', 'editor:run', 'editor:suggestHooks', 'avatars:render', 'avatars:recreate', 'avatars:generateFaces', 'avatars:restyle', 'avatars:makeReactions', 'avatars:cloneVoice', 'edit:start', 'edit:ideas', 'heygen:createAvatar', 'remix:planBroll'])
+export const GATED_CHANNELS = new Set(['automations:enhance', 'automations:enhanceBatch', 'history:enhanceMetadata', 'avatars:writeScript', 'voices:sample', 'job:start', 'job:startMany', 'job:moreClips', 'remix:start', 'remix:write', 'remix:render', 'remix:anotherMoment', 'remix:talkingPoints', 'remix:readTimecode', 'remix:readTimecodeFile', 'editor:run', 'editor:suggestHooks', 'avatars:render', 'avatars:recreate', 'avatars:generateFaces', 'avatars:restyle', 'avatars:makeReactions', 'avatars:cloneVoice', 'edit:start', 'edit:ideas', 'heygen:createAvatar', 'remix:planBroll'])
 const overrides = new Map<string, number>()
 
 /** "Start anyway" after a low-balance warning: the next call on this channel skips the balance check (never the monthly limit). */
@@ -241,7 +258,8 @@ export function allowOnce(channel: unknown): boolean {
 }
 
 /** Throws the encoded gate when this paid run should not start. An unknown balance never blocks. */
-export async function assertSpendAllowed(channel: string, provider: SpendProvider, estimateUsd: number | null, options: { balance?: boolean } = {}): Promise<void> {
+export async function assertSpendAllowed(channel: string, provider: SpendProvider, estimateUsd: number | null,
+  options: { balance?: boolean; balanceEstimateUsd?: number | null } = {}): Promise<void> {
   const settings = loadSettings()
   const limitUsd = parseSpendLimit(settings.monthlySpendLimitUsd) ?? null
   const override = (overrides.get(channel) ?? 0) > Date.now()
@@ -251,7 +269,7 @@ export async function assertSpendAllowed(channel: string, provider: SpendProvide
   }
   let monthUsd = 0
   try { monthUsd = await monthSpendUsd() } catch { /* an unreadable ledger never blocks */ }
-  const gate = spendGateDecision({ provider, estimateUsd, monthUsd, limitUsd, balanceUsd })
+  const gate = spendGateDecision({ provider, estimateUsd, monthUsd, limitUsd, balanceUsd, ...(options.balanceEstimateUsd !== undefined ? { balanceEstimateUsd: options.balanceEstimateUsd } : {}) })
   if (gate) {
     logger.info('spending.gate', { channel, reason: gate.reason })
     throw new Error(encodeSpendGate(gate))
@@ -279,6 +297,8 @@ const meters = new AsyncLocalStorage<Meter>()
 /** The cost of one media call: as reported, otherwise from list prices. */
 export function mediaChargeUsd(charge: MediaCharge): { usd: number; estimated: boolean } {
   if (typeof charge.usd === 'number' && Number.isFinite(charge.usd) && charge.usd >= 0) return { usd: charge.usd, estimated: false }
+  // A text call with no reported cost isn't priced (its tokens aren't known here).
+  if (charge.what === 'text') return { usd: 0, estimated: false }
   if (charge.what === 'image') return { usd: PRICES.image, estimated: true }
   if (charge.what === 'speech') {
     const rate = charge.model === OPENROUTER_MODELS.cloneTts ? PRICES.cloneTtsPer1000Chars : PRICES.ttsPer1000Chars
@@ -292,6 +312,8 @@ function onCharge(charge: MediaCharge): void {
   const { usd, estimated } = mediaChargeUsd(charge)
   const meter = meters.getStore()
   if (meter) { meter.usd += usd; meter.estimated ||= estimated; return }
+  // Writing post captions (automations, unattended posting) reports text calls outside any paid action.
+  if (charge.what === 'text') { void recordSpend({ kind: 'posting', provider: 'openrouter', usd, label: 'Post captions', estimated }); return }
   void recordSpend({ kind: 'avatar', provider: 'openrouter', usd, label: 'AI media', estimated })
 }
 
@@ -374,5 +396,5 @@ export function initSpending(): void {
 
 /** Tests: forget everything held in memory. */
 export function resetSpendingForTests(): void {
-  entries = null; loading = null; balanceCache = null; recordedRuns.clear(); overrides.clear(); avatarRenders.clear(); remixRecorded.clear(); lastCreditNotice = 0
+  entries = null; loading = null; balanceCache = null; recordedRuns.clear(); recordedRunIds.clear(); overrides.clear(); avatarRenders.clear(); remixRecorded.clear(); lastCreditNotice = 0
 }

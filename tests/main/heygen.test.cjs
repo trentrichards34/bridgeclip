@@ -380,7 +380,7 @@ test('a twin avatar asks HeyGen for its consent link right away; the link is reu
   } finally { flow.cleanup() }
 })
 
-test('a take: audio uploaded, 9:16 video created, polled to completion, downloaded, and its cost recorded', async () => {
+test('a take: audio uploaded, 9:16 video created, polled to completion, downloaded, and its cost recorded (an estimate as it starts, then its length)', async () => {
   let polls = 0
   const flow = avatarFlow({ avatar: { ...READY_TWIN, heygen: { ...READY_TWIN.heygen, voice: 'app' } }, routes: {
     'POST /v3/assets': () => json({ data: { asset_id: 'ast_audio', url: 'https://files.heygen.ai/a.mp3', mime_type: 'audio/mpeg', size_bytes: 5 } }),
@@ -399,7 +399,11 @@ test('a take: audio uploaded, 9:16 video created, polled to completion, download
     assert.deepEqual(body, { type: 'avatar', avatar_id: 'look_1', aspect_ratio: '9:16', resolution: '1080p', fit: 'cover', output_format: 'mp4', audio_asset_id: 'ast_audio' })
     assert.equal(flow.calls.find((call) => call.key === 'POST /v3/assets').body.get('file').type, 'audio/mpeg')
     assert.ok(statuses.includes('Waiting in HeyGen’s queue') && statuses.includes('HeyGen is animating your avatar'))
-    assert.deepEqual(plain(flow.spend), [{ kind: 'avatar', provider: 'heygen', usd: 1.25, label: 'HeyGen avatar video', estimated: true }])
+    // Recorded the moment HeyGen accepts it (the audio couldn't be measured here: at least a second), then replaced by the finished length.
+    assert.deepEqual(plain(flow.spend), [
+      { kind: 'avatar', provider: 'heygen', ref: 'heygen:v_9', estimated: true, usd: 0.1, label: 'HeyGen avatar video' },
+      { kind: 'avatar', provider: 'heygen', ref: 'heygen:v_9', estimated: true, usd: 1.25, label: 'HeyGen avatar video' }
+    ])
     assert.deepEqual(flow.calls.find((call) => call.url.startsWith('https://files.heygen.ai/')).headers, {}, 'the download carries no key')
   } finally { flow.cleanup() }
 })
@@ -414,19 +418,19 @@ test('a take spoken by HeyGen sends the script and the avatar’s voice; Remix c
     await flow.mod.renderHeygenTake({ avatarId: READY_TWIN.id, text: 'Say this.', outPath: path.join(flow.dir, 's.mp4'), spendKind: 'remix', sleep: async () => {} })
     const body = JSON.parse(flow.calls[0].body)
     assert.deepEqual([body.script, body.voice_id, body.audio_asset_id], ['Say this.', 'voice_clone', undefined])
-    assert.equal(flow.spend[0].kind, 'remix')
+    assert.deepEqual(flow.spend.map((entry) => [entry.kind, entry.ref, entry.usd]), [['remix', 'heygen:v_s', 0.1], ['remix', 'heygen:v_s', 0.4]], 'two words: at least a second; then 4 seconds')
   } finally { flow.cleanup() }
 })
 
-test('a failed video gives HeyGen’s reason; no cost is recorded; an empty balance says so plainly', async () => {
+test('a failed video gives HeyGen’s reason; its started estimate is removed; an empty balance says so plainly', async () => {
   for (const [failure, pattern] of [[{ failure_code: 'insufficient_credit', failure_message: 'Need 10 credits' }, /HeyGen balance is too low/], [{ failure_code: 'video_too_long', failure_message: 'Too long' }, /could not make this video \(video_too_long\)\. HeyGen says: Too long/]]) {
     const flow = avatarFlow({ avatar: READY_TWIN, routes: {
       'POST /v3/videos': () => json({ data: { video_id: 'v_f', status: 'waiting' } }),
       'GET /v3/videos/v_f': () => json({ data: { id: 'v_f', status: 'failed', ...failure } })
     } })
     try {
-      await assert.rejects(flow.mod.renderHeygenTake({ avatarId: READY_TWIN.id, text: 'Hi', outPath: path.join(flow.dir, 'f.mp4'), sleep: async () => {} }), pattern)
-      assert.deepEqual(flow.spend, [])
+      await assert.rejects(flow.mod.renderHeygenTake({ avatarId: READY_TWIN.id, text: 'Hi', outPath: path.join(flow.dir, 'f.mp4'), sleep: async () => {} }), (error) => pattern.test(error.message) && error.videoFailed === true)
+      assert.deepEqual(flow.spend.map((entry) => [entry.ref, entry.usd]), [['heygen:v_f', 0.1], ['heygen:v_f', 0]], 'HeyGen doesn’t bill a video that fails there')
     } finally { flow.cleanup() }
   }
 })
@@ -448,7 +452,7 @@ test('nothing is created on HeyGen while consent is pending, rejected, or the av
   }
 })
 
-test('a canceled take stops polling (HeyGen has no cancel call) and records nothing', async () => {
+test('a canceled take stops polling (HeyGen has no cancel call) and keeps the estimate recorded when HeyGen accepted it', async () => {
   const controller = new AbortController()
   const flow = avatarFlow({ avatar: READY_TWIN, routes: {
     'POST /v3/videos': () => json({ data: { video_id: 'v_c', status: 'waiting' } }),
@@ -456,8 +460,28 @@ test('a canceled take stops polling (HeyGen has no cancel call) and records noth
   } })
   try {
     const sleep = (ms, signal) => signal?.aborted ? Promise.reject(new DOMException('Aborted', 'AbortError')) : Promise.resolve()
-    await assert.rejects(flow.mod.renderHeygenTake({ avatarId: READY_TWIN.id, text: 'Hi', outPath: path.join(flow.dir, 'c.mp4'), signal: controller.signal, sleep }), { name: 'AbortError' })
-    assert.deepEqual(flow.spend, [])
+    const started = []
+    await assert.rejects(flow.mod.renderHeygenTake({ avatarId: READY_TWIN.id, text: 'Hi', outPath: path.join(flow.dir, 'c.mp4'), signal: controller.signal, sleep, onStarted: (id) => started.push(id) }), { name: 'AbortError' })
+    assert.deepEqual(started, ['v_c'])
+    // HeyGen may still finish and bill it: the started estimate stays in the ledger.
+    assert.deepEqual(plain(flow.spend), [{ kind: 'avatar', provider: 'heygen', ref: 'heygen:v_c', estimated: true, usd: 0.1, label: 'HeyGen avatar video' }])
+  } finally { flow.cleanup() }
+})
+
+test('a take whose wait fails (deadline, download) after HeyGen accepted it keeps its estimate; nothing is recorded before HeyGen accepts', async () => {
+  const flow = avatarFlow({ avatar: READY_TWIN, routes: {
+    'POST /v3/videos': () => json({ data: { video_id: 'v_d', status: 'waiting' } }),
+    'GET /v3/videos/v_d': () => json({ data: { id: 'v_d', status: 'processing' } })
+  } })
+  try {
+    const words = Array.from({ length: 26 }, () => 'word').join(' ')
+    await assert.rejects(flow.mod.renderHeygenTake({ avatarId: READY_TWIN.id, text: words, outPath: path.join(flow.dir, 'd.mp4'), timeoutMs: -1, sleep: async () => {} }), /taking unusually long/)
+    assert.deepEqual(flow.spend.map((entry) => [entry.ref, entry.usd]), [['heygen:v_d', 1]], 'about 10 seconds of speech at the published price')
+  } finally { flow.cleanup() }
+  const refused = avatarFlow({ avatar: READY_TWIN, routes: { 'POST /v3/videos': () => json({ error: { code: 'invalid_parameter', message: 'Bad' } }, 400) } })
+  try {
+    await assert.rejects(refused.mod.renderHeygenTake({ avatarId: READY_TWIN.id, text: 'Hi', outPath: path.join(refused.dir, 'r.mp4'), sleep: async () => {} }))
+    assert.deepEqual(refused.spend, [])
   } finally { flow.cleanup() }
 })
 
@@ -556,11 +580,12 @@ test('the check before a render: HeyGen-voiced talking heads are priced per seco
   // 26 words is about 10 seconds of speech: $1.00 at $0.10 a second.
   const narration = Array.from({ length: 26 }, () => 'word').join(' ')
   const request = { avatarId: READY_TWIN.id, style: 'talking', captionPreset: 'beast', script: { title: 'Hook', scenes: [{ narration }] } }
-  assert.deepEqual(plain(studio(READY_TWIN).renderSpendCheck(request)), { provider: 'heygen', estimateUsd: 1 })
+  assert.deepEqual(plain(studio(READY_TWIN).renderSpendCheck(request)), { provider: 'heygen', estimateUsd: 1, openrouterUsd: null })
   const appVoice = plain(studio({ ...READY_TWIN, heygen: { ...READY_TWIN.heygen, voice: 'app' } }).renderSpendCheck(request))
   assert.equal(appVoice.provider, 'openrouter')
   assert.ok(appVoice.estimateUsd > 1 && appVoice.estimateUsd < 1.1, 'HeyGen plus the voice on OpenRouter')
-  assert.deepEqual(plain(studio({ ...READY_TWIN, heygen: { ...READY_TWIN.heygen, engines: ['avatar_iii'] } }).renderSpendCheck(request)), { provider: 'heygen', estimateUsd: null }, 'billed by HeyGen: no number')
+  assert.ok(appVoice.openrouterUsd > 0 && appVoice.openrouterUsd < 0.1, 'only the voice is compared with the OpenRouter balance')
+  assert.deepEqual(plain(studio({ ...READY_TWIN, heygen: { ...READY_TWIN.heygen, engines: ['avatar_iii'] } }).renderSpendCheck(request)), { provider: 'heygen', estimateUsd: null, openrouterUsd: null }, 'billed by HeyGen: no number')
   const plainAvatar = { ...READY_TWIN, heygen: null }
   assert.equal(studio(plainAvatar).renderSpendCheck(request).provider, 'openrouter')
   const cinematic = { ...request, style: 'cinematic', script: { title: '', scenes: [{ narration: 'Hi there.', visual: 'A desk', featuresAvatar: true }] } }

@@ -117,6 +117,24 @@ test('styles naming deleted CTAs, avatars, brand identities or backgrounds drop 
   assert.deepEqual(plain(kept.presets.remix[0].style), { avatarId: null, brandIdentityId: null })
 })
 
+test('a library that could not be read keeps its saved ids (only items known to be gone are dropped)', () => {
+  const prefs = shared.parseMemberPrefs({
+    create: { ctaId: CTA, backgroundVideo: 'kept.mp4' },
+    remix: { ctaId: CTA, avatarId: AVATAR, brandIdentityId: BRAND },
+    presets: { create: [], remix: [{ id: 'a'.repeat(16), name: 'Daily', style: { avatarId: AVATAR, brandIdentityId: BRAND } }] }
+  })
+  // The avatars and brand identities couldn't be read (null); the CTAs and backgrounds were, and are empty.
+  const kept = shared.dropMissing(prefs, { ctaIds: new Set(), avatarIds: null, brandIds: null, backgrounds: new Set() })
+  assert.deepEqual(plain(kept.remix), { ctaId: null, avatarId: AVATAR, brandIdentityId: BRAND })
+  assert.deepEqual(plain(kept.create), { ctaId: null, backgroundVideo: null })
+  assert.deepEqual(plain(kept.presets.remix[0].style), { avatarId: AVATAR, brandIdentityId: BRAND })
+})
+
+test('prefs:load treats a failed library read as unknown, not as empty', () => {
+  const handlers = fs.readFileSync(path.join(__dirname, '../../src/main/ipc-handlers.ts'), 'utf8')
+  assert.match(handlers, /listCtas\(\)\.catch\(\(\) => null\), listAvatars\(\)\.catch\(\(\) => null\), listBrandIdentities\(\)\.catch\(\(\) => null\), listBackgrounds\(\)\.catch\(\(\) => null\)/)
+})
+
 test('preset names are 1 to 40 characters; support links are https links or emails', () => {
   assert.equal(shared.presetName('  Morning   posts '), 'Morning posts')
   assert.equal(shared.presetName(''), null)

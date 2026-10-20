@@ -26,7 +26,7 @@ import type { BrandMarkForEngine } from '../shared/brand-kit'
 import { resolveBackground } from './backgrounds'
 import { assertMediaPath } from './security'
 import { downloadFalFile, falFileUrl, falInputUrl, falRun } from './fal'
-import { generateImage, generateVideo, synthesizeSpeech } from './openrouter-media'
+import { generateImage, generateVideo, reportOpenRouterUsage, synthesizeSpeech } from './openrouter-media'
 import { readResponseText } from './http-response'
 import { logger } from './logger'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
@@ -94,6 +94,9 @@ function parseScriptRequest(value: unknown): AvatarScriptRequest {
   return { topic, niche, seconds, style: raw.style, brandIdentityId }
 }
 
+/** One script-writing call (a small model, at most a few thousand tokens): the spending check's estimate. */
+export const SCRIPT_ESTIMATE_USD = 0.01
+
 export async function writeAvatarScript(value: unknown, fetchImpl: typeof fetch = fetch): Promise<AvatarScript> {
   const request = parseScriptRequest(value)
   const key = loadSettings().openrouterApiKey
@@ -127,6 +130,8 @@ export async function writeAvatarScript(value: unknown, fetchImpl: typeof fetch 
   let content: unknown
   try {
     const body = JSON.parse(await readResponseText(response, 200_000, 'OpenRouter returned too much data.')) as { choices?: { message?: { content?: unknown } }[] }
+    // Its reported cost goes to the spend ledger (inside the caller's paid action), even if the script is then unreadable.
+    reportOpenRouterUsage(SCRIPT_MODEL, body)
     content = JSON.parse(String(body.choices?.[0]?.message?.content ?? ''))
   } catch { throw new Error('OpenRouter returned an unreadable script. Try again.') }
   const script = parseAvatarScript(content, request.style, true)
@@ -146,7 +151,11 @@ interface ActiveRender {
   child?: ChildProcess
   /** The render's Library run folder. */
   folder: string
+  /** HeyGen accepted this render's video and it hasn't arrived yet (HeyGen has no cancel: it bills it anyway). */
+  heygenWaiting?: boolean
 }
+
+const HEYGEN_STILL_BILLING = 'HeyGen may still finish the avatar video it had already started and bill it on your HeyGen account.'
 
 let active: ActiveRender | null = null
 let lastStatus: AvatarRenderStatus | null = null
@@ -422,7 +431,7 @@ async function launch(avatarId: string, folder: string, estimatedCostUsd: number
   }).catch((error: unknown) => {
     const cancelled = render.cancelled
     render.status = { ...render.status, phase: cancelled ? 'cancelled' : 'failed', detail: cancelled ? 'Canceled' : 'Failed',
-      error: cancelled ? null : renderErrorMessage(error) }
+      error: cancelled ? null : renderErrorMessage(error), ...(render.heygenWaiting ? { warning: HEYGEN_STILL_BILLING } : {}) }
     if (!cancelled) logger.warn('avatar.render.failed', { message: String((error as Error)?.message ?? error).slice(0, 300) })
     render.abort.abort()
   }).finally(() => {
@@ -488,15 +497,16 @@ function heygenSpeaks(link: HeygenAvatarLink | null): boolean {
  * (app voice at list prices plus HeyGen's published per-second price). A
  * HeyGen render HeyGen can't be priced for has no estimate ("billed by HeyGen").
  */
-export function renderSpendCheck(value: unknown): { provider: SpendProvider; estimateUsd: number | null } {
+export function renderSpendCheck(value: unknown): { provider: SpendProvider; estimateUsd: number | null; openrouterUsd: number | null } {
   const request = parseRenderRequest(value)
   let avatar: { heygen?: HeygenAvatarLink | null; voice?: AvatarVoice } = {}
   try { avatar = readAvatar(request.avatarId) } catch { /* the render itself reports it */ }
   const link = heygenFor(request, avatar)
   const voice = heygenSpeaks(link) ? 0 : estimateRenderCost({ ...request, voiceProvider: avatar.voice?.provider })
-  if (!link) return { provider: 'openrouter', estimateUsd: voice }
+  if (!link) return { provider: 'openrouter', estimateUsd: voice, openrouterUsd: voice }
   const heygen = heygenRenderEstimate({ heygen: link }, estimateSpokenSeconds(scriptText(request.script)))
-  return { provider: heygenSpeaks(link) ? 'heygen' : 'openrouter', estimateUsd: heygen === null ? null : Math.round((voice + heygen) * 100) / 100 }
+  // Only the app's voice is billed on OpenRouter (the balance check); HeyGen bills the video on its own account.
+  return { provider: heygenSpeaks(link) ? 'heygen' : 'openrouter', estimateUsd: heygen === null ? null : Math.round((voice + heygen) * 100) / 100, openrouterUsd: voice > 0 ? voice : null }
 }
 
 export async function startAvatarRender(value: unknown): Promise<AvatarRenderStatus> {
@@ -542,11 +552,19 @@ async function runRender(render: ActiveRender, request: AvatarRenderRequest, voi
   if (heygen) {
     // A realistic, lip-synced talking head made on HeyGen (9:16, 1080p), then finished here like any other.
     const take = join(parts, 'heygen.mp4')
-    await renderHeygenTake({
-      avatarId: request.avatarId, outPath: take, signal, title: request.script.title || avatarName,
-      ...(heygenSpeaks(heygen) ? { text, voiceId: heygen.voiceId } : { audioPath: narration }),
-      onStatus: (detail, fraction) => update(render, 'animate', detail, 12 + fraction * 66)
-    })
+    try {
+      await renderHeygenTake({
+        avatarId: request.avatarId, outPath: take, signal, title: request.script.title || avatarName,
+        ...(heygenSpeaks(heygen) ? { text, voiceId: heygen.voiceId } : { audioPath: narration }),
+        onStatus: (detail, fraction) => update(render, 'animate', detail, 12 + fraction * 66),
+        onStarted: () => { render.heygenWaiting = true }
+      })
+      render.heygenWaiting = false
+    } catch (error) {
+      // A video HeyGen itself reports as failed isn't billed; any other stop (cancel, a failed wait or download) may be.
+      if ((error as { videoFailed?: unknown } | null)?.videoFailed === true) render.heygenWaiting = false
+      throw error
+    }
     await ffmpeg(['-i', take, '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,format=yuv420p',
       '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-c:a', 'aac', '-b:a', '192k', assembled], signal)
     // Caption timing follows the finished video's own sound.

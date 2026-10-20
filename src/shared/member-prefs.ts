@@ -324,17 +324,20 @@ export function parseMemberPrefs(value: unknown): MemberPrefs {
   }
 }
 
-/** Library items that still exist; ids pointing anywhere else are dropped from styles. */
-export interface KnownItems { ctaIds: ReadonlySet<string>; avatarIds: ReadonlySet<string>; brandIds: ReadonlySet<string>; backgrounds: ReadonlySet<string> }
+/**
+ * Library items that still exist; ids pointing anywhere else are dropped from styles. A category that
+ * couldn't be read is null, and its ids are kept (a failed read must not clear saved choices).
+ */
+export interface KnownItems { ctaIds: ReadonlySet<string> | null; avatarIds: ReadonlySet<string> | null; brandIds: ReadonlySet<string> | null; backgrounds: ReadonlySet<string> | null }
 
 function dropMissingFrom<K extends StyleKind>(kind: K, style: Partial<StyleOf<K>>, known: KnownItems): Partial<StyleOf<K>> {
   const next = { ...style } as Record<string, unknown>
-  if (typeof next.ctaId === 'string' && !known.ctaIds.has(next.ctaId)) next.ctaId = null
-  if (typeof next.brandIdentityId === 'string' && !known.brandIds.has(next.brandIdentityId)) next.brandIdentityId = null
+  if (typeof next.ctaId === 'string' && known.ctaIds && !known.ctaIds.has(next.ctaId)) next.ctaId = null
+  if (typeof next.brandIdentityId === 'string' && known.brandIds && !known.brandIds.has(next.brandIdentityId)) next.brandIdentityId = null
   if (kind === 'create') {
-    if (typeof next.backgroundVideo === 'string' && !known.backgrounds.has(next.backgroundVideo)) next.backgroundVideo = null
+    if (typeof next.backgroundVideo === 'string' && known.backgrounds && !known.backgrounds.has(next.backgroundVideo)) next.backgroundVideo = null
   } else {
-    if (typeof next.avatarId === 'string' && !known.avatarIds.has(next.avatarId)) next.avatarId = null
+    if (typeof next.avatarId === 'string' && known.avatarIds && !known.avatarIds.has(next.avatarId)) next.avatarId = null
   }
   return next as Partial<StyleOf<K>>
 }

@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { createHash, randomBytes } from 'crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { isAvatarId, parseVoice } from '../shared/avatars'
+import { isAvatarId, parseVoice, PRICES } from '../shared/avatars'
 import { readAvatar, speechFor } from './avatars'
 import { synthesizeSpeech, type SpeechRequest } from './openrouter-media'
 import { loadSettings } from './settings-store'
@@ -14,7 +14,14 @@ import { loadSettings } from './settings-store'
  */
 export const SAMPLE_TEXT = "Hey there! This is how I'll sound in your videos. Clear, natural, and ready to post."
 
-export interface VoiceSampleDeps { speak?: typeof synthesizeSpeech }
+/** What one new sample costs at the dearer voice's list price (the spending check's estimate). */
+export const SAMPLE_ESTIMATE_USD = Math.round(SAMPLE_TEXT.length / 1000 * PRICES.ttsPer1000Chars * 10_000) / 10_000
+
+export interface VoiceSampleDeps {
+  speak?: typeof synthesizeSpeech
+  /** The spending check, run only when a sample has to be made (a cached one is free). */
+  beforePaid?: () => Promise<void>
+}
 
 const inflight = new Map<string, Promise<Uint8Array>>()
 
@@ -51,6 +58,7 @@ export async function voiceSample(value: unknown, deps: VoiceSampleDeps = {}): P
   const work = (async () => {
     const key = loadSettings().openrouterApiKey
     if (!key) throw new Error('Add your OpenRouter key in Settings → API keys to hear voices.')
+    await deps.beforePaid?.()
     const bytes = await (deps.speak ?? synthesizeSpeech)(request, { key, signal: AbortSignal.timeout(90_000) })
     await mkdir(cacheDir(), { recursive: true })
     const partial = `${file}.${randomBytes(4).toString('hex')}.part`

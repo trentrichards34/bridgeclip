@@ -18,10 +18,10 @@ import { getEnginePath, getBridgeRunnerPath, resolvePythonPath, validatePython }
 import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds, onJobUpdate } from './job-manager'
 import { allowOnce, assertSpendAllowed, friendlyIpcError, initSpending, metered, meteredAvatarRender, onOutOfCredits, onSpendingChange, openRouterBalance, recordSpend, spendOverview, trackAvatarStatus, trackJobSnapshot, trackRemixStatus } from './spending'
 import { readTimecodeScreenshot } from './moment-take'
-import { MAX_TIMECODE_IMAGE_BYTES, parseMomentRanges, type TimecodeRead } from '../shared/moment-take'
+import { MAX_TIMECODE_IMAGE_BYTES, type TimecodeRead } from '../shared/moment-take'
 import { friendlyCreditError, type SpendProvider } from '../shared/spending'
 import { AI_PORTRAIT_CANDIDATES, estimateRecreateCost, PRICES, REACTIONS } from '../shared/avatars'
-import { estimateRemixCost, isRemixHost, MAX_REMIXES } from '../shared/remix'
+import { estimateRemixCost } from '../shared/remix'
 import { deletePreset, readMemberPrefs, renamePreset, saveAppPrefs, saveLastStyle, savePreset, saveProfile } from './member-prefs'
 import { recordToolCheck, reportIssue } from './support-report'
 import { announce, avatarNotice, createNotice, remixNotice } from './job-notifications'
@@ -33,16 +33,16 @@ import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds
 import { addCta, applyRunCta, applyRunCtaInLock, listCtas, removeCta, updateCta, withRunLock } from './ctas'
 import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../shared/ctas'
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, readReactions, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
-import { voiceSample } from './voice-samples'
+import { SAMPLE_ESTIMATE_USD, voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
-import { addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentEstimate, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen } from './remix'
+import { addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStartEstimate, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen } from './remix'
 import { importLegacyAvatarVideos } from './avatar-library'
 import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
   isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate
 } from './edit-recording'
 import { EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
-import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, renderSpendCheck, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
+import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, renderSpendCheck, SCRIPT_ESTIMATE_USD, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { createHeygenAvatar, draftTwinVideo, heygenAccount, heygenConsentUrl, heygenKey, readyHeygenLink, refreshHeygenAvatar, renderHeygenTake, saveTwinRecording, setHeygenVoice, stockHeygenAvatars, TWIN_VIDEO_EXTENSIONS } from './heygen-avatar'
 import { isConsentUrl } from './heygen'
 import { HEYGEN_PRICES } from '../shared/heygen'
@@ -119,6 +119,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   onSpendingChange(() => sendToWindow('spend:changed'))
   onOutOfCredits((provider) => sendToWindow('spend:outOfCredits', provider))
   onJobUpdate(trackJobSnapshot)
+  /** Writing one clip's post captions: transcription, an optional web search and one writing call (the check's estimate). */
+  const POST_CAPTIONS_ESTIMATE_USD = 0.02
   /** A paid handler: the spending check (monthly limit, OpenRouter balance) runs first. */
   const paid = (channel: string, provider: SpendProvider, estimate: (...args: unknown[]) => number | null,
     run: (...args: unknown[]) => unknown): void => {
@@ -136,12 +138,13 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // Remembered styles, saved styles, the support link and notifications (member-prefs.json).
   // Styles name library items by id: ones deleted since are dropped as they're read.
   const known = async (prefs: MemberPrefs): Promise<MemberPrefs> => {
+    // A library that couldn't be read keeps its saved ids (null): only items known to be gone are dropped.
     const [ctas, avatars, brands, backgrounds] = await Promise.all([
-      listCtas().catch(() => []), listAvatars().catch(() => []), listBrandIdentities().catch(() => []), listBackgrounds().catch(() => [])
+      listCtas().catch(() => null), listAvatars().catch(() => null), listBrandIdentities().catch(() => null), listBackgrounds().catch(() => null)
     ])
     const result = dropMissing(prefs, {
-      ctaIds: new Set(ctas.map((item) => item.id)), avatarIds: new Set(avatars.map((item) => item.id)),
-      brandIds: new Set(brands.map((item) => item.id)), backgrounds: new Set(backgrounds)
+      ctaIds: ctas && new Set(ctas.map((item) => item.id)), avatarIds: avatars && new Set(avatars.map((item) => item.id)),
+      brandIds: brands && new Set(brands.map((item) => item.id)), backgrounds: backgrounds && new Set(backgrounds)
     })
     // End-to-end tests start on a fresh profile; the guided setup only opens in the tests that ask for it.
     if (process.env.BRIDGECLIP_E2E === '1' && process.env.BRIDGECLIP_E2E_ONBOARDING !== '1' && result.profile.onboarding === 'new') {
@@ -244,9 +247,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('zernio:posts:openTikTokLegal', (_event, key: unknown) => openTikTokLegal(key))
 
   handle('automations:enhancementGroups', (_event, id: unknown) => automationEnhancementGroups(id))
-  handle('automations:enhanceBatch', (_event, id: unknown, ids: unknown, key: unknown, guidance: unknown) => enhanceAutomationBatch(id, ids, key, guidance))
+  // Writing post captions (transcription, an optional web search and the writing call) is paid: it passes the spending check.
+  paid('automations:enhanceBatch', 'openrouter', (_id, ids) => POST_CAPTIONS_ESTIMATE_USD * (Array.isArray(ids) ? Math.min(Math.max(ids.length, 1), 100) : 1),
+    (id, ids, key, guidance) => metered('posting', 'Post captions', () => enhanceAutomationBatch(id, ids, key, guidance)))
   handle('automations:source', (_event, id: unknown, contentId: unknown) => automationContentSource(id, contentId))
-  handle('automations:enhance', (_event, id: unknown, contentId: unknown, options: unknown) => enhanceAutomationContent(id, contentId, options))
+  paid('automations:enhance', 'openrouter', () => POST_CAPTIONS_ESTIMATE_USD,
+    (id, contentId, options) => metered('posting', 'Post captions', () => enhanceAutomationContent(id, contentId, options)))
   handle('automations:resolveDraft', (_event, id: unknown, contentId: unknown, draftId: unknown, apply: unknown) => resolveAutomationMetadataDraft(id, contentId, draftId, apply))
   handle('automations:list', () => listAutomations())
   handle('automations:acknowledgeWarnings', (_event, id: unknown, contentId: unknown) => acknowledgeAutomationWarnings(id, contentId))
@@ -392,12 +398,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (result.canceled || !result.filePaths[0]) return null
     return metered('avatar', 'Voice clone', () => cloneVoice(id, result.filePaths[0], consent))
   })
-  handle('avatars:writeScript', (_event, request: unknown) => writeAvatarScript(request))
+  paid('avatars:writeScript', 'openrouter', () => SCRIPT_ESTIMATE_USD, (request) => metered('avatar', 'Avatar script', () => writeAvatarScript(request)))
   // A HeyGen avatar's talking head is checked against HeyGen's published per-second price (or no estimate when it has none).
   handle('avatars:render', async (_event, request: unknown) => {
-    let check: { provider: SpendProvider; estimateUsd: number | null } = { provider: 'openrouter', estimateUsd: null }
+    let check: { provider: SpendProvider; estimateUsd: number | null; openrouterUsd?: number | null } = { provider: 'openrouter', estimateUsd: null }
     try { check = renderSpendCheck(request) } catch { /* the render itself reports a bad request */ }
-    await assertSpendAllowed('avatars:render', check.provider, check.estimateUsd)
+    await assertSpendAllowed('avatars:render', check.provider, check.estimateUsd, check.openrouterUsd !== undefined ? { balanceEstimateUsd: check.openrouterUsd } : {})
     return meteredAvatarRender(false, () => startAvatarRender(request))
   })
   paid('avatars:recreate', 'fal', (request) => {
@@ -436,7 +442,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return setHeygenVoice(id, voice)
   })
   handle('avatars:renderStatus', () => friendlyStatus(avatarRenderStatus()))
-  handle('voices:sample', (_event, request: unknown) => metered('avatar', 'Voice preview', () => voiceSample(request)))
+  // A new sample is paid (a cached one is free): only making one passes the spending check.
+  handle('voices:sample', (_event, request: unknown) => metered('avatar', 'Voice preview', () => voiceSample(request, {
+    beforePaid: () => assertSpendAllowed('voices:sample', 'openrouter', SAMPLE_ESTIMATE_USD)
+  })))
   onAvatarRenderStatus((status) => {
     trackAvatarStatus(status)
     announce(avatarNotice(status), getMainWindow)
@@ -461,20 +470,13 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (result.canceled || !result.filePaths[0]) return null
     return importBrandLogo(result.filePaths[0])
   })
-  paid('remix:start', 'openrouter', (request) => {
-    const raw = (request ?? {}) as Record<string, unknown>
-    if (raw.format === 'image' || raw.format === 'pause_react' || raw.format === 'clip_then_me' || raw.format === 'react_thoughts') return estimateRemixCost('camera', 1, 0, raw.format).total
-    if (raw.format === 'moment_take') return momentEstimate(parseMomentRanges((raw.moment as { ranges?: unknown } | undefined)?.ranges)).total
-    const sources = Array.isArray(raw.sources) ? Math.max(1, raw.sources.length) : 1
-    const count = typeof raw.count === 'number' && Number.isInteger(raw.count) && raw.count >= 1 && raw.count <= MAX_REMIXES ? raw.count : null
-    if (!isRemixHost(raw.host) || count === null) return null
-    return estimateRemixCost(raw.host, count * sources, 0.5, raw.format === 'silent' ? 'silent' : 'commentary').total
-  }, (request) => startRemix(request))
+  paid('remix:start', 'openrouter', (request) => remixStartEstimate(request), (request) => startRemix(request))
   // Making the approved takes: with Avatar on camera, HeyGen's lines are in the estimate (and HeyGen is the provider when it speaks).
   handle('remix:render', async (_event, edits: unknown) => {
-    let check: { provider: SpendProvider; estimateUsd: number | null } = { provider: 'openrouter', estimateUsd: null }
+    let check: { provider: SpendProvider; estimateUsd: number | null; openrouterUsd?: number | null } = { provider: 'openrouter', estimateUsd: null }
     try { check = remixRenderCheck(edits) } catch { /* the render itself reports a bad request */ }
-    await assertSpendAllowed('remix:render', check.provider, check.estimateUsd)
+    // The monthly limit counts every provider's share; the OpenRouter balance only OpenRouter's (HeyGen bills its own account).
+    await assertSpendAllowed('remix:render', check.provider, check.estimateUsd, check.openrouterUsd !== undefined ? { balanceEstimateUsd: check.openrouterUsd } : {})
     return renderRemix(edits)
   })
   // Avatar on camera (HeyGen, Beta): Remix makes each spoken line on HeyGen through these.
@@ -643,7 +645,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('history:delete', (_event, outputDir: unknown) => deleteLibraryRun(outputDir))
   handle('history:deleteClips', (_event, outputDir: unknown, indices: unknown) => deleteLibraryClips(outputDir, indices))
   handle('history:metadataSource', (_event, outputDir: unknown, clipIndex: unknown) => libraryMetadataSource(outputDir, clipIndex))
-  handle('history:enhanceMetadata', (_event, outputDir: unknown, clipIndex: unknown, options: unknown) => enhanceLibraryMetadata(outputDir, clipIndex, options))
+  paid('history:enhanceMetadata', 'openrouter', () => POST_CAPTIONS_ESTIMATE_USD,
+    (outputDir, clipIndex, options) => metered('posting', 'Post captions', () => enhanceLibraryMetadata(outputDir, clipIndex, options)))
   handle('history:getJob', (_event, outputDir: string) => {
     assertAbsolutePath(outputDir)
     const library = loadSettings().outputDirectory
@@ -757,48 +760,74 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return result.filePaths.slice(0, MAX_CREATE_SOURCES).map((path) => authorizeMedia(path))
   })
 
-  // The selected clips as one .zip (stored, not recompressed: video is already compressed).
-  handle('clips:exportZip', async (_event, clips: { path: string; name: string }[], zipName: unknown) => {
-    const window = getMainWindow()
+  /**
+   * The clips chosen for export, checked: a file that's gone (deleted or moved since the Library was read) is
+   * counted as missing instead of failing the whole export with a raw file-system error.
+   */
+  const exportSelection = (clips: unknown): { present: { path: string; name: string }[]; missing: number } => {
     if (!Array.isArray(clips) || clips.length > 500) throw new Error('Invalid export selection')
-    for (const clip of clips) {
-      if (!clip || typeof clip.name !== 'string' || clip.name.length > 500) throw new Error('Invalid export selection')
-      assertMediaPath(clip.path, loadSettings().outputDirectory)
+    const present: { path: string; name: string }[] = []
+    let missing = 0
+    for (const clip of clips as { path: unknown; name: unknown }[]) {
+      if (!clip || typeof clip.name !== 'string' || clip.name.length > 500 || typeof clip.path !== 'string') throw new Error('Invalid export selection')
+      try { assertMediaPath(clip.path, loadSettings().outputDirectory) } catch (error) {
+        // File-system errors (ENOENT and the like) carry a code and the path: never shown, counted as missing.
+        if (typeof (error as NodeJS.ErrnoException | null)?.code !== 'string') throw error
+        missing += 1
+        continue
+      }
+      present.push({ path: clip.path, name: clip.name })
     }
-    if (!window || clips.length === 0) return { success: false, count: 0, failedCount: clips.length }
+    return { present, missing }
+  }
+  const missingClips = (count: number): string => `${count === 1 ? '1 clip is' : `${count} clips are`} missing from the Library (deleted or moved), so ${count === 1 ? 'it' : 'they'} can’t be exported.`
+
+  // The selected clips as one .zip (stored, not recompressed: video is already compressed).
+  handle('clips:exportZip', async (_event, selection: unknown, zipName: unknown) => {
+    const window = getMainWindow()
+    const { present: clips, missing } = exportSelection(selection)
+    if (missing && !clips.length) throw new Error(missingClips(missing))
+    if (!window || clips.length === 0) return { success: false, count: 0, failedCount: clips.length + missing }
     const suggested = uniqueFileName(typeof zipName === 'string' && zipName.trim() ? zipName : 'CreatorClips clips', '.zip', new Set())
     const result = await dialog.showSaveDialog(window, { title: 'Save Clips as .zip', defaultPath: suggested, filters: [{ name: 'Zip archive', extensions: ['zip'] }] })
     if (result.canceled || !result.filePath) return { success: false, count: 0, failedCount: 0 }
     const dest = result.filePath.toLowerCase().endsWith('.zip') ? result.filePath : `${result.filePath}.zip`
     const { open, rm, rename } = await import('fs/promises')
     const { extname, join, dirname } = await import('path')
-    const sources: Awaited<ReturnType<typeof openAuthorizedMedia>>[] = []
+    const sources: { source: Awaited<ReturnType<typeof openAuthorizedMedia>>; clip: { path: string; name: string } }[] = []
     const temp = join(dirname(dest), `.creatorclips-${randomUUID()}.zip.part`)
+    let gone = missing
     try {
-      for (const clip of clips) sources.push(await openAuthorizedMedia(clip.path, loadSettings().outputDirectory))
+      for (const clip of clips) {
+        // One that disappeared since the check is skipped and counted like the others.
+        try { sources.push({ source: await openAuthorizedMedia(clip.path, loadSettings().outputDirectory), clip }) } catch (error) {
+          if (typeof (error as NodeJS.ErrnoException | null)?.code !== 'string') throw error
+          gone += 1
+        }
+      }
+      if (!sources.length) throw new Error(missingClips(gone))
       const taken = new Set<string>()
       const target = await open(temp, 'wx', 0o600)
       try {
-        await writeZip(target, sources.map((source, index) => ({ name: uniqueFileName(clips[index].name, extname(clips[index].path) || '.mp4', taken), handle: source.handle, size: source.size })))
+        await writeZip(target, sources.map(({ source, clip }) => ({ name: uniqueFileName(clip.name, extname(clip.path) || '.mp4', taken), handle: source.handle, size: source.size })))
       } finally { await target.close() }
       await rename(temp, dest)
-      return { success: true, count: clips.length, failedCount: 0, destDir: dest }
+      return { success: true, count: sources.length, failedCount: gone, destDir: dest }
     } catch (error) {
       await rm(temp, { force: true }).catch(() => undefined)
+      // Plain words only: a file-system error names paths on this computer.
+      if (typeof (error as NodeJS.ErrnoException | null)?.code === 'string') throw new Error('The .zip could not be saved there. Check the folder and free space, then try again.')
       throw error
     } finally {
-      await Promise.all(sources.map((source) => source.handle.close().catch(() => undefined)))
+      await Promise.all(sources.map(({ source }) => source.handle.close().catch(() => undefined)))
     }
   })
 
-  handle('clips:bulkExport', async (_event, clips: { path: string; name: string }[]) => {
+  handle('clips:bulkExport', async (_event, selection: unknown) => {
     const window = getMainWindow()
-    if (!Array.isArray(clips) || clips.length > 500) throw new Error('Invalid export selection')
-    for (const clip of clips) {
-      if (!clip || typeof clip.name !== 'string' || clip.name.length > 500) throw new Error('Invalid export selection')
-      assertMediaPath(clip.path, loadSettings().outputDirectory)
-    }
-    if (!window || clips.length === 0) return { success: false, count: 0, failedCount: clips.length }
+    const { present: clips, missing } = exportSelection(selection)
+    if (missing && !clips.length) throw new Error(missingClips(missing))
+    if (!window || clips.length === 0) return { success: false, count: 0, failedCount: clips.length + missing }
 
     const result = await dialog.showOpenDialog(window, {
       properties: ['openDirectory', 'createDirectory'],
@@ -844,7 +873,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       } catch { /* Counted below as an unsuccessful copy. */ }
     }
 
-    return { success: count > 0, count, failedCount: clips.length - count, destDir }
+    return { success: count > 0, count, failedCount: clips.length + missing - count, destDir }
   })
 
   handle('system:isPackaged', () => {

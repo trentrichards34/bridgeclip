@@ -77,11 +77,17 @@ interface RunContext {
   /** The engine finding another moment (it rewrites .work/plan.json): Discard stops it before removing the folder. */
   momentChild?: ChildProcess
   /** React, then my thoughts: the member's own b-roll (copied into the run's .broll), stock on or off, and the plan. */
-  broll?: { items: BrollItem[]; stock: boolean; plan: BrollShot[] | null; takeSeconds: number | null }
+  /** `adding`: room held for clips still being copied in (two adds at once can't pass the limit together). */
+  broll?: { items: BrollItem[]; stock: boolean; plan: BrollShot[] | null; takeSeconds: number | null; adding?: number }
 }
 
-/** Avatar on camera on HeyGen: the lines being made now (canceling stops waiting for them) and what they were estimated at. */
-interface HeygenRun { abort: AbortController; inFlight: number; made: number; usd: number; unpriced: boolean; canceledWhileWaiting?: boolean }
+/**
+ * Avatar on camera on HeyGen: the lines being made now (canceling stops waiting for them), how many of those HeyGen
+ * already accepted (and bills: it has no cancel), and what the finished ones were estimated at. `abandoned` is set
+ * once the app stopped waiting for a video HeyGen had accepted, for whatever reason (cancel, the engine stopping,
+ * a failed wait or download): HeyGen may still finish and bill it.
+ */
+interface HeygenRun { abort: AbortController; inFlight: number; waiting: number; made: number; usd: number; unpriced: boolean; abandoned?: boolean }
 
 interface ActiveRemix { status: RemixStatus; child?: ChildProcess; cancelled: boolean; avatarId: string | null; context: RunContext; ctaAbort?: AbortController; heygen?: HeygenRun }
 
@@ -95,7 +101,7 @@ export interface RemixHeygen {
   ready: (avatarId: string, signal?: AbortSignal) => Promise<HeygenAvatarLink>
   render: (request: {
     avatarId: string; audioPath?: string | null; text?: string | null; voiceId?: string | null; outPath: string; signal?: AbortSignal
-    onStatus?: (detail: string, fraction: number) => void; spendKind?: 'remix'; title?: string
+    onStatus?: (detail: string, fraction: number) => void; onStarted?: (videoId: string) => void; spendKind?: 'remix'; title?: string
   }) => Promise<{ videoId: string; path: string; seconds: number; estimatedUsd: number | null }>
 }
 let heygenApi: RemixHeygen | null = null
@@ -464,16 +470,37 @@ function heygenUsdPerSecond(link: HeygenAvatarLink): number | null {
 
 /**
  * The spending check before making the approved takes: their estimates (with the avatar's HeyGen lines at HeyGen's
- * published price when Avatar on camera is chosen; null when HeyGen's price for it isn't known). HeyGen speaking in its
- * own voice bills mostly HeyGen; otherwise mostly OpenRouter (the voice and the planning).
+ * published price when Avatar on camera is chosen; null when HeyGen's price for it isn't known), for the monthly
+ * limit. HeyGen speaking in its own voice bills mostly HeyGen; otherwise mostly OpenRouter (the voice), and only
+ * OpenRouter's share (`openrouterUsd`) is compared with the OpenRouter balance.
  */
-export function remixRenderCheck(edits: unknown): { provider: SpendProvider; estimateUsd: number | null } {
+export function remixRenderCheck(edits: unknown): { provider: SpendProvider; estimateUsd: number | null; openrouterUsd?: number | null } {
   const run = reviewing
   const ids = new Set(Array.isArray(edits) ? edits.map((edit) => (edit as { id?: unknown } | null)?.id) : [])
-  const total = (run?.status.drafts ?? []).filter((draft) => ids.has(draft.id)).reduce((sum, draft) => sum + draft.estimateUsd, 0)
+  const chosen = (run?.status.drafts ?? []).filter((draft) => ids.has(draft.id))
+  const total = chosen.reduce((sum, draft) => sum + draft.estimateUsd, 0)
   const config = run?.context.config
   if (config?.presenter !== 'heygen') return { provider: 'openrouter', estimateUsd: total > 0 ? total : null }
-  return { provider: config.heygen_voice === true ? 'heygen' : 'openrouter', estimateUsd: config.heygen_usd_per_second === null ? null : total > 0 ? total : null }
+  const priced = config.heygen_usd_per_second !== null && chosen.every((draft) => draft.heygenEstimateUsd !== null)
+  // The HeyGen share: the engine's figure for each take, or (older drafts) none known.
+  const heygenShare = chosen.reduce((sum, draft) => sum + (draft.heygenEstimateUsd ?? 0), 0)
+  const openrouter = Math.max(0, total - heygenShare)
+  return {
+    provider: config.heygen_voice === true ? 'heygen' : 'openrouter',
+    estimateUsd: priced && total > 0 ? total : null,
+    openrouterUsd: openrouter > 0 ? Math.round(openrouter * 10_000) / 10_000 : null
+  }
+}
+
+/** The spending check's estimate for starting a remix (the Remix page and the chat use the same one), or null. */
+export function remixStartEstimate(request: unknown): number | null {
+  const raw = (request ?? {}) as Record<string, unknown>
+  if (raw.format === 'image' || raw.format === 'pause_react' || raw.format === 'clip_then_me' || raw.format === 'react_thoughts') return estimateRemixCost('camera', 1, 0, raw.format).total
+  if (raw.format === 'moment_take') return momentEstimate(parseMomentRanges((raw.moment as { ranges?: unknown } | undefined)?.ranges)).total
+  const sources = Array.isArray(raw.sources) ? Math.max(1, raw.sources.length) : 1
+  const count = typeof raw.count === 'number' && Number.isInteger(raw.count) && raw.count >= 1 && raw.count <= MAX_REMIXES ? raw.count : null
+  if (!isRemixHost(raw.host) || count === null) return null
+  return estimateRemixCost(raw.host, count * sources, 0.5, raw.format === 'silent' ? 'silent' : 'commentary').total
 }
 
 /** Moment + my take: transcribing the ranges and picking a moment in each, then one writing call per video. */
@@ -654,7 +681,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
   let result: Record<string, unknown> | null = null
   // Avatar on camera: the engine asks for each spoken line on stdout, and the answer goes back on stdin.
   const heygen = config.presenter === 'heygen' && config.mode === 'render'
-  if (heygen) run.heygen = { abort: new AbortController(), inFlight: 0, made: 0, usd: 0, unpriced: false }
+  if (heygen) run.heygen = { abort: new AbortController(), inFlight: 0, waiting: 0, made: 0, usd: 0, unpriced: false }
   const answer = (message: Record<string, unknown>): void => {
     if (!child.stdin.destroyed && child.stdin.writable) child.stdin.write(JSON.stringify(message) + '\n')
   }
@@ -682,7 +709,8 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
   child.on('close', () => { void closed() })
   async function closed(): Promise<void> {
     clearTimeout(timer); run.child = undefined
-    if (heygen) { child.stdin.end(); run.heygen?.abort.abort() }
+    // The engine stopped (finished, failed or canceled): lines still in flight on HeyGen are no longer waited for.
+    if (heygen) { child.stdin.end(); if (run.heygen) stopWaitingForHeygen(run.heygen) }
     if (!running(run)) return
     if (run.context.writing) {
       run.context.writing = false
@@ -730,15 +758,13 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
       else for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions', '.recordings', '.broll']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
       // HeyGen has no cancel: a video it had started may still finish there and be billed.
-      const heygenWarnings = [heygenNote(run), run.heygen?.canceledWhileWaiting ? 'HeyGen may still finish an avatar video it had already started and bill it on your HeyGen account.' : null]
-        .filter((note): note is string => Boolean(note))
+      const notes = heygenWarnings(run)
       finish(run, { phase: 'cancelled', detail: planning ? 'Canceled while planning' : 'Canceled', ...(spent > 0 ? { costUsd: (planning ? 0 : run.context.planCostUsd) + spent } : {}),
-        ...(heygenWarnings.length ? { warnings: heygenWarnings } : {}) })
+        ...(notes.length ? { warnings: notes } : {}) })
       return
     }
     const warnings = Array.isArray(result?.warnings) ? result.warnings.filter((w): w is string => typeof w === 'string').map((w) => w.slice(0, 400)).slice(0, 12) : []
-    const madeOnHeygen = heygenNote(run)
-    if (madeOnHeygen) warnings.push(madeOnHeygen)
+    warnings.push(...heygenWarnings(run))
     const cost = typeof result?.cost_usd === 'number' && Number.isFinite(result.cost_usd) ? result.cost_usd : null
     if (result?.ok === true && planning) {
       const drafts = (Array.isArray(result.drafts) ? result.drafts : []).map(parseRemixDraft).filter((item): item is RemixDraft => item !== null)
@@ -791,7 +817,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
         finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, error: message, warnings, costUsd })
         return
       }
-      finish(run, { phase: 'failed', error: message, costUsd })
+      finish(run, { phase: 'failed', error: message, costUsd, ...(warnings.length ? { warnings } : {}) })
     }
   }
   child.stdin.on('error', () => undefined)
@@ -835,11 +861,13 @@ async function heygenLine(run: ActiveRemix, message: Record<string, unknown>): P
   if (!heygenApi || !run.avatarId) return fail(NO_HEYGEN)
   if (run.cancelled) return fail('Canceled.')
   state.inFlight += 1
+  let started = false
   try {
     const made = await heygenApi.render({
       avatarId: run.avatarId, outPath, signal: state.abort.signal, spendKind: 'remix', title: `CreatorClips remix: ${label}`.slice(0, 100),
       ...(heygenVoice ? { text } : { audioPath }),
-      onStatus: (detail) => { if (!run.cancelled) publish(run, { detail: `${label}: ${detail}`.slice(0, 160) }) }
+      onStatus: (detail) => { if (!run.cancelled) publish(run, { detail: `${label}: ${detail}`.slice(0, 160) }) },
+      onStarted: () => { if (!started) { started = true; state.waiting += 1 } }
     })
     state.made += 1
     if (made.estimatedUsd === null) state.unpriced = true
@@ -847,13 +875,30 @@ async function heygenLine(run: ActiveRemix, message: Record<string, unknown>): P
     logger.info('remix.heygen.line', { seconds: Math.round(made.seconds) })
     return { type: 'heygen_result', id, ok: true, path: outPath }
   } catch (error) {
+    // HeyGen had accepted this video and the app stopped waiting for it (unless HeyGen itself said it failed): it may still bill it.
+    if (started && (error as { videoFailed?: unknown } | null)?.videoFailed !== true) state.abandoned = true
     if (run.cancelled) return fail('Canceled.')
     const message = (error as { message?: unknown } | null)?.message
     const reason = typeof message === 'string' && message ? message.slice(0, 300) : 'HeyGen could not make this video. Try again.'
     logger.warn('remix.heygen.failed', { message: reason.slice(0, 120) })
     return fail(reason)
-  } finally { state.inFlight -= 1 }
+  } finally {
+    state.inFlight -= 1
+    if (started) state.waiting -= 1
+  }
 }
+
+/** Stop waiting for HeyGen's lines; any it had already accepted may still finish and be billed there. */
+function stopWaitingForHeygen(state: HeygenRun): void {
+  if (state.waiting > 0) state.abandoned = true
+  state.abort.abort()
+}
+
+/** The HeyGen notes for a finished, failed or canceled run: what was made, and a warning when waiting was stopped. */
+function heygenWarnings(run: ActiveRemix): string[] {
+  return [heygenNote(run), run.heygen?.abandoned ? HEYGEN_STILL_BILLING : null].filter((note): note is string => Boolean(note))
+}
+const HEYGEN_STILL_BILLING = 'HeyGen may still finish an avatar video it had already started and bill it on your HeyGen account.'
 
 /** What the HeyGen part of a run cost, for the finished (or failed) run's notes; null when nothing was made. */
 function heygenNote(run: ActiveRemix): string | null {
@@ -1273,25 +1318,36 @@ export function brollView(): BrollView | null {
 export async function addBroll(sources: string[]): Promise<BrollView> {
   const run = brollRun()
   const broll = run.context.broll
-  const room = BROLL_MAX_ITEMS - broll.items.length
+  // Room is held before the first wait, so another add running at the same time counts these too.
+  const room = BROLL_MAX_ITEMS - broll.items.length - (broll.adding ?? 0)
   if (sources.length > room) throw new Error(room > 0 ? `Add up to ${BROLL_MAX_ITEMS} clips or pictures (${room} more).` : `You have ${BROLL_MAX_ITEMS} already. Remove one to add another.`)
+  broll.adding = (broll.adding ?? 0) + sources.length
   const added: BrollItem[] = []
-  for (const source of sources) {
-    const kind = brollKind(basename(source))
-    if (!kind) throw new Error('Choose videos (MP4, MOV, WebM) or pictures (JPG, PNG, WebP).')
-    const info = await stat(source)
-    if (!info.isFile() || info.size > BROLL_MAX_BYTES) throw new Error('Choose clips under 1 GB.')
-  }
-  await saving(run, async () => {
-    await mkdir(join(run.status.folder, '.broll'), { recursive: true })
+  try {
     for (const source of sources) {
-      const id = `b${randomBytes(4).toString('hex')}`
-      const path = join(run.status.folder, '.broll', `${id}${extname(source).toLowerCase()}`)
-      await copyFile(source, path)
-      added.push({ id, name: basename(source).slice(0, 80), kind: brollKind(basename(source)) as BrollItem['kind'], path })
+      const kind = brollKind(basename(source))
+      if (!kind) throw new Error('Choose videos (MP4, MOV, WebM) or pictures (JPG, PNG, WebP).')
+      const info = await stat(source)
+      if (!info.isFile() || info.size > BROLL_MAX_BYTES) throw new Error('Choose clips under 1 GB.')
     }
-  })
-  if (reviewing !== run) throw new Error('This review was closed.')
+    await saving(run, async () => {
+      await mkdir(join(run.status.folder, '.broll'), { recursive: true })
+      for (const source of sources) {
+        const id = `b${randomBytes(4).toString('hex')}`
+        const path = join(run.status.folder, '.broll', `${id}${extname(source).toLowerCase()}`)
+        // Listed before copying, so a copy that fails partway is removed below.
+        added.push({ id, name: basename(source).slice(0, 80), kind: brollKind(basename(source)) as BrollItem['kind'], path })
+        await copyFile(source, path)
+      }
+    })
+    if (reviewing !== run) throw new Error('This review was closed.')
+  } catch (error) {
+    // Nothing is half-added: copies already made are removed.
+    await Promise.all(added.map((item) => rm(item.path, { force: true }).catch(() => undefined)))
+    throw error
+  } finally {
+    broll.adding = Math.max(0, (broll.adding ?? 0) - sources.length)
+  }
   broll.items = [...broll.items, ...added]
   return brollView() as BrollView
 }
@@ -1658,7 +1714,7 @@ export function cancelRemix(): boolean {
   run.cancelled = true
   run.ctaAbort?.abort()
   // Stops waiting for HeyGen (it has no cancel: a video it already started may still finish and be billed there).
-  if (run.heygen) { run.heygen.canceledWhileWaiting = run.heygen.inFlight > 0; run.heygen.abort.abort() }
+  if (run.heygen) stopWaitingForHeygen(run.heygen)
   run.status = { ...run.status, detail: 'Cancelling…' }
   notify(run.status)
   kill(run.child)

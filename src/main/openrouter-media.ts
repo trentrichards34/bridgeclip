@@ -31,11 +31,18 @@ export interface MediaOptions {
 }
 
 /** One finished paid media call, for the spend ledger: the cost OpenRouter reported (null when none) and what's needed to estimate it. */
-export interface MediaCharge { what: 'image' | 'speech' | 'video'; model: string; usd: number | null; chars?: number; seconds?: number }
+export interface MediaCharge { what: 'image' | 'speech' | 'video' | 'text'; model: string; usd: number | null; chars?: number; seconds?: number }
 let chargeListener: (charge: MediaCharge) => void = () => undefined
 export function onMediaCharge(listener: (charge: MediaCharge) => void): void { chargeListener = listener }
 function charged(charge: MediaCharge): void {
   try { chargeListener(charge) } catch { /* recording never fails the call */ }
+}
+
+/** A finished OpenRouter text or transcription call made elsewhere (post captions): its reported cost goes to the spend ledger. */
+export function reportOpenRouterUsage(model: string, body: unknown): void {
+  const usage = body && typeof body === 'object' ? (body as { usage?: { cost?: unknown } }).usage : undefined
+  const cost = usage?.cost
+  if (typeof cost === 'number' && Number.isFinite(cost) && cost > 0) charged({ what: 'text', model, usd: cost })
 }
 function reportedCost(json: Record<string, unknown>): number | null {
   const cost = (json.usage as { cost?: unknown } | undefined)?.cost
