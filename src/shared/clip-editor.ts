@@ -1,3 +1,4 @@
+import type { EditorGraphic } from './motion-graphics'
 /** Persisted source-time edits. Media paths and review results are main-process owned. */
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
 import { isCaptionLanguage, type CaptionLanguage } from './caption-language'
@@ -42,6 +43,8 @@ export interface CandidateEdit {
   hook?: EditorHook | null
   /** Call to action added after export: absent uses the run's, null none. */
   cta_id?: string | null
+  /** Motion graphics on the clip (motion-graphics.ts). Absent = none. */
+  graphics?: EditorGraphic[]
 }
 export interface EditorCandidate extends CandidateEdit {
   camera_scan?: CameraScan
