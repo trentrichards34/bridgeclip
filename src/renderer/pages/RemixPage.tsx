@@ -87,6 +87,15 @@ const GRADE_TONES: Record<string, string> = {
   A: 'bg-emerald-400 text-black', B: 'bg-lime-300 text-black', C: 'bg-amber-300 text-black', D: 'bg-orange-400 text-black', F: 'bg-red-500 text-white'
 }
 
+/** Voice only picked by this page because no avatar existed yet; kept across restarts so it can be undone once one does. */
+const AUTO_VOICE_KEY = 'creatorclips.remix.autoVoiceOnly'
+const autoVoiceOnly = {
+  get active(): boolean { try { return localStorage.getItem(AUTO_VOICE_KEY) !== null } catch { return false } },
+  set active(on: boolean) { try { if (on) localStorage.setItem(AUTO_VOICE_KEY, this.voice || ''); else localStorage.removeItem(AUTO_VOICE_KEY) } catch { /* storage unavailable */ } },
+  get voice(): string { try { return localStorage.getItem(AUTO_VOICE_KEY) ?? '' } catch { return '' } },
+  set voice(id: string) { try { if (localStorage.getItem(AUTO_VOICE_KEY) !== null) localStorage.setItem(AUTO_VOICE_KEY, id) } catch { /* storage unavailable */ } }
+}
+
 export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: PageName) => void; onViewLibrary?: (outputDir: string) => void }): React.JSX.Element {
   const openrouterConfigured = useSettingsStore((s) => s.openrouterConfigured)
   const pexelsConfigured = useSettingsStore((s) => s.pexelsConfigured)
@@ -309,14 +318,24 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   // Voice only with a preset voice (only when the side opens, so a choice made here stays).
   const noAvatars = avatarsLoaded && avatars.length === 0
   useEffect(() => {
-    if (!noAvatars || mode !== 'ai') return
+    if (mode !== 'ai' || !avatarsLoaded) return
     const current = useRemixForm.getState()
+    if (!noAvatars) {
+      // An avatar now exists: undo the stand-in this page chose (not a choice the member made).
+      if (autoVoiceOnly.active && current.host === 'voice' && current.voice === autoVoiceOnly.voice) current.update({ host: 'still', voice: AVATAR_VOICE })
+      autoVoiceOnly.active = false
+      return
+    }
     const patch: Partial<RemixForm> = {
       ...(current.host === 'still' || current.host === 'lipsync' ? { host: 'voice' as const } : {}),
       ...(current.voice === AVATAR_VOICE ? { voice: REMIX_VOICES[0].id } : {})
     }
-    if (Object.keys(patch).length) current.update(patch)
-  }, [noAvatars, mode])
+    if (Object.keys(patch).length) {
+      current.update(patch)
+      autoVoiceOnly.active = patch.host === 'voice'
+      autoVoiceOnly.voice = patch.voice ?? current.voice
+    }
+  }, [noAvatars, avatarsLoaded, mode])
   // The AI presenter's voiced take: avatar photo or voice only (its clip reactions are always the avatar's).
   const hostChoice = mode === 'ai' && !silent
   const cameraValue = image ? form.imageCamera : pause ? form.pauseCamera : momentTake || clip ? form.momentCamera : form.camera
