@@ -22,7 +22,10 @@ test('Their clip, then me: You on camera, a short clip trimmed, an uploaded take
   const take = path.join(root, 'my-take.mp4')
   execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x406080:s=360x640:r=30:d=9', '-f', 'lavfi', '-i', 'sine=frequency=300:d=9',
     '-vf', 'drawbox=x=120:y=180:w=120:h=200:color=0xe0b090:t=fill', ...tools.encoder, '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', take])
-  await dialogs([reel, take])
+  // A screenshot of their own post, as proof while they talk.
+  const proof = path.join(root, 'my-post.png')
+  execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0xc81ec8:s=600x900:d=1', '-frames:v', '1', proof])
+  await dialogs([reel, take, [proof]])
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
   // Two big choices first; "You on camera" lists only the real-person templates.
@@ -49,6 +52,14 @@ test('Their clip, then me: You on camera, a short clip trimmed, an uploaded take
   await page.getByRole('button', { name: 'Or choose a file' }).click()
   await page.getByText('skincare-reel.mp4').waitFor()
   await page.getByPlaceholder('e.g. @theircreator').fill('@skincoach')
+  // Like the reels: their clip fills the frame (no hook text bar), and its own captions are left alone.
+  await page.getByRole('button', { name: /Look & call to action/ }).click()
+  const theirCaptions = page.getByRole('radiogroup', { name: 'Their clip already has captions' })
+  assert.equal(await theirCaptions.getByRole('radio', { name: 'Check for me' }).getAttribute('aria-checked'), 'true', 'a file: checked for them')
+  await theirCaptions.getByRole('radio', { name: 'It has captions' }).click()
+  await page.getByText('Their own captions stay as they are; ours start when you do.').waitFor()
+  await page.getByRole('button', { name: 'No hook text', exact: true }).click()
+  await page.getByTestId('look-summary').getByText(/No hook text/).waitFor()
   await page.getByRole('checkbox', { name: "I'm allowed to use this video" }).check()
   await next.click()
 
@@ -66,6 +77,12 @@ test('Their clip, then me: You on camera, a short clip trimmed, an uploaded take
   await page.getByText(/^You said: “Honestly that number scared me/).waitFor()
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await page.getByRole('heading', { name: 'Your clip, then you' }).scrollIntoViewIfNeeded(); await shot(app, 'clip-then-me-review.png') }
   await hook.fill('This serum changed her skin in a week? Not mine')
+  // A proof screenshot pops in while they talk: added from the file dialog, labeled.
+  const proofs = page.getByRole('region', { name: 'Proof screenshots' })
+  await proofs.getByRole('button', { name: 'Add screenshots' }).click()
+  await proofs.getByText('my-post.png').waitFor()
+  await proofs.getByLabel('Label for my-post.png').selectOption('My post')
+  await page.waitForFunction(() => window.bridgeclip.remix.layoutView().then((view) => view?.proofs[0]?.label === 'My post'))
 
   await make.click()
   await page.getByText(/^1 remix ready/).waitFor({ timeout: 300000 })
@@ -77,6 +94,10 @@ test('Their clip, then me: You on camera, a short clip trimmed, an uploaded take
   const manifest = JSON.parse(fs.readFileSync(path.join(library, run, 'clip_00.source.json'), 'utf8'))
   assert.equal(manifest.format, 'clip_then_me')
   assert.deepEqual(manifest.source.trim, { start_seconds: 1, end_seconds: 7 })
+  assert.equal(manifest.presenter.clip_then_me.their_captions, true)
+  assert.deepEqual(manifest.presenter.clip_then_me.proofs.map((item) => item.label), ['My post'])
+  // The run's copies of the screenshots are gone once it's made.
+  assert.equal(fs.existsSync(path.join(library, run, '.layout')), false)
   const file = path.join(library, run, 'clip_00.mp4')
   const seconds = Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).toString())
   assert.ok(Math.abs(seconds - 15) < 0.4, `their 6 s clip, then the 9 s take (${seconds}s)`)

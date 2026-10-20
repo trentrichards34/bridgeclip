@@ -656,7 +656,8 @@ def underline_image(width: int, thickness: int, path: str, reveal: float = 1.0, 
 
 
 def underline_layers(work: str, rect: tuple[float, float, float, float], start_s: float, frame_w: int,
-                     draw_s: float = 0.35, shift: str = "", visible: Optional[tuple[float, float]] = None) -> list[Layer]:
+                     draw_s: float = 0.35, shift: str = "", visible: Optional[tuple[float, float]] = None,
+                     end_s: Optional[float] = None, name: str = "underline") -> list[Layer]:
     """A red underline drawn under rect (x, y, w, h in output px) from start_s, left to right over draw_s. With
     `shift` (an expression in t) it moves up by that much (a scrolling screenshot), shown only while its line is
     within `visible` (y range)."""
@@ -669,12 +670,13 @@ def underline_layers(work: str, rect: tuple[float, float, float, float], start_s
     frames = 6
     layers = []
     for k in range(1, frames + 1):
-        path = os.path.join(work, f"underline-{k}.png")
+        path = os.path.join(work, f"{name}-{k}.png")
         iw, ih = underline_image(length, thickness, path, k / frames)
         ux = round(x - (length - w) / 2 - thickness * 2)
         uy = round(y + h + thickness * 0.4 - ih / 2)
         a = start_s + draw_s * (k - 1) / frames
-        enable = f"gte(t,{a:.3f})" if k == frames else f"between(t,{a:.3f},{start_s + draw_s * k / frames:.3f})"
+        enable = (f"between(t,{a:.3f},{end_s:.3f})" if end_s is not None else f"gte(t,{a:.3f})") if k == frames \
+            else f"between(t,{a:.3f},{start_s + draw_s * k / frames:.3f})"
         y_expr = str(uy)
         if shift:
             y_expr = f"{uy}-({shift})"
@@ -813,6 +815,24 @@ def reel_layers(extras: LookExtras, work: str, *, width: int, height: int, total
         layers += comment_box_layers(work, extras.keyword, width, center, total_s, dark)
     if extras.has("progress_bar"):
         layers += progress_bar_layers(work, width, height, total_s, extras.color, under=under)
+    return layers
+
+
+def proof_card_layers(extras: LookExtras, work: str, proofs: Any, frame_w: int) -> list[Layer]:
+    """Remix proof cards (remix_layouts, tags["proofs"]: their "highlight" box in frame pixels and their start/end on
+    the video's clock): the underline under each marked number while its card shows, drawn once the card has popped in."""
+    if not extras.has("proof_underline") or not isinstance(proofs, list):
+        return []
+    layers: list[Layer] = []
+    for i, proof in enumerate(proofs):
+        lit = proof.get("highlight") if isinstance(proof, dict) else None
+        try:
+            start, end = float(proof["start"]), float(proof["end"])
+            rect = tuple(float(v) for v in lit) if isinstance(lit, list) and len(lit) == 4 else None
+        except (KeyError, TypeError, ValueError):
+            continue
+        if rect and end - start > 0.8:
+            layers += underline_layers(work, rect, start + 0.3, frame_w, end_s=end - 0.05, name=f"proof-{i}-underline")
     return layers
 
 

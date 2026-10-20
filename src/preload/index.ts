@@ -42,6 +42,7 @@ import type { ListicleScript, ListicleScriptRequest, ListicleStatus } from '../s
 import type { EditDecisions, EditImage, EditSource, EditStartRequest, EditStatus, FilmIdea, FilmIdeasRequest } from '../shared/edit-recording'
 import type { PauseEvent, PauseSettings, PauseView } from '../shared/pause-react'
 import type { BrollShot, BrollView } from '../shared/react-templates'
+import type { LayoutExtrasPatch, LayoutExtrasView } from '../shared/remix-layouts'
 import type { TimecodeRead } from '../shared/moment-take'
 import type {
   AppDataScope,
@@ -474,6 +475,15 @@ export interface BridgeClipAPI {
     brollPlan: (plan: BrollShot[]) => Promise<BrollView>
     /** Plan the b-roll over what you said (one small paid call). */
     planBroll: () => Promise<BrollView>
+    /** Their clip, then me / React, then my thoughts: part 2's look and proof screenshots (null when it isn't one). */
+    layoutView: () => Promise<LayoutExtrasView | null>
+    /** Opens a file dialog in main (several screenshots); null when cancelled. */
+    addProofs: () => Promise<LayoutExtrasView | null>
+    /** React, then my thoughts: opens a file dialog for a screen recording; null when cancelled. */
+    addScreenRecording: () => Promise<LayoutExtrasView | null>
+    removeLayoutItem: (id: string) => Promise<LayoutExtrasView>
+    /** Part 2's look, the banner, circles, and each screenshot's time, label and highlight (free). */
+    setLayout: (patch: LayoutExtrasPatch) => Promise<LayoutExtrasView>
     /** Pause & react: the take's timeline and adjustments; null before anything is recorded. */
     pauseView: () => Promise<PauseView | null>
     /** Pause & react, phone recordings: nudge the start, ignore short pauses or plays, flip stretches. */
@@ -864,6 +874,11 @@ const api: BridgeClipAPI = {
     brollStock: (on) => ipcRenderer.invoke('remix:brollStock', on),
     brollPlan: (plan) => ipcRenderer.invoke('remix:brollPlan', plan),
     planBroll: () => paid('remix:planBroll'),
+    layoutView: () => ipcRenderer.invoke('remix:layoutView'),
+    addProofs: () => ipcRenderer.invoke('remix:addProofs'),
+    addScreenRecording: () => ipcRenderer.invoke('remix:addScreenRecording'),
+    removeLayoutItem: (id) => ipcRenderer.invoke('remix:removeLayoutItem', id),
+    setLayout: (patch) => ipcRenderer.invoke('remix:setLayout', patch),
     pauseView: () => ipcRenderer.invoke('remix:pauseView'),
     pauseSettings: (settings) => ipcRenderer.invoke('remix:pauseSettings', settings),
     recordingAbort: (token) => ipcRenderer.invoke('remix:recordingAbort', token),

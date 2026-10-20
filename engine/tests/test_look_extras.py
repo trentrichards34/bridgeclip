@@ -458,11 +458,14 @@ def test_remix_commentary_final_tags_broll_and_punches_only_on_the_presenter(tmp
     monkeypatch.setattr(remix, "VIDEO_ARGS", FAST_VIDEO)
     assembled = _face_video(tmp_path / "assembled.mp4", seconds=10, size="1080:1920")
     remixer = remix.Remixer.__new__(remix.Remixer)
-    remixer.config = remix.RemixConfig(output_dir=str(tmp_path), look_extras=["punch_zoom", "broll_tags", "comment_box"], cta_keyword="REMOTE")
+    remixer.config = remix.RemixConfig(output_dir=str(tmp_path), look_extras=["punch_zoom", "broll_tags", "comment_box", "proof_underline"],
+                                       cta_keyword="REMOTE")
     remixer.progress, remixer.warnings, remixer._clip_offset = (lambda *_: None), [], 0
     words = timed_words("So this is the part where it gets interesting. Watch what happens next with the numbers. Then we talk about it.", 200)
     tags = {"style": "commentary", "credit_text": "", "ai_presenter": False, "excerpt_windows": [[0.0, 2.0]], "ai_windows": [],
-            "cta_keyword": "REMOTE", "cta_window": [7.0, 10.0], "broll_windows": [[5.0, 6.5]]}
+            "cta_keyword": "REMOTE", "cta_window": [7.0, 10.0], "broll_windows": [[5.0, 6.5]],
+            # A proof card (remix_layouts) placed 2.5-4.5 s with its number marked: underlined while it shows.
+            "proofs": [{"id": "p1", "start": 2.5, "end": 4.5, "label": "", "card": [200, 1000, 680, 400], "highlight": [300, 1100, 300, 60]}]}
     out = str(tmp_path / "final.mp4")
     work = tmp_path / "work"
     work.mkdir()
@@ -485,9 +488,13 @@ def test_remix_commentary_final_tags_broll_and_punches_only_on_the_presenter(tmp
     corner = img[24:90, 1080 - 320:]
     assert int(((corner[..., 0] > 200) & (corner[..., 1] < 110)).sum()) > 20
     assert "cta.png" not in " ".join(os.listdir(work))
+    def red(img):
+        part = img[1150:1220, 280:640]
+        return int(((part[..., 0] > 190) & (part[..., 1] < 90) & (part[..., 2] < 90)).sum())
+    assert red(frame(out, 4.0)) > 500 and red(frame(out, 2.6)) < 50 and red(frame(out, 5.0)) < 50
     assert int((frame(out, 9.7)[100:1300].min(axis=2) > 235).sum()) > 20000
     # Recorded with the bundle's tags: re-making keeps them.
-    assert tags["look_extras"] == {"ids": ["punch_zoom", "comment_box", "broll_tags"], "color": None, "keyword": "REMOTE"}
+    assert tags["look_extras"] == {"ids": ["punch_zoom", "comment_box", "broll_tags", "proof_underline"], "color": None, "keyword": "REMOTE"}
     again = remix.Remixer.__new__(remix.Remixer)
     again.config = remix.RemixConfig(output_dir=str(tmp_path))
     assert again._look_extras_tag(json.loads(json.dumps(tags))).has("broll_tags")

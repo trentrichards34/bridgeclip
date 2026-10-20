@@ -5,6 +5,7 @@
  */
 
 import type { ImageHighlight } from './look-extras-engine'
+import type { RemixLayoutChoice } from './remix-layouts'
 import type { BrandLook } from './brand-kit'
 import type { HeadlineLook } from './headline-look'
 import type { LookExtraId } from './look-extras'
@@ -292,6 +293,8 @@ export interface RemixRequest {
   moment?: { ranges: MomentRange[]; pip: boolean }
   /** React to an article or post: a box around the key number on the screenshot (shares of the picture), for the proof underline. */
   imageHighlight?: ImageHighlight
+  /** Pause & react, Their clip then me, React then my thoughts: their captions, where the hook text sits, part 1's look. */
+  layout?: RemixLayoutChoice
 }
 
 /** filmed: your real background; cutout: you cut out over a blur or your color; greenscreen: the clip fills the screen behind you. */

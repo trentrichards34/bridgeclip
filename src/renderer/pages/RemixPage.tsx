@@ -19,6 +19,7 @@ import { PauseReactReview } from '../components/PauseReactReview'
 import { MomentTakeReview } from '../components/MomentTakeReview'
 import { ClipTakeReview } from '../components/ClipTakeReview'
 import { CLIP_MAX_SECONDS, longClipNote } from '../../shared/react-templates'
+import { defaultTheirCaptions, HOOK_AT_LABELS, PART1_CHOICES, THEIR_CAPTION_CHOICES, type RemixLayoutChoice } from '../../shared/remix-layouts'
 import { MomentRanges } from '../components/MomentRanges'
 import { formatTimecode, MOMENT_TAKE_MAX_SECONDS, readRanges } from '../../shared/moment-take'
 import { PAUSE_CAPTION_CHOICES, PAUSE_LAYOUTS, PAUSE_REACT_MAX_SECONDS, type PauseLayout } from '../../shared/pause-react'
@@ -162,6 +163,13 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const [fileSeconds, setFileSeconds] = useState<number | null>(null)
   useEffect(() => { setFileSeconds(null) }, [form.filePath])
   const longClip = form.format === 'clip_then_me' && form.filePath ? longClipNote(fileSeconds) : null
+  // The reels' layouts: their captions (Instagram and TikTok clips have their own), the hook on the split line or beside you.
+  const theirCaptions = form.theirCaptions ?? defaultTheirCaptions(form.filePath ? '' : links[0] ?? '')
+  const splitHook = pause && form.pauseLayout === 'split'
+  const phoneCard = form.format === 'react_thoughts' && form.reactPart1 === 'phone'
+  const layoutChoice: RemixLayoutChoice | null = pause || clip ? {
+    theirCaptions, part1: phoneCard ? 'phone' : 'box', hookAt: splitHook ? form.splitHook : phoneCard ? form.phoneHook : 'top'
+  } : null
   const moments = readRanges(form.momentRanges, form.filePath ? fileSeconds : null)
   const rangeMinutes = moments.ranges.reduce((sum, range) => sum + range.endS - range.startS, 0) / 60
   // React to a clip (silent): the avatar's reactions, or the member's own. Over a screenshot, in a pause-and-react and in your take on a moment, it's always you.
@@ -272,6 +280,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
           // Green screen over their video: always the green screen (React, then my thoughts films you behind a box).
           : silent ? { ...form.camera, layout: 'greenscreen' as const, talk: form.camera.talk } : { ...form.camera, talk: false } } : {}),
         ...(pause ? { pause: { layout: form.pauseLayout, captions: form.pauseCaptions } } : {}),
+        ...(layoutChoice ? { layout: layoutChoice } : {}),
         ...(momentTake ? { moment: { ranges: moments.ranges, pip: form.momentPip } } : {}),
         ...(form.ctaId ? { ctaId: form.ctaId } : {}),
         ...(brand && showMark && form.showHandle ? { showHandle: true } : {})
@@ -603,6 +612,56 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     </div>
   )
 
+  // React, then my thoughts: how their clip shows while you react silently (and, as a phone card, where the hook goes).
+  const part1Choice = form.format === 'react_thoughts' && (
+    <div className="space-y-2">
+      <span className="block text-sm text-ink">While you react</span>
+      <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="While you react">
+        {PART1_CHOICES.map((item) => {
+          const selected = form.reactPart1 === item.id
+          return (
+            <button key={item.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+              onClick={() => form.update({ reactPart1: item.id })}
+              className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+              <span className="block text-xs font-medium">{item.label}</span>
+              <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{item.detail}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+  // Where the hook text goes: on the split line (Pause & react, split) or beside you (phone card); else at the top.
+  const hookPlace = splitHook ? form.splitHook : phoneCard ? form.phoneHook : null
+  const hookPlaceRow = hookPlace && form.headlineLook.look !== 'none' && (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <span>
+        <span className="block text-sm text-ink">Where the hook text goes</span>
+        <span className="block text-2xs text-ink-subtle">{HOOK_AT_LABELS[hookPlace].detail}</span>
+      </span>
+      <Segmented label="Where the hook text goes" size="sm" value={hookPlace}
+        onChange={(value) => form.update(splitHook ? { splitHook: value as 'seam' | 'top' } : { phoneHook: value as 'beside' | 'top' })}
+        options={(splitHook ? ['seam', 'top'] as const : ['beside', 'top'] as const).map((id) => ({ value: id, label: HOOK_AT_LABELS[id].label }))} />
+    </div>
+  )
+  // Their clip's own captions: left alone (ours start when you talk). Only matters when their words would be captioned.
+  const theirCaptionsRow = form.includeCaptions && (clip || (pause && form.pauseCaptions === 'both')) && (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <span>
+        <span className="block text-sm text-ink">Their clip already has captions</span>
+        <span className="block text-2xs text-ink-subtle">{THEIR_CAPTION_CHOICES.find((item) => item.id === theirCaptions)?.detail}</span>
+      </span>
+      <Segmented label="Their clip already has captions" size="sm" value={theirCaptions} onChange={(value) => form.update({ theirCaptions: value })}
+        options={THEIR_CAPTION_CHOICES.map((item) => ({ value: item.id, label: item.label }))} />
+    </div>
+  )
+  // Their clip, then me: the reels show their clip full frame with no hook bar; "No hook text" is a fine choice here.
+  const clipHookNote = form.format === 'clip_then_me' && form.headlineLook.look !== 'none' && (
+    <p className="text-2xs text-ink-subtle">
+      Tip: <button type="button" className="text-accent hover:underline" onClick={() => form.update({ headlineLook: { ...form.headlineLook, look: 'none' } })}>No hook text</button> lets their clip fill the whole frame, like most “their clip, then me” reels. The hook text is still your video’s title in the Library.
+    </p>
+  )
+
   // (You on camera is the other side of the first choice: here, only the AI presenters.)
   const hostCards = hostChoice && (
     <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Presenter">
@@ -803,7 +862,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
           <p className="text-2xs text-ink-subtle">{onCamera ? 'Optional. These start from your Brand Identity’s look and your last choices.'
             : 'Optional. Your Brand Identity decides what your presenter believes, so every take sounds like your brand and only uses your real proof. Its look fills in the style below.'}</p>
           {brandBlock}
-          {styleBoard(onCamera ? <>{pauseLayoutChoice}{cameraBlock}{pipRow}{pauseCaptionsRow}</> : undefined)}
+          {styleBoard(onCamera ? <>{pauseLayoutChoice}{part1Choice}{hookPlaceRow}{clipHookNote}{cameraBlock}{pipRow}{pauseCaptionsRow}{theirCaptionsRow}</> : undefined)}
         </div>
       )}
     </Panel>

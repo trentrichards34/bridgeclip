@@ -26,6 +26,10 @@ import {
   BROLL_MAX_BYTES, BROLL_MAX_ITEMS, brollKind, CLIP_MAX_SECONDS, CLIP_TAKE_MAX_SECONDS, parseBrollPlan, REACTION_LEAD_SECONDS, readBrollPlan,
   type BrollItem, type BrollShot, type BrollView
 } from '../shared/react-templates'
+import {
+  engineLayout, isProofId, layoutFormat, MAX_PROOFS, parseExtrasPatch, parseLayoutChoice, PROOF_EXTENSIONS, PROOF_MAX_BYTES, SCREEN_EXTENSIONS, SCREEN_MAX_BYTES,
+  type LayoutExtrasView, type ProofShot
+} from '../shared/remix-layouts'
 import { suggestTalkingPoints } from './moment-take'
 import { estimateHeygenVideoUsd, HEYGEN_PRICES, heygenEngine, type HeygenAvatarLink } from '../shared/heygen'
 import type { SpendProvider } from '../shared/spending'
@@ -81,6 +85,9 @@ interface RunContext {
   /** React, then my thoughts: the member's own b-roll (copied into the run's .broll), stock on or off, and the plan. */
   /** `adding`: room held for clips still being copied in (two adds at once can't pass the limit together). */
   broll?: { items: BrollItem[]; stock: boolean; plan: BrollShot[] | null; takeSeconds: number | null; adding?: number }
+  /** Their clip, then me / React, then my thoughts: part 2's look (a screen recording, banner, circles) and proof
+   * screenshots, copied into the run's .layout. `adding`: room held for screenshots still being copied in. */
+  extras?: Omit<LayoutExtrasView, 'keyword' | 'format'> & { adding?: number }
 }
 
 /**
@@ -199,6 +206,8 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   // Over a screenshot, when you pause their video to talk, and in your take on a moment, your voice is always kept.
   const camera = parsedCamera && (image || pause || momentTake) ? { ...parsedCamera, talk: true } : parsedCamera
   const pauseChoice = format === 'pause_react' ? parsePauseChoice(raw.pause) : undefined
+  if (!layoutFormat(format) && raw.layout !== undefined && raw.layout !== null) throw new Error('Choose the layout again.')
+  const layoutChoice = layoutFormat(format) ? parseLayoutChoice(raw.layout, format, pauseChoice?.layout ?? null) : undefined
   const momentChoice = momentTake ? parseMomentChoice(raw.moment) : undefined
   const brandIdentityId = raw.brandIdentityId === null || raw.brandIdentityId === undefined ? null : raw.brandIdentityId
   if (brandIdentityId !== null && !isBrandId(brandIdentityId)) throw new Error('Choose a brand identity.')
@@ -233,6 +242,7 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
       ...(camera ? { camera } : {}),
       ...(raw.showHandle === true && brandIdentityId ? { showHandle: true } : {}),
       ...(pauseChoice ? { pause: pauseChoice } : {}),
+      ...(layoutChoice ? { layout: layoutChoice } : {}),
       ...(momentChoice ? { moment: momentChoice } : {}),
       ...(imageHighlight ? { imageHighlight } : {})
     }
@@ -443,6 +453,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         ...(request.camera ? { camera_layout: request.camera.layout, camera_backdrop: request.camera.backdrop,
           camera_backdrop_color: request.camera.backdropColor, camera_talk: request.camera.talk } : {}),
         ...(request.pause ? { pause_layout: request.pause.layout, pause_captions: request.pause.captions } : {}),
+        ...(request.layout ? { layout: engineLayout(request.layout) } : {}),
         ...(request.moment ? { moment_ranges: request.moment.ranges.map((range) => [range.startS, range.endS]), moment_pip: request.moment.pip } : {}),
         ...(heygenLink ? { presenter: 'heygen', heygen_voice: heygenVoice, heygen_usd_per_second: heygenUsdPerSecond(heygenLink) } : {})
       }
@@ -603,6 +614,7 @@ export async function cleanupAbandoned(outputDirectory: string, keep: string | n
       await rm(join(folder, '.reactions'), { recursive: true, force: true })
       await rm(join(folder, '.recordings'), { recursive: true, force: true })
       await rm(join(folder, '.broll'), { recursive: true, force: true })
+      await rm(join(folder, '.layout'), { recursive: true, force: true })
       // A re-make interrupted by quitting.
       if (folder !== recomposing) for (const file of await readdir(folder)) if (/^\.recompose-[a-f0-9]{8}\.mp4$/.test(file)) await rm(join(folder, file), { force: true })
       if ((await readdir(folder)).length === 0) await rm(folder, { recursive: true, force: true })
@@ -764,7 +776,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
     const spent = result?.ok === true ? 0 : paidUsd(result)
     if (run.cancelled) {
       if (planning) await rm(run.status.folder, { recursive: true, force: true }).catch(() => undefined)
-      else for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions', '.recordings', '.broll']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
+      else for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions', '.recordings', '.broll', '.layout']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
       // HeyGen has no cancel: a video it had started may still finish there and be billed.
       const notes = heygenWarnings(run)
       finish(run, { phase: 'cancelled', detail: planning ? 'Canceled while planning' : 'Canceled', ...(spent > 0 ? { costUsd: (planning ? 0 : run.context.planCostUsd) + spent } : {}),
@@ -782,6 +794,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
         const seconds = typeof result.source_seconds === 'number' && Number.isFinite(result.source_seconds) && result.source_seconds > 0 ? result.source_seconds : (drafts[0]?.endMs ?? 0) / 1000
         run.context.pause = { sourceSeconds: seconds, settings: DEFAULT_PAUSE_SETTINGS }
         if (request.format === 'react_thoughts') run.context.broll = { items: [], stock: false, plan: null, takeSeconds: null }
+        if (clipFormat(request.format)) run.context.extras = { part2: 'camera', screen: null, banner: false, circles: [], proofs: [] }
       }
       logger.info('remix.planned', { drafts: drafts.length, cost })
       finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, drafts, warnings: [...warnings, ...await varietyWarnings(drafts)], costUsd: cost })
@@ -805,7 +818,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
         }
       }
       await recordCreators(outputs.map((output) => output.creator))
-      for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions', '.recordings', '.broll']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
+      for (const copy of ['.presenter.jpg', '.voice.mp3', '.reactions', '.recordings', '.broll', '.layout']) await rm(join(run.status.folder, copy), { recursive: true, force: true }).catch(() => undefined)
       logger.info('remix.done', { count: outputs.length, cost })
       finish(run, { phase: 'done', detail: 'Done', percent: 100, outputs, warnings, costUsd: (cost ?? 0) + run.context.planCostUsd })
     } else {
@@ -1287,8 +1300,11 @@ function clipConfig(run: ActiveRemix, render = false): Record<string, unknown> {
   if (!clipFormat(run.context.request.format)) return {}
   const draft = run.status.drafts[0]
   const broll = run.context.broll
+  const choice = run.context.request.layout
   return {
     ...(draft ? { clip_trim: [Math.round(draft.startMs), Math.round(draft.endMs)] } : {}),
+    // The layout as chosen, with part 2's look and the proof screenshots added in the review.
+    ...(choice ? { layout: engineLayout(choice, run.context.extras) } : {}),
     ...(broll ? {
       broll_items: broll.items.map((item) => ({ id: item.id, path: item.path, kind: item.kind, name: item.name })), broll_stock: broll.stock,
       // Making it: the plan as the member left it (none yet: the engine plans it then).
@@ -1387,6 +1403,117 @@ export function setBrollPlan(value: unknown): BrollView {
   const broll = run.context.broll
   broll.plan = parseBrollPlan(value, new Set(broll.items.map((item) => item.id)), broll.stock, broll.takeSeconds)
   return brollView() as BrollView
+}
+
+// ---------------------------------------------------------------------------
+// Their clip, then me / React, then my thoughts: part 2's look and proof screenshots
+// ---------------------------------------------------------------------------
+
+function extrasRun(): ActiveRemix & { context: { extras: NonNullable<RunContext['extras']> } } {
+  const run = reviewRun()
+  if (!clipFormat(run.context.request.format) || !run.context.extras) throw new Error('This remix has no part 2 to change.')
+  return run as ActiveRemix & { context: { extras: NonNullable<RunContext['extras']> } }
+}
+
+/** Part 2's look and the proof screenshots (null when this review has none). */
+export function layoutExtrasView(): LayoutExtrasView | null {
+  const run = reviewing
+  const extras = run?.status.phase === 'review' ? run.context.extras : undefined
+  if (!run || !extras) return null
+  return {
+    format: run.context.request.format as LayoutExtrasView['format'], part2: extras.part2,
+    screen: extras.screen ? { ...extras.screen, path: authorizeMedia(extras.screen.path) } : null,
+    banner: extras.banner, circles: extras.circles, keyword: run.context.request.ctaKeyword,
+    proofs: extras.proofs.map((proof) => ({ ...proof, path: authorizeMedia(proof.path) }))
+  }
+}
+
+async function copyIn(run: ActiveRemix, source: string, id: string, extensions: string[], maxBytes: number, what: string): Promise<string> {
+  const extension = extname(source).slice(1).toLowerCase()
+  if (!extensions.includes(extension)) throw new Error(what)
+  const info = await stat(source)
+  if (!info.isFile() || info.size > maxBytes) throw new Error(what)
+  await mkdir(join(run.status.folder, '.layout'), { recursive: true })
+  const path = join(run.status.folder, '.layout', `${id}.${extension}`)
+  await copyFile(source, path)
+  return path
+}
+
+/** Proof screenshots (from the file dialog), copied into the run: up to six, spread evenly over part 2 to start with. */
+export async function addProofs(sources: string[]): Promise<LayoutExtrasView> {
+  const run = extrasRun()
+  const extras = run.context.extras
+  const room = MAX_PROOFS - extras.proofs.length - (extras.adding ?? 0)
+  if (sources.length > room) throw new Error(room > 0 ? `Add up to ${MAX_PROOFS} screenshots (${room} more).` : `You have ${MAX_PROOFS} already. Remove one to add another.`)
+  extras.adding = (extras.adding ?? 0) + sources.length
+  const added: ProofShot[] = []
+  try {
+    await saving(run, async () => {
+      for (const source of sources) {
+        const id = `p${randomBytes(4).toString('hex')}`
+        const path = await copyIn(run, source, id, PROOF_EXTENSIONS, PROOF_MAX_BYTES, 'Choose screenshots (JPG, PNG or WebP) under 50 MB.')
+        added.push({ id, name: basename(source).slice(0, 80), path, at: null, label: '', highlight: null })
+      }
+    })
+    if (reviewing !== run) throw new Error('This review was closed.')
+  } catch (error) {
+    // Nothing is half-added: copies already made are removed.
+    await Promise.all(added.map((proof) => rm(proof.path, { force: true }).catch(() => undefined)))
+    throw error
+  } finally {
+    extras.adding = Math.max(0, (extras.adding ?? 0) - sources.length)
+  }
+  Object.assign(extras, { proofs: [...extras.proofs, ...added] })
+  return layoutExtrasView() as LayoutExtrasView
+}
+
+/** React, then my thoughts: the screen recording part 2 plays over (from the file dialog), copied into the run. */
+export async function addScreenRecording(source: string): Promise<LayoutExtrasView> {
+  const run = extrasRun()
+  if (run.context.request.format !== 'react_thoughts') throw new Error('Only React, then my thoughts uses a screen recording.')
+  const id = `s${randomBytes(4).toString('hex')}`
+  const path = await saving(run, () => copyIn(run, source, id, SCREEN_EXTENSIONS, SCREEN_MAX_BYTES, 'Choose a screen recording (MP4, MOV, WebM or MKV) under 2 GB.'))
+  if (reviewing !== run) { await rm(path, { force: true }).catch(() => undefined); throw new Error('This review was closed.') }
+  const previous = run.context.extras.screen
+  // A new recording: circles marked on the old one don't apply any more.
+  Object.assign(run.context.extras, { part2: 'screen', screen: { id, name: basename(source).slice(0, 80), path }, circles: [] })
+  if (previous) await rm(previous.path, { force: true }).catch(() => undefined)
+  return layoutExtrasView() as LayoutExtrasView
+}
+
+/** Remove a proof screenshot, or the screen recording (part 2 goes back to you on camera). */
+export async function removeLayoutItem(id: unknown): Promise<LayoutExtrasView> {
+  const run = extrasRun()
+  const extras = run.context.extras
+  if (isProofId(id)) {
+    const proof = extras.proofs.find((item) => item.id === id)
+    if (!proof) throw new Error('That screenshot is no longer here.')
+    Object.assign(extras, { proofs: extras.proofs.filter((item) => item !== proof) })
+    await rm(proof.path, { force: true }).catch(() => undefined)
+  } else if (extras.screen && id === extras.screen.id) {
+    const path = extras.screen.path
+    Object.assign(extras, { part2: 'camera', screen: null, circles: [] })
+    await rm(path, { force: true }).catch(() => undefined)
+  } else throw new Error('That file is no longer here.')
+  return layoutExtrasView() as LayoutExtrasView
+}
+
+/** Part 2's look, the banner, the circles, and each screenshot's time, label and highlight box (all free). */
+export function setLayoutExtras(value: unknown): LayoutExtrasView {
+  const run = extrasRun()
+  const extras = run.context.extras
+  const patch = parseExtrasPatch(value, run.context.request.format as LayoutExtrasView['format'], new Set(extras.proofs.map((proof) => proof.id)))
+  if ((patch.part2 === 'screen' || patch.circles) && !extras.screen) throw new Error('Add your screen recording first.')
+  // Screenshots are listed in the order sent (the member may reorder them); every one is still there.
+  const proofs = patch.proofs
+    ? patch.proofs.map((change) => ({ ...(extras.proofs.find((proof) => proof.id === change.id) as ProofShot), ...change }))
+    : extras.proofs
+  if (patch.proofs && proofs.length !== extras.proofs.length) throw new Error('That screenshot list is out of date. Try again.')
+  Object.assign(extras, {
+    ...(patch.part2 ? { part2: patch.part2 } : {}), ...(patch.banner !== undefined ? { banner: patch.banner } : {}),
+    ...(patch.circles ? { circles: patch.circles } : {}), proofs
+  })
+  return layoutExtrasView() as LayoutExtrasView
 }
 
 /** "Plan my b-roll": one small planning call over what you said (after adding clips, or without writing first). */

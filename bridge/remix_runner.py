@@ -253,6 +253,11 @@ def parse_config(raw):
     if fmt == "moment_take" and (raw.get("host") != "camera" or (mode == "plan" and len(sources) != 1)):
         raise ValueError("Invalid format")
     moment_ranges, moment_pip, write_ids = parse_moment_options(raw, fmt, mode)
+    # The reels' layouts (where the hook text sits, phone card, screen recording, proof screenshots): checked by the engine.
+    from clip_engine.services import remix_layouts
+    if fmt not in remix_layouts.LAYOUT_FORMATS and raw.get("layout") is not None:
+        raise ValueError("Invalid layout")
+    shape = remix_layouts.parse_layout(raw.get("layout"), fmt) if fmt in remix_layouts.LAYOUT_FORMATS else None
     if fmt == "pause_react" and (raw.get("host") != "camera" or (mode == "plan" and len(sources) != 1)
                                  or (raw.get("pause_layout") or "box") not in PAUSE_LAYOUTS or (raw.get("pause_captions") or "member") not in PAUSE_CAPTIONS):
         raise ValueError("Invalid format")
@@ -306,7 +311,7 @@ def parse_config(raw):
         recordings=recordings, image_source=image_source, brand_mark=validate_brand_mark(raw.get("brand_mark")),
         pause_layout=raw.get("pause_layout") or "box", pause_captions=raw.get("pause_captions") or "member",
         moment_ranges=moment_ranges, moment_pip=moment_pip, write_ids=write_ids,
-        clip_trim=clip_trim, broll_items=broll_items, broll_stock=broll_stock, broll_plan=broll_plan,
+        clip_trim=clip_trim, broll_items=broll_items, broll_stock=broll_stock, broll_plan=broll_plan, layout=shape,
         presenter=presenter, heygen_voice=heygen_voice, heygen_usd_per_second=heygen_price,
         look_extras=look_extras, look_extras_color=look_extras_color,
     )
