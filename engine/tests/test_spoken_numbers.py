@@ -59,6 +59,15 @@ from clip_engine.services.transcription_service import TranscriptSegment, Transc
     # Punctuation around the number is kept.
     ("“twenty percent,” he said", "“20%,” he said"),
     ("It was fifteen billion.", "It was 15 billion."),
+    # A number never runs past the end of a sentence or clause, and the punctuation stays.
+    ("there were twenty. Five of them left", "there were 20. Five of them left"),
+    ("we hit one million. Two weeks later", "we hit 1 million. 2 weeks later"),
+    ("five hundred, six hundred people", "500, 600 people"),
+    ("in twenty twenty. Five years later", "in 2020. 5 years later"),
+    ("it was twenty, twenty five maybe", "it was 20, 25 maybe"),
+    ("about fifteen. Percent of them", "about 15. Percent of them"),
+    ("one hundred and. fifty", "100 and. 50"),
+    ("I said one. Twenty five people", "I said one. 25 people"),
 ])
 def test_spoken_numbers_as_digits(said, shown):
     assert digitize_text(said) == shown

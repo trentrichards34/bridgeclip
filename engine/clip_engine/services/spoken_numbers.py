@@ -34,6 +34,8 @@ QUANTITY_WORDS = frozenset((
 _DIGITS = re.compile(r"^\d+(?:,\d{3})*(?:\.\d+)?$")
 _LEAD = re.compile(r"^[\"'“‘(\[]+")
 _TRAIL = re.compile(r"[\"'”’)\].,!?;:]+$")
+# A word that ends a sentence or clause ("twenty." "hundred,"): a number never runs past it.
+_BREAK = re.compile(r"[.,!?;:][\"'”’)\]]*$")
 
 
 @dataclass
@@ -44,6 +46,10 @@ class NumberSpan:
     last: int
     text: str
     value: float
+
+
+def _breaks(words: Sequence[str]) -> list[bool]:
+    return [bool(_BREAK.search(word.strip())) for word in words]
 
 
 def _key(word: str) -> str:
@@ -73,8 +79,8 @@ def _word_value(key: str) -> Optional[tuple[int, str]]:
 class _Parse:
     """One number read from position i: its end (exclusive), value, the number words in it and how to show it."""
 
-    def __init__(self, keys: Sequence[str], i: int):
-        self.keys, self.start = keys, i
+    def __init__(self, keys: Sequence[str], i: int, breaks: Sequence[bool]):
+        self.keys, self.start, self.breaks = keys, i, breaks
         self.end = i
         self.value = 0.0
         self.words = 0
@@ -98,6 +104,8 @@ class _Parse:
         elif keys[j] in ("a", "an") and self._peek(j + 1) in ("hundred", *_BIG):
             current, last, j = 1.0, "a", j + 1
         while j < len(keys):
+            if j > self.start and self.breaks[j - 1]:
+                break  # "twenty. Five of them": the sentence ended with the number
             key = keys[j]
             word = None if self.digit_start else _word_value(key)
             if word is not None:
@@ -128,15 +136,17 @@ class _Parse:
                 self.words += 1
                 self.small_only = False
                 continue
-            if key == "and" and last in ("hundred", "scale") and _word_value(self._peek(j + 1)) is not None:
+            if key == "and" and last in ("hundred", "scale") and not self.breaks[j] and _word_value(self._peek(j + 1)) is not None:
                 last, j = "and", j + 1
                 continue
-            if key == "point" and last in ("unit", "tens") and self._peek(j + 1) in UNITS and UNITS[self._peek(j + 1)] < 10:
+            if key == "point" and last in ("unit", "tens") and not self.breaks[j] and self._peek(j + 1) in UNITS and UNITS[self._peek(j + 1)] < 10:
                 digits = ""
                 k = j + 1
                 while k < len(keys) and keys[k] in UNITS and UNITS[keys[k]] < 10:
                     digits += str(UNITS[keys[k]])
                     k += 1
+                    if self.breaks[k - 1]:
+                        break
                 current = float(f"{int(current)}.{digits}")
                 self.words += 1 + len(digits)
                 last, j = "point", k
@@ -153,36 +163,40 @@ class _Parse:
 def number_spans(words: Sequence[str]) -> list[NumberSpan]:
     """The spoken quantities among caption words, as digits (see the module docstring for what counts)."""
     keys = [_key(word) for word in words]
+    breaks = _breaks(words)
     spans: list[NumberSpan] = []
     i = 0
     skip_next_adjacent = -1
     while i < len(keys):
         key = keys[i]
-        starts = _DIGITS.match(key) or _word_value(key) is not None or (key in ("a", "an") and i + 1 < len(keys) and keys[i + 1] in ("hundred", *_BIG))
+        starts = _DIGITS.match(key) or _word_value(key) is not None or (key in ("a", "an") and not breaks[i] and i + 1 < len(keys) and keys[i + 1] in ("hundred", *_BIG))
         if not starts:
             i += 1
             continue
-        parse = _Parse(keys, i)
-        if parse.end <= i or (parse.digit_start and parse.end == i + 1 and not _suffix(keys, parse.end)):
+        parse = _Parse(keys, i, breaks)
+        if parse.end <= i or (parse.digit_start and parse.end == i + 1 and not _suffix(keys, parse.end, breaks)):
             # Digits on their own are already written as digits.
             i = max(i + 1, parse.end)
             continue
         end, value = parse.end, parse.value
         year = None
         # "twenty twenty six" -> 2026, "nineteen ninety" -> 1990.
-        if parse.small_only and not parse.digit_start and value in (19, 20) and end < len(keys) and _word_value(keys[end]) is not None:
-            second = _Parse(keys, end)
-            if second.small_only and 10 <= second.value <= 99 and not _suffix(keys, second.end):
+        if (parse.small_only and not parse.digit_start and value in (19, 20) and end < len(keys) and not breaks[end - 1]
+                and _word_value(keys[end]) is not None):
+            second = _Parse(keys, end, breaks)
+            if second.small_only and 10 <= second.value <= 99 and not _suffix(keys, second.end, breaks):
                 year, end = int(value * 100 + second.value), second.end
-        suffix = None if year else _suffix(keys, end)
+        suffix = None if year else _suffix(keys, end, breaks)
         last = end - 1 + (len(suffix[1]) if suffix else 0)
         multi = parse.words >= 2 or keys[i] in ("a", "an")
-        small_quantity = 2 <= value <= 9 and parse.words == 1 and end < len(keys) and keys[end] in QUANTITY_WORDS
+        small_quantity = (2 <= value <= 9 and parse.words == 1 and end < len(keys) and not breaks[end - 1]
+                          and keys[end] in QUANTITY_WORDS)
         convert = year is not None or suffix is not None or multi or value >= 10 or small_quantity
         if convert and i == skip_next_adjacent and suffix is None:
             convert = False  # "two thirty", "one twenty five": a time or a list said out loud, left as said
         if not convert:
-            skip_next_adjacent = end
+            # "one twenty five" is left as said, but not across a break ("one. Twenty five").
+            skip_next_adjacent = -1 if breaks[end - 1] else end
             i = end
             continue
         if year is not None:
@@ -203,11 +217,13 @@ def number_spans(words: Sequence[str]) -> list[NumberSpan]:
     return spans
 
 
-def _suffix(keys: Sequence[str], j: int) -> Optional[tuple[str, list[str]]]:
+def _suffix(keys: Sequence[str], j: int, breaks: Sequence[bool]) -> Optional[tuple[str, list[str]]]:
     """'%' or '$' when the number is followed by percent / per cent / dollars, with the words it takes."""
+    if j == 0 or breaks[j - 1]:
+        return None
     if j < len(keys) and keys[j] in _PERCENT:
         return "%", [keys[j]]
-    if j + 1 < len(keys) and keys[j] == "per" and keys[j + 1] == "cent":
+    if j + 1 < len(keys) and keys[j] == "per" and not breaks[j] and keys[j + 1] == "cent":
         return "%", keys[j:j + 2]
     if j < len(keys) and keys[j] in _DOLLARS:
         return "$", [keys[j]]
