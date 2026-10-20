@@ -19,6 +19,18 @@ test('first launch: the guided setup builds a profile, then Create shows the pat
 
   const flow = page.getByTestId('onboarding')
   await flow.getByRole('heading', { name: 'What do you want to make?' }).waitFor()
+  // One height for every step: the body scrolls, the footer stays put.
+  const heights = []
+  // The layout height (the panel's opening animation scales it).
+  const height = async () => heights.push(await flow.evaluate((el) => el.offsetHeight))
+  await height()
+  // "Not sure yet" is a choice like the others: it ticks everything, and unticks it again.
+  const notSure = flow.getByRole('checkbox', { name: /Not sure yet: show me everything/ })
+  await notSure.click()
+  assert.equal(await flow.getByRole('checkbox', { name: /Clips from my long videos/ }).getAttribute('aria-checked'), 'true')
+  assert.equal(await notSure.getAttribute('aria-checked'), 'true')
+  await notSure.click()
+  assert.equal(await flow.getByRole('checkbox', { name: /Clips from my long videos/ }).getAttribute('aria-checked'), 'false')
   // Continue needs a choice.
   await flow.getByRole('button', { name: 'Continue' }).click()
   await flow.getByRole('alert').filter({ hasText: 'Pick at least one' }).waitFor()
@@ -31,13 +43,28 @@ test('first launch: the guided setup builds a profile, then Create shows the pat
   await flow.getByRole('checkbox', { name: 'TikTok', exact: true }).click()
   await flow.getByRole('checkbox', { name: 'YouTube', exact: true }).click()
   await flow.getByRole('checkbox', { name: /Post and schedule to them from CreatorClips/ }).click()
+  await height()
   await flow.getByRole('button', { name: 'Continue' }).click()
 
   await flow.getByRole('heading', { name: 'Your brand and call to action' }).waitFor()
+  // Compact call-to-action tiles, not tall 9:16 cards.
+  const none = await flow.getByRole('radiogroup', { name: 'Call to action' }).getByRole('radio', { name: /None/ }).boundingBox()
+  assert.ok(none.height <= 120, `compact CTA tile (${none.height}px)`)
+  await height()
   await flow.getByRole('button', { name: 'Continue' }).click()
 
   await flow.getByRole('heading', { name: 'Your setup path' }).waitFor()
+  await height()
+  assert.equal(new Set(heights).size, 1, `same height on every step: ${heights}`)
+  // The last step has no "Skip for now" (finishing is the way out).
+  assert.equal(await flow.getByRole('button', { name: 'Skip for now' }).count(), 0)
   const path1 = flow.getByRole('list', { name: 'Your setup path' })
+  const previewIds = await path1.locator('[data-setup-item]').evaluateAll((rows) => rows.map((row) => row.getAttribute('data-setup-item')))
+  // Every step sits above the footer once scrolled to.
+  await path1.locator('li').last().scrollIntoViewIfNeeded()
+  const last = await path1.locator('li').last().boundingBox()
+  const footer = await flow.getByRole('button', { name: 'Show my setup path' }).boundingBox()
+  assert.ok(last.y + last.height <= footer.y - 8, 'the last step is not under the footer')
   for (const title of ['Allow the camera and microphone', 'Connect TikTok and YouTube', 'Make your first clips', 'Make your first on-camera reaction']) {
     await path1.getByText(title, { exact: true }).waitFor()
   }
@@ -51,6 +78,7 @@ test('first launch: the guided setup builds a profile, then Create shows the pat
   assert.equal(await checklist.getByTestId('setup-goals').innerText(), 'Set up for: Clips from my long videos · Reactions on camera · Post and schedule from here')
   const ids = await checklist.locator('[data-setup-item]').evaluateAll((rows) => rows.map((row) => row.getAttribute('data-setup-item')))
   assert.deepEqual(ids, ['openrouter', 'tools', 'camera', 'posting', 'brand', 'cta', 'first-clip', 'first-camera-reaction'])
+  assert.deepEqual(previewIds, ids, 'the guided setup showed the same steps in the same order')
   // Each step has a short how-to.
   await checklist.getByRole('button', { name: 'How: Add your OpenRouter key' }).click()
   await checklist.getByText('Create an API key there.').waitFor()

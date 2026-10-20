@@ -151,7 +151,7 @@ test('the summary line names each choice', () => {
 
 test('every swatch row is a radio group with one tab stop, and the arrow keys move and choose', () => {
   const html = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook: 'brand', color: '#FF8800', handle: true }, onChange() {}, rows: ALL_ROWS, brand: BRAND }))
-  const groups = [...html.matchAll(/<div role="radiogroup" aria-label="([^"]+)"[^>]*>(.*?)<\/div>(?=<button|<label|<\/div>)/gs)]
+  const groups = [...html.matchAll(/<div role="radiogroup" aria-label="([^"]+)"[^>]*>(.*?)<\/div>(?=<button|<label|<p|<\/div>)/gs)]
   const names = groups.map((group) => group[1])
   for (const name of ['Caption style', 'Hook text look', 'Hook text font', 'Bar color', 'Handle corner', 'Call to action']) assert.ok(names.includes(name), name)
   for (const [, name, body] of groups) {
@@ -194,7 +194,51 @@ test('rows a page doesn’t use are left out, and the font waits for a hook look
   // Without a brand mark there is no handle switch, just how to add one.
   const plain = staticRender(React.createElement(m.StyleBoard, { value: BASE, onChange() {}, rows: { handle: true }, brand: { ...BRAND, look: {} } }))
   assert.doesNotMatch(plain, /Show my handle/)
-  assert.match(plain, /Add a handle or logo to Pull-Up Lab/)
+  assert.match(plain, /Add your handle or logo to Pull-Up Lab/)
+  assert.match(plain, /<button[^>]*>.*?Add a handle<\/button>/s, 'a button to add one right there')
+})
+
+test('without a brand, "Set up my brand" replaces a greyed-out "Use my brand", and the handle row offers the same', () => {
+  const html = staticRender(React.createElement(m.StyleBoard, { value: BASE, onChange() {}, rows: ALL_ROWS, brand: null }))
+  assert.doesNotMatch(html, />Use my brand</)
+  assert.equal((html.match(/>Set up my brand<\/button>/g) ?? []).length, 2)
+  assert.doesNotMatch(html, /<button[^>]*disabled=""[^>]*>Use my brand/)
+  const branded = staticRender(React.createElement(m.StyleBoard, { value: BASE, onChange() {}, rows: ALL_ROWS, brand: BRAND }))
+  assert.match(branded, />Use my brand<\/button>/)
+  assert.doesNotMatch(branded, /Set up my brand/)
+})
+
+test('rows wrap (no sideways strips); captions show a first set with "Show all"', () => {
+  const html = staticRender(React.createElement(m.StyleBoard, { value: BASE, onChange() {}, rows: ALL_ROWS, brand: BRAND }))
+  assert.doesNotMatch(html, /overflow-x-auto/)
+  const captions = html.match(/aria-label="Caption style"[^>]*>(.*?)<\/div><button/s)[1]
+  const radios = captions.match(/role="radio"/g)
+  assert.equal(radios.length, 10, 'No captions and the first nine')
+  assert.match(html, new RegExp(`aria-expanded="false"[^>]*>Show all ${m.CAPTION_PRESETS.length + 1}`))
+  assert.doesNotMatch(captions, /aria-label="Vintage"/)
+  // A chosen style past the first set is still shown (and chosen).
+  const later = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, captionPreset: 'vintage' }, onChange() {}, rows: ALL_ROWS, brand: BRAND }))
+  assert.match(later.match(/aria-label="Caption style"[^>]*>(.*?)<\/div><button/s)[1], /aria-checked="true" aria-label="Vintage"/)
+})
+
+test('the color row only shows for a Brand color bar, the one look it changes', () => {
+  for (const hook of ['white', 'black', 'floating', 'none']) {
+    const html = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook }, onChange() {}, rows: ALL_ROWS, brand: BRAND }))
+    assert.doesNotMatch(html, /aria-label="Bar color"/, hook)
+    assert.doesNotMatch(html, /For a Brand color bar/)
+  }
+  const brand = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook: 'brand', color: '#7C5CFF' }, onChange() {}, rows: ALL_ROWS, brand: BRAND }))
+  assert.match(brand, /aria-label="Bar color"/)
+  assert.match(brand, /data-testid="style-row-bar-color-current"[^>]*>Violet #7C5CFF/)
+})
+
+test('the comment keyword has one heading and one keyword field beside "What they get"', () => {
+  const html = staticRender(React.createElement(m.StyleBoard, { value: BASE, onChange() {}, rows: ALL_ROWS, brand: BRAND, keywordLabel: 'Comment keyword (optional)' }))
+  assert.equal((html.match(/>Comment keyword</g) ?? []).length, 1)
+  assert.doesNotMatch(html, /Comment keyword \(optional\)/)
+  assert.match(html, /aria-label="Comment keyword"/)
+  assert.match(html, />Keyword</)
+  assert.match(html, />What they get</)
 })
 
 test('the preview frame: a local video, a YouTube thumbnail, or the neutral stand-in', () => {

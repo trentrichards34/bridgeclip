@@ -55,6 +55,9 @@ test('setup path: only the steps the goals need, a first-run step per kind of vi
     ['openrouter', 'tools', 'camera', 'brand', 'cta', 'first-camera-reaction', 'first-article'])
   assert.deepEqual(ids({ goals: ['ai-reactions', 'avatar-videos', 'posting'], platforms: ['tiktok'] }),
     ['openrouter', 'tools', 'posting', 'brand', 'cta', 'avatar', 'first-ai-reaction', 'first-avatar-video'])
+  // The order the goals were picked in (the guided setup) or saved in (Create) never changes the path's order.
+  assert.deepEqual(ids({ goals: ['camera-reactions', 'clips', 'ai-reactions'], platforms: [] }), ids({ goals: ['clips', 'ai-reactions', 'camera-reactions'], platforms: [] }))
+  assert.deepEqual(ids({ goals: ['camera-reactions', 'clips', 'ai-reactions'], platforms: [] }).slice(-3), ['first-clip', 'first-ai-reaction', 'first-camera-reaction'])
 
   const path = setupItems(facts(), { goals: ['ai-reactions'], platforms: [] })
   assert.equal(path.find((item) => item.id === 'avatar').optional, false, 'an AI reaction needs an avatar')

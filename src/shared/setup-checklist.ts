@@ -6,7 +6,7 @@
  * need are shown, plus a "make your first one" step for each kind of video.
  */
 
-import { GOALS, isVideoGoal, type GoalId, type VideoGoalId } from './onboarding'
+import { GOALS, VIDEO_GOALS, type GoalId, type VideoGoalId } from './onboarding'
 import { ZERNIO_PLATFORM_NAMES, type ZernioPlatform } from './zernio'
 
 export type FirstRunId = 'first-clip' | 'first-ai-reaction' | 'first-camera-reaction' | 'first-article' | 'first-avatar-video'
@@ -133,7 +133,8 @@ export function setupItems(facts: SetupFacts, profile: SetupProfile = { goals: [
     why: 'AI reactions and avatar videos are presented by your avatar.',
     how: ['Open Avatar Studio and choose Create avatar.', 'Use your photo as is, make an AI version of it, or generate an AI person.', 'Pick a voice, or clone your own.']
   })
-  const runGoals: VideoGoalId[] = general ? ['clips'] : profile.goals.filter(isVideoGoal)
+  // In the app's order, whatever order the goals were picked in.
+  const runGoals: VideoGoalId[] = general ? ['clips'] : VIDEO_GOALS.filter((goal) => goals.has(goal))
   for (const goal of runGoals) {
     const run = FIRST_RUNS[goal]
     const done = general ? facts.runs > 0 : facts.runsByKind[run.count] > 0
