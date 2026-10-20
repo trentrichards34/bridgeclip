@@ -30,12 +30,12 @@ function read(): Saved {
   try {
     const raw = JSON.parse(window.localStorage.getItem(KEY) ?? 'null') as Partial<Saved> | null
     if (raw && typeof raw === 'object') {
-      const folded = raw.folded === true
+      const folded = raw.folded !== false
       if (raw.day === today) return { day: today, ideas: Array.isArray(raw.ideas) ? raw.ideas.slice(0, 10) as FilmIdea[] : [], reactionLink: typeof raw.reactionLink === 'string' ? raw.reactionLink.slice(0, 2000) : '', folded }
       return { day: today, ideas: [], reactionLink: '', folded }
     }
   } catch { /* storage unavailable: start fresh */ }
-  return { day: today, ideas: [], reactionLink: '', folded: false }
+  return { day: today, ideas: [], reactionLink: '', folded: true }
 }
 
 function save(state: Saved): void {

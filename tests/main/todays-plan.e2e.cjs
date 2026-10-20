@@ -50,6 +50,10 @@ test("Today's 3 on Create proposes three videos, ticks off today's runs, counts 
 
   const card = page.getByTestId('todays-plan')
   await card.waitFor()
+  // It starts folded to one line, so the Create form stays near the top.
+  const toggle = card.locator('button[aria-controls="todays-plan-items"]')
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false')
+  await toggle.click()
   const items = card.getByRole('list', { name: 'Today’s videos' }).getByRole('listitem')
   assert.deepEqual(await items.evaluateAll((nodes) => nodes.map((node) => [node.dataset.kind, node.dataset.done])), [['clip', 'true'], ['reaction', 'false'], ['talking', 'true']])
   assert.equal(await card.getByTestId('todays-plan-count').textContent(), '2 of 3 done')
