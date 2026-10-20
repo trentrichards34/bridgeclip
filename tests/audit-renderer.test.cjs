@@ -163,6 +163,21 @@ test('the settings page shows a configured key as a masked, empty field rather t
   assertEscaped(html)
 })
 
+test('settings use the app’s own controls and examples a coach would use', () => {
+  useSettingsStore.setState({ openrouterConfigured: true, loaded: true, outputDirectory: '/clips', customVocabulary: '' })
+  const html = render(React.createElement(SettingsPage))
+  // The social-login browser picker is the app's Select, not a system dropdown.
+  assert.doesNotMatch(html, /<select/)
+  assert.match(html, /aria-label="Browser login for social links"/)
+  assert.match(html, /Don’t use a login/)
+  // Vocabulary examples: a name, a course, an offer.
+  assert.match(html, /placeholder="Jane Rivera\nProfit Path Academy\n90-Day Money Reset"/)
+  assert.doesNotMatch(html, /GPT 6 Sol|BridgeMind<\/textarea|Jev thresholds use Apply/)
+  // Jev reads as a quality check, styled like the rest of Settings.
+  assert.match(html, /Quality check/)
+  assert.doesNotMatch(html, /jev-hero|Editorial checks for automatic clipping/)
+})
+
 test('a pasted YouTube link only ever loads its thumbnail from i.ytimg.com, whatever the video id contains', () => {
   const links = [
     `https://www.youtube.com/watch?v=${encodeURIComponent('abc"><img src=x onerror=alert(1)>')}`,

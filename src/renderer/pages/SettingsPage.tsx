@@ -1,6 +1,6 @@
 import { JevSettings } from '../components/JevSettings'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, ListChecks, Loader2, RefreshCw, ScrollText, SlidersHorizontal, Sparkles, Wallet } from 'lucide-react'
+import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, ListChecks, Loader2, RefreshCw, ScrollText, ShieldCheck, Sparkles, Wallet } from 'lucide-react'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useChangelogStore } from '../store/use-changelog-store'
 import { useApiKeyDrafts } from '../hooks/use-api-key-drafts'
@@ -18,6 +18,7 @@ import { Panel, PanelHeader } from '../components/ui/Panel'
 import { Button } from '../components/ui/Button'
 import { Field, TextArea, TextInput } from '../components/ui/Field'
 import { Badge, StatusDot } from '../components/ui/Badge'
+import { Select } from '../components/ui/Select'
 import { IconTile } from '../components/ui/IconTile'
 import { Callout } from '../components/ui/Callout'
 import { UpdatesRow } from '../components/Updates'
@@ -76,7 +77,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
     { id: 'keys', label: 'API keys', icon: <KeyRound />, tone: keysMissing ? 'warning' : 'success' },
     { id: 'spending', label: 'Spending', icon: <Wallet />, tone: 'idle' },
     { id: 'assistant', label: 'Assistant', icon: <Sparkles />, tone: assistantConnected ? 'success' : 'idle' },
-    { id: 'jev', label: 'TypeSafe Jev', icon: <SlidersHorizontal />, tone: 'idle' },
+    { id: 'jev', label: 'Quality check', icon: <ShieldCheck />, tone: 'idle' },
     { id: 'vocabulary', label: 'Vocabulary', icon: <BookA />, tone: 'idle' },
     { id: 'output', label: 'Output', icon: <FolderOpen />, tone: 'idle' },
     { id: 'system', label: 'System check', icon: <Cpu />, tone: !toolsChecked ? 'idle' : toolsMissing ? 'danger' : 'success' },
@@ -107,9 +108,9 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
   return (
     <Page width="default" className="max-w-[1080px]">
       <PageHeader
-        eyebrow="Preferences"
+        eyebrow="Workspace"
         title="Settings"
-        description="Changes save automatically. Jev thresholds use Apply."
+        description="Changes save as you make them."
         actions={<SaveIndicator saving={saving} savedAt={lastSaved || null} error={error} />}
       />
 
@@ -194,20 +195,21 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
                   <span className="mt-1 block text-xs text-ink-subtle">Off by default. When on, the video’s title, description and channel go to OpenRouter web search (up to two searches) and Gemini builds a channel and video overview before transcription. Uses extra OpenRouter credit and adds time. Only YouTube and Twitch sources are researched; local files never are. View the brief and sources in the transcript inspector.</span>
                 </span>
               </label>
-              <label className="flex items-start gap-3 px-3 py-2 text-sm text-ink-muted">
+              <div className="flex items-start gap-3 px-3 py-2 text-sm text-ink-muted">
                 <span className="flex-1">Instagram, TikTok, X and Facebook links
                   <span className="mt-1 block text-xs text-ink-subtle">These sites often only share a video with someone logged in. Choose the browser you’re logged in with and CreatorClips downloads with that login (it reads the browser’s cookies on this computer, nothing is sent anywhere else). {IS_MAC ? 'For Chrome, Edge or Brave your Mac asks once to allow it; Safari needs Full Disk Access for CreatorClips in System Settings → Privacy & Security.' : 'Close the browser first if it can’t be read while open.'}</span>
                 </span>
-                <select aria-label="Browser login for social links" value={downloadLoginBrowser ?? ''} onChange={(e) => void commit({ downloadLoginBrowser: e.target.value })}
-                  className="mt-0.5 rounded-lg border border-white/10 bg-black/20 px-2 py-1.5 text-xs text-ink">
-                  <option value="">Don’t use a login</option>
-                  <option value="chrome">Chrome</option>
-                  {IS_MAC && <option value="safari">Safari</option>}
-                  <option value="firefox">Firefox</option>
-                  <option value="edge">Edge</option>
-                  <option value="brave">Brave</option>
-                </select>
-              </label>
+                <Select aria-label="Browser login for social links" size="sm" className="mt-0.5 w-44 shrink-0" value={downloadLoginBrowser ?? ''}
+                  onChange={(value) => void commit({ downloadLoginBrowser: value })}
+                  options={[
+                    { value: '', label: 'Don’t use a login' },
+                    { value: 'chrome', label: 'Chrome' },
+                    ...(IS_MAC ? [{ value: 'safari', label: 'Safari' }] : []),
+                    { value: 'firefox', label: 'Firefox' },
+                    { value: 'edge', label: 'Edge' },
+                    { value: 'brave', label: 'Brave' }
+                  ]} />
+              </div>
               <p className="eyebrow px-1 pt-2">Optional</p>
               <KeyRow>
                 <ApiKeyInput
@@ -279,7 +281,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
             <PanelHeader
               icon={<IconTile><BookA /></IconTile>}
               title="Custom vocabulary"
-              description="Names, products and jargon that transcription should spell exactly, one per line. Used for captions and generated post metadata."
+              description="Words captions should spell exactly, one per line: your name, your course, your offer, and any terms you use. Used for captions and post text."
               action={vocabularyTerms > 0 && <Badge className="font-mono tabular">{vocabularyTerms} term{vocabularyTerms === 1 ? '' : 's'}</Badge>}
             />
             <VocabularyField value={customVocabulary} onCommit={(value) => commit({ customVocabulary: value })} />
@@ -518,7 +520,7 @@ function VocabularyField({ value, onCommit }: { value: string; onCommit: (value:
       <TextArea
         rows={4}
         value={draft}
-        placeholder={'GPT 6 Sol\nOpus 5.5\nBridgeMind'}
+        placeholder={'Jane Rivera\nProfit Path Academy\n90-Day Money Reset'}
         aria-label="Custom vocabulary"
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => draft !== value && onCommit(draft)}

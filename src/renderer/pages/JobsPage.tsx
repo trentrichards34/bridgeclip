@@ -247,8 +247,9 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
   return (
     <Page width="default">
       <PageHeader
+        eyebrow="Studio"
         title="Jobs"
-        className="items-center"
+        description="What’s making now and everything you’ve made: Create, Remix, Edit my recording and Avatar Studio."
         actions={
           <>
             <Button
@@ -296,8 +297,8 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
         {nothingYet ? (
           <EmptyState
             icon={<ListVideo />}
-            title="No clipping jobs yet"
-            description="Jobs appear here as soon as you generate clips. Queue as many videos as you like; up to two run at once."
+            title="No jobs yet"
+            description="Every video you make shows up here while it works, then stays listed when it’s done: Create clips, Remix, Edit my recording and Avatar Studio. Up to two run at once."
             action={<Button variant="primary" onClick={onNew}>Create clips</Button>}
           />
         ) : (

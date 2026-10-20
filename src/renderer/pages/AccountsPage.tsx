@@ -33,7 +33,7 @@ function openLink(url: string): void {
 export function AccountsPage({ onNavigate }: { onNavigate: (page: Page) => void }): React.JSX.Element {
   const configured = useSettingsStore((s) => s.zernioConfigured)
   return (
-    <PageColumn width="narrow">
+    <PageColumn width="default">
       {configured ? <ConnectedAccounts onNavigate={onNavigate} /> : <ZernioSetup />}
     </PageColumn>
   )
@@ -44,7 +44,7 @@ function ZernioSetup(): React.JSX.Element {
 
   return (
     <>
-      <PageHeader title={TITLE} />
+      <PageHeader eyebrow="Workspace" title={TITLE} description="Connect the social accounts you post to, through Zernio." />
       <Panel padded={false} className="mt-4 overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3">
           <div className="min-w-0 flex-1">
@@ -231,8 +231,9 @@ function ConnectedAccounts({ onNavigate }: { onNavigate: (page: Page) => void })
   return (
     <>
       <PageHeader
+        eyebrow="Workspace"
         title={TITLE}
-        className="items-center"
+        description="Connect the social accounts you post to, through Zernio."
         actions={
           <>
             {hasData && (

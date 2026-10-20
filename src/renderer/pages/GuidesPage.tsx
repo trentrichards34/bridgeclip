@@ -17,7 +17,7 @@ export function GuidesPage({ onNavigate }: { onNavigate: (page: Page) => void })
   const order: GoalId[] = [...goals, ...GOALS.map((goal) => goal.id).filter((id) => !goals.includes(id))]
   return (
     <PageColumn width="narrow">
-      <PageHeader title="Guides" description="Short how-tos for each kind of video. Yours come first."
+      <PageHeader eyebrow="Workspace" title="Guides" description="Short how-tos for each kind of video. Yours come first."
         actions={<Button variant="ghost" icon={<UserRoundCog className="h-4 w-4" />} onClick={() => useOnboarding.getState().setOpen(true)}>
           {goals.length ? 'Edit your profile' : 'Set up your profile'}
         </Button>} />

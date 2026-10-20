@@ -13,9 +13,8 @@ import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-
 import { parseJobOutput } from '../../shared/job-output'
 import type { Page as PageName } from '../components/Sidebar'
 import { BackgroundPicker } from '../components/BackgroundPicker'
-import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
-import { CtaPicker } from '../components/CtaPicker'
-import { HeadlineLookPicker } from '../components/HeadlineLookPicker'
+import { previewFrame, StyleBoard } from '../components/StyleBoard'
+import { LOOK_HOOKS, type BoardStyle, type HookChoice } from '../lib/style-board'
 import { PostDialog, type PostableClip } from '../components/PostDialog'
 import { VoicePreview } from '../components/VoicePreview'
 import { heygenPriceNote, HeygenCreateForm, HeygenStatus } from '../components/avatar/HeygenAvatar'
@@ -90,6 +89,10 @@ const useStudioDraft = create<StudioDraft>((set) => ({
   update: (patch) => set(patch)
 }))
 
+/** The member's avatars; null until the first load. Kept across visits so the page doesn't flash empty. */
+export const useAvatarList = create<{ avatars: AvatarSummary[] | null }>(() => ({ avatars: null }))
+const setAvatars = (avatars: AvatarSummary[]): void => useAvatarList.setState({ avatars })
+
 function voiceLabel(voice: AvatarVoice): string {
   return voice.provider === 'elevenlabs' ? voice.voice : 'Cloned voice'
 }
@@ -99,8 +102,12 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
   const openrouterConfigured = useSettingsStore((s) => s.openrouterConfigured)
   const heygenConfigured = useSettingsStore((s) => s.heygenConfigured)
   const draft = useStudioDraft()
-  const [avatars, setAvatars] = useState<AvatarSummary[]>([])
-  const [creating, setCreating] = useState(false)
+  const loadedAvatars = useAvatarList((s) => s.avatars)
+  const avatars = loadedAvatars ?? []
+  /** Loaded, and there are none yet: the script steps wait for an avatar. */
+  const noAvatar = loadedAvatars !== null && loadedAvatars.length === 0
+  /** The New avatar dialog, open on this kind of avatar. */
+  const [creating, setCreating] = useState<AvatarKindChoice | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [writing, setWriting] = useState(false)
   const [status, setStatus] = useState<AvatarRenderStatus | null>(null)
@@ -119,6 +126,7 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
     const off = getApi().avatars.onStatus((next) => setStatus(next))
     return () => { live = false; off() }
   }, [loadBrands])
+  const startAvatar = (kind: AvatarKindChoice = 'self'): void => setCreating(kind)
 
   const selected = avatars.find((avatar) => avatar.id === draft.avatarId) ?? avatars[0] ?? null
   useEffect(() => {
@@ -178,6 +186,34 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
   // With a gameplay split the hook is a title card, as in Create.
   const hookIsCard = draft.style === 'talking' && Boolean(draft.backgroundVideo)
 
+  // The look as the Style board shows it (the same board as Create, Remix and Edit my recording).
+  const boardHooks: readonly HookChoice[] = hookIsCard ? ['card', 'none'] : LOOK_HOOKS
+  const boardBrand = handleBrand ?? brands.find((brand) => brand.id === draft.brandIdentityId) ?? markBrands[0] ?? brands[0] ?? null
+  const captionsOn = draft.includeCaptions && (draft.style !== 'recreate' || recreate.keepAudio)
+  const board: BoardStyle = {
+    captions: captionsOn, captionPreset: draft.captionPreset,
+    hook: !draft.includeTitle || draft.headlineLook.look === 'none' ? 'none' : hookIsCard ? 'card' : draft.headlineLook.look,
+    font: draft.headlineLook.font, color: draft.headlineLook.color, handle: handleBrand !== null,
+    ctaId: draft.ctaId, keyword: '', offer: ''
+  }
+  const changeLook = (patch: Partial<BoardStyle>): void => {
+    const next: Partial<Omit<StudioDraft, 'update'>> = {}
+    if (patch.captions !== undefined) {
+      next.includeCaptions = patch.captions
+      if (patch.captions && draft.style === 'recreate' && !recreate.keepAudio) next.recreate = { ...recreate, keepAudio: true }
+    }
+    if (patch.captionPreset !== undefined) next.captionPreset = patch.captionPreset
+    const look = patch.hook && patch.hook !== 'card' ? patch.hook : undefined
+    if (patch.hook !== undefined) next.includeTitle = patch.hook !== 'none'
+    if ((look && look !== 'none') || patch.font || patch.color) {
+      next.headlineLook = { ...draft.headlineLook, ...(look && look !== 'none' ? { look } : {}), ...(patch.font ? { font: patch.font } : {}), ...(patch.color ? { color: patch.color } : {}) }
+    }
+    if (patch.hook && patch.hook !== 'none' && draft.headlineLook.look === 'none' && !next.headlineLook) next.headlineLook = { ...draft.headlineLook, look: 'white' }
+    if (patch.handle !== undefined) next.handleBrandId = patch.handle ? (hasBrandMark(boardBrand?.look) ? boardBrand!.id : markBrands[0]?.id ?? null) : null
+    if (patch.ctaId !== undefined) next.ctaId = patch.ctaId
+    draft.update(next)
+  }
+
   const generate = async (): Promise<void> => {
     if (!selected) return
     setError(null)
@@ -209,7 +245,7 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
       <PageHeader
         eyebrow="Studio"
         title="Avatar Studio"
-        description="Create an AI avatar once, then turn scripts into ready-to-post vertical videos for faceless channels."
+        description="Make an avatar of yourself, or an AI presenter, once. Then turn scripts into ready-to-post vertical videos."
       />
       <FirstRunGuide page="avatar" />
 
@@ -225,10 +261,11 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
         <div className="space-y-5">
           <Panel>
             <PanelHeader title="Your avatars" description="Your own likeness or a fictional AI person."
-              action={<Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreating(true)}>New</Button>} />
+              action={<Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => startAvatar()}>New</Button>} />
             {avatars.length === 0 ? (
               <EmptyState className="mt-4" icon={<UserRound />} title="No avatars yet"
-                description="Use a photo of yourself, or describe a person and generate one." />
+                description="Start from a photo of yourself, or describe a person and generate one."
+                action={<Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => startAvatar()}>Create your avatar</Button>} />
             ) : (
               <div className="mt-4 grid grid-cols-3 gap-2" role="radiogroup" aria-label="Avatar">
                 {avatars.map((avatar) => (
@@ -248,6 +285,13 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
           {selected && <AvatarDetails avatar={selected} busy={busy} openrouterConfigured={openrouterConfigured} onChange={setAvatars} onError={setError} />}
         </div>
 
+        {noAvatar ? (
+          <Panel>
+            <EmptyState icon={<Wand2 />} title="Make an avatar first"
+              description="Every video uses one. Once it’s made, you write a script here, pick your look and generate the video."
+              className="bg-transparent shadow-none" />
+          </Panel>
+        ) : (
         <div className="space-y-5">
           <Panel>
             <PanelHeader title={draft.style === 'recreate' ? '1 · Source video' : '1 · Script'}
@@ -341,13 +385,14 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
           </Panel>
 
           <Panel>
-            <PanelHeader title="2 · Look" description="The same caption styles as Create." />
+            <PanelHeader title="2 · Look" description="The same looks as Create, Remix and Edit my recording." />
             <div className="mt-4 space-y-4">
-              {draft.style === 'talking' && (
-                <p className="text-2xs text-ink-subtle">{heygen
-                  ? `Realistic lip-sync on HeyGen (Beta), vertical 1080p, then the captions and hook text below are added here. ${heygenVoice ? 'HeyGen speaks the script in its voice for this avatar.' : 'Voiced in the avatar’s app voice, then HeyGen lip-syncs to it.'}`
-                  : 'Your avatar’s photo with a slow push-in, voiced in its voice. Lip-sync is coming: OpenRouter can’t animate a face to your own voice yet. For realistic lip-sync, make a HeyGen avatar (Beta).'}</p>
-              )}
+              {draft.style === 'talking' && (heygen
+                ? <p className="text-2xs text-ink-subtle">{`Realistic lip-sync on HeyGen (Beta), vertical 1080p, then the captions and hook text below are added here. ${heygenVoice ? 'HeyGen speaks the script in its voice for this avatar.' : 'Voiced in the avatar’s app voice, then HeyGen lip-syncs to it.'}`}</p>
+                : <Callout tone="info" title="This avatar’s mouth won’t move"
+                  action={!heygenConfigured ? <Button size="sm" onClick={openKeys}>Add HeyGen key</Button> : <Button size="sm" onClick={() => startAvatar('heygen')}>New HeyGen avatar</Button>}>
+                  It’s a still photo with a slow push-in, voiced in its voice. For a talking avatar with lip-sync, make a HeyGen avatar (Beta). It needs your HeyGen key in Settings → API keys, and HeyGen bills your account.
+                </Callout>)}
               {draft.style === 'cinematic' && (
                 <Field label="Scene quality">
                   <Select value={draft.sceneQuality} onChange={(value) => draft.update({ sceneQuality: value as SceneQuality })} options={[
@@ -356,43 +401,31 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
                   ]} />
                 </Field>
               )}
-              <SettingRow title="Captions"
-                description={draft.style === 'recreate' ? (recreate.keepAudio ? 'Transcribed from the original audio (uses your OpenRouter key).' : 'Keep the original audio to add captions.') : 'Word-by-word captions in the style below.'}
-                control={<Switch label="Captions" disabled={draft.style === 'recreate' && !recreate.keepAudio} checked={draft.includeCaptions && (draft.style !== 'recreate' || recreate.keepAudio)} onChange={(includeCaptions) => draft.update({ includeCaptions })} />} />
-              {markBrands.length > 0 && (
-                <div className="space-y-2">
-                  <SettingRow title="Show my handle" description="Your brand’s handle or logo, small in a corner of the video."
-                    control={<Switch label="Show my handle" checked={handleBrand !== null}
-                      onChange={(on) => draft.update({ handleBrandId: on ? (markBrands.find((brand) => brand.id === draft.brandIdentityId) ?? markBrands[0]).id : null })} />} />
-                  {handleBrand && markBrands.length > 1 && (
-                    <Select value={handleBrand.id} aria-label="Brand for the handle" onChange={(handleBrandId) => draft.update({ handleBrandId })}
-                      options={markBrands.map((brand) => ({ value: brand.id, label: brand.name, detail: brand.look?.handle || 'Logo' }))} />
-                  )}
-                </div>
+              {draft.style === 'recreate' && (
+                <p className="text-2xs text-ink-subtle">{recreate.keepAudio ? 'Captions are transcribed from the original audio (uses your OpenRouter key).' : 'Captions need the original audio: turning them on keeps it.'}</p>
               )}
-              <SettingRow title="Hook text at the top" description={hookIsCard ? 'With a gameplay split the hook text is a title card, like Create’s clips.' : 'A headline at the top of the video, like Create’s clips.'}
-                control={<Switch label="Hook text" checked={draft.includeTitle} onChange={(includeTitle) => draft.update({ includeTitle })} />} />
-              {draft.includeTitle && !hookIsCard && (
-                <div>
-                  <p className="mb-2 text-xs font-medium text-ink">Hook text look</p>
-                  <HeadlineLookPicker value={draft.headlineLook} onChange={(headlineLook) => draft.update({ headlineLook })} />
-                  {draft.headlineLook.look !== 'none' && !(draft.style === 'recreate' ? draft.script.title.trim() : hook) && (
-                    <p className="mt-2 text-2xs text-ink-subtle">Add hook text above to show it.</p>
-                  )}
-                </div>
-              )}
-              {draft.includeCaptions && (draft.style !== 'recreate' || recreate.keepAudio) && <CaptionPresetPicker value={draft.captionPreset} onChange={(captionPreset) => draft.update({ captionPreset })} />}
-              {draft.style === 'talking' && (
-                <div>
-                  <div className="mb-2 flex items-center justify-between"><span className="eyebrow">Gameplay split</span><span className="text-2xs text-ink-subtle">Optional</span></div>
-                  <BackgroundPicker value={draft.backgroundVideo} onChange={(backgroundVideo) => draft.update({ backgroundVideo })} />
-                </div>
-              )}
-              <div>
-                <p className="text-sm font-medium text-ink">Call to action at the end</p>
-                <p className="mb-2.5 mt-0.5 text-2xs text-ink-muted">Add one of your CTA clips to the end of the video. You can change it later in the Library.</p>
-                <CtaPicker value={draft.ctaId} onChange={(ctaId) => draft.update({ ctaId })} disabled={busy} />
-              </div>
+              <StyleBoard value={board} onChange={changeLook} rows={{ hooks: boardHooks, handle: brands.length > 0, cta: true }} brand={boardBrand}
+                frame={draft.style === 'recreate' ? previewFrame(recreate.sourcePath, 'video', recreate.startSeconds + 0.1) : previewFrame(selected?.portraitPath, 'image')}
+                hookText={(draft.style === 'recreate' ? draft.script.title.trim() : hook) || undefined}
+                words={text ? text.split(/\s+/).slice(0, 12) : undefined}
+                hookNote={hookIsCard ? 'With a gameplay split the hook text is a title card, like Create’s clips.' : undefined}
+                ctaHelp="Add one of your CTA clips to the end of the video. You can change it later in the Library."
+                layout={draft.style === 'talking' || (handleBrand && markBrands.length > 1) ? (
+                  <>
+                    {handleBrand && markBrands.length > 1 && (
+                      <Field label="Brand for the handle">
+                        <Select value={handleBrand.id} aria-label="Brand for the handle" onChange={(handleBrandId) => draft.update({ handleBrandId })}
+                          options={markBrands.map((brand) => ({ value: brand.id, label: brand.name, detail: brand.look?.handle || 'Logo' }))} />
+                      </Field>
+                    )}
+                    {draft.style === 'talking' && (
+                      <div>
+                        <div className="mb-2 flex items-center justify-between"><span className="text-xs font-semibold text-ink">Gameplay split</span><span className="text-2xs text-ink-subtle">Optional</span></div>
+                        <BackgroundPicker value={draft.backgroundVideo} onChange={(backgroundVideo) => draft.update({ backgroundVideo })} />
+                      </div>
+                    )}
+                  </>
+                ) : undefined} />
             </div>
           </Panel>
 
@@ -430,11 +463,12 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
             </div>
           </Panel>
         </div>
+        )}
       </div>
 
-      {creating && <CreateAvatarDialog openrouterConfigured={openrouterConfigured} heygenConfigured={heygenConfigured} onOpenKeys={() => { setCreating(false); openKeys() }}
-        onClose={() => setCreating(false)} onCreated={(list, consent) => {
-          setAvatars(list); setCreating(false); if (list[0]) draft.update({ avatarId: list[0].id })
+      {creating && <CreateAvatarDialog initialKind={creating} openrouterConfigured={openrouterConfigured} heygenConfigured={heygenConfigured} onOpenKeys={() => { setCreating(null); openKeys() }}
+        onClose={() => setCreating(null)} onCreated={(list, consent) => {
+          setAvatars(list); setCreating(null); if (list[0]) draft.update({ avatarId: list[0].id })
           // A new video avatar: HeyGen's consent page opens in the browser right away.
           if (consent && list[0]?.heygen?.source === 'twin') getApi().heygen.openConsent(list[0].id).then(setAvatars).catch((err) => setError(errorMessage(err)))
         }} />}
@@ -628,12 +662,14 @@ function AvatarDetails({ avatar, busy, openrouterConfigured, onChange, onError }
   )
 }
 
-function CreateAvatarDialog({ openrouterConfigured, heygenConfigured, onClose, onCreated, onOpenKeys }: {
-  openrouterConfigured: boolean; heygenConfigured: boolean; onClose: () => void; onOpenKeys: () => void
+type AvatarKindChoice = 'self' | 'ai' | 'heygen'
+
+function CreateAvatarDialog({ initialKind = 'self', openrouterConfigured, heygenConfigured, onClose, onCreated, onOpenKeys }: {
+  initialKind?: AvatarKindChoice; openrouterConfigured: boolean; heygenConfigured: boolean; onClose: () => void; onOpenKeys: () => void
   /** `consent`: a new HeyGen video avatar whose consent page should open now. */
   onCreated: (list: AvatarSummary[], consent?: boolean) => void
 }): React.JSX.Element {
-  const [kind, setKind] = useState<'self' | 'ai' | 'heygen'>(openrouterConfigured ? 'ai' : 'self')
+  const [kind, setKind] = useState<AvatarKindChoice>(initialKind)
   const [description, setDescription] = useState('')
   const [drafts, setDrafts] = useState<{ draftId: string; path: string }[]>([])
   const [chosen, setChosen] = useState<string | null>(null)
@@ -678,8 +714,8 @@ function CreateAvatarDialog({ openrouterConfigured, heygenConfigured, onClose, o
     <>
       <h2 className="text-base font-semibold text-ink">New avatar</h2>
       <Segmented label="Avatar type" value={kind} onChange={switchKind} options={[
-        { value: 'ai', label: 'Generate an AI person' },
         { value: 'self', label: 'Use my photo' },
+        { value: 'ai', label: 'Generate an AI person' },
         { value: 'heygen', label: <span className="inline-flex items-center gap-1.5">Realistic talking avatar (HeyGen, Beta)</span> }
       ]} />
     </>

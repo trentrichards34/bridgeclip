@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Bookmark, Clapperboard, FolderOpen, ListVideo, Pencil, RefreshCw, Search, Sparkles, Trash2 } from 'lucide-react'
+import { AlertTriangle, Bookmark, Clapperboard, FolderOpen, ListVideo, Pencil, RefreshCw, Scissors, Search, Sparkles, Trash2 } from 'lucide-react'
 import { getApi } from '../lib/ipc'
 import { useDataVersion } from '../store/use-data-version-store'
 import { cn, errorMessage, formatRelativeDate, formatUsd, localFileUrl } from '../lib/utils'
@@ -246,6 +246,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
     )
   }
 
+  const hasRuns = Boolean(entries && entries.length > 0)
   return (
     <Page width="wide">
       <PageHeader
@@ -270,8 +271,8 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
               disabled={refreshing || busy.size > 0}
               icon={<RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />}
             />
-            <FreeUpSpaceButton onFreed={() => { setStorageRevision((value) => value + 1); void load() }} />
-            {outputDirectory && (
+            {hasRuns && <FreeUpSpaceButton onFreed={() => { setStorageRevision((value) => value + 1); void load() }} />}
+            {hasRuns && outputDirectory && (
               <Button icon={<FolderOpen className="h-4 w-4" />} onClick={() => getApi().shell.openPath(outputDirectory)}>
                 Open folder
               </Button>
@@ -331,12 +332,16 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
         ) : entries.length === 0 ? (
           <EmptyState
             icon={<Clapperboard />}
-            title="No clips yet"
-            description="Generate clips from a long video and every run will show up here, newest first."
+            title="No videos yet"
+            description="Everything you make lands here, newest first: clips from Create, reaction videos from Remix, reels from Edit my recording and Avatar Studio videos."
             action={
-              <Button variant="primary" size="lg" icon={<Sparkles className="h-4 w-4" />} onClick={() => onNavigate('clip')}>
-                Create your first clips
-              </Button>
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button variant="primary" size="lg" icon={<Sparkles className="h-4 w-4" />} onClick={() => onNavigate('clip')}>
+                  Create clips
+                </Button>
+                <Button size="lg" icon={<Clapperboard className="h-4 w-4" />} onClick={() => onNavigate('remix')}>Remix a video</Button>
+                <Button size="lg" icon={<Scissors className="h-4 w-4" />} onClick={() => onNavigate('edit')}>Edit my recording</Button>
+              </div>
             }
           />
         ) : filtered.length === 0 ? (
@@ -463,7 +468,7 @@ function RunCard({ entry, size, previewRevision, counts, busy, onFavorite, onDel
           )}
         </p>
         <p className="mt-2 text-xs text-ink-muted" title="Only fully published clips count as posted. Scheduled, partial and inbox deliveries remain Not Posted.">
-          {entry.editorProject && entry.clipCount === 0 ? remaining === 0 ? 'No clips to finish' : 'No clips baked yet' : counts ? <><span className="text-success">{counts.posted} Posted</span><span className="mx-2 text-ink-faint">·</span><span>{counts.notPosted} Not Posted</span></>
+          {entry.editorProject && entry.clipCount === 0 ? remaining === 0 ? 'No clips to finish' : 'No clips baked yet' : counts ? counts.posted > 0 ? <><span className="text-success">{counts.posted} Posted</span><span className="mx-2 text-ink-faint">·</span><span>{counts.notPosted} Not Posted</span></> : <span>{counts.notPosted} Not Posted</span>
             : counts === null ? 'Posting status unavailable' : 'Checking posting status…'}
         </p>
       </div>
@@ -473,9 +478,12 @@ function RunCard({ entry, size, previewRevision, counts, busy, onFavorite, onDel
           tooltip={entry.favorite ? 'Remove bookmark. This run returns to its place among your recent runs.' : 'Bookmark this run to keep it in the Bookmarked section.'}
           aria-label={`${entry.favorite ? 'Remove bookmark from' : 'Bookmark'} ${entry.videoTitle}`} aria-pressed={Boolean(entry.favorite)}
           onClick={() => { if (!busy) onFavorite() }} icon={<Bookmark className="h-3.5 w-3.5" fill={entry.favorite ? 'currentColor' : 'none'} />} />
+        {/* Delete shows on hover or keyboard focus, so it doesn't sit on every card. */}
+        <span className="opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100">
         <HoverCard cardClassName="px-3 py-2 text-xs" content="Delete this Library item and its local files">
           <Button size="sm" iconOnly className="glass-chip hover:text-danger" disabled={busy} aria-label={`Delete ${entry.videoTitle}`} onClick={onDelete} icon={<Trash2 className="h-3.5 w-3.5" />} />
         </HoverCard>
+        </span>
       </div>
     </article>
   )
