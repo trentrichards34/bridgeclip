@@ -457,7 +457,7 @@ export interface BridgeClipAPI {
     /** Choose a screenshot for an article-or-post remix. */
     selectImage: () => Promise<string | null>
     /** Library → "Remix this clip": that clip's video as the source file, and its creator when known. */
-    libraryClip: (outputDir: string, clipIndex: number) => Promise<{ path: string; creator: string }>
+    libraryClip: (outputDir: string, clipIndex: number) => Promise<{ path: string; creator: string; clean: boolean }>
     recordings: () => Promise<RemixRecordings>
     recordingBegin: (draftId: number, part: RecordingPart, mime: string) => Promise<string>
     recordingAppend: (token: string, chunk: Uint8Array) => Promise<void>

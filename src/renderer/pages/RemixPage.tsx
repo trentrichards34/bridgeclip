@@ -487,13 +487,19 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
           ) : (
             <Button variant="secondary" icon={<ImageIcon className="h-4 w-4" />} disabled={busy} onClick={() => void chooseImage()}>Choose a screenshot</Button>
           )
-        ) : form.filePath ? (
+        ) : form.filePath ? (<>
           <div className="glass-tile flex items-center gap-3 rounded-xl px-3 py-2.5">
             <Film className="h-4 w-4 shrink-0 text-ink-muted" />
             <span className="min-w-0 flex-1 truncate text-sm text-ink" title={form.filePath}>{form.filePath.split(/[\\/]/).pop()}</span>
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => form.update({ filePath: null })}>Use links instead</Button>
           </div>
-        ) : (
+          {form.sourceBurnedIn === form.filePath && (
+            <Callout tone="warning" className="mt-2" data-testid="remix-burned-in">
+              This clip already has its own hook text and captions, and its original video is no longer in your Library, so they’ll show in your remix.
+              {form.headlineLook.look !== 'none' && <> To avoid two hooks, turn yours off. <button type="button" className="underline" onClick={() => form.update({ headlineLook: { ...form.headlineLook, look: 'none' } })}>Turn off my hook text</button></>}
+            </Callout>
+          )}
+        </>) : (
           <div className="space-y-2">
             {/* One-video formats ask for one link; the others take a list. */}
             <TextArea rows={singleVideo ? 1 : 3} value={form.links} aria-label="Video links"

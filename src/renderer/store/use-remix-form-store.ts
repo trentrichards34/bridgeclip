@@ -62,7 +62,9 @@ interface RemixFormState extends RemixForm {
   /** A saved or remembered style: a different kind of remix needs its permission box ticked again. */
   applyStyle: (style: Partial<RemixFormStyle>) => void
   /** Library → "Remix this clip": the clip becomes the source file (its length, when known, picks a format that suits it). */
-  setSourceFile: (path: string, creator: string, seconds?: number) => void
+  setSourceFile: (path: string, creator: string, seconds?: number, burnedIn?: boolean) => void
+  /** A Library clip file that already has its own hook text and captions burned in (its original video wasn't kept). */
+  sourceBurnedIn: string | null
 }
 
 /** The form survives navigating away (e.g. to Settings to add a key); its style is remembered across restarts. */
@@ -89,10 +91,11 @@ export const useRemixForm = create<RemixFormState>((set, get) => ({
   phoneHook: 'beside',
   update: (patch) => set(patch),
   applyStyle: (style) => set({ ...style, ...(style.format && style.format !== get().format ? { clipRightsAck: false } : {}) }),
-  setSourceFile: (path, creator, seconds) => {
+  sourceBurnedIn: null,
+  setSourceFile: (path, creator, seconds, burnedIn = false) => {
     const state = get()
     const format = libraryClipFormat(state.format, state.host, seconds)
-    set({ filePath: path, links: '', creator, format, ...(format !== state.format ? { clipRightsAck: false } : {}) })
+    set({ filePath: path, links: '', creator, format, sourceBurnedIn: burnedIn ? path : null, ...(burnedIn ? { theirCaptions: 'yes' as const } : {}), ...(format !== state.format ? { clipRightsAck: false } : {}) })
   }
 }))
 

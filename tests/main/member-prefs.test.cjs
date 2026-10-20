@@ -399,10 +399,13 @@ test('Library → Remix: a clip in a Library run becomes an authorized source fi
     './settings-store': { loadSettings: () => ({ outputDirectory: library }) },
     './security': {
       assertMediaPath: (p, dir) => { if (!fs.realpathSync(p).startsWith(dir + path.sep)) throw new Error('outside') },
-      authorizeMedia: (p) => { authorized.push(p); return fs.realpathSync(p) }
-    }
+      authorizeMedia: (p) => { authorized.push(p); return fs.realpathSync(p) },
+      isWithinDirectory: (p, dir) => path.resolve(p).startsWith(path.resolve(dir) + path.sep)
+    },
+    './tools': { resolveBinary: (name) => name }
   })
-  assert.deepEqual(plain(await mod.libraryClipForRemix(run, 0)), { path: video, creator: 'Coach Example' })
+  // No kept source video: the made clip itself (its hook text and captions are burned in).
+  assert.deepEqual(plain(await mod.libraryClipForRemix(run, 0)), { path: video, creator: 'Coach Example', clean: false })
   assert.deepEqual(authorized, [video])
   await assert.rejects(mod.libraryClipForRemix(run, 1), /missing or outside/)
   await assert.rejects(mod.libraryClipForRemix(run, 7), /no longer in your Library/)
@@ -413,6 +416,38 @@ test('Library → Remix: a clip in a Library run becomes an authorized source fi
   assert.equal((await mod.libraryClipForRemix(run, 0)).creator, '', 'no creator unless it is known')
   fs.rmSync(library, { recursive: true, force: true })
   fs.rmSync(outside, { recursive: true, force: true })
+})
+
+test('Library → Remix: with the run\'s source video kept, the clip\'s moment is cut clean from it (no hook text or captions burned in)', async () => {
+  const { execFileSync } = require('node:child_process')
+  const library = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'library-clean-')))
+  const run = path.join(library, 'run1')
+  fs.mkdirSync(run)
+  const made = path.join(run, 'clip_00.mp4')
+  fs.writeFileSync(made, 'x')
+  execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=25', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '4', '-shortest', '-pix_fmt', 'yuv420p', path.join(run, 'editor-source.mp4')])
+  const output = { source_video_channel: 'PowerfulJRE', clips: [{ clip_index: 0, s3_url: `file://${made}`, start_time_ms: 1000, end_time_ms: 2500 }] }
+  const mod = load('main/library-source.ts', {
+    './file-manager': { getJobOutput: async () => output },
+    './settings-store': { loadSettings: () => ({ outputDirectory: library }) },
+    './security': {
+      assertMediaPath: () => undefined,
+      authorizeMedia: (p) => fs.realpathSync(p),
+      isWithinDirectory: (p, dir) => path.resolve(p).startsWith(path.resolve(dir) + path.sep)
+    },
+    './tools': { resolveBinary: (name) => name }
+  })
+  const first = plain(await mod.libraryClipForRemix(run, 0))
+  assert.equal(first.clean, true)
+  assert.equal(first.creator, 'PowerfulJRE')
+  assert.ok(first.path.startsWith(path.join(run, '.remix-sources') + path.sep), first.path)
+  const seconds = Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', first.path]).toString())
+  assert.ok(Math.abs(seconds - 1.5) < 0.15, `cut is ${seconds}s`)
+  // Asked again, the same cut is reused.
+  const mtime = fs.statSync(first.path).mtimeMs
+  assert.equal((await mod.libraryClipForRemix(run, 0)).path, first.path)
+  assert.equal(fs.statSync(first.path).mtimeMs, mtime)
+  fs.rmSync(library, { recursive: true, force: true })
 })
 
 test('look extras: remembered on Create and Remix and in saved styles; unknown ids dropped; Create requests checked', () => {
