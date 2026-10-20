@@ -26,6 +26,12 @@ async function pickBrand(page, name) {
   await page.getByRole('option', { name: new RegExp(`^${name}`) }).click()
 }
 
+// Remix keeps "Look & call to action" folded until opened.
+async function openRemixLook(page) {
+  const toggle = page.locator('button[aria-controls="remix-look"]')
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+}
+
 const checked = async (locator) => (await locator.getAttribute('aria-checked')) === 'true'
 
 test('picking a brand fills the Remix and Create style fields once; re-picking it keeps the member’s edits', { timeout: 240000 }, async (t) => {
@@ -56,6 +62,7 @@ test('picking a brand fills the Remix and Create style fields once; re-picking i
   // Remix: the brand's look fills hook look, captions, keyword and the handle toggle.
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
   await page.getByRole('heading', { name: 'Remix', exact: true }).waitFor()
+  await openRemixLook(page)
   const hookLooks = page.getByRole('radiogroup', { name: 'Hook text look' })
   assert.equal(await checked(hookLooks.getByRole('radio', { name: /^White bar/ })), true)
   await pickBrand(page, 'Pull-Up Lab')
@@ -134,6 +141,7 @@ test('the brand dialog saves a look with a handle and keeps old brands working',
   page.on('pageerror', (error) => errors.push(error.message))
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
   await page.getByRole('heading', { name: 'Remix', exact: true }).waitFor()
+  await openRemixLook(page)
   await pickBrand(page, 'Old brand')
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Edit brand identity' })
