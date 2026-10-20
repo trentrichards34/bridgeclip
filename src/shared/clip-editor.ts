@@ -1,4 +1,4 @@
-import type { EditorGraphic } from './motion-graphics'
+import { parseGraphics, type EditorGraphic } from './motion-graphics'
 /** Persisted source-time edits. Media paths and review results are main-process owned. */
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
 import { isCaptionLanguage, type CaptionLanguage } from './caption-language'
@@ -261,6 +261,7 @@ export function parseCandidateEdit(value: unknown, duration: number, transcriptC
     caption_y: v.caption_y == null ? null : num(v.caption_y, .1, .9),
     ...(v.hook === undefined ? {} : { hook: parseHook(v.hook) }),
     ...(v.cta_id === undefined ? {} : { cta_id: v.cta_id === null ? null : /^[a-f0-9]{16}$/.test(str(v.cta_id, 16)) ? v.cta_id as string : fail() }),
+    ...(v.graphics === undefined ? {} : { graphics: parseGraphics(v.graphics) }),
     ...(v.dismissed_camera_markers === undefined ? {} : { dismissed_camera_markers: [...new Set(arr(v.dismissed_camera_markers, 5000).map((t) => num(t, 0, duration)))].sort((a, b) => a - b) }) }
 }
 /** A hook from the project or the renderer: null (none) or text and a look. */
@@ -341,7 +342,7 @@ function parseAutomaticOrigin(value: unknown): AutomaticOrigin {
 export function candidateEdit(c: CandidateEdit): CandidateEdit {
   const { id, title, ranges, scenes, captions, caption_preset, video_speed, status, caption_edits, caption_suppression_ranges = [], dismissed_camera_markers } = c
   return { id, title, ranges, scenes, captions, caption_preset, video_speed, status, caption_edits, caption_suppression_ranges, caption_y: c.caption_y ?? null,
-    ...(dismissed_camera_markers ? { dismissed_camera_markers } : {}), ...(c.hook !== undefined ? { hook: c.hook } : {}), ...(c.cta_id !== undefined ? { cta_id: c.cta_id } : {}) }
+    ...(dismissed_camera_markers ? { dismissed_camera_markers } : {}), ...(c.hook !== undefined ? { hook: c.hook } : {}), ...(c.cta_id !== undefined ? { cta_id: c.cta_id } : {}), ...(c.graphics !== undefined ? { graphics: c.graphics } : {}) }
 }
 export function renderEditKey(c: CandidateEdit): string {
   // The call to action is added after rendering, so changing it doesn't need a new render.
