@@ -1,0 +1,163 @@
+/*
+ * Motion graphic templates (templates.ts). Every size is a multiple of --u
+ * (one pixel of a 1080-wide frame), so a template looks the same in the
+ * editor's small preview and the full-size render. Fonts are the app's own
+ * bundled fonts (engine/assets/fonts), declared again here for the offscreen
+ * page, which doesn't load the app's stylesheet.
+ */
+@font-face { font-family: 'MG Montserrat'; src: url('../../../engine/assets/fonts/Montserrat-ExtraBold.ttf') format('truetype'); font-weight: 800; }
+@font-face { font-family: 'MG Montserrat'; src: url('../../../engine/assets/fonts/Montserrat-Black.ttf') format('truetype'); font-weight: 900; }
+@font-face { font-family: 'MG Jakarta'; src: url('../../../engine/assets/fonts/PlusJakartaSans.ttf') format('truetype'); font-weight: 200 800; }
+@font-face { font-family: 'MG Anton'; src: url('../../../engine/assets/fonts/Anton-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'MG Fraunces'; src: url('../../../engine/assets/fonts/Fraunces72pt-Black.ttf') format('truetype'); }
+@font-face { font-family: 'MG Caveat Brush'; src: url('../../../engine/assets/fonts/CaveatBrush-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'MG Instrument Serif'; src: url('../../../engine/assets/fonts/InstrumentSerif-Italic.ttf') format('truetype'); font-style: italic; }
+
+.mg-root {
+  position: absolute; left: 0; top: 0; overflow: hidden; pointer-events: none;
+  --ink: #111318; --paper: #f7f6f2; --muted: #60656f; --line: rgba(17, 19, 24, .1);
+  --shadow: 0 calc(var(--u) * 22) calc(var(--u) * 60) rgba(0, 0, 0, .34), 0 calc(var(--u) * 4) calc(var(--u) * 12) rgba(0, 0, 0, .18);
+  font-family: 'MG Jakarta', 'MG Montserrat', system-ui, sans-serif; color: var(--ink);
+  -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; line-height: 1.15;
+  font-kerning: normal; letter-spacing: 0;
+}
+.mg-root * { box-sizing: border-box; }
+.mg-band { position: absolute; left: 0; right: 0; display: flex; justify-content: center; }
+.mg-band.top { align-items: flex-start; }
+.mg-band.middle { align-items: center; }
+.mg-band.bottom { align-items: flex-end; }
+.mg-fit { transform-origin: 50% 50%; display: flex; justify-content: center; }
+.mg-band.top .mg-fit { transform-origin: 50% 0; }
+.mg-band.bottom .mg-fit { transform-origin: 50% 100%; }
+.mg-display { font-family: var(--display); font-weight: var(--display-weight); text-transform: var(--display-case); }
+.mg-hidden { opacity: 0; }
+
+/* Paper card with an accent rule, the base of most templates. */
+.mg-card {
+  position: relative; background: var(--paper); border-radius: calc(var(--u) * 40); box-shadow: var(--shadow);
+  padding: calc(var(--u) * 52) calc(var(--u) * 60) calc(var(--u) * 56); width: var(--card-w); overflow: hidden;
+}
+.mg-card::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: calc(var(--u) * 14); background: var(--accent);
+}
+.mg-kicker {
+  display: inline-flex; align-items: center; gap: calc(var(--u) * 12); font-family: 'MG Montserrat', sans-serif; font-weight: 900;
+  font-size: calc(var(--u) * 30); letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
+}
+
+/* Stat counter */
+.mg-stat { text-align: center; padding-top: calc(var(--u) * 46); }
+.mg-stat-value {
+  display: block; font-size: calc(var(--u) * var(--stat-size, 170)); line-height: .98; color: var(--accent); letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums; white-space: nowrap; transform-origin: 50% 60%;
+}
+.mg-stat-suffix { font-size: .42em; letter-spacing: 0; margin-left: .08em; }
+.mg-stat-rule { height: calc(var(--u) * 12); width: calc(var(--u) * 180); border-radius: 999px; background: var(--accent); margin: calc(var(--u) * 26) auto calc(var(--u) * 24); transform-origin: 50% 50%; }
+.mg-stat-label { font-family: 'MG Montserrat', sans-serif; font-weight: 800; font-size: calc(var(--u) * 56); line-height: 1.18; color: var(--ink); }
+.mg-stat.no-label .mg-stat-rule { display: none; }
+
+/* Title slam */
+.mg-title { width: var(--card-w); text-align: center; display: flex; flex-wrap: wrap; justify-content: center; align-content: center; gap: calc(var(--u) * 6) calc(var(--u) * 26); }
+.mg-title-word {
+  display: inline-block; color: #fff; font-size: calc(var(--u) * var(--title-size, 132)); line-height: 1.02; letter-spacing: -.01em;
+  -webkit-text-stroke: calc(var(--u) * 3) rgba(0, 0, 0, .55); paint-order: stroke fill;
+  text-shadow: 0 calc(var(--u) * 10) 0 rgba(0, 0, 0, .55), 0 calc(var(--u) * 18) calc(var(--u) * 36) rgba(0, 0, 0, .45);
+  transform-origin: 50% 70%;
+}
+.mg-title-word.accent {
+  color: var(--on-accent); background: var(--accent); -webkit-text-stroke: 0; text-shadow: none;
+  padding: calc(var(--u) * 4) calc(var(--u) * 26) calc(var(--u) * 10); border-radius: calc(var(--u) * 22);
+  box-shadow: 0 calc(var(--u) * 12) 0 rgba(0, 0, 0, .35);
+}
+
+/* Numbered list and checklist */
+.mg-list-title { font-family: 'MG Montserrat', sans-serif; font-weight: 900; font-size: calc(var(--u) * 66); line-height: 1.1; margin: calc(var(--u) * 6) 0 calc(var(--u) * 36); color: var(--ink); }
+.mg-list-items { display: flex; flex-direction: column; gap: calc(var(--u) * 28); }
+.mg-list-item { display: flex; align-items: center; gap: calc(var(--u) * 26); }
+.mg-list-num {
+  flex: none; width: calc(var(--u) * 96); height: calc(var(--u) * 96); border-radius: 50%; background: var(--accent); color: var(--on-accent);
+  display: grid; place-items: center; font-family: 'MG Montserrat', sans-serif; font-weight: 900; font-size: calc(var(--u) * 50);
+}
+.mg-list-text { font-weight: 800; font-size: calc(var(--u) * 54); line-height: 1.2; color: var(--ink); }
+.mg-check-box {
+  flex: none; position: relative; width: calc(var(--u) * 92); height: calc(var(--u) * 92); border-radius: calc(var(--u) * 24);
+  border: calc(var(--u) * 6) solid rgba(17, 19, 24, .22); background: #fff;
+}
+.mg-check-fill { position: absolute; inset: calc(var(--u) * -6); border-radius: calc(var(--u) * 20); background: var(--accent); transform-origin: 50% 50%; }
+.mg-check-box svg { position: absolute; inset: calc(var(--u) * -6); width: calc(100% + var(--u) * 12); height: calc(100% + var(--u) * 12); overflow: visible; }
+.mg-check-box path { fill: none; stroke: var(--on-accent); stroke-width: 11; stroke-linecap: round; stroke-linejoin: round; }
+.mg-list-item.done .mg-list-text { color: var(--ink); }
+
+/* Name tag (lower third) */
+.mg-tag { width: var(--card-w); display: flex; flex-direction: column; align-items: flex-start; gap: calc(var(--u) * 12); }
+.mg-tag-row { display: flex; align-items: stretch; }
+.mg-tag-bar { width: calc(var(--u) * 20); border-radius: calc(var(--u) * 8); background: var(--accent); margin-right: calc(var(--u) * 14); transform-origin: 50% 100%; }
+.mg-tag-mask { overflow: hidden; border-radius: calc(var(--u) * 18); }
+.mg-tag-name {
+  display: block; background: var(--ink); color: #fff; font-family: 'MG Montserrat', sans-serif; font-weight: 900; font-size: calc(var(--u) * 84);
+  padding: calc(var(--u) * 18) calc(var(--u) * 44) calc(var(--u) * 24); line-height: 1.08; box-shadow: var(--shadow);
+}
+.mg-tag-role {
+  display: block; background: var(--accent); color: var(--on-accent); font-weight: 800; font-size: calc(var(--u) * 50);
+  padding: calc(var(--u) * 14) calc(var(--u) * 34) calc(var(--u) * 18); line-height: 1.12; margin-left: calc(var(--u) * 34);
+}
+
+/* Logo pop */
+.mg-logo { display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 30); }
+.mg-logo-stage { position: relative; width: var(--logo); height: var(--logo); }
+.mg-logo-ring { position: absolute; inset: 0; border-radius: 50%; border: calc(var(--u) * 12) solid var(--accent); }
+.mg-logo-tile {
+  position: absolute; inset: 0; border-radius: calc(var(--u) * 54); background: #fff; box-shadow: var(--shadow);
+  display: grid; place-items: center; padding: calc(var(--u) * 34); overflow: hidden;
+}
+.mg-logo-tile img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.mg-logo-empty { font-weight: 700; font-size: calc(var(--u) * 34); color: var(--muted); text-align: center; }
+.mg-logo-caption {
+  background: var(--ink); color: #fff; font-family: 'MG Montserrat', sans-serif; font-weight: 800; font-size: calc(var(--u) * 54);
+  padding: calc(var(--u) * 16) calc(var(--u) * 44) calc(var(--u) * 22); border-radius: 999px; max-width: var(--card-w); text-align: center; box-shadow: var(--shadow);
+}
+
+/* Before / after */
+.mg-ba { width: var(--card-w); display: grid; grid-template-columns: 1fr 1fr; gap: calc(var(--u) * 84); position: relative; align-items: stretch; }
+.mg-ba-card {
+  border-radius: calc(var(--u) * 34); padding: calc(var(--u) * 34) calc(var(--u) * 34) calc(var(--u) * 40); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: calc(var(--u) * 24); min-height: calc(var(--u) * 330);
+}
+.mg-ba-card.before { background: #e7e5df; color: #4a4e57; }
+.mg-ba-card.after { background: var(--accent); color: var(--on-accent); }
+.mg-ba-tag {
+  align-self: flex-start; font-family: 'MG Montserrat', sans-serif; font-weight: 900; font-size: calc(var(--u) * 30); letter-spacing: .14em;
+  padding: calc(var(--u) * 10) calc(var(--u) * 20); border-radius: 999px; background: rgba(17, 19, 24, .1);
+}
+.mg-ba-card.after .mg-ba-tag { background: var(--ink); color: #fff; }
+.mg-ba-text { font-weight: 800; font-size: calc(var(--u) * 56); line-height: 1.14; }
+.mg-ba-card.before .mg-ba-text { text-decoration: line-through; text-decoration-thickness: calc(var(--u) * 4); text-decoration-color: rgba(74, 78, 87, .55); }
+.mg-ba-arrow {
+  position: absolute; left: 50%; top: 50%; width: calc(var(--u) * 110); height: calc(var(--u) * 110); margin: calc(var(--u) * -55) 0 0 calc(var(--u) * -55);
+  border-radius: 50%; background: var(--ink); display: grid; place-items: center; box-shadow: var(--shadow);
+}
+.mg-ba-arrow svg { width: 55%; height: 55%; }
+.mg-ba-arrow path { fill: none; stroke: #fff; stroke-width: 12; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Quote card */
+.mg-quote {
+  margin-top: calc(var(--u) * 44); position: relative; width: var(--card-w); background: rgba(17, 19, 24, .94); color: #fff; border-radius: calc(var(--u) * 40); box-shadow: var(--shadow);
+  padding: calc(var(--u) * 110) calc(var(--u) * 64) calc(var(--u) * 64);
+}
+.mg-quote-mark {
+  position: absolute; left: calc(var(--u) * 50); top: calc(var(--u) * -44); width: calc(var(--u) * 140); height: calc(var(--u) * 140); border-radius: 50%;
+  background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-family: 'MG Fraunces', Georgia, serif;
+  font-size: calc(var(--u) * 180); line-height: 1; padding-top: calc(var(--u) * 74); box-shadow: var(--shadow);
+}
+.mg-quote-text { font-family: 'MG Instrument Serif', Georgia, serif; font-style: italic; font-size: calc(var(--u) * var(--quote-size, 84)); line-height: 1.14; }
+.mg-quote-word { display: inline-block; white-space: pre; }
+.mg-quote-author {
+  margin-top: calc(var(--u) * 34); display: flex; align-items: center; gap: calc(var(--u) * 18); font-family: 'MG Montserrat', sans-serif; font-weight: 800;
+  font-size: calc(var(--u) * 38); letter-spacing: .1em; text-transform: uppercase; color: rgba(255, 255, 255, .8);
+}
+.mg-quote-author::before { content: ''; width: calc(var(--u) * 56); height: calc(var(--u) * 8); border-radius: 999px; background: var(--accent); }
+
+/* Arrow or circle */
+.mg-highlight { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.mg-highlight path, .mg-highlight ellipse { fill: none; stroke: var(--accent); stroke-linecap: round; stroke-linejoin: round; }
+.mg-highlight .mg-shadow { stroke: rgba(0, 0, 0, .35); }

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- The offscreen motion graphic renderer (src/main/graphics-render.ts): our own template code, no network, images only as data URLs. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
+    <title>Graphic</title>
+    <style>html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }</style>
+  </head>
+  <body>
+    <div id="graphic"></div>
+    <script type="module" src="./graphics/page.ts"></script>
+  </body>
+</html>

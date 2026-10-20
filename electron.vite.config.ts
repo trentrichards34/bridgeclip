@@ -70,7 +70,9 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/renderer/index.html')
+          index: resolve(__dirname, 'src/renderer/index.html'),
+          // The motion graphic templates, rendered offscreen by main (graphics-render.ts).
+          graphics: resolve(__dirname, 'src/renderer/graphics.html')
         }
       }
     },
