@@ -18,8 +18,11 @@ import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, MAX_GRAPHIC_FIELD_C
 import { MAX_REEL_GRAPHICS, REEL_GRAPHIC_TEMPLATES, TAKE_GRAPHIC_FROM_MS, graphicFields, type RemixGraphicFormat } from './reel-graphics'
 import { MAX_POST_CAPTION_CHARS, REMIX_WORD_LIMITS, wordCount } from './remix'
 import type { BoxAt } from './remix-layouts'
+import { PIN_PROP, aimGraphic, pinArg, pointCenter, type ChatPoint } from './chat-point'
 
 export const REMIX_CHAT_SUGGESTIONS = ['Punchier hook', 'Make my part shorter', 'Add a stat graphic', 'Shorten their clip'] as const
+/** Suggestions while the member has pins on the frame. */
+export const REMIX_CHAT_POINT_SUGGESTIONS = ['Put an arrow here', 'Put their clip box here', 'Move the graphic here'] as const
 export const MAX_HEADLINE_CHARS = 160
 /** The shortest part of a take that can be kept (ms). */
 export const MIN_TAKE_PART_MS = 2000
@@ -83,7 +86,7 @@ function ms(value: unknown, name: string, max: number): number {
 }
 
 /** Runs one tool call. Returns the step and the changed state and facts, or throws ChatToolError. */
-export function applyRemixChatTool(state: RemixChatState, facts: RemixChatFacts, name: string, args: Record<string, unknown>, newId?: () => string): { step: RemixChatStep; state: RemixChatState; facts: RemixChatFacts } {
+export function applyRemixChatTool(state: RemixChatState, facts: RemixChatFacts, name: string, args: Record<string, unknown>, newId?: () => string, points: readonly ChatPoint[] = []): { step: RemixChatStep; state: RemixChatState; facts: RemixChatFacts } {
   const why = chatReason(args)
   const step = (summary: string, patch: RemixChatPatch, extra: { action?: RemixChatAction; undo?: RemixChatAction; facts?: RemixChatFacts } = {}): { step: RemixChatStep; state: RemixChatState; facts: RemixChatFacts } => ({
     step: { tool: name as RemixChatToolName, summary: chatSentence(summary), patch, ...(extra.action ? { action: extra.action, undo: extra.undo } : {}) },
@@ -132,8 +135,10 @@ export function applyRemixChatTool(state: RemixChatState, facts: RemixChatFacts,
     case 'set_box_position': {
       if (facts.boxAt === null) return fail(facts.format === 'pause_react' ? 'In Pause & react their video already sits at the top (or fills the top half), so it can’t move.'
         : facts.format === 'react_thoughts' ? 'Their clip is a phone card in this layout, so it can’t move.' : 'Their clip plays full screen first in this format, so there is no box to move.')
-      const position = args.position
-      if (position !== 'top' && position !== 'bottom' && position !== 'auto') return fail('position must be top, bottom or auto.')
+      const pin = pinArg(args, points)
+      // "Put their clip box here": the half of the frame the pin is in.
+      const position = args.position ?? (pin ? pointCenter(pin).y < 0.5 ? 'top' : 'bottom' : undefined)
+      if (position !== 'top' && position !== 'bottom' && position !== 'auto') return fail('position must be top, bottom or auto (or give a pin).')
       if (position === facts.boxAt) fail('Their clip is already there.')
       const label = position === 'auto' ? 'wherever it doesn’t cover your face' : `at the ${position}`
       return step(`Their clip’s box goes ${label} while you react${why}`, {}, { action: { kind: 'layout', patch: { boxAt: position } }, undo: { kind: 'layout', patch: { boxAt: facts.boxAt } }, facts: { ...facts, boxAt: position } })
@@ -164,7 +169,9 @@ export function applyRemixChatTool(state: RemixChatState, facts: RemixChatFacts,
       if (!(GRAPHIC_PLACEMENTS as readonly unknown[]).includes(placement)) return fail(`placement must be ${GRAPHIC_PLACEMENTS.join(', ')}.`)
       const fields = graphicFields(template, current?.fields ?? {}, args.fields)
       const base = current ?? newGraphic(template, at, { origin: 'chat', taken: graphics.map((g) => g.id) })
-      const graphic: EditorGraphic = { ...base, ...(newId && !current ? { id: newId() } : {}), at_ms: at, duration_ms: Math.round(Math.min(duration, to - at)), placement: placement as GraphicPlacement, fields }
+      const pin = pinArg(args, points)
+      let graphic: EditorGraphic = { ...base, ...(newId && !current ? { id: newId() } : {}), at_ms: at, duration_ms: Math.round(Math.min(duration, to - at)), placement: placement as GraphicPlacement, fields }
+      if (pin) { const aimed = aimGraphic(graphic, pin, typeof (args.fields as Record<string, unknown> | undefined)?.shape === 'string'); graphic = { ...aimed, placement: args.placement !== undefined ? graphic.placement : aimed.placement } }
       const next = (current ? graphics.map((g) => g.id === graphic.id ? graphic : g) : [...graphics, graphic]).sort((x, y) => x.at_ms - y.at_ms)
       try { parseGraphics(next) } catch (error) { fail((error as Error).message) }
       return step(`${current ? 'Changed the' : 'Added a'} ${templateInfo(template).label.toLowerCase()} at ${chatClock(at)} of your ${facts.format === 'pause_react' ? 'video' : 'take'}${why}`, { graphics: next })
@@ -259,9 +266,9 @@ export const REMIX_CHAT_TOOLS: { name: RemixChatToolName; description: string; p
   { name: 'set_post_caption', description: `Replace the post caption (up to ${MAX_POST_CAPTION_CHARS} characters). Keep its credit and call to action lines.`, parameters: { type: 'object', properties: { text: { type: 'string', maxLength: MAX_POST_CAPTION_CHARS }, reason }, required: ['text'], additionalProperties: false } },
   { name: 'set_their_clip', description: 'Choose the part of their video used (source ms): to shorten it, start later or end earlier. Use their word times.', parameters: { type: 'object', properties: { start_ms: msProp('Start, source ms.'), end_ms: msProp('End, source ms.'), reason }, required: ['start_ms', 'end_ms'], additionalProperties: false } },
   { name: 'trim_my_take', description: 'Use only part of the member’s take (ms into the take): to make their part shorter or cut a first sentence. Both null: use all of it again.', parameters: { type: 'object', properties: { start_ms: { type: ['number', 'null'], minimum: 0 }, end_ms: { type: ['number', 'null'], minimum: 0 }, reason }, required: ['start_ms', 'end_ms'], additionalProperties: false } },
-  { name: 'set_box_position', description: 'React, then my thoughts (big box): put their clip’s box at the top or bottom of part 1, or auto (wherever it doesn’t cover the member’s face).', parameters: { type: 'object', properties: { position: { type: 'string', enum: ['top', 'bottom', 'auto'] }, reason }, required: ['position'], additionalProperties: false } },
+  { name: 'set_box_position', description: 'React, then my thoughts (big box): put their clip’s box at the top or bottom of part 1, or auto (wherever it doesn’t cover the member’s face). With pin ("put their clip box here"): the half the pin is in.', parameters: { type: 'object', properties: { position: { type: 'string', enum: ['top', 'bottom', 'auto'] }, pin: PIN_PROP, reason }, additionalProperties: false } },
   { name: 'set_comment_banner', description: 'React, then my thoughts: show the “Comment KEYWORD” banner through part 2, or not.', parameters: { type: 'object', properties: { on: { type: 'boolean' }, reason }, required: ['on'], additionalProperties: false } },
-  { name: 'add_graphic', description: `Add a motion graphic on the member’s part (${REEL_GRAPHIC_TEMPLATES.map((t) => `${t.id}: ${t.detail}`).join(' ')}). It stays clear of their clip’s box, the hook text and the captions.`, parameters: { type: 'object', properties: { template: { type: 'string', enum: REEL_GRAPHIC_TEMPLATES.map((t) => t.id) }, at_ms: msProp('Start, ms into the member’s part. Time it to the words it shows.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, reason }, required: ['template', 'at_ms', 'fields'], additionalProperties: false } },
-  { name: 'update_graphic', description: 'Change a graphic by id. Give only what changes.', parameters: { type: 'object', properties: { id: { type: 'string' }, at_ms: msProp('Start, ms into the member’s part.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, reason }, required: ['id'], additionalProperties: false } },
+  { name: 'add_graphic', description: `Add a motion graphic on the member’s part (${REEL_GRAPHIC_TEMPLATES.map((t) => `${t.id}: ${t.detail}`).join(' ')}). It stays clear of their clip’s box, the hook text and the captions. With pin ("put an arrow here"): a highlight points at the pin; another template sits in the band nearest it.`, parameters: { type: 'object', properties: { template: { type: 'string', enum: REEL_GRAPHIC_TEMPLATES.map((t) => t.id) }, at_ms: msProp('Start, ms into the member’s part. Time it to the words it shows.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['template', 'at_ms', 'fields'], additionalProperties: false } },
+  { name: 'update_graphic', description: 'Change a graphic by id. Give only what changes. With pin ("move it here"): an arrow or circle points at the pin; another graphic moves to the band nearest it.', parameters: { type: 'object', properties: { id: { type: 'string' }, at_ms: msProp('Start, ms into the member’s part.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['id'], additionalProperties: false } },
   { name: 'remove_graphic', description: 'Remove a graphic by id.', parameters: { type: 'object', properties: { id: { type: 'string' }, reason }, required: ['id'], additionalProperties: false } }
 ]

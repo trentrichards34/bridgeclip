@@ -7,14 +7,18 @@
  * which checks them again. Times are SOURCE milliseconds, like the clip's cuts.
  */
 import { CAPTION_PRESET_IDS, isCaptionPresetId } from './caption-presets'
-import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_LOOKS, parseHeadlineLook } from './headline-look'
-import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHICS_PER_CLIP, isGraphicTemplate, parseGraphics, type EditorGraphic, type GraphicPlacement } from './motion-graphics'
-import { MAX_HOOK_CHARS, SPLIT_RANGE, TRANSCRIPT_CLIP_MS, defaultCrop, editDuration, framingAt, normalizeSceneTransitions, parseCandidateEdit, parseHook, type CandidateEdit, type EditorRange, type EditorScene } from './clip-editor'
+import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_LOOKS, headlineBarColor, parseHeadlineLook } from './headline-look'
+import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHICS_PER_CLIP, isGraphicTemplate, parseGraphics, sourceTimeAt, type EditorGraphic, type GraphicPlacement } from './motion-graphics'
+import { MAX_HOOK_CHARS, SPLIT_RANGE, TRANSCRIPT_CLIP_MS, defaultCrop, editDuration, framingAt, normalizeSceneTransitions, panelRows, parseCandidateEdit, parseHook, type CandidateEdit, type Crop, type EditorRange, type EditorScene } from './clip-editor'
+import { hookShare, outputSize } from './graphic-layout'
+import { PIN_PROP, aimGraphic, checkHighlightFields, pinArg, type ChatPoint } from './chat-point'
 
 import { CHAT_MAX_TOOL_CALLS, chatClock, chatFail as fail, chatReason as reasonOf, chatSeconds, chatSentence as sentence, chatText as text, type ChatReplyOf } from './chat-core'
 
 export { CHAT_MAX_MESSAGE_CHARS, CHAT_MAX_TOOL_CALLS, CHAT_MAX_TURNS, ChatToolError, chatClock, chatCostNote, chatPlainText, chatSeconds, type ChatInfo } from './chat-core'
 export const CHAT_SUGGESTIONS = ['Start earlier', 'Cut the pauses', 'Punchier hook', 'Add a stat graphic'] as const
+/** Suggestions while the member has pins on the preview. */
+export const CHAT_POINT_SUGGESTIONS = ['Put an arrow here', 'Circle this', 'Zoom in on this', 'Move the graphic here'] as const
 const MAX_CUTS = 24
 const MAX_SCENES = 60
 const MIN_PIECE_MS = 100
@@ -96,6 +100,64 @@ function cropsFor(layout: EditorScene['layout'], project: ChatProject): EditorSc
     ? [defaultCrop(project.width, project.height, aspect / SPLIT_RANGE.default, .25), defaultCrop(project.width, project.height, aspect / SPLIT_RANGE.default, .75)]
     : [defaultCrop(project.width, project.height, aspect)]
 }
+/** Zoom limits for "zoom in on this" (the Framing tab's Zoom slider goes to 4×). */
+const MAX_POINT_ZOOM = 4
+const DEFAULT_POINT_ZOOM = 1.6
+
+/** The source time a pin was made at (its output time through the cuts and speed), or null when it has none or is past the end. */
+export function pinSourceMs(c: Pick<CandidateEdit, 'ranges' | 'video_speed'>, pin: Pick<ChatPoint, 'out_ms'>): number | null {
+  return pin.out_ms === null ? null : sourceTimeAt(c, pin.out_ms)
+}
+
+/**
+ * Where a point on the OUTPUT frame (fractions) shows the SOURCE video at
+ * source time `t` (fractions of the source frame), following the layout there
+ * like the editor's Output preview: the hook bar on top, the split panels, the
+ * crop trimmed to its panel. Null on a Fit layout's blurred background.
+ */
+export function sourcePointAt(c: CandidateEdit, project: Pick<ChatProject, 'width' | 'height' | 'aspect_ratio'>, x: number, y: number, t: number): { x: number; y: number } | null {
+  const scene = framingAt(c, t), out = outputSize(project.aspect_ratio)
+  const clamp = (n: number): number => Math.max(0, Math.min(1, n))
+  if (scene.layout === 'fit') {
+    const scale = Math.min(out.width / project.width, out.height / project.height)
+    const w = project.width * scale / out.width, h = project.height * scale / out.height
+    const u = (x - (1 - w) / 2) / w, v = (y - (1 - h) / 2) / h
+    return u < 0 || u > 1 || v < 0 || v > 1 ? null : { x: clamp(u), y: clamp(v) }
+  }
+  const bar = c.hook && headlineBarColor(c.hook.look) ? hookShare(c, project.aspect_ratio) : 0
+  const ya = clamp((y - bar) / (1 - bar))
+  const rows = panelRows(scene)
+  const index = Math.max(0, rows.findIndex(([top, share]) => ya <= top + share + 1e-9))
+  const [top, share] = rows[index]
+  let [cx, cy, cw, ch] = scene.crops[Math.min(index, scene.crops.length - 1)]
+  // The crop is trimmed around its center to its panel's shape, as the preview and export draw it.
+  const target = out.width / (share * (1 - bar) * out.height), pw = cw * project.width, ph = ch * project.height
+  if (pw / ph < target) { const th = pw / target / project.height; cy += (ch - th) / 2; ch = th } else if (pw / ph > target) { const tw = ph * target / project.width; cx += (cw - tw) / 2; cw = tw }
+  return { x: clamp(cx + clamp(x) * cw), y: clamp(cy + clamp((ya - top) / share) * ch) }
+}
+
+/** A Full frame crop centered on a pin, zoomed in (a box: zoomed so the box fills the frame; a point: `zoom` or 1.6× / half again the zoom in use). */
+export function zoomCropAt(c: CandidateEdit, project: ChatProject, pin: ChatPoint, t: number, zoom?: number): { crop: Crop; zoom: number } {
+  const aspect = project.aspect_ratio === '9:16' ? 9 / 16 : 16 / 9
+  const base = defaultCrop(project.width, project.height, aspect)
+  const centerX = pin.x + (pin.w ?? 0) / 2, centerY = pin.y + (pin.h ?? 0) / 2
+  const center = sourcePointAt(c, project, centerX, centerY, t)
+  if (!center) return fail('That pin is on the blurred background, not on the video. Ask the member to point at the video itself.')
+  let z = zoom
+  if (z === undefined && pin.w !== undefined && pin.h !== undefined) {
+    const a = sourcePointAt(c, project, pin.x, pin.y, t), b = sourcePointAt(c, project, pin.x + pin.w, pin.y + pin.h, t)
+    if (a && b && Math.abs(b.x - a.x) > 1e-3 && Math.abs(b.y - a.y) > 1e-3) z = Math.min(base[2] / Math.abs(b.x - a.x), base[3] / Math.abs(b.y - a.y))
+  }
+  if (z === undefined) {
+    const scene = framingAt(c, t)
+    const current = scene.layout === 'fill' ? base[2] / scene.crops[0][2] : 1
+    z = Math.max(DEFAULT_POINT_ZOOM, current * 1.5)
+  }
+  z = Math.round(Math.max(1, Math.min(MAX_POINT_ZOOM, z)) * 100) / 100
+  const crop = defaultCrop(project.width, project.height, aspect, center.x, center.y, z).map((n) => Math.round(n * 1e6) / 1e6) as Crop
+  return { crop, zoom: z }
+}
+
 const layoutName = (layout: string): string => layout === 'fill' ? 'Full frame' : layout === 'split' ? 'Split' : 'Fit'
 const clipStart = (c: CandidateEdit): number => c.ranges[0][0]
 const clipEnd = (c: CandidateEdit): number => c.ranges[c.ranges.length - 1][1]
@@ -117,7 +179,7 @@ export function patchValues(c: CandidateEdit, keys: readonly (keyof ChatPatch)[]
  * Runs one tool call against `c`. Returns the step and the changed clip, or
  * throws ChatToolError with words the model can act on.
  */
-export function applyChatTool(c: CandidateEdit, name: string, args: Record<string, unknown>, project: ChatProject, newId: () => string): { step: ChatStep; candidate: CandidateEdit } {
+export function applyChatTool(c: CandidateEdit, name: string, args: Record<string, unknown>, project: ChatProject, newId: () => string, points: readonly ChatPoint[] = []): { step: ChatStep; candidate: CandidateEdit } {
   const done = (summary: string, patch: ChatPatch, focus_ms: number | null, play_seconds = 0): { step: ChatStep; candidate: CandidateEdit } => {
     const candidate = { ...c, ...patch }
     if (patch.scenes) candidate.scenes = normalizeSceneTransitions(patch.scenes)
@@ -182,13 +244,20 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
       return done(`Hook look set to ${label}, ${font} font${look.look === 'brand' ? `, ${look.color}` : ''}${why}`, { hook }, clipStart(c), 0)
     }
     case 'set_layout_at': {
-      const layout = args.layout
+      const pin = pinArg(args, points)
+      const layout = args.layout ?? (pin ? 'fill' : undefined)
       if (layout !== 'fill' && layout !== 'split' && layout !== 'fit') return fail('layout must be fill, split or fit.')
-      const at = ms(args.at_ms, 'at_ms', project), start = clipStart(c), end = clipEnd(c)
+      if (pin && layout !== 'fill') fail('Zooming in on a pin uses the fill layout. Leave out layout or use fill.')
+      if (args.zoom !== undefined && !pin) fail('zoom goes with a pin: give the pin to zoom in on.')
+      if (args.zoom !== undefined && (typeof args.zoom !== 'number' || !Number.isFinite(args.zoom) || args.zoom < 1 || args.zoom > MAX_POINT_ZOOM)) fail(`zoom must be between 1 and ${MAX_POINT_ZOOM}.`)
+      const pinAt = pin ? pinSourceMs(c, pin) : null
+      const at = ms(args.at_ms ?? pinAt ?? undefined, 'at_ms', project), start = clipStart(c), end = clipEnd(c)
       if (at >= end) fail(`at_ms must be before the clip ends (${end}).`)
       const until = args.until_ms === undefined || args.until_ms === null ? null : ms(args.until_ms, 'until_ms', project)
       if (until !== null && until <= at) fail('until_ms must be after at_ms.')
-      const fresh = (at_ms: number): EditorScene => ({ at_ms, layout, crops: cropsFor(layout, project) })
+      // A pin: a Full frame crop centered on it, framed as the preview showed it when the member pointed.
+      const zoomed = pin ? zoomCropAt(c, project, pin, pinAt ?? Math.max(start, at), args.zoom as number | undefined) : null
+      const fresh = (at_ms: number): EditorScene => ({ at_ms, layout, crops: zoomed ? [zoomed.crop] : cropsFor(layout, project) })
       let scenes: EditorScene[]
       const from = at <= start ? start : at
       if (at <= start) {
@@ -203,7 +272,8 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
       scenes = scenes.filter((s) => s.at_ms <= from || s.at_ms >= stop)
       if (restore) scenes = [...scenes.filter((s) => Math.abs(s.at_ms - until!) >= 1), restore].sort((a, b) => a.at_ms - b.at_ms)
       if (scenes.length > MAX_SCENES) fail(`A clip can have up to ${MAX_SCENES} layout changes.`)
-      return done(`Layout set to ${layoutName(layout)} from ${at <= start ? 'the start' : chatClock(at)} ${restore ? `to ${chatClock(until!)}` : 'to the end'}${why}`, { scenes }, Math.max(start, at), 3)
+      const span = `from ${at <= start ? 'the start' : chatClock(at)} ${restore ? `to ${chatClock(until!)}` : 'to the end'}`
+      return done(zoomed ? `Zoomed in ${zoomed.zoom.toFixed(1)}× on pin ${pin!.n} ${span}${why}` : `Layout set to ${layoutName(layout)} ${span}${why}`, { scenes }, Math.max(start, at), 3)
     }
     case 'set_captions': {
       const patch: ChatPatch = {}
@@ -227,15 +297,22 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
       if (graphics.length >= MAX_GRAPHICS_PER_CLIP) fail(`A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics.`)
       if (!isGraphicTemplate(args.template)) return fail(`template must be one of ${GRAPHIC_TEMPLATES.map((t) => t.id).join(', ')}.`)
       const template = GRAPHIC_TEMPLATES.find((t) => t.id === args.template)!
-      const graphic = graphicFrom({ id: newId(), template: template.id, at_ms: args.at_ms, duration_ms: args.duration_ms ?? 2500, placement: args.placement ?? 'middle', fields: {}, origin: 'chat' }, args, c, project)
-      return done(`Added a ${template.label.toLowerCase()} at ${chatClock(graphic.at_ms)}${why}`, { graphics: [...graphics, graphic].sort((a, b) => a.at_ms - b.at_ms) }, graphic.at_ms, 3)
+      const pin = pinArg(args, points)
+      // At a pin with no time given: a little before the moment pointed at (in its section), so it is on screen there.
+      const pinAt = pin && args.at_ms === undefined ? pinSourceMs(c, pin) : null
+      const range = pinAt === null ? undefined : c.ranges.find(([a, b]) => pinAt >= a && pinAt < b)
+      const at = pinAt !== null && range ? Math.max(range[0], pinAt - 400) : args.at_ms
+      const graphic = graphicFrom({ id: newId(), template: template.id, at_ms: at, duration_ms: args.duration_ms ?? 2500, placement: args.placement ?? 'middle', fields: {}, origin: 'chat' }, args, c, project, pin)
+      return done(`Added ${template.id === 'highlight' ? `${graphic.fields.shape === 'arrow' ? 'an arrow' : 'a circle'}` : `a ${template.label.toLowerCase()}`}${pin ? ` at pin ${pin.n}` : ''} at ${chatClock(graphic.at_ms)}${why}`, { graphics: [...graphics, graphic].sort((a, b) => a.at_ms - b.at_ms) }, graphic.at_ms, 3)
     }
     case 'update_graphic': {
       const graphics = c.graphics ?? [], current = graphics.find((g) => g.id === args.id)
       if (!current) return fail(`No graphic ${String(args.id).slice(0, 40)}. The clip's graphics are listed in the context.`)
-      const graphic = graphicFrom({ ...current, at_ms: args.at_ms ?? current.at_ms, duration_ms: args.duration_ms ?? current.duration_ms, placement: args.placement ?? current.placement }, args, c, project)
+      const pin = pinArg(args, points)
+      const graphic = graphicFrom({ ...current, at_ms: args.at_ms ?? current.at_ms, duration_ms: args.duration_ms ?? current.duration_ms, placement: args.placement ?? current.placement }, args, c, project, pin)
       const label = GRAPHIC_TEMPLATES.find((t) => t.id === graphic.template)!.label.toLowerCase()
-      return done(`Changed the ${label} at ${chatClock(graphic.at_ms)}${why}`, { graphics: graphics.map((g) => g.id === graphic.id ? graphic : g).sort((a, b) => a.at_ms - b.at_ms) }, graphic.at_ms, 3)
+      const moved = pin ? graphic.template === 'highlight' ? ` to point at pin ${pin.n}` : ` to the ${graphic.placement}` : ''
+      return done(`${pin ? 'Moved' : 'Changed'} the ${label} at ${chatClock(graphic.at_ms)}${moved}${why}`, { graphics: graphics.map((g) => g.id === graphic.id ? graphic : g).sort((a, b) => a.at_ms - b.at_ms) }, graphic.at_ms, 3)
     }
     case 'remove_graphic': {
       const graphics = c.graphics ?? [], current = graphics.find((g) => g.id === args.id)
@@ -249,7 +326,7 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
 }
 
 type GraphicDraft = Omit<EditorGraphic, 'at_ms' | 'duration_ms' | 'placement'> & { at_ms: unknown; duration_ms: unknown; placement: unknown }
-function graphicFrom(base: GraphicDraft, args: Record<string, unknown>, c: CandidateEdit, project: ChatProject): EditorGraphic {
+function graphicFrom(base: GraphicDraft, args: Record<string, unknown>, c: CandidateEdit, project: ChatProject, pin: ChatPoint | null = null): EditorGraphic {
   const at = ms(base.at_ms, 'at_ms', project)
   if (typeof base.duration_ms !== 'number' || !Number.isFinite(base.duration_ms) || base.duration_ms < GRAPHIC_MIN_MS || base.duration_ms > GRAPHIC_MAX_MS) fail(`duration_ms must be between ${GRAPHIC_MIN_MS} and ${GRAPHIC_MAX_MS}.`)
   if (!c.ranges.some(([a, b]) => at >= a && at < b)) fail('at_ms must be inside the clip (one of its sections).')
@@ -270,8 +347,15 @@ function graphicFrom(base: GraphicDraft, args: Record<string, unknown>, c: Candi
     }
   }
   if (template.id === 'logo') fail('The chat can’t add a logo graphic. The member can add one in the Graphics row.')
-  if (!template.fields.some((f) => fields[f])) fail(`Give the ${template.id} graphic its text: ${template.fields.join(', ')}.`)
-  return { id: base.id, template: template.id, at_ms: at, duration_ms: Math.round(base.duration_ms as number), placement: base.placement as GraphicPlacement, fields, origin: base.origin ?? 'chat' }
+  let graphic: EditorGraphic = { id: base.id, template: template.id, at_ms: at, duration_ms: Math.round(base.duration_ms as number), placement: base.placement as GraphicPlacement, fields, origin: base.origin ?? 'chat' }
+  if (template.id === 'highlight') checkHighlightFields(fields)
+  if (pin) {
+    const aimed = aimGraphic(graphic, pin, typeof (args.fields as Record<string, unknown> | undefined)?.shape === 'string')
+    // A placement the model gave wins over the band nearest the pin.
+    graphic = { ...aimed, placement: args.placement !== undefined ? graphic.placement : aimed.placement }
+  }
+  if (!template.fields.some((f) => graphic.fields[f])) fail(`Give the ${template.id} graphic its text: ${template.fields.join(', ')}.`)
+  return graphic
 }
 
 /**
@@ -324,11 +408,11 @@ export const CHAT_TOOLS: { name: ChatToolName; description: string; parameters: 
   { name: 'add_section', description: 'Add start_ms–end_ms of the source to the clip (merged with the sections around it).', parameters: { type: 'object', properties: { start_ms: msProp('Source ms.'), end_ms: msProp('Source ms.'), reason }, required: ['start_ms', 'end_ms'], additionalProperties: false } },
   { name: 'set_hook_text', description: `Set the hook text drawn at the top of a vertical clip: 2+ words, up to ${MAX_HOOK_CHARS} characters, true to what is said.`, parameters: { type: 'object', properties: { text: { type: 'string', minLength: 3, maxLength: MAX_HOOK_CHARS }, reason }, required: ['text'], additionalProperties: false } },
   { name: 'set_hook_look', description: 'Change how the hook text looks. Give only what changes.', parameters: { type: 'object', properties: { look: { type: 'string', enum: HEADLINE_LOOKS.map((l) => l.id) }, font: { type: 'string', enum: HEADLINE_FONTS.map((f) => f.id) }, color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$', description: 'Bar color for the brand look.' }, reason }, additionalProperties: false } },
-  { name: 'set_layout_at', description: 'Frame the clip as fill (full frame, cropped), split (two panels stacked) or fit (whole frame, blurred background) from at_ms to until_ms (or to the end). at_ms at or before the clip start changes it from the start.', parameters: { type: 'object', properties: { at_ms: msProp('Source ms.'), layout: { type: 'string', enum: ['fill', 'split', 'fit'] }, until_ms: msProp('Optional end, source ms.'), reason }, required: ['at_ms', 'layout'], additionalProperties: false } },
+  { name: 'set_layout_at', description: 'Frame the clip as fill (full frame, cropped), split (two panels stacked) or fit (whole frame, blurred background) from at_ms to until_ms (or to the end). at_ms at or before the clip start changes it from the start. With pin ("zoom in on this"): a fill crop centered on the pin, zoomed in (zoom, or about 1.6×; a box pin fills the frame); at_ms defaults to the pin\'s time. Give until_ms to zoom back out.', parameters: { type: 'object', properties: { at_ms: msProp('Source ms (optional with a pin).'), layout: { type: 'string', enum: ['fill', 'split', 'fit'] }, until_ms: msProp('Optional end, source ms.'), pin: PIN_PROP, zoom: { type: 'number', minimum: 1, maximum: MAX_POINT_ZOOM, description: 'With pin: how far to zoom in (1 = no zoom).' }, reason }, additionalProperties: false } },
   { name: 'set_captions', description: 'Turn burned-in captions on or off, or choose their style.', parameters: { type: 'object', properties: { on: { type: 'boolean' }, preset: { type: 'string', enum: [...CAPTION_PRESET_IDS] }, reason }, additionalProperties: false } },
   { name: 'set_title', description: 'Rename the clip (its title in the editor and Library).', parameters: { type: 'object', properties: { title: { type: 'string', minLength: 1, maxLength: 200 }, reason }, required: ['title'], additionalProperties: false } },
   { name: 'play', description: 'Play a moment of the source for the member (no edit). Use it to ask "is this the moment you mean?" before editing when you are not sure.', parameters: { type: 'object', properties: { at_ms: msProp('Source ms.'), seconds: { type: 'number', minimum: 1, maximum: MAX_PLAY_SECONDS }, reason }, required: ['at_ms'], additionalProperties: false } },
-  { name: 'add_graphic', description: `Add a motion graphic over the clip (${GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo').map((t) => `${t.id}: ${t.detail}`).join(' ')})`, parameters: { type: 'object', properties: { template: { type: 'string', enum: GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo').map((t) => t.id) }, at_ms: msProp('Source ms, inside the clip. Time it to the words it shows.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, reason }, required: ['template', 'at_ms', 'fields'], additionalProperties: false } },
-  { name: 'update_graphic', description: 'Change a graphic on the clip by id. Give only what changes.', parameters: { type: 'object', properties: { id: { type: 'string' }, at_ms: msProp('Source ms.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, reason }, required: ['id'], additionalProperties: false } },
+  { name: 'add_graphic', description: `Add a motion graphic over the clip (${GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo').map((t) => `${t.id}: ${t.detail}`).join(' ')}) With pin ("put an arrow here"): a highlight points at the pin (give fields.shape arrow or circle), another template sits in the band nearest it, and at_ms defaults to the pin's time.`, parameters: { type: 'object', properties: { template: { type: 'string', enum: GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo').map((t) => t.id) }, at_ms: msProp('Source ms, inside the clip. Time it to the words it shows.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['template'], additionalProperties: false } },
+  { name: 'update_graphic', description: 'Change a graphic on the clip by id. Give only what changes. With pin ("move the graphic here"): an arrow or circle points at the pin; another graphic moves to the band (top, middle or bottom) nearest it.', parameters: { type: 'object', properties: { id: { type: 'string' }, at_ms: msProp('Source ms.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['id'], additionalProperties: false } },
   { name: 'remove_graphic', description: 'Remove a graphic from the clip by id.', parameters: { type: 'object', properties: { id: { type: 'string' }, reason }, required: ['id'], additionalProperties: false } }
 ]

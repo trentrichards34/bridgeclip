@@ -11,7 +11,8 @@ import { constants, statSync } from 'fs'
 import { open } from 'fs/promises'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
-import { CHAT_TOOLS, applyChatTool, chatClock, chatPlainText, clipLengthNote, type ChatInfo, type ChatProject, type ChatReply, type ChatStep } from '../shared/clip-chat'
+import { CHAT_TOOLS, applyChatTool, chatClock, chatPlainText, clipLengthNote, pinSourceMs, type ChatInfo, type ChatProject, type ChatReply, type ChatStep } from '../shared/clip-chat'
+import { messageWithPoints, parseChatPoints, type ChatPoint } from '../shared/chat-point'
 import { editDuration, parseCandidateEdit, type CandidateEdit, type EditorProject } from '../shared/clip-editor'
 import { parseGraphics } from '../shared/motion-graphics'
 import type { OpenRouterModel } from '../shared/openrouter-models'
@@ -135,7 +136,9 @@ Rules:
 - Only change what the member asked for. Don't invent words, numbers or quotes: graphics and hooks use what is said in the clip or what the member gives you.
 - Non-word moments (a laugh, a "wowww", applause, a gasp) may only show as a sound tag, a loud moment or a short word like "Wow". When you are not sure which moment the member means, don't edit: say which moment you think it is (its time and what you based it on) and call play on it so they can hear it, then ask them to confirm.
 - If a tool returns an error, fix the call and try again, or tell the member why it can't be done.
-- Don't say you made a change unless its tool call succeeded.`
+- Don't say you made a change unless its tool call succeeded.
+- The member may point at the video (pins). "Put an arrow here" or "circle this": add_graphic with template highlight and the pin. "Move the graphic here": update_graphic with the pin. "Zoom in on this": set_layout_at with the pin. "Put the hook/caption here" can't move to a point: say where it can go.
+- Blurring or hiding part of the video isn't supported here: say so plainly and don't call a tool for it.`
 
 function rangeLabel(segment: { start_ms: number; end_ms: number }, c: CandidateEdit): string {
   const start = c.ranges[0][0], end = c.ranges[c.ranges.length - 1][1]
@@ -196,6 +199,8 @@ export interface ChatTurnInput {
   fetch?: typeof fetch
   onCost?: (usd: number) => void
   newId?: () => string
+  /** Pins the member put on the Output preview with this message (checked). */
+  points?: ChatPoint[]
 }
 
 /** One member message: the model's answer and the checked edits. History is not changed here. */
@@ -205,16 +210,22 @@ export async function runClipChat(input: ChatTurnInput): Promise<ChatReply> {
   if (context.length > MAX_CONTEXT_CHARS) context = `${context.slice(0, MAX_CONTEXT_CHARS)}\n(trimmed)`
   let working = input.candidate
   const newId = input.newId ?? (() => `chat-${randomBytes(4).toString('hex')}`)
+  const points = input.points ?? []
   return runToolChat<ChatStep>({
     apiKey: input.apiKey, model: input.model, signal: input.signal, url: input.url, fetch: input.fetch, onCost: input.onCost,
     systemPrompt: `${SYSTEM_PROMPT}\n\nThe clip right now:\n${context}`,
-    history: input.history, message: input.message, tools: CHAT_TOOLS,
+    history: input.history, message: chatTurnMessage(input.message, input.candidate, points), tools: CHAT_TOOLS,
     apply: (name, args) => {
-      const { step, candidate } = applyChatTool(working, name, args, input.project, newId)
+      const { step, candidate } = applyChatTool(working, name, args, input.project, newId, points)
       working = candidate
       return { step, result: { sections: working.ranges, clip: clipLengthNote(working) } }
     }
   })
+}
+
+/** The member's words with their pins (the source time each pin's output time falls on, through the clip's cuts and speed). */
+export function chatTurnMessage(message: string, c: CandidateEdit, points: readonly ChatPoint[]): string {
+  return messageWithPoints(message, points, (p) => pinSourceMs(c, p))
 }
 
 // ── Per-clip conversations (this app session only) ───────────────────────
@@ -240,11 +251,12 @@ export interface EditorChatDeps {
 }
 
 /** The `editor:chat` request: checks the clip the renderer sent, runs the turn, remembers it. */
-export async function editorChat(candidate: unknown, message: unknown, deps: EditorChatDeps): Promise<ChatReply> {
+export async function editorChat(candidate: unknown, message: unknown, deps: EditorChatDeps, pins?: unknown): Promise<ChatReply> {
   const { run, project } = deps.session
   if (project.media_freed) throw new Error('Editor media was freed. This project is read-only.')
   if (!deps.apiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about this clip.')
   const text = chatMessage(message)
+  const points = parseChatPoints(pins)
   let clip: CandidateEdit
   try {
     clip = parseCandidateEdit(candidate, project.duration_ms, project.transcript.length)
@@ -264,9 +276,10 @@ export async function editorChat(candidate: unknown, message: unknown, deps: Edi
     const result = await runClipChat({
       apiKey: deps.apiKey, model: deps.model, url: deps.url, onCost: deps.onCost,
       project: { duration_ms: project.duration_ms, width: project.width, height: project.height, aspect_ratio: project.aspect_ratio, transcriptCount: project.transcript.length, title: project.title, transcript: project.transcript },
-      candidate: clip, message: text, history: chatHistory(key), segments, loud, signal: AbortSignal.timeout(CHAT_TIMEOUT_MS)
+      candidate: clip, message: text, history: chatHistory(key), segments, loud, signal: AbortSignal.timeout(CHAT_TIMEOUT_MS), points
     })
-    rememberTurn(key, text, result)
+    // Remembered with its pins, so "the same spot" makes sense in the next message.
+    rememberTurn(key, chatTurnMessage(text, clip, points), result)
     return result
   })
 }

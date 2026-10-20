@@ -13,6 +13,7 @@ import { isRemixGraphicFormat, parseRemixGraphics } from '../shared/reel-graphic
 import { MAX_POST_CAPTION_CHARS } from '../shared/remix'
 import { MAX_HEADLINE_CHARS, REMIX_CHAT_TOOLS, applyRemixChatTool, remixChatContext, type RemixChatFacts, type RemixChatReply, type RemixChatState, type RemixChatStep } from '../shared/remix-chat'
 import { CHAT_TIMEOUT_MS, ChatMemory, chatInfoFor, chatMessage, runToolChat } from './chat-engine'
+import { messageWithPoints, parseChatPoints, type ChatPoint } from '../shared/chat-point'
 import type { OpenRouterMessage } from './assistant/openrouter-agent'
 
 const MAX_CONTEXT_CHARS = 50_000
@@ -25,7 +26,8 @@ Rules:
 - "Make my part shorter" or "cut my first sentence" trims the member's take (trim_my_take); "shorten their clip" changes the part of their video (set_their_clip).
 - Only change what the member asked for. Don't invent words, numbers or quotes: hook text and graphics use what is said or what the member gives you.
 - If a tool returns an error, fix the call and try again, or tell the member why it can't be done.
-- Don't say you made a change unless its tool call succeeded.`
+- Don't say you made a change unless its tool call succeeded.
+- The member may point at the video (pins). "Put an arrow here": add_graphic with template highlight and the pin. "Move the graphic here": update_graphic with the pin. "Put their clip box here": set_box_position with the pin. Zooming and blurring part of the video aren't supported here: say so plainly.`
 
 export function remixChatInfo(input: { apiKey: boolean; model: string; catalogModel?: OpenRouterModel }): ChatInfo {
   return chatInfoFor(input, 'your video')
@@ -56,6 +58,8 @@ export interface RemixChatTurnInput {
   fetch?: typeof fetch
   onCost?: (usd: number) => void
   newId?: () => string
+  /** Pins the member put on the preview with this message (checked). */
+  points?: ChatPoint[]
 }
 
 export async function runRemixChat(input: RemixChatTurnInput): Promise<RemixChatReply> {
@@ -63,12 +67,13 @@ export async function runRemixChat(input: RemixChatTurnInput): Promise<RemixChat
   if (context.length > MAX_CONTEXT_CHARS) context = `${context.slice(0, MAX_CONTEXT_CHARS)}\n(trimmed)`
   let state = input.state, facts = input.facts
   const newId = input.newId ?? (() => `g-${randomBytes(5).toString('hex')}`)
+  const points = input.points ?? []
   return runToolChat<RemixChatStep>({
     apiKey: input.apiKey, model: input.model, signal: input.signal, url: input.url, fetch: input.fetch, onCost: input.onCost,
     systemPrompt: `${SYSTEM_PROMPT}\n\nThe video right now:\n${context}`,
-    history: input.history, message: input.message, tools: REMIX_CHAT_TOOLS,
+    history: input.history, message: messageWithPoints(input.message, points), tools: REMIX_CHAT_TOOLS,
     apply: (name, args) => {
-      const result = applyRemixChatTool(state, facts, name, args, newId)
+      const result = applyRemixChatTool(state, facts, name, args, newId, points)
       state = result.state; facts = result.facts
       return { step: result.step, result: { hook: state.headline, take: facts.takeTrim ?? 'whole', their_part: facts.theirClip ? [facts.theirClip.startMs, facts.theirClip.endMs] : null, graphics: state.graphics.length } }
     }
@@ -88,17 +93,18 @@ export interface RemixChatDeps {
 }
 
 /** The `remix:chat` request: checks the take and the page's state, runs the turn, remembers it per take. */
-export async function remixChat(value: unknown, message: unknown, deps: RemixChatDeps): Promise<RemixChatReply> {
+export async function remixChat(value: unknown, message: unknown, deps: RemixChatDeps, pins?: unknown): Promise<RemixChatReply> {
   if (!deps.apiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about your video.')
   const text = chatMessage(message)
+  const points = parseChatPoints(pins)
   const draftId = (value as { draftId?: unknown } | null)?.draftId
   const { facts, words, runId } = await deps.facts(draftId)
   const state = parseRemixChatState(value, facts)
   const key = `${runId}\n${state.draftId}`
   return memory.exclusive(key, async () => {
     const result = await runRemixChat({ apiKey: deps.apiKey, model: deps.model, url: deps.url, fetch: deps.fetch, onCost: deps.onCost,
-      state, facts, words, message: text, history: memory.history(key), signal: AbortSignal.timeout(CHAT_TIMEOUT_MS) })
-    memory.remember(key, text, result)
+      state, facts, words, message: text, history: memory.history(key), signal: AbortSignal.timeout(CHAT_TIMEOUT_MS), points })
+    memory.remember(key, messageWithPoints(text, points), result)
     return result
   })
 }

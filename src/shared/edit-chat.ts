@@ -20,8 +20,11 @@ import { HEADLINE_FONTS, HEADLINE_LOOKS, parseHeadlineLook } from './headline-lo
 import { LOOK_EXTRAS, parseLookExtras } from './look-extras'
 import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, MAX_GRAPHIC_FIELD_CHARS, newGraphic, templateInfo, type GraphicPlacement, type GraphicTemplateId } from './motion-graphics'
 import { MAX_REEL_GRAPHICS, REEL_GRAPHIC_TEMPLATES, graphicFields, newEditGraphic, type EditGraphic } from './reel-graphics'
+import { PIN_PROP, aimGraphic, pinArg, type ChatPoint } from './chat-point'
 
 export const EDIT_CHAT_SUGGESTIONS = ['Cut the retakes', 'Punchier hook', 'Add a stat card', 'Turn off the pop-ups'] as const
+/** Suggestions while the member has pins on the frame. */
+export const EDIT_CHAT_POINT_SUGGESTIONS = ['Put an arrow here', 'Circle this', 'Move the graphic here'] as const
 
 /** What the chat may change in the review (the look is the member's current look). */
 export type EditChatPatch = Partial<Pick<EditDecisions, 'cut' | 'hookId' | 'hookText' | 'endOnCta' | 'popups' | 'sounds' | 'look' | 'recipe' | 'lookExtras' | 'cutoutIntro' | 'rawIntro' | 'graphics'>>
@@ -67,7 +70,7 @@ export function editPatchValues(d: EditDecisions, keys: readonly (keyof EditChat
 }
 
 /** Runs one tool call against `d`. Returns the step and the changed review, or throws ChatToolError. */
-export function applyEditChatTool(d: EditDecisions, name: string, args: Record<string, unknown>, ctx: EditChatContext, newId?: () => string): { step: EditChatStep; decisions: EditDecisions } {
+export function applyEditChatTool(d: EditDecisions, name: string, args: Record<string, unknown>, ctx: EditChatContext, newId?: () => string, points: readonly ChatPoint[] = []): { step: EditChatStep; decisions: EditDecisions } {
   const { plan } = ctx
   const why = chatReason(args)
   const done = (summary: string, patch: EditChatPatch): { step: EditChatStep; decisions: EditDecisions } => {
@@ -201,7 +204,9 @@ export function applyEditChatTool(d: EditDecisions, name: string, args: Record<s
       const card = reelCardWindows(plan, d, starts).find((w) => at < w.end && at + duration / 1000 > w.start)
       if (card) fail(`That would play during a card (${card.start.toFixed(1)}–${card.end.toFixed(1)}s of the reel), so it would be left out. Use a word after the card ends, or turn the card off.`)
       const base = current ?? newEditGraphic(newGraphic(template, 0, { origin: 'chat', taken: graphics.map((g) => g.id) }), word)
-      const graphic: EditGraphic = { ...base, ...(newId && !current ? { id: newId() } : {}), word, duration_ms: Math.round(duration), placement: placement as GraphicPlacement, fields, origin: current?.origin ?? 'chat' }
+      const pin = pinArg(args, points)
+      let graphic: EditGraphic = { ...base, ...(newId && !current ? { id: newId() } : {}), word, duration_ms: Math.round(duration), placement: placement as GraphicPlacement, fields, origin: current?.origin ?? 'chat' }
+      if (pin) { const aimed = aimGraphic(graphic, pin, typeof (args.fields as Record<string, unknown> | undefined)?.shape === 'string'); graphic = { ...aimed, placement: args.placement !== undefined ? graphic.placement : aimed.placement } }
       const next = current ? graphics.map((g) => g.id === graphic.id ? graphic : g) : [...graphics, graphic]
       const label = templateInfo(template).label.toLowerCase()
       return done(`${current ? 'Changed the' : 'Added a'} ${label} on ${quote(plan, word, word)}${why}`, { graphics: next.sort((x, y) => x.word - y.word) })
@@ -296,8 +301,8 @@ export const EDIT_CHAT_TOOLS: { name: EditChatToolName; description: string; par
   { name: 'set_openings', description: 'Turn the cut-out opening (background removed for the first 3 seconds) or the raw-to-edited opening (a 3.5-second card showing the raw take first) on or off.', parameters: { type: 'object', properties: { cutout_intro: { type: 'boolean' }, raw_intro: { type: 'boolean' }, reason }, additionalProperties: false } },
   { name: 'set_captions', description: 'Turn captions on or off, or choose their style.', parameters: { type: 'object', properties: { on: { type: 'boolean' }, preset: { type: 'string', enum: [...CAPTION_PRESET_IDS] }, reason }, additionalProperties: false } },
   { name: 'set_hook_look', description: 'Change how the hook text looks. Give only what changes.', parameters: { type: 'object', properties: { look: { type: 'string', enum: HEADLINE_LOOKS.map((l) => l.id) }, font: { type: 'string', enum: HEADLINE_FONTS.map((f) => f.id) }, color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' }, reason }, additionalProperties: false } },
-  { name: 'add_graphic', description: `Add a motion graphic that starts as a word is said (${REEL_GRAPHIC_TEMPLATES.map((t) => `${t.id}: ${t.detail}`).join(' ')}). It can't play during a half-screen card.`, parameters: { type: 'object', properties: { template: { type: 'string', enum: REEL_GRAPHIC_TEMPLATES.map((t) => t.id) }, word: index('The word index it starts on (a kept word).'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, reason }, required: ['template', 'word', 'fields'], additionalProperties: false } },
-  { name: 'update_graphic', description: 'Change a graphic by id. Give only what changes.', parameters: { type: 'object', properties: { id: { type: 'string' }, word: index('The word index it starts on.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, reason }, required: ['id'], additionalProperties: false } },
+  { name: 'add_graphic', description: `Add a motion graphic that starts as a word is said (${REEL_GRAPHIC_TEMPLATES.map((t) => `${t.id}: ${t.detail}`).join(' ')}). It can't play during a half-screen card. With pin ("put an arrow here"): a highlight points at the pin; another template sits in the band nearest it.`, parameters: { type: 'object', properties: { template: { type: 'string', enum: REEL_GRAPHIC_TEMPLATES.map((t) => t.id) }, word: index('The word index it starts on (a kept word).'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['template', 'word', 'fields'], additionalProperties: false } },
+  { name: 'update_graphic', description: 'Change a graphic by id. Give only what changes. With pin ("move it here"): an arrow or circle points at the pin; another graphic moves to the band nearest it.', parameters: { type: 'object', properties: { id: { type: 'string' }, word: index('The word index it starts on.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['id'], additionalProperties: false } },
   { name: 'remove_graphic', description: 'Remove a graphic by id.', parameters: { type: 'object', properties: { id: { type: 'string' }, reason }, required: ['id'], additionalProperties: false } }
 ]
 

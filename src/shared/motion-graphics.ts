@@ -239,6 +239,34 @@ export function outputTime(c: Timing, t: number): number | null {
 }
 
 /**
+ * Output time (ms into the finished clip) → source time, through the cuts and
+ * export speed (the inverse of outputTime). Past the end: null. A time on a
+ * join lands at the start of the next section.
+ */
+export function sourceTimeAt(c: Timing, out: number): number | null {
+  if (!Number.isFinite(out) || out < 0) return null
+  let left = out * c.video_speed
+  for (const [a, b] of c.ranges) {
+    if (left < b - a) return Math.round(a + left)
+    left -= b - a
+  }
+  const last = c.ranges[c.ranges.length - 1]
+  return left < 1 ? last[1] - 1 : null
+}
+
+/** Source time → output time, with a time in cut-out footage moved to the nearest kept moment (for a pin made while "Play cuts only" is off). */
+export function nearestOutputTime(c: Timing, t: number): number {
+  const exact = outputTime(c, t)
+  if (exact !== null) return exact
+  let best = 0, gap = Infinity, before = 0
+  for (const [a, b] of c.ranges) {
+    for (const [edge, out] of [[a, before], [b, before + b - a]] as const) if (Math.abs(t - edge) < gap) { gap = Math.abs(t - edge); best = out }
+    before += b - a
+  }
+  return best / c.video_speed
+}
+
+/**
  * Where a graphic plays in the finished clip (output ms). Parts of it that fall
  * in cut-out footage are dropped (the kept parts play back to back), so a
  * graphic across a cut is shortened; one with under 0.4 s left is dropped (null).

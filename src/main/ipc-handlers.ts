@@ -591,7 +591,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const model = chatModel(readMemberPrefs().create)
     return remixChatInfo({ apiKey: Boolean(loadSettings().openrouterApiKey), model, catalogModel: await chatCatalogModel(model) })
   })
-  handle('remix:chat', async (_event, state: unknown, message: unknown) => {
+  handle('remix:chat', async (_event, state: unknown, message: unknown, points: unknown) => {
     const settings = loadSettings()
     if (!settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about your video.')
     const model = chatModel(readMemberPrefs().create)
@@ -603,7 +603,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       url: app.isPackaged ? undefined : process.env.BRIDGECLIP_E2E_OPENROUTER_URL || undefined,
       // Recorded with OpenRouter's reported cost, also when the turn fails part way.
       onCost: (usd) => { void recordSpend({ kind: 'remix', provider: 'openrouter', usd, label: 'Remix: chat', ...(runId ? { runId } : {}) }).catch(() => {}) }
-    })
+    }, points)
   })
   handle('remix:chatReset', async (_event, draftId: unknown) => { const status = remixStatus(); if (status) resetRemixChat(status.id, draftId) })
   handle('remix:pauseView', () => pauseView())
@@ -657,7 +657,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const model = chatModel(readMemberPrefs().create)
     return editChatInfo({ apiKey: Boolean(loadSettings().openrouterApiKey), model, catalogModel: await chatCatalogModel(model) })
   })
-  handle('edit:chat', async (_event, decisions: unknown, message: unknown) => {
+  handle('edit:chat', async (_event, decisions: unknown, message: unknown, points: unknown) => {
     const settings = loadSettings()
     if (!settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about your edit.')
     const model = chatModel(readMemberPrefs().create)
@@ -668,7 +668,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       url: app.isPackaged ? undefined : process.env.BRIDGECLIP_E2E_OPENROUTER_URL || undefined,
       // Recorded with OpenRouter's reported cost, also when the turn fails part way.
       onCost: (usd) => { void recordSpend({ kind: 'edit', provider: 'openrouter', usd, label: 'Edit my recording: chat', ...(status ? { runId: status.folder.split(/[\\/]/).pop() } : {}) }).catch(() => {}) }
-    })
+    }, points)
   })
   handle('edit:chatReset', () => { const status = editStatus(); if (status) resetEditChat(status.id) })
   // My images: chosen in the file dialog (here), or dropped on the page (their bytes, checked like any picture).
@@ -794,7 +794,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const model = chatModel(readMemberPrefs().create)
     return chatInfo({ apiKey: Boolean(loadSettings().openrouterApiKey), model, catalogModel: await chatCatalogModel(model) })
   })
-  handle('editor:chat', async (_event, path: unknown, candidate: unknown, message: unknown) => {
+  handle('editor:chat', async (_event, path: unknown, candidate: unknown, message: unknown, points: unknown) => {
     const session = await openEditor(path)
     const settings = loadSettings()
     if (!settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about this clip.')
@@ -806,7 +806,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       url: app.isPackaged ? undefined : process.env.BRIDGECLIP_E2E_OPENROUTER_URL || undefined,
       // Recorded with OpenRouter's reported cost, also when the turn fails part way.
       onCost: (usd) => { void recordSpend({ kind: 'create', provider: 'openrouter', usd, label: 'Clip editor chat' }).catch(() => {}) }
-    })
+    }, points)
   })
   handle('editor:chatReset', async (_event, path: unknown, candidateId: unknown) => {
     await openEditor(path)

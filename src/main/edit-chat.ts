@@ -11,6 +11,7 @@ import { parseEditDecisions, reelSeconds, formatClock, type EditDecisions, type 
 import type { OpenRouterModel } from '../shared/openrouter-models'
 import type { ChatInfo } from '../shared/chat-core'
 import { CHAT_TIMEOUT_MS, ChatMemory, chatInfoFor, chatMessage, runToolChat } from './chat-engine'
+import { messageWithPoints, parseChatPoints, type ChatPoint } from '../shared/chat-point'
 
 const MAX_CONTEXT_CHARS = 60_000
 
@@ -23,7 +24,8 @@ Rules:
 - Only change what the member asked for. Don't invent words, numbers or quotes: hook text, pop-ups, cards and graphics use what was said or what the member gives you.
 - A graphic starts on a kept word and can't play during a half-screen card.
 - If a tool returns an error, fix the call and try again, or tell the member why it can't be done.
-- Don't say you made a change unless its tool call succeeded.`
+- Don't say you made a change unless its tool call succeeded.
+- The member may point at the video (pins). "Put an arrow here": add_graphic with template highlight and the pin. "Move the graphic here": update_graphic with the pin. Zooming and blurring part of the video aren't supported here: say so plainly.`
 
 export function editChatInfo(input: { apiKey: boolean; model: string; catalogModel?: OpenRouterModel }): ChatInfo {
   return chatInfoFor(input, 'your edit')
@@ -41,6 +43,8 @@ export interface EditChatTurnInput {
   fetch?: typeof fetch
   onCost?: (usd: number) => void
   newId?: () => string
+  /** Pins the member put on the preview with this message (checked). */
+  points?: ChatPoint[]
 }
 
 /** One member message: the model's answer and the checked changes. */
@@ -50,12 +54,13 @@ export async function runEditChat(input: EditChatTurnInput): Promise<EditChatRep
   if (context.length > MAX_CONTEXT_CHARS) context = `${context.slice(0, MAX_CONTEXT_CHARS)}\n(trimmed)`
   let working = input.decisions
   const newId = input.newId ?? (() => `g-${randomBytes(5).toString('hex')}`)
+  const points = input.points ?? []
   return runToolChat<EditChatStep>({
     apiKey: input.apiKey, model: input.model, signal: input.signal, url: input.url, fetch: input.fetch, onCost: input.onCost,
     systemPrompt: `${SYSTEM_PROMPT}\n\nThe edit right now:\n${context}`,
-    history: input.history, message: input.message, tools: EDIT_CHAT_TOOLS,
+    history: input.history, message: messageWithPoints(input.message, points), tools: EDIT_CHAT_TOOLS,
     apply: (name, args) => {
-      const { step, decisions } = applyEditChatTool(working, name, args, ctx, newId)
+      const { step, decisions } = applyEditChatTool(working, name, args, ctx, newId, points)
       working = decisions
       return { step, result: { reel: `The reel is now about ${formatClock(reelSeconds(ctx.plan, working))} long.`, cut_words: working.cut.length } }
     }
@@ -74,11 +79,12 @@ export interface EditChatDeps {
 }
 
 /** The `edit:chat` request: checks the review's choices the page sent against the run's plan, runs the turn, remembers it. */
-export async function editRecordingChat(value: unknown, message: unknown, deps: EditChatDeps): Promise<EditChatReply> {
+export async function editRecordingChat(value: unknown, message: unknown, deps: EditChatDeps, pins?: unknown): Promise<EditChatReply> {
   const status = deps.status
   if (!status || status.phase !== 'review' || !status.plan) throw new Error('There is no edit waiting for review.')
   if (!deps.apiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about your edit.')
   const text = chatMessage(message)
+  const points = parseChatPoints(pins)
   let decisions: EditDecisions
   try { decisions = parseEditDecisions(value, status.plan, status.images ?? []) } catch (error) {
     throw new Error(`Your edit has a choice the chat can’t read (${(error as Error).message.replace(/\.$/, '')}). Fix it and try again.`)
@@ -87,9 +93,9 @@ export async function editRecordingChat(value: unknown, message: unknown, deps: 
   return memory.exclusive(key, async () => {
     const result = await runEditChat({
       apiKey: deps.apiKey, model: deps.model, url: deps.url, fetch: deps.fetch, onCost: deps.onCost,
-      status: status as EditChatTurnInput['status'], decisions, message: text, history: memory.history(key), signal: AbortSignal.timeout(CHAT_TIMEOUT_MS)
+      status: status as EditChatTurnInput['status'], decisions, message: text, history: memory.history(key), signal: AbortSignal.timeout(CHAT_TIMEOUT_MS), points
     })
-    memory.remember(key, text, result)
+    memory.remember(key, messageWithPoints(text, points), result)
     return result
   })
 }

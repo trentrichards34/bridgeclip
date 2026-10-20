@@ -9,11 +9,12 @@ import { useMemo } from 'react'
 import { MessageSquare, Scissors } from 'lucide-react'
 import { newGraphic, type EditorGraphic, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { TAKE_GRAPHIC_FROM_MS, fitRemixGraphic, remixGraphicFrame, isRemixGraphicFormat } from '../../shared/reel-graphics'
-import { REMIX_CHAT_SUGGESTIONS, mergeRemixChatSteps, parseRemixChatSteps, type RemixChatAction, type RemixChatPatch, type RemixChatStep } from '../../shared/remix-chat'
+import { REMIX_CHAT_POINT_SUGGESTIONS, REMIX_CHAT_SUGGESTIONS, mergeRemixChatSteps, parseRemixChatSteps, type RemixChatAction, type RemixChatPatch, type RemixChatStep } from '../../shared/remix-chat'
 import type { RemixDraft, RemixRecordings, RemixStatus } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
 import { errorMessage } from '../lib/utils'
 import { ChatPanel, type ChatApplyOutcome } from './ChatPanel'
+import { PointPad } from './ChatPoints'
 import { ReelGraphics, type ReelGraphicItem, type ReelGraphicPatch } from './ReelGraphics'
 import { Button } from './ui/Button'
 
@@ -144,7 +145,8 @@ export function RemixChatSection({ runId, draft, text, onText, afterMain, disabl
       placeholder="Ask for a change to this video" suggestions={REMIX_CHAT_SUGGESTIONS}
       disabledReason={disabledReason}
       loadInfo={typeof api?.chatInfo === 'function' ? () => api.chatInfo() : undefined}
-      ask={(message) => api.chat({ draftId: draft.id, headline: text.headline, postCaption: text.postCaption, graphics: text.graphics }, message)}
+      ask={(message, points) => api.chat({ draftId: draft.id, headline: text.headline, postCaption: text.postCaption, graphics: text.graphics }, message, points)}
+      point={{ suggestions: REMIX_CHAT_POINT_SUGGESTIONS, pad: <PointPad thread={`remix\n${runId}\n${draft.id}`} /> }}
       parseSteps={parseRemixChatSteps} isEdit={(s) => Object.keys(s.patch).length > 0 || Boolean(s.action)}
       apply={apply} undo={undo}
       onReset={() => { void api?.chatReset?.(draft.id).catch(() => {}) }}
