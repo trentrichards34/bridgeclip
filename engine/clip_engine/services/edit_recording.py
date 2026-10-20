@@ -335,43 +335,78 @@ def _digits(token: str) -> Optional[tuple[float, str]]:
 
 
 def numbers_in(text: str) -> list[float]:
-    """Every number in a text, digits or words ("15", "$1,200", "15B", "fifteen billion", "3.5 million")."""
+    """Every number in a text, digits or words ("15", "$1,200", "15B", "fifteen billion", "3.5 million",
+    "three point five", "one and a half million", "a hundred")."""
     tokens = [t for t in re.split(r"[\s\-–—/]+", text.lower().replace("’", "'")) if t]
+    words = [t.strip(".,!?;:\"'()[]").strip("$€£%") for t in tokens]
     values: list[float] = []
     total = current = 0.0
     active = False
+    places = 0  # digits said after "point" so far (0: not in a decimal)
 
     def flush() -> None:
-        nonlocal total, current, active
+        nonlocal total, current, active, places
         if active:
             values.append(total + current)
         total = current = 0.0
         active = False
+        places = 0
 
-    for raw in tokens:
-        token = raw.strip(".,!?;:\"'()[]")
+    def word_at(k: int) -> str:
+        return words[k] if 0 <= k < len(words) else ""
+
+    def scale_word(word: str) -> bool:
+        return word == "hundred" or (word in _SCALES and word not in ("k", "m", "b", "bn"))
+
+    i = 0
+    while i < len(tokens):
+        token = tokens[i].strip(".,!?;:\"'()[]")
         digit = _digits(token)
-        word = token.strip("$€£%")
+        word = words[i]
         if digit is not None:
             flush()
             current, active = digit[0], True
             if digit[1] in ("k", "m", "b", "bn", "x", "%"):
                 flush()
+        elif places and word in _UNITS and _UNITS[word] < 10:
+            # "three point one four": each digit after the point.
+            current += _UNITS[word] / 10 ** places
+            places += 1
         elif word in _UNITS or word in _TENS:
+            if places:
+                flush()  # "point twenty": not a decimal digit, a new number
             value = _UNITS.get(word, _TENS.get(word, 0))
             if active and current % 100 >= 10 and value < 100 and word in _TENS:
                 flush()  # "twenty twenty": two numbers
             current += value
             active = True
-        elif word in ("hundred",) and active:
+        elif word == "half" and word_at(i + 1) == "a" and scale_word(word_at(i + 2)):
+            # "half a million"
+            flush()
+            current, active = 0.5, True
+            i += 1
+        elif word == "a" and scale_word(word_at(i + 1)):
+            # "a hundred", "a thousand", "a million": one of it.
+            flush()
+            current, active = 1.0, True
+        elif word == "hundred" and active:
+            places = 0
             current = (current or 1) * 100
-        elif word in _SCALES and word not in ("k", "m", "b", "bn") and active:
+        elif scale_word(word) and word != "hundred" and active:
+            places = 0
             total += (current or 1) * _SCALES[word]
             current = 0.0
-        elif word in ("and", "point") and active:
-            continue
+        elif word == "and" and active and not places and word_at(i + 1) == "a" and word_at(i + 2) == "half":
+            # "one and a half (million)"
+            current += 0.5
+            i += 2
+        elif word == "point" and active and not places and float(current).is_integer() and word_at(i + 1) in _UNITS and _UNITS[word_at(i + 1)] < 10:
+            places = 1
+        elif word == "and" and active and not places:
+            pass  # "two hundred and fifty"
         else:
             flush()
+        i += 1
     flush()
     return values
 
@@ -1493,8 +1528,11 @@ def place_graphics(raw: Any, starts: dict, cards: list[dict], total_s: float, wa
     return sorted(placed, key=lambda g: g["start_ms"])
 
 
-def _graphic_paths(root: str, graphics: list[dict], total_s: float) -> list[dict]:
-    """The placed graphics' renders, checked (in the run's .graphics/reel/); none when they're missing."""
+GRAPHICS_FAILED = "Your graphics couldn't be added this time. Make the video again to try."
+
+
+def _graphic_paths(root: str, graphics: list[dict], total_s: float, warnings: list[str]) -> list[dict]:
+    """The placed graphics' renders, checked (in the run's .graphics/reel/); none, with a warning, when they're missing."""
     from pathlib import Path
     from clip_engine.services.graphics_overlay import REEL_DIR, checked_graphics
     if not graphics:
@@ -1503,6 +1541,8 @@ def _graphic_paths(root: str, graphics: list[dict], total_s: float) -> list[dict
         return checked_graphics(Path(root), graphics, round(total_s * 1000), REEL_DIR)
     except ValueError as error:
         logger.warning(f"Graphics left out: {error}")
+        if GRAPHICS_FAILED not in warnings:
+            warnings.append(GRAPHICS_FAILED)
         return []
 
 
@@ -1611,7 +1651,7 @@ async def render_edit(config: dict, progress: Progress) -> dict:
     await overlay_reel(base, partial, work, look, timed_list, popups, total, root, layers, warnings)
     if graphics:
         progress("Adding your graphics", 92)
-        await asyncio.to_thread(_layer_graphics, partial, _graphic_paths(root, graphics, total))
+        await asyncio.to_thread(_layer_graphics, partial, _graphic_paths(root, graphics, total, warnings))
     if raw_intro:
         joined = os.path.join(root, ".clip_00.joined.mp4")
         await asyncio.to_thread(prepend_intro, raw_intro, partial, joined)
@@ -1666,6 +1706,7 @@ async def recompose_edit(config: dict, progress: Progress) -> dict:
     work = os.path.join(root, ".work-recompose")
     os.makedirs(work, exist_ok=True)
     folder = edit_dir(root)
+    warnings: list[str] = []
     try:
         progress("Making it again", 10)
         popups = [p for p in data.get("popups") or [] if isinstance(p, dict) and isinstance(p.get("text"), str)
@@ -1680,7 +1721,7 @@ async def recompose_edit(config: dict, progress: Progress) -> dict:
         saved_graphics = [g for g in data.get("graphics") or [] if isinstance(g, dict)]
         if saved_graphics:
             progress("Adding your graphics", 80)
-            await asyncio.to_thread(_layer_graphics, target, _graphic_paths(root, saved_graphics, total))
+            await asyncio.to_thread(_layer_graphics, target, _graphic_paths(root, saved_graphics, total, warnings))
         if raw_path:
             await asyncio.to_thread(prepend_intro, raw_path, target, out)
         data["settings"] = settings_of(look)
@@ -1688,4 +1729,5 @@ async def recompose_edit(config: dict, progress: Progress) -> dict:
     finally:
         import shutil
         shutil.rmtree(work, ignore_errors=True)
-    return {"duration_seconds": round(probe_seconds(out), 3), "settings": settings_of(look), "editable": editable_of(look)}
+    return {"duration_seconds": round(probe_seconds(out), 3), "settings": settings_of(look), "editable": editable_of(look),
+            "warnings": warnings[:4]}

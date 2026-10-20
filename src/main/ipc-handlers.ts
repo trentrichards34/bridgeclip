@@ -625,7 +625,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const settings = loadSettings()
     if (!settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about your video.')
     const model = chatModel(readMemberPrefs().create)
-    await assertSpendAllowed('remix:chat', 'openrouter', chatEstimateUsd(await chatCatalogModel(model)))
+    await assertSpendAllowed('remix:chat', 'openrouter', chatEstimateUsd(await chatCatalogModel(model), true))
     let runId: string | undefined
     return remixChat(state, message, {
       facts: async (draftId) => { const found = await remixChatFacts(draftId); runId = found.folder.split(/[\\/]/).pop(); return found },
@@ -691,7 +691,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const settings = loadSettings()
     if (!settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about your edit.')
     const model = chatModel(readMemberPrefs().create)
-    await assertSpendAllowed('edit:chat', 'openrouter', chatEstimateUsd(await chatCatalogModel(model)))
+    await assertSpendAllowed('edit:chat', 'openrouter', chatEstimateUsd(await chatCatalogModel(model), true))
     const status = editStatus()
     return editRecordingChat(decisions, message, {
       status, apiKey: settings.openrouterApiKey, model,
@@ -829,7 +829,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const settings = loadSettings()
     if (!settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about this clip.')
     const model = chatModel(readMemberPrefs().create)
-    await assertSpendAllowed('editor:chat', 'openrouter', chatEstimateUsd(await chatCatalogModel(model)))
+    await assertSpendAllowed('editor:chat', 'openrouter', chatEstimateUsd(await chatCatalogModel(model), true))
     return editorChat(candidate, message, {
       session: { run: realpathSync(path as string), project: session.project, sourcePath: session.sourcePath, previewPath: session.previewPath },
       apiKey: settings.openrouterApiKey, model, ffmpeg: resolveBinary('ffmpeg'),

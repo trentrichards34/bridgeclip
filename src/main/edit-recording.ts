@@ -842,7 +842,9 @@ export async function recomposeEditRun(outputDir: unknown, clipIndex: unknown, v
       const temp = join(folder, `.job_output-${randomBytes(4).toString('hex')}.json`)
       await writeFile(temp, JSON.stringify(latest, null, 2), { mode: 0o600 })
       await rename(temp, join(folder, 'job_output.json'))
-      return note
+      // What the engine left out (graphics that couldn't be added) is said with the note.
+      const warnings = Array.isArray(result.warnings) ? result.warnings.filter((item): item is string => typeof item === 'string').map((item) => item.slice(0, 300)).slice(0, 2) : []
+      return [note, ...warnings].filter(Boolean).join(' ') || null
     })
   } finally {
     recomposing = null

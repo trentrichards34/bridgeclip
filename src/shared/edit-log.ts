@@ -25,6 +25,33 @@ export interface EditLogLine<P> {
   restoreHint?: string
 }
 
+/** What a Restore changed: the fields it set and the values they had before, so Undo puts back only those. */
+export interface RestoreUndo<T> {
+  before: Partial<T>
+  after: Partial<T>
+}
+
+/** Apply a line's Restore; returns the new state and how to take it back. */
+export function applyRestore<T extends object>(state: T, restore: Partial<T>): { state: T; undo: RestoreUndo<T> } {
+  const before: Partial<T> = {}
+  for (const key of Object.keys(restore) as (keyof T)[]) before[key] = state[key]
+  return { state: { ...state, ...restore }, undo: { before, after: { ...restore } } }
+}
+
+/**
+ * Undo a Restore: only the fields it set go back; anything changed since stays. Null when one of those fields
+ * was changed again after the Restore (Undo would throw that change away), so Undo is no longer offered.
+ */
+export function undoRestore<T extends object>(state: T, undo: RestoreUndo<T>): T | null {
+  if (!restoreStillApplied(state, undo)) return null
+  return { ...state, ...undo.before }
+}
+
+/** The fields a Restore set still hold what it set them to. */
+export function restoreStillApplied<T extends object>(state: T, undo: RestoreUndo<T>): boolean {
+  return (Object.keys(undo.after) as (keyof T)[]).every((key) => JSON.stringify(state[key]) === JSON.stringify(undo.after[key]))
+}
+
 /** A start or end moved by less than this is just the cut snapping to words: not listed. */
 export const EDGE_MIN_MS = 400
 

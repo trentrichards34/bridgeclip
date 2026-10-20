@@ -451,6 +451,18 @@ test('Library → Remix: with the run\'s source video kept, the clip\'s moment i
   const mtime = fs.statSync(first.path).mtimeMs
   assert.equal((await mod.libraryClipForRemix(run, 0)).path, first.path)
   assert.equal(fs.statSync(first.path).mtimeMs, mtime)
+  // Two asks at once for a new moment (a start before 0 counts from 0): each writes its own partial file, both get the cut.
+  output.clips[0].start_time_ms = -400
+  const both = await Promise.all([mod.libraryClipForRemix(run, 0), mod.libraryClipForRemix(run, 0)])
+  assert.ok(both.every((item) => item.clean && item.path === path.join(run, '.remix-sources', 'clip_00-0-2500.mp4')), JSON.stringify(both))
+  assert.deepEqual(fs.readdirSync(path.join(run, '.remix-sources')).filter((name) => name.includes('partial')), [])
+  // A linked .remix-sources folder isn't written through: the made clip is used instead.
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'elsewhere-'))
+  fs.rmSync(path.join(run, '.remix-sources'), { recursive: true })
+  fs.symlinkSync(elsewhere, path.join(run, '.remix-sources'))
+  assert.deepEqual(plain(await mod.libraryClipForRemix(run, 0)), { path: made, creator: 'PowerfulJRE', clean: false })
+  assert.deepEqual(fs.readdirSync(elsewhere), [])
+  fs.rmSync(elsewhere, { recursive: true, force: true })
   fs.rmSync(library, { recursive: true, force: true })
 })
 

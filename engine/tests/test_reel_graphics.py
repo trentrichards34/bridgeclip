@@ -181,6 +181,21 @@ def test_an_edited_reel_shows_its_graphic_on_its_word_and_a_remake_keeps_it(tmp_
     asyncio.run(er.recompose_edit({"output_dir": root, "output_path": again, "headline": "New hook words", "headline_look": None,
                                    "include_captions": False, "caption_preset": "pop"}, lambda *_: None))
     assert red_share(frame_at(again, at[fifteen] + 0.7, str(tmp_path / "again.png"))) > 0.5
+    # Its render gone: the re-make goes ahead without the graphic and says so.
+    os.remove(os.path.join(root, ".graphics", REEL_DIR, NAME))
+    remade = asyncio.run(er.recompose_edit({"output_dir": root, "output_path": again, "headline": "New hook words", "headline_look": None,
+                                            "include_captions": False, "caption_preset": "pop"}, lambda *_: None))
+    assert remade["warnings"] == [er.GRAPHICS_FAILED]
+    assert red_share(frame_at(again, at[fifteen] + 0.7, str(tmp_path / "gone.png"))) < 0.05
+
+
+def test_graphics_that_cant_be_checked_are_left_out_with_a_warning(tmp_path):
+    warnings = []
+    graphics = [{"file": NAME, "start_ms": 500, "duration_ms": 1000}]
+    assert er._graphic_paths(str(tmp_path), graphics, 5.0, warnings) == []
+    assert warnings == ["Your graphics couldn't be added this time. Make the video again to try."]
+    assert er._graphic_paths(str(tmp_path), graphics, 5.0, warnings) == [] and len(warnings) == 1, "said once"
+    assert er._graphic_paths(str(tmp_path), [], 5.0, warnings) == []
 
 
 # ---------------------------------------------------------------------------

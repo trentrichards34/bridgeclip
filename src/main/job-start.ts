@@ -15,6 +15,7 @@ import { resolveAdvancedModels } from './openrouter-models'
 import { supportsCaptionFilter } from './tools'
 import { brandForJob } from './brands'
 import { referenceForRun, referencePath } from './reference-image'
+import { resolveMusic } from './music'
 import { plannerModelFor } from '../shared/purpose'
 import type { JobSnapshot } from '../shared/jobs'
 
@@ -50,7 +51,9 @@ export async function startClipJobRequest(request: unknown): Promise<StartJobRes
     if (config.brandIdentityId) brandForJob(config.brandIdentityId, false)
     // A reference picture that's gone is reported now, too.
     if (config.referenceImage) referencePath(config.referenceImage)
-  } catch (error) { return { error: error instanceof Error ? error.message : 'Invalid job options' } }
+    // And music of their own that was removed (a saved style can still point to it).
+    if (config.music && config.musicTrack) resolveMusic(config.musicTrack)
+  } catch (error) { return { error: String((error as Error | null)?.message || 'Invalid job options').slice(0, 300) } }
   const settings = loadSettings()
 
   if (!settings.openrouterApiKey) {
