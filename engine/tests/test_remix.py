@@ -92,8 +92,24 @@ class TestChecksAndPieces:
 
     def test_estimates_and_filters(self):
         script = remix.parse_plan({"remixes": [plan_item(4, 8)]}, transcript(), "", 1)[0]
-        assert remix.estimate_remix_cost(script, "lipsync") > remix.estimate_remix_cost(script, "voice") > 0
-        assert remix.estimate_remix_cost(script, "lipsync") < 1.5
+        assert remix.estimate_remix_cost(script, "lipsync", heygen_per_second=0.05) > remix.estimate_remix_cost(script, "voice") > 0
+        assert remix.estimate_remix_cost(script, "lipsync", heygen_per_second=0.05) < 1.5
+
+    def test_heygen_part_is_left_out_not_guessed_when_its_price_is_unknown(self):
+        script = remix.parse_plan({"remixes": [plan_item(4, 8)]}, transcript(), "", 1)[0]
+        voice = remix.estimate_remix_cost(script, "voice")
+        # No price for this avatar's HeyGen engine: only the app's voice is estimated, and the draft says HeyGen's part is unknown.
+        assert remix.estimate_heygen_cost(script, None) is None
+        assert remix.estimate_remix_cost(script, "lipsync", heygen_per_second=None) == voice
+        unpriced = remix.script_to_draft(script, 0, 0, {}, "lipsync", heygen_per_second=None)
+        assert unpriced["heygen_estimate_usd"] is None and unpriced["estimate_usd"] == round(voice, 3)
+        priced = remix.script_to_draft(script, 0, 0, {}, "lipsync", heygen_per_second=0.1)
+        part = remix.estimate_heygen_cost(script, 0.1)
+        assert priced["heygen_estimate_usd"] == round(part, 3) and priced["estimate_usd"] == round(voice + part, 3)
+        # Speaking in its HeyGen voice: every line is HeyGen's, so the whole estimate is HeyGen's.
+        spoken = remix.script_to_draft(script, 0, 0, {}, "lipsync", heygen_per_second=0.1, heygen_voice=True)
+        assert spoken["heygen_estimate_usd"] == spoken["estimate_usd"]
+        assert "heygen_estimate_usd" not in remix.script_to_draft(script, 0, 0, {}, "voice")
         assert remix.concat_filter(2) == "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]"
         assert remix.enable_expr([(0, 1.5), (3, 4)]) == "between(t,0.000,1.500)+between(t,3.000,4.000)"
         words = remix.estimated_words("one two three.", 1000, 2000)

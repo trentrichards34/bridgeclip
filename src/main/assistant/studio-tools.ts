@@ -8,17 +8,20 @@ import {
   normalizeCtaKeyword, remixEditProblem, type BrandIdentity, type RemixDraft, type RemixEdit, type RemixStatus
 } from '../../shared/remix'
 import {
-  estimateRenderCost, estimateSpokenSeconds, MAX_SCENES, REACTIONS, SCRIPT_LENGTHS, scriptText,
+  estimateSpokenSeconds, MAX_SCENES, REACTIONS, SCRIPT_LENGTHS, scriptText,
   type AvatarRenderStatus, type AvatarSummary
 } from '../../shared/avatars'
 import { loadSettings } from '../settings-store'
 import { applyRunCta, listCtas } from '../ctas'
 import { setLibraryClipCta } from '../library-management'
 import {
-  cancelRemix, editRemixDraft, listBrandIdentities, parseRemixRequest, readBrandIdentity, recomposeRemix, remixFolderInUse, remixStatus, renderRemix, saveBrandIdentity, startRemix
+  cancelRemix, editRemixDraft, listBrandIdentities, parseRemixRequest, readBrandIdentity, recomposeRemix, remixFolderInUse, remixRenderCheck, remixStartEstimate, remixStatus,
+  renderRemix, saveBrandIdentity, startRemix
 } from '../remix'
 import { listAvatars, readAvatar } from '../avatars'
-import { avatarRenderStatus, parseRenderRequest, startAvatarRender, writeAvatarScript } from '../avatar-studio'
+import { avatarRenderStatus, parseRenderRequest, renderSpendCheck, SCRIPT_ESTIMATE_USD, startAvatarRender, writeAvatarScript } from '../avatar-studio'
+import { assertSpendAllowed, metered, meteredAvatarRender } from '../spending'
+import { decodeSpendGate, type SpendProvider } from '../../shared/spending'
 import { AssistantToolError, type AssistantToolSpec } from './tool-types'
 import {
   clipFile, clipIndexProperty, libraryPath, object, pollUntil, runIdProperty, runOutput, seconds, toolError, type ToolHost
@@ -46,6 +49,16 @@ const plural = (count: number, word: string, many = `${word}s`): string => `${co
 /** Run a main-module call, turning its member-facing errors into tool errors. */
 async function guarded<T>(work: () => Promise<T> | T): Promise<T> {
   try { return await work() } catch (error) { throw toolError(error) }
+}
+
+/**
+ * The spending check the app's pages run before the same paid call. The member approved it in the chat, so
+ * (as for start_clip_job) only their monthly spending limit can still stop it.
+ */
+async function spendCheck(channel: string, provider: SpendProvider, estimateUsd: number | null): Promise<void> {
+  try { await assertSpendAllowed(channel, provider, estimateUsd, { balance: false }) } catch (error) {
+    throw new AssistantToolError(decodeSpendGate((error as Error | null)?.message)?.message ?? 'The spending check failed. Try again.')
+  }
 }
 
 function noOpenRouterKey(what: string): never {
@@ -516,6 +529,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
         }
         assertRemixIdle()
         const { request } = await remixPlan(input)
+        await spendCheck('remix:start', 'openrouter', remixStartEstimate(request))
         const status = await guarded(() => startRemix(request))
         return { ...remixView(status), started: true, summary: 'Planning started' }
       }
@@ -595,11 +609,21 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
         if (status.onCamera) return null
         const drafts = chosenDrafts(status, input.draftIds as number[])
         const total = drafts.reduce((sum, draft) => sum + draft.estimateUsd, 0)
+        // The same estimate and provider as the Remix page's check (Avatar on camera is billed on HeyGen too).
+        const check = remixRenderCheck(drafts.map((draft) => ({ id: draft.id })))
+        const heygen = check.openrouterUsd !== undefined
+        const cost = !heygen
+          ? (total > 0 ? `Uses your OpenRouter credit: about ${money(total)} in all.` : 'Making these is free: the avatar’s reactions are reused.')
+          : check.estimateUsd === null
+            ? `Uses your HeyGen account for the avatar video${check.openrouterUsd ? ` (at HeyGen’s own price) and about ${money(check.openrouterUsd)} of OpenRouter credit for the voice` : ' (at HeyGen’s own price)'}.`
+            : check.provider === 'heygen' || !check.openrouterUsd
+              ? `Uses your HeyGen account: about ${money(check.estimateUsd)} in all.`
+              : `About ${money(check.estimateUsd)} in all: ${money(check.openrouterUsd)} of OpenRouter credit for the voice, the rest on your HeyGen account.`
         return [
           `Make ${plural(drafts.length, 'video')}:`,
           ...drafts.slice(0, 12).map((draft) => `• ${draft.grade ? `${draft.grade.letter} · ` : ''}“${clip(draft.headline, 90)}”`),
           ...(drafts.length > 12 ? [`…and ${drafts.length - 12} more`] : []),
-          total > 0 ? `Uses your OpenRouter credit: about ${money(total)} in all.` : 'Making these is free: the avatar’s reactions are reused.',
+          cost,
           ...(drafts.length < status.drafts.length ? [`The other ${plural(status.drafts.length - drafts.length, 'take')} won’t be made.`] : [])
         ]
       },
@@ -612,6 +636,8 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
         const edits: RemixEdit[] = chosenDrafts(status, input.draftIds as number[]).map((draft) => ({
           id: draft.id, headline: draft.headline, intro: draft.intro, beats: draft.beats, close: draft.close, postCaption: draft.postCaption
         }))
+        const check = remixRenderCheck(edits)
+        await spendCheck('remix:render', check.provider, check.estimateUsd)
         const next = await guarded(() => renderRemix(edits))
         return { ...remixView(next), started: true, summary: `Making ${plural(edits.length, 'video')}` }
       }
@@ -693,7 +719,8 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
       },
       run: async (input) => {
         const style = (input.style as string | undefined) ?? 'talking'
-        const script = await guarded(() => writeAvatarScript({ topic: input.topic, niche: input.niche ?? '', seconds: input.seconds ?? 30, style, brandIdentityId: input.brandIdentityId ?? null }))
+        await spendCheck('avatars:writeScript', 'openrouter', SCRIPT_ESTIMATE_USD)
+        const script = await guarded(() => metered('avatar', 'Avatar script', () => writeAvatarScript({ topic: input.topic, niche: input.niche ?? '', seconds: input.seconds ?? 30, style, brandIdentityId: input.brandIdentityId ?? null })))
         return { style, script, spokenSecondsEstimate: estimateSpokenSeconds(scriptText(script)), summary: `“${clip(script.title, 60)}”` }
       }
     },
@@ -715,22 +742,31 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
       }, ['avatarId', 'style', 'script']),
       confirm: async (input) => {
         if (avatarRendering()) throw new AssistantToolError('An avatar video is already being made. Follow it with get_avatar_video_status.')
-        if (!loadSettings().openrouterApiKey) noOpenRouterKey('avatar videos')
-        const { request, avatarName, voiceProvider } = avatarPlan(input)
+        const { request, avatarName } = avatarPlan(input)
+        // The same estimate and provider as Avatar Studio's check: a HeyGen avatar's video is billed on HeyGen.
+        const check = renderSpendCheck(request)
+        if (check.provider === 'openrouter' && !loadSettings().openrouterApiKey) noOpenRouterKey('avatar videos')
         const text = scriptText(request.script)
-        const cost = estimateRenderCost({ ...request, voiceProvider })
+        const onHeygen = check.openrouterUsd !== check.estimateUsd || check.provider === 'heygen'
+        const cost = check.estimateUsd === null
+          ? `The avatar video is billed on your HeyGen account at HeyGen’s own price${check.openrouterUsd ? `, plus about ${money(check.openrouterUsd)} of OpenRouter credit for the voice` : ''}.`
+          : !onHeygen ? `Estimated cost about ${money(check.estimateUsd)} on OpenRouter.`
+            : check.provider === 'heygen' || !check.openrouterUsd ? `Estimated cost about ${money(check.estimateUsd)} on your HeyGen account.`
+              : `Estimated cost about ${money(check.estimateUsd)}: ${money(check.openrouterUsd)} on OpenRouter for the voice, the rest on your HeyGen account.`
         return [
           `Make a ${request.style === 'talking' ? 'talking-head' : `cinematic (${plural(request.script.scenes.length, 'scene')}, ${request.sceneQuality})`} video with ${avatarName}.`,
           ...(request.script.title ? [`Hook text: “${request.script.title}”`] : []),
           `Script: ${text.split(/\s+/).filter(Boolean).length} words, about ${Math.round(estimateSpokenSeconds(text))}s · “${clip(text, 160)}”`,
           request.includeCaptions ? `Captions: ${CAPTION_PRESETS.find((item) => item.id === request.captionPreset)?.name ?? request.captionPreset}` : 'No captions',
-          `Estimated cost about ${money(cost)} on OpenRouter.`
+          cost
         ]
       },
       run: async (input) => {
         if (avatarRendering()) throw new AssistantToolError('An avatar video is already being made. Follow it with get_avatar_video_status.')
         const { request } = avatarPlan(input)
-        const status = await guarded(() => startAvatarRender(request))
+        const check = renderSpendCheck(request)
+        await spendCheck('avatars:render', check.provider, check.estimateUsd)
+        const status = await guarded(() => meteredAvatarRender(false, () => startAvatarRender(request)))
         return { ...renderView(status, await listAvatars().catch(() => [])), started: true, summary: 'Started' }
       }
     },

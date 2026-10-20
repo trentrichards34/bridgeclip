@@ -673,9 +673,9 @@ const api: BridgeClipAPI = {
     showInFolder: (id, contentId) => ipcRenderer.invoke('automations:showInFolder', id, contentId),
     reorder: (id, contentId, beforeId) => ipcRenderer.invoke('automations:reorder', id, contentId, beforeId),
     enhancementGroups: (id) => ipcRenderer.invoke('automations:enhancementGroups', id),
-    enhanceBatch: (id, contentIds, key, guidance) => ipcRenderer.invoke('automations:enhanceBatch', id, contentIds, key, guidance),
+    enhanceBatch: (id, contentIds, key, guidance) => paid('automations:enhanceBatch', id, contentIds, key, guidance),
     source: (id, contentId) => ipcRenderer.invoke('automations:source', id, contentId),
-    enhance: (id, contentId, options) => ipcRenderer.invoke('automations:enhance', id, contentId, options),
+    enhance: (id, contentId, options) => paid('automations:enhance', id, contentId, options),
     resolveDraft: (id, contentId, draftId, apply) => ipcRenderer.invoke('automations:resolveDraft', id, contentId, draftId, apply),
     list: () => ipcRenderer.invoke('automations:list'),
     create: (name) => ipcRenderer.invoke('automations:create', name),
@@ -749,7 +749,7 @@ const api: BridgeClipAPI = {
     readyToPost: () => ipcRenderer.invoke('history:readyToPost'),
     setPosted: (outputDir, clipIndex, posted) => ipcRenderer.invoke('history:setPosted', outputDir, clipIndex, posted),
     metadataSource: (outputDir, clipIndex) => ipcRenderer.invoke('history:metadataSource', outputDir, clipIndex),
-    enhanceMetadata: (outputDir, clipIndex, options) => ipcRenderer.invoke('history:enhanceMetadata', outputDir, clipIndex, options),
+    enhanceMetadata: (outputDir, clipIndex, options) => paid('history:enhanceMetadata', outputDir, clipIndex, options),
     list: () => ipcRenderer.invoke('history:list'),
     getJob: (outputDir) => ipcRenderer.invoke('history:getJob', outputDir)
   },
@@ -780,7 +780,7 @@ const api: BridgeClipAPI = {
     update: (id, patch) => ipcRenderer.invoke('avatars:update', id, patch),
     remove: (id) => ipcRenderer.invoke('avatars:remove', id),
     cloneVoice: (id, consent) => paid('avatars:cloneVoice', id, consent),
-    writeScript: (request) => ipcRenderer.invoke('avatars:writeScript', request),
+    writeScript: (request) => paid('avatars:writeScript', request),
     render: (request) => paid('avatars:render', request),
     recreate: (request) => paid('avatars:recreate', request),
     cancelRender: () => ipcRenderer.invoke('avatars:cancelRender'),
@@ -798,7 +798,7 @@ const api: BridgeClipAPI = {
     setVoice: (id, voice) => ipcRenderer.invoke('heygen:setVoice', id, voice)
   },
   voices: {
-    sample: (request) => ipcRenderer.invoke('voices:sample', request)
+    sample: (request) => paid('voices:sample', request)
   },
   brandIdentities: {
     list: () => ipcRenderer.invoke('brandIdentities:list'),

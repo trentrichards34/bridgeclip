@@ -323,3 +323,85 @@ test('editor bakes that translate captions pass the spending check and can take 
   assert.match(handlers, /recordSpend\(\{ kind: 'create', provider: 'openrouter', usd, label \}\)/)
   assert.match(handlers, /onEditorSpend\(\(usd, label\) => recordSpend\(\{ kind: 'create'/)
 })
+
+test('a HeyGen video recorded when it starts is replaced by its final figure, never counted twice; $0 removes it', async () => {
+  const { main, userData } = loadMain()
+  await main.recordSpend({ kind: 'remix', provider: 'heygen', usd: 0.5, label: 'HeyGen avatar video', estimated: true, ref: 'heygen:v1' })
+  await main.recordSpend({ kind: 'remix', provider: 'heygen', usd: 0.3, label: 'HeyGen avatar video', estimated: true, ref: 'heygen:v2' })
+  await main.recordSpend({ kind: 'remix', provider: 'heygen', usd: 1.25, label: 'HeyGen avatar video', estimated: true, ref: 'heygen:v1' })
+  await main.recordSpend({ kind: 'remix', provider: 'heygen', usd: 0, label: 'HeyGen avatar video', estimated: true, ref: 'heygen:v2' })
+  // A $0 entry with no earlier one is nothing to record.
+  assert.equal(await main.recordSpend({ kind: 'remix', provider: 'heygen', usd: 0, label: 'x', ref: 'heygen:none' }), null)
+  await main.flushSpending()
+  const summary = plain((await main.spendOverview()).summary)
+  assert.equal(summary.allTimeUsd, 1.25)
+  assert.deepEqual(summary.recent.map((item) => [item.ref, item.usd]), [['heygen:v1', 1.25]])
+  // The append-only file holds every step; reading it back keeps only the latest of each.
+  const text = fs.readFileSync(path.join(userData, 'spending', 'ledger.jsonl'), 'utf8')
+  assert.equal(text.trim().split('\n').length, 4)
+  assert.deepEqual(plain(shared.parseLedger(text)).map((item) => [item.ref, item.usd]), [['heygen:v1', 1.25]])
+  assert.equal(shared.parseSpendEntry({ at: '2026-10-01T00:00:00Z', kind: 'remix', provider: 'heygen', usd: 1, label: 'x', ref: '../etc' }).ref, undefined)
+})
+
+test('the first backfill skips Avatar Studio runs and runs already recorded under any kind (Edit my recording)', async () => {
+  const history = [
+    { jobId: 'edit-11111111-1111-4111-8111-111111111111', status: 'completed', totalCostUsd: 0.8, finishedAt: null, date: '2026-09-02T09:00:00.000Z' },
+    { jobId: 'edit-22222222-2222-4222-8222-222222222222', status: 'completed', totalCostUsd: 0.4, finishedAt: null, date: '2026-09-02T09:00:00.000Z' },
+    { jobId: 'avatar-33333333-3333-4333-8333-333333333333', status: 'completed', totalCostUsd: 2, finishedAt: null, date: '2026-09-03T09:00:00.000Z' },
+    { jobId: '44444444-4444-4444-8444-444444444444', status: 'completed', totalCostUsd: 0.31, finishedAt: null, date: '2026-09-04T09:00:00.000Z' }
+  ]
+  const { main } = loadMain({ history })
+  // Recorded as it ran (an edit run's steps carry its folder name; an avatar render carries none).
+  await main.recordSpend({ kind: 'edit', provider: 'openrouter', usd: 0.8, label: 'Edit my recording', runId: history[0].jobId })
+  await main.recordSpend({ kind: 'avatar', provider: 'openrouter', usd: 2, label: 'Avatar video' })
+  const summary = plain((await main.spendOverview()).summary)
+  assert.deepEqual(summary.recent.map((item) => [item.kind, item.usd, item.backfilled === true]).sort(), [
+    ['avatar', 2, false], ['create', 0.31, true], ['edit', 0.4, true], ['edit', 0.8, false]
+  ])
+  assert.equal(summary.allTimeUsd, 3.51)
+})
+
+test('post captions: text calls report their cost into the paid action, or on their own outside one', async () => {
+  const { main, state } = loadMain()
+  main.initSpending()
+  await main.metered('posting', 'Post captions', async () => {
+    state.mediaListener({ what: 'text', model: 'openai/gpt-4.1-mini', usd: 0.004 })
+    state.mediaListener({ what: 'text', model: 'microsoft/mai-transcribe-2', usd: null })
+    state.mediaListener({ what: 'text', model: 'openai/gpt-4.1-mini', usd: 0.002 })
+  })
+  // Unattended posting writes captions with no paid action around it.
+  state.mediaListener({ what: 'text', model: 'openai/gpt-4.1-mini', usd: 0.003 })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  await main.flushSpending()
+  const summary = plain((await main.spendOverview()).summary)
+  assert.deepEqual(summary.recent.map((item) => [item.kind, item.label, Math.round(item.usd * 1000) / 1000, item.estimated === true]).sort(), [
+    ['posting', 'Post captions', 0.003, false], ['posting', 'Post captions', 0.006, false]
+  ])
+  assert.equal(summary.byKind.posting.allTimeUsd, 0.009)
+})
+
+test('a run billed partly elsewhere (lip-sync on HeyGen) checks only OpenRouter’s share against the balance, and the whole against the limit', () => {
+  const base = { provider: 'openrouter', estimateUsd: 3, monthUsd: 0, limitUsd: null, balanceUsd: 1 }
+  assert.equal(shared.spendGateDecision(base).reason, 'balance', 'the whole estimate is more than the balance')
+  assert.equal(shared.spendGateDecision({ ...base, balanceEstimateUsd: 0.2 }), null, 'OpenRouter’s share fits')
+  const low = shared.spendGateDecision({ ...base, balanceUsd: 0.1, balanceEstimateUsd: 0.2 })
+  assert.equal(low.reason, 'balance')
+  assert.equal(low.estimateUsd, 0.2)
+  assert.match(low.message, /\$0\.20 on OpenRouter/)
+  // The monthly limit still counts HeyGen's part.
+  assert.equal(shared.spendGateDecision({ ...base, balanceUsd: 10, balanceEstimateUsd: 0.2, monthUsd: 8, limitUsd: 10 }).reason, 'limit')
+  // An unknown share falls back to the $1 minimum, like any unpriced run.
+  assert.equal(shared.spendGateDecision({ ...base, estimateUsd: null, balanceUsd: 0.5, balanceEstimateUsd: null }).reason, 'balance')
+})
+
+test('paid post captions, avatar scripts and new voice samples are gated channels and go through the gate dialog', () => {
+  const { main } = loadMain()
+  const preload = fs.readFileSync(path.join(ROOT, 'preload/index.ts'), 'utf8')
+  for (const channel of ['automations:enhance', 'automations:enhanceBatch', 'history:enhanceMetadata', 'avatars:writeScript', 'voices:sample']) {
+    assert.ok(main.GATED_CHANNELS.has(channel), channel)
+    assert.match(preload, new RegExp(`paid\\('${channel}'`), `${channel} uses paid() in the preload`)
+  }
+  const handlers = fs.readFileSync(path.join(ROOT, 'main/ipc-handlers.ts'), 'utf8')
+  assert.match(handlers, /beforePaid: \(\) => assertSpendAllowed\('voices:sample', 'openrouter', SAMPLE_ESTIMATE_USD\)/)
+  assert.match(handlers, /metered\('posting', 'Post captions', \(\) => enhanceLibraryMetadata/)
+})

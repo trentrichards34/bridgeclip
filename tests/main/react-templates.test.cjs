@@ -224,6 +224,16 @@ test('React, then my thoughts in main: both parts, your b-roll copied in, stock,
     let view = await m.addBroll([red, pic])
     assert.deepEqual(plain(view.items.map((item) => [item.name, item.kind])), [['red car.mp4', 'video'], ['cream.png', 'image']])
     const [own1, own2] = view.items.map((item) => item.id)
+    // Two adds at once can't pass the limit together (room is held before copying); the refused one leaves no files.
+    const before = fs.readdirSync(path.join(m.remixStatus().folder, '.broll')).length
+    const both = await Promise.allSettled([m.addBroll(Array.from({ length: 6 }, () => red)), m.addBroll(Array.from({ length: 6 }, () => red))])
+    assert.deepEqual(both.map((result) => result.status).sort(), ['fulfilled', 'rejected'])
+    assert.match(both.find((result) => result.status === 'rejected').reason.message, /up to 12 clips or pictures \(4 more\)/)
+    const extra = m.brollView().items.slice(2)
+    assert.equal(extra.length, 6)
+    assert.equal(fs.readdirSync(path.join(m.remixStatus().folder, '.broll')).length, before + 6)
+    for (const item of extra) await m.removeBroll(item.id)
+    view = m.brollView()
     assert.ok(view.items.every((item) => /^b[0-9a-f]{8}$/.test(item.id) && item.path.startsWith(path.join(m.remixStatus().folder, '.broll')) && fs.existsSync(item.path)))
     // Stock on (no Pexels key: the review says so and links to it).
     view = m.setBrollStock(true)

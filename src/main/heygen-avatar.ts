@@ -5,7 +5,7 @@ import { existsSync } from 'fs'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
 import { extname, join } from 'path'
 import { promisify } from 'util'
-import { isAvatarId, parseVoice, type Avatar, type AvatarSummary } from '../shared/avatars'
+import { estimateSpokenSeconds, isAvatarId, parseVoice, type Avatar, type AvatarSummary } from '../shared/avatars'
 import {
   consentLinkFresh, estimateHeygenVideoUsd, HEYGEN_MAX_ASSET_BYTES, HEYGEN_MAX_AUDIO_SECONDS, HEYGEN_PRICES, heygenEngine, heygenStage, isHeygenId, parseConsent, parseHeygenAccount,
   parseHeygenStatus, TWIN_MAX_SECONDS, TWIN_MIN_SECONDS,
@@ -367,6 +367,8 @@ export interface HeygenTakeRequest {
   signal?: AbortSignal
   /** Progress for the page: a short detail and 0-1 of HeyGen's part. */
   onStatus?: (detail: string, fraction: number) => void
+  /** HeyGen accepted the video (and bills it from here on, finished or not: it has no cancel). */
+  onStarted?: (videoId: string) => void
   /** The spending ledger kind (Avatar Studio: avatar; Remix: remix). */
   spendKind?: SpendKind
   title?: string
@@ -423,14 +425,23 @@ async function audioForUpload(path: string, outPath: string, signal?: AbortSigna
   } finally { await rm(converted, { force: true }) }
 }
 
+/** The ledger ref for one HeyGen video: its started estimate is replaced by the final figure. */
+function heygenSpendRef(videoId: string): string {
+  return `heygen:${videoId.replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 80) || createHash('sha256').update(videoId).digest('hex').slice(0, 32)}`
+}
+
 /**
  * Render one lip-synced take of a HeyGen avatar: upload the audio (or send
  * the text and voice), create a 9:16 1080p video, poll until it's done, and
- * download it to `outPath`. The finished video's cost is recorded in the
- * spending ledger at HeyGen's published Engine IV price (marked estimated).
+ * download it to `outPath`. The cost is recorded in the spending ledger at
+ * HeyGen's published Engine IV price (marked estimated) as soon as HeyGen
+ * accepts the video, from the audio's length or the script's, and replaced
+ * by the finished video's own length when it's done.
  *
  * Canceling (the signal) stops waiting; HeyGen has no cancel call, so a
- * video it already started may still finish on HeyGen and be billed there.
+ * video it already started may still finish on HeyGen and be billed there:
+ * its started estimate stays in the ledger (as it does when waiting stops for
+ * any other reason). Only a video HeyGen itself reports as failed is removed.
  */
 export async function renderHeygenTake(request: HeygenTakeRequest): Promise<HeygenTake> {
   const { signal, onStatus } = request
@@ -439,10 +450,12 @@ export async function renderHeygenTake(request: HeygenTakeRequest): Promise<Heyg
   const engine = heygenEngine(link.engines)
   let audioAssetId: string | undefined
   let text: string | undefined
+  let expectedSeconds = 0
   if (request.audioPath) {
     const info = await stat(request.audioPath).catch(() => null)
     if (!info?.isFile()) throw new Error('The voiceover is missing. Try again.')
     const seconds = await mediaSeconds(request.audioPath)
+    expectedSeconds = seconds
     if (seconds > HEYGEN_MAX_AUDIO_SECONDS) throw new Error('HeyGen lip-syncs at most 10 minutes of audio.')
     const audio = await audioForUpload(request.audioPath, request.outPath, signal)
     if (audio.bytes.byteLength > HEYGEN_MAX_ASSET_BYTES) throw new Error('The voiceover is too large to send to HeyGen.')
@@ -451,12 +464,18 @@ export async function renderHeygenTake(request: HeygenTakeRequest): Promise<Heyg
   } else {
     text = (request.text ?? '').trim()
     if (!text) throw new Error('Write a script first.')
+    expectedSeconds = estimateSpokenSeconds(text)
   }
   const voiceId = text ? (request.voiceId ?? link.voiceId) : null
   if (text && !voiceId) throw new Error('Choose a voice for this avatar.')
   onStatus?.('Starting your video on HeyGen', 0.05)
   const { videoId } = await createVideo({ avatarId: link.lookId, audioAssetId, script: text, voiceId, engine, title: request.title }, opts)
   logger.info('heygen.video.started', { engine: engine ?? 'default' })
+  // Billed from here: recorded now (an estimate), so a cancel, a failed wait or download, or quitting still counts it.
+  const spend = { kind: request.spendKind ?? 'avatar', provider: 'heygen' as const, ref: heygenSpendRef(videoId), estimated: true }
+  const startedUsd = estimateHeygenVideoUsd(Math.max(1, expectedSeconds), engine)
+  if (startedUsd !== null) await recordSpend({ ...spend, usd: startedUsd, label: 'HeyGen avatar video' }).catch(() => null)
+  try { request.onStarted?.(videoId) } catch { /* progress only */ }
 
   const started = Date.now()
   const deadline = started + (request.timeoutMs ?? 40 * 60_000)
@@ -475,7 +494,10 @@ export async function renderHeygenTake(request: HeygenTakeRequest): Promise<Heyg
     if (video.status === 'failed') {
       const code = video.failureCode
       const message = code && /credit|quota|balance|trial|subscription/.test(code) ? HEYGEN_OUT_OF_CREDIT : heygenMessage(0, code, video.failureMessage)
-      throw new HeygenError(message.replace(/^HeyGen could not do that/, 'HeyGen could not make this video'), code)
+      // HeyGen returns the credit for a video that fails on its side: its started estimate is removed.
+      if (startedUsd !== null) await recordSpend({ ...spend, usd: 0, label: 'HeyGen avatar video' }).catch(() => null)
+      // Marked so a caller knows HeyGen won't bill it (unlike a video it stopped waiting for).
+      throw Object.assign(new HeygenError(message.replace(/^HeyGen could not do that/, 'HeyGen could not make this video'), code), { videoFailed: true })
     }
     if (video.status === 'completed') {
       if (!video.videoUrl) throw new Error('HeyGen finished but returned no video. Try again.')
@@ -483,7 +505,8 @@ export async function renderHeygenTake(request: HeygenTakeRequest): Promise<Heyg
       await downloadHeygenFile(video.videoUrl, request.outPath, { signal, fetch: request.fetch, sleep: request.sleep })
       const seconds = video.duration ?? await mediaSeconds(request.outPath)
       const estimatedUsd = estimateHeygenVideoUsd(seconds, engine)
-      if (estimatedUsd !== null) await recordSpend({ kind: request.spendKind ?? 'avatar', provider: 'heygen', usd: estimatedUsd, label: 'HeyGen avatar video', estimated: true })
+      // The finished length replaces the started estimate (the same ledger item, never counted twice).
+      if (estimatedUsd !== null) await recordSpend({ ...spend, usd: estimatedUsd, label: 'HeyGen avatar video' })
       else logger.info('heygen.video.unpriced', { engine })
       return { videoId, path: request.outPath, seconds, estimatedUsd }
     }

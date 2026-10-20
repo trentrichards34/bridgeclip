@@ -182,7 +182,10 @@ test('a HeyGen photo avatar is made from my photo and a script video lands in th
 
   // Spending: HeyGen's avatar creation and the video, at its published prices, marked as estimates.
   const ledger = fs.readFileSync(path.join(userDataDir, 'spending', 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line)).filter((entry) => entry.provider === 'heygen')
-  assert.deepEqual(ledger.map((entry) => [entry.label, entry.usd, entry.estimated]), [['HeyGen photo avatar', 1, true], ['HeyGen avatar video', 0.3, true]])
+  // The video is recorded when HeyGen accepts it, then replaced by its finished length (same ref): one charge, not two.
+  const latest = [...new Map(ledger.map((entry, index) => [entry.ref ?? index, entry])).values()]
+  assert.deepEqual(latest.map((entry) => [entry.label, entry.usd, entry.estimated]), [['HeyGen photo avatar', 1, true], ['HeyGen avatar video', 0.3, true]])
+  assert.equal(ledger.filter((entry) => entry.ref).length, 2, 'started, then finished')
   assert.ok(!fs.readFileSync(path.join(userDataDir, 'spending', 'ledger.jsonl'), 'utf8').includes(KEY))
 
   await page.getByRole('button', { name: 'Open in Library' }).click()

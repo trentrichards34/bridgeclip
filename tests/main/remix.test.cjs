@@ -780,7 +780,7 @@ test('Avatar on camera (HeyGen): each spoken line is made on HeyGen from main, a
     fs.mkdirSync(work, { recursive: true })
     fs.writeFileSync(path.join(work, 'plan.json'), '{}')
     return { ok: true, cost_usd: 0.02, drafts: [{ id: 0, source_index: 0, headline: 'He says lose weight first', intro: 'He is wrong.', close: 'Train the pull.',
-      beats: [{ text: 'Strength first.', broll: 'gym' }], start_ms: 1000, end_ms: 4000, estimate_usd: 1.2 }] }
+      beats: [{ text: 'Strength first.', broll: 'gym' }], start_ms: 1000, end_ms: 4000, estimate_usd: 1.2, heygen_estimate_usd: 1 }] }
   }
   const spawn = () => {
     child = new EventEmitter()
@@ -804,6 +804,8 @@ test('Avatar on camera (HeyGen): each spoken line is made on HeyGen from main, a
     ready: async () => { if (!avatar.heygen) throw new Error('not heygen'); return avatar.heygen },
     render: async (request) => {
       renders.push(request)
+      // HeyGen accepted the video (it bills it from here).
+      request.onStarted?.('vid')
       request.onStatus?.('HeyGen is animating your avatar', 0.5)
       await new Promise((resolve, reject) => {
         if (request.signal?.aborted) { reject(new Error('aborted')); return }
@@ -849,8 +851,9 @@ test('Avatar on camera (HeyGen): each spoken line is made on HeyGen from main, a
   fs.mkdirSync(work, { recursive: true })
   fs.writeFileSync(path.join(work, 'intro.mp3'), 'MP3')
   fs.writeFileSync(path.join(work, 'close.mp3'), 'MP3')
-  // The gate: the takes' estimates (HeyGen's lines included by the engine), billed mostly by OpenRouter (the voice).
-  assert.deepEqual(plain(m.remixRenderCheck([{ id: 0 }])), { provider: 'openrouter', estimateUsd: 1.2 })
+  // The gate: the takes' estimates (HeyGen's lines included by the engine) for the monthly limit, and only OpenRouter's
+  // share (the voice) for the OpenRouter balance.
+  assert.deepEqual(plain(m.remixRenderCheck([{ id: 0 }])), { provider: 'openrouter', estimateUsd: 1.2, openrouterUsd: 0.2 })
 
   // Making it: the engine asks for the opening and closing lines (and two bad requests); main answers each.
   scenario = () => {
@@ -880,7 +883,7 @@ test('Avatar on camera (HeyGen): each spoken line is made on HeyGen from main, a
   await m.startRemix(request)
   await settle('planning')
   assert.equal(configs[2].heygen_voice, true)
-  assert.deepEqual(plain(m.remixRenderCheck([{ id: 0 }])), { provider: 'heygen', estimateUsd: 1.2 })
+  assert.deepEqual(plain(m.remixRenderCheck([{ id: 0 }])), { provider: 'heygen', estimateUsd: 1.2, openrouterUsd: 0.2 })
   // A HeyGen failure is answered plainly; one that would repeat stops the rest (stop_all).
   heygen.failWith = 'Your HeyGen balance is too low for this. Add credit on HeyGen, then try again.'
   folder = m.remixStatus().folder
@@ -892,8 +895,23 @@ test('Avatar on camera (HeyGen): each spoken line is made on HeyGen from main, a
   assert.deepEqual([answers[0].ok, answers[0].stop_all, renders[0].text, renders[0].audioPath], [false, true, 'He is wrong.', undefined])
   assert.equal(m.remixStatus().error, 'Your HeyGen balance is too low for this. Add credit on HeyGen, then try again.')
 
-  // Cancel while HeyGen is working: it stops waiting (the signal), and says HeyGen may still bill a video it started.
+  // The engine stops (one line failed, say) while HeyGen is still making another: main stops waiting for it and
+  // says HeyGen may still bill it, though the member didn't cancel.
   heygen.failWith = null
+  answers.length = 0; renders.length = 0
+  scenario = () => reply(line(1, { text: 'slow', out: path.join(folder, '.work', 'intro-heygen.mp4') }))
+  onAnswer = () => undefined
+  await m.renderRemix([edit])
+  for (let i = 0; i < 200 && !renders.length; i++) await new Promise((resolve) => setTimeout(resolve, 5))
+  finishEngine({ ok: false, error: 'Remix 1: HeyGen could not make this video.' }, 1)
+  await settle('rendering')
+  for (let i = 0; i < 100 && !renders[0].signal.aborted; i++) await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.equal(renders[0].signal.aborted, true, 'waiting stopped when the engine did')
+  const stopped = m.remixStatus()
+  assert.equal(stopped.phase, 'review')
+  assert.ok(stopped.warnings.includes('HeyGen may still finish an avatar video it had already started and bill it on your HeyGen account.'), stopped.warnings)
+
+  // Cancel while HeyGen is working: it stops waiting (the signal), and says HeyGen may still bill a video it started.
   answers.length = 0; renders.length = 0
   scenario = () => reply(line(1, { text: 'slow', out: path.join(folder, '.work', 'intro-heygen.mp4') }))
   onAnswer = () => undefined

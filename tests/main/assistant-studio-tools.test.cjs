@@ -43,12 +43,15 @@ function load(t) {
       portraitPath: '/secret/portrait.jpg', pictures: [{ file: 'p.jpg', path: '/secret/p.jpg', source: 'ai', createdAt: '', active: true, archivedReactions: 0 }],
       reactions: [{ id: 'nod', source: 'ai', path: '/secret/nod.mp4' }] }],
     render: null,
+    renderCheck: null,
     outputs: {}
   }
   const remix = {
     parseRemixRequest: real.parseRemixRequest,
     remixStatus: () => state.remix,
     remixFolderInUse: () => null,
+    remixStartEstimate: () => 0.4,
+    remixRenderCheck: (edits) => state.renderCheck ?? { provider: 'openrouter', estimateUsd: state.remix.drafts.filter((d) => edits.some((e) => e.id === d.id)).reduce((sum, d) => sum + d.estimateUsd, 0) },
     startRemix: async (request) => { calls.started.push(request); state.remix = status({ phase: 'planning', percent: 1, drafts: [] }); return state.remix },
     renderRemix: async (edits) => { calls.rendered.push(edits); state.remix = status({ phase: 'rendering', percent: 1 }); return state.remix },
     editRemixDraft: (edit) => { calls.edited.push(edit); const next = { ...state.remix.drafts.find((d) => d.id === edit.id), ...edit }; return next },
@@ -76,6 +79,8 @@ function load(t) {
     '../avatars': { listAvatars: async () => state.avatars, readAvatar: (id) => { const avatar = state.avatars.find((a) => a.id === id); if (!avatar) throw new Error('That avatar is no longer in your library.'); return avatar } },
     '../avatar-studio': {
       parseRenderRequest: real.parseRenderRequest,
+      SCRIPT_ESTIMATE_USD: 0.01,
+      renderSpendCheck: () => state.renderCheck ?? { provider: 'openrouter', estimateUsd: 0.12, openrouterUsd: 0.12 },
       avatarRenderStatus: () => state.render,
       startAvatarRender: async (request) => { calls.renders.push(request); state.render = { id: 'v1', avatarId: request.avatarId, phase: 'voice', detail: 'Recording the voiceover', percent: 1, outputPath: null, error: null, warning: null, estimatedCostUsd: 0.01, startedAt: 'now' }; return state.render },
       writeAvatarScript: async (request) => { calls.scripts.push(request); return { title: 'Lift first', scenes: [{ narration: 'Strength comes before weight loss.', visual: '', featuresAvatar: true }] } }
@@ -86,7 +91,7 @@ function load(t) {
     },
     '../file-manager': { getJobOutput: async (dir) => state.outputs[path.basename(dir)] ?? null, getJobHistory: async () => [] }
   }
-  const mod = loadMain("export * from './src/main/assistant/bridgeclip-tools'; export { validateToolInput } from './src/main/assistant/tool-input'; export { replaceApiKey } from './src/main/settings-store'", { electron: { ...electron, dialog: {} }, ...mocks })
+  const mod = loadMain("export * from './src/main/assistant/bridgeclip-tools'; export { validateToolInput } from './src/main/assistant/tool-input'; export { replaceApiKey, saveSpendLimit } from './src/main/settings-store'; export { recordSpend, flushSpending } from './src/main/spending'", { electron: { ...electron, dialog: {} }, ...mocks })
   const host = { changed: [], shown: [] }
   const tools = mod.createBridgeClipTools({ getMainWindow: () => null, dataChanged: (scope) => host.changed.push(scope), navigate: (page, runDir) => host.shown.push([page, runDir]) })
   const tool = (name) => { const found = tools.find((item) => item.name === name); assert.ok(found, name); return found }
@@ -372,4 +377,41 @@ test('show_in_bridgeclip can open Remix and Avatar Studio', async (t) => {
   await tool('show_in_bridgeclip').run({ page: 'remix' }, ctx())
   await tool('show_in_bridgeclip').run({ page: 'avatar' }, ctx())
   assert.deepEqual(host.shown, [['remix', undefined], ['avatar', undefined]])
+})
+
+test('paid chat tools pass the same spending check as the app’s pages: the monthly limit stops them before anything is spent', async (t) => {
+  const { mod, tool, state, calls } = load(t)
+  mod.replaceApiKey('openrouterApiKey', 'sk-or-test')
+  await mod.recordSpend({ kind: 'remix', provider: 'openrouter', usd: 5, label: 'Remix videos' })
+  mod.saveSpendLimit('5')
+  const script = { title: 'Lift first', scenes: [{ narration: 'Strength comes before weight loss.' }] }
+  await assert.rejects(tool('start_remix').run({ sources: ['https://www.youtube.com/watch?v=hqP9fivmBqI'] }, ctx()), /monthly AI spending limit of \$5\.00/)
+  assert.equal(calls.started.length, 0)
+  await assert.rejects(tool('write_avatar_script').run({ topic: 'lifting first' }, ctx()), /monthly AI spending limit/)
+  assert.equal(calls.scripts.length, 0)
+  await assert.rejects(tool('start_avatar_video').run({ avatarId: AVATAR, style: 'talking', script }, ctx()), /monthly AI spending limit/)
+  assert.equal(calls.renders.length, 0)
+  state.remix = status()
+  await assert.rejects(tool('make_remix_videos').run({ draftIds: [1] }, ctx()), /monthly AI spending limit/)
+  assert.equal(calls.rendered.length, 0)
+  // Raised: they go ahead.
+  mod.saveSpendLimit('')
+  assert.equal((await tool('make_remix_videos').run({ draftIds: [1] }, ctx())).started, true)
+})
+
+test('a HeyGen avatar’s video is priced and billed on HeyGen in the chat’s confirmation, as in Avatar Studio and Remix', async (t) => {
+  const { mod, tool, state } = load(t)
+  const script = { title: 'Lift first', scenes: [{ narration: 'Strength comes before weight loss.' }] }
+  // HeyGen speaks in its own voice: no OpenRouter key needed, billed on HeyGen.
+  state.renderCheck = { provider: 'heygen', estimateUsd: 1, openrouterUsd: null }
+  assert.match((await tool('start_avatar_video').confirm({ avatarId: AVATAR, style: 'talking', script })).join('\n'), /about \$1\.00 on your HeyGen account/)
+  mod.replaceApiKey('openrouterApiKey', 'sk-or-test')
+  state.renderCheck = { provider: 'openrouter', estimateUsd: 1.05, openrouterUsd: 0.05 }
+  assert.match((await tool('start_avatar_video').confirm({ avatarId: AVATAR, style: 'talking', script })).join('\n'), /about \$1\.05: \$0\.05 on OpenRouter for the voice, the rest on your HeyGen account/)
+  state.renderCheck = { provider: 'heygen', estimateUsd: null, openrouterUsd: null }
+  assert.match((await tool('start_avatar_video').confirm({ avatarId: AVATAR, style: 'talking', script })).join('\n'), /billed on your HeyGen account at HeyGen’s own price/)
+  // Remix with Avatar on camera.
+  state.remix = status()
+  state.renderCheck = { provider: 'openrouter', estimateUsd: 1.2, openrouterUsd: 0.2 }
+  assert.match(tool('make_remix_videos').confirm({ draftIds: [1] }).join('\n'), /About \$1\.20 in all: \$0\.20 of OpenRouter credit for the voice, the rest on your HeyGen account/)
 })
