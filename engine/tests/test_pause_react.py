@@ -343,7 +343,8 @@ def test_prepare_write_and_render_a_box_layout(env, monkeypatch):
     windows = samples[:len(samples) // 2400 * 2400].reshape(-1, 2400)
     assert np.sqrt((windows ** 2).mean(axis=1)).min() > 0.01 and abs(len(samples) / 48000 - 6.0) < 0.06
     manifest = json.load(open(made["manifest_path"]))
-    assert manifest["presenter"]["pause_react"] == {"arrangement": "box", "timeline_from": "app", "pauses": 2, "original_seconds": 3.0, "captions": "member"}
+    assert manifest["presenter"]["pause_react"] == {"arrangement": "box", "timeline_from": "app", "pauses": 2, "original_seconds": 3.0, "captions": "member",
+                                                    "their_captions": False, "hook": "top"}
     assert made["editable"]["split"] is True
     job = json.load(open(os.path.join(env.out, "job_output.json")))
     assert job["clips"][0]["editable"]["split"] is True and job["metrics"]["remix_kinds"] == ["camera"]
@@ -449,3 +450,46 @@ def test_assembly_in_batches_keeps_every_frame_and_the_sound_in_step(env, monkey
         assert max(diffs[start:start + 20]) < 1.0, (start, diffs[start:start + 21])
     assert min(diffs[1:20]) > 1.0 and frames.mean(axis=(1, 2)).min() > 20
     assert len(list(work.glob("original-0*.mp4"))) == 3
+
+
+def test_split_hook_on_the_seam_and_their_captions_left_alone(env, monkeypatch):
+    """Split layout with the hook text "On the split line": no bar at the top, a white box with black text centered on
+    the line between the halves, the credit under it; their video already has captions, so its words aren't captioned
+    again even with "both" (the member's still are). Edit hook text keeps it on the line."""
+    from clip_engine.services import remix_layouts as rl
+    from .recompose_support import spy_captions
+    fake_ai(monkeypatch)
+    shape = {"hook_at": "seam", "their_captions": "yes"}
+
+    def make():
+        c = config(env, layout="split", captions="both")
+        c.layout = dict(shape)
+        return c
+    asyncio.run(remix.Remixer(make(), media=FakeMedia(env.ffmpeg), settings=SETTINGS).plan())
+    seen = spy_captions(monkeypatch)
+    result = asyncio.run(remix.Remixer(make(), media=FakeMedia(env.ffmpeg), settings=SETTINGS).render([{"id": 0, "headline": "$1M from less than 6,000 followers"}]))
+    [made] = result["remixes"]
+    data = json.load(open(os.path.join(env.out, ".edit", "clip_00", "edit.json")))
+    assert data["tags"]["hook"] == {"at": "seam", "y": 960} and data["tags"]["tags_y"] == 960 + rl.SEAM_HALF + 16
+    # Only the member's words (theirs are burned into their video).
+    assert seen and "pull" not in seen[0][0] and "coach" in seen[0][0]
+    manifest = json.load(open(made["manifest_path"]))["presenter"]["pause_react"]
+    assert (manifest["hook"], manifest["their_captions"]) == ("seam", True)
+    frame = os.path.join(env.tmp, "seam.png")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "2.5", "-i", made["path"], "-frames:v", "1", frame], check=True)
+    from PIL import Image
+    picture = np.asarray(Image.open(frame).convert("L")).astype(int)
+    # White box across the seam (left and right of the text), black text inside it; the very top is the video (no bar).
+    assert (picture[955:965, :] > 240).mean() > 0.3 and picture[960 - 30:960 + 30, 300:780].min() < 40
+    assert picture[0:120, :].std() > 10
+    sample = os.environ.get("PAUSE_REACT_SAMPLES")
+    if sample:
+        os.makedirs(sample, exist_ok=True)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "2.5", "-i", made["path"], "-frames:v", "1", os.path.join(sample, "split-seam-2.5.png")], check=True)
+    no_ai(monkeypatch)
+    edited = recompose(env.out, headline="A million from under six thousand followers")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "2.5", "-i", edited["path"], "-frames:v", "1", frame], check=True)
+    again = np.asarray(Image.open(frame).convert("L")).astype(int)
+    assert again[0:120, :].std() > 10 and (again[955:965, :] > 240).mean() > 0.3
+    if sample:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "2.5", "-i", edited["path"], "-frames:v", "1", os.path.join(sample, "split-seam-edited.png")], check=True)

@@ -8,6 +8,8 @@ import { BROLL_MAX_ITEMS, CLIP_MAX_SECONDS, CLIP_TAKE_MAX_SECONDS, type BrollSho
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { partLabel, RemixRecorder } from './RemixRecorder'
+import { Part2Look, ProofScreenshots } from './ClipLayoutSections'
+import type { LayoutExtrasView } from '../../shared/remix-layouts'
 import { TrimControl } from './PauseReactReview'
 import { Button } from './ui/Button'
 import { Callout } from './ui/Callout'
@@ -17,7 +19,7 @@ import { Panel, PanelHeader } from './ui/Panel'
 import { SettingRow } from './ui/SettingRow'
 import { Switch } from './ui/Switch'
 
-type Working = '' | 'upload' | 'write' | 'make' | 'trim' | 'discard' | 'broll' | 'plan'
+type Working = '' | 'upload' | 'write' | 'make' | 'trim' | 'discard' | 'broll' | 'plan' | 'layout'
 
 /**
  * Their clip, then me / React, then my thoughts, once their video is ready: choose the part of it, record (or upload)
@@ -35,14 +37,16 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
   const [writeOwn, setWriteOwn] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const [broll, setBroll] = useState<BrollView | null>(null)
+  const [layout, setLayout] = useState<LayoutExtrasView | null>(null)
   const parts = partsFor(draft.format, 0)
   const recorded = (part: RecordingPart): boolean => Boolean(recordings[draft.id]?.[part])
   const allRecorded = parts.every(recorded)
 
   const refresh = useCallback(async (): Promise<RemixRecordings> => {
-    const [list, view] = await Promise.all([getApi().remix.recordings(), react ? getApi().remix.brollView() : Promise.resolve(null)])
+    const [list, view, extras] = await Promise.all([getApi().remix.recordings(), react ? getApi().remix.brollView() : Promise.resolve(null), getApi().remix.layoutView()])
     setRecordings(list)
     setBroll(view)
+    setLayout(extras)
     return list
   }, [react])
   useEffect(() => {
@@ -113,13 +117,19 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
       </section>
     )
   }
-  const step = react ? 5 : 3
+  // Steps in order: their clip, the recording(s), part 2's look, b-roll, proof screenshots, then the hook text.
+  const lookStep = 4
+  const brollStep = layout ? 5 : 4
+  const proofStep = react ? brollStep + (broll ? 1 : 0) : 3
+  const step = proofStep + (layout ? 1 : 0)
+  const takeSeconds = recordings[draft.id]?.[take]?.seconds ?? null
+  const layoutProps = layout ? { view: layout, busy, onView: setLayout, onError, setBusy: (on: boolean) => setWorking(on ? 'layout' : '') } : null
 
   return (
     <Panel>
       <PanelHeader title={react ? 'Your React, then my thoughts' : 'Your clip, then you'}
         description={react
-          ? 'Their clip plays in a big box while you react behind it, then you share your thoughts with your b-roll cutting in. Choose the part, record both parts, add your b-roll, then make it.'
+          ? 'Their clip plays while you react to it silently, then you share your thoughts (on camera or over a screen recording) with your b-roll cutting in. Choose the part, record both parts, add your b-roll, then make it.'
           : 'Their clip plays first with its captions, then you give your take. Choose the part, record your take, then make it.'} />
       <div className="mt-4 space-y-4">
         {status.error && <Callout tone="danger"><FriendlyError error={status.error} suffix="Your recordings are still here, so you can try again." /></Callout>}
@@ -138,11 +148,15 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
           {recorder('reaction', partLabel('reaction', 'react_thoughts'),
             'Their clip plays on screen while your camera films you watching it. React with your face; your microphone isn’t recorded for this part (their clip’s sound is used). Or upload a phone video of you watching it play out loud: it’s lined up by its sound.', 2)}
           {recorder('thoughts', partLabel('thoughts', 'react_thoughts'),
-            `Then say what you think of it, in your own words, up to ${CLIP_TAKE_MAX_SECONDS / 60} minutes. You fill the screen, and your b-roll cuts in over what you say.`, 3)}
-          {broll && <BrollSection view={broll} busy={busy} working={working} canPlan={recorded('thoughts') && recorded('reaction')}
+            layout?.part2 === 'screen'
+              ? `Then say what you think of it, up to ${CLIP_TAKE_MAX_SECONDS / 60} minutes. Only your voice is used: your screen recording plays over it.`
+              : `Then say what you think of it, in your own words, up to ${CLIP_TAKE_MAX_SECONDS / 60} minutes. You fill the screen, and your b-roll cuts in over what you say.`, 3)}
+          {layoutProps && <Part2Look {...layoutProps} step={lookStep} />}
+          {broll && <BrollSection view={broll} step={brollStep} busy={busy} working={working} canPlan={recorded('thoughts') && recorded('reaction')}
             onView={setBroll} onError={onError} setWorking={setWorking} onPlan={setPlan} onOpenKeys={onOpenKeys} />}
         </>) : recorder('reaction', 'Your take',
           `Watch their clip, then say what you think of it, in your own words, up to ${CLIP_TAKE_MAX_SECONDS / 60} minutes. Record here, or upload a phone video.`, 2)}
+        {layoutProps && <ProofScreenshots {...layoutProps} step={proofStep} takeSeconds={takeSeconds} />}
 
         <section className="glass-tile space-y-3 rounded-2xl p-4" aria-label="Hook text and caption">
           <h3 className="flex items-center gap-2 text-sm font-medium text-ink"><Sparkles className="h-4 w-4" />{step} · Hook text and caption</h3>
@@ -182,8 +196,8 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
 }
 
 /** React, then my thoughts: your own clips and pictures, stock footage to fill, and the plan (time, which clip, swap or remove). */
-function BrollSection({ view, busy, working, canPlan, onView, onError, setWorking, onPlan, onOpenKeys }: {
-  view: BrollView; busy: boolean; working: Working; canPlan: boolean
+function BrollSection({ view, step, busy, working, canPlan, onView, onError, setWorking, onPlan, onOpenKeys }: {
+  view: BrollView; step: number; busy: boolean; working: Working; canPlan: boolean
   onView: (view: BrollView) => void; onError: (message: string | null) => void; setWorking: (working: Working) => void
   onPlan: (plan: BrollShot[]) => Promise<void>; onOpenKeys: () => void
 }): React.JSX.Element {
@@ -203,7 +217,7 @@ function BrollSection({ view, busy, working, canPlan, onView, onError, setWorkin
   }
   return (
     <section className="glass-tile space-y-3 rounded-2xl p-4" aria-label="Your b-roll">
-      <h3 className="flex items-center gap-2 text-sm font-medium text-ink"><Film className="h-4 w-4" />4 · Your b-roll</h3>
+      <h3 className="flex items-center gap-2 text-sm font-medium text-ink"><Film className="h-4 w-4" />{step} · Your b-roll</h3>
       <p className="text-2xs text-ink-muted">Your own clips and pictures cut in over your thoughts, 1.5–4 seconds each, where they match what you say. Never in your first 2 seconds or your last 1.5, and your voice keeps going underneath.</p>
       <div
         onDragEnter={(e) => { e.preventDefault(); depth.current += 1; if (!busy && !full) setDragging(true) }}

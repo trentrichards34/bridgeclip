@@ -569,6 +569,7 @@ test('Remix: You on camera / AI presenter, setup goals land on the right side, a
         export { remixMode, CAMERA_CARDS, AI_CARDS } from './src/shared/remix';
         export { partLabel } from './src/renderer/components/RemixRecorder';
         export { ClipTakeReview } from './src/renderer/components/ClipTakeReview';
+        export { Part2Look, ProofScreenshots } from './src/renderer/components/ClipLayoutSections';
         export { GUIDES } from './src/shared/onboarding';`,
       resolveDir: path.resolve(__dirname, '..'), loader: 'ts'
     },
@@ -576,7 +577,7 @@ test('Remix: You on camera / AI presenter, setup goals land on the right side, a
   }).outputFiles[0].text
   const mod = { exports: {} }
   vm.runInNewContext(code, { module: mod, exports: mod.exports, require, window: { bridgeclip: {} }, navigator: {} })
-  const { useRemixForm, startGoal, remixMode, CAMERA_CARDS, AI_CARDS, partLabel, ClipTakeReview, GUIDES } = mod.exports
+  const { useRemixForm, startGoal, remixMode, CAMERA_CARDS, AI_CARDS, partLabel, ClipTakeReview, Part2Look, ProofScreenshots, GUIDES } = mod.exports
   const side = () => remixMode(useRemixForm.getState().format, useRemixForm.getState().host)
 
   // AI reactions land in "AI presenter" even from an on-camera template; on-camera goals land in "You on camera".
@@ -605,10 +606,25 @@ test('Remix: You on camera / AI presenter, setup goals land on the right side, a
     drafts: [{ id: 0, format, headline: '', intro: '', beats: [], close: '', postCaption: '', quote: '', why: '', startMs: 0, endMs: 15000, sourceIndex: 0, sourceTitle: 'The ad',
       creator: '@brand', style: 'reaction', stance: 'add_nuance', notes: [], grade: null, estimateUsd: 0, cues: [] }] })
   const react = renderToStaticMarkup(React.createElement(ClipTakeReview, { status: status('react_thoughts'), onError() {}, onOpenKeys() {} }))
-  for (const heading of ['1 · Their clip', '2 · Part 1 · Watch &amp; react', '3 · Part 2 · Your thoughts', '5 · Hook text and caption']) assert.ok(react.includes(heading), heading)
+  // (Before the review's views load: part 2's look, b-roll and proof screenshots follow once they do.)
+  for (const heading of ['1 · Their clip', '2 · Part 1 · Watch &amp; react', '3 · Part 2 · Your thoughts', '4 · Hook text and caption']) assert.ok(react.includes(heading), heading)
   assert.match(react, /credited on screen as @brand/)
   const clip = renderToStaticMarkup(React.createElement(ClipTakeReview, { status: status('clip_then_me'), onError() {}, onOpenKeys() {} }))
   assert.ok(clip.includes('2 · Your take') && clip.includes('3 · Hook text and caption') && !clip.includes('b-roll'))
+
+  // Part 2's look: you on camera or a voiceover over a screen recording (with circles and the comment banner); proof screenshots.
+  const base = { busy: false, onView() {}, onError() {}, setBusy() {} }
+  const view = { format: 'react_thoughts', part2: 'screen', screen: { id: 's00000000', name: 'tool demo.mov', path: '/run/.layout/s00000000.mov' }, banner: true,
+    circles: [{ at: 4.5, x: 0.3, y: 0.6 }], keyword: 'FLY',
+    proofs: [{ id: 'p0000000a', name: 'post.png', path: '/run/.layout/p0000000a.png', at: null, label: 'Thread', highlight: { x: 0.1, y: 0.2, w: 0.5, h: 0.1 } }] }
+  const look = renderToStaticMarkup(React.createElement(Part2Look, { ...base, view, step: 4 }))
+  for (const text of ['4 · How part 2 looks', 'Voiceover over a screen recording', 'tool demo.mov', 'Remove the circle at 4.5s', 'Pin “Comment FLY” at the top', 'your camera picture isn’t used']) {
+    assert.ok(look.includes(text.replace('&', '&amp;')), text)
+  }
+  const noKeyword = renderToStaticMarkup(React.createElement(Part2Look, { ...base, view: { ...view, part2: 'camera', keyword: '' }, step: 4 }))
+  assert.ok(noKeyword.includes('Add a comment keyword') && !noKeyword.includes('tool demo.mov'))
+  const proofs = renderToStaticMarkup(React.createElement(ProofScreenshots, { ...base, view, step: 6, takeSeconds: 20 }))
+  for (const text of ['6 · Proof screenshots (optional)', 'post.png', 'Label for post.png', 'placeholder="2.3"', 'Clear box', 'Add screenshots', 'Up to 6']) assert.ok(proofs.includes(text), text)
 })
 
 test('Remix first visit: opens on You on camera (the AI presenter only for an AI-only profile), says what is missing next to the button, labels the take style and folds the look on both sides', () => {

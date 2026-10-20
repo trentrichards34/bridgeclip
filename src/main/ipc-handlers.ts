@@ -35,7 +35,8 @@ import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../s
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, readReactions, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { SAMPLE_ESTIMATE_USD, voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
-import { addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStartEstimate, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen } from './remix'
+import { PROOF_EXTENSIONS, SCREEN_EXTENSIONS } from '../shared/remix-layouts'
+import { addProofs, addScreenRecording, layoutExtrasView, removeLayoutItem, setLayoutExtras, addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStartEstimate, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen } from './remix'
 import { importLegacyAvatarVideos } from './avatar-library'
 import { cancelListicleRender, LISTICLE_SCRIPT_ESTIMATE_USD, listicleRunBusy, listicleSpendCheck, listicleStatus, onListicleStatus, saveListicleRecording, startListicleRender, writeListicleScript } from './listicle'
 import {
@@ -534,6 +535,27 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('remix:brollStock', (_event, on: unknown) => setBrollStock(on))
   handle('remix:brollPlan', (_event, plan: unknown) => setBrollPlan(plan))
   paid('remix:planBroll', 'openrouter', () => BROLL_PLAN_ESTIMATE_USD, () => planBroll())
+  // Their clip, then me / React, then my thoughts: proof screenshots and part 2's screen recording (chosen in the file
+  // dialog and copied into the run), and the free changes to part 2's look.
+  handle('remix:layoutView', () => layoutExtrasView())
+  handle('remix:addProofs', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile', 'multiSelections'], title: 'Choose your proof screenshots',
+      filters: [{ name: 'Screenshots', extensions: PROOF_EXTENSIONS }] })
+    if (result.canceled || !result.filePaths.length) return null
+    return addProofs(result.filePaths)
+  })
+  handle('remix:addScreenRecording', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose your screen recording',
+      filters: [{ name: 'Screen recordings', extensions: SCREEN_EXTENSIONS }] })
+    if (result.canceled || !result.filePaths.length) return null
+    return addScreenRecording(result.filePaths[0])
+  })
+  handle('remix:removeLayoutItem', (_event, id: unknown) => removeLayoutItem(id))
+  handle('remix:setLayout', (_event, patch: unknown) => setLayoutExtras(patch))
   // Moment + my take: nudge a moment (free), find another one in its range (one planning call), talking points (one small call),
   // and read the time from a screenshot of a player (one small call; before any run, so it's recorded here).
   handle('remix:momentBounds', (_event, draftId: unknown, startMs: unknown, endMs: unknown) => setMomentBounds(draftId, startMs, endMs))

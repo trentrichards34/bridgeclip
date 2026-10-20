@@ -286,6 +286,40 @@ class ParseConfigTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=repr(bad)[:160]):
                 remix_runner.parse_config(bad)
 
+    def test_layout_keys(self):
+        shot, screen = os.path.abspath("post.png"), os.path.abspath("screen.mov")
+        made = remix_runner.parse_config(self.clip(mode="render", sources=[], layout={
+            "their_captions": "yes", "part1": "phone", "hook_at": "beside", "part2": "screen", "screen": {"path": screen}, "banner": True,
+            "circles": [{"at": 4.5, "x": 0.3, "y": 0.6}],
+            "proofs": [{"id": "p0000000a", "path": shot, "at": None, "label": " My\npost ", "highlight": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.1}}]}))
+        self.assertEqual((made.layout["part1"], made.layout["hook_at"], made.layout["screen"], made.layout["banner"]), ("phone", "beside", {"path": screen}, True))
+        self.assertEqual(made.layout["proofs"][0]["label"], "My post")
+        self.assertEqual(made.layout["proofs"][0]["highlight"], {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.1})
+        clip = remix_runner.parse_config(self.clip("clip_then_me", layout={"their_captions": "auto", "proofs": []}))
+        self.assertEqual((clip.layout["hook_at"], clip.layout["part2"]), ("top", "camera"))
+        pause = remix_runner.parse_config(self.base(format="pause_react", host="camera", sources=["https://a.example/x"], pause_layout="split",
+                                                    layout={"hook_at": "seam", "their_captions": "no"}))
+        self.assertEqual(pause.layout["hook_at"], "seam")
+        self.assertIsNone(remix_runner.parse_config(self.base()).layout)
+
+    def test_rejects_bad_layouts(self):
+        shot = os.path.abspath("post.png")
+        proof = {"id": "p0000000a", "path": shot, "at": 3}
+        bads = [
+            self.base(layout={"their_captions": "yes"}), self.clip(layout={"their_captions": "maybe"}), self.clip(layout={"hook_at": "seam"}),
+            self.clip(layout={"hook_at": "beside"}), self.clip("clip_then_me", layout={"part1": "phone"}), self.clip(layout={"part2": "screen"}),
+            self.clip(layout={"part2": "screen", "screen": {"path": "rel.mov"}}), self.clip(layout={"extra": 1}),
+            self.clip(layout={"circles": [{"at": 1, "x": 2, "y": 0}], "part2": "screen", "screen": {"path": os.path.abspath("s.mp4")}}),
+            self.clip(layout={"proofs": [proof] * 2}), self.clip(layout={"proofs": [dict(proof, id="p1", path=shot)]}),
+            self.clip(layout={"proofs": [dict(proof, path=os.path.abspath("x.exe"))]}), self.clip(layout={"proofs": [dict(proof, at=-1)]}),
+            self.clip(layout={"proofs": [dict(proof, highlight={"x": 0.9, "y": 0, "w": 0.5, "h": 0.1})]}),
+            self.clip(layout={"proofs": [dict(proof, id=f"p000000{i:02d}") for i in range(7)]}),
+            self.base(format="pause_react", host="camera", sources=["https://a.example/x"], layout={"proofs": [proof]}),
+        ]
+        for bad in bads:
+            with self.assertRaises(ValueError, msg=repr(bad)[:160]):
+                remix_runner.parse_config(bad)
+
 
 if __name__ == "__main__":
     unittest.main()
