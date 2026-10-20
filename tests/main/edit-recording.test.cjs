@@ -258,3 +258,125 @@ test('Library re-makes are only for edited recordings in the output folder', asy
   await assert.rejects(main.recomposeEditRun('/tmp/edit-12345678-1234-1234-1234-123456789abc', 0, {}), /Only edited recordings/)
   await assert.rejects(main.recomposeEditRun(path.join(userData, 'edit-12345678-1234-1234-1234-123456789abc'), 0, {}), /Only edited recordings/)
 })
+
+// ---------------------------------------------------------------------------
+// The run itself, with FFmpeg, the engine and OpenRouter faked
+// ---------------------------------------------------------------------------
+
+const { EventEmitter } = require('node:events')
+const { promisify } = require('node:util')
+
+function loadWithGlobals(relative, mocks, globals) {
+  const module = { exports: {} }
+  const dir = path.dirname(path.join(ROOT, relative))
+  vm.runInNewContext(transpile(path.join(ROOT, relative)), {
+    module, exports: module.exports, URL, Buffer, console, setTimeout, clearTimeout, process, FormData, Blob, AbortSignal, AbortController, Response, ...globals,
+    require: (id) => {
+      if (id in mocks) return mocks[id]
+      if (id.startsWith('.')) return load(path.relative(ROOT, path.join(dir, id)) + '.ts', mocks)
+      return require(id)
+    }
+  })
+  return module.exports
+}
+
+/** An edit-recording module whose FFmpeg extraction waits for `extract` and whose engine answers from `engine`. */
+function runHarness({ brandMark = async () => null } = {}) {
+  const state = { extractions: [], fetches: 0, engineModes: [], statuses: [] }
+  const execFile = (bin, args, options, callback) => {
+    if (typeof options === 'function') { callback = options; options = {} }
+    if (bin === 'ffprobe') { callback(null, { stdout: '10\n', stderr: '' }); return }
+    if (args.includes('-encoders')) { callback(null, { stdout: ' A..... libmp3lame\n', stderr: '' }); return }
+    if (args.includes('-version')) { callback(null, { stdout: 'ffmpeg', stderr: '' }); return }
+    // The audio extraction: finishes after a moment unless its signal stops it first.
+    const out = args[args.length - 1]
+    const entry = { signal: options.signal, done: false }
+    state.extractions.push(entry)
+    const timer = setTimeout(() => { entry.done = true; fs.mkdirSync(path.dirname(out), { recursive: true }); fs.writeFileSync(out, 'audio'); callback(null, { stdout: '', stderr: '' }) }, 80)
+    options.signal?.addEventListener('abort', () => { clearTimeout(timer); callback(Object.assign(new Error('aborted'), { name: 'AbortError' })) })
+  }
+  const spawn = () => {
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.pid = undefined
+    child.stdin = { on() {}, end(text) {
+      const config = JSON.parse(text)
+      state.engineModes.push(config.mode)
+      const answer = config.mode === 'plan'
+        ? { ok: true, cost_usd: 0.01, words: [['Most', 0, 400, 0, null], ['coaches', 450, 900, 0, null], ['undercharge.', 950, 1500, 0, null], ['Here', 2000, 2200, 0, null], ['is', 2250, 2400, 0, null], ['why.', 2450, 2900, 0, null]],
+          hooks: [{ id: 0, start: 3, end: 5, text: 'Here is why', why: '' }], hook: 0, cta: null, popups: [], sounds: [], planned: 'ai', notes: [], warnings: [] }
+        : { ok: true, duration_seconds: 3, warnings: [] }
+      setTimeout(() => { child.stdout.emit('data', JSON.stringify(answer) + '\n'); child.emit('close', 0) }, 10)
+    } }
+    return child
+  }
+  const fetchStub = async () => {
+    state.fetches += 1
+    return new Response(JSON.stringify({ text: 'Most coaches undercharge.', words: [{ word: 'Most', start: 0, end: 0.4 }, { word: 'coaches', start: 0.45, end: 0.9 }], usage: { cost: 0.001 } }))
+  }
+  const module = loadWithGlobals('main/edit-recording.ts', {
+    child_process: { execFile, execFileSync: () => '', spawn },
+    util: { promisify },
+    './brands': { brandMarkForRun: brandMark, isBrandId: () => false, readBrandIdentity: async () => null },
+    './ctas': { applyRunCtaInLock: async () => ({ failed: [] }), originalPath: (p) => p + '.original.mp4', withRunLock: async (_f, work) => work() },
+    './logger': { logger: { info() {}, warn() {} } },
+    './member-prefs': { readMemberPrefs: () => ({ profile: { goals: [], platforms: [] } }) },
+    './openrouter-media': { openRouterBase: () => 'https://openrouter.test/api/v1' },
+    './pipeline-runner': { getBridgeRunnerPath: () => '/x/bridge_runner.py', getEnginePath: () => '/x', resolvePythonPath: () => 'python3', runtimeEnvironment: () => ({}), validatePython: async () => ({ ok: true }) },
+    './remix': { parseRemixRecompose: (v) => v },
+    './security': { assertMediaPath: () => undefined, authorizeMedia: (p) => p },
+    './settings-store': { loadSettings: () => SETTINGS, getSettingsForBridge: () => ({}), vocabularyTerms: () => [] },
+    './tools': { resolveBinary: (name) => name }
+  }, { fetch: fetchStub })
+  module.onEditStatus((status) => state.statuses.push(plain(status)))
+  return { main: module, state }
+}
+
+async function waitFor(check, label) {
+  for (let i = 0; i < 300; i += 1) { if (check()) return; await new Promise((resolve) => setTimeout(resolve, 10)) }
+  throw new Error(`timed out waiting for ${label}`)
+}
+
+test('canceling while the audio is read out stops FFmpeg, and the paid transcription is never sent', async () => {
+  const { main: edit, state } = runHarness()
+  await edit.startEdit({ sources: [path.join(userData, 'cancel-take.mp4')] })
+  await waitFor(() => state.extractions.length === 1, 'the extraction')
+  assert.ok(state.extractions[0].signal, 'FFmpeg gets the run’s abort signal')
+  assert.equal(edit.cancelEdit(), true)
+  await waitFor(() => edit.editStatus()?.phase === 'cancelled', 'the run to cancel')
+  // Let a late extraction (if it wasn't stopped) finish, then check nothing paid went out.
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  assert.equal(state.extractions[0].done, false)
+  assert.equal(state.fetches, 0)
+  assert.equal(edit.editStatus().costUsd, 0)
+})
+
+test('making the reel can only start once: a second click, Start over or Cancel during setup are safe', async () => {
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  let marks = 0
+  const { main: edit, state } = runHarness({ brandMark: async () => { marks += 1; await gate; return null } })
+  await edit.startEdit({ sources: [path.join(userData, 'render-take.mp4')] })
+  await waitFor(() => edit.editStatus()?.phase === 'review', 'the review')
+  assert.equal(state.fetches, 1)
+  const plan = edit.editStatus().plan
+  const decisions = { ...shared.initialDecisions(plan), look: { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false } }
+  const first = edit.renderEdit(decisions)
+  // Rendering is set before the brand mark is read, so a second click is turned away.
+  assert.equal(edit.editStatus().phase, 'rendering')
+  await assert.rejects(edit.renderEdit(decisions), /no edit waiting for review/)
+  assert.equal(await edit.discardEdit(), false, 'Start over waits while the reel is being made')
+  await assert.rejects(edit.startEdit({ sources: [path.join(userData, 'render-take.mp4')] }), /being edited/)
+  // Cancel while the brand mark is read: back to review, nothing rendered.
+  assert.equal(edit.cancelEdit(), true)
+  release()
+  await first
+  assert.equal(marks, 1)
+  assert.equal(edit.editStatus().phase, 'review')
+  assert.equal(edit.editStatus().error, null)
+  assert.deepEqual(state.engineModes, ['plan'])
+  // And it can be made afterward.
+  await edit.renderEdit(decisions)
+  await waitFor(() => edit.editStatus()?.phase === 'done', 'the reel')
+  assert.deepEqual(state.engineModes, ['plan', 'render'])
+  fs.rmSync(edit.editStatus().folder, { recursive: true, force: true })
+})
