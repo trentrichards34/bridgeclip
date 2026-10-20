@@ -60,9 +60,9 @@ export const DEFAULT_READY_FILTERS: ReadyFilters = { minGrade: 'any', kind: 'all
 
 const GRADE_ORDER: Record<Grade, number> = { A: 4, B: 3, C: 2, D: 1, F: 0 }
 
-/** A run folder's kind: Avatar Studio and Remix runs have their own folder names. */
+/** A run folder's kind: Avatar Studio (its avatar videos and Top lists) and Remix runs have their own folder names. */
 export function runKindOf(folderName: string, title = ''): RunKind {
-  if (/^avatar-/.test(folderName) || title.startsWith('Avatar Studio ·')) return 'avatar'
+  if (/^(avatar|listicle)-/.test(folderName) || title.startsWith('Avatar Studio ·')) return 'avatar'
   if (/^remix-/.test(folderName)) return 'remix'
   return 'create'
 }

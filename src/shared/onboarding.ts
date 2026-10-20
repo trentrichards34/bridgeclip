@@ -7,7 +7,7 @@
 
 import { ZERNIO_PLATFORMS, type ZernioPlatform } from './zernio'
 
-export type GoalId = 'clips' | 'edit-recording' | 'ai-reactions' | 'camera-reactions' | 'article' | 'avatar-videos' | 'posting'
+export type GoalId = 'clips' | 'edit-recording' | 'ai-reactions' | 'camera-reactions' | 'article' | 'avatar-videos' | 'listicle' | 'posting'
 
 /** Where each kind of video is made (renderer page ids). */
 export type GoalPage = 'clip' | 'edit' | 'remix' | 'avatar' | 'accounts'
@@ -26,13 +26,14 @@ export const GOALS: readonly Goal[] = [
   { id: 'camera-reactions', label: 'Reactions on camera', detail: 'Record yourself reacting to other videos, here or on your phone.', page: 'remix' },
   { id: 'article', label: 'Talk over an article or post', detail: 'Green screen yourself over a screenshot; the AI writes the headline.', page: 'remix' },
   { id: 'avatar-videos', label: 'AI avatar videos from a script', detail: 'Write a script and your avatar presents it.', page: 'avatar' },
+  { id: 'listicle', label: 'Top lists, no camera', detail: '“5 tools you need” videos from screenshots and a voice-over.', page: 'avatar' },
   { id: 'posting', label: 'Post and schedule from here', detail: 'Connect your accounts and post or schedule without leaving the app.', page: 'accounts' }
 ]
 
 /** The kinds of video a member makes on Create, Remix and Avatar Studio (their setup steps and first-run guides). */
 // Edit my recording has its own page and guide; it isn't one of the setup's first-video steps.
 export type VideoGoalId = Exclude<GoalId, 'posting' | 'edit-recording'>
-export const VIDEO_GOALS: readonly VideoGoalId[] = ['clips', 'ai-reactions', 'camera-reactions', 'article', 'avatar-videos']
+export const VIDEO_GOALS: readonly VideoGoalId[] = ['clips', 'ai-reactions', 'camera-reactions', 'article', 'avatar-videos', 'listicle']
 
 export type OnboardingState = 'new' | 'skipped' | 'done'
 
@@ -206,6 +207,24 @@ export const GUIDES: Record<GoalId, Guide> = {
       'Under 3 · Generate, check the estimated cost, then generate. The video is saved to your Library.'
     ],
     tips: ['Recreate swaps your avatar into an existing video. It runs on fal.ai, so it needs a fal.ai key in Settings → API keys.', 'Realistic lip-synced avatars use HeyGen (Beta) with your own HeyGen key in Settings → API keys.']
+  },
+  listicle: {
+    id: 'listicle',
+    title: 'Top lists, no camera',
+    summary: 'A “5 tools you need” style video: numbered items, your screenshots with the key part boxed, a voice-over and captions. No filming.',
+    needs: ['Your OpenRouter key (not needed if you record your own voice)', 'The system check passing'],
+    steps: [
+      'Open Avatar Studio and choose Top list at the top. You don’t need an avatar for it.',
+      'Write the list title and 3 to 7 items. For each one, add its name and a line or two about it.',
+      'Add a screenshot to any item and drag on it to box the part that matters. Items without one show their number and name.',
+      'Choose Write the script. Read each line and change anything that isn’t right: the video only says what you leave here.',
+      'Pick a voice: a preset voice, your avatar’s voice, or record your own in the app (free). Check the header, your handle for the end card and your call to action.',
+      'Check the estimated cost, then choose Make the video. It lands in your Library, ready to post.'
+    ],
+    tips: [
+      'Crop screenshots to the part that matters so they read well on a phone.',
+      'The header defaults to your brand name. Add a category after it, like “YOUR BRAND · AI TOOLS”.'
+    ]
   },
   posting: {
     id: 'posting',
