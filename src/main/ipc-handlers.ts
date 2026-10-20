@@ -7,6 +7,7 @@ import { BROLL_IMAGE_EXTENSIONS, BROLL_PLAN_ESTIMATE_USD, BROLL_VIDEO_EXTENSIONS
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
 import { addEditorCandidate, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorProgress, suggestEditorHooks } from './clip-editor'
 import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
+import { chatEstimateUsd, chatInfo, chatModel, editorChat, resetChat } from './clip-chat'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
 import { readFile, stat } from 'fs/promises'
@@ -734,6 +735,37 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('editor:suggestHooks', async (_event, path: unknown, revision: unknown, id: unknown) => {
     await assertSpendAllowed('editor:suggestHooks', 'openrouter', await editorCallEstimate(path, 'suggest-hooks').catch(() => null))
     return suggestEditorHooks(path, revision, id)
+  })
+  // The Chat tab: one paid OpenRouter turn per message (the member's key and planning model). Main checks
+  // every edit the model makes; the renderer applies them through the editor's own undo and autosave.
+  const chatCatalogModel = async (model: string): Promise<Awaited<ReturnType<typeof getModelCatalog>>['assistant'][number] | undefined> => {
+    let timer: NodeJS.Timeout | undefined
+    try {
+      const catalog = await Promise.race([getModelCatalog(), new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 4000) })])
+      return catalog?.assistant.find((item) => item.id === model)
+    } catch { return undefined } finally { clearTimeout(timer) }
+  }
+  handle('editor:chatInfo', async () => {
+    const model = chatModel(readMemberPrefs().create)
+    return chatInfo({ apiKey: Boolean(loadSettings().openrouterApiKey), model, catalogModel: await chatCatalogModel(model) })
+  })
+  handle('editor:chat', async (_event, path: unknown, candidate: unknown, message: unknown) => {
+    const session = await openEditor(path)
+    const settings = loadSettings()
+    if (!settings.openrouterApiKey) throw new Error('Add your OpenRouter key in Settings → API keys to chat about this clip.')
+    const model = chatModel(readMemberPrefs().create)
+    await assertSpendAllowed('editor:chat', 'openrouter', chatEstimateUsd(await chatCatalogModel(model)))
+    return editorChat(candidate, message, {
+      session: { run: realpathSync(path as string), project: session.project, sourcePath: session.sourcePath, previewPath: session.previewPath },
+      apiKey: settings.openrouterApiKey, model, ffmpeg: resolveBinary('ffmpeg'),
+      url: app.isPackaged ? undefined : process.env.BRIDGECLIP_E2E_OPENROUTER_URL || undefined,
+      // Recorded with OpenRouter's reported cost, also when the turn fails part way.
+      onCost: (usd) => { void recordSpend({ kind: 'create', provider: 'openrouter', usd, label: 'Clip editor chat' }).catch(() => {}) }
+    })
+  })
+  handle('editor:chatReset', async (_event, path: unknown, candidateId: unknown) => {
+    await openEditor(path)
+    resetChat(realpathSync(path as string), candidateId)
   })
   handle('editor:closeReady', (_event, saved: unknown) => editorCloseReady(saved))
   // An Automatic Create run opened in the editor: what it takes, doing it, and its progress.

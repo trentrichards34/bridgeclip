@@ -2,6 +2,7 @@ import type { JevThresholdSettings } from '../shared/jev-settings'
 import type { LibraryClipTarget } from '../shared/library-posting'
 import type { AutomationReviewResult } from '../shared/automations'
 import type { AutomaticEditInfo, CandidateEdit, EditorProgressSummary, EditorSession, HookIdea } from '../shared/clip-editor'
+import type { ChatInfo, ChatReply } from '../shared/clip-chat'
 import type { JobOutput } from '../shared/job-output'
 import type { HeadlineLook } from '../shared/headline-look'
 import type { CtaSummary } from '../shared/ctas'
@@ -218,6 +219,12 @@ export interface BridgeClipAPI {
     prepareAutomatic: (path: string, localFile?: string) => Promise<AutomaticEditInfo>
     /** The running editor operation and its progress, also before a run has an editor project. */
     operationStatus: (path: string) => Promise<{ operation: EditorSession['operation']; progress?: EditorSession['progress'] }>
+    /** Whether the Chat tab can be used, its model and cost note. */
+    chatInfo: () => Promise<ChatInfo>
+    /** One chat message about a clip (its current, maybe unsaved, edit). Uses the OpenRouter key; main checks every edit. */
+    chat: (path: string, candidate: CandidateEdit, message: string) => Promise<ChatReply>
+    /** Forget this clip's chat. */
+    chatReset: (path: string, candidateId: string) => Promise<void>
   }
   edits: { inspect: (outputDir: string) => Promise<EditAudit> }
   models: { list: (refresh?: boolean) => Promise<OpenRouterCatalog> }
@@ -690,7 +697,10 @@ const api: BridgeClipAPI = {
     closeReady: (saved) => ipcRenderer.invoke('editor:closeReady', saved),
     automaticInfo: (path) => ipcRenderer.invoke('editor:automaticInfo', path),
     prepareAutomatic: (path, localFile) => ipcRenderer.invoke('editor:prepareAutomatic', path, localFile),
-    operationStatus: (path) => ipcRenderer.invoke('editor:operationStatus', path)
+    operationStatus: (path) => ipcRenderer.invoke('editor:operationStatus', path),
+    chatInfo: () => ipcRenderer.invoke('editor:chatInfo'),
+    chat: (path, candidate, message) => paid('editor:chat', path, candidate, message),
+    chatReset: (path, candidateId) => ipcRenderer.invoke('editor:chatReset', path, candidateId)
   },
   edits: { inspect: (outputDir) => ipcRenderer.invoke('edits:inspect', outputDir) },
   models: { list: (refresh = false) => ipcRenderer.invoke('models:list', refresh) },

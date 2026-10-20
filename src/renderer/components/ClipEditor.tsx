@@ -21,6 +21,8 @@ import { captionAnchor } from '../lib/caption-preview'
 import { Switch } from './ui/Switch'
 import { Select } from './ui/Select'
 import { EditInspector } from './EditInspector'
+import { ClipChat, type ChatApplied, type ChatApplyResult } from './ClipChat'
+import { clipLengthNote, mergeChatSteps, patchValues, type ChatPatch, type ChatStep } from '../../shared/clip-chat'
 
 const labels: Record<string, string> = { not_sponsored: 'Not sponsored', opening_context: 'Opening context', self_contained: 'Self contained', complete_ending: 'Complete ending', logical_flow: 'Logical flow', faithful_to_source: 'Faithful to source', title_supported: 'Title supported', evidence: 'Enough evidence', removal_safe: 'Safe to remove', join_logical: 'Natural join' }
 const clock = (n: number): string => `${formatTimecode(n)}.${String(Math.floor(n % 1000)).padStart(3, '0')}`
@@ -75,7 +77,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   const [replacement, setReplacement] = useState<string | null>(null)
   const closeReplacement = useCallback(() => setReplacement(null), [])
   const [selected, setSelected] = useState(0)
-  const [tab, setTab] = useState<'review' | 'framing' | 'captions' | 'hook' | 'transcript'>('review')
+  const [tab, setTab] = useState<'review' | 'framing' | 'captions' | 'hook' | 'transcript' | 'chat'>('review')
   // "Choose" picked but no call to action chosen yet (the clip still uses the run's until one is).
   const [ctaPicking, setCtaPicking] = useState(false)
   useEffect(() => setCtaPicking(false), [selected])
@@ -113,6 +115,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   const [undo, setUndo] = useState<EditorCandidate[][]>([])
   const [redo, setRedo] = useState<EditorCandidate[][]>([])
   const [editingCaption, setEditingCaption] = useState<number | null>(null)
+  // A chat answer playing a moment: when it stops, and whether "Play cuts only" goes back on.
+  const chatPlay = useRef<{ timer: number; restoreCut: boolean } | null>(null)
+  useEffect(() => () => { if (chatPlay.current) window.clearTimeout(chatPlay.current.timer) }, [])
   const firstCaptionChange = useRef(true)
   const captionInput = useRef<HTMLTextAreaElement>(null)
   const video = useRef<HTMLVideoElement>(null)
@@ -638,6 +643,59 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
     }
     target.addEventListener('pointermove', move); target.addEventListener('lostpointercapture', done)
   }
+  // ── Chat tab: answers are applied through change(), so Undo, autosave and Bake work as for any edit.
+  const chatProject = { duration_ms: project.duration_ms, width: project.width, height: project.height, aspect_ratio: project.aspect_ratio, transcriptCount: project.transcript.length }
+  const chatKey = (c: EditorCandidate): string => JSON.stringify(candidateEdit(c))
+  /** Seek to `at` and play `seconds` of it; outside the clip's cut, "Play cuts only" is paused for it. */
+  const playMoment = (at: number, seconds: number, anywhere = false): void => {
+    const v = video.current
+    if (!v) return
+    if (chatPlay.current) { window.clearTimeout(chatPlay.current.timer); if (chatPlay.current.restoreCut) setPreviewCut(true); chatPlay.current = null }
+    v.pause()
+    // Let the edit render first, so playback follows the new cut.
+    window.setTimeout(() => {
+      const c = candidateRef.current
+      const inside = !!c && c.ranges.some(([a, b]) => at >= a && at + seconds * 1000 <= b)
+      const restoreCut = anywhere && !inside && previewCutRef.current
+      if (restoreCut) { previewCutRef.current = false; setPreviewCut(false) }
+      seek(at)
+      if (seconds <= 0) return
+      window.setTimeout(() => {
+        void video.current?.play().catch(() => {})
+        const timer = window.setTimeout(() => {
+          video.current?.pause()
+          if (chatPlay.current?.restoreCut) setPreviewCut(true)
+          chatPlay.current = null
+        }, seconds * 1000 / Math.max(.5, (c?.video_speed ?? 1) * reviewSpeed))
+        chatPlay.current = { timer, restoreCut }
+      }, restoreCut ? 60 : 0)
+    }, 60)
+  }
+  const applyChat = (steps: ChatStep[]): ChatApplyResult => {
+    const editing = steps.filter((s) => Object.keys(s.patch).length)
+    let applied: ChatApplied | null = null, length: string | null = null
+    if (editing.length) {
+      if (editingDisabled) return { error: status === 'discarded' ? 'Restore this clip to change it.' : 'Wait for the current task to finish, then ask again.' }
+      let patch: ChatPatch
+      try { patch = mergeChatSteps(candidate, editing, chatProject) } catch (e) { return { error: errorMessage(e) } }
+      const after = refineEdit(candidate, patch)
+      applied = { clipId: candidate.id, before: patchValues(candidate, Object.keys(patch) as (keyof ChatPatch)[]), afterKey: chatKey(after) }
+      length = clipLengthNote(after)
+      video.current?.pause(); setEditingCaption(null)
+      change(patch)
+    }
+    const focus = [...steps].reverse().find((s) => s.focus_ms !== null)
+    if (focus) playMoment(focus.focus_ms!, focus.play_seconds, focus.tool === 'play')
+    return { applied, length }
+  }
+  const undoChat = (applied: ChatApplied): string | null => {
+    if (applied.clipId !== candidate.id) return 'Open that clip to undo this change.'
+    if (editingDisabled) return 'Wait for the current task to finish, then undo.'
+    // Still the latest change: a real undo step. Otherwise put the old values back as a new change.
+    if (chatKey(candidate) === applied.afterKey && undo.length) history('undo')
+    else change(applied.before)
+    return null
+  }
   return <section ref={editorRoot} className="clip-editor" aria-label="Clip editor">
     <header className="editor-header"><div className="min-w-0 flex-1"><div className="flex items-center gap-3">{safeLeading}<span className="truncate text-sm font-medium">{project.title}</span></div><span className="text-2xs text-ink-subtle">{saving ? 'Saving…' : key !== savedKey.current ? 'Unsaved changes' : 'All changes saved'}</span></div>
       <Button variant="ghost" size="sm" onClick={() => setShowAudit(true)}>Transcript & edits</Button>
@@ -807,7 +865,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           </div>
         </div>
       </div>
-      <aside className="editor-inspector"><div className="editor-tabs">{(['review', 'framing', 'captions', 'hook', 'transcript'] as const).map((t) => <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)} className={cn(tab === t && 'selected')}>{t === 'review' ? 'Jev' : t === 'hook' ? 'Hook & CTA' : t[0].toUpperCase() + t.slice(1)}</button>)}</div>
+      <aside className="editor-inspector"><div className="editor-tabs">{(['review', 'framing', 'captions', 'hook', 'transcript', 'chat'] as const).map((t) => <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)} className={cn(tab === t && 'selected')}>{t === 'review' ? 'Jev' : t === 'hook' ? 'Hook & CTA' : t[0].toUpperCase() + t.slice(1)}</button>)}</div>
         <div ref={transcriptPanel} className="editor-inspector-body"><label className="editor-label" htmlFor="editor-title">Title</label><textarea id="editor-title" value={candidate.title} maxLength={200} disabled={editingDisabled} rows={2} onChange={(e) => { if (e.target.value.trim()) change({ title: e.target.value }) }} />
           {tab === 'review' && <div className="space-y-3 mt-4"><div className="flex items-center justify-between"><span className={cn('text-xs', current ? candidate.review?.decision === 'passes' ? 'text-success' : 'text-warning' : 'text-ink-muted')}>{!current ? 'Review out of date' : candidate.review?.decision === 'passes' ? 'Checks passed' : 'Consider before baking'}</span><Button size="sm" disabled={editingDisabled} onClick={() => { void run('review') }}>Review again</Button></div><p className="text-2xs text-ink-subtle">{current ? 'Review the questions, then adjust the cut and framing. You decide when the clip is ready.' : 'These results describe an earlier edit. Run Jev again to check your changes.'}</p>{candidate.review?.questions.map((q) => <Question key={q.id} q={q} />)}{!candidate.review && <p>No review is available yet. Run Jev to evaluate this candidate.</p>}{candidate.review?.cuts.map((cut, i) => <div key={i}><p className="editor-label">Removed {clock(cut.interval[0])} – {clock(cut.interval[1])}</p>{cut.questions.map((q) => <Question key={q.id} q={q} />)}</div>)}</div>}
           {tab === 'framing' && <fieldset disabled={editingDisabled} className="space-y-4 mt-4"><div className="editor-layouts">{(['fill', 'split', 'fit'] as const).map((l) => <button key={l} className={cn(currentScene.layout === l && 'selected')} onClick={() => setLayout(l)}>{l === 'fill' ? 'Full frame' : l === 'split' ? 'Split' : 'Fit'}</button>)}</div>{currentScene.layout === 'split' && <><div className="flex gap-2">{['Top', 'Bottom'].map((name, i) => <Button key={i} size="sm" variant={panel === i ? 'primary' : 'secondary'} onClick={() => setPanel(i)}>{name}</Button>)}</div>
@@ -909,6 +967,8 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
                 : <button className="editor-transcript-text" onClick={() => seek(r.start_ms)}>{captionText(i).trim() || <em>Caption hidden</em>}</button>}
             </div>
           })}{!project.transcript.length && <p>No spoken transcript is available for this source.</p>}</div>}
+          {tab === 'chat' && <ClipChat outputDir={outputDir} candidate={candidate} apply={applyChat} undo={undoChat} play={(at, seconds) => playMoment(at, seconds, true)}
+            disabledReason={busy ? 'Wait for the current task to finish to chat about this clip.' : status === 'discarded' ? 'Restore this clip to chat about it.' : null} />}
 
         </div>
       </aside>

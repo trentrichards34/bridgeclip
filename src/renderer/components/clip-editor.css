@@ -173,3 +173,26 @@
 .editor-hook-grade.grade-a, .editor-hook-grade.grade-b { color:rgb(var(--success)); background:rgb(var(--success) / .12); }
 .editor-hook-grade.grade-c { color:rgb(var(--warning)); background:rgb(var(--warning) / .12); }
 .editor-hook-grade.grade-d, .editor-hook-grade.grade-f { color:rgb(var(--danger)); background:rgb(var(--danger) / .12); }
+
+/* Chat tab: messages, change cards with Keep / Undo, and a composer pinned to the panel's bottom. */
+.editor-chat { display:flex; flex-direction:column; gap:12px; margin-top:16px; min-width:0; }
+.editor-chat-reason { font-size:11px; line-height:1.5; color:rgb(var(--warning)); padding:8px 10px; border-radius:6px; background:rgb(var(--warning) / .08); }
+.editor-chat-log { display:flex; flex-direction:column; gap:10px; min-width:0; }
+.editor-chat-message { font-size:12px; line-height:1.55; overflow-wrap:anywhere; min-width:0; }
+.editor-chat-message > p { white-space:pre-wrap; }
+.editor-chat-message.member { align-self:flex-end; max-width:88%; padding:7px 10px; border-radius:10px 10px 3px 10px; background:rgb(var(--accent) / .14); }
+.editor-chat-message.assistant { display:flex; flex-direction:column; gap:8px; color:rgb(var(--ink)); }
+.editor-chat-message.error { font-size:11px; color:rgb(var(--danger)); }
+.editor-chat-card { display:flex; flex-direction:column; gap:6px; padding:10px; border-radius:8px; border:1px solid rgb(255 255 255 / .08); background:rgb(var(--editor-well) / .55); font-size:11px; line-height:1.5; }
+.editor-chat-card ul { display:flex; flex-direction:column; gap:4px; }
+.editor-chat-card li { position:relative; padding-left:12px; }
+.editor-chat-card li::before { content:''; position:absolute; left:2px; top:.6em; width:4px; height:4px; border-radius:50%; background:rgb(var(--accent)); }
+.editor-chat-card.undone li { color:rgb(var(--ink-subtle)); text-decoration:line-through; }
+.editor-chat-compose { position:sticky; bottom:-16px; margin:0 -16px -16px; padding:10px 16px 16px; display:flex; flex-direction:column; gap:8px; border-top:1px solid rgb(var(--editor-divider)); background:rgb(var(--editor-inspector)); }
+.editor-chat-chips { display:flex; flex-wrap:wrap; gap:4px; }
+.editor-chat-chips button { font-size:10.5px; line-height:1; padding:6px 9px; border-radius:999px; border:1px solid #ffffff15; color:rgb(var(--ink-muted)); }
+.editor-chat-chips button:hover:not(:disabled) { color:rgb(var(--ink)); border-color:rgb(var(--accent) / .45); }
+.editor-chat-chips button:disabled { opacity:.5; cursor:default; }
+.editor-chat-input { display:flex; align-items:flex-end; gap:6px; min-width:0; }
+.editor-chat-input textarea { flex:1; min-width:0; resize:none; }
+.editor-chat-input textarea::placeholder { color:rgb(var(--ink-subtle)); }

@@ -69,7 +69,7 @@ function ipcWithLibrary(library) {
     './zernio/service': {},
     './zernio/posts': {},
     './automations': {},
-    './clip-editor': { onEditorExportCta() {}, onEditorRunLock() {}, onEditorSpend() {} }, './edit-automatic': { automaticEditInfo: async () => ({}), prepareAutomaticEditor: async () => ({}) },
+    './clip-editor': { onEditorExportCta() {}, onEditorRunLock() {}, onEditorSpend() {} }, './clip-chat': { chatEstimateUsd: () => null, chatInfo: () => ({}), chatModel: () => 'google/gemini-3.8-flash', editorChat: async () => ({ reply: '', steps: [] }), resetChat() {} }, './edit-automatic': { automaticEditInfo: async () => ({}), prepareAutomaticEditor: async () => ({}) },
     './output-storage': {},
     './edit-inspector': {},
     './youtube-preview': {},
