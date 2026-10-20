@@ -8,6 +8,7 @@ import { promisify } from 'util'
 import { isAvatarId } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
 import { headlineLookForEngine, parseHeadlineLook } from '../shared/headline-look'
+import { lookExtrasForEngine, parseImageHighlight, parseLookExtrasField } from '../shared/look-extras-engine'
 import { parseCtaChoice } from '../shared/ctas'
 import { applyRunCta, applyRunCtaInLock, originalPath, readCta, withRunLock } from './ctas'
 import {
@@ -215,6 +216,8 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const headlineLook = raw.headlineLook === undefined || raw.headlineLook === null ? undefined : parseHeadlineLook(raw.headlineLook)
   const ctaId = parseCtaChoice(raw.ctaId)
   if (raw.showHandle !== undefined && typeof raw.showHandle !== 'boolean') throw new Error('Choose whether to show your handle.')
+  const lookExtras = parseLookExtrasField(raw.lookExtras)
+  const imageHighlight = image ? parseImageHighlight(raw.imageHighlight) : undefined
   return {
     sourceIsUrl: local.length === 0,
     request: {
@@ -227,7 +230,9 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
       ...(camera ? { camera } : {}),
       ...(raw.showHandle === true && brandIdentityId ? { showHandle: true } : {}),
       ...(pauseChoice ? { pause: pauseChoice } : {}),
-      ...(momentChoice ? { moment: momentChoice } : {})
+      ...(momentChoice ? { moment: momentChoice } : {}),
+      ...(lookExtras.length ? { lookExtras } : {}),
+      ...(imageHighlight ? { imageHighlight } : {})
     }
   }
 }
@@ -422,7 +427,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       request, draftIds: new Set(), planCostUsd: 0,
       config: {
         sources: image ? [] : request.sources, output_dir: folder,
-        ...(imageCopy ? { image_source: { path: imageCopy, credit: request.creator } } : {}), angle: request.angle, order: request.order, count: request.count, host: request.host,
+        ...(imageCopy ? { image_source: { path: imageCopy, credit: request.creator, ...(request.imageHighlight ? { highlight: request.imageHighlight } : {}) } } : {}), angle: request.angle, order: request.order, count: request.count, host: request.host,
         voice: preset, voice_model: cloned ? 'fish-audio/s2.1-pro' : 'elevenlabs/eleven-v3', voice_reference: voiceReference,
         voice_transcript: cloned?.transcript ?? '', avatar_photo: request.format === 'silent' ? null : photo,
         format: request.format, reactions, reactions_ai: reactionsAi, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
@@ -432,6 +437,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         // Their recorded call to action ends each video, so the presenter doesn't say one too.
         ...(request.ctaId ? { cta_clip: true } : {}),
         ...(brandMark ? { brand_mark: brandMark } : {}),
+        ...lookExtrasForEngine(request.lookExtras, brand?.look?.color, request.headlineLook),
         ...(request.camera ? { camera_layout: request.camera.layout, camera_backdrop: request.camera.backdrop,
           camera_backdrop_color: request.camera.backdropColor, camera_talk: request.camera.talk } : {}),
         ...(request.pause ? { pause_layout: request.pause.layout, pause_captions: request.pause.captions } : {}),

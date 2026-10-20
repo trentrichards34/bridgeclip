@@ -1994,6 +1994,10 @@ class RemixConfig:
     presenter: str = ""
     heygen_voice: bool = False
     heygen_usd_per_second: Optional[float] = None
+    # Look extras (see look_extras): motion effects on top of the look, and the brand color they use. Kept with each
+    # video's edit bundle (tags["look_extras"]), so re-making it keeps them.
+    look_extras: list = field(default_factory=list)
+    look_extras_color: Optional[str] = None
 
 
 @dataclass
@@ -2239,6 +2243,14 @@ class Remixer:
                 raise RemixError("The screenshot is missing. Add it again.")
             credit = image.get("credit") if isinstance(image.get("credit"), str) else ""
             config.image_source = {"path": path, "credit": " ".join(credit.split())[:120]}
+            try:
+                from clip_engine.services.look_extras import parse_highlight
+                highlight = parse_highlight(image.get("highlight"))
+            except ValueError:
+                highlight = None
+            if highlight:
+                # Look extras, proof highlights: the box around the key number (shares of the screenshot).
+                config.image_source["highlight"] = list(highlight)
         if config.host == "camera":
             if config.camera_layout not in CAMERA_LAYOUTS or config.camera_backdrop not in CAMERA_BACKDROPS:
                 raise RemixError("Choose how you appear on camera.")
@@ -2921,6 +2933,7 @@ class Remixer:
         parts.append(("host", intro_part))
         if self.config.order != "moment_first":
             parts.append(("excerpt", excerpt))
+        broll_parts: set[int] = set()
         for i, beat in enumerate(beats):
             out = os.path.join(work, f"p2-beat{i}.mp4")
             seconds = await asyncio.to_thread(media_seconds, audio[f"beat{i}"])
@@ -2928,6 +2941,7 @@ class Remixer:
             if broll[i]:
                 try:
                     path = await asyncio.to_thread(video_segment, broll[i], out, OUT_W, panel_h, audio[f"beat{i}"], seconds, True)
+                    broll_parts.add(len(parts))
                 except RemixError:
                     logger.warning("A B-roll file could not be used; using a still")
             if not path and host_videos.get(f"beat{i}"):
@@ -2975,7 +2989,9 @@ class Remixer:
                 "excerpt_windows": [list(w) for w in windows["excerpt"]],
                 "ai_windows": [[starts[i], starts[i] + durations[i]] for i in sorted(avatar_parts)],
                 "cta_keyword": "" if self.config.cta_clip else keyword,
-                "cta_window": list(windows["host"][-1]) if windows["host"] else None}
+                "cta_window": list(windows["host"][-1]) if windows["host"] else None,
+                # Stock b-roll beats (look extras: tagged, never zoomed).
+                "broll_windows": [[starts[i], starts[i] + durations[i]] for i in sorted(broll_parts)]}
         credit_text = tags["credit_text"]
         os.makedirs(root, exist_ok=True)
         final = os.path.join(root, f"{name}.mp4")
@@ -3083,7 +3099,9 @@ class Remixer:
         "excerpt_windows", "ai_windows", "cta_window"; for silent "tags_y"}."""
         from clip_engine.config import get_caption_preset
         from clip_engine.services.caption_generator import CaptionGeneratorService
+        from clip_engine.services import look_extras as lx
 
+        extras = self._look_extras_tag(tags)
         panel_h = OUT_H - bar_h
         caption_path = None
         if self.config.include_captions and words:
@@ -3091,6 +3109,7 @@ class Remixer:
                 style = get_caption_preset(self.config.caption_preset)
             except Exception:  # noqa: BLE001 - fall back to the default look
                 style = get_caption_preset("pop")
+            style = lx.caption_style(style, extras)
             # Silent layouts: below the presenter's face, above the platforms' own buttons. Voiced takes: low in the panel.
             caption_y = OUT_H - SILENT_CAPTION_FROM_BOTTOM if anchor == "silent" else bar_h + round(panel_h * 0.72)
             if anchor == "silent" and tags.get("tags_y"):
@@ -3107,6 +3126,8 @@ class Remixer:
             overlays.append((bar_path, "0", "0", "1"))
         credit_text = tags.get("credit_text") or ""
         keyword = tags.get("cta_keyword") or ""
+        if extras.has("comment_box") and extras.keyword:
+            keyword = ""  # the comment box types it instead
         if tags.get("style") == "commentary":
             if credit_text:
                 credit_png = os.path.join(work, "credit.png")
@@ -3158,6 +3179,13 @@ class Remixer:
                 x, y = mark_position(mark["position"], OUT_W, OUT_H, size[0], size[1], top_from=top_from, captions_to=captions_to)
                 overlays.append((mark_png, str(x), str(y), "1"))
         graph = f"[0:v]{base_filter + ',' if base_filter else ''}pad={OUT_W}:{OUT_H}:0:{bar_h}:color={self._look.pad_color},setsar=1[base]"
+        if extras.has("punch_zoom") and tags.get("style") == "commentary":
+            # Zoom punch while the presenter fills the frame (never over their clip, a box or b-roll).
+            blocked = [tuple(w[:2]) for key in ("excerpt_windows", "broll_windows") for w in tags.get(key) or []]
+            punch = await asyncio.to_thread(lx.reel_punch, extras, assembled, [(w.start_time_ms / 1000, w.end_time_ms / 1000, w.word) for w in words],
+                                            total_s, OUT_W, panel_h, "pzs", "pzd", blocked=blocked)
+            graph = (f"[0:v]{base_filter or 'null'},setsar=1[pzs];{punch};"
+                     f"[pzd]pad={OUT_W}:{OUT_H}:0:{bar_h}:color={self._look.pad_color},setsar=1[base]")
         current = "base"
         if caption_path:
             graph += f";[{current}]{service._caption_filter(caption_path)}[cap]"
@@ -3166,8 +3194,34 @@ class Remixer:
             graph += f";[{current}][{i}:v]overlay=x={x}:y={y}:enable='{enable}'[o{i}]"
             current = f"o{i}"
         overlay_inputs = [arg for path, *_ in overlays for arg in ("-i", path)]
+        if extras:
+            # Extras: b-roll tags under the hook text (and a top-right mark), the comment box off the face, the progress bar.
+            caption_line = OUT_H - SILENT_CAPTION_FROM_BOTTOM if anchor == "silent" else bar_h + round(panel_h * 0.72)
+            ending = (max(0.0, total_s - 2.5), total_s)
+            faces = await asyncio.to_thread(lx.face_boxes, assembled, [ending], (OUT_W, panel_h), (0, bar_h))
+            tag_top = clear_h + 24 + ((round(OUT_H * 0.04) + 16) if mark and mark.get("position") == "top-right" else 0)
+            layers = lx.reel_layers(
+                extras, os.path.join(work, "extras"), width=OUT_W, height=OUT_H, total_s=total_s, top=max(clear_h, round(OUT_H * 0.06)) + 24,
+                caption_top=caption_line - 130, faces=[f for f in faces if f], under=self._look.background if bar_h else None,
+                broll=[(float(w[0]), float(w[1]), lx.tag_label("broll", w[2] if len(w) > 2 else None)) for w in tags.get("broll_windows") or []],
+                dark=await asyncio.to_thread(lx.frame_is_dark, assembled, max(0.0, total_s - 1.0)), tag_top=tag_top)
+            if layers:
+                chain, current = lx.overlay_chain(current, layers, len(overlays) + 1)
+                graph += ";" + chain
+                overlay_inputs += lx.layer_inputs(layers, total_s, FPS)
         await asyncio.to_thread(ffmpeg, ["-i", assembled, *overlay_inputs, "-filter_complex", graph, "-map", f"[{current}]", "-map", "0:a",
                                          *VIDEO_ARGS, "-c:a", "copy", "-movflags", "+faststart", out])
+
+    def _look_extras_tag(self, tags: dict) -> Any:
+        """The look extras to draw: the ones kept in the edit bundle's tags (re-making a video), else this run's
+        (recorded in `tags`, saved with the bundle)."""
+        from clip_engine.services import look_extras as lx
+        if "look_extras" in tags:
+            return lx.from_record(tags.get("look_extras"))
+        extras = lx.look_extras(self.config.look_extras, self.config.look_extras_color, self.config.cta_keyword)
+        if extras:
+            tags["look_extras"] = extras.record()
+        return extras
 
     def _brand_mark_tag(self, tags: dict) -> Optional[dict]:
         """The mark to draw: the one kept in the edit bundle's tags (re-making a video), else this run's.
@@ -3290,7 +3344,39 @@ class Remixer:
                 shift = max(0, round(open_top + SILENT_FACE_SPOT * (panel_h - open_top) - SILENT_FACE_AT * OUT_H))
                 graph = box + ";" + camera_graph(layout, OUT_W, panel_h, size, matte=matte is not None, backdrop=spec.get("backdrop") or "blur",
                                                  color=spec.get("color") or "#111111", duration=duration, fg_height=OUT_H, shift=shift)
-                graph += f";[camv][box]overlay=x=(W-w)/2:y={lift + SILENT_TOP}:shortest=1[v]"
+                if isinstance(spec.get("proof"), dict):
+                    # Look extras, proof highlights: the screenshot pops in, the key number underlined when it's marked.
+                    from clip_engine.services import look_extras as lx
+                    top = lift + SILENT_TOP
+                    px, py = lx.pop_xy(0, top, box_w, moment_h, 0.0)
+                    graph += (f";[box]{lx.pop_filter(0.0, fade=False)}[boxp]"
+                              f";[camv][boxp]overlay=x='(W-w)/2':y='{py}':shortest=1[vbox]")
+                    with Image.open(image) as picture:
+                        pw, ph = picture.size
+                    shift, visible = "", None
+                    if scrolls:
+                        # A long one scrolls inside the box: the underline moves with it, shown while in the box.
+                        shown_w = box_w - 12
+                        shown_h = round(ph * shown_w / max(1, pw))
+                        travel = max(0, min(shown_h, MAX_SCROLL_HEIGHT) - (moment_h - 12))
+                        shift = scroll_y(travel, duration).strip("'")
+                        visible = (top + 6, top + moment_h - 6)
+                    else:
+                        shown_h = moment_h - 12
+                        shown_w = round(pw * shown_h / max(1, ph))
+                    rect = lx.highlight_rect(lx.parse_highlight(spec["proof"].get("highlight")),
+                                             ((OUT_W - shown_w) / 2, top + 6, shown_w, shown_h))
+                    if rect and rect[1] + rect[3] > top + 6 + min(shown_h, MAX_SCROLL_HEIGHT):
+                        rect = None  # in the part of a very long screenshot that isn't used
+                    layers = lx.underline_layers(os.path.join(work, "proof"), rect, 0.45, OUT_W, shift=shift, visible=visible) if rect else []
+                    if layers:
+                        chain, last = lx.overlay_chain("vbox", layers, 2 + sum(1 for arg in extra if arg == "-i"), tag="pf")
+                        graph += f";{chain};[{last}]null[v]"
+                        extra = extra + lx.layer_inputs(layers, duration, FPS)
+                    else:
+                        graph += ";[vbox]null[v]"
+                else:
+                    graph += f";[camv][box]overlay=x=(W-w)/2:y={lift + SILENT_TOP}:shortest=1[v]"
                 info.update(tags_y=clear_h + SILENT_TOP + moment_h + 16, split_value=round(moment_h / OUT_H, 3))
             inputs += extra
             info.update(scrolls=scrolls, cut=cut)
@@ -3500,6 +3586,8 @@ class Remixer:
         # 2. The screenshot behind them (green screen) or as the box over them, and their voice.
         say("putting it together", 0.45)
         compose = {"format": "image", "layout": layout, "backdrop": self.config.camera_backdrop, "color": self.config.camera_backdrop_color}
+        if "proof_underline" in (self.config.look_extras or []):
+            compose["proof"] = {"highlight": (self.config.image_source or {}).get("highlight")}
         data = {"dir": folder, "kind": "image", "files": files, "compose": compose, "duration": duration}
         assembled, info = await self._compose(data, None, bar_h, clear_h, work)
         if info.get("cut"):
@@ -4694,6 +4782,7 @@ class Remixer:
                 "cta_window": [round(max(op, total_s - 4.0), 3), round(total_s, 3)], "cuts": [round(op, 3)],
                 "credit_y": int(part1_info["tags_y"]),
                 **({"caption_anchors": [[round(op * 1000), int(place["caption_y"])]]} if place["at"] != "fallback" else {}),
+                "broll_windows": [[round(op + s["start"], 3), round(op + s["end"], 3)] for s in shots],
                 "part1": {"at": place["at"], "box": box, "face": list(face) if face else None}}
         final, manifest_path, editable = await self._finish_panel(service, assembled, work, root, name, script.headline, total_s, words, tags,
                                                                   bar_path, bar_h, clear_h, panel_h, "react_thoughts", layout)

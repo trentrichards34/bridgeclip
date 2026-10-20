@@ -14,6 +14,7 @@ import { parseJobOutput, type JobOutput } from '../shared/job-output'
 import { BRIDGE_CONTRACT_VERSION } from '../shared/job-contract'
 import type { ClipJobRequest } from '../shared/jobs'
 import { headlineLookForEngine } from '../shared/headline-look'
+import { lookExtrasForEngine } from '../shared/look-extras-engine'
 import type { OpenRouterModel } from '../shared/openrouter-models'
 import { finishRunRecord, type StoredRunStatus } from './run-history'
 import { resolveBinary } from './tools'
@@ -547,6 +548,7 @@ export function startClipJob(
     ...(brand ? { brand_identity: brand.text, brand_name: brand.name } : {}),
     ...(brand?.mark ? { brand_mark: brand.mark } : {}),
     ...(config.ctaKeyword && config.workflow !== 'review' ? { cta_keyword: config.ctaKeyword, cta_offer: config.ctaOffer ?? '' } : {}),
+    ...(config.workflow !== 'review' ? lookExtrasForEngine(config.lookExtras, brand?.color, config.headlineLook) : {}),
     keyterms: vocabularyTerms(settings.customVocabulary),
     start_time_seconds: config.startTimeSeconds,
     end_time_seconds: config.endTimeSeconds,

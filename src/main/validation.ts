@@ -9,6 +9,7 @@ import { isBackgroundVideoName } from '../shared/backgrounds'
 import { parseHeadlineLook } from '../shared/headline-look'
 import { isCtaId } from '../shared/ctas'
 import { isCaptionLanguage } from '../shared/caption-language'
+import { parseLookExtrasField } from '../shared/look-extras-engine'
 
 const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 import { MAX_CTA_OFFER_CHARS, normalizeCtaKeyword } from '../shared/remix'
@@ -82,11 +83,15 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
     delete known.ctaOffer
   }
   if (!known.showHandle) delete known.showHandle
+  // Extras are drawn on Automatic renders; the review editor exports without them.
+  const extras = parseLookExtrasField(known.lookExtras)
+  if (extras.length && v.workflow !== 'review') known.lookExtras = extras
+  else delete known.lookExtras
   return { ...known, videoUrl: normalizeVideoSource(v.videoUrl), videoSpeed: v.videoSpeed ?? 1, includeTitle: v.includeTitle ?? true, clipRequest, plannerCapabilities: undefined }
 }
 
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
   'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'includeTitle', 'titleStyle', 'headlineLook', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'lookExtras', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

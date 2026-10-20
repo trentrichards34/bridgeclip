@@ -51,7 +51,11 @@ def _look(raw):
     if not isinstance(captions, bool) or preset not in presets:
         raise ValueError("Invalid captions")
     mark = validate_brand_mark(raw.get("brand_mark")) if raw.get("mode") == "render" else None
-    return Look(headline, validate_headline_look(raw.get("headline_look")), captions, preset, mark)
+    extras = None
+    if raw.get("mode") == "render":
+        from clip_engine.services.look_extras import look_extras
+        extras = look_extras(raw.get("look_extras"), raw.get("look_extras_color"), raw.get("cta_keyword") or "")
+    return Look(headline, validate_headline_look(raw.get("headline_look")), captions, preset, mark, extras)
 
 
 def parse_request(raw):

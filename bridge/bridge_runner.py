@@ -327,6 +327,8 @@ async def run(config: dict) -> bool:
         cta_keyword=config.get("cta_keyword") or "",
         cta_offer=config.get("cta_offer") or "",
         brand_mark=config.get("brand_mark"),
+        look_extras=config.get("look_extras"),
+        look_extras_color=config.get("look_extras_color"),
     )
 
     emit({
@@ -504,6 +506,10 @@ def validate_config(config: object) -> dict:
         raise ValueError("Invalid call-to-action keyword")
     from clip_engine.services.brand_mark import validate_brand_mark
     config["brand_mark"] = validate_brand_mark(config.get("brand_mark"))
+    # Look extras: known effects only, and their color.
+    from clip_engine.services.look_extras import parse_color, parse_look_extras
+    config["look_extras"] = list(parse_look_extras(config.get("look_extras")))
+    config["look_extras_color"] = parse_color(config.get("look_extras_color")) if config["look_extras"] else None
     ranges = config.get("duration_ranges")
     if ranges is not None and (
         not isinstance(ranges, list) or len(ranges) > len(DURATION_RANGE_IDS) or

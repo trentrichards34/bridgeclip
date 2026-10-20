@@ -190,6 +190,16 @@ test('the review: words toggle, a span toggles, another hook comes with its text
   assert.ok(shared.reelSeconds(plan, shared.initialDecisions(plan)) > 2)
 })
 
+test('look extras in the review choices: missing is none, unknown ones dropped', () => {
+  const plan = samplePlan()
+  const look = { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false }
+  const good = { ...shared.initialDecisions(plan), look }
+  assert.equal('lookExtras' in shared.parseEditDecisions(good, plan).look, false)
+  const picked = shared.parseEditDecisions({ ...good, look: { ...look, lookExtras: ['comment_box', 'glow', 'punch_zoom'] } }, plan)
+  assert.deepEqual(plain(picked.look.lookExtras), ['punch_zoom', 'comment_box'])
+  assert.throws(() => shared.parseEditDecisions({ ...good, look: { ...look, lookExtras: 'punch_zoom' } }, plan), /extras/)
+})
+
 test('the review choices are checked against the plan before a reel is made', () => {
   const plan = samplePlan()
   const good = { ...shared.initialDecisions(plan), look: { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false } }

@@ -260,11 +260,13 @@ def parse_config(raw):
     if fmt == "image":
         image_source = raw.get("image_source")
         credit = image_source.get("credit", "") if isinstance(image_source, dict) else None
-        if raw.get("host") != "camera" or not isinstance(image_source, dict) or not set(image_source) <= {"path", "credit"} \
+        if raw.get("host") != "camera" or not isinstance(image_source, dict) or not set(image_source) <= {"path", "credit", "highlight"} \
                 or not _abs_path(image_source.get("path")) or not image_source["path"].lower().endswith(IMAGE_EXTENSIONS) \
                 or not isinstance(credit, str) or len(credit) > 120 or "\0" in credit:
             raise ValueError("Invalid image source")
-        image_source = {"path": image_source["path"], "credit": " ".join(credit.split())}
+        from clip_engine.services.look_extras import parse_highlight
+        highlight = parse_highlight(image_source.get("highlight"))
+        image_source = {"path": image_source["path"], "credit": " ".join(credit.split()), **({"highlight": list(highlight)} if highlight else {})}
     elif raw.get("image_source") is not None:
         raise ValueError("Invalid image source")
     if fmt not in ("commentary", "silent", "image", "pause_react", "moment_take", *CLIP_FORMATS) or not isinstance(reactions, dict) or any(
@@ -283,6 +285,9 @@ def parse_config(raw):
     from clip_engine.services.rendering_service import validate_headline_look
     from clip_engine.services.brand_mark import validate_brand_mark
     headline_look = validate_headline_look(raw.get("headline_look"))
+    from clip_engine.services.look_extras import parse_color, parse_look_extras
+    look_extras = list(parse_look_extras(raw.get("look_extras")))
+    look_extras_color = parse_color(raw.get("look_extras_color")) if look_extras else None
     try:
         keyword = normalize_keyword(raw.get("cta_keyword"))
     except ValueError:
@@ -303,6 +308,7 @@ def parse_config(raw):
         moment_ranges=moment_ranges, moment_pip=moment_pip, write_ids=write_ids,
         clip_trim=clip_trim, broll_items=broll_items, broll_stock=broll_stock, broll_plan=broll_plan,
         presenter=presenter, heygen_voice=heygen_voice, heygen_usd_per_second=heygen_price,
+        look_extras=look_extras, look_extras_color=look_extras_color,
     )
 
 

@@ -951,6 +951,8 @@ class Look:
     include_captions: bool
     caption_preset: str
     brand_mark: Optional[dict]
+    # Look extras (see look_extras.LookExtras); None for none.
+    look_extras: Any = None
 
 
 async def overlay_reel(base: str, out: str, work: str, look: Look, timed: list[list], popups: list[dict], total_s: float,
@@ -960,6 +962,8 @@ async def overlay_reel(base: str, out: str, work: str, look: Look, timed: list[l
     from clip_engine.services.brand_mark import mark_image, mark_position
     from clip_engine.services.caption_generator import CaptionGeneratorService
     from clip_engine.services.rendering_service import RenderingService, RenderRequest, TitleStyle, parse_headline_look
+    from clip_engine.services import look_extras as lx
+    extras = look.look_extras or lx.LookExtras()
     service = RenderingService()
     style = parse_headline_look(look.headline_look)
     bar = service._headline_bar_image(RenderRequest(
@@ -985,13 +989,16 @@ async def overlay_reel(base: str, out: str, work: str, look: Look, timed: list[l
             caption_style = get_caption_preset("pop")
         caption_path = await CaptionGeneratorService().generate_captions(
             transcript_segments=_segments(words), clip_start_ms=0, clip_end_ms=round(total_s * 1000),
-            output_path=os.path.join(work, "captions.ass"), caption_style=caption_style, output_width=OUT_W, output_height=OUT_H,
-            anchors=[(10**9, 5, caption_y)], emphasis_words=[p["text"] for p in popups if p.get("kind") == "keyword"] or None,
+            output_path=os.path.join(work, "captions.ass"), caption_style=lx.caption_style(caption_style, extras),
+            output_width=OUT_W, output_height=OUT_H, anchors=[(10**9, 5, caption_y)], emphasis_words=[p["text"] for p in popups if p.get("kind") == "keyword"] or None,
         )
     inputs: list[str] = []
     steps: list[str] = []
-    graph = (f"[0:v]scale={OUT_W}:{panel_h}:force_original_aspect_ratio=increase,crop={OUT_W}:{panel_h}:0:(ih-{panel_h})*0.35,"
-             f"pad={OUT_W}:{OUT_H}:0:{bar_h}:color={style.pad_color},setsar=1[base]")
+    graph = (f"[0:v]scale={OUT_W}:{panel_h}:force_original_aspect_ratio=increase,crop={OUT_W}:{panel_h}:0:(ih-{panel_h})*0.35[panel];"
+             # (The base reel is OUT_W x OUT_H: the panel is its middle, a little above center.)
+             + lx.reel_punch(extras, base, [(s / 1000, e / 1000, str(t)) for t, s, e, *_ in timed], total_s, OUT_W, panel_h, "panel", "framed",
+                             shown_size=(OUT_W, OUT_H), offset=(0, -(OUT_H - panel_h) * 0.35))
+             + f";[framed]pad={OUT_W}:{OUT_H}:0:{bar_h}:color={style.pad_color},setsar=1[base]")
     current = "base"
     if caption_path:
         graph += f";[{current}]{service._caption_filter(caption_path)}[cap]"
@@ -1016,10 +1023,19 @@ async def overlay_reel(base: str, out: str, work: str, look: Look, timed: list[l
         k += 1
         inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{seconds:.3f}", "-i", png]
         fade_out = max(0.0, seconds - 0.18)
-        steps.append(f"[{k}:v]format=rgba,fade=t=in:st=0:d=0.14:alpha=1,fade=t=out:st={fade_out:.3f}:d=0.18:alpha=1,"
-                     f"setpts=PTS-STARTPTS+{start:.3f}/TB[p{k}]")
-        # It rises into place over a fifth of a second.
-        steps.append(f"[{current}][p{k}]overlay=x={(OUT_W - w) // 2}:y='{popup_y}+46*max(0,1-(t-{start:.3f})/0.2)':eof_action=pass[o{k}]")
+        if lx.popup_pop(extras):
+            # Proof highlights: it pops in (0.9 -> 1 over 150 ms) instead of rising.
+            with Image.open(png) as card:
+                card_w, card_h = card.size
+            px, py = lx.pop_xy((OUT_W - w) // 2, popup_y, card_w, card_h, start)
+            steps.append(f"[{k}:v]setpts=PTS-STARTPTS+{start:.3f}/TB,{lx.pop_filter(start, fade=False)},"
+                         f"fade=t=in:st={start:.3f}:d=0.12:alpha=1,fade=t=out:st={start + fade_out:.3f}:d=0.18:alpha=1[p{k}]")
+            steps.append(f"[{current}][p{k}]overlay=x='{px}':y='{py}':eof_action=pass[o{k}]")
+        else:
+            steps.append(f"[{k}:v]format=rgba,fade=t=in:st=0:d=0.14:alpha=1,fade=t=out:st={fade_out:.3f}:d=0.18:alpha=1,"
+                         f"setpts=PTS-STARTPTS+{start:.3f}/TB[p{k}]")
+            # It rises into place over a fifth of a second.
+            steps.append(f"[{current}][p{k}]overlay=x={(OUT_W - w) // 2}:y='{popup_y}+46*max(0,1-(t-{start:.3f})/0.2)':eof_action=pass[o{k}]")
         current = f"o{k}"
     if look.brand_mark:
         png = os.path.join(work, "brand-mark.png")
@@ -1032,6 +1048,18 @@ async def overlay_reel(base: str, out: str, work: str, look: Look, timed: list[l
             current = f"o{k}"
     if steps:
         graph += ";" + ";".join(steps)
+    if extras:
+        # Extras: the comment box (off the face, above the captions), the progress bar (over the hook bar's color).
+        faces = await asyncio.to_thread(lx.face_boxes, base, [(max(0.0, total_s - 2.5), total_s)], (OUT_W, OUT_H),
+                                        (0, bar_h - round((OUT_H - panel_h) * 0.35)))
+        dark = await asyncio.to_thread(lx.frame_is_dark, base, max(0.0, total_s - 1.0))
+        layers = lx.reel_layers(extras, os.path.join(work, "extras"), width=OUT_W, height=OUT_H, total_s=total_s,
+                                top=max(clear_h, round(OUT_H * 0.06)) + 30, caption_top=caption_y - 130,
+                                faces=[f for f in faces if f], under=style.background if bar_h else None, dark=dark)
+        if layers:
+            chain, current = lx.overlay_chain(current, layers, k + 1)
+            graph += ";" + chain
+            inputs += lx.layer_inputs(layers, total_s, FPS)
     await asyncio.to_thread(ffmpeg, [*MEDIA_GUARD, "-i", base, *inputs, "-filter_complex", graph, "-map", f"[{current}]", "-map", "0:a",
                                      *VIDEO_ARGS, "-c:a", "copy", "-movflags", "+faststart", "-t", f"{total_s:.3f}", out])
 
@@ -1174,6 +1202,7 @@ async def render_edit(config: dict, progress: Progress) -> dict:
     seconds = probe_seconds(final) or total
     write_bundle(root, {"version": EDIT_VERSION, "words": timed_list, "popups": popups, "duration": round(total, 3),
                         "settings": settings_of(look), "brand_mark": _saved_mark(look.brand_mark, root),
+                        **({"look_extras": look.look_extras.record()} if look.look_extras else {}),
                         "sounds": [name for name, _ in events]})
     title = config.get("title") or look.headline or "My recording"
     write_job_output(root, final, seconds, look, float(config.get("cost_usd") or 0), f"Edited · {title}", post_caption_of(timed))
@@ -1205,7 +1234,10 @@ async def recompose_edit(config: dict, progress: Progress) -> dict:
             mark = validate_brand_mark({"handle": saved.get("handle") or "", "logo_path": logo_path, "position": saved.get("position")})
         except ValueError:
             mark = None
-    look = Look(config["headline"], config["headline_look"], config["include_captions"], config["caption_preset"], mark)
+    from clip_engine.services.look_extras import from_record
+    # The extras it was made with stay (they're picked when it's first made).
+    look = Look(config["headline"], config["headline_look"], config["include_captions"], config["caption_preset"], mark,
+                from_record(data.get("look_extras")))
     work = os.path.join(root, ".work-recompose")
     os.makedirs(work, exist_ok=True)
     try:

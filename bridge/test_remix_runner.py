@@ -78,6 +78,19 @@ class ParseConfigTests(unittest.TestCase):
         render = remix_runner.parse_config(self.image(mode="render", camera_layout="cutout", image_source={"path": os.path.abspath("x.WEBP")}))
         self.assertEqual((render.camera_layout, render.image_source["credit"]), ("cutout", ""))
 
+    def test_look_extras_and_the_screenshot_highlight(self):
+        plain = remix_runner.parse_config(self.base())
+        self.assertEqual((plain.look_extras, plain.look_extras_color), ([], None))
+        picked = remix_runner.parse_config(self.base(look_extras=["progress_bar", "glow", "punch_zoom"], look_extras_color="#2f6bff"))
+        self.assertEqual((picked.look_extras, picked.look_extras_color), (["punch_zoom", "progress_bar"], "#2F6BFF"))
+        marked = remix_runner.parse_config(self.image(image_source={"path": os.path.abspath("x.png"), "credit": "WSJ",
+                                                                    "highlight": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.05}}))
+        self.assertEqual(marked.image_source["highlight"], [0.1, 0.2, 0.3, 0.05])
+        for bad in (self.base(look_extras="punch_zoom"), self.base(look_extras=["progress_bar"], look_extras_color="blue"),
+                    self.image(image_source={"path": os.path.abspath("x.png"), "highlight": [0.9, 0, 0.5, 0.1]})):
+            with self.assertRaises(ValueError):
+                remix_runner.parse_config(bad)
+
     def test_rejects_bad_image_values(self):
         me = os.path.abspath("me.webm")
         bads = [

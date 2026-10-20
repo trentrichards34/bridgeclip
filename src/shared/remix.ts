@@ -4,6 +4,8 @@
  * every model call goes through OpenRouter, stock B-roll through Pexels.
  */
 
+import type { LookExtraId } from './look-extras'
+import type { ImageHighlight } from './look-extras-engine'
 import type { BrandLook } from './brand-kit'
 import type { HeadlineLook } from './headline-look'
 import { PRESET_VOICE_IDS, PRESET_VOICES } from './voices'
@@ -286,6 +288,10 @@ export interface RemixRequest {
   pause?: { layout: PauseLayout; captions: PauseCaptions }
   /** Moment + my take: the time ranges, and whether the moment stays small on screen while the member talks. */
   moment?: { ranges: MomentRange[]; pip: boolean }
+  /** Look extras: motion effects on top of the look. Older requests: none. */
+  lookExtras?: LookExtraId[]
+  /** React to an article or post: a box around the key number on the screenshot (shares of the picture), for the proof underline. */
+  imageHighlight?: ImageHighlight
 }
 
 /** filmed: your real background; cutout: you cut out over a blur or your color; greenscreen: the clip fills the screen behind you. */

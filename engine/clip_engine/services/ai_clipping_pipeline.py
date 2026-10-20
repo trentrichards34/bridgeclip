@@ -40,6 +40,7 @@ from clip_engine.services.editorial_vision import EditorialVision
 from clip_engine.services.editorial_review import protect_acknowledgments, review_duplicate_candidates, editorial_summary
 from clip_engine.services.framework_grader import GRADER_MODEL, FrameworkGrader, select_by_grade
 from clip_engine.services.brand_mark import create_post_caption
+from clip_engine.services.look_extras import look_extras
 from clip_engine.services.intelligence_planner import (
     MAX_BRAND_IDENTITY_CHARS,
     MAX_CLIP_REQUEST_CHARS,
@@ -192,8 +193,14 @@ class ClippingJobRequest:
     headline_voice: str = 'clipper'
     # The member's @handle and/or logo in a corner ({"handle", "logo_path", "position"}; see brand_mark).
     brand_mark: Optional[dict] = None
+    # Look extras (see look_extras): motion effects picked on Create, and the brand color they use.
+    look_extras: Optional[list] = None
+    look_extras_color: Optional[str] = None
 
     def _post_init_brand(self):
+        from clip_engine.services.look_extras import parse_color, parse_look_extras
+        self.look_extras = list(parse_look_extras(self.look_extras))
+        self.look_extras_color = parse_color(self.look_extras_color) if self.look_extras else None
         if self.headline_voice not in ('creator', 'clipper'):
             raise ValueError("Invalid headline voice")
         self.brand_identity = (self.brand_identity or '').strip()[:MAX_BRAND_IDENTITY_CHARS]
@@ -205,6 +212,7 @@ class ClippingJobRequest:
         if self.workflow == 'review':
             # The editor's export has its own end card; the keyword tag and mark are Automatic-only for now.
             self.cta_keyword, self.cta_offer, self.brand_mark = '', '', None
+            self.look_extras, self.look_extras_color = [], None
         # Blank means no request, so the run and its no-match error agree with the planner.
         self.clip_request = (self.clip_request or '').strip()[:MAX_CLIP_REQUEST_CHARS] or None
         if self.job_id is None:
@@ -902,6 +910,8 @@ class AIClippingPipeline:
                         apply_padding=not jev_enabled,
                         brand_mark=request.brand_mark,
                         cta_keyword=request.cta_keyword if not longform else '',
+                        look_extras=look_extras(request.look_extras, request.look_extras_color,
+                                                request.cta_keyword if not longform else ''),
                     )
 
                     render_result = await self.rendering_service.render_clip(render_request)

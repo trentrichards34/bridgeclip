@@ -447,7 +447,8 @@ test('Article or post: a screenshot run starts in review, writes its headline fr
   const shot = path.join(out, 'article.png')
   childProcess.execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=white:s=400x1200', '-frames:v', '1', shot])
   chosen.add(shot)
-  const imageBase = { ...base, sources: [shot], format: 'image', creator: 'The Daily Example', clipRightsAck: true, aiLabelAck: false, host: 'still', avatarId: null }
+  const imageBase = { ...base, sources: [shot], format: 'image', creator: 'The Daily Example', clipRightsAck: true, aiLabelAck: false, host: 'still', avatarId: null,
+    lookExtras: ['proof_underline', 'glow', 'progress_bar'], imageHighlight: { x: 0.1, y: 0.5, w: 0.4, h: 0.05 } }
 
   // Requests: one chosen screenshot, a credit, the sharing promise; always you, always talking, one take.
   const request = camera.parseRemixRequest(imageBase, out).request
@@ -490,7 +491,9 @@ test('Article or post: a screenshot run starts in review, writes its headline fr
   const write = configs[1]
   assert.equal(write.mode, 'write')
   assert.deepEqual(write.sources, [])
-  assert.deepEqual(write.image_source, { path: moment.path, credit: 'The Daily Example' })
+  assert.deepEqual(write.image_source, { path: moment.path, credit: 'The Daily Example', highlight: { x: 0.1, y: 0.5, w: 0.4, h: 0.05 } })
+  // Look extras: known ones only, in the app's order.
+  assert.deepEqual(write.look_extras, ['progress_bar', 'proof_underline'])
   assert.deepEqual(write.recordings, { 0: { reaction: { path: list[0].reaction.path, offset_s: 0 } } })
   assert.equal(write.camera_talk, true)
   const reviewed = camera.remixStatus()
@@ -505,6 +508,7 @@ test('Article or post: a screenshot run starts in review, writes its headline fr
   assert.equal(render.mode, 'render')
   assert.equal(render.approved[0].headline, 'Remote work is over, says this paper')
   assert.deepEqual(render.recordings, { 0: { reaction: { path: list[0].reaction.path, offset_s: 0 } } })
+  assert.deepEqual(render.look_extras, ['progress_bar', 'proof_underline'])
   fs.rmSync(out, { recursive: true, force: true })
 })
 

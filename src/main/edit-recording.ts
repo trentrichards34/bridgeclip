@@ -11,6 +11,7 @@ import {
   type EditPlan, type EditSource, type EditStatus, type FilmIdea
 } from '../shared/edit-recording'
 import { headlineLookForEngine } from '../shared/headline-look'
+import { lookExtrasForEngine } from '../shared/look-extras-engine'
 import type { BrandIdentity } from '../shared/remix'
 import { brandMarkForRun, isBrandId, readBrandIdentity } from './brands'
 import { applyRunCtaInLock, originalPath, withRunLock } from './ctas'
@@ -443,7 +444,11 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     }),
     sounds: decisions.sounds.filter((item) => item.on).flatMap((item) => { const sound = plan.sounds.find((s) => s.id === item.id); return sound ? [{ at: sound.at, sound: sound.sound }] : [] }),
     headline: decisions.hookText, ...(look ? { headline_look: look } : {}), include_captions: decisions.look.includeCaptions, caption_preset: decisions.look.captionPreset,
-    ...(brandMark ? { brand_mark: brandMark } : {}), title: decisions.hookText || current.status.sources[0]?.name.replace(/\.[^.]+$/, '') || '', cost_usd: current.status.costUsd
+    ...(brandMark ? { brand_mark: brandMark } : {}),
+    // Extras; the comment box types the brand's comment keyword (none: it is left out).
+    ...lookExtrasForEngine(decisions.look.lookExtras, current.brand?.look?.color, decisions.look.headlineLook),
+    ...(decisions.look.lookExtras?.includes('comment_box') && current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}),
+    title: decisions.hookText || current.status.sources[0]?.name.replace(/\.[^.]+$/, '') || '', cost_usd: current.status.costUsd
   }
   void (async () => {
     try {

@@ -220,6 +220,12 @@ class CaptionStyle:
     # (None disables). Chosen per preset to contrast with the highlight.
     emphasis_color: Optional[str] = None
 
+    # Look extras (see services/look_extras): the key word of each caption group
+    # sits in a rounded pill of this color, and/or is drawn lowercase in this
+    # italic serif face. None disables each.
+    keyword_pill_color: Optional[str] = None
+    accent_font: Optional[str] = None
+
 
 # ============================================================
 # CAPTION PRESETS

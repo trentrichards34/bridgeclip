@@ -123,7 +123,7 @@ export async function removeBrandIdentity(id: unknown): Promise<BrandIdentity[]>
  * `folder` (the run's folder) the logo is copied there, like Remix's
  * brandMarkForRun, so replacing or deleting it mid-run can't change the run.
  */
-export function brandForJob(id: string, show: boolean | undefined, folder?: string): { name: string; text: string; mark: BrandMarkForEngine | null } {
+export function brandForJob(id: string, show: boolean | undefined, folder?: string): { name: string; text: string; mark: BrandMarkForEngine | null; color: string | null } {
   let brand: BrandIdentity | null = null
   if (isBrandId(id)) {
     try { brand = parseBrand(JSON.parse(readFileSync(join(brandDir(), `${id}.json`), 'utf8'))) } catch { brand = null }
@@ -138,7 +138,7 @@ export function brandForJob(id: string, show: boolean | undefined, folder?: stri
   const mark = show && (look.handle || logo)
     ? { handle: look.handle ?? '', logo_path: logo, position: look.handlePosition ?? DEFAULT_HANDLE_POSITION }
     : null
-  return { name: brand.name, text: brand.text, mark }
+  return { name: brand.name, text: brand.text, mark, color: look.color ?? null }
 }
 
 /** Text of a .txt/.md file the user picked, to fill the editor. */

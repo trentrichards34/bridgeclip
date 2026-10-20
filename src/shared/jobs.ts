@@ -16,6 +16,7 @@ import type { HeadlineLook } from './headline-look'
 import type { PipelineStage } from './job-progress'
 import type { JobOutput } from './job-output'
 import type { CaptionLanguage } from './caption-language'
+import type { LookExtraId } from './look-extras'
 
 /** Options for one clipping run, as the Create wizard submits them. */
 export interface ClipJobRequest {
@@ -73,6 +74,8 @@ export interface ClipJobRequest {
   ctaOffer?: string
   /** Draw the brand's handle or logo in a corner (Automatic, needs a brand). */
   showHandle?: boolean
+  /** Look extras: motion effects on top of the look (Automatic). Older requests: none. */
+  lookExtras?: LookExtraId[]
   startTimeSeconds: number | null
   endTimeSeconds: number | null
   bannerPlatform: string | null
