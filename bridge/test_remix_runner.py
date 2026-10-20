@@ -32,6 +32,20 @@ class ParseConfigTests(unittest.TestCase):
         look = remix_runner.parse_config(self.base(headline_look={"look": "brand", "color": "#ff8800", "font": "serif"}))
         self.assertEqual(look.headline_look, {"look": "brand", "color": "#FF8800", "font": "serif"})
 
+    def test_purpose_and_reference_image(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            picture = os.path.join(folder, "reference.png")
+            with open(picture, "wb") as handle:
+                handle.write(b"\x89PNG\r\n\x1a\n")
+            config = remix_runner.parse_config(self.base(purpose="  Instagram reel  selling my call ", reference_image=picture))
+            self.assertEqual((config.purpose, config.reference_image), ("Instagram reel selling my call", picture))
+            plain = remix_runner.parse_config(self.base())
+            self.assertEqual((plain.purpose, plain.reference_image), ("", None))
+            for bad in ({"purpose": "x" * 201}, {"purpose": 5}, {"reference_image": "relative.png"}, {"reference_image": os.path.join(folder, "missing.png")}):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    remix_runner.parse_config(self.base(**bad))
+
     def test_rejects_bad_values(self):
         for bad in (self.base(angle="repost"), self.base(host="clone"), self.base(count=0), self.base(count=True),
                     self.base(output_dir="relative"), self.base(avatar_photo="photo.jpg"), self.base(sources=[]), self.base(sources=["x"] * 11), self.base(sources=[5]), self.base(order="random"), self.base(mode="go"),

@@ -11,6 +11,9 @@ import { headlineLookForEngine, parseHeadlineLook } from '../shared/headline-loo
 import { lookExtrasForEngine, parseImageHighlight } from '../shared/look-extras-engine'
 import { parseLookExtras } from '../shared/look-extras'
 import { parseCtaChoice } from '../shared/ctas'
+import { parseAudioSkills } from '../shared/skills'
+import { DEFAULT_PLANNER_MODEL, isReferenceId, parsePurpose } from '../shared/purpose'
+import { referenceForRun } from './reference-image'
 import { applyRunCta, applyRunCtaInLock, originalPath, readCta, withRunLock } from './ctas'
 import {
   estimateRemixCost, isRemixAngle, isRemixHost, isRemixOrder, MAX_CTA_OFFER_CHARS, MAX_REMIXES, MAX_SOURCES, parseRemixDraft, parseRemixEdits, parseRemixOutput, remixEditProblem,
@@ -74,6 +77,8 @@ interface RunContext {
   config: Record<string, unknown>
   draftIds: Set<number>
   planCostUsd: number
+  /** Why the reference image wasn't shown to the AI (said with the takes), when it wasn't. */
+  referenceNote?: string
   /** An article-or-post remix is writing its headline from the recording (back to review afterwards). */
   writing?: boolean
   /** Recordings being saved or copied in right now: writing and making wait for them. */
@@ -234,6 +239,10 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
   const ctaId = parseCtaChoice(raw.ctaId)
   if (raw.showHandle !== undefined && typeof raw.showHandle !== 'boolean') throw new Error('Choose whether to show your handle.')
   const imageHighlight = image ? parseImageHighlight(raw.imageHighlight) : undefined
+  // Skills (music, voice cleanup) and "Say what it's for": checked here; the picture is found by its id in main.
+  const audio = parseAudioSkills(raw)
+  const purpose = parsePurpose(raw.purpose)
+  if (raw.referenceImage !== undefined && raw.referenceImage !== null && !isReferenceId(raw.referenceImage)) throw new Error('Choose your reference image again.')
   return {
     sourceIsUrl: local.length === 0,
     request: {
@@ -249,7 +258,10 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
       ...(pauseChoice ? { pause: pauseChoice } : {}),
       ...(layoutChoice ? { layout: layoutChoice } : {}),
       ...(momentChoice ? { moment: momentChoice } : {}),
-      ...(imageHighlight ? { imageHighlight } : {})
+      ...(imageHighlight ? { imageHighlight } : {}),
+      ...audio,
+      ...(purpose ? { purpose } : {}),
+      ...(isReferenceId(raw.referenceImage) ? { referenceImage: raw.referenceImage } : {})
     }
   }
 }
@@ -436,12 +448,18 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     }
     // The handle or logo in a corner: the run keeps its own copy of the logo (re-making a video later still finds it).
     const brandMark = await brandMarkForRun(brand, request.showHandle, folder)
+    // "A look you like": kept in the run folder; shown to the writing model only when it can look at images.
+    let reference: { send: string | null; note: string | null } = { send: null, note: null }
+    if (request.referenceImage) {
+      try { reference = await referenceForRun(request.referenceImage, folder, DEFAULT_PLANNER_MODEL) }
+      catch (error) { reference = { send: null, note: `${(error as Error)?.message || 'Your reference image could not be used.'} The remix goes ahead without it.` } }
+    }
     // Only now that the new run can start: it replaces takes waiting for review.
     if (reviewing) await discardRemix()
     await cleanupAbandoned(settings.outputDirectory, folder)
     if (pending.cancelled) { await rm(folder, { recursive: true, force: true }); throw new Error('Canceled before it started.') }
     const context: RunContext = {
-      request, draftIds: new Set(), planCostUsd: 0,
+      request, draftIds: new Set(), planCostUsd: 0, ...(reference.note ? { referenceNote: reference.note } : {}),
       config: {
         sources: image ? [] : request.sources, output_dir: folder,
         ...(imageCopy ? { image_source: { path: imageCopy, credit: request.creator, ...(request.imageHighlight ? { highlight: request.imageHighlight } : {}) } } : {}), angle: request.angle, order: request.order, count: request.count, host: request.host,
@@ -450,6 +468,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         format: request.format, reactions, reactions_ai: reactionsAi, brand_identity: brand?.text ?? '', brand_name: brand?.name ?? '', creator: request.creator,
         caption_preset: request.captionPreset, include_captions: request.includeCaptions,
         cta_keyword: request.ctaKeyword, cta_offer: request.ctaOffer,
+        ...(request.purpose ? { purpose: request.purpose } : {}),
+        ...(reference.send ? { reference_image: reference.send } : {}),
         ...(headlineLookForEngine(request.headlineLook) ? { headline_look: headlineLookForEngine(request.headlineLook) } : {}),
         // Their recorded call to action ends each video, so the presenter doesn't say one too.
         ...(request.ctaId ? { cta_clip: true } : {}),
@@ -472,7 +492,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         ...(remixGraphicContext(request) ? { graphics: remixGraphicContext(request)! } : {}),
         estimateUsd: request.moment ? momentEstimate(request.moment.ranges).total
           : estimateRemixCost(request.host, request.count * request.sources.length, 0.5, request.format).total,
-        drafts: [], outputs: [], costUsd: null, warnings: [], error: null
+        drafts: [], outputs: [], costUsd: null, warnings: reference.note ? [reference.note] : [], error: null
       }
     }
     if (image) {
@@ -871,7 +891,7 @@ async function execute(run: ActiveRemix, config: Record<string, unknown>): Promi
         if (clipFormat(request.format)) run.context.extras = { part2: 'camera', screen: null, banner: false, circles: [], proofs: [] }
       }
       logger.info('remix.planned', { drafts: drafts.length, cost })
-      finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, drafts, warnings: [...warnings, ...await varietyWarnings(drafts)], costUsd: cost })
+      finish(run, { phase: 'review', detail: 'Ready for review', percent: 100, drafts, warnings: [...warnings, ...(run.context.referenceNote ? [run.context.referenceNote] : []), ...await varietyWarnings(drafts)], costUsd: cost })
     } else if (result?.ok === true) {
       let outputs = (Array.isArray(result.remixes) ? result.remixes : []).map(parseRemixOutput).filter((item): item is RemixOutput => item !== null)
       if (request.ctaId && outputs.length) {

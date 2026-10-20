@@ -300,6 +300,8 @@ async def run(config: dict) -> bool:
         broll_keep_hook=config.get("broll_keep_hook", True),
         hook_preview=config.get("hook_preview", False),
         motion_graphics=config.get("motion_graphics", False) and config.get("workflow", "automatic") != "review",
+        purpose=config.get("purpose") or None,
+        reference_image_path=config.get("reference_image_path") or None,
         quality_bar=config.get("quality_bar", "b"),
         debug_capture=config.get("debug_capture", False),
         pacing=config.get("pacing") or "tight",
@@ -405,6 +407,11 @@ def validate_config(config: object) -> dict:
     for field in ("include_captions", "include_title", "auto_clip_count", "layout_vision_enabled", "debug_capture", "broll_enabled", "broll_keep_hook", "hook_preview", "motion_graphics"):
         if field in config and not isinstance(config[field], bool):
             raise ValueError(f"{field} must be a boolean")
+    purpose = config.get("purpose")
+    if purpose is not None and (not isinstance(purpose, str) or len(purpose) > 200 or "\0" in purpose):
+        raise ValueError("Invalid purpose")
+    from clip_engine.services.purpose_context import validate_reference_path
+    validate_reference_path(config.get("reference_image_path"))
     if config.get('title_style', 'card') not in ('card', 'headline'):
         raise ValueError('Invalid title style')
     from clip_engine.services.rendering_service import validate_headline_look

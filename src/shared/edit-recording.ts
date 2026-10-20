@@ -14,6 +14,7 @@ import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './h
 import { DEFAULT_EDIT_RECIPE, editRecipe, isEditRecipeId, recipeExtras, type EditRecipeId } from './edit-recipes'
 import { parseLookExtras, type LookExtraId } from './look-extras'
 import { parseEditGraphics, type EditGraphic } from './reel-graphics'
+import { parseAudioSkills } from './skills'
 
 export const EDIT_MAX_SOURCES = 5
 /** Per recording, and all takes together. */
@@ -129,6 +130,12 @@ export interface EditLook {
   showHandle: boolean
   /** Extras on top of the look (keyword pill, progress bar, ...): look-extras.ts. Missing: none. */
   lookExtras?: LookExtraId[]
+  /** Background music (Skills). Missing: off. */
+  music?: boolean
+  /** The music track (an id from the track list); only with music on. */
+  musicTrack?: string
+  /** Clean up the voice (Skills). Missing: off. */
+  voiceCleanup?: boolean
 }
 
 export const DEFAULT_EDIT_LOOK: EditLook = { includeCaptions: true, captionPreset: DEFAULT_CAPTION_PRESET, headlineLook: DEFAULT_HEADLINE_LOOK, showHandle: false }
@@ -163,6 +170,10 @@ export interface EditStartRequest {
   brandIdentityId: string | null
   /** From "What should I film?": the hook they meant to open with (a hint for the plan, never shown as is). */
   hookHint?: string
+  /** What the video is for, in the member's words: steers the hook, title and pop-ups the plan picks. */
+  purpose?: string
+  /** A reference image ("A look you like"): the id of a picture chosen with reference:choose. */
+  referenceImage?: string
 }
 
 export function isRunningEdit(status: EditStatus | null | undefined): boolean {
@@ -469,11 +480,13 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
   let graphics: EditGraphic[]
   try { graphics = parseEditGraphics(value.graphics, n) } catch (error) { throw new Error(`Check your graphics: ${(error as Error).message}`) }
   if (look.lookExtras !== undefined && !Array.isArray(look.lookExtras)) throw new Error('Choose your extras again.')
+  // Skills: music and voice cleanup (off unless on; a track only with music).
+  const audio = parseAudioSkills(look)
   // Extras can come from the edit style chips (decisions) or the look board (look): one list either way.
   const lookExtras = parseLookExtras([...(Array.isArray(value.lookExtras) ? value.lookExtras : []), ...(Array.isArray(look.lookExtras) ? look.lookExtras : [])])
   const decisions: EditDecisions = { cut, hookId: value.hookId as number | null, hookText, endOnCta: value.endOnCta, popups, sounds,
     look: { includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: parseHeadlineLook(look.headlineLook), showHandle: look.showHandle,
-      ...(lookExtras.length ? { lookExtras } : {}) },
+      ...(lookExtras.length ? { lookExtras } : {}), ...audio },
     recipe: isEditRecipeId(value.recipe) ? value.recipe : DEFAULT_EDIT_RECIPE, lookExtras, pins,
     cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true, graphics }
   if (reelOrder(plan, decisions).length < 3) throw new Error('Keep a few more words: the reel would be almost empty.')

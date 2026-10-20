@@ -593,6 +593,8 @@ class IntelligencePlannerService:
         brand_name: Optional[str] = None,
         headline_voice: Optional[str] = None,
         motion_graphics: bool = False,
+        purpose: Optional[str] = None,
+        reference_image: Optional[str] = None,
     ) -> ClipPlanResponse:
         """
         Plan viral clips from video content.
@@ -632,6 +634,10 @@ class IntelligencePlannerService:
                 this language (captions are translated separately).
             motion_graphics: Also suggest 0-3 motion graphic moments per clip
                 (Automatic runs with "Motion graphics: Auto"), in the same call.
+            purpose: What the video is for, in the member's words: steers hooks, titles
+                and graphics (never facts).
+            reference_image: A picture of a look the member likes (the app sends it only
+                when the planner accepts images); style guidance only.
 
         Returns:
             ClipPlanResponse with identified clips
@@ -651,6 +657,9 @@ class IntelligencePlannerService:
         self._clip_request = clip_request
         self._brand_identity = (brand_identity or '').strip()[:MAX_BRAND_IDENTITY_CHARS] or None
         self._brand_name = ' '.join((brand_name or '').split())[:120] or None
+        from clip_engine.services.purpose_context import clean_purpose
+        self._purpose = clean_purpose(purpose) or None
+        self._reference_image = reference_image or None
         if discovery_feedback is None:
             self.audit = {'requests': []}
         self._discovery_feedback = discovery_feedback
@@ -800,6 +809,8 @@ class IntelligencePlannerService:
             system_prompt += MOTION_GRAPHICS_RULE
         if getattr(self, "_brand_identity", None):
             system_prompt += BRAND_IDENTITY_RULE
+        from clip_engine.services.purpose_context import system_rules
+        system_prompt += system_rules(self._purpose, bool(self._reference_image))
         if transcript:
             system_prompt += MOMENT_DISCOVERY_RULE if jev_enabled else MOMENT_HINT_RULE
         if discovery_feedback is not None:
@@ -1381,6 +1392,10 @@ Do not overlap clips by more than 5 seconds."""
         if brand:
             user_content.append({"type": "text", "text": "CREATOR BRAND IDENTITY (advisory context for titles and wording, not evidence):\n"
                                  + json.dumps({"name": getattr(self, "_brand_name", None) or "", "text": brand}, ensure_ascii=False)})
+        from clip_engine.services.purpose_context import purpose_text, reference_parts
+        if getattr(self, "_purpose", None):
+            user_content.append({"type": "text", "text": purpose_text(self._purpose)})
+        user_content.extend(reference_parts(getattr(self, "_reference_image", None)))
 
         # Add final instruction; a clip request narrows every mode to matching moments.
         source = 'transcript and frames' if frame_images else 'transcript'

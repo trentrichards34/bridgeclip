@@ -6,6 +6,7 @@ import type { ChatInfo, ChatReply } from '../shared/clip-chat'
 import type { JobOutput } from '../shared/job-output'
 import type { HeadlineLook } from '../shared/headline-look'
 import type { CtaSummary } from '../shared/ctas'
+import type { ReferenceImage, ReferenceSupport } from '../shared/purpose'
 import type { EditAudit } from '../shared/editorial'
 import { contextBridge, ipcRenderer } from 'electron'
 import { decodeSpendGate, type OpenRouterBalance, type SpendGate, type SpendOverview, type SpendProvider } from '../shared/spending'
@@ -435,6 +436,15 @@ export interface BridgeClipAPI {
     importFile: () => Promise<{ name: string; text: string; truncated: boolean } | null>
     /** Opens an image dialog in main and stores the logo (saved with the brand); null when cancelled. */
     chooseLogo: () => Promise<{ logo: string; path: string } | null>
+  }
+  /** "A look you like": the reference image for Create, Edit my recording and Remix. */
+  reference: {
+    /** Opens an image dialog in main; the picture is checked and copied into the app's data. Null when cancelled. */
+    choose: () => Promise<ReferenceImage | null>
+    /** The kept picture's bytes, for the preview and the suggested look. */
+    bytes: (id: string) => Promise<Uint8Array>
+    /** Whether the planning model (Create: its mode and model; otherwise the default) can look at it, and the token estimate. */
+    support: (id: string, model?: { clippingMode?: 'quality' | 'economy' | 'advanced'; plannerModel?: string }) => Promise<ReferenceSupport>
   }
   /** Remix: commentary videos built on someone else's viral moments. */
   remix: {
@@ -874,6 +884,11 @@ const api: BridgeClipAPI = {
     remove: (id) => ipcRenderer.invoke('brandIdentities:remove', id),
     importFile: () => ipcRenderer.invoke('brandIdentities:importFile'),
     chooseLogo: () => ipcRenderer.invoke('brandIdentities:chooseLogo')
+  },
+  reference: {
+    choose: () => ipcRenderer.invoke('reference:choose'),
+    bytes: (id) => ipcRenderer.invoke('reference:bytes', id),
+    support: (id, model) => ipcRenderer.invoke('reference:support', id, model)
   },
   remix: {
     start: (request) => paid('remix:start', request),

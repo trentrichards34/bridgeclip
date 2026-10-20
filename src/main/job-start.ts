@@ -14,6 +14,8 @@ import { validateJobConfig } from './validation'
 import { resolveAdvancedModels } from './openrouter-models'
 import { supportsCaptionFilter } from './tools'
 import { brandForJob } from './brands'
+import { referenceForRun, referencePath } from './reference-image'
+import { plannerModelFor } from '../shared/purpose'
 import type { JobSnapshot } from '../shared/jobs'
 
 /** A passing engine check is reused briefly, so queuing several videos stays quick. */
@@ -46,6 +48,8 @@ export async function startClipJobRequest(request: unknown): Promise<StartJobRes
     if (config.bannerChannelUrl) await assertPublicWebUrl(config.bannerChannelUrl)
     // A deleted brand is reported now, not when the run reaches a slot.
     if (config.brandIdentityId) brandForJob(config.brandIdentityId, false)
+    // A reference picture that's gone is reported now, too.
+    if (config.referenceImage) referencePath(config.referenceImage)
   } catch (error) { return { error: error instanceof Error ? error.message : 'Invalid job options' } }
   const settings = loadSettings()
 
@@ -98,9 +102,21 @@ export async function startClipJobRequest(request: unknown): Promise<StartJobRes
   // Its settings, so "More clips from this video" can start from them later.
   try { writeCreateRequest(join(settings.outputDirectory, jobId), config, config.reuse?.excludeRangesMs ?? []) }
   catch { logger.warn('job.start.requestNotSaved', { jobId }) }
+  // The reference picture: kept in the run folder, and sent to the planner only when its model can look at images.
+  let note: string | undefined
+  if (config.referenceImage) {
+    try {
+      const reference = await referenceForRun(config.referenceImage, join(settings.outputDirectory, jobId), plannerModelFor(config.clippingMode, config.plannerModel))
+      if (reference.send) config.referenceImagePath = reference.send
+      note = reference.note ?? undefined
+    } catch (error) {
+      logger.warn('job.start.referenceNotSaved', { jobId })
+      note = `${(error as Error)?.message || 'Your reference image could not be used.'} The run goes ahead without it.`
+    }
+  }
   // Starts now when a slot is free; otherwise waits its turn in the queue.
   const job = enqueueJob(jobId, config, settings.outputDirectory)
-  return { jobId, queued: job.status === 'queued', job }
+  return { jobId, queued: job.status === 'queued', job, ...(note ? { note } : {}) }
 }
 
 function brandExists(id: string): boolean {

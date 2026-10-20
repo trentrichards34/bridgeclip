@@ -84,6 +84,14 @@ def _image_path(value):
     return value
 
 
+def _reference(value):
+    from clip_engine.services.purpose_context import validate_reference_path
+    try:
+        return validate_reference_path(value)
+    except ValueError:
+        raise ValueError("Invalid reference image") from None
+
+
 def parse_request(raw):
     from clip_engine.services.edit_recording import MAX_SOURCES, MAX_WORDS, SOUNDS, parse_words
     if not isinstance(raw, dict) or raw.get("mode") not in MODES:
@@ -120,7 +128,8 @@ def parse_request(raw):
             raise ValueError("Invalid names")
         return {"mode": mode, "output_dir": raw["output_dir"], "words": words, "names": names,
                 "brand_identity": _text(raw.get("brand_identity"), 60000, "brand"), "brand_name": _text(raw.get("brand_name"), 120, "brand"),
-                "hook_hint": _text(raw.get("hook_hint"), 600, "hook hint")}
+                "hook_hint": _text(raw.get("hook_hint"), 600, "hook hint"), "purpose": _text(raw.get("purpose"), 200, "purpose"),
+                "reference_image": _reference(raw.get("reference_image"))}
     sources = raw.get("sources")
     if not isinstance(sources, list) or not all(_abs_path(s) for s in sources):
         raise ValueError("Invalid sources")

@@ -7,6 +7,7 @@ import type { RemixFormStyle } from '../../shared/member-prefs'
 import { DEFAULT_PAUSE_REACT, type PauseCaptions, type PauseLayout } from '../../shared/pause-react'
 import type { RangeInput } from '../../shared/moment-take'
 import type { GoalId } from '../../shared/onboarding'
+import type { ReferenceImage } from '../../shared/purpose'
 import type { Part1Layout, TheirCaptions } from '../../shared/remix-layouts'
 
 export interface RemixForm {
@@ -55,6 +56,14 @@ export interface RemixForm {
   /** React, then my thoughts: part 1 as a big box or a phone card, and (phone card) the hook text beside you or at the top. */
   reactPart1: Part1Layout
   phoneHook: 'beside' | 'top'
+  /** Skills: background music (its track, '' for the default) and voice cleanup. */
+  music: boolean
+  musicTrack: string
+  voiceCleanup: boolean
+  /** "What's this video for?" (optional). */
+  purpose: string
+  /** "A look you like" (optional): the picture chosen with reference:choose. */
+  reference: ReferenceImage | null
 }
 
 interface RemixFormState extends RemixForm {
@@ -89,6 +98,11 @@ export const useRemixForm = create<RemixFormState>((set, get) => ({
   splitHook: 'seam',
   reactPart1: 'box',
   phoneHook: 'beside',
+  music: false,
+  musicTrack: '',
+  voiceCleanup: false,
+  purpose: '',
+  reference: null,
   update: (patch) => set(patch),
   applyStyle: (style) => set({ ...style, ...(style.format && style.format !== get().format ? { clipRightsAck: false } : {}) }),
   sourceBurnedIn: null,

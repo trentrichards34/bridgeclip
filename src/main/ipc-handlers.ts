@@ -24,6 +24,8 @@ import { MAX_TIMECODE_IMAGE_BYTES, type TimecodeRead } from '../shared/moment-ta
 import { friendlyCreditError, type SpendProvider } from '../shared/spending'
 import { AI_PORTRAIT_CANDIDATES, estimateRecreateCost, PRICES, REACTIONS } from '../shared/avatars'
 import { estimateRemixCost } from '../shared/remix'
+import { REFERENCE_EXTENSIONS } from '../shared/purpose'
+import { addReferenceFile, referenceBytes, referenceSupportFor } from './reference-image'
 import { deletePreset, readMemberPrefs, renamePreset, saveAppPrefs, saveLastStyle, savePreset, saveProfile } from './member-prefs'
 import { recordToolCheck, reportIssue } from './support-report'
 import { announce, avatarNotice, createNotice, remixNotice } from './job-notifications'
@@ -497,6 +499,16 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (result.canceled || !result.filePaths[0]) return null
     return importBrandLogo(result.filePaths[0])
   })
+  // "A look you like": a picture chosen here is checked and copied into the app's data; the page gets its id.
+  handle('reference:choose', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a look you like', filters: [{ name: 'Images', extensions: REFERENCE_EXTENSIONS }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return addReferenceFile(result.filePaths[0])
+  })
+  handle('reference:bytes', (_event, id: unknown) => referenceBytes(id))
+  handle('reference:support', (_event, id: unknown, model: unknown) => referenceSupportFor(id, model))
   paid('remix:start', 'openrouter', (request) => remixStartEstimate(request), (request) => startRemix(request))
   // Making the approved takes: with Avatar on camera, HeyGen's lines are in the estimate (and HeyGen is the provider when it speaks).
   handle('remix:render', async (_event, edits: unknown, graphics: unknown) => {

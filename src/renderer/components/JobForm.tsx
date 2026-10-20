@@ -33,6 +33,10 @@ import { mergeSources, parseSourceText, sourceCountLabel } from '../../shared/cr
 import { Select } from './ui/Select'
 import { useBrands } from '../store/use-brand-store'
 import { createCtaLine, DEFAULT_HANDLE_POSITION, HANDLE_POSITIONS, hasBrandMark } from '../../shared/brand-kit'
+import { createSkillPatch, createSkillRows, type SkillId } from '../../shared/skills'
+import type { ReferenceLook } from '../../shared/purpose'
+import { SkillsPanel } from './SkillsPanel'
+import { PurposeFields } from './PurposeFields'
 
 const DURATIONS = DURATION_OPTIONS
 
@@ -148,6 +152,12 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     headlineVoice: draft.headlineVoice,
     ...(draft.workflow === 'automatic' && isCaptionLanguage(draft.captionLanguage) ? { captionLanguage: draft.captionLanguage } : {}),
     ...brandRequestFields(draft),
+    // Skills: music and voice cleanup (Automatic).
+    ...(draft.workflow === 'automatic' && draft.music ? { music: true, ...(draft.musicTrack ? { musicTrack: draft.musicTrack } : {}) } : {}),
+    ...(draft.workflow === 'automatic' && draft.voiceCleanup ? { voiceCleanup: true } : {}),
+    // "Say what it's for".
+    ...(draft.purpose?.trim() ? { purpose: draft.purpose.replace(/\s+/g, ' ').trim() } : {}),
+    ...(draft.reference ? { referenceImage: draft.reference.id } : {}),
     startTimeSeconds: trim.start,
     endTimeSeconds: trim.end,
     bannerPlatform: null,
@@ -261,14 +271,15 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, onOpen
 
       <Panel className="p-4 xl:p-5">
         {step !== 'video' && <div className="mb-3">
-          <h2 className="text-sm font-semibold text-ink">{step === 'review' && draft.workflow === 'review' ? 'Ready to find candidates' : meta.title}</h2>
-          <p className="mt-0.5 text-xs text-ink-muted">{step === 'review' && draft.workflow === 'review' ? 'A quality check reviews each candidate before the editor opens for your final cut.' : meta.description}</p>
+          <h2 className="text-sm font-semibold text-ink">{step === 'review' && draft.workflow === 'review' ? 'Ready to find candidates' : step === 'captions' && draft.workflow === 'automatic' ? 'Skills, look and captions' : meta.title}</h2>
+          <p className="mt-0.5 text-xs text-ink-muted">{step === 'review' && draft.workflow === 'review' ? 'A quality check reviews each candidate before the editor opens for your final cut.'
+            : step === 'captions' && draft.workflow === 'automatic' ? 'Turn parts of the edit on or off, then choose how captions and titles look. Silent videos are clipped without captions.' : meta.description}</p>
         </div>}
         {sourceError && <p role="alert" className="text-sm text-danger">{sourceError}</p>}
         {step === 'video' && <VideoStep draft={draft} update={update} trimError={trim.error} disabled={submitting} onOpenRemix={onOpenRemix} />}
         {step === 'format' && <FormatStep draft={draft} update={update} customize={customize.format} onCustomize={(format) => setCustomize((value) => ({ ...value, format }))} />}
         {step === 'clips' && <ClipsStep draft={draft} update={update} customize={customize.clips} onCustomize={(clips) => setCustomize((value) => ({ ...value, clips }))} />}
-        {step === 'captions' && <CaptionsStep draft={draft} update={update} />}
+        {step === 'captions' && <CaptionsStep draft={draft} update={update} onOpenFormat={() => { setCustomize((value) => ({ ...value, format: true })); goTo('format') }} />}
         {step === 'review' && <ReviewStep draft={draft} trim={trim} onEdit={goTo} />}
         {step !== 'video' && sourceCount > 1 && <p className="mt-3 text-2xs text-ink-subtle" data-testid="batch-note">{sourceCountLabel(sourceCount)} with these settings, one job each.</p>}
       </Panel>
@@ -893,20 +904,50 @@ export function createBoardPatch(draft: ClipDraft, patch: Partial<BoardStyle>): 
   return out
 }
 
-export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
+/** Scrolls a control on this step into view (the Skills panel's "More options"). */
+function reveal(id: string): () => void {
+  return () => document.getElementById(id)?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+}
+
+/** "Use colors from my reference": the picture's color on the hook bar (where there is one) and its caption style. */
+export function createReferencePatch(draft: ClipDraft, look: ReferenceLook): Partial<ClipDraft> {
+  const current = draft.headlineLook ?? DEFAULT_HEADLINE_LOOK
+  const bar = createHooks(draft).includes('brand')
+  return {
+    captionPreset: look.captionPreset,
+    headlineLook: { ...current, color: look.color, ...(bar ? { look: 'brand' as const } : {}) },
+    ...(bar ? { includeTitle: true, titleStyle: 'headline' as const } : {})
+  }
+}
+
+export function CaptionsStep({ draft, update, onOpenFormat }: { draft: ClipDraft; update: Update; onOpenFormat?: () => void }): React.JSX.Element {
   const automatic = draft.workflow !== 'review'
   const brand = useBrands((s) => s.brands.find((item) => item.id === draft.brandIdentityId) ?? null)
+  const pexels = useSettingsStore((s) => s.pexelsConfigured)
   const hooks = createHooks(draft)
   const rows: BoardRows = automatic ? { hooks, handle: true, cta: true, keyword: true, extras: true } : {}
+  const skills = createSkillRows(draft, { pexels })
+  const more = (id: SkillId): (() => void) | undefined =>
+    id === 'rough_cut' || id === 'broll' ? onOpenFormat
+      : id === 'captions' || id === 'zoom' ? reveal('create-look')
+        : id === 'motion_graphics' ? reveal('create-motion-graphics') : undefined
   return (
     <div className="space-y-3">
+      {automatic && <SkillsPanel rows={skills} onToggle={(id, on) => update(createSkillPatch(draft, id, on))} onMore={more} />}
+      <div className="glass-tile rounded-2xl p-3">
+        <PurposeFields purpose={draft.purpose ?? ''} onPurpose={(purpose) => update({ purpose })} reference={draft.reference ?? null}
+          onReference={(reference) => update({ reference })} model={{ clippingMode: draft.clippingMode, ...(draft.clippingMode === 'advanced' ? { plannerModel: draft.plannerModel } : {}) }}
+          onUseLook={(look) => update(createReferencePatch(draft, look))} />
+      </div>
       <CreateBrandSection draft={draft} update={update} />
+      <div id="create-look" className="scroll-mt-4">
       <StyleBoard value={createBoardStyle(draft)} onChange={(patch) => update(createBoardPatch(draft, patch))} rows={rows} brand={brand}
         frame={previewFrame(draft.source)} aspect={draft.aspectRatio === '16:9' ? '16:9' : '9:16'} saveKind="create"
         hookNote={!hooks.includes('white') ? (draft.aspectRatio !== '9:16' ? 'The headline bar is for vertical clips; 16:9 clips use the title card.' : 'With a gameplay background the clips use the title card.') : undefined}
         keywordHelp={<CreateKeywordHelp draft={draft} />}
         ctaHelp="Add one of your CTA clips to the end of every clip (a video of you up to 15 seconds, or an image). You can change it on any single clip afterward. Added on your computer, so there’s no AI cost." />
-      {automatic && <MotionGraphicsPicker value={draft.motionGraphics} onChange={(motionGraphics) => update({ motionGraphics })} />}
+      </div>
+      {automatic && <div id="create-motion-graphics" className="scroll-mt-4"><MotionGraphicsPicker value={draft.motionGraphics} onChange={(motionGraphics) => update({ motionGraphics })} /></div>}
       {automatic && <CaptionLanguagePicker value={draft.captionLanguage ?? 'original'} onChange={(captionLanguage) => update({ captionLanguage })} />}
     </div>
   )
@@ -995,6 +1036,9 @@ export function ReviewStep({ draft, trim, onEdit }: {
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Extras', value: extrasName(parseLookExtras(draft.lookExtras)) })
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Graphics', value: draft.motionGraphics ? MOTION_GRAPHICS_SUMMARY : 'Off' })
   if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Call to action', value: draft.ctaId ? 'Added to the end of every clip' : 'None' })
+  if (draft.workflow !== 'review' && (draft.music || draft.voiceCleanup)) rows.push({ step: 'captions', label: 'Audio', value: [draft.music ? 'Music' : '', draft.voiceCleanup ? 'Voice cleanup' : ''].filter(Boolean).join(' · ') })
+  if (draft.purpose?.trim()) rows.push({ step: 'captions', label: 'For', value: draft.purpose.trim() })
+  if (draft.reference) rows.push({ step: 'captions', label: 'Reference', value: `${draft.reference.name} · a look you like` })
   // The brand, comment keyword and handle, as they'll be sent (see brandRequestFields).
   const brandFields = brandRequestFields(draft)
   if (brand) rows.push({ step: 'captions', label: 'Brand', value: `${brand.name} · titles in its voice` })

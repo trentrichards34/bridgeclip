@@ -20,7 +20,7 @@ STRING_LIMITS = {"output_dir": 4096, "angle": 32, "host": 16, "voice": 32, "avat
                  "cta_keyword": 32, "cta_offer": 200,
                  "voice_model": 64, "voice_reference": 4096, "voice_transcript": 4000, "format": 16,
                  "camera_layout": 16, "camera_backdrop": 16, "camera_backdrop_color": 16,
-                 "pause_layout": 8, "pause_captions": 8, "presenter": 8}
+                 "pause_layout": 8, "pause_captions": 8, "presenter": 8, "purpose": 200}
 MAX_RECORDING_DRAFTS = 200
 MAX_RECORDED_BEATS = 4
 MAX_OFFSET_SECONDS = 3600
@@ -326,6 +326,11 @@ def parse_config(raw):
     from clip_engine.services.look_extras import parse_color, parse_look_extras
     look_extras = list(parse_look_extras(raw.get("look_extras")))
     look_extras_color = parse_color(raw.get("look_extras_color")) if look_extras else None
+    from clip_engine.services.purpose_context import clean_purpose, validate_reference_path
+    try:
+        reference_image = validate_reference_path(raw.get("reference_image"))
+    except ValueError:
+        raise ValueError("Invalid reference image") from None
     try:
         keyword = normalize_keyword(raw.get("cta_keyword"))
     except ValueError:
@@ -335,6 +340,7 @@ def parse_config(raw):
         order=raw.get("order") or "moment_first",
         voice=voice, voice_model=voice_model, voice_reference=reference, voice_transcript=raw.get("voice_transcript") or "",
         avatar_photo=photo, brand_identity=raw.get("brand_identity") or "",
+        purpose=clean_purpose(raw.get("purpose")), reference_image=reference_image,
         brand_name=raw.get("brand_name") or "", creator=raw.get("creator") or "",
         caption_preset=raw.get("caption_preset") or "pop", include_captions=raw.get("include_captions") is not False,
         format=fmt, reactions=dict(reactions), reactions_ai=raw.get("reactions_ai") is not False,

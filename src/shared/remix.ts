@@ -296,6 +296,16 @@ export interface RemixRequest {
   imageHighlight?: ImageHighlight
   /** Pause & react, Their clip then me, React then my thoughts: their captions, where the hook text sits, part 1's look. */
   layout?: RemixLayoutChoice
+  /** Background music (Skills). Missing: off. */
+  music?: boolean
+  /** The music track (an id from the track list); only with music on. */
+  musicTrack?: string
+  /** Clean up the member's voice (Skills). Missing: off. */
+  voiceCleanup?: boolean
+  /** What the video is for, in the member's words: steers the hook text and caption. */
+  purpose?: string
+  /** A reference image ("A look you like"): the id of a picture chosen with reference:choose. */
+  referenceImage?: string
 }
 
 /** filmed: your real background; cutout: you cut out over a blur or your color; greenscreen: the clip fills the screen behind you. */

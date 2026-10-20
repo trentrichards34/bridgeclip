@@ -769,9 +769,12 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
         + ("\n\nWHAT THEY MEANT TO OPEN WITH (data)\n" + config["hook_hint"] if config.get("hook_hint") else "")
         + "\n\nTRANSCRIPT (data)\n" + format_transcript(words, base, names)
     )
+    # "Say what it's for": the purpose line and (when the app found the model accepts images) the reference picture.
+    from clip_engine.services.purpose_context import system_rules, with_context
     payload: dict[str, Any] = {
         "model": settings.planner_model,
-        "messages": [{"role": "system", "content": plan_system_prompt()}, {"role": "user", "content": user}],
+        "messages": [{"role": "system", "content": plan_system_prompt() + system_rules(config.get("purpose"), bool(config.get("reference_image")))},
+                     {"role": "user", "content": with_context(user, config.get("purpose"), config.get("reference_image"))}],
         "response_format": json_schema_format("recording_edit", PLAN_SCHEMA),
         "provider": {"require_parameters": True}, "max_tokens": 12000,
     }
