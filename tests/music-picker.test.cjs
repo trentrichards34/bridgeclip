@@ -8,7 +8,7 @@ const { renderToStaticMarkup } = require('react-dom/server')
 
 const bundled = buildSync({
   stdin: {
-    contents: `export { MusicPicker, MusicSettingsPanel } from './src/renderer/components/MusicPicker';
+    contents: `export { MusicPicker, MusicSettingsPanel, MUSIC_VOLUMES, musicVolumeOf } from './src/renderer/components/MusicPicker';
       export { MUSIC_TRACKS } from './src/shared/music';
       export { pickSkillsMusic, musicTrackMissing } from './src/renderer/components/SkillsPanel';
       export { editSkillPatch, parseAudioSkills } from './src/shared/skills';`,
@@ -62,8 +62,12 @@ test('Settings → My music: my tracks to play or remove, the music volume and R
   assert.match(html, /aria-label="Remove Intro theme from my music"/)
   assert.match(html, /2\.3 MB/)
   assert.match(html, /Add music/)
-  assert.match(html, /id="music-level" type="range" min="-30" max="-10" step="1"[^>]*value="-22"/)
-  assert.match(html, /-22 dB/)
+  // Volume in words, no dB: -22 (saved earlier) shows as the nearest, Medium.
+  assert.match(html, /role="radiogroup" aria-label="Music volume"/)
+  assert.match(html, /role="radio" aria-checked="true"[^>]*>Medium</)
+  assert.doesNotMatch(html, /dB/)
+  assert.deepEqual(['quiet', 'medium', 'loud'].map((id) => m.MUSIC_VOLUMES.find((v) => v.id === id).levelDb), [-26, -20, -14])
+  assert.deepEqual([-30, -24, -20, -16, -10].map(m.musicVolumeOf), ['quiet', 'quiet', 'medium', 'loud', 'loud'])
   assert.match(html, /role="switch" aria-checked="false" aria-label="Music under their clip in Remix"/)
   const empty = renderToStaticMarkup(React.createElement(m.MusicSettingsPanel, { initialLibrary: { ...LIBRARY, own: [] } }))
   assert.match(empty, /No music of your own yet/)

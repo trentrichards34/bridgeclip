@@ -62,10 +62,14 @@ test('trim validation matches main process bounds, including an end at zero', ()
 test('the wizard opens on the video step with the steps listed in order', () => {
   const html = renderToStaticMarkup(React.createElement(JobForm, { onSubmit() {} }))
   const labels = [...html.matchAll(/aria-label="Create steps"[^>]*>(.*?)<\/nav>/gs)][0]?.[1] ?? ''
-  const order = ['Video', 'Format', 'Clips', 'Captions', 'Review'].map((label) => labels.indexOf(label))
+  const order = ['Video', 'Format', 'Clips', 'Look', 'Review'].map((label) => labels.indexOf(label))
   assert.ok(order.every((index, i) => index > -1 && (i === 0 || index > order[i - 1])))
   assert.match(html, /aria-current="step"[^>]*>.*?Video/s)
   assert.match(html, /Choose a video/)
+  // What the video is for and a reference picture belong to the video: on step 1, right after the source.
+  assert.ok(html.indexOf('What’s this video for?') > html.indexOf('Choose a video'))
+  assert.ok(html.indexOf('What’s this video for?') < html.indexOf('Whose video is this?'))
+  assert.match(html, /A look you like/)
   assert.equal(form.exports.useDraftStore.getState().workflow, null)
   const allRadios = html.match(/<button[^>]*role="radio"[^>]*>/g) ?? []
   // The workflow choice (nothing picked yet), then whose video it is (third-person headlines by default).
@@ -136,12 +140,27 @@ test('Skills on Create (Automatic): one list over the draft’s own fields, with
     assert.match(html, /data-testid="skills-panel"/)
     for (const name of ['Rough cut', 'Captions', 'Motion graphics', 'Zoom', 'B-roll', 'Music', 'Voice cleanup']) assert.match(html, new RegExp(`aria-label="${name}"`))
     assert.equal((html.match(/>Beta</g) ?? []).length, 2)
-    assert.match(html, /What’s this video for\?/)
-    assert.match(html, /A look you like/)
-    // Review & edit has no Skills list (its look is set in the editor), but can still say what it's for.
+    // One home per setting: what it's for moved to the Video step, Motion graphics is only a skill, and Zoom
+    // (a skill) is left out of the look's Extras.
+    assert.doesNotMatch(html, /What’s this video for\?/)
+    assert.doesNotMatch(html, /role="radiogroup" aria-label="Motion graphics"/)
+    assert.doesNotMatch(html, /role="checkbox"[^>]*aria-label="Zoom"/)
+    assert.match(html, /role="checkbox"[^>]*aria-label="Keyword pill"/)
+    assert.match(html, /Zoom is in Skills above\./)
+    // "More options": only Captions (the look board) and B-roll (opens in place, once a Pexels key is saved) have more to set.
+    assert.equal((html.match(/>More options</g) ?? []).length, 1)
+    // A server render reads the store's initial state.
+    const settingsInitial = form.exports.useSettingsStore.getInitialState()
+    const pexelsBefore = settingsInitial.pexelsConfigured
+    settingsInitial.pexelsConfigured = true
+    try {
+      const withKey = renderToStaticMarkup(React.createElement(CaptionsStep, { draft: useDraftStore.getState(), update() {} }))
+      assert.equal((withKey.match(/>More options</g) ?? []).length, 2)
+      assert.match(withKey, /data-skill="broll".*?aria-expanded="false" aria-controls="skill-more-broll"/s)
+    } finally { settingsInitial.pexelsConfigured = pexelsBefore }
+    // Review & edit has no Skills list (its look is set in the editor) and keeps every extra.
     const review = renderToStaticMarkup(React.createElement(CaptionsStep, { draft: { ...useDraftStore.getState(), workflow: 'review' }, update() {} }))
     assert.doesNotMatch(review, /data-testid="skills-panel"/)
-    assert.match(review, /What’s this video for\?/)
     // The style board's captions switch and the Skills switch are the same field.
     original.update(createBoardPatch(useDraftStore.getState(), { captions: false }))
     assert.match(renderToStaticMarkup(React.createElement(CaptionsStep, { draft: useDraftStore.getState(), update() {} })), /aria-checked="false" aria-label="Captions"/)
@@ -486,7 +505,7 @@ test('Format and Clips open on a recommended summary; changed options start open
   for (const hidden of ['Video speed', 'Screen share clips', 'B-roll', 'Cut dead air']) assert.doesNotMatch(format, new RegExp(`aria-label="${hidden}`))
   const clips = renderToStaticMarkup(React.createElement(ClipsStep, { draft: defaults, update() {} }))
   assert.match(clips, /aria-label="What to clip"/)
-  assert.match(clips, /Recommended.*?Best quality, 30–60s clips, B grade or better, AI decides how many\./s)
+  assert.match(clips, /Recommended.*?Best quality, 30–60s clips, good clips and better, AI decides how many\./s)
   assert.doesNotMatch(clips, /aria-label="Clipping mode"/)
   assert.doesNotMatch(clips, /aria-label="Quality bar"/)
   // Changed from the defaults: the options start open and the summary names the change.
@@ -542,4 +561,25 @@ test('the setup card leaves the key to the checklist when asked', () => {
   useSettingsStore.setState({ openrouterConfigured: false })
   assert.equal(renderToStaticMarkup(React.createElement(SetupCard, { onOpenSettings() {}, askForKey: false })), '')
   assert.match(renderToStaticMarkup(React.createElement(SetupCard, { onOpenSettings() {} })), /OpenRouter key/)
+})
+
+test('Review names each setting as it is named where it is set: Skills, hook text, the reference file once, plain words', () => {
+  const { ReviewStep, useDraftStore } = form.exports
+  const draft = { ...useDraftStore.getInitialState(), workflow: 'automatic', source: '/videos/my talk.mp4', aspectRatio: '9:16', layoutStyle: 'auto', layoutVision: true,
+    pacing: 'tight', includeCaptions: true, motionGraphics: false, lookExtras: ['punch_zoom', 'progress_bar'], music: true, musicTrack: '', voiceCleanup: true,
+    purpose: 'Instagram reel', reference: { id: 'a'.repeat(24), name: 'a look I like.png', path: '/x.png', width: 1, height: 1, bytes: 1 } }
+  const html = renderToStaticMarkup(React.createElement(ReviewStep, { draft, trim: { start: null, end: null }, onEdit() {} }))
+  const value = (label) => html.match(new RegExp(`<dt[^>]*>${label}</dt><dd[^>]*>(.*?)</dd>`))?.[1]
+  assert.equal(value('Skills'), 'Rough cut · Captions · Zoom · Music (Calm pad) · Voice cleanup')
+  assert.equal(value('Hook text'), 'White bar')
+  assert.equal(value('Extras'), 'Progress bar')
+  assert.equal(value('Reference'), 'a look I like.png')
+  assert.equal(value('For'), 'Instagram reel')
+  assert.equal(value('Quality'), 'Keeps the good clips and better')
+  for (const gone of ['Audio', 'Graphics', 'Pacing', 'Title', 'Quality bar']) assert.equal(value(gone), undefined, gone)
+  assert.doesNotMatch(html, /AI vision|B grades/)
+  assert.match(value('Format'), /Smart framing · AI checks tricky shots/)
+  const none = renderToStaticMarkup(React.createElement(ReviewStep, { draft: { ...draft, pacing: 'natural', includeCaptions: false, lookExtras: [], music: false, voiceCleanup: false, includeTitle: false }, trim: { start: null, end: null }, onEdit() {} }))
+  assert.match(none, /<dt[^>]*>Skills<\/dt><dd[^>]*>None<\/dd>/)
+  assert.match(none, /<dt[^>]*>Hook text<\/dt><dd[^>]*>No hook text<\/dd>/)
 })

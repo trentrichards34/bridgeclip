@@ -126,7 +126,7 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   const list = page.getByRole('list', { name: 'Your recordings' })
   await list.getByText('my raw take.mp4').waitFor()
   await list.getByText('0:08').waitFor()
-  assert.match(await page.getByTestId('edit-cost').innerText(), /^Listening to 0:08 with ElevenLabs Scribe v2 costs about under \$0\.01, and planning the edit about \$0\.02, through your OpenRouter account\./)
+  assert.match(await page.getByTestId('edit-cost').innerText(), /^Listening to 0:08 with ElevenLabs Scribe v2 costs under 1¢, and planning the edit about \$0\.02, through your OpenRouter account\./)
 
   // What should I film? Five ideas from a topic; the first one is filmed here with its hook and points as a teleprompter.
   await page.getByRole('button', { name: /What should I film\?/ }).click()

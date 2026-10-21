@@ -33,7 +33,7 @@ function ffmpegPath() {
   return null
 }
 
-test('Create: Motion graphics starts Off, one click turns on Auto, Review shows it, the request carries it and it is remembered', { timeout: 180000 }, async (t) => {
+test('Create: the Motion graphics skill starts Off, one click turns it on, Review lists it, the request carries it and it is remembered', { timeout: 180000 }, async (t) => {
   const ffmpeg = ffmpegPath()
   if (!ffmpeg) { t.skip('ffmpeg is needed for the source video'); return }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-auto-graphics-ui-'))
@@ -70,33 +70,26 @@ test('Create: Motion graphics starts Off, one click turns on Auto, Review shows 
   await page.getByRole('button', { name: 'Browse', exact: true }).click()
   await page.getByText('my talk.mp4').first().waitFor()
   const steps = page.getByRole('navigation', { name: 'Create steps' })
-  await steps.getByRole('button', { name: /Captions/ }).click()
+  await steps.getByRole('button', { name: /Look/ }).click()
   await page.getByTestId('style-board').waitFor()
-  // Right under the look: Off the first time, with one line on what Auto does.
-  const graphics = page.getByRole('radiogroup', { name: 'Motion graphics' })
-  await graphics.waitFor()
-  assert.equal(await checked(graphics.getByRole('radio', { name: 'Off' })), true)
-  await page.getByText('Off. Choose Auto to add animated cards for numbers, lists and names said in each clip.', { exact: true }).waitFor()
-  const boardBottom = (await page.getByTestId('style-board').boundingBox()).y + (await page.getByTestId('style-board').boundingBox()).height
-  assert.ok((await graphics.boundingBox()).y >= boardBottom, 'the option sits below the look board')
+  // One home: Motion graphics is a skill (Off the first time), with no second Auto/Off row under the look.
+  const panel = page.getByTestId('skills-panel')
+  const graphics = panel.getByRole('switch', { name: 'Motion graphics', exact: true })
+  assert.equal(await checked(graphics), false)
+  assert.equal(await page.getByRole('radiogroup', { name: 'Motion graphics' }).count(), 0)
+  // Nothing more to set, so no "More options" link that goes nowhere.
+  assert.equal(await panel.locator('[data-skill="motion_graphics"]').getByRole('button', { name: 'More options' }).count(), 0)
   // One click.
-  await graphics.getByRole('radio', { name: 'Auto' }).click()
-  assert.equal(await checked(graphics.getByRole('radio', { name: 'Auto' })), true)
-  await page.getByText(/^Adds up to 3 animated cards to each clip \(a number, a list, a name\) using only words said in it\./).waitFor()
-  // Nothing spills sideways (the board keeps its no-overflow rule; the row fits the panel).
-  const spill = await page.evaluate(() => {
-    const row = document.querySelector('[aria-label="Motion graphics"]')?.closest('.glass-tile')
-    return row ? row.scrollWidth - row.clientWidth : -1
-  })
-  assert.ok(spill >= 0 && spill <= 1, `the row spills ${spill}px`)
-  await graphics.scrollIntoViewIfNeeded()
+  await graphics.click()
+  assert.equal(await checked(graphics), true)
+  await panel.scrollIntoViewIfNeeded()
   await shot(page, 'create-motion-graphics.png')
 
-  // Review shows it, with a way back to change it.
+  // Review lists it under Skills, by the same name, with a way back to change it.
   await steps.getByRole('button', { name: /Review/ }).click()
-  const row = page.locator('dl > div').filter({ has: page.getByText('Graphics', { exact: true }) })
-  assert.equal(await row.locator('dd').innerText(), 'Auto · up to 3 cards per clip, from what’s said')
-  await row.getByRole('button', { name: 'Edit graphics' }).waitFor()
+  const row = page.locator('dl > div').filter({ has: page.getByText('Skills', { exact: true }) })
+  assert.match(await row.locator('dd').innerText(), /(^| · )Motion graphics( · |$)/)
+  await row.getByRole('button', { name: 'Edit skills' }).waitFor()
   await shot(page, 'create-review-graphics.png')
   await page.getByRole('button', { name: 'Generate clips', exact: true }).click()
   await page.getByRole('button', { name: 'Clip another video' }).waitFor()
@@ -113,8 +106,8 @@ test('Create: Motion graphics starts Off, one click turns on Auto, Review shows 
   await page.getByRole('radio', { name: 'Automatic', exact: true }).click()
   await page.getByRole('button', { name: 'Browse', exact: true }).click()
   await page.getByText('my talk.mp4').first().waitFor()
-  await steps.getByRole('button', { name: /Captions/ }).click()
-  assert.equal(await checked(page.getByRole('radiogroup', { name: 'Motion graphics' }).getByRole('radio', { name: 'Auto' })), true)
+  await steps.getByRole('button', { name: /Look/ }).click()
+  assert.equal(await checked(page.getByTestId('skills-panel').getByRole('switch', { name: 'Motion graphics', exact: true })), true)
   assert.deepEqual(errors, [])
 })
 

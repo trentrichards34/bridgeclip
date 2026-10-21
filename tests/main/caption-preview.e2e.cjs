@@ -26,7 +26,7 @@ test('caption styles preview word progression in the style board, pause and play
   await page.getByRole('button', { name: 'Use link', exact: true }).click()
   await page.getByRole('radio', { name: 'Automatic', exact: true }).click()
   const steps = page.getByRole('navigation', { name: 'Create steps' })
-  await steps.getByRole('button', { name: /Captions/ }).click()
+  await steps.getByRole('button', { name: /Look/ }).click()
   const board = page.getByTestId('style-board')
   const preview = board.getByTestId('style-preview')
   const presets = page.getByRole('radiogroup', { name: 'Caption style' })

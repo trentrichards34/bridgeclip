@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Music2, Wand2 } from 'lucide-react'
 import { MUSIC_TRACKS, musicTrackLabel, OWN_MUSIC_PREFIX } from '../../shared/music'
 import { MusicPicker } from './MusicPicker'
@@ -25,19 +25,22 @@ export function musicTrackMissing(track: string | null, own: readonly { id: stri
 
 /**
  * Skills: one on/off list over settings that already exist (see shared/skills.ts). Each switch writes the same
- * field as the detailed control; "More options" takes the member to that control.
+ * field as the detailed control; "More options" opens that control right under the skill, or takes the member to it.
  */
-export function SkillsPanel({ rows, onToggle, onMore, intro, className, music }: {
+export function SkillsPanel({ rows, onToggle, onMore, expand, intro, className, music }: {
   rows: SkillRow[]
   onToggle: (id: SkillId, on: boolean) => void
   /** Where a skill's detailed control is ("More options"); undefined for skills with nothing more to set. */
   onMore?: (id: SkillId) => (() => void) | undefined
+  /** A skill's detailed control, opened in place by "More options" (used before onMore). */
+  expand?: (id: SkillId) => ReactNode | undefined
   intro?: string
   className?: string
   /** The music track, shown (and changeable) under the list while Music is on. */
   music?: { track: string | null; onChange: (track: string | null) => void }
 }): React.JSX.Element {
   const [picking, setPicking] = useState(false)
+  const [open, setOpen] = useState<SkillId | null>(null)
   const musicOn = rows.some((row) => row.id === 'music' && row.on)
   const ownTrack = Boolean(music?.track?.startsWith(OWN_MUSIC_PREFIX))
   // The member's own tracks, to tell when the chosen one was removed (Settings → My music).
@@ -57,7 +60,9 @@ export function SkillsPanel({ rows, onToggle, onMore, intro, className, music }:
       </div>
       <ul className="grid gap-1.5 sm:grid-cols-2" aria-label="Skills">
         {rows.map((skill) => {
-          const more = onMore?.(skill.id)
+          const detail = expand?.(skill.id)
+          const more = detail ? () => setOpen(open === skill.id ? null : skill.id) : onMore?.(skill.id)
+          const expanded = Boolean(detail) && open === skill.id
           return (
             <li key={skill.id} className="flex min-w-0 items-center justify-between gap-3 rounded-xl bg-white/[0.03] px-3 py-2" data-skill={skill.id}>
               <div className="min-w-0">
@@ -67,10 +72,12 @@ export function SkillsPanel({ rows, onToggle, onMore, intro, className, music }:
                 </p>
                 <p className="mt-0.5 text-2xs leading-snug text-ink-subtle">{skill.disabledReason ?? skill.note ?? skill.detail}</p>
                 {more && (
-                  <button type="button" onClick={more} className="mt-0.5 rounded text-2xs font-medium text-accent hover:underline focus-visible:underline">
-                    More options
+                  <button type="button" onClick={more} aria-expanded={detail ? expanded : undefined} aria-controls={detail ? `skill-more-${skill.id}` : undefined}
+                    className="mt-0.5 rounded text-2xs font-medium text-accent hover:underline focus-visible:underline">
+                    {expanded ? 'Fewer options' : 'More options'}
                   </button>
                 )}
+                {expanded && <div id={`skill-more-${skill.id}`} className="mt-1.5 animate-fade-in">{detail}</div>}
               </div>
               <Switch label={skill.label} checked={skill.on} disabled={skill.disabledReason !== null && !skill.on} onChange={(on) => onToggle(skill.id, on)} />
             </li>

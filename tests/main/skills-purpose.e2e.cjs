@@ -1,9 +1,10 @@
 // Skills and "Say what it's for" on Create (Automatic).
-// The Skills list sits at the top of the look step: each switch is the same setting as its detailed control
-// (Rough cut is Format's "Cut dead air", Zoom is the Zoom punch extra), "More options" opens that control, Music and
-// Voice cleanup carry a Beta chip. "What's this video for?" and a reference picture ("A look you like", chosen in
-// the file dialog, checked and copied into the app's data by main) ride along with the request; the picture's
-// colors can be used with one click. Nothing spills sideways at 1280x800 or 1024x700.
+// The Skills list sits at the top of the Look step: each switch is the same setting as its detailed control
+// (Rough cut is Format's "Cut dead air", Zoom is the Zoom extra, which then has one home: Skills). "More options"
+// opens something real (B-roll's timing in place) or isn't there. Music and Voice cleanup carry a Beta chip.
+// "What's this video for?" and a reference picture ("A look you like", chosen in the file dialog, checked and copied
+// into the app's data by main) sit on the Video step and ride along with the request; the picture's colors can be
+// used with one click. Review names each skill as Skills does. Nothing spills sideways at 1280x800 or 1024x700.
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
@@ -36,6 +37,15 @@ function ffmpegPath() {
     try { execFileSync(candidate, ['-version'], { stdio: 'ignore' }); return candidate } catch { /* next */ }
   }
   return null
+}
+
+/** Sets the window's content size and waits for the page to follow (asking again if a resize is dropped). */
+async function resize(app, page, width, height) {
+  for (let i = 0; i < 20; i++) {
+    await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size[0], size[1]), [width, height])
+    if (await page.waitForFunction((w) => window.innerWidth === w, width, { timeout: 1500 }).then(() => true, () => false)) return
+  }
+  throw new Error(`The window did not resize to ${width}x${height}.`)
 }
 
 /** Scrolls an element to the top of the window and lets it paint (for the pictures). */
@@ -101,7 +111,7 @@ test('Create: Skills over existing settings, plus what the video is for and a re
   await page.getByRole('button', { name: 'Browse', exact: true }).click()
   await page.getByText('my talk.mp4').first().waitFor()
   const steps = page.getByRole('navigation', { name: 'Create steps' })
-  await steps.getByRole('button', { name: /Captions/ }).click()
+  await steps.getByRole('button', { name: /Look/ }).click()
 
   // The Skills list comes first on the look step, above the style board.
   const panel = page.getByTestId('skills-panel')
@@ -116,34 +126,60 @@ test('Create: Skills over existing settings, plus what the video is for and a re
   assert.equal(await checked(skill('Captions')), true)
   assert.equal(await checked(skill('Zoom')), false)
 
-  // Zoom is the style board's Zoom punch extra: one setting, two places to change it.
+  // Zoom is the style board's Zoom extra; on Create it has one home, Skills, so the Extras row leaves it out.
   await skill('Zoom').click()
   assert.equal(await checked(skill('Zoom')), true)
+  const extras = page.getByRole('group', { name: 'Extras: pick as many as you like' })
+  await extras.getByRole('checkbox', { name: 'Keyword pill' }).waitFor()
+  assert.equal(await extras.getByRole('checkbox', { name: 'Zoom' }).count(), 0)
+  await page.getByText(/Zoom is in Skills above\./).waitFor()
   await skill('Music').click()
   await skill('Voice cleanup').click()
-  // Rough cut off, then "More options" opens Format with "Cut dead air" showing the same setting.
+  // "More options" only where there's more to set: Rough cut, Motion graphics and Zoom have none.
+  const more = (id) => panel.locator(`[data-skill="${id}"]`).getByRole('button', { name: 'More options' })
+  for (const id of ['rough_cut', 'motion_graphics', 'zoom']) assert.equal(await more(id).count(), 0, id)
+  // B-roll's opens in place: when the footage plays (the same choice as Format's B-roll); picking one turns B-roll on.
+  await more('broll').click()
+  const when = panel.getByRole('radiogroup', { name: 'When B-roll plays' })
+  await when.getByRole('radio', { name: 'Whole clip' }).click()
+  assert.equal(await checked(skill('B-roll')), true)
+  await showTop(page, panel)
+  await shot(page, 'create-broll-more-options-1280x800.png')
+  await panel.getByRole('button', { name: 'Fewer options' }).click()
+  assert.equal(await when.count(), 0)
+  await skill('B-roll').click()
+  // Rough cut off here shows as "Cut dead air" off in Format, and back.
   await skill('Rough cut').click()
   assert.equal(await checked(skill('Rough cut')), false)
-  await panel.locator('[data-skill="rough_cut"]').getByRole('button', { name: 'More options' }).click()
+  await steps.getByRole('button', { name: /Format/ }).click()
   const deadAir = page.getByRole('switch', { name: 'Cut dead air and filler words' })
   await deadAir.waitFor()
   assert.equal(await checked(deadAir), false)
   await deadAir.click()
-  await steps.getByRole('button', { name: /Captions/ }).click()
+  await steps.getByRole('button', { name: /Look/ }).click()
   assert.equal(await checked(skill('Rough cut')), true, 'the Skills switch follows the detailed control')
+  assert.equal(await page.getByTestId('purpose-fields').count(), 0, 'what it’s for is on the Video step now')
 
-  // What it's for, and a reference picture chosen in the file dialog.
+  // What it's for, and a reference picture chosen in the file dialog: on the Video step, after the source.
+  await steps.getByRole('button', { name: /Video/ }).click()
+  const fields = page.getByTestId('purpose-fields')
+  await fields.waitFor()
+  assert.ok((await fields.boundingBox()).y > (await page.getByRole('heading', { name: 'Choose a video' }).boundingBox()).y)
   await page.getByLabel('What’s this video for?').fill('Instagram reel selling my coaching call')
   await app.evaluate(({ dialog }, file) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] }) }, reference)
   await page.getByRole('button', { name: 'Choose a picture' }).click()
   const card = page.getByTestId('reference-card')
   await card.waitFor()
   await card.getByText('a look I like.png').waitFor()
-  await page.getByTestId('reference-support').getByText(/adds about 932 input tokens to each planning call \(under \$0\.01\), an estimate/).waitFor()
-  // The suggested look is worked out here from the picture: its red, and Paper captions for a light picture.
-  const line = card.getByText(/^Hook bar in #[0-9A-F]{6} and Paper captions \(your picture is mostly light\)\.$/)
-  await line.waitFor()
-  const color = (await line.innerText()).match(/#([0-9A-F]{6})/)[1]
+  // Plain words for the cost; the token estimate waits under Details.
+  await page.getByTestId('reference-support').getByText('Adds a little to the AI cost (under 1¢).', { exact: true }).waitFor()
+  assert.equal(await card.getByText(/input tokens/).isVisible(), false)
+  await card.getByTestId('reference-cost-details').getByText('Details', { exact: true }).click()
+  await card.getByText(/^About 932 extra input tokens on each planning call, about \$0\.0047 at Claude Opus 5\.5’s listed price\. An estimate\.$/).waitFor()
+  // The suggested look is worked out here from the picture: its red as a swatch (no color code), and Paper captions for a light picture.
+  await card.getByText('This color on the hook bar, with Paper captions (your picture is mostly light).', { exact: true }).waitFor()
+  assert.equal(await card.getByText(/#[0-9A-F]{6}/i).count(), 0)
+  const color = (await card.getByTestId('reference-color').getAttribute('data-color')).slice(1)
   const near = (hex, want) => [0, 2, 4].every((i) => Math.abs(parseInt(hex.slice(i, i + 2), 16) - parseInt(want.slice(i, i + 2), 16)) <= 6)
   assert.ok(near(color, 'D7263D'), `the picture's red, not ${color}`)
   await card.getByRole('button', { name: 'Use colors from my reference' }).click()
@@ -156,27 +192,40 @@ test('Create: Skills over existing settings, plus what the video is for and a re
   assert.deepEqual(support.at(-1).model, { clippingMode: 'quality' })
 
   // Nothing spills sideways, at either window size.
-  await showTop(page, panel)
-  assert.deepEqual(await overflow(page), { page: 0, panel: 0, purpose: 0 })
-  await shot(page, 'create-skills-1280x800.png')
-  await showTop(page, page.getByTestId('purpose-fields'))
-  await shot(page, 'create-purpose-1280x800.png')
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1024, 700))
-  await page.waitForFunction(() => window.innerWidth === 1024)
-  await showTop(page, panel)
-  assert.deepEqual(await overflow(page), { page: 0, panel: 0, purpose: 0 })
-  await shot(page, 'create-skills-1024x700.png')
-  await showTop(page, page.getByTestId('purpose-fields'))
-  await shot(page, 'create-purpose-1024x700.png')
+  for (const [width, height] of [[1280, 800], [1024, 700]]) {
+    await resize(app, page, width, height)
+    await showTop(page, page.getByTestId('purpose-fields'))
+    assert.deepEqual(await overflow(page), { page: 0, panel: 0, purpose: 0 })
+    await shot(page, `create-purpose-${width}x${height}.png`)
+    await steps.getByRole('button', { name: /Look/ }).click()
+    await showTop(page, panel)
+    assert.deepEqual(await overflow(page), { page: 0, panel: 0, purpose: 0 })
+    await shot(page, `create-skills-${width}x${height}.png`)
+    await extras.evaluate((el) => el.scrollIntoView({ block: 'center' }))
+    await page.waitForTimeout(250)
+    await shot(page, `create-extras-${width}x${height}.png`)
+    await steps.getByRole('button', { name: /Video/ }).click()
+  }
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 800))
 
   // Review lists them; the request carries the same fields the detailed controls set.
   await steps.getByRole('button', { name: /Review/ }).click()
   const value = (label) => page.locator('dl > div').filter({ has: page.getByText(label, { exact: true }) }).locator('dd').innerText()
   assert.equal(await value('For'), 'Instagram reel selling my coaching call')
-  assert.equal(await value('Reference'), 'a look I like.png · a look you like')
-  assert.equal(await value('Audio'), 'Music · Voice cleanup')
-  assert.equal(await value('Pacing'), 'Cut dead air')
+  assert.equal(await value('Reference'), 'a look I like.png')
+  assert.equal(await value('Skills'), 'Rough cut · Captions · Zoom · Music (Calm pad) · Voice cleanup')
+  assert.equal(await value('Hook text'), 'Brand color')
+  for (const gone of ['Audio', 'Pacing', 'Graphics', 'Title']) assert.equal(await page.locator('dl dt').getByText(gone, { exact: true }).count(), 0, gone)
+  for (const [width, height] of [[1280, 800], [1024, 700]]) {
+    await resize(app, page, width, height)
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0)
+    await showTop(page, page.locator('dl'))
+    await shot(page, `create-review-${width}x${height}.png`)
+    await page.locator('dl > div').last().evaluate((el) => el.scrollIntoView({ block: 'end' }))
+    await page.waitForTimeout(250)
+    await shot(page, `create-review-end-${width}x${height}.png`)
+  }
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 800))
   await page.getByRole('button', { name: 'Generate clips', exact: true }).click()
   await page.getByRole('button', { name: 'Clip another video' }).waitFor()
   const submitted = await app.evaluate(() => globalThis.skillsTest.submitted)

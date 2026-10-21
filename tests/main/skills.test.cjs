@@ -158,7 +158,12 @@ test('the reference picture: its kind and size from its bytes, and the token est
   assert.equal(purpose.referenceImageTokens(500, 500), Math.ceil(250000 / 750))
   assert.equal(purpose.referenceCostUsd(1000, 0.000003), 0.003)
   assert.equal(purpose.referenceCostUsd(1000, null), null)
-  assert.match(purpose.referenceCostLine({ model: 'm', modelName: 'M', supportsImages: true, tokens: 699, costUsd: 0.0021 }), /about 699 input tokens .*under \$0\.01/)
+  // Plain words on the page; the token estimate stays available in the details.
+  const support = { model: 'm', modelName: 'M', supportsImages: true, tokens: 699, costUsd: 0.0021 }
+  assert.equal(purpose.referenceCostLine(support), 'Adds a little to the AI cost (under 1¢).')
+  assert.equal(purpose.referenceCostLine({ ...support, costUsd: null }), 'Adds a little to the AI cost.')
+  assert.match(purpose.referenceCostDetail(support), /^About 699 extra input tokens on each planning call, about \$0\.0021 at M’s listed price\. An estimate\.$/)
+  assert.equal(purpose.referenceCostDetail({ ...support, supportsImages: false }), null)
   assert.equal(purpose.referenceCostLine({ model: 'm', modelName: 'M', supportsImages: false, tokens: 699, costUsd: null }), purpose.REFERENCE_SKIPPED_NOTE)
 })
 

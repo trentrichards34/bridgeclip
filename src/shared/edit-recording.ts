@@ -195,8 +195,13 @@ export function editEstimate(seconds: number, scribe = true): { transcribeUsd: n
 }
 
 export function formatUsd(value: number): string {
-  if (value > 0 && value < 0.01) return 'under $0.01'
+  if (value > 0 && value < 0.01) return 'under 1¢'
   return `$${value.toFixed(2)}`
+}
+
+/** An estimate in words: "under 1¢" or "about $0.12". */
+export function aboutUsd(value: number): string {
+  return value > 0 && value < 0.01 ? 'under 1¢' : `about ${formatUsd(value)}`
 }
 
 export function formatClock(seconds: number): string {
