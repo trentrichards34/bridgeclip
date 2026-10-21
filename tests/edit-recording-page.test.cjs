@@ -13,7 +13,8 @@ const bundled = buildSync({
       export { parseEditPlan } from './src/shared/edit-recording';
       export { useSettingsStore } from './src/renderer/store/use-settings-store';
       export { useEditRecordingStore } from './src/renderer/store/use-edit-recording-store';
-      export { isCreateOutput } from './src/renderer/components/ClipList';`,
+      export { isCreateOutput } from './src/renderer/components/ClipList';
+      export { GraphicForm as ReelGraphicForm } from './src/renderer/components/ReelGraphics';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
   },
@@ -27,7 +28,7 @@ const pending = () => new Promise(() => {})
 globalThis.window = { bridgeclip: { edit: { status: pending, onStatus: () => () => {} }, brandIdentities: { list: pending }, settings: { load: pending } } }
 const mod = { exports: {} }
 new Function('module', 'exports', 'require', bundled)(mod, mod.exports, require)
-const { EditRecordingPage, EditReview, lookFromBrand, transcriptLines, parseEditPlan, useSettingsStore, useEditRecordingStore, isCreateOutput } = mod.exports
+const { EditRecordingPage, EditReview, lookFromBrand, transcriptLines, parseEditPlan, useSettingsStore, useEditRecordingStore, isCreateOutput, ReelGraphicForm } = mod.exports
 
 function staticRender(element) {
   const original = React.useSyncExternalStore
@@ -154,4 +155,20 @@ test('the review: an edit style, half-screen cards to edit or switch off, my ima
   assert.match(html, /Cut-out opening/)
   assert.match(html, /role="switch" aria-checked="false" aria-label="Raw-to-edited opening"/)
   useEditRecordingStore.setState({ recipe: 'clean' })
+})
+
+test('a reel graphic form: Orbit and Feature tile get icon pickers and switches, never raw "labels" or "dot" boxes (audit)', () => {
+  const frame = { aspect: '9:16', hook: 0, captions: null, handle: null }
+  const form = (template, fields) => staticRender(React.createElement(ReelGraphicForm, {
+    g: { id: 'g1', template, at: 1, where: 'at 0:01', problem: null, duration_ms: 3000, placement: 'top', fields }, frame, look: null, disabled: false,
+    cursorLabel: 'here', onField: () => {}, onPatch: () => {}, onMoveHere: () => {}, onRemove: () => {}
+  }))
+  const orbit = form('orbit', { items: 'Ads\nPages\nEmails', icons: 'megaphone\nfile\nmail' })
+  assert.doesNotMatch(orbit, /aria-label="Orbit labels"/)
+  assert.match(orbit, /aria-label="Labels under the icons"/)
+  assert.match(orbit, /aria-label="Icon for Ads"/)
+  const tiles = form('feature_tile', { items: 'Auto reports' })
+  assert.doesNotMatch(tiles, /aria-label="Feature tile dot"/)
+  assert.match(tiles, /aria-label="Red dot on the first tile"/)
+  assert.match(tiles, /aria-label="Icon for Auto reports"/)
 })

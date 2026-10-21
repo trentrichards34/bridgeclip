@@ -126,7 +126,8 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
   </section>
 }
 
-function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, onPatch, onMoveHere, onRemove }: {
+/** One reel graphic's form (exported for tests). */
+export function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, onPatch, onMoveHere, onRemove }: {
   g: ReelGraphicItem; frame: GraphicFrame; look: HeadlineLook | null; disabled: boolean; cursorLabel: string
   onField: (key: string, value: string) => void; onPatch: (patch: ReelGraphicPatch) => void; onMoveHere: () => void; onRemove: () => void
 }): React.JSX.Element {
@@ -143,7 +144,7 @@ function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, onPatch, 
       </div>
       {g.problem && <p className="text-2xs text-warning" role="note">{g.problem}</p>}
       {!graphicHasContent(g) && <p className="text-2xs text-warning">Add its words to show it.</p>}
-      {info.fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'highlights', 'style', 'vertical', 'motion'].includes(k)).map((key) => <label key={key} className="block space-y-1 text-2xs text-ink-muted">{fieldLabel(g.template, key)}
+      {info.fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'highlights', 'style', 'vertical', 'motion', 'labels', 'dot'].includes(k)).map((key) => <label key={key} className="block space-y-1 text-2xs text-ink-muted">{fieldLabel(g.template, key)}
         {key === 'items' || key === 'text'
           ? <textarea className={cn(input, 'resize-y')} rows={key === 'items' ? MAX_GRAPHIC_ITEMS : 2} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''}
             onChange={(e) => onField(key, e.target.value)} aria-label={`${info.label} ${fieldLabel(g.template, key).toLowerCase()}`} />
@@ -152,6 +153,11 @@ function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, onPatch, 
       </label>)}
       {g.template === 'icon_pop' && <IconFields fields={g.fields} onField={onField} imageNote={false} />}
       {g.template === 'big_words' && <BigWordsFields fields={g.fields} onField={onField} />}
+      {(g.template === 'orbit' || g.template === 'feature_tile') && <IconFields fields={g.fields} onField={onField} template={g.template} imageNote={false} />}
+      {g.template === 'orbit' && <div className="flex items-center justify-between gap-2 text-xs text-ink"><span>Labels under the icons</span>
+        <Switch label="Labels under the icons" checked={g.fields.labels !== 'off'} onChange={(on) => onField('labels', on ? '' : 'off')} /></div>}
+      {g.template === 'feature_tile' && <div className="flex items-center justify-between gap-2 text-xs text-ink"><span>Red dot on the first tile</span>
+        <Switch label="Red dot on the first tile" checked={g.fields.dot === 'on'} onChange={(on) => onField('dot', on ? 'on' : '')} /></div>}
       {graphicCanGoBehind(g.template) && <div className="space-y-1">
         <div className="flex items-center justify-between gap-2 text-xs text-ink"><span>Behind me</span>
           <Switch label="Behind me" checked={graphicDepth(g) === 'behind'} onChange={(on) => onPatch({ depth: on ? 'behind' : 'front' })} /></div>
