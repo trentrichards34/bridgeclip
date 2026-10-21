@@ -31,6 +31,8 @@ class ParseConfigTests(unittest.TestCase):
         self.assertTrue(remix_runner.parse_config(self.base(cta_clip=True)).cta_clip)
         look = remix_runner.parse_config(self.base(headline_look={"look": "brand", "color": "#ff8800", "font": "serif"}))
         self.assertEqual(look.headline_look, {"look": "brand", "color": "#FF8800", "font": "serif"})
+        boxed = remix_runner.parse_config(self.base(headline_look={"look": "floating", "font": "clean", "textBg": "dark"}))
+        self.assertEqual(boxed.headline_look, {"look": "floating", "color": "#FFFFFF", "font": "clean", "textBg": "dark"})
 
     def test_purpose_and_reference_image(self):
         import tempfile

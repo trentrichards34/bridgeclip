@@ -7,7 +7,9 @@
  */
 import { CAPTION_PRESETS } from '../../shared/caption-presets'
 import { DEFAULT_HANDLE_POSITION, HANDLE_POSITIONS, hasBrandMark, type BrandLook, type HandlePosition } from '../../shared/brand-kit'
-import { DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, isHexColor, type HeadlineFont, type HeadlineLook, type HeadlineLookStyle } from '../../shared/headline-look'
+import {
+  DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, isHexColor, setTextBg, type HeadlineFont, type HeadlineLook, type HeadlineLookStyle, type HeadlineTextBg
+} from '../../shared/headline-look'
 import { LOOK_EXTRAS, LOOK_EXTRA_IDS, parseLookExtras, type LookExtraId } from '../../shared/look-extras'
 
 /** The hook text choices: the engine's headline looks, plus Create's title card. */
@@ -18,8 +20,10 @@ export interface BoardStyle {
   captionPreset: string
   hook: HookChoice
   font: HeadlineFont
-  /** The bar color for the brand-color look (#RRGGBB). */
+  /** The bar color for the brand-color look (#RRGGBB), and the brand-color text box. */
   color: string
+  /** Floating text's background (a box behind each line); missing means none. */
+  textBg?: HeadlineTextBg
   handle: boolean
   ctaId: string | null
   keyword: string
@@ -59,6 +63,8 @@ export interface CuratedCombo {
   hook: 'white' | 'black' | 'brand' | 'floating'
   font: HeadlineFont
   color: string
+  /** Floating text's box behind each line. */
+  textBg?: HeadlineTextBg
 }
 
 /**
@@ -79,21 +85,23 @@ export const CURATED_COMBOS: readonly CuratedCombo[] = [
   { id: 'high-energy', name: 'High energy', captionPreset: 'hype', hook: 'black', font: 'condensed', color: '#39FF6A' },
   { id: 'old-print', name: 'Old print', captionPreset: 'vintage', hook: 'brand', font: 'serif', color: '#FFB547' },
   { id: 'hand-drawn', name: 'Hand-drawn', captionPreset: 'pop', hook: 'floating', font: 'marker', color: '#FFFFFF' },
-  { id: 'magazine', name: 'Magazine', captionPreset: 'sweep', hook: 'black', font: 'sans_serif_accent', color: '#FFFFFF' }
+  { id: 'magazine', name: 'Magazine', captionPreset: 'sweep', hook: 'black', font: 'sans_serif_accent', color: '#FFFFFF' },
+  { id: 'reel-caption', name: 'Reel caption', captionPreset: 'subtle', hook: 'floating', font: 'clean', color: '#FFFFFF', textBg: 'dark' }
 ]
 
 export function comboPatch(combo: CuratedCombo, hooks: readonly HookChoice[] = ['white', 'black', 'brand', 'floating']): Partial<BoardStyle> {
   return {
     captions: true, captionPreset: combo.captionPreset, font: combo.font, color: combo.color,
     // A page without that hook look (16:9 Create clips use a title card) keeps its own.
-    ...(hooks.includes(combo.hook) ? { hook: combo.hook } : {})
+    ...(hooks.includes(combo.hook) ? { hook: combo.hook, textBg: combo.textBg ?? 'none' } : {})
   }
 }
 
 /** The curated combo the board currently shows, if any. */
 export function matchingCombo(value: BoardStyle): CuratedCombo | null {
   return CURATED_COMBOS.find((combo) => value.captions && combo.captionPreset === value.captionPreset && combo.hook === value.hook
-    && combo.font === value.font && (combo.hook !== 'brand' || combo.color.toUpperCase() === value.color.toUpperCase())) ?? null
+    && combo.font === value.font && (combo.hook !== 'brand' || combo.color.toUpperCase() === value.color.toUpperCase())
+    && (combo.hook !== 'floating' || (combo.textBg ?? 'none') === (value.textBg ?? 'none'))) ?? null
 }
 
 /** A random curated combo, never the one already showing. */
@@ -111,6 +119,8 @@ export function brandBoardPatch(look: BrandLook | undefined, value: BoardStyle, 
   if (look.headlineLook) {
     if (hooks.includes(look.headlineLook.look)) patch.hook = look.headlineLook.look
     patch.font = look.headlineLook.font
+    if ((look.headlineLook.textBg ?? 'none') !== (value.textBg ?? 'none')) patch.textBg = look.headlineLook.textBg ?? 'none'
+
     patch.color = look.color ?? look.headlineLook.color
   } else if (look.color) patch.color = look.color
   if (look.captionPreset) { patch.captions = true; patch.captionPreset = look.captionPreset }
@@ -127,6 +137,18 @@ export function hookPatch(value: BoardStyle, hook: HookChoice, brandColor?: stri
     return { hook, color: brandColor && isHexColor(brandColor) ? brandColor.toUpperCase() : DEFAULT_BRAND_COLOR }
   }
   return { hook }
+}
+
+/** Picking floating text's background; the brand-color box starts from the brand's color when the color is still white. */
+export function textBgPatch(value: BoardStyle, textBg: HeadlineTextBg, brandColor?: string): Partial<BoardStyle> {
+  if (textBg === 'brand' && (!isHexColor(value.color) || value.color.toUpperCase() === '#FFFFFF')) {
+    return { textBg, color: brandColor && isHexColor(brandColor) ? brandColor.toUpperCase() : DEFAULT_BRAND_COLOR }
+  }
+  return { textBg }
+}
+
+export function textBgName(textBg: HeadlineTextBg | undefined): string {
+  return HEADLINE_TEXT_BGS.find((item) => item.id === (textBg ?? 'none'))?.label ?? 'None'
 }
 
 /** Picking a color puts the hook text on a bar in that color (when the page offers one). */
@@ -186,6 +208,9 @@ export function styleSummary(value: BoardStyle, rows: BoardRows, extra: { brandC
     parts.push(HOOK_LABELS[value.hook])
     if (value.hook !== 'none' && value.hook !== 'card') parts.push(`${fontName(value.font)} font`)
     if (value.hook === 'brand') parts.push(colorName(value.color, extra.brandColor))
+    if (value.hook === 'floating' && (value.textBg ?? 'none') !== 'none') {
+      parts.push(value.textBg === 'brand' ? `${colorName(value.color, extra.brandColor)} box` : textBgName(value.textBg))
+    }
   }
   if (rows.handle && extra.hasMark) parts.push(value.handle ? `Handle ${cornerName(extra.corner).toLowerCase()}` : 'No handle')
   if (rows.cta) parts.push(value.ctaId ? `Ends with ${extra.ctaName ?? 'your CTA clip'}` : 'No CTA clip')
@@ -291,7 +316,7 @@ export interface LookFields {
 export function boardFromLook(form: LookFields): BoardStyle {
   return {
     captions: form.includeCaptions, captionPreset: form.captionPreset, hook: hookFromLook(form.headlineLook, LOOK_HOOKS),
-    font: form.headlineLook.font, color: form.headlineLook.color, handle: form.showHandle,
+    font: form.headlineLook.font, color: form.headlineLook.color, ...(form.headlineLook.textBg ? { textBg: form.headlineLook.textBg } : {}), handle: form.showHandle,
     ctaId: form.ctaId ?? null, keyword: form.ctaKeyword ?? '', offer: form.ctaOffer ?? '', extras: parseLookExtras(form.lookExtras)
   }
 }
@@ -301,13 +326,13 @@ export function lookPatch(form: LookFields, patch: Partial<BoardStyle>): Partial
   const out: Partial<LookFields> = {}
   if (patch.captions !== undefined) out.includeCaptions = patch.captions
   if (patch.captionPreset !== undefined) out.captionPreset = patch.captionPreset
-  if ((patch.hook && patch.hook !== 'card') || patch.font || patch.color) {
-    out.headlineLook = {
+  if ((patch.hook && patch.hook !== 'card') || patch.font || patch.color || patch.textBg) {
+    out.headlineLook = withTextBg({
       ...form.headlineLook,
       ...(patch.hook && patch.hook !== 'card' ? { look: patch.hook } : {}),
       ...(patch.font ? { font: patch.font } : {}),
       ...(patch.color ? { color: patch.color } : {})
-    }
+    }, patch.textBg)
   }
   if (patch.handle !== undefined) out.showHandle = patch.handle
   if (patch.ctaId !== undefined) out.ctaId = patch.ctaId
@@ -315,4 +340,9 @@ export function lookPatch(form: LookFields, patch: Partial<BoardStyle>): Partial
   if (patch.offer !== undefined) out.ctaOffer = patch.offer
   if (patch.extras !== undefined) out.lookExtras = [...patch.extras]
   return out
+}
+
+/** A headline look with the board's text background (none is left out, as parseHeadlineLook does). */
+export function withTextBg(look: HeadlineLook, textBg: HeadlineTextBg | undefined): HeadlineLook {
+  return textBg === undefined ? look : setTextBg(look, textBg)
 }

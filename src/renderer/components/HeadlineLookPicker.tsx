@@ -1,6 +1,6 @@
 import { cn } from '../lib/utils'
 import {
-  DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, headlineBarColor, headlineTextColor, isHexColor,
+  DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, TEXT_BOX, headlineBarColor, headlineTextBg, headlineTextBox, headlineTextColor, isHexColor, setTextBg,
   type HeadlineLook
 } from '../../shared/headline-look'
 import { onRadioKeyDown, Segmented } from './ui/Segmented'
@@ -13,6 +13,19 @@ function LookPreview({ look }: { look: HeadlineLook }): React.JSX.Element {
   const font = HEADLINE_FONTS.find((item) => item.id === look.font) ?? HEADLINE_FONTS[0]
   const text = font.upper ? SAMPLE.toUpperCase() : SAMPLE
   const color = headlineTextColor(look)
+  const box = headlineTextBox(look)
+  if (box) {
+    // Floating text on a box: a snug rounded box behind each line (the engine draws the same shape).
+    return (
+      <div className="relative mx-auto aspect-[9/16] w-full max-w-[84px] overflow-hidden rounded-md bg-gradient-to-b from-slate-500 via-slate-700 to-slate-900" aria-hidden data-text-bg={look.textBg}>
+        <div className="absolute inset-x-0 bottom-0 top-[30%] bg-[radial-gradient(circle_at_50%_40%,rgb(255_255_255/0.28),transparent_55%)]" />
+        <div className="relative px-1.5 pt-3 text-center" style={{ fontFamily: font.family, fontSize: font.upper ? 8 : 7.5, fontWeight: 800, lineHeight: 1.22 }}>
+          <span style={{ color, background: box.opacity < 1 ? `rgb(0 0 0 / ${box.opacity})` : box.color, padding: `0 ${TEXT_BOX.padX}em`, borderRadius: `${TEXT_BOX.radius}em`,
+            boxDecorationBreak: 'clone', WebkitBoxDecorationBreak: 'clone' }}>{text}</span>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="relative mx-auto aspect-[9/16] w-full max-w-[84px] overflow-hidden rounded-md bg-gradient-to-b from-slate-500 via-slate-700 to-slate-900" aria-hidden>
       <div className="absolute inset-x-0 bottom-0 top-[30%] bg-[radial-gradient(circle_at_50%_40%,rgb(255_255_255/0.28),transparent_55%)]" />
@@ -31,6 +44,12 @@ function LookPreview({ look }: { look: HeadlineLook }): React.JSX.Element {
       </div>
     </div>
   )
+}
+
+/** The look with floating text's background (none is left out); the brand box starts from the default brand color while the color is white. */
+function withBg(value: HeadlineLook, bg: (typeof HEADLINE_TEXT_BGS)[number]['id']): HeadlineLook {
+  const look = setTextBg(value, bg)
+  return bg === 'brand' && value.color.toUpperCase() === '#FFFFFF' ? { ...look, color: DEFAULT_BRAND_COLOR } : look
 }
 
 /** Choose how the hook text at the top looks: bar color or floating, and font. */
@@ -54,6 +73,26 @@ export function HeadlineLookPicker({ value, onChange, compact = false }: { value
         })}
       </div>
       <p className="text-2xs text-ink-subtle">{HEADLINE_LOOKS.find((item) => item.id === value.look)?.hint}</p>
+      {value.look === 'floating' && (
+        <div className="space-y-1.5">
+          <p className="text-xs font-medium text-ink" id="hook-text-bg-label">Text background</p>
+          <div className={cn('grid grid-cols-3 gap-2', !compact && 'sm:grid-cols-4')} role="radiogroup" aria-labelledby="hook-text-bg-label">
+            {HEADLINE_TEXT_BGS.map((option) => {
+              const selected = headlineTextBg(value) === option.id
+              const look: HeadlineLook = withBg(value, option.id)
+              return (
+                <button key={option.id} type="button" role="radio" aria-checked={selected} aria-label={option.label} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
+                  title={option.hint} onClick={() => onChange(look)}
+                  className={cn('glass-tile glass-tile-hover flex min-w-0 flex-col gap-1.5 rounded-xl p-2 text-center', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+                  <LookPreview look={look} />
+                  <span className="block truncate text-2xs font-medium">{option.label}</span>
+                </button>
+              )
+            })}
+          </div>
+          <p className="text-2xs text-ink-subtle">{HEADLINE_TEXT_BGS.find((item) => item.id === headlineTextBg(value))?.hint}</p>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         {value.look !== 'none' && compact && (
           <div className="flex min-w-0 flex-wrap gap-1.5" role="radiogroup" aria-label="Hook text font">
@@ -75,12 +114,12 @@ export function HeadlineLookPicker({ value, onChange, compact = false }: { value
           options={HEADLINE_FONTS.map((font) => ({ value: font.id, label: <span style={{ fontFamily: font.family }}>{font.label}</span> }))}
           onChange={(font) => onChange({ ...value, font })}
         />}
-        {value.look === 'brand' && (
+        {(value.look === 'brand' || headlineTextBg(value) === 'brand') && (
           <label className="flex items-center gap-2 text-2xs text-ink-muted">
-            Bar color
+            {value.look === 'brand' ? 'Bar color' : 'Box color'}
             <input
               type="color"
-              aria-label="Bar color"
+              aria-label={value.look === 'brand' ? 'Bar color' : 'Box color'}
               value={isHexColor(value.color) ? value.color.toLowerCase() : DEFAULT_BRAND_COLOR.toLowerCase()}
               onChange={(event) => { if (isHexColor(event.target.value)) onChange({ ...value, color: event.target.value.toUpperCase() }) }}
               className="h-7 w-10 cursor-pointer rounded-md border border-white/15 bg-transparent p-0.5"

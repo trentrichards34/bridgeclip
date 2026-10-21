@@ -12,7 +12,7 @@ const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
 const KIT = 'a1b2c3d4e5f60718'
 const TEXT = 'Core promise: pull-ups for busy parents. Voice: plain and warm.'
 // The curated combos' caption names (src/renderer/lib/style-board.ts CURATED_COMBOS).
-const COMBO_CAPTIONS = ['Pop', 'Headline', 'Spotlight', 'Impact', 'Editorial', 'Glow', 'Neon', 'Lime', 'Retro', 'Paper', 'Hype', 'Vintage', 'Sweep']
+const COMBO_CAPTIONS = ['Pop', 'Headline', 'Spotlight', 'Impact', 'Editorial', 'Glow', 'Neon', 'Lime', 'Retro', 'Paper', 'Hype', 'Vintage', 'Sweep', 'Subtle']
 
 function ffmpegPath() {
   for (const candidate of [process.env.FFMPEG_PATH, 'ffmpeg']) {
@@ -351,5 +351,112 @@ test('the style board picks the look in one place, previews it and sends the sam
   await aiFold.evaluate((el) => el.scrollIntoView({ block: 'start' }))
   await shot(app, 'style-board-remix-ai.png')
 
+  assert.deepEqual(errors, [])
+})
+
+test('floating text with a text background: the row, the preview\'s per-line boxes, and the Create request', { timeout: 300000 }, async (t) => {
+  const ffmpeg = ffmpegPath()
+  if (!ffmpeg) { t.skip('ffmpeg is needed for the source video'); return }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-text-bg-e2e-'))
+  const userData = path.join(root, 'user-data')
+  const video = path.join(root, 'my talk.mp4')
+  execFileSync(ffmpeg, ['-v', 'error', '-y', '-loop', '1', '-i', path.join(__dirname, '../../engine/tests/fixtures/portrait_person.jpg'), '-t', '5', '-r', '24',
+    '-vf', 'scale=720:1280,format=yuv420p', '-c:v', 'libx264', video])
+  const session = await launchApp({ appDir: buildApp(path.join(root, 'app')), userDataDir: userData })
+  t.after(async () => { await session.close(); fs.rmSync(root, { recursive: true, force: true }) })
+  const { app, page } = session
+  page.setDefaultTimeout(20000)
+  const errors = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await app.evaluate(({ ipcMain, BrowserWindow, dialog }, { root, video }) => {
+    globalThis.styleTest = { submitted: null }
+    ipcMain.removeHandler('settings:load')
+    ipcMain.handle('settings:load', () => ({ openrouterConfigured: true, zernioConfigured: false, outputDirectory: root, pythonPath: '', customVocabulary: '' }))
+    ipcMain.removeHandler('system:checkTools')
+    ipcMain.handle('system:checkTools', () => ({ python: true, pythonDeps: true, ffmpeg: true, ffmpegCaptions: true, ffprobe: true, ytdlp: true, engine: true, bridgeRunner: true }))
+    ipcMain.removeHandler('job:start')
+    ipcMain.handle('job:start', (_event, config) => {
+      globalThis.styleTest.submitted = config
+      const now = new Date().toISOString()
+      return { jobId: 'style-job', queued: false, job: { id: 'style-job', revision: 1, request: config, status: 'downloading', percent: 5, step: 'Downloading video',
+        clipsDone: 0, clipsTotal: 0, error: null, errorHint: null, output: null, outputDir: root, queuedAt: now, startedAt: now, finishedAt: null } }
+    })
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [video] })
+    const window = BrowserWindow.getAllWindows()[0]
+    window.setSize(1280, 1000)
+    window.webContents.setBackgroundThrottling(false)
+    window.show()
+  }, { root, video })
+  await page.reload()
+  await page.getByRole('radio', { name: 'Automatic', exact: true }).click()
+  await page.getByRole('button', { name: 'Browse', exact: true }).click()
+  await page.getByText('my talk.mp4').first().waitFor()
+  const steps = page.getByRole('navigation', { name: 'Create steps' })
+  await steps.getByRole('button', { name: /Look/ }).click()
+  const board = page.getByTestId('style-board')
+  await board.waitFor()
+  const summary = board.getByTestId('style-board-summary')
+  const preview = board.getByTestId('style-preview')
+
+  // The row only shows with floating text.
+  assert.equal(await page.getByRole('radiogroup', { name: 'Text background' }).count(), 0)
+  await page.getByRole('radiogroup', { name: 'Hook text look' }).getByRole('radio', { name: 'Floating text' }).click()
+  const bgs = page.getByRole('radiogroup', { name: 'Text background' })
+  await bgs.waitFor()
+  for (const name of ['None', 'Dark box', 'Light box', 'Brand color']) await bgs.getByRole('radio', { name, exact: true }).waitFor()
+  assert.equal(await checked(bgs.getByRole('radio', { name: 'None', exact: true })), true)
+  assert.equal(await bgs.locator('[data-look-tile]').count(), 4, 'each option is a tile on the member\'s frame')
+
+  // Dark box: one rounded outline behind the lines, each line's box as wide as that line (not the frame).
+  await bgs.getByRole('radio', { name: 'Dark box' }).click()
+  assert.match(await summary.innerText(), /Floating text · Clean font · Dark box/)
+  const boxed = preview.getByTestId('hook-text-box')
+  await boxed.waitFor()
+  assert.equal(await boxed.getAttribute('data-text-bg'), 'dark')
+  assert.equal(await boxed.locator('path').getAttribute('fill'), '#000000')
+  const geometry = await boxed.evaluate((el) => {
+    const frame = el.getBoundingClientRect()
+    const path = el.querySelector('path').getBoundingClientRect()
+    const lines = [...el.querySelectorAll('[data-hook-line]')].map((line) => {
+      const range = document.createRange(); range.selectNodeContents(line)
+      return { text: line.textContent, color: getComputedStyle(line).color, width: range.getBoundingClientRect().width }
+    })
+    return { frame: frame.width, path: path.width, lines }
+  })
+  assert.ok(geometry.lines.length >= 2, JSON.stringify(geometry))
+  assert.ok(geometry.path < geometry.frame * 0.95, 'snug, not full width')
+  assert.ok(geometry.lines.every((line) => line.color === 'rgb(255, 255, 255)'), 'white text on the dark box')
+  assert.ok(geometry.lines.every((line) => line.width <= geometry.path + 1), 'the text sits inside its box')
+
+  // Light box: black text; brand box: the Box color row.
+  await bgs.getByRole('radio', { name: 'Light box' }).click()
+  assert.equal(await boxed.locator('path').getAttribute('fill'), '#FFFFFF')
+  assert.equal(await boxed.locator('[data-hook-line]').first().evaluate((el) => getComputedStyle(el).color), 'rgb(0, 0, 0)')
+  await bgs.getByRole('radio', { name: 'Brand color' }).click()
+  await page.getByRole('radiogroup', { name: 'Box color' }).getByRole('radio', { name: 'Violet #7C5CFF' }).click()
+  assert.equal(await boxed.locator('path').getAttribute('fill'), '#7C5CFF')
+  assert.equal(await checked(page.getByRole('radiogroup', { name: 'Hook text look' }).getByRole('radio', { name: 'Floating text' })), true, 'still floating text')
+  await bgs.getByRole('radio', { name: 'Dark box' }).click()
+  await board.evaluate((el) => el.scrollIntoView({ block: 'start' }))
+  await shot(app, 'text-bg-board-1280.png')
+
+  // No row spills sideways at 1024 wide or on a narrow window.
+  for (const [w, h] of [[1024, 700], [720, 1000]]) {
+    await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setSize(size[0], size[1]), [w, h])
+    await page.waitForTimeout(300)
+    assert.deepEqual(await noSidewaysRows(page), [], `${w} wide`)
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true)
+    await shot(app, `text-bg-board-${w}.png`)
+  }
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 1000))
+
+  // The request carries it.
+  await steps.getByRole('button', { name: /Review/ }).click()
+  await page.getByRole('button', { name: 'Generate clips', exact: true }).click()
+  await page.getByRole('button', { name: 'View job' }).waitFor()
+  const request = await app.evaluate(() => globalThis.styleTest.submitted)
+  assert.equal(request.includeTitle, true)
+  assert.equal(request.titleStyle, 'headline')
+  assert.deepEqual(request.headlineLook, { look: 'floating', color: '#7C5CFF', font: 'clean', textBg: 'dark' })
   assert.deepEqual(errors, [])
 })

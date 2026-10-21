@@ -25,7 +25,7 @@ import { WorkflowPicker } from './WorkflowPicker'
 import { BackgroundPicker } from './BackgroundPicker'
 import { brandRequestFields, CreateBrandSection, CreateKeywordHelp } from './CreateBrandSection'
 import { previewFrame, StyleBoard } from './StyleBoard'
-import { extrasName, HOOK_LABELS, type BoardRows, type BoardStyle, type HookChoice } from '../lib/style-board'
+import { extrasName, HOOK_LABELS, withTextBg, type BoardRows, type BoardStyle, type HookChoice } from '../lib/style-board'
 import { DEFAULT_HEADLINE_LOOK } from '../../shared/headline-look'
 import { parseLookExtras, type LookExtraId } from '../../shared/look-extras'
 import { CAPTION_LANGUAGES, captionLanguageLabel, isCaptionLanguage, type CaptionLanguageChoice } from '../../shared/caption-language'
@@ -884,7 +884,7 @@ export function createBoardStyle(draft: ClipDraft): BoardStyle {
     : !hooks.includes('white') || (draft.titleStyle ?? 'headline') === 'card' ? 'card'
       : look.look
   return {
-    captions: draft.includeCaptions, captionPreset: draft.captionPreset, hook, font: look.font, color: look.color,
+    captions: draft.includeCaptions, captionPreset: draft.captionPreset, hook, font: look.font, color: look.color, ...(look.textBg ? { textBg: look.textBg } : {}),
     handle: draft.showHandle, ctaId: draft.ctaId ?? null, keyword: draft.ctaKeyword ?? '', offer: draft.ctaOffer ?? '', extras: parseLookExtras(draft.lookExtras)
   }
 }
@@ -896,6 +896,7 @@ export function createBoardPatch(draft: ClipDraft, patch: Partial<BoardStyle>): 
   if (patch.captionPreset !== undefined) out.captionPreset = patch.captionPreset
   let look = draft.headlineLook ?? DEFAULT_HEADLINE_LOOK
   if (patch.font !== undefined || patch.color !== undefined) look = { ...look, ...(patch.font ? { font: patch.font } : {}), ...(patch.color ? { color: patch.color } : {}) }
+  if (patch.textBg !== undefined && patch.textBg !== (look.textBg ?? 'none')) look = withTextBg(look, patch.textBg)
   if (patch.hook === 'none') out.includeTitle = false
   else if (patch.hook === 'card') { out.includeTitle = true; out.titleStyle = 'card' }
   else if (patch.hook) { out.includeTitle = true; out.titleStyle = 'headline'; look = { ...look, look: patch.hook } }

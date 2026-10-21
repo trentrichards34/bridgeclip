@@ -14,7 +14,7 @@ import { parseJobOutput } from '../../shared/job-output'
 import type { Page as PageName } from '../components/Sidebar'
 import { BackgroundPicker } from '../components/BackgroundPicker'
 import { previewFrame, StyleBoard } from '../components/StyleBoard'
-import { LOOK_HOOKS, type BoardStyle, type HookChoice } from '../lib/style-board'
+import { LOOK_HOOKS, withTextBg, type BoardStyle, type HookChoice } from '../lib/style-board'
 import { PostDialog, type PostableClip } from '../components/PostDialog'
 import { VoicePreview } from '../components/VoicePreview'
 import { heygenPriceNote, HeygenCreateForm, HeygenStatus } from '../components/avatar/HeygenAvatar'
@@ -197,7 +197,7 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
   const board: BoardStyle = {
     captions: captionsOn, captionPreset: draft.captionPreset,
     hook: !draft.includeTitle || draft.headlineLook.look === 'none' ? 'none' : hookIsCard ? 'card' : draft.headlineLook.look,
-    font: draft.headlineLook.font, color: draft.headlineLook.color, handle: handleBrand !== null,
+    font: draft.headlineLook.font, color: draft.headlineLook.color, ...(draft.headlineLook.textBg ? { textBg: draft.headlineLook.textBg } : {}), handle: handleBrand !== null,
     ctaId: draft.ctaId, keyword: '', offer: '', extras: []
   }
   const changeLook = (patch: Partial<BoardStyle>): void => {
@@ -209,8 +209,8 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
     if (patch.captionPreset !== undefined) next.captionPreset = patch.captionPreset
     const look = patch.hook && patch.hook !== 'card' ? patch.hook : undefined
     if (patch.hook !== undefined) next.includeTitle = patch.hook !== 'none'
-    if ((look && look !== 'none') || patch.font || patch.color) {
-      next.headlineLook = { ...draft.headlineLook, ...(look && look !== 'none' ? { look } : {}), ...(patch.font ? { font: patch.font } : {}), ...(patch.color ? { color: patch.color } : {}) }
+    if ((look && look !== 'none') || patch.font || patch.color || patch.textBg) {
+      next.headlineLook = withTextBg({ ...draft.headlineLook, ...(look && look !== 'none' ? { look } : {}), ...(patch.font ? { font: patch.font } : {}), ...(patch.color ? { color: patch.color } : {}) }, patch.textBg)
     }
     if (patch.hook && patch.hook !== 'none' && draft.headlineLook.look === 'none' && !next.headlineLook) next.headlineLook = { ...draft.headlineLook, look: 'white' }
     if (patch.handle !== undefined) next.handleBrandId = patch.handle ? (hasBrandMark(boardBrand?.look) ? boardBrand!.id : markBrands[0]?.id ?? null) : null
