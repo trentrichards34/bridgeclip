@@ -37,17 +37,23 @@ test('Settings → My music: add, play, volume, Remix choice and remove', { time
   assert.deepEqual(preview, { mime: 'audio/wav', size: fs.statSync(song).size })
   await list.getByRole('button', { name: 'Play My intro' }).waitFor()
 
-  // How loud music sits under the voice: saved when let go.
-  const slider = section.getByLabel('Music volume')
-  await slider.fill('-16')
-  await slider.blur()
-  await section.getByText('-16 dB', { exact: true }).waitFor()
+  // How loud music sits under the voice, in words (Quiet, Medium, Loud); the level is stored in dB.
+  const volume = section.getByRole('radiogroup', { name: 'Music volume' })
+  assert.equal(await volume.getByRole('radio', { name: 'Medium' }).getAttribute('aria-checked'), 'true')
+  assert.equal(await section.getByText(/dB/).count(), 0)
+  await volume.getByRole('radio', { name: 'Loud' }).click()
+  await volume.locator('[role="radio"][aria-checked="true"]', { hasText: 'Loud' }).waitFor()
+  if (process.env.BRIDGECLIP_E2E_SHOTS) {
+    fs.mkdirSync(process.env.BRIDGECLIP_E2E_SHOTS, { recursive: true })
+    await section.scrollIntoViewIfNeeded()
+    await page.screenshot({ path: path.join(process.env.BRIDGECLIP_E2E_SHOTS, 'settings-music-volume.png'), timeout: 10000 }).catch(() => undefined)
+  }
   const settingsFile = path.join(userData, 'music', 'settings.json')
-  for (let i = 0; i < 50 && !(fs.existsSync(settingsFile) && JSON.parse(fs.readFileSync(settingsFile, 'utf8')).levelDb === -16); i++) await page.waitForTimeout(50)
-  assert.equal(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).levelDb, -16)
+  for (let i = 0; i < 50 && !(fs.existsSync(settingsFile) && JSON.parse(fs.readFileSync(settingsFile, 'utf8')).levelDb === -14); i++) await page.waitForTimeout(50)
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).levelDb, -14)
   await section.getByRole('switch', { name: 'Music under their clip in Remix' }).click()
   await section.locator('[role="switch"][aria-checked="true"]').waitFor()
-  assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile, 'utf8')), { levelDb: -16, duringTheirClip: true })
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile, 'utf8')), { levelDb: -14, duringTheirClip: true })
 
   await list.getByRole('button', { name: 'Remove My intro from my music' }).click()
   await section.getByText('No music of your own yet', { exact: false }).waitFor()

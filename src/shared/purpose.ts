@@ -132,14 +132,21 @@ export function referenceCostUsd(tokens: number, inputPricePerToken: number | nu
   return inputPricePerToken === null || !Number.isFinite(inputPricePerToken) ? null : tokens * inputPricePerToken
 }
 
-/** One line on the estimate change for the page. */
+/** One plain line on what the picture adds to the cost, for the page (the estimate itself is in referenceCostDetail). */
 export function referenceCostLine(support: ReferenceSupport | null): string | null {
   if (!support) return null
   if (support.supportsImages === false) return REFERENCE_SKIPPED_NOTE
   if (support.supportsImages === null) return 'The model list couldn’t be checked, so the reference is skipped this time. It’s still saved with the video.'
-  const tokens = support.tokens.toLocaleString('en-US')
-  const cost = support.costUsd === null ? '' : support.costUsd > 0 && support.costUsd < 0.01 ? ' (under $0.01)' : ` (about $${support.costUsd.toFixed(2)})`
-  return `The reference adds about ${tokens} input tokens to each planning call${cost}, an estimate.`
+  const cost = support.costUsd === null ? '' : support.costUsd < 0.01 ? ' (under 1¢)' : ` (about $${support.costUsd.toFixed(2)} per planning call)`
+  return `Adds a little to the AI cost${cost}.`
+}
+
+/** The estimate behind that line, for its details (null when the picture isn't sent). */
+export function referenceCostDetail(support: ReferenceSupport | null): string | null {
+  if (!support?.supportsImages) return null
+  const cost = support.costUsd === null ? '' : `, about $${support.costUsd < 0.0001 ? support.costUsd.toFixed(6) : support.costUsd.toFixed(4)}`
+  const at = support.costUsd === null ? '' : ` at ${support.modelName ?? support.model}’s listed price`
+  return `About ${support.tokens.toLocaleString('en-US')} extra input tokens on each planning call${cost}${at}. An estimate.`
 }
 
 export interface ReferenceLook {

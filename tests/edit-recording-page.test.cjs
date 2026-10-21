@@ -135,7 +135,7 @@ test('the review: an edit style, half-screen cards to edit or switch off, my ima
   // The last style picked is used: Fast explainer, with its extras on.
   assert.match(html, /role="radio" aria-checked="true"[^>]*>(?:(?!<\/button>).)*Fast explainer/s)
   assert.match(html, /aria-pressed="true"[^>]*>Keyword pill</)
-  assert.match(html, /aria-pressed="false"[^>]*>Zoom punch</)
+  assert.match(html, /aria-pressed="false"[^>]*>Zoom</)
   assert.match(html, /Card 1 · List/)
   assert.match(html, /Fills the top half for 3 s when you say “Write”/)
   assert.match(html, /value="Three steps"/)

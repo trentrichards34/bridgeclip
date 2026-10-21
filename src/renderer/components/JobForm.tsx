@@ -25,15 +25,16 @@ import { WorkflowPicker } from './WorkflowPicker'
 import { BackgroundPicker } from './BackgroundPicker'
 import { brandRequestFields, CreateBrandSection, CreateKeywordHelp } from './CreateBrandSection'
 import { previewFrame, StyleBoard } from './StyleBoard'
-import { extrasName, type BoardRows, type BoardStyle, type HookChoice } from '../lib/style-board'
-import { DEFAULT_HEADLINE_LOOK, HEADLINE_LOOKS } from '../../shared/headline-look'
-import { parseLookExtras } from '../../shared/look-extras'
+import { extrasName, HOOK_LABELS, type BoardRows, type BoardStyle, type HookChoice } from '../lib/style-board'
+import { DEFAULT_HEADLINE_LOOK } from '../../shared/headline-look'
+import { parseLookExtras, type LookExtraId } from '../../shared/look-extras'
 import { CAPTION_LANGUAGES, captionLanguageLabel, isCaptionLanguage, type CaptionLanguageChoice } from '../../shared/caption-language'
 import { mergeSources, parseSourceText, sourceCountLabel } from '../../shared/create-sources'
 import { Select } from './ui/Select'
 import { useBrands } from '../store/use-brand-store'
 import { createCtaLine, DEFAULT_HANDLE_POSITION, HANDLE_POSITIONS, hasBrandMark } from '../../shared/brand-kit'
-import { createSkillPatch, createSkillRows, type SkillId } from '../../shared/skills'
+import { createSkillPatch, createSkillRows, type SkillId, type SkillRow } from '../../shared/skills'
+import { MUSIC_TRACKS, musicTrackLabel } from '../../shared/music'
 import type { ReferenceLook } from '../../shared/purpose'
 import { SkillsPanel } from './SkillsPanel'
 import { PurposeFields } from './PurposeFields'
@@ -80,16 +81,16 @@ export const WIZARD_STEPS: { id: WizardStep; label: string; title: string; descr
   { id: 'video', label: 'Video', title: 'Choose a video', description: 'A local file, YouTube link or Twitch VOD link. Optionally suggest where to find clips.' },
   { id: 'format', label: 'Format', title: 'Format, framing and speed', description: 'Choose the look and pace of every clip in this job.' },
   { id: 'clips', label: 'Clips', title: 'What to clip, length and count', description: 'Optionally describe the moments you want. Pick one or more lengths, or none for any length.' },
-  { id: 'captions', label: 'Captions', title: 'Captions', description: 'Word-by-word captions burned into each clip. Silent videos are clipped without them.' },
+  { id: 'captions', label: 'Look', title: 'Look', description: 'Choose how captions look. Word-by-word captions are burned into each clip; silent videos are clipped without them.' },
   { id: 'review', label: 'Review', title: 'Review and generate', description: 'Check the run, then generate. You can queue another video right after.' }
 ]
 
 export const QUALITY_BAR_OPTIONS: { id: QualityBar; label: string; hint: string; summary: string }[] = [
-  { id: 'b', label: 'B or better', hint: 'Recommended', summary: 'Keep B grades and up' },
-  { id: 'a', label: 'Standouts', hint: 'A first, topped up with B', summary: 'Keep A grades, top up with B' },
-  { id: 'c', label: 'C or better', hint: 'More clips', summary: 'Keep C grades and up' },
-  { id: 'all', label: 'Grade all', hint: 'Keep everything', summary: 'Grade and keep all' },
-  { id: 'off', label: 'Off', hint: 'No grading', summary: 'No grading' }
+  { id: 'b', label: 'B or better', hint: 'Recommended', summary: 'Keeps the good clips and better' },
+  { id: 'a', label: 'Standouts', hint: 'A first, topped up with B', summary: 'Keeps the standout clips, topped up with good ones' },
+  { id: 'c', label: 'C or better', hint: 'More clips', summary: 'Keeps the OK clips and better' },
+  { id: 'all', label: 'Grade all', hint: 'Keep everything', summary: 'Keeps every clip, each with its grade' },
+  { id: 'off', label: 'Off', hint: 'No grading', summary: 'Keeps every clip, no grading' }
 ]
 
 export function parseTrimRange(enabled: boolean, startText: string, endText: string): {
@@ -271,15 +272,15 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, onOpen
 
       <Panel className="p-4 xl:p-5">
         {step !== 'video' && <div className="mb-3">
-          <h2 className="text-sm font-semibold text-ink">{step === 'review' && draft.workflow === 'review' ? 'Ready to find candidates' : step === 'captions' && draft.workflow === 'automatic' ? 'Skills, look and captions' : meta.title}</h2>
+          <h2 className="text-sm font-semibold text-ink">{step === 'review' && draft.workflow === 'review' ? 'Ready to find candidates' : meta.title}</h2>
           <p className="mt-0.5 text-xs text-ink-muted">{step === 'review' && draft.workflow === 'review' ? 'A quality check reviews each candidate before the editor opens for your final cut.'
-            : step === 'captions' && draft.workflow === 'automatic' ? 'Turn parts of the edit on or off, then choose how captions and titles look. Silent videos are clipped without captions.' : meta.description}</p>
+            : step === 'captions' && draft.workflow === 'automatic' ? 'Turn parts of the edit on or off in Skills, then choose how captions and hook text look. Silent videos are clipped without captions.' : meta.description}</p>
         </div>}
         {sourceError && <p role="alert" className="text-sm text-danger">{sourceError}</p>}
         {step === 'video' && <VideoStep draft={draft} update={update} trimError={trim.error} disabled={submitting} onOpenRemix={onOpenRemix} />}
         {step === 'format' && <FormatStep draft={draft} update={update} customize={customize.format} onCustomize={(format) => setCustomize((value) => ({ ...value, format }))} />}
         {step === 'clips' && <ClipsStep draft={draft} update={update} customize={customize.clips} onCustomize={(clips) => setCustomize((value) => ({ ...value, clips }))} />}
-        {step === 'captions' && <CaptionsStep draft={draft} update={update} onOpenFormat={() => { setCustomize((value) => ({ ...value, format: true })); goTo('format') }} />}
+        {step === 'captions' && <CaptionsStep draft={draft} update={update} />}
         {step === 'review' && <ReviewStep draft={draft} trim={trim} onEdit={goTo} />}
         {step !== 'video' && sourceCount > 1 && <p className="mt-3 text-2xs text-ink-subtle" data-testid="batch-note">{sourceCountLabel(sourceCount)} with these settings, one job each.</p>}
       </Panel>
@@ -399,6 +400,9 @@ function VideoStep({ draft, update, trimError, disabled, onOpenRemix }: { draft:
           onSourcesChange={(sources) => update({ sources, source: sources[0] ?? '' })}
           onPendingChange={(pendingLink) => useDraftStore.setState({ pendingLink })} />
       </section>
+      <PurposeFields purpose={draft.purpose ?? ''} onPurpose={(purpose) => update({ purpose })} reference={draft.reference ?? null} disabled={disabled}
+        onReference={(reference) => update({ reference })} model={{ clippingMode: draft.clippingMode, ...(draft.clippingMode === 'advanced' ? { plannerModel: draft.plannerModel } : {}) }}
+        onUseLook={(look) => update(createReferencePatch(draft, look))} />
       <HeadlineVoicePicker value={draft.headlineVoice} onChange={(headlineVoice) => update({ headlineVoice })} disabled={disabled} />
       {onOpenRemix && <p className="flex flex-wrap items-center gap-x-1 text-2xs text-ink-subtle" data-testid="remix-note">
         Want to react to someone else’s video with your own take?
@@ -478,7 +482,7 @@ export function clipsSummary(draft: Pick<ClipDraft, 'clippingMode' | 'durations'
     // Lengths are of the original footage; a faster speed makes the clips shorter.
     : { text: `${DURATIONS.filter((d) => durations.includes(d.id)).map((d) => d.range).join(', ')} clips${(draft.videoSpeed ?? 1) > 1 ? ' (of source footage)' : ''}`, changed: !sameLengths })
   const bar = QUALITY_BAR_OPTIONS.find((option) => option.id === (draft.qualityBar ?? DEFAULTS.qualityBar)) ?? QUALITY_BAR_OPTIONS[0]
-  parts.push(bar.id === DEFAULTS.qualityBar ? { text: 'B grade or better', changed: false } : { text: lowerFirst(bar.summary), changed: true })
+  parts.push(bar.id === DEFAULTS.qualityBar ? { text: 'good clips and better', changed: false } : { text: lowerFirst(bar.summary), changed: true })
   parts.push(draft.autoClipCount === false ? { text: `up to ${draft.maxClips} clip${draft.maxClips === 1 ? '' : 's'}`, changed: true } : { text: 'AI decides how many', changed: false })
   if (draft.workflow !== 'review' && draft.hookPreview) parts.push({ text: 'hook preview on', changed: true })
   return parts
@@ -609,9 +613,9 @@ export function FormatStep({ draft, update, customize, onCustomize }: StepProps)
           )}
           {draft.clippingMode !== 'economy' && (
             <SettingRow
-              title="Check tricky shots with AI vision"
-              description="Checks uncertain shots. May add OpenRouter charges."
-              control={<Switch label="AI vision for smart framing" checked={draft.layoutVision} onChange={(layoutVision) => update({ layoutVision })} />}
+              title="Let AI check tricky shots"
+              description="The AI looks at shots where it isn’t sure what to frame. May add OpenRouter charges."
+              control={<Switch label="Let AI check tricky shots" checked={draft.layoutVision} onChange={(layoutVision) => update({ layoutVision })} />}
             />
           )}
           <div className="glass-tile mt-2 rounded-xl px-3 py-2.5">
@@ -906,7 +910,23 @@ export function createBoardPatch(draft: ClipDraft, patch: Partial<BoardStyle>): 
 
 /** Scrolls a control on this step into view (the Skills panel's "More options"). */
 function reveal(id: string): () => void {
-  return () => document.getElementById(id)?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+  return () => document.getElementById(id)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+}
+
+/** Extras the Skills list owns on Create (Zoom): one home, so the look's Extras row leaves them out. */
+export const CREATE_SKILL_EXTRAS: readonly LookExtraId[] = ['punch_zoom']
+
+/** B-roll's "More options", in place under the skill: when the footage plays (choosing one turns B-roll on). */
+function BrollMoreOptions({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
+  const value = draft.broll ?? 'off'
+  return (
+    <div className="space-y-1">
+      <Segmented size="sm" label="When B-roll plays" value={value}
+        options={BROLL_OPTIONS.map((option) => ({ value: option.id, label: option.label }))}
+        onChange={(broll) => update(broll === 'off' ? { broll } : { broll, backgroundVideo: null })} />
+      <p className="text-2xs text-ink-subtle">{BROLL_OPTIONS.find((option) => option.id === value)?.hint ?? ''}. The same choice as B-roll in the Format step, where a gameplay background is too.</p>
+    </div>
+  )
 }
 
 /** "Use colors from my reference": the picture's color on the hook bar (where there is one) and its caption style. */
@@ -920,58 +940,43 @@ export function createReferencePatch(draft: ClipDraft, look: ReferenceLook): Par
   }
 }
 
-export function CaptionsStep({ draft, update, onOpenFormat }: { draft: ClipDraft; update: Update; onOpenFormat?: () => void }): React.JSX.Element {
+export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
   const automatic = draft.workflow !== 'review'
   const brand = useBrands((s) => s.brands.find((item) => item.id === draft.brandIdentityId) ?? null)
   const pexels = useSettingsStore((s) => s.pexelsConfigured)
   const hooks = createHooks(draft)
   const rows: BoardRows = automatic ? { hooks, handle: true, cta: true, keyword: true, extras: true } : {}
   const skills = createSkillRows(draft, { pexels })
-  const more = (id: SkillId): (() => void) | undefined =>
-    id === 'rough_cut' || id === 'broll' ? onOpenFormat
-      : id === 'captions' || id === 'zoom' ? reveal('create-look')
-        : id === 'motion_graphics' ? reveal('create-motion-graphics') : undefined
+  // "More options": Captions' style is on the look board below; B-roll's timing opens in place. Rough cut, Motion
+  // graphics and Zoom have nothing more to set, so they have no link.
+  const more = (id: SkillId): (() => void) | undefined => id === 'captions' ? reveal('create-look') : undefined
+  const brollRow = skills.find((row) => row.id === 'broll')
+  const expand = (id: SkillId): ReactNode | undefined =>
+    id === 'broll' && brollRow && !(brollRow.disabledReason && !brollRow.on) ? <BrollMoreOptions draft={draft} update={update} /> : undefined
   return (
     <div className="space-y-3">
-      {automatic && <SkillsPanel rows={skills} onToggle={(id, on) => update(createSkillPatch(draft, id, on))} onMore={more}
+      {automatic && <SkillsPanel rows={skills} onToggle={(id, on) => update(createSkillPatch(draft, id, on))} onMore={more} expand={expand}
         music={{ track: draft.musicTrack || null, onChange: (track) => update({ musicTrack: track ?? '' }) }} />}
-      <div className="glass-tile rounded-2xl p-3">
-        <PurposeFields purpose={draft.purpose ?? ''} onPurpose={(purpose) => update({ purpose })} reference={draft.reference ?? null}
-          onReference={(reference) => update({ reference })} model={{ clippingMode: draft.clippingMode, ...(draft.clippingMode === 'advanced' ? { plannerModel: draft.plannerModel } : {}) }}
-          onUseLook={(look) => update(createReferencePatch(draft, look))} />
-      </div>
       <CreateBrandSection draft={draft} update={update} />
       <div id="create-look" className="scroll-mt-4">
       <StyleBoard value={createBoardStyle(draft)} onChange={(patch) => update(createBoardPatch(draft, patch))} rows={rows} brand={brand}
-        frame={previewFrame(draft.source)} aspect={draft.aspectRatio === '16:9' ? '16:9' : '9:16'} saveKind="create"
+        frame={previewFrame(draft.source)} aspect={draft.aspectRatio === '16:9' ? '16:9' : '9:16'} saveKind="create" skillExtras={automatic ? CREATE_SKILL_EXTRAS : undefined}
         hookNote={!hooks.includes('white') ? (draft.aspectRatio !== '9:16' ? 'The headline bar is for vertical clips; 16:9 clips use the title card.' : 'With a gameplay background the clips use the title card.') : undefined}
         keywordHelp={<CreateKeywordHelp draft={draft} />}
         ctaHelp="Add one of your CTA clips to the end of every clip (a video of you up to 15 seconds, or an image). You can change it on any single clip afterward. Added on your computer, so there’s no AI cost." />
       </div>
-      {automatic && <div id="create-motion-graphics" className="scroll-mt-4"><MotionGraphicsPicker value={draft.motionGraphics} onChange={(motionGraphics) => update({ motionGraphics })} /></div>}
       {automatic && <CaptionLanguagePicker value={draft.captionLanguage ?? 'original'} onChange={(captionLanguage) => update({ captionLanguage })} />}
     </div>
   )
 }
 
-/** One line for the Review step and the picker: what Auto does. */
-export const MOTION_GRAPHICS_SUMMARY = 'Auto · up to 3 cards per clip, from what’s said'
-
 /**
- * Motion graphics: Auto or Off (Automatic runs). Off until the member turns it on once; then it's
- * remembered with their style. The cards are picked in the same AI call that plans the clips.
+ * The Review step's Skills row: the skills that are on, by their Skills names (Music with its track), or None.
+ * Motion graphics are only Skills now: Off until the member turns them on once, then remembered with their style.
  */
-export function MotionGraphicsPicker({ value, onChange }: { value: boolean; onChange: (value: boolean) => void }): React.JSX.Element {
-  return (
-    <SettingRow
-      title="Motion graphics"
-      description={value
-        ? 'Adds up to 3 animated cards to each clip (a number, a list, a name) using only words said in it. Picked when the clips are planned. Change or remove them in the editor.'
-        : 'Off. Choose Auto to add animated cards for numbers, lists and names said in each clip.'}
-      control={<Segmented size="sm" label="Motion graphics" value={value ? 'auto' : 'off'}
-        options={[{ value: 'auto', label: 'Auto' }, { value: 'off', label: 'Off' }]} onChange={(next) => onChange(next === 'auto')} />}
-    />
-  )
+export function skillsSummary(rows: readonly SkillRow[], musicTrack: string | null | undefined): string {
+  const on = rows.filter((row) => row.on).map((row) => row.id === 'music' ? `${row.label} (${musicTrackLabel(musicTrack || MUSIC_TRACKS[0].id)})` : row.label)
+  return on.length ? on.join(' · ') : 'None'
 }
 
 export const CAPTION_LANGUAGE_OPTIONS = [
@@ -999,13 +1004,15 @@ export function ReviewStep({ draft, trim, onEdit }: {
   onEdit: (step: WizardStep) => void
 }): React.JSX.Element {
   const active = useActiveJobs()
+  const pexels = useSettingsStore((s) => s.pexelsConfigured)
+  const automatic = draft.workflow !== 'review'
   const brand = useBrands((s) => s.brands.find((item) => item.id === draft.brandIdentityId) ?? null)
   const runningCount = active.filter((job) => job.status !== 'queued').length
   const lengths = draft.durations.length === 0
     ? 'Any length'
     : DURATIONS.filter((d) => draft.durations.includes(d.id)).map((d) => d.range).join(', ')
   const framing = draft.aspectRatio === '9:16'
-    ? `${LAYOUT_STYLES.find((s) => s.id === draft.layoutStyle)?.label ?? 'Smart'} framing${draft.clippingMode !== 'economy' && draft.layoutStyle === 'auto' && draft.layoutVision ? ' · AI vision' : ''}`
+    ? `${LAYOUT_STYLES.find((s) => s.id === draft.layoutStyle)?.label ?? 'Smart'} framing${draft.clippingMode !== 'economy' && draft.layoutStyle === 'auto' && draft.layoutVision ? ' · AI checks tricky shots' : ''}`
     : 'Whole frame'
   const trimLabel = draft.trimOpen && (trim.start != null || trim.end != null)
     ? ` · ${trim.start != null ? formatSeconds(trim.start) : 'start'} to ${trim.end != null ? formatSeconds(trim.end) : 'end'}`
@@ -1016,30 +1023,33 @@ export function ReviewStep({ draft, trim, onEdit }: {
     { step: 'video', label: draftSources(draft).length > 1 ? 'Videos' : 'Video', value: draftSources(draft).length > 1
       ? `${draftSources(draft).length} videos · ${sourceLabel(draft.source)} and ${draftSources(draft).length - 1} more`
       : `${sourceLabel(draft.source)}${trimLabel}` },
+    // What it's for and the reference picture are set with the video (step 1).
+    ...(draft.purpose?.trim() ? [{ step: 'video' as const, label: 'For', value: draft.purpose.trim() }] : []),
+    ...(draft.reference ? [{ step: 'video' as const, label: 'Reference', value: draft.reference.name }] : []),
     { step: 'format', label: 'Format', value: `${FORMATS.find((f) => f.id === draft.aspectRatio)?.label ?? draft.aspectRatio} ${draft.aspectRatio} · ${framing}` },
     ...(draft.aspectRatio === '9:16' && draft.layoutStyle === 'auto'
       ? [{ step: 'format' as const, label: 'Screen share', value: (SCREEN_FOCUS_OPTIONS.find((option) => option.id === (draft.screenFocus ?? 'smart')) ?? SCREEN_FOCUS_OPTIONS[0]).summary }]
       : []),
-    { step: 'format', label: 'Pacing', value: draft.workflow === 'review' ? 'Manual · choose your own cuts in the editor' : draft.pacing === 'tight' ? 'Cut dead air' : 'Keep pauses' },
+    // Automatic: Rough cut is a skill (the Skills row); Review & edit cuts by hand.
+    ...(automatic ? [] : [{ step: 'format' as const, label: 'Pacing', value: 'Manual · choose your own cuts in the editor' }]),
     { step: 'format', label: 'Speed', value: `${draft.videoSpeed ?? 1}×${(draft.videoSpeed ?? 1) === 1 ? ' · Normal' : ' · All exported clips'}` },
     { step: 'clips', label: 'Mode', value: draft.clippingMode === 'advanced' ? 'Your own models' : draft.clippingMode === 'economy' ? 'Lower cost · may be less accurate' : 'Best quality' },
     { step: 'clips', label: 'Clips', value: `${lengths}${(draft.videoSpeed ?? 1) > 1 && draft.durations.length > 0 ? ' of source footage' : ''} · ${draft.autoClipCount ? 'AI decides how many' : `Up to ${draft.maxClips}`}` },
     { step: 'clips', label: 'What to clip', value: draft.clipRequest?.trim() || 'The best moments' },
     ...(draft.workflow !== 'review' && draft.hookPreview ? [{ step: 'clips' as const, label: 'Hook preview', value: 'Opens with the strongest line' }] : []),
     { step: 'video' as const, label: 'Whose video', value: HEADLINE_VOICE_OPTIONS.find((option) => option.id === draft.headlineVoice)?.summary ?? 'Someone else’s' },
-    { step: 'clips' as const, label: 'Quality bar', value: QUALITY_BAR_OPTIONS.find((option) => option.id === draft.qualityBar)?.summary ?? 'B or better' },
+    { step: 'clips' as const, label: 'Quality', value: QUALITY_BAR_OPTIONS.find((option) => option.id === draft.qualityBar)?.summary ?? QUALITY_BAR_OPTIONS[0].summary },
+    // Skills by their Skills names, so each setting reads the same here as where it's set.
+    ...(automatic ? [{ step: 'captions' as const, label: 'Skills', value: skillsSummary(createSkillRows(draft, { pexels }), draft.musicTrack) }] : []),
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
   if (draft.workflow !== 'review' && isCaptionLanguage(draft.captionLanguage)) {
     rows.push({ step: 'captions', label: 'Language', value: `${captionLanguageLabel(draft.captionLanguage)} captions · speech stays original` })
   }
-  if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Title', value: draft.includeTitle ? ((draft.titleStyle ?? 'headline') === 'headline' && draft.aspectRatio === '9:16' && !(draft.backgroundVideo && draft.broll === 'off') ? `Headline: ${(HEADLINE_LOOKS.find((item) => item.id === (draft.headlineLook ?? DEFAULT_HEADLINE_LOOK).look)?.label ?? 'White bar').toLowerCase()}` : 'Title card at the top') : 'Off' })
-  if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Extras', value: extrasName(parseLookExtras(draft.lookExtras)) })
-  if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Graphics', value: draft.motionGraphics ? MOTION_GRAPHICS_SUMMARY : 'Off' })
-  if (draft.workflow !== 'review') rows.push({ step: 'captions', label: 'Call to action', value: draft.ctaId ? 'Added to the end of every clip' : 'None' })
-  if (draft.workflow !== 'review' && (draft.music || draft.voiceCleanup)) rows.push({ step: 'captions', label: 'Audio', value: [draft.music ? 'Music' : '', draft.voiceCleanup ? 'Voice cleanup' : ''].filter(Boolean).join(' · ') })
-  if (draft.purpose?.trim()) rows.push({ step: 'captions', label: 'For', value: draft.purpose.trim() })
-  if (draft.reference) rows.push({ step: 'captions', label: 'Reference', value: `${draft.reference.name} · a look you like` })
+  // The hook text by the name the look board gives it (White bar, Title card, No hook text, ...).
+  if (automatic) rows.push({ step: 'captions', label: 'Hook text', value: HOOK_LABELS[createBoardStyle(draft).hook] })
+  if (automatic) rows.push({ step: 'captions', label: 'Extras', value: extrasName(parseLookExtras(draft.lookExtras).filter((id) => !CREATE_SKILL_EXTRAS.includes(id))) })
+  if (automatic) rows.push({ step: 'captions', label: 'Call to action', value: draft.ctaId ? 'Added to the end of every clip' : 'None' })
   // The brand, comment keyword and handle, as they'll be sent (see brandRequestFields).
   const brandFields = brandRequestFields(draft)
   if (brand) rows.push({ step: 'captions', label: 'Brand', value: `${brand.name} · titles in its voice` })
@@ -1052,7 +1062,7 @@ export function ReviewStep({ draft, trim, onEdit }: {
     const corner = HANDLE_POSITIONS.find((item) => item.id === (brand.look?.handlePosition ?? DEFAULT_HANDLE_POSITION))?.label ?? 'Corner'
     rows.push({ step: 'captions', label: 'Handle', value: `${brand.look?.handle || 'Your logo'} · ${corner.toLowerCase()}` })
   }
-  if (draft.clippingMode === 'advanced') rows.splice(5, 0,
+  if (draft.clippingMode === 'advanced') rows.splice(rows.findIndex((row) => row.label === 'Mode') + 1, 0,
     { step: 'clips', label: 'Transcribe', value: draft.transcriptionModel || 'Choose a model' },
     { step: 'clips', label: 'Plan', value: draft.plannerModel || 'Choose a model' })
   const afterFormat = rows.findIndex((row) => row.label === 'Format') + 1
