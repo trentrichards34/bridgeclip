@@ -40,6 +40,20 @@ SMOOTHING = 0.6
 LOW, HIGH = 0.35, 0.75
 
 
+def _valid_rate(fps: int | str) -> bool:
+    """A frame rate as a positive number or "num/den" (kept to digits, for the FFmpeg arguments)."""
+    if isinstance(fps, bool):
+        return False
+    if isinstance(fps, (int, float)):
+        return 0 < fps <= 240
+    import re
+    match = re.fullmatch(r"(\d{1,6})(?:/(\d{1,6}))?", fps) if isinstance(fps, str) else None
+    if not match or int(match.group(1)) <= 0:
+        return False
+    den = int(match.group(2) or 1)
+    return den > 0 and int(match.group(1)) / den <= 240
+
+
 def model_path() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "assets", "models", MODEL_FILE))
 
@@ -104,29 +118,72 @@ class MatteSmoother:
         return (ramp * 255.0 + 0.5).astype(np.uint8)
 
 
+def guided_filter(guide: np.ndarray, p: np.ndarray, radius: int, eps: float) -> np.ndarray:
+    """He et al.'s guided filter (gray guide, float32 0..1): `p` with its edges moved onto the guide's edges."""
+    size = (2 * radius + 1, 2 * radius + 1)
+    mean = lambda x: cv2.boxFilter(x, -1, size)  # noqa: E731
+    mean_i, mean_p = mean(guide), mean(p)
+    a = (mean(guide * p) - mean_i * mean_p) / (mean(guide * guide) - mean_i * mean_i + eps)
+    b = mean_p - a * mean_i
+    return mean(a) * guide + mean(b)
+
+
+class EdgeRefiner:
+    """A tighter matte for words behind the speaker: the model's probability (made at its own small size) is
+    smoothed over time, then snapped to the picture's edges with a guided filter at the matte's full size (hair
+    follows its real outline instead of a soft blob), then softly thresholded."""
+
+    def __init__(self, width: int, height: int, smoothing: float = SMOOTHING):
+        self.size = (width, height)
+        self.smoothing = smoothing
+        self.previous: Optional[np.ndarray] = None
+        self.radius = max(3, int(round(max(width, height) / 120)))
+        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+
+    def __call__(self, probability: np.ndarray, bgr: np.ndarray) -> np.ndarray:
+        prob = np.clip(np.nan_to_num(probability.astype(np.float32)), 0.0, 1.0)
+        if self.previous is not None and self.previous.shape == prob.shape:
+            prob = self.smoothing * prob + (1.0 - self.smoothing) * self.previous
+        self.previous = prob
+        if prob.shape[1::-1] != self.size:
+            prob = cv2.resize(prob, self.size, interpolation=cv2.INTER_LINEAR)
+        guide = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+        q = np.clip(guided_filter(guide, prob, self.radius, 2e-3), 0.0, 1.0)
+        ramp = np.clip((q - 0.4) / (0.75 - 0.4), 0.0, 1.0)
+        ramp = ramp * ramp * (3.0 - 2.0 * ramp)
+        ramp = cv2.erode(ramp, self.kernel)
+        return (ramp * 255.0 + 0.5).astype(np.uint8)
+
+
 def matte_image(bgr: np.ndarray, segmenter: Optional[SelfieSegmenter] = None) -> np.ndarray:
     """The matte for one picture (uint8, the picture's size)."""
     h, w = bgr.shape[:2]
     return MatteSmoother(w, h)((segmenter or SelfieSegmenter()).probability(bgr))
 
 
-def write_matte(video: str, out: str, width: int, height: int, fps: int = 30,
-                timeout: float = MATTE_TIMEOUT_SECONDS) -> str:
+def write_matte(video: str, out: str, width: int, height: int, fps: int | str = 30,
+                timeout: float = MATTE_TIMEOUT_SECONDS, start: float = 0.0, duration: Optional[float] = None,
+                max_edge: int = MAX_INTERNAL_EDGE, refine: bool = False) -> str:
     """A gray matte video (FFV1 in Matroska, lossless, full range) for `video`, frame for frame.
 
     `width`/`height` are the video's size; the matte is written at the internal size
-    (same aspect) and scaled by the compositor. Raises MediaProcessError on failure."""
+    (same aspect, at most `max_edge`) and scaled by the compositor. `fps` may be a rate
+    like "30000/1001". `start`/`duration` (seconds): only that part of the video (a matte
+    for one window, starting at its first frame). `refine`: edges snapped to the picture (EdgeRefiner), for words
+    behind the speaker. Raises MediaProcessError on failure."""
     if not available():
         raise MediaProcessError("Background removal is not available")
-    if width <= 0 or height <= 0 or fps <= 0:
+    if width <= 0 or height <= 0 or not _valid_rate(fps) or start < 0 or (duration is not None and duration <= 0):
         raise MediaProcessError("Invalid matte size")
-    mw, mh = internal_size(width, height)
-    decode = ["ffmpeg", "-nostdin", "-v", "error", *MEDIA_INPUT_OPTIONS, "-i", video, "-map", "0:v:0", "-an", "-sn", "-dn",
+    mw, mh = internal_size(width, height, max_edge)
+    seek = ["-ss", f"{start:.3f}"] if start > 0 else []
+    length = ["-t", f"{duration:.3f}"] if duration is not None else []
+    decode = ["ffmpeg", "-nostdin", "-v", "error", *MEDIA_INPUT_OPTIONS, *seek, "-i", video, *length, "-map", "0:v:0", "-an", "-sn", "-dn",
               "-vf", f"fps={fps},scale={mw}:{mh}:flags=area", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
     encode = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{mw}x{mh}",
               "-r", str(fps), "-i", "pipe:0", "-c:v", "ffv1", "-pix_fmt", "gray", out]
     segmenter = SelfieSegmenter()
-    smooth = MatteSmoother(mw, mh)
+    smooth = EdgeRefiner(mw, mh) if refine else MatteSmoother(mw, mh)
     frame_bytes = mw * mh * 3
     with tempfile.TemporaryFile() as errors:
         writer = subprocess.Popen(encode, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=errors, env=media_child_env())
@@ -147,7 +204,13 @@ def write_matte(video: str, out: str, width: int, height: int, fps: int = 30,
                         raise MediaProcessError("The recording is too long to cut out")
                     image = np.frombuffer(raw, np.uint8).reshape(mh, mw, 3)
                     try:
-                        writer.stdin.write(smooth(segmenter.probability(image)).tobytes())
+                        if refine:
+                            # The model sees a square of 256 anyway: run it on a smaller copy, refine at full size.
+                            small = cv2.resize(image, internal_size(mw, mh, MAX_INTERNAL_EDGE), interpolation=cv2.INTER_AREA)
+                            matte = smooth(segmenter.probability(small), image)
+                        else:
+                            matte = smooth(segmenter.probability(image))
+                        writer.stdin.write(matte.tobytes())
                     except (BrokenPipeError, OSError):
                         raise MediaProcessError("Writing the cut-out failed") from None
             if reader.returncode:

@@ -109,6 +109,15 @@ export function graphicBox(placement: GraphicPlacement, frame: GraphicFrame, siz
   return { top: center - h / 2, bottom: center + h / 2 }
 }
 
+/**
+ * The size a graphic's band is worked out for. Big words take the stage's height (the top of the frame down to
+ * about its middle, under the hook): room for two lines that each fill the width, set high so the speaker's head
+ * overlaps their lower part.
+ */
+export function graphicBandSize(graphic: Pick<EditorGraphic, 'template' | 'size'>): GraphicSize | undefined {
+  return graphic.template === 'big_words' ? 'stage' : graphic.size
+}
+
 /** A graphic's brand color and font: its own color field, else the hook's brand color, else a calm blue; the hook's font. */
 export function graphicStyle(candidate: Pick<CandidateEdit, 'hook'>, graphic?: Pick<EditorGraphic, 'fields'>): { color: string; font: string } {
   const own = graphic?.fields.color
@@ -175,7 +184,7 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
     const out = items.map((t) => outputTime(candidate, graphic.at_ms + t))
     if (out.every((t) => t !== null)) fields.item_ms = out.map((t) => String(Math.max(0, Math.round((t as number) - window.start_ms)))).join('\n')
   }
-  let box = graphicBox(graphic.placement, frame, graphic.size)
+  let box = graphicBox(graphic.placement, frame, graphicBandSize(graphic))
   // A stage graphic in a Visual scene (the speaker card is away) takes the frame down to just over the captions.
   if (graphic.size === 'stage' && project.aspect_ratio === '9:16' && stageSceneAt(candidate.stage_scenes, at).scene === 'visual') {
     box = { top: box.top, bottom: Math.max(box.bottom, STAGE_LAYOUT.visualCaptionY - .08) }

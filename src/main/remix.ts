@@ -37,7 +37,7 @@ import {
 import { suggestTalkingPoints } from './moment-take'
 import { estimateHeygenVideoUsd, HEYGEN_PRICES, heygenEngine, type HeygenAvatarLink } from '../shared/heygen'
 import type { SpendProvider } from '../shared/spending'
-import { isRemixGraphicFormat, parseRemixGraphics, reelGraphicSpec, remixGraphicFrame, drawableGraphics, type RemixGraphicContext } from '../shared/reel-graphics'
+import { graphicDepth, isRemixGraphicFormat, parseRemixGraphics, reelGraphicSpec, remixGraphicFrame, drawableGraphics, type RemixGraphicContext } from '../shared/reel-graphics'
 import type { GraphicJob } from './graphics-render'
 import type { RemixChatFacts } from '../shared/remix-chat'
 
@@ -626,7 +626,7 @@ function memberPartMs(run: ActiveRemix, draft: RemixDraft): number | null {
  * The member's graphics for the takes being made, checked and drawn (offscreen, cached in the run's
  * .graphics/reel/): what the engine lays over each finished video, by draft id.
  */
-async function drawRemixGraphics(run: ActiveRemix, edits: RemixEdit[], value: unknown): Promise<Record<string, { file: string; at_ms: number; duration_ms: number }[]>> {
+async function drawRemixGraphics(run: ActiveRemix, edits: RemixEdit[], value: unknown): Promise<Record<string, { file: string; at_ms: number; duration_ms: number; depth?: 'behind' }[]>> {
   const context = remixGraphicContext(run.context.request)
   if (value === undefined || value === null) return {}
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Your graphics could not be read. Try again.')
@@ -634,7 +634,7 @@ async function drawRemixGraphics(run: ActiveRemix, edits: RemixEdit[], value: un
   if (!entries.length) return {}
   if (!context) throw new Error('Graphics can be added to on-camera remixes only.')
   const { graphicJob, renderGraphicJobs, REEL_GRAPHICS_DIR } = await import('./graphics-render')
-  const out: Record<string, { file: string; at_ms: number; duration_ms: number }[]> = {}
+  const out: Record<string, { file: string; at_ms: number; duration_ms: number; depth?: 'behind' }[]> = {}
   const banner = Boolean(run.context.extras?.banner && run.context.request.ctaKeyword)
   for (const [key, list] of entries) {
     const edit = edits.find((item) => String(item.id) === key)
@@ -646,7 +646,7 @@ async function drawRemixGraphics(run: ActiveRemix, edits: RemixEdit[], value: un
     if (!graphics.length) continue
     const frame = remixGraphicFrame(context, edit.headline, banner)
     const jobs = graphics.flatMap((g): GraphicJob[] => {
-      const job = graphicJob(run.status.folder, g.id, reelGraphicSpec(g, frame, g.duration_ms, context.headlineLook), { start_ms: g.at_ms, duration_ms: g.duration_ms })
+      const job = graphicJob(run.status.folder, g.id, reelGraphicSpec(g, frame, g.duration_ms, context.headlineLook), { start_ms: g.at_ms, duration_ms: g.duration_ms }, undefined, graphicDepth(g))
       return job ? [job] : []
     })
     let drawn
@@ -654,7 +654,7 @@ async function drawRemixGraphics(run: ActiveRemix, edits: RemixEdit[], value: un
       logger.warn('remix.graphics.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
       throw new Error('Your graphics could not be drawn. Try again, or remove a graphic and make the video again.')
     }
-    out[key] = drawn.map((item) => ({ file: item.file, at_ms: item.start_ms, duration_ms: item.duration_ms }))
+    out[key] = drawn.map((item) => ({ file: item.file, at_ms: item.start_ms, duration_ms: item.duration_ms, ...(item.depth ? { depth: item.depth } : {}) }))
   }
   return out
 }

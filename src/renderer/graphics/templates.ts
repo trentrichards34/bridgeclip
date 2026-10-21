@@ -19,6 +19,7 @@
 import { createTimeline } from 'animejs'
 import './graphics.css'
 import { ICONS } from './icons'
+import { bigWordsTemplate } from './big-words'
 import {
   accentWords, browserHighlights, formatStatValue, graphicIcons, graphicItems, graphicItemTimes, highlightPoint, parseStatValue, templateItems,
   type GraphicRenderSpec
@@ -242,7 +243,7 @@ export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): Mounte
  * so text is drawn crisply at its final size.
  */
 function fitToBand({ band, fit, root, spec, u }: Build): void {
-  if (spec.template === 'highlight') return
+  if (spec.template === 'highlight' || spec.template === 'big_words') return
   fit.style.removeProperty('--u')
   fit.style.removeProperty('--card-w')
   const cardW = parseFloat(root.style.getPropertyValue('--card-w'))
@@ -778,7 +779,10 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
       tl.add(pill, { scale: [1, 1.05], duration: 420, ease: 'inOutSine' }, tin + 900)
       tl.add(pill, { scale: [1.05, 1], duration: 520, ease: 'inOutSine' }, tin + 1320)
     }
-  }
+  },
+
+  // Huge words in the scene (big-words.ts): sized and animated on their own, outside the band's card layout.
+  big_words(b) { bigWordsTemplate(b) }
 }
 
 function listLike(b: Build, checks: boolean): void {

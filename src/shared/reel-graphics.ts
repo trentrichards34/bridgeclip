@@ -18,9 +18,9 @@
  */
 import { chatFail as fail, chatPlainText } from './chat-core'
 import { checkHighlightFields } from './chat-point'
-import { graphicBox, GRAPHIC_DEFAULT_COLOR, outputSize, type GraphicFrame } from './graphic-layout'
+import { graphicBandSize, graphicBox, GRAPHIC_DEFAULT_COLOR, outputSize, type GraphicFrame } from './graphic-layout'
 import { HEADLINE_FONTS, isHexColor, type HeadlineLook } from './headline-look'
-import { GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHICS_PER_CLIP, clampGraphicMs, templateInfo, graphicHasContent, parseGraphics, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from './motion-graphics'
+import { GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, graphicDepth, MAX_GRAPHICS_PER_CLIP, clampGraphicMs, templateInfo, graphicHasContent, parseGraphics, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from './motion-graphics'
 
 /** The templates offered on review screens (every one but Logo pop). */
 export const REEL_GRAPHIC_TEMPLATES = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo')
@@ -48,7 +48,7 @@ export function reelGraphicSpec(graphic: Pick<EditorGraphic, 'template' | 'field
   const fields = { ...graphic.fields }
   delete fields.image
   delete fields.color
-  return { template: graphic.template, fields, width, height, duration_ms: Math.round(durationMs), box: graphicBox(graphic.placement, frame, graphic.size), placement: graphic.placement,
+  return { template: graphic.template, fields, width, height, duration_ms: Math.round(durationMs), box: graphicBox(graphic.placement, frame, graphicBandSize(graphic)), placement: graphic.placement,
     ...reelGraphicStyle(look, graphic), ...(graphic.size && graphic.size !== 'card' ? { size: graphic.size } : {}) }
 }
 
@@ -88,7 +88,7 @@ export function newEditGraphic(base: EditorGraphic, word: number): EditGraphic {
 }
 
 /** Change one Edit graphic (merged fields; an empty string clears one). */
-export function patchEditGraphic(graphics: EditGraphic[], id: string, patch: Partial<Pick<EditGraphic, 'word' | 'duration_ms' | 'placement'>> & { fields?: Record<string, string> }): EditGraphic[] {
+export function patchEditGraphic(graphics: EditGraphic[], id: string, patch: Partial<Pick<EditGraphic, 'word' | 'duration_ms' | 'placement' | 'depth'>> & { fields?: Record<string, string> }): EditGraphic[] {
   return graphics.map((g) => {
     if (g.id !== id) return g
     const fields = { ...g.fields }
@@ -96,7 +96,7 @@ export function patchEditGraphic(graphics: EditGraphic[], id: string, patch: Par
       if (!/^[a-z_]{1,20}$/.test(key) || typeof value !== 'string') continue
       fields[key] = value.slice(0, key === 'items' ? 800 : 160)
     }
-    return { ...g, ...(patch.word !== undefined ? { word: patch.word } : {}), ...(patch.placement ? { placement: patch.placement } : {}),
+    return { ...g, ...(patch.word !== undefined ? { word: patch.word } : {}), ...(patch.placement ? { placement: patch.placement } : {}), ...(patch.depth ? { depth: patch.depth } : {}),
       ...(patch.duration_ms !== undefined ? { duration_ms: clampGraphicMs(patch.duration_ms) } : {}), fields }
   }).sort((a, b) => a.word - b.word)
 }
@@ -196,3 +196,4 @@ export function graphicFields(template: GraphicTemplateId, current: Record<strin
 }
 
 export type { GraphicPlacement, GraphicTemplateId }
+export { graphicDepth }

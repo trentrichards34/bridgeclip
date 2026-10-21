@@ -12,13 +12,14 @@ import type { GraphicFrame } from '../../shared/graphic-layout'
 import { graphicBox } from '../../shared/graphic-layout'
 import type { HeadlineLook } from '../../shared/headline-look'
 import { isHexColor } from '../../shared/headline-look'
-import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHIC_ITEMS, graphicHasContent, highlightPoint, templateInfo, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from '../../shared/motion-graphics'
+import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHIC_ITEMS, graphicCanGoBehind, graphicDepth, graphicHasContent, highlightPoint, templateInfo, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { MAX_REEL_GRAPHICS, REEL_GRAPHIC_TEMPLATES, reelGraphicSpec, reelGraphicStyle } from '../../shared/reel-graphics'
 import { outputSize } from '../../shared/graphic-layout'
 import { cn } from '../lib/utils'
-import { GraphicView, IconFields, SAMPLES, SHORT, fieldLabel, graphicSummary } from './ClipGraphics'
+import { BigWordsFields, GraphicView, IconFields, SAMPLES, SHORT, fieldLabel, graphicSummary } from './ClipGraphics'
 import { Button } from './ui/Button'
 import { Segmented } from './ui/Segmented'
+import { Switch } from './ui/Switch'
 
 /** One graphic as the strip shows it: `at` is seconds on the strip (null: not in the video now). */
 export interface ReelGraphicItem extends Omit<EditorGraphic, 'at_ms'> {
@@ -29,7 +30,7 @@ export interface ReelGraphicItem extends Omit<EditorGraphic, 'at_ms'> {
   problem: string | null
 }
 
-export type ReelGraphicPatch = Partial<Pick<EditorGraphic, 'duration_ms' | 'placement'>> & { at?: number; fields?: Record<string, string> }
+export type ReelGraphicPatch = Partial<Pick<EditorGraphic, 'duration_ms' | 'placement' | 'depth'>> & { at?: number; fields?: Record<string, string> }
 
 const clock = (seconds: number): string => `${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, '0')}`
 
@@ -142,7 +143,7 @@ function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, onPatch, 
       </div>
       {g.problem && <p className="text-2xs text-warning" role="note">{g.problem}</p>}
       {!graphicHasContent(g) && <p className="text-2xs text-warning">Add its words to show it.</p>}
-      {info.fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'highlights'].includes(k)).map((key) => <label key={key} className="block space-y-1 text-2xs text-ink-muted">{fieldLabel(g.template, key)}
+      {info.fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'highlights', 'style', 'vertical', 'motion'].includes(k)).map((key) => <label key={key} className="block space-y-1 text-2xs text-ink-muted">{fieldLabel(g.template, key)}
         {key === 'items' || key === 'text'
           ? <textarea className={cn(input, 'resize-y')} rows={key === 'items' ? MAX_GRAPHIC_ITEMS : 2} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''}
             onChange={(e) => onField(key, e.target.value)} aria-label={`${info.label} ${fieldLabel(g.template, key).toLowerCase()}`} />
@@ -150,6 +151,11 @@ function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, onPatch, 
             aria-label={`${info.label} ${fieldLabel(g.template, key).toLowerCase()}`} placeholder={key === 'value' ? 'e.g. a number you said, like 40%' : undefined} />}
       </label>)}
       {g.template === 'icon_pop' && <IconFields fields={g.fields} onField={onField} imageNote={false} />}
+      {g.template === 'big_words' && <BigWordsFields fields={g.fields} onField={onField} />}
+      {graphicCanGoBehind(g.template) && <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2 text-xs text-ink"><span>Behind me</span>
+          <Switch label="Behind me" checked={graphicDepth(g) === 'behind'} onChange={(on) => onPatch({ depth: on ? 'behind' : 'front' })} /></div>
+        <p className="text-2xs text-ink-subtle">{graphicDepth(g) === 'behind' ? 'In the video you stand in front of it: you’re cut out and laid back over it. The small preview shows it in front.' : 'It sits over the video, in front of you.'}</p></div>}
       {g.template === 'stat' && <p className="text-2xs text-ink-subtle">The number counts up. Use one you said, like “$1,200/month” or “40%”.</p>}
       {g.template === 'highlight' ? <div className="space-y-2">
         <Segmented label="Shape" size="sm" value={highlightPoint(g.fields).shape} onChange={(shape) => onField('shape', shape)} options={[{ value: 'circle', label: 'Circle' }, { value: 'arrow', label: 'Arrow' }]} />

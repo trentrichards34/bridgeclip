@@ -357,3 +357,66 @@ test('automatic item times: checked against the item count, moved onto the finis
   const visual = mg.graphicSpec(project, { ...c, stage_scenes: [{ scene: 'visual', start_ms: 1500, end_ms: 5000 }] }, g)
   assert.ok(visual.box.bottom > .7 && visual.box.bottom < .8, JSON.stringify(visual.box))
 })
+
+test('depth: behind parses for big type only, Big words start behind, and the switch saves it', () => {
+  const base = { id: 'g-0000000001', template: 'big_words', at_ms: 0, duration_ms: 2500, placement: 'top', fields: { text: 'Paid Creators', style: 'mixed' } }
+  assert.equal(mg.parseGraphics([{ ...base, depth: 'behind' }])[0].depth, 'behind')
+  assert.equal(mg.parseGraphics([{ ...base, depth: 'front' }])[0].depth, 'front')
+  assert.equal(mg.parseGraphics([{ ...base, depth: 'under' }])[0].depth, undefined)
+  // Older graphics (no depth) stay as they were; a template that can't go behind drops it.
+  assert.equal('depth' in mg.parseGraphics([{ ...base, template: 'title' }])[0], false)
+  assert.equal(mg.parseGraphics([{ ...base, template: 'stat', depth: 'behind' }])[0].depth, undefined)
+  for (const t of ['big_words', 'title', 'statement', 'headline_pill']) assert.equal(mg.graphicCanGoBehind(t), true, t)
+  for (const t of ['stat', 'list', 'lower_third', 'highlight', 'quote']) assert.equal(mg.graphicCanGoBehind(t), false, t)
+  // Big words: behind unless set otherwise; the effective depth.
+  assert.equal(mg.newGraphic('big_words', 0).depth, 'behind')
+  assert.equal(mg.newGraphic('title', 0).depth, undefined)
+  assert.equal(mg.graphicDepth({ template: 'big_words', depth: 'front' }), 'front')
+  assert.equal(mg.graphicDepth({ template: 'stat', depth: 'behind' }), 'front')
+  const c = clip({ ranges: [[0, 9000]], graphics: [{ ...base, depth: 'behind' }] })
+  assert.equal(mg.updateGraphic(c, base.id, { depth: 'front' })[0].depth, 'front')
+  const title = clip({ ranges: [[0, 9000]], graphics: [{ ...base, template: 'title', fields: { text: 'Hi' } }] })
+  assert.equal(mg.updateGraphic(title, base.id, { depth: 'behind' })[0].depth, 'behind')
+  // Switching to a template that can't go behind drops the depth.
+  assert.equal(mg.updateGraphic({ ...title, graphics: mg.updateGraphic(title, base.id, { depth: 'behind' }) }, base.id, { template: 'stat' })[0].depth, undefined)
+  // The fields round-trip; the words are only the ones given.
+  assert.deepEqual(mg.parseGraphics([base])[0].fields, { text: 'Paid Creators', style: 'mixed' })
+  assert.equal(mg.graphicHasContent({ template: 'big_words', fields: { text: '  ' } }), false)
+  assert.equal(mg.graphicHasContent({ template: 'big_words', fields: { text: 'Go' } }), true)
+})
+
+test('big words: at most 3 words, stacked so each line can fill the width, options default sensibly', () => {
+  assert.deepEqual(mg.bigWords('Paid Creators'), [['Paid'], ['Creators']])
+  assert.deepEqual(mg.bigWords('Go viral'), [['Go', 'viral']])
+  assert.deepEqual(mg.bigWords('Go viral', { mixed: true }), [['Go'], ['viral']])
+  assert.deepEqual(mg.bigWords('Performance Marketing works well'), [['Performance'], ['Marketing', 'works']])
+  assert.deepEqual(mg.bigWords('one two\nthree four'), [['one', 'two'], ['three']])
+  assert.deepEqual(mg.bigWords('Virtual nobody', { stack: false }), [['Virtual', 'nobody']])
+  assert.deepEqual(mg.bigWords(''), [])
+  assert.deepEqual(mg.bigWordsOptions({}), { style: 'serif', vertical: null, motion: 'scale' })
+  assert.deepEqual(mg.bigWordsOptions({ style: 'mixed', vertical: 'left', motion: 'reveal' }), { style: 'mixed', vertical: 'left', motion: 'reveal' })
+  assert.deepEqual(mg.bigWordsOptions({ style: '<b>', vertical: 'up', motion: 'spin' }), { style: 'serif', vertical: null, motion: 'scale' })
+  // Their band is the stage's height (room for two lines across the frame, set high).
+  const project = { ...structuredClone(fixture) }
+  const c = clip({ ranges: [[0, 9000]], video_speed: 1, captions: false, hook: undefined })
+  const g = mg.newGraphic('big_words', 1000, { fields: { text: 'Paid Creators' } })
+  const spec = mg.graphicSpec(project, c, g)
+  assert.ok(spec.box.bottom - spec.box.top > .4, JSON.stringify(spec.box))
+  assert.equal(mg.graphicSpec(project, c, { ...g, depth: 'front' }).box.top, spec.box.top)
+})
+
+test('a graphic behind the speaker keeps its depth through the render jobs, with the same cached render', async (t) => {
+  const { dir, cleanup } = tempDir('bridgeclip-graphic-depth-')
+  t.after(cleanup)
+  const { mod } = renderModule(t, dir)
+  const run = path.join(dir, 'run'); fs.mkdirSync(run)
+  const project = { ...structuredClone(fixture) }
+  const g = { id: 'g-0000000009', template: 'big_words', at_ms: 1500, duration_ms: 2000, placement: 'top', fields: { text: 'Paid Creators' }, depth: 'behind' }
+  const c = { ...clip(), graphics: [g, { ...g, id: 'g-0000000010', at_ms: 7200, depth: 'front' }] }
+  const jobs = mod.candidateGraphicJobs(run, project, c)
+  assert.deepEqual(jobs.map((j) => j.depth), ['behind', undefined])
+  // Depth doesn't change the pixels: the same render serves both.
+  const front = mod.graphicJob(run, 'x', jobs[0].spec, { start_ms: 0, duration_ms: 2000 })
+  assert.equal(front.key, jobs[0].key)
+  assert.equal(front.depth, undefined)
+})

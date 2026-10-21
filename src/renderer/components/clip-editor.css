@@ -231,6 +231,7 @@
 .editor-graphic-edge:hover { background:#e9d5ff; }
 .editor-graphics-overlay { position:absolute; pointer-events:none; overflow:hidden; }
 .editor-graphics-overlay .editor-graphic-view { position:absolute; inset:0; }
+.editor-graphic-depth-badge { position:absolute; left:8px; bottom:8px; padding:3px 8px; border-radius:999px; font-size:11px; line-height:1.3; color:#fff; background:rgb(15 23 42 / .72); box-shadow:0 0 0 1px rgb(255 255 255 / .16); }
 .editor-graphic-view { position:relative; overflow:hidden; flex-shrink:0; }
 .editor-graphics-panel { display:flex; flex-direction:column; gap:10px; min-width:0; }
 .editor-graphic-picker { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; }

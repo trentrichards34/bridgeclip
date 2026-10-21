@@ -101,7 +101,7 @@ function removePlan(run: string): void {
   try { unlinkSync(join(run, GRAPHICS_PLAN_FILE)) } catch { /* gone */ }
 }
 
-type LayRequest = { clip_index: number; graphics: { file: string; start_ms: number; duration_ms: number }[] }
+type LayRequest = { clip_index: number; graphics: { file: string; start_ms: number; duration_ms: number; depth?: 'behind' }[] }
 type LayResult = { done: number[]; failed: number[]; cancelled: boolean }
 
 /** Run the engine's overlay once for the run. Clips it reports are final; the rest count as failed. */
@@ -233,7 +233,7 @@ async function applyNow(run: string, worker: RunGraphicsWorker, options: RunGrap
     if (cancelled) break
     if (rendered.length < (c.graphics?.length ?? 0)) failed.add(index)
     if (rendered.length) {
-      requests.push({ clip_index: index, graphics: rendered.map((g) => ({ file: g.file, start_ms: g.start_ms + extra.offset_ms, duration_ms: g.duration_ms })) })
+      requests.push({ clip_index: index, graphics: rendered.map((g) => ({ file: g.file, start_ms: g.start_ms + extra.offset_ms, duration_ms: g.duration_ms, ...(g.depth ? { depth: g.depth } : {}) })) })
       const placements = new Map((c.graphics ?? []).map((g) => [g.id, g.placement] as const))
       ids.set(index, new Map(rendered.flatMap((g) => placements.has(g.id) ? [[g.id, placements.get(g.id) as GraphicPlacement] as const] : [])))
     }

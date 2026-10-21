@@ -22,7 +22,8 @@ export const GRAPHIC_TEMPLATES = [
   { id: 'browser_frame', label: 'Browser window', detail: 'A screenshot (or a short headline) in a browser window.', fields: ['domain', 'image', 'title', 'accent', 'subline', 'highlights'] },
   { id: 'icon_pop', label: 'Icon row', detail: 'Up to 4 icons that pop in one by one, with labels.', fields: ['items', 'icons', 'image'] },
   { id: 'headline_pill', label: 'Headline', detail: 'Two lines: a bold line, then the key words on a color box.', fields: ['text', 'phrase'] },
-  { id: 'comment_cta', label: 'Comment prompt', detail: '“Comment” over the keyword people should comment.', fields: ['keyword', 'lead'] }
+  { id: 'comment_cta', label: 'Comment prompt', detail: '“Comment” over the keyword people should comment.', fields: ['keyword', 'lead'] },
+  { id: 'big_words', label: 'Big words (behind you)', detail: '1 to 3 huge words placed in the scene, behind your head.', fields: ['text', 'style', 'vertical', 'motion'] }
 ] as const
 
 export type GraphicTemplateId = (typeof GRAPHIC_TEMPLATES)[number]['id']
@@ -41,6 +42,25 @@ export function isGraphicSize(value: unknown): value is GraphicSize {
   return typeof value === 'string' && (GRAPHIC_SIZES as readonly string[]).includes(value)
 }
 
+/**
+ * Where a graphic sits in depth. `front` (the default, also when unset): over
+ * the video. `behind`: in the scene, behind the speaker (the engine lays the
+ * speaker, cut out of the same frames, back on top while it plays). Only the
+ * templates in GRAPHIC_DEPTH_TEMPLATES can go behind.
+ */
+export type GraphicDepth = 'front' | 'behind'
+export const GRAPHIC_DEPTHS: readonly GraphicDepth[] = ['front', 'behind']
+export function isGraphicDepth(value: unknown): value is GraphicDepth {
+  return value === 'front' || value === 'behind'
+}
+/** Templates that can sit behind the speaker (big words and big type; Big words starts there). */
+export const GRAPHIC_DEPTH_TEMPLATES: readonly string[] = ['big_words', 'title', 'statement', 'headline_pill']
+export function graphicCanGoBehind(template: string): boolean { return GRAPHIC_DEPTH_TEMPLATES.includes(template) }
+/** A graphic's depth: its own when its template can go behind, else front. */
+export function graphicDepth(g: { template: string; depth?: GraphicDepth }): GraphicDepth {
+  return g.depth === 'behind' && graphicCanGoBehind(g.template) ? 'behind' : 'front'
+}
+
 /** One graphic on a clip. Times are SOURCE time (like the clip's ranges), so it stays on its words when the cut changes. */
 export interface EditorGraphic {
   id: string
@@ -54,6 +74,8 @@ export interface EditorGraphic {
   origin?: 'member' | 'auto' | 'chat'
   /** How big it is drawn (unset: 'card', as before sizes existed). */
   size?: GraphicSize
+  /** In front of the speaker (unset) or behind them (see GraphicDepth). */
+  depth?: GraphicDepth
 }
 
 export const MAX_GRAPHICS_PER_CLIP = 12
@@ -89,7 +111,8 @@ export function parseGraphics(value: unknown): EditorGraphic[] {
     if (fields.image !== undefined && !/^[A-Za-z0-9._-]{1,80}$/.test(fields.image)) throw new Error('A graphic’s image must be one of the clip’s images.')
     const origin: EditorGraphic['origin'] = g.origin === 'auto' || g.origin === 'chat' || g.origin === 'member' ? g.origin : undefined
     const size = isGraphicSize(g.size) ? g.size : undefined
-    return { id: g.id, template: g.template, at_ms: Math.round(g.at_ms), duration_ms: Math.round(g.duration_ms), placement, fields, ...(origin ? { origin } : {}), ...(size ? { size } : {}) }
+    const depth = isGraphicDepth(g.depth) && graphicCanGoBehind(g.template) ? g.depth : undefined
+    return { id: g.id, template: g.template, at_ms: Math.round(g.at_ms), duration_ms: Math.round(g.duration_ms), placement, fields, ...(origin ? { origin } : {}), ...(size ? { size } : {}), ...(depth ? { depth } : {}) }
   }).sort((a, b) => a.at_ms - b.at_ms)
 }
 
@@ -109,7 +132,8 @@ export type GraphicHighlightShape = 'circle' | 'arrow'
 /** How long a new graphic of each kind lasts (ms). */
 export const GRAPHIC_DEFAULT_MS: Record<GraphicTemplateId, number> = {
   stat: 3500, title: 2500, list: 5000, lower_third: 4000, logo: 3000, before_after: 4000, checklist: 5000, quote: 5000, highlight: 2500,
-  statement: 3500, sticky_notes: 4000, strike_list: 5000, browser_frame: 5000, icon_pop: 3500, headline_pill: 3500, comment_cta: 3500
+  statement: 3500, sticky_notes: 4000, strike_list: 5000, browser_frame: 5000, icon_pop: 3500, headline_pill: 3500, comment_cta: 3500,
+  big_words: 2500
 }
 
 /** Templates that can show a picture the member chose (Logo pop needs one; the others draw without it). */
@@ -276,6 +300,7 @@ export function graphicHasContent(g: Pick<EditorGraphic, 'template' | 'fields'>)
     case 'icon_pop': return graphicItems(f.items).length > 0 || !!f.image
     case 'headline_pill': return !!(f.text?.trim() || f.phrase?.trim())
     case 'comment_cta': return !!f.keyword?.trim()
+    case 'big_words': return bigWords(f.text).length > 0
   }
 }
 
@@ -298,14 +323,17 @@ function randomId(): string {
  * A new graphic. `fields` start empty (or as given): the words come from the
  * member, the chat or what was said in the clip, never made up here.
  */
-export function newGraphic(template: GraphicTemplateId, at_ms: number, options: { fields?: Record<string, string>; duration_ms?: number; placement?: GraphicPlacement; size?: GraphicSize; origin?: EditorGraphic['origin']; taken?: Iterable<string> } = {}): EditorGraphic {
+export function newGraphic(template: GraphicTemplateId, at_ms: number, options: { fields?: Record<string, string>; duration_ms?: number; placement?: GraphicPlacement; size?: GraphicSize; depth?: GraphicDepth; origin?: EditorGraphic['origin']; taken?: Iterable<string> } = {}): EditorGraphic {
   const taken = new Set(options.taken ?? [])
   let id = randomId()
   while (taken.has(id)) id = randomId()
   const fields: Record<string, string> = template === 'highlight' ? { shape: 'circle', x: '0.5', y: '0.45' } : {}
   for (const [key, value] of Object.entries(options.fields ?? {})) if (/^[a-z_]{1,20}$/.test(key) && typeof value === 'string') fields[key] = value.slice(0, key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS)
   const placement = options.placement ?? (template === 'lower_third' ? 'bottom' : template === 'title' || template === 'comment_cta' ? 'middle' : 'top')
-  return { id, template, at_ms: Math.max(0, Math.round(at_ms)), duration_ms: clampGraphicMs(options.duration_ms ?? GRAPHIC_DEFAULT_MS[template]), placement, fields, origin: options.origin ?? 'member', ...(isGraphicSize(options.size) ? { size: options.size } : {}) }
+  // Big words start behind the speaker; the others in front unless asked.
+  const depth = options.depth ?? (template === 'big_words' ? 'behind' : undefined)
+  return { id, template, at_ms: Math.max(0, Math.round(at_ms)), duration_ms: clampGraphicMs(options.duration_ms ?? GRAPHIC_DEFAULT_MS[template]), placement, fields, origin: options.origin ?? 'member', ...(isGraphicSize(options.size) ? { size: options.size } : {}),
+    ...(depth && graphicCanGoBehind(template) ? { depth } : {}) }
 }
 
 export function clampGraphicMs(ms: number): number {
@@ -332,7 +360,7 @@ export function withGraphic(c: Timing & { graphics?: EditorGraphic[] }, g: Edito
 }
 
 /** Change one graphic (by id): its time, length, placement or fields. Fields given are merged; an empty string clears one. */
-export function updateGraphic(c: Timing & { graphics?: EditorGraphic[] }, id: string, patch: Partial<Pick<EditorGraphic, 'at_ms' | 'duration_ms' | 'placement' | 'template' | 'size'>> & { fields?: Record<string, string> }): EditorGraphic[] {
+export function updateGraphic(c: Timing & { graphics?: EditorGraphic[] }, id: string, patch: Partial<Pick<EditorGraphic, 'at_ms' | 'duration_ms' | 'placement' | 'template' | 'size' | 'depth'>> & { fields?: Record<string, string> }): EditorGraphic[] {
   const g = (c.graphics ?? []).find((x) => x.id === id)
   if (!g) return c.graphics ?? []
   const fields = { ...g.fields }
@@ -342,10 +370,13 @@ export function updateGraphic(c: Timing & { graphics?: EditorGraphic[] }, id: st
     else if (value === '') delete fields[key]
     else fields[key] = value.slice(0, key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS)
   }
-  const { fields: _ignored, size, ...rest } = patch
+  const { fields: _ignored, size, depth, ...rest } = patch
   void _ignored
   const next: EditorGraphic = { ...g, ...rest, ...(rest.duration_ms !== undefined ? { duration_ms: clampGraphicMs(rest.duration_ms) } : {}), fields }
   if (size !== undefined) { if (isGraphicSize(size) && size !== 'card') next.size = size; else delete next.size }
+  // Depth is kept as set (Big words keeps an explicit 'front'); a template that can't go behind has none.
+  if (depth !== undefined) { if (isGraphicDepth(depth) && graphicCanGoBehind(next.template)) next.depth = depth; else delete next.depth }
+  if (next.depth && !graphicCanGoBehind(next.template)) delete next.depth
   return withGraphic(c, next)
 }
 
@@ -485,4 +516,47 @@ export function placeInFreeBand<G extends Placed>(others: readonly Placed[], g: 
   if (free(g.placement)) return g
   const band = GRAPHIC_BAND_ORDER.find(free)
   return band ? { ...g, placement: band } : g
+}
+
+// ---------------------------------------------------------------------------
+// Big words: 1–3 huge words placed in the scene (usually behind the speaker).
+// ---------------------------------------------------------------------------
+
+export const MAX_BIG_WORDS = 3
+export type BigWordsStyle = 'serif' | 'sans' | 'mixed'
+export type BigWordsMotion = 'scale' | 'reveal'
+/** Big words' look from its option fields: `style` (serif, sans, mixed), `vertical` (left, right or empty), `motion` (scale, reveal). */
+export function bigWordsOptions(fields: Record<string, string>): { style: BigWordsStyle; vertical: 'left' | 'right' | null; motion: BigWordsMotion } {
+  const style = fields.style === 'sans' || fields.style === 'mixed' ? fields.style : 'serif'
+  const vertical = fields.vertical === 'left' || fields.vertical === 'right' ? fields.vertical : null
+  return { style, vertical, motion: fields.motion === 'reveal' ? 'reveal' : 'scale' }
+}
+
+/**
+ * Big words' lines: the words of `text` (at most 3), on the lines the member
+ * typed, else stacked so each line can fill the frame's width: two words go on
+ * two lines (unless one is a short word like “Go”), three on the split that
+ * evens out the lines. `stack: false` keeps them on one line (vertical).
+ */
+export function bigWords(text: string | undefined, options: { stack?: boolean; mixed?: boolean } = {}): string[][] {
+  const typed = (text ?? '').split(/\r?\n/).map((line) => line.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)).filter((line) => line.length)
+  const lines: string[][] = []
+  let count = 0
+  for (const line of typed) {
+    const room = line.slice(0, MAX_BIG_WORDS - count)
+    if (room.length) lines.push(room)
+    count += room.length
+    if (count >= MAX_BIG_WORDS) break
+  }
+  const words = lines.flat()
+  if (!words.length) return []
+  if (options.stack === false) return [words]
+  if (lines.length > 1) return lines
+  const letters = (w: string): number => (w.match(/[\p{L}\p{N}]/gu) ?? []).length
+  if (words.length === 2) return options.mixed || Math.min(letters(words[0]), letters(words[1])) > 3 ? [[words[0]], [words[1]]] : [words]
+  if (words.length === 3) {
+    const a = letters(words[0]), b = letters(words[1]) + letters(words[2]) + 1, c = letters(words[0]) + letters(words[1]) + 1, d = letters(words[2])
+    return Math.abs(a - b) <= Math.abs(c - d) ? [[words[0]], words.slice(1)] : [words.slice(0, 2), [words[2]]]
+  }
+  return [words]
 }
