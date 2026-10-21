@@ -38,7 +38,7 @@ export function EditLog<P>({ lines, onRestore, onUndo, disabled, note, className
           : <><span className="text-xs font-semibold text-ink">What changed</span>
             <span className="text-2xs text-ink-subtle">· {lines.length ? `${lines.length} ${lines.length === 1 ? 'thing' : 'things'} the app did` : 'all restored'}</span></>}
         <span className="ml-auto shrink-0 text-2xs text-accent" aria-hidden={variant !== 'strip'}>{open ? 'Hide' : 'Show'}</span>
-        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform data-[open=true]:rotate-180" data-open={open} aria-hidden />
+        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform", open && "rotate-180")} aria-hidden />
       </button>
       {open && <>
         <ul className={cn('mt-1.5 space-y-0.5', variant === 'strip' && 'max-h-44 overflow-y-auto overflow-x-hidden')}>
