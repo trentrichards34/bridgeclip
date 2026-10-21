@@ -126,7 +126,7 @@ def clip_hook(settings, clip):
     if not text or any(ord(char) < 32 for char in text):
         return None
     look = parse_headline_look(settings['headline_look'])
-    return {'text': text, 'look': {'look': look.look, 'color': look.color, 'font': look.font}}
+    return {'text': text, 'look': look.as_dict()}
 
 
 def _int(value):

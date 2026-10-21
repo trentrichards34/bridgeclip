@@ -16,8 +16,9 @@ const bundled = buildSync({
       export { useDraftStore } from './src/renderer/store/use-draft-store';
       export { CAPTION_PRESETS } from './src/shared/caption-presets';
       export { StylePreview } from './src/renderer/components/StylePreview';
-      export { LookFrame } from './src/renderer/components/LookFrame';
-      export { HEADLINE_FONTS, accentWordIndex, parseHeadlineLook } from './src/shared/headline-look';
+      export { LookFrame, boxedHookLayout } from './src/renderer/components/LookFrame';
+      export { HeadlineLookPicker } from './src/renderer/components/HeadlineLookPicker';
+      export { HEADLINE_FONTS, HEADLINE_TEXT_BGS, accentWordIndex, parseHeadlineLook, headlineLookForEngine, headlineTextColor, headlineTextBox, textBoxOutline, textBoxPath, wrapHeadline } from './src/shared/headline-look';
       export { LOOK_EXTRAS } from './src/shared/look-extras';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
@@ -383,4 +384,101 @@ test('the live preview draws the chosen extras', () => {
     time: 4800, loop: 4900, ending: true, extras: ['comment_box'], keyword: 'GUIDE' })))
   assert.match(box, /data-testid="look-extra-comment_box"/)
   assert.match(box, />GUI/)
+})
+
+// ---------------------------------------------------------------------------
+// Floating text's background: a snug rounded box behind each line.
+// ---------------------------------------------------------------------------
+
+test('text background: parsed, validated, left out when none, and only sent to the engine with floating text', () => {
+  assert.deepEqual(m.parseHeadlineLook({ look: 'floating', color: '#e11d48', font: 'clean', textBg: 'brand' }), { look: 'floating', color: '#E11D48', font: 'clean', textBg: 'brand' })
+  assert.deepEqual(m.parseHeadlineLook({ look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'none' }), { look: 'floating', color: '#FFFFFF', font: 'clean' })
+  assert.throws(() => m.parseHeadlineLook({ look: 'floating', textBg: 'neon' }))
+  assert.throws(() => m.parseHeadlineLook({ look: 'floating', textBg: 1 }))
+  const look = m.parseHeadlineLook({ look: 'floating', color: '#FFFFFF', font: 'serif', textBg: 'dark' })
+  assert.deepEqual(m.parseHeadlineLook(JSON.parse(JSON.stringify(look))), look, 'round-trips')
+  assert.deepEqual(m.headlineLookForEngine(look), look)
+  assert.deepEqual(m.headlineLookForEngine({ look: 'black', color: '#FFFFFF', font: 'clean', textBg: 'dark' }), { look: 'black', color: '#FFFFFF', font: 'clean' })
+  assert.equal(m.headlineLookForEngine({ look: 'white', color: '#FFFFFF', font: 'clean', textBg: 'dark' }), undefined)
+  // Text color: white on the dark box, black on the light one, by contrast on the brand box; outlined white without one.
+  assert.equal(m.headlineTextColor({ look: 'floating', color: '#FFFFFF', font: 'clean' }), '#FFFFFF')
+  assert.equal(m.headlineTextColor({ look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'dark' }), '#FFFFFF')
+  assert.equal(m.headlineTextColor({ look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'light' }), '#000000')
+  assert.equal(m.headlineTextColor({ look: 'floating', color: '#FFE600', font: 'clean', textBg: 'brand' }), '#000000')
+  assert.equal(m.headlineTextColor({ look: 'floating', color: '#1D3BB3', font: 'clean', textBg: 'brand' }), '#FFFFFF')
+  assert.deepEqual(m.headlineTextBox({ look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'dark' }), { color: '#000000', opacity: 0.9 })
+  assert.equal(m.headlineTextBox({ look: 'black', color: '#FFFFFF', font: 'clean', textBg: 'dark' }), null, 'bars ignore it')
+})
+
+test('text background on the board: Create, Remix and Edit my recording fields, Shuffle and the summary', () => {
+  const draft = { ...m.useDraftStore.getState(), workflow: 'automatic', source: 'https://example.com/v', aspectRatio: '9:16', includeTitle: true, titleStyle: 'headline' }
+  const chosen = { ...draft, ...m.createBoardPatch(draft, { hook: 'floating', textBg: 'dark' }) }
+  assert.deepEqual(chosen.headlineLook, { look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'dark' })
+  assert.equal(m.createBoardStyle(chosen).textBg, 'dark')
+  assert.deepEqual(m.buildJobRequest(chosen, { start: null, end: null }).headlineLook, { look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'dark' })
+  assert.deepEqual(m.createBoardPatch(chosen, { textBg: 'none' }).headlineLook, { look: 'floating', color: '#FFFFFF', font: 'clean' })
+  const form = { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'floating', color: '#FFFFFF', font: 'clean' }, showHandle: false }
+  assert.deepEqual(m.lookPatch(form, { textBg: 'light' }), { headlineLook: { look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'light' } })
+  assert.equal(m.boardFromLook({ ...form, headlineLook: { ...form.headlineLook, textBg: 'light' } }).textBg, 'light')
+  // The brand box starts from the brand color while the color is still white.
+  assert.deepEqual(m.textBgPatch(BASE, 'brand', '#FF8800'), { textBg: 'brand', color: '#FF8800' })
+  assert.deepEqual(m.textBgPatch({ ...BASE, color: '#123456' }, 'brand'), { textBg: 'brand' })
+  assert.deepEqual(m.textBgPatch(BASE, 'dark'), { textBg: 'dark' })
+  // The ready-made "Reel caption" look: floating text on a dark box.
+  const reel = m.CURATED_COMBOS.find((combo) => combo.id === 'reel-caption')
+  const value = { ...BASE, ...m.comboPatch(reel, m.LOOK_HOOKS) }
+  assert.equal(value.textBg, 'dark')
+  assert.equal(m.matchingCombo(value), reel)
+  assert.notEqual(m.matchingCombo({ ...value, textBg: 'none' }), reel)
+  assert.equal(m.styleSummary(value, { hooks: m.LOOK_HOOKS }), 'Subtle captions · Floating text · Clean font · Dark box')
+  assert.equal(m.styleSummary({ ...value, textBg: 'brand', color: '#7C5CFF' }, { hooks: m.LOOK_HOOKS }), 'Subtle captions · Floating text · Clean font · Violet #7C5CFF box')
+})
+
+test('box outline: the same corners as the engine (text_box_outline), and the preview places snug per-line boxes', () => {
+  const outline = m.textBoxOutline([[100, 0, 900, 70], [300, 70, 700, 140]], 15)
+  assert.deepEqual(outline.map(([x, y]) => [x, y]), [[100, 0], [900, 0], [900, 70], [700, 70], [700, 140], [300, 140], [300, 70], [100, 70]])
+  assert.deepEqual(m.textBoxOutline([[100, 0, 900, 70], [105, 70, 895, 140]], 15, 15).map(([x, y]) => [x, y]), [[100, 0], [900, 0], [900, 140], [100, 140]])
+  assert.equal(Math.min(...m.textBoxOutline([[100, 0, 900, 70], [120, 70, 880, 140]], 15).map(([, , r]) => r)), 10)
+  assert.match(m.textBoxPath(outline), /^M[\d. ]+Q[\d. ]+(L[\d. ]+Q[\d. ]+){7}Z$/)
+  // The engine's wrap: the biggest size that fits, balanced lines.
+  const measure = (line, size) => line.length * size * 0.5
+  const wrapped = m.wrapHeadline('I quit my job and this happened to my business in under ninety days', measure, 1080 - 2 * 65)
+  assert.equal(wrapped.size, 60)
+  assert.ok(wrapped.lines.length >= 2 && wrapped.lines.length <= 3)
+  const layout = m.boxedHookLayout('I quit my job and this happened to my business', 'clean', 1080, 1920, 1, (line, _css, size) => line.length * size * 0.5)
+  assert.ok(layout.lines.length > 1)
+  assert.equal(new Set(layout.lines.map((line) => line.width)).size, layout.lines.length, 'each box follows its own line')
+  assert.equal(layout.lines[1].center - layout.lines[0].center, layout.lineH, 'boxes touch')
+  assert.match(layout.path, /^M.*Z$/)
+})
+
+test('Text background row: shown with floating text, a tile per option on the member\'s frame; the preview draws the boxes', () => {
+  const rows = { hooks: m.LOOK_HOOKS }
+  const frame = { kind: 'image', src: 'https://i.ytimg.com/vi/x/hqdefault.jpg' }
+  assert.doesNotMatch(staticRender(React.createElement(m.StyleBoard, { value: BASE, onChange() {}, rows, brand: null, frame })), /aria-label="Text background"/)
+  const html = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook: 'floating', textBg: 'dark' }, onChange() {}, rows, brand: null, frame }))
+  const row = group(html, 'Text background')
+  assert.ok(row, 'the row is there')
+  assert.equal((row.match(/role="radio"/g) ?? []).length, 4)
+  for (const bg of m.HEADLINE_TEXT_BGS) assert.match(row, new RegExp(`aria-label="${bg.label}"`), bg.id)
+  assert.match(row, /aria-checked="true" aria-label="Dark box"/)
+  assert.equal((row.match(/data-look-tile/g) ?? []).length, 4)
+  assert.match(row, /hqdefault\.jpg/, 'on the member\'s frame')
+  // The live preview: one outline behind the lines, in the box color.
+  assert.match(html, /data-testid="hook-text-box" data-text-bg="dark"[^]*?<path d="M[^"]+Z" fill="#000000" fill-opacity="0.9"/)
+  // The brand box adds the Color row (the box's color, not the bar's).
+  const brand = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook: 'floating', textBg: 'brand', color: '#7C5CFF' }, onChange() {}, rows, brand: null }))
+  assert.ok(group(brand, 'Box color'))
+  assert.match(brand, /fill="#7C5CFF" fill-opacity="1"/)
+})
+
+test('clip editor hook look picker: a Text background row with floating text (compact)', () => {
+  const render = (value) => staticRender(React.createElement(m.HeadlineLookPicker, { value, onChange() {}, compact: true }))
+  assert.doesNotMatch(render({ look: 'white', color: '#FFFFFF', font: 'clean' }), /Text background/)
+  const html = render({ look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'light' })
+  assert.match(html, /Text background/)
+  for (const bg of m.HEADLINE_TEXT_BGS) assert.match(html, new RegExp(`aria-label="${bg.label}"`))
+  assert.match(html, /aria-checked="true" aria-label="Light box"/)
+  assert.match(html, /data-text-bg="light"/)
+  assert.match(render({ look: 'floating', color: '#7C5CFF', font: 'clean', textBg: 'brand' }), /aria-label="Box color"/)
 })

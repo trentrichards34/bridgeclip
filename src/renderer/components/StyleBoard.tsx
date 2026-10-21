@@ -2,13 +2,13 @@ import { memo, useMemo, useState, type ReactNode } from 'react'
 import { Ban, Check, ChevronDown, ChevronLeft, ChevronRight, Image as ImageIcon, LayoutGrid, MessageCircle, Plus, Shuffle, SlidersHorizontal, Sparkles, Video } from 'lucide-react'
 import { CAPTION_PRESETS } from '../../shared/caption-presets'
 import { DEFAULT_HANDLE_POSITION, HANDLE_POSITIONS, hasBrandMark, type HandlePosition } from '../../shared/brand-kit'
-import { HEADLINE_FONTS, isHexColor } from '../../shared/headline-look'
+import { HEADLINE_FONTS, HEADLINE_TEXT_BGS, isHexColor, type HeadlineTextBg } from '../../shared/headline-look'
 import { LOOK_EXTRAS, type LookExtraId } from '../../shared/look-extras'
 import { MAX_CTA_OFFER_CHARS, normalizeCtaKeyword, type BrandIdentity } from '../../shared/remix'
 import type { StyleKind } from '../../shared/member-prefs'
 import {
   COLOR_PRESETS, CURATED_COMBOS, HOOK_HINTS, HOOK_LABELS, brandBoardPatch, captionName, colorName, colorPatch, comboPatch, cornerName, extrasName, fontName,
-  hookPatch, matchingCombo, shuffleCombo, styleSummary, toggleExtra, type BoardRows, type BoardStyle, type CuratedCombo, type HookChoice
+  hookPatch, matchingCombo, shuffleCombo, styleSummary, textBgName, textBgPatch, toggleExtra, type BoardRows, type BoardStyle, type CuratedCombo, type HookChoice
 } from '../lib/style-board'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, youtubeId } from '../lib/utils'
@@ -317,7 +317,7 @@ export function StyleBoard({
   const wide = aspect === '16:9'
   const tileGrid = wide ? TILE_GRID_WIDE : TILE_GRID
   // A neutral look each row's option is applied to: the board's own font and colors, nothing else drawn.
-  const plain: BoardStyle = useMemo(() => ({ ...value, captions: false, hook: 'none', handle: false, extras: [] }), [value.font, value.color])
+  const plain: BoardStyle = useMemo(() => ({ ...value, captions: false, hook: 'none', handle: false, extras: [] }), [value.font, value.color, value.textBg])
   const hookRows = useMemo<BoardRows>(() => ({ hooks }), [hooks.join(' ')])
   const NO_ROWS = useMemo<BoardRows>(() => ({}), [])
 
@@ -332,6 +332,14 @@ export function StyleBoard({
   const hookOptions = useMemo<SwatchOption<HookChoice>[]>(() => hooks.map((hook) => ({ id: hook, name: HOOK_LABELS[hook], description: HOOK_HINTS[hook], content: (
     <TileOption name={HOOK_LABELS[hook]} scene={scene} look={{ value: { ...plain, hook, color: hookColor(hook) }, rows: hookRows, textScale: 1.6 }} />
   ) })), [scene, plain, hookRows, brandColor])
+
+  // Floating text's background, each on the board's font (the brand box in the brand's color while the color is still white).
+  const boxColor = value.color.toUpperCase() === '#FFFFFF' ? brandColor ?? COLOR_PRESETS[0].color : value.color
+  const textBgOptions = useMemo<SwatchOption<HeadlineTextBg>[]>(() => HEADLINE_TEXT_BGS.map((bg) => ({ id: bg.id, name: bg.label, description: bg.hint, content: (
+    <TileOption name={bg.label} scene={scene} look={{ value: { ...plain, hook: 'floating', textBg: bg.id, color: bg.id === 'brand' ? boxColor : value.color }, rows: { hooks: ['floating'] }, textScale: 1.6 }} />
+  ) })), [scene, plain, boxColor])
+  const textBgApplies = value.hook === 'floating' && hooks.includes('floating')
+  const boxColorRow = textBgApplies && value.textBg === 'brand'
 
   // Fonts on the hook look in use (a white bar when there's none to show).
   const fontHook: HookChoice = value.hook === 'none' || value.hook === 'card' ? 'white' : value.hook
@@ -416,23 +424,28 @@ export function StyleBoard({
               value={value.hook} onSelect={(hook) => onChange(hookPatch(value, hook, brandColor ?? undefined))}
               note={<p className="text-2xs text-ink-subtle">{hookNote ?? HOOK_HINTS[value.hook]}</p>} />}
 
+            {lookRows && textBgApplies && <SwatchRow title="Text background" groupLabel="Text background" current={textBgName(value.textBg)}
+              options={textBgOptions} grid={tileGrid} value={value.textBg ?? 'none'}
+              onSelect={(textBg) => onChange(textBgPatch(value, textBg, brandColor ?? undefined))}
+              note={<p className="text-2xs text-ink-subtle">{HEADLINE_TEXT_BGS.find((bg) => bg.id === (value.textBg ?? 'none'))?.hint}</p>} />}
+
             {lookRows && <SwatchRow title="Font" groupLabel="Hook text font" current={fontApplies ? fontName(value.font) : `${fontName(value.font)} · for the hook text`}
               disabled={!fontApplies} options={fontOptions} grid={tileGrid}
               value={value.font} onSelect={(font) => onChange({ font })} />}
 
-            {value.hook === 'brand' && hooks.includes('brand') && <SwatchRow title="Color" groupLabel="Bar color" current={colorName(value.color, brandColor)}
+            {((value.hook === 'brand' && hooks.includes('brand')) || boxColorRow) && <SwatchRow title="Color" groupLabel={boxColorRow ? 'Box color' : 'Bar color'} current={colorName(value.color, brandColor)}
               options={[...(brandColor ? [{ id: 'brand', name: 'Brand', color: brandColor }] : []), ...COLOR_PRESETS.filter((item) => item.color.toUpperCase() !== brandColor)].map((item) => ({
                 id: item.color.toUpperCase(), name: item.name, label: `${item.name} ${item.color.toUpperCase()}`, content: (
                   <span aria-hidden className="block h-7 w-7 rounded-full shadow-[inset_0_0_0_1px_rgb(255_255_255/0.25)]" style={{ background: item.color }} />
                 ) }))}
-              value={value.color.toUpperCase()} onSelect={(color) => onChange(colorPatch(color, hooks))}
+              value={value.color.toUpperCase()} onSelect={(color) => onChange(boxColorRow ? { color } : colorPatch(color, hooks))}
               after={<label title="Custom color" className="glass-tile glass-tile-hover flex cursor-pointer items-center gap-1.5 rounded-xl p-1 pr-2.5 text-ink-muted hover:text-ink">
-                <input type="color" aria-label="Custom bar color" value={(isHexColor(value.color) ? value.color : COLOR_PRESETS[0].color).toLowerCase()}
-                  onChange={(e) => { if (isHexColor(e.target.value)) onChange(colorPatch(e.target.value, hooks)) }}
+                <input type="color" aria-label={boxColorRow ? 'Custom box color' : 'Custom bar color'} value={(isHexColor(value.color) ? value.color : COLOR_PRESETS[0].color).toLowerCase()}
+                  onChange={(e) => { if (isHexColor(e.target.value)) onChange(boxColorRow ? { color: e.target.value.toUpperCase() } : colorPatch(e.target.value, hooks)) }}
                   className="h-7 w-7 cursor-pointer rounded-full border-0 bg-transparent p-0" />
                 <span className="text-2xs font-medium">Custom</span>
               </label>}
-              note={<p className="text-2xs text-ink-subtle">The color of the hook text bar. The text turns black or white to stay readable.</p>} />}
+              note={<p className="text-2xs text-ink-subtle">{boxColorRow ? 'The color of the box behind each line.' : 'The color of the hook text bar.'} The text turns black or white to stay readable.</p>} />}
           </>}
 
           {rows.extras && <ExtrasRow value={value.extras} onChange={(extras) => onChange({ extras })} options={extraOptions} wide={wide} skillExtras={skillExtras} />}

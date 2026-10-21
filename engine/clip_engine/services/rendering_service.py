@@ -92,6 +92,12 @@ class TitleStyle:
 # How the headline (hook text) looks: a bar in white, black or a brand color,
 # or floating text over the top of the video; and its font.
 HEADLINE_LOOKS = ("white", "black", "brand", "floating", "none")
+# Floating text's background: none (outlined text) or a snug rounded box behind each line.
+HEADLINE_TEXT_BGS = ("none", "dark", "light", "brand")
+# The box, against the font size: padding left and right, corner radius; the dark box's opacity.
+TEXT_BOX_PAD_X = 0.32
+TEXT_BOX_RADIUS = 0.25
+TEXT_BOX_DARK_OPACITY = 0.9
 HEADLINE_FONTS = {
     "clean": "Montserrat-ExtraBold.ttf", "serif": "Fraunces72pt-Black.ttf", "condensed": "Anton-Regular.ttf",
     # Hand-drawn marker capitals (Caveat Brush, OFL).
@@ -122,6 +128,8 @@ class HeadlineLook:
     look: str = "white"
     color: str = "#FFFFFF"
     font: str = "clean"
+    # Floating text only: a snug rounded box behind each line (none, dark, light or brand: the brand color).
+    text_bg: str = "none"
 
     @property
     def background(self) -> Optional[tuple[int, int, int]]:
@@ -131,12 +139,23 @@ class HeadlineLook:
         if self.look == "black":
             return (14, 14, 14)
         if self.look == "brand":
-            return tuple(int(self.color[i:i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]
+            return _rgb(self.color)
         return (255, 255, 255)
 
     @property
+    def box(self) -> Optional[tuple[int, int, int, int]]:
+        """The RGBA box behind each line of floating text, or None (outlined text)."""
+        if self.look != "floating" or self.text_bg == "none":
+            return None
+        if self.text_bg == "dark":
+            return (0, 0, 0, round(255 * TEXT_BOX_DARK_OPACITY))
+        if self.text_bg == "light":
+            return (255, 255, 255, 255)
+        return (*_rgb(self.color), 255)
+
+    @property
     def text(self) -> tuple[int, int, int]:
-        bg = self.background
+        bg = self.background or (self.box[:3] if self.box else None)
         if bg is None:
             return (255, 255, 255)
         luminance = 0.2126 * bg[0] + 0.7152 * bg[1] + 0.0722 * bg[2]
@@ -147,6 +166,17 @@ class HeadlineLook:
         bg = self.background or (0, 0, 0)
         return "0x%02X%02X%02X" % bg
 
+    def as_dict(self) -> dict:
+        """The look as requests carry it (textBg only when there is a box)."""
+        out = {"look": self.look, "color": self.color, "font": self.font}
+        if self.text_bg != "none":
+            out["textBg"] = self.text_bg
+        return out
+
+
+def _rgb(color: str) -> tuple[int, int, int]:
+    return tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]
+
 
 def parse_headline_look(raw: Any) -> HeadlineLook:
     """A look from a request (untrusted): unknown values fall back to the white bar in the clean font."""
@@ -156,19 +186,69 @@ def parse_headline_look(raw: Any) -> HeadlineLook:
     look = raw.get("look") if raw.get("look") in HEADLINE_LOOKS else "white"
     color = raw.get("color") if isinstance(raw.get("color"), str) and _HEX.match(raw["color"]) else "#FFFFFF"
     font = raw.get("font") if raw.get("font") in HEADLINE_FONTS else "clean"
-    return HeadlineLook(look, color.upper(), font)
+    text_bg = raw.get("textBg") if raw.get("textBg") in HEADLINE_TEXT_BGS else "none"
+    return HeadlineLook(look, color.upper(), font, text_bg)
 
 
 def validate_headline_look(raw: Any) -> Optional[dict]:
-    """Strict check for requests from the app: None, or {look, color, font} with known values."""
+    """Strict check for requests from the app: None, or {look, color, font, textBg?} with known values."""
     if raw is None:
         return None
-    if not isinstance(raw, dict) or set(raw) - {"look", "color", "font"} \
-            or not all(isinstance(raw.get(key, ""), str) for key in ("look", "color", "font")) \
+    if not isinstance(raw, dict) or set(raw) - {"look", "color", "font", "textBg"} \
+            or not all(isinstance(raw.get(key, ""), str) for key in ("look", "color", "font", "textBg")) \
             or raw.get("look", "white") not in HEADLINE_LOOKS or raw.get("font", "clean") not in HEADLINE_FONTS \
-            or not _HEX.match(raw.get("color", "#FFFFFF")):
+            or raw.get("textBg", "none") not in HEADLINE_TEXT_BGS or not _HEX.match(raw.get("color", "#FFFFFF")):
         raise ValueError("Invalid headline look")
-    return {"look": raw.get("look", "white"), "color": raw.get("color", "#FFFFFF").upper(), "font": raw.get("font", "clean")}
+    out = {"look": raw.get("look", "white"), "color": raw.get("color", "#FFFFFF").upper(), "font": raw.get("font", "clean")}
+    if raw.get("textBg", "none") != "none":
+        out["textBg"] = raw["textBg"]
+    return out
+
+
+def text_box_outline(boxes: list[tuple[float, float, float, float]], radius: float, snap: float = 0.0) -> list[tuple[float, float, float]]:
+    """The outline around per-line boxes stacked edge to edge (Instagram's text background):
+    (x, y, corner radius) per corner, clockwise from the top left. Outer corners are rounded and
+    where a line is narrower than its neighbor the inside corner is filleted too. Lines within
+    `snap` of their neighbor's width take the wider one (no tiny steps). Mirrors textBoxPath
+    in src/shared/headline-look.ts."""
+    rows = [list(box) for box in boxes]
+    for i in range(1, len(rows)):
+        a, b = rows[i - 1], rows[i]
+        if abs((a[2] - a[0]) - (b[2] - b[0])) < snap:
+            left, right = min(a[0], b[0]), max(a[2], b[2])
+            a[0] = b[0] = left
+            a[2] = b[2] = right
+    points: list[tuple[float, float]] = [(rows[0][0], rows[0][1]), (rows[0][2], rows[0][1])]
+    for i in range(len(rows) - 1):
+        if rows[i + 1][2] != rows[i][2]:
+            points += [(rows[i][2], rows[i][3]), (rows[i + 1][2], rows[i][3])]
+    points += [(rows[-1][2], rows[-1][3]), (rows[-1][0], rows[-1][3])]
+    for i in range(len(rows) - 1, 0, -1):
+        if rows[i - 1][0] != rows[i][0]:
+            points += [(rows[i][0], rows[i][1]), (rows[i - 1][0], rows[i][1])]
+    out = []
+    for i, (x, y) in enumerate(points):
+        px, py = points[i - 1]
+        nx, ny = points[(i + 1) % len(points)]
+        out.append((x, y, min(radius, math.hypot(x - px, y - py) / 2, math.hypot(nx - x, ny - y) / 2)))
+    return out
+
+
+def text_box_polygon(outline: list[tuple[float, float, float]], steps: int = 12) -> list[tuple[float, float]]:
+    """The outline's corners as quadratic curves (control point at the corner), sampled into a polygon."""
+    polygon: list[tuple[float, float]] = []
+    count = len(outline)
+    for i, (x, y, r) in enumerate(outline):
+        px, py, _ = outline[i - 1]
+        nx, ny, _ = outline[(i + 1) % count]
+        din = math.hypot(x - px, y - py) or 1
+        dout = math.hypot(nx - x, ny - y) or 1
+        sx, sy = x + (px - x) / din * r, y + (py - y) / din * r
+        ex, ey = x + (nx - x) / dout * r, y + (ny - y) / dout * r
+        for k in range(steps + 1):
+            t = k / steps
+            polygon.append(((1 - t) ** 2 * sx + 2 * (1 - t) * t * x + t * t * ex, (1 - t) ** 2 * sy + 2 * (1 - t) * t * y + t * t * ey))
+    return polygon
 
 
 # Headline bar, as a share of a 1080x1920 frame: the clear space above the
@@ -1155,49 +1235,82 @@ class RenderingService:
         text_h = line_h * len(lines)
         bar_h = even(min(max(top + 2 * pad_y + text_h, target_height * HEADLINE_MIN_H), target_height * HEADLINE_MAX_H))
         bg = style.background
+        box = style.box
         img = Image.new("RGBA", (target_width, bar_h), (*bg, 255) if bg else (0, 0, 0, 0))
-        out = ImageDraw.Draw(img)
         # Center the text in the space below the platform UI.
         y = top + max(0, (bar_h - top - text_h) // 2)
-        stroke = 0 if bg else max(3, round(getattr(font, "size", 40) * 0.09))
-        if not bg:
+        # Text over the video gets an outline and a shadow, unless each line sits on a box.
+        stroke = 0 if bg or box else max(3, round(getattr(font, "size", 40) * 0.09))
+        accent = self._headline_accent(style.font, font)
+        accent_at = headline_accent_index(text.split()) if accent else -1
+        measure = ImageDraw.Draw(img)
+        # Each line's words, their faces and widths, and the line's left edge.
+        placed = []
+        word_at = 0
+        space = measure.textlength(" ", font=font)
+        for line in lines:
+            words = line.split()
+            faces = [accent if accent and word_at + i == accent_at else font for i in range(len(words))]
+            widths = [measure.textlength(word, font=face) for word, face in zip(words, faces)]
+            width = sum(widths) + space * (len(words) - 1) if accent else measure.textlength(line, font=font)
+            placed.append((line, words, faces, widths, width, (target_width - width) / 2))
+            word_at += len(words)
+        if box:
+            img = Image.alpha_composite(img, self._text_boxes(img.size, [p[4] for p in placed], y, line_h, font, box))
+        elif not bg:
             # Floating: a soft shadow under the outlined text keeps it readable on any footage.
             shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
             sd = ImageDraw.Draw(shadow)
             sy = y
-            for line in lines:
-                w = sd.textlength(line, font=font)
-                sd.text(((target_width - w) / 2, sy + round(6 * unit)), line, font=font, fill=(0, 0, 0, 150), stroke_width=stroke, stroke_fill=(0, 0, 0, 150))
+            for line, *_rest, x in placed:
+                sd.text((x, sy + round(6 * unit)), line, font=font, fill=(0, 0, 0, 150), stroke_width=stroke, stroke_fill=(0, 0, 0, 150))
                 sy += line_h
             img = Image.alpha_composite(img, shadow.filter(ImageFilter.GaussianBlur(round(8 * unit))))
-            out = ImageDraw.Draw(img)
-        accent = self._headline_accent(style.font, font)
-        accent_at = headline_accent_index(text.split()) if accent else -1
-        word_at = 0
-        for line in lines:
+        # The text on its own layer, so it composites over a see-through box.
+        layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        out = ImageDraw.Draw(layer)
+        for line, words, faces, widths, _width, x in placed:
             if not accent:
-                w = out.textlength(line, font=font)
-                out.text(((target_width - w) / 2, y), line, font=font, fill=(*style.text, 255),
+                out.text((x, y), line, font=font, fill=(*style.text, 255),
                          stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
             else:
                 # One word in the italic serif, on the same baseline as the sans words.
-                words = line.split()
-                faces = [accent if word_at + i == accent_at else font for i in range(len(words))]
-                space = out.textlength(" ", font=font)
-                widths = [out.textlength(word, font=face) for word, face in zip(words, faces)]
-                x = (target_width - sum(widths) - space * (len(words) - 1)) / 2
                 baseline = y + font.getmetrics()[0]
                 for word, face, width in zip(words, faces, widths):
                     out.text((x, baseline), word, font=face, anchor="ls", fill=(*style.text, 255),
                              stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
                     x += width + space
-                word_at += len(words)
             y += line_h
+        img = Image.alpha_composite(img, layer)
         path = os.path.join(
             os.path.dirname(request.output_path), f"headline-{request.start_time_ms}-{request.end_time_ms}.png",
         )
         img.save(path, "PNG")
         return path, (bar_h if bg else 0)
+
+    @staticmethod
+    def _text_boxes(size: tuple[int, int], widths: list[float], y: float, line_h: int, font: Any,
+                    color: tuple[int, int, int, int]) -> Image.Image:
+        """Instagram-style text background: a snug rounded box behind each line, touching the next one.
+        Each box is the line's width plus padding, one line tall, centered on the line's text."""
+        em = getattr(font, "size", 40)
+        ascent, descent = font.getmetrics() if hasattr(font, "getmetrics") else (em, 0)
+        # Centered on the glyphs the way a browser centers a line box (the preview matches).
+        center = y + (ascent + descent) / 2
+        pad = em * TEXT_BOX_PAD_X
+        boxes = []
+        for i, width in enumerate(widths):
+            mid = center + i * line_h
+            boxes.append(((size[0] - width) / 2 - pad, mid - line_h / 2, (size[0] + width) / 2 + pad, mid + line_h / 2))
+        radius = em * TEXT_BOX_RADIUS
+        scale = 4  # drawn big and scaled down: smooth edges
+        mask = Image.new("L", (size[0] * scale, size[1] * scale), 0)
+        polygon = text_box_polygon(text_box_outline(boxes, radius, snap=radius))
+        ImageDraw.Draw(mask).polygon([(px * scale, py * scale) for px, py in polygon], fill=255)
+        mask = mask.resize(size, Image.LANCZOS)
+        layer = Image.new("RGBA", size, color[:3] + (0,))
+        layer.putalpha(mask.point(lambda v: round(v * color[3] / 255)))
+        return layer
 
     def _headline_accent(self, font_id: str, font: Any) -> Any:
         """The italic serif for the accent word (sans + italic serif look only), at the base font's size."""
