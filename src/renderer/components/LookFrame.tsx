@@ -1,7 +1,10 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { BrandIdentity } from '../../shared/remix'
 import { DEFAULT_HANDLE_POSITION, hasBrandMark } from '../../shared/brand-kit'
-import { HEADLINE_ACCENT_SCALE, HEADLINE_FONTS, accentWordIndex, headlineBarColor, headlineTextColor, isHexColor } from '../../shared/headline-look'
+import {
+  HEADLINE_ACCENT_SCALE, HEADLINE_FONTS, accentWordIndex, headlineBarColor, headlineTextBox, headlineTextColor, isHexColor, textBoxOutline, textBoxPath,
+  textBoxRects, TEXT_BOX, wrapHeadline, type HeadlineLook
+} from '../../shared/headline-look'
 import type { LookExtraId } from '../../shared/look-extras'
 import {
   BAR_HOOKS, CAPTION_Y, ENGINE_CAPTIONS, FRAME_H, FRAME_W, HEADLINE, KEYWORD_TAG, MARK, captionEm, captionsBottom, markPosition,
@@ -275,6 +278,111 @@ function HookText({ text, accent, style }: { text: string; accent?: string; styl
   )
 }
 
+// ---------------------------------------------------------------------------
+// Floating text on a box (Instagram's text background), placed the way the engine places it.
+// ---------------------------------------------------------------------------
+
+let measureCanvas: CanvasRenderingContext2D | null | undefined
+/** A line's width in pixels at this CSS font (an estimate where there is no canvas, as in tests). */
+function measureLine(text: string, css: string, size: number): number {
+  if (measureCanvas === undefined) {
+    try { measureCanvas = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d') } catch { measureCanvas = null }
+  }
+  if (!measureCanvas) return text.length * size * 0.56
+  measureCanvas.font = css
+  return measureCanvas.measureText(text).width
+}
+
+/** Re-renders once the page's fonts have loaded (measurements before that use a fallback font). */
+function useFontsReady(): number {
+  const [ready, setReady] = useState(0)
+  useEffect(() => {
+    let live = true
+    const fonts = typeof document === 'undefined' ? undefined : (document as Document & { fonts?: FontFaceSet }).fonts
+    void fonts?.ready.then(() => { if (live) setReady((n) => n + 1) })
+    return () => { live = false }
+  }, [])
+  return ready
+}
+
+export interface BoxedLine { text: string; words: { text: string; accent: boolean; width: number }[]; width: number; center: number }
+
+/**
+ * Where floating text on a box goes, in 1080x1920 frame pixels: the engine's
+ * wrap and size (wrapHeadline), each line centered, and the outline of the
+ * boxes behind them (textBoxOutline). `scale` draws everything bigger (tiles).
+ */
+export function boxedHookLayout(text: string, fontId: HeadlineLook['font'], frameW: number, frameH: number, scale = 1,
+  measure: (line: string, css: string, size: number) => number = measureLine): { size: number; lineH: number; lines: BoxedLine[]; path: string; height: number } {
+  const font = HEADLINE_FONTS.find((item) => item.id === fontId) ?? HEADLINE_FONTS[0]
+  const words = (font.upper ? text.toUpperCase() : text).split(/\s+/).filter(Boolean)
+  const accentAt = font.accent ? accentWordIndex(words) : -1
+  const css = (size: number, accent = false): string => accent ? `italic 400 ${size * HEADLINE_ACCENT_SCALE}px ${font.accent}` : `${font.weight ?? 400} ${size}px ${font.family}`
+  // Word widths per size, so the wrap and the boxes measure the accent word in its own face.
+  const lineWidth = (line: string, size: number, first: number): number => {
+    const parts = line.split(' ')
+    if (!font.accent) return measure(line, css(size), size)
+    return parts.reduce((sum, word, i) => sum + measure(word, css(size, first + i === accentAt), size), 0) + measure(' ', css(size), size) * (parts.length - 1)
+  }
+  const sizes = [60, 54, 48, 42].map((size) => size * (font.scale ?? 1) * scale)
+  const maxW = frameW - 2 * Math.round(frameW * HEADLINE.padX)
+  // The wrap measures whole lines in the base face (as the engine's _headline_lines does).
+  const { size, lines } = wrapHeadline(words.join(' '), (line, at) => measure(line, css(at), at), maxW, sizes)
+  const lineH = Math.round(size * 1.22)
+  const top = Math.round(frameH * HEADLINE.topSafe)
+  const padY = Math.round(frameH * HEADLINE.padY)
+  const textH = lineH * lines.length
+  const height = Math.min(Math.max(top + 2 * padY + textH, frameH * HEADLINE.minH), frameH * HEADLINE.maxH)
+  const y = top + Math.max(0, Math.floor((height - top - textH) / 2))
+  let first = 0
+  const placed: BoxedLine[] = lines.map((line, i) => {
+    const parts = line.split(' ')
+    const out = {
+      text: line,
+      words: parts.map((word, j) => ({ text: word, accent: first + j === accentAt, width: measure(word, css(size, first + j === accentAt), size) })),
+      width: lineWidth(line, size, first),
+      // The middle of the line: the engine centers the box on ascent + descent, about a line's height for these fonts.
+      center: y + i * lineH + lineH / 2
+    }
+    first += parts.length
+    return out
+  })
+  const rects = textBoxRects(placed.map((line) => line.width), placed.map((line) => line.center), lineH, frameW, size)
+  const radius = size * TEXT_BOX.radius
+  return { size, lineH, lines: placed, path: textBoxPath(textBoxOutline(rects, radius, radius)), height }
+}
+
+/** Floating hook text with a box behind each line (the engine's drawing, as an SVG behind the lines). */
+function BoxedHook({ text, look, u, scale, frameW, frameH }: { text: string; look: HeadlineLook; u: number; scale: number; frameW: number; frameH: number }): React.JSX.Element | null {
+  const ready = useFontsReady()
+  const box = headlineTextBox(look)
+  const font = HEADLINE_FONTS.find((item) => item.id === look.font) ?? HEADLINE_FONTS[0]
+  const layout = useMemo(() => boxedHookLayout(text, look.font, frameW, frameH, scale), [text, look.font, frameW, frameH, scale, ready])
+  if (!box) return null
+  const color = headlineTextColor(look)
+  return (
+    <div data-testid="hook-text-box" data-text-bg={look.textBg} className="absolute inset-x-0 top-0" style={{ height: layout.height * u }}>
+      <svg aria-hidden className="absolute inset-0 h-full w-full" viewBox={`0 0 ${frameW} ${layout.height}`} preserveAspectRatio="none">
+        <path d={layout.path} fill={box.color} fillOpacity={box.opacity} />
+      </svg>
+      {layout.lines.map((line, i) => (
+        <div key={i} data-hook-line className="absolute inset-x-0 flex justify-center whitespace-nowrap"
+          style={{ top: (line.center - layout.lineH / 2) * u, height: layout.lineH * u, lineHeight: `${layout.lineH * u}px`, color,
+            fontFamily: font.family, fontWeight: font.weight ?? 400, fontSize: layout.size * u }}>
+          {font.accent
+            ? line.words.map((word, j) => (
+              <span key={j}>
+                {j > 0 && ' '}
+                {word.accent ? <span data-hook-accent style={{ fontFamily: font.accent, fontStyle: 'italic', fontWeight: 400, fontSize: `${HEADLINE_ACCENT_SCALE}em`, lineHeight: 0.9 }}>{word.text}</span> : word.text}
+              </span>
+            ))
+            : line.text}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** Small mock-ups of the extras that aren't part of the caption line. */
 function ProgressBar({ u, progress, color }: { u: number; progress: number; color: string }): React.JSX.Element {
   return (
@@ -388,6 +496,8 @@ export function LookFrame({ value, rows, background, aspect = '9:16', hookText, 
   const floating = showHook && !landscape && value.hook === 'floating'
   const card = showHook && (value.hook === 'card' || (landscape && value.hook !== 'none'))
   const headLook = { look: value.hook === 'card' ? 'white' as const : value.hook, color: value.color, font: value.font }
+  const boxLook: HeadlineLook = { look: 'floating', color: value.color, font: value.font, textBg: value.textBg ?? 'none' }
+  const boxed = floating && headlineTextBox(boxLook) !== null
   const font = HEADLINE_FONTS.find((item) => item.id === value.font) ?? HEADLINE_FONTS[0]
   const hookSize = HEADLINE.fontSize * (font.scale ?? 1) * u * textScale
 
@@ -446,7 +556,8 @@ export function LookFrame({ value, rows, background, aspect = '9:16', hookText, 
           </div>
         )}
       </div>
-      {floating && (
+      {boxed && <BoxedHook text={text} look={boxLook} u={u} scale={textScale} frameW={FW} frameH={FH} />}
+      {floating && !boxed && (
         <div className="absolute inset-x-0 top-0 flex flex-col" style={hookBox}>
           <div className="flex flex-1 items-center justify-center text-center" style={{ paddingTop: FH * HEADLINE.padY * u, paddingBottom: FH * HEADLINE.padY * u }}>
             <HookText text={text} accent={font.accent} style={{ ...hookStyle, color: '#FFFFFF', textShadow: [...ring(Math.max(3, hookSize / u * 0.09) * u, '#000'), `0 ${6 * u}px ${8 * u}px rgb(0 0 0 / 0.6)`].join(', ') }} />

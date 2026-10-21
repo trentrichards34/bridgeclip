@@ -26,7 +26,7 @@ def _bar(tmp_path, look):
 
 def test_parse_falls_back_and_validate_is_strict():
     assert parse_headline_look(None).look == "white"
-    assert parse_headline_look({"look": "neon", "font": "comic", "color": "red"}).__dict__ == {"look": "white", "color": "#FFFFFF", "font": "clean"}
+    assert parse_headline_look({"look": "neon", "font": "comic", "color": "red"}).__dict__ == {"look": "white", "color": "#FFFFFF", "font": "clean", "text_bg": "none"}
     assert parse_headline_look({"look": "brand", "color": "#ff8800"}).pad_color == "0xFF8800"
     assert validate_headline_look(None) is None
     assert validate_headline_look({"look": "brand", "color": "#2563eb", "font": "serif"}) == {"look": "brand", "color": "#2563EB", "font": "serif"}
@@ -168,3 +168,129 @@ def test_render_with_no_hook_text_keeps_the_full_frame(tmp_path, monkeypatch):
     ffmpeg, out = _render(tmp_path, monkeypatch, {"look": "none"})
     corner = _mean(ffmpeg, out, 1.0, "crop=20:10:0:0")
     assert corner.max() < 235, corner
+
+
+# ---------------------------------------------------------------------------
+# Floating text's background: a snug rounded box behind each line (Instagram's text background).
+# ---------------------------------------------------------------------------
+
+def test_text_bg_parses_validates_and_round_trips():
+    assert parse_headline_look({"look": "floating", "textBg": "dark"}).text_bg == "dark"
+    assert parse_headline_look({"look": "floating", "textBg": "neon"}).text_bg == "none"
+    assert validate_headline_look({"look": "floating", "textBg": "light"}) == {"look": "floating", "color": "#FFFFFF", "font": "clean", "textBg": "light"}
+    # "none" is the default: left out, so older requests and outputs are unchanged.
+    assert validate_headline_look({"look": "floating", "textBg": "none"}) == {"look": "floating", "color": "#FFFFFF", "font": "clean"}
+    for bad in ({"textBg": "neon"}, {"textBg": 1}, {"text_bg": "dark"}):
+        with pytest.raises(ValueError):
+            validate_headline_look(bad)
+    look = parse_headline_look({"look": "floating", "color": "#e11d48", "font": "serif", "textBg": "brand"})
+    assert look.as_dict() == {"look": "floating", "color": "#E11D48", "font": "serif", "textBg": "brand"}
+    assert parse_headline_look(look.as_dict()) == look
+    assert parse_headline_look({"look": "white"}).as_dict() == {"look": "white", "color": "#FFFFFF", "font": "clean"}
+
+
+def test_text_color_follows_the_box():
+    assert parse_headline_look({"look": "floating", "textBg": "dark"}).text == (255, 255, 255)
+    assert parse_headline_look({"look": "floating", "textBg": "light"}).text == (0, 0, 0)
+    assert parse_headline_look({"look": "floating", "textBg": "brand", "color": "#FFE600"}).text == (0, 0, 0)
+    assert parse_headline_look({"look": "floating", "textBg": "brand", "color": "#1D3BB3"}).text == (255, 255, 255)
+    # Only floating text gets a box; bars ignore it.
+    assert parse_headline_look({"look": "black", "textBg": "light"}).box is None
+    assert parse_headline_look({"look": "black", "textBg": "light"}).text == (255, 255, 255)
+    assert parse_headline_look({"look": "floating", "textBg": "dark"}).background is None
+
+
+def test_outline_steps_between_lines_and_snaps_near_widths():
+    # Two lines, the second narrower: 4 outer corners and a step (2 corners) on each side.
+    outline = module.text_box_outline([(100, 0, 900, 70), (300, 70, 700, 140)], 15)
+    assert [(x, y) for x, y, _ in outline] == [(100, 0), (900, 0), (900, 70), (700, 70), (700, 140), (300, 140), (300, 70), (100, 70)]
+    assert all(r == 15 for _, _, r in outline)
+    # Lines within the snap distance take the wider width: one rectangle.
+    snapped = module.text_box_outline([(100, 0, 900, 70), (105, 70, 895, 140)], 15, snap=15)
+    assert [(x, y) for x, y, _ in snapped] == [(100, 0), (900, 0), (900, 140), (100, 140)]
+    # A small step limits the corner radius to half of it.
+    small = module.text_box_outline([(100, 0, 900, 70), (120, 70, 880, 140)], 15)
+    assert min(r for _, _, r in small) == 10
+
+
+def _boxed(tmp_path, text_bg, text=TEXT, color="#E11D48"):
+    path, bar_h = _bar_text(tmp_path, {"look": "floating", "textBg": text_bg, "color": color}, text)
+    assert bar_h == 0  # still over the video: no bar
+    return Image.open(path).convert("RGBA")
+
+
+def _bar_text(tmp_path, look, text):
+    request = RenderRequest("in.mp4", str(tmp_path / "o.mp4"), 0, 1000, 64, 64, title_style=TitleStyle.HEADLINE,
+                            headline_text=text, headline_look=look)
+    return RenderingService()._headline_bar_image(request, 1080, 1920, False)
+
+
+def _rows(img):
+    """Each row band of the box: (top, bottom, left, right) where the alpha is solid."""
+    alpha = img.getchannel("A")
+    rows = []
+    for y in range(img.height):
+        xs = [x for x in range(0, img.width, 2) if alpha.getpixel((x, y)) > 200]
+        if xs:
+            rows.append((y, xs[0], xs[-1]))
+    return rows
+
+
+@pytest.mark.parametrize("text_bg,box,ink", [
+    ("dark", (0, 0, 0, 230), (255, 255, 255)),
+    ("light", (255, 255, 255, 255), (0, 0, 0)),
+    ("brand", (0xE1, 0x1D, 0x48, 255), (255, 255, 255)),
+])
+def test_each_line_sits_on_a_snug_box(tmp_path, text_bg, box, ink):
+    img = _boxed(tmp_path, text_bg, "Why nobody watches your videos yet ok")
+    rows = _rows(img)
+    assert rows, "a box is drawn"
+    top, bottom = rows[0][0], rows[-1][0]
+    # Boxes touch: no see-through gap between the lines' boxes down the middle.
+    alpha = img.getchannel("A")
+    assert all(alpha.getpixel((540, y)) > 200 for y in range(top + 2, bottom - 2))
+    # Snug: the widest box stays inside the frame's side margins, and the lines' boxes differ in width.
+    widths = {right - left for _, left, right in rows[len(rows) // 8: -len(rows) // 8]}
+    assert max(widths) < 1080 - 2 * 40
+    assert max(widths) - min(widths) > 60
+    # The box's color fills the corner-free part of a line (left edge, between the glyphs and the box edge).
+    y = top + 22  # below the first box's top corners
+    left = next(l for row_y, l, _ in rows if row_y == y)
+    assert img.getpixel((left + 6, y)) == box
+    # The text on it is in the contrast color, with no black outline around it.
+    pixels = list(img.crop((0, top, 1080, bottom)).getdata())
+    assert any(px[:3] == ink and px[3] == 255 for px in pixels)
+    if ink == (255, 255, 255):
+        assert not any(px[:3] == (0, 0, 0) and px[3] == 255 for px in pixels)  # no opaque outline (the dark box is 90%)
+
+
+def test_outside_the_snug_box_is_video(tmp_path):
+    img = _boxed(tmp_path, "dark", "I quit my job and this happened to my business in under ninety days")
+    rows = _rows(img)
+    lefts = [left for _, left, _ in rows]
+    # Where a line is narrower than the widest, the space beside its box is see-through (the video).
+    narrow_y, narrow_left, _ = max(rows, key=lambda row: row[1])
+    assert narrow_left > min(lefts) + 40
+    assert img.getpixel((narrow_left - 20, narrow_y))[3] == 0
+    assert img.getpixel((min(lefts) - 10, narrow_y))[3] == 0
+    # Above and below the boxes too.
+    assert img.getpixel((540, rows[0][0] - 8))[3] == 0
+    assert img.getpixel((540, rows[-1][0] + 8))[3] == 0
+
+
+def test_boxes_keep_the_text_where_it_was(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    plain, _ = _bar_text(tmp_path / "a", {"look": "floating"}, TEXT)
+    boxed, _ = _bar_text(tmp_path / "b", {"look": "floating", "textBg": "light"}, TEXT)
+    with Image.open(plain) as a, Image.open(boxed) as b:
+        assert a.size == b.size
+        # The black text on the light box lands on the white text's fill (inside the outline).
+        dark = [(x, y) for y in range(0, b.height, 3) for x in range(0, b.width, 3) if b.getpixel((x, y)) == (0, 0, 0, 255)]
+        assert dark and sum(a.getpixel(p)[:3] == (255, 255, 255) for p in dark) / len(dark) > 0.9
+
+
+def test_render_floating_with_a_dark_box(tmp_path, monkeypatch):
+    ffmpeg, out = _render(tmp_path, monkeypatch, {"look": "floating", "textBg": "dark"})
+    corner = _mean(ffmpeg, out, 1.0, "crop=20:10:0:0")
+    assert corner.max() < 235, corner  # still no bar

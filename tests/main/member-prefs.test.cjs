@@ -489,3 +489,35 @@ test('look extras: remembered on Create and Remix and in saved styles; unknown i
   assert.throws(() => validateJobConfig({ ...base, lookExtras: 'keyword_pill' }), /extras/)
   assert.equal(validateJobConfig({ ...base, headlineLook: { look: 'black', color: '#FFFFFF', font: 'sans_serif_accent' } }).headlineLook.font, 'sans_serif_accent')
 })
+
+test('floating text\'s background is remembered and round-trips: styles, saved styles, brand kit, job requests and remix outputs', () => {
+  const boxed = { look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'dark' }
+  assert.deepEqual(plain(shared.parseCreateStyle({ headlineLook: boxed }).headlineLook), boxed)
+  assert.deepEqual(plain(shared.parseRemixStyle({ headlineLook: { ...boxed, textBg: 'brand', color: '#7c5cff' } }).headlineLook), { ...boxed, textBg: 'brand', color: '#7C5CFF' })
+  // An unknown background drops the look (as any invalid look is dropped), never the whole style.
+  assert.equal('headlineLook' in plain(shared.parseCreateStyle({ headlineLook: { ...boxed, textBg: 'neon' } })), false)
+  const prefs = shared.parseMemberPrefs({ presets: { create: [{ id: 'c'.repeat(16), name: 'Reels', style: { headlineLook: boxed }, updatedAt: '2026-10-01T00:00:00.000Z' }] } })
+  assert.deepEqual(plain(prefs.presets.create[0].style.headlineLook), boxed)
+
+  const kit = load('shared/brand-kit.ts')
+  assert.deepEqual(plain(kit.parseBrandLook({ headlineLook: { ...boxed, textBg: 'light' } }).headlineLook), { ...boxed, textBg: 'light' })
+  assert.deepEqual(plain(kit.readBrandLook({ headlineLook: { ...boxed, textBg: 'light' } }).headlineLook), { ...boxed, textBg: 'light' })
+  assert.throws(() => kit.parseBrandLook({ headlineLook: { ...boxed, textBg: 'neon' } }), /hook text/)
+
+  const { validateJobConfig } = load('main/validation.ts', { './security': { isWebUrl: (url) => /^https?:\/\//.test(url) } })
+  const base = {
+    workflow: 'automatic', videoUrl: 'https://example.com/v', maxClips: null, autoClipCount: true, durationRanges: null, aspectRatio: '9:16', layoutStyle: 'auto',
+    layoutVision: false, pacing: 'tight', includeCaptions: true, captionPreset: 'pop', startTimeSeconds: null, endTimeSeconds: null, bannerPlatform: null, bannerChannelUrl: null
+  }
+  assert.deepEqual(plain(validateJobConfig({ ...base, headlineLook: boxed }).headlineLook), boxed)
+  assert.throws(() => validateJobConfig({ ...base, headlineLook: { ...boxed, textBg: 'neon' } }))
+
+  // A remix's settings in job_output.json keep it (Library re-make and Edit start from them).
+  const { parseJobOutput } = load('shared/job-output.ts')
+  const clip = (look) => ({ clip_index: 0, s3_url: 'file:///x.mp4', duration_ms: 1000, start_time_ms: 0, end_time_ms: 1000, virality_score: 1,
+    editable: { split: false, settings: { headline: 'Hi there', headline_look: look, include_captions: true, caption_preset: 'pop' } } })
+  const output = parseJobOutput({ job_id: 'j', clips: [clip(boxed)] })
+  assert.deepEqual(plain(output.clips[0].remix_settings.headline_look), boxed)
+  const older = parseJobOutput({ job_id: 'j', clips: [clip({ look: 'black', color: '#FFFFFF', font: 'clean' })] })
+  assert.deepEqual(plain(older.clips[0].remix_settings.headline_look), { look: 'black', color: '#FFFFFF', font: 'clean' })
+})

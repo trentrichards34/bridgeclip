@@ -6,11 +6,16 @@
 export type HeadlineLookStyle = 'white' | 'black' | 'brand' | 'floating' | 'none'
 export type HeadlineFont = 'clean' | 'serif' | 'condensed' | 'marker' | 'sans_serif_accent'
 
+/** Floating text's background: none (outlined text) or a snug rounded box behind each line, Instagram style. */
+export type HeadlineTextBg = 'none' | 'dark' | 'light' | 'brand'
+
 export interface HeadlineLook {
   look: HeadlineLookStyle
-  /** The bar color for the brand look, as #RRGGBB. */
+  /** The bar color for the brand look (and the brand-color text box), as #RRGGBB. */
   color: string
   font: HeadlineFont
+  /** Floating text only (ignored for the other looks): a box behind each line. Missing means 'none'. */
+  textBg?: HeadlineTextBg
 }
 
 export const DEFAULT_HEADLINE_LOOK: HeadlineLook = { look: 'white', color: '#FFFFFF', font: 'clean' }
@@ -20,9 +25,19 @@ export const HEADLINE_LOOKS: readonly { id: HeadlineLookStyle; label: string; hi
   { id: 'white', label: 'White bar', hint: 'Black text on a white bar. The original look.' },
   { id: 'black', label: 'Black bar', hint: 'White text on a black bar.' },
   { id: 'brand', label: 'Brand color', hint: 'A bar in your color; the text turns black or white to stay readable.' },
-  { id: 'floating', label: 'Floating text', hint: 'No bar: outlined white text over the top of the video.' },
+  { id: 'floating', label: 'Floating text', hint: 'No bar: the text sits over the top of the video, outlined or on a box.' },
   { id: 'none', label: 'No hook text', hint: 'Nothing at the top: the video fills the frame.' }
 ]
+
+export const HEADLINE_TEXT_BGS: readonly { id: HeadlineTextBg; label: string; hint: string }[] = [
+  { id: 'none', label: 'None', hint: 'Outlined white text right on the video.' },
+  { id: 'dark', label: 'Dark box', hint: 'White text on a black box behind each line, so it stands out on busy video.' },
+  { id: 'light', label: 'Light box', hint: 'Black text on a white box behind each line.' },
+  { id: 'brand', label: 'Brand color', hint: 'A box in your color behind each line; the text turns black or white to stay readable.' }
+]
+
+/** The text box against the font size (the engine's TEXT_BOX_*): padding left and right, corner radius, the dark box's opacity. */
+export const TEXT_BOX = { padX: 0.32, radius: 0.25, darkOpacity: 0.9 }
 
 export const HEADLINE_FONTS: readonly {
   id: HeadlineFont; label: string; family: string; upper?: boolean
@@ -57,12 +72,34 @@ export function isHexColor(value: unknown): value is string {
   return typeof value === 'string' && HEX.test(value)
 }
 
-/** Black or white text, whichever reads on this bar color (matches the engine). */
-export function headlineTextColor(look: HeadlineLook): string {
-  if (look.look === 'floating' || look.look === 'black') return '#FFFFFF'
-  if (look.look === 'white') return '#000000'
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(look.color.slice(i, i + 2), 16))
+/** The text background in use: floating text's box, else 'none'. */
+export function headlineTextBg(look: Pick<HeadlineLook, 'look' | 'textBg'>): HeadlineTextBg {
+  return look.look === 'floating' && look.textBg && HEADLINE_TEXT_BGS.some((item) => item.id === look.textBg) ? look.textBg : 'none'
+}
+
+/** The box behind each line of floating text, or null for outlined text (matches the engine's HeadlineLook.box). */
+export function headlineTextBox(look: HeadlineLook): { color: string; opacity: number } | null {
+  const bg = headlineTextBg(look)
+  if (bg === 'none') return null
+  if (bg === 'dark') return { color: '#000000', opacity: TEXT_BOX.darkOpacity }
+  if (bg === 'light') return { color: '#FFFFFF', opacity: 1 }
+  return { color: isHexColor(look.color) ? look.color.toUpperCase() : DEFAULT_BRAND_COLOR, opacity: 1 }
+}
+
+function contrastText(color: string): string {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16))
   return 0.2126 * r + 0.7152 * g + 0.0722 * b > 150 ? '#000000' : '#FFFFFF'
+}
+
+/** Black or white text, whichever reads on this bar or text box color (matches the engine). */
+export function headlineTextColor(look: HeadlineLook): string {
+  if (look.look === 'floating') {
+    const box = headlineTextBox(look)
+    return box ? contrastText(box.color) : '#FFFFFF'
+  }
+  if (look.look === 'black') return '#FFFFFF'
+  if (look.look === 'white') return '#000000'
+  return contrastText(look.color)
 }
 
 export function headlineBarColor(look: HeadlineLook): string | null {
@@ -76,18 +113,135 @@ export function headlineBarColor(look: HeadlineLook): string | null {
 export function parseHeadlineLook(value: unknown): HeadlineLook {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid headline look')
   const raw = value as Record<string, unknown>
-  if (Object.keys(raw).some((key) => !['look', 'color', 'font'].includes(key))) throw new Error('Invalid headline look')
+  if (Object.keys(raw).some((key) => !['look', 'color', 'font', 'textBg'].includes(key))) throw new Error('Invalid headline look')
   const look = raw.look ?? 'white'
   const font = raw.font ?? 'clean'
   const color = raw.color ?? '#FFFFFF'
-  if (!HEADLINE_LOOKS.some((item) => item.id === look) || !HEADLINE_FONTS.some((item) => item.id === font) || !isHexColor(color)) {
+  const textBg = raw.textBg ?? 'none'
+  if (!HEADLINE_LOOKS.some((item) => item.id === look) || !HEADLINE_FONTS.some((item) => item.id === font) || !isHexColor(color)
+    || !HEADLINE_TEXT_BGS.some((item) => item.id === textBg)) {
     throw new Error('Invalid headline look')
   }
-  return { look: look as HeadlineLookStyle, color: color.toUpperCase(), font: font as HeadlineFont }
+  // 'none' is left out, so looks made before the text box read and compare the same.
+  return { look: look as HeadlineLookStyle, color: color.toUpperCase(), font: font as HeadlineFont, ...(textBg !== 'none' ? { textBg: textBg as HeadlineTextBg } : {}) }
 }
 
-/** What the engine needs: nothing for the default look, so older runs are unchanged. */
+/** The look with this text background ('none' is left out, as parseHeadlineLook leaves it out). */
+export function setTextBg(look: HeadlineLook, textBg: HeadlineTextBg): HeadlineLook {
+  const out: HeadlineLook = { look: look.look, color: look.color, font: look.font }
+  return textBg === 'none' ? out : { ...out, textBg }
+}
+
+/** What the engine needs: nothing for the default look, so older runs are unchanged; the text box only with floating text. */
 export function headlineLookForEngine(look: HeadlineLook | undefined): HeadlineLook | undefined {
   if (!look) return undefined
-  return look.look === 'white' && look.font === 'clean' ? undefined : look
+  if (look.look === 'white' && look.font === 'clean') return undefined
+  if (look.textBg === undefined) return look
+  return setTextBg(look, look.look === 'floating' ? look.textBg : 'none')
+}
+
+// ---------------------------------------------------------------------------
+// Floating text on a box: where the lines go and the outline around their boxes
+// (rendering_service._headline_bar_image and text_box_outline). The previews draw with these.
+// ---------------------------------------------------------------------------
+
+/** The engine's sizes for the hook text (HEADLINE_FONT_SIZES at a 1080x1920 frame), largest first. */
+export const HEADLINE_FONT_SIZES = [60, 54, 48, 42]
+export const HEADLINE_MAX_LINES = 3
+
+/** Greedy word wrap to maxWidth (rendering_service._headline_lines). */
+export function headlineLines(text: string, measure: (line: string) => number, maxWidth: number): string[] {
+  const lines: string[] = []
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const trial = lines.length ? `${lines[lines.length - 1]} ${word}` : word
+    if (lines.length && measure(trial) <= maxWidth) lines[lines.length - 1] = trial
+    else lines.push(word)
+  }
+  return lines
+}
+
+/**
+ * The engine's wrap: the biggest size that fits in three lines, then the
+ * narrowest wrap with the same number of lines (no lone last word).
+ * `measure(line, size)` is the line's width at that font size.
+ */
+export function wrapHeadline(text: string, measure: (line: string, size: number) => number, maxWidth: number,
+  sizes: readonly number[] = HEADLINE_FONT_SIZES): { size: number; lines: string[] } {
+  let size = sizes[sizes.length - 1]
+  let lines: string[] = []
+  for (const candidate of sizes) {
+    size = candidate
+    const at = (line: string): number => measure(line, candidate)
+    lines = headlineLines(text, at, maxWidth)
+    if (lines.length <= HEADLINE_MAX_LINES) {
+      let width = maxWidth
+      while (lines.length > 1 && width > Math.floor(maxWidth / 2)) {
+        const narrower = headlineLines(text, at, width - 20)
+        if (narrower.length !== lines.length) break
+        lines = narrower
+        width -= 20
+      }
+      break
+    }
+  }
+  return { size, lines: lines.slice(0, HEADLINE_MAX_LINES) }
+}
+
+/** One line's box: left, top, right, bottom. */
+export type TextBoxRect = [number, number, number, number]
+
+/**
+ * The outline around per-line boxes stacked edge to edge (Instagram's text
+ * background), as corners with their radius, clockwise from the top left.
+ * Lines within `snap` of their neighbor's width take the wider one. Mirrors
+ * the engine's text_box_outline.
+ */
+export function textBoxOutline(boxes: readonly TextBoxRect[], radius: number, snap = 0): [number, number, number][] {
+  if (!boxes.length) return []
+  const rows = boxes.map((box) => [...box] as TextBoxRect)
+  for (let i = 1; i < rows.length; i++) {
+    const a = rows[i - 1], b = rows[i]
+    if (Math.abs((a[2] - a[0]) - (b[2] - b[0])) < snap) {
+      const left = Math.min(a[0], b[0]), right = Math.max(a[2], b[2])
+      a[0] = b[0] = left
+      a[2] = b[2] = right
+    }
+  }
+  const last = rows[rows.length - 1]
+  const points: [number, number][] = [[rows[0][0], rows[0][1]], [rows[0][2], rows[0][1]]]
+  for (let i = 0; i < rows.length - 1; i++) {
+    if (rows[i + 1][2] !== rows[i][2]) points.push([rows[i][2], rows[i][3]], [rows[i + 1][2], rows[i][3]])
+  }
+  points.push([last[2], last[3]], [last[0], last[3]])
+  for (let i = rows.length - 1; i > 0; i--) {
+    if (rows[i - 1][0] !== rows[i][0]) points.push([rows[i][0], rows[i][1]], [rows[i - 1][0], rows[i][1]])
+  }
+  return points.map(([x, y], i) => {
+    const [px, py] = points[(i - 1 + points.length) % points.length]
+    const [nx, ny] = points[(i + 1) % points.length]
+    return [x, y, Math.min(radius, Math.hypot(x - px, y - py) / 2, Math.hypot(nx - x, ny - y) / 2)]
+  })
+}
+
+/** The outline as an SVG path (or a canvas Path2D): each corner a quadratic curve, as the engine samples it. */
+export function textBoxPath(outline: readonly [number, number, number][]): string {
+  if (!outline.length) return ''
+  const n = (v: number): string => (Math.round(v * 100) / 100).toString()
+  const ends = outline.map(([x, y, r], i) => {
+    const [px, py] = outline[(i - 1 + outline.length) % outline.length]
+    const [nx, ny] = outline[(i + 1) % outline.length]
+    const din = Math.hypot(x - px, y - py) || 1, dout = Math.hypot(nx - x, ny - y) || 1
+    return { start: [x + (px - x) / din * r, y + (py - y) / din * r], end: [x + (nx - x) / dout * r, y + (ny - y) / dout * r], x, y }
+  })
+  return `M${n(ends[0].start[0])} ${n(ends[0].start[1])}` + ends.map((c, i) => `${i ? `L${n(c.start[0])} ${n(c.start[1])}` : ''}Q${n(c.x)} ${n(c.y)} ${n(c.end[0])} ${n(c.end[1])}`).join('') + 'Z'
+}
+
+/**
+ * The boxes behind each line, the way the engine places them: the line's
+ * width plus padding, one line tall, centered on the line. `centers` are each
+ * line's middle; `widths` its text width.
+ */
+export function textBoxRects(widths: readonly number[], centers: readonly number[], lineHeight: number, frameWidth: number, fontSize: number): TextBoxRect[] {
+  const pad = fontSize * TEXT_BOX.padX
+  return widths.map((width, i) => [(frameWidth - width) / 2 - pad, centers[i] - lineHeight / 2, (frameWidth + width) / 2 + pad, centers[i] + lineHeight / 2])
 }

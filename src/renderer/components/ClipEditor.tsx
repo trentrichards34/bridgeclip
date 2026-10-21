@@ -8,7 +8,7 @@ import { cn, errorMessage, formatTimecode, localFileUrl, parseTimecode } from '.
 import { HeadlineLookPicker } from './HeadlineLookPicker'
 import { CtaPicker } from './CtaPicker'
 import { Segmented } from './ui/Segmented'
-import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, headlineBarColor, headlineTextColor } from '../../shared/headline-look'
+import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, TEXT_BOX, headlineBarColor, headlineTextBox, headlineTextColor, textBoxOutline, textBoxPath, textBoxRects } from '../../shared/headline-look'
 import { captionLanguageLabel } from '../../shared/caption-language'
 import { type AutomaticOmission, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, applyStyleToAll, runHookLook, transcriptClip, transcriptRange, variantOf, type HookIdea, MAX_HOOK_CHARS, SPLIT_RANGE, panelRows, resizeSplit, splitOf, EDITOR_REVISION_CONFLICT, cameraMarkers, snapFrame, stepFrame, candidateEdit, canAnimateScene, defaultCrop, editDuration, editSignature, editorProgress, framingAt, normalizeSceneTransitions, refineEdit, renderEditKey, resizeCrop, retimeScene, sceneAt, trimRange, type CandidateEdit, type Crop, type CropCorner, type EditorCandidate, type EditorQuestion, type EditorRange, type EditorScene, type EditorSession } from '../../shared/clip-editor'
 import { CameraChanges, CameraScanButton } from './CameraChanges'
@@ -393,9 +393,19 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           ctx.font = `800 ${size}px ${hookLayout.family}`
           if (bar) { ctx.fillStyle = bar; ctx.fillRect(0, 0, out.width, hookLayout.barH) }
           ctx.textAlign = 'center'; ctx.textBaseline = 'top'
+          const box = bar ? null : headlineTextBox(hook.look)
+          if (box) {
+            // Floating text on a box: a snug rounded box behind each line, as the export draws it.
+            const centers = shown.map((_, i) => top + i * lineH + lineH / 2)
+            const rects = textBoxRects(shown.map((line) => ctx.measureText(line).width), centers, lineH, out.width, size)
+            ctx.globalAlpha = box.opacity; ctx.fillStyle = box.color
+            ctx.fill(new Path2D(textBoxPath(textBoxOutline(rects, size * TEXT_BOX.radius, size * TEXT_BOX.radius))))
+            ctx.globalAlpha = 1; ctx.textBaseline = 'middle'
+          }
           shown.forEach((line, i) => {
-            if (!bar) { ctx.lineWidth = Math.max(2, size / 7); ctx.strokeStyle = '#000'; ctx.strokeText(line, out.width / 2, top + i * lineH) }
-            ctx.fillStyle = headlineTextColor(hook.look); ctx.fillText(line, out.width / 2, top + i * lineH)
+            const y = box ? top + i * lineH + lineH / 2 : top + i * lineH
+            if (!bar && !box) { ctx.lineWidth = Math.max(2, size / 7); ctx.strokeStyle = '#000'; ctx.strokeText(line, out.width / 2, y) }
+            ctx.fillStyle = headlineTextColor(hook.look); ctx.fillText(line, out.width / 2, y)
           })
           ctx.textAlign = 'start'
         }

@@ -56,7 +56,7 @@ export interface ClipArtifact {
 
 export interface RemixClipSettings {
   headline: string
-  headline_look: { look: string; color: string; font: string } | null
+  headline_look: { look: string; color: string; font: string; textBg?: string } | null
   include_captions: boolean
   caption_preset: string
   split: number | null
@@ -68,7 +68,10 @@ function remixSettings(value: unknown): RemixClipSettings | null {
   const look = raw.headline_look && typeof raw.headline_look === 'object' ? raw.headline_look as Record<string, unknown> : null
   return {
     headline: typeof raw.headline === 'string' ? raw.headline.slice(0, 200) : '',
-    headline_look: look && typeof look.look === 'string' ? { look: look.look, color: typeof look.color === 'string' ? look.color : '#FFFFFF', font: typeof look.font === 'string' ? look.font : 'clean' } : null,
+    headline_look: look && typeof look.look === 'string' ? {
+      look: look.look, color: typeof look.color === 'string' ? look.color : '#FFFFFF', font: typeof look.font === 'string' ? look.font : 'clean',
+      ...(typeof look.textBg === 'string' && look.textBg !== 'none' ? { textBg: look.textBg } : {})
+    } : null,
     include_captions: raw.include_captions !== false,
     caption_preset: typeof raw.caption_preset === 'string' ? raw.caption_preset.slice(0, 64) : '',
     // The box as made can be smaller than the slider's range (a wide clip defaults below 30%).
