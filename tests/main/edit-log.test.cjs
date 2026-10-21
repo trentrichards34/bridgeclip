@@ -143,14 +143,27 @@ test('Edit my recording: retakes, filler, the opening, cards, pop-ups and sounds
   assert.ok(!log.editRecordingLog(plan, recording.toggleWord(d, 1)).some((l) => l.id === 'retakes'))
 })
 
-test('remix reviews: the part of their clip, the take trim (Restore uses all of it) and the AI hook', () => {
-  const lines = log.remixEditLog({ startMs: 3000, endMs: 11400, take: { seconds: 40, trim: { startMs: 2000, endMs: 31500 } }, aiHeadline: 'She was wrong about pricing', headline: 'She was wrong about pricing' })
-  assert.deepEqual(plain(lines.map((l) => [l.id, l.text, l.restore ?? null])), [
-    ['their-clip', 'Used 0:03–0:11 of their clip (8.4 s)', null],
-    ['take-trim', 'Your take trimmed to 0:02.0–0:31.5 (30 s of 40 s)', 'use-whole-take'],
-    ['hook', 'Hook: “She was wrong about pricing”', null]])
-  const edited = log.remixEditLog({ startMs: 0, endMs: 5000, take: { seconds: 12 }, aiHeadline: 'AI words', headline: 'My words' })
-  assert.deepEqual(plain(edited.map((l) => l.id)), ['their-clip'])
+test('remix reviews: the AI hook text and caption are the app\'s; chat changes are "you asked"; the member\'s own picks are not listed', () => {
+  const ai = { aiHeadline: 'She was wrong about pricing', aiCaption: 'Pricing lesson.\n\nClip: @coach' }
+  // Fresh from the AI: the hook text and caption it wrote. Their clip's span and a trim made with the controls are the member's.
+  const fresh = log.remixEditLog({ startMs: 3000, endMs: 11400, take: { seconds: 40, trim: { startMs: 2000, endMs: 31500 } }, ...ai, headline: ai.aiHeadline, caption: ai.aiCaption })
+  assert.deepEqual(plain(fresh.map((l) => [l.id, l.text, l.asked ?? false])), [
+    ['hook', 'Wrote the hook text: “She was wrong about pricing”', false],
+    ['caption', 'Wrote the post caption', false]])
+  // Asked in the chat: their part, the take's trim (Restore uses all of it), the hook, the caption and a graphic.
+  const asked = log.remixEditLog({
+    startMs: 4000, endMs: 9000, take: { seconds: 40, trim: { startMs: 2000, endMs: 31500 } }, ...ai, headline: 'Her pricing advice is wrong', caption: 'Shorter.',
+    graphics: [{ template: 'stat', fields: { value: '$1,200', label: 'a month' }, origin: 'chat' }, { template: 'title', fields: { text: 'Mine' }, origin: 'member' }],
+    asked: { theirClip: { startMs: 4000, endMs: 9000 }, takeTrim: { startMs: 2000, endMs: 31500 }, headline: 'Her pricing advice is wrong', postCaption: 'Shorter.' }
+  })
+  assert.deepEqual(plain(asked.map((l) => [l.id, l.asked ?? false, l.restore ?? null])), [
+    ['their-clip', true, null], ['take-trim', true, 'use-whole-take'], ['hook', true, null], ['caption', true, null], ['graphics', true, null]])
+  assert.equal(asked[0].text, 'Their part set to 0:04–0:09 (5 s)')
+  // Changed by hand afterwards: no longer the AI's or the chat's.
+  const own = log.remixEditLog({ startMs: 0, endMs: 5000, take: { seconds: 12 }, ...ai, headline: 'My words', caption: 'Mine', asked: { headline: 'Chat words' } })
+  assert.deepEqual(plain(own), [])
+  // Moment + my take: the moment the AI picked is listed until the member moves it.
+  assert.deepEqual(plain(log.remixEditLog({ startMs: 60000, endMs: 75000, aiMoment: true, ...ai, headline: '', caption: '' }).map((l) => l.text)), ['Picked the moment 1:00–1:15 (15 s)'])
 })
 
 test('wording: plain, and numbers come from the data', () => {

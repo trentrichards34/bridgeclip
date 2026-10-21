@@ -76,6 +76,40 @@ test('Their clip, then me: You on camera, a short clip trimmed, an uploaded take
   assert.equal(await hook.inputValue(), 'He says 15 billion scam ads run every day')
   await page.getByText(/^You said: “Honestly that number scared me/).waitFor()
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await page.getByRole('heading', { name: 'Your clip, then you' }).scrollIntoViewIfNeeded(); await shot(app, 'clip-then-me-review.png') }
+  // While the review is open the setup form is folded away; "Start a new remix" brings it back (and Hide folds it again).
+  assert.equal(await page.getByRole('heading', { name: '1 · What are you making?' }).count(), 0)
+  await page.getByTestId('new-remix-fold').getByRole('button', { name: 'Start a new remix' }).click()
+  await page.getByRole('heading', { name: '1 · What are you making?' }).waitFor()
+  await page.getByRole('button', { name: 'Hide', exact: true }).click()
+  await page.getByRole('heading', { name: '1 · What are you making?' }).waitFor({ state: 'detached' })
+  // "What changed", folded to one line: the hook text and caption the AI wrote; their clip's part is the member's own.
+  const log = page.getByTestId('edit-log')
+  assert.match(await log.getByRole('button').first().innerText(), /What changed\s*· 2 things the app did/)
+  assert.equal(await log.getByRole('button').first().getAttribute('aria-expanded'), 'false')
+  await log.getByRole('button').first().click()
+  assert.deepEqual(await log.locator('li').allInnerTexts(), ['Wrote the hook text: “He says 15 billion scam ads run every day”', 'Wrote the post caption'])
+  // This video's look and skills, in the review: a change goes to the run.
+  const look = page.getByTestId('review-look')
+  await look.getByRole('switch', { name: 'Captions', exact: true }).click()
+  await page.waitForFunction(() => window.bridgeclip.remix.status().then((status) => status?.look?.includeCaptions === false))
+  await look.getByRole('switch', { name: 'Captions', exact: true }).click()
+  await page.waitForFunction(() => window.bridgeclip.remix.status().then((status) => status?.look?.includeCaptions === true))
+  await look.getByRole('button', { name: /Captions and hook text look/ }).click()
+  await look.getByText('This video’s look').waitFor()
+  if (process.env.BRIDGECLIP_E2E_SHOTS) { await look.scrollIntoViewIfNeeded(); await shot(app, 'clip-then-me-review-look.png') }
+  // Your take's own Start and End (like their clip's): 1 s on, then all of it again.
+  const takeTrim = page.getByTestId('take-trim-control')
+  await takeTrim.getByLabel('Start of your take').fill('1')
+  await takeTrim.getByRole('button', { name: 'Use this part' }).click()
+  await page.getByTestId('take-trim').getByText(/Uses 0:01\.0–0:09\.0 of your take/).waitFor()
+  await page.getByTestId('take-trim').getByRole('button', { name: 'Use all of it' }).click()
+  await page.getByTestId('take-trim').waitFor({ state: 'detached' })
+  // The chat's chips fit this format; Point shows a still of the take to point on.
+  const chat = page.getByRole('region', { name: 'Chat' })
+  await chat.getByRole('button', { name: 'Make my part shorter' }).waitFor()
+  await chat.getByRole('button', { name: 'Point', exact: true }).click()
+  await page.locator('.chat-point-pad video').waitFor()
+  await page.keyboard.press('Escape')
   await hook.fill('This serum changed her skin in a week? Not mine')
   // A proof screenshot pops in while they talk: added from the file dialog, labeled.
   const proofs = page.getByRole('region', { name: 'Proof screenshots' })

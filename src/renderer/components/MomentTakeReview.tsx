@@ -7,7 +7,9 @@ import {
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { RemixRecorder } from './RemixRecorder'
-import { RemixChatSection, RemixGraphicsSection, TakeTrimNote, type TakeText } from './RemixReviewExtras'
+import { RemixChatSection, RemixGraphicsSection, TakeTrimControl, TakeTrimNote, type TakeText } from './RemixReviewExtras'
+import { RemixLookSection } from './RemixReviewLook'
+import type { RemixAsked } from '../../shared/edit-log'
 import { RemixEditLog } from './EditLog'
 import type { EditorGraphic } from '../../shared/motion-graphics'
 import { Segmented } from './ui/Segmented'
@@ -47,6 +49,9 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
   // Graphics per take, and which take the Graphics and Chat sections are on.
   const [graphics, setGraphics] = useState<Record<number, EditorGraphic[]>>({})
   const [focus, setFocus] = useState<number>(drafts[0]?.id ?? 0)
+  // What the chat set per take, and the moments the member moved themselves (no longer the AI's pick).
+  const [asked, setAsked] = useState<Record<number, RemixAsked>>({})
+  const [nudged, setNudged] = useState<Set<number>>(new Set())
   // Hook text that just arrived from the AI replaces what was typed for that take before.
   const headlines = useRef<Record<number, string>>({})
   useEffect(() => {
@@ -77,8 +82,14 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
     }
   }, 'Your video could not be used.')
   const remove = (draft: RemixDraft): Promise<void> => run(`remove-${draft.id}`, async () => setRecordings(await getApi().remix.removeRecording(draft.id, 'reaction')), 'It could not be deleted.')
-  const nudge = (draft: RemixDraft, startMs: number, endMs: number): Promise<void> => run(`nudge-${draft.id}`, () => getApi().remix.momentBounds(draft.id, startMs, endMs), 'The moment could not be changed.')
-  const another = (draft: RemixDraft): Promise<void> => run(`another-${draft.id}`, () => getApi().remix.anotherMoment(draft.id), 'Another moment could not be found.')
+  const nudge = (draft: RemixDraft, startMs: number, endMs: number): Promise<void> => run(`nudge-${draft.id}`, async () => {
+    await getApi().remix.momentBounds(draft.id, startMs, endMs)
+    setNudged((list) => new Set(list).add(draft.id))
+  }, 'The moment could not be changed.')
+  const another = (draft: RemixDraft): Promise<void> => run(`another-${draft.id}`, async () => {
+    await getApi().remix.anotherMoment(draft.id)
+    setNudged((list) => { const next = new Set(list); next.delete(draft.id); return next })
+  }, 'Another moment could not be found.')
   const points = (draft: RemixDraft): Promise<void> => run(`points-${draft.id}`, () => getApi().remix.talkingPoints(draft.id), 'No talking points came back.')
   const closeRecorder = (changed: boolean): void => {
     const draft = recording
@@ -138,7 +149,8 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
                 {range && <Badge>From your range {formatTimecode(range.rangeStartMs / 1000)}–{formatTimecode(range.rangeEndMs / 1000)}</Badge>}
                 <Badge>{((draft.endMs - draft.startMs) / 1000).toFixed(1)}s</Badge>
               </div>
-              <RemixEditLog draft={draft} recordings={recordings} headline={current.headline} disabled={busy} onRecordings={setRecordings} onError={onError} />
+              <RemixEditLog draft={draft} recordings={recordings} headline={current.headline} caption={current.postCaption ?? ''} graphics={graphics[draft.id]} asked={asked[draft.id]}
+                aiMoment={Boolean(range) && !nudged.has(draft.id)} disabled={busy} onRecordings={setRecordings} onError={onError} />
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
                 {source ? <MomentPreview source={source} startMs={draft.startMs} endMs={draft.endMs} label={`Moment ${draft.id + 1}`} />
                   : <div className="aspect-video w-full rounded-xl bg-black" />}
@@ -176,6 +188,7 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
                   <Button size="sm" variant="ghost" icon={<ListChecks className="h-3.5 w-3.5" />} loading={working === `points-${draft.id}`} disabled={busy}
                     onClick={() => void points(draft)}>Give me talking points</Button>
                 )}
+                <TakeTrimControl draft={draft} recordings={recordings} disabled={busy || recording !== null} onRecordings={setRecordings} onError={onError} />
                 <TakeTrimNote draft={draft} recordings={recordings} disabled={busy} onRecordings={setRecordings} onError={onError} />
               </div>
 
@@ -204,6 +217,7 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
             </section>
           )
         })}
+        <RemixLookSection status={status} disabled={busy} frame={recordings[focused?.id ?? 0]?.reaction?.path ?? source} hookText={focused ? value(focused).headline : ''} onError={onError} />
         {focused && <>
           {drafts.length > 1 && (
             <div className="flex flex-wrap items-center gap-2">
@@ -216,6 +230,7 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
             onGraphics={(change) => setGraphics((current) => ({ ...current, [focused.id]: change(current[focused.id] ?? []) }))}
             partMs={recordings[focused.id]?.reaction?.seconds ? Math.round(recordings[focused.id]!.reaction!.seconds * 1000) : null} />
           <RemixChatSection key={`c${focused.id}`} runId={status.id} draft={focused} text={focusText(focused)} onText={(patch) => onText(focused, patch)}
+            video={recordings[focused.id]?.reaction?.path ?? null} onAsked={(next) => setAsked((before) => ({ ...before, [focused.id]: { ...before[focused.id], ...next } }))}
             afterMain={async () => { setRecordings(await getApi().remix.recordings()) }} label={drafts.length > 1 ? `Chat · moment ${focused.id + 1}` : 'Chat'}
             disabledReason={busy ? 'Wait for what’s running to finish.' : recording ? 'Close the recorder to chat.' : null} />
         </>}

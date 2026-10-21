@@ -5,12 +5,15 @@
  * take in its own state and hands them in here with their setters, plus a
  * refresh for what main holds (the part of their video, the take, the layout).
  */
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { MessageSquare, Scissors } from 'lucide-react'
 import { newGraphic, type EditorGraphic, type GraphicTemplateId } from '../../shared/motion-graphics'
+import { MIN_TAKE_PART_MS } from '../../shared/remix-chat'
 import { TAKE_GRAPHIC_FROM_MS, fitRemixGraphic, remixGraphicFrame, isRemixGraphicFormat } from '../../shared/reel-graphics'
-import { REMIX_CHAT_POINT_SUGGESTIONS, REMIX_CHAT_SUGGESTIONS, mergeRemixChatSteps, parseRemixChatSteps, type RemixChatAction, type RemixChatPatch, type RemixChatStep } from '../../shared/remix-chat'
+import { REMIX_CHAT_POINT_SUGGESTIONS, mergeRemixChatSteps, remixChatIntro, remixChatSuggestions, remixPartName, parseRemixChatSteps, type RemixChatAction, type RemixChatPatch, type RemixChatStep } from '../../shared/remix-chat'
 import type { RemixDraft, RemixRecordings, RemixStatus } from '../../shared/remix'
+import type { RemixAsked } from '../../shared/edit-log'
+import { TrimControl } from './PauseReactReview'
 import { getApi } from '../lib/ipc'
 import { errorMessage } from '../lib/utils'
 import { ChatPanel, type ChatApplyOutcome } from './ChatPanel'
@@ -68,18 +71,45 @@ export function RemixGraphicsSection({ status, draft, text, onGraphics, partMs, 
         ...(change.placement ? { placement: change.placement } : {}), fields }, format, partMs)
     }).sort((a, b) => a.at_ms - b.at_ms))
   }
-  const part = pause ? 'your video' : 'your take'
+  const react = format === 'react_thoughts'
+  // The format's own name for the member's part ("Part 2 · Your thoughts" in React, then my thoughts).
+  const part = remixPartName(format)
+  const over = react ? `“${part}”` : part
   return <section className="glass-tile space-y-3 rounded-2xl p-4" aria-label="Graphics on your part">
     <ReelGraphics label={step ? `${step} · Graphics` : 'Graphics'}
-      intro={`Animated cards over ${part}: a stat that counts up, a title, a list and more. They stay clear of ${pause ? 'their video, ' : ''}your hook text and captions${format === 'moment_take' && context.momentPip ? ' and the moment’s box' : ''}. One that would cover a proof screenshot is left out.`}
+      intro={`Animated cards over ${over}: a stat that counts up, a title, a list and more. They stay clear of ${pause ? 'their video, ' : ''}your hook text and captions${format === 'moment_take' && context.momentPip ? ' and the moment’s box' : ''}. One that would cover a proof screenshot is left out.`}
       items={items} totalSeconds={total / 1000} blocked={blocked} frame={frame} look={context.headlineLook} disabled={disabled}
-      emptyNote={partMs ? null : pause ? 'Record your reaction first: graphics go on your part.' : 'Record your take first: graphics go on your part.'}
+      emptyNote={partMs ? null : pause ? 'Record your reaction first: graphics go on your part.' : react ? `Record ${part} first: graphics go on it.` : 'Record your take first: graphics go on your part.'}
       onAdd={add} onPatch={patch} onRemove={(id) => onGraphics((list) => list.filter((g) => g.id !== id))}
       cursorLabel={(at) => `at ${clock(Math.max(pause ? 0 : TAKE_GRAPHIC_FROM_MS, at * 1000))} of ${part}`} />
   </section>
 }
 
-/** Their clip then me / Moment + my take: the part of the take used, when it's trimmed (from the chat). */
+/**
+ * Their clip then me / Moment + my take: Start and End for the member's own take (like their clip's trim), so only
+ * that part of it is used. Free; the hook text and caption stay as written.
+ */
+export function TakeTrimControl({ draft, recordings, disabled, onRecordings, onError }: {
+  draft: RemixDraft; recordings: RemixRecordings; disabled: boolean; onRecordings: (list: RemixRecordings) => void; onError: (message: string | null) => void
+}): React.JSX.Element | null {
+  const [saving, setSaving] = useState(false)
+  const take = recordings[draft.id]?.reaction
+  if (!take?.path || !take.seconds) return null
+  const total = Math.round(take.seconds * 1000)
+  const startMs = take.trim?.startMs ?? 0, endMs = take.trim?.endMs ?? total
+  const save = (a: number, b: number): void => {
+    setSaving(true); onError(null)
+    const whole = a <= 50 && b >= total - 50
+    getApi().remix.takeTrim(draft.id, whole ? null : a, whole ? null : b).then(onRecordings, (e) => onError(errorMessage(e, 'That part of your take could not be used.'))).finally(() => setSaving(false))
+  }
+  return <div data-testid="take-trim-control">
+    <TrimControl key={`${take.path}-${startMs}-${endMs}`} source={take.path} startMs={startMs} endMs={endMs} disabled={disabled} saving={saving} uploaded={take.uploaded}
+      onTrim={save} label="Your take" minSeconds={MIN_TAKE_PART_MS / 1000} durationSeconds={take.seconds}
+      note="Only this part of your take is used. Graphics outside it don’t show." />
+  </div>
+}
+
+/** Their clip then me / Moment + my take: the part of the take used, when it's trimmed (from the chat or the controls). */
 export function TakeTrimNote({ draft, recordings, disabled, onRecordings, onError }: {
   draft: RemixDraft; recordings: RemixRecordings; disabled: boolean; onRecordings: (list: RemixRecordings) => void; onError: (message: string | null) => void
 }): React.JSX.Element | null {
@@ -94,7 +124,7 @@ export function TakeTrimNote({ draft, recordings, disabled, onRecordings, onErro
 interface RemixApplied { before: RemixChatPatch; undo: RemixChatAction[] }
 
 /** The Chat panel for one take: changes the page's text and graphics, and calls main for the rest. */
-export function RemixChatSection({ runId, draft, text, onText, afterMain, disabledReason, label }: {
+export function RemixChatSection({ runId, draft, text, onText, afterMain, disabledReason, label, video, suggestions, onAsked }: {
   runId: string
   draft: RemixDraft
   text: TakeText
@@ -103,7 +133,14 @@ export function RemixChatSection({ runId, draft, text, onText, afterMain, disabl
   afterMain: () => Promise<void>
   disabledReason: string | null
   label?: string
+  /** The member's take: a still of it to point on (none yet: an empty frame). */
+  video?: string | null
+  /** The chips (default: the format's own, see remixChatSuggestions). */
+  suggestions?: readonly string[]
+  /** What a kept answer set (the hook text, caption, their part, the take's trim), for "What changed". */
+  onAsked?: (asked: RemixAsked) => void
 }): React.JSX.Element {
+  const format = isRemixGraphicFormat(draft.format) ? draft.format : 'clip_then_me'
   const api = getApi().remix
   const run = async (action: RemixChatAction): Promise<void> => {
     if (action.kind === 'their_clip') {
@@ -129,6 +166,16 @@ export function RemixChatSection({ runId, draft, text, onText, afterMain, disabl
       return done.length || Object.keys(merged.patch).length ? { applied: { before, undo }, length: `Not everything could be changed: ${errorMessage(error)}` } : { error: errorMessage(error) }
     }
     if (merged.actions.length) await afterMain().catch(() => undefined)
+    if (onAsked) {
+      const asked: RemixAsked = {}
+      if (merged.patch.headline !== undefined) asked.headline = merged.patch.headline
+      if (merged.patch.postCaption !== undefined) asked.postCaption = merged.patch.postCaption
+      for (const action of merged.actions) {
+        if (action.kind === 'their_clip') asked.theirClip = { startMs: action.startMs, endMs: action.endMs }
+        if (action.kind === 'take_trim' && action.startMs !== null && action.endMs !== null) asked.takeTrim = { startMs: action.startMs, endMs: action.endMs }
+      }
+      if (Object.keys(asked).length) onAsked(asked)
+    }
     return { applied: { before, undo: merged.undo }, length: null }
   }
   const undo = async (applied: RemixApplied): Promise<string | null> => {
@@ -141,12 +188,12 @@ export function RemixChatSection({ runId, draft, text, onText, afterMain, disabl
     <h3 id={`remix-chat-${draft.id}`} className="flex items-center gap-1.5 text-sm font-medium text-ink"><MessageSquare className="h-4 w-4" aria-hidden />{label ?? 'Chat'}</h3>
     <ChatPanel<RemixChatStep, RemixApplied>
       variant="review" threadKey={`remix\n${runId}\n${draft.id}`} label="Chat about your video"
-      intro="Ask for a change in your own words, like “make my part shorter”, “change the hook” or “add a stat when I say $1,200”. Each answer shows what changed, with Keep or Undo."
-      placeholder="Ask for a change to this video" suggestions={REMIX_CHAT_SUGGESTIONS}
+      intro={remixChatIntro(format)}
+      placeholder="Ask for a change to this video" suggestions={suggestions ?? remixChatSuggestions(format)}
       disabledReason={disabledReason}
       loadInfo={typeof api?.chatInfo === 'function' ? () => api.chatInfo() : undefined}
       ask={(message, points) => api.chat({ draftId: draft.id, headline: text.headline, postCaption: text.postCaption, graphics: text.graphics }, message, points)}
-      point={{ suggestions: REMIX_CHAT_POINT_SUGGESTIONS, pad: <PointPad thread={`remix\n${runId}\n${draft.id}`} /> }}
+      point={{ suggestions: REMIX_CHAT_POINT_SUGGESTIONS, pad: <PointPad thread={`remix\n${runId}\n${draft.id}`} video={video} /> }}
       parseSteps={parseRemixChatSteps} isEdit={(s) => Object.keys(s.patch).length > 0 || Boolean(s.action)}
       apply={apply} undo={undo}
       onReset={() => { void api?.chatReset?.(draft.id).catch(() => {}) }}

@@ -64,6 +64,11 @@ test('React, then my thoughts: both parts uploaded, your b-roll added, planned, 
   await hook.waitFor({ timeout: 120000 })
   assert.equal(await hook.inputValue(), 'He says 15 billion scam ads run every day')
   await broll.getByText('No b-roll: you’re on screen the whole time.').waitFor()
+  // The chat's chips fit this format (part 2 can't be trimmed here), and graphics name the part they go on.
+  const chat = page.getByRole('region', { name: 'Chat' })
+  await chat.getByRole('button', { name: 'Punchier hook' }).waitFor()
+  assert.equal(await chat.getByRole('button', { name: 'Make my part shorter' }).count(), 0)
+  await page.getByRole('region', { name: 'Graphics on your part' }).getByText(/Animated cards over “Part 2 · Your thoughts”/).waitFor()
 
   // Your b-roll: a clip and a picture (the dialog opens from the button, as it does for a drop); then planned over your words.
   await broll.getByRole('button', { name: 'Add clips or pictures' }).click()

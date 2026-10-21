@@ -11,7 +11,10 @@ import { partLabel, RemixRecorder } from './RemixRecorder'
 import { Part2Look, ProofScreenshots } from './ClipLayoutSections'
 import type { BoxAt, LayoutExtrasView } from '../../shared/remix-layouts'
 import type { EditorGraphic } from '../../shared/motion-graphics'
-import { RemixChatSection, RemixGraphicsSection, TakeTrimNote, type TakeText } from './RemixReviewExtras'
+import { RemixChatSection, RemixGraphicsSection, TakeTrimControl, TakeTrimNote, type TakeText } from './RemixReviewExtras'
+import { RemixLookSection } from './RemixReviewLook'
+import { remixChatSuggestions } from '../../shared/remix-chat'
+import type { RemixAsked } from '../../shared/edit-log'
 import { RemixEditLog } from './EditLog'
 import { Segmented } from './ui/Segmented'
 import { TrimControl } from './PauseReactReview'
@@ -43,6 +46,8 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
   const [broll, setBroll] = useState<BrollView | null>(null)
   const [layout, setLayout] = useState<LayoutExtrasView | null>(null)
   const [graphics, setGraphics] = useState<EditorGraphic[]>([])
+  // What the chat set (kept answers), for "What changed".
+  const [asked, setAsked] = useState<RemixAsked>({})
   const parts = partsFor(draft.format, 0)
   const recorded = (part: RecordingPart): boolean => Boolean(recordings[draft.id]?.[part])
   const allRecorded = parts.every(recorded)
@@ -109,7 +114,7 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
     : !recorded(take) ? (react ? 'Record part 2 first: your thoughts' : 'Record or upload your take first')
       : !current.headline.trim() ? 'Write the hook text first'
         : problem ? 'Fix the hook text or caption first' : null
-  const recorder = (part: RecordingPart, title: string, detail: string, step: number): React.JSX.Element => {
+  const recorder = (part: RecordingPart, title: string, detail: string, step: number, extra?: React.ReactNode): React.JSX.Element => {
     const saved = recordings[draft.id]?.[part]
     return (
       <section className="glass-tile space-y-3 rounded-2xl p-4" aria-label={title}>
@@ -128,6 +133,7 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
             <Button size="sm" variant="secondary" icon={<Upload className="h-3.5 w-3.5" />} loading={working === 'upload'} disabled={busy} onClick={() => void upload(part)}>Upload a phone video</Button>
           </div>
         )}
+        {saved && extra}
       </section>
     )
   }
@@ -148,7 +154,8 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
       <div className="mt-4 space-y-4">
         {status.error && <Callout tone="danger"><FriendlyError error={status.error} suffix="Your recordings are still here, so you can try again." /></Callout>}
         {status.warnings.map((warning, i) => <Callout key={i} tone="warning">{warning}</Callout>)}
-        <RemixEditLog draft={draft} recordings={recordings} headline={current.headline} disabled={busy} onRecordings={setRecordings} onError={onError} />
+        <RemixEditLog draft={draft} recordings={recordings} headline={current.headline} caption={current.postCaption ?? ''} graphics={graphics} asked={asked}
+          disabled={busy} onRecordings={setRecordings} onError={onError} />
 
         <section className="glass-tile space-y-3 rounded-2xl p-4" aria-label="Their clip">
           <h3 className="flex items-center gap-2 text-sm font-medium text-ink"><Scissors className="h-4 w-4" />1 · Their clip</h3>
@@ -178,8 +185,11 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
             onView={setBroll} onError={onError} setWorking={setWorking} onPlan={setPlan} onOpenKeys={onOpenKeys} />}
         </>) : <>
           {recorder('reaction', 'Your take',
-            `Watch their clip, then say what you think of it, in your own words, up to ${CLIP_TAKE_MAX_SECONDS / 60} minutes. Record here, or upload a phone video.`, 2)}
-          <TakeTrimNote draft={draft} recordings={recordings} disabled={busy} onRecordings={setRecordings} onError={onError} />
+            `Watch their clip, then say what you think of it, in your own words, up to ${CLIP_TAKE_MAX_SECONDS / 60} minutes. Record here, or upload a phone video.`, 2,
+            <>
+              <TakeTrimControl draft={draft} recordings={recordings} disabled={busy || recording !== null} onRecordings={setRecordings} onError={onError} />
+              <TakeTrimNote draft={draft} recordings={recordings} disabled={busy} onRecordings={setRecordings} onError={onError} />
+            </>)}
         </>}
         {layoutProps && <ProofScreenshots {...layoutProps} step={proofStep} takeSeconds={takeSeconds} />}
 
@@ -206,9 +216,12 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
           {draft.notes.map((note, i) => <p key={i} className="text-2xs text-warning"><AlertTriangle className="mr-1 inline h-3 w-3" />{note}</p>)}
         </section>
 
+        <RemixLookSection status={status} step={step + 1} disabled={busy} frame={recordings[draft.id]?.[take]?.path ?? source} hookText={current.headline} onError={onError} />
         <RemixGraphicsSection status={status} draft={draft} text={text} onGraphics={(change) => setGraphics(change)} recordings={recordings}
-          partMs={takeSeconds ? Math.round(takeSeconds * 1000) : null} banner={Boolean(layout?.banner && layout.keyword)} disabled={busy} step={step + 1} />
+          partMs={takeSeconds ? Math.round(takeSeconds * 1000) : null} banner={Boolean(layout?.banner && layout.keyword)} disabled={busy} step={step + 2} />
         <RemixChatSection runId={status.id} draft={draft} text={text} onText={onText} afterMain={async () => { await refresh() }}
+          video={recordings[draft.id]?.[take]?.path ?? null} onAsked={(next) => setAsked((before) => ({ ...before, ...next }))}
+          suggestions={remixChatSuggestions(draft.format === 'react_thoughts' ? 'react_thoughts' : 'clip_then_me', { box: layout?.boxAt ?? null, banner: Boolean(layout && !layout.banner && layout.keyword) })}
           disabledReason={busy ? 'Wait for what’s running to finish.' : recording ? 'Close the recorder to chat.' : null} />
 
         <div className="flex flex-wrap items-center gap-2">

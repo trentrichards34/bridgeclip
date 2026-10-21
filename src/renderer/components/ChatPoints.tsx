@@ -126,7 +126,9 @@ export function PointChips({ thread }: { thread: string }): React.JSX.Element | 
 /** A small vertical frame to point on, for a review screen with no live preview (a still of `video` when given). */
 export function PointPad({ thread, video }: { thread: string; video?: string | null }): React.JSX.Element {
   return <div className="chat-point-pad">
-    {video ? <video src={`${localFileUrl(video)}#t=0.1`} muted preload="auto" playsInline aria-hidden /> : <div className="chat-point-pad-grid" aria-hidden />}
+    {/* A media fragment (#t=) leaves some recordings black: seek once the metadata is in instead. */}
+    {video ? <video src={localFileUrl(video)} muted preload="auto" playsInline aria-hidden
+      onLoadedMetadata={(e) => { const v = e.currentTarget; const d = v.duration; v.currentTime = Number.isFinite(d) && d > 0 ? Math.min(0.1, d / 2) : 0.1 }} /> : <div className="chat-point-pad-grid" aria-hidden />}
     <PointLayer thread={thread} outMs={() => null} />
   </div>
 }

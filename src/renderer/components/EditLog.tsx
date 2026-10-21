@@ -6,7 +6,8 @@
  */
 import { useState } from 'react'
 import { ChevronDown, History, RotateCcw } from 'lucide-react'
-import { remixEditLog, type EditLogLine } from '../../shared/edit-log'
+import { remixEditLog, type EditLogLine, type RemixAsked } from '../../shared/edit-log'
+import type { EditorGraphic } from '../../shared/motion-graphics'
 import type { RemixDraft, RemixRecordings } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage } from '../lib/utils'
@@ -27,20 +28,24 @@ export function EditLog<P>({ lines, onRestore, onUndo, disabled, note, className
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(defaultOpen)
   if (!lines.length && !onUndo) return null
+  // Lines the member asked for (in a chat) are counted and marked apart from what the app did on its own.
+  const askedCount = lines.filter((line) => line.asked).length
+  const appCount = lines.length - askedCount
+  const count = [appCount ? `${appCount} ${appCount === 1 ? 'thing' : 'things'} the app did` : '', askedCount ? `${askedCount} you asked for` : ''].filter(Boolean).join(' · ')
   return (
     <section data-testid="edit-log" aria-label="What changed"
       className={cn('min-w-0', variant === 'strip' ? 'edit-log-strip border-b border-white/10 px-3 py-2' : 'glass-tile rounded-2xl p-3', className)}>
       <button type="button" className="flex w-full min-w-0 items-center gap-1.5 text-left" aria-expanded={open} onClick={() => setOpen(!open)}>
         <History className="h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden />
         <span className="text-xs font-semibold text-ink">What changed</span>
-        <span className="text-2xs text-ink-subtle">· {lines.length ? `${lines.length} ${lines.length === 1 ? 'thing' : 'things'} the app did` : 'all restored'}</span>
+        <span className="text-2xs text-ink-subtle">· {lines.length ? count : 'all restored'}</span>
         <ChevronDown className={cn('ml-auto h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform', open && 'rotate-180')} aria-hidden />
       </button>
       {open && <>
         <ul className={cn('mt-1.5 space-y-0.5', variant === 'strip' && 'max-h-44 overflow-y-auto overflow-x-hidden')}>
           {lines.map((line) => (
             <li key={line.id} data-log={line.id} className="flex min-w-0 items-start gap-1.5 rounded-md px-1 py-0.5 hover:bg-white/[0.04]">
-              <span className="min-w-0 flex-1 break-words pt-1 text-2xs leading-snug text-ink">{line.text}</span>
+              <span className="min-w-0 flex-1 break-words pt-1 text-2xs leading-snug text-ink">{line.text}{line.asked && <span className="ml-1.5 whitespace-nowrap text-ink-subtle">· you asked</span>}</span>
               {line.restore !== undefined && (
                 <Button size="sm" variant="ghost" className="h-6 shrink-0 px-1.5 text-2xs" icon={<RotateCcw className="h-3 w-3" />} disabled={disabled}
                   tooltip={line.restoreHint} aria-label={`Restore: ${line.text}`} onClick={() => onRestore(line)}>Restore</Button>
@@ -58,13 +63,17 @@ export function EditLog<P>({ lines, onRestore, onUndo, disabled, note, className
   )
 }
 
-/** A remix take's review: the part of their clip used, your take's trim (Restore uses all of it) and the AI's hook text. */
-export function RemixEditLog({ draft, recordings, headline, disabled, onRecordings, onError }: {
-  draft: RemixDraft; recordings: RemixRecordings; headline: string; disabled: boolean
+/**
+ * A remix take's review: the hook text and caption the AI wrote (and, in Moment + my take, the moment it picked), and
+ * what the member asked the chat for, marked "you asked" (a chat trim of the take has Restore: use all of it).
+ */
+export function RemixEditLog({ draft, recordings, headline, caption, graphics, asked, aiMoment, disabled, onRecordings, onError }: {
+  draft: RemixDraft; recordings: RemixRecordings; headline: string; caption: string; graphics?: EditorGraphic[]; asked?: RemixAsked
+  aiMoment?: boolean; disabled: boolean
   onRecordings: (list: RemixRecordings) => void; onError: (message: string | null) => void
 }): React.JSX.Element | null {
   const take = recordings[draft.id]?.reaction
-  const lines = remixEditLog({ startMs: draft.startMs, endMs: draft.endMs, take, aiHeadline: draft.headline, headline })
+  const lines = remixEditLog({ startMs: draft.startMs, endMs: draft.endMs, aiMoment, take, aiHeadline: draft.headline, headline, aiCaption: draft.postCaption, caption, graphics, asked })
   return <EditLog lines={lines} disabled={disabled} defaultOpen={false} onRestore={(line) => {
     if (line.restore === 'use-whole-take') getApi().remix.takeTrim(draft.id, null, null).then(onRecordings, (e) => onError(errorMessage(e)))
   }} />
