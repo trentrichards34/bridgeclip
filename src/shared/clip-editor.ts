@@ -495,6 +495,11 @@ export function resizeCrop(crop: Crop, corner: CropCorner, dx: number, dy: numbe
 }
 export function editDuration(c: CandidateEdit): number { return c.ranges.reduce((n, [a, b]) => n + b - a, 0) / c.video_speed }
 
+/** Where source time `t` (ms) lands in the exported clip (ms): the kept time before it, at the export speed. */
+export function outputTimeAt(c: Pick<CandidateEdit, 'ranges' | 'video_speed'>, t: number): number {
+  return c.ranges.reduce((n, [a, b]) => n + Math.max(0, Math.min(b, t) - a), 0) / (c.video_speed || 1)
+}
+
 /** Lower bound with a small tolerance for browser media timestamps. */
 function frameIndex(frames: number[], time: number): number {
   let lo = 0, hi = frames.length

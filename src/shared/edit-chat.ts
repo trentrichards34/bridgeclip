@@ -16,7 +16,7 @@ import {
   applyRecipe, chooseHook, formatClock, parseEditDecisions, reelCardWindows, reelOrder, reelSeconds, reelWordStarts,
   type EditCard, type EditDecisions, type EditImage, type EditPlan
 } from './edit-recording'
-import { HEADLINE_FONTS, HEADLINE_LOOKS, parseHeadlineLook } from './headline-look'
+import { HEADLINE_FONTS, HEADLINE_HIDE_AFTER_S, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, HOOK_LOOK_TOOL_PROPERTIES, applyHookLookArgs, hideAfterLabel } from './headline-look'
 import { LOOK_EXTRAS, parseLookExtras } from './look-extras'
 import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, MAX_GRAPHIC_FIELD_CHARS, newGraphic, templateInfo, type GraphicPlacement, type GraphicTemplateId } from './motion-graphics'
 import { MAX_REEL_GRAPHICS, REEL_GRAPHIC_TEMPLATES, graphicFields, newEditGraphic, type EditGraphic } from './reel-graphics'
@@ -182,12 +182,11 @@ export function applyEditChatTool(d: EditDecisions, name: string, args: Record<s
       return done(`${!look.includeCaptions ? 'Captions turned off' : args.preset ? `Captions set to the ${look.captionPreset} style` : 'Captions turned on'}${why}`, { look })
     }
     case 'set_hook_look': {
-      const next: Record<string, unknown> = { ...d.look.headlineLook }
-      for (const key of ['look', 'color', 'font'] as const) if (args[key] !== undefined) next[key] = args[key]
       let headlineLook
-      try { headlineLook = parseHeadlineLook(next) } catch { return fail(`Use look ${HEADLINE_LOOKS.map((l) => l.id).join('/')}, font ${HEADLINE_FONTS.map((f) => f.id).join('/')} and color as #RRGGBB.`) }
+      try { headlineLook = applyHookLookArgs(d.look.headlineLook, args) } catch { return fail(`Use look ${HEADLINE_LOOKS.map((l) => l.id).join('/')}, font ${HEADLINE_FONTS.map((f) => f.id).join('/')}, text_bg ${HEADLINE_TEXT_BGS.map((b) => b.id).join('/')}, hide_after_s ${[0, ...HEADLINE_HIDE_AFTER_S].join('/')} and color as #RRGGBB.`) }
       const label = HEADLINE_LOOKS.find((l) => l.id === headlineLook.look)?.label ?? headlineLook.look
-      return done(`Hook text look set to ${label}${why}`, { look: { ...d.look, headlineLook } })
+      const hides = hideAfterLabel(headlineLook)
+      return done(`Hook text look set to ${label}${hides ? `, ${hides}` : ''}${why}`, { look: { ...d.look, headlineLook } })
     }
     case 'add_graphic': case 'update_graphic': {
       const graphics = d.graphics ?? []
@@ -317,7 +316,7 @@ export function editChatContext(d: EditDecisions, ctx: EditChatContext, sources:
   lines.push('')
   lines.push(plan.hooks.length ? `Hooks found (choose_hook): ${plan.hooks.map((h) => `id ${h.id}: words ${h.start}–${h.end} “${h.text}”${h.id === d.hookId ? ' (chosen)' : ''}`).join('; ')}.` : 'No hooks were found.')
   lines.push(hook ? `Opens with hook ${hook.id}.` : 'No hook: it starts from the beginning.')
-  lines.push(`Hook text on screen: ${d.hookText ? `“${d.hookText}”` : 'none'} (look ${d.look.headlineLook.look}, font ${d.look.headlineLook.font}).`)
+  lines.push(`Hook text on screen: ${d.hookText ? `“${d.hookText}”` : 'none'} (look ${d.look.headlineLook.look}, font ${d.look.headlineLook.font}${d.look.headlineLook.textBg ? `, text box ${d.look.headlineLook.textBg}` : ''}${d.look.headlineLook.hideAfterS ? `, ${hideAfterLabel(d.look.headlineLook)}` : ''}).`)
   lines.push(plan.cta ? `Call to action: words ${plan.cta.start}–${plan.cta.end}; ${d.endOnCta ? 'moved to the end' : 'left where it was said'}.` : 'No call to action was found.')
   const cards = plan.popups.filter((p) => p.kind === 'card'), pops = plan.popups.filter((p) => p.kind !== 'card')
   const choice = (id: number): EditDecisions['popups'][number] | undefined => d.popups.find((p) => p.id === id)
@@ -354,7 +353,7 @@ export const EDIT_CHAT_TOOLS: { name: EditChatToolName; description: string; par
   { name: 'set_extras', description: `Set the extras on top of the look (the full list): ${LOOK_EXTRAS.map((x) => `${x.id}: ${x.detail}`).join(' ')}`, parameters: { type: 'object', properties: { extras: { type: 'array', items: { type: 'string', enum: LOOK_EXTRAS.map((x) => x.id) } }, reason }, required: ['extras'], additionalProperties: false } },
   { name: 'set_openings', description: 'Turn the cut-out opening (background removed for the first 3 seconds) or the raw-to-edited opening (a 3.5-second card showing the raw take first) on or off.', parameters: { type: 'object', properties: { cutout_intro: { type: 'boolean' }, raw_intro: { type: 'boolean' }, reason }, additionalProperties: false } },
   { name: 'set_captions', description: 'Turn captions on or off, or choose their style.', parameters: { type: 'object', properties: { on: { type: 'boolean' }, preset: { type: 'string', enum: [...CAPTION_PRESET_IDS] }, reason }, additionalProperties: false } },
-  { name: 'set_hook_look', description: 'Change how the hook text looks. Give only what changes.', parameters: { type: 'object', properties: { look: { type: 'string', enum: HEADLINE_LOOKS.map((l) => l.id) }, font: { type: 'string', enum: HEADLINE_FONTS.map((f) => f.id) }, color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' }, reason }, additionalProperties: false } },
+  { name: 'set_hook_look', description: 'Change how the hook text looks. Give only what changes.', parameters: { type: 'object', properties: { look: { type: 'string', enum: HEADLINE_LOOKS.map((l) => l.id) }, font: { type: 'string', enum: HEADLINE_FONTS.map((f) => f.id) }, color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' }, ...HOOK_LOOK_TOOL_PROPERTIES, reason }, additionalProperties: false } },
   { name: 'add_graphic', description: `Add a motion graphic that starts as a word is said (${REEL_GRAPHIC_TEMPLATES.map((t) => `${t.id}: ${t.detail}`).join(' ')}). It can't play during a half-screen card. With pin ("put an arrow here"): a highlight points at the pin; another template sits in the band nearest it.`, parameters: { type: 'object', properties: { template: { type: 'string', enum: REEL_GRAPHIC_TEMPLATES.map((t) => t.id) }, word: index('The word index it starts on (a kept word).'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['template', 'word', 'fields'], additionalProperties: false } },
   { name: 'update_graphic', description: 'Change a graphic by id. Give only what changes. With pin ("move it here"): an arrow or circle points at the pin; another graphic moves to the band nearest it.', parameters: { type: 'object', properties: { id: { type: 'string' }, word: index('The word index it starts on.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['id'], additionalProperties: false } },
   { name: 'remove_graphic', description: 'Remove a graphic by id.', parameters: { type: 'object', properties: { id: { type: 'string' }, reason }, required: ['id'], additionalProperties: false } },

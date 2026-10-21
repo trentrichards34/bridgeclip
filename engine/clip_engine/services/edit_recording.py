@@ -1259,7 +1259,9 @@ async def overlay_reel(base: str, out: str, work: str, look: Look, timed: list[l
     from clip_engine.services import edit_visuals as ev
     from clip_engine.services.brand_mark import mark_image, mark_position
     from clip_engine.services.caption_generator import CaptionGeneratorService
-    from clip_engine.services.rendering_service import RenderingService, RenderRequest, TitleStyle, parse_headline_look
+    from clip_engine.services.rendering_service import (
+        RenderingService, RenderRequest, TitleStyle, headline_hide_fade, headline_hide_overlay, parse_headline_look,
+    )
     from clip_engine.services import look_extras as lx
     layers = layers or Layers()
     warnings = warnings if warnings is not None else []
@@ -1343,8 +1345,16 @@ async def overlay_reel(base: str, out: str, work: str, look: Look, timed: list[l
         current = "cap"
     if bar_path:
         k += 1
-        inputs += ["-i", bar_path]
-        steps.append(f"[{current}][{k}:v]overlay=x=0:y=0[o{k}]")
+        fade = headline_hide_fade(style, total_s)
+        if fade:
+            # "Hide hook text": the text fades out (a bar stays as a plain band in the padding's color).
+            enable, image_filter = headline_hide_overlay(fade)
+            inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{total_s:.3f}", "-i", bar_path]
+            steps.append(f"[{k}:v]{image_filter}[hide{k}]")
+            steps.append(f"[{current}][hide{k}]overlay=x=0:y=0:enable='{enable}'[o{k}]")
+        else:
+            inputs += ["-i", bar_path]
+            steps.append(f"[{current}][{k}:v]overlay=x=0:y=0[o{k}]")
         current = f"o{k}"
     accent = ev.accent_of(look.headline_look)
     for n, (a, b, card) in enumerate(windows):

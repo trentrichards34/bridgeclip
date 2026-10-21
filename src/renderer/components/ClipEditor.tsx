@@ -8,9 +8,9 @@ import { cn, errorMessage, formatTimecode, localFileUrl, parseTimecode } from '.
 import { HeadlineLookPicker } from './HeadlineLookPicker'
 import { CtaPicker } from './CtaPicker'
 import { Segmented } from './ui/Segmented'
-import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, TEXT_BOX, headlineBarColor, headlineTextBox, headlineTextColor, textBoxOutline, textBoxPath, textBoxRects } from '../../shared/headline-look'
+import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, TEXT_BOX, headlineBarColor, headlineShownAt, headlineTextBox, headlineTextColor, textBoxOutline, textBoxPath, textBoxRects } from '../../shared/headline-look'
 import { captionLanguageLabel } from '../../shared/caption-language'
-import { type AutomaticOmission, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, applyStyleToAll, runHookLook, transcriptClip, transcriptRange, variantOf, type HookIdea, MAX_HOOK_CHARS, SPLIT_RANGE, panelRows, resizeSplit, splitOf, EDITOR_REVISION_CONFLICT, cameraMarkers, snapFrame, stepFrame, candidateEdit, canAnimateScene, defaultCrop, editDuration, editSignature, editorProgress, framingAt, normalizeSceneTransitions, refineEdit, renderEditKey, resizeCrop, retimeScene, sceneAt, trimRange, type CandidateEdit, type Crop, type CropCorner, type EditorCandidate, type EditorQuestion, type EditorRange, type EditorScene, type EditorSession } from '../../shared/clip-editor'
+import { type AutomaticOmission, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, applyStyleToAll, runHookLook, transcriptClip, transcriptRange, variantOf, type HookIdea, MAX_HOOK_CHARS, SPLIT_RANGE, panelRows, resizeSplit, splitOf, EDITOR_REVISION_CONFLICT, cameraMarkers, snapFrame, stepFrame, candidateEdit, canAnimateScene, defaultCrop, editDuration, editSignature, editorProgress, framingAt, outputTimeAt, normalizeSceneTransitions, refineEdit, renderEditKey, resizeCrop, retimeScene, sceneAt, trimRange, type CandidateEdit, type Crop, type CropCorner, type EditorCandidate, type EditorQuestion, type EditorRange, type EditorScene, type EditorSession } from '../../shared/clip-editor'
 import { CameraChanges, CameraScanButton } from './CameraChanges'
 import { ActionMenu } from './ui/ActionMenu'
 import { Button } from './ui/Button'
@@ -389,9 +389,13 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
         // Hook text preview (vertical clips): the bar or floating text at the top.
         const hook = c.hook
         if (hook && hookLayout) {
-          const { bar, size, lines: shown, top, lineH } = hookLayout
+          const { bar, size } = hookLayout
           ctx.font = `800 ${size}px ${hookLayout.family}`
           if (bar) { ctx.fillStyle = bar; ctx.fillRect(0, 0, out.width, hookLayout.barH) }
+        }
+        // "Hide hook text": past its time in the exported clip, the text is gone (a bar stays as a plain band).
+        if (hook && hookLayout && headlineShownAt(hook.look, outputTimeAt(c, t) / 1000)) {
+          const { bar, size, lines: shown, top, lineH } = hookLayout
           ctx.textAlign = 'center'; ctx.textBaseline = 'top'
           const box = bar ? null : headlineTextBox(hook.look)
           if (box) {

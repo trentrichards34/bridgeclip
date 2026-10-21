@@ -56,7 +56,7 @@ export interface ClipArtifact {
 
 export interface RemixClipSettings {
   headline: string
-  headline_look: { look: string; color: string; font: string; textBg?: string } | null
+  headline_look: { look: string; color: string; font: string; textBg?: string; hideAfterS?: number } | null
   include_captions: boolean
   caption_preset: string
   split: number | null
@@ -70,7 +70,9 @@ function remixSettings(value: unknown): RemixClipSettings | null {
     headline: typeof raw.headline === 'string' ? raw.headline.slice(0, 200) : '',
     headline_look: look && typeof look.look === 'string' ? {
       look: look.look, color: typeof look.color === 'string' ? look.color : '#FFFFFF', font: typeof look.font === 'string' ? look.font : 'clean',
-      ...(typeof look.textBg === 'string' && look.textBg !== 'none' ? { textBg: look.textBg } : {})
+      ...(typeof look.textBg === 'string' && look.textBg !== 'none' ? { textBg: look.textBg } : {}),
+      // headline-look's HEADLINE_HIDE_AFTER_S (not imported: main tests load this module on its own).
+      ...(typeof look.hideAfterS === 'number' && [3, 5, 8, 10, 15].includes(look.hideAfterS) ? { hideAfterS: look.hideAfterS } : {})
     } : null,
     include_captions: raw.include_captions !== false,
     caption_preset: typeof raw.caption_preset === 'string' ? raw.caption_preset.slice(0, 64) : '',

@@ -3230,6 +3230,7 @@ class Remixer:
         from clip_engine.config import get_caption_preset
         from clip_engine.services.caption_generator import CaptionGeneratorService
         from clip_engine.services import look_extras as lx
+        from clip_engine.services.rendering_service import headline_hide_fade, headline_hide_overlay
 
         extras = self._look_extras_tag(tags)
         panel_h = OUT_H - bar_h
@@ -3252,8 +3253,10 @@ class Remixer:
                 anchors=[*[(int(until), 5, int(y)) for until, y in tags.get("caption_anchors") or []], (10**9, 5, caption_y)],
             )
         overlays: list[tuple[str, str, str, str]] = []
+        # "Hide hook text": the top hook text fades out (a bar stays as a plain band in the padding's color).
+        bar_fade = headline_hide_fade(self._look, total_s) if bar_path else None
         if bar_path:
-            overlays.append((bar_path, "0", "0", "1"))
+            overlays.append((bar_path, "0", "0", headline_hide_overlay(bar_fade)[0] if bar_fade else "1"))
         hook = self._hook_overlay(tags.get("hook"), headline, work)
         if hook:
             overlays.append(hook)
@@ -3324,9 +3327,16 @@ class Remixer:
             graph += f";[{current}]{service._caption_filter(caption_path)}[cap]"
             current = "cap"
         for i, (_, x, y, enable) in enumerate(overlays, start=1):
-            graph += f";[{current}][{i}:v]overlay=x={x}:y={y}:enable='{enable}'[o{i}]"
+            image = f"[{i}:v]"
+            if i == 1 and bar_fade:
+                graph += f";[{i}:v]{headline_hide_overlay(bar_fade)[1]}[hide{i}]"
+                image = f"[hide{i}]"
+            graph += f";[{current}]{image}overlay=x={x}:y={y}:enable='{enable}'[o{i}]"
             current = f"o{i}"
         overlay_inputs = [arg for path, *_ in overlays for arg in ("-i", path)]
+        if bar_fade:
+            # A looped picture, so the fade has a clock.
+            overlay_inputs = ["-loop", "1", "-framerate", str(FPS), "-t", f"{total_s:.3f}", *overlay_inputs]
         if extras:
             # Extras: b-roll tags under the hook text (and a top-right mark), the comment box off the face, the progress bar.
             caption_line = OUT_H - SILENT_CAPTION_FROM_BOTTOM if anchor == "silent" else bar_h + round(panel_h * 0.72)

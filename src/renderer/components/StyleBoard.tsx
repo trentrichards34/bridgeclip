@@ -7,7 +7,7 @@ import { LOOK_EXTRAS, type LookExtraId } from '../../shared/look-extras'
 import { MAX_CTA_OFFER_CHARS, normalizeCtaKeyword, type BrandIdentity } from '../../shared/remix'
 import type { StyleKind } from '../../shared/member-prefs'
 import {
-  COLOR_PRESETS, CURATED_COMBOS, HOOK_HINTS, HOOK_LABELS, brandBoardPatch, captionName, colorName, colorPatch, comboPatch, cornerName, extrasName, fontName,
+  BAR_HOOKS, COLOR_PRESETS, CURATED_COMBOS, HOOK_HINTS, HOOK_LABELS, brandBoardPatch, captionName, colorName, colorPatch, comboPatch, cornerName, extrasName, fontName,
   hookPatch, matchingCombo, shuffleCombo, styleSummary, textBgName, textBgPatch, toggleExtra, type BoardRows, type BoardStyle, type CuratedCombo, type HookChoice
 } from '../lib/style-board'
 import { getApi } from '../lib/ipc'
@@ -20,6 +20,7 @@ import { SaveStyleButton } from './StylePresets'
 import { StylePreview, type StyleFrame } from './StylePreview'
 import { Button } from './ui/Button'
 import { Field, TextInput } from './ui/Field'
+import { HideHookText } from './HideHookText'
 import { onRadioKeyDown } from './ui/Segmented'
 import { Switch } from './ui/Switch'
 
@@ -447,6 +448,10 @@ export function StyleBoard({
               </label>}
               note={<p className="text-2xs text-ink-subtle">{boxColorRow ? 'The color of the box behind each line.' : 'The color of the hook text bar.'} The text turns black or white to stay readable.</p>} />}
           </>}
+
+          {lookRows && value.hook !== 'none' && value.hook !== 'card' && hooks.includes(value.hook) && (
+            <HideHookText value={value.hideAfterS} bar={BAR_HOOKS.includes(value.hook)} onChange={(hideAfterS) => onChange({ hideAfterS })} />
+          )}
 
           {rows.extras && <ExtrasRow value={value.extras} onChange={(extras) => onChange({ extras })} options={extraOptions} wide={wide} skillExtras={skillExtras} />}
 
