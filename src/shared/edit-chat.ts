@@ -1,7 +1,7 @@
 /**
  * Edit my recording's Chat panel: the member asks for a change to the reviewed
  * edit in plain words ("remove the second retake", "start with the line about
- * pricing", "add a stat card when I say 40%"); the model calls these tools.
+ * pricing", "add a stat graphic when I say 40%"); the model calls these tools.
  * Main checks every call against a copy of the review's choices (an invalid
  * call goes back to the model as an error); the page applies the returned
  * steps through the review's own setters with `mergeEditChatSteps`, which
@@ -22,7 +22,7 @@ import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, MAX_GRAPHIC_FIELD_C
 import { MAX_REEL_GRAPHICS, REEL_GRAPHIC_TEMPLATES, graphicFields, newEditGraphic, type EditGraphic } from './reel-graphics'
 import { PIN_PROP, aimGraphic, pinArg, type ChatPoint } from './chat-point'
 
-export const EDIT_CHAT_SUGGESTIONS = ['Cut the retakes', 'Punchier hook', 'Add a stat card', 'Turn off the pop-ups'] as const
+export const EDIT_CHAT_SUGGESTIONS = ['Cut the retakes', 'Punchier hook', 'Add a stat graphic', 'Turn off the pop-ups'] as const
 /** Suggestions while the member has pins on the frame. */
 export const EDIT_CHAT_POINT_SUGGESTIONS = ['Put an arrow here', 'Circle this', 'Move the graphic here'] as const
 
@@ -142,7 +142,7 @@ export function applyEditChatTool(d: EditDecisions, name: string, args: Record<s
       const on = args.on === undefined ? item.on : args.on
       if (typeof on !== 'boolean') return fail('on must be true or false.')
       const popups = d.popups.map((p) => p.id === popup.id ? { ...p, on, card, text: card.title || card.items[0] || '' } : p)
-      return done(`${CARD_TYPE_LABELS[card.type]} card ${args.title !== undefined || args.items !== undefined ? 'changed' : ''}${on ? ' (on)' : ' (off)'}${why}`.replace('  ', ' '), { popups })
+      return done(`${CARD_TYPE_LABELS[card.type]} half-screen graphic ${args.title !== undefined || args.items !== undefined ? 'changed' : ''}${on ? ' (on)' : ' (off)'}${why}`.replace('  ', ' '), { popups })
     }
     case 'set_sound': {
       const sound = plan.sounds.find((s) => s.id === args.id)
