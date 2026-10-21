@@ -6,7 +6,7 @@
 // the review applies the returned steps through its own setters.
 
 import { randomBytes } from 'crypto'
-import { EDIT_CHAT_TOOLS, applyEditChatTool, editChatContext, type EditChatReply, type EditChatStep } from '../shared/edit-chat'
+import { COMBINE_CHAT_TOOLS, EDIT_CHAT_TOOLS, applyEditChatTool, editChatContext, type EditChatReply, type EditChatStep } from '../shared/edit-chat'
 import { parseEditDecisions, reelSeconds, formatClock, type EditDecisions, type EditStatus } from '../shared/edit-recording'
 import type { OpenRouterModel } from '../shared/openrouter-models'
 import type { ChatInfo } from '../shared/chat-core'
@@ -16,7 +16,7 @@ import { messageWithPoints, parseChatPoints, type ChatPoint } from '../shared/ch
 const MAX_CONTEXT_CHARS = 60_000
 
 const SYSTEM_PROMPT = `You edit ONE short vertical reel in CreatorClips' "Edit my recording" review, for a creator who posts to TikTok, Instagram and YouTube.
-The member recorded themselves talking to camera (maybe in a few takes); the app transcribed it and planned the edit. They ask for a change in plain words; you make it with the tools, then answer in one to three short sentences (plain words, US spelling).
+The member recorded themselves talking to camera (maybe in a few takes, or as several short clips the app combines into one video); the app transcribed it and planned the edit. They ask for a change in plain words; you make it with the tools, then answer in one to three short sentences (plain words, US spelling).
 
 Rules:
 - Words are referred to by their index in the transcript (index:word). Cut and keep whole lines or phrases, never half a word.
@@ -59,7 +59,9 @@ export async function runEditChat(input: EditChatTurnInput): Promise<EditChatRep
   return runToolChat<EditChatStep>({
     apiKey: input.apiKey, model: input.model, signal: input.signal, url: input.url, fetch: input.fetch, onCost: input.onCost,
     systemPrompt: `${SYSTEM_PROMPT}\n\nThe edit right now:\n${context}`,
-    history: input.history, message: messageWithPoints(input.message, points), tools: EDIT_CHAT_TOOLS,
+    history: input.history, message: messageWithPoints(input.message, points),
+    // The clip tools only when clips are combined.
+    tools: ctx.plan.combine ? EDIT_CHAT_TOOLS : EDIT_CHAT_TOOLS.filter((tool) => !COMBINE_CHAT_TOOLS.includes(tool.name)),
     apply: (name, args) => {
       const { step, decisions } = applyEditChatTool(working, name, args, ctx, newId, points)
       working = decisions

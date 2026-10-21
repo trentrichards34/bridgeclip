@@ -21,17 +21,21 @@ import { LOOK_EXTRAS, parseLookExtras } from './look-extras'
 import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, MAX_GRAPHIC_FIELD_CHARS, newGraphic, templateInfo, type GraphicPlacement, type GraphicTemplateId } from './motion-graphics'
 import { MAX_REEL_GRAPHICS, REEL_GRAPHIC_TEMPLATES, graphicFields, newEditGraphic, type EditGraphic } from './reel-graphics'
 import { PIN_PROP, aimGraphic, pinArg, type ChatPoint } from './chat-point'
+import { SHOT_LABELS, moveClip, removeClip, restoreClip, sameOrder, type ShotType } from './combine-clips'
 
 export const EDIT_CHAT_SUGGESTIONS = ['Cut the retakes', 'Punchier hook', 'Add a stat graphic', 'Turn off the pop-ups'] as const
 /** Suggestions while the member has pins on the frame. */
 export const EDIT_CHAT_POINT_SUGGESTIONS = ['Put an arrow here', 'Circle this', 'Move the graphic here'] as const
 
 /** What the chat may change in the review (the look is the member's current look). */
-export type EditChatPatch = Partial<Pick<EditDecisions, 'cut' | 'hookId' | 'hookText' | 'endOnCta' | 'popups' | 'sounds' | 'look' | 'recipe' | 'lookExtras' | 'cutoutIntro' | 'rawIntro' | 'graphics'>>
-const PATCH_KEYS = ['cut', 'hookId', 'hookText', 'endOnCta', 'popups', 'sounds', 'look', 'recipe', 'lookExtras', 'cutoutIntro', 'rawIntro', 'graphics'] as const
+export type EditChatPatch = Partial<Pick<EditDecisions, 'cut' | 'hookId' | 'hookText' | 'endOnCta' | 'popups' | 'sounds' | 'look' | 'recipe' | 'lookExtras' | 'cutoutIntro' | 'rawIntro' | 'graphics' | 'clipOrder' | 'transitions'>>
+const PATCH_KEYS = ['cut', 'hookId', 'hookText', 'endOnCta', 'popups', 'sounds', 'look', 'recipe', 'lookExtras', 'cutoutIntro', 'rawIntro', 'graphics', 'clipOrder', 'transitions'] as const
 
 export type EditChatToolName = 'cut_words' | 'keep_words' | 'choose_hook' | 'start_with' | 'set_hook_text' | 'set_end_on_cta' | 'set_popup' | 'set_card'
   | 'set_sound' | 'set_style' | 'set_extras' | 'set_openings' | 'set_captions' | 'set_hook_look' | 'add_graphic' | 'update_graphic' | 'remove_graphic'
+  | 'move_clip' | 'remove_clip' | 'restore_clip' | 'order_clips' | 'set_transitions'
+/** The tools only a combine-clips edit has. */
+export const COMBINE_CHAT_TOOLS: readonly EditChatToolName[] = ['move_clip', 'remove_clip', 'restore_clip', 'order_clips', 'set_transitions']
 
 export interface EditChatStep { tool: EditChatToolName; summary: string; patch: EditChatPatch }
 export type EditChatReply = ChatReplyOf<EditChatStep>
@@ -216,10 +220,53 @@ export function applyEditChatTool(d: EditDecisions, name: string, args: Record<s
       if (!current) return fail(`No graphic ${String(args.id).slice(0, 40)}. The graphics are listed in the context.`)
       return done(`Removed the ${templateInfo(current.template).label.toLowerCase()} on ${quote(plan, current.word, current.word)}${why}`, { graphics: graphics.filter((g) => g.id !== current.id) })
     }
+    case 'move_clip': case 'remove_clip': case 'restore_clip': case 'order_clips': case 'set_transitions': {
+      const combine = plan.combine
+      if (!combine || !d.clipOrder) return fail('This edit is one recording, not clips to combine.')
+      const count = combine.startOrder.length
+      const clip = (): number => {
+        const n = args.clip
+        if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > count) fail(`clip must be a clip number from 1 to ${count}.`)
+        return (n as number) - 1
+      }
+      if (name === 'set_transitions') {
+        if (typeof args.on !== 'boolean') return fail('on must be true or false.')
+        return done(`${args.on ? 'Quick transitions between clips' : 'Clean cuts between clips'}${why}`, { transitions: args.on })
+      }
+      if (name === 'order_clips') {
+        const filmed = Array.from({ length: count }, (_, i) => i)
+        if (args.order === 'ai') {
+          if (!combine.aiOrder) return fail('The AI didn’t suggest an order for these clips. Move clips with move_clip instead.')
+          if (sameOrder(d.clipOrder, combine.aiOrder)) fail('The clips are already in the AI’s order.')
+          return done(`Put the clips in the AI’s order${combine.orderWhy ? `: ${combine.orderWhy}` : ''}${why}`, { clipOrder: [...combine.aiOrder] })
+        }
+        if (args.order === 'filmed') {
+          if (sameOrder(d.clipOrder, filmed)) fail('The clips are already in the order they were filmed.')
+          return done(`Put the clips back in the order they were filmed${why}`, { clipOrder: filmed })
+        }
+        return fail('order must be "ai" or "filmed".')
+      }
+      const src = clip()
+      if (name === 'restore_clip') {
+        if (d.clipOrder.includes(src)) fail(`Clip ${src + 1} is already in the reel.`)
+        return done(`Put clip ${src + 1} back${why}`, { clipOrder: restoreClip(d.clipOrder, src) })
+      }
+      if (!d.clipOrder.includes(src)) fail(`Clip ${src + 1} was removed. Use restore_clip to put it back first.`)
+      if (name === 'remove_clip') {
+        if (d.clipOrder.length === 1) fail('That is the only clip left in the reel.')
+        return done(`Removed clip ${src + 1}${why}`, { clipOrder: removeClip(d.clipOrder, src) })
+      }
+      const position = args.position
+      if (typeof position !== 'number' || !Number.isInteger(position) || position < 1 || position > d.clipOrder.length) return fail(`position must be from 1 to ${d.clipOrder.length}.`)
+      if (d.clipOrder.indexOf(src) === position - 1) fail(`Clip ${src + 1} already plays there.`)
+      return done(`Moved clip ${src + 1} to play ${ordinal(position)}${why}`, { clipOrder: moveClip(d.clipOrder, src, 0, position - 1) })
+    }
     default:
       return fail(`There is no tool called ${String(name).slice(0, 40)}.`)
   }
 }
+
+const ordinal = (n: number): string => n === 1 ? 'first' : n === 2 ? 'second' : n === 3 ? 'third' : `${n}th`
 
 /** The page's check before applying: every step's values in order, merged, and valid like Make my reel. */
 export function mergeEditChatSteps(d: EditDecisions, steps: unknown, ctx: EditChatContext): EditChatPatch {
@@ -242,20 +289,27 @@ export function parseEditChatSteps(value: unknown): EditChatStep[] {
 }
 
 /** The review as the model sees it: every word with its index (cut ones struck), takes, hooks, cards, pop-ups, sounds, graphics and the look. */
-export function editChatContext(d: EditDecisions, ctx: EditChatContext, sources: readonly { name: string }[]): string {
+export function editChatContext(d: EditDecisions, ctx: EditChatContext, sources: readonly { name: string; shot?: ShotType }[]): string {
   const { plan } = ctx
   const cut = new Set(d.cut)
   const lines: string[] = []
   const hook = plan.hooks.find((h) => h.id === d.hookId)
-  lines.push(`The reel is about ${formatClock(reelSeconds(plan, d))} long, made from ${sources.length} take${sources.length === 1 ? '' : 's'} (${sources.map((s, i) => `take ${i + 1}: ${chatPlainText(s.name, 80)}`).join('; ')}).`)
-  lines.push(`It plays: the hook first (if any), then the kept words in order, then the call to action (when it ends on it). ${reelOrder(plan, d).length} of ${plan.words.length} words are kept.`)
+  if (plan.combine && d.clipOrder) {
+    const order = d.clipOrder
+    lines.push(`The reel is about ${formatClock(reelSeconds(plan, d))} long, COMBINED from ${sources.length} clips filmed one after another (parts of one video, numbered in filming order): ${sources.map((s, i) => `clip ${i + 1}: ${chatPlainText(s.name, 60)} (${s.shot ? SHOT_LABELS[s.shot].toLowerCase() : 'video'})`).join('; ')}.`)
+    lines.push(`They play in this order: ${order.map((src) => `clip ${src + 1}`).join(', ')}.${sources.length > order.length ? ` Removed: ${sources.map((_, i) => i).filter((i) => !order.includes(i)).map((i) => `clip ${i + 1}`).join(', ')}.` : ''} The AI's order: ${plan.combine.aiOrder ? `${plan.combine.aiOrder.map((src) => src + 1).join(', ')}${plan.combine.orderWhy ? ` (${chatPlainText(plan.combine.orderWhy, 160)})` : ''}` : 'none'}. Transitions: ${d.transitions ? 'quick dip between clips' : 'clean cuts'}. Use move_clip, remove_clip, restore_clip, order_clips and set_transitions for these.`)
+    lines.push(`It plays: the hook first (if any), then each clip's kept words, clip by clip, then the call to action (when it ends on it). ${reelOrder(plan, d).length} of ${plan.words.length} words play.`)
+  } else {
+    lines.push(`The reel is about ${formatClock(reelSeconds(plan, d))} long, made from ${sources.length} take${sources.length === 1 ? '' : 's'} (${sources.map((s, i) => `take ${i + 1}: ${chatPlainText(s.name, 80)}`).join('; ')}).`)
+    lines.push(`It plays: the hook first (if any), then the kept words in order, then the call to action (when it ends on it). ${reelOrder(plan, d).length} of ${plan.words.length} words are kept.`)
+  }
   lines.push('')
   lines.push('Transcript. Each word is index:word; ~word~ is cut, with why in brackets. A new line starts at a sentence end or a long pause.')
   let line: string[] = [], src = -1
   const flush = (): void => { if (line.length) lines.push(line.join(' ')); line = [] }
   plan.words.forEach((w, i) => {
     const prev = plan.words[i - 1]
-    if (w.src !== src) { flush(); lines.push(`— Take ${w.src + 1} —`); src = w.src }
+    if (w.src !== src) { flush(); lines.push(`— ${plan.combine ? 'Clip' : 'Take'} ${w.src + 1} —`); src = w.src }
     else if (prev && (/[.!?…]["')\]]*$/.test(prev.text) || w.startMs - prev.endMs > 1500)) flush()
     line.push(cut.has(i) ? `${i}:~${w.text}~${w.cut ? `[${CUT_LABELS[w.cut]}]` : ''}` : `${i}:${w.text}`)
   })
@@ -303,7 +357,12 @@ export const EDIT_CHAT_TOOLS: { name: EditChatToolName; description: string; par
   { name: 'set_hook_look', description: 'Change how the hook text looks. Give only what changes.', parameters: { type: 'object', properties: { look: { type: 'string', enum: HEADLINE_LOOKS.map((l) => l.id) }, font: { type: 'string', enum: HEADLINE_FONTS.map((f) => f.id) }, color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' }, reason }, additionalProperties: false } },
   { name: 'add_graphic', description: `Add a motion graphic that starts as a word is said (${REEL_GRAPHIC_TEMPLATES.map((t) => `${t.id}: ${t.detail}`).join(' ')}). It can't play during a half-screen card. With pin ("put an arrow here"): a highlight points at the pin; another template sits in the band nearest it.`, parameters: { type: 'object', properties: { template: { type: 'string', enum: REEL_GRAPHIC_TEMPLATES.map((t) => t.id) }, word: index('The word index it starts on (a kept word).'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['template', 'word', 'fields'], additionalProperties: false } },
   { name: 'update_graphic', description: 'Change a graphic by id. Give only what changes. With pin ("move it here"): an arrow or circle points at the pin; another graphic moves to the band nearest it.', parameters: { type: 'object', properties: { id: { type: 'string' }, word: index('The word index it starts on.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['id'], additionalProperties: false } },
-  { name: 'remove_graphic', description: 'Remove a graphic by id.', parameters: { type: 'object', properties: { id: { type: 'string' }, reason }, required: ['id'], additionalProperties: false } }
+  { name: 'remove_graphic', description: 'Remove a graphic by id.', parameters: { type: 'object', properties: { id: { type: 'string' }, reason }, required: ['id'], additionalProperties: false } },
+  { name: 'move_clip', description: 'Combined clips only: move a clip (its number, in filming order) to play at a position (1 = first).', parameters: { type: 'object', properties: { clip: { type: 'integer', minimum: 1 }, position: { type: 'integer', minimum: 1 }, reason }, required: ['clip', 'position'], additionalProperties: false } },
+  { name: 'remove_clip', description: 'Combined clips only: leave a clip out of the reel.', parameters: { type: 'object', properties: { clip: { type: 'integer', minimum: 1 }, reason }, required: ['clip'], additionalProperties: false } },
+  { name: 'restore_clip', description: 'Combined clips only: put a removed clip back (where it was filmed).', parameters: { type: 'object', properties: { clip: { type: 'integer', minimum: 1 }, reason }, required: ['clip'], additionalProperties: false } },
+  { name: 'order_clips', description: 'Combined clips only: play the clips in the AI’s suggested order ("ai": hook, points, proof, close) or in the order they were filmed ("filmed").', parameters: { type: 'object', properties: { order: { type: 'string', enum: ['ai', 'filmed'] }, reason }, required: ['order'], additionalProperties: false } },
+  { name: 'set_transitions', description: 'Combined clips only: a quick 0.2 s dip through black between clips (true) or clean cuts (false).', parameters: { type: 'object', properties: { on: { type: 'boolean' }, reason }, required: ['on'], additionalProperties: false } }
 ]
 
 export { ChatToolError }

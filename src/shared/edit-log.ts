@@ -13,7 +13,8 @@
 import { CAPTION_PRESETS } from './caption-presets'
 import { fitCropToAspect, type CandidateEdit, type EditorCandidate, type EditorProject, type EditorRange, type EditorScene } from './clip-editor'
 import { graphicItems, type EditorGraphic } from './motion-graphics'
-import { SOUND_LABELS, chooseHook, type CutReason, type EditDecisions, type EditPlan } from './edit-recording'
+import { SOUND_LABELS, chooseHook, type CutReason, type EditDecisions, type EditPlan, type EditSource } from './edit-recording'
+import { deadAir, orderedBy, sameOrder } from './combine-clips'
 
 export interface EditLogLine<P> {
   /** Stable per kind of change (tests and the UI's keys). */
@@ -224,9 +225,10 @@ function cutSpans(plan: EditPlan, reasons: CutReason[]): number[][] {
 const spanMs = (plan: EditPlan, span: number[]): number => plan.words[span[span.length - 1]].endMs - plan.words[span[0]].startMs
 
 /** The "What changed" lines for Edit my recording's review. Restore patches go through the review's own setters. */
-export function editRecordingLog(plan: EditPlan, d: EditDecisions): EditLogLine<EditPatch>[] {
+export function editRecordingLog(plan: EditPlan, d: EditDecisions, sources: readonly EditSource[] = []): EditLogLine<EditPatch>[] {
   const lines: EditLogLine<EditPatch>[] = []
   const cut = new Set(d.cut)
+  if (plan.combine && d.clipOrder) lines.push(...combineLog(plan, d, sources))
   for (const group of CUT_GROUPS) {
     // Still cut as planned: every word of the span is still cut.
     const spans = cutSpans(plan, group.reasons).filter((span) => span.every((i) => cut.has(i)))
@@ -245,7 +247,7 @@ export function editRecordingLog(plan: EditPlan, d: EditDecisions): EditLogLine<
     const moved = plan.words.slice(0, hook.start).some((_, i) => !cut.has(i))
     if (words) {
       const restored = chooseHook(plan, d, null)
-      lines.push({ id: 'hook', text: `Opened with “${short(words, 40)}”${moved ? ` (moved from ${plan.words.some((w) => w.src > 0) ? `take ${first.src + 1}, ` : ''}${logClock(first.startMs)})` : ''}`,
+      lines.push({ id: 'hook', text: `Opened with “${short(words, 40)}”${moved ? ` (moved from ${plan.words.some((w) => w.src > 0) ? `${plan.combine ? 'clip' : 'take'} ${first.src + 1}, ` : ''}${logClock(first.startMs)})` : ''}`,
         restore: { hookId: restored.hookId, hookText: restored.hookText, cut: restored.cut }, restoreHint: 'Start from the beginning, as recorded' })
     }
   }
@@ -270,6 +272,38 @@ export function editRecordingLog(plan: EditPlan, d: EditDecisions): EditLogLine<
   }
   if (d.cutoutIntro) lines.push({ id: 'cutout', text: 'Cut-out opening on', restore: { cutoutIntro: false }, restoreHint: 'Turn the cut-out opening off' })
   if (d.rawIntro) lines.push({ id: 'raw', text: 'Raw-to-edited opening on', restore: { rawIntro: false }, restoreHint: 'Turn the raw-to-edited opening off' })
+  return lines
+}
+
+/** Combine clips: how the clips were put in order and evened out, the dead air trimmed and the proof graphics added. */
+function combineLog(plan: EditPlan, d: EditDecisions, sources: readonly EditSource[]): EditLogLine<EditPatch>[] {
+  const lines: EditLogLine<EditPatch>[] = []
+  const combine = plan.combine!, order = d.clipOrder!
+  const count = combine.startOrder.length
+  const filmed = Array.from({ length: count }, (_, i) => i)
+  if (sameOrder(order, filmed)) {
+    lines.push({ id: 'order', text: `Ordered ${plural(count, 'clip')} by ${sources.length && orderedBy(sources) === 'name' ? 'their file names (the order they were filmed)' : 'when they were filmed'}` })
+  } else if (sameOrder(order, combine.aiOrder)) {
+    lines.push({ id: 'order', text: `Put ${plural(count, 'clip')} in the AI’s order${combine.orderWhy ? `: ${short(combine.orderWhy, 80)}` : ''}`,
+      restore: { clipOrder: filmed }, restoreHint: 'Use the order they were filmed in' })
+  }
+  if (sources.length) {
+    const air = deadAir(plan.words, sources, order)
+    if (air.starts) lines.push({ id: 'dead-air-start', text: `Trimmed ${logSeconds(air.startMs)} of dead air from ${plural(air.starts, 'clip start')}` })
+    if (air.ends) lines.push({ id: 'dead-air-end', text: `Trimmed ${logSeconds(air.endMs)} of dead air from ${plural(air.ends, 'clip end')}` })
+    const playing = order.filter((src) => sources[src])
+    if (playing.length > 1) lines.push({ id: 'evened', text: `Evened out brightness and loudness across ${plural(playing.length, 'clip')}` })
+    const screens = playing.filter((src) => sources[src].shot === 'screen')
+    if (screens.length) {
+      const steadied = screens.filter((src) => sources[src].steadied).length
+      lines.push({ id: 'screens', text: `${steadied ? 'Steadied and zoomed' : 'Zoomed'} in on the screen in ${plural(screens.length, 'screen clip')}` })
+    }
+  }
+  const proof = (d.graphics ?? []).filter((g) => g.origin === 'auto' && g.template === 'stat')
+  if (proof.length) {
+    lines.push({ id: 'proof', text: `Added ${proof.length === 1 ? `a ${graphicPhrase(proof[0])}` : `${plural(proof.length, 'proof graphic')}: ${proof.map(graphicPhrase).join(', ')}`} on what you said`,
+      restore: { graphics: (d.graphics ?? []).filter((g) => !proof.includes(g)) }, restoreHint: `Remove the ${plural(proof.length, 'graphic')} the app added` })
+  }
   return lines
 }
 

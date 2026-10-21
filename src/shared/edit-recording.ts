@@ -15,6 +15,9 @@ import { DEFAULT_EDIT_RECIPE, editRecipe, isEditRecipeId, recipeExtras, type Edi
 import { parseLookExtras, type LookExtraId } from './look-extras'
 import { parseEditGraphics, type EditGraphic } from './reel-graphics'
 import { parseAudioSkills } from './skills'
+import { parseClipOrder, type ClipOrderMode, type EditMode, type ShotType } from './combine-clips'
+import { newGraphic } from './motion-graphics'
+import { newEditGraphic } from './reel-graphics'
 
 export const EDIT_MAX_SOURCES = 5
 /** Per recording, and all takes together. */
@@ -95,9 +98,34 @@ export interface EditPlan {
   planned: 'ai' | 'basic'
   notes: string[]
   warnings: string[]
+  /** Combine clips only: the clips' order and proof graphics (words' `src` is the clip, numbered in filming order). */
+  combine?: EditCombine
 }
 
-export interface EditSource { path: string; name: string; seconds: number }
+/** A stat graphic the plan suggests on a number said while filming a screen (value as said, label in their words). */
+export interface EditProof { word: number; value: string; label: string }
+
+export interface EditCombine {
+  /** The AI's order (every clip once), or null when it didn't give one. */
+  aiOrder: number[] | null
+  /** One line: why the AI's order. */
+  orderWhy: string
+  proof: EditProof[]
+  /** The order the review starts with: filming order (0, 1, 2, …), or the AI's when the member asked for it. */
+  startOrder: number[]
+}
+
+export interface EditSource {
+  path: string; name: string; seconds: number
+  /** Combine clips: when the camera wrote the file (container creation_time, ISO), for filming order. */
+  createdAt?: string
+  /** Combine clips, after they are made ready: the 1080p proxy (also for previews), a thumbnail and the shot type. */
+  proxy?: string
+  thumb?: string
+  shot?: ShotType
+  /** A screen shot that was steadied. */
+  steadied?: boolean
+}
 
 export type EditPhase = 'transcribing' | 'planning' | 'review' | 'rendering' | 'done' | 'failed' | 'cancelled'
 
@@ -120,6 +148,8 @@ export interface EditStatus {
   warnings: string[]
   /** "My images" added on the review screen. */
   images?: EditImage[]
+  /** Retakes of one video (missing: this), or clips combined into one. */
+  mode?: EditMode
 }
 
 export interface EditLook {
@@ -168,10 +198,18 @@ export interface EditDecisions {
   /** Background music under the reel, ducking while they talk; `musicTrack` is the track (see music.ts). */
   music?: boolean
   musicTrack?: string
+  /** Combine clips: the clips in the order they play (a clip left out is removed from the reel). */
+  clipOrder?: number[]
+  /** Combine clips: a quick dip through black at each change of clip (missing: clean cuts). */
+  transitions?: boolean
 }
 
 export interface EditStartRequest {
   sources: string[]
+  /** Retakes of the same thing (missing: this), or parts of one video to combine. */
+  mode?: EditMode
+  /** Combine clips: start in filming order, or in the order the AI finds best. */
+  order?: ClipOrderMode
   brandIdentityId: string | null
   /** From "What should I film?": the hook they meant to open with (a hint for the plan, never shown as is). */
   hookHint?: string
@@ -215,6 +253,7 @@ export function formatClock(seconds: number): string {
 
 export function initialDecisions(plan: EditPlan, look: EditLook = DEFAULT_EDIT_LOOK, recipe: EditRecipeId = DEFAULT_EDIT_RECIPE): EditDecisions {
   const hook = plan.hooks.find((item) => item.id === plan.hook) ?? null
+  const combine = plan.combine ? { clipOrder: [...plan.combine.startOrder], transitions: false, graphics: proofGraphics(plan) } : {}
   return applyRecipe(plan, {
     cut: plan.words.flatMap((word, i) => (word.cut ? [i] : [])),
     hookId: hook?.id ?? null,
@@ -222,8 +261,18 @@ export function initialDecisions(plan: EditPlan, look: EditLook = DEFAULT_EDIT_L
     endOnCta: plan.cta !== null,
     popups: plan.popups.map((popup) => ({ id: popup.id, on: true, text: popup.text, ...(popup.card ? { card: copyCard(popup.card) } : {}) })),
     sounds: plan.sounds.map((sound) => ({ id: sound.id, on: true })),
-    look, recipe, lookExtras: [], pins: [], cutoutIntro: false, rawIntro: false, graphics: []
+    look, recipe, lookExtras: [], pins: [], cutoutIntro: false, rawIntro: false, graphics: [], ...combine
   }, recipe)
+}
+
+/** Combine clips: the plan's proof stat graphics (marked as added by the app, so "What changed" lists them). */
+export function proofGraphics(plan: EditPlan): EditGraphic[] {
+  const taken: string[] = []
+  return (plan.combine?.proof ?? []).map((proof) => {
+    const graphic = newEditGraphic(newGraphic('stat', 0, { fields: { value: proof.value, ...(proof.label ? { label: proof.label } : {}) }, origin: 'auto', taken }), proof.word)
+    taken.push(graphic.id)
+    return graphic
+  })
 }
 
 function copyCard(card: EditCard): EditCard {
@@ -285,15 +334,21 @@ export function chooseHook(plan: EditPlan, decisions: EditDecisions, hookId: num
   return { ...decisions, hookId: hook?.id ?? null, hookText: typed ? decisions.hookText : hook?.text ?? '', cut: [...cut].sort((a, b) => a - b) }
 }
 
-/** The words in the order the reel plays them: the hook, the rest as recorded, the call to action. */
+/**
+ * The words in the order the reel plays them: the hook, the rest as recorded, the call to action. Combine clips: the
+ * rest plays clip by clip in the member's order, and the words of a clip left out don't play at all.
+ */
 export function reelOrder(plan: EditPlan, decisions: EditDecisions): number[] {
   const cut = new Set(decisions.cut)
+  const place = decisions.clipOrder ? new Map(decisions.clipOrder.map((src, k) => [src, k])) : null
+  const plays = (i: number): boolean => !cut.has(i) && (!place || place.has(plan.words[i].src))
   const hook = plan.hooks.find((item) => item.id === decisions.hookId) ?? null
-  const range = (span: EditSpan | null): number[] => span ? Array.from({ length: span.end - span.start + 1 }, (_, k) => span.start + k).filter((i) => !cut.has(i)) : []
+  const range = (span: EditSpan | null): number[] => span ? Array.from({ length: span.end - span.start + 1 }, (_, k) => span.start + k).filter(plays) : []
   const first = range(hook)
   const last = decisions.endOnCta ? range(plan.cta).filter((i) => !first.includes(i)) : []
   const taken = new Set([...first, ...last])
-  const body = plan.words.map((_, i) => i).filter((i) => !cut.has(i) && !taken.has(i))
+  const body = plan.words.map((_, i) => i).filter((i) => plays(i) && !taken.has(i))
+  if (place) body.sort((a, b) => place.get(plan.words[a].src)! - place.get(plan.words[b].src)! || a - b)
   return [...first, ...body, ...last]
 }
 
@@ -410,7 +465,29 @@ export function parseEditPlan(value: unknown, sources: number): EditPlan | null 
   }
   const lines = (raw: unknown, max: number): string[] => Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string').map((item) => item.slice(0, 300)).slice(0, max) : []
   const hook = int(value.hook, 0, 10) && hooks.some((item) => item.id === value.hook) ? value.hook as number : hooks[0]?.id ?? null
-  return { words, hooks, hook, cta: span(value.cta), popups, sounds, planned: value.planned === 'basic' ? 'basic' : 'ai', notes: lines(value.notes, 6), warnings: lines(value.warnings, 4) }
+  const combine = value.combine === undefined ? undefined : parseCombine(value.combine, words, sources)
+  if (combine === null) return null
+  return { words, hooks, hook, cta: span(value.cta), popups, sounds, planned: value.planned === 'basic' ? 'basic' : 'ai', notes: lines(value.notes, 6), warnings: lines(value.warnings, 4),
+    ...(combine ? { combine } : {}) }
+}
+
+/** The plan's combine part (engine: ai_order, order_why, proof; or already parsed), checked; null when it isn't one. */
+function parseCombine(raw: unknown, words: EditWord[], count: number): EditCombine | null {
+  if (!record(raw)) return null
+  const aiRaw = raw.aiOrder ?? raw.ai_order
+  const aiOrder = aiRaw === null || aiRaw === undefined ? null : parseClipOrder(aiRaw, count)
+  if (aiRaw !== null && aiRaw !== undefined && (!aiOrder || aiOrder.length !== count)) return null
+  const why = cleanLine(raw.orderWhy ?? raw.order_why ?? '', 200)
+  const proof: EditProof[] = []
+  for (const item of Array.isArray(raw.proof) ? raw.proof.slice(0, 3) : []) {
+    const value = record(item) ? cleanLine(item.value, 24) : null
+    const label = record(item) ? cleanLine(item.label ?? '', 40) : null
+    if (!record(item) || !int(item.word, 0, words.length - 1) || !value || label === null) continue
+    proof.push({ word: item.word as number, value, label })
+  }
+  const start = raw.startOrder === undefined ? Array.from({ length: count }, (_, i) => i) : parseClipOrder(raw.startOrder, count)
+  if (!start) return null
+  return { aiOrder, orderWhy: aiOrder ? why ?? '' : '', proof, startOrder: start }
 }
 
 // eslint-disable-next-line no-control-regex
@@ -502,6 +579,13 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
       ...(lookExtras.length ? { lookExtras } : {}), ...audio },
     recipe: isEditRecipeId(value.recipe) ? value.recipe : DEFAULT_EDIT_RECIPE, lookExtras, pins,
     cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true, graphics, ...audio }
+  if (plan.combine) {
+    const order = value.clipOrder === undefined ? [...plan.combine.startOrder] : parseClipOrder(value.clipOrder, plan.combine.startOrder.length)
+    if (!order) throw new Error('Put your clips in order again.')
+    if (value.transitions !== undefined && typeof value.transitions !== 'boolean') throw new Error('Choose whether to add transitions between clips.')
+    decisions.clipOrder = order
+    decisions.transitions = value.transitions === true
+  }
   if (reelOrder(plan, decisions).length < 3) throw new Error('Keep a few more words: the reel would be almost empty.')
   return decisions
 }

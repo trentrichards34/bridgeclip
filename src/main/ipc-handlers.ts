@@ -47,9 +47,10 @@ import { importLegacyAvatarVideos } from './avatar-library'
 import { cancelListicleRender, LISTICLE_SCRIPT_ESTIMATE_USD, listicleRunBusy, listicleSpendCheck, listicleStatus, onListicleStatus, saveListicleRecording, startListicleRender, writeListicleScript } from './listicle'
 import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
-  isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate, addEditImage, addEditImageFiles, removeEditImage
+  isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate, addEditImage, addEditImageFiles, removeEditImage, importClips
 } from './edit-recording'
 import { EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGES, EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
+import { COMBINE_MAX_CLIPS } from '../shared/combine-clips'
 import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, renderSpendCheck, SCRIPT_ESTIMATE_USD, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { createHeygenAvatar, draftTwinVideo, heygenAccount, heygenConsentUrl, heygenKey, readyHeygenLink, refreshHeygenAvatar, renderHeygenTake, saveTwinRecording, setHeygenVoice, stockHeygenAvatars, TWIN_VIDEO_EXTENSIONS } from './heygen-avatar'
 import { isConsentUrl } from './heygen'
@@ -680,6 +681,15 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const sources = []
     for (const path of result.filePaths.slice(0, EDIT_MAX_SOURCES)) sources.push(await describeSource(authorizeMedia(path)))
     return sources
+  })
+  // Combine clips: videos or one .zip (unpacked in main), each file's progress sent to the page as it goes.
+  handle('edit:chooseClips', async () => {
+    const window = getMainWindow()
+    if (!window) return { sources: [], skipped: [] }
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile', 'multiSelections'], title: 'Choose your clips (or one .zip of them)', filters: [{ name: 'Video clips or a .zip', extensions: [...EDIT_VIDEO_EXTENSIONS, 'zip'] }] })
+    if (result.canceled || !result.filePaths.length) return { sources: [], skipped: [] }
+    if (result.filePaths.length > COMBINE_MAX_CLIPS) throw new Error(`Use up to ${COMBINE_MAX_CLIPS} clips.`)
+    return importClips(result.filePaths, (files) => sendToWindow('edit:importProgress', files))
   })
   paid('edit:start', 'openrouter', (request) => startEstimate(request), (request) => startEdit(request))
   handle('edit:render', (_event, decisions: unknown) => renderEdit(decisions))

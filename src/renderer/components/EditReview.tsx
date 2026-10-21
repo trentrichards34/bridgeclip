@@ -14,6 +14,8 @@ import { wordsAtPlayhead } from './ClipGraphics'
 import { ReelGraphics, type ReelGraphicItem, type ReelGraphicPatch } from './ReelGraphics'
 import { CardEditor, EditStylePicker, MyImages } from './EditExtras'
 import { EditLog } from './EditLog'
+import { ClipOrder } from './CombineClips'
+import { SHOT_LABELS } from '../../shared/combine-clips'
 import { applyRestore, editRecordingLog, restoreStillApplied, undoRestore, type RestoreUndo } from '../../shared/edit-log'
 import { SkillsPanel } from './SkillsPanel'
 import { editSkillPatch, editSkillRows } from '../../shared/skills'
@@ -76,7 +78,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const [lastRestore, setLastRestore] = useState<RestoreUndo<EditDecisions> | null>(null)
   // A field the Restore set changed again since: Undo would throw that away, so it's no longer offered.
   useEffect(() => { if (lastRestore && !restoreStillApplied(decisions, lastRestore)) setLastRestore(null) }, [decisions, lastRestore])
-  const logLines = useMemo(() => editRecordingLog(plan, decisions), [plan, decisions])
+  const logLines = useMemo(() => editRecordingLog(plan, decisions, status.sources), [plan, decisions, status.sources])
   const [hooksOpen, setHooksOpen] = useState(false)
   const [lookOpen, setLookOpen] = useState(false)
   const [making, setMaking] = useState(false)
@@ -164,7 +166,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   }), shownExtras)
   // The still next to the extras (and the frame to point on): the reel's first kept frame.
   const firstWord = useMemo(() => { const i = reelOrder(plan, decisions)[0]; return i === undefined ? null : plan.words[i] }, [plan, decisions])
-  const stillVideo = firstWord ? sources[firstWord.src]?.path : sources[0]?.path
+  // Combine clips: the clips' 1080p proxies play here (a phone's 4K HEVC original may not).
+  const media = (src: number | undefined): string | undefined => src === undefined ? undefined : sources[src]?.proxy ?? sources[src]?.path
+  const stillVideo = firstWord ? media(firstWord.src) : media(decisions.clipOrder?.[0] ?? 0)
   const stillAt = firstWord ? firstWord.startMs / 1000 + 0.05 : 0.1
 
   // The Chat panel works on the review's choices with the current look (extras live with the edit style).
@@ -211,7 +215,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   return (
     <Panel>
       <PanelHeader title="Review your edit" icon={<Wand2 className="h-4 w-4" />}
-        description={`About ${formatClock(seconds)} long · ${cutCount} word${cutCount === 1 ? '' : 's'} cut${sources.length > 1 ? ` · from ${sources.length} takes` : ''}. Making the reel is free. Chat messages use your OpenRouter credit.`} />
+        description={`About ${formatClock(seconds)} long · ${cutCount} word${cutCount === 1 ? '' : 's'} cut${plan.combine ? ` · ${decisions.clipOrder?.length ?? sources.length} of ${sources.length} clips` : sources.length > 1 ? ` · from ${sources.length} takes` : ''}. Making the reel is free. Chat messages use your OpenRouter credit.`} />
       {(plan.notes.length > 0 || status.transcriber) && (
         <p className="mt-2 text-2xs text-ink-muted" data-testid="edit-notes">
           {[...plan.notes, status.transcriber === 'scribe' ? 'Transcribed with ElevenLabs Scribe v2.' : status.transcriber === 'standard' ? 'Transcribed with the usual transcription (Scribe wasn’t available).' : ''].filter(Boolean).join(' ')}
@@ -279,6 +283,12 @@ export function EditReview({ status, brand, look, onLook, onError }: {
             {problem && <p className="text-2xs text-danger">{problem}</p>}
           </section>
 
+          {plan.combine && decisions.clipOrder && (
+            <ClipOrder plan={plan} sources={sources} order={decisions.clipOrder} transitions={decisions.transitions === true} disabled={making}
+              onOrder={(clipOrder) => setDecisions((current) => ({ ...current, clipOrder }))}
+              onTransitions={(transitions) => setDecisions((current) => ({ ...current, transitions }))} />
+          )}
+
           <section className="mt-5" aria-labelledby="edit-transcript-title">
             <div className="flex flex-wrap items-end justify-between gap-2">
               <div>
@@ -291,7 +301,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
               {lines.map((line, n) => (
                 <div key={n}>
                   {sources.length > 1 && (n === 0 || lines[n - 1].src !== line.src) && (
-                    <p className="eyebrow mt-2 text-[10px] text-ink-faint first:mt-0">Take {line.src + 1} · {sources[line.src]?.name}</p>
+                    <p className="eyebrow mt-2 text-[10px] text-ink-faint first:mt-0">
+                      {plan.combine ? `Clip ${line.src + 1}${sources[line.src]?.shot ? ` (${SHOT_LABELS[sources[line.src].shot!].toLowerCase()})` : ''}${decisions.clipOrder && !decisions.clipOrder.includes(line.src) ? ' · left out' : ''}` : `Take ${line.src + 1}`} · {sources[line.src]?.name}
+                    </p>
                   )}
                   <p>
                     {line.words.map((i) => {
@@ -456,7 +468,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                   void _extras
                   onLook({ ...look, ...lookPatch(look, rest) })
                 }}
-                  rows={{ hooks: LOOK_HOOKS, handle: true, extras: true }} brand={brand} frame={previewFrame(sources[0]?.path, 'video', 0.1)}
+                  rows={{ hooks: LOOK_HOOKS, handle: true, extras: true }} brand={brand} frame={previewFrame(media(decisions.clipOrder?.[0] ?? 0), 'video', 0.1)}
                   hookText={decisions.hookText} words={previewWords} skillExtras={['punch_zoom']} />
               </div>
             )}

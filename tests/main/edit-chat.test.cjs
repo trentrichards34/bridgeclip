@@ -160,7 +160,7 @@ test('one turn: tool calls become checked changes, errors go back to the model, 
   // The model saw the words with their indexes, and its bad call came back as an error it could fix.
   assert.match(openrouter.requests[0].messages[0].content, /10:Raise 11:your 12:price 13:by/)
   assert.match(openrouter.requests[1].messages.at(-1).content, /^Error: end must be a word index from 0 to 24/)
-  assert.deepEqual(openrouter.requests[0].tools.map((t) => t.function.name).sort(), plain(shared.EDIT_CHAT_TOOLS.map((t) => t.name)).sort())
+  assert.deepEqual(openrouter.requests[0].tools.map((t) => t.function.name).sort(), plain(shared.EDIT_CHAT_TOOLS.map((t) => t.name).filter((name) => !shared.COMBINE_CHAT_TOOLS.includes(name))).sort())
   const history = main.editChatHistory('run1')
   assert.deepEqual(history.map((m) => m.role), ['user', 'assistant'])
   assert.match(history[1].content, /\[Edits made: Cut “Most coaches lose clients” \(4 words\) \(the first take\)\. Added a stat counter on “by”\.\]|\[Edits made: Cut/)

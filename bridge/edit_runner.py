@@ -14,7 +14,7 @@ import sys
 from bridge_runner import reserve_stdout_for_protocol, emit
 
 MAX_REQUEST = 4 * 1024 * 1024
-MODES = ("transcribe", "plan", "render", "recompose")
+MODES = ("transcribe", "plan", "render", "recompose", "clips")
 
 
 def _abs_path(value):
@@ -108,6 +108,13 @@ def parse_request(raw):
                 or any(not isinstance(k, str) or len(k) > 100 for k in keyterms):
             raise ValueError("Invalid request")
         return {"mode": mode, "output_dir": raw["output_dir"], "source": raw["source"], "src": src, "keyterms": keyterms}
+    if mode == "clips":
+        from clip_engine.services.combine_clips import MAX_CLIPS
+        sources = raw.get("sources")
+        if not set(raw) <= {"mode", "output_dir", "sources"} or not isinstance(sources, list) or not 1 <= len(sources) <= MAX_CLIPS \
+                or not all(_abs_path(s) for s in sources):
+            raise ValueError("Invalid request")
+        return {"mode": mode, "output_dir": raw["output_dir"], "sources": list(sources)}
     if mode == "recompose":
         out = raw.get("output_path")
         if not set(raw) <= {"mode", "output_dir", "output_path", "headline", "headline_look", "include_captions", "caption_preset", "look_extras"}:
@@ -126,7 +133,8 @@ def parse_request(raw):
         names = raw.get("names") or []
         if not isinstance(names, list) or len(names) > MAX_SOURCES or any(not isinstance(n, str) or len(n) > 200 for n in names):
             raise ValueError("Invalid names")
-        return {"mode": mode, "output_dir": raw["output_dir"], "words": words, "names": names,
+        combine = _plan_combine(raw.get("combine"), count)
+        return {"mode": mode, "output_dir": raw["output_dir"], "words": words, "names": names, **({"combine": combine} if combine else {}),
                 "brand_identity": _text(raw.get("brand_identity"), 60000, "brand"), "brand_name": _text(raw.get("brand_name"), 120, "brand"),
                 "hook_hint": _text(raw.get("hook_hint"), 600, "hook hint"), "purpose": _text(raw.get("purpose"), 200, "purpose"),
                 "reference_image": _reference(raw.get("reference_image"))}
@@ -193,7 +201,31 @@ def parse_request(raw):
             "sounds": [dict(s) for s in sounds], "look": _look(raw), "title": " ".join(_text(raw.get("title"), 200, "title").split()),
             "cost_usd": float(cost), "pacing": _pacing(raw.get("pacing")), "recipe": raw.get("recipe", "clean"), "images": images,
             "pins": [dict(p) for p in pins], "cutout_intro": raw.get("cutout_intro", False), "raw_intro": raw.get("raw_intro", False),
-            "graphics": [dict(g) for g in graphics], "audio": audio}
+            "graphics": [dict(g) for g in graphics], "audio": audio, **({"combine": _render_combine(raw.get("combine"), len(sources))}
+                                                                     if raw.get("combine") is not None else {})}
+
+
+def _plan_combine(raw, count):
+    """Combine clips, for the plan: each clip's shot and length (in source order)."""
+    if raw is None:
+        return None
+    clips = raw.get("clips") if isinstance(raw, dict) and set(raw) == {"clips"} else None
+    if not isinstance(clips, list) or len(clips) != count or any(
+            not isinstance(c, dict) or set(c) != {"shot", "seconds"} or c.get("shot") not in ("face", "screen")
+            or isinstance(c.get("seconds"), bool) or not isinstance(c.get("seconds"), (int, float)) or not 0 <= c["seconds"] <= 3600 for c in clips):
+        raise ValueError("Invalid clips")
+    return {"clips": [{"shot": c["shot"], "seconds": float(c["seconds"])} for c in clips]}
+
+
+def _render_combine(raw, count):
+    """Combine clips, for the render: the clips in the order they play (left-out clips aren't listed) and transitions."""
+    if not isinstance(raw, dict) or set(raw) != {"order", "transitions"} or not isinstance(raw["transitions"], bool):
+        raise ValueError("Invalid clips")
+    order = raw["order"]
+    if not isinstance(order, list) or not 1 <= len(order) <= count or any(type(v) is not int or not 0 <= v < count for v in order) \
+            or len(set(order)) != len(order):
+        raise ValueError("Invalid clip order")
+    return {"order": list(order), "transitions": raw["transitions"]}
 
 
 def main():
@@ -225,6 +257,12 @@ def main():
                 return await edit_recording.plan_edit(config, progress)
             if mode == "recompose":
                 return await edit_recording.recompose_edit(config, progress)
+            if mode == "clips":
+                from clip_engine.services import combine_clips
+                try:
+                    return await combine_clips.prepare_clips(config, progress)
+                except combine_clips.CombineError as error:
+                    raise edit_recording.EditError(str(error)) from None
             return await edit_recording.render_edit(config, progress)
 
         result = asyncio.run(work())
