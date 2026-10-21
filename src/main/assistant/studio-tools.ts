@@ -1,6 +1,6 @@
 import { basename } from 'path'
 import { CAPTION_PRESETS, CAPTION_PRESET_IDS, DEFAULT_CAPTION_PRESET, isCaptionPresetId } from '../../shared/caption-presets'
-import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_LOOKS, parseHeadlineLook, type HeadlineLook } from '../../shared/headline-look'
+import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_HIDE_AFTER_S, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, parseHeadlineLook, type HeadlineLook } from '../../shared/headline-look'
 import { IMAGE_CTA_SECONDS, MAX_CTA_VIDEO_SECONDS, type CtaSummary } from '../../shared/ctas'
 import {
   AVATAR_VOICE, BRAND_IDENTITY_TEMPLATE, brandCtaKeyword, ctaLine, estimateRemixCost, isRunning, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, MAX_POST_CAPTION_CHARS,
@@ -39,7 +39,9 @@ const REMIX_RUN_ID = '^remix-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 const hookLookProperty = object({
   look: { type: 'string', enum: HEADLINE_LOOKS.map((item) => item.id), description: HEADLINE_LOOKS.map((item) => `${item.id}: ${item.hint}`).join(' ') },
   color: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$', description: 'Bar color for the "brand" look, #RRGGBB.' },
-  font: { type: 'string', enum: HEADLINE_FONTS.map((item) => item.id) }
+  font: { type: 'string', enum: HEADLINE_FONTS.map((item) => item.id) },
+  textBg: { type: 'string', enum: HEADLINE_TEXT_BGS.map((item) => item.id), description: 'Floating look only: a box behind each line (none, dark, light, or brand: the color).' },
+  hideAfterS: { type: 'integer', enum: [...HEADLINE_HIDE_AFTER_S], description: 'Fade the hook text out this many seconds in (a bar stays as a plain band). Leave out to show it the whole video.' }
 })
 
 const money = (value: number): string => `$${value.toFixed(2)}`
@@ -837,7 +839,7 @@ async function recomposePlan(input: Record<string, unknown>): Promise<{
   }
   const problem = remixEditProblem({ headline: edit.headline, intro: '', beats: [], close: '' }, 'silent')
   if (problem) throw new AssistantToolError(`Hook text: ${problem}`)
-  const lookLabel = (look: HeadlineLook): string => `${HEADLINE_LOOKS.find((item) => item.id === look.look)?.label ?? look.look}${look.look === 'brand' ? ` ${look.color}` : ''}, ${HEADLINE_FONTS.find((item) => item.id === look.font)?.label ?? look.font}`
+  const lookLabel = (look: HeadlineLook): string => `${HEADLINE_LOOKS.find((item) => item.id === look.look)?.label ?? look.look}${look.look === 'brand' ? ` ${look.color}` : ''}, ${HEADLINE_FONTS.find((item) => item.id === look.font)?.label ?? look.font}${look.hideAfterS ? `, hides after ${look.hideAfterS} s` : ''}`
   const presetName = (id: string): string => CAPTION_PRESETS.find((item) => item.id === id)?.name ?? id
   const changes = [
     input.hookText !== undefined ? `Hook text: “${clip(madeHeadline, 100)}” → “${clip(edit.headline, 100)}”` : '',

@@ -121,6 +121,13 @@ test('hook, captions, title and layout tools give valid edits', () => {
   r = shared.applyChatTool(r.candidate, 'set_hook_look', { look: 'brand', color: '#ff0055', font: 'condensed' }, project, newId)
   assert.deepEqual(plain(r.candidate.hook.look), { look: 'brand', color: '#FF0055', font: 'condensed' })
   assert.match(r.step.summary, /Brand color, Bold condensed font, #FF0055/)
+  // A text box (floating text) and "Hide hook text" (0: never).
+  r = shared.applyChatTool(r.candidate, 'set_hook_look', { look: 'floating', text_bg: 'dark', hide_after_s: 10 }, project, newId)
+  assert.deepEqual(plain(r.candidate.hook.look), { look: 'floating', color: '#FF0055', font: 'condensed', textBg: 'dark', hideAfterS: 10 })
+  assert.match(r.step.summary, /dark box behind the text, hides after 10 s/)
+  r = shared.applyChatTool(r.candidate, 'set_hook_look', { hide_after_s: 0 }, project, newId)
+  assert.equal(r.candidate.hook.look.hideAfterS, undefined)
+  assert.throws(() => shared.applyChatTool(r.candidate, 'set_hook_look', { hide_after_s: 7 }, project, newId), /hide_after_s/)
   r = shared.applyChatTool(c, 'set_captions', { preset: 'boxed' }, project, newId)
   assert.deepEqual(plain(r.step.patch), { caption_preset: 'boxed', captions: true })
   r = shared.applyChatTool(c, 'set_title', { title: 'Why it worked' }, project, newId)

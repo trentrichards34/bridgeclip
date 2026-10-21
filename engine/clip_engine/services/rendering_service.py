@@ -94,6 +94,9 @@ class TitleStyle:
 HEADLINE_LOOKS = ("white", "black", "brand", "floating", "none")
 # Floating text's background: none (outlined text) or a snug rounded box behind each line.
 HEADLINE_TEXT_BGS = ("none", "dark", "light", "brand")
+# "Hide hook text": seconds into the video (output clock) the hook text fades out; missing keeps it the whole video.
+HEADLINE_HIDE_AFTER_S = (3, 5, 8, 10, 15)
+HEADLINE_HIDE_FADE_S = 0.3
 # The box, against the font size: padding left and right, corner radius; the dark box's opacity.
 TEXT_BOX_PAD_X = 0.32
 TEXT_BOX_RADIUS = 0.25
@@ -130,6 +133,8 @@ class HeadlineLook:
     font: str = "clean"
     # Floating text only: a snug rounded box behind each line (none, dark, light or brand: the brand color).
     text_bg: str = "none"
+    # Seconds (output clock) after which the hook text fades out (a bar stays as a plain band); None: the whole video.
+    hide_after_s: Optional[int] = None
 
     @property
     def background(self) -> Optional[tuple[int, int, int]]:
@@ -171,7 +176,31 @@ class HeadlineLook:
         out = {"look": self.look, "color": self.color, "font": self.font}
         if self.text_bg != "none":
             out["textBg"] = self.text_bg
+        if self.hide_after_s is not None:
+            out["hideAfterS"] = self.hide_after_s
         return out
+
+
+def _hide_after(value: Any) -> Optional[int]:
+    """A known "hide after" choice, else None (strict callers check it themselves)."""
+    return value if type(value) is int and value in HEADLINE_HIDE_AFTER_S else None
+
+
+def headline_hide_fade(look: HeadlineLook, total_s: float, speed: float = 1.0) -> Optional[tuple[float, float]]:
+    """When the hook text fades out, on the clock the overlays run on (before a speed-up):
+    (start, length) in seconds, or None when it stays (no choice, or the video ends first)."""
+    if look.hide_after_s is None or look.look == "none" or total_s <= look.hide_after_s:
+        return None
+    return look.hide_after_s * speed, HEADLINE_HIDE_FADE_S * speed
+
+
+def headline_hide_overlay(fade: tuple[float, float]) -> tuple[str, str]:
+    """The overlay's (enable expression, image filter) for a fade from headline_hide_fade. The image must be a
+    looped input so the fade has a clock. Over a bar look the image fades into the padding's same color: the bar
+    stays as a plain band."""
+    start, length = fade
+    return (f"lt(t,{start + length:.3f})",
+            f"format=rgba,fade=t=out:st={start:.3f}:d={length:.3f}:alpha=1")
 
 
 def _rgb(color: str) -> tuple[int, int, int]:
@@ -182,19 +211,21 @@ def parse_headline_look(raw: Any) -> HeadlineLook:
     """A look from a request (untrusted): unknown values fall back to the white bar in the clean font."""
     if not isinstance(raw, dict):
         return HeadlineLook()
+    hide = _hide_after(raw.get("hideAfterS"))
     raw = {key: value for key, value in raw.items() if isinstance(value, str)}
     look = raw.get("look") if raw.get("look") in HEADLINE_LOOKS else "white"
     color = raw.get("color") if isinstance(raw.get("color"), str) and _HEX.match(raw["color"]) else "#FFFFFF"
     font = raw.get("font") if raw.get("font") in HEADLINE_FONTS else "clean"
     text_bg = raw.get("textBg") if raw.get("textBg") in HEADLINE_TEXT_BGS else "none"
-    return HeadlineLook(look, color.upper(), font, text_bg)
+    return HeadlineLook(look, color.upper(), font, text_bg, hide)
 
 
 def validate_headline_look(raw: Any) -> Optional[dict]:
-    """Strict check for requests from the app: None, or {look, color, font, textBg?} with known values."""
+    """Strict check for requests from the app: None, or {look, color, font, textBg?, hideAfterS?} with known values."""
     if raw is None:
         return None
-    if not isinstance(raw, dict) or set(raw) - {"look", "color", "font", "textBg"} \
+    if not isinstance(raw, dict) or set(raw) - {"look", "color", "font", "textBg", "hideAfterS"} \
+            or ("hideAfterS" in raw and _hide_after(raw["hideAfterS"]) is None) \
             or not all(isinstance(raw.get(key, ""), str) for key in ("look", "color", "font", "textBg")) \
             or raw.get("look", "white") not in HEADLINE_LOOKS or raw.get("font", "clean") not in HEADLINE_FONTS \
             or raw.get("textBg", "none") not in HEADLINE_TEXT_BGS or not _HEX.match(raw.get("color", "#FFFFFF")):
@@ -202,6 +233,8 @@ def validate_headline_look(raw: Any) -> Optional[dict]:
     out = {"look": raw.get("look", "white"), "color": raw.get("color", "#FFFFFF").upper(), "font": raw.get("font", "clean")}
     if raw.get("textBg", "none") != "none":
         out["textBg"] = raw["textBg"]
+    if "hideAfterS" in raw:
+        out["hideAfterS"] = raw["hideAfterS"]
     return out
 
 
@@ -874,7 +907,8 @@ class RenderingService:
             bar_h=bar_h,
         )
         graph += self._caption_graph(caption_path, request.caption_suppression_ranges_ms, window_start_ms, time_map)
-        overlays = self._overlays(request, out_plan, target_width, target_height, is_landscape, headline=headline)
+        overlays = self._overlays(request, out_plan, target_width, target_height, is_landscape, headline=headline,
+                                  end_s=time_map.output_ms / 1000)
         overlays += self._brand_overlays(request, target_width, target_height, is_landscape, bar_h, bool(background),
                                          time_map.output_ms / 1000)
         overlays += extras_module.create_layers(
@@ -990,8 +1024,12 @@ class RenderingService:
         target_height: int,
         is_landscape: bool,
         headline: Optional[tuple[str, int]] = None,
+        end_s: Optional[float] = None,
     ) -> list[Overlay]:
-        """Title card or headline bar, and channel banner, positioned per shot on the output timeline."""
+        """Title card or headline bar, and channel banner, positioned per shot on the output timeline.
+
+        `end_s` is the edited clip's length (before the speed-up): with "Hide hook text" the headline fades
+        out at its time on the output clock (scaled onto this clock by the video speed)."""
         src_w, src_h = out_plan.source_width, out_plan.source_height
         overlays: list[Overlay] = []
         # Landscape overlays were sized for 1080p; scale them with the output.
@@ -1002,7 +1040,9 @@ class RenderingService:
                    and not is_landscape and not self._background_video(request, is_landscape))
         title = None if headline or no_hook else self._title_overlay_image(request, target_width, scale)
         if headline:
-            overlays.append((headline[0], "0", "0"))
+            look = parse_headline_look(request.headline_look)
+            fade = headline_hide_fade(look, (end_s or 0) / request.video_speed, request.video_speed) if end_s else None
+            overlays.append((headline[0], "0", "0", *headline_hide_overlay(fade)) if fade else (headline[0], "0", "0"))
         if title:
             path, _, height = title
             if is_landscape:

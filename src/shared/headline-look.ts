@@ -16,6 +16,18 @@ export interface HeadlineLook {
   font: HeadlineFont
   /** Floating text only (ignored for the other looks): a box behind each line. Missing means 'none'. */
   textBg?: HeadlineTextBg
+  /** "Hide hook text": seconds into the video the text fades out (a bar stays as a plain band). Missing: the whole video. */
+  hideAfterS?: HeadlineHideAfter
+}
+
+/** The "Hide hook text" choices, in seconds (the engine's HEADLINE_HIDE_AFTER_S). */
+export const HEADLINE_HIDE_AFTER_S = [3, 5, 8, 10, 15] as const
+export type HeadlineHideAfter = typeof HEADLINE_HIDE_AFTER_S[number]
+/** How long the text takes to fade out (the engine's HEADLINE_HIDE_FADE_S). */
+export const HEADLINE_HIDE_FADE_S = 0.3
+
+export function isHeadlineHideAfter(value: unknown): value is HeadlineHideAfter {
+  return typeof value === 'number' && (HEADLINE_HIDE_AFTER_S as readonly number[]).includes(value)
 }
 
 export const DEFAULT_HEADLINE_LOOK: HeadlineLook = { look: 'white', color: '#FFFFFF', font: 'clean' }
@@ -113,7 +125,8 @@ export function headlineBarColor(look: HeadlineLook): string | null {
 export function parseHeadlineLook(value: unknown): HeadlineLook {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid headline look')
   const raw = value as Record<string, unknown>
-  if (Object.keys(raw).some((key) => !['look', 'color', 'font', 'textBg'].includes(key))) throw new Error('Invalid headline look')
+  if (Object.keys(raw).some((key) => !['look', 'color', 'font', 'textBg', 'hideAfterS'].includes(key))) throw new Error('Invalid headline look')
+  if (raw.hideAfterS !== undefined && !isHeadlineHideAfter(raw.hideAfterS)) throw new Error('Invalid headline look')
   const look = raw.look ?? 'white'
   const font = raw.font ?? 'clean'
   const color = raw.color ?? '#FFFFFF'
@@ -122,20 +135,62 @@ export function parseHeadlineLook(value: unknown): HeadlineLook {
     || !HEADLINE_TEXT_BGS.some((item) => item.id === textBg)) {
     throw new Error('Invalid headline look')
   }
-  // 'none' is left out, so looks made before the text box read and compare the same.
-  return { look: look as HeadlineLookStyle, color: color.toUpperCase(), font: font as HeadlineFont, ...(textBg !== 'none' ? { textBg: textBg as HeadlineTextBg } : {}) }
+  // 'none' and "never hide" are left out, so looks made before them read and compare the same.
+  return withHideAfter({ look: look as HeadlineLookStyle, color: color.toUpperCase(), font: font as HeadlineFont, ...(textBg !== 'none' ? { textBg: textBg as HeadlineTextBg } : {}) },
+    raw.hideAfterS as HeadlineHideAfter | undefined)
 }
 
-/** The look with this text background ('none' is left out, as parseHeadlineLook leaves it out). */
+/** The look with this text background ('none' is left out, as parseHeadlineLook leaves it out). Keeps its "hide after". */
 export function setTextBg(look: HeadlineLook, textBg: HeadlineTextBg): HeadlineLook {
-  const out: HeadlineLook = { look: look.look, color: look.color, font: look.font }
-  return textBg === 'none' ? out : { ...out, textBg }
+  const out: HeadlineLook = { look: look.look, color: look.color, font: look.font, ...(textBg !== 'none' ? { textBg } : {}) }
+  return withHideAfter(out, look.hideAfterS)
+}
+
+/** The look with this "hide after" (undefined, or an unknown value: shown the whole video, and left out). */
+export function setHideAfter(look: HeadlineLook, hideAfterS: number | undefined): HeadlineLook {
+  const rest: HeadlineLook = { look: look.look, color: look.color, font: look.font, ...(look.textBg !== undefined ? { textBg: look.textBg } : {}) }
+  return withHideAfter(rest, hideAfterS)
+}
+
+function withHideAfter(look: HeadlineLook, hideAfterS: number | undefined): HeadlineLook {
+  return isHeadlineHideAfter(hideAfterS) ? { ...look, hideAfterS } : look
+}
+
+/** The chat tools' set_hook_look parameters beyond look, font and color (snake case, as the tools take them). */
+export const HOOK_LOOK_TOOL_PROPERTIES = {
+  text_bg: { type: 'string', enum: HEADLINE_TEXT_BGS.map((item) => item.id), description: 'Floating text only: a box behind each line (none, dark, light, or brand: the color).' },
+  hide_after_s: { type: 'integer', enum: [0, ...HEADLINE_HIDE_AFTER_S], description: 'Fade the hook text out this many seconds in (a bar stays as a plain band). 0: show it the whole video.' }
+} as const
+
+/**
+ * A chat tool's set_hook_look arguments over the current look: look, font, color, text_bg and
+ * hide_after_s (0 or null: the whole video). Throws on anything unknown (parseHeadlineLook).
+ */
+export function applyHookLookArgs(current: HeadlineLook, args: Record<string, unknown>): HeadlineLook {
+  const next: Record<string, unknown> = { ...current }
+  for (const key of ['look', 'color', 'font'] as const) if (args[key] !== undefined) next[key] = args[key]
+  if (args.text_bg !== undefined) next.textBg = args.text_bg
+  if (args.hide_after_s !== undefined) {
+    if (args.hide_after_s === 0 || args.hide_after_s === null) delete next.hideAfterS
+    else next.hideAfterS = args.hide_after_s
+  }
+  return parseHeadlineLook(next)
+}
+
+/** "hides after 10 s" / "" for the chat tools' replies. */
+export function hideAfterLabel(look: Pick<HeadlineLook, 'hideAfterS'>): string {
+  return look.hideAfterS ? `hides after ${look.hideAfterS} s` : ''
+}
+
+/** Whether the hook text shows at this time (seconds on the output clock): previews with a playhead hide it after the time. */
+export function headlineShownAt(look: Pick<HeadlineLook, 'hideAfterS'> | undefined, t: number): boolean {
+  return !look?.hideAfterS || t < look.hideAfterS
 }
 
 /** What the engine needs: nothing for the default look, so older runs are unchanged; the text box only with floating text. */
 export function headlineLookForEngine(look: HeadlineLook | undefined): HeadlineLook | undefined {
   if (!look) return undefined
-  if (look.look === 'white' && look.font === 'clean') return undefined
+  if (look.look === 'white' && look.font === 'clean' && look.hideAfterS === undefined) return undefined
   if (look.textBg === undefined) return look
   return setTextBg(look, look.look === 'floating' ? look.textBg : 'none')
 }

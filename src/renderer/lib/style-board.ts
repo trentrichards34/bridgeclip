@@ -8,7 +8,8 @@
 import { CAPTION_PRESETS } from '../../shared/caption-presets'
 import { DEFAULT_HANDLE_POSITION, HANDLE_POSITIONS, hasBrandMark, type BrandLook, type HandlePosition } from '../../shared/brand-kit'
 import {
-  DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, isHexColor, setTextBg, type HeadlineFont, type HeadlineLook, type HeadlineLookStyle, type HeadlineTextBg
+  DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, isHexColor, setHideAfter, setTextBg,
+  type HeadlineFont, type HeadlineHideAfter, type HeadlineLook, type HeadlineLookStyle, type HeadlineTextBg
 } from '../../shared/headline-look'
 import { LOOK_EXTRAS, LOOK_EXTRA_IDS, parseLookExtras, type LookExtraId } from '../../shared/look-extras'
 
@@ -24,6 +25,8 @@ export interface BoardStyle {
   color: string
   /** Floating text's background (a box behind each line); missing means none. */
   textBg?: HeadlineTextBg
+  /** "Hide hook text": seconds in the hook text fades out; missing means never. A patch with the key set to undefined means never. */
+  hideAfterS?: HeadlineHideAfter
   handle: boolean
   ctaId: string | null
   keyword: string
@@ -120,6 +123,7 @@ export function brandBoardPatch(look: BrandLook | undefined, value: BoardStyle, 
     if (hooks.includes(look.headlineLook.look)) patch.hook = look.headlineLook.look
     patch.font = look.headlineLook.font
     if ((look.headlineLook.textBg ?? 'none') !== (value.textBg ?? 'none')) patch.textBg = look.headlineLook.textBg ?? 'none'
+    patch.hideAfterS = look.headlineLook.hideAfterS
 
     patch.color = look.color ?? look.headlineLook.color
   } else if (look.color) patch.color = look.color
@@ -211,6 +215,7 @@ export function styleSummary(value: BoardStyle, rows: BoardRows, extra: { brandC
     if (value.hook === 'floating' && (value.textBg ?? 'none') !== 'none') {
       parts.push(value.textBg === 'brand' ? `${colorName(value.color, extra.brandColor)} box` : textBgName(value.textBg))
     }
+    if (value.hook !== 'none' && value.hook !== 'card' && value.hideAfterS) parts.push(`Hides after ${value.hideAfterS} s`)
   }
   if (rows.handle && extra.hasMark) parts.push(value.handle ? `Handle ${cornerName(extra.corner).toLowerCase()}` : 'No handle')
   if (rows.cta) parts.push(value.ctaId ? `Ends with ${extra.ctaName ?? 'your CTA clip'}` : 'No CTA clip')
@@ -316,7 +321,8 @@ export interface LookFields {
 export function boardFromLook(form: LookFields): BoardStyle {
   return {
     captions: form.includeCaptions, captionPreset: form.captionPreset, hook: hookFromLook(form.headlineLook, LOOK_HOOKS),
-    font: form.headlineLook.font, color: form.headlineLook.color, ...(form.headlineLook.textBg ? { textBg: form.headlineLook.textBg } : {}), handle: form.showHandle,
+    font: form.headlineLook.font, color: form.headlineLook.color, ...(form.headlineLook.textBg ? { textBg: form.headlineLook.textBg } : {}),
+    ...(form.headlineLook.hideAfterS ? { hideAfterS: form.headlineLook.hideAfterS } : {}), handle: form.showHandle,
     ctaId: form.ctaId ?? null, keyword: form.ctaKeyword ?? '', offer: form.ctaOffer ?? '', extras: parseLookExtras(form.lookExtras)
   }
 }
@@ -326,13 +332,13 @@ export function lookPatch(form: LookFields, patch: Partial<BoardStyle>): Partial
   const out: Partial<LookFields> = {}
   if (patch.captions !== undefined) out.includeCaptions = patch.captions
   if (patch.captionPreset !== undefined) out.captionPreset = patch.captionPreset
-  if ((patch.hook && patch.hook !== 'card') || patch.font || patch.color || patch.textBg) {
-    out.headlineLook = withTextBg({
+  if ((patch.hook && patch.hook !== 'card') || patch.font || patch.color || patch.textBg || 'hideAfterS' in patch) {
+    out.headlineLook = withHideAfterPatch(withTextBg({
       ...form.headlineLook,
       ...(patch.hook && patch.hook !== 'card' ? { look: patch.hook } : {}),
       ...(patch.font ? { font: patch.font } : {}),
       ...(patch.color ? { color: patch.color } : {})
-    }, patch.textBg)
+    }, patch.textBg), patch)
   }
   if (patch.handle !== undefined) out.showHandle = patch.handle
   if (patch.ctaId !== undefined) out.ctaId = patch.ctaId
@@ -345,4 +351,9 @@ export function lookPatch(form: LookFields, patch: Partial<BoardStyle>): Partial
 /** A headline look with the board's text background (none is left out, as parseHeadlineLook does). */
 export function withTextBg(look: HeadlineLook, textBg: HeadlineTextBg | undefined): HeadlineLook {
   return textBg === undefined ? look : setTextBg(look, textBg)
+}
+
+/** A headline look with the board's "Hide hook text" when the patch has it (the key set to undefined: never). */
+export function withHideAfterPatch(look: HeadlineLook, patch: Partial<BoardStyle>): HeadlineLook {
+  return 'hideAfterS' in patch ? setHideAfter(look, patch.hideAfterS) : look
 }

@@ -1,8 +1,9 @@
 import { cn } from '../lib/utils'
 import {
-  DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, TEXT_BOX, headlineBarColor, headlineTextBg, headlineTextBox, headlineTextColor, isHexColor, setTextBg,
+  DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, TEXT_BOX, headlineBarColor, headlineTextBg, headlineTextBox, headlineTextColor, isHexColor, setHideAfter, setTextBg,
   type HeadlineLook
 } from '../../shared/headline-look'
+import { HideHookText } from './HideHookText'
 import { onRadioKeyDown, Segmented } from './ui/Segmented'
 
 const SAMPLE = 'He tried to humble the whole room'
@@ -128,6 +129,10 @@ export function HeadlineLookPicker({ value, onChange, compact = false }: { value
           </label>
         )}
       </div>
+      {value.look !== 'none' && (
+        <HideHookText compact={compact} value={value.hideAfterS} bar={headlineBarColor(value) !== null}
+          onChange={(hideAfterS) => onChange(setHideAfter(value, hideAfterS))} />
+      )}
     </div>
   )
 }

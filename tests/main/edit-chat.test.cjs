@@ -77,6 +77,10 @@ test('hook text, pop-ups, cards, sounds, the style, extras, openings and the loo
   r = shared.applyEditChatTool(d, 'set_hook_look', { look: 'brand', color: '#ff0055' }, ctx)
   assert.deepEqual(plain(r.decisions.look.headlineLook), { look: 'brand', color: '#FF0055', font: 'clean' })
   toolError(() => shared.applyEditChatTool(d, 'set_hook_look', { color: 'red' }, ctx), /#RRGGBB/)
+  r = shared.applyEditChatTool(d, 'set_hook_look', { look: 'floating', text_bg: 'light', hide_after_s: 5 }, ctx)
+  assert.deepEqual(plain(r.decisions.look.headlineLook), { look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'light', hideAfterS: 5 })
+  assert.match(r.step.summary, /hides after 5 s/)
+  toolError(() => shared.applyEditChatTool(d, 'set_hook_look', { hide_after_s: 4 }, ctx), /hide_after_s/)
   toolError(() => shared.applyEditChatTool(d, 'shout', {}, ctx), /no tool called shout/)
 })
 

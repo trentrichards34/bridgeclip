@@ -9,7 +9,7 @@
  * editor's playhead shows it).
  */
 import { CAPTION_PRESET_IDS, isCaptionPresetId } from './caption-presets'
-import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_LOOKS, headlineBarColor, parseHeadlineLook } from './headline-look'
+import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_HIDE_AFTER_S, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, HOOK_LOOK_TOOL_PROPERTIES, applyHookLookArgs, headlineBarColor, headlineTextBg, hideAfterLabel } from './headline-look'
 import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHICS_PER_CLIP, fitGraphicInCut, isGraphicTemplate, nearestOutputTime, outputTime, parseGraphics, placeInFreeBand, sourceTimeAt, type EditorGraphic, type GraphicPlacement } from './motion-graphics'
 import { MAX_HOOK_CHARS, SPLIT_RANGE, TRANSCRIPT_CLIP_MS, defaultCrop, editDuration, framingAt, normalizeSceneTransitions, panelRows, parseCandidateEdit, parseHook, type CandidateEdit, type Crop, type EditorRange, type EditorScene } from './clip-editor'
 import { hookShare, outputSize } from './graphic-layout'
@@ -247,16 +247,16 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
     }
     case 'set_hook_look': {
       const current = c.hook?.look ?? DEFAULT_HEADLINE_LOOK
-      const next: Record<string, unknown> = { ...current }
-      for (const key of ['look', 'color', 'font'] as const) if (args[key] !== undefined) next[key] = args[key]
       let look
-      try { look = parseHeadlineLook(next) } catch { return fail(`Use look ${HEADLINE_LOOKS.map((l) => l.id).join('/')}, font ${HEADLINE_FONTS.map((f) => f.id).join('/')} and color as #RRGGBB.`) }
+      try { look = applyHookLookArgs(current, args) } catch { return fail(`Use look ${HEADLINE_LOOKS.map((l) => l.id).join('/')}, font ${HEADLINE_FONTS.map((f) => f.id).join('/')}, text_bg ${HEADLINE_TEXT_BGS.map((b) => b.id).join('/')}, hide_after_s ${[0, ...HEADLINE_HIDE_AFTER_S].join('/')} and color as #RRGGBB.`) }
       const hookText = c.hook?.text ?? c.title.slice(0, MAX_HOOK_CHARS)
       let hook
       try { hook = parseHook({ text: hookText, look }) } catch { return fail('Set the hook text first.') }
       const label = HEADLINE_LOOKS.find((l) => l.id === look.look)?.label ?? look.look
       const font = HEADLINE_FONTS.find((f) => f.id === look.font)?.label ?? look.font
-      return done(`Hook look set to ${label}, ${font} font${look.look === 'brand' ? `, ${look.color}` : ''}${why}`, { hook }, clipStart(c), 0)
+      const box = headlineTextBg(look) !== 'none' ? `, ${HEADLINE_TEXT_BGS.find((b) => b.id === headlineTextBg(look))?.label.toLowerCase()} behind the text` : ''
+      const hides = hideAfterLabel(look)
+      return done(`Hook look set to ${label}, ${font} font${look.look === 'brand' ? `, ${look.color}` : ''}${box}${hides ? `, ${hides}` : ''}${why}`, { hook }, clipStart(c), 0)
     }
     case 'set_layout_at': {
       const pin = pinArg(args, points)
@@ -435,7 +435,7 @@ export const CHAT_TOOLS: { name: ChatToolName; description: string; parameters: 
   { name: 'remove_section', description: 'Cut start_ms–end_ms out of the clip (for pauses, filler, a tangent). Use word times so no word is cut in half.', parameters: { type: 'object', properties: { start_ms: msProp('Source ms.'), end_ms: msProp('Source ms.'), reason }, required: ['start_ms', 'end_ms'], additionalProperties: false } },
   { name: 'add_section', description: 'Add start_ms–end_ms of the source to the clip (merged with the sections around it).', parameters: { type: 'object', properties: { start_ms: msProp('Source ms.'), end_ms: msProp('Source ms.'), reason }, required: ['start_ms', 'end_ms'], additionalProperties: false } },
   { name: 'set_hook_text', description: `Set the hook text drawn at the top of a vertical clip: 2+ words, up to ${MAX_HOOK_CHARS} characters, true to what is said.`, parameters: { type: 'object', properties: { text: { type: 'string', minLength: 3, maxLength: MAX_HOOK_CHARS }, reason }, required: ['text'], additionalProperties: false } },
-  { name: 'set_hook_look', description: 'Change how the hook text looks. Give only what changes.', parameters: { type: 'object', properties: { look: { type: 'string', enum: HEADLINE_LOOKS.map((l) => l.id) }, font: { type: 'string', enum: HEADLINE_FONTS.map((f) => f.id) }, color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$', description: 'Bar color for the brand look.' }, reason }, additionalProperties: false } },
+  { name: 'set_hook_look', description: 'Change how the hook text looks. Give only what changes.', parameters: { type: 'object', properties: { look: { type: 'string', enum: HEADLINE_LOOKS.map((l) => l.id) }, font: { type: 'string', enum: HEADLINE_FONTS.map((f) => f.id) }, color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$', description: 'Bar color for the brand look.' }, ...HOOK_LOOK_TOOL_PROPERTIES, reason }, additionalProperties: false } },
   { name: 'set_layout_at', description: 'Frame the clip as fill (full frame, cropped), split (two panels stacked) or fit (whole frame, blurred background) from at_ms to until_ms (or to the end). at_ms at or before the clip start changes it from the start. With pin ("zoom in on this"): a fill crop centered on the pin, zoomed in (zoom, or about 1.6×; a box pin fills the frame); at_ms defaults to the pin\'s time. Give until_ms to zoom back out.', parameters: { type: 'object', properties: { at_ms: msProp('Source ms (optional with a pin).'), layout: { type: 'string', enum: ['fill', 'split', 'fit'] }, until_ms: msProp('Optional end, source ms.'), pin: PIN_PROP, zoom: { type: 'number', minimum: 1, maximum: MAX_POINT_ZOOM, description: 'With pin: how far to zoom in (1 = no zoom).' }, reason }, additionalProperties: false } },
   { name: 'set_captions', description: 'Turn burned-in captions on or off, or choose their style.', parameters: { type: 'object', properties: { on: { type: 'boolean' }, preset: { type: 'string', enum: [...CAPTION_PRESET_IDS] }, reason }, additionalProperties: false } },
   { name: 'set_title', description: 'Rename the clip (its title in the editor and Library).', parameters: { type: 'object', properties: { title: { type: 'string', minLength: 1, maxLength: 200 }, reason }, required: ['title'], additionalProperties: false } },

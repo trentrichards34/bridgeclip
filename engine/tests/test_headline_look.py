@@ -26,7 +26,7 @@ def _bar(tmp_path, look):
 
 def test_parse_falls_back_and_validate_is_strict():
     assert parse_headline_look(None).look == "white"
-    assert parse_headline_look({"look": "neon", "font": "comic", "color": "red"}).__dict__ == {"look": "white", "color": "#FFFFFF", "font": "clean", "text_bg": "none"}
+    assert parse_headline_look({"look": "neon", "font": "comic", "color": "red"}).__dict__ == {"look": "white", "color": "#FFFFFF", "font": "clean", "text_bg": "none", "hide_after_s": None}
     assert parse_headline_look({"look": "brand", "color": "#ff8800"}).pad_color == "0xFF8800"
     assert validate_headline_look(None) is None
     assert validate_headline_look({"look": "brand", "color": "#2563eb", "font": "serif"}) == {"look": "brand", "color": "#2563EB", "font": "serif"}

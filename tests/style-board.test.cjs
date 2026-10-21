@@ -18,8 +18,10 @@ const bundled = buildSync({
       export { StylePreview } from './src/renderer/components/StylePreview';
       export { LookFrame, boxedHookLayout } from './src/renderer/components/LookFrame';
       export { HeadlineLookPicker } from './src/renderer/components/HeadlineLookPicker';
-      export { HEADLINE_FONTS, HEADLINE_TEXT_BGS, accentWordIndex, parseHeadlineLook, headlineLookForEngine, headlineTextColor, headlineTextBox, textBoxOutline, textBoxPath, wrapHeadline } from './src/shared/headline-look';
-      export { LOOK_EXTRAS } from './src/shared/look-extras';`,
+      export { HEADLINE_FONTS, HEADLINE_TEXT_BGS, accentWordIndex, parseHeadlineLook, headlineLookForEngine, setTextBg, setHideAfter, headlineShownAt, applyHookLookArgs, headlineTextColor, headlineTextBox, textBoxOutline, textBoxPath, wrapHeadline } from './src/shared/headline-look';
+      export { LOOK_EXTRAS } from './src/shared/look-extras';
+      export { outputTimeAt } from './src/shared/clip-editor';
+      export { parseRemixStyle } from './src/shared/member-prefs';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
   },
@@ -481,4 +483,60 @@ test('clip editor hook look picker: a Text background row with floating text (co
   assert.match(html, /aria-checked="true" aria-label="Light box"/)
   assert.match(html, /data-text-bg="light"/)
   assert.match(render({ look: 'floating', color: '#7C5CFF', font: 'clean', textBg: 'brand' }), /aria-label="Box color"/)
+})
+
+test('hide hook text: parsed, validated, left out when never, kept by the other setters, and sent to the engine', () => {
+  const look = m.parseHeadlineLook({ look: 'black', color: '#ffffff', font: 'clean', hideAfterS: 10 })
+  assert.deepEqual(look, { look: 'black', color: '#FFFFFF', font: 'clean', hideAfterS: 10 })
+  assert.deepEqual(m.parseHeadlineLook(JSON.parse(JSON.stringify(look))), look, 'round trip')
+  // Older looks read and compare the same.
+  assert.deepEqual(m.parseHeadlineLook({ look: 'black', color: '#FFFFFF', font: 'clean' }), { look: 'black', color: '#FFFFFF', font: 'clean' })
+  for (const bad of [7, 0, '10', 10.5, true, null]) assert.throws(() => m.parseHeadlineLook({ look: 'black', hideAfterS: bad }), /Invalid headline look/)
+  assert.deepEqual(m.setTextBg({ ...look, look: 'floating' }, 'dark'), { look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'dark', hideAfterS: 10 })
+  assert.deepEqual(m.setHideAfter(look, undefined), { look: 'black', color: '#FFFFFF', font: 'clean' })
+  assert.deepEqual(m.setHideAfter(look, 3), { ...look, hideAfterS: 3 })
+  // The default white bar with a hide time is no longer "the default look": the engine needs it.
+  assert.deepEqual(m.headlineLookForEngine({ look: 'white', color: '#FFFFFF', font: 'clean', hideAfterS: 5 }), { look: 'white', color: '#FFFFFF', font: 'clean', hideAfterS: 5 })
+  assert.deepEqual(m.headlineLookForEngine({ look: 'black', color: '#FFFFFF', font: 'clean', textBg: 'dark', hideAfterS: 5 }), { look: 'black', color: '#FFFFFF', font: 'clean', hideAfterS: 5 })
+  // Previews with a playhead hide it after the time.
+  assert.equal(m.headlineShownAt(look, 9.9), true)
+  assert.equal(m.headlineShownAt(look, 10), false)
+  assert.equal(m.headlineShownAt({}, 100), true)
+  // The clip editor's clock: kept time before the playhead, at the export speed.
+  assert.equal(m.outputTimeAt({ ranges: [[1000, 5000], [9000, 20000]], video_speed: 2 }, 10000), (4000 + 1000) / 2)
+  // Remembered styles keep it.
+  assert.deepEqual(m.parseRemixStyle({ headlineLook: look }).headlineLook, look)
+  // The chat tools: text box and hide time; 0 means never.
+  assert.deepEqual(m.applyHookLookArgs({ look: 'floating', color: '#FFFFFF', font: 'clean' }, { text_bg: 'dark', hide_after_s: 5 }),
+    { look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'dark', hideAfterS: 5 })
+  assert.deepEqual(m.applyHookLookArgs(look, { hide_after_s: 0 }), { look: 'black', color: '#FFFFFF', font: 'clean' })
+  assert.throws(() => m.applyHookLookArgs(look, { hide_after_s: 7 }))
+})
+
+test('hide hook text on the board: Create, Remix and Edit my recording fields, the summary and the row', () => {
+  const draft = { ...m.useDraftStore.getState(), workflow: 'automatic', source: 'https://example.com/v', aspectRatio: '9:16', includeTitle: true, titleStyle: 'headline' }
+  const chosen = { ...draft, ...m.createBoardPatch(draft, { hideAfterS: 10 }) }
+  assert.deepEqual(chosen.headlineLook, { look: 'white', color: '#FFFFFF', font: 'clean', hideAfterS: 10 })
+  assert.equal(m.createBoardStyle(chosen).hideAfterS, 10)
+  assert.equal(m.buildJobRequest(chosen, { start: null, end: null }).headlineLook.hideAfterS, 10)
+  assert.deepEqual(m.createBoardPatch(chosen, { hideAfterS: undefined }).headlineLook, { look: 'white', color: '#FFFFFF', font: 'clean' })
+  // Other board changes keep it.
+  assert.equal(m.createBoardPatch(chosen, { font: 'serif' }).headlineLook.hideAfterS, 10)
+  const form = { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'floating', color: '#FFFFFF', font: 'clean' }, showHandle: false }
+  assert.deepEqual(m.lookPatch(form, { hideAfterS: 5 }), { headlineLook: { look: 'floating', color: '#FFFFFF', font: 'clean', hideAfterS: 5 } })
+  assert.equal(m.boardFromLook({ ...form, headlineLook: { ...form.headlineLook, hideAfterS: 5 } }).hideAfterS, 5)
+  assert.equal(m.styleSummary({ ...BASE, hook: 'black', hideAfterS: 10 }, { hooks: m.LOOK_HOOKS }), 'Pop captions · Black bar · Clean font · Hides after 10 s')
+  const rows = { hooks: m.LOOK_HOOKS }
+  const html = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook: 'black', hideAfterS: 10 }, onChange() {}, rows, brand: null }))
+  const row = group(html, 'Hide hook text')
+  assert.ok(row, 'the row is there')
+  for (const label of ['Never', 'After 3 s', 'After 5 s', 'After 10 s', 'After 15 s']) assert.match(row, new RegExp(`>${label}<`))
+  assert.match(row, /aria-checked="true"[^>]*>After 10 s</)
+  assert.match(html, /The text fades out; the bar stays\./)
+  assert.doesNotMatch(staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook: 'none' }, onChange() {}, rows, brand: null })), /aria-label="Hide hook text"/)
+  assert.doesNotMatch(staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook: 'card' }, onChange() {}, rows: { hooks: ['card', 'none'] }, brand: null })), /aria-label="Hide hook text"/)
+  // The picker (clip editor, brand identity, Remix edit) has it too.
+  const picker = staticRender(React.createElement(m.HeadlineLookPicker, { value: { look: 'floating', color: '#FFFFFF', font: 'clean', hideAfterS: 3 }, onChange() {} }))
+  assert.match(picker, /aria-label="Hide hook text"/)
+  assert.match(picker, /fades out 3 seconds in/)
 })

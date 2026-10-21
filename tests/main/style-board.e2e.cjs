@@ -437,6 +437,12 @@ test('floating text with a text background: the row, the preview\'s per-line box
   assert.equal(await boxed.locator('path').getAttribute('fill'), '#7C5CFF')
   assert.equal(await checked(page.getByRole('radiogroup', { name: 'Hook text look' }).getByRole('radio', { name: 'Floating text' })), true, 'still floating text')
   await bgs.getByRole('radio', { name: 'Dark box' }).click()
+  // "Hide hook text": Never by default; After 10 s fades it out 10 seconds in.
+  const hide = page.getByRole('radiogroup', { name: 'Hide hook text' })
+  assert.equal(await checked(hide.getByRole('radio', { name: 'Never' })), true)
+  await hide.getByRole('radio', { name: 'After 10 s' }).click()
+  assert.match(await summary.innerText(), /Dark box · Hides after 10 s/)
+  await page.getByText('The hook text fades out 10 seconds in.').waitFor()
   await board.evaluate((el) => el.scrollIntoView({ block: 'start' }))
   await shot(app, 'text-bg-board-1280.png')
 
@@ -457,6 +463,6 @@ test('floating text with a text background: the row, the preview\'s per-line box
   const request = await app.evaluate(() => globalThis.styleTest.submitted)
   assert.equal(request.includeTitle, true)
   assert.equal(request.titleStyle, 'headline')
-  assert.deepEqual(request.headlineLook, { look: 'floating', color: '#7C5CFF', font: 'clean', textBg: 'dark' })
+  assert.deepEqual(request.headlineLook, { look: 'floating', color: '#7C5CFF', font: 'clean', textBg: 'dark', hideAfterS: 10 })
   assert.deepEqual(errors, [])
 })
