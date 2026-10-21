@@ -1,3 +1,4 @@
+import { isBrollSource, type BrollSource } from './broll-library'
 /**
  * Edit my recording: a member drops in one raw talking-to-camera recording
  * (or a few takes of the same video) and gets back one finished vertical reel.
@@ -166,6 +167,8 @@ export interface EditLook {
   musicTrack?: string
   /** Clean up the voice (Skills). Missing: off. */
   voiceCleanup?: boolean
+  /** B-roll over the speaker (Skills), and where it comes from (broll-library.ts). Missing or null: off. */
+  broll?: BrollSource | null
 }
 
 export const DEFAULT_EDIT_LOOK: EditLook = { includeCaptions: true, captionPreset: DEFAULT_CAPTION_PRESET, headlineLook: DEFAULT_HEADLINE_LOOK, showHandle: false }
@@ -576,7 +579,7 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
   })
   const decisions: EditDecisions = { cut, hookId: value.hookId as number | null, hookText, endOnCta: value.endOnCta, popups, sounds,
     look: { includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: parseHeadlineLook(look.headlineLook), showHandle: look.showHandle,
-      ...(lookExtras.length ? { lookExtras } : {}), ...audio },
+      ...(lookExtras.length ? { lookExtras } : {}), ...audio, ...(isBrollSource(look.broll) ? { broll: look.broll } : {}) },
     recipe: isEditRecipeId(value.recipe) ? value.recipe : DEFAULT_EDIT_RECIPE, lookExtras, pins,
     cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true, graphics, ...audio }
   if (plan.combine) {

@@ -27,6 +27,7 @@ import { referenceForRun, referencePath } from './reference-image'
 import { DEFAULT_PLANNER_MODEL, isReferenceId, parsePurpose } from '../shared/purpose'
 import { applyRunCtaInLock, originalPath, withRunLock } from './ctas'
 import { graphicJob, renderGraphicJobs, REEL_GRAPHICS_DIR, type GraphicJob } from './graphics-render'
+import { brollRunFields } from './broll-library'
 import { logger } from './logger'
 import { readMemberPrefs } from './member-prefs'
 import { openRouterBase } from './openrouter-media'
@@ -547,7 +548,7 @@ async function transcribe(current: EditRun, source: EditSource, index: number, k
   return words.flatMap((item): [string, number, number][] => Array.isArray(item) && typeof item[0] === 'string' && Number.isInteger(item[1]) && Number.isInteger(item[2]) ? [[item[0], item[1], item[2]]] : [])
 }
 
-/** Make the reel from the reviewed edit (local, no AI cost). */
+/** Make the reel from the reviewed edit (local; only b-roll from AI or the library planner costs anything). */
 export async function renderEdit(value: unknown): Promise<EditStatus> {
   const current = run
   if (!current || current.status.phase !== 'review' || !current.status.plan) throw new Error('There is no edit waiting for review. Start again with your recording.')
@@ -612,6 +613,18 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     throw error
   }
   if (audio) Object.assign(config, { audio })
+  // B-roll (Skills): from the member's library, Pexels or AI, checked now; the library's catalog goes in the run's .work.
+  if (decisions.look.broll) {
+    const keys = loadSettings()
+    let fields: ReturnType<typeof brollRunFields>
+    try { fields = brollRunFields(decisions.look.broll, { pexels: Boolean(keys.pexelsApiKey), openrouter: Boolean(keys.openrouterApiKey) }, join(current.status.folder, '.work')) }
+    catch { fields = { error: 'Your B-roll library could not be read. Try again.' } }
+    if ('error' in fields) {
+      publish(current, { phase: 'review', detail: 'Ready for review', percent: 100, error: null })
+      throw new Error(fields.error)
+    }
+    Object.assign(config, fields.fields)
+  }
   // Motion graphics on words still in the reel: drawn here (offscreen, cached in the run), layered by the engine.
   const graphics = drawableGraphics(decisions.graphics ?? []).filter((g) => !cut.has(g.word))
   void (async () => {
@@ -633,6 +646,8 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
         Object.assign(config, { graphics: drawn.map((item) => ({ file: item.file, word: graphics.find((g) => g.id === item.id)!.word, duration_ms: item.duration_ms, ...(item.depth ? { depth: item.depth } : {}) })) })
       }
       const result = await runEngine(config, 2 * 60 * 60_000, (detail, percent) => { if (!current.cancelled) publish(current, { detail, percent }) }, (child) => { current.child = child })
+      // B-roll planning and AI shots are the only paid part of making the reel.
+      spend(current, typeof result.cost_usd === 'number' ? result.cost_usd : 0)
       const path = join(current.status.folder, 'clip_00.mp4')
       const seconds = typeof result.duration_seconds === 'number' ? result.duration_seconds : 0
       const warnings = Array.isArray(result.warnings) ? result.warnings.filter((item): item is string => typeof item === 'string').map((item) => item.slice(0, 300)).slice(0, 4) : []
@@ -643,6 +658,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
       publish(current, { phase: 'done', detail: 'Done', percent: 100, output: { path, durationSeconds: seconds }, warnings, sources })
       await dropImports(current)
     } catch (error) {
+      spend(current, errorCost(error))
       // The plan stays: back to review to change something and try again.
       publish(current, { phase: 'review', detail: 'Ready for review', percent: 100, error: current.cancelled ? null : (error as Error)?.message?.slice(0, 400) || 'Your video could not be made.' })
     } finally { current.child = undefined }

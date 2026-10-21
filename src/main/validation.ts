@@ -1,3 +1,4 @@
+import { isBrollSource } from '../shared/broll-library'
 import { normalizeVideoSource, twitchSourceError } from '../shared/video-source'
 import { isAbsolute } from 'path'
 import type { ClipJobConfig } from './pipeline-runner'
@@ -35,6 +36,7 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   if (v.broll !== undefined && v.broll !== 'after-hook' && v.broll !== 'full') throw new Error('Invalid B-roll option')
   if (v.broll !== undefined && v.backgroundVideo !== undefined) throw new Error('Choose either a background video or B-roll, not both')
   if (v.broll !== undefined && v.workflow === 'review') throw new Error('B-roll works with the Automatic workflow')
+  if (v.brollSource !== undefined && (!isBrollSource(v.brollSource) || v.broll === undefined)) throw new Error('Invalid B-roll source')
   if (v.hookPreview !== undefined && typeof v.hookPreview !== 'boolean') throw new Error('Invalid hook preview option')
   if (v.hookPreview && v.workflow === 'review') throw new Error('Hook preview works with the Automatic workflow')
   if (v.motionGraphics !== undefined && typeof v.motionGraphics !== 'boolean') throw new Error('Invalid motion graphics option')
@@ -113,5 +115,5 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
   'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'motionGraphics', 'stageLayouts', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'music', 'musicTrack', 'voiceCleanup', 'purpose', 'referenceImage', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'brollSource', 'hookPreview', 'motionGraphics', 'stageLayouts', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'music', 'musicTrack', 'voiceCleanup', 'purpose', 'referenceImage', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

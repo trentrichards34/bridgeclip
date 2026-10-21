@@ -1,3 +1,4 @@
+import type { BrollSource } from './broll-library'
 /**
  * Remix: turn someone else's viral moment into the user's own commentary video.
  * The engine (engine/clip_engine/services/remix_service.py) plans and renders;
@@ -307,6 +308,8 @@ export interface RemixRequest {
   purpose?: string
   /** A reference image ("A look you like"): the id of a picture chosen with reference:choose. */
   referenceImage?: string
+  /** Voiced remixes: where the beats' b-roll comes from (broll-library.ts). Missing: stock footage when a Pexels key is set. */
+  brollSource?: BrollSource
 }
 
 /** filmed: your real background; cutout: you cut out over a blur or your color; greenscreen: the clip fills the screen behind you. */

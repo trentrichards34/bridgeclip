@@ -4,6 +4,7 @@ import { createHash } from 'crypto'
 import { appendFile, mkdir, readFile, rename, stat, writeFile } from 'fs/promises'
 import { basename, join } from 'path'
 import { OPENROUTER_MODELS, PRICES, type AvatarRenderStatus } from '../shared/avatars'
+import { BROLL_AI_MODELS } from '../shared/broll-library'
 import type { JobSnapshot } from '../shared/jobs'
 import type { RemixStatus } from '../shared/remix'
 import {
@@ -247,7 +248,7 @@ export async function openRouterBalance(force = false, timeoutMs?: number): Prom
 // ---------------------------------------------------------------------------
 
 /** IPC channels that start paid work, and so pass the spending check. */
-export const GATED_CHANNELS = new Set(['automations:enhance', 'automations:enhanceBatch', 'history:enhanceMetadata', 'avatars:writeScript', 'voices:sample', 'job:start', 'job:startMany', 'job:moreClips', 'remix:start', 'remix:write', 'remix:render', 'remix:anotherMoment', 'remix:talkingPoints', 'remix:readTimecode', 'remix:readTimecodeFile', 'editor:run', 'editor:suggestHooks', 'editor:chat', 'edit:chat', 'remix:chat', 'avatars:render', 'avatars:recreate', 'avatars:generateFaces', 'avatars:restyle', 'avatars:makeReactions', 'avatars:cloneVoice', 'edit:start', 'edit:ideas', 'heygen:createAvatar', 'remix:planBroll', 'listicle:writeScript', 'listicle:render'])
+export const GATED_CHANNELS = new Set(['automations:enhance', 'automations:enhanceBatch', 'history:enhanceMetadata', 'avatars:writeScript', 'voices:sample', 'job:start', 'job:startMany', 'job:moreClips', 'remix:start', 'remix:write', 'remix:render', 'remix:anotherMoment', 'remix:talkingPoints', 'remix:readTimecode', 'remix:readTimecodeFile', 'editor:run', 'editor:suggestHooks', 'editor:chat', 'edit:chat', 'remix:chat', 'avatars:render', 'avatars:recreate', 'avatars:generateFaces', 'avatars:restyle', 'avatars:makeReactions', 'avatars:cloneVoice', 'edit:start', 'edit:ideas', 'heygen:createAvatar', 'remix:planBroll', 'listicle:writeScript', 'listicle:render', 'brollLibrary:index', 'brollLibrary:makeAiShot', 'edit:render'])
 const overrides = new Map<string, number>()
 
 /** "Start anyway" after a low-balance warning: the next call on this channel skips the balance check (never the monthly limit). */
@@ -304,6 +305,9 @@ export function mediaChargeUsd(charge: MediaCharge): { usd: number; estimated: b
     const rate = charge.model === OPENROUTER_MODELS.cloneTts ? PRICES.cloneTtsPer1000Chars : PRICES.ttsPer1000Chars
     return { usd: ((charge.chars ?? 0) / 1000) * rate, estimated: true }
   }
+  // AI b-roll models: their own list price, when known.
+  const broll = BROLL_AI_MODELS.find((model) => model.id === charge.model)?.perSecondUsd
+  if (typeof broll === 'number') return { usd: (charge.seconds ?? 5) * broll, estimated: true }
   const perSecond = charge.model === OPENROUTER_MODELS.scenePro ? PRICES.imageToVideoPerSecond : PRICES.imageToVideoStandardPerSecond
   return { usd: (charge.seconds ?? 5) * perSecond, estimated: true }
 }

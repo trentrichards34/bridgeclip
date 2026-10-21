@@ -1,3 +1,4 @@
+import type { BrollSource } from '../../shared/broll-library'
 import { create } from 'zustand'
 import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
 import type { LookExtraId } from '../../shared/look-extras'
@@ -61,6 +62,8 @@ export interface ClipDraft {
   backgroundVideo: string | null
   /** B-roll mode (Automatic): Pexels footage after the hook, for the whole clip, or off. */
   broll: 'off' | 'after-hook' | 'full'
+  /** Where B-roll comes from (null: the default, My library when it has clips). */
+  brollSource: BrollSource | null
   /** Hook preview (Automatic): open with the clip's strongest line. */
   hookPreview: boolean
   /** Motion graphics: Auto (Automatic): up to 3 animated cards per clip from what's said. Off until turned on (then remembered). */
@@ -133,6 +136,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   ctaId: null,
   backgroundVideo: null,
   broll: 'off',
+  brollSource: null,
   hookPreview: false,
   motionGraphics: false,
   stageLayouts: false,

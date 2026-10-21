@@ -43,6 +43,8 @@ import type { RemixChatFacts } from '../shared/remix-chat'
 
 const DEFAULT_VOICE_NAME = 'Brian'
 import { portraitPath, readAvatar, readReactions, voiceSamplePath } from './avatars'
+import { brollRunEstimateUsd, brollRunFields, libraryItemFiles } from './broll-library'
+import { isBrollSource } from '../shared/broll-library'
 import { logger } from './logger'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
 import { assertMediaPath, authorizeMedia } from './security'
@@ -265,7 +267,9 @@ export function parseRemixRequest(value: unknown, outputDirectory: string): Pars
       ...(imageHighlight ? { imageHighlight } : {}),
       ...audio,
       ...(purpose ? { purpose } : {}),
-      ...(isReferenceId(raw.referenceImage) ? { referenceImage: raw.referenceImage } : {})
+      ...(isReferenceId(raw.referenceImage) ? { referenceImage: raw.referenceImage } : {}),
+      // Voiced remixes: where the beats' b-roll comes from (missing: stock, as before).
+      ...(format === 'commentary' && isBrollSource(raw.brollSource) ? { brollSource: raw.brollSource } : {})
     }
   }
 }
@@ -460,6 +464,16 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
       try { reference = await referenceForRun(request.referenceImage, folder, DEFAULT_PLANNER_MODEL) }
       catch (error) { reference = { send: null, note: `${(error as Error)?.message || 'Your reference image could not be used.'} The remix goes ahead without it.` } }
     }
+    // B-roll from the member's library or AI (voiced remixes): checked now, the catalog kept in the run's folder.
+    let brollFields: Record<string, unknown> = {}
+    if (request.brollSource) {
+      const settingsNow = loadSettings()
+      let result: ReturnType<typeof brollRunFields>
+      try { result = brollRunFields(request.brollSource, { pexels: Boolean(settingsNow.pexelsApiKey), openrouter: Boolean(settingsNow.openrouterApiKey) }, join(folder, '.work')) }
+      catch { result = { error: 'Your B-roll library could not be read. Try again.' } }
+      if ('error' in result) { await rm(folder, { recursive: true, force: true }); throw new Error(result.error) }
+      brollFields = result.fields
+    }
     // Only now that the new run can start: it replaces takes waiting for review.
     if (reviewing) await discardRemix()
     await cleanupAbandoned(settings.outputDirectory, folder)
@@ -488,7 +502,8 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         ...(request.layout ? { layout: engineLayout(request.layout) } : {}),
         ...(request.moment ? { moment_ranges: request.moment.ranges.map((range) => [range.startS, range.endS]), moment_pip: request.moment.pip } : {}),
         ...(heygenLink ? { presenter: 'heygen', heygen_voice: heygenVoice, heygen_usd_per_second: heygenUsdPerSecond(heygenLink) } : {}),
-        ...(audio ? { audio } : {})
+        ...(audio ? { audio } : {}),
+        ...brollFields
       }
     }
     const run: ActiveRemix = {
@@ -532,8 +547,10 @@ export function remixRenderCheck(edits: unknown): { provider: SpendProvider; est
   const run = reviewing
   const ids = new Set(Array.isArray(edits) ? edits.map((edit) => (edit as { id?: unknown } | null)?.id) : [])
   const chosen = (run?.status.drafts ?? []).filter((draft) => ids.has(draft.id))
-  const total = chosen.reduce((sum, draft) => sum + draft.estimateUsd, 0)
   const config = run?.context.config
+  // AI b-roll for voiced remixes: at most its shots per video.
+  const aiShots = config?.broll_ai ? brollRunEstimateUsd(run?.context.request.brollSource, chosen.length) ?? 0 : 0
+  const total = chosen.reduce((sum, draft) => sum + draft.estimateUsd, 0) + aiShots
   if (config?.presenter !== 'heygen') return { provider: 'openrouter', estimateUsd: total > 0 ? total : null }
   const priced = config.heygen_usd_per_second !== null && chosen.every((draft) => draft.heygenEstimateUsd !== null)
   // The HeyGen share: the engine's figure for each take, or (older drafts) none known.
@@ -1562,8 +1579,23 @@ export function brollView(): BrollView | null {
   }
 }
 
+/** Clips from My B-roll library for React, then my thoughts: the original (or its 720p copy when the original is gone or too big). */
+export async function addBrollFromLibrary(ids: unknown): Promise<BrollView> {
+  const files = await libraryItemFiles(ids)
+  const sources = files.map((file) => {
+    const fits = (path: string | null): path is string => {
+      if (!path || !brollKind(basename(path))) return false
+      try { return statSync(path).size <= BROLL_MAX_BYTES } catch { return false }
+    }
+    if (fits(file.path)) return file.path
+    if (fits(file.proxy)) return file.proxy
+    throw new Error(`“${file.name}” can’t be used here. Choose another clip.`)
+  })
+  return addBroll(sources, files.map((file) => file.name))
+}
+
 /** Your own clips or pictures for the b-roll (from the file dialog), copied into the run. */
-export async function addBroll(sources: string[]): Promise<BrollView> {
+export async function addBroll(sources: string[], names?: string[]): Promise<BrollView> {
   const run = brollRun()
   const broll = run.context.broll
   // Room is held before the first wait, so another add running at the same time counts these too.
@@ -1584,7 +1616,7 @@ export async function addBroll(sources: string[]): Promise<BrollView> {
         const id = `b${randomBytes(4).toString('hex')}`
         const path = join(run.status.folder, '.broll', `${id}${extname(source).toLowerCase()}`)
         // Listed before copying, so a copy that fails partway is removed below.
-        added.push({ id, name: basename(source).slice(0, 80), kind: brollKind(basename(source)) as BrollItem['kind'], path })
+        added.push({ id, name: (names?.[sources.indexOf(source)] || basename(source)).slice(0, 80), kind: brollKind(basename(source)) as BrollItem['kind'], path })
         await copyFile(source, path)
       }
     })

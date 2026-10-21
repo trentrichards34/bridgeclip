@@ -86,10 +86,15 @@ const PLAN = { words: [{ cut: 'filler' }, { cut: null }, { cut: 'retake' }, { cu
 const EDIT = { cut: [0, 2, 4], sounds: [{ id: 0, on: true }, { id: 1, on: false }], lookExtras: [], look: { includeCaptions: true } }
 
 test('Edit my recording: rows only for what the plan has; Rough cut changes only the plan’s own cuts', () => {
-  const rows = skills.editSkillRows(PLAN, EDIT)
-  assert.deepEqual(plain(rows.map((row) => row.id)), ['rough_cut', 'captions', 'zoom', 'sound_effects', 'music', 'voice_cleanup'])
-  assert.deepEqual(on(rows), { rough_cut: true, captions: true, zoom: false, sound_effects: true, music: false, voice_cleanup: false })
-  assert.deepEqual(plain(skills.editSkillRows({ words: [{ cut: null }], sounds: [] }, EDIT).map((row) => row.id)), ['captions', 'zoom', 'music', 'voice_cleanup'])
+  const context = { brollSource: 'library' }
+  const rows = skills.editSkillRows(PLAN, EDIT, context)
+  assert.deepEqual(plain(rows.map((row) => row.id)), ['rough_cut', 'captions', 'zoom', 'broll', 'sound_effects', 'music', 'voice_cleanup'])
+  assert.deepEqual(on(rows), { rough_cut: true, captions: true, zoom: false, broll: false, sound_effects: true, music: false, voice_cleanup: false })
+  assert.deepEqual(plain(skills.editSkillRows({ words: [{ cut: null }], sounds: [] }, EDIT).map((row) => row.id)), ['captions', 'zoom', 'broll', 'music', 'voice_cleanup'])
+  // B-roll: on with the page's source (My library when it has shots); it can't be turned on when no source can run.
+  assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'broll', true, context)), { look: { broll: 'library' } })
+  assert.deepEqual(plain(skills.editSkillPatch(PLAN, { ...EDIT, look: { ...EDIT.look, broll: 'ai' } }, 'broll', false, context)), { look: { broll: null } })
+  assert.match(skills.editSkillRows(PLAN, EDIT).find((row) => row.id === 'broll').disabledReason, /B-roll library/)
   // Off keeps the plan's cut words (word 4, cut by the member, stays cut); on cuts them again.
   const off = skills.editSkillPatch(PLAN, EDIT, 'rough_cut', false)
   assert.deepEqual(plain(off), { decisions: { cut: [4] } })
@@ -102,9 +107,9 @@ test('Edit my recording: rows only for what the plan has; Rough cut changes only
   assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'motion_graphics', true)), {})
   // Round trip through the same state.
   for (const row of rows) {
-    const patch = skills.editSkillPatch(PLAN, EDIT, row.id, !row.on)
+    const patch = skills.editSkillPatch(PLAN, EDIT, row.id, !row.on, context)
     const next = { ...EDIT, ...(patch.decisions ?? {}), look: { ...EDIT.look, ...(patch.look ?? {}) } }
-    assert.equal(on(skills.editSkillRows(PLAN, next))[row.id], !row.on, row.id)
+    assert.equal(on(skills.editSkillRows(PLAN, next, context))[row.id], !row.on, row.id)
   }
 })
 

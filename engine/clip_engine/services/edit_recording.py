@@ -1764,6 +1764,13 @@ async def render_edit(config: dict, progress: Progress) -> dict:
         # text or caption style (recompose) keeps it.
         progress("Adding the music", 64)
         await asyncio.to_thread(finish_in_place, base, replace(audio, voice_cleanup=False, target_lufs=None), os.path.join(work, "audio"), warnings)
+    broll_cost = 0.0
+    if config.get("broll_source"):
+        # B-roll over the speaker (Skills): the member's library, stock or AI, matched to what is said. In base.mp4, so a
+        # new hook text or caption style (recompose) keeps it; captions and graphics go on top.
+        progress("Adding b-roll", 66)
+        from clip_engine.services.broll_library import overlay_reel_broll
+        broll_cost = await overlay_reel_broll(base, timed, total, config, work, warnings)
     starts = {i: s for _, s, _, i in timed}
     popups = [{"text": p["text"], "kind": p.get("kind", "keyword"), "start_ms": starts[p["word"]]} for p in config["popups"]
               if p["word"] in starts and p.get("kind") != "card"]
@@ -1813,10 +1820,10 @@ async def render_edit(config: dict, progress: Progress) -> dict:
                         **({"look_extras_color": look.look_extras_color, "look_extras_keyword": look.look_extras_keyword,
                             "punched": [list(w) for w in look.punched]} if look.look_extras else {})})
     title = config.get("title") or look.headline or "My recording"
-    write_job_output(root, final, seconds, look, float(config.get("cost_usd") or 0), f"Edited · {title}", post_caption_of(timed))
+    write_job_output(root, final, seconds, look, float(config.get("cost_usd") or 0) + broll_cost, f"Edited · {title}", post_caption_of(timed))
     progress("Done", 100)
     return {"path": final, "duration_seconds": round(seconds, 3), "warnings": warnings[:4], "editable": editable_of(look),
-            "loudness": measured}
+            "loudness": measured, "cost_usd": round(broll_cost, 6)}
 
 
 def _saved_mark(mark: Optional[dict], root: str) -> Optional[dict]:

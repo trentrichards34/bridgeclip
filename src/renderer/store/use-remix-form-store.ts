@@ -1,3 +1,4 @@
+import type { BrollSource } from '../../shared/broll-library'
 import { create } from 'zustand'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
@@ -64,6 +65,8 @@ export interface RemixForm {
   purpose: string
   /** "A look you like" (optional): the picture chosen with reference:choose. */
   reference: ReferenceImage | null
+  /** Voiced remixes: where the beats' b-roll comes from (null: the default, My library when it has clips). */
+  brollSource: BrollSource | null
 }
 
 interface RemixFormState extends RemixForm {
@@ -103,6 +106,7 @@ export const useRemixForm = create<RemixFormState>((set, get) => ({
   voiceCleanup: false,
   purpose: '',
   reference: null,
+  brollSource: null,
   update: (patch) => set(patch),
   applyStyle: (style) => set({ ...style, ...(style.format && style.format !== get().format ? { clipRightsAck: false } : {}) }),
   sourceBurnedIn: null,

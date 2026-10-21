@@ -26,6 +26,7 @@ from typing import Any, Callable, Optional
 
 from clip_engine.config import CaptionStyle, LayoutStyle, get_settings, is_longform, resolve_clip_duration_bounds
 from clip_engine.services.video_speed import validate_video_speed
+from clip_engine.services.broll_library import load_catalog, parse_ai_settings, prepare_library_broll
 from clip_engine.services.broll_service import PexelsKeyRejected, prepare_broll
 from clip_engine.services.hook_preview import pick_teaser
 from clip_engine.services.auto_graphics import fit_to_clip, on_stage, stage_scenes_for, write_graphics_plan
@@ -166,6 +167,12 @@ class ClippingJobRequest:
     # on screen for the opening hook.
     broll_enabled: bool = False
     broll_keep_hook: bool = True
+    # Where the b-roll comes from (broll_library.py): None or 'stock' is Pexels; 'library', 'ai' and
+    # 'library_ai' use the member's library catalog and/or AI shots (saved to broll_ai_dir for the library).
+    broll_source: Optional[str] = None
+    broll_catalog_path: Optional[str] = None
+    broll_ai: Optional[dict] = None
+    broll_ai_dir: Optional[str] = None
     # Hook preview: open each clip with its strongest line, then play it.
     hook_preview: bool = False
     # Motion graphics: Auto (Automatic): the planner also picks 0-3 card moments per clip (auto_graphics);
@@ -335,6 +342,9 @@ class AIClippingPipeline:
         clip_trace_paths: dict[int, str] = {}
         clip_durations_ms: dict[int, int] = {}
         layout_vision_cost = 0.0
+        broll_cost = 0.0
+        broll_counts = {'library': 0, 'ai': 0}
+        broll_catalog: Optional[list] = None
         peak_rss_mb = 0.0
         transcription_status = "available"
         transcript_reused = False
@@ -870,7 +880,7 @@ class AIClippingPipeline:
                     )
 
             async def render_clip_locked(i: int, segment: ClipPlanSegment) -> tuple[int, str, ClipPlanSegment]:
-                nonlocal layout_vision_cost
+                nonlocal layout_vision_cost, broll_cost, broll_catalog
                 async with render_semaphore:
                     clip_start = time.perf_counter()
                     output_path = os.path.join(clips_dir, f"clip_{i:02d}.mp4")
@@ -892,14 +902,30 @@ class AIClippingPipeline:
                     if request.broll_enabled and not request.background_video_path:
                         render_progress(i, 'Finding B-roll', None)
                         try:
-                            shots = await prepare_broll(
-                                clip_transcript, segment.start_time_ms, segment.end_time_ms,
-                                # The job's private work folder: cleaned up with the job, never
-                                # next to a local source video (local files are used in place).
-                                os.path.join(work_dir, 'broll'),
-                                portrait=request.aspect_ratio == '9:16', keep_hook=request.broll_keep_hook,
-                            )
-                            broll_shots = [(shot.start_ms, shot.end_ms, shot.path) for shot in shots if shot.path]
+                            if request.broll_source in ('library', 'ai', 'library_ai'):
+                                # The member's library (read once per run) and/or AI shots for the gaps.
+                                if broll_catalog is None:
+                                    broll_catalog = load_catalog(request.broll_catalog_path) if request.broll_catalog_path else []
+                                made = await prepare_library_broll(
+                                    clip_transcript, segment.start_time_ms, segment.end_time_ms,
+                                    os.path.join(work_dir, 'broll', f'clip-{i:02d}'),
+                                    portrait=request.aspect_ratio == '9:16', source=request.broll_source, catalog=broll_catalog,
+                                    ai=parse_ai_settings(request.broll_ai) if request.broll_ai else None, ai_dir=request.broll_ai_dir,
+                                    keep_hook=request.broll_keep_hook,
+                                )
+                                broll_cost += made.cost_usd
+                                broll_counts['library'] += made.library_used
+                                broll_counts['ai'] += made.ai_made
+                                broll_shots = [(shot.start_ms, shot.end_ms, shot.path) for shot in made.shots if shot.path]
+                            else:
+                                shots = await prepare_broll(
+                                    clip_transcript, segment.start_time_ms, segment.end_time_ms,
+                                    # The job's private work folder: cleaned up with the job, never
+                                    # next to a local source video (local files are used in place).
+                                    os.path.join(work_dir, 'broll'),
+                                    portrait=request.aspect_ratio == '9:16', keep_hook=request.broll_keep_hook,
+                                )
+                                broll_shots = [(shot.start_ms, shot.end_ms, shot.path) for shot in shots if shot.path]
                         except PexelsKeyRejected:
                             raise
                         except Exception as exc:
@@ -1276,6 +1302,17 @@ class AIClippingPipeline:
                 }
                 total_cost += pc.estimated_cost_usd
 
+            if broll_cost:
+                # Library b-roll planning and AI shots (OpenRouter's reported cost, or list price where it reported none).
+                api_costs["broll"] = {
+                    "provider": "openrouter",
+                    "model": self.settings.broll_model,
+                    "estimated_cost_usd": round(broll_cost, 6),
+                    "library_shots": broll_counts['library'],
+                    "ai_shots": broll_counts['ai'],
+                }
+                total_cost += broll_cost
+
             if layout_vision_cost:
                 api_costs["layout_vision"] = {
                     "provider": "openrouter",
@@ -1335,7 +1372,7 @@ class AIClippingPipeline:
                     "title_style": request.title_style,
                     "headline_look": request.headline_look,
                     "background_video": os.path.basename(request.background_video_path) if request.background_video_path else None,
-                    "broll": {"enabled": request.broll_enabled, "keep_hook": request.broll_keep_hook},
+                    "broll": {"enabled": request.broll_enabled, "keep_hook": request.broll_keep_hook, "source": request.broll_source or "stock"},
                     "hook_preview": request.hook_preview,
                     "motion_graphics": request.motion_graphics,
                     "stage_layouts": stages_on(request),

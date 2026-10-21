@@ -197,12 +197,16 @@ def parse_request(raw):
     # Voice cleanup and background music (audio_finish.parse_audio): checked here, applied while the sound is mixed.
     from clip_engine.services.audio_finish import parse_audio
     audio = parse_audio(raw.get("audio"))
+    # B-roll from the member's library, stock or AI (broll_library): the source, catalog and AI settings main wrote.
+    from clip_engine.services.broll_library import validate_broll_config
+    broll = {k: raw[k] for k in ("broll_source", "broll_catalog_path", "broll_ai", "broll_ai_dir") if raw.get(k) is not None}
+    validate_broll_config(broll, require_enabled=False)
     return {"mode": mode, "output_dir": raw["output_dir"], "sources": list(sources), "words": words, "keep": keep,
             "hook": _span(raw.get("hook"), len(words)), "cta": _span(raw.get("cta"), len(words)), "popups": clean_popups,
             "sounds": [dict(s) for s in sounds], "look": _look(raw), "title": " ".join(_text(raw.get("title"), 200, "title").split()),
             "cost_usd": float(cost), "pacing": _pacing(raw.get("pacing")), "recipe": raw.get("recipe", "clean"), "images": images,
             "pins": [dict(p) for p in pins], "cutout_intro": raw.get("cutout_intro", False), "raw_intro": raw.get("raw_intro", False),
-            "graphics": [dict(g) for g in graphics], "audio": audio, **({"combine": _render_combine(raw.get("combine"), len(sources))}
+            "graphics": [dict(g) for g in graphics], "audio": audio, **broll, **({"combine": _render_combine(raw.get("combine"), len(sources))}
                                                                      if raw.get("combine") is not None else {})}
 
 

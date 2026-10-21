@@ -11,6 +11,7 @@
 
 import { parseLookExtras, type LookExtraId } from './look-extras'
 import { isMusicTrackId, MUSIC_TRACKS, parseAudioChoice } from './music'
+import type { BrollSource } from './broll-library'
 
 export const SKILL_IDS = ['rough_cut', 'captions', 'motion_graphics', 'stage_layouts', 'zoom', 'broll', 'sound_effects', 'music', 'voice_cleanup'] as const
 export type SkillId = (typeof SKILL_IDS)[number]
@@ -31,7 +32,7 @@ export const SKILLS: Record<SkillId, SkillInfo> = {
   motion_graphics: { id: 'motion_graphics', label: 'Motion graphics', detail: 'Animated cards for the numbers, lists, names and key lines said in each clip.' },
   stage_layouts: { id: 'stage_layouts', label: 'Stage layouts', detail: 'Big cards go on a stage at the top, with you in a card below. Then back to full frame.', beta: true },
   zoom: { id: 'zoom', label: 'Zoom', detail: 'Cuts between a wide and a tight shot of your face every few seconds.' },
-  broll: { id: 'broll', label: 'B-roll', detail: 'Stock footage from Pexels over the speaker, after a 3-second hook.' },
+  broll: { id: 'broll', label: 'B-roll', detail: 'Footage that matches what’s said over the speaker, after a 3-second hook: from your B-roll library, stock or AI.' },
   sound_effects: { id: 'sound_effects', label: 'Sound effects', detail: 'The soft whooshes and pops the edit planned, mixed under your voice.' },
   music: { id: 'music', label: 'Music', detail: 'A background track, kept quiet under your voice.', beta: true },
   voice_cleanup: { id: 'voice_cleanup', label: 'Voice cleanup', detail: 'Reduces room echo and background noise in your voice.', beta: true }
@@ -78,8 +79,12 @@ export interface CreateSkillFields {
 }
 
 export interface CreateSkillContext {
-  /** A Pexels key is saved (B-roll needs one). */
+  /** A Pexels key is saved (stock b-roll needs one). */
   pexels: boolean
+  /** Shots ready in My B-roll library. */
+  library?: number
+  /** An OpenRouter key is saved (AI b-roll needs one). */
+  openrouter?: boolean
 }
 
 export const CREATE_SKILLS: readonly SkillId[] = ['rough_cut', 'captions', 'motion_graphics', 'stage_layouts', 'zoom', 'broll', 'music', 'voice_cleanup']
@@ -105,8 +110,10 @@ export function createSkillRows(fields: CreateSkillFields, context: CreateSkillC
       case 'motion_graphics': return row(id, fields.motionGraphics === true)
       case 'stage_layouts': return row(id, stageLayoutsOn(fields), stageLayoutsBlocked(fields))
       case 'zoom': return row(id, hasExtra(fields.lookExtras, ZOOM))
-      case 'broll': return row(id, fields.broll !== 'off', fields.broll === 'off' && !context.pexels ? 'Add a free Pexels key in Settings → API keys first.' : null,
-        fields.broll === 'full' ? 'Stock footage from Pexels over the speaker, for the whole clip.' : undefined)
+      // B-roll comes from the library, Pexels or AI: it can be turned on when any of them can run.
+      case 'broll': return row(id, fields.broll !== 'off',
+        fields.broll === 'off' && !context.pexels && !context.openrouter && !(context.library ?? 0) ? 'Add clips to your B-roll library, or a free Pexels key in Settings → API keys, first.' : null,
+        fields.broll === 'full' ? 'Footage that matches what’s said over the speaker, for the whole clip: from your B-roll library, stock or AI.' : undefined)
       case 'music': return row(id, fields.music === true)
       default: return row(id, fields.voiceCleanup === true)
     }
@@ -143,18 +150,21 @@ export interface EditSkillState {
   cut: number[]
   sounds: { id: number; on: boolean }[]
   lookExtras: LookExtraId[]
-  look: { includeCaptions: boolean; music?: boolean; voiceCleanup?: boolean }
+  look: { includeCaptions: boolean; music?: boolean; voiceCleanup?: boolean; broll?: BrollSource | null }
 }
 
-export type EditSkillPatch = { decisions?: Partial<Pick<EditSkillState, 'cut' | 'sounds' | 'lookExtras'>>; look?: { includeCaptions?: boolean; music?: boolean; voiceCleanup?: boolean } }
+export type EditSkillPatch = { decisions?: Partial<Pick<EditSkillState, 'cut' | 'sounds' | 'lookExtras'>>; look?: { includeCaptions?: boolean; music?: boolean; voiceCleanup?: boolean; broll?: BrollSource | null } }
+
+/** Edit my recording's B-roll: where it would come from when switched on (null: none can run), set by the page. */
+export interface EditSkillContext { brollSource?: BrollSource | null }
 
 /** The words the plan cut on its own (filler words, false starts, retakes): the rough cut. */
 export function plannedCuts(plan: EditSkillPlan): number[] {
   return plan.words.flatMap((word, i) => (word.cut && word.cut !== 'member' ? [i] : []))
 }
 
-/** Rows for this plan: Rough cut needs planned cuts and Sound effects planned sounds; Motion graphics and B-roll aren't planned here. */
-export function editSkillRows(plan: EditSkillPlan, state: EditSkillState): SkillRow[] {
+/** Rows for this plan: Rough cut needs planned cuts and Sound effects planned sounds; Motion graphics isn't planned here. */
+export function editSkillRows(plan: EditSkillPlan, state: EditSkillState, context: EditSkillContext = {}): SkillRow[] {
   const rows: SkillRow[] = []
   const planned = plannedCuts(plan)
   if (planned.length) {
@@ -163,13 +173,15 @@ export function editSkillRows(plan: EditSkillPlan, state: EditSkillState): Skill
   }
   rows.push(row('captions', state.look.includeCaptions))
   rows.push(row('zoom', hasExtra(state.lookExtras, ZOOM)))
+  rows.push(row('broll', Boolean(state.look.broll), !state.look.broll && !context.brollSource ? 'Add clips to your B-roll library, or a free Pexels key in Settings → API keys, first.' : null,
+    'Footage that matches what you say over you, after a 3-second hook: from your B-roll library, stock or AI.'))
   if (plan.sounds.length) rows.push(row('sound_effects', state.sounds.some((sound) => sound.on)))
   rows.push(row('music', state.look.music === true))
   rows.push(row('voice_cleanup', state.look.voiceCleanup === true))
   return rows
 }
 
-export function editSkillPatch(plan: EditSkillPlan, state: EditSkillState, id: SkillId, on: boolean): EditSkillPatch {
+export function editSkillPatch(plan: EditSkillPlan, state: EditSkillState, id: SkillId, on: boolean, context: EditSkillContext = {}): EditSkillPatch {
   switch (id) {
     case 'rough_cut': {
       // Only the plan's own cuts change; words the member cut or kept by hand stay as they are.
@@ -183,6 +195,7 @@ export function editSkillPatch(plan: EditSkillPlan, state: EditSkillState, id: S
     case 'sound_effects': return { decisions: { sounds: state.sounds.map((sound) => ({ ...sound, on })) } }
     case 'music': return { look: { music: on } }
     case 'voice_cleanup': return { look: { voiceCleanup: on } }
+    case 'broll': return { look: { broll: on ? state.look.broll ?? context.brollSource ?? null : null } }
     default: return {}
   }
 }

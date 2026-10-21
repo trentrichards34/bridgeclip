@@ -123,6 +123,18 @@ test('B-roll and a background video are sent only for Automatic jobs, never toge
     request = buildJobRequest(useDraftStore.getState(), trim)
     assert.equal(request.broll, 'after-hook')
     assert.equal(request.backgroundVideo, undefined)
+    // B-roll from: with nothing in the library and no keys, AI is what can run; a pick that can run is kept.
+    assert.equal(request.brollSource, 'ai')
+    const settings = form.exports.useSettingsStore
+    const keys = settings.getState()
+    try {
+      settings.setState({ pexelsConfigured: true, openrouterConfigured: true })
+      assert.equal(buildJobRequest(useDraftStore.getState(), trim).brollSource, 'stock', 'stock is the default without library shots when Pexels is set')
+      original.update({ brollSource: 'library' })
+      assert.equal(buildJobRequest(useDraftStore.getState(), trim).brollSource, 'stock', 'an empty library falls back to the default')
+      original.update({ brollSource: 'ai' })
+      assert.equal(buildJobRequest(useDraftStore.getState(), trim).brollSource, 'ai')
+    } finally { settings.setState({ pexelsConfigured: keys.pexelsConfigured, openrouterConfigured: keys.openrouterConfigured }); original.update({ brollSource: null }) }
     original.update({ hookPreview: true })
     assert.equal(buildJobRequest(useDraftStore.getState(), trim).hookPreview, true)
     assert.equal(buildJobRequest(useDraftStore.getState(), trim).motionGraphics, undefined, 'motion graphics start Off')
@@ -528,7 +540,8 @@ test('Format and Clips open on a recommended summary; changed options start open
   assert.ok(formatSummary(defaults).every((part) => !part.changed))
   assert.ok(clipsSummary(defaults).every((part) => !part.changed))
   assert.deepEqual(clipsSummary({ ...defaults, clippingMode: 'economy', durations: [], autoClipCount: false, maxClips: 3 }).filter((p) => p.changed).map((p) => p.text), ['Lower cost', 'any length', 'up to 3 clips'])
-  assert.deepEqual(formatSummary({ ...defaults, broll: 'full' }).filter((p) => p.changed).map((p) => p.text), ['B-roll: pexels footage for the whole clip'])
+  assert.deepEqual(formatSummary({ ...defaults, broll: 'full' }).filter((p) => p.changed).map((p) => p.text), ['B-roll: footage for the whole clip'])
+  assert.deepEqual(formatSummary({ ...defaults, broll: 'full', brollSource: 'library' }).filter((p) => p.changed).map((p) => p.text), ['B-roll: footage for the whole clip · My library'])
   assert.deepEqual(formatSummary({ ...defaults, backgroundVideo: 'gameplay.mp4' }).filter((p) => p.changed).map((p) => p.text), ['gameplay.mp4 under the speaker'])
 })
 

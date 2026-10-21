@@ -48,6 +48,9 @@ import { Switch } from '../components/ui/Switch'
 import { getApi } from '../lib/ipc'
 import { requestSettingsSection } from '../lib/settings-focus'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
+import { brollSourceProblem, type BrollSource } from '../../shared/broll-library'
+import { useBrollContext } from '../store/use-broll-library-store'
+import { BrollSourcePicker } from '../components/BrollSourcePicker'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useRemixForm, type RemixForm } from '../store/use-remix-form-store'
 import { useBrands } from '../store/use-brand-store'
@@ -154,6 +157,10 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const reviewing = status?.phase === 'review'
   const { links, invalid } = parseLinks(form.links)
   const silent = form.format === 'silent'
+  // Voiced takes' b-roll: the member's pick when it can run, else My library when it has shots, else stock (or stills).
+  const { usableShots: libraryShots } = useBrollContext()
+  const pickedBroll = form.brollSource && !brollSourceProblem(form.brollSource, { libraryShots, pexels: pexelsConfigured, openrouter: openrouterConfigured }) ? form.brollSource : null
+  const remixBrollSource: BrollSource | null = pickedBroll ?? (libraryShots > 0 ? 'library' : pexelsConfigured ? 'stock' : null)
   // "You on camera" (real-person templates) or "AI presenter" (Beta): the format and presenter decide which.
   const mode: RemixMode = remixMode(form.format, form.host)
   // Green screen over their video: React to a clip, you on camera, cut out in front of their moment.
@@ -298,7 +305,9 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         ...(onCamera && form.voiceCleanup ? { voiceCleanup: true } : {}),
         // "Say what it's for".
         ...(form.purpose.trim() ? { purpose: form.purpose.replace(/\s+/g, ' ').trim() } : {}),
-        ...(form.reference ? { referenceImage: form.reference.id } : {})
+        ...(form.reference ? { referenceImage: form.reference.id } : {}),
+        // Voiced takes: where the beats' b-roll comes from (none picked and no library: stock or stills, as before).
+        ...(form.format === 'commentary' && remixBrollSource ? { brollSource: remixBrollSource } : {})
       })
       setStatus((previous) => previous?.id === started.id && previous.phase !== 'planning' ? previous : started)
       setRevealReview(true)
@@ -839,10 +848,11 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             onUseLook={(picked) => form.update({ captionPreset: picked.captionPreset, includeCaptions: true, headlineLook: { ...form.headlineLook, color: picked.color, look: 'brand' } })} />
         </div>
         {countRow}
-        {!pexelsConfigured && !silent && !onCamera && (
-          <p className="text-2xs text-ink-subtle">
-            Tip: add a free Pexels key in Settings → API keys for stock B-roll under the voice-over. Without it, those beats use stills.
-          </p>
+        {form.format === 'commentary' && (
+          <div className="glass-tile rounded-2xl p-3">
+            <BrollSourcePicker value={form.brollSource} current={remixBrollSource} onChange={(brollSource) => form.update({ brollSource })} disabled={launching}
+              onOpenLibrary={() => onNavigate('broll')} emptyText="Stills: add clips to your B-roll library or a free Pexels key for moving b-roll under the voice-over." />
+          </div>
         )}
         {promises}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

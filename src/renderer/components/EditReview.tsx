@@ -19,6 +19,7 @@ import { SHOT_LABELS } from '../../shared/combine-clips'
 import { applyRestore, editRecordingLog, restoreStillApplied, undoRestore, type RestoreUndo } from '../../shared/edit-log'
 import { SkillsPanel } from './SkillsPanel'
 import { editSkillPatch, editSkillRows } from '../../shared/skills'
+import { BrollSourcePicker, useBrollLibraryLoaded, useEffectiveBrollSource } from './BrollSourcePicker'
 import { hasBrandMark } from '../../shared/brand-kit'
 import type { BrandIdentity } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
@@ -62,6 +63,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   onError: (error: string | null) => void
 }): React.JSX.Element {
   const plan = status.plan
+  // B-roll (Skills): where it comes from when switched on (My library when it has shots).
+  useBrollLibraryLoaded()
+  const brollDefault = useEffectiveBrollSource(null)
   // Choices made here outlive the page (by run id), so leaving and coming back keeps them.
   const [decisions, setDecisions] = useState<EditDecisions>(() => {
     const fresh = initialDecisions(plan, look, useEditRecordingStore.getState().recipe)
@@ -335,10 +339,11 @@ export function EditReview({ status, brand, look, onLook, onError }: {
               control={<Switch label="End on your call to action" checked={decisions.endOnCta} onChange={(endOnCta) => setDecisions((current) => ({ ...current, endOnCta }))} />} />
           )}
 
-          <SkillsPanel className="mt-5" rows={editSkillRows(plan, { ...decisions, look })}
+          <SkillsPanel className="mt-5" rows={editSkillRows(plan, { ...decisions, look }, { brollSource: brollDefault })}
             music={{ track: look.musicTrack ?? null, onChange: (track) => onLook({ ...look, musicTrack: track ?? undefined }) }}
+            expand={(id) => id === 'broll' && look.broll ? <BrollSourcePicker value={look.broll} onChange={(broll) => onLook({ ...look, broll })} disabled={making} /> : undefined}
             onToggle={(id, on) => {
-              const patch = editSkillPatch(plan, { ...decisions, look }, id, on)
+              const patch = editSkillPatch(plan, { ...decisions, look }, id, on, { brollSource: brollDefault })
               if (patch.decisions) { const next = patch.decisions; setDecisions((current) => ({ ...current, ...next })) }
               if (patch.look) onLook({ ...look, ...patch.look })
             }}
