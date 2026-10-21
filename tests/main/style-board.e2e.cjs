@@ -99,7 +99,7 @@ test('the style board picks the look in one place, previews it and sends the sam
   await page.getByRole('button', { name: 'Browse', exact: true }).click()
   await page.getByText('my talk.mp4').first().waitFor()
   const steps = page.getByRole('navigation', { name: 'Create steps' })
-  await steps.getByRole('button', { name: /Captions/ }).click()
+  await steps.getByRole('button', { name: /Look/ }).click()
   const board = page.getByTestId('style-board')
   await board.waitFor()
   const summary = board.getByTestId('style-board-summary')

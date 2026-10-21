@@ -64,7 +64,7 @@ test('pasting three links queues one job per video, two running and one waiting'
 
   // Caption language on the Captions step says the speech is not translated.
   const steps = page.getByRole('navigation', { name: 'Create steps' })
-  await steps.getByRole('button', { name: /Captions/ }).click()
+  await steps.getByRole('button', { name: /Look/ }).click()
   await page.getByRole('combobox', { name: 'Caption language' }).click()
   await page.getByRole('option', { name: 'Spanish' }).click()
   await page.getByText(/The speech stays in its original language: only the captions are translated/).waitFor()

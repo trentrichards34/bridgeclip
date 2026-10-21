@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Camera, Check, FolderOpen, Library, Scissors, Video, X } from 'lucide-react'
 import {
-  DEFAULT_EDIT_LOOK, EDIT_MAX_SOURCES, EDIT_MAX_TOTAL_SECONDS, editEstimate, formatClock, formatUsd, isRunningEdit,
+  DEFAULT_EDIT_LOOK, EDIT_MAX_SOURCES, EDIT_MAX_TOTAL_SECONDS, aboutUsd, editEstimate, formatClock, formatUsd, isRunningEdit,
   type EditLook, type EditPlan, type EditSource, type EditStatus, type FilmIdea
 } from '../../shared/edit-recording'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
@@ -228,7 +228,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
             </div>
             <p className="mt-3 text-xs text-ink-muted" data-testid="edit-cost">
               {sources.length
-                ? `Listening to ${formatClock(total)} with ElevenLabs Scribe v2 costs about ${formatUsd(estimate.transcribeUsd)}, and planning the edit about ${formatUsd(estimate.planUsd)}, through your OpenRouter account. Your custom vocabulary is sent as key terms, which may cost a little extra. Reviewing and making the reel are free.`
+                ? `Listening to ${formatClock(total)} with ElevenLabs Scribe v2 costs ${aboutUsd(estimate.transcribeUsd)}, and planning the edit ${aboutUsd(estimate.planUsd)}, through your OpenRouter account. Your custom vocabulary is sent as key terms, which may cost a little extra. Reviewing and making the reel are free.`
                 : 'Add your recording first. Transcribing and planning go through your OpenRouter account; reviewing and making the reel are free.'}
             </p>
             <div className="mt-3 flex justify-end">

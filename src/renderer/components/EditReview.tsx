@@ -455,7 +455,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                   onLook({ ...look, ...lookPatch(look, rest) })
                 }}
                   rows={{ hooks: LOOK_HOOKS, handle: true, extras: true }} brand={brand} frame={previewFrame(sources[0]?.path, 'video', 0.1)}
-                  hookText={decisions.hookText} words={previewWords} />
+                  hookText={decisions.hookText} words={previewWords} skillExtras={['punch_zoom']} />
               </div>
             )}
           </section>

@@ -135,7 +135,7 @@ test('the review: an edit style, half-screen cards to edit or switch off, my ima
   // The last style picked is used: Fast explainer, with its extras on.
   assert.match(html, /role="radio" aria-checked="true"[^>]*>(?:(?!<\/button>).)*Fast explainer/s)
   assert.match(html, /aria-pressed="true"[^>]*>Keyword pill</)
-  assert.match(html, /aria-pressed="false"[^>]*>Zoom punch</)
+  assert.match(html, /aria-pressed="false"[^>]*>Zoom</)
   assert.match(html, /Half-screen graphic 1 · List/)
   // One "On-screen extras" section with sub-groups, in the page's order; the header says what costs money.
   assert.match(html, /Making the reel is free\. Chat messages use your OpenRouter credit\./)

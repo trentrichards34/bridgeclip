@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ImagePlus, Palette, X } from 'lucide-react'
 import { CAPTION_PRESETS } from '../../shared/caption-presets'
 import {
-  MAX_PURPOSE_CHARS, REFERENCE_MAX_BYTES, deriveReferenceLook, referenceCostLine, type ReferenceImage, type ReferenceLook, type ReferenceSupport
+  MAX_PURPOSE_CHARS, REFERENCE_MAX_BYTES, deriveReferenceLook, referenceCostDetail, referenceCostLine, type ReferenceImage, type ReferenceLook, type ReferenceSupport
 } from '../../shared/purpose'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
@@ -24,10 +24,10 @@ async function pixelsOf(bytes: Uint8Array): Promise<Uint8ClampedArray | null> {
   return context.getImageData(0, 0, width, height).data
 }
 
-/** In a sentence: what "Use colors from my reference" changes. */
+/** In a sentence, after the color's swatch: what "Use colors from my reference" changes (no color codes). */
 export function referenceLookLine(look: ReferenceLook): string {
   const preset = CAPTION_PRESETS.find((item) => item.id === look.captionPreset)?.name ?? look.captionPreset
-  return `Hook bar in ${look.color} and ${preset} captions (your picture is mostly ${look.light ? 'light' : 'dark'}).`
+  return `This color on the hook bar, with ${preset} captions (your picture is mostly ${look.light ? 'light' : 'dark'}).`
 }
 
 /**
@@ -84,6 +84,7 @@ export function PurposeFields({ purpose, onPurpose, reference, onReference, mode
   }
 
   const costLine = referenceCostLine(support)
+  const costDetail = referenceCostDetail(support)
   return (
     <section className="space-y-3" aria-label="Say what it’s for" data-testid="purpose-fields">
       <label className="block">
@@ -110,10 +111,14 @@ export function PurposeFields({ purpose, onPurpose, reference, onReference, mode
                 <Button size="sm" variant="ghost" iconOnly aria-label="Remove the reference image" icon={<X className="h-3.5 w-3.5" />} disabled={disabled}
                   onClick={() => { onReference(null); setError(null) }} />
               </p>
-              {costLine && <p className={cn('text-2xs', support?.supportsImages ? 'text-ink-subtle' : 'text-warning')} data-testid="reference-support">{costLine}</p>}
+              {costLine && <p className={cn('text-2xs', support?.supportsImages ? 'text-ink-subtle' : 'text-warning')} data-testid="reference-support" title={costDetail ?? undefined}>{costLine}</p>}
+              {costDetail && <details className="text-2xs text-ink-subtle" data-testid="reference-cost-details">
+                <summary className="cursor-pointer select-none hover:text-ink-muted">Details</summary>
+                <p className="mt-0.5 leading-relaxed">{costDetail}</p>
+              </details>}
               {look && onUseLook && (
                 <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                  <span className="h-4 w-4 shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgb(255_255_255/0.25)]" style={{ background: look.color }} aria-hidden />
+                  <span className="h-4 w-4 shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgb(255_255_255/0.25)]" style={{ background: look.color }} aria-hidden data-testid="reference-color" data-color={look.color} />
                   <span className="min-w-0 text-2xs text-ink-muted">{referenceLookLine(look)}</span>
                   <Button size="sm" variant="secondary" icon={<Palette className="h-3.5 w-3.5" />} disabled={disabled}
                     onClick={() => { onUseLook(look); setUsed(true) }}>{used ? 'Colors used' : 'Use colors from my reference'}</Button>

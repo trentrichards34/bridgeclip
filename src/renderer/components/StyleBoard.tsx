@@ -112,21 +112,26 @@ function SwatchRow<T extends string>({ title, groupLabel, current, options, valu
 const CAPTIONS_FIRST = 10
 
 /** The Extras row: a checkbox per effect (pick as many as you like), each a tile of the effect on the member's frame. */
-function ExtrasRow({ value, onChange, options, wide }: {
+function ExtrasRow({ value, onChange, options, wide, skillExtras = [] }: {
   value: readonly LookExtraId[]; onChange: (extras: LookExtraId[]) => void
   options: { id: LookExtraId; name: string; description: string; content: ReactNode }[]; wide: boolean
+  /** Extras the page's Skills list owns: left out here (and kept as they are by Clear). */
+  skillExtras?: readonly LookExtraId[]
 }): React.JSX.Element {
+  const shown = value.filter((id) => !skillExtras.includes(id))
+  const kept = value.filter((id) => skillExtras.includes(id))
+  const skillNames = LOOK_EXTRAS.filter((extra) => skillExtras.includes(extra.id)).map((extra) => extra.label)
   return (
     <div className="space-y-1.5" role="group" aria-labelledby="style-row-extras">
       <div className="flex min-h-7 items-center gap-2">
         <span id="style-row-extras" className="shrink-0 text-xs font-semibold text-ink">Extras</span>
         <span className="min-w-0 flex-1 truncate text-2xs text-ink-muted" data-testid="style-row-extras-current">
-          {value.length ? extrasName(value) : 'Pick as many as you like'}
+          {shown.length ? extrasName(shown) : 'Pick as many as you like'}
         </span>
-        {value.length > 0 && <Button size="sm" variant="ghost" aria-label="Clear extras" onClick={() => onChange([])}>Clear</Button>}
+        {shown.length > 0 && <Button size="sm" variant="ghost" aria-label="Clear extras" onClick={() => onChange(kept)}>Clear</Button>}
       </div>
       <div role="group" aria-label="Extras: pick as many as you like" className="grid gap-1.5" style={{ gridTemplateColumns: wide ? TILE_GRID_WIDE : TILE_GRID }}>
-        {options.map((option) => {
+        {options.filter((option) => !skillExtras.includes(option.id)).map((option) => {
           const on = value.includes(option.id)
           return (
             <button key={option.id} type="button" role="checkbox" aria-checked={on} aria-label={option.name} title={option.description}
@@ -142,7 +147,7 @@ function ExtrasRow({ value, onChange, options, wide }: {
           )
         })}
       </div>
-      <p className="text-2xs text-ink-subtle">Effects on top of your look. Each tile shows it on your video.</p>
+      <p className="text-2xs text-ink-subtle">Effects on top of your look. Each tile shows it on your video.{skillNames.length ? ` ${skillNames.join(' and ')} ${skillNames.length > 1 ? 'are' : 'is'} in Skills above.` : ''}</p>
     </div>
   )
 }
@@ -245,6 +250,8 @@ export interface StyleBoardProps {
   saveKind?: StyleKind
   /** Template options that aren't the look, under the board. */
   layout?: ReactNode
+  /** Extras the page's Skills list turns on and off (Create's Zoom): one home, so they're left out of Extras and the summary. */
+  skillExtras?: readonly LookExtraId[]
   title?: string
   className?: string
 }
@@ -257,7 +264,7 @@ export interface StyleBoardProps {
  */
 export function StyleBoard({
   value, onChange, rows, brand, frame = null, aspect = '9:16', hookText, words, hookNote, keywordHelp,
-  ctaHelp = CTA_HELP, onUseBrand, saveKind, layout, title = 'Your look', className
+  ctaHelp = CTA_HELP, onUseBrand, saveKind, layout, skillExtras, title = 'Your look', className
 }: StyleBoardProps): React.JSX.Element {
   const hooks = rows.hooks ?? []
   const look = brand?.look
@@ -271,7 +278,7 @@ export function StyleBoard({
   const [brandDialog, setBrandDialog] = useState<'new' | 'handle' | null>(null)
   const library = useCtaLibrary(rows.cta ? value.ctaId : null, (ctaId) => onChange({ ctaId }))
   const ctaName = rows.cta && value.ctaId ? library.selected?.name ?? null : null
-  const summary = styleSummary(value, rows, { brandColor, corner, hasMark, ctaName })
+  const summary = styleSummary(skillExtras?.length ? { ...value, extras: value.extras.filter((id) => !skillExtras.includes(id)) } : value, rows, { brandColor, corner, hasMark, ctaName })
   const fontApplies = value.hook !== 'none' && value.hook !== 'card' && hooks.some((hook) => hook !== 'none' && hook !== 'card')
 
   const shuffle = (): void => onChange(comboPatch(shuffleCombo(value), hooks))
@@ -428,7 +435,7 @@ export function StyleBoard({
               note={<p className="text-2xs text-ink-subtle">The color of the hook text bar. The text turns black or white to stay readable.</p>} />}
           </>}
 
-          {rows.extras && <ExtrasRow value={value.extras} onChange={(extras) => onChange({ extras })} options={extraOptions} wide={wide} />}
+          {rows.extras && <ExtrasRow value={value.extras} onChange={(extras) => onChange({ extras })} options={extraOptions} wide={wide} skillExtras={skillExtras} />}
 
           {rows.handle && (hasMark ? (
             <SwatchRow title="Handle" groupLabel="Handle corner" current={value.handle ? `${look?.handle || 'Your logo'} · ${cornerName(corner).toLowerCase()}` : 'Off'}

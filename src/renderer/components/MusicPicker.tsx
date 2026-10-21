@@ -5,10 +5,23 @@ import { getApi } from '../lib/ipc'
 import { Button } from './ui/Button'
 import { SettingRow } from './ui/SettingRow'
 import { Switch } from './ui/Switch'
-import { onRadioKeyDown } from './ui/Segmented'
+import { onRadioKeyDown, Segmented } from './ui/Segmented'
 import {
-  DEFAULT_MUSIC_LEVEL_DB, MAX_MUSIC_LEVEL_DB, MIN_MUSIC_LEVEL_DB, MUSIC_TRACKS, type MusicLibrary, type MusicSettings
+  DEFAULT_MUSIC_LEVEL_DB, MUSIC_TRACKS, type MusicLibrary, type MusicSettings
 } from '../../shared/music'
+
+/** Settings → My music's volume, in words. Each is a stored level (dB under the voice); Medium is the default. */
+export const MUSIC_VOLUMES = [
+  { id: 'quiet', label: 'Quiet', levelDb: -26 },
+  { id: 'medium', label: 'Medium', levelDb: DEFAULT_MUSIC_LEVEL_DB },
+  { id: 'loud', label: 'Loud', levelDb: -14 }
+] as const
+export type MusicVolume = (typeof MUSIC_VOLUMES)[number]['id']
+
+/** The word for a stored level: the nearest of the three (a level saved earlier stays as it is until changed). */
+export function musicVolumeOf(levelDb: number): MusicVolume {
+  return MUSIC_VOLUMES.reduce((best, item) => Math.abs(item.levelDb - levelDb) < Math.abs(best.levelDb - levelDb) ? item : best, MUSIC_VOLUMES[1] as (typeof MUSIC_VOLUMES)[number]).id
+}
 
 const EMPTY: MusicLibrary = { tracks: MUSIC_TRACKS, own: [], settings: { levelDb: DEFAULT_MUSIC_LEVEL_DB, duringTheirClip: false } }
 const RIGHTS = 'Only add music you own or have the rights to use in your videos.'
@@ -226,9 +239,8 @@ export function MusicSettingsPanel({ initialLibrary }: { initialLibrary?: MusicL
   const { library, error, update } = useMusicLibrary(initialLibrary)
   const [busy, setBusy] = useState(false)
   const [skipped, setSkipped] = useState<string[]>([])
-  const [level, setLevel] = useState(library.settings.levelDb)
   const saved = useRef(library.settings)
-  useEffect(() => { setLevel(library.settings.levelDb); saved.current = library.settings }, [library.settings])
+  useEffect(() => { saved.current = library.settings }, [library.settings])
   useEffect(() => () => stopMusicPreview(), [])
 
   const save = (patch: Partial<MusicSettings>): void => {
@@ -281,33 +293,13 @@ export function MusicSettingsPanel({ initialLibrary }: { initialLibrary?: MusicL
         </Button>
       </div>
       {skipped.length > 0 && <p className="text-2xs text-warning" role="status">Left out (use MP3, WAV or M4A up to 30 MB): {skipped.join(', ')}</p>}
-      <div className="glass-tile rounded-xl px-3 py-2.5">
-        <div className="flex items-center justify-between gap-3">
-          <label htmlFor="music-level" className="text-sm font-medium text-ink">Music volume</label>
-          <span className="font-mono text-xs tabular text-ink-muted">{level} dB</span>
-        </div>
-        <input
-          id="music-level"
-          type="range"
-          min={MIN_MUSIC_LEVEL_DB}
-          max={MAX_MUSIC_LEVEL_DB}
-          step={1}
-          value={level}
-          aria-valuetext={`${-level} dB under your voice`}
-          onChange={(event) => setLevel(Number(event.target.value))}
-          onPointerUp={() => save({ levelDb: level })}
-          onKeyUp={() => save({ levelDb: level })}
-          onBlur={() => save({ levelDb: level })}
-          className="mt-2 block w-full"
-        />
-        <div className="mt-1 flex justify-between text-2xs text-ink-subtle">
-          <span>Quieter</span>
-          <span>Louder</span>
-        </div>
-        <p className="mt-1 text-2xs leading-relaxed text-ink-subtle">
-          How far under your voice the music sits while you talk ({DEFAULT_MUSIC_LEVEL_DB} dB is the default). It comes back up in pauses.
-        </p>
-      </div>
+      <SettingRow
+        title="Music volume"
+        description="How loud music plays under your voice while you talk. It comes back up in pauses. Medium suits most videos."
+        control={<Segmented size="sm" label="Music volume" value={musicVolumeOf(library.settings.levelDb)}
+          options={MUSIC_VOLUMES.map((item) => ({ value: item.id, label: item.label }))}
+          onChange={(id) => save({ levelDb: MUSIC_VOLUMES.find((item) => item.id === id)?.levelDb ?? DEFAULT_MUSIC_LEVEL_DB })} />}
+      />
       <SettingRow
         title="Music under their clip in Remix"
         description="Off: the music stops while the other creator's clip plays, so their sound stays as it was."
