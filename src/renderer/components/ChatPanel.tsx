@@ -1,7 +1,8 @@
 /**
  * The chat panel shared by the clip editor's Chat tab, Edit my recording's
  * review and Remix's review: the conversation, a change card per answer (what
- * changed, Keep or Undo), suggestion chips and the message box. The place
+ * changed, Keep or Undo), suggestion chips (they fill the message box, to edit
+ * before sending) and the message box; each new message scrolls into view. The place
  * supplies how to ask (a paid IPC call), how to apply the checked steps through
  * its own setters, and how to undo them.
  */
@@ -78,7 +79,8 @@ export function ChatPanel<Step extends ChatStepBase, Applied>(props: ChatPanelPr
   const [pending, setPending] = useState(false)
   const [info, setInfo] = useState<ChatInfo | null>(null)
   const [infoError, setInfoError] = useState<string | null>(null)
-  const end = useRef<HTMLDivElement>(null)
+  const log = useRef<HTMLDivElement>(null)
+  const compose = useRef<HTMLDivElement>(null)
   const pendingKey = useRef<string | null>(null)
   // The answer arrives later: apply it to the state as it is then, not as it was when asked.
   const latest = useRef(props); latest.current = props
@@ -101,7 +103,13 @@ export function ChatPanel<Step extends ChatStepBase, Applied>(props: ChatPanelPr
     load().then((value) => { if (live) setInfo(value) }, (e) => { if (live) setInfoError(errorMessage(e)) })
     return () => { live = false }
   }, [])
-  useEffect(() => { if (variant === 'editor') end.current?.scrollIntoView({ block: 'nearest' }) }, [entries.length, pending, variant])
+  // The newest message (or "Working on it…") into view: its top first when it's taller than the space,
+  // above the message box when that box sticks to the bottom of the scrolling column.
+  useEffect(() => {
+    const box = log.current
+    const target = box?.querySelector<HTMLElement>('[data-chat-pending]') ?? [...(box?.querySelectorAll<HTMLElement>('[data-chat-entry]') ?? [])].at(-1)
+    if (box && target) revealNewest(box, target, compose.current)
+  }, [entries.length, pending, key])
 
   const update = (thread: string, change: (list: ChatEntry<Applied>[]) => ChatEntry<Applied>[]): void => {
     const next = change(read(thread))
@@ -169,9 +177,9 @@ export function ChatPanel<Step extends ChatStepBase, Applied>(props: ChatPanelPr
       {entries.length > 0 && <Button size="sm" variant="ghost" iconOnly icon={<RotateCcw size={12} />} aria-label="Clear chat" tooltip={props.clearTooltip} disabled={pending} onClick={clear} />}
     </div>
     {reason && <p role="note" className={c('-reason')}>{reason}</p>}
-    <div className={c('-log')} role="log" aria-label="Chat messages" aria-live="polite">
+    <div ref={log} className={c('-log')} role="log" aria-label="Chat messages" aria-live="polite">
       {!entries.length && !pending && <p className="text-2xs text-ink-subtle flex items-center gap-1.5"><MessageSquare size={12} />No messages yet.</p>}
-      {entries.map((entry) => <div key={entry.id} className={cn(c('-message'), entry.role)}>
+      {entries.map((entry) => <div key={entry.id} data-chat-entry className={cn(c('-message'), entry.role)}>
         {entry.text && <p>{entry.text}</p>}
         {entry.pins && <ul className="chat-point-sent" aria-label="Pins sent">{entry.pins.map((pin) => <li key={pin}><MapPin size={10} aria-hidden />{pin}</li>)}</ul>}
         {entry.card && <div className={cn(c('-card'), entry.card.state)} role="group" aria-label="Chat changes">
@@ -188,10 +196,9 @@ export function ChatPanel<Step extends ChatStepBase, Applied>(props: ChatPanelPr
           </div>
         </div>}
       </div>)}
-      {pending && <p role="status" className="text-2xs text-ink-muted flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" />Working on it…</p>}
-      <div ref={end} />
+      {pending && <p role="status" data-chat-pending className="text-2xs text-ink-muted flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" />Working on it…</p>}
     </div>
-    <div className={c('-compose')}>
+    <div ref={compose} className={c('-compose')}>
       {props.point?.pad && <div className="flex flex-wrap items-center gap-2">
         <PointButton thread={key} disabled={!!reason || pending} />
         <span className="text-2xs text-ink-subtle">{pointing ? 'Click or drag on the frame below. Esc cancels.' : 'Show where on the video, then ask, like “put an arrow here”.'}</span>
@@ -199,7 +206,13 @@ export function ChatPanel<Step extends ChatStepBase, Applied>(props: ChatPanelPr
       {props.point?.pad && (pointing || points.length > 0) && props.point.pad}
       {props.point && <PointChips thread={key} />}
       <div className={c('-chips')} role="group" aria-label="Suggestions">
-        {(props.point && points.length ? props.point.suggestions : props.suggestions).map((s) => <button key={s} type="button" disabled={disabled} onClick={() => { void send(s) }}>{s}</button>)}
+        {(props.point && points.length ? props.point.suggestions : props.suggestions).map((s) => <button key={s} type="button" disabled={!!reason || !info}
+          title="Puts these words in the message box. Change them if you like, then send." onClick={() => {
+            // A starting point, not a sent message: the member edits it, then sends.
+            setDraft(s)
+            const box = input.current
+            if (box) { box.focus({ preventScroll: true }); requestAnimationFrame(() => box.setSelectionRange(s.length, s.length)) }
+          }}>{s}</button>)}
       </div>
       <form className={c('-input')} onSubmit={(e) => { e.preventDefault(); void send(draft) }}>
         <textarea ref={input} aria-label="Message" rows={2} maxLength={CHAT_MAX_MESSAGE_CHARS} value={draft} disabled={!!reason || !info}
@@ -212,4 +225,24 @@ export function ChatPanel<Step extends ChatStepBase, Applied>(props: ChatPanelPr
       {info && <p className="text-2xs text-ink-subtle">{info.costNote} Model: {info.model}.</p>}
     </div>
   </section>
+}
+
+/** The nearest scrolling box around `el` (the chat log itself, or the column it sits in). */
+function scrollerOf(el: HTMLElement): HTMLElement | null {
+  for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY
+    if ((overflow === 'auto' || overflow === 'scroll') && node.scrollHeight > node.clientHeight + 1) return node
+  }
+  return null
+}
+
+/** Scrolls the newest message into view without moving the rest of the page: as much of it as fits, its start first. */
+function revealNewest(log: HTMLElement, target: HTMLElement, compose: HTMLElement | null): void {
+  const scroller = scrollerOf(log)
+  if (!scroller) return
+  const view = scroller.getBoundingClientRect(), item = target.getBoundingClientRect()
+  // A message box that sticks to the bottom of the same column covers its last lines.
+  const bottom = compose && scroller.contains(compose) && !log.contains(compose) ? Math.min(view.bottom, compose.getBoundingClientRect().top) : view.bottom
+  const delta = Math.min(item.bottom - bottom + 8, item.top - view.top - 8)
+  if (delta > 0) scroller.scrollTop += delta
 }

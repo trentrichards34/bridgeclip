@@ -49,6 +49,12 @@ test('an Automatic clip shows what the run did; Restore puts back the pauses and
   const log = page.getByTestId('edit-log')
   await log.waitFor()
   const texts = async () => (await log.locator('li').allInnerTexts()).map((s) => s.replace(/\s*Restore$/, '').trim())
+  // Folded to one line until opened, so the inspector keeps its room.
+  assert.equal(await log.locator('li').count(), 0)
+  const toggle = log.getByRole('button', { name: /changes the app made/ })
+  assert.match(await toggle.innerText(), /^6 changes the app made\s*Show$/)
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false')
+  await toggle.click()
   const lines = await texts()
   assert.deepEqual(lines, [
     'Started at 0:01 (left out 1 s before: “Here is”)',
@@ -85,7 +91,7 @@ test('an Automatic clip shows what the run did; Restore puts back the pauses and
   await log.getByRole('button', { name: /^Restore: Added 1 graphic/ }).click()
   await settle()
   assert.deepEqual(saved().candidates[0].graphics, [])
-  await log.getByRole('button', { name: /What changed/ }).click()
+  await toggle.click()
   assert.equal(await log.locator('li').count(), 0)
   assert.deepEqual(errors, [])
 })

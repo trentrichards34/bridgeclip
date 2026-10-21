@@ -5,7 +5,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
-const { editorTools, linkEngine } = require('./editor-e2e-tools.cjs')
+const { editorTools, linkEngine, openEditorTab } = require('./editor-e2e-tools.cjs')
 const fixture = require('../fixtures/editor/project.json')
 
 test('camera scanning, exact frame edits, dismissals and Space playback survive reopening', { timeout: 180000 }, async (t) => {
@@ -264,6 +264,7 @@ test('camera scanning, exact frame edits, dismissals and Space playback survive 
     await camera.getByRole('button', { name: /^Camera change at/ }).first().click()
     await page.screenshot({ path: path.join(process.env.BRIDGECLIP_E2E_SHOTS, 'camera-editor.png') })
   }
+  await openEditorTab(page, 'Hook & CTA')
   const title = page.getByRole('textbox', { name: 'Title', exact: true })
   const originalTitle = await title.inputValue()
   await title.focus()

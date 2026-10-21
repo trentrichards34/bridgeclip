@@ -291,3 +291,71 @@ export function graphicLocalMs(c: Timing, g: Pick<EditorGraphic, 'at_ms' | 'dura
   const local = o - w.start_ms
   return local >= 0 && local < w.duration_ms ? local : null
 }
+
+// ---------------------------------------------------------------------------
+// Fitting graphics into the cut, and keeping them out of each other's way.
+// ---------------------------------------------------------------------------
+
+/** How much of a graphic plays: all of it, part of it (it runs past the cut), or none. */
+export type GraphicCutFit = 'inside' | 'partly' | 'outside'
+
+/**
+ * Whether a graphic plays in full: 'partly' when it runs before the clip's
+ * start or past its end, or loses more than half of itself to removed parts (a
+ * short pause cut inside it only shortens it a little, which is fine).
+ */
+export function graphicCutFit(c: Timing, g: Pick<EditorGraphic, 'at_ms' | 'duration_ms'>): GraphicCutFit {
+  const w = graphicWindow(c, g)
+  if (!w) return 'outside'
+  const start = c.ranges[0][0], end = c.ranges[c.ranges.length - 1][1]
+  const outside = g.at_ms < start - 20 || g.at_ms + g.duration_ms > end + 20
+  return outside || w.duration_ms * c.video_speed < g.duration_ms / 2 ? 'partly' : 'inside'
+}
+
+/**
+ * A graphic moved so all of it plays inside the clip's cut: one that runs past
+ * the clip's end starts earlier, one that would start in cut-out footage starts
+ * where the next kept part begins, and when the clip has less time left it is
+ * shortened to what fits. Null when less than 0.8 s fits.
+ */
+export function fitGraphicInCut<G extends Pick<EditorGraphic, 'at_ms' | 'duration_ms'>>(g: G, c: Timing): G | null {
+  const start = c.ranges[0][0], end = c.ranges[c.ranges.length - 1][1]
+  let at = Math.max(start, Math.round(g.at_ms)), duration = clampGraphicMs(g.duration_ms)
+  if (at + duration > end) at = Math.max(start, end - duration)
+  if (!c.ranges.some(([a, b]) => at >= a && at < b)) at = c.ranges.find(([a]) => a > at)?.[0] ?? at
+  duration = Math.min(duration, end - at)
+  if (duration < GRAPHIC_MIN_MS) return null
+  return at === g.at_ms && duration === g.duration_ms ? g : { ...g, at_ms: at, duration_ms: duration }
+}
+
+/** Graphics that sit in a band (an arrow or circle points at a spot instead). */
+const usesBand = (g: Pick<EditorGraphic, 'template'>): boolean => g.template !== 'highlight'
+/** The order a new graphic tries the bands in when its own is taken. */
+export const GRAPHIC_BAND_ORDER: readonly GraphicPlacement[] = ['top', 'bottom', 'middle']
+
+type Placed = Pick<EditorGraphic, 'id' | 'template' | 'at_ms' | 'duration_ms' | 'placement'>
+/** True when two graphics share a band and are on screen at the same time. */
+export function graphicsClash(a: Placed, b: Placed): boolean {
+  return a.id !== b.id && usesBand(a) && usesBand(b) && a.placement === b.placement &&
+    a.at_ms < b.at_ms + b.duration_ms && b.at_ms < a.at_ms + a.duration_ms
+}
+
+/** The ids of graphics that cover another one (same band, same time). */
+export function graphicClashes(graphics: readonly Placed[]): Set<string> {
+  const ids = new Set<string>()
+  graphics.forEach((a, i) => graphics.slice(i + 1).forEach((b) => { if (graphicsClash(a, b)) { ids.add(a.id); ids.add(b.id) } }))
+  return ids
+}
+
+/**
+ * A graphic being added, moved to the next free band (top, then bottom, then
+ * middle) when another graphic already sits in its band at the same time.
+ * Unchanged when its band is free or no band is.
+ */
+export function placeInFreeBand<G extends Placed>(others: readonly Placed[], g: G): G {
+  if (!usesBand(g)) return g
+  const free = (placement: GraphicPlacement): boolean => !others.some((o) => graphicsClash(o, { ...g, placement }))
+  if (free(g.placement)) return g
+  const band = GRAPHIC_BAND_ORDER.find(free)
+  return band ? { ...g, placement: band } : g
+}

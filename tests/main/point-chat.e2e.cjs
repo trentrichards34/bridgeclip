@@ -105,7 +105,7 @@ test('Point: a pin on the Output preview and "put an arrow here" add an arrow at
   await chat.getByRole('textbox', { name: 'Message' }).fill('put an arrow here')
   await chat.getByRole('textbox', { name: 'Message' }).press('Enter')
   const card = chat.getByRole('group', { name: 'Chat changes' })
-  await card.getByText('Added an arrow at pin 1 at 0:01.0.', { exact: true }).waitFor()
+  await card.getByText('Added an arrow at pin 1 at 0:00.0.', { exact: true }).waitFor() // the clip's clock, like the pin
   await chat.getByText('Done. An arrow points at the spot you picked.').waitFor()
   // Pins go with the message they were sent with, then clear.
   assert.equal(await chips.count(), 0)

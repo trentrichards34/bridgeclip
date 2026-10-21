@@ -159,7 +159,7 @@
 .editor-caption-preview:hover, .editor-caption-preview:focus-visible { border-color:rgb(var(--accent)); outline:1px dashed rgb(var(--accent)); outline-offset:4px; }
 .editor-caption-preview:disabled { cursor:default; }
 .editor-caption-words { display:flex; flex-wrap:wrap; justify-content:center; gap:0 .28em; padding:.12em .2em; border-radius:.15em; }
-.editor-subtitle-controls { margin-top:16px; padding:12px; border:1px solid #ffffff14; border-radius:8px; display:grid; gap:10px; }
+.editor-subtitle-controls { padding:12px; border:1px solid #ffffff14; border-radius:8px; display:grid; gap:10px; }
 .editor-subtitle-controls fieldset:disabled { opacity:.5; }
 /* Transcript line selection for "Make a clip from these lines". */
 .editor-line-select { width:13px; height:13px; flex:none; display:inline-grid; place-items:center; border-radius:3px; border:1px solid rgb(var(--ink-subtle) / .6); color:rgb(var(--accent-ink)); touch-action:none; }
@@ -175,7 +175,7 @@
 .editor-hook-grade.grade-d, .editor-hook-grade.grade-f { color:rgb(var(--danger)); background:rgb(var(--danger) / .12); }
 
 /* Chat tab: messages, change cards with Keep / Undo, and a composer pinned to the panel's bottom. */
-.editor-chat { display:flex; flex-direction:column; gap:12px; margin-top:16px; min-width:0; }
+.editor-chat { display:flex; flex-direction:column; gap:12px; min-width:0; }
 .editor-chat-reason { font-size:11px; line-height:1.5; color:rgb(var(--warning)); padding:8px 10px; border-radius:6px; background:rgb(var(--warning) / .08); }
 .editor-chat-log { display:flex; flex-direction:column; gap:10px; min-width:0; }
 .editor-chat-message { font-size:12px; line-height:1.55; overflow-wrap:anywhere; min-width:0; }
@@ -198,9 +198,19 @@
 .editor-chat-input textarea::placeholder { color:rgb(var(--ink-subtle)); }
 
 /* Motion graphics: the Graphics row, the Graphics tab and the Output overlay (ClipGraphics.tsx). */
-/* Seven tabs: they wrap onto two rows rather than cutting their names short. */
-.editor-tabs { flex-wrap:wrap; }
-.editor-tabs button { padding:10px 8px 8px; }
+/* Four tabs and a "More" menu on one row (EditorTabs.tsx). */
+.editor-tabs { position:relative; flex-wrap:nowrap; }
+.editor-tabs > button { padding:11px 3px 9px; overflow:hidden; text-overflow:ellipsis; }
+.editor-tabs > .editor-tabs-more { flex:0 0 auto; display:flex; align-items:center; justify-content:center; gap:2px; padding-inline:6px; }
+.editor-tabs-more > span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.editor-tabs-more > svg { flex:none; }
+.editor-tabs-menu { position:absolute; right:6px; top:calc(100% + 4px); z-index:30; min-width:160px; padding:4px; display:flex; flex-direction:column; border-radius:10px; border:1px solid #ffffff1a; background:rgb(var(--editor-well)); box-shadow:0 12px 32px rgb(0 0 0 / .45); }
+.editor-tabs-menu button { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-radius:6px; font-size:12px; color:rgb(var(--ink)); text-align:left; }
+.editor-tabs-menu button:hover, .editor-tabs-menu button:focus-visible { background:rgb(255 255 255 / .08); outline:none; }
+/* A graphic only partly inside the cut, or covering another graphic in its band. */
+.editor-graphic-block.partly { border-color:rgb(var(--warning)); border-style:dashed; }
+.editor-graphic-block.clash { border-color:rgb(var(--warning)); box-shadow:inset 0 0 0 1px rgb(var(--warning) / .6); }
+.editor-graphic-warning { flex:none; display:grid; place-items:center; padding:0 3px; color:rgb(var(--warning)); }
 .editor-graphics-row { margin:8px 8px 0; }
 .editor-graphics-label { display:flex; align-items:center; gap:6px; font-size:10px; font-weight:500; color:rgb(var(--ink-muted)); margin-bottom:4px; }
 .editor-graphics-label > span { margin-right:auto; }
@@ -222,7 +232,7 @@
 .editor-graphics-overlay { position:absolute; pointer-events:none; overflow:hidden; }
 .editor-graphics-overlay .editor-graphic-view { position:absolute; inset:0; }
 .editor-graphic-view { position:relative; overflow:hidden; flex-shrink:0; }
-.editor-graphics-panel { margin-top:16px; display:flex; flex-direction:column; gap:10px; min-width:0; }
+.editor-graphics-panel { display:flex; flex-direction:column; gap:10px; min-width:0; }
 .editor-graphic-picker { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; }
 .editor-graphic-tile { display:flex; flex-direction:column; align-items:center; gap:6px; padding:6px 4px 8px; border-radius:8px; border:1px solid #ffffff14; background:rgb(var(--editor-well)); font-size:10px; color:rgb(var(--ink-muted)); min-width:0; }
 .editor-graphic-tile .editor-graphic-view { border-radius:5px; background:#3a4256; }
