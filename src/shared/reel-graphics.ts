@@ -43,12 +43,13 @@ export function reelGraphicStyle(look: HeadlineLook | null | undefined, graphic?
 }
 
 /** What a reel graphic draws (1080×1920), lasting `durationMs` on screen. */
-export function reelGraphicSpec(graphic: Pick<EditorGraphic, 'template' | 'fields' | 'placement'>, frame: GraphicFrame, durationMs: number, look: HeadlineLook | null | undefined): GraphicRenderSpec {
+export function reelGraphicSpec(graphic: Pick<EditorGraphic, 'template' | 'fields' | 'placement' | 'size'>, frame: GraphicFrame, durationMs: number, look: HeadlineLook | null | undefined): GraphicRenderSpec {
   const { width, height } = outputSize('9:16')
   const fields = { ...graphic.fields }
   delete fields.image
   delete fields.color
-  return { template: graphic.template, fields, width, height, duration_ms: Math.round(durationMs), box: graphicBox(graphic.placement, frame), placement: graphic.placement, ...reelGraphicStyle(look, graphic) }
+  return { template: graphic.template, fields, width, height, duration_ms: Math.round(durationMs), box: graphicBox(graphic.placement, frame, graphic.size), placement: graphic.placement,
+    ...reelGraphicStyle(look, graphic), ...(graphic.size && graphic.size !== 'card' ? { size: graphic.size } : {}) }
 }
 
 /** Checks graphics from the page (or the chat) the clip editor's way, then keeps reel rules: no Logo pop, up to 8. */

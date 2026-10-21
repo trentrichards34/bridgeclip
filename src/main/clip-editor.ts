@@ -414,7 +414,7 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
           let result: WorkerResult
           try {
             result = await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId,
-              ...(graphics.length ? { graphics: graphics.map(({ file, start_ms, duration_ms }) => ({ file, start_ms, duration_ms })) } : {}) })
+              ...(graphics.length ? { graphics: graphics.map(({ file, start_ms, duration_ms, size }) => ({ file, start_ms, duration_ms, ...(size ? { size } : {}) })) } : {}) })
           } catch (error) {
             // A render that failed after its captions were translated still spent that call; so did a review that failed part way.
             const failedResult = (error as WorkerFailure).result

@@ -10,6 +10,7 @@ const fixture = require('../fixtures/editor/project.json')
 
 const mg = loadMain("export * from './src/shared/motion-graphics'; export * from './src/shared/graphic-layout'; export { parseCandidateEdit, candidateEdit, renderEditKey, refineEdit } from './src/shared/clip-editor'")
 const clip = (over = {}) => ({ ...structuredClone(fixture.candidates[0]), ...over })
+const plainCopy = (value) => JSON.parse(JSON.stringify(value))
 
 test('source time maps through the cuts and the export speed; cut-out parts of a graphic are dropped', () => {
   // Cuts [1000,5000] and [7000,10000] at 1.25×.
@@ -239,4 +240,101 @@ test('automatic cards move off the speaker’s face: the placement covering the 
   // No face found, or the chosen placement is already clear: kept.
   assert.equal(mg.placementAvoidingFace(project, c, g, null), 'middle')
   assert.equal(mg.placementAvoidingFace(project, c, { ...g, placement: 'top' }, [0.3, 0.75, 0.3, 0.05]), 'top')
+})
+
+test('the new templates and the size parse, round-trip and keep older graphics as they were', () => {
+  const ids = mg.GRAPHIC_TEMPLATES.map((t) => t.id)
+  for (const id of ['statement', 'sticky_notes', 'strike_list', 'browser_frame', 'icon_pop', 'headline_pill', 'comment_cta']) {
+    assert.ok(ids.includes(id), id)
+    assert.ok(mg.GRAPHIC_DEFAULT_MS[id] >= mg.GRAPHIC_MIN_MS)
+  }
+  const old = { id: 'g-0000000001', template: 'stat', at_ms: 2000, duration_ms: 3000, placement: 'top', fields: { value: '25%' } }
+  // An older graphic (no size) parses exactly as before.
+  assert.deepEqual(plainCopy(mg.parseGraphics([old])), [old])
+  const stage = { ...old, id: 'g-0000000002', template: 'browser_frame', size: 'stage', fields: { domain: 'example.com', title: 'A headline', highlights: '0.1, 0.2, 0.5, 0.1, 1.5' } }
+  const parsed = mg.parseGraphics([stage, { ...old, id: 'g-0000000003', size: 'giant' }])
+  assert.equal(parsed[0].size, 'stage')
+  assert.equal('size' in parsed[1], false) // an unknown size is dropped (the usual card)
+  assert.deepEqual(plainCopy(mg.parseGraphics(JSON.parse(JSON.stringify(parsed)))), plainCopy(parsed))
+  assert.equal(mg.newGraphic('statement', 0, { size: 'compact' }).size, 'compact')
+  assert.equal('size' in mg.newGraphic('statement', 0), false)
+  // Changing the size: 'card' (the default) clears it.
+  const c = clip({ graphics: [mg.newGraphic('statement', 2000, { fields: { text: 'Skip the scraping.' } })] })
+  const id = c.graphics[0].id
+  const big = mg.updateGraphic(c, id, { size: 'stage' })
+  assert.equal(big[0].size, 'stage')
+  assert.equal('size' in mg.updateGraphic({ ...c, graphics: big }, id, { size: 'card' })[0], false)
+})
+
+test('new templates only draw the words, picture or icons they were given', () => {
+  const has = (template, fields) => mg.graphicHasContent({ template, fields })
+  assert.equal(has('statement', {}), false); assert.equal(has('statement', { text: 'Skip the scraping.' }), true)
+  assert.equal(has('sticky_notes', { items: '\n' }), false); assert.equal(has('sticky_notes', { items: 'One' }), true)
+  assert.equal(has('strike_list', {}), false); assert.equal(has('strike_list', { final: 'just a typed client.' }), true)
+  assert.equal(has('browser_frame', { domain: 'example.com' }), false); assert.equal(has('browser_frame', { title: 'Hi there' }), true); assert.equal(has('browser_frame', { image: 'a.png' }), true)
+  assert.equal(has('icon_pop', {}), false); assert.equal(has('icon_pop', { items: 'Email' }), true)
+  assert.equal(has('headline_pill', { phrase: 'hidden API' }), true); assert.equal(has('comment_cta', { lead: 'Comment' }), false); assert.equal(has('comment_cta', { keyword: 'API' }), true)
+  assert.deepEqual(mg.templateItems('sticky_notes', 'a\nb\nc\nd'), ['a', 'b', 'c'])
+  assert.deepEqual(mg.templateItems('strike_list', 'a\nb\nc\nd\ne'), ['a', 'b', 'c', 'd'])
+  // The accent: the given words where they appear (any case, punctuation kept), else the last word; typed line breaks kept.
+  assert.deepEqual(plainCopy(mg.accentWords('Skip the scraping.', 'Scraping')), { words: ['Skip', 'the', 'scraping.'], from: 2, to: 2, breaks: [] })
+  assert.deepEqual(plainCopy(mg.accentWords('just a typed client.', 'typed client')), { words: ['just', 'a', 'typed', 'client.'], from: 2, to: 3, breaks: [] })
+  assert.deepEqual(plainCopy(mg.accentWords('Skip the\nscraping.', 'nope')), { words: ['Skip', 'the', 'scraping.'], from: 2, to: 2, breaks: [2] })
+  assert.equal(mg.accentWords('', 'x').from, -1)
+  // Boxes on a screenshot: shares of the picture, an optional time in seconds; bad lines are skipped, at most 4.
+  assert.deepEqual(plainCopy(mg.browserHighlights('0.1, 0.2, 0.5, 0.1, 1.5\nnope\n0.5 0.5 0.8 0.1\n0.2,0.3,0.4,0.05')), [
+    { x: .1, y: .2, w: .5, h: .1, at_ms: 1500 }, { x: .2, y: .3, w: .4, h: .05, at_ms: 1600 }])
+  assert.equal(mg.browserHighlights(Array(6).fill('0,0,0.5,0.1').join('\n')).length, 4)
+  // Icons: known generic names only, one per item.
+  assert.deepEqual(plainCopy(mg.graphicIcons({ items: 'Email\nVideo\nChat', icons: 'mail\ninstagram\n' })), ['mail', null, null])
+  assert.ok(mg.GRAPHIC_ICONS.every((name) => /^[a-z]+$/.test(name)))
+  assert.deepEqual(plainCopy(mg.GRAPHIC_IMAGE_TEMPLATES), ['logo', 'browser_frame', 'icon_pop'])
+})
+
+test('a stage-size graphic takes the top of a 9:16 frame and shares every band', () => {
+  const frame = { aspect: '9:16', hook: 0, captions: { y: 1340 / 1920, bottom: false } }
+  for (const placement of ['top', 'middle', 'bottom']) {
+    const box = mg.graphicBox(placement, frame, 'stage')
+    assert.ok(box.top <= .1 && Math.abs(box.bottom - mg.STAGE_BOTTOM) < 1e-9, JSON.stringify(box))
+  }
+  // Under a hook, clear of the captions.
+  const hooked = mg.graphicBox('top', { ...frame, hook: .2 }, 'stage')
+  assert.ok(hooked.top >= .22 - 1e-9 && hooked.bottom <= 1340 / 1920 - .075)
+  // Compact is a shorter band than the card.
+  const card = mg.graphicBox('top', frame), compact = mg.graphicBox('top', frame, 'compact')
+  assert.ok(compact.bottom - compact.top < card.bottom - card.top)
+  assert.deepEqual(mg.graphicBox('top', frame, 'card'), card)
+  const a = { id: 'g-a', template: 'statement', at_ms: 1000, duration_ms: 2000, placement: 'top', size: 'stage' }
+  const b = { id: 'g-b', template: 'stat', at_ms: 1500, duration_ms: 2000, placement: 'bottom' }
+  assert.equal(mg.graphicsClash(a, b), true)
+  assert.equal(mg.graphicsClash({ ...a, size: undefined }, b), false)
+  assert.equal(mg.placeInFreeBand([b], a), a)
+  // The render spec carries the size (and only when it isn't the usual card).
+  const project = { aspect_ratio: '9:16', width: 1920, height: 1080 }
+  const g = { ...mg.newGraphic('statement', 2000, { fields: { text: 'Skip the scraping.' } }), size: 'stage' }
+  const c = clip({ graphics: [g] })
+  assert.equal(mg.graphicSpec(project, c, g).size, 'stage')
+  assert.equal('size' in mg.graphicSpec(project, c, { ...g, size: undefined }), false)
+  assert.equal(mg.placementAvoidingFace(project, c, g, [0.2, 0.1, 0.6, 0.3]), g.placement)
+})
+
+test('a browser window or icon row draws without its picture when it has words; logo pop needs its picture', async (t) => {
+  const { dir, cleanup } = tempDir('bridgeclip-graphic-jobs-')
+  t.after(cleanup)
+  const { mod } = renderModule(t, dir)
+  const run = path.join(dir, 'run'); fs.mkdirSync(run)
+  const spec = (template, fields) => ({ template, fields, width: 1080, height: 1920, duration_ms: 2000, box: { top: .1, bottom: .5 }, placement: 'top', color: '#3B82F6', font: 'clean', size: 'stage' })
+  const win = { start_ms: 0, duration_ms: 2000 }
+  assert.equal(mod.graphicJob(run, 'g-1', spec('logo', {}), win), null)
+  const titled = mod.graphicJob(run, 'g-2', spec('browser_frame', { title: 'A headline' }), win, 'missing0000000000.png')
+  assert.ok(titled && !titled.spec.image)
+  assert.equal(mod.graphicJob(run, 'g-3', spec('browser_frame', {}), win, '0123456789abcdef.png'), null)
+  const png = path.join(dir, 'shot.png')
+  fs.writeFileSync(png, Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]))
+  const name = mod.importGraphicImage(run, png)
+  const shot = mod.graphicJob(run, 'g-4', spec('browser_frame', {}), win, name)
+  assert.match(shot.spec.image, /^data:image\/png;base64,/)
+  assert.notEqual(shot.key, titled.key)
+  const icons = mod.graphicJob(run, 'g-5', spec('icon_pop', { items: 'Email' }), win, name)
+  assert.match(icons.spec.image, /^data:image\/png/)
 })

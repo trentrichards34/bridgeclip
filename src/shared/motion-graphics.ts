@@ -15,13 +15,31 @@ export const GRAPHIC_TEMPLATES = [
   { id: 'before_after', label: 'Before / after', detail: 'Two short lines side by side.', fields: ['before', 'after'] },
   { id: 'checklist', label: 'Checklist', detail: 'Up to 5 items that tick off.', fields: ['title', 'items'] },
   { id: 'quote', label: 'Quote card', detail: 'A short quote and who said it.', fields: ['text', 'author'] },
-  { id: 'highlight', label: 'Arrow or circle', detail: 'Points at something on screen.', fields: ['shape', 'x', 'y'] }
+  { id: 'highlight', label: 'Arrow or circle', detail: 'Points at something on screen.', fields: ['shape', 'x', 'y'] },
+  { id: 'statement', label: 'Statement', detail: 'One or two lines in big serif type, with the key words in italics.', fields: ['text', 'accent', 'subline'] },
+  { id: 'sticky_notes', label: 'Sticky notes', detail: 'Two or three short notes that drop in.', fields: ['items'] },
+  { id: 'strike_list', label: 'Crossed-out list', detail: 'Up to 4 items crossed out one by one, then the better choice.', fields: ['items', 'final', 'accent'] },
+  { id: 'browser_frame', label: 'Browser window', detail: 'A screenshot (or a short headline) in a browser window.', fields: ['domain', 'image', 'title', 'accent', 'subline', 'highlights'] },
+  { id: 'icon_pop', label: 'Icon row', detail: 'Up to 4 icons that pop in one by one, with labels.', fields: ['items', 'icons', 'image'] },
+  { id: 'headline_pill', label: 'Headline', detail: 'Two lines: a bold line, then the key words on a color box.', fields: ['text', 'phrase'] },
+  { id: 'comment_cta', label: 'Comment prompt', detail: '“Comment” over the keyword people should comment.', fields: ['keyword', 'lead'] }
 ] as const
 
 export type GraphicTemplateId = (typeof GRAPHIC_TEMPLATES)[number]['id']
 export const GRAPHIC_TEMPLATE_IDS: readonly GraphicTemplateId[] = GRAPHIC_TEMPLATES.map((t) => t.id)
 export type GraphicPlacement = 'top' | 'middle' | 'bottom'
 export const GRAPHIC_PLACEMENTS: readonly GraphicPlacement[] = ['top', 'middle', 'bottom']
+/**
+ * How big a graphic is drawn. `compact`: a smaller card in its band; `card`
+ * (the default, also when unset): a card in its band; `stage`: the card takes
+ * the top ~55% of a 9:16 frame (the "stage" over the speaker), whatever the
+ * placement.
+ */
+export type GraphicSize = 'compact' | 'card' | 'stage'
+export const GRAPHIC_SIZES: readonly GraphicSize[] = ['compact', 'card', 'stage']
+export function isGraphicSize(value: unknown): value is GraphicSize {
+  return typeof value === 'string' && (GRAPHIC_SIZES as readonly string[]).includes(value)
+}
 
 /** One graphic on a clip. Times are SOURCE time (like the clip's ranges), so it stays on its words when the cut changes. */
 export interface EditorGraphic {
@@ -34,6 +52,8 @@ export interface EditorGraphic {
   fields: Record<string, string>
   /** Who added it: the member, the automatic pass or the chat. */
   origin?: 'member' | 'auto' | 'chat'
+  /** How big it is drawn (unset: 'card', as before sizes existed). */
+  size?: GraphicSize
 }
 
 export const MAX_GRAPHICS_PER_CLIP = 12
@@ -68,7 +88,8 @@ export function parseGraphics(value: unknown): EditorGraphic[] {
     }
     if (fields.image !== undefined && !/^[A-Za-z0-9._-]{1,80}$/.test(fields.image)) throw new Error('A graphic’s image must be one of the clip’s images.')
     const origin: EditorGraphic['origin'] = g.origin === 'auto' || g.origin === 'chat' || g.origin === 'member' ? g.origin : undefined
-    return { id: g.id, template: g.template, at_ms: Math.round(g.at_ms), duration_ms: Math.round(g.duration_ms), placement, fields, ...(origin ? { origin } : {}) }
+    const size = isGraphicSize(g.size) ? g.size : undefined
+    return { id: g.id, template: g.template, at_ms: Math.round(g.at_ms), duration_ms: Math.round(g.duration_ms), placement, fields, ...(origin ? { origin } : {}), ...(size ? { size } : {}) }
   }).sort((a, b) => a.at_ms - b.at_ms)
 }
 
@@ -77,7 +98,7 @@ export function parseGraphics(value: unknown): EditorGraphic[] {
 // ---------------------------------------------------------------------------
 
 /** Bump when a template's look changes, so cached renders are made again. */
-export const GRAPHICS_VERSION = 1
+export const GRAPHICS_VERSION = 2
 /** Rendered graphics are layered over the clip at this frame rate. */
 export const GRAPHIC_FPS = 30
 /** A graphic left with less than this much on screen after the cut is dropped. */
@@ -87,7 +108,30 @@ export type GraphicHighlightShape = 'circle' | 'arrow'
 
 /** How long a new graphic of each kind lasts (ms). */
 export const GRAPHIC_DEFAULT_MS: Record<GraphicTemplateId, number> = {
-  stat: 3500, title: 2500, list: 5000, lower_third: 4000, logo: 3000, before_after: 4000, checklist: 5000, quote: 5000, highlight: 2500
+  stat: 3500, title: 2500, list: 5000, lower_third: 4000, logo: 3000, before_after: 4000, checklist: 5000, quote: 5000, highlight: 2500,
+  statement: 3500, sticky_notes: 4000, strike_list: 5000, browser_frame: 5000, icon_pop: 3500, headline_pill: 3500, comment_cta: 3500
+}
+
+/** Templates that can show a picture the member chose (Logo pop needs one; the others draw without it). */
+export const GRAPHIC_IMAGE_TEMPLATES: readonly GraphicTemplateId[] = ['logo', 'browser_frame', 'icon_pop']
+export function graphicUsesImage(template: GraphicTemplateId): boolean { return GRAPHIC_IMAGE_TEMPLATES.includes(template) }
+
+/** Most items a template shows (the rest of `items` is left out). */
+export const GRAPHIC_ITEM_LIMITS: Partial<Record<GraphicTemplateId, number>> = { sticky_notes: 3, strike_list: 4, icon_pop: 4 }
+
+/**
+ * Generic icons the Icon row can draw (Lucide, ISC license, vendored in
+ * src/renderer/graphics/icons.ts). `icons` holds one of these names per item,
+ * one per line; brand logos are never drawn (the member adds their own image).
+ */
+export const GRAPHIC_ICONS = [
+  'globe', 'mail', 'message', 'video', 'camera', 'mic', 'phone', 'laptop', 'code', 'terminal', 'database', 'file', 'search', 'link',
+  'chart', 'trending', 'dollar', 'users', 'user', 'calendar', 'clock', 'check', 'zap', 'rocket', 'sparkles', 'star', 'heart',
+  'cart', 'card', 'lock', 'settings', 'bot', 'brain', 'book', 'target', 'idea', 'play', 'image', 'dashboard', 'megaphone', 'gift', 'trophy'
+] as const
+export type GraphicIcon = (typeof GRAPHIC_ICONS)[number]
+export function isGraphicIcon(value: unknown): value is GraphicIcon {
+  return typeof value === 'string' && (GRAPHIC_ICONS as readonly string[]).includes(value)
 }
 
 /** What a template draws, as handed to the template page (live preview and offscreen render). */
@@ -108,15 +152,72 @@ export interface GraphicRenderSpec {
   font: string
   /** Logo image as a URL the page may load (a local-file URL in the editor, a data URL offscreen). */
   image?: string
+  /** How big it is drawn (unset: 'card'). */
+  size?: GraphicSize
 }
 
 export function templateInfo(id: GraphicTemplateId): (typeof GRAPHIC_TEMPLATES)[number] {
   return GRAPHIC_TEMPLATES.find((t) => t.id === id) ?? GRAPHIC_TEMPLATES[0]
 }
 
-/** A list field's lines: trimmed, non-empty, at most 5. */
-export function graphicItems(text: string | undefined): string[] {
-  return (text ?? '').split(/\r?\n/).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, MAX_GRAPHIC_ITEMS)
+/** A list field's lines: trimmed, non-empty, at most 5 (or `limit`). */
+export function graphicItems(text: string | undefined, limit = MAX_GRAPHIC_ITEMS): string[] {
+  return (text ?? '').split(/\r?\n/).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, Math.min(limit, MAX_GRAPHIC_ITEMS))
+}
+
+/** A template's items, at most its own limit (Sticky notes 3, Crossed-out list and Icon row 4, others 5). */
+export function templateItems(template: GraphicTemplateId, text: string | undefined): string[] {
+  return graphicItems(text, GRAPHIC_ITEM_LIMITS[template] ?? MAX_GRAPHIC_ITEMS)
+}
+
+/**
+ * The words of `text` and which of them are the accent (drawn in italics):
+ * the words of `accent` where they appear in `text` (any case, punctuation
+ * around them kept), else the last word. `breaks`: where a line break was
+ * typed (the index of each word that starts a new line).
+ */
+export function accentWords(text: string | undefined, accent: string | undefined): { words: string[]; from: number; to: number; breaks: number[] } {
+  const breaks: number[] = []
+  const words: string[] = []
+  for (const line of (text ?? '').split(/\r?\n/)) {
+    const parts = line.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+    if (!parts.length) continue
+    if (words.length) breaks.push(words.length)
+    words.push(...parts)
+  }
+  if (!words.length) return { words, from: -1, to: -1, breaks }
+  const key = (w: string): string => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+  const want = (accent ?? '').replace(/\s+/g, ' ').trim().split(' ').map(key).filter(Boolean)
+  if (want.length) {
+    for (let i = words.length - want.length; i >= 0; i--) {
+      if (want.every((w, k) => key(words[i + k]) === w)) return { words, from: i, to: i + want.length - 1, breaks }
+    }
+  }
+  return { words, from: words.length - 1, to: words.length - 1, breaks }
+}
+
+/** One box drawn over a Browser window's picture: x/y/w/h are shares (0–1) of the picture; it appears `at_ms` into the graphic. */
+export interface GraphicHighlightBox { x: number; y: number; w: number; h: number; at_ms: number }
+export const MAX_GRAPHIC_HIGHLIGHTS = 4
+/** `highlights`: one box per line, "x, y, w, h" or "x, y, w, h, seconds" (shares of the picture; seconds into the graphic). Bad lines are skipped. */
+export function browserHighlights(text: string | undefined): GraphicHighlightBox[] {
+  const out: (Omit<GraphicHighlightBox, 'at_ms'> & { at_ms: number | null })[] = []
+  for (const line of (text ?? '').split(/\r?\n/)) {
+    const n = line.split(/[\s,;]+/).filter(Boolean).map(Number)
+    if (n.length < 4 || n.length > 5 || n.some((v) => !Number.isFinite(v))) continue
+    const [x, y, w, h] = n.map((v) => Math.max(0, Math.min(1, v)))
+    if (w < .01 || h < .005 || x + w > 1.001 || y + h > 1.001) continue
+    out.push({ x, y, w, h, at_ms: n.length === 5 ? Math.round(Math.max(0, Math.min(GRAPHIC_MAX_MS, n[4] * 1000))) : null })
+    if (out.length >= MAX_GRAPHIC_HIGHLIGHTS) break
+  }
+  // Boxes without a time come in one after another once the window is open.
+  return out.map((b, i) => ({ ...b, at_ms: b.at_ms ?? 900 + i * 700 }))
+}
+
+/** The Icon row's icon for each item (null: none or unknown; the first tile shows the member's picture when there is one). */
+export function graphicIcons(fields: Record<string, string>): (GraphicIcon | null)[] {
+  const names = (fields.icons ?? '').split(/\r?\n/).map((line) => line.trim().toLowerCase())
+  return templateItems('icon_pop', fields.items).map((_, i) => isGraphicIcon(names[i]) ? names[i] as GraphicIcon : null)
 }
 
 /** "$1,200/month" → prefix "$", 1200, suffix "/month"; "15 billion", "25%", "3.5x". Null when there is no number. */
@@ -153,6 +254,13 @@ export function graphicHasContent(g: Pick<EditorGraphic, 'template' | 'fields'>)
     case 'logo': return !!f.image
     case 'before_after': return !!(f.before?.trim() || f.after?.trim())
     case 'highlight': return true
+    case 'statement': return !!f.text?.trim()
+    case 'sticky_notes': return graphicItems(f.items).length > 0
+    case 'strike_list': return graphicItems(f.items).length > 0 || !!f.final?.trim()
+    case 'browser_frame': return !!(f.image || f.title?.trim())
+    case 'icon_pop': return graphicItems(f.items).length > 0 || !!f.image
+    case 'headline_pill': return !!(f.text?.trim() || f.phrase?.trim())
+    case 'comment_cta': return !!f.keyword?.trim()
   }
 }
 
@@ -175,14 +283,14 @@ function randomId(): string {
  * A new graphic. `fields` start empty (or as given): the words come from the
  * member, the chat or what was said in the clip, never made up here.
  */
-export function newGraphic(template: GraphicTemplateId, at_ms: number, options: { fields?: Record<string, string>; duration_ms?: number; placement?: GraphicPlacement; origin?: EditorGraphic['origin']; taken?: Iterable<string> } = {}): EditorGraphic {
+export function newGraphic(template: GraphicTemplateId, at_ms: number, options: { fields?: Record<string, string>; duration_ms?: number; placement?: GraphicPlacement; size?: GraphicSize; origin?: EditorGraphic['origin']; taken?: Iterable<string> } = {}): EditorGraphic {
   const taken = new Set(options.taken ?? [])
   let id = randomId()
   while (taken.has(id)) id = randomId()
   const fields: Record<string, string> = template === 'highlight' ? { shape: 'circle', x: '0.5', y: '0.45' } : {}
   for (const [key, value] of Object.entries(options.fields ?? {})) if (/^[a-z_]{1,20}$/.test(key) && typeof value === 'string') fields[key] = value.slice(0, key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS)
-  const placement = options.placement ?? (template === 'lower_third' ? 'bottom' : template === 'title' ? 'middle' : 'top')
-  return { id, template, at_ms: Math.max(0, Math.round(at_ms)), duration_ms: clampGraphicMs(options.duration_ms ?? GRAPHIC_DEFAULT_MS[template]), placement, fields, origin: options.origin ?? 'member' }
+  const placement = options.placement ?? (template === 'lower_third' ? 'bottom' : template === 'title' || template === 'comment_cta' ? 'middle' : 'top')
+  return { id, template, at_ms: Math.max(0, Math.round(at_ms)), duration_ms: clampGraphicMs(options.duration_ms ?? GRAPHIC_DEFAULT_MS[template]), placement, fields, origin: options.origin ?? 'member', ...(isGraphicSize(options.size) ? { size: options.size } : {}) }
 }
 
 export function clampGraphicMs(ms: number): number {
@@ -209,7 +317,7 @@ export function withGraphic(c: Timing & { graphics?: EditorGraphic[] }, g: Edito
 }
 
 /** Change one graphic (by id): its time, length, placement or fields. Fields given are merged; an empty string clears one. */
-export function updateGraphic(c: Timing & { graphics?: EditorGraphic[] }, id: string, patch: Partial<Pick<EditorGraphic, 'at_ms' | 'duration_ms' | 'placement' | 'template'>> & { fields?: Record<string, string> }): EditorGraphic[] {
+export function updateGraphic(c: Timing & { graphics?: EditorGraphic[] }, id: string, patch: Partial<Pick<EditorGraphic, 'at_ms' | 'duration_ms' | 'placement' | 'template' | 'size'>> & { fields?: Record<string, string> }): EditorGraphic[] {
   const g = (c.graphics ?? []).find((x) => x.id === id)
   if (!g) return c.graphics ?? []
   const fields = { ...g.fields }
@@ -219,9 +327,11 @@ export function updateGraphic(c: Timing & { graphics?: EditorGraphic[] }, id: st
     else if (value === '') delete fields[key]
     else fields[key] = value.slice(0, key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS)
   }
-  const { fields: _ignored, ...rest } = patch
+  const { fields: _ignored, size, ...rest } = patch
   void _ignored
-  return withGraphic(c, { ...g, ...rest, ...(rest.duration_ms !== undefined ? { duration_ms: clampGraphicMs(rest.duration_ms) } : {}), fields })
+  const next: EditorGraphic = { ...g, ...rest, ...(rest.duration_ms !== undefined ? { duration_ms: clampGraphicMs(rest.duration_ms) } : {}), fields }
+  if (size !== undefined) { if (isGraphicSize(size) && size !== 'card') next.size = size; else delete next.size }
+  return withGraphic(c, next)
 }
 
 export function removeGraphic(c: { graphics?: EditorGraphic[] }, id: string): EditorGraphic[] {
@@ -330,13 +440,15 @@ export function fitGraphicInCut<G extends Pick<EditorGraphic, 'at_ms' | 'duratio
 
 /** Graphics that sit in a band (an arrow or circle points at a spot instead). */
 const usesBand = (g: Pick<EditorGraphic, 'template'>): boolean => g.template !== 'highlight'
+/** A stage-size graphic takes the top of the frame over every band. */
+const onStage = (g: { size?: GraphicSize }): boolean => g.size === 'stage'
 /** The order a new graphic tries the bands in when its own is taken. */
 export const GRAPHIC_BAND_ORDER: readonly GraphicPlacement[] = ['top', 'bottom', 'middle']
 
-type Placed = Pick<EditorGraphic, 'id' | 'template' | 'at_ms' | 'duration_ms' | 'placement'>
-/** True when two graphics share a band and are on screen at the same time. */
+type Placed = Pick<EditorGraphic, 'id' | 'template' | 'at_ms' | 'duration_ms' | 'placement'> & { size?: GraphicSize }
+/** True when two graphics share a band (a stage-size one shares every band) and are on screen at the same time. */
 export function graphicsClash(a: Placed, b: Placed): boolean {
-  return a.id !== b.id && usesBand(a) && usesBand(b) && a.placement === b.placement &&
+  return a.id !== b.id && usesBand(a) && usesBand(b) && (a.placement === b.placement || onStage(a) || onStage(b)) &&
     a.at_ms < b.at_ms + b.duration_ms && b.at_ms < a.at_ms + a.duration_ms
 }
 
@@ -353,7 +465,7 @@ export function graphicClashes(graphics: readonly Placed[]): Set<string> {
  * Unchanged when its band is free or no band is.
  */
 export function placeInFreeBand<G extends Placed>(others: readonly Placed[], g: G): G {
-  if (!usesBand(g)) return g
+  if (!usesBand(g) || onStage(g)) return g
   const free = (placement: GraphicPlacement): boolean => !others.some((o) => graphicsClash(o, { ...g, placement }))
   if (free(g.placement)) return g
   const band = GRAPHIC_BAND_ORDER.find(free)

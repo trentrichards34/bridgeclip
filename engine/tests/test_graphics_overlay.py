@@ -48,6 +48,16 @@ def test_checked_graphics_validates_names_times_and_trims_to_the_clip(tmp_path):
             checked_graphics(tmp_path, bad, 5000)
 
 
+def test_checked_graphics_keeps_a_known_size(tmp_path):
+    (tmp_path / ".graphics").mkdir()
+    (tmp_path / ".graphics" / NAME).write_bytes(b"x" * 100)
+    ok = checked_graphics(tmp_path, [{"file": NAME, "start_ms": 0, "duration_ms": 1000, "size": "stage"},
+                                     {"file": NAME, "start_ms": 2000, "duration_ms": 1000}], 5000)
+    assert [g.get("size") for g in ok] == ["stage", None]
+    with pytest.raises(ValueError):
+        checked_graphics(tmp_path, [{"file": NAME, "start_ms": 0, "duration_ms": 1000, "size": "huge"}], 5000)
+
+
 def test_checked_graphics_refuses_a_linked_render(tmp_path):
     (tmp_path / ".graphics").mkdir()
     target = tmp_path / "elsewhere.mov"

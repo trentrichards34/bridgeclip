@@ -1,9 +1,13 @@
 /*
- * Motion graphic templates (templates.ts). Every size is a multiple of --u
- * (one pixel of a 1080-wide frame), so a template looks the same in the
- * editor's small preview and the full-size render. Fonts are the app's own
- * bundled fonts (engine/assets/fonts), declared again here for the offscreen
- * page, which doesn't load the app's stylesheet.
+ * Motion graphic templates (templates.ts): one design system. Clean white
+ * rounded cards with a soft shadow (a thin accent glow on the key ones), bold
+ * sans headlines with an italic serif accent, the brand color as the accent.
+ *
+ * Every size is a multiple of --u (one pixel of a 1080-wide frame, times the
+ * graphic's size scale), so a template looks the same in the editor's small
+ * preview and the full-size render. Fonts are the app's own bundled fonts
+ * (engine/assets/fonts), declared again here for the offscreen page, which
+ * doesn't load the app's stylesheet.
  */
 @font-face { font-family: 'MG Montserrat'; src: url('../../../engine/assets/fonts/Montserrat-ExtraBold.ttf') format('truetype'); font-weight: 800; }
 @font-face { font-family: 'MG Montserrat'; src: url('../../../engine/assets/fonts/Montserrat-Black.ttf') format('truetype'); font-weight: 900; }
@@ -12,152 +16,223 @@
 @font-face { font-family: 'MG Fraunces'; src: url('../../../engine/assets/fonts/Fraunces72pt-Black.ttf') format('truetype'); }
 @font-face { font-family: 'MG Caveat Brush'; src: url('../../../engine/assets/fonts/CaveatBrush-Regular.ttf') format('truetype'); }
 @font-face { font-family: 'MG Instrument Serif'; src: url('../../../engine/assets/fonts/InstrumentSerif-Italic.ttf') format('truetype'); font-style: italic; }
+@font-face { font-family: 'MG Instrument Serif'; src: url('../../../engine/assets/fonts/InstrumentSerif-Regular.ttf') format('truetype'); font-style: normal; }
 
 .mg-root {
   position: absolute; left: 0; top: 0; overflow: hidden; pointer-events: none;
-  --ink: #111318; --paper: #f7f6f2; --muted: #60656f; --line: rgba(17, 19, 24, .1);
-  --shadow: 0 calc(var(--u) * 22) calc(var(--u) * 60) rgba(0, 0, 0, .34), 0 calc(var(--u) * 4) calc(var(--u) * 12) rgba(0, 0, 0, .18);
-  font-family: 'MG Jakarta', 'MG Montserrat', system-ui, sans-serif; color: var(--ink);
+  --ink: #0f172a; --ink-2: #334155; --muted: #64748b; --faint: #94a3b8; --hair: rgba(15, 23, 42, .08); --paper: #ffffff;
+  --sans: 'MG Jakarta', 'MG Montserrat', system-ui, sans-serif;
+  --serif: 'MG Instrument Serif', Georgia, serif;
+  --radius: calc(var(--u) * 44);
+  --shadow: 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(15, 23, 42, .06), 0 calc(var(--u) * 14) calc(var(--u) * 34) rgba(15, 23, 42, .14), 0 calc(var(--u) * 40) calc(var(--u) * 90) rgba(15, 23, 42, .16);
+  --glow: 0 0 0 calc(var(--u) * 3) rgba(var(--accent-rgb), .5), 0 0 calc(var(--u) * 34) rgba(var(--accent-rgb), .30);
+  --marker: rgba(var(--accent-rgb), .26);
+  --strike: #e5484d;
+  font-family: var(--sans); color: var(--ink);
   -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; line-height: 1.15;
   font-kerning: normal; letter-spacing: 0;
 }
 .mg-root * { box-sizing: border-box; }
 .mg-band { position: absolute; left: 0; right: 0; display: flex; justify-content: center; }
 .mg-band.top { align-items: flex-start; }
-.mg-band.middle { align-items: center; }
+.mg-band.middle, .mg-band.stage { align-items: center; }
 .mg-band.bottom { align-items: flex-end; }
-.mg-fit { transform-origin: 50% 50%; display: flex; justify-content: center; }
-.mg-band.top .mg-fit { transform-origin: 50% 0; }
-.mg-band.bottom .mg-fit { transform-origin: 50% 100%; }
-.mg-display { font-family: var(--display); font-weight: var(--display-weight); text-transform: var(--display-case); }
-.mg-hidden { opacity: 0; }
+.mg-fit { display: flex; justify-content: center; padding: calc(var(--u) * 12) 0 calc(var(--u) * 20); }
+.mg-fit.left { width: 100%; justify-content: flex-start; padding-left: calc(var(--u) * 60); padding-right: calc(var(--u) * 60); }
+.mg-push { transform-origin: 50% 50%; display: flex; justify-content: center; }
+.mg-display { font-family: var(--display); font-weight: var(--display-weight); text-transform: var(--display-case); letter-spacing: var(--display-tracking); }
 
-/* Paper card with an accent rule, the base of most templates. */
+/* Words that build one by one, and the italic serif accent with its marker. */
+.mg-w { display: inline-block; white-space: pre; }
+.mg-accent {
+  position: relative; display: inline-block; isolation: isolate; white-space: nowrap;
+  font-family: var(--serif); font-style: italic; font-weight: 400; text-transform: none; letter-spacing: -.005em;
+  padding: 0 .07em;
+}
+.mg-display .mg-accent, .mg-strike-final .mg-accent { font-size: 1.16em; line-height: .9; }
+.mg-accent.tint { color: var(--accent-ink); }
+.mg-mark {
+  position: absolute; z-index: -1; left: -.02em; right: -.02em; top: .5em; bottom: .02em;
+  background: var(--marker); border-radius: .08em; transform-origin: 0 50%;
+}
+.mg-sub { margin-top: calc(var(--u) * 26); font-weight: 600; font-size: calc(var(--u) * 40); line-height: 1.3; color: var(--muted); letter-spacing: -.005em; }
+.mg-kicker { font-weight: 800; font-size: calc(var(--u) * 26); letter-spacing: .16em; text-transform: uppercase; color: var(--accent-ink); }
+.mg-kicker.muted { color: var(--faint); }
+.mg-boxdraw { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.mg-boxdraw path { fill: none; stroke: var(--accent); stroke-linecap: round; stroke-linejoin: round; }
+
+/* The card: white, rounded, a soft shadow; .glow adds the thin accent border. */
 .mg-card {
-  position: relative; background: var(--paper); border-radius: calc(var(--u) * 40); box-shadow: var(--shadow);
-  padding: calc(var(--u) * 52) calc(var(--u) * 60) calc(var(--u) * 56); width: var(--card-w); overflow: hidden;
+  position: relative; background: var(--paper); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: calc(var(--u) * 54) calc(var(--u) * 64) calc(var(--u) * 58); width: var(--card-w);
 }
-.mg-card::before {
-  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: calc(var(--u) * 14); background: var(--accent);
-}
-.mg-kicker {
-  display: inline-flex; align-items: center; gap: calc(var(--u) * 12); font-family: 'MG Montserrat', sans-serif; font-weight: 900;
-  font-size: calc(var(--u) * 30); letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
-}
+.mg-card.glow, .mg-tile.glow, .mg-window.glow { box-shadow: var(--glow), var(--shadow); }
+.mg-tile { position: relative; background: var(--paper); border-radius: calc(var(--u) * 48); box-shadow: var(--shadow); }
 
 /* Stat counter */
-.mg-stat { text-align: center; padding-top: calc(var(--u) * 46); }
+.mg-stat { text-align: center; padding-top: calc(var(--u) * 50); }
 .mg-stat-value {
-  display: block; font-size: calc(var(--u) * var(--stat-size, 170)); line-height: .98; color: var(--accent); letter-spacing: -.02em;
-  font-variant-numeric: tabular-nums; white-space: nowrap; transform-origin: 50% 60%;
+  display: block; font-size: calc(var(--u) * var(--stat-size, 170)); line-height: 1; color: var(--ink); white-space: nowrap;
+  font-variant-numeric: tabular-nums; transform-origin: 50% 60%; letter-spacing: -.035em;
 }
-.mg-stat-suffix { font-size: .42em; letter-spacing: 0; margin-left: .08em; }
-.mg-stat-rule { height: calc(var(--u) * 12); width: calc(var(--u) * 180); border-radius: 999px; background: var(--accent); margin: calc(var(--u) * 26) auto calc(var(--u) * 24); transform-origin: 50% 50%; }
-.mg-stat-label { font-family: 'MG Montserrat', sans-serif; font-weight: 800; font-size: calc(var(--u) * 56); line-height: 1.18; color: var(--ink); }
+.mg-stat-short { color: var(--accent-ink); margin-left: .02em; }
+.mg-stat-unit { font-family: var(--serif); font-style: italic; font-weight: 400; text-transform: none; letter-spacing: 0; font-size: .5em; color: var(--accent-ink); margin-left: .12em; }
+.mg-stat-rule { height: calc(var(--u) * 8); width: calc(var(--u) * 120); border-radius: 999px; background: var(--accent); margin: calc(var(--u) * 28) auto calc(var(--u) * 24); transform-origin: 50% 50%; }
+.mg-stat-label { font-weight: 600; font-size: calc(var(--u) * 50); line-height: 1.25; color: var(--ink-2); text-wrap: balance; letter-spacing: -.01em; }
 .mg-stat.no-label .mg-stat-rule { display: none; }
 
-/* Title slam */
-.mg-title { width: var(--card-w); text-align: center; display: flex; flex-wrap: wrap; justify-content: center; align-content: center; gap: calc(var(--u) * 6) calc(var(--u) * 26); }
-.mg-title-word {
-  display: inline-block; color: #fff; font-size: calc(var(--u) * var(--title-size, 132)); line-height: 1.02; letter-spacing: -.01em;
-  -webkit-text-stroke: calc(var(--u) * 3) rgba(0, 0, 0, .55); paint-order: stroke fill;
-  text-shadow: 0 calc(var(--u) * 10) 0 rgba(0, 0, 0, .55), 0 calc(var(--u) * 18) calc(var(--u) * 36) rgba(0, 0, 0, .45);
-  transform-origin: 50% 70%;
-}
-.mg-title-word.accent {
-  color: var(--on-accent); background: var(--accent); -webkit-text-stroke: 0; text-shadow: none;
-  padding: calc(var(--u) * 4) calc(var(--u) * 26) calc(var(--u) * 10); border-radius: calc(var(--u) * 22);
-  box-shadow: 0 calc(var(--u) * 12) 0 rgba(0, 0, 0, .35);
-}
+/* Title */
+.mg-title-card { width: auto; max-width: var(--card-w); padding: calc(var(--u) * 44) calc(var(--u) * 56) calc(var(--u) * 50); }
+.mg-title { text-align: center; font-size: calc(var(--u) * var(--title-size, 120)); line-height: 1.04; color: var(--ink); text-wrap: balance; }
 
 /* Numbered list and checklist */
-.mg-list-title { font-family: 'MG Montserrat', sans-serif; font-weight: 900; font-size: calc(var(--u) * 66); line-height: 1.1; margin: calc(var(--u) * 6) 0 calc(var(--u) * 36); color: var(--ink); }
-.mg-list-items { display: flex; flex-direction: column; gap: calc(var(--u) * 28); }
-.mg-list-item { display: flex; align-items: center; gap: calc(var(--u) * 26); }
+.mg-list { padding: calc(var(--u) * 50) calc(var(--u) * 58) calc(var(--u) * 56); }
+.mg-list-title { font-size: calc(var(--u) * 64); line-height: 1.08; color: var(--ink); padding-bottom: calc(var(--u) * 30); margin-bottom: calc(var(--u) * 34); border-bottom: calc(var(--u) * 2) solid var(--hair); }
+.mg-list-items { display: flex; flex-direction: column; gap: calc(var(--u) * 26); }
+.mg-list-item { display: flex; align-items: center; gap: calc(var(--u) * 28); }
 .mg-list-num {
-  flex: none; width: calc(var(--u) * 96); height: calc(var(--u) * 96); border-radius: 50%; background: var(--accent); color: var(--on-accent);
-  display: grid; place-items: center; font-family: 'MG Montserrat', sans-serif; font-weight: 900; font-size: calc(var(--u) * 50);
+  flex: none; width: calc(var(--u) * 78); height: calc(var(--u) * 78); border-radius: calc(var(--u) * 24); background: var(--accent); color: var(--on-accent);
+  display: grid; place-items: center; font-weight: 800; font-size: calc(var(--u) * 40); letter-spacing: -.02em;
+  box-shadow: 0 calc(var(--u) * 8) calc(var(--u) * 18) rgba(var(--accent-rgb), .3);
 }
-.mg-list-text { font-weight: 800; font-size: calc(var(--u) * 54); line-height: 1.2; color: var(--ink); }
-.mg-check-box {
-  flex: none; position: relative; width: calc(var(--u) * 92); height: calc(var(--u) * 92); border-radius: calc(var(--u) * 24);
-  border: calc(var(--u) * 6) solid rgba(17, 19, 24, .22); background: #fff;
-}
-.mg-check-fill { position: absolute; inset: calc(var(--u) * -6); border-radius: calc(var(--u) * 20); background: var(--accent); transform-origin: 50% 50%; }
-.mg-check-box svg { position: absolute; inset: calc(var(--u) * -6); width: calc(100% + var(--u) * 12); height: calc(100% + var(--u) * 12); overflow: visible; }
-.mg-check-box path { fill: none; stroke: var(--on-accent); stroke-width: 11; stroke-linecap: round; stroke-linejoin: round; }
-.mg-list-item.done .mg-list-text { color: var(--ink); }
+.mg-list-text { font-weight: 700; font-size: calc(var(--u) * 54); line-height: 1.2; color: var(--ink); letter-spacing: -.015em; }
+.mg-check { flex: none; position: relative; width: calc(var(--u) * 76); height: calc(var(--u) * 76); border-radius: 50%; border: calc(var(--u) * 5) solid #cbd5e1; }
+.mg-check-fill { position: absolute; inset: calc(var(--u) * -5); border-radius: 50%; background: var(--accent); transform-origin: 50% 50%; box-shadow: 0 calc(var(--u) * 8) calc(var(--u) * 18) rgba(var(--accent-rgb), .3); }
+.mg-check svg { position: absolute; inset: calc(var(--u) * -5); width: calc(100% + var(--u) * 10); height: calc(100% + var(--u) * 10); overflow: visible; }
+.mg-check path { fill: none; stroke: var(--on-accent); stroke-width: 10; stroke-linecap: round; stroke-linejoin: round; }
 
-/* Name tag (lower third) */
-.mg-tag { width: var(--card-w); display: flex; flex-direction: column; align-items: flex-start; gap: calc(var(--u) * 12); }
-.mg-tag-row { display: flex; align-items: stretch; }
-.mg-tag-bar { width: calc(var(--u) * 20); border-radius: calc(var(--u) * 8); background: var(--accent); margin-right: calc(var(--u) * 14); transform-origin: 50% 100%; }
-.mg-tag-mask { overflow: hidden; border-radius: calc(var(--u) * 18); }
-.mg-tag-name {
-  display: block; background: var(--ink); color: #fff; font-family: 'MG Montserrat', sans-serif; font-weight: 900; font-size: calc(var(--u) * 84);
-  padding: calc(var(--u) * 18) calc(var(--u) * 44) calc(var(--u) * 24); line-height: 1.08; box-shadow: var(--shadow);
-}
-.mg-tag-role {
-  display: block; background: var(--accent); color: var(--on-accent); font-weight: 800; font-size: calc(var(--u) * 50);
-  padding: calc(var(--u) * 14) calc(var(--u) * 34) calc(var(--u) * 18); line-height: 1.12; margin-left: calc(var(--u) * 34);
-}
+/* Name tag */
+.mg-tag { width: auto; max-width: var(--card-w); display: flex; align-items: stretch; gap: calc(var(--u) * 28); padding: calc(var(--u) * 34) calc(var(--u) * 52) calc(var(--u) * 38) calc(var(--u) * 36); border-radius: calc(var(--u) * 36); }
+.mg-tag-bar { flex: none; width: calc(var(--u) * 10); border-radius: 999px; background: var(--accent); transform-origin: 50% 100%; }
+.mg-tag-text { display: flex; flex-direction: column; gap: calc(var(--u) * 4); min-width: 0; }
+.mg-tag-name { font-size: calc(var(--u) * 74); line-height: 1.08; color: var(--ink); }
+.mg-tag-role { font-family: var(--serif); font-style: italic; font-size: calc(var(--u) * 62); line-height: 1.1; color: var(--accent-ink); }
 
 /* Logo pop */
-.mg-logo { display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 30); }
-.mg-logo-stage { position: relative; width: var(--logo); height: var(--logo); }
-.mg-logo-ring { position: absolute; inset: 0; border-radius: 50%; border: calc(var(--u) * 12) solid var(--accent); }
-.mg-logo-tile {
-  position: absolute; inset: 0; border-radius: calc(var(--u) * 54); background: #fff; box-shadow: var(--shadow);
-  display: grid; place-items: center; padding: calc(var(--u) * 34); overflow: hidden;
-}
+.mg-logo { display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 34); }
+.mg-logo-tile { width: var(--logo); height: var(--logo); display: grid; place-items: center; padding: calc(var(--u) * 44); overflow: hidden; border-radius: calc(var(--u) * 72); }
 .mg-logo-tile img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .mg-logo-empty { font-weight: 700; font-size: calc(var(--u) * 34); color: var(--muted); text-align: center; }
-.mg-logo-caption {
-  background: var(--ink); color: #fff; font-family: 'MG Montserrat', sans-serif; font-weight: 800; font-size: calc(var(--u) * 54);
-  padding: calc(var(--u) * 16) calc(var(--u) * 44) calc(var(--u) * 22); border-radius: 999px; max-width: var(--card-w); text-align: center; box-shadow: var(--shadow);
+.mg-chip {
+  background: var(--paper); color: var(--ink); font-weight: 800; font-size: calc(var(--u) * 48); letter-spacing: -.015em;
+  padding: calc(var(--u) * 20) calc(var(--u) * 40) calc(var(--u) * 24); border-radius: calc(var(--u) * 28); max-width: var(--card-w); text-align: center; box-shadow: var(--shadow);
 }
 
 /* Before / after */
-.mg-ba { width: var(--card-w); display: grid; grid-template-columns: 1fr 1fr; gap: calc(var(--u) * 84); position: relative; align-items: stretch; }
-.mg-ba-card {
-  border-radius: calc(var(--u) * 34); padding: calc(var(--u) * 34) calc(var(--u) * 34) calc(var(--u) * 40); box-shadow: var(--shadow);
-  display: flex; flex-direction: column; gap: calc(var(--u) * 24); min-height: calc(var(--u) * 330);
-}
-.mg-ba-card.before { background: #e7e5df; color: #4a4e57; }
-.mg-ba-card.after { background: var(--accent); color: var(--on-accent); }
-.mg-ba-tag {
-  align-self: flex-start; font-family: 'MG Montserrat', sans-serif; font-weight: 900; font-size: calc(var(--u) * 30); letter-spacing: .14em;
-  padding: calc(var(--u) * 10) calc(var(--u) * 20); border-radius: 999px; background: rgba(17, 19, 24, .1);
-}
-.mg-ba-card.after .mg-ba-tag { background: var(--ink); color: #fff; }
-.mg-ba-text { font-weight: 800; font-size: calc(var(--u) * 56); line-height: 1.14; }
-.mg-ba-card.before .mg-ba-text { text-decoration: line-through; text-decoration-thickness: calc(var(--u) * 4); text-decoration-color: rgba(74, 78, 87, .55); }
+.mg-ba { width: var(--card-w); display: grid; grid-template-columns: 1fr 1fr; gap: calc(var(--u) * 60); position: relative; align-items: stretch; }
+.mg-ba-card { width: auto; padding: calc(var(--u) * 40) calc(var(--u) * 40) calc(var(--u) * 46); display: flex; flex-direction: column; gap: calc(var(--u) * 20); min-height: calc(var(--u) * 250); border-radius: calc(var(--u) * 38); }
+.mg-ba-text { font-weight: 700; font-size: calc(var(--u) * 60); line-height: 1.14; letter-spacing: -.015em; }
+.mg-ba-card.before .mg-ba-text { color: var(--muted); }
+.mg-ba-card.after .mg-ba-text { color: var(--ink); }
 .mg-ba-arrow {
-  position: absolute; left: 50%; top: 50%; width: calc(var(--u) * 110); height: calc(var(--u) * 110); margin: calc(var(--u) * -55) 0 0 calc(var(--u) * -55);
-  border-radius: 50%; background: var(--ink); display: grid; place-items: center; box-shadow: var(--shadow);
+  position: absolute; left: 50%; top: 50%; width: calc(var(--u) * 96); height: calc(var(--u) * 96); margin: calc(var(--u) * -48) 0 0 calc(var(--u) * -48);
+  border-radius: 50%; background: var(--accent); display: grid; place-items: center; z-index: 2;
+  box-shadow: 0 0 0 calc(var(--u) * 8) #fff, 0 calc(var(--u) * 10) calc(var(--u) * 26) rgba(15, 23, 42, .18);
 }
-.mg-ba-arrow svg { width: 55%; height: 55%; }
-.mg-ba-arrow path { fill: none; stroke: #fff; stroke-width: 12; stroke-linecap: round; stroke-linejoin: round; }
+.mg-ba-arrow svg { width: 56%; height: 56%; }
+.mg-ba-arrow path { fill: none; stroke: var(--on-accent); stroke-width: 11; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Quote card */
-.mg-quote {
-  margin-top: calc(var(--u) * 44); position: relative; width: var(--card-w); background: rgba(17, 19, 24, .94); color: #fff; border-radius: calc(var(--u) * 40); box-shadow: var(--shadow);
-  padding: calc(var(--u) * 110) calc(var(--u) * 64) calc(var(--u) * 64);
-}
+.mg-quote { padding: calc(var(--u) * 92) calc(var(--u) * 68) calc(var(--u) * 60); margin-top: calc(var(--u) * 30); }
 .mg-quote-mark {
-  position: absolute; left: calc(var(--u) * 50); top: calc(var(--u) * -44); width: calc(var(--u) * 140); height: calc(var(--u) * 140); border-radius: 50%;
-  background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-family: 'MG Fraunces', Georgia, serif;
-  font-size: calc(var(--u) * 180); line-height: 1; padding-top: calc(var(--u) * 74); box-shadow: var(--shadow);
+  position: absolute; left: calc(var(--u) * 52); top: calc(var(--u) * -62); font-family: var(--serif); font-style: italic;
+  font-size: calc(var(--u) * 260); line-height: 1; color: var(--accent-ink); transform-origin: 30% 60%;
 }
-.mg-quote-text { font-family: 'MG Instrument Serif', Georgia, serif; font-style: italic; font-size: calc(var(--u) * var(--quote-size, 84)); line-height: 1.14; }
-.mg-quote-word { display: inline-block; white-space: pre; }
+.mg-quote-text { font-family: var(--serif); font-size: calc(var(--u) * var(--quote-size, 84)); line-height: 1.08; color: var(--ink); letter-spacing: -.005em; text-wrap: pretty; }
 .mg-quote-author {
-  margin-top: calc(var(--u) * 34); display: flex; align-items: center; gap: calc(var(--u) * 18); font-family: 'MG Montserrat', sans-serif; font-weight: 800;
-  font-size: calc(var(--u) * 38); letter-spacing: .1em; text-transform: uppercase; color: rgba(255, 255, 255, .8);
+  margin-top: calc(var(--u) * 34); display: flex; align-items: center; gap: calc(var(--u) * 18); font-weight: 700;
+  font-size: calc(var(--u) * 30); letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
 }
-.mg-quote-author::before { content: ''; width: calc(var(--u) * 56); height: calc(var(--u) * 8); border-radius: 999px; background: var(--accent); }
+.mg-quote-author::before { content: ''; width: calc(var(--u) * 48); height: calc(var(--u) * 6); border-radius: 999px; background: var(--accent); }
 
 /* Arrow or circle */
 .mg-highlight { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .mg-highlight path, .mg-highlight ellipse { fill: none; stroke: var(--accent); stroke-linecap: round; stroke-linejoin: round; }
-.mg-highlight .mg-shadow { stroke: rgba(0, 0, 0, .35); }
+.mg-highlight .mg-halo { stroke: rgba(255, 255, 255, .9); }
+
+/* Statement */
+.mg-statement { text-align: center; padding: calc(var(--u) * 60) calc(var(--u) * 60) calc(var(--u) * 66); }
+.mg-statement-text { font-family: var(--serif); font-size: calc(var(--u) * var(--statement-size, 130)); line-height: 1.02; color: var(--ink); letter-spacing: -.012em; text-wrap: balance; }
+.mg-statement-text .mg-accent { padding: 0 .1em; }
+
+/* Sticky notes */
+.mg-notes { display: flex; justify-content: center; width: var(--card-w); }
+.mg-notes-row { width: 100%; align-items: flex-start; padding: calc(var(--u) * 34) calc(var(--u) * 10) calc(var(--u) * 46); }
+.mg-note {
+  position: relative; flex: 1 1 0; min-width: 0; aspect-ratio: 1 / .94; padding: calc(var(--u) * 54) calc(var(--u) * 34) calc(var(--u) * 40);
+  border-radius: calc(var(--u) * 10) calc(var(--u) * 10) calc(var(--u) * 18) calc(var(--u) * 10); display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 3) rgba(15, 23, 42, .08), 0 calc(var(--u) * 18) calc(var(--u) * 34) rgba(15, 23, 42, .18);
+  transform-origin: 50% 0;
+}
+.mg-notes.n2 .mg-note { max-width: calc(var(--u) * 440); }
+.mg-notes.n1 .mg-note { max-width: calc(var(--u) * 560); aspect-ratio: 1 / .7; }
+.mg-note + .mg-note { margin-left: calc(var(--u) * -14); }
+.mg-note.c0 { background: linear-gradient(180deg, #fff3a8, #ffe873); }
+.mg-note.c1 { background: linear-gradient(180deg, #ffd3e2, #ffbcd3); }
+.mg-note.c2 { background: linear-gradient(180deg, #c9f5e2, #aeeed2); }
+.mg-note-text { font-weight: 800; font-size: calc(var(--u) * var(--note-size, 50)); line-height: 1.12; color: #1f2430; text-align: center; letter-spacing: -.02em; text-wrap: balance; }
+.mg-tape {
+  position: absolute; left: 50%; top: calc(var(--u) * -22); width: calc(var(--u) * 150); height: calc(var(--u) * 46); margin-left: calc(var(--u) * -75);
+  background: rgba(255, 255, 255, .62); border: 1px solid rgba(15, 23, 42, .05); transform: rotate(var(--tape-tilt, -3deg));
+  box-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(15, 23, 42, .08);
+}
+
+/* Crossed-out list */
+.mg-strike { padding: calc(var(--u) * 50) calc(var(--u) * 64) calc(var(--u) * 56); }
+.mg-strike-row { padding: calc(var(--u) * 8) 0; }
+.mg-strike-text { position: relative; display: inline-block; font-weight: 700; font-size: calc(var(--u) * 54); line-height: 1.2; color: var(--ink); letter-spacing: -.015em; }
+.mg-strike-line { position: absolute; left: -.08em; right: -.08em; top: 52%; height: calc(var(--u) * 7); margin-top: calc(var(--u) * -3.5); border-radius: 999px; background: var(--strike); transform-origin: 0 50%; }
+.mg-strike-final .mg-accent { margin-left: .14em; }
+.mg-strike-final { margin-top: calc(var(--u) * 30); padding-top: calc(var(--u) * 34); border-top: calc(var(--u) * 2) solid var(--hair); font-size: calc(var(--u) * 72); line-height: 1.1; color: var(--ink); }
+
+/* Browser window */
+.mg-window { position: relative; width: var(--card-w); background: var(--paper); border-radius: calc(var(--u) * 34); box-shadow: var(--shadow); overflow: hidden; }
+.mg-window-bar { display: flex; align-items: center; gap: calc(var(--u) * 20); height: calc(var(--u) * 84); padding: 0 calc(var(--u) * 28); background: #f3f5f8; border-bottom: calc(var(--u) * 2) solid var(--hair); }
+.mg-dots { flex: none; display: flex; gap: calc(var(--u) * 12); width: calc(var(--u) * 130); }
+.mg-dots span { width: calc(var(--u) * 22); height: calc(var(--u) * 22); border-radius: 50%; }
+.mg-dots .d0 { background: #ff5f57; } .mg-dots .d1 { background: #febc2e; } .mg-dots .d2 { background: #28c840; }
+.mg-window-spacer { flex: none; width: calc(var(--u) * 130); }
+.mg-url {
+  flex: 1; min-width: 0; height: calc(var(--u) * 52); border-radius: 999px; background: #fff; border: calc(var(--u) * 2) solid var(--hair);
+  display: flex; align-items: center; justify-content: center; gap: calc(var(--u) * 10); padding: 0 calc(var(--u) * 24);
+}
+.mg-url-lock { flex: none; width: calc(var(--u) * 24); height: calc(var(--u) * 24); stroke: var(--faint); stroke-width: 2.4; }
+.mg-url-text { font-weight: 600; font-size: calc(var(--u) * 28); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -.005em; }
+.mg-window-view { position: relative; overflow: hidden; }
+.mg-window-scroll { position: relative; }
+.mg-window-scroll img { display: block; width: 100%; height: auto; }
+.mg-window-mark { position: absolute; background: var(--marker); border-radius: calc(var(--u) * 8); box-shadow: inset 0 0 0 calc(var(--u) * 3) rgba(var(--accent-rgb), .75); transform-origin: 0 50%; }
+.mg-window-page { padding: calc(var(--u) * 76) calc(var(--u) * 68) calc(var(--u) * 84); }
+.mg-window-title { font-size: calc(var(--u) * var(--page-size, 84)); line-height: 1.06; color: var(--ink); text-wrap: balance; }
+
+/* Icon row */
+.mg-icons { display: flex; justify-content: center; width: var(--card-w); }
+.mg-icons-row { width: 100%; gap: calc(var(--u) * 24); align-items: stretch; padding: calc(var(--u) * 10) 0 calc(var(--u) * 20); }
+.mg-icon-tile { flex: 1 1 0; min-width: 0; max-width: calc(var(--u) * 290); padding: calc(var(--u) * 40) calc(var(--u) * 16) calc(var(--u) * 34); display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 22); }
+.mg-icon-art { width: calc(var(--u) * 124); height: calc(var(--u) * 124); display: grid; place-items: center; border-radius: calc(var(--u) * 30); background: rgba(var(--accent-rgb), .1); }
+.mg-icon-art img { width: 100%; height: 100%; object-fit: contain; border-radius: calc(var(--u) * 24); }
+.mg-icon-svg { width: 62%; height: 62%; stroke: var(--accent-ink); stroke-width: 1.9; }
+.mg-icon-letter { font-family: var(--serif); font-style: italic; font-size: calc(var(--u) * 92); line-height: 1; color: var(--accent-ink); }
+.mg-icon-label { font-weight: 700; font-size: calc(var(--u) * 36); line-height: 1.15; color: var(--ink); text-align: center; letter-spacing: -.01em; text-wrap: balance; }
+
+/* Headline: a bold line, then the key words in white italic on the accent */
+.mg-headline { display: flex; justify-content: center; }
+.mg-headline-stack { flex-direction: column; align-items: center; gap: calc(var(--u) * 10); max-width: var(--card-w); }
+.mg-hl-line { position: relative; border-radius: calc(var(--u) * 26); text-align: center; }
+.mg-hl-line.one {
+  background: var(--paper); color: var(--ink); box-shadow: var(--shadow); font-size: calc(var(--u) * var(--headline-size, 96)); line-height: 1.04;
+  padding: calc(var(--u) * 16) calc(var(--u) * 38) calc(var(--u) * 22);
+}
+.mg-hl-line.two { padding: calc(var(--u) * 6) calc(var(--u) * 40) calc(var(--u) * 16); }
+.mg-hl-fill { position: absolute; inset: 0; border-radius: calc(var(--u) * 26); background: var(--accent); transform-origin: 0 50%; box-shadow: 0 calc(var(--u) * 14) calc(var(--u) * 34) rgba(var(--accent-rgb), .35); }
+.mg-hl-text { position: relative; font-family: var(--serif); font-style: italic; color: var(--on-accent); font-size: calc(var(--u) * var(--headline-size, 96) * 1.2); line-height: 1.05; letter-spacing: -.005em; }
+
+/* Comment prompt */
+.mg-cta { width: auto; max-width: var(--card-w); display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 28); padding: calc(var(--u) * 44) calc(var(--u) * 80) calc(var(--u) * 64); }
+.mg-cta-lead { font-family: var(--serif); font-style: italic; font-size: calc(var(--u) * 104); line-height: 1; color: var(--ink); }
+.mg-cta-pill {
+  position: relative; border-radius: 999px; background: var(--accent); padding: calc(var(--u) * 18) calc(var(--u) * 84) calc(var(--u) * 24);
+  box-shadow: 0 0 0 calc(var(--u) * 6) rgba(var(--accent-rgb), .18), 0 calc(var(--u) * 16) calc(var(--u) * 40) rgba(var(--accent-rgb), .45);
+}
+.mg-cta-glow { position: absolute; inset: 0; border-radius: 999px; box-shadow: 0 0 calc(var(--u) * 40) calc(var(--u) * 6) rgba(var(--accent-rgb), .55); opacity: 0; }
+.mg-cta-word { position: relative; display: block; color: var(--on-accent); font-size: calc(var(--u) * var(--cta-size, 110)); line-height: 1.02; white-space: nowrap; }

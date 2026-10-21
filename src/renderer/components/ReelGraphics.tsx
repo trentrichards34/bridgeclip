@@ -16,7 +16,7 @@ import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHIC_IT
 import { MAX_REEL_GRAPHICS, REEL_GRAPHIC_TEMPLATES, reelGraphicSpec, reelGraphicStyle } from '../../shared/reel-graphics'
 import { outputSize } from '../../shared/graphic-layout'
 import { cn } from '../lib/utils'
-import { FIELD_LABELS, GraphicView, SAMPLES, SHORT, graphicSummary } from './ClipGraphics'
+import { GraphicView, IconFields, SAMPLES, SHORT, fieldLabel, graphicSummary } from './ClipGraphics'
 import { Button } from './ui/Button'
 import { Segmented } from './ui/Segmented'
 
@@ -142,13 +142,14 @@ function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, onPatch, 
       </div>
       {g.problem && <p className="text-2xs text-warning" role="note">{g.problem}</p>}
       {!graphicHasContent(g) && <p className="text-2xs text-warning">Add its words to show it.</p>}
-      {info.fields.filter((k) => !['image', 'shape', 'x', 'y'].includes(k)).map((key) => <label key={key} className="block space-y-1 text-2xs text-ink-muted">{FIELD_LABELS[key] ?? key}
+      {info.fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'highlights'].includes(k)).map((key) => <label key={key} className="block space-y-1 text-2xs text-ink-muted">{fieldLabel(g.template, key)}
         {key === 'items' || key === 'text'
           ? <textarea className={cn(input, 'resize-y')} rows={key === 'items' ? MAX_GRAPHIC_ITEMS : 2} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''}
-            onChange={(e) => onField(key, e.target.value)} aria-label={`${info.label} ${(FIELD_LABELS[key] ?? key).toLowerCase()}`} />
+            onChange={(e) => onField(key, e.target.value)} aria-label={`${info.label} ${fieldLabel(g.template, key).toLowerCase()}`} />
           : <input className={input} maxLength={MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => onField(key, e.target.value)}
-            aria-label={`${info.label} ${(FIELD_LABELS[key] ?? key).toLowerCase()}`} placeholder={key === 'value' ? 'e.g. a number you said, like 40%' : undefined} />}
+            aria-label={`${info.label} ${fieldLabel(g.template, key).toLowerCase()}`} placeholder={key === 'value' ? 'e.g. a number you said, like 40%' : undefined} />}
       </label>)}
+      {g.template === 'icon_pop' && <IconFields fields={g.fields} onField={onField} imageNote={false} />}
       {g.template === 'stat' && <p className="text-2xs text-ink-subtle">The number counts up. Use one you said, like “$1,200/month” or “40%”.</p>}
       {g.template === 'highlight' ? <div className="space-y-2">
         <Segmented label="Shape" size="sm" value={highlightPoint(g.fields).shape} onChange={(shape) => onField('shape', shape)} options={[{ value: 'circle', label: 'Circle' }, { value: 'arrow', label: 'Arrow' }]} />
