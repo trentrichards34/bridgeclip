@@ -4,7 +4,8 @@
 // 2. A real run (fake transcription and planner, everything else real): the planner's stat and list moments are
 //    checked against what was said (a made-up number is dropped), drawn offscreen, laid over the finished clip
 //    (a sampled frame shows the card), recorded for the editor, and opening the clip in the editor shows them
-//    in the Graphics row.
+//    in the Graphics row. With Stage layouts on, the list is stage size: the clip switches to the stage layout
+//    around it (backdrop at the top, the speaker in a card), and the editor's Scenes row shows that scene.
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
@@ -130,7 +131,7 @@ function outputMs(ranges, speed, t) {
   return null
 }
 
-test('a Create run with Motion graphics: Auto draws said-only cards over its clip, and the editor shows them', { timeout: 420000 }, async (t) => {
+test('a Create run with Motion graphics: Auto and Stage layouts draws said-only cards and a stage scene, and the editor shows them', { timeout: 420000 }, async (t) => {
   const tools = editorTools(t, { python: true, captions: true })
   if (!tools) return
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgeclip-auto-graphics-run-'))
@@ -175,7 +176,7 @@ test('a Create run with Motion graphics: Auto draws said-only cards over its cli
     videoUrl, workflow: 'automatic', clippingMode: 'quality', maxClips: 1, autoClipCount: false, durationRanges: ['xshort'], aspectRatio: '9:16',
     layoutStyle: 'auto', layoutVision: false, pacing: 'tight', videoSpeed: 1, includeCaptions: true, captionPreset: 'pop', includeTitle: true,
     titleStyle: 'headline', headlineLook: { look: 'white', color: '#FFFFFF', font: 'clean' }, qualityBar: 'off', headlineVoice: 'creator',
-    motionGraphics: true, startTimeSeconds: null, endTimeSeconds: null, bannerPlatform: null, bannerChannelUrl: null
+    motionGraphics: true, stageLayouts: true, startTimeSeconds: null, endTimeSeconds: null, bannerPlatform: null, bannerChannelUrl: null
   }), video)
   const run = path.join(library, started.jobId)
   // Done: the run finishes (graphics drawn and laid before it shows as done).
@@ -196,6 +197,15 @@ test('a Create run with Motion graphics: Auto draws said-only cards over its cli
   assert.equal(fs.existsSync(path.join(run, 'auto-graphics.json')), false, 'the plan is used once')
   const renders = fs.readdirSync(path.join(run, '.graphics')).filter((name) => name.endsWith('.mov'))
   assert.equal(renders.length, 2)
+  // Stage layouts: the list is a stage card with a stage scene around it (source time); the stat stays a card.
+  assert.deepEqual(layout.graphics.map((g) => g.size), ['card', 'stage'])
+  assert.equal(output.metrics.requested_settings.stage_layouts, true)
+  assert.equal(layout.stage_scenes?.length, 1)
+  const [stage] = layout.stage_scenes
+  assert.equal(stage.scene, 'stage')
+  assert.ok(stage.start_ms <= layout.graphics[1].at_ms && stage.end_ms >= layout.graphics[1].at_ms + layout.graphics[1].duration_ms, JSON.stringify(stage))
+  // Its items come in as they're said.
+  assert.equal(layout.graphics[1].fields.item_ms.split('\n').length, 3)
 
   // A frame of the finished clip shows the stat card while it plays, in the band under the hook (a still backdrop,
   // so the same box after the card is gone is the clip alone).
@@ -206,13 +216,18 @@ test('a Create run with Motion graphics: Auto draws said-only cards over its cli
   const listStart = outputMs(layout.kept_source_ms, 1, list.at_ms) / 1000
   assert.ok(start >= 1, `never in the first second (${start})`)
   assert.ok(statEnd <= listStart, 'never two at once')
+  // The stage layout is drawn: the speaker's card sits at the bottom with backdrop above it (the left edge of the
+  // caption band, which is the picture itself before the scene).
+  const edge = [8, 1060, 24, 80]
+  const staged = boxDifference(tools.ffmpeg, clip, Math.max(0, start - 0.6), listStart + 1.5, edge)
+  assert.ok(staged > 20, `the stage backdrop shows during the stage scene (difference ${staged.toFixed(1)})`)
   const band = [140, 420, 800, 260]
   const during = boxDifference(tools.ffmpeg, clip, start + 1.4, statEnd + 0.3, band)
   assert.ok(during > 25, `the stat card shows in its band while it plays (difference ${during.toFixed(1)})`)
   const shots = process.env.BRIDGECLIP_E2E_SHOTS
   if (shots) {
     fs.mkdirSync(shots, { recursive: true })
-    for (const [name, at] of [['auto-clip-stat.png', start + 1.6], ['auto-clip-list.png', listStart + 3.2], ['auto-clip-between.png', statEnd + 0.3]]) {
+    for (const [name, at] of [['auto-clip-stat.png', start + 1.6], ['auto-clip-list.png', listStart + 3.2], ['auto-clip-between.png', statEnd + 0.3], ['auto-clip-stage.png', listStart + 1.5]]) {
       execFileSync(tools.ffmpeg, ['-v', 'error', '-y', '-ss', String(at), '-i', clip, '-frames:v', '1', path.join(shots, name)])
     }
   }
@@ -230,6 +245,10 @@ test('a Create run with Motion graphics: Auto draws said-only cards over its cli
   await page.getByRole('button', { name: /^Numbered list at / }).waitFor()
   const project = JSON.parse(fs.readFileSync(path.join(run, 'editor-project.json'), 'utf8'))
   assert.deepEqual(project.candidates[0].graphics.map((g) => [g.id, g.origin]), layout.graphics.map((g) => [g.id, 'auto']))
+  // ...and its Scenes row shows the stage scene the run drew.
+  assert.deepEqual(project.candidates[0].stage_scenes, layout.stage_scenes)
+  await page.locator('.editor-scene-block.scene-stage').first().waitFor()
+  assert.equal(await page.locator('.editor-scene-block.scene-stage').count(), 1)
   if (shots) await page.screenshot({ path: path.join(shots, 'auto-editor-graphics.png') })
   assert.deepEqual(errors, [])
 })

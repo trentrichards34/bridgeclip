@@ -310,6 +310,12 @@ test('job validation rejects malformed options and invalid trim intervals', () =
   assert.equal('motionGraphics' in validateJobConfig({ ...job, motionGraphics: false }), false)
   for (const motionGraphics of ['auto', 1, null]) assert.throws(() => validateJobConfig({ ...job, motionGraphics }), /motion graphics/)
   assert.throws(() => validateJobConfig({ ...job, workflow: 'review', motionGraphics: true }), /Automatic/)
+  // Stage layouts ride on motion graphics, on vertical clips without a gameplay background.
+  assert.equal(validateJobConfig({ ...job, motionGraphics: true, stageLayouts: true }).stageLayouts, true)
+  assert.equal('stageLayouts' in validateJobConfig({ ...job, stageLayouts: true }), false)
+  assert.equal('stageLayouts' in validateJobConfig({ ...job, motionGraphics: true, stageLayouts: true, aspectRatio: '16:9' }), false)
+  assert.equal('stageLayouts' in validateJobConfig({ ...job, motionGraphics: true, stageLayouts: true, backgroundVideo: 'gameplay.mp4' }), false)
+  for (const stageLayouts of ['on', 1, null]) assert.throws(() => validateJobConfig({ ...job, motionGraphics: true, stageLayouts }), /stage layouts/)
   // Skills: music (and its track) and voice cleanup; off is never sent along, a track only rides with music.
   const audio = validateJobConfig({ ...job, music: true, musicTrack: 'calm-pad', voiceCleanup: true })
   assert.deepEqual([audio.music, audio.musicTrack, audio.voiceCleanup], [true, 'calm-pad', true])

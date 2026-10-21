@@ -338,3 +338,22 @@ test('a browser window or icon row draws without its picture when it has words; 
   const icons = mod.graphicJob(run, 'g-5', spec('icon_pop', { items: 'Email' }), win, name)
   assert.match(icons.spec.image, /^data:image\/png/)
 })
+
+test('automatic item times: checked against the item count, moved onto the finished clip, and a visual scene gives a stage card more room', () => {
+  assert.deepEqual(plainCopy(mg.graphicItemTimes({ item_ms: '0\n800\n1600' }, 3, 4000)), [0, 800, 1600])
+  // One more for a crossed-out list's final line; otherwise the even beats (null).
+  assert.deepEqual(plainCopy(mg.graphicItemTimes({ item_ms: '0\n800\n1600' }, 2, 4000)), [0, 800, 1600])
+  for (const item_ms of ['0\n800', '0\n900\n500', 'x\n1\n2', '0\n800\n9000', '']) assert.equal(mg.graphicItemTimes({ item_ms }, 3, 4000), null)
+  // Cuts [1000,5000] and [7000,10000] at 1.25×: source offsets become output offsets from the graphic's start.
+  const c = clip({ aspect_ratio: '9:16', captions: true, hook: null })
+  const project = { aspect_ratio: '9:16', width: 1080, height: 1920 }
+  const g = { id: 'g-list', template: 'list', at_ms: 2000, duration_ms: 2500, placement: 'top', size: 'stage', fields: { items: 'a\nb', item_ms: '0\n1000' } }
+  const spec = mg.graphicSpec(project, c, g)
+  assert.equal(spec.fields.item_ms, '0\n800')
+  // A graphic that runs into cut-out footage keeps the even beats.
+  assert.equal(mg.graphicSpec(project, c, { ...g, at_ms: 4000, fields: { items: 'a\nb', item_ms: '0\n1500' } }).fields.item_ms, undefined)
+  // In a Visual scene the stage card reaches down to just over the captions.
+  assert.ok(Math.abs(spec.box.bottom - mg.STAGE_BOTTOM) < 1e-9)
+  const visual = mg.graphicSpec(project, { ...c, stage_scenes: [{ scene: 'visual', start_ms: 1500, end_ms: 5000 }] }, g)
+  assert.ok(visual.box.bottom > .7 && visual.box.bottom < .8, JSON.stringify(visual.box))
+})

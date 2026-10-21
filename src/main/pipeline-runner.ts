@@ -553,7 +553,7 @@ export function startClipJob(
     ...(backgroundPath ? { background_video_path: backgroundPath } : {}),
     ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook' } : {}),
     ...(config.hookPreview ? { hook_preview: true } : {}),
-    ...(config.motionGraphics && config.workflow !== 'review' ? { motion_graphics: true } : {}),
+    ...(config.motionGraphics && config.workflow !== 'review' ? { motion_graphics: true, ...(config.stageLayouts ? { stage_layouts: true } : {}) } : {}),
     ...(audio ? { audio } : {}),
     quality_bar: config.qualityBar ?? 'b',
     headline_voice: config.headlineVoice ?? 'clipper',

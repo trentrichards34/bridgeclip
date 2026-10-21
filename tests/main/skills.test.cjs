@@ -27,10 +27,11 @@ const on = (rows) => plain(Object.fromEntries(rows.map((row) => [row.id, row.on]
 
 test('Create: every skill reads and writes the existing field, and turning it back restores the same fields', () => {
   const rows = skills.createSkillRows(CREATE, { pexels: true })
-  assert.deepEqual(plain(rows.map((row) => row.id)), ['rough_cut', 'captions', 'motion_graphics', 'zoom', 'broll', 'music', 'voice_cleanup'])
-  assert.deepEqual(on(rows), { rough_cut: true, captions: true, motion_graphics: false, zoom: false, broll: false, music: false, voice_cleanup: false })
+  assert.deepEqual(plain(rows.map((row) => row.id)), ['rough_cut', 'captions', 'motion_graphics', 'stage_layouts', 'zoom', 'broll', 'music', 'voice_cleanup'])
+  assert.deepEqual(on(rows), { rough_cut: true, captions: true, motion_graphics: false, stage_layouts: false, zoom: false, broll: false, music: false, voice_cleanup: false })
   const fields = { rough_cut: ['pacing'], captions: ['includeCaptions'], motion_graphics: ['motionGraphics'], zoom: ['lookExtras'], broll: ['broll', 'backgroundVideo'], music: ['music'], voice_cleanup: ['voiceCleanup'] }
-  for (const row of rows) {
+  // (Stage layouts ride on motion graphics: their own test below.)
+  for (const row of rows.filter((item) => item.id !== 'stage_layouts')) {
     const flipped = { ...CREATE, ...skills.createSkillPatch(CREATE, row.id, !row.on) }
     // Only the skill's own fields change (nothing else is stored for the panel)...
     const changed = Object.keys(CREATE).filter((key) => JSON.stringify(flipped[key]) !== JSON.stringify(CREATE[key]))
@@ -58,8 +59,27 @@ test('Create: the switch shows what a detailed control set, with no copy of its 
   const noKey = skills.createSkillRows(CREATE, { pexels: false }).find((row) => row.id === 'broll')
   assert.match(noKey.disabledReason, /Pexels/)
   assert.equal(skills.createSkillRows({ ...CREATE, broll: 'after-hook' }, { pexels: false }).find((row) => row.id === 'broll').disabledReason, null)
-  // Music and voice cleanup carry the Beta chip.
-  assert.deepEqual(plain(skills.createSkillRows(CREATE, { pexels: true }).filter((row) => row.beta).map((row) => row.id)), ['music', 'voice_cleanup'])
+  // Stage layouts, music and voice cleanup carry the Beta chip.
+  assert.deepEqual(plain(skills.createSkillRows(CREATE, { pexels: true }).filter((row) => row.beta).map((row) => row.id)), ['stage_layouts', 'music', 'voice_cleanup'])
+})
+
+test('Create: Stage layouts sit next to Motion graphics and need it, a vertical clip and no gameplay background', () => {
+  const ready = { ...CREATE, backgroundVideo: null, motionGraphics: true, aspectRatio: '9:16' }
+  const row = (fields) => skills.createSkillRows(fields, { pexels: true }).find((item) => item.id === 'stage_layouts')
+  assert.equal(row(ready).on, false)
+  assert.equal(row(ready).disabledReason, null)
+  const on = { ...ready, ...skills.createSkillPatch(ready, 'stage_layouts', true) }
+  assert.deepEqual(plain(skills.createSkillPatch(ready, 'stage_layouts', true)), { stageLayouts: true })
+  assert.equal(row(on).on, true)
+  assert.equal(skills.stageLayoutsOn(on), true)
+  // Remembered, but off (and not switchable) while something blocks them.
+  for (const [patch, reason] of [[{ motionGraphics: false }, /Motion graphics first/], [{ aspectRatio: '16:9' }, /vertical/], [{ backgroundVideo: 'minecraft.mp4' }, /gameplay/]]) {
+    const blocked = { ...on, ...patch }
+    assert.equal(row(blocked).on, false)
+    assert.match(row(blocked).disabledReason, reason)
+    assert.equal(skills.stageLayoutsOn(blocked), false)
+  }
+  assert.equal(skills.createSkillPatch(on, 'stage_layouts', false).stageLayouts, false)
 })
 
 const PLAN = { words: [{ cut: 'filler' }, { cut: null }, { cut: 'retake' }, { cut: null }, { cut: null }], sounds: [{ id: 0 }, { id: 1 }] }

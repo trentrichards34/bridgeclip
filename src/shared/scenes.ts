@@ -4,7 +4,7 @@
  *
  * - face: the normal full-frame framing (the default: any time without a scene is face).
  * - stage: a backdrop fills the frame, the speaker sits in a rounded card along
- *   the bottom, the top ~55% is free for graphics and the captions sit between.
+ *   the bottom, the top ~53% is free for graphics and the captions sit between.
  * - visual: the card is off-screen; the whole frame is backdrop (for a big graphic).
  *
  * The clip editor keeps a clip's scenes in SOURCE time (`CandidateEdit.stage_scenes`,
@@ -38,9 +38,9 @@ export const MIN_RENDER_SCENE_MS = 300
 
 /** Stage geometry as shares of the 9:16 frame (1080 x 1920), the same as the engine's. */
 export const STAGE_LAYOUT = {
-  cardSide: 40 / 1080, cardBottom: 40 / 1920, cardHeight: 0.40, cardRadius: 48 / 1080,
+  cardSide: 40 / 1080, cardBottom: 40 / 1920, cardHeight: 0.37, cardRadius: 48 / 1080,
   /** Graphics own the frame above this line in a stage scene. */
-  stageBottom: 0.55,
+  stageBottom: 0.53,
   /** Caption center in a visual scene. */
   visualCaptionY: 0.82
 } as const

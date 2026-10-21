@@ -12,7 +12,7 @@
 import { parseLookExtras, type LookExtraId } from './look-extras'
 import { isMusicTrackId, MUSIC_TRACKS, parseAudioChoice } from './music'
 
-export const SKILL_IDS = ['rough_cut', 'captions', 'motion_graphics', 'zoom', 'broll', 'sound_effects', 'music', 'voice_cleanup'] as const
+export const SKILL_IDS = ['rough_cut', 'captions', 'motion_graphics', 'stage_layouts', 'zoom', 'broll', 'sound_effects', 'music', 'voice_cleanup'] as const
 export type SkillId = (typeof SKILL_IDS)[number]
 export type SkillSurface = 'create' | 'edit' | 'remix'
 
@@ -28,7 +28,8 @@ export interface SkillInfo {
 export const SKILLS: Record<SkillId, SkillInfo> = {
   rough_cut: { id: 'rough_cut', label: 'Rough cut', detail: 'Cuts dead air, long pauses and filler words.' },
   captions: { id: 'captions', label: 'Captions', detail: 'Word-by-word captions burned into the video.' },
-  motion_graphics: { id: 'motion_graphics', label: 'Motion graphics', detail: 'Up to 3 animated cards per clip for numbers, lists and names said in it.' },
+  motion_graphics: { id: 'motion_graphics', label: 'Motion graphics', detail: 'Animated cards for the numbers, lists, names and key lines said in each clip.' },
+  stage_layouts: { id: 'stage_layouts', label: 'Stage layouts', detail: 'Big cards go on a stage at the top, with you in a card below. Then back to full frame.', beta: true },
   zoom: { id: 'zoom', label: 'Zoom', detail: 'Cuts between a wide and a tight shot of your face every few seconds.' },
   broll: { id: 'broll', label: 'B-roll', detail: 'Stock footage from Pexels over the speaker, after a 3-second hook.' },
   sound_effects: { id: 'sound_effects', label: 'Sound effects', detail: 'The soft whooshes and pops the edit planned, mixed under your voice.' },
@@ -65,6 +66,10 @@ export interface CreateSkillFields {
   pacing: 'tight' | 'natural'
   includeCaptions: boolean
   motionGraphics: boolean
+  /** Stage layouts with motion graphics (absent: off). */
+  stageLayouts?: boolean
+  /** The clips' shape (stage layouts are for 9:16; absent: 9:16). */
+  aspectRatio?: string
   lookExtras: LookExtraId[]
   broll: 'off' | 'after-hook' | 'full'
   backgroundVideo: string | null
@@ -77,7 +82,20 @@ export interface CreateSkillContext {
   pexels: boolean
 }
 
-export const CREATE_SKILLS: readonly SkillId[] = ['rough_cut', 'captions', 'motion_graphics', 'zoom', 'broll', 'music', 'voice_cleanup']
+export const CREATE_SKILLS: readonly SkillId[] = ['rough_cut', 'captions', 'motion_graphics', 'stage_layouts', 'zoom', 'broll', 'music', 'voice_cleanup']
+
+/** Why Stage layouts can't be on for these settings (null: they can). */
+export function stageLayoutsBlocked(fields: Pick<CreateSkillFields, 'motionGraphics' | 'aspectRatio' | 'backgroundVideo'>): string | null {
+  if ((fields.aspectRatio ?? '9:16') !== '9:16') return 'Stage layouts are for vertical (9:16) clips.'
+  if (fields.backgroundVideo) return 'Stage layouts can’t be used with a gameplay background.'
+  if (!fields.motionGraphics) return 'Turn on Motion graphics first. The stage holds its cards.'
+  return null
+}
+
+/** Stage layouts apply to the run: switched on and nothing blocks them. */
+export function stageLayoutsOn(fields: Pick<CreateSkillFields, 'motionGraphics' | 'aspectRatio' | 'backgroundVideo' | 'stageLayouts'>): boolean {
+  return fields.stageLayouts === true && stageLayoutsBlocked(fields) === null
+}
 
 export function createSkillRows(fields: CreateSkillFields, context: CreateSkillContext): SkillRow[] {
   return CREATE_SKILLS.map((id) => {
@@ -85,6 +103,7 @@ export function createSkillRows(fields: CreateSkillFields, context: CreateSkillC
       case 'rough_cut': return row(id, fields.pacing === 'tight')
       case 'captions': return row(id, fields.includeCaptions)
       case 'motion_graphics': return row(id, fields.motionGraphics === true)
+      case 'stage_layouts': return row(id, stageLayoutsOn(fields), stageLayoutsBlocked(fields))
       case 'zoom': return row(id, hasExtra(fields.lookExtras, ZOOM))
       case 'broll': return row(id, fields.broll !== 'off', fields.broll === 'off' && !context.pexels ? 'Add a free Pexels key in Settings → API keys first.' : null,
         fields.broll === 'full' ? 'Stock footage from Pexels over the speaker, for the whole clip.' : undefined)
@@ -95,11 +114,12 @@ export function createSkillRows(fields: CreateSkillFields, context: CreateSkillC
 }
 
 /** Turning one skill on or off, as the same draft fields the detailed controls set. */
-export function createSkillPatch(fields: CreateSkillFields, id: SkillId, on: boolean): Partial<CreateSkillFields> {
+export function createSkillPatch(fields: CreateSkillFields, id: SkillId, on: boolean): Partial<Omit<CreateSkillFields, 'aspectRatio'>> {
   switch (id) {
     case 'rough_cut': return { pacing: on ? 'tight' : 'natural' }
     case 'captions': return { includeCaptions: on }
     case 'motion_graphics': return { motionGraphics: on }
+    case 'stage_layouts': return { stageLayouts: on }
     case 'zoom': return { lookExtras: withExtra(fields.lookExtras, ZOOM, on) }
     // On keeps a mode already picked; B-roll and a gameplay background can't both run.
     case 'broll': return on ? { broll: fields.broll === 'off' ? 'after-hook' : fields.broll, backgroundVideo: null } : { broll: 'off' }

@@ -110,6 +110,13 @@ test('B-roll and a background video are sent only for Automatic jobs, never toge
     const base = { source: 'https://example.com/video', workflow: 'automatic', aspectRatio: '9:16' }
     original.update({ ...base, broll: 'off', backgroundVideo: 'gameplay.mp4' })
     let request = buildJobRequest(useDraftStore.getState(), trim)
+    // Stage layouts ride along only with motion graphics on a vertical clip without a gameplay background.
+    assert.equal(request.stageLayouts, undefined)
+    assert.equal(buildJobRequest({ ...useDraftStore.getState(), stageLayouts: true, motionGraphics: true }, trim).stageLayouts, undefined)
+    const clean = { ...useDraftStore.getState(), backgroundVideo: null, stageLayouts: true }
+    assert.equal(buildJobRequest(clean, trim).stageLayouts, undefined)
+    assert.equal(buildJobRequest({ ...clean, motionGraphics: true }, trim).stageLayouts, true)
+    assert.equal(buildJobRequest({ ...clean, motionGraphics: true, aspectRatio: '16:9' }, trim).stageLayouts, undefined)
     assert.equal(request.backgroundVideo, 'gameplay.mp4')
     assert.equal(request.broll, undefined)
     original.update({ broll: 'after-hook' })
@@ -138,8 +145,10 @@ test('Skills on Create (Automatic): one list over the draft’s own fields, with
     original.update({ source: 'https://example.com/video', workflow: 'automatic', aspectRatio: '9:16' })
     const html = renderToStaticMarkup(React.createElement(CaptionsStep, { draft: useDraftStore.getState(), update() {} }))
     assert.match(html, /data-testid="skills-panel"/)
-    for (const name of ['Rough cut', 'Captions', 'Motion graphics', 'Zoom', 'B-roll', 'Music', 'Voice cleanup']) assert.match(html, new RegExp(`aria-label="${name}"`))
-    assert.equal((html.match(/>Beta</g) ?? []).length, 2)
+    for (const name of ['Rough cut', 'Captions', 'Motion graphics', 'Stage layouts', 'Zoom', 'B-roll', 'Music', 'Voice cleanup']) assert.match(html, new RegExp(`aria-label="${name}"`))
+    assert.equal((html.match(/>Beta</g) ?? []).length, 3)
+    // Stage layouts wait for Motion graphics (switch disabled, with why).
+    assert.match(html, /Turn on Motion graphics first/)
     // One home per setting: what it's for moved to the Video step, Motion graphics is only a skill, and Zoom
     // (a skill) is left out of the look's Extras.
     assert.doesNotMatch(html, /What’s this video for\?/)

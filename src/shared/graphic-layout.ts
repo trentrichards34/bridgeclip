@@ -12,7 +12,8 @@
  */
 import { sceneAt, type CandidateEdit, type EditorProject } from './clip-editor'
 import { HEADLINE_FONTS, isHexColor } from './headline-look'
-import { graphicWindow, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize } from './motion-graphics'
+import { STAGE_LAYOUT, sceneAt as stageSceneAt } from './scenes'
+import { graphicWindow, outputTime, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize } from './motion-graphics'
 
 /** The editor's default brand color for graphics (the engine's cards use the same calm blue). */
 export const GRAPHIC_DEFAULT_COLOR = '#2F5BFF'
@@ -59,8 +60,8 @@ export interface GraphicFrame {
 /** Share of the height a corner handle takes, with its margin (brand_mark.py: about 4% tall). */
 const HANDLE_SHARE = .06
 
-/** On a 9:16 frame a stage-size graphic ends here: the top ~55% is the stage, the speaker sits below. */
-export const STAGE_BOTTOM = .56
+/** On a 9:16 frame a stage-size graphic ends here: the top ~53% is the stage, the speaker sits below. */
+export const STAGE_BOTTOM = .53
 
 /**
  * The vertical band (fractions of the height) a graphic with this placement
@@ -96,7 +97,7 @@ export function graphicBox(placement: GraphicPlacement, frame: GraphicFrame, siz
     // The free space that overlaps the stage most, cut at the stage's bottom (never shorter than 30% of the frame when there is room).
     const span = ([a, b]: [number, number]): number => Math.min(b, STAGE_BOTTOM) - Math.max(a, 0)
     const [a, b] = [...pool].sort((x, y) => span(y) - span(x))[0]
-    return { top: a, bottom: Math.min(b, Math.max(STAGE_BOTTOM, a + .3)) }
+    return { top: a, bottom: Math.min(b, Math.max(STAGE_BOTTOM, a + .22)) }
   }
   if (placement === 'top') { const [a, b] = pool[0]; return { top: a, bottom: Math.min(b, a + h) } }
   if (placement === 'bottom') { const [a, b] = pool[pool.length - 1]; return { top: Math.max(a, b - h), bottom: b } }
@@ -167,6 +168,18 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
   const fields = { ...graphic.fields }
   delete fields.image
   delete fields.color
-  return { template: graphic.template, fields, width, height, duration_ms: window.duration_ms, box: graphicBox(graphic.placement, frame, graphic.size), placement: graphic.placement,
+  delete fields.item_ms
+  // Item reveal times (source ms from the graphic's start) on the finished clip's clock.
+  const items = (graphic.fields.item_ms ?? '').split(/[\s,]+/).filter(Boolean).map(Number)
+  if (items.length && items.every(Number.isFinite)) {
+    const out = items.map((t) => outputTime(candidate, graphic.at_ms + t))
+    if (out.every((t) => t !== null)) fields.item_ms = out.map((t) => String(Math.max(0, Math.round((t as number) - window.start_ms)))).join('\n')
+  }
+  let box = graphicBox(graphic.placement, frame, graphic.size)
+  // A stage graphic in a Visual scene (the speaker card is away) takes the frame down to just over the captions.
+  if (graphic.size === 'stage' && project.aspect_ratio === '9:16' && stageSceneAt(candidate.stage_scenes, at).scene === 'visual') {
+    box = { top: box.top, bottom: Math.max(box.bottom, STAGE_LAYOUT.visualCaptionY - .08) }
+  }
+  return { template: graphic.template, fields, width, height, duration_ms: window.duration_ms, box, placement: graphic.placement,
     ...graphicStyle(candidate, graphic), ...(graphic.size && graphic.size !== 'card' ? { size: graphic.size } : {}) }
 }

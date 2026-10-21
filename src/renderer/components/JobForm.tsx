@@ -33,7 +33,7 @@ import { mergeSources, parseSourceText, sourceCountLabel } from '../../shared/cr
 import { Select } from './ui/Select'
 import { useBrands } from '../store/use-brand-store'
 import { createCtaLine, DEFAULT_HANDLE_POSITION, HANDLE_POSITIONS, hasBrandMark } from '../../shared/brand-kit'
-import { createSkillPatch, createSkillRows, type SkillId, type SkillRow } from '../../shared/skills'
+import { createSkillPatch, createSkillRows, stageLayoutsOn, type SkillId, type SkillRow } from '../../shared/skills'
 import { MUSIC_TRACKS, musicTrackLabel } from '../../shared/music'
 import type { ReferenceLook } from '../../shared/purpose'
 import { SkillsPanel } from './SkillsPanel'
@@ -149,6 +149,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
     ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
     ...(draft.workflow === 'automatic' && draft.motionGraphics ? { motionGraphics: true } : {}),
+    ...(draft.workflow === 'automatic' && stageLayoutsOn(draft) ? { stageLayouts: true } : {}),
     qualityBar: draft.qualityBar,
     headlineVoice: draft.headlineVoice,
     ...(draft.workflow === 'automatic' && isCaptionLanguage(draft.captionLanguage) ? { captionLanguage: draft.captionLanguage } : {}),

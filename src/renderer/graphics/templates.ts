@@ -20,7 +20,7 @@ import { createTimeline } from 'animejs'
 import './graphics.css'
 import { ICONS } from './icons'
 import {
-  accentWords, browserHighlights, formatStatValue, graphicIcons, graphicItems, highlightPoint, parseStatValue, templateItems,
+  accentWords, browserHighlights, formatStatValue, graphicIcons, graphicItems, graphicItemTimes, highlightPoint, parseStatValue, templateItems,
   type GraphicRenderSpec
 } from '../../shared/motion-graphics'
 
@@ -297,9 +297,21 @@ function shell(b: Build, className: string, parent: HTMLElement = b.fit): { push
   pushIn(b, push)
   return { push, card }
 }
-/** Even beats for revealing items during the hold (`share` of it). */
-function beats(spec: GraphicRenderSpec, count: number, share = .55, start?: number): number[] {
-  const { tin, hold } = phases(spec.duration_ms)
+/**
+ * Beats for revealing items during the hold (`share` of it): evenly spaced, or as each item is said when
+ * the graphic has item times (`item_ms`, automatic graphics). `extra`: one more beat after the items (a
+ * Crossed-out list's final line), from the times when given.
+ */
+function beats(spec: GraphicRenderSpec, count: number, share = .55, start?: number, extra = false): number[] {
+  const { tin, hold, outAt } = phases(spec.duration_ms)
+  const said = graphicItemTimes(spec.fields, count, spec.duration_ms)
+  if (said) {
+    // Never before the card has started to come in, and never during its exit.
+    const lo = Math.min(start ?? 0, tin * .5), hi = Math.max(lo, outAt - 260)
+    const times = said.slice(0, count + (extra ? 1 : 0)).map((t) => clamp(t - 80, lo, hi))
+    for (let i = 1; i < times.length; i++) times[i] = Math.max(times[i], times[i - 1] + 120)
+    return times
+  }
   const from = start ?? tin * .8
   const step = count > 1 ? clamp((hold * share) / (count - 1), 160, 560) : 0
   return Array.from({ length: count }, (_, i) => from + i * step)
@@ -625,13 +637,13 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     const rich = finalEl ? richText(finalEl, final, spec.fields.accent, { marker: false, accentClass: 'tint' }) : null
     const { tin, hold } = phases(spec.duration_ms)
     rows.forEach((r, i) => riseIn(b, r.row, tin * .5 + i * 70, 16, 300))
-    const at = beats(spec, rows.length, .45, tin + 280)
+    const at = beats(spec, rows.length, .45, tin + 280, true)
     rows.forEach((r, i) => {
       tl.add(r.line, { scaleX: [0, 1], duration: 300, ease: 'inOutQuad' }, at[i])
       tl.add(r.words, { opacity: [1, .5], duration: 260, ease: 'outQuad' }, at[i] + 220)
     })
     if (finalEl && rich) {
-      const finalAt = (rows.length ? at[at.length - 1] + 420 : tin * .6)
+      const finalAt = at.length > rows.length ? at[rows.length] : rows.length ? at[rows.length - 1] + 420 : tin * .6
       const end = buildWords(b, rich.words, finalAt, wordStep(rich.words.length, 360, 80), 'pop')
       if (rich.accent) boxAround(b, card, rich.accent, Math.min(end + 40, tin + hold - 500))
     }

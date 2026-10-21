@@ -217,8 +217,8 @@ class BridgeTests(unittest.TestCase):
 
     def test_broll_options_are_booleans_and_exclude_a_background(self):
         bridge.validate_config(self.config(broll_enabled=True, broll_keep_hook=False))
-        bridge.validate_config(self.config(hook_preview=True, motion_graphics=True))
-        for bad in ({"broll_enabled": "yes"}, {"broll_keep_hook": 1}, {"hook_preview": "on"}, {"motion_graphics": "auto"}):
+        bridge.validate_config(self.config(hook_preview=True, motion_graphics=True, stage_layouts=True))
+        for bad in ({"broll_enabled": "yes"}, {"broll_keep_hook": 1}, {"hook_preview": "on"}, {"motion_graphics": "auto"}, {"stage_layouts": "on"}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 bridge.validate_config(self.config(**bad))
         with tempfile.TemporaryDirectory() as folder:

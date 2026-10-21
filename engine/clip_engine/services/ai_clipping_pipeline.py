@@ -28,7 +28,7 @@ from clip_engine.config import CaptionStyle, LayoutStyle, get_settings, is_longf
 from clip_engine.services.video_speed import validate_video_speed
 from clip_engine.services.broll_service import PexelsKeyRejected, prepare_broll
 from clip_engine.services.hook_preview import pick_teaser
-from clip_engine.services.auto_graphics import fit_to_clip, write_graphics_plan
+from clip_engine.services.auto_graphics import fit_to_clip, on_stage, stage_scenes_for, write_graphics_plan
 from clip_engine.error_policy import NoClipCandidatesError, NoNewMomentsError, NoRequestedMomentsError, safe_failure_code, safe_processing_error
 from clip_engine.services.caption_translation import CaptionTranslator, language_name
 from clip_engine.services.transcript_reuse import load_saved_transcript, reusable_transcript, source_fingerprint
@@ -107,6 +107,21 @@ def spoken_language_code(language: Optional[str]) -> Optional[str]:
     return match.group(1) if match else None
 
 
+def headline_off(request) -> bool:
+    """The member's own hook text is off on these clips ("No hook text" or no title), so a hook headline may be drawn."""
+    look = request.headline_look if isinstance(getattr(request, 'headline_look', None), dict) else {}
+    return request.aspect_ratio == '9:16' and (not request.include_title or (request.title_style == 'headline' and look.get('look') == 'none'))
+
+
+def stages_on(request) -> bool:
+    """Stage layouts apply: asked for, with motion graphics, on vertical clips without a gameplay background."""
+    return bool(request.stage_layouts and request.motion_graphics and request.aspect_ratio == '9:16' and not request.background_video_path)
+
+
+def graphics_options(request) -> dict:
+    return {'headline_off': headline_off(request), 'cta_keyword': request.cta_keyword or '', 'stage': stages_on(request)}
+
+
 @dataclass
 class ClippingJobRequest:
     """Request to process a video for AI clipping."""
@@ -156,6 +171,9 @@ class ClippingJobRequest:
     # Motion graphics: Auto (Automatic): the planner also picks 0-3 card moments per clip (auto_graphics);
     # main draws them over the finished clips after the run.
     motion_graphics: bool = False
+    # Stage layouts (with motion graphics on, 9:16): the big pattern cards are stage size and each clip switches to
+    # the stage scene around them (stage_scenes), rendered with the clip.
+    stage_layouts: bool = False
     # "Say what it's for": the member's purpose line, and a reference picture (sent only when the planner accepts images).
     purpose: Optional[str] = None
     reference_image_path: Optional[str] = None
@@ -549,7 +567,8 @@ class AIClippingPipeline:
                 brand_identity=request.brand_identity or None,
                 brand_name=request.brand_name or None,
                 headline_voice=request.headline_voice,
-                **({'motion_graphics': True} if request.motion_graphics and request.workflow != 'review' else {}),
+                **({'motion_graphics': True, 'graphics_options': graphics_options(request)}
+                   if request.motion_graphics and request.workflow != 'review' else {}),
                 **({'purpose': request.purpose} if request.purpose else {}),
                 **({'reference_image': request.reference_image_path} if request.reference_image_path else {}),
             )
@@ -886,8 +905,20 @@ class AIClippingPipeline:
                         except Exception as exc:
                             logger.warning(f"B-roll unavailable for clip {i + 1}; rendering the speaker only: {exc}")
 
+                    # Stage layouts: the stage scenes around the clip's stage-size cards, worked out before the render
+                    # (on the uncut clip; the render moves them onto its cut).
+                    source_scenes: list[dict] = []
+                    if segment.graphics and stages_on(request) and not longform:
+                        try:
+                            planned_cards = fit_to_clip(segment.graphics, transcription_result.segments,
+                                                        [(segment.start_time_ms, segment.end_time_ms)], request.video_speed,
+                                                        graphics_options(request))
+                            source_scenes = stage_scenes_for(planned_cards, segment.start_time_ms, segment.end_time_ms)
+                        except Exception as exc:
+                            logger.warning(f"Stage layouts skipped for clip {i + 1}: {exc}")
                     render_request = RenderRequest(
                         progress_callback=lambda detail, percent=None: render_progress(i, detail, percent),
+                        source_scenes=source_scenes,
                         video_path=download_result.video_path,
                         output_path=output_path,
                         start_time_ms=segment.start_time_ms,
@@ -952,9 +983,15 @@ class AIClippingPipeline:
                         # The planner's card moments that survive the finished cut, with words actually said.
                         try:
                             graphics = fit_to_clip(segment.graphics, transcription_result.segments,
-                                                   getattr(render_result, "kept_source_ms", []) or [], request.video_speed)
+                                                   getattr(render_result, "kept_source_ms", []) or [], request.video_speed,
+                                                   graphics_options(request))
                         except Exception as exc:
                             logger.warning(f"Motion graphics skipped for clip {i + 1}: {exc}")
+                    drawn_scenes = list(getattr(render_result, "stage_scenes", None) or []) if graphics else []
+                    for g in graphics:
+                        # A stage card only where the clip was drawn with the stage; elsewhere it's a card.
+                        if g.get('size') == 'stage' and not on_stage(g, drawn_scenes):
+                            g['size'] = 'card'
                     if getattr(render_result, "framing_trace_path", None):
                         clip_trace_paths[i] = render_result.framing_trace_path
                     segment.layout_type = render_result.layout_type
@@ -986,6 +1023,9 @@ class AIClippingPipeline:
                         # Motion graphics: Auto (source time, editor graphics), drawn by main after the run; the
                         # hook preview's length shifts them in the finished file.
                         **({"graphics": graphics, "teaser_ms": max(0, render_result.duration_ms - body_ms)} if graphics else {}),
+                        # Stage layouts as drawn (source time; the editor's Scenes row).
+                        **({"stage_scenes": [{k: v for k, v in s.items() if k != 'backdrop' or v != 'light'} for s in drawn_scenes]}
+                           if drawn_scenes else {}),
                         # Voice cleanup and music as applied ({"voice_cleanup", "music"}; both off when they failed).
                         **({"audio": audio_done} if audio_done is not None else {}),
                     })
@@ -1298,6 +1338,7 @@ class AIClippingPipeline:
                     "broll": {"enabled": request.broll_enabled, "keep_hook": request.broll_keep_hook},
                     "hook_preview": request.hook_preview,
                     "motion_graphics": request.motion_graphics,
+                    "stage_layouts": stages_on(request),
                     "voice_cleanup": bool((request.audio or {}).get("voice_cleanup")),
                     "music": ((request.audio or {}).get("music") or {}).get("track") or ("own" if (request.audio or {}).get("music") else None),
                     "clip_request": request.clip_request,
