@@ -4,11 +4,13 @@
  * call through `applyChatTool` against a copy of the clip (an invalid call goes
  * back to the model as an error, so it can fix it); the renderer applies the
  * returned steps through the editor's own change() path with `mergeChatSteps`,
- * which checks them again. Times are SOURCE milliseconds, like the clip's cuts.
+ * which checks them again. Tools take SOURCE milliseconds, like the clip's cuts;
+ * the change card's words give CLIP time (the finished clip's clock, as the
+ * editor's playhead shows it).
  */
 import { CAPTION_PRESET_IDS, isCaptionPresetId } from './caption-presets'
 import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_LOOKS, headlineBarColor, parseHeadlineLook } from './headline-look'
-import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHICS_PER_CLIP, isGraphicTemplate, parseGraphics, sourceTimeAt, type EditorGraphic, type GraphicPlacement } from './motion-graphics'
+import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHICS_PER_CLIP, fitGraphicInCut, isGraphicTemplate, nearestOutputTime, outputTime, parseGraphics, placeInFreeBand, sourceTimeAt, type EditorGraphic, type GraphicPlacement } from './motion-graphics'
 import { MAX_HOOK_CHARS, SPLIT_RANGE, TRANSCRIPT_CLIP_MS, defaultCrop, editDuration, framingAt, normalizeSceneTransitions, panelRows, parseCandidateEdit, parseHook, type CandidateEdit, type Crop, type EditorRange, type EditorScene } from './clip-editor'
 import { hookShare, outputSize } from './graphic-layout'
 import { PIN_PROP, aimGraphic, checkHighlightFields, pinArg, type ChatPoint } from './chat-point'
@@ -51,6 +53,18 @@ export interface ChatProject {
 
 /** "Clip is now 37.7s." after the steps are applied. */
 export const clipLengthNote = (c: Pick<CandidateEdit, 'ranges' | 'video_speed'>): string => `Clip is now ${chatSeconds(editDuration(c as CandidateEdit))}.`
+
+/** Source ms as the clip's own clock ("0:03.2"): where it plays in the finished clip (a cut-out moment: the nearest kept one). */
+export function clipClock(c: Pick<CandidateEdit, 'ranges' | 'video_speed'>, source: number): string {
+  return chatClock(nearestOutputTime(c, source))
+}
+/** Where a source moment is, for a sentence: "0:03.2" in the clip, or "1.2s before the clip starts". */
+function clipMoment(c: CandidateEdit, source: number): string {
+  if (outputTime(c, source) !== null) return chatClock(outputTime(c, source)!)
+  if (source < clipStart(c)) return `${chatSeconds(clipStart(c) - source)} before the clip starts`
+  if (source >= clipEnd(c)) return `${chatSeconds(source - clipEnd(c))} after the clip ends`
+  return `a part cut out near ${clipClock(c, source)}`
+}
 
 function ms(value: unknown, name: string, project: ChatProject): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) fail(`${name} must be a number of milliseconds.`)
@@ -191,7 +205,7 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
   switch (name) {
     case 'set_ranges': {
       const ranges = checkRanges(normalizeRanges(readRanges(args.ranges, project)), c)
-      return done(`Sections set to ${ranges.map(([a, b]) => `${chatClock(a)}–${chatClock(b)}`).join(', ')}${why}`, { ranges }, ranges[0][0], 3)
+      return done(`Clip set to ${ranges.length === 1 ? 'one section' : `${ranges.length} sections`} of the video${why}`, { ranges }, ranges[0][0], 3)
     }
     case 'extend_start': {
       const to = ms(args.to_ms, 'to_ms', project), first = c.ranges[0]
@@ -214,14 +228,15 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
       if (b - a < MIN_PIECE_MS) fail('end_ms must be at least 100 ms after start_ms.')
       if (!c.ranges.some(([x, y]) => a < y && b > x)) fail('That part isn’t in the clip, so there is nothing to remove.')
       const ranges = checkRanges(subtract(c.ranges, a, b), c)
-      return done(`Cut ${chatClock(a)}–${chatClock(b)} (${chatSeconds(b - a)})${why}`, { ranges }, Math.max(ranges[0][0], a - 2000), 4)
+      const removed = c.ranges.reduce((n, [x, y]) => n + Math.max(0, Math.min(y, b) - Math.max(x, a)), 0)
+      return done(`Cut ${chatSeconds(removed)} at ${clipClock(c, Math.max(a, clipStart(c)))}${why}`, { ranges }, Math.max(ranges[0][0], a - 2000), 4)
     }
     case 'add_section': {
       const a = ms(args.start_ms, 'start_ms', project), b = ms(args.end_ms, 'end_ms', project)
       if (b - a < MIN_PIECE_MS) fail('end_ms must be at least 100 ms after start_ms.')
       if (c.ranges.some(([x, y]) => a >= x && b <= y)) fail('That part is already in the clip.')
       const ranges = checkRanges(normalizeRanges([...c.ranges, [a, b]]), c)
-      return done(`Added ${chatClock(a)}–${chatClock(b)} (${chatSeconds(b - a)})${why}`, { ranges }, a, 4)
+      return done(`Added ${chatSeconds(b - a)} of the video at ${clipClock({ ...c, ranges }, a)}${why}`, { ranges }, a, 4)
     }
     case 'set_hook_text': {
       const words = text(args.text, 'text', MAX_HOOK_CHARS)
@@ -272,7 +287,7 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
       scenes = scenes.filter((s) => s.at_ms <= from || s.at_ms >= stop)
       if (restore) scenes = [...scenes.filter((s) => Math.abs(s.at_ms - until!) >= 1), restore].sort((a, b) => a.at_ms - b.at_ms)
       if (scenes.length > MAX_SCENES) fail(`A clip can have up to ${MAX_SCENES} layout changes.`)
-      const span = `from ${at <= start ? 'the start' : chatClock(at)} ${restore ? `to ${chatClock(until!)}` : 'to the end'}`
+      const span = `from ${at <= start ? 'the start' : clipClock(c, at)} ${restore ? `to ${clipClock(c, until!)}` : 'to the end'}`
       return done(zoomed ? `Zoomed in ${zoomed.zoom.toFixed(1)}× on pin ${pin!.n} ${span}${why}` : `Layout set to ${layoutName(layout)} ${span}${why}`, { scenes }, Math.max(start, at), 3)
     }
     case 'set_captions': {
@@ -290,7 +305,7 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
     case 'play': {
       const at = ms(args.at_ms, 'at_ms', project)
       const seconds = typeof args.seconds === 'number' && Number.isFinite(args.seconds) ? Math.max(1, Math.min(MAX_PLAY_SECONDS, args.seconds)) : 3
-      return { step: { tool: 'play', summary: sentence(`Playing ${chatClock(at)} for ${Math.round(seconds)}s${why}`), patch: {}, focus_ms: at, play_seconds: seconds }, candidate: c }
+      return { step: { tool: 'play', summary: sentence(`Playing ${clipMoment(c, at)} for ${Math.round(seconds)}s${why}`), patch: {}, focus_ms: at, play_seconds: seconds }, candidate: c }
     }
     case 'add_graphic': {
       const graphics = c.graphics ?? []
@@ -302,27 +317,40 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
       const pinAt = pin && args.at_ms === undefined ? pinSourceMs(c, pin) : null
       const range = pinAt === null ? undefined : c.ranges.find(([a, b]) => pinAt >= a && pinAt < b)
       const at = pinAt !== null && range ? Math.max(range[0], pinAt - 400) : args.at_ms
-      const graphic = graphicFrom({ id: newId(), template: template.id, at_ms: at, duration_ms: args.duration_ms ?? 2500, placement: args.placement ?? 'middle', fields: {}, origin: 'chat' }, args, c, project, pin)
-      return done(`Added ${template.id === 'highlight' ? `${graphic.fields.shape === 'arrow' ? 'an arrow' : 'a circle'}` : `a ${template.label.toLowerCase()}`}${pin ? ` at pin ${pin.n}` : ''} at ${chatClock(graphic.at_ms)}${why}`, { graphics: [...graphics, graphic].sort((a, b) => a.at_ms - b.at_ms) }, graphic.at_ms, 3)
+      const { graphic: fit, note } = fitted(graphicFrom({ id: newId(), template: template.id, at_ms: at, duration_ms: args.duration_ms ?? 2500, placement: args.placement ?? 'middle', fields: {}, origin: 'chat' }, args, c, project, pin), c)
+      // Another graphic in its band at the same time: the next free band (top, bottom, middle).
+      const graphic = placeInFreeBand(graphics, fit)
+      const band = graphic.placement !== fit.placement ? ` at the ${graphic.placement} (the ${fit.placement} has another graphic then)` : ''
+      return done(`Added ${template.id === 'highlight' ? `${graphic.fields.shape === 'arrow' ? 'an arrow' : 'a circle'}` : `a ${template.label.toLowerCase()}`}${pin ? ` at pin ${pin.n}` : ''} at ${clipClock(c, graphic.at_ms)}${band}${note}${why}`, { graphics: [...graphics, graphic].sort((a, b) => a.at_ms - b.at_ms) }, graphic.at_ms, 3)
     }
     case 'update_graphic': {
       const graphics = c.graphics ?? [], current = graphics.find((g) => g.id === args.id)
       if (!current) return fail(`No graphic ${String(args.id).slice(0, 40)}. The clip's graphics are listed in the context.`)
       const pin = pinArg(args, points)
-      const graphic = graphicFrom({ ...current, at_ms: args.at_ms ?? current.at_ms, duration_ms: args.duration_ms ?? current.duration_ms, placement: args.placement ?? current.placement }, args, c, project, pin)
+      const { graphic, note } = fitted(graphicFrom({ ...current, at_ms: args.at_ms ?? current.at_ms, duration_ms: args.duration_ms ?? current.duration_ms, placement: args.placement ?? current.placement }, args, c, project, pin), c)
       const label = GRAPHIC_TEMPLATES.find((t) => t.id === graphic.template)!.label.toLowerCase()
       const moved = pin ? graphic.template === 'highlight' ? ` to point at pin ${pin.n}` : ` to the ${graphic.placement}` : ''
-      return done(`${pin ? 'Moved' : 'Changed'} the ${label} at ${chatClock(graphic.at_ms)}${moved}${why}`, { graphics: graphics.map((g) => g.id === graphic.id ? graphic : g).sort((a, b) => a.at_ms - b.at_ms) }, graphic.at_ms, 3)
+      return done(`${pin ? 'Moved' : 'Changed'} the ${label} at ${clipClock(c, graphic.at_ms)}${moved}${note}${why}`, { graphics: graphics.map((g) => g.id === graphic.id ? graphic : g).sort((a, b) => a.at_ms - b.at_ms) }, graphic.at_ms, 3)
     }
     case 'remove_graphic': {
       const graphics = c.graphics ?? [], current = graphics.find((g) => g.id === args.id)
       if (!current) return fail(`No graphic ${String(args.id).slice(0, 40)}. The clip's graphics are listed in the context.`)
       const label = GRAPHIC_TEMPLATES.find((t) => t.id === current.template)?.label.toLowerCase() ?? 'graphic'
-      return done(`Removed the ${label} at ${chatClock(current.at_ms)}${why}`, { graphics: graphics.filter((g) => g.id !== current.id) }, null)
+      return done(`Removed the ${label} at ${clipClock(c, current.at_ms)}${why}`, { graphics: graphics.filter((g) => g.id !== current.id) }, null)
     }
     default:
       return fail(`There is no tool called ${String(name).slice(0, 40)}.`)
   }
+}
+
+/** A graphic moved or shortened so all of it plays inside the cut, and words for the card when it was. */
+function fitted(g: EditorGraphic, c: CandidateEdit): { graphic: EditorGraphic; note: string } {
+  const fit = fitGraphicInCut(g, c)
+  if (!fit) return fail(`Less than ${GRAPHIC_MIN_MS / 1000} s of the clip is left after at_ms, so the graphic can't fit. Start it earlier.`)
+  const note = fit.duration_ms < g.duration_ms ? ` (shortened to ${chatSeconds(fit.duration_ms)} to fit in the clip)`
+    : fit.at_ms < g.at_ms ? ' (starts a little earlier so all of it plays before the clip ends)'
+      : fit.at_ms > g.at_ms ? ' (starts where the clip picks up again)' : ''
+  return { graphic: fit, note }
 }
 
 type GraphicDraft = Omit<EditorGraphic, 'at_ms' | 'duration_ms' | 'placement'> & { at_ms: unknown; duration_ms: unknown; placement: unknown }

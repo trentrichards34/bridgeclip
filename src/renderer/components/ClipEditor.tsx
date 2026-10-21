@@ -24,8 +24,9 @@ import { EditInspector } from './EditInspector'
 import { ClipChat, clipChatThread, type ChatApplied, type ChatApplyResult } from './ClipChat'
 import { PointButton, PointLayer } from './ChatPoints'
 import { GraphicsInspector, GraphicsOverlay, GraphicsTrack } from './ClipGraphics'
-import { nearestOutputTime, type EditorGraphic } from '../../shared/motion-graphics'
+import { nearestOutputTime, outputTime, type EditorGraphic } from '../../shared/motion-graphics'
 import { EditLog } from './EditLog'
+import { EditorTabs, type EditorTab } from './EditorTabs'
 import { clipEditLog } from '../../shared/edit-log'
 import { clipLengthNote, mergeChatSteps, patchValues, type ChatPatch, type ChatStep } from '../../shared/clip-chat'
 
@@ -82,7 +83,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   const [replacement, setReplacement] = useState<string | null>(null)
   const closeReplacement = useCallback(() => setReplacement(null), [])
   const [selected, setSelected] = useState(0)
-  const [tab, setTab] = useState<'review' | 'framing' | 'captions' | 'hook' | 'transcript' | 'chat' | 'graphics'>('review')
+  const [tab, setTab] = useState<EditorTab>('review')
   // "Choose" picked but no call to action chosen yet (the clip still uses the run's until one is).
   const [ctaPicking, setCtaPicking] = useState(false)
   useEffect(() => setCtaPicking(false), [selected])
@@ -654,6 +655,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
     target.addEventListener('pointermove', move); target.addEventListener('lostpointercapture', done)
   }
   // ── Chat tab: answers are applied through change(), so Undo, autosave and Bake work as for any edit.
+  // One clock: the playhead, graphics, pins and chat cards show clip time (where a moment plays in the finished clip).
+  const playheadOut = outputTime(candidate, time)
+  const clipClock = (source: number): string => clock(nearestOutputTime(candidate, source))
   const chatProject = { duration_ms: project.duration_ms, width: project.width, height: project.height, aspect_ratio: project.aspect_ratio, transcriptCount: project.transcript.length }
   const chatKey = (c: EditorCandidate): string => JSON.stringify(candidateEdit(c))
   /** Seek to `at` and play `seconds` of it; outside the clip's cut, "Play cuts only" is paused for it. */
@@ -690,7 +694,8 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       try { patch = mergeChatSteps(candidate, editing, chatProject) } catch (e) { return { error: errorMessage(e) } }
       const after = refineEdit(candidate, patch)
       applied = { clipId: candidate.id, before: patchValues(candidate, Object.keys(patch) as (keyof ChatPatch)[]), afterKey: chatKey(after) }
-      length = clipLengthNote(after)
+      // The card mentions the clip's length only when this answer changed it.
+      length = editDuration(after) === editDuration(candidate) ? null : clipLengthNote(after)
       video.current?.pause(); setEditingCaption(null)
       change(patch)
     }
@@ -820,7 +825,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
         </div>
         <div className="editor-transport">
           <Button size="sm" variant="ghost" iconOnly icon={<ChevronLeft size={14} />} aria-label="Previous frame" tooltip="Move back one source frame. Exact after scanning; approximate outside scanned footage." disabled={!!busy || time <= .01} onClick={() => frameStep(-1)} />
-          <Button size="sm" variant="ghost" iconOnly icon={<ChevronRight size={14} />} aria-label="Next frame" tooltip="Move forward one source frame. Exact after scanning; approximate outside scanned footage." disabled={!!busy || time >= project.duration_ms - 1 - .01} onClick={() => frameStep(1)} /><Button tooltip="Move the playhead to the beginning of this clip." aria-label="Back to start" iconOnly variant="ghost" icon={<SkipBack size={15} />} onClick={() => seek(start)} /><Button tooltip="Play or pause the preview. Shortcut: Space." aria-label="Play / pause" iconOnly icon={playing ? <Pause size={16} /> : <Play size={16} />} onClick={toggle} /><span className="font-mono text-xs">{clock(time)}</span><span className="text-ink-subtle text-2xs">/ {(editDuration(candidate) / 1000).toFixed(1)}s selected</span><label className="editor-review-speed" title="Preview only. Press 1/2/3 for speed; arrow keys step 1/2/3 source frames (1.5× rounds to two). Shift+arrows jump one second. Multiplies the clip’s export speed without changing the export.">Review speed<select aria-label="Review speed" value={reviewSpeed} onChange={(e) => {
+          <Button size="sm" variant="ghost" iconOnly icon={<ChevronRight size={14} />} aria-label="Next frame" tooltip="Move forward one source frame. Exact after scanning; approximate outside scanned footage." disabled={!!busy || time >= project.duration_ms - 1 - .01} onClick={() => frameStep(1)} /><Button tooltip="Move the playhead to the beginning of this clip." aria-label="Back to start" iconOnly variant="ghost" icon={<SkipBack size={15} />} onClick={() => seek(start)} /><Button tooltip="Play or pause the preview. Shortcut: Space." aria-label="Play / pause" iconOnly icon={playing ? <Pause size={16} /> : <Play size={16} />} onClick={toggle} /><span className="font-mono text-xs" title="Where the playhead is in the finished clip">{playheadOut === null ? 'Outside the cut' : clock(playheadOut)}</span><span className="text-ink-subtle text-2xs">/ {(editDuration(candidate) / 1000).toFixed(1)}s clip</span><span className="text-ink-subtle text-2xs font-mono" title="The same moment in the source video">Source {clock(time)}</span><label className="editor-review-speed" title="Preview only. Press 1/2/3 for speed; arrow keys step 1/2/3 source frames (1.5× rounds to two). Shift+arrows jump one second. Multiplies the clip’s export speed without changing the export.">Review speed<select aria-label="Review speed" value={reviewSpeed} onChange={(e) => {
             setReviewSpeed(Number(e.target.value))
             // Return Space to playback after choosing a speed.
             e.currentTarget.blur()
@@ -858,7 +863,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
               }} />)}
             {time >= viewStart && time <= viewEnd && <div className="editor-playhead" style={{ left: `${(time - viewStart) / (viewEnd - viewStart) * 100}%` }} />}
           </div>
-          <GraphicsTrack candidate={candidate} viewStart={viewStart} viewEnd={viewEnd} selected={graphicId} disabled={editingDisabled} clock={clock}
+          <GraphicsTrack candidate={candidate} viewStart={viewStart} viewEnd={viewEnd} selected={graphicId} disabled={editingDisabled} clock={clipClock}
             onSelect={(id) => { setGraphicId(id); setGraphicPicking(false); setTab('graphics') }} onChange={setGraphics}
             onDrag={(active) => { dragging.current = active; if (active) { video.current?.pause(); setDragWindow([viewStart, viewEnd]) } else setDragWindow(null) }}
             onAdd={() => { video.current?.pause(); setGraphicPicking(true); setTab('graphics') }} />
@@ -882,12 +887,12 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           </div>
         </div>
       </div>
-      <aside className="editor-inspector">{automatic && <EditLog variant="strip" lines={clipEditLog(project, candidate)} disabled={editingDisabled}
+      <aside className="editor-inspector">{automatic && <EditLog key={candidate.id} variant="strip" defaultOpen={false} lines={clipEditLog(project, candidate)} disabled={editingDisabled}
         onRestore={(line) => { if (line.restore) change(line.restore) }}
-        note={candidate.auto ? 'Undo takes back a Restore.' : 'This clip was opened in the editor before the app kept a record of its cut, so only the graphics it added are listed.'} />}<div className="editor-tabs">{(['review', 'framing', 'captions', 'hook', 'transcript', 'graphics', 'chat'] as const).map((t) => <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)} className={cn(tab === t && 'selected')}>{t === 'review' ? 'Jev' : t === 'hook' ? 'Hook & CTA' : t[0].toUpperCase() + t.slice(1)}</button>)}</div>
-        <div ref={transcriptPanel} className="editor-inspector-body"><label className="editor-label" htmlFor="editor-title">Title</label><textarea id="editor-title" value={candidate.title} maxLength={200} disabled={editingDisabled} rows={2} onChange={(e) => { if (e.target.value.trim()) change({ title: e.target.value }) }} />
-          {tab === 'review' && <div className="space-y-3 mt-4"><div className="flex items-center justify-between"><span className={cn('text-xs', current ? candidate.review?.decision === 'passes' ? 'text-success' : 'text-warning' : 'text-ink-muted')}>{!current ? 'Review out of date' : candidate.review?.decision === 'passes' ? 'Checks passed' : 'Consider before baking'}</span><Button size="sm" disabled={editingDisabled} onClick={() => { void run('review') }}>Review again</Button></div><p className="text-2xs text-ink-subtle">{current ? 'Review the questions, then adjust the cut and framing. You decide when the clip is ready.' : 'These results describe an earlier edit. Run Jev again to check your changes.'}</p>{candidate.review?.questions.map((q) => <Question key={q.id} q={q} />)}{!candidate.review && <p>No review is available yet. Run Jev to evaluate this candidate.</p>}{candidate.review?.cuts.map((cut, i) => <div key={i}><p className="editor-label">Removed {clock(cut.interval[0])} – {clock(cut.interval[1])}</p>{cut.questions.map((q) => <Question key={q.id} q={q} />)}</div>)}</div>}
-          {tab === 'framing' && <fieldset disabled={editingDisabled} className="space-y-4 mt-4"><div className="editor-layouts">{(['fill', 'split', 'fit'] as const).map((l) => <button key={l} className={cn(currentScene.layout === l && 'selected')} onClick={() => setLayout(l)}>{l === 'fill' ? 'Full frame' : l === 'split' ? 'Split' : 'Fit'}</button>)}</div>{currentScene.layout === 'split' && <><div className="flex gap-2">{['Top', 'Bottom'].map((name, i) => <Button key={i} size="sm" variant={panel === i ? 'primary' : 'secondary'} onClick={() => setPanel(i)}>{name}</Button>)}</div>
+        note={candidate.auto ? 'Undo takes back a Restore.' : 'This clip was opened in the editor before the app kept a record of its cut, so only the graphics it added are listed.'} />}<EditorTabs tab={tab} onTab={setTab} />
+        <div ref={transcriptPanel} className="editor-inspector-body">
+          {tab === 'review' && <div className="space-y-3"><p className="text-2xs text-ink-subtle">Checked by Jev, an AI review made by TypeSafe AI.</p><div className="flex items-center justify-between"><span className={cn('text-xs', current ? candidate.review?.decision === 'passes' ? 'text-success' : 'text-warning' : 'text-ink-muted')}>{!current ? 'Review out of date' : candidate.review?.decision === 'passes' ? 'Checks passed' : 'Consider before baking'}</span><Button size="sm" disabled={editingDisabled} onClick={() => { void run('review') }}>Review again</Button></div><p className="text-2xs text-ink-subtle">{current ? 'Review the questions, then adjust the cut and framing. You decide when the clip is ready.' : 'These results describe an earlier edit. Run Jev again to check your changes.'}</p>{candidate.review?.questions.map((q) => <Question key={q.id} q={q} />)}{!candidate.review && <p>No review is available yet. Run Jev to evaluate this candidate.</p>}{candidate.review?.cuts.map((cut, i) => <div key={i}><p className="editor-label">Removed {clock(cut.interval[0])} – {clock(cut.interval[1])}</p>{cut.questions.map((q) => <Question key={q.id} q={q} />)}</div>)}</div>}
+          {tab === 'framing' && <fieldset disabled={editingDisabled} className="space-y-4"><div className="editor-layouts">{(['fill', 'split', 'fit'] as const).map((l) => <button key={l} className={cn(currentScene.layout === l && 'selected')} onClick={() => setLayout(l)}>{l === 'fill' ? 'Full frame' : l === 'split' ? 'Split' : 'Fit'}</button>)}</div>{currentScene.layout === 'split' && <><div className="flex gap-2">{['Top', 'Bottom'].map((name, i) => <Button key={i} size="sm" variant={panel === i ? 'primary' : 'secondary'} onClick={() => setPanel(i)}>{name}</Button>)}</div>
             <div className="space-y-2 rounded-lg border border-white/10 p-2.5"><label className="editor-label">Split size <span className="float-right">Top {Math.round(topShare * 100)}% · Bottom {Math.round((1 - topShare) * 100)}%</span>
               <input aria-label="Split size" type="range" min={SPLIT_RANGE.min * 100} max={SPLIT_RANGE.max * 100} step={1} value={Math.round(topShare * 100)} onChange={(e) => setSplit(Number(e.target.value) / 100)} /></label>
               <div className="flex flex-wrap gap-1">{([['Bigger top', .6], ['Even', .5], ['Bigger bottom', .4]] as const).map(([label, value]) => <Button key={label} size="sm" variant={Math.abs(topShare - value) < .005 ? 'secondary' : 'ghost'} onClick={() => setSplit(value)}>{label}</Button>)}</div>
@@ -897,8 +902,10 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
             {sceneIndex > 0 && frames.length > 0 && <div className="flex gap-2 mt-2"><Button size="sm" variant="ghost" disabled={editingDisabled} onClick={() => moveScene(sceneIndex, stepFrame(frames, currentScene.at_ms, -1))}>One frame earlier</Button><Button size="sm" variant="ghost" disabled={editingDisabled} onClick={() => moveScene(sceneIndex, stepFrame(frames, currentScene.at_ms, 1))}>One frame later</Button></div>}
             {sceneIndex + 1 < candidate.scenes.length && <p className="text-2xs text-ink-subtle mt-2">Until {clock(candidate.scenes[sceneIndex + 1].at_ms)}</p>}
           </div><Button size="sm" icon={<Scissors size={13} />} disabled={candidate.scenes.length >= 60 || time <= start || time >= end || candidate.scenes.some((s) => Math.abs(s.at_ms - time) < .01)} onClick={() => newLayout()}>New layout here</Button>{sceneIndex > 0 && <Button size="sm" variant="ghost" onClick={() => change({ scenes: candidate.scenes.filter((_, i) => i !== sceneIndex) })}>Remove layout change</Button>}<Button size="sm" variant="ghost" onClick={() => change({ scenes: [{ ...currentScene, at_ms: 0 }] })}>Use layout for whole clip</Button></div></fieldset>}
-          {tab === 'captions' && <fieldset disabled={editingDisabled} className="space-y-4 mt-4"><div className="flex items-center justify-between text-xs"><span>Burn in captions</span><Switch label="Burn in captions" checked={candidate.captions} onChange={(captions) => change({ captions })} /></div><p className="text-2xs text-ink-subtle">Captions follow your final cuts. Use the placement guide in Transcript to position them before baking.</p>{candidate.caption_language && candidate.captions && <p className="text-2xs text-ink-subtle">These captions are shown in {captionLanguageLabel(candidate.caption_language)}. Baking translates them again from the transcript (one request on your OpenRouter key).</p>}<CaptionSuppression key={candidate.id} ranges={suppressedCaptions} cuts={candidate.ranges} time={time} duration={project.duration_ms} disabled={editingDisabled || !candidate.captions} onChange={(caption_suppression_ranges) => { video.current?.pause(); change({ caption_suppression_ranges }) }} seek={seek} />{candidate.captions && <CaptionPresetPicker value={candidate.caption_preset} onChange={(caption_preset) => change({ caption_preset })} />}<label className="editor-label">Export speed<select value={candidate.video_speed} onChange={(e) => change({ video_speed: Number(e.target.value) })}>{[1, 1.1, 1.25, 1.5, 1.75, 2].map((n) => <option key={n} value={n}>{n}×</option>)}</select></label>{styleButton}</fieldset>}
-          {tab === 'hook' && <div className="space-y-4 mt-4">
+          {tab === 'captions' && <fieldset disabled={editingDisabled} className="space-y-4"><div className="flex items-center justify-between text-xs"><span>Burn in captions</span><Switch label="Burn in captions" checked={candidate.captions} onChange={(captions) => change({ captions })} /></div><p className="text-2xs text-ink-subtle">Captions follow your final cuts. Use the placement guide in Transcript to position them before baking.</p>{candidate.caption_language && candidate.captions && <p className="text-2xs text-ink-subtle">These captions are shown in {captionLanguageLabel(candidate.caption_language)}. Baking translates them again from the transcript (one request on your OpenRouter key).</p>}<CaptionSuppression key={candidate.id} ranges={suppressedCaptions} cuts={candidate.ranges} time={time} duration={project.duration_ms} disabled={editingDisabled || !candidate.captions} onChange={(caption_suppression_ranges) => { video.current?.pause(); change({ caption_suppression_ranges }) }} seek={seek} />{candidate.captions && <CaptionPresetPicker value={candidate.caption_preset} onChange={(caption_preset) => change({ caption_preset })} />}<label className="editor-label">Export speed<select value={candidate.video_speed} onChange={(e) => change({ video_speed: Number(e.target.value) })}>{[1, 1.1, 1.25, 1.5, 1.75, 2].map((n) => <option key={n} value={n}>{n}×</option>)}</select></label>{styleButton}</fieldset>}
+          {tab === 'hook' && <div className="space-y-4">
+            <div><label className="editor-label" htmlFor="editor-title">Title</label><textarea id="editor-title" value={candidate.title} maxLength={200} disabled={editingDisabled} rows={2} onChange={(e) => { if (e.target.value.trim()) change({ title: e.target.value }) }} />
+              <p className="text-2xs text-ink-subtle mt-1">The clip’s name in the editor and your Library.</p></div>
             <fieldset disabled={editingDisabled} className="space-y-3">
               <div className="flex items-center justify-between text-xs"><span>Hook text at the top</span>
                 <Switch label="Hook text at the top" checked={!!candidate.hook}
@@ -989,7 +996,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           {tab === 'chat' && <ClipChat outputDir={outputDir} candidate={candidate} apply={applyChat} undo={undoChat} play={(at, seconds) => playMoment(at, seconds, true)}
             disabledReason={busy ? 'Wait for the current task to finish to chat about this clip.' : status === 'discarded' ? 'Restore this clip to chat about it.' : null} />}
           {tab === 'graphics' && <GraphicsInspector project={project} candidate={candidate} outputDir={outputDir} time={time} selected={graphicId} picking={graphicPicking}
-            disabled={editingDisabled} onPick={setGraphicPicking} onSelect={setGraphicId} onChange={setGraphics} seek={seek} clock={clock} />}
+            disabled={editingDisabled} onPick={setGraphicPicking} onSelect={setGraphicId} onChange={setGraphics} seek={seek} clock={clipClock} />}
 
         </div>
       </aside>

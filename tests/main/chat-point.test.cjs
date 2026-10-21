@@ -89,7 +89,7 @@ test('the clip editor tools take a pin: an arrow or circle at it, a graphic move
   let r = shared.applyChatTool(c, 'add_graphic', { template: 'highlight', pin: 1, fields: { shape: 'arrow' } }, project, newId, pins)
   let g = r.candidate.graphics[0]
   assert.deepEqual(plain([g.template, g.at_ms, g.placement, g.origin, g.fields]), ['highlight', 2600, 'middle', 'chat', { shape: 'arrow', x: '0.3', y: '0.25' }])
-  assert.equal(r.step.summary, 'Added an arrow at pin 1 at 0:02.6.')
+  assert.equal(r.step.summary, 'Added an arrow at pin 1 at 0:01.3.', 'clip time, like the pin (made at 0:01.6)')
   // A box pin with no shape given gets a circle around its center.
   r = shared.applyChatTool(c, 'add_graphic', { template: 'highlight', pin: 2 }, project, newId, pins)
   g = r.candidate.graphics[0]
@@ -100,7 +100,7 @@ test('the clip editor tools take a pin: an arrow or circle at it, a graphic move
   assert.equal(title.placement, 'top')
   r = shared.applyChatTool(r.candidate, 'update_graphic', { id: title.id, pin: 2 }, project, newId, pins)
   assert.equal(r.candidate.graphics[0].placement, 'bottom')
-  assert.equal(r.step.summary, 'Moved the title slam at 0:02.6 to the bottom.')
+  assert.equal(r.step.summary, 'Moved the title slam at 0:01.3 to the bottom.')
   // A placement the model gives wins.
   r = shared.applyChatTool(c, 'add_graphic', { template: 'title', pin: 1, placement: 'middle', fields: { text: 'Look here' } }, project, newId, pins)
   assert.equal(r.candidate.graphics[0].placement, 'middle')
@@ -112,7 +112,7 @@ test('the clip editor tools take a pin: an arrow or circle at it, a graphic move
   const [x, y, w, h] = zoom.crops[0]
   near(w, 0.31640625 / 1.6, 'zoomed width'); near(h, 1 / 1.6, 'zoomed height')
   near(x + w / 2, 0.1 + 0.3 * 0.31640625, 'centered across'); near(y, 0, 'as close to centered down as the frame allows')
-  assert.equal(r.step.summary, 'Zoomed in 1.6× on pin 1 from 0:03.0 to the end.')
+  assert.equal(r.step.summary, 'Zoomed in 1.6× on pin 1 from 0:01.6 to the end.', 'the pin’s own clip time')
   r = shared.applyChatTool(c, 'set_layout_at', { pin: 1, zoom: 2, until_ms: 4000 }, project, newId, pins)
   near(r.candidate.scenes.find((s) => s.at_ms === 3000).crops[0][2], 0.31640625 / 2, 'zoom 2')
   assert.ok(r.candidate.scenes.some((s) => s.at_ms === 4000), 'zooms back out at until_ms')
@@ -190,7 +190,7 @@ test('one turn (mocked OpenRouter): a pin and "put an arrow here" become an arro
     assert.equal(result.reply, 'Done. An arrow points at that spot.')
     const g = result.steps[0].patch.graphics[0]
     assert.deepEqual(plain([g.template, g.at_ms, g.fields]), ['highlight', 2600, { shape: 'arrow', x: '0.3', y: '0.25' }])
-    assert.equal(result.steps[0].summary, 'Added an arrow at pin 1 at 0:02.6 (where you pointed).')
+    assert.equal(result.steps[0].summary, 'Added an arrow at pin 1 at 0:01.3 (where you pointed).')
     // The model got the pin with the member's words, its source time, and tools that take a pin.
     const asked = openrouter.requests[0].messages.at(-1).content
     assert.match(asked, /^put an arrow here\n\n\[The member pointed at the video/)

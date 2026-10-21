@@ -74,7 +74,7 @@ test('a stat graphic added in the editor saves, undoes, previews live and is bak
   assert.deepEqual([graphics[0].template, graphics[0].at_ms, graphics[0].duration_ms, graphics[0].placement], ['stat', 1000, 3500, 'top'])
   assert.deepEqual(graphics[0].fields, { value: '$1,200/month', label: 'from one clip a day' })
   // The block on the timeline and the live animation over the Output monitor (playhead inside the graphic).
-  await page.getByRole('button', { name: /^Stat counter at 0:01\.000, 3\.5 seconds$/ }).waitFor()
+  await page.getByRole('button', { name: /^Stat counter at 0:00\.000, 3\.5 seconds$/ }).waitFor()
   await page.getByRole('slider', { name: 'Fine timeline position' }).fill('3800')
   await page.locator('.editor-graphics-overlay .mg-stat-value').waitFor()
   await page.waitForFunction(() => document.querySelector('.editor-graphics-overlay .mg-stat-value')?.textContent?.includes('1,200'))
@@ -108,5 +108,27 @@ test('a stat graphic added in the editor saves, undoes, previews live and is bak
   if (shots) execFileSync(tools.ffmpeg, ['-v', 'error', '-ss', '1.5', '-i', video, '-frames:v', '1', '-y', path.join(shots, 'baked-graphic.png')])
   assert.ok(during.every((c) => c > 200), `the baked frame shows the stat card: ${during.map(Math.round)}`)
   assert.ok(Math.min(...after) < 200 || Math.abs(after[0] - after[2]) > 20, `the card is gone after the graphic: ${after.map(Math.round)}`)
+
+  // Near the clip's end (10 s), a new graphic starts earlier so all of it plays inside the cut.
+  await page.getByRole('slider', { name: 'Fine timeline position' }).fill('9800')
+  const addTitle = async () => {
+    await page.getByRole('button', { name: 'Add graphic at playhead', exact: true }).click()
+    await page.getByRole('button', { name: 'Add Title slam', exact: true }).click()
+  }
+  await addTitle()
+  await savedWhen((p) => p.candidates[0].graphics?.length === 2)
+  assert.deepEqual(saved().candidates[0].graphics.map((g) => [g.template, g.at_ms, g.duration_ms, g.placement]), [['stat', 1000, 3500, 'top'], ['title', 7500, 2500, 'middle']])
+  // Another one at the same time moves to the next free band: top, then bottom; with none free it stays and both are flagged.
+  await addTitle(); await addTitle(); await addTitle()
+  await savedWhen((p) => p.candidates[0].graphics?.length === 5)
+  assert.deepEqual(saved().candidates[0].graphics.slice(1).map((g) => g.placement).sort(), ['bottom', 'middle', 'middle', 'top'])
+  assert.equal(await page.locator('.editor-graphic-block.clash').count(), 2)
+  await page.getByRole('note').filter({ hasText: 'Another graphic is at the middle at the same time' }).waitFor()
+  // Trim the clip's end: a graphic that now runs past it is flagged on the row and in the tab.
+  await page.getByLabel('Cut 2 end', { exact: true }).fill('0:09.000')
+  await page.getByLabel('Cut 2 end', { exact: true }).press('Enter')
+  await page.locator('.editor-graphic-block.partly').first().waitFor()
+  await page.getByRole('note').filter({ hasText: 'Part of it is outside the cut' }).waitFor()
+  if (shots) await page.screenshot({ path: path.join(shots, 'editor-graphics-warnings.png') })
   assert.deepEqual(errors, [])
 })

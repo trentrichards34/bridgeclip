@@ -6,7 +6,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
-const { editorTools } = require('./editor-e2e-tools.cjs')
+const { editorTools, openEditorTab } = require('./editor-e2e-tools.cjs')
 const fixture = require('../fixtures/editor/project.json')
 
 async function openEditor(t, name) {
@@ -40,7 +40,7 @@ test('"Make a clip from these lines" adds a whole-line clip that saves and undoe
   const editor = await openEditor(t, 'lines')
   if (!editor) return
   const { page, saved, settle } = editor
-  await page.getByRole('button', { name: 'Transcript', exact: true }).click()
+  await openEditorTab(page, 'Transcript')
   // Click the 0:03 line, then Shift-click the 0:06 line.
   await page.getByRole('button', { name: /^Select line at 0:03\.000$/ }).click()
   await page.getByRole('button', { name: /^Select line at 0:06\.000$/ }).click({ modifiers: ['Shift'] })
@@ -50,6 +50,7 @@ test('"Make a clip from these lines" adds a whole-line clip that saves and undoe
   if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, 'editor-transcript-lines.png') }) }
   await bar.getByRole('button', { name: 'Make a clip from these lines', exact: true }).click()
   await page.getByText(/^Made a new clip from 2 transcript lines\./).waitFor()
+  await openEditorTab(page, 'Hook & CTA')
   const title = page.getByLabel('Title', { exact: true })
   assert.equal(await title.inputValue(), 'The event happened. That explains the result.')
   let project = saved()

@@ -7,11 +7,11 @@
  * offscreen (src/renderer/graphics/templates.ts).
  */
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { Plus, Trash2, ImagePlus, Shapes } from 'lucide-react'
+import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes } from 'lucide-react'
 import type { MountedGraphic } from '../graphics/templates'
 import {
   GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
-  clampGraphicMs, graphicHasContent, graphicLocalMs, graphicWindow, highlightPoint, newGraphic, removeGraphic, templateInfo, updateGraphic, withGraphic,
+  clampGraphicMs, fitGraphicInCut, graphicClashes, graphicCutFit, graphicHasContent, placeInFreeBand, graphicLocalMs, highlightPoint, newGraphic, removeGraphic, templateInfo, updateGraphic, withGraphic,
   type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId
 } from '../../shared/motion-graphics'
 import { GRAPHIC_DEFAULT_COLOR, graphicSpec, graphicStyle, outputSize } from '../../shared/graphic-layout'
@@ -115,6 +115,7 @@ export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disable
   const ends = [-Infinity, -Infinity]
   for (const g of graphics) { const lane = g.at_ms >= ends[0] ? 0 : 1; lanes.push(lane); ends[lane] = Math.max(ends[lane], g.at_ms + g.duration_ms) }
   const stacked = lanes.includes(1)
+  const clashes = graphicClashes(graphics)
   const startDrag = (e: React.PointerEvent<HTMLElement>, g: EditorGraphic, mode: 'move' | 'start' | 'end'): void => {
     if (disabled || e.button !== 0) return
     e.preventDefault(); e.stopPropagation()
@@ -152,14 +153,16 @@ export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disable
       {graphics.map((g, i) => {
         const a = Math.max(g.at_ms, viewStart), b = Math.min(g.at_ms + g.duration_ms, viewEnd)
         if (b <= a) return null
-        const offscreen = !graphicWindow(candidate, g)
-        const label = `${templateInfo(g.template).label} at ${clock(g.at_ms)}, ${(g.duration_ms / 1000).toFixed(1)} seconds`
-        return <div key={g.id} className={cn('editor-graphic-block', selected === g.id && 'selected', offscreen && 'cut-out', !graphicHasContent(g) && 'empty', stacked && (lanes[i] ? 'lane-2' : 'lane-1'))}
+        const fit = graphicCutFit(candidate, g), offscreen = fit === 'outside', clash = clashes.has(g.id)
+        const warning = graphicWarning(fit, clash, g.placement)
+        const label = `${templateInfo(g.template).label} at ${clock(g.at_ms)}, ${(g.duration_ms / 1000).toFixed(1)} seconds${warning ? `. ${warning}` : ''}`
+        return <div key={g.id} className={cn('editor-graphic-block', selected === g.id && 'selected', offscreen && 'cut-out', fit === 'partly' && 'partly', clash && 'clash', !graphicHasContent(g) && 'empty', stacked && (lanes[i] ? 'lane-2' : 'lane-1'))}
           style={{ left: `${(a - viewStart) / span * 100}%`, width: `${(b - a) / span * 100}%` }}>
           <button className="editor-graphic-edge" aria-label={`Change when ${label} starts`} disabled={disabled} onPointerDown={(e) => startDrag(e, g, 'start')} tabIndex={-1} />
           <button className="editor-graphic-body" aria-label={label} aria-pressed={selected === g.id}
-            title={`${label}${offscreen ? ' · In a part you cut out: not shown' : ''} · Drag to move · Drag an edge to change its length · Delete removes it`}
+            title={`${label} · Drag to move · Drag an edge to change its length · Delete removes it`}
             onPointerDown={(e) => startDrag(e, g, 'move')} onClick={() => onSelect(g.id)} onKeyDown={(e) => nudge(e, g)}>
+            {(fit === 'partly' || clash) && <AlertTriangle size={10} className="editor-graphic-warning" aria-hidden />}
             <span className="editor-graphic-kind">{SHORT[g.template]}</span><span className="editor-graphic-words">{graphicSummary(g)}</span>
           </button>
           <button className="editor-graphic-edge" aria-label={`Change when ${label} ends`} disabled={disabled} onPointerDown={(e) => startDrag(e, g, 'end')} tabIndex={-1} />
@@ -168,6 +171,15 @@ export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disable
       {!graphics.length && <span className="editor-graphics-empty">No graphics yet</span>}
     </div>
   </div>
+}
+
+/** What is wrong with where a graphic sits, in a sentence (or null). */
+export function graphicWarning(fit: ReturnType<typeof graphicCutFit>, clash: boolean, placement: GraphicPlacement): string | null {
+  const parts: string[] = []
+  if (fit === 'outside') parts.push('It sits in a part you cut out, so it won’t show. Move it onto the cut.')
+  if (fit === 'partly') parts.push('Part of it is outside the cut, so it plays shorter. Move it or shorten it to play all of it.')
+  if (clash) parts.push(`Another graphic is at the ${placement} at the same time, so they cover each other. Move one to another place or time.`)
+  return parts.length ? parts.join(' ') : null
 }
 
 /** Sample words for the picker's previews only (never put in a clip). */
@@ -207,7 +219,9 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
   const add = (template: GraphicTemplateId): void => {
     const at = Math.max(clipStart, Math.min(clipEnd - GRAPHIC_MIN_MS, Math.round(time)))
     const line = project.transcript.find((r) => at >= r.start_ms && at < r.end_ms)?.text
-    const graphic = newGraphic(template, at, { fields: wordsAtPlayhead(template, line), taken: graphics.map((x) => x.id) })
+    const drafted = newGraphic(template, at, { fields: wordsAtPlayhead(template, line), taken: graphics.map((x) => x.id) })
+    // All of it plays inside the cut (near the end it starts earlier), in a band no other graphic uses then.
+    const graphic = placeInFreeBand(graphics, fitGraphicInCut(drafted, candidate) ?? drafted)
     onChange(withGraphic(candidate, graphic))
     onSelect(graphic.id); onPick(false)
   }
@@ -228,9 +242,10 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
       {full && <p className="text-2xs text-warning">A clip can have up to {MAX_GRAPHICS_PER_CLIP} graphics.</p>}
     </section>
   }
+  const clashes = graphicClashes(graphics)
   const list = <div className="editor-graphic-list" role="list" aria-label="Graphics on this clip">{graphics.map((x) => <button key={x.id} role="listitem" className={cn(x.id === selected && 'selected')}
     onClick={() => { onSelect(x.id); if (time < x.at_ms || time >= x.at_ms + x.duration_ms) seek(x.at_ms + Math.min(1200, x.duration_ms * .45)) }}>
-    <span>{templateInfo(x.template).label}</span><span className="text-ink-subtle">{clock(x.at_ms)}</span></button>)}</div>
+    <span>{templateInfo(x.template).label}</span>{graphicWarning(graphicCutFit(candidate, x), clashes.has(x.id), x.placement) && <AlertTriangle size={11} className="text-warning" aria-label="Needs a look" />}<span className="text-ink-subtle">{clock(x.at_ms)}</span></button>)}</div>
   return <section className="editor-graphics-panel" aria-label="Graphics">
     <div className="flex items-center justify-between gap-2"><p className="text-xs">Graphics <span className="text-ink-subtle">{graphics.length} / {MAX_GRAPHICS_PER_CLIP}</span></p>
       <Button size="sm" icon={<Plus size={13} />} disabled={disabled || full} onClick={() => onPick(true)}>Add at playhead</Button></div>
@@ -238,7 +253,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
     {!g ? <p className="text-2xs text-ink-subtle">Select a graphic on the timeline or in the list to edit it.</p> : <fieldset disabled={disabled} className="space-y-3 border-t border-white/10 pt-3">
       <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">{templateInfo(g.template).label}</p>
         <Button size="sm" variant="ghost" icon={<Trash2 size={12} />} onClick={() => { onChange(removeGraphic(candidate, g.id)); onSelect(null) }}>Remove</Button></div>
-      {!graphicWindow(candidate, g) && <p className="text-2xs text-warning">This graphic sits in a part you cut out, so it won’t show. Move it onto the cut.</p>}
+      {(() => { const warning = graphicWarning(graphicCutFit(candidate, g), graphicClashes(graphics).has(g.id), g.placement); return warning && <p role="note" className="text-2xs text-warning">{warning}</p> })()}
       {!graphicHasContent(g) && <p className="text-2xs text-warning">{g.template === 'logo' ? 'Choose an image to show it.' : 'Add its words to show it.'}</p>}
       {g.template === 'logo' && <div className="space-y-2">
         <div className="flex items-center gap-2">{graphicImageUrl(outputDir, g.fields.image) && <img className="editor-graphic-thumb" src={graphicImageUrl(outputDir, g.fields.image)} alt="" />}
