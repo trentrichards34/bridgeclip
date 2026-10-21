@@ -197,6 +197,9 @@ test('B-roll video: a voiceover and the whole library become a video in the Libr
   assert.match(after.source_id, /^[0-9a-f]{32}$/)
   assert.equal(after.candidates[0].status, 'ready')
   assert.ok(fs.existsSync(path.join(folder, `editor-source-${after.source_id}.mp4`)))
+  // The video and preview from before the swap are removed (each swap would otherwise leave a full copy behind).
+  const before = [`editor-source${project.source_id ? `-${project.source_id}` : ''}.mp4`, `editor-preview-${project.preview_id ?? project.source_id}.mp4`]
+  for (const name of before) assert.ok(!fs.existsSync(path.join(folder, name)), `${name} is removed after the swap`)
 
   // It opens in the clip editor, ready to bake again.
   await page.getByRole('button', { name: 'Open in the editor' }).click()
