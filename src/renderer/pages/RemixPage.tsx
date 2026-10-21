@@ -60,6 +60,8 @@ import { clipFilePath } from '../lib/thumbnails'
 import { parseJobOutput } from '../../shared/job-output'
 
 const COUNTS = [1, 3, 5, 10] as const
+/** On camera, Zoom is a Skill (in the Skills list): not also in the look board's Extras. */
+const REMIX_SKILL_EXTRAS = ['punch_zoom'] as const
 /** "Look & call to action" stays open or closed for the rest of the session once the member chooses. */
 let lookOpenThisSession = false
 /** Switching between "You on camera" and "AI presenter" comes back to the template last picked on each side. */
@@ -588,7 +590,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       keywordHelp={keywordHelp} keywordLabel="Comment keyword (optional)"
       ctaHelp="A short video of you (or an image) played at the end of every video. It replaces the presenter’s spoken call to action. You can change it on any video afterward in the Library."
       onUseBrand={() => { if (brand) form.update({ ...brandFormPatch(brand.look, form), ...(brand.look?.captionPreset ? { includeCaptions: true } : {}) }) }}
-      layout={layout} />
+      layout={layout} skillExtras={onCamera ? REMIX_SKILL_EXTRAS : undefined} />
   )
 
   const pauseLayoutChoice = pause && (
