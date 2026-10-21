@@ -377,3 +377,10 @@ test('Remix: a voiced take keeps where its b-roll comes from; other kinds of rem
   assert.equal('brollSource' in remix.parseRemixRequest({ ...base, brollSource: 'giphy' }, userData).request, false)
   assert.equal('brollSource' in remix.parseRemixRequest({ ...base, format: 'silent', clipRightsAck: true, brollSource: 'library' }, userData).request, false)
 })
+
+test('More clips prices the earlier run’s AI b-roll before it starts (not a free pass past the spending check)', () => {
+  const handlers = fs.readFileSync(path.join(ROOT, 'main/ipc-handlers.ts'), 'utf8')
+  assert.doesNotMatch(handlers, /paid\('job:moreClips', 'openrouter', \(\) => null/)
+  assert.match(handlers, /paid\('job:moreClips', 'openrouter', \(outputDir, choices\) => moreClipsEstimate\(outputDir, choices\)/)
+  assert.match(handlers, /try \{ estimateUsd = await estimate\(\.\.\.args\) \}/, 'an estimate may be worked out from the saved run')
+})
