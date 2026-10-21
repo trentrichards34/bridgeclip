@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Clapperboard, Eye, FilePlus2, Film, FolderPlus, Image as ImageIcon, Search, Sparkles, Square, Tag, Trash2, UserRound, Wand2 } from 'lucide-react'
 import {
-  aiShotEstimateUsd, INDEX_ESTIMATE_PER_SHOT_USD, parseTagInput, searchLibrary, type BrollLibraryEntry
+  aiShotEstimateUsd, autoIndexAllowed, indexEstimateUsd, parseTagInput, searchLibrary, type BrollLibraryEntry
 } from '../../shared/broll-library'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
@@ -66,9 +66,10 @@ export function BrollLibraryPage({ onNavigate }: { onNavigate: (page: Page) => v
     finally { setBusy('') }
   }
 
-  // New clips are looked at as soon as they're prepared (the spending check runs first).
+  // A small batch of new clips is looked at as soon as it's prepared (the spending check runs first); a bigger one
+  // waits for "Look at new clips", which shows its price.
   useEffect(() => {
-    if (!view || !openrouter || autoIndexed.current || busy || indexing || view.preparing > 0 || view.pendingShots === 0) return
+    if (!view || !openrouter || autoIndexed.current || busy || indexing || view.preparing > 0 || !autoIndexAllowed(view.pendingShots)) return
     if (!items.some((item) => Date.now() - Date.parse(item.addedAt) < 10 * 60_000)) return
     autoIndexed.current = true
     void look()
@@ -101,7 +102,7 @@ export function BrollLibraryPage({ onNavigate }: { onNavigate: (page: Page) => v
               action={indexing
                 ? <Button size="sm" variant="secondary" icon={<Square className="h-3.5 w-3.5" />} onClick={() => void getApi().brollLibrary.cancelIndex()}>Stop</Button>
                 : pending > 0 && <Button size="sm" variant="primary" loading={busy === 'index'} disabled={Boolean(busy) || !openrouter} onClick={() => void look()}
-                  tooltip={openrouter ? undefined : 'Add your OpenRouter key in Settings → API keys first.'}>Look at new clips (about ${Math.max(0.01, pending * INDEX_ESTIMATE_PER_SHOT_USD).toFixed(2)})</Button>} />
+                  tooltip={openrouter ? undefined : 'Add your OpenRouter key in Settings → API keys first.'}>Look at new clips (about ${indexEstimateUsd(pending).toFixed(2)})</Button>} />
             {progress && progress.phase !== 'done' && progress.phase !== 'cancelled' && progress.phase !== 'failed' && (
               <div className="mt-3 space-y-1" data-testid="broll-index-progress">
                 <ProgressBar value={progress.total ? (100 * progress.done) / progress.total : 5} />

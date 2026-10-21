@@ -392,3 +392,15 @@ test('More clips prices the earlier run’s AI b-roll before it starts (not a fr
   assert.match(handlers, /paid\('job:moreClips', 'openrouter', \(outputDir, choices\) => moreClipsEstimate\(outputDir, choices\)/)
   assert.match(handlers, /try \{ estimateUsd = await estimate\(\.\.\.args\) \}/, 'an estimate may be worked out from the saved run')
 })
+
+test('new clips are looked at on their own only in a small batch; a big folder waits for the priced button', () => {
+  assert.equal(shared.autoIndexAllowed(0), false)
+  assert.equal(shared.autoIndexAllowed(10), true)
+  assert.equal(shared.autoIndexAllowed(125), true, 'about $0.25')
+  assert.equal(shared.autoIndexAllowed(126), false)
+  assert.equal(shared.autoIndexAllowed(20000), false, 'a 500-file folder never starts spending by itself')
+  assert.equal(shared.indexEstimateUsd(3), 0.01)
+  assert.equal(shared.indexEstimateUsd(500), 1)
+  const page = fs.readFileSync(path.join(ROOT, 'renderer/pages/BrollLibraryPage.tsx'), 'utf8')
+  assert.match(page, /!autoIndexAllowed\(view\.pendingShots\)\) return/)
+})
