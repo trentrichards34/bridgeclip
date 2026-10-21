@@ -77,7 +77,7 @@ test('Remix graphics: a stat on the member’s take, a chat change to the hook t
   // A stat counter on the take: it starts after the "My take" label (1.3 s in).
   await graphics.getByRole('button', { name: 'Add a graphic' }).click()
   await graphics.getByRole('region', { name: 'Choose a graphic' }).waitFor()
-  assert.equal(await graphics.locator('.reel-graphic-picker button').count(), 16, 'every template but Logo pop')
+  assert.equal(await graphics.locator('.reel-graphic-picker button').count(), 18, 'every template but Logo pop and Screen recording')
   await graphics.getByRole('button', { name: 'Add Stat counter', exact: true }).click()
   await graphics.getByLabel('Stat counter number', { exact: true }).fill('$1,200')
   await graphics.getByLabel('Stat counter label', { exact: true }).fill('a month')

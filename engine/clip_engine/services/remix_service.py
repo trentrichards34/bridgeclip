@@ -2851,7 +2851,8 @@ class Remixer:
             if overlapping(start, length, proofs):
                 during += 1
                 continue
-            placed.append({"file": g["file"], "start_ms": int(start), "duration_ms": int(length), **({"depth": "behind"} if g.get("depth") == "behind" else {})})
+            placed.append({"file": g["file"], "start_ms": int(start), "duration_ms": int(length), **({"depth": "behind"} if g.get("depth") == "behind" else {}),
+                       **({"min_top": g["min_top"]} if g.get("depth") == "behind" and "min_top" in g else {})})
         if outside:
             result.warnings.append(f"{outside} graphic{'s were' if outside != 1 else ' was'} left out: {'they' if outside != 1 else 'it'} came outside the part of your take that's used.")
         if during:

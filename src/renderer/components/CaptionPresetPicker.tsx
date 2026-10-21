@@ -117,7 +117,7 @@ const PRESETS: CaptionPreset[] = [
   {
     id: 'sweep',
     name: 'Sweep',
-    description: 'Colour follows the voice',
+    description: 'Color follows the voice',
     font: '"Poppins", "Poppins ExtraBold", system-ui, sans-serif',
     weight: 800,
     size: 14,
@@ -318,6 +318,21 @@ const PRESETS: CaptionPreset[] = [
     shadow: 'hard',
     uppercase: false,
     words: ['your best', 'reel made', '$0']
+  },
+  {
+    id: 'highlight_box',
+    name: 'Highlight box',
+    description: 'White words on a purple box',
+    font: '"Montserrat", system-ui, sans-serif',
+    weight: 800,
+    size: 13,
+    primary: '#FFFFFF',
+    highlight: '#FFFFFF',
+    stroke: 0,
+    shadow: 'none',
+    uppercase: false,
+    plate: '#7C3AED',
+    words: ['built my', 'own ads', 'manager']
   }
 ]
 

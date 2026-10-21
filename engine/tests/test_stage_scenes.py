@@ -104,7 +104,7 @@ def test_captions_move_to_the_band_and_take_dark_text_on_a_light_backdrop():
     assert (geo.card_x, geo.card_w, geo.radius) == (40, 1000, 48)
     segments = ss.edited_segments([ss.Scene("stage", 1000, 3000), ss.Scene("visual", 3000, 4000, "dark")], 6000, 1.0)
     windows = ss.caption_windows(segments, geo)
-    assert windows == [(1000, 3000, geo.caption_y, True), (3000, 4000, geo.visual_caption_y, False)]
+    assert windows == [(1000, 3000, geo.caption_y, "light"), (3000, 4000, geo.visual_caption_y, "")]
     anchors = ss.scene_anchors([(2000, 5, 1340), (10 ** 9, 2, 1500)], windows)
     assert anchors == [(1000, 5, 1340), (3000, 5, geo.caption_y), (4000, 5, geo.visual_caption_y), (10 ** 9, 2, 1500)]
     placed = ss.scene_placer(lambda *a: (2, 1600), windows)

@@ -4,8 +4,11 @@ Three scenes on the finished clip's clock (OUTPUT time: after the cut and the
 export speed, like the graphics main lays over a render):
 
 - ``face``: the normal full-frame framing (the default; gaps between scenes are face).
-- ``stage``: a backdrop (soft light-gray gradient, dark charcoal or brand-tinted)
-  fills the frame; the speaker sits in a big rounded card along the bottom
+- ``stage``: a backdrop (soft light-gray gradient, dark charcoal, brand-tinted, a
+  brand gradient with a faint square grid, or a soft brand gradient) fills the
+  frame; the speaker sits in a big card along the bottom (``rounded``: a rounded
+  card with a margin; ``arch``: full width, large rounded top corners, flush with
+  the bottom edge)
   (face-centered crop of the framed speaker), the top ~53% is free for graphics
   and the captions sit in the band between the two.
 - ``visual``: the card is off-screen; the whole frame is backdrop (for a big graphic or inset).
@@ -22,13 +25,16 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from dataclasses import dataclass
 from typing import Callable, Iterable, Optional, Sequence
 
 from PIL import Image, ImageDraw, ImageFilter
 
 SCENE_KINDS = ("face", "stage", "visual")
-BACKDROPS = ("light", "dark", "brand")
+BACKDROPS = ("light", "dark", "brand", "grid", "gradient")
+# The speaker card's shape in a stage scene.
+CARDS = ("rounded", "arch")
 MAX_SCENES = 24
 # Shorter than this (after the cut) a scene is dropped; the editor keeps scenes 1.2 s or longer.
 MIN_RENDER_SCENE_MS = 300
@@ -40,6 +46,8 @@ CARD_SIDE = 40 / 1080
 CARD_BOTTOM = 40 / 1920
 CARD_HEIGHT = 0.37
 CARD_RADIUS = 48 / 1080
+# The arch card: full width, its top where the rounded card's is, these large top corners.
+ARCH_RADIUS = 120 / 1080
 STAGE_BOTTOM = 0.53
 VISUAL_CAPTION_Y = 0.82
 # Where the face sits in the card (share of the crop height from its top), and the
@@ -55,6 +63,11 @@ DEFAULT_BRAND = "#3B6BFF"
 # Text on a light backdrop: bold, near-black; accent words in a readable blue.
 DARK_TEXT = "#111111"
 DARK_ACCENT = "#1F5BFF"
+# The Highlight box captions' box on a grid or gradient backdrop without a brand color.
+DEFAULT_BOX = "#7C3AED"
+# How captions in a scene's band are drawn: dark text (light backdrops), white on a color box (grid and
+# gradient backdrops), or the member's own captions (dark backdrop).
+CAPTION_MODES = {"light": "light", "brand": "light", "grid": "box", "gradient": "box", "dark": ""}
 
 
 @dataclass(frozen=True)
@@ -63,6 +76,8 @@ class Scene:
     start_ms: int
     end_ms: int
     backdrop: str = "light"
+    # stage only: the speaker card's shape.
+    card: str = "rounded"
 
 
 def _number(value) -> bool:
@@ -80,12 +95,14 @@ def parse_scenes(raw: object, duration_ms: Optional[int] = None) -> list[Scene]:
         raise ValueError("Invalid scenes")
     items: list[Scene] = []
     for item in raw:
-        if not isinstance(item, dict) or set(item) - {"scene", "start_ms", "end_ms", "backdrop"}:
+        if not isinstance(item, dict) or set(item) - {"scene", "start_ms", "end_ms", "backdrop", "card"}:
             raise ValueError("Invalid scene")
         kind, start, end, backdrop = item.get("scene"), item.get("start_ms"), item.get("end_ms"), item.get("backdrop", "light")
-        if kind not in SCENE_KINDS or backdrop not in BACKDROPS or not _number(start) or not _number(end) or start < 0 or end <= start:
+        card = item.get("card", "rounded")
+        if kind not in SCENE_KINDS or backdrop not in BACKDROPS or card not in CARDS or not _number(start) or not _number(end) \
+                or start < 0 or end <= start:
             raise ValueError("Invalid scene")
-        items.append(Scene(kind, round(start), round(end), backdrop))
+        items.append(Scene(kind, round(start), round(end), backdrop, card if kind == "stage" else "rounded"))
     return normalize_scenes(items, duration_ms)
 
 
@@ -97,10 +114,10 @@ def normalize_scenes(scenes: Iterable[Scene], duration_ms: Optional[int] = None,
         end = s.end_ms if duration_ms is None else min(s.end_ms, duration_ms)
         if end <= s.start_ms:
             continue
-        s = Scene(s.scene, s.start_ms, end, s.backdrop)
+        s = Scene(s.scene, s.start_ms, end, s.backdrop, s.card)
         if out and out[-1].end_ms > s.start_ms:
             prev = out[-1]
-            out[-1] = Scene(prev.scene, prev.start_ms, s.start_ms, prev.backdrop)
+            out[-1] = Scene(prev.scene, prev.start_ms, s.start_ms, prev.backdrop, prev.card)
             if out[-1].end_ms <= out[-1].start_ms:
                 out.pop()
         out.append(s)
@@ -108,8 +125,9 @@ def normalize_scenes(scenes: Iterable[Scene], duration_ms: Optional[int] = None,
     for s in out:
         if s.scene == "face" or s.end_ms - s.start_ms < min_ms:
             continue
-        if merged and merged[-1].scene == s.scene and merged[-1].backdrop == s.backdrop and s.start_ms - merged[-1].end_ms <= 1:
-            merged[-1] = Scene(s.scene, merged[-1].start_ms, s.end_ms, s.backdrop)
+        if merged and merged[-1].scene == s.scene and merged[-1].backdrop == s.backdrop and merged[-1].card == s.card \
+                and s.start_ms - merged[-1].end_ms <= 1:
+            merged[-1] = Scene(s.scene, merged[-1].start_ms, s.end_ms, s.backdrop, s.card)
         else:
             merged.append(s)
     return merged
@@ -124,7 +142,8 @@ def scene_at(scenes: Sequence[Scene], t_ms: float) -> str:
 
 
 def to_dicts(scenes: Iterable[Scene]) -> list[dict]:
-    return [{"scene": s.scene, "start_ms": s.start_ms, "end_ms": s.end_ms, "backdrop": s.backdrop} for s in scenes]
+    return [{"scene": s.scene, "start_ms": s.start_ms, "end_ms": s.end_ms, "backdrop": s.backdrop,
+             **({"card": s.card} if s.card != "rounded" else {})} for s in scenes]
 
 
 def output_scenes(source_scenes: Iterable[dict], ranges: Sequence[Sequence[float]], video_speed: float) -> list[tuple[dict, dict]]:
@@ -150,7 +169,9 @@ def output_scenes(source_scenes: Iterable[dict], ranges: Sequence[Sequence[float
             continue
         lo_ms, hi_ms = round(start / video_speed), round((start + kept) / video_speed)
         if hi_ms - lo_ms >= MIN_RENDER_SCENE_MS:
-            out.append((s, {"scene": s["scene"], "start_ms": lo_ms, "end_ms": hi_ms, "backdrop": s.get("backdrop", "light")}))
+            card = s.get("card") if s["scene"] == "stage" and s.get("card") in CARDS else "rounded"
+            out.append((s, {"scene": s["scene"], "start_ms": lo_ms, "end_ms": hi_ms, "backdrop": s.get("backdrop", "light"),
+                            **({"card": card} if card != "rounded" else {})}))
     return out[:MAX_SCENES]
 
 
@@ -162,13 +183,13 @@ STAGE_PAD_BEFORE_MS = 400
 STAGE_PAD_AFTER_MS = 300
 
 
-def suggest_scenes(graphics: Iterable[dict], duration_ms: int, backdrop: str = "light") -> list[dict]:
+def suggest_scenes(graphics: Iterable[dict], duration_ms: int, backdrop: str = "light", card: str = "rounded") -> list[dict]:
     """Scenes for a clip from its graphics: 'stage' around each stage-size graphic (EditorGraphic
     ``size == 'stage'``; a missing size is not stage), padded a little either side, with stage
     windows closer than a scene's minimum merged; 'face' everywhere else (gaps shorter than the
     minimum join the stage). Times are on the graphics' own clock, clipped to [0, duration_ms].
     """
-    if backdrop not in BACKDROPS:
+    if backdrop not in BACKDROPS or card not in CARDS:
         raise ValueError("Invalid backdrop")
     duration_ms = max(0, int(duration_ms))
     windows: list[list[int]] = []
@@ -211,7 +232,7 @@ def suggest_scenes(graphics: Iterable[dict], duration_ms: int, backdrop: str = "
     for a, b in final:
         if a > cursor:
             out.append({"scene": "face", "start_ms": cursor, "end_ms": a})
-        out.append({"scene": "stage", "start_ms": a, "end_ms": b, "backdrop": backdrop})
+        out.append({"scene": "stage", "start_ms": a, "end_ms": b, "backdrop": backdrop, **({"card": card} if card != "rounded" else {})})
         cursor = b
     if cursor < duration_ms:
         out.append({"scene": "face", "start_ms": cursor, "end_ms": duration_ms})
@@ -240,6 +261,9 @@ class StageGeometry:
     stage_bottom: int
     caption_y: int
     visual_caption_y: int
+    # The arch card: full width, from card_y down to the frame's bottom edge, large top corners.
+    arch_h: int = 0
+    arch_radius: int = 0
 
 
 def geometry(width: int, height: int) -> StageGeometry:
@@ -251,7 +275,14 @@ def geometry(width: int, height: int) -> StageGeometry:
     return StageGeometry(
         width, height, (width - card_w) // 2, card_y, card_w, card_h, max(4, round(width * CARD_RADIUS)),
         max(8, round(width * 28 / 1080)), stage_bottom, round((stage_bottom + card_y) / 2), round(height * VISUAL_CAPTION_Y),
+        height - card_y, max(6, round(width * ARCH_RADIUS)),
     )
+
+
+def auto_look(brand: Optional[str]) -> tuple[str, str]:
+    """The backdrop and card the automatic Stage layouts use: the brand grid with the arch card when the member
+    has a brand color, else the light backdrop with the rounded card."""
+    return ("grid", "arch") if isinstance(brand, str) and len(brand) == 7 and brand.startswith("#") else ("light", "rounded")
 
 
 def _hex(color: str) -> tuple[int, int, int]:
@@ -263,8 +294,13 @@ def backdrop_colors(backdrop: str, brand: Optional[str] = None) -> tuple[tuple[i
     """Top and bottom colors of a backdrop's vertical gradient. Brand: the brand color mixed into white (stays light)."""
     if backdrop in BACKDROP_COLORS:
         return BACKDROP_COLORS[backdrop]
-    r, g, b = _hex(brand if brand and len(brand) == 7 else DEFAULT_BRAND)
+    r, g, b = _hex(brand if brand and len(brand) == 7 else DEFAULT_BRAND if backdrop == "brand" else DEFAULT_BOX)
     mix = lambda share: tuple(round(255 + (c - 255) * share) for c in (r, g, b))  # noqa: E731
+    if backdrop == "grid":
+        # Lavender at the top, deepening to the brand color at the bottom (under the speaker card).
+        return mix(0.16), mix(0.82)
+    if backdrop == "gradient":
+        return mix(0.08), mix(0.5)
     return mix(0.10), mix(0.24)
 
 
@@ -272,12 +308,19 @@ def is_light(backdrop: str) -> bool:
     return backdrop != "dark"
 
 
+def caption_mode(backdrop: Optional[str]) -> str:
+    """How captions in a scene on this backdrop are drawn: "light" (dark text), "box" (white on a color box) or ""."""
+    return CAPTION_MODES.get(backdrop or "light", "light")
+
+
 def draw_backdrop(path: str, width: int, height: int, backdrop: str, brand: Optional[str] = None) -> str:
-    """Vertical gradient with a soft glow near the top (no banding: a little dither)."""
+    """Vertical gradient with a soft glow near the top (no banding: a little dither); the grid backdrop adds a faint
+    square grid that fades out toward the bottom."""
     top, bottom = backdrop_colors(backdrop, brand)
     column = Image.new("RGB", (1, 256))
     for y in range(256):
-        p = y / 255
+        # The brand backdrops ease into their deep color low in the frame, so the stage stays light.
+        p = y / 255 if backdrop not in ("grid", "gradient") else (y / 255) ** 1.6
         column.putpixel((0, y), tuple(round(a + (b - a) * p) for a, b in zip(top, bottom)))
     img = column.resize((width, height), Image.BICUBIC)
     # A faint light pool behind the stage area, so the backdrop isn't flat.
@@ -285,10 +328,28 @@ def draw_backdrop(path: str, width: int, height: int, backdrop: str, brand: Opti
     ImageDraw.Draw(glow).ellipse((-width * 0.2, -height * 0.15, width * 1.2, height * 0.55), fill=60 if backdrop != "dark" else 28)
     glow = glow.filter(ImageFilter.GaussianBlur(radius=width * 0.18))
     img = Image.composite(Image.new("RGB", (width, height), (255, 255, 255)), img, glow)
+    if backdrop == "grid":
+        img = _grid(img, width, height)
     noise = Image.effect_noise((width, height), 6).convert("L")
     img = Image.blend(img, Image.merge("RGB", (noise, noise, noise)), 0.015)
     img.save(path, optimize=False, compress_level=1)
     return path
+
+
+def _grid(img: Image.Image, width: int, height: int) -> Image.Image:
+    """A faint white square grid (about 14 cells across), strongest at the top, gone by the bottom."""
+    cell = max(8, round(width / 14))
+    lines = Image.new("L", (width, height), 0)
+    d = ImageDraw.Draw(lines)
+    stroke = max(1, round(width / 900))
+    x0 = (width % cell) // 2
+    for x in range(x0, width, cell):
+        d.rectangle((x, 0, x + stroke - 1, height), fill=255)
+    for y in range(0, height, cell):
+        d.rectangle((0, y, width, y + stroke - 1), fill=255)
+    fade = Image.linear_gradient("L").resize((width, height)).point(lambda v: round(70 * (1 - v / 255) ** 1.2))
+    alpha = Image.composite(fade, Image.new("L", (width, height), 0), lines)
+    return Image.composite(Image.new("RGB", (width, height), (255, 255, 255)), img, alpha)
 
 
 def draw_mask(path: str, width: int, height: int, radius: int) -> str:
@@ -297,6 +358,27 @@ def draw_mask(path: str, width: int, height: int, radius: int) -> str:
     big = Image.new("L", (width * scale, height * scale), 0)
     ImageDraw.Draw(big).rounded_rectangle((0, 0, width * scale - 1, height * scale - 1), radius=radius * scale, fill=255)
     big.resize((width, height), Image.LANCZOS).save(path, compress_level=1)
+    return path
+
+
+def draw_arch_mask(path: str, width: int, height: int, radius: int) -> str:
+    """The arch card's alpha mask: large rounded top corners, square at the bottom (drawn at 4x and reduced)."""
+    scale = 4
+    big = Image.new("L", (width * scale, height * scale), 0)
+    d = ImageDraw.Draw(big)
+    d.rounded_rectangle((0, 0, width * scale - 1, height * scale - 1 + radius * scale * 2), radius=radius * scale, fill=255)
+    big.resize((width, height), Image.LANCZOS).save(path, compress_level=1)
+    return path
+
+
+def draw_arch_shadow(path: str, width: int, height: int, radius: int, pad: int) -> str:
+    """The arch card's soft shadow: a glow above its top edge (the card sits on the bottom of the frame)."""
+    img = Image.new("RGBA", (width + 2 * pad, height + 2 * pad), (0, 0, 0, 0))
+    alpha = Image.new("L", img.size, 0)
+    ImageDraw.Draw(alpha).rounded_rectangle((pad, pad, pad + width, pad + height + radius * 2), radius=radius, fill=60)
+    alpha = alpha.filter(ImageFilter.GaussianBlur(radius=pad / 2.2))
+    img.putalpha(alpha)
+    img.save(path, compress_level=1)
     return path
 
 
@@ -324,6 +406,7 @@ class Segment:
     start: float
     end: float
     backdrop: Optional[str]
+    card: str = "rounded"
 
 
 def edited_segments(scenes: Sequence[Scene], edited_ms: int, video_speed: float) -> list[Segment]:
@@ -340,7 +423,7 @@ def edited_segments(scenes: Sequence[Scene], edited_ms: int, video_speed: float)
             continue
         if a > cursor + 1e-6:
             segments.append(Segment("face", cursor, a, None))
-        segments.append(Segment(s.scene, max(a, cursor), b, s.backdrop))
+        segments.append(Segment(s.scene, max(a, cursor), b, s.backdrop, s.card))
         cursor = b
     if cursor < total - 1e-6:
         segments.append(Segment("face", cursor, total, None))
@@ -361,9 +444,11 @@ def _runs(segments: Sequence[Segment], key: Callable[[Segment], object]) -> list
     return runs
 
 
-def card_runs(segments: Sequence[Segment]) -> list[tuple[float, float]]:
-    """Edited-clock spans where the speaker card is up (consecutive stage segments)."""
-    return [(segments[i].start, segments[j].end) for i, j in _runs(segments, lambda s: s.scene == "stage")]
+def card_runs(segments: Sequence[Segment], card: Optional[str] = None) -> list[tuple[float, float]]:
+    """Edited-clock spans where the speaker card is up (consecutive stage segments; with `card`, only that shape's)."""
+    if card is None:
+        return [(segments[i].start, segments[j].end) for i, j in _runs(segments, lambda s: s.scene == "stage")]
+    return [(segments[i].start, segments[j].end) for i, j in _runs(segments, lambda s: s.scene == "stage" and s.card == card)]
 
 
 def backdrop_windows(segments: Sequence[Segment], transition: float) -> list[dict]:
@@ -430,6 +515,49 @@ def _shot_face(plan, shot) -> Optional[tuple[float, float]]:
         return None
     xs, ys = sorted(b.cx for b in centers), sorted(b.cy for b in centers)
     return xs[len(xs) // 2], ys[len(ys) // 2]
+
+
+# Frames looked at to find the speaker's face for the card when the plan has none (an editor export's plan).
+MAX_CARD_FACE_SAMPLES = 8
+
+
+def card_faces(video: str, plan, window_start_ms: int) -> list:
+    """Face samples [(window ms, [Box])] for the card's framing, found in a few frames of the source (the middle of
+    each shot, a little more of long ones), for plans that carry none. Best effort: [] without the detector."""
+    try:
+        import cv2
+        import numpy as np
+        from clip_engine.services.layout_analyzer import Box
+        from clip_engine.services.media_process import MEDIA_INPUT_OPTIONS, run_media
+        from clip_engine.services.remix_service import FACE_MODEL
+    except Exception:  # noqa: BLE001
+        return []
+    if not os.path.isfile(FACE_MODEL):
+        return []
+    times: list[int] = []
+    for shot in plan.shots:
+        length = shot.end_ms - shot.start_ms
+        parts = 1 if length < 6000 else 2
+        times += [round(shot.start_ms + length * (k + 0.5) / parts) for k in range(parts)]
+    out, detector = [], None
+    for t in times[:MAX_CARD_FACE_SAMPLES]:
+        try:
+            png = run_media(["ffmpeg", "-nostdin", "-v", "error", *MEDIA_INPUT_OPTIONS, "-ss", f"{(window_start_ms + t) / 1000:.3f}", "-i", video,
+                             "-frames:v", "1", "-vf", "scale='if(gt(iw,ih),640,-2)':'if(gt(iw,ih),-2,640)'", "-f", "image2pipe", "-c:v", "png", "-"],
+                            timeout=60, check=True, max_output=8 * 1024 * 1024).stdout
+            frame = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+        except Exception:  # noqa: BLE001 - a frame that can't be read is skipped
+            continue
+        if frame is None:
+            continue
+        h, w = frame.shape[:2]
+        if detector is None:
+            detector = cv2.FaceDetectorYN.create(FACE_MODEL, "", (w, h), 0.7, 0.3, 50)
+        detector.setInputSize((w, h))
+        _, faces = detector.detect(frame)
+        if faces is not None and len(faces):
+            out.append((t, [Box(float(f[0]) / w, float(f[1]) / h, float(f[2]) / w, float(f[3]) / h) for f in faces]))
+    return out
 
 
 def card_plan(plan, out_w: int, panel_h: int, card_w: int, card_h: int):
@@ -519,7 +647,6 @@ def build_scene_graph(
     own_card = bool(runs and card_graph and graph.count("[0:v]") == 1)
     if own_card:
         parts[0] = "[0:v]split=2[sc_v0][sc_card_src];" + parts[0].replace("[0:v]", "[sc_v0]")
-        parts.append(card_graph(geo.card_w, geo.card_h))
         current = "sc_in"
     elif runs:
         parts.append("[sc_in]split=2[sc_face][sc_src]")
@@ -545,32 +672,54 @@ def build_scene_graph(
         current = nxt
     if runs:
         panel_h = height - bar_h
-        crop_h = min(panel_h, even(width * geo.card_h / geo.card_w))
+        shapes = [c for c in CARDS if card_runs(segments, c)]
+        arch = "arch" in shapes
+        # The card's frames: the rounded card's size, or (with an arch anywhere) the arch's full width, which the
+        # rounded card's runs crop at the center (same zoom, a narrower window).
+        frame_w, frame_h = (width, geo.arch_h) if arch else (geo.card_w, geo.card_h)
+        crop_h = min(panel_h, even(width * frame_h / frame_w))
         tops = []
         for a, b in runs:
             cy = face_center_y(zones, a * 1000, b * 1000, panel_h)
             tops.append(bar_h + max(0, min(panel_h - crop_h, round(cy - crop_h * CARD_FACE_Y))))
-        mask = os.path.join(work_dir, f"scene-{stem}-mask.png")
-        shadow = os.path.join(work_dir, f"scene-{stem}-shadow.png")
-        draw_mask(mask, geo.card_w, geo.card_h, geo.radius)
-        draw_shadow(shadow, geo.card_w, geo.card_h, geo.radius, geo.shadow_pad)
-        mask_index, shadow_index = first_input + len(inputs), first_input + len(inputs) + 1
-        inputs += [mask, shadow]
-        visible = card_visibility_expr(runs, total, transition)
-        off = height + 2 * geo.shadow_pad
-        y = f"{off}-({off - geo.card_y})*({visible})"
-        enable = card_enable_expr(runs, transition)
         if own_card:
+            parts.append(card_graph(frame_w, frame_h))
             parts.append("[sc_card_frames]format=yuva420p[sc_card_rgb]")
         else:
             parts.append(f"[sc_src]crop={width}:{crop_h}:0:'{crop_y_expr(runs, tops)}',"
-                         f"scale={geo.card_w}:{geo.card_h}:flags=bicubic,format=yuva420p[sc_card_rgb]")
-        parts.append(f"[{mask_index}:v]format=gray[sc_mask]")
-        parts.append("[sc_card_rgb][sc_mask]alphamerge[sc_card]")
-        parts.append(f"[{shadow_index}:v]format=yuva420p[sc_shadow]")
-        parts.append(f"[{current}][sc_shadow]overlay=x={geo.card_x - geo.shadow_pad}:y='{y}-{geo.shadow_pad}':enable='{enable}'[sc_shadowed]")
-        parts.append(f"[sc_shadowed][sc_card]overlay=x={geo.card_x}:y='{y}':enable='{enable}'[sc_carded]")
-        current = "sc_carded"
+                         f"scale={frame_w}:{frame_h}:flags=bicubic,format=yuva420p[sc_card_rgb]")
+        if len(shapes) > 1:
+            parts.append("[sc_card_rgb]split=2" + "".join(f"[sc_card_rgb_{c}]" for c in shapes))
+        off = height + 2 * geo.shadow_pad
+        for shape in shapes:
+            shape_runs = card_runs(segments, shape)
+            frames = f"sc_card_rgb_{shape}" if len(shapes) > 1 else "sc_card_rgb"
+            tag = "" if shape == "rounded" else "-arch"
+            mask = os.path.join(work_dir, f"scene-{stem}-mask{tag}.png")
+            shadow = os.path.join(work_dir, f"scene-{stem}-shadow{tag}.png")
+            if shape == "arch":
+                cx, cw, ch = 0, width, geo.arch_h
+                draw_arch_mask(mask, cw, ch, geo.arch_radius)
+                draw_arch_shadow(shadow, cw, ch, geo.arch_radius, geo.shadow_pad)
+            else:
+                cx, cw, ch = geo.card_x, geo.card_w, geo.card_h
+                draw_mask(mask, cw, ch, geo.radius)
+                draw_shadow(shadow, cw, ch, geo.radius, geo.shadow_pad)
+                if arch:
+                    parts.append(f"[{frames}]crop={cw}:{ch}:{(frame_w - cw) // 2}:{(frame_h - ch) // 2}[{frames}_c]")
+                    frames = f"{frames}_c"
+            mask_index, shadow_index = first_input + len(inputs), first_input + len(inputs) + 1
+            inputs += [mask, shadow]
+            visible = card_visibility_expr(shape_runs, total, transition)
+            y = f"{off}-({off - geo.card_y})*({visible})"
+            enable = card_enable_expr(shape_runs, transition)
+            k = "" if shape == "rounded" else "_arch"
+            parts.append(f"[{mask_index}:v]format=gray[sc_mask{k}]")
+            parts.append(f"[{frames}][sc_mask{k}]alphamerge[sc_card{k}]")
+            parts.append(f"[{shadow_index}:v]format=yuva420p[sc_shadow{k}]")
+            parts.append(f"[{current}][sc_shadow{k}]overlay=x={cx - geo.shadow_pad}:y='{y}-{geo.shadow_pad}':enable='{enable}'[sc_shadowed{k}]")
+            parts.append(f"[sc_shadowed{k}][sc_card{k}]overlay=x={cx}:y='{y}':enable='{enable}'[sc_carded{k}]")
+            current = f"sc_carded{k}"
     parts.append(f"[{current}]format=yuv420p[base]")
     return SceneComposite(";".join(parts), inputs, segments, geo)
 
@@ -580,14 +729,17 @@ def build_scene_graph(
 # ---------------------------------------------------------------------------
 
 
-def caption_windows(segments: Sequence[Segment], geo: StageGeometry) -> list[tuple[int, int, int, bool]]:
-    """(start ms, end ms, y, light backdrop) on the edited clock where captions move off the face default."""
+def caption_windows(segments: Sequence[Segment], geo: StageGeometry) -> list[tuple[int, int, int, str]]:
+    """(start ms, end ms, y, caption mode) on the edited clock where captions move off the face default.
+
+    The mode (caption_mode): "light" for dark text on a light backdrop, "box" for white words on a color box
+    (grid and gradient backdrops), "" for the member's own captions (dark backdrop)."""
     out = []
     for s in segments:
         if s.scene == "face":
             continue
         y = geo.caption_y if s.scene == "stage" else geo.visual_caption_y
-        out.append((round(s.start * 1000), round(s.end * 1000), y, is_light(s.backdrop or "light")))
+        out.append((round(s.start * 1000), round(s.end * 1000), y, caption_mode(s.backdrop)))
     return out
 
 
@@ -643,9 +795,32 @@ def light_backdrop_style(style):
     return styled
 
 
-def splice_caption_events(normal_ass: str, light_ass: str, windows: Sequence[tuple[int, int, int, bool]], parse_time) -> str:
-    """The normal captions with each event that starts on a light backdrop taken from the light-text version."""
-    light = [(a, b) for a, b, _, is_light_bg in windows if is_light_bg]
+def boxed(style) -> bool:
+    """Whether captions already sit on a solid box of their own (the Highlight box look reads on any backdrop)."""
+    return bool(style.line_box_color) and getattr(style, "line_box_shape", "round") == "rect" and style.line_box_opacity >= 0.9
+
+
+def box_backdrop_style(style, brand: Optional[str] = None):
+    """Captions for a grid or gradient backdrop: the Highlight box look (white bold words on a solid box), the box
+    in the brand color when there is one. A member already on Highlight box keeps their style (box recolored)."""
+    import copy
+    from clip_engine.config import HIGHLIGHT_BOX_COLOR, get_caption_preset
+    color = brand if isinstance(brand, str) and len(brand) == 7 and brand.startswith("#") else HIGHLIGHT_BOX_COLOR
+    styled = copy.copy(style) if boxed(style) else get_caption_preset("highlight_box")
+    # A very light brand color would wash out white words: darkened toward black.
+    if _luma(color) > 0.62:
+        r, g, b = _hex(color)
+        k = 0.62 / _luma(color)
+        color = "#{:02X}{:02X}{:02X}".format(round(r * k), round(g * k), round(b * k))
+    styled.line_box_color = color
+    return styled
+
+
+def splice_caption_events(normal_ass: str, light_ass: str, windows: Sequence[tuple[int, int, int, object]], parse_time,
+                          mode: object = "light") -> str:
+    """The normal captions with each event that starts in a window of this mode taken from the other version
+    (the dark-text one for "light", the Highlight box one for "box")."""
+    light = [(a, b) for a, b, _, m in windows if (m == mode if isinstance(m, str) else bool(m) and mode == "light")]
     prefix = "Dialogue: "
 
     def start(line: str) -> int:
@@ -659,6 +834,21 @@ def splice_caption_events(normal_ass: str, light_ass: str, windows: Sequence[tup
     for line in normal_ass.split("\n"):
         (events if line.startswith(prefix) else head).append(line)
     kept = [line for line in events if not lit(line)]
-    kept += [line for line in light_ass.split("\n") if line.startswith(prefix) and lit(line)]
+    taken = [line for line in light_ass.split("\n") if line.startswith(prefix) and lit(line)]
+    # The other version's own styles (its font, its box) go in under their own names, so both looks render.
+    tag = "Light" if mode == "light" else "Box"
+    styles = {name: f"{tag}{name}" for name in re.findall(r"^Style: ([A-Za-z]+),", light_ass, re.M)}
+    if styles and taken:
+        def rename(line: str) -> str:
+            fields = line.split(",", 4)
+            if len(fields) == 5 and fields[3] in styles:
+                fields[3] = styles[fields[3]]
+            return ",".join(fields)
+        taken = [rename(line) for line in taken]
+        extra = [f"Style: {styles[m.group(1)]},{m.group(2)}" for m in re.finditer(r"^Style: ([A-Za-z]+),(.*)$", light_ass, re.M)]
+        last = max((i for i, line in enumerate(head) if line.startswith("Style: ")), default=None)
+        if last is not None:
+            head = head[:last + 1] + extra + head[last + 1:]
+    kept += taken
     kept.sort(key=start)
     return "\n".join(head + kept)

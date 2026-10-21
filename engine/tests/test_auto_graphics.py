@@ -84,7 +84,7 @@ def test_planner_asks_for_graphics_in_the_same_call_only_when_on():
     item = schema["properties"]["clips"]["items"]
     assert "graphics" in item["required"] and item["properties"]["graphics"]["items"]["properties"]["template"]["enum"] == [
         "stat", "title", "list", "checklist", "before_after", "quote", "lower_third",
-        "statement", "sticky_notes", "strike_list", "headline_pill", "icon_pop", "comment_cta"]
+        "statement", "sticky_notes", "strike_list", "headline_pill", "icon_pop", "comment_cta", "orbit", "feature_tile"]
     # Strict output: every field is required, none extra (OpenRouter structured outputs).
     graphic = item["properties"]["graphics"]["items"]
     assert set(graphic["required"]) == set(graphic["properties"]) and graphic["additionalProperties"] is False

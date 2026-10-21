@@ -1643,7 +1643,8 @@ def place_graphics(raw: Any, starts: dict, cards: list[dict], total_s: float, wa
         if any(start / 1000 < b and (start + length) / 1000 > a for a, b in windows):
             during += 1
             continue
-        placed.append({"file": g["file"], "start_ms": int(start), "duration_ms": int(length), **({"depth": "behind"} if g.get("depth") == "behind" else {})})
+        placed.append({"file": g["file"], "start_ms": int(start), "duration_ms": int(length), **({"depth": "behind"} if g.get("depth") == "behind" else {}),
+                       **({"min_top": g["min_top"]} if g.get("depth") == "behind" and "min_top" in g else {})})
     if cut:
         warnings.append(f"{cut} graphic{'s were' if cut != 1 else ' was'} left out: {'their words were' if cut != 1 else 'its word was'} cut or came right at the end.")
     if during:

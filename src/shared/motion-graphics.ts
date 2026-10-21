@@ -23,7 +23,10 @@ export const GRAPHIC_TEMPLATES = [
   { id: 'icon_pop', label: 'Icon row', detail: 'Up to 4 icons that pop in one by one, with labels.', fields: ['items', 'icons', 'image'] },
   { id: 'headline_pill', label: 'Headline', detail: 'Two lines: a bold line, then the key words on a color box.', fields: ['text', 'phrase'] },
   { id: 'comment_cta', label: 'Comment prompt', detail: '“Comment” over the keyword people should comment.', fields: ['keyword', 'lead'] },
-  { id: 'big_words', label: 'Big words (behind you)', detail: '1 to 3 huge words placed in the scene, behind your head.', fields: ['text', 'style', 'vertical', 'motion'] }
+  { id: 'big_words', label: 'Big words (behind you)', detail: '1 to 3 huge words placed in the scene, behind your head.', fields: ['text', 'style', 'vertical', 'motion'] },
+  { id: 'orbit', label: 'Orbit', detail: 'A center tile with 3 to 6 icons that draw in around it on a ring.', fields: ['text', 'items', 'icons', 'image', 'labels'] },
+  { id: 'feature_tile', label: 'Feature tile', detail: 'Up to 3 frosted tiles, each an icon and a short label, with an optional red dot.', fields: ['items', 'icons', 'dot'] },
+  { id: 'screen_frame', label: 'Screen recording', detail: 'A video playing in a dark window with a soft glow: your screen recording, or part of this clip.', fields: ['video', 'from', 'zoom', 'label', 'shape'] }
 ] as const
 
 export type GraphicTemplateId = (typeof GRAPHIC_TEMPLATES)[number]['id']
@@ -109,6 +112,7 @@ export function parseGraphics(value: unknown): EditorGraphic[] {
       }
     }
     if (fields.image !== undefined && !/^[A-Za-z0-9._-]{1,80}$/.test(fields.image)) throw new Error('A graphic’s image must be one of the clip’s images.')
+    if (fields.video !== undefined && fields.video !== '' && !isScreenVideo(fields.video)) throw new Error('A graphic’s video must be one of the clip’s videos.')
     const origin: EditorGraphic['origin'] = g.origin === 'auto' || g.origin === 'chat' || g.origin === 'member' ? g.origin : undefined
     const size = isGraphicSize(g.size) ? g.size : undefined
     const depth = isGraphicDepth(g.depth) && graphicCanGoBehind(g.template) ? g.depth : undefined
@@ -121,7 +125,7 @@ export function parseGraphics(value: unknown): EditorGraphic[] {
 // ---------------------------------------------------------------------------
 
 /** Bump when a template's look changes, so cached renders are made again. */
-export const GRAPHICS_VERSION = 2
+export const GRAPHICS_VERSION = 3
 /** Rendered graphics are layered over the clip at this frame rate. */
 export const GRAPHIC_FPS = 30
 /** A graphic left with less than this much on screen after the cut is dropped. */
@@ -133,15 +137,18 @@ export type GraphicHighlightShape = 'circle' | 'arrow'
 export const GRAPHIC_DEFAULT_MS: Record<GraphicTemplateId, number> = {
   stat: 3500, title: 2500, list: 5000, lower_third: 4000, logo: 3000, before_after: 4000, checklist: 5000, quote: 5000, highlight: 2500,
   statement: 3500, sticky_notes: 4000, strike_list: 5000, browser_frame: 5000, icon_pop: 3500, headline_pill: 3500, comment_cta: 3500,
-  big_words: 2500
+  big_words: 2500, orbit: 4500, feature_tile: 3500, screen_frame: 5000
 }
 
 /** Templates that can show a picture the member chose (Logo pop needs one; the others draw without it). */
-export const GRAPHIC_IMAGE_TEMPLATES: readonly GraphicTemplateId[] = ['logo', 'browser_frame', 'icon_pop']
+export const GRAPHIC_IMAGE_TEMPLATES: readonly GraphicTemplateId[] = ['logo', 'browser_frame', 'icon_pop', 'orbit']
 export function graphicUsesImage(template: GraphicTemplateId): boolean { return GRAPHIC_IMAGE_TEMPLATES.includes(template) }
 
 /** Most items a template shows (the rest of `items` is left out). */
-export const GRAPHIC_ITEM_LIMITS: Partial<Record<GraphicTemplateId, number>> = { sticky_notes: 3, strike_list: 4, icon_pop: 4 }
+export const GRAPHIC_ITEM_LIMITS: Partial<Record<GraphicTemplateId, number>> = { sticky_notes: 3, strike_list: 4, icon_pop: 4, orbit: 6, feature_tile: 3 }
+/** Orbit: 3 to 6 nodes on its ring. */
+export const MIN_ORBIT_NODES = 3
+export const MAX_ORBIT_NODES = 6
 
 /**
  * Generic icons the Icon row can draw (Lucide, ISC license, vendored in
@@ -176,6 +183,8 @@ export interface GraphicRenderSpec {
   font: string
   /** Logo image as a URL the page may load (a local-file URL in the editor, a data URL offscreen). */
   image?: string
+  /** Editor preview only (never in a render): the Screen recording's video as a URL the page may load, and where it starts (s). */
+  preview_video?: { url: string; from: number }
   /** How big it is drawn (unset: 'card'). */
   size?: GraphicSize
 }
@@ -184,9 +193,9 @@ export function templateInfo(id: GraphicTemplateId): (typeof GRAPHIC_TEMPLATES)[
   return GRAPHIC_TEMPLATES.find((t) => t.id === id) ?? GRAPHIC_TEMPLATES[0]
 }
 
-/** A list field's lines: trimmed, non-empty, at most 5 (or `limit`). */
+/** A list field's lines: trimmed, non-empty, at most 5 (or `limit`, at most 6: an Orbit's nodes). */
 export function graphicItems(text: string | undefined, limit = MAX_GRAPHIC_ITEMS): string[] {
-  return (text ?? '').split(/\r?\n/).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, Math.min(limit, MAX_GRAPHIC_ITEMS))
+  return (text ?? '').split(/\r?\n/).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, Math.min(limit, MAX_ORBIT_NODES))
 }
 
 /** A template's items, at most its own limit (Sticky notes 3, Crossed-out list and Icon row 4, others 5). */
@@ -253,10 +262,148 @@ export function graphicItemTimes(fields: Record<string, string>, count: number, 
   return times.map((t) => Math.round(t))
 }
 
-/** The Icon row's icon for each item (null: none or unknown; the first tile shows the member's picture when there is one). */
-export function graphicIcons(fields: Record<string, string>): (GraphicIcon | null)[] {
+/**
+ * The icon for each item (null: none or unknown). Icon row: the first tile shows the member's picture when there is
+ * one. Orbit and Feature tile: one per item, or (with no labels) one node per icon given.
+ */
+export function graphicIcons(fields: Record<string, string>, template: 'icon_pop' | 'orbit' | 'feature_tile' = 'icon_pop'): (GraphicIcon | null)[] {
   const names = (fields.icons ?? '').split(/\r?\n/).map((line) => line.trim().toLowerCase())
-  return templateItems('icon_pop', fields.items).map((_, i) => isGraphicIcon(names[i]) ? names[i] as GraphicIcon : null)
+  const items = templateItems(template, fields.items)
+  const count = template === 'icon_pop' ? items.length : Math.max(items.length, Math.min(GRAPHIC_ITEM_LIMITS[template] ?? MAX_GRAPHIC_ITEMS, names.filter(isGraphicIcon).length))
+  return Array.from({ length: count }, (_, i) => isGraphicIcon(names[i]) ? names[i] as GraphicIcon : null)
+}
+
+/** An Orbit's nodes: an icon and an optional label each (labels hidden with `labels: off`); at most 6. */
+export function orbitNodes(fields: Record<string, string>): { icon: GraphicIcon | null; label: string }[] {
+  const items = templateItems('orbit', fields.items)
+  const showLabels = fields.labels !== 'off'
+  return graphicIcons(fields, 'orbit').map((icon, i) => ({ icon, label: showLabels ? items[i] ?? '' : '' }))
+}
+
+// ---------------------------------------------------------------------------
+// Screen recording: a video in a dark window. The page draws the window with a
+// transparent hole; the engine plays the video under it (graphics_overlay).
+// ---------------------------------------------------------------------------
+
+/** The window's video: a file the member added (copied into the run's .graphics/videos/) or 'source' (this clip's own video). */
+export const SCREEN_VIDEO_FILE = /^[a-f0-9]{16}\.(mp4|mov|m4v|webm)$/
+export type ScreenShape = 'wide' | 'square' | 'tall'
+export const SCREEN_SHAPES: readonly ScreenShape[] = ['wide', 'square', 'tall']
+/** The hole's width / height per shape. */
+export const SCREEN_ASPECT: Record<ScreenShape, number> = { wide: 16 / 9, square: 1, tall: 4 / 5 }
+/** The window fades in and out over this long; the engine fades the video the same. */
+export const SCREEN_FADE_MS = 300
+export function isScreenVideo(value: unknown): boolean { return value === 'source' || (typeof value === 'string' && SCREEN_VIDEO_FILE.test(value)) }
+export function screenShape(fields: Record<string, string>): ScreenShape {
+  return (SCREEN_SHAPES as readonly string[]).includes(fields.shape) ? fields.shape as ScreenShape : 'wide'
+}
+/** Where the video starts playing (seconds into it, from `from`), 0 when unset. */
+export function screenFrom(fields: Record<string, string>): number {
+  const n = Number(fields.from)
+  return Number.isFinite(n) && n >= 0 ? Math.min(n, 24 * 3600) : 0
+}
+/**
+ * The slow zoom's target from `zoom` ("x, y, w, h", shares 0–1 of what the window shows at the start), made the
+ * window's shape (a square of shares, at most 4× in), or null for none (a gentle push-in instead).
+ */
+export function screenZoom(fields: Record<string, string>): [number, number, number, number] | null {
+  const n = (fields.zoom ?? '').split(/[\s,;]+/).filter(Boolean).map(Number)
+  if (n.length !== 4 || n.some((v) => !Number.isFinite(v))) return null
+  const [x, y, w, h] = n.map((v) => Math.max(0, Math.min(1, v)))
+  if (w < .02 || h < .02) return null
+  const side = Math.min(1, Math.max(.25, w, h))
+  const cx = Math.min(1, x + w / 2), cy = Math.min(1, y + h / 2)
+  const round = (v: number): number => Math.round(v * 10000) / 10000
+  return [round(Math.max(0, Math.min(1 - side, cx - side / 2))), round(Math.max(0, Math.min(1 - side, cy - side / 2))), round(side), round(side)]
+}
+/**
+ * The Screen recording window in a frame (pixels): its outer box, its title bar, and the hole the video shows
+ * through, centered in the graphic's band, as big as the band allows at the window's shape.
+ */
+export function screenFrameLayout(spec: Pick<GraphicRenderSpec, 'width' | 'height' | 'box' | 'fields'>): { window: { x: number; y: number; w: number; h: number }; hole: { x: number; y: number; w: number; h: number }; bar: number; border: number; radius: number } {
+  const { width: W, height: H } = spec
+  const u = Math.min(W, H) / 1080
+  const bar = Math.round(54 * u), border = Math.round(12 * u), radius = Math.round(34 * u)
+  const top = spec.box.top * H, bandH = (spec.box.bottom - spec.box.top) * H
+  const maxW = Math.min(W - 2 * 56 * u, 1000 * u), maxH = bandH - 2 * 18 * u
+  const aspect = SCREEN_ASPECT[screenShape(spec.fields)]
+  let holeW = maxW - 2 * border, holeH = holeW / aspect
+  if (holeH + bar + border > maxH) { holeH = Math.max(40 * u, maxH - bar - border); holeW = holeH * aspect }
+  const even = (v: number): number => Math.max(2, Math.round(v / 2) * 2)
+  holeW = even(holeW); holeH = even(holeH)
+  const outerW = holeW + 2 * border, outerH = holeH + bar + border
+  const x = Math.round((W - outerW) / 2), y = Math.round(top + (bandH - outerH) / 2)
+  return { window: { x, y, w: outerW, h: outerH }, hole: { x: x + border, y: y + bar, w: holeW, h: holeH }, bar, border, radius }
+}
+
+// ---------------------------------------------------------------------------
+// Word timing: text cards that build word by word reveal each word as it is said.
+// ---------------------------------------------------------------------------
+
+/** Templates whose words build one by one and may carry `word_ms` (each word's spoken time). */
+export const WORD_TIMED_TEMPLATES: readonly string[] = ['big_words', 'title', 'statement', 'headline_pill']
+/** A word-timed card holds at least this long after its last word starts being said. */
+export const WORD_HOLD_MS = 700
+/** A word-timed card starts at most this much before its first word. */
+export const WORD_LEAD_MS = 100
+
+/** The words a word-timed card shows, in reading order (the ones `word_ms` times). */
+export function cardWords(template: string, fields: Record<string, string>): string[] {
+  const split = (t: string | undefined): string[] => (t ?? '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+  if (template === 'big_words') return bigWords(fields.text).flat()
+  if (template === 'headline_pill') return [...split(fields.text), ...split(fields.phrase)]
+  if (template === 'statement') return [...split(fields.text), ...split(fields.subline)]
+  return split(fields.text)
+}
+
+/**
+ * When each word comes in (ms into the graphic) from the optional `word_ms` field: one time per word, in order.
+ * Null when it is missing or doesn't fit (the template's own beats are used).
+ */
+export function graphicWordTimes(fields: Record<string, string>, count: number, durationMs: number): number[] | null {
+  const text = fields.word_ms
+  if (!text || count < 1) return null
+  const times = text.split(/[\s,]+/).filter(Boolean).map(Number)
+  if (times.length !== count || times.some((t, i) => !Number.isFinite(t) || t < 0 || t > durationMs || (i > 0 && t < times[i - 1]))) return null
+  return times.map((t) => Math.round(t))
+}
+
+/** A transcript word with its time (source ms). */
+export interface TimedWord { word: string; start_ms: number; end_ms: number }
+const wordKey = (w: string): string => w.toLowerCase().replace(/[’']/g, "'").replace(/[^\p{L}\p{N}']+/gu, '').replace(/'s$/, '')
+
+/**
+ * A word-timed card fitted to where its words are said near `around` (source ms, within `windowMs`): it starts
+ * just before the first word (WORD_LEAD_MS), lasts until WORD_HOLD_MS after the last word ends (at least
+ * GRAPHIC_MIN_MS) and carries each word's offset (`word_ms`). Null when its words aren't said there in order.
+ */
+export function matchCardWords<G extends Pick<EditorGraphic, 'template' | 'fields' | 'at_ms' | 'duration_ms'>>(g: G, words: readonly TimedWord[], around = g.at_ms, windowMs = 6000): G | null {
+  if (!WORD_TIMED_TEMPLATES.includes(g.template)) return null
+  const want = cardWords(g.template, g.fields).map(wordKey).filter(Boolean)
+  if (!want.length) return null
+  const near = words.filter((w) => w.start_ms >= around - windowMs && w.start_ms <= around + windowMs).map((w) => ({ ...w, key: wordKey(w.word) }))
+  let best: TimedWord[] | null = null
+  for (let i = 0; i < near.length; i++) {
+    if (near[i].key !== want[0]) continue
+    const found: TimedWord[] = [near[i]]
+    let k = i + 1
+    for (const w of want.slice(1)) {
+      // The next word follows within two words (a filler word may sit between).
+      const hit = near.slice(k, k + 3).findIndex((x) => x.key === w)
+      if (hit < 0) break
+      found.push(near[k + hit]); k += hit + 1
+    }
+    if (found.length !== want.length) continue
+    if (!best || Math.abs(found[0].start_ms - around) < Math.abs(best[0].start_ms - around)) best = found
+  }
+  if (!best) return null
+  const at = Math.max(0, best[0].start_ms - WORD_LEAD_MS)
+  const last = best[best.length - 1]
+  // On screen until WORD_HOLD_MS after the last word ends (and at least 1.2 s), at most 8 s.
+  const duration = clampGraphicMs(Math.max(1200, last.end_ms + WORD_HOLD_MS - at))
+  // Each word's offset; one too late for the card's length is pulled in.
+  const offsets = best.map((w) => Math.max(0, Math.min(duration - 300, w.start_ms - at)))
+  return { ...g, at_ms: at, duration_ms: duration, fields: { ...g.fields, word_ms: offsets.join('\n') } }
 }
 
 /** "$1,200/month" → prefix "$", 1200, suffix "/month"; "15 billion", "25%", "3.5x". Null when there is no number. */
@@ -301,6 +448,9 @@ export function graphicHasContent(g: Pick<EditorGraphic, 'template' | 'fields'>)
     case 'headline_pill': return !!(f.text?.trim() || f.phrase?.trim())
     case 'comment_cta': return !!f.keyword?.trim()
     case 'big_words': return bigWords(f.text).length > 0
+    case 'orbit': return orbitNodes(f).length >= 1 || !!f.text?.trim() || !!f.image
+    case 'feature_tile': return graphicItems(f.items).length > 0
+    case 'screen_frame': return isScreenVideo(f.video)
   }
 }
 
@@ -370,6 +520,8 @@ export function updateGraphic(c: Timing & { graphics?: EditorGraphic[] }, id: st
     else if (value === '') delete fields[key]
     else fields[key] = value.slice(0, key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS)
   }
+  // Word times belong to the words where they were said: a card moved or reworded loses them (its own beats are used).
+  if (fields.word_ms && ((patch.at_ms !== undefined && Math.round(patch.at_ms) !== g.at_ms) || ['text', 'phrase', 'subline'].some((k) => patch.fields?.[k] !== undefined && patch.fields[k] !== g.fields[k]))) delete fields.word_ms
   const { fields: _ignored, size, depth, ...rest } = patch
   void _ignored
   const next: EditorGraphic = { ...g, ...rest, ...(rest.duration_ms !== undefined ? { duration_ms: clampGraphicMs(rest.duration_ms) } : {}), fields }

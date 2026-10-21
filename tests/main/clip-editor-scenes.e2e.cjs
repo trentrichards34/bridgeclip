@@ -64,7 +64,8 @@ test('a stage scene added in the Scenes row saves, undoes, previews and is baked
   assert.deepEqual(saved().candidates[0].stage_scenes, [{ scene: 'stage', start_ms: 2000, end_ms: 5000 }])
   assert.equal(await page.locator('.editor-scene-block.scene-stage').count(), 1)
   // The selected scene's backdrop → Dark.
-  await page.getByRole('group', { name: 'Selected scene' }).getByRole('radio', { name: 'Dark', exact: true }).click()
+  await page.getByRole('group', { name: 'Selected scene' }).getByRole('combobox', { name: 'Backdrop', exact: true }).click()
+  await page.getByRole('option', { name: 'Dark', exact: true }).click()
   await savedWhen((p) => p.candidates[0].stage_scenes?.[0]?.backdrop === 'dark')
   assert.deepEqual(saved().candidates[0].stage_scenes, [{ scene: 'stage', start_ms: 2000, end_ms: 5000, backdrop: 'dark' }])
   // The Output monitor previews the stage: backdrop and speaker card.

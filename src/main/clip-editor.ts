@@ -11,7 +11,7 @@ import { getJobOutput } from './file-manager'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment } from './pipeline-runner'
 import { resolveBinary } from './tools'
 import { logger } from './logger'
-import { importGraphicImage, renderCandidateGraphics, sweepGraphicRenders, type RenderedGraphic } from './graphics-render'
+import { importGraphicImage, importGraphicVideo, renderCandidateGraphics, sweepGraphicRenders, type RenderedGraphic } from './graphics-render'
 import { outputScenes } from '../shared/scenes'
 
 type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source' | 'suggest-hooks' | 'prepare'
@@ -416,7 +416,7 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
           let result: WorkerResult
           try {
             result = await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId,
-              ...(graphics.length ? { graphics: graphics.map(({ file, start_ms, duration_ms, size, depth }) => ({ file, start_ms, duration_ms, ...(size ? { size } : {}), ...(depth ? { depth } : {}) })) } : {}),
+              ...(graphics.length ? { graphics: graphics.map(({ file, start_ms, duration_ms, size, depth, min_top, inset }) => ({ file, start_ms, duration_ms, ...(size ? { size } : {}), ...(depth ? { depth } : {}), ...(min_top !== undefined ? { min_top } : {}), ...(inset ? { inset } : {}) })) } : {}),
               // Scenes on the finished clip's clock (vertical clips only).
               ...(exporting && session.project.aspect_ratio === '9:16' && outputScenes(candidate).length ? { scenes: outputScenes(candidate) } : {}) })
           } catch (error) {
@@ -629,6 +629,16 @@ export function addEditorGraphicImage(path: unknown, file: unknown): string {
   const run = runPath(path)
   assertAbsolutePath(file)
   return importGraphicImage(run, file)
+}
+
+/**
+ * A video for a graphic (Screen recording), chosen in main's file dialog: checked and copied into the run's
+ * .graphics/videos/. Returns its name for the graphic's `video` field.
+ */
+export async function addEditorGraphicVideo(path: unknown, file: unknown): Promise<string> {
+  const run = runPath(path)
+  assertAbsolutePath(file)
+  return importGraphicVideo(run, file)
 }
 
 // Keep IPC's editable surface narrow; no media paths, reviews or export records come from React.

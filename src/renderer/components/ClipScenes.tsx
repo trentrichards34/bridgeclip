@@ -10,14 +10,15 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Clapperboard, Plus, Trash2 } from 'lucide-react'
 import type { CandidateEdit } from '../../shared/clip-editor'
 import {
-  BACKDROP_LABELS, MAX_SCENES, MIN_SCENE_MS, SCENE_DETAILS, SCENE_LABELS, STAGE_LAYOUT, newSceneAt, outputScenes, sceneMix, updateScene, withScene,
-  type SceneBackdrop, type SceneKind, type StageScene
+  BACKDROP_LABELS, CARD_LABELS, MAX_SCENES, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_DETAILS, SCENE_LABELS, STAGE_LAYOUT, newSceneAt, outputScenes, sceneMix, updateScene, withScene,
+  type SceneBackdrop, type SceneCard, type SceneKind, type StageScene
 } from '../../shared/scenes'
 import { nearestOutputTime } from '../../shared/motion-graphics'
 import { isHexColor } from '../../shared/headline-look'
 import { cn } from '../lib/utils'
 import { Button } from './ui/Button'
 import { Segmented } from './ui/Segmented'
+import { Select } from './ui/Select'
 import './clip-scenes.css'
 
 export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onChange, onDrag, clock }: {
@@ -80,9 +81,12 @@ export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onC
       {current && <div className="editor-scenes-tools" role="group" aria-label="Selected scene">
         <Segmented<SceneKind> label="Scene" size="sm" value={current.scene} onChange={pick}
           options={(['face', 'stage', 'visual'] as const).map((value) => ({ value, label: SCENE_LABELS[value], ...(disabled ? { disabled: 'Editing is off right now.' } : {}) }))} />
-        <Segmented<SceneBackdrop> label="Backdrop" size="sm" value={current.backdrop ?? 'light'}
-          onChange={(backdrop) => onChange(updateScene(scenes, selected!, { backdrop }, bounds), true)}
-          options={(['light', 'dark', 'brand'] as const).map((value) => ({ value, label: BACKDROP_LABELS[value], ...(disabled ? { disabled: 'Editing is off right now.' } : {}) }))} />
+        <Select size="sm" aria-label="Backdrop" value={current.backdrop ?? 'light'} disabled={disabled}
+          onChange={(backdrop) => onChange(updateScene(scenes, selected!, { backdrop: backdrop as SceneBackdrop }, bounds), true)}
+          options={SCENE_BACKDROPS.map((value) => ({ value, label: BACKDROP_LABELS[value] }))} />
+        {current.scene === 'stage' && <Segmented<SceneCard> label="Card" size="sm" value={current.card ?? 'rounded'}
+          onChange={(card) => onChange(updateScene(scenes, selected!, { card }, bounds), true)}
+          options={(['rounded', 'arch'] as const).map((value) => ({ value, label: CARD_LABELS[value], ...(disabled ? { disabled: 'Editing is off right now.' } : {}) }))} />}
         <Button size="sm" variant="ghost" iconOnly icon={<Trash2 size={12} />} aria-label="Remove scene" tooltip="Remove this scene. That part goes back to the normal full-frame video." disabled={disabled} onClick={() => remove(selected!)} />
       </div>}
       <Button size="sm" variant="ghost" icon={<Plus size={12} />} disabled={disabled || full || !draft} onClick={add}
@@ -91,7 +95,7 @@ export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onC
       {scenes.map((s, i) => {
         const a = Math.max(s.start_ms, viewStart), b = Math.min(s.end_ms, viewEnd)
         if (b <= a) return null
-        const label = `${SCENE_LABELS[s.scene]} scene${s.scene !== 'face' ? `, ${BACKDROP_LABELS[s.backdrop ?? 'light'].toLowerCase()} backdrop,` : ''} from ${clock(s.start_ms)} to ${clock(s.end_ms)}`
+        const label = `${SCENE_LABELS[s.scene]} scene${s.scene !== 'face' ? `, ${BACKDROP_LABELS[s.backdrop ?? 'light'].toLowerCase()} backdrop${s.card === 'arch' ? ', arch card' : ''},` : ''} from ${clock(s.start_ms)} to ${clock(s.end_ms)}`
         return <div key={`${i}-${s.start_ms}`} className={cn('editor-scene-block', `scene-${s.scene}`, `backdrop-${s.backdrop ?? 'light'}`, selected === i && 'selected')}
           style={{ left: `${(a - viewStart) / span * 100}%`, width: `${(b - a) / span * 100}%` }}>
           <button className="editor-scene-edge" aria-label={`Change when the ${label} starts`} disabled={disabled} onPointerDown={(e) => startDrag(e, i, 'start')} tabIndex={-1} />
@@ -111,7 +115,10 @@ export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onC
 const BACKDROP_CSS: Record<SceneBackdrop, (brand: string) => string> = {
   light: () => 'linear-gradient(#f6f7f9, #e2e5ea)',
   dark: () => 'linear-gradient(#2b2e34, #15171b)',
-  brand: (c) => `linear-gradient(color-mix(in srgb, ${c} 10%, white), color-mix(in srgb, ${c} 24%, white))`
+  brand: (c) => `linear-gradient(color-mix(in srgb, ${c} 10%, white), color-mix(in srgb, ${c} 24%, white))`,
+  // The engine's grid: lavender easing into the brand color low in the frame, a faint white square grid fading out.
+  grid: (c) => `linear-gradient(rgba(255,255,255,.28) 1px, transparent 1px) 0 0 / 7.1428% 4.0179%, linear-gradient(90deg, rgba(255,255,255,.28) 1px, transparent 1px) 0 0 / 7.1428% 4.0179%, linear-gradient(color-mix(in srgb, ${c} 16%, white), color-mix(in srgb, ${c} 30%, white) 45%, color-mix(in srgb, ${c} 82%, white))`,
+  gradient: (c) => `linear-gradient(color-mix(in srgb, ${c} 8%, white), color-mix(in srgb, ${c} 20%, white) 45%, color-mix(in srgb, ${c} 50%, white))`
 }
 
 /** A preview of the scenes over the Output monitor: the backdrop and the speaker card (cut from the preview's own frame). */
@@ -150,14 +157,18 @@ export function ScenesOverlay({ canvas, candidate, time }: { canvas: RefObject<H
     return () => cancelAnimationFrame(frame)
   }, [visible, canvas])
   if (!bounds.width || !visible) return null
-  const brand = candidate.hook?.look.look === 'brand' && isHexColor(candidate.hook.look.color) ? candidate.hook.look.color : '#3B6BFF'
+  const own = candidate.hook?.look.look === 'brand' && isHexColor(candidate.hook.look.color) ? candidate.hook.look.color : null
+  // Grid and gradient without a brand color are purple, like the engine's.
+  const brandFor = (b: SceneBackdrop): string => own ?? (b === 'grid' || b === 'gradient' ? '#7C3AED' : '#3B6BFF')
   const w = bounds.width, h = bounds.height
-  const cardW = w * (1 - 2 * STAGE_LAYOUT.cardSide), cardH = h * STAGE_LAYOUT.cardHeight
-  const rest = h * (1 - STAGE_LAYOUT.cardBottom) - cardH, off = h + 8
+  const arch = mix.shape === 'arch'
+  const cardW = arch ? w : w * (1 - 2 * STAGE_LAYOUT.cardSide), cardH = h * STAGE_LAYOUT.cardHeight + (arch ? h * STAGE_LAYOUT.cardBottom : 0)
+  const rest = h * (1 - STAGE_LAYOUT.cardBottom) - h * STAGE_LAYOUT.cardHeight, off = h + 8
+  const radius = arch ? `${w * STAGE_LAYOUT.archRadius}px ${w * STAGE_LAYOUT.archRadius}px 0 0` : w * STAGE_LAYOUT.cardRadius
   return <div className="editor-scenes-overlay" style={bounds} aria-hidden data-scene={mix.card > 0.5 ? 'stage' : mix.alpha > 0.5 ? 'visual' : 'face'}>
-    {mix.under && <div className="editor-scenes-backdrop" style={{ background: BACKDROP_CSS[mix.under](brand) }} />}
-    {mix.backdrop && <div className="editor-scenes-backdrop" style={{ background: BACKDROP_CSS[mix.backdrop](brand), opacity: mix.alpha }} />}
-    <canvas ref={card} className="editor-scenes-card" width={360} height={Math.round(360 * cardH / cardW)}
-      style={{ width: cardW, height: cardH, left: (w - cardW) / 2, top: off - (off - rest) * mix.card, borderRadius: w * STAGE_LAYOUT.cardRadius, visibility: mix.card > 0 ? 'visible' : 'hidden' }} />
+    {mix.under && <div className="editor-scenes-backdrop" style={{ background: BACKDROP_CSS[mix.under](brandFor(mix.under)) }} />}
+    {mix.backdrop && <div className="editor-scenes-backdrop" style={{ background: BACKDROP_CSS[mix.backdrop](brandFor(mix.backdrop)), opacity: mix.alpha }} />}
+    <canvas ref={card} className="editor-scenes-card" data-card={mix.shape} width={360} height={Math.round(360 * cardH / cardW)}
+      style={{ width: cardW, height: cardH, left: (w - cardW) / 2, top: off - (off - rest) * mix.card, borderRadius: radius, visibility: mix.card > 0 ? 'visible' : 'hidden' }} />
   </div>
 }

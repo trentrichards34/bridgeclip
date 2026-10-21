@@ -13,12 +13,21 @@ segmentation matte, segmentation.py) on top, only while it plays. The matte is
 made for those windows only, and kept per clip in the graphics folder's
 ``mattes/`` (named by the clip's bytes and the window), so laying the same clip
 again reuses it. Without the cut-out model (or when it fails) the graphic is
-laid in front, as before.
+laid in front, as before. Words behind the speaker are placed by the matte: at
+the graphic's start the top of the head is found, and the block of words moves
+(and, when there is no room above, shrinks) so the head covers only the lower
+third or so of its last line, never above the band main allowed (``min_top``).
+
+A Screen recording graphic carries an ``inset``: main drew the window with a
+see-through hole, and the video (a file the member added, in the graphics
+folder's ``videos/``, or the clip's own source at source time) plays under it,
+cover-fitted to the hole, with a slow eased zoom and the window's fades.
 """
 from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 import re
 from pathlib import Path
@@ -43,16 +52,67 @@ MAX_MATTES = 24
 BEHIND_MATTE_EDGE = 1280
 # Bump when the matte's look changes, so kept mattes are made again.
 MATTE_VERSION = 2
+VIDEOS_DIR = "videos"
+VIDEO_FILE = re.compile(r"[a-f0-9]{16}\.(mp4|mov|m4v|webm)")
+# Behind the speaker, the head covers about this much of the last line (from its bottom); moves start outside 25-35%.
+HEAD_COVER = 0.3
+HEAD_COVER_RANGE = (0.25, 0.35)
+# The words are moved down at most this share of the frame, and shrunk to no less than this.
+MAX_DROP = 0.12
+MIN_SHRINK = 0.4
+# Without a band from main, words never go above this share of the frame (platform buttons, the hook).
+DEFAULT_MIN_TOP = 0.08
+# The inset video plays at this rate (the graphics are drawn at 30 fps too).
+INSET_FPS = 30
+# The slow zoom: from the window's start (after its fade in) to this share of its length.
+ZOOM_END_SHARE = 0.75
+# With no zoom target, a gentle push-in to this share of the view, centered.
+PUSH_IN = 0.94
 
 logger = logging.getLogger(__name__)
 
 
-def checked_graphics(run: Path, raw: object, clip_ms: int, sub: str = "") -> list[dict]:
+def _shares(value: object, count: int = 4) -> Optional[list[float]]:
+    if not isinstance(value, list) or len(value) != count or not all(type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 1 for v in value):
+        return None
+    return [float(v) for v in value]
+
+
+def checked_inset(run: Path, raw: object, source: Optional[str]) -> dict:
+    """A Screen recording's video (untrusted): 'source' (only where the clip's source is known) or a file in the run's
+    .graphics/videos/; where it starts; the hole (shares of the frame); an optional zoom target (shares of the view)."""
+    if not isinstance(raw, dict) or set(raw) - {"video", "from_ms", "rect", "zoom", "fade_ms"}:
+        raise ValueError("Invalid graphic video")
+    video, start, fade = raw.get("video"), raw.get("from_ms", 0), raw.get("fade_ms", 300)
+    rect, zoom = _shares(raw.get("rect")), _shares(raw.get("zoom")) if raw.get("zoom") is not None else None
+    if type(start) is not int or not 0 <= start <= 24 * 3600 * 1000 or type(fade) is not int or not 0 <= fade <= 2000 or rect is None \
+            or rect[2] < 0.02 or rect[3] < 0.02 or rect[0] + rect[2] > 1.001 or rect[1] + rect[3] > 1.001:
+        raise ValueError("Invalid graphic video")
+    if raw.get("zoom") is not None and (zoom is None or zoom[2] <= 0 or zoom[3] <= 0):
+        raise ValueError("Invalid graphic video")
+    if video == "source":
+        if not source:
+            raise ValueError("Invalid graphic video")
+        path = source
+    elif isinstance(video, str) and VIDEO_FILE.fullmatch(video):
+        folder = run / GRAPHICS_DIR / VIDEOS_DIR
+        path = folder / video
+        if folder.is_symlink() or path.is_symlink() or not path.is_file():
+            raise ValueError("A graphic's video is missing")
+        path = str(path)
+    else:
+        raise ValueError("Invalid graphic video")
+    return {"path": path, "from_ms": start, "rect": rect, **({"zoom": zoom} if zoom else {}), "fade_ms": fade}
+
+
+def checked_graphics(run: Path, raw: object, clip_ms: int, sub: str = "", source: Optional[str] = None) -> list[dict]:
     """The graphics main asked for, validated: known render files in the run's .graphics/ folder (or `sub` in it),
     inside the clip.
 
     A graphic past the clip's end is dropped; one running over it is trimmed. An optional "size" ("compact",
-    "card" or "stage") is kept so a stage scene can make room for a stage-size graphic.
+    "card" or "stage") is kept so a stage scene can make room for a stage-size graphic; "min_top" (behind the speaker:
+    the highest its words may go) and "inset" (a Screen recording's video; `source` is the clip's own video when the
+    caller knows it) are checked and kept.
     """
     if raw is None:
         return []
@@ -82,10 +142,15 @@ def checked_graphics(run: Path, raw: object, clip_ms: int, sub: str = "") -> lis
         depth = item.get("depth")
         if depth is not None and depth not in DEPTHS:
             raise ValueError("Invalid graphic depth")
+        min_top = item.get("min_top")
+        if min_top is not None and not (type(min_top) in (int, float) and math.isfinite(min_top) and 0 <= min_top <= 0.6):
+            raise ValueError("Invalid graphic band")
+        inset = checked_inset(run, item["inset"], source) if item.get("inset") is not None else None
         if start >= clip_ms - MIN_MS:
             continue
         out.append({"path": str(path), "start_ms": start, "duration_ms": min(length, clip_ms - start), **({"size": size} if size else {}),
-                    **({"depth": "behind"} if depth == "behind" else {})})
+                    **({"depth": "behind"} if depth == "behind" else {}),
+                    **({"min_top": float(min_top)} if depth == "behind" and min_top is not None else {}), **({"inset": inset} if inset else {})})
     return sorted(out, key=lambda g: g["start_ms"])
 
 
@@ -120,6 +185,15 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
         cmd += [*MEDIA_INPUT_OPTIONS, "-i", g["path"]]
     for m in mattes:
         cmd += [*MEDIA_INPUT_OPTIONS, "-i", m["path"]]
+    # Screen recordings' videos, each from where it starts, a little longer than its window.
+    inset_index: dict[int, int] = {}
+    next_input = len(graphics) + len(mattes) + 1
+    for i, g in enumerate(graphics, start=1):
+        if g.get("inset"):
+            inset = g["inset"]
+            cmd += ["-ss", f"{inset['from_ms'] / 1000:.3f}", "-t", f"{g['duration_ms'] / 1000 + 1:.3f}", *MEDIA_INPUT_OPTIONS, "-i", inset["path"]]
+            inset_index[i] = next_input
+            next_input += 1
     parts: list[str] = []
     last = "[0:v]"
     if mattes:
@@ -130,9 +204,22 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
     def lay(i: int, g: dict) -> None:
         nonlocal last
         start, end = g["start_ms"] / 1000, (g["start_ms"] + g["duration_ms"]) / 1000
+        if i in inset_index:
+            # The video goes under the window's see-through hole first.
+            parts.append(inset_chain(inset_index[i], g, width, height, f"in{i}"))
+            x, y, _, _ = inset_box(g["inset"]["rect"], width, height)
+            parts.append(f"{last}[in{i}]overlay={x}:{y}:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'[w{i}]")
+            last = f"[w{i}]"
         # Shift the graphic to its start, scale it to the frame (renders are made at the output size), keep its alpha.
-        parts.append(f"[{i}:v]format=argb,scale={width}:{height},setpts=PTS-STARTPTS+{start:.3f}/TB[g{i}]")
-        parts.append(f"{last}[g{i}]overlay=0:0:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'[v{i}]")
+        place = g.get("place")
+        if place and place != (1.0, 0, 0):
+            # Moved (and maybe shrunk) to clear the speaker's head: scaled about its own center, then offset.
+            s, x, y = place
+            parts.append(f"[{i}:v]format=argb,scale={even(width * s)}:{even(height * s)},setpts=PTS-STARTPTS+{start:.3f}/TB[g{i}]")
+            parts.append(f"{last}[g{i}]overlay={x}:{y}:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'[v{i}]")
+        else:
+            parts.append(f"[{i}:v]format=argb,scale={width}:{height},setpts=PTS-STARTPTS+{start:.3f}/TB[g{i}]")
+            parts.append(f"{last}[g{i}]overlay=0:0:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'[v{i}]")
         last = f"[v{i}]"
 
     for i, g in enumerate(graphics[:behind], start=1):
@@ -151,6 +238,147 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "0:a?", "-c:a", "copy", *codec,
             "-movflags", "+faststart", output]
     return cmd
+
+
+def even(value: float) -> int:
+    return max(2, int(round(value / 2)) * 2)
+
+
+# How far the inset video reaches under the window's border on each side (hides rounding at the hole's edge).
+INSET_BLEED = 2
+
+
+def inset_box(rect: list[float], width: int, height: int) -> tuple[int, int, int, int]:
+    """The inset video's place and size in the frame (pixels): the hole, a little bigger on each side, even sizes."""
+    x, y = round(rect[0] * width) - INSET_BLEED, round(rect[1] * height) - INSET_BLEED
+    return x, y, even(rect[2] * width + 2 * INSET_BLEED), even(rect[3] * height + 2 * INSET_BLEED)
+
+
+def _smooth(x: str) -> str:
+    return f"(({x})*({x})*(3-2*({x})))"
+
+
+def inset_chain(index: int, g: dict, width: int, height: int, label: str) -> str:
+    """The Screen recording's video: cover-fitted to the window's hole, slowly zoomed (to its target, or a gentle
+    centered push-in) with an ease, faded in and out with the window, starting at the graphic's time."""
+    inset = g["inset"]
+    _, _, w, h = inset_box(inset["rect"], width, height)
+    aspect = w / h
+    start, length = g["start_ms"] / 1000, g["duration_ms"] / 1000
+    fade = min(inset.get("fade_ms", 300) / 1000, length / 3)
+    zx, zy, zw, _ = inset.get("zoom") or [(1 - PUSH_IN) / 2, (1 - PUSH_IN) / 2, PUSH_IN, PUSH_IN]
+    # Progress of the zoom: after the fade in, done by ZOOM_END_SHARE of the window (eased both ends).
+    a, b = fade, max(0.3, length * ZOOM_END_SHARE - fade)
+    p = _smooth(f"clip((in/{INSET_FPS}-{a:.3f})/{b:.3f},0,1)")
+    zoom = f"1/(1-{1 - zw:.5f}*{p})"
+    x, y = f"{zx:.5f}*{p}*iw", f"{zy:.5f}*{p}*ih"
+    return (f"[{index}:v]fps={INSET_FPS},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=60,"
+            f"crop='min(iw,ih*{aspect:.6f})':'min(ih,iw/{aspect:.6f})',scale={2 * w}:{2 * h}:flags=bicubic,setsar=1,"
+            f"zoompan=z='{zoom}':x='{x}':y='{y}':d=1:s={w}x{h}:fps={INSET_FPS},trim=duration={length:.3f},format=yuva420p,"
+            f"fade=t=in:st=0:d={fade:.3f}:alpha=1,fade=t=out:st={max(0.0, length - fade):.3f}:d={fade:.3f}:alpha=1,"
+            f"setpts=PTS+{start:.3f}/TB[{label}]")
+
+
+# ---------------------------------------------------------------------------
+# Words behind the speaker: placed so the head covers only the lower part of the last line.
+# ---------------------------------------------------------------------------
+
+def _frame_alpha(path: str, at_s: float, width: int, height: int, alpha: bool) -> Optional["np.ndarray"]:
+    """One frame's alpha (a graphic) or gray (a matte) at `at_s` seconds, at width x height, as a uint8 array."""
+    import numpy as np
+    from clip_engine.services.media_process import run_media
+    vf = f"{'alphaextract,' if alpha else ''}scale={width}:{height}:flags=area,format=gray"
+    result = run_media(["ffmpeg", "-nostdin", "-v", "error", *MEDIA_INPUT_OPTIONS, "-ss", f"{max(0.0, at_s):.3f}", "-i", path,
+                        "-frames:v", "1", "-vf", vf, "-f", "rawvideo", "-pix_fmt", "gray", "-"], timeout=120, check=True,
+                        max_output=width * height + 4096)
+    data = result.stdout if isinstance(result.stdout, (bytes, bytearray)) else b""
+    if len(data) < width * height:
+        return None
+    return np.frombuffer(data[:width * height], np.uint8).reshape(height, width)
+
+
+def text_lines(alpha: "np.ndarray", gap: int = 4, min_h: int = 6) -> list[tuple[int, int]]:
+    """The rows (top, bottom) of each line of drawn words in a graphic's alpha: runs of rows with ink, joined across
+    gaps of up to `gap` rows, slivers under `min_h` rows left out."""
+    ink = (alpha > 96).sum(axis=1) > max(2, alpha.shape[1] // 400)
+    runs: list[list[int]] = []
+    for y, on in enumerate(ink):
+        if not on:
+            continue
+        if runs and y - runs[-1][1] <= gap + 1:
+            runs[-1][1] = y
+        else:
+            runs.append([y, y])
+    return [(a, b + 1) for a, b in runs if b + 1 - a >= min_h]
+
+
+def head_top(matte: "np.ndarray") -> Optional[int]:
+    """The speaker's highest row in a matte (the top of the head), or None when nobody is there."""
+    rows = (matte > 128).sum(axis=1) > max(4, matte.shape[1] // 100)
+    hits = rows.nonzero()[0]
+    return int(hits[0]) if hits.size else None
+
+
+def text_x_span(alpha: "np.ndarray") -> tuple[int, int]:
+    cols = ((alpha > 96).sum(axis=0) > 0).nonzero()[0]
+    return (int(cols[0]), int(cols[-1]) + 1) if cols.size else (0, alpha.shape[1])
+
+
+def behind_place(lines: list[tuple[int, int]], head: Optional[int], height: int, min_top: float,
+                 x_span: tuple[int, int] = (0, 0)) -> tuple[float, int, int]:
+    """(scale, x, y) for a block of words behind the speaker so the head covers about HEAD_COVER of its last line.
+
+    Words the head covers too much move up (shrunk about their center when there is no room under `min_top`); words
+    the head doesn't reach move down a little (at most MAX_DROP of the frame). (1.0, 0, 0) leaves them where they are."""
+    if not lines or head is None or head <= min_top * height:
+        # Nobody there, or the head reaches above the band (filmed close or cut off at the top): left as drawn.
+        return (1.0, 0, 0)
+    top, (last_top, last_bottom) = lines[0][0], lines[-1]
+    h = last_bottom - last_top
+    if h <= 0:
+        return (1.0, 0, 0)
+    covered = (last_bottom - head) / h
+    if HEAD_COVER_RANGE[0] <= covered <= HEAD_COVER_RANGE[1]:
+        return (1.0, 0, 0)
+    target = last_top + (1 - HEAD_COVER) * h  # where the head should meet the last line
+    dy = head - target
+    if dy > 0:
+        dy = min(dy, MAX_DROP * height)
+        return (1.0, 0, round(dy))
+    floor = min_top * height
+    if top + dy >= floor:
+        return (1.0, 0, round(dy))
+    # No room above: anchored at the floor, shrunk so the head still meets the last line where it should.
+    span = (last_top - top) + (1 - HEAD_COVER) * h
+    s = max(MIN_SHRINK, min(1.0, (head - floor) / span)) if span > 0 else 1.0
+    cx = (x_span[0] + x_span[1]) / 2 if x_span[1] > x_span[0] else 0
+    return (round(s, 4), round(cx * (1 - s)), round(floor - s * top))
+
+
+def place_behind(graphics: list[dict], mattes: list[dict], width: int, height: int) -> list[dict]:
+    """The graphics behind the speaker with a "place" (scale, x, y) worked out from the matte at their start and their
+    own drawn words (best effort: a graphic that can't be measured stays where main drew it)."""
+    out = []
+    for g in graphics:
+        if g.get("depth") != "behind" or g.get("inset"):
+            out.append(g)
+            continue
+        try:
+            a = g["start_ms"]
+            window = next(m for m in mattes if m["start_ms"] <= a < m["start_ms"] + m["duration_ms"])
+            # The head where the words land (a little after the start), and the words once they have built.
+            matte = _frame_alpha(window["path"], (a - window["start_ms"] + 250) / 1000, width, height, alpha=False)
+            words = _frame_alpha(g["path"], min(g["duration_ms"] * 0.6, g["duration_ms"] - 200) / 1000, width, height, alpha=True)
+            if matte is None or words is None:
+                out.append(g)
+                continue
+            place = behind_place(text_lines(words, gap=max(4, height // 300), min_h=max(6, height // 160)), head_top(matte), height,
+                                 g.get("min_top", DEFAULT_MIN_TOP), text_x_span(words))
+            out.append({**g, "place": place} if place != (1.0, 0, 0) else g)
+        except Exception as error:  # noqa: BLE001 - placement is a nicety; the words go where main drew them
+            logger.warning(f"Words behind the speaker kept their place: {type(error).__name__}: {error}")
+            out.append(g)
+    return out
 
 
 def _file_digest(path: str) -> str:
@@ -238,8 +466,11 @@ def overlay_graphics_file(video: str, graphics: list[dict], width: int, height: 
     if not graphics:
         return
     output = f"{video}.graphics.mp4"
+    mattes = behind_mattes(video, graphics)
+    if mattes:
+        graphics = place_behind(graphics, mattes, width, height)
     try:
-        run_cmd(overlay_command(video, graphics, output, width, height, codec, behind_mattes(video, graphics)))
+        run_cmd(overlay_command(video, graphics, output, width, height, codec, mattes))
         os.replace(output, video)
     finally:
         if os.path.exists(output):
@@ -260,6 +491,8 @@ async def overlay_graphics(renderer, video: str, graphics: list[dict]) -> None:
     width, height = await renderer._get_video_dimensions(video)
     fps = await renderer._probe_fps(video)
     mattes = await asyncio.to_thread(behind_mattes, video, graphics)
+    if mattes:
+        graphics = await asyncio.to_thread(place_behind, graphics, mattes, width, height)
     output = f"{video}.graphics.mp4"
     try:
         await renderer._run_cmd(overlay_command(video, graphics, output, width, height, renderer._video_codec_args(width, height, fps), mattes))

@@ -30,6 +30,7 @@ from clip_engine.services.broll_library import load_catalog, parse_ai_settings, 
 from clip_engine.services.broll_service import PexelsKeyRejected, prepare_broll
 from clip_engine.services.hook_preview import pick_teaser
 from clip_engine.services.auto_graphics import fit_to_clip, on_stage, stage_scenes_for, write_graphics_plan
+from clip_engine.services.stage_scenes import auto_look
 from clip_engine.error_policy import NoClipCandidatesError, NoNewMomentsError, NoRequestedMomentsError, safe_failure_code, safe_processing_error
 from clip_engine.services.caption_translation import CaptionTranslator, language_name
 from clip_engine.services.transcript_reuse import load_saved_transcript, reusable_transcript, source_fingerprint
@@ -117,6 +118,15 @@ def headline_off(request) -> bool:
 def stages_on(request) -> bool:
     """Stage layouts apply: asked for, with motion graphics, on vertical clips without a gameplay background."""
     return bool(request.stage_layouts and request.motion_graphics and request.aspect_ratio == '9:16' and not request.background_video_path)
+
+
+def stage_brand(request) -> Optional[str]:
+    """The member's brand color for Stage layouts (their hook's brand color), or None."""
+    look = request.headline_look if isinstance(getattr(request, 'headline_look', None), dict) else {}
+    color = look.get('color')
+    if (look.get('look') == 'brand' or look.get('textBg') == 'brand') and isinstance(color, str) and re.fullmatch(r'#[0-9A-Fa-f]{6}', color):
+        return color.upper()
+    return None
 
 
 def graphics_options(request) -> dict:
@@ -939,12 +949,15 @@ class AIClippingPipeline:
                             planned_cards = fit_to_clip(segment.graphics, transcription_result.segments,
                                                         [(segment.start_time_ms, segment.end_time_ms)], request.video_speed,
                                                         graphics_options(request))
-                            source_scenes = stage_scenes_for(planned_cards, segment.start_time_ms, segment.end_time_ms)
+                            # The brand grid and the arch card with a brand color; the light backdrop otherwise.
+                            backdrop, card = auto_look(stage_brand(request))
+                            source_scenes = stage_scenes_for(planned_cards, segment.start_time_ms, segment.end_time_ms, backdrop, card)
                         except Exception as exc:
                             logger.warning(f"Stage layouts skipped for clip {i + 1}: {exc}")
                     render_request = RenderRequest(
                         progress_callback=lambda detail, percent=None: render_progress(i, detail, percent),
                         source_scenes=source_scenes,
+                        scene_brand_color=stage_brand(request) if source_scenes else None,
                         video_path=download_result.video_path,
                         output_path=output_path,
                         start_time_ms=segment.start_time_ms,

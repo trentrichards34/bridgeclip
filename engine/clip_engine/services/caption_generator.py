@@ -542,6 +542,11 @@ class CaptionGeneratorService:
             f"{alignment},60,60,{margin_v},1"
         )
 
+        if style.line_box_color and getattr(style, "line_box_shape", "round") == "rect":
+            # The crisp box: an opaque box (BorderStyle 3) per line, its padding the plate layer's \\bord.
+            default_style += "\n" + default_style.replace("Style: Default,", "Style: Plate,", 1).replace(
+                f",1,{style.outline_width},0,{alignment},", f",3,{style.outline_width},0,{alignment},", 1)
+
         return f"""[Script Info]
 Title: CreatorClips Captions
 ScriptType: v4.00+
@@ -692,7 +697,8 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
                 karaoke = f"\\kf{t.karaoke_cs}" if t.karaoke_cs else ""
                 parts.append(f"{{{karaoke}{self._font_tags(t, style)}{tags_for(t)}}}{t.text}")
             text = "\\N".join(self._wrap_words(parts, style.max_words_per_line, gap))
-            events.append(f"Dialogue: {layer},{start},{end},Default,,0,0,0,,{{{lead}}}{text}")
+            name = "Plate" if layer == LAYER_PLATE and getattr(style, "line_box_shape", "round") == "rect" else "Default"
+            events.append(f"Dialogue: {layer},{start},{end},{name},,0,0,0,,{{{lead}}}{text}")
         return events
 
     # ------------------------------------------------------------------

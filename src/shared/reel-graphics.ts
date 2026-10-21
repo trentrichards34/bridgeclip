@@ -22,8 +22,8 @@ import { graphicBandSize, graphicBox, GRAPHIC_DEFAULT_COLOR, outputSize, type Gr
 import { HEADLINE_FONTS, isHexColor, type HeadlineLook } from './headline-look'
 import { GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, graphicDepth, MAX_GRAPHICS_PER_CLIP, clampGraphicMs, templateInfo, graphicHasContent, parseGraphics, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from './motion-graphics'
 
-/** The templates offered on review screens (every one but Logo pop). */
-export const REEL_GRAPHIC_TEMPLATES = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo')
+/** The templates offered on review screens (every one but Logo pop and Screen recording, which need the clip editor's files). */
+export const REEL_GRAPHIC_TEMPLATES = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo' && t.id !== 'screen_frame')
 export const MAX_REEL_GRAPHICS = 8
 
 /** The hook text's share of the frame's height at the top (0: none, too short to draw, or not at the top). */
@@ -170,7 +170,8 @@ export function fitRemixGraphic(g: EditorGraphic, format: RemixGraphicFormat, pa
 
 /** A list of graphics that draw something (words or an arrow), for the render. */
 export function drawableGraphics<T extends Pick<EditorGraphic, 'template' | 'fields'>>(graphics: readonly T[]): T[] {
-  return graphics.filter(graphicHasContent).slice(0, MAX_GRAPHICS_PER_CLIP)
+  // A Screen recording needs the clip editor's video files: never drawn on a reel.
+  return graphics.filter((g) => g.template !== 'screen_frame' && graphicHasContent(g)).slice(0, MAX_GRAPHICS_PER_CLIP)
 }
 
 /** A graphic's words from the model: only the template's fields, plain and short; it must say something. */
