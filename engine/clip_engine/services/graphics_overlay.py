@@ -6,13 +6,23 @@ it plays in the finished clip (output time: through the cut and the export
 speed, with cut-out parts dropped). Here each one is placed full-frame over the
 clip from its start for its length. The graphic's band already keeps it clear
 of the hook and the captions, so there is nothing to position.
+
+A graphic with depth "behind" sits in the scene, behind the speaker: the clip,
+then the graphic, then the speaker cut out of the same frames (the selfie
+segmentation matte, segmentation.py) on top, only while it plays. The matte is
+made for those windows only, and kept per clip in the graphics folder's
+``mattes/`` (named by the clip's bytes and the window), so laying the same clip
+again reuses it. Without the cut-out model (or when it fails) the graphic is
+laid in front, as before.
 """
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 import re
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 from clip_engine.services.media_process import MEDIA_INPUT_OPTIONS
 
@@ -24,6 +34,17 @@ MAX_GRAPHICS = 12
 MIN_MS = 100
 # How big main drew a graphic: absent is the usual card; "stage" takes the top ~55% of a 9:16 frame.
 SIZES = ("compact", "card", "stage")
+# In front of the video (the default) or behind the speaker.
+DEPTHS = ("front", "behind")
+MATTES_DIR = "mattes"
+# Mattes kept per graphics folder (the newest; older ones are removed).
+MAX_MATTES = 24
+# Mattes for text behind the speaker are cut at a finer size than "Me, on camera" (hair edges over big letters).
+BEHIND_MATTE_EDGE = 1280
+# Bump when the matte's look changes, so kept mattes are made again.
+MATTE_VERSION = 2
+
+logger = logging.getLogger(__name__)
 
 
 def checked_graphics(run: Path, raw: object, clip_ms: int, sub: str = "") -> list[dict]:
@@ -58,29 +79,158 @@ def checked_graphics(run: Path, raw: object, clip_ms: int, sub: str = "") -> lis
         size = item.get("size")
         if size is not None and size not in SIZES:
             raise ValueError("Invalid graphic size")
+        depth = item.get("depth")
+        if depth is not None and depth not in DEPTHS:
+            raise ValueError("Invalid graphic depth")
         if start >= clip_ms - MIN_MS:
             continue
-        out.append({"path": str(path), "start_ms": start, "duration_ms": min(length, clip_ms - start), **({"size": size} if size else {})})
+        out.append({"path": str(path), "start_ms": start, "duration_ms": min(length, clip_ms - start), **({"size": size} if size else {}),
+                    **({"depth": "behind"} if depth == "behind" else {})})
     return sorted(out, key=lambda g: g["start_ms"])
 
 
-def overlay_command(video: str, graphics: Iterable[dict], output: str, width: int, height: int, codec: list[str]) -> list[str]:
-    """FFmpeg: the clip with each graphic laid over it at its time (audio copied)."""
+def behind_windows(graphics: Iterable[dict]) -> list[tuple[int, int]]:
+    """The output windows (start_ms, end_ms) graphics behind the speaker play in, overlapping ones merged."""
+    spans = sorted((g["start_ms"], g["start_ms"] + g["duration_ms"]) for g in graphics if g.get("depth") == "behind")
+    merged: list[tuple[int, int]] = []
+    for a, b in spans:
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    return merged
+
+
+def overlay_command(video: str, graphics: Iterable[dict], output: str, width: int, height: int, codec: list[str],
+                    mattes: Optional[list[dict]] = None) -> list[str]:
+    """FFmpeg: the clip with each graphic laid over it at its time (audio copied).
+
+    `mattes` ([{"path", "start_ms", "duration_ms"}], one per behind window): the graphics behind the speaker go on
+    first, then the speaker, cut out of the clip's own frames with each window's matte, then the others. Without
+    mattes every graphic is laid over the clip in time order.
+    """
     graphics = list(graphics)
+    mattes = list(mattes or [])
+    if mattes:
+        # Behind the speaker first; the speaker; then the rest (each group in time order).
+        graphics = [g for g in graphics if g.get("depth") == "behind"] + [g for g in graphics if g.get("depth") != "behind"]
+    behind = sum(1 for g in graphics if g.get("depth") == "behind") if mattes else 0
     cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", *MEDIA_INPUT_OPTIONS, "-i", video]
-    parts, last = [], "[0:v]"
-    for i, g in enumerate(graphics, start=1):
-        start, end = g["start_ms"] / 1000, (g["start_ms"] + g["duration_ms"]) / 1000
+    for g in graphics:
         cmd += [*MEDIA_INPUT_OPTIONS, "-i", g["path"]]
+    for m in mattes:
+        cmd += [*MEDIA_INPUT_OPTIONS, "-i", m["path"]]
+    parts: list[str] = []
+    last = "[0:v]"
+    if mattes:
+        # The clip's frames are used again for the cut-out: one copy for the picture, one per window.
+        parts.append(f"[0:v]split={len(mattes) + 1}[base]" + "".join(f"[src{k}]" for k in range(len(mattes))))
+        last = "[base]"
+
+    def lay(i: int, g: dict) -> None:
+        nonlocal last
+        start, end = g["start_ms"] / 1000, (g["start_ms"] + g["duration_ms"]) / 1000
         # Shift the graphic to its start, scale it to the frame (renders are made at the output size), keep its alpha.
         parts.append(f"[{i}:v]format=argb,scale={width}:{height},setpts=PTS-STARTPTS+{start:.3f}/TB[g{i}]")
-        label = f"[v{i}]"
-        parts.append(f"{last}[g{i}]overlay=0:0:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'{label}")
-        last = label
+        parts.append(f"{last}[g{i}]overlay=0:0:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'[v{i}]")
+        last = f"[v{i}]"
+
+    for i, g in enumerate(graphics[:behind], start=1):
+        lay(i, g)
+    for k, m in enumerate(mattes):
+        start, end = m["start_ms"] / 1000, (m["start_ms"] + m["duration_ms"]) / 1000
+        # The window's own frames with its matte (made smaller: scaled up smoothly) as their alpha, back at the window's time.
+        parts.append(f"[src{k}]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS,format=yuva444p[pv{k}]")
+        parts.append(f"[{len(graphics) + 1 + k}:v]scale={width}:{height}:flags=bicubic,format=gray,setpts=PTS-STARTPTS[pm{k}]")
+        parts.append(f"[pv{k}][pm{k}]alphamerge,setpts=PTS+{start:.3f}/TB[person{k}]")
+        parts.append(f"{last}[person{k}]overlay=0:0:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'[p{k}]")
+        last = f"[p{k}]"
+    for i, g in enumerate(graphics[behind:], start=behind + 1):
+        lay(i, g)
     parts.append(f"{last}format=yuv420p[vout]")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "0:a?", "-c:a", "copy", *codec,
             "-movflags", "+faststart", output]
     return cmd
+
+
+def _file_digest(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _video_rate(video: str) -> tuple[int, int, str]:
+    """The clip's frame size and rate ("30000/1001")."""
+    import json
+    from clip_engine.services.media_process import run_media
+    result = run_media(["ffprobe", "-v", "error", *MEDIA_INPUT_OPTIONS, "-select_streams", "v:0", "-show_entries",
+                        "stream=width,height,r_frame_rate", "-of", "json", video], timeout=60, check=True)
+    stream = json.loads(result.stdout)["streams"][0]
+    rate = str(stream.get("r_frame_rate") or "30")
+    if not re.fullmatch(r"\d{1,6}(/\d{1,6})?", rate) or rate.endswith("/0") or rate.startswith("0"):
+        rate = "30"
+    return int(stream["width"]), int(stream["height"]), rate
+
+
+def _prune_mattes(folder: Path, keep: set[str]) -> None:
+    try:
+        files = sorted((p for p in folder.iterdir() if p.is_file() and not p.is_symlink()), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return
+    for path in files[MAX_MATTES:]:
+        if path.name not in keep:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
+def behind_mattes(video: str, graphics: list[dict], cache: Optional[Path] = None) -> list[dict]:
+    """The speaker's matte for each window a graphic plays behind them: [{"path", "start_ms", "duration_ms"}].
+
+    Made only for those windows, and kept in `cache` (default: the graphics folder's mattes/) under the clip's bytes
+    and the window, so the same clip laid again reuses them. Empty (the graphics then go in front) when there is no
+    behind graphic, the cut-out model isn't available, or making a matte fails."""
+    windows = behind_windows(graphics)
+    if not windows:
+        return []
+    from clip_engine.services import segmentation
+    if not segmentation.available():
+        logger.warning("Text behind the speaker was laid in front: background removal is not available")
+        return []
+    try:
+        folder = cache or Path(next(g["path"] for g in graphics if g.get("depth") == "behind")).parent / MATTES_DIR
+        if folder.is_symlink():
+            raise ValueError("Invalid mattes folder")
+        folder.mkdir(mode=0o700, exist_ok=True)
+        width, height, rate = _video_rate(video)
+        digest = _file_digest(video)[:32]
+        out, names = [], set()
+        for a, b in windows:
+            name = f"{digest}-{a}-{b - a}-v{MATTE_VERSION}.mkv"
+            path = folder / name
+            names.add(name)
+            if path.is_symlink():
+                raise ValueError("Invalid matte")
+            if not path.is_file() or path.stat().st_size < 64:
+                partial = folder / f".tmp-{os.getpid()}-{name}"
+                try:
+                    segmentation.write_matte(video, str(partial), width, height, rate, start=a / 1000, duration=(b - a) / 1000,
+                                             max_edge=BEHIND_MATTE_EDGE, refine=True)
+                    os.replace(partial, path)
+                finally:
+                    if partial.exists():
+                        partial.unlink()
+            else:
+                os.utime(path)
+            out.append({"path": str(path), "start_ms": a, "duration_ms": b - a})
+        _prune_mattes(folder, names)
+        return out
+    except Exception as error:  # noqa: BLE001 - the graphics still go on, in front
+        logger.warning(f"Text behind the speaker was laid in front: {type(error).__name__}: {error}")
+        return []
 
 
 def overlay_graphics_file(video: str, graphics: list[dict], width: int, height: int, codec: list[str], run_cmd) -> None:
@@ -89,7 +239,7 @@ def overlay_graphics_file(video: str, graphics: list[dict], width: int, height: 
         return
     output = f"{video}.graphics.mp4"
     try:
-        run_cmd(overlay_command(video, graphics, output, width, height, codec))
+        run_cmd(overlay_command(video, graphics, output, width, height, codec, behind_mattes(video, graphics)))
         os.replace(output, video)
     finally:
         if os.path.exists(output):
@@ -106,11 +256,13 @@ async def overlay_graphics(renderer, video: str, graphics: list[dict]) -> None:
     """Replace `video` with a copy that has the graphics laid over it."""
     if not graphics:
         return
+    import asyncio
     width, height = await renderer._get_video_dimensions(video)
     fps = await renderer._probe_fps(video)
+    mattes = await asyncio.to_thread(behind_mattes, video, graphics)
     output = f"{video}.graphics.mp4"
     try:
-        await renderer._run_cmd(overlay_command(video, graphics, output, width, height, renderer._video_codec_args(width, height, fps)))
+        await renderer._run_cmd(overlay_command(video, graphics, output, width, height, renderer._video_codec_args(width, height, fps), mattes))
         os.replace(output, video)
     finally:
         if os.path.exists(output):

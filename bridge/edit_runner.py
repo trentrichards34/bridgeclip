@@ -189,7 +189,8 @@ def parse_request(raw):
     # Motion graphics main drew (in the run's .graphics/reel/), each starting as its word is said.
     graphics = raw.get("graphics") or []
     if not isinstance(graphics, list) or len(graphics) > 8 or any(
-            not isinstance(g, dict) or set(g) != {"file", "word", "duration_ms"} or not isinstance(g.get("file"), str)
+            not isinstance(g, dict) or not {"file", "word", "duration_ms"} <= set(g) <= {"file", "word", "duration_ms", "depth"}
+            or g.get("depth", "behind") != "behind" or not isinstance(g.get("file"), str)
             or not re.fullmatch(r"[a-f0-9]{64}\.mov", g["file"]) or type(g.get("word")) is not int or not 0 <= g["word"] < len(words)
             or type(g.get("duration_ms")) is not int or not 400 <= g["duration_ms"] <= 8000 for g in graphics):
         raise ValueError("Invalid graphics")

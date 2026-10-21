@@ -11,8 +11,8 @@ import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes } from 'lucide-react'
 import type { MountedGraphic } from '../graphics/templates'
 import {
   GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
-  clampGraphicMs, fitGraphicInCut, graphicClashes, graphicCutFit, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, newGraphic, removeGraphic, templateInfo, templateItems, updateGraphic, withGraphic,
-  type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId
+  bigWordsOptions, clampGraphicMs, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, newGraphic, removeGraphic, templateInfo, templateItems, updateGraphic, withGraphic,
+  MAX_BIG_WORDS, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId
 } from '../../shared/motion-graphics'
 import { GRAPHIC_DEFAULT_COLOR, graphicSpec, graphicStyle, outputSize } from '../../shared/graphic-layout'
 import type { CandidateEdit, EditorProject } from '../../shared/clip-editor'
@@ -22,6 +22,7 @@ import { getApi } from '../lib/ipc'
 import { Button } from './ui/Button'
 import { Segmented } from './ui/Segmented'
 import { Select } from './ui/Select'
+import { Switch } from './ui/Switch'
 
 /** Where a graphic's picture lives in the run (copied there by main). */
 export function graphicImageUrl(outputDir: string, name: string | undefined): string | undefined {
@@ -89,14 +90,18 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir }:
     return [{ g, spec, local }]
   })
   if (!bounds.width || !shown.length) return null
-  return <div className="editor-graphics-overlay" style={bounds} aria-hidden>
-    {shown.map(({ g, spec, local }) => <GraphicView key={g.id} spec={spec} time={local} width={bounds.width} />)}
+  // The preview can't cut the speaker out: a graphic set behind them shows in front, with a note.
+  const behind = shown.some(({ g }) => graphicDepth(g) === 'behind')
+  return <div className="editor-graphics-overlay" style={bounds}>
+    <div aria-hidden>{shown.map(({ g, spec, local }) => <GraphicView key={g.id} spec={spec} time={local} width={bounds.width} />)}</div>
+    {behind && <span className="editor-graphic-depth-badge" title="This preview shows the words in front. The exported clip puts them behind you.">Behind you in the export</span>}
   </div>
 }
 
 export const SHORT: Record<GraphicTemplateId, string> = {
   stat: 'Stat', title: 'Title', list: 'List', lower_third: 'Name', logo: 'Logo', before_after: 'Before/after', checklist: 'Checklist', quote: 'Quote', highlight: 'Arrow/circle',
-  statement: 'Statement', sticky_notes: 'Notes', strike_list: 'Crossed out', browser_frame: 'Browser', icon_pop: 'Icons', headline_pill: 'Headline', comment_cta: 'Comment'
+  statement: 'Statement', sticky_notes: 'Notes', strike_list: 'Crossed out', browser_frame: 'Browser', icon_pop: 'Icons', headline_pill: 'Headline', comment_cta: 'Comment',
+  big_words: 'Big words'
 }
 export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): string {
   const f = g.fields
@@ -197,7 +202,8 @@ export const SAMPLES: Record<GraphicTemplateId, Record<string, string>> = {
   highlight: { shape: 'circle', x: '0.5', y: '0.45' }, statement: { text: 'Your big idea', accent: 'idea', subline: 'A short line under it' },
   sticky_notes: { items: 'First note\nSecond note' }, strike_list: { items: 'Old way\nOther old way', final: 'The better way', accent: 'better way' },
   browser_frame: { domain: 'yoursite.com', title: 'Your page headline', accent: 'headline' }, icon_pop: { items: 'Email\nVideo\nChat', icons: 'mail\nvideo\nmessage' },
-  headline_pill: { text: 'Your first line', phrase: 'Key words' }, comment_cta: { keyword: 'WORD' }
+  headline_pill: { text: 'Your first line', phrase: 'Key words' }, comment_cta: { keyword: 'WORD' },
+  big_words: { text: 'Big words', style: 'mixed' }
 }
 
 const NUMBER_WORDS = /[$€£]?\d[\d,]*(?:\.\d+)?\s?(?:%|percent\b|[kKmMxX]\b|thousand\b|million\b|billion\b|hours?\b|days?\b|minutes?\b|years?\b)?/
@@ -206,6 +212,7 @@ export function wordsAtPlayhead(template: GraphicTemplateId, line: string | unde
   const text = (line ?? '').replace(/\s+/g, ' ').trim()
   if (!text) return {}
   if (template === 'title') return { text: text.split(' ').slice(0, 6).join(' ').replace(/[,.;:!?]+$/, '') }
+  if (template === 'big_words') return { text: text.split(' ').slice(0, 2).join(' ').replace(/[,.;:!?]+$/, '') }
   if (template === 'quote') return { text: text.slice(0, MAX_GRAPHIC_FIELD_CHARS) }
   if (template === 'stat') { const n = NUMBER_WORDS.exec(text); return n ? { value: n[0].trim() } : {} }
   return {}
@@ -216,19 +223,38 @@ export const FIELD_LABELS: Record<string, string> = { value: 'Number', label: 'L
 /** Per-template field labels where the general one doesn't fit. */
 const TEMPLATE_FIELD_LABELS: Partial<Record<GraphicTemplateId, Record<string, string>>> = {
   sticky_notes: { items: 'Notes (one per line, up to 3)' }, strike_list: { items: 'Crossed-out items (one per line, up to 4)' },
-  icon_pop: { items: 'Labels (one per line, up to 4)' }, headline_pill: { text: 'First line' }, browser_frame: { title: 'Headline (when there’s no picture)' }
+  icon_pop: { items: 'Labels (one per line, up to 4)' }, headline_pill: { text: 'First line' }, browser_frame: { title: 'Headline (when there’s no picture)' },
+  big_words: { text: `Words (up to ${MAX_BIG_WORDS})` }
 }
 /** Hints under a field. */
 const FIELD_HINTS: Partial<Record<GraphicTemplateId, Record<string, string>>> = {
   statement: { accent: 'Words from the statement, drawn in italics with a marker. Empty: the last word.' },
   strike_list: { accent: 'Words from the last line, circled. Empty: the last word.' },
   browser_frame: { accent: 'Words from the headline, with a marker.', highlights: 'One box per line: across, down, width, height (0 to 1 of the picture), then the second it shows. For example: 0.1, 0.3, 0.6, 0.08, 1.5' },
-  comment_cta: { lead: 'Empty: “Comment”.' }
+  comment_cta: { lead: 'Empty: “Comment”.' },
+  big_words: { text: 'Use words you say here. Each line fills the width; press Enter to choose where a new line starts.' }
 }
 export const fieldLabel = (template: GraphicTemplateId, key: string): string => TEMPLATE_FIELD_LABELS[template]?.[key] ?? FIELD_LABELS[key] ?? key
 const ICON_LABELS: Record<string, string> = { message: 'Chat', phone: 'Phone', file: 'Document', chart: 'Bar chart', trending: 'Trending up', dollar: 'Money', cart: 'Shopping cart', card: 'Credit card', bot: 'Robot', book: 'Book', idea: 'Light bulb', dashboard: 'Dashboard' }
 const ICON_OPTIONS = [{ value: '', label: 'Letter' }, ...GRAPHIC_ICONS.map((name) => ({ value: name, label: ICON_LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1) }))]
 const SIZE_OPTIONS: { value: GraphicSize; label: string }[] = [{ value: 'compact', label: 'Small' }, { value: 'card', label: 'Card' }, { value: 'stage', label: 'Stage' }]
+const BIG_STYLE_OPTIONS: { value: BigWordsStyle; label: string }[] = [{ value: 'serif', label: 'Serif' }, { value: 'sans', label: 'Bold' }, { value: 'mixed', label: 'Mixed' }]
+const BIG_SIDE_OPTIONS: { value: 'across' | 'left' | 'right'; label: string }[] = [{ value: 'across', label: 'Across' }, { value: 'left', label: 'Left side' }, { value: 'right', label: 'Right side' }]
+const BIG_MOTION_OPTIONS: { value: BigWordsMotion; label: string }[] = [{ value: 'scale', label: 'Scale in' }, { value: 'reveal', label: 'Slide up' }]
+
+/** Big words' look: style, across or along a side, and how they come in. */
+export function BigWordsFields({ fields, onField }: { fields: Record<string, string>; onField: (key: string, value: string) => void }): React.JSX.Element {
+  const options = bigWordsOptions(fields)
+  return <div className="space-y-2">
+    <div className="space-y-1"><p className="editor-label">Style</p>
+      <Segmented<BigWordsStyle> label="Big words style" size="sm" value={options.style} onChange={(style) => onField('style', style)} options={BIG_STYLE_OPTIONS} />
+      <p className="text-2xs text-ink-subtle">{options.style === 'serif' ? 'White serif type.' : options.style === 'sans' ? 'Bold condensed capitals.' : 'Line 1 in italic serif, line 2 in bold capitals in your color.'}</p></div>
+    <div className="space-y-1"><p className="editor-label">Direction</p>
+      <Segmented<'across' | 'left' | 'right'> label="Big words direction" size="sm" value={options.vertical ?? 'across'} onChange={(side) => onField('vertical', side === 'across' ? '' : side)} options={BIG_SIDE_OPTIONS} /></div>
+    <div className="space-y-1"><p className="editor-label">Animation</p>
+      <Segmented<BigWordsMotion> label="Big words animation" size="sm" value={options.motion} onChange={(motion) => onField('motion', motion)} options={BIG_MOTION_OPTIONS} /></div>
+  </div>
+}
 
 /** The Icon row's icon for each label (generic icons only; a brand's logo is an image the member adds). */
 export function IconFields({ fields, onField, imageNote = true }: { fields: Record<string, string>; onField: (key: string, value: string) => void; imageNote?: boolean }): React.JSX.Element | null {
@@ -304,21 +330,26 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
         <p className="text-2xs text-ink-subtle">PNG, JPEG or WebP, up to 12 MB. It’s copied into this run.{g.template === 'browser_frame' ? ' A tall screenshot scrolls slowly inside the window.' : g.template === 'icon_pop' ? ' It shows in the first tile.' : ''}</p>
         {imageError && <p role="alert" className="text-2xs text-danger">{imageError}</p>}
       </div>}
-      {templateInfo(g.template).fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
+      {templateInfo(g.template).fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'style', 'vertical', 'motion'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
         {key === 'items' || key === 'text' || key === 'highlights' ? <textarea rows={key === 'items' ? GRAPHIC_ITEM_LIMITS[g.template] ?? MAX_GRAPHIC_ITEMS : key === 'highlights' ? 2 : 3} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`} />
           : <input className="editor-graphic-input" maxLength={MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`}
             placeholder={key === 'value' ? 'e.g. the number said in the clip' : key === 'domain' ? 'e.g. yoursite.com' : undefined} />}
         {FIELD_HINTS[g.template]?.[key] && <span className="block text-2xs text-ink-subtle">{FIELD_HINTS[g.template]?.[key]}</span>}
       </label>)}
       {g.template === 'icon_pop' && <IconFields fields={g.fields} onField={field} />}
+      {g.template === 'big_words' && <BigWordsFields fields={g.fields} onField={field} />}
+      {graphicCanGoBehind(g.template) && <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2 text-xs"><span>Behind me</span>
+          <Switch label="Behind me" checked={graphicDepth(g) === 'behind'} onChange={(on) => onChange(updateGraphic(candidate, g.id, { depth: on ? 'behind' : 'front' }))} /></div>
+        <p className="text-2xs text-ink-subtle">{graphicDepth(g) === 'behind' ? 'In the export you stand in front of it: you’re cut out of the video and laid back over it. The preview here shows it in front.' : 'It sits over the video, in front of you.'}</p></div>}
       {g.template === 'stat' && <p className="text-2xs text-ink-subtle">The number counts up. Use one from the clip, like “$1,200/month”, “15 billion” or “25%”.</p>}
       {g.template === 'highlight' ? <div className="space-y-2">
         <Segmented label="Shape" size="sm" value={highlightPoint(g.fields).shape} onChange={(shape) => field('shape', shape)} options={[{ value: 'circle', label: 'Circle' }, { value: 'arrow', label: 'Arrow' }]} />
         {(['x', 'y'] as const).map((axis) => <label key={axis} className="editor-label">{axis === 'x' ? 'Across' : 'Down'} <span className="float-right">{Math.round(highlightPoint(g.fields)[axis] * 100)}%</span>
           <input type="range" min={0} max={100} step={1} aria-label={axis === 'x' ? 'Point across' : 'Point down'} value={Math.round(highlightPoint(g.fields)[axis] * 100)} onChange={(e) => field(axis, String(Number(e.target.value) / 100))} /></label>)}
-      </div> : <div className="space-y-1"><p className="editor-label">Size</p>
-        <Segmented<GraphicSize> label="Graphic size" size="sm" value={g.size ?? 'card'} onChange={(size) => onChange(updateGraphic(candidate, g.id, { size }))} options={SIZE_OPTIONS} />
-        {g.size === 'stage' ? <p className="text-2xs text-ink-subtle">Stage: a big card over the top half of the video. Keep it short, so the speaker shows again.</p> : <>
+      </div> : <div className="space-y-1">{g.template !== 'big_words' && <><p className="editor-label">Size</p>
+        <Segmented<GraphicSize> label="Graphic size" size="sm" value={g.size ?? 'card'} onChange={(size) => onChange(updateGraphic(candidate, g.id, { size }))} options={SIZE_OPTIONS} /></>}
+        {g.size === 'stage' && g.template !== 'big_words' ? <p className="text-2xs text-ink-subtle">Stage: a big card over the top half of the video. Keep it short, so the speaker shows again.</p> : <>
           <p className="editor-label pt-1">Place</p>
           <Segmented<GraphicPlacement> label="Graphic placement" size="sm" value={g.placement} onChange={(placement) => onChange(updateGraphic(candidate, g.id, { placement }))}
             options={[{ value: 'top', label: 'Top' }, { value: 'middle', label: 'Middle' }, { value: 'bottom', label: 'Bottom' }]} /></>}

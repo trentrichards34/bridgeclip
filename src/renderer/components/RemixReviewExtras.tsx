@@ -68,7 +68,7 @@ export function RemixGraphicsSection({ status, draft, text, onGraphics, partMs, 
       for (const [key, value] of Object.entries(change.fields ?? {})) fields[key] = value
       if (change.fields?.color === '') delete fields.color
       return fitRemixGraphic({ ...g, ...(change.at !== undefined ? { at_ms: Math.round(change.at * 1000) } : {}), ...(change.duration_ms !== undefined ? { duration_ms: change.duration_ms } : {}),
-        ...(change.placement ? { placement: change.placement } : {}), fields }, format, partMs)
+        ...(change.placement ? { placement: change.placement } : {}), ...(change.depth ? { depth: change.depth } : {}), fields }, format, partMs)
     }).sort((a, b) => a.at_ms - b.at_ms))
   }
   const react = format === 'react_thoughts'

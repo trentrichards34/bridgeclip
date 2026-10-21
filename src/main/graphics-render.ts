@@ -19,7 +19,7 @@ import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, 
 import { extname, join } from 'path'
 import { BrowserWindow, session, type BrowserWindowConstructorOptions, type Session } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import { GRAPHIC_FPS, GRAPHICS_VERSION, graphicHasContent, graphicUsesImage, graphicWindow, type GraphicRenderSpec, type GraphicSize } from '../shared/motion-graphics'
+import { GRAPHIC_FPS, GRAPHICS_VERSION, graphicDepth, graphicHasContent, graphicUsesImage, graphicWindow, type GraphicRenderSpec, type GraphicSize } from '../shared/motion-graphics'
 import { graphicSpec } from '../shared/graphic-layout'
 import type { EditorCandidate, EditorProject } from '../shared/clip-editor'
 import { resolveBinary } from './tools'
@@ -36,8 +36,9 @@ const IMAGE_FILE = /^[a-f0-9]{16}\.(png|jpg|webp)$/
 /**
  * One rendered graphic for the engine: a file in the run's .graphics/ folder and its OUTPUT-time window.
  * `size`: 'compact' or 'stage' when the graphic isn't the usual card (a stage scene can make room for a stage-size one).
+ * `depth`: 'behind' when the engine lays the speaker back over it (absent: in front).
  */
-export interface RenderedGraphic { id: string; file: string; start_ms: number; duration_ms: number; size?: GraphicSize }
+export interface RenderedGraphic { id: string; file: string; start_ms: number; duration_ms: number; size?: GraphicSize; depth?: 'behind' }
 
 /** The picture type from its first bytes (PNG, JPEG or WebP), or null. */
 export function graphicImageKind(bytes: Uint8Array): 'png' | 'jpg' | 'webp' | null {
@@ -216,7 +217,7 @@ export function candidateGraphicJobs(run: string, project: EditorProject, candid
     if (!graphicHasContent(g)) continue
     const spec = graphicSpec(project, candidate, g, extra), window = graphicWindow(candidate, g)
     if (!spec || !window) continue
-    const job = graphicJob(run, g.id, spec, window, g.fields.image)
+    const job = graphicJob(run, g.id, spec, window, g.fields.image, graphicDepth(g))
     if (job) jobs.push(job)
   }
   return jobs
@@ -227,8 +228,8 @@ let makeRenderer: RendererFactory = openGraphicRenderer
 /** Tests swap the offscreen window for a fake. */
 export function setGraphicRendererFactory(factory: RendererFactory | null): void { makeRenderer = factory ?? openGraphicRenderer }
 
-/** One graphic to draw: what it shows, its cache name and where it plays (output ms). */
-export interface GraphicJob { id: string; spec: GraphicRenderSpec; key: string; start_ms: number; duration_ms: number }
+/** One graphic to draw: what it shows, its cache name, where it plays (output ms) and whether it sits behind the speaker. */
+export interface GraphicJob { id: string; spec: GraphicRenderSpec; key: string; start_ms: number; duration_ms: number; depth?: 'behind' }
 
 /** Renders made outside the clip editor (Edit my recording, Remix) are kept in .graphics/reel/: the editor's sweep never removes them. */
 export const REEL_GRAPHICS_DIR = 'reel'
@@ -237,7 +238,7 @@ export const REEL_GRAPHICS_DIR = 'reel'
  * A job for a graphic drawn from `spec`. Its picture (Logo pop, Browser window, Icon row) is loaded from the run;
  * null when Logo pop's is missing, or when another template's picture is missing and it has nothing else to show.
  */
-export function graphicJob(run: string, id: string, spec: GraphicRenderSpec, window: { start_ms: number; duration_ms: number }, image?: string): GraphicJob | null {
+export function graphicJob(run: string, id: string, spec: GraphicRenderSpec, window: { start_ms: number; duration_ms: number }, image?: string, depth?: 'front' | 'behind'): GraphicJob | null {
   let imageHash: string | undefined
   if (graphicUsesImage(spec.template) && (image || spec.template === 'logo')) {
     const data = graphicImageData(run, image)
@@ -246,7 +247,8 @@ export function graphicJob(run: string, id: string, spec: GraphicRenderSpec, win
       imageHash = data.hash
     } else if (spec.template === 'logo' || !graphicHasContent({ template: spec.template, fields: spec.fields })) return null
   }
-  return { id, spec, key: graphicCacheKey(spec, imageHash), start_ms: window.start_ms, duration_ms: window.duration_ms }
+  // Depth doesn't change the render's pixels (the engine does the layering), so it isn't part of the cache name.
+  return { id, spec, key: graphicCacheKey(spec, imageHash), start_ms: window.start_ms, duration_ms: window.duration_ms, ...(depth === 'behind' ? { depth } : {}) }
 }
 
 /**
@@ -277,7 +279,7 @@ export async function renderGraphicJobs(run: string, jobs: GraphicJob[], cancell
         } finally { try { unlinkSync(temporary) } catch { /* moved */ } }
         logger.info('graphics.rendered', { template: job.spec.template, ms: Date.now() - started, frames: Math.ceil(job.spec.duration_ms * GRAPHIC_FPS / 1000) })
       }
-      done.push({ id: job.id, file, start_ms: job.start_ms, duration_ms: job.duration_ms, ...(job.spec.size ? { size: job.spec.size } : {}) })
+      done.push({ id: job.id, file, start_ms: job.start_ms, duration_ms: job.duration_ms, ...(job.spec.size ? { size: job.spec.size } : {}), ...(job.depth === 'behind' ? { depth: job.depth } : {}) })
     }
   } finally { renderer?.close() }
   return done

@@ -212,7 +212,7 @@ GRAPHIC_FORMATS = ("pause_react", "moment_take", "clip_then_me", "react_thoughts
 
 
 def parse_graphics(raw, fmt, mode):
-    """Motion graphics on the member's part, drawn by the app: draft id -> [{"file", "at_ms", "duration_ms"}]."""
+    """Motion graphics on the member's part, drawn by the app: draft id -> [{"file", "at_ms", "duration_ms", "depth"?}]."""
     if raw is None:
         return {}
     if mode != "render" or fmt not in GRAPHIC_FORMATS or not isinstance(raw, dict) or len(raw) > MAX_RECORDING_DRAFTS:
@@ -223,7 +223,8 @@ def parse_graphics(raw, fmt, mode):
             raise ValueError("Invalid graphics")
         clean = []
         for g in items:
-            if not isinstance(g, dict) or set(g) != {"file", "at_ms", "duration_ms"} or not isinstance(g.get("file"), str) \
+            if not isinstance(g, dict) or not {"file", "at_ms", "duration_ms"} <= set(g) <= {"file", "at_ms", "duration_ms", "depth"} \
+                    or g.get("depth", "behind") != "behind" or not isinstance(g.get("file"), str) \
                     or not re.fullmatch(r"[a-f0-9]{64}\.mov", g["file"]) or type(g.get("at_ms")) is not int or not 0 <= g["at_ms"] <= 3600 * 1000 \
                     or type(g.get("duration_ms")) is not int or not 400 <= g["duration_ms"] <= 8000:
                 raise ValueError("Invalid graphics")

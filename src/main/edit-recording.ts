@@ -20,7 +20,7 @@ import { IMPORTS_DIR, cleanupImports, extractZipClips, importFolder, type Import
 import { headlineLookForEngine } from '../shared/headline-look'
 import { lookExtrasForEngine } from '../shared/look-extras-engine'
 import { audioForEngine } from './music'
-import { drawableGraphics, editGraphicFrame, reelGraphicSpec } from '../shared/reel-graphics'
+import { drawableGraphics, editGraphicFrame, graphicDepth, reelGraphicSpec } from '../shared/reel-graphics'
 import type { BrandIdentity } from '../shared/remix'
 import { brandMarkForRun, isBrandId, readBrandIdentity } from './brands'
 import { referenceForRun, referencePath } from './reference-image'
@@ -620,7 +620,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
         publish(current, { detail: 'Drawing your graphics', percent: 2 })
         const frame = editGraphicFrame(decisions.hookText, decisions.look)
         const jobs = graphics.flatMap((g): GraphicJob[] => {
-          const job = graphicJob(current.status.folder, g.id, reelGraphicSpec(g, frame, g.duration_ms, decisions.look.headlineLook), { start_ms: 0, duration_ms: g.duration_ms })
+          const job = graphicJob(current.status.folder, g.id, reelGraphicSpec(g, frame, g.duration_ms, decisions.look.headlineLook), { start_ms: 0, duration_ms: g.duration_ms }, undefined, graphicDepth(g))
           return job ? [job] : []
         })
         let drawn
@@ -630,7 +630,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
           throw new Error('Your graphics could not be drawn. Try again, or remove a graphic and make the reel again.')
         }
         if (current.cancelled) throw new Error('Canceled.')
-        Object.assign(config, { graphics: drawn.map((item) => ({ file: item.file, word: graphics.find((g) => g.id === item.id)!.word, duration_ms: item.duration_ms })) })
+        Object.assign(config, { graphics: drawn.map((item) => ({ file: item.file, word: graphics.find((g) => g.id === item.id)!.word, duration_ms: item.duration_ms, ...(item.depth ? { depth: item.depth } : {}) })) })
       }
       const result = await runEngine(config, 2 * 60 * 60_000, (detail, percent) => { if (!current.cancelled) publish(current, { detail, percent }) }, (child) => { current.child = child })
       const path = join(current.status.folder, 'clip_00.mp4')

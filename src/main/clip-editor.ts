@@ -416,7 +416,7 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
           let result: WorkerResult
           try {
             result = await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId,
-              ...(graphics.length ? { graphics: graphics.map(({ file, start_ms, duration_ms, size }) => ({ file, start_ms, duration_ms, ...(size ? { size } : {}) })) } : {}),
+              ...(graphics.length ? { graphics: graphics.map(({ file, start_ms, duration_ms, size, depth }) => ({ file, start_ms, duration_ms, ...(size ? { size } : {}), ...(depth ? { depth } : {}) })) } : {}),
               // Scenes on the finished clip's clock (vertical clips only).
               ...(exporting && session.project.aspect_ratio === '9:16' && outputScenes(candidate).length ? { scenes: outputScenes(candidate) } : {}) })
           } catch (error) {

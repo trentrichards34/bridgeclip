@@ -82,6 +82,11 @@ def test_edit_graphics_start_on_their_words_and_never_during_a_card():
     assert any("came during a card" in w for w in warnings) and any("word was cut" in w for w in warnings)
 
 
+def test_edit_graphics_keep_their_depth_behind():
+    placed = er.place_graphics([{"file": NAME, "word": 3, "duration_ms": 2000, "depth": "behind"}], {3: 1200}, [], 9.5, [])
+    assert placed == [{"file": NAME, "start_ms": 1200, "duration_ms": 2000, "depth": "behind"}]
+
+
 def test_the_edit_runner_checks_the_graphics_it_is_sent():
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "bridge"))
     import edit_runner
@@ -91,9 +96,12 @@ def test_the_edit_runner_checks_the_graphics_it_is_sent():
     good = edit_runner.parse_request({**base, "graphics": [{"file": NAME, "word": 1, "duration_ms": 2000}]})
     assert good["graphics"] == [{"file": NAME, "word": 1, "duration_ms": 2000}]
     for bad in ([{"file": "../x.mov", "word": 1, "duration_ms": 2000}], [{"file": NAME, "word": 3, "duration_ms": 2000}],
-                [{"file": NAME, "word": 1, "duration_ms": 90000}], [{"file": NAME, "word": 1, "duration_ms": 2000, "x": 1}]):
+                [{"file": NAME, "word": 1, "duration_ms": 90000}], [{"file": NAME, "word": 1, "duration_ms": 2000, "x": 1}],
+                [{"file": NAME, "word": 1, "duration_ms": 2000, "depth": "under"}]):
         with pytest.raises(ValueError):
             edit_runner.parse_request({**base, "graphics": bad})
+    behind = edit_runner.parse_request({**base, "graphics": [{"file": NAME, "word": 1, "duration_ms": 2000, "depth": "behind"}]})
+    assert behind["graphics"][0]["depth"] == "behind"
 
 
 def test_the_remix_runner_checks_graphics_and_a_trimmed_take():
@@ -101,7 +109,10 @@ def test_the_remix_runner_checks_graphics_and_a_trimmed_take():
     import remix_runner
     assert remix_runner.parse_graphics({"0": [{"file": NAME, "at_ms": 2000, "duration_ms": 3000}]}, "clip_then_me", "render") == \
         {"0": [{"file": NAME, "at_ms": 2000, "duration_ms": 3000}]}
-    for bad in ({"0": [{"file": NAME, "at_ms": -1, "duration_ms": 3000}]}, {"x": []}, {"0": [{"file": "a.mov", "at_ms": 0, "duration_ms": 3000}]}):
+    assert remix_runner.parse_graphics({"0": [{"file": NAME, "at_ms": 2000, "duration_ms": 3000, "depth": "behind"}]}, "clip_then_me", "render") == \
+        {"0": [{"file": NAME, "at_ms": 2000, "duration_ms": 3000, "depth": "behind"}]}
+    for bad in ({"0": [{"file": NAME, "at_ms": -1, "duration_ms": 3000}]}, {"x": []}, {"0": [{"file": "a.mov", "at_ms": 0, "duration_ms": 3000}]},
+                {"0": [{"file": NAME, "at_ms": 2000, "duration_ms": 3000, "depth": 1}]}):
         with pytest.raises(ValueError):
             remix_runner.parse_graphics(bad, "clip_then_me", "render")
     with pytest.raises(ValueError):

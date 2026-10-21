@@ -236,3 +236,27 @@
 }
 .mg-cta-glow { position: absolute; inset: 0; border-radius: 999px; box-shadow: 0 0 calc(var(--u) * 40) calc(var(--u) * 6) rgba(var(--accent-rgb), .55); opacity: 0; }
 .mg-cta-word { position: relative; display: block; color: var(--on-accent); font-size: calc(var(--u) * var(--cta-size, 110)); line-height: 1.02; white-space: nowrap; }
+
+/* Big words (big-words.ts): huge type set in the scene, no card. Each line's size is set by the template. */
+.mg-big { position: absolute; left: 0; right: 0; display: flex; justify-content: center; align-items: flex-start; }
+.mg-big.middle { align-items: center; }
+.mg-big.bottom { align-items: flex-end; }
+.mg-big-drift { display: flex; flex-direction: column; align-items: center; transform-origin: 50% 50%; }
+.mg-big-line {
+  display: block; white-space: nowrap; color: #ffffff; line-height: .9; padding: 0 .04em;
+  text-shadow: 0 .02em .14em rgba(0, 0, 0, .28);
+}
+.mg-big.reveal .mg-big-line { overflow: hidden; padding-top: .1em; padding-bottom: .1em; margin: -.1em 0; }
+.mg-big-inner { display: inline-block; white-space: nowrap; vertical-align: top; }
+.mg-big-w { display: inline-block; white-space: pre; vertical-align: top; transform-origin: 50% 60%; }
+.mg-big-line.serif { font-family: 'MG Instrument Serif', Georgia, serif; font-style: normal; font-weight: 400; letter-spacing: -.02em; line-height: .8; }
+.mg-big-line.serif-italic { font-family: 'MG Instrument Serif', Georgia, serif; font-style: italic; font-weight: 400; letter-spacing: -.015em; line-height: .8; }
+.mg-big-line.sans, .mg-big-line.accent { font-family: 'MG Anton', Impact, sans-serif; text-transform: uppercase; letter-spacing: .005em; line-height: .92; }
+.mg-big-line.accent { color: var(--accent); }
+/* Along a side: the words run up the left edge or down the right one. */
+.mg-big.vertical { align-items: center; }
+.mg-big.vertical .mg-big-drift { position: absolute; top: 0; bottom: 0; flex-direction: row; align-items: center; }
+.mg-big.vertical.left .mg-big-drift { left: calc(var(--u) * 28); }
+.mg-big.vertical.right .mg-big-drift { right: calc(var(--u) * 28); }
+.mg-big.vertical .mg-big-line { writing-mode: vertical-rl; }
+.mg-big.vertical.left .mg-big-line { transform: rotate(180deg); }
