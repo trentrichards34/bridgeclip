@@ -130,5 +130,7 @@ test('a stat graphic added in the editor saves, undoes, previews live and is bak
   await page.locator('.editor-graphic-block.partly').first().waitFor()
   await page.getByRole('note').filter({ hasText: 'Part of it is outside the cut' }).waitFor()
   if (shots) await page.screenshot({ path: path.join(shots, 'editor-graphics-warnings.png') })
+  // Let the trim save, so closing the app doesn't stop on the unsaved-changes prompt.
+  await savedWhen((p) => p.candidates[0].ranges[p.candidates[0].ranges.length - 1][1] === 9000)
   assert.deepEqual(errors, [])
 })
