@@ -61,8 +61,8 @@ test('a stat graphic added in the editor saves, undoes, previews live and is bak
   // The Graphics row → template picker (live previews) → a stat counter at the playhead (the clip's start).
   await page.getByRole('button', { name: 'Add graphic at playhead', exact: true }).click()
   await page.getByRole('region', { name: 'Choose a graphic' }).waitFor()
-  assert.equal(await page.locator('.editor-graphic-tile').count(), 9)
-  await page.waitForFunction(() => document.querySelectorAll('.editor-graphic-tile .mg-root').length === 9)
+  assert.equal(await page.locator('.editor-graphic-tile').count(), 16)
+  await page.waitForFunction(() => document.querySelectorAll('.editor-graphic-tile .mg-root').length === 16)
   const shots = process.env.BRIDGECLIP_E2E_SHOTS
   if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, 'editor-graphic-picker.png') }) }
   await page.getByRole('button', { name: 'Add Stat counter', exact: true }).click()

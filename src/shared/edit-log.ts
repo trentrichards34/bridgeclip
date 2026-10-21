@@ -97,6 +97,13 @@ export function graphicPhrase(g: Pick<EditorGraphic, 'template' | 'fields'>): st
     case 'before_after': return 'before/after'
     case 'logo': return 'logo'
     case 'highlight': return f.shape === 'arrow' ? 'arrow' : 'circle'
+    case 'statement': return f.text?.trim() ? `“${short(f.text, 24)}” statement` : 'statement'
+    case 'sticky_notes': return 'sticky notes'
+    case 'strike_list': return 'crossed-out list'
+    case 'browser_frame': return f.domain?.trim() ? `${short(f.domain, 24)} browser window` : 'browser window'
+    case 'icon_pop': return 'icon row'
+    case 'headline_pill': return 'headline'
+    case 'comment_cta': return f.keyword?.trim() ? `“${short(f.keyword, 24)}” comment prompt` : 'comment prompt'
   }
 }
 

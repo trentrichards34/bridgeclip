@@ -19,7 +19,7 @@ import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, 
 import { extname, join } from 'path'
 import { BrowserWindow, session, type BrowserWindowConstructorOptions, type Session } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import { GRAPHIC_FPS, GRAPHICS_VERSION, graphicHasContent, graphicWindow, type GraphicRenderSpec } from '../shared/motion-graphics'
+import { GRAPHIC_FPS, GRAPHICS_VERSION, graphicHasContent, graphicUsesImage, graphicWindow, type GraphicRenderSpec, type GraphicSize } from '../shared/motion-graphics'
 import { graphicSpec } from '../shared/graphic-layout'
 import type { EditorCandidate, EditorProject } from '../shared/clip-editor'
 import { resolveBinary } from './tools'
@@ -33,8 +33,11 @@ export const GRAPHICS_PARTITION = 'graphics-render'
 const RENDER_FILE = /^[a-f0-9]{64}\.mov$/
 const IMAGE_FILE = /^[a-f0-9]{16}\.(png|jpg|webp)$/
 
-/** One rendered graphic for the engine: a file in the run's .graphics/ folder and its OUTPUT-time window. */
-export interface RenderedGraphic { id: string; file: string; start_ms: number; duration_ms: number }
+/**
+ * One rendered graphic for the engine: a file in the run's .graphics/ folder and its OUTPUT-time window.
+ * `size`: 'compact' or 'stage' when the graphic isn't the usual card (a stage scene can make room for a stage-size one).
+ */
+export interface RenderedGraphic { id: string; file: string; start_ms: number; duration_ms: number; size?: GraphicSize }
 
 /** The picture type from its first bytes (PNG, JPEG or WebP), or null. */
 export function graphicImageKind(bytes: Uint8Array): 'png' | 'jpg' | 'webp' | null {
@@ -230,14 +233,18 @@ export interface GraphicJob { id: string; spec: GraphicRenderSpec; key: string; 
 /** Renders made outside the clip editor (Edit my recording, Remix) are kept in .graphics/reel/: the editor's sweep never removes them. */
 export const REEL_GRAPHICS_DIR = 'reel'
 
-/** A job for a graphic drawn from `spec` (Logo pop: its picture is loaded from the run; null when it's missing). */
+/**
+ * A job for a graphic drawn from `spec`. Its picture (Logo pop, Browser window, Icon row) is loaded from the run;
+ * null when Logo pop's is missing, or when another template's picture is missing and it has nothing else to show.
+ */
 export function graphicJob(run: string, id: string, spec: GraphicRenderSpec, window: { start_ms: number; duration_ms: number }, image?: string): GraphicJob | null {
   let imageHash: string | undefined
-  if (spec.template === 'logo') {
+  if (graphicUsesImage(spec.template) && (image || spec.template === 'logo')) {
     const data = graphicImageData(run, image)
-    if (!data) return null
-    spec = { ...spec, image: data.url }
-    imageHash = data.hash
+    if (data) {
+      spec = { ...spec, image: data.url }
+      imageHash = data.hash
+    } else if (spec.template === 'logo' || !graphicHasContent({ template: spec.template, fields: spec.fields })) return null
   }
   return { id, spec, key: graphicCacheKey(spec, imageHash), start_ms: window.start_ms, duration_ms: window.duration_ms }
 }
@@ -270,7 +277,7 @@ export async function renderGraphicJobs(run: string, jobs: GraphicJob[], cancell
         } finally { try { unlinkSync(temporary) } catch { /* moved */ } }
         logger.info('graphics.rendered', { template: job.spec.template, ms: Date.now() - started, frames: Math.ceil(job.spec.duration_ms * GRAPHIC_FPS / 1000) })
       }
-      done.push({ id: job.id, file, start_ms: job.start_ms, duration_ms: job.duration_ms })
+      done.push({ id: job.id, file, start_ms: job.start_ms, duration_ms: job.duration_ms, ...(job.spec.size ? { size: job.spec.size } : {}) })
     }
   } finally { renderer?.close() }
   return done

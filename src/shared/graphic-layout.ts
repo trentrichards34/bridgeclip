@@ -12,7 +12,7 @@
  */
 import { sceneAt, type CandidateEdit, type EditorProject } from './clip-editor'
 import { HEADLINE_FONTS, isHexColor } from './headline-look'
-import { graphicWindow, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec } from './motion-graphics'
+import { graphicWindow, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize } from './motion-graphics'
 
 /** The editor's default brand color for graphics (the engine's cards use the same calm blue). */
 export const GRAPHIC_DEFAULT_COLOR = '#2F5BFF'
@@ -59,10 +59,19 @@ export interface GraphicFrame {
 /** Share of the height a corner handle takes, with its margin (brand_mark.py: about 4% tall). */
 const HANDLE_SHARE = .06
 
-/** The vertical band (fractions of the height) a graphic with this placement sits in. */
-export function graphicBox(placement: GraphicPlacement, frame: GraphicFrame): { top: number; bottom: number } {
+/** On a 9:16 frame a stage-size graphic ends here: the top ~55% is the stage, the speaker sits below. */
+export const STAGE_BOTTOM = .56
+
+/**
+ * The vertical band (fractions of the height) a graphic with this placement
+ * sits in. `size`: 'compact' is a shorter band, 'card' (or unset) the usual
+ * one; 'stage' ignores the placement and takes the top of the frame down to
+ * STAGE_BOTTOM on 9:16 (under the hook, clear of the captions), or the
+ * largest free space on other frames.
+ */
+export function graphicBox(placement: GraphicPlacement, frame: GraphicFrame, size?: GraphicSize): { top: number; bottom: number } {
   const wide = frame.aspect === '16:9'
-  const h = wide ? .4 : frame.aspect === '1:1' ? .34 : .27
+  const h = (wide ? .4 : frame.aspect === '1:1' ? .34 : .27) * (size === 'compact' ? .78 : 1)
   // Platform buttons and captions sit along the very top and bottom of the screen.
   const topSafe = (frame.hook ? frame.hook + .02 : wide ? .06 : .08) + (frame.handle === 'top' ? HANDLE_SHARE : 0)
   const bottomSafe = (wide ? .94 : .86) - (frame.handle === 'bottom' ? HANDLE_SHARE : 0)
@@ -82,6 +91,13 @@ export function graphicBox(placement: GraphicPlacement, frame: GraphicFrame): { 
   if (!free.length) free = [[topSafe, Math.max(topSafe + .1, bottomSafe)]]
   const big = free.filter(([a, b]) => b - a >= Math.min(h, .15))
   const pool = big.length ? big : free
+  if (size === 'stage') {
+    if (frame.aspect !== '9:16') { const [a, b] = [...pool].sort((x, y) => (y[1] - y[0]) - (x[1] - x[0]))[0]; return { top: a, bottom: b } }
+    // The free space that overlaps the stage most, cut at the stage's bottom (never shorter than 30% of the frame when there is room).
+    const span = ([a, b]: [number, number]): number => Math.min(b, STAGE_BOTTOM) - Math.max(a, 0)
+    const [a, b] = [...pool].sort((x, y) => span(y) - span(x))[0]
+    return { top: a, bottom: Math.min(b, Math.max(STAGE_BOTTOM, a + .3)) }
+  }
   if (placement === 'top') { const [a, b] = pool[0]; return { top: a, bottom: Math.min(b, a + h) } }
   if (placement === 'bottom') { const [a, b] = pool[pool.length - 1]; return { top: Math.max(a, b - h), bottom: b } }
   // Middle: centered in the free space that overlaps the frame's middle most.
@@ -127,7 +143,7 @@ function faceCover(box: { top: number; bottom: number }, face: { top: number; bo
  */
 export function placementAvoidingFace(project: Pick<EditorProject, 'aspect_ratio' | 'width' | 'height' | 'automatic'>, candidate: CandidateEdit, graphic: EditorGraphic,
   face: readonly [number, number, number, number] | null | undefined, extra: { top?: number } = {}): GraphicPlacement {
-  if (!face || graphic.template === 'highlight') return graphic.placement
+  if (!face || graphic.template === 'highlight' || graphic.size === 'stage') return graphic.placement
   const span = { top: face[1], bottom: face[1] + face[3] }
   if (!(span.bottom > span.top)) return graphic.placement
   const at = Math.max(graphic.at_ms, candidate.ranges[0][0])
@@ -151,5 +167,6 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
   const fields = { ...graphic.fields }
   delete fields.image
   delete fields.color
-  return { template: graphic.template, fields, width, height, duration_ms: window.duration_ms, box: graphicBox(graphic.placement, frame), placement: graphic.placement, ...graphicStyle(candidate, graphic) }
+  return { template: graphic.template, fields, width, height, duration_ms: window.duration_ms, box: graphicBox(graphic.placement, frame, graphic.size), placement: graphic.placement,
+    ...graphicStyle(candidate, graphic), ...(graphic.size && graphic.size !== 'card' ? { size: graphic.size } : {}) }
 }

@@ -22,13 +22,16 @@ REEL_DIR = "reel"
 RENDER_FILE = re.compile(r"[a-f0-9]{64}\.mov")
 MAX_GRAPHICS = 12
 MIN_MS = 100
+# How big main drew a graphic: absent is the usual card; "stage" takes the top ~55% of a 9:16 frame.
+SIZES = ("compact", "card", "stage")
 
 
 def checked_graphics(run: Path, raw: object, clip_ms: int, sub: str = "") -> list[dict]:
     """The graphics main asked for, validated: known render files in the run's .graphics/ folder (or `sub` in it),
     inside the clip.
 
-    A graphic past the clip's end is dropped; one running over it is trimmed.
+    A graphic past the clip's end is dropped; one running over it is trimmed. An optional "size" ("compact",
+    "card" or "stage") is kept so a stage scene can make room for a stage-size graphic.
     """
     if raw is None:
         return []
@@ -52,9 +55,12 @@ def checked_graphics(run: Path, raw: object, clip_ms: int, sub: str = "") -> lis
         path = folder / name
         if path.is_symlink() or not path.is_file():
             raise ValueError("A graphic's render is missing")
+        size = item.get("size")
+        if size is not None and size not in SIZES:
+            raise ValueError("Invalid graphic size")
         if start >= clip_ms - MIN_MS:
             continue
-        out.append({"path": str(path), "start_ms": start, "duration_ms": min(length, clip_ms - start)})
+        out.append({"path": str(path), "start_ms": start, "duration_ms": min(length, clip_ms - start), **({"size": size} if size else {})})
     return sorted(out, key=lambda g: g["start_ms"])
 
 

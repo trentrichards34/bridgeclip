@@ -10,9 +10,9 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes } from 'lucide-react'
 import type { MountedGraphic } from '../graphics/templates'
 import {
-  GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
-  clampGraphicMs, fitGraphicInCut, graphicClashes, graphicCutFit, graphicHasContent, placeInFreeBand, graphicLocalMs, highlightPoint, newGraphic, removeGraphic, templateInfo, updateGraphic, withGraphic,
-  type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId
+  GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
+  clampGraphicMs, fitGraphicInCut, graphicClashes, graphicCutFit, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, newGraphic, removeGraphic, templateInfo, templateItems, updateGraphic, withGraphic,
+  type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId
 } from '../../shared/motion-graphics'
 import { GRAPHIC_DEFAULT_COLOR, graphicSpec, graphicStyle, outputSize } from '../../shared/graphic-layout'
 import type { CandidateEdit, EditorProject } from '../../shared/clip-editor'
@@ -21,6 +21,7 @@ import { cn, localFileUrl } from '../lib/utils'
 import { getApi } from '../lib/ipc'
 import { Button } from './ui/Button'
 import { Segmented } from './ui/Segmented'
+import { Select } from './ui/Select'
 
 /** Where a graphic's picture lives in the run (copied there by main). */
 export function graphicImageUrl(outputDir: string, name: string | undefined): string | undefined {
@@ -84,7 +85,7 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir }:
     if (local === null || !graphicHasContent(g)) return []
     const spec = graphicSpec(project, candidate, g)
     if (!spec) return []
-    if (g.template === 'logo') spec.image = graphicImageUrl(outputDir, g.fields.image)
+    if (graphicUsesImage(g.template)) spec.image = graphicImageUrl(outputDir, g.fields.image)
     return [{ g, spec, local }]
   })
   if (!bounds.width || !shown.length) return null
@@ -93,11 +94,17 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir }:
   </div>
 }
 
-export const SHORT: Record<GraphicTemplateId, string> = { stat: 'Stat', title: 'Title', list: 'List', lower_third: 'Name', logo: 'Logo', before_after: 'Before/after', checklist: 'Checklist', quote: 'Quote', highlight: 'Arrow/circle' }
+export const SHORT: Record<GraphicTemplateId, string> = {
+  stat: 'Stat', title: 'Title', list: 'List', lower_third: 'Name', logo: 'Logo', before_after: 'Before/after', checklist: 'Checklist', quote: 'Quote', highlight: 'Arrow/circle',
+  statement: 'Statement', sticky_notes: 'Notes', strike_list: 'Crossed out', browser_frame: 'Browser', icon_pop: 'Icons', headline_pill: 'Headline', comment_cta: 'Comment'
+}
 export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): string {
   const f = g.fields
+  const first = (f.items ?? '').split('\n')[0]
   const words = g.template === 'stat' ? [f.value, f.label] : g.template === 'lower_third' ? [f.name, f.role] : g.template === 'before_after' ? [f.before, f.after]
-    : g.template === 'list' || g.template === 'checklist' ? [f.title, (f.items ?? '').split('\n')[0]] : g.template === 'logo' ? [f.caption] : g.template === 'highlight' ? [f.shape === 'arrow' ? 'Arrow' : 'Circle'] : [f.text]
+    : g.template === 'list' || g.template === 'checklist' ? [f.title, first] : g.template === 'logo' ? [f.caption] : g.template === 'highlight' ? [f.shape === 'arrow' ? 'Arrow' : 'Circle']
+      : g.template === 'sticky_notes' || g.template === 'icon_pop' ? [first] : g.template === 'strike_list' ? [first, f.final] : g.template === 'browser_frame' ? [f.domain, f.title]
+        : g.template === 'headline_pill' ? [f.text, f.phrase] : g.template === 'comment_cta' ? [f.keyword] : [f.text]
   return words.map((w) => w?.trim()).filter(Boolean).join(' · ')
 }
 
@@ -187,7 +194,10 @@ export const SAMPLES: Record<GraphicTemplateId, Record<string, string>> = {
   stat: { value: '75%', label: 'Sample label' }, title: { text: 'Your big words' }, list: { title: 'Sample list', items: 'First point\nSecond point\nThird point' },
   lower_third: { name: 'Your name', role: 'Your role' }, logo: { caption: 'Your caption' }, before_after: { before: 'Before', after: 'After' },
   checklist: { title: 'Sample checklist', items: 'First item\nSecond item\nThird item' }, quote: { text: 'A short quote goes here.', author: 'Who said it' },
-  highlight: { shape: 'circle', x: '0.5', y: '0.45' }
+  highlight: { shape: 'circle', x: '0.5', y: '0.45' }, statement: { text: 'Your big idea', accent: 'idea', subline: 'A short line under it' },
+  sticky_notes: { items: 'First note\nSecond note' }, strike_list: { items: 'Old way\nOther old way', final: 'The better way', accent: 'better way' },
+  browser_frame: { domain: 'yoursite.com', title: 'Your page headline', accent: 'headline' }, icon_pop: { items: 'Email\nVideo\nChat', icons: 'mail\nvideo\nmessage' },
+  headline_pill: { text: 'Your first line', phrase: 'Key words' }, comment_cta: { keyword: 'WORD' }
 }
 
 const NUMBER_WORDS = /[$€£]?\d[\d,]*(?:\.\d+)?\s?(?:%|percent\b|[kKmMxX]\b|thousand\b|million\b|billion\b|hours?\b|days?\b|minutes?\b|years?\b)?/
@@ -201,7 +211,36 @@ export function wordsAtPlayhead(template: GraphicTemplateId, line: string | unde
   return {}
 }
 
-export const FIELD_LABELS: Record<string, string> = { value: 'Number', label: 'Label', text: 'Words', title: 'Title', items: 'Items (one per line)', name: 'Name', role: 'Role', caption: 'Caption', before: 'Before', after: 'After', author: 'Who said it' }
+export const FIELD_LABELS: Record<string, string> = { value: 'Number', label: 'Label', text: 'Words', title: 'Title', items: 'Items (one per line)', name: 'Name', role: 'Role', caption: 'Caption', before: 'Before', after: 'After', author: 'Who said it',
+  accent: 'Words in italics', subline: 'Small line under it', final: 'Last line', domain: 'Website address', highlights: 'Boxes on the picture', phrase: 'Key words (on the color box)', keyword: 'Keyword to comment', lead: 'Word above it' }
+/** Per-template field labels where the general one doesn't fit. */
+const TEMPLATE_FIELD_LABELS: Partial<Record<GraphicTemplateId, Record<string, string>>> = {
+  sticky_notes: { items: 'Notes (one per line, up to 3)' }, strike_list: { items: 'Crossed-out items (one per line, up to 4)' },
+  icon_pop: { items: 'Labels (one per line, up to 4)' }, headline_pill: { text: 'First line' }, browser_frame: { title: 'Headline (when there’s no picture)' }
+}
+/** Hints under a field. */
+const FIELD_HINTS: Partial<Record<GraphicTemplateId, Record<string, string>>> = {
+  statement: { accent: 'Words from the statement, drawn in italics with a marker. Empty: the last word.' },
+  strike_list: { accent: 'Words from the last line, circled. Empty: the last word.' },
+  browser_frame: { accent: 'Words from the headline, with a marker.', highlights: 'One box per line: across, down, width, height (0 to 1 of the picture), then the second it shows. For example: 0.1, 0.3, 0.6, 0.08, 1.5' },
+  comment_cta: { lead: 'Empty: “Comment”.' }
+}
+export const fieldLabel = (template: GraphicTemplateId, key: string): string => TEMPLATE_FIELD_LABELS[template]?.[key] ?? FIELD_LABELS[key] ?? key
+const ICON_LABELS: Record<string, string> = { message: 'Chat', phone: 'Phone', file: 'Document', chart: 'Bar chart', trending: 'Trending up', dollar: 'Money', cart: 'Shopping cart', card: 'Credit card', bot: 'Robot', book: 'Book', idea: 'Light bulb', dashboard: 'Dashboard' }
+const ICON_OPTIONS = [{ value: '', label: 'Letter' }, ...GRAPHIC_ICONS.map((name) => ({ value: name, label: ICON_LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1) }))]
+const SIZE_OPTIONS: { value: GraphicSize; label: string }[] = [{ value: 'compact', label: 'Small' }, { value: 'card', label: 'Card' }, { value: 'stage', label: 'Stage' }]
+
+/** The Icon row's icon for each label (generic icons only; a brand's logo is an image the member adds). */
+export function IconFields({ fields, onField, imageNote = true }: { fields: Record<string, string>; onField: (key: string, value: string) => void; imageNote?: boolean }): React.JSX.Element | null {
+  const labels = templateItems('icon_pop', fields.items)
+  if (!labels.length) return null
+  const icons = graphicIcons(fields)
+  return <div className="space-y-1.5"><p className="editor-label">Icons</p>
+    {labels.map((label, i) => <div key={i} className="flex items-center justify-between gap-2 text-2xs"><span className="truncate">{label}</span>
+      <Select size="sm" aria-label={`Icon for ${label}`} value={icons[i] ?? ''} options={ICON_OPTIONS} searchable
+        onChange={(name) => onField('icons', labels.map((_, k) => k === i ? name : icons[k] ?? '').join('\n'))} /></div>)}
+    <p className="text-2xs text-ink-subtle">Simple icons only.{imageNote ? ' To show a brand’s logo, choose its image above.' : ' “Letter” shows the label’s first letter.'}</p></div>
+}
 
 /** The Graphics inspector tab: pick a template, then edit the selected graphic's words, place and length. */
 export function GraphicsInspector({ project, candidate, outputDir, time, selected, picking, disabled, onPick, onSelect, onChange, seek, clock }: {
@@ -254,29 +293,35 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
       <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">{templateInfo(g.template).label}</p>
         <Button size="sm" variant="ghost" icon={<Trash2 size={12} />} onClick={() => { onChange(removeGraphic(candidate, g.id)); onSelect(null) }}>Remove</Button></div>
       {(() => { const warning = graphicWarning(graphicCutFit(candidate, g), graphicClashes(graphics).has(g.id), g.placement); return warning && <p role="note" className="text-2xs text-warning">{warning}</p> })()}
-      {!graphicHasContent(g) && <p className="text-2xs text-warning">{g.template === 'logo' ? 'Choose an image to show it.' : 'Add its words to show it.'}</p>}
-      {g.template === 'logo' && <div className="space-y-2">
+      {!graphicHasContent(g) && <p className="text-2xs text-warning">{g.template === 'logo' ? 'Choose an image to show it.' : g.template === 'browser_frame' ? 'Choose a screenshot or add a headline to show it.' : 'Add its words to show it.'}</p>}
+      {graphicUsesImage(g.template) && <div className="space-y-2">
         <div className="flex items-center gap-2">{graphicImageUrl(outputDir, g.fields.image) && <img className="editor-graphic-thumb" src={graphicImageUrl(outputDir, g.fields.image)} alt="" />}
           <Button size="sm" icon={<ImagePlus size={13} />} onClick={() => {
             setImageError(null)
             void getApi().editor.graphicImage(outputDir).then((name) => { if (name) field('image', name) }).catch((e: unknown) => setImageError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : 'Could not add that image.'))
-          }}>{g.fields.image ? 'Change image' : 'Choose image'}</Button></div>
-        <p className="text-2xs text-ink-subtle">PNG, JPEG or WebP, up to 12 MB. It’s copied into this run.</p>
+          }}>{g.fields.image ? 'Change image' : g.template === 'browser_frame' ? 'Choose screenshot' : 'Choose image'}</Button>
+          {g.fields.image && g.template !== 'logo' && <Button size="sm" variant="ghost" onClick={() => field('image', '')}>Remove image</Button>}</div>
+        <p className="text-2xs text-ink-subtle">PNG, JPEG or WebP, up to 12 MB. It’s copied into this run.{g.template === 'browser_frame' ? ' A tall screenshot scrolls slowly inside the window.' : g.template === 'icon_pop' ? ' It shows in the first tile.' : ''}</p>
         {imageError && <p role="alert" className="text-2xs text-danger">{imageError}</p>}
       </div>}
-      {templateInfo(g.template).fields.filter((k) => !['image', 'shape', 'x', 'y'].includes(k)).map((key) => <label key={key} className="editor-label">{FIELD_LABELS[key] ?? key}
-        {key === 'items' || key === 'text' ? <textarea rows={key === 'items' ? MAX_GRAPHIC_ITEMS : 3} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${(FIELD_LABELS[key] ?? key).toLowerCase()}`} />
-          : <input className="editor-graphic-input" maxLength={MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${(FIELD_LABELS[key] ?? key).toLowerCase()}`}
-            placeholder={key === 'value' ? 'e.g. the number said in the clip' : undefined} />}
+      {templateInfo(g.template).fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
+        {key === 'items' || key === 'text' || key === 'highlights' ? <textarea rows={key === 'items' ? GRAPHIC_ITEM_LIMITS[g.template] ?? MAX_GRAPHIC_ITEMS : key === 'highlights' ? 2 : 3} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`} />
+          : <input className="editor-graphic-input" maxLength={MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`}
+            placeholder={key === 'value' ? 'e.g. the number said in the clip' : key === 'domain' ? 'e.g. yoursite.com' : undefined} />}
+        {FIELD_HINTS[g.template]?.[key] && <span className="block text-2xs text-ink-subtle">{FIELD_HINTS[g.template]?.[key]}</span>}
       </label>)}
+      {g.template === 'icon_pop' && <IconFields fields={g.fields} onField={field} />}
       {g.template === 'stat' && <p className="text-2xs text-ink-subtle">The number counts up. Use one from the clip, like “$1,200/month”, “15 billion” or “25%”.</p>}
       {g.template === 'highlight' ? <div className="space-y-2">
         <Segmented label="Shape" size="sm" value={highlightPoint(g.fields).shape} onChange={(shape) => field('shape', shape)} options={[{ value: 'circle', label: 'Circle' }, { value: 'arrow', label: 'Arrow' }]} />
         {(['x', 'y'] as const).map((axis) => <label key={axis} className="editor-label">{axis === 'x' ? 'Across' : 'Down'} <span className="float-right">{Math.round(highlightPoint(g.fields)[axis] * 100)}%</span>
           <input type="range" min={0} max={100} step={1} aria-label={axis === 'x' ? 'Point across' : 'Point down'} value={Math.round(highlightPoint(g.fields)[axis] * 100)} onChange={(e) => field(axis, String(Number(e.target.value) / 100))} /></label>)}
-      </div> : <div className="space-y-1"><p className="editor-label">Place</p>
-        <Segmented<GraphicPlacement> label="Graphic placement" size="sm" value={g.placement} onChange={(placement) => onChange(updateGraphic(candidate, g.id, { placement }))}
-          options={[{ value: 'top', label: 'Top' }, { value: 'middle', label: 'Middle' }, { value: 'bottom', label: 'Bottom' }]} />
+      </div> : <div className="space-y-1"><p className="editor-label">Size</p>
+        <Segmented<GraphicSize> label="Graphic size" size="sm" value={g.size ?? 'card'} onChange={(size) => onChange(updateGraphic(candidate, g.id, { size }))} options={SIZE_OPTIONS} />
+        {g.size === 'stage' ? <p className="text-2xs text-ink-subtle">Stage: a big card over the top half of the video. Keep it short, so the speaker shows again.</p> : <>
+          <p className="editor-label pt-1">Place</p>
+          <Segmented<GraphicPlacement> label="Graphic placement" size="sm" value={g.placement} onChange={(placement) => onChange(updateGraphic(candidate, g.id, { placement }))}
+            options={[{ value: 'top', label: 'Top' }, { value: 'middle', label: 'Middle' }, { value: 'bottom', label: 'Bottom' }]} /></>}
         <p className="text-2xs text-ink-subtle">Graphics stay clear of the hook and the captions.</p></div>}
       <label className="editor-label">Length <span className="float-right">{(g.duration_ms / 1000).toFixed(1)}s</span>
         <input type="range" aria-label="Graphic length" min={GRAPHIC_MIN_MS} max={GRAPHIC_MAX_MS} step={100} value={g.duration_ms} onChange={(e) => onChange(updateGraphic(candidate, g.id, { duration_ms: Number(e.target.value) }))} /></label>

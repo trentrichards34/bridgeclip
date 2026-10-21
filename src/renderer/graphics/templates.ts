@@ -4,13 +4,25 @@
  * it is at that moment, so the editor's preview follows the playhead and the
  * offscreen render steps frame by frame (same input, same pixels).
  *
- * Text is only ever set with textContent. The page draws on a transparent
- * background; each template animates in, holds and animates out within
- * `spec.duration_ms`.
+ * One design system for every template (graphics.css): clean white rounded
+ * cards with a soft shadow (and a thin accent glow on the key ones), bold sans
+ * headlines with an italic serif accent, the brand color as the accent. Shared
+ * moves: card enter (scale up, rise, fade), word-by-word build, pop-in that
+ * settles, a highlight marker sweeping across a phrase, a rounded box drawn
+ * around a phrase, a strike-through drawn line by line, a slow push-in while
+ * the card is on screen and a short clean exit.
+ *
+ * Text is only ever set with textContent, and only words from the graphic's
+ * fields are drawn. The page draws on a transparent background; each template
+ * animates in, holds and animates out within `spec.duration_ms`.
  */
 import { createTimeline } from 'animejs'
 import './graphics.css'
-import { formatStatValue, graphicItems, highlightPoint, parseStatValue, type GraphicRenderSpec } from '../../shared/motion-graphics'
+import { ICONS } from './icons'
+import {
+  accentWords, browserHighlights, formatStatValue, graphicIcons, graphicItems, highlightPoint, parseStatValue, templateItems,
+  type GraphicRenderSpec
+} from '../../shared/motion-graphics'
 
 export interface MountedGraphic {
   /** Show the graphic as it is `ms` into its animation (hidden outside 0..duration). */
@@ -20,18 +32,34 @@ export interface MountedGraphic {
   ready: Promise<void>
 }
 
-const DISPLAY: Record<string, { family: string; weight: number; upper: boolean }> = {
-  clean: { family: '"MG Montserrat", "Montserrat", sans-serif', weight: 900, upper: false },
-  serif: { family: '"MG Fraunces", "Fraunces 72pt Black", Georgia, serif', weight: 400, upper: false },
-  condensed: { family: '"MG Anton", "Anton", Impact, sans-serif', weight: 400, upper: true },
-  marker: { family: '"MG Caveat Brush", "Caveat Brush", cursive', weight: 400, upper: true },
-  sans_serif_accent: { family: '"MG Montserrat", "Montserrat", sans-serif', weight: 900, upper: false }
+/** The headline face follows the hook's font; the accent is always the italic serif. */
+const DISPLAY: Record<string, { family: string; weight: number; upper: boolean; tracking: string }> = {
+  clean: { family: '"MG Jakarta", "MG Montserrat", sans-serif', weight: 800, upper: false, tracking: '-0.025em' },
+  serif: { family: '"MG Fraunces", "Fraunces 72pt Black", Georgia, serif', weight: 400, upper: false, tracking: '-0.01em' },
+  condensed: { family: '"MG Anton", "Anton", Impact, sans-serif', weight: 400, upper: true, tracking: '0.005em' },
+  marker: { family: '"MG Caveat Brush", "Caveat Brush", cursive', weight: 400, upper: true, tracking: '0' },
+  sans_serif_accent: { family: '"MG Jakarta", "MG Montserrat", sans-serif', weight: 800, upper: false, tracking: '-0.025em' }
 }
-const FONT_LOADS = ['900 40px "MG Montserrat"', '800 40px "MG Montserrat"', '700 40px "MG Jakarta"', '40px "MG Anton"', '40px "MG Fraunces"', '40px "MG Caveat Brush"', 'italic 40px "MG Instrument Serif"']
+const FONT_LOADS = ['900 40px "MG Montserrat"', '800 40px "MG Montserrat"', '800 40px "MG Jakarta"', '600 40px "MG Jakarta"', '40px "MG Anton"', '40px "MG Fraunces"',
+  '40px "MG Caveat Brush"', 'italic 40px "MG Instrument Serif"', '40px "MG Instrument Serif"']
+/** Size scale per graphic size: a compact card, the usual card, the stage. */
+const SIZE_SCALE = { compact: .82, card: 1, stage: 1.1 } as const
 
+function rgb(hex: string): [number, number, number] {
+  const clean = /^#[0-9a-f]{6}$/i.test(hex) ? hex : '#2F5BFF'
+  return [1, 3, 5].map((i) => parseInt(clean.slice(i, i + 2), 16)) as [number, number, number]
+}
 function onColor(hex: string): string {
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 160 ? '#111318' : '#ffffff'
+  const [r, g, b] = rgb(hex)
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 165 ? '#0F172A' : '#ffffff'
+}
+/** The accent as text on white: a very light brand color is darkened so it stays readable. */
+function accentInk(hex: string): string {
+  const [r, g, b] = rgb(hex)
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  if (lum <= 150) return hex
+  const k = 150 / lum
+  return `rgb(${Math.round(r * k)}, ${Math.round(g * k)}, ${Math.round(b * k)})`
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, parent?: HTMLElement, text?: string): HTMLElementTagNameMap[K] {
@@ -48,10 +76,14 @@ function svg(tag: string, attrs: Record<string, string | number>, parent: Elemen
   return node
 }
 const clamp = (n: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, n))
-const outExpo = (p: number): number => p >= 1 ? 1 : 1 - Math.pow(2, -10 * p)
+const outExpo = (p: number): number => p >= 1 ? 1 : p <= 0 ? 0 : 1 - Math.pow(2, -10 * p)
+const clean = (text: string | undefined): string => (text ?? '').replace(/\s+/g, ' ').trim()
 
 type Value = number | string
-type Segment = { at: number; duration: number; from: Value; to: Value; ease: string }
+/** A value, or one worked out once the layout is measured (fonts loaded, picture sizes known). */
+type Lazy = Value | (() => Value)
+type Segment = { at: number; duration: number; from: Lazy; to: Lazy; ease: string }
+const value = (v: Lazy): Value => typeof v === 'function' ? v() : v
 /**
  * Templates describe moves as `add(target, { prop: [from, to], duration, ease }, at)`.
  * Each element's moves on one property become ONE anime.js animation with
@@ -64,10 +96,10 @@ class Tracks {
     const duration = Math.max(1, Number(params.duration) || 1), ease = String(params.ease ?? 'linear')
     let props = this.items.get(target)
     if (!props) { props = new Map(); this.items.set(target, props) }
-    for (const [key, value] of Object.entries(params)) {
-      if (key === 'duration' || key === 'ease' || !Array.isArray(value)) continue
+    for (const [key, v] of Object.entries(params)) {
+      if (key === 'duration' || key === 'ease' || !Array.isArray(v)) continue
       const list = props.get(key) ?? []
-      list.push({ at: Math.max(0, at), duration, from: value[0] as Value, to: value[1] as Value, ease })
+      list.push({ at: Math.max(0, at), duration, from: v[0] as Lazy, to: v[1] as Lazy, ease })
       props.set(key, list)
     }
     return this
@@ -85,7 +117,7 @@ class Tracks {
       const params: Record<string, unknown> = {}
       // Before its first move an element shows that move's starting value.
       const initial: Record<string, Value> = {}
-      for (const [key, raw] of props) initial[key] = [...raw].sort((a, b) => a.at - b.at)[0].from
+      for (const [key, raw] of props) initial[key] = value([...raw].sort((a, b) => a.at - b.at)[0].from)
       setInitial(target, initial)
       for (const [key, raw] of props) {
         const list = [...raw].sort((a, b) => a.at - b.at)
@@ -96,10 +128,9 @@ class Tracks {
           const next = list[i + 1]
           const duration = next ? Math.max(1, Math.min(seg.duration, next.at - seg.at)) : seg.duration
           // The value holds until the move begins (a keyframe delay).
-          frames.push({ from: seg.from, to: seg.to, duration, ease: seg.ease, delay: Math.max(0, seg.at - end) })
+          frames.push({ from: value(seg.from), to: value(seg.to), duration, ease: seg.ease, delay: Math.max(0, seg.at - end) })
           end = Math.max(end, seg.at) + duration
         })
-        
         params[key] = frames
       }
       tl.add(target as HTMLElement, params as never, 0)
@@ -129,9 +160,9 @@ function setInitial(target: Element, values: Record<string, Value>): void {
   }
 }
 
-/** Timing shared by every template: in, hold, out. */
+/** Timing shared by every template: a snappy entrance, the hold, a short exit. */
 function phases(duration: number): { tin: number; tout: number; outAt: number; hold: number } {
-  const tin = clamp(duration * .26, 220, 620), tout = clamp(duration * .16, 180, 420)
+  const tin = clamp(duration * .14, 260, 420), tout = clamp(duration * .09, 180, 280)
   return { tin, tout, outAt: duration - tout, hold: Math.max(0, duration - tin - tout) }
 }
 
@@ -140,31 +171,38 @@ interface Build {
   tl: Tracks; spec: GraphicRenderSpec; u: number
   /** Extra per-frame work (counters), run after the timeline is seeked. */
   onSeek: ((ms: number) => void)[]
-  /** Layout fixes once fonts are loaded (before fitting the band). */
+  /** Layout fixes once fonts and pictures are loaded (before fitting the band). */
   fitters: (() => void)[]
+  /** Measurements once the layout is fitted to its band (boxes drawn around words). */
+  after: (() => void)[]
 }
 
 export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): MountedGraphic {
   const { width: W, height: H } = spec
-  const u = Math.min(W, H) / 1080
+  const size = spec.size === 'compact' || spec.size === 'stage' ? spec.size : 'card'
+  const u = Math.min(W, H) / 1080 * SIZE_SCALE[size]
   const display = DISPLAY[spec.font] ?? DISPLAY.clean
-  const root = el('div', 'mg-root', host)
+  const root = el('div', `mg-root size-${size}`, host)
   root.style.width = `${W}px`; root.style.height = `${H}px`
   root.style.setProperty('--u', `${u}px`)
   root.style.setProperty('--accent', spec.color)
+  root.style.setProperty('--accent-rgb', rgb(spec.color).join(', '))
+  root.style.setProperty('--accent-ink', accentInk(spec.color))
   root.style.setProperty('--on-accent', onColor(spec.color))
   root.style.setProperty('--display', display.family)
   root.style.setProperty('--display-weight', String(display.weight))
   root.style.setProperty('--display-case', display.upper ? 'uppercase' : 'none')
-  root.style.setProperty('--card-w', `${Math.round(Math.min(W - 140 * u, 940 * u))}px`)
-  root.style.setProperty('--logo', `${Math.round(Math.min(520 * u, (spec.box.bottom - spec.box.top) * H * .7))}px`)
-  const band = el('div', `mg-band ${spec.placement}`, root)
+  root.style.setProperty('--display-tracking', display.tracking)
+  const frameU = Math.min(W, H) / 1080
+  const widest = size === 'stage' ? 984 : size === 'compact' ? 800 : 940
+  root.style.setProperty('--card-w', `${Math.round(Math.min(W - (size === 'stage' ? 96 : 140) * frameU, widest * frameU))}px`)
+  root.style.setProperty('--logo', `${Math.round(Math.min(380 * u, (spec.box.bottom - spec.box.top) * H * .62))}px`)
+  const band = el('div', `mg-band ${size === 'stage' ? 'stage' : spec.placement}`, root)
   band.style.top = `${spec.box.top * H}px`
   band.style.height = `${(spec.box.bottom - spec.box.top) * H}px`
   const fit = el('div', 'mg-fit', band)
-  // No composition between tweens: each one owns its stretch of time, so seeking is exact in any order.
   const tracks = new Tracks()
-  const build: Build = { root, band, fit, tl: tracks, spec, u, onSeek: [], fitters: [] }
+  const build: Build = { root, band, fit, tl: tracks, spec, u, onSeek: [], fitters: [], after: [] }
   const make = TEMPLATES[spec.template] ?? TEMPLATES.title
   make(build)
   // Every seek starts a fresh timeline at 0 and jumps to the time, so a frame
@@ -188,6 +226,7 @@ export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): Mounte
     tracks.clear()
     for (const fix of build.fitters) fix()
     fitToBand(build)
+    for (const measure of build.after) measure()
     tl = tracks.timeline(spec.duration_ms)
     const at = last
     last = -1
@@ -208,9 +247,9 @@ function fitToBand({ band, fit, root, spec, u }: Build): void {
   fit.style.removeProperty('--card-w')
   const cardW = parseFloat(root.style.getPropertyValue('--card-w'))
   let scale = 1
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     const need = fit.scrollHeight, wide = fit.scrollWidth
-    const next = scale * Math.min(1, band.clientHeight / Math.max(1, need), (band.clientWidth - 60 * u) / Math.max(1, wide))
+    const next = scale * Math.min(1, band.clientHeight / Math.max(1, need), (band.clientWidth - 40 * u) / Math.max(1, wide))
     if (next >= scale - .001) break
     scale = next
     fit.style.setProperty('--u', `${u * scale}px`)
@@ -218,166 +257,259 @@ function fitToBand({ band, fit, root, spec, u }: Build): void {
   }
 }
 
-/** The common card entrance and exit. */
-function cardInOut(b: Build, target: HTMLElement, from: 'up' | 'down' | 'left' = 'up'): void {
+// ---------------------------------------------------------------------------
+// Shared moves
+// ---------------------------------------------------------------------------
+
+/** The card entrance: up from 92% while rising and fading in. */
+function cardIn(b: Build, target: HTMLElement, at = 0): void {
+  const { tl, u } = b
+  tl.add(target, { opacity: [0, 1], duration: 220, ease: 'outQuad' }, at)
+  tl.add(target, { scale: [.92, 1], translateY: [44 * u, 0], duration: 420, ease: 'outQuart' }, at)
+}
+/** The clean exit: a short fade, shrinking a touch and lifting. */
+function cardOut(b: Build, target: HTMLElement): void {
   const { tl, spec, u } = b
-  const { tin, tout, outAt } = phases(spec.duration_ms)
-  const dy = from === 'down' ? -90 * u : from === 'up' ? 90 * u : 0
-  const dx = from === 'left' ? -140 * u : 0
-  tl.add(target, { opacity: [0, 1], translateY: [dy, 0], translateX: [dx, 0], scale: [.86, 1], duration: tin, ease: 'outBack(1.5)' }, 0)
-  tl.add(target, { opacity: [1, 0], translateY: [0, 50 * u], scale: [1, .94], duration: tout, ease: 'inQuad' }, outAt)
+  const { tout, outAt } = phases(spec.duration_ms)
+  tl.add(target, { opacity: [1, 0], scale: [1, .96], translateY: [0, -20 * u], duration: tout, ease: 'inCubic' }, outAt)
+}
+/** A slow push-in while the graphic holds (on a wrapper, so it never fights the card's own moves). */
+function pushIn(b: Build, target: HTMLElement, amount = .035): void {
+  const { tin, outAt } = phases(b.spec.duration_ms)
+  if (outAt - tin > 400) b.tl.add(target, { scale: [1, 1 + amount], duration: outAt - tin, ease: 'inOutSine' }, tin)
+}
+/** Pop in and settle: from 115% and see-through to its place. */
+function popIn(b: Build, target: Element, at: number, from = 1.15, duration = 340): void {
+  b.tl.add(target, { opacity: [0, 1], duration: Math.min(180, duration), ease: 'outQuad' }, at)
+  b.tl.add(target, { scale: [from, 1], duration, ease: 'outCubic' }, at)
+}
+/** Rise in (a word or a row): up a little while fading in. */
+function riseIn(b: Build, target: Element, at: number, distance = 22, duration = 320): void {
+  b.tl.add(target, { opacity: [0, 1], duration: Math.min(200, duration), ease: 'outQuad' }, at)
+  b.tl.add(target, { translateY: [distance * b.u, 0], duration, ease: 'outCubic' }, at)
+}
+/** The common shell: a push-in wrapper around the main element, which enters and exits like a card. */
+function shell(b: Build, className: string, parent: HTMLElement = b.fit): { push: HTMLElement; card: HTMLElement } {
+  const push = el('div', 'mg-push', parent)
+  const card = el('div', className, push)
+  cardIn(b, card)
+  cardOut(b, card)
+  pushIn(b, push)
+  return { push, card }
+}
+/** Even beats for revealing items during the hold (`share` of it). */
+function beats(spec: GraphicRenderSpec, count: number, share = .55, start?: number): number[] {
+  const { tin, hold } = phases(spec.duration_ms)
+  const from = start ?? tin * .8
+  const step = count > 1 ? clamp((hold * share) / (count - 1), 160, 560) : 0
+  return Array.from({ length: count }, (_, i) => from + i * step)
 }
 
-/** Even beats for revealing items during the hold. */
-function beats(spec: GraphicRenderSpec, count: number, share = .6): number[] {
-  const { tin, hold } = phases(spec.duration_ms)
-  const step = count > 1 ? Math.min(520, (hold * share) / (count - 1)) : 0
-  return Array.from({ length: count }, (_, i) => tin * .75 + i * step)
+interface RichText {
+  /** Every word's span, in order. */
+  words: HTMLElement[]
+  /** The italic accent group (null when there is none), its marker and the words' character counts. */
+  accent: HTMLElement | null
+  mark: HTMLElement | null
 }
+/**
+ * Words as spans (so they can build one by one) with the accent words in a
+ * group drawn in the italic serif, with a marker behind it for the sweep.
+ * Typed line breaks are kept.
+ */
+function richText(parent: HTMLElement, text: string | undefined, accent: string | undefined | null, options: { marker?: boolean; accentClass?: string } = {}): RichText {
+  const parts = accentWords(text, accent ?? undefined)
+  const from = accent === null ? -1 : parts.from, to = accent === null ? -1 : parts.to
+  const words: HTMLElement[] = []
+  let group: HTMLElement | null = null, mark: HTMLElement | null = null
+  parts.words.forEach((word, i) => {
+    const inGroup = from >= 0 && i >= from && i <= to
+    const container: HTMLElement = inGroup && i > from && group ? group : parent
+    if (i > 0) {
+      if (parts.breaks.includes(i)) el('br', '', container)
+      else container.appendChild(document.createTextNode(' '))
+    }
+    if (i === from) {
+      group = el('span', `mg-accent ${options.accentClass ?? ''}`.trim(), parent)
+      if (options.marker !== false) mark = el('span', 'mg-mark', group)
+    }
+    words.push(el('span', 'mg-w', inGroup && group ? group : parent, word))
+  })
+  return { words, accent: group, mark }
+}
+/** The marker sweeping left to right across the accent words. */
+function sweep(b: Build, mark: HTMLElement | null, at: number, duration = 460): void {
+  if (mark) b.tl.add(mark, { scaleX: [0, 1], duration, ease: 'inOutCubic' }, at)
+}
+/** Build words one by one from `at`, `step` ms apart; returns when the last one lands. */
+function buildWords(b: Build, words: HTMLElement[], at: number, step: number, how: 'rise' | 'pop' = 'rise'): number {
+  words.forEach((w, i) => how === 'pop' ? popIn(b, w, at + i * step, 1.18, 300) : riseIn(b, w, at + i * step, 26, 340))
+  return at + Math.max(0, words.length - 1) * step + 300
+}
+/** The step between words so `count` of them build within `budget` ms. */
+const wordStep = (count: number, budget: number, max = 120): number => count > 1 ? clamp(budget / (count - 1), 45, max) : 0
+
+/** The offset of `node` inside `ancestor` (layout pixels: transforms and the editor's preview scale don't change it). */
+function offsetIn(node: HTMLElement, ancestor: HTMLElement): { x: number; y: number; w: number; h: number } {
+  let x = 0, y = 0, at: HTMLElement | null = node
+  while (at && at !== ancestor) { x += at.offsetLeft; y += at.offsetTop; at = at.offsetParent as HTMLElement | null }
+  return { x, y, w: node.offsetWidth, h: node.offsetHeight }
+}
+/** A rounded outline drawn around `target` (inside `container`, which must be positioned). */
+function boxAround(b: Build, container: HTMLElement, target: HTMLElement, at: number, duration = 520): void {
+  const layer = svg('svg', { class: 'mg-boxdraw' }, container)
+  const path = svg('path', { pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1 }, layer)
+  b.after.push(() => {
+    const box = offsetIn(target, container)
+    const unit = parseFloat(getComputedStyle(container).getPropertyValue('--u')) || b.u
+    const padX = 12 * unit, padY = 6 * unit, r = Math.min(26 * unit, (box.h + padY * 2) / 2)
+    const x = box.x - padX, y = box.y - padY, w = box.w + padX * 2, h = box.h + padY * 2
+    // Starts at the top middle and goes all the way round, a little past the start, like a quick pen stroke.
+    path.setAttribute('d', `M${x + w * .45},${y} H${x + w - r} A${r},${r} 0 0 1 ${x + w},${y + r} V${y + h - r} A${r},${r} 0 0 1 ${x + w - r},${y + h} H${x + r} A${r},${r} 0 0 1 ${x},${y + h - r} V${y + r} A${r},${r} 0 0 1 ${x + r},${y} H${x + w * .56}`)
+    path.setAttribute('stroke-width', String(5 * unit))
+  })
+  b.tl.add(path, { strokeDashoffset: [1, 0], duration, ease: 'inOutCubic' }, at)
+}
+/** Lucide icon (24 grid) as an inline SVG. */
+function icon(parent: HTMLElement, name: keyof typeof ICONS, className: string): SVGElement {
+  const node = svg('svg', { class: className, viewBox: '0 0 24 24', fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, parent)
+  for (const [tag, attrs] of ICONS[name]) svg(tag, attrs, node)
+  return node
+}
+
+// ---------------------------------------------------------------------------
+// Templates
+// ---------------------------------------------------------------------------
 
 const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
   stat(b) {
-    const { spec, fit, tl, u } = b
-    const value = spec.fields.value ?? '', label = (spec.fields.label ?? '').trim()
-    const card = el('div', `mg-card mg-stat${label ? '' : ' no-label'}`, fit)
-    const stat = parseStatValue(value)
-    const number = el('span', 'mg-stat-value mg-display', card)
-    // A long unit ("/month", " billion") is drawn smaller next to the number; "%" or "x" stay full size.
-    const small = stat && stat.suffix.trim().length > 2 ? stat.suffix : ''
-    const counted = stat ? { ...stat, suffix: small ? '' : stat.suffix } : null
-    const digits = el('span', '', number, counted ? formatStatValue(counted, 0) : value.trim())
-    if (small) el('span', 'mg-stat-suffix', number, small.trim())
-    const final = counted ? formatStatValue(counted, 1) : value.trim()
-    number.style.setProperty('--stat-size', String(Math.round(clamp(1250 / Math.max(3, final.length * .8 + small.length * .3), 110, 260))))
+    const { spec, tl, u } = b
+    const valueText = clean(spec.fields.value), label = clean(spec.fields.label)
+    const { card } = shell(b, `mg-card glow mg-stat${label ? '' : ' no-label'}`)
+    const stat = parseStatValue(valueText)
+    const number = el('div', 'mg-stat-value mg-display', card)
+    // A long unit ("/month", " billion") is drawn in the italic serif after the number; a short one ("%", "x") in the accent color.
+    const long = stat && stat.suffix.trim().length > 2 ? stat.suffix.trim() : ''
+    const short = stat && !long ? stat.suffix : ''
+    const counted = stat ? { ...stat, suffix: '' } : null
+    const digits = el('span', '', number, counted ? formatStatValue(counted, 0) : valueText)
+    if (short) el('span', 'mg-stat-short', number, short)
+    if (long) el('span', 'mg-stat-unit', number, long)
+    const final = counted ? formatStatValue(counted, 1) + short : valueText
+    number.style.setProperty('--stat-size', String(Math.round(clamp(1180 / Math.max(3, final.length * .82 + long.length * .3), 120, 250))))
     b.fitters.push(() => {
       // The finished number must fit the card: shrink it when it would not.
       const shown = digits.textContent
-      digits.textContent = final
-      const room = card.clientWidth - 170 * u, need = number.scrollWidth
+      digits.textContent = counted ? formatStatValue(counted, 1) : valueText
+      const room = card.clientWidth - 140 * u, need = number.scrollWidth
       if (need > room) number.style.setProperty('--stat-size', String(Math.floor(Number(number.style.getPropertyValue('--stat-size')) * room / need)))
       digits.textContent = shown
     })
     const rule = el('div', 'mg-stat-rule', card)
-    if (label) el('div', 'mg-stat-label', card, label)
-    cardInOut(b, card)
+    const labelEl = label ? el('div', 'mg-stat-label', card) : null
+    const labelWords = labelEl ? richText(labelEl, label, null).words : []
     const { tin, hold } = phases(spec.duration_ms)
-    const countAt = tin * .55, countFor = clamp(hold * .7, 300, 1500)
-    tl.add(rule, { scaleX: [0, 1], duration: Math.min(500, countFor), ease: 'outExpo' }, countAt)
+    const countAt = tin * .6, countFor = clamp(hold * .55, 500, 1400)
     if (counted) {
       b.onSeek.push((t) => { digits.textContent = formatStatValue(counted, outExpo((t - countAt) / countFor)) })
-      tl.add(number, { scale: [1, 1.12], duration: 140, ease: 'outQuad' }, countAt + countFor)
-      tl.add(number, { scale: [1.12, 1], duration: 260, ease: 'outBack(2)' }, countAt + countFor + 140)
-    }
-    void u
+      tl.add(number, { scale: [1, 1.06], duration: 130, ease: 'outQuad' }, countAt + countFor - 60)
+      tl.add(number, { scale: [1.06, 1], duration: 300, ease: 'outCubic' }, countAt + countFor + 70)
+    } else popIn(b, number, countAt)
+    tl.add(rule, { scaleX: [0, 1], duration: 420, ease: 'outQuart' }, countAt + 120)
+    buildWords(b, labelWords, countAt + 200, wordStep(labelWords.length, 420, 70))
   },
 
   title(b) {
-    const { spec, fit, tl, u } = b
-    const words = (spec.fields.text ?? '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).slice(0, 12)
-    const box = el('div', 'mg-title', fit)
-    const longest = words.reduce((n, w) => Math.max(n, w.length), 1), total = words.join(' ').length
-    box.style.setProperty('--title-size', String(Math.round(clamp(Math.min(1700 / Math.max(5, longest * .9), 3900 / Math.max(10, total * .9)), 86, 210))))
-    // One word carries the brand color: the last one with 3+ letters.
-    let accent = -1
-    for (let i = words.length - 1; i >= 0; i--) if ((words[i].match(/[\p{L}\p{N}]/gu) ?? []).length >= 3) { accent = i; break }
-    const { tin, tout, outAt } = phases(spec.duration_ms)
-    const step = Math.min(120, (tin * 1.6) / Math.max(1, words.length))
-    words.forEach((word, i) => {
-      const node = el('span', `mg-title-word mg-display${i === accent ? ' accent' : ''}`, box, word)
-      const at = i * step
-      tl.add(node, { opacity: [0, 1], scale: [2.3, 1], rotate: [i % 2 ? 7 : -7, i === accent ? -2 : 0], duration: 300, ease: 'outExpo' }, at)
-      tl.add(node, { opacity: [1, 0], translateY: [0, -40 * u], duration: tout * .8, ease: 'inQuad' }, outAt + i * Math.min(40, tout * .2 / Math.max(1, words.length)))
-    })
-    // A small jolt as the last word lands.
-    const land = (words.length - 1) * step + 120
-    tl.add(box, { translateX: [0, -12 * u], translateY: [0, 6 * u], duration: 50, ease: 'linear' }, land)
-    tl.add(box, { translateX: [-12 * u, 0], translateY: [6 * u, 0], duration: 220, ease: 'outElastic(1, .4)' }, land + 50)
-    void tin
+    const { spec } = b
+    const text = clean(spec.fields.text)
+    const { card } = shell(b, 'mg-card mg-title-card')
+    const box = el('div', 'mg-title mg-display', card)
+    const words = text.split(' ').filter(Boolean)
+    // One word carries the accent: the last one with 3+ letters.
+    let accent: string | null = null
+    for (let i = words.length - 1; i >= 0; i--) if ((words[i].match(/[\p{L}\p{N}]/gu) ?? []).length >= 3) { accent = words[i]; break }
+    const longest = words.reduce((n, w) => Math.max(n, w.length), 1), total = text.length
+    box.style.setProperty('--title-size', String(Math.round(clamp(Math.min(1500 / Math.max(5, longest * .9), 3400 / Math.max(10, total * .9)), 74, 150))))
+    const rich = richText(box, words.slice(0, 14).join(' '), accent, { accentClass: 'tint' })
+    const { tin } = phases(spec.duration_ms)
+    const end = buildWords(b, rich.words, tin * .55, wordStep(rich.words.length, 700, 110), 'pop')
+    sweep(b, rich.mark, end - 60)
   },
 
   list(b) { listLike(b, false) },
   checklist(b) { listLike(b, true) },
 
   lower_third(b) {
-    const { spec, fit, tl, u } = b
-    const name = (spec.fields.name ?? '').trim(), role = (spec.fields.role ?? '').trim()
-    const tag = el('div', 'mg-tag', fit)
-    const row = el('div', 'mg-tag-row', tag)
-    const bar = el('div', 'mg-tag-bar', row)
-    const nameMask = el('div', 'mg-tag-mask', row)
-    const nameEl = el('span', 'mg-tag-name', nameMask, name || role)
-    let roleEl: HTMLElement | null = null
-    if (name && role) roleEl = el('span', 'mg-tag-role', el('div', 'mg-tag-mask', tag), role)
-    const { tin, tout, outAt } = phases(spec.duration_ms)
-    tl.add(bar, { scaleY: [0, 1], duration: tin * .6, ease: 'outExpo' }, 0)
-    tl.add(nameEl, { translateX: ['-105%', '0%'], duration: tin, ease: 'outExpo' }, tin * .25)
-    if (roleEl) tl.add(roleEl, { translateX: ['-105%', '0%'], duration: tin, ease: 'outExpo' }, tin * .55)
-    tl.add(nameEl, { translateX: ['0%', '-105%'], duration: tout, ease: 'inCubic' }, outAt)
-    if (roleEl) tl.add(roleEl, { translateX: ['0%', '-105%'], duration: tout * .8, ease: 'inCubic' }, outAt)
-    tl.add(bar, { scaleY: [1, 0], duration: tout * .7, ease: 'inQuad' }, outAt + tout * .3)
-    void u
+    const { spec, tl, fit } = b
+    fit.classList.add('left')
+    const name = clean(spec.fields.name), role = clean(spec.fields.role)
+    const { card } = shell(b, 'mg-card mg-tag')
+    const bar = el('div', 'mg-tag-bar', card)
+    const col = el('div', 'mg-tag-text', card)
+    const nameEl = el('div', 'mg-tag-name mg-display', col, name || role)
+    const roleEl = name && role ? el('div', 'mg-tag-role', col, role) : null
+    const { tin } = phases(spec.duration_ms)
+    tl.add(bar, { scaleY: [0, 1], duration: 380, ease: 'outQuart' }, tin * .4)
+    riseIn(b, nameEl, tin * .5, 18)
+    if (roleEl) riseIn(b, roleEl, tin * .5 + 140, 18)
   },
 
   logo(b) {
-    const { spec, fit, tl, u } = b
+    const { spec, fit } = b
     const box = el('div', 'mg-logo', fit)
-    const stage = el('div', 'mg-logo-stage', box)
-    const ring = el('div', 'mg-logo-ring', stage)
-    const tile = el('div', 'mg-logo-tile', stage)
+    const push = el('div', 'mg-push mg-logo', box)
+    const tile = el('div', 'mg-tile glow mg-logo-tile', push)
     if (spec.image) {
       const img = el('img', '', tile)
       img.alt = ''
       img.decoding = 'sync'
       img.src = spec.image
     } else el('div', 'mg-logo-empty', tile, 'Add an image')
-    const caption = (spec.fields.caption ?? '').trim()
-    const pill = caption ? el('div', 'mg-logo-caption', box, caption) : null
-    const { tin, tout, outAt } = phases(spec.duration_ms)
-    tl.add(tile, { scale: [0, 1], rotate: [-14, 0], duration: tin * 1.2, ease: 'outBack(2.2)' }, 0)
-    tl.add(ring, { scale: [.6, 1.55], opacity: [.9, 0], duration: tin * 1.6, ease: 'outCubic' }, tin * .35)
-    if (pill) tl.add(pill, { opacity: [0, 1], translateY: [40 * u, 0], duration: tin, ease: 'outBack(1.6)' }, tin * .6)
-    tl.add(tile, { scale: [1, 1.04], duration: 300, ease: 'inOutSine' }, tin * 1.3)
-    tl.add(tile, { scale: [1.04, 1], duration: 300, ease: 'inOutSine' }, tin * 1.3 + 300)
-    tl.add(box, { opacity: [1, 0], scale: [1, .85], duration: tout, ease: 'inBack(1.4)' }, outAt)
+    const caption = clean(spec.fields.caption)
+    const chip = caption ? el('div', 'mg-chip', push, caption) : null
+    const { tin } = phases(spec.duration_ms)
+    popIn(b, tile, 0, 1.18, 380)
+    if (chip) riseIn(b, chip, tin * .7, 20)
+    pushIn(b, push)
+    cardOut(b, box)
   },
 
   before_after(b) {
-    const { spec, fit, tl, u } = b
-    const box = el('div', 'mg-ba', fit)
-    const before = el('div', 'mg-ba-card before', box)
-    el('span', 'mg-ba-tag', before, 'BEFORE')
-    el('div', 'mg-ba-text', before, (spec.fields.before ?? '').trim())
-    const after = el('div', 'mg-ba-card after', box)
-    el('span', 'mg-ba-tag', after, 'AFTER')
-    el('div', 'mg-ba-text', after, (spec.fields.after ?? '').trim())
-    const arrow = el('div', 'mg-ba-arrow', box)
-    const icon = svg('svg', { viewBox: '0 0 100 100' }, arrow)
-    svg('path', { d: 'M22 50 H74 M52 26 L76 50 L52 74' }, icon)
-    const { tin, tout, outAt, hold } = phases(spec.duration_ms)
-    const swap = tin + Math.min(650, hold * .3)
-    tl.add(before, { opacity: [0, 1], translateX: [-120 * u, 0], rotate: [-4, 0], duration: tin, ease: 'outBack(1.4)' }, 0)
-    tl.add(arrow, { scale: [0, 1], rotate: [-90, 0], duration: 360, ease: 'outBack(2)' }, swap - 220)
-    tl.add(after, { opacity: [0, 1], translateX: [120 * u, 0], scale: [.8, 1], rotate: [4, 0], duration: tin, ease: 'outBack(1.6)' }, swap)
-    tl.add(box, { opacity: [1, 0], translateY: [0, 50 * u], duration: tout, ease: 'inQuad' }, outAt)
+    const { spec, tl } = b
+    const { card: grid } = shell(b, 'mg-ba')
+    const before = el('div', 'mg-card mg-ba-card before', grid)
+    el('div', 'mg-kicker muted', before, 'Before')
+    const beforeText = el('div', 'mg-ba-text', before, clean(spec.fields.before))
+    const after = el('div', 'mg-card glow mg-ba-card after', grid)
+    el('div', 'mg-kicker', after, 'After')
+    const afterText = el('div', 'mg-ba-text mg-display', after, clean(spec.fields.after))
+    const arrow = el('div', 'mg-ba-arrow', grid)
+    const glyph = svg('svg', { viewBox: '0 0 100 100' }, arrow)
+    svg('path', { d: 'M24 50 H74 M54 30 L74 50 L54 70' }, glyph)
+    const { tin, hold } = phases(spec.duration_ms)
+    const swap = tin + clamp(hold * .25, 300, 700)
+    riseIn(b, beforeText, tin * .6, 16)
+    // The "before" fades back as the "after" arrives.
+    tl.add(before, { opacity: [1, .78], duration: 300, ease: 'outQuad' }, swap)
+    popIn(b, arrow, swap - 120, 1.4, 320)
+    popIn(b, after, swap, 1.1, 380)
+    riseIn(b, afterText, swap + 120, 16)
   },
 
   quote(b) {
-    const { spec, fit, tl, u } = b
-    const card = el('div', 'mg-quote', fit)
+    const { spec } = b
+    const { card } = shell(b, 'mg-card mg-quote')
     const mark = el('div', 'mg-quote-mark', card, '“')
     const textBox = el('div', 'mg-quote-text', card)
-    const words = (spec.fields.text ?? '').replace(/\s+/g, ' ').trim().replace(/^["“”']+|["“”']+$/g, '').split(' ').filter(Boolean)
-    const total = words.join(' ').length
-    card.style.setProperty('--quote-size', String(Math.round(clamp(6400 / Math.max(40, total), 56, 104))))
-    const spans = words.map((w, i) => el('span', 'mg-quote-word', textBox, i < words.length - 1 ? `${w} ` : w))
-    const author = (spec.fields.author ?? '').trim()
+    const text = clean(spec.fields.text).replace(/^["“”']+|["“”']+$/g, '')
+    textBox.style.setProperty('--quote-size', String(Math.round(clamp(6000 / Math.max(36, text.length), 58, 104))))
+    const rich = richText(textBox, text, null)
+    const author = clean(spec.fields.author)
     const by = author ? el('div', 'mg-quote-author', card, author) : null
-    cardInOut(b, card)
     const { tin, hold } = phases(spec.duration_ms)
-    tl.add(mark, { scale: [0, 1], rotate: [-30, 0], duration: 420, ease: 'outBack(2.4)' }, tin * .5)
-    const spread = Math.min(1100, hold * .45), step = spans.length > 1 ? spread / (spans.length - 1) : 0
-    spans.forEach((span, i) => tl.add(span, { opacity: [0, 1], translateY: [18 * u, 0], duration: 320, ease: 'outCubic' }, tin * .6 + i * step))
-    if (by) tl.add(by, { opacity: [0, 1], translateX: [-30 * u, 0], duration: 400, ease: 'outCubic' }, tin * .6 + spread + 120)
+    popIn(b, mark, tin * .4, 1.4, 360)
+    const end = buildWords(b, rich.words, tin * .6, wordStep(rich.words.length, Math.min(1300, hold * .45), 90))
+    if (by) riseIn(b, by, end + 60, 14)
   },
 
   highlight(b) {
@@ -387,7 +519,7 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     const layer = svg('svg', { class: 'mg-highlight', viewBox: `0 0 ${W} ${H}` }, root)
     const px = x * W, py = y * H
     const { tin, tout, outAt } = phases(spec.duration_ms)
-    const stroke = 22 * u
+    const stroke = 20 * u
     if (shape === 'circle') {
       const rx = 230 * u, ry = 160 * u
       // A hand-drawn loop: a little more than one turn, slightly tilted.
@@ -398,11 +530,11 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
         points.push(`${(px + Math.cos(a) * rx * wobble).toFixed(1)},${(py + Math.sin(a) * ry * wobble * (1 + i / 400)).toFixed(1)}`)
       }
       const d = `M${points.join(' L')}`
-      const shadow = svg('path', { d, class: 'mg-shadow', 'stroke-width': stroke, pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1, transform: `translate(0 ${6 * u})` }, layer)
+      const halo = svg('path', { d, class: 'mg-halo', 'stroke-width': stroke * 1.9, pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1 }, layer)
       const loop = svg('path', { d, 'stroke-width': stroke, pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1 }, layer)
-      for (const p of [shadow, loop]) tl.add(p, { strokeDashoffset: [1, 0], duration: tin * 1.4, ease: 'inOutCubic' }, 0)
+      for (const p of [halo, loop]) tl.add(p, { strokeDashoffset: [1, 0], duration: tin * 1.6, ease: 'inOutCubic' }, 0)
       const pulse = svg('ellipse', { cx: px, cy: py, rx, ry, 'stroke-width': stroke * .5, opacity: 0 }, layer)
-      tl.add(pulse, { opacity: [.7, 0], rx: [rx, rx * 1.35], ry: [ry, ry * 1.35], duration: 700, ease: 'outCubic' }, tin * 1.4)
+      tl.add(pulse, { opacity: [.6, 0], rx: [rx, rx * 1.3], ry: [ry, ry * 1.3], duration: 700, ease: 'outCubic' }, tin * 1.6)
       tl.add(layer, { opacity: [1, 0], duration: tout, ease: 'inQuad' }, outAt)
     } else {
       // The arrow comes in from the roomier side and stops just short of the point.
@@ -416,46 +548,255 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
       const hx2 = ex - head * Math.cos(angle + .5), hy2 = ey - head * Math.sin(angle + .5)
       const tip = `M${hx1},${hy1} L${ex},${ey} L${hx2},${hy2}`
       const group = svg('g', {}, layer)
-      for (const cls of ['mg-shadow', '']) {
-        const g = svg('g', cls ? { class: cls, transform: `translate(0 ${6 * u})` } : {}, group)
-        const line = svg('path', { d: body, class: cls, 'stroke-width': stroke, pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1 }, g)
-        const arrowHead = svg('path', { d: tip, class: cls, 'stroke-width': stroke, opacity: 0 }, g)
-        tl.add(line, { strokeDashoffset: [1, 0], duration: tin * 1.2, ease: 'outCubic' }, 0)
-        tl.add(arrowHead, { opacity: [0, 1], duration: 120, ease: 'linear' }, tin * 1.1)
+      for (const cls of ['mg-halo', '']) {
+        const g = svg('g', {}, group)
+        const width = cls ? stroke * 1.9 : stroke
+        const line = svg('path', { d: body, class: cls, 'stroke-width': width, pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1 }, g)
+        const arrowHead = svg('path', { d: tip, class: cls, 'stroke-width': width, opacity: 0 }, g)
+        tl.add(line, { strokeDashoffset: [1, 0], duration: tin * 1.4, ease: 'outCubic' }, 0)
+        tl.add(arrowHead, { opacity: [0, 1], duration: 120, ease: 'linear' }, tin * 1.25)
       }
       // A nudge toward the point while it holds.
-      tl.add(group, { translateX: [0, -dx * 14 * u], translateY: [0, -dy * 12 * u], duration: 260, ease: 'inOutSine' }, tin * 1.4)
-      tl.add(group, { translateX: [-dx * 14 * u, 0], translateY: [-dy * 12 * u, 0], duration: 260, ease: 'inOutSine' }, tin * 1.4 + 260)
+      tl.add(group, { translateX: [0, -dx * 14 * u], translateY: [0, -dy * 12 * u], duration: 260, ease: 'inOutSine' }, tin * 1.6)
+      tl.add(group, { translateX: [-dx * 14 * u, 0], translateY: [-dy * 12 * u, 0], duration: 260, ease: 'inOutSine' }, tin * 1.6 + 260)
       tl.add(layer, { opacity: [1, 0], duration: tout, ease: 'inQuad' }, outAt)
+    }
+  },
+
+  statement(b) {
+    const { spec } = b
+    const text = spec.fields.text ?? ''
+    const subline = clean(spec.fields.subline)
+    const { card } = shell(b, 'mg-card mg-statement')
+    const box = el('div', 'mg-statement-text', card)
+    const length = clean(text).length
+    box.style.setProperty('--statement-size', String(Math.round(clamp(2400 / Math.max(10, length) + 40, 84, 156))))
+    const rich = richText(box, text, spec.fields.accent)
+    const sub = subline ? el('div', 'mg-sub', card) : null
+    const subWords = sub ? richText(sub, subline, null).words : []
+    const { tin, hold } = phases(spec.duration_ms)
+    const end = buildWords(b, rich.words, tin * .55, wordStep(rich.words.length, Math.min(900, hold * .35), 130))
+    sweep(b, rich.mark, end - 40, 520)
+    buildWords(b, subWords, end + 260, wordStep(subWords.length, 360, 60))
+  },
+
+  sticky_notes(b) {
+    const { spec, fit, tl, u } = b
+    const notes = templateItems('sticky_notes', spec.fields.items)
+    const wall = el('div', `mg-notes n${notes.length}`, fit)
+    const push = el('div', 'mg-push mg-notes-row', wall)
+    const longest = notes.reduce((n, t) => Math.max(n, t.length), 1)
+    const base = notes.length === 1 ? 78 : notes.length === 2 ? 66 : 56
+    push.style.setProperty('--note-size', String(Math.round(clamp(base - Math.max(0, longest - 12) * .8, 34, base))))
+    const tilt = [-4, 3, -2], drop = [0, 34, 10]
+    const at = beats(spec, notes.length, .4, 0)
+    notes.forEach((text, i) => {
+      const note = el('div', `mg-note c${i % 3}`, push)
+      note.style.marginTop = `calc(var(--u) * ${drop[i]})`
+      const tape = el('div', 'mg-tape', note)
+      tape.style.setProperty('--tape-tilt', `${i % 2 ? 4 : -3}deg`)
+      const words = el('div', 'mg-note-text', note, text)
+      // A long word must fit its note: shrink that note's words until it does.
+      b.fitters.push(() => {
+        const room = note.clientWidth - 92 * u
+        const size = parseFloat(getComputedStyle(words).getPropertyValue('--note-size')) || 50
+        if (words.scrollWidth > room) words.style.setProperty('--note-size', String(Math.floor(size * room / words.scrollWidth)))
+      })
+      tl.add(note, { opacity: [0, 1], duration: 160, ease: 'outQuad' }, at[i])
+      tl.add(note, { translateY: [-150 * u, 0], duration: 460, ease: 'outBack(1.15)' }, at[i])
+      tl.add(note, { rotate: [tilt[i] - 9, tilt[i]], scale: [1.08, 1], duration: 460, ease: 'outBack(1.4)' }, at[i])
+    })
+    pushIn(b, push, .03)
+    cardOut(b, wall)
+  },
+
+  strike_list(b) {
+    const { spec, tl } = b
+    const items = templateItems('strike_list', spec.fields.items)
+    const final = spec.fields.final ?? ''
+    const { card } = shell(b, 'mg-card mg-strike')
+    const rows = items.map((text) => {
+      const row = el('div', 'mg-strike-row', card)
+      const words = el('span', 'mg-strike-text', row, text)
+      const line = el('span', 'mg-strike-line', words)
+      return { row, words, line }
+    })
+    const finalEl = clean(final) ? el('div', 'mg-strike-final mg-display', card) : null
+    const rich = finalEl ? richText(finalEl, final, spec.fields.accent, { marker: false, accentClass: 'tint' }) : null
+    const { tin, hold } = phases(spec.duration_ms)
+    rows.forEach((r, i) => riseIn(b, r.row, tin * .5 + i * 70, 16, 300))
+    const at = beats(spec, rows.length, .45, tin + 280)
+    rows.forEach((r, i) => {
+      tl.add(r.line, { scaleX: [0, 1], duration: 300, ease: 'inOutQuad' }, at[i])
+      tl.add(r.words, { opacity: [1, .5], duration: 260, ease: 'outQuad' }, at[i] + 220)
+    })
+    if (finalEl && rich) {
+      const finalAt = (rows.length ? at[at.length - 1] + 420 : tin * .6)
+      const end = buildWords(b, rich.words, finalAt, wordStep(rich.words.length, 360, 80), 'pop')
+      if (rich.accent) boxAround(b, card, rich.accent, Math.min(end + 40, tin + hold - 500))
+    }
+  },
+
+  browser_frame(b) {
+    const { spec, tl, band, u } = b
+    const { card: win } = shell(b, 'mg-window glow')
+    const bar = el('div', 'mg-window-bar', win)
+    const dots = el('div', 'mg-dots', bar)
+    for (let i = 0; i < 3; i++) el('span', `d${i}`, dots)
+    const url = el('div', 'mg-url', bar)
+    icon(url, 'lock', 'mg-url-lock')
+    const domain = clean(spec.fields.domain).replace(/^[a-z]+:\/\//i, '').replace(/\/$/, '')
+    if (domain) el('span', 'mg-url-text', url, domain)
+    el('div', 'mg-window-spacer', bar)
+    const view = el('div', 'mg-window-view', win)
+    const { tin, outAt } = phases(spec.duration_ms)
+    if (spec.image) {
+      const scroller = el('div', 'mg-window-scroll', view)
+      const img = el('img', '', scroller)
+      img.alt = ''
+      img.decoding = 'sync'
+      img.src = spec.image
+      let distance = 0
+      b.fitters.push(() => {
+        const width = win.clientWidth
+        const ratio = img.naturalWidth > 0 ? img.naturalHeight / img.naturalWidth : .6
+        const imageH = width * ratio
+        const room = Math.max(160 * u, band.clientHeight - bar.offsetHeight - 24 * u)
+        const viewH = Math.min(imageH, room)
+        view.style.height = `${Math.round(viewH)}px`
+        distance = Math.max(0, imageH - viewH)
+      })
+      // A tall page scrolls slowly from the top down while the window holds.
+      const scrollAt = tin + 500, scrollFor = Math.max(400, outAt - 250 - scrollAt)
+      tl.add(scroller, { translateY: [0, () => -distance], duration: scrollFor, ease: 'inOutSine' }, scrollAt)
+      for (const box of browserHighlights(spec.fields.highlights)) {
+        const mark = el('div', 'mg-window-mark', scroller)
+        Object.assign(mark.style, { left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.w * 100}%`, height: `${box.h * 100}%` })
+        const at = clamp(box.at_ms, tin, outAt - 300)
+        tl.add(mark, { scaleX: [0, 1], duration: 380, ease: 'inOutCubic' }, at)
+      }
+    } else {
+      const page = el('div', 'mg-window-page', view)
+      const head = el('div', 'mg-window-title mg-display', page)
+      const title = clean(spec.fields.title)
+      head.style.setProperty('--page-size', String(Math.round(clamp(1900 / Math.max(12, title.length) + 22, 56, 96))))
+      const rich = richText(head, spec.fields.title, spec.fields.accent ? spec.fields.accent : null)
+      const subline = clean(spec.fields.subline)
+      const sub = subline ? el('div', 'mg-sub', page) : null
+      const subWords = sub ? richText(sub, subline, null).words : []
+      const end = buildWords(b, rich.words, tin * .8, wordStep(rich.words.length, 600, 100))
+      sweep(b, rich.mark, end - 40)
+      buildWords(b, subWords, end + 220, wordStep(subWords.length, 320, 60))
+    }
+  },
+
+  icon_pop(b) {
+    const { spec, fit } = b
+    const labels = templateItems('icon_pop', spec.fields.items)
+    const icons = graphicIcons(spec.fields)
+    const count = Math.max(labels.length, spec.image ? 1 : 0)
+    const row = el('div', `mg-icons n${count}`, fit)
+    const push = el('div', 'mg-push mg-icons-row', row)
+    const at = beats(spec, count, .5, 0)
+    for (let i = 0; i < count; i++) {
+      const tile = el('div', 'mg-tile mg-icon-tile', push)
+      const art = el('div', 'mg-icon-art', tile)
+      const name = icons[i]
+      if (i === 0 && spec.image) {
+        const img = el('img', '', art)
+        img.alt = ''
+        img.decoding = 'sync'
+        img.src = spec.image
+      } else if (name) icon(art, name, 'mg-icon-svg')
+      else el('span', 'mg-icon-letter', art, (labels[i] ?? '').replace(/[^\p{L}\p{N}]/gu, '').slice(0, 1).toUpperCase())
+      if (labels[i]) el('div', 'mg-icon-label', tile, labels[i])
+      popIn(b, tile, at[i], 1.18, 360)
+    }
+    pushIn(b, push, .03)
+    cardOut(b, row)
+  },
+
+  headline_pill(b) {
+    const { spec, fit, tl } = b
+    const box = el('div', 'mg-headline', fit)
+    const push = el('div', 'mg-push mg-headline-stack', box)
+    const text = clean(spec.fields.text), phrase = clean(spec.fields.phrase)
+    const { tin, hold } = phases(spec.duration_ms)
+    let t = 0
+    // Line 1 should fit on one line when it can (the phrase is drawn 1.2× in a narrower italic).
+    const longest = Math.max(text.length, phrase.length * .95, 8)
+    push.style.setProperty('--headline-size', String(Math.round(clamp(1420 / longest, 58, 112))))
+    if (text) {
+      const line = el('div', 'mg-hl-line one mg-display', push)
+      const words = richText(line, text, null).words
+      cardIn(b, line, 0)
+      t = buildWords(b, words, 120, wordStep(words.length, Math.min(520, hold * .25), 110))
+    }
+    if (phrase) {
+      const line = el('div', 'mg-hl-line two', push)
+      const fill = el('div', 'mg-hl-fill', line)
+      const inner = el('div', 'mg-hl-text', line)
+      const words = richText(inner, phrase, null).words
+      const at = text ? t - 120 : 0
+      tl.add(line, { opacity: [0, 1], duration: 120, ease: 'linear' }, at)
+      tl.add(fill, { scaleX: [0, 1], duration: 380, ease: 'outQuart' }, at)
+      buildWords(b, words, at + 160, wordStep(words.length, 420, 120), 'pop')
+    }
+    pushIn(b, push, .03)
+    cardOut(b, box)
+    void tin
+  },
+
+  comment_cta(b) {
+    const { spec, tl } = b
+    const keyword = clean(spec.fields.keyword), lead = clean(spec.fields.lead) || 'Comment'
+    const { card } = shell(b, 'mg-card mg-cta')
+    const leadEl = el('div', 'mg-cta-lead', card, lead)
+    const pill = el('div', 'mg-cta-pill', card)
+    const word = el('span', 'mg-cta-word mg-display', pill, keyword)
+    pill.style.setProperty('--cta-size', String(Math.round(clamp(900 / Math.max(3, keyword.length), 64, 128))))
+    const { tin, hold } = phases(spec.duration_ms)
+    riseIn(b, leadEl, tin * .5, 18)
+    popIn(b, pill, tin * .5 + 160, 1.25, 380)
+    riseIn(b, word, tin * .5 + 260, 10, 260)
+    // The pill's glow breathes once while it holds.
+    const glow = el('div', 'mg-cta-glow', pill)
+    tl.add(glow, { opacity: [0, 1], duration: 380, ease: 'outQuad' }, tin + 300)
+    if (hold > 1600) {
+      tl.add(pill, { scale: [1, 1.05], duration: 420, ease: 'inOutSine' }, tin + 900)
+      tl.add(pill, { scale: [1.05, 1], duration: 520, ease: 'inOutSine' }, tin + 1320)
     }
   }
 }
 
 function listLike(b: Build, checks: boolean): void {
-  const { spec, fit, tl, u } = b
+  const { spec, tl } = b
   const items = graphicItems(spec.fields.items)
-  const card = el('div', 'mg-card mg-list', fit)
-  const title = (spec.fields.title ?? '').trim()
-  if (title) el('div', 'mg-list-title mg-display', card, title)
+  const { card } = shell(b, `mg-card mg-list${checks ? ' checks' : ''}`)
+  const title = clean(spec.fields.title)
+  if (title) {
+    const head = el('div', 'mg-list-title mg-display', card)
+    const words = richText(head, title, null).words
+    buildWords(b, words, phases(spec.duration_ms).tin * .5, wordStep(words.length, 300, 70))
+  }
   const list = el('div', 'mg-list-items', card)
-  const at = beats(spec, items.length)
+  const at = beats(spec, items.length, .55)
   items.forEach((text, i) => {
     const row = el('div', 'mg-list-item', list)
     if (checks) {
-      const box = el('div', 'mg-check-box', row)
+      const box = el('div', 'mg-check', row)
       const fill = el('div', 'mg-check-fill', box)
       const mark = svg('svg', { viewBox: '0 0 100 100' }, box)
-      const tick = svg('path', { d: 'M26 52 L44 69 L76 33', pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1 }, mark)
+      const tick = svg('path', { d: 'M28 52 L44 67 L73 36', pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1 }, mark)
       el('div', 'mg-list-text', row, text)
-      tl.add(row, { opacity: [0, 1], translateX: [-50 * u, 0], duration: 340, ease: 'outCubic' }, at[i])
-      tl.add(fill, { scale: [0, 1], opacity: [0, 1], duration: 260, ease: 'outBack(2)' }, at[i] + 220)
-      tl.add(tick, { strokeDashoffset: [1, 0], duration: 260, ease: 'outCubic' }, at[i] + 320)
+      riseIn(b, row, at[i], 18, 300)
+      popIn(b, fill, at[i] + 200, 1.3, 260)
+      tl.add(tick, { strokeDashoffset: [1, 0], duration: 240, ease: 'outCubic' }, at[i] + 300)
     } else {
       const num = el('div', 'mg-list-num', row, String(i + 1))
       el('div', 'mg-list-text', row, text)
-      tl.add(row, { opacity: [0, 1], translateX: [-60 * u, 0], duration: 360, ease: 'outCubic' }, at[i])
-      tl.add(num, { scale: [0, 1], rotate: [-60, 0], duration: 380, ease: 'outBack(2.2)' }, at[i] + 60)
+      riseIn(b, row, at[i], 18, 300)
+      popIn(b, num, at[i] + 60, 1.35, 320)
     }
   })
-  cardInOut(b, card)
 }
