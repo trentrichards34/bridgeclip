@@ -135,7 +135,7 @@ test('AI shots: settings, estimates and the OpenRouter requests (9:16, no sound,
   assert.throws(() => shared.checkBrollAiSettings({ kind: 'video', model: 'evil/model', maxShots: 1 }), /listed video models/)
   assert.throws(() => shared.checkBrollAiSettings({ kind: 'video', model: 'google/veo-3.1-lite', maxShots: 7 }), /0 to 6/)
   assert.equal(shared.aiShotEstimateUsd({ kind: 'video', model: 'bytedance/seedance-2.0-fast', maxShots: 2 }), 0.2)
-  assert.equal(shared.aiShotEstimateUsd({ kind: 'video', model: 'bytedance/seedance-2.0', maxShots: 2 }), null, 'no price listed: none is made up')
+  assert.ok(Math.abs(shared.aiShotEstimateUsd({ kind: 'video', model: 'bytedance/seedance-2.0', maxShots: 2 }) - 0.35) < 1e-9, 'listed "from" price: one 5 s shot x $0.07')
   assert.equal(shared.aiShotEstimateUsd({ kind: 'image', model: 'x', maxShots: 2 }), avatars.PRICES.image)
   assert.equal(shared.aiRunEstimateUsd({ kind: 'video', model: 'x-ai/grok-imagine-video-1.5-lite', maxShots: 2 }, 5), 1)
   assert.match(shared.aiEstimateLine({ kind: 'video', model: 'x-ai/grok-imagine-video-1.5-lite', maxShots: 2 }), /About \$0\.10 a shot, at most \$0\.20 a clip/)

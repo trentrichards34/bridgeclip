@@ -504,8 +504,8 @@ export const BROLL_AI_MODELS: readonly BrollAiModel[] = [
   { id: 'x-ai/grok-imagine-video-1.5-lite', label: 'Grok Imagine Video 1.5 Lite', perSecondUsd: 0.02, seconds: 5 },
   { id: 'bytedance/seedance-2.0-fast', label: 'Seedance 2.0 Fast', perSecondUsd: 0.04, seconds: 5 },
   { id: 'google/veo-3.1-lite', label: 'Veo 3.1 Lite', perSecondUsd: 0.05, seconds: 4 },
-  { id: 'bytedance/seedance-2.0', label: 'Seedance 2.0', perSecondUsd: null, seconds: 5 },
-  { id: 'alibaba/wan-3.0', label: 'Wan 3.0', perSecondUsd: null, seconds: 5 }
+  { id: 'bytedance/seedance-2.0', label: 'Seedance 2.0', perSecondUsd: 0.07, seconds: 5 },
+  { id: 'alibaba/wan-3.0', label: 'Wan 3.0', perSecondUsd: 0.05, seconds: 5 }
 ]
 /** The cheapest one listed. */
 export const DEFAULT_BROLL_AI_MODEL = 'x-ai/grok-imagine-video-1.5-lite'
