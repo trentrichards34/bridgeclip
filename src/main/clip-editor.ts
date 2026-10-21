@@ -12,6 +12,7 @@ import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironme
 import { resolveBinary } from './tools'
 import { logger } from './logger'
 import { importGraphicImage, renderCandidateGraphics, sweepGraphicRenders, type RenderedGraphic } from './graphics-render'
+import { outputScenes } from '../shared/scenes'
 
 type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source' | 'suggest-hooks' | 'prepare'
 interface EditorOperation { progress?: EditorSession['progress']; action: NonNullable<EditorSession['operation']>; child?: ChildProcess; cancelled?: boolean; abort?: AbortController; batch?: EditorBatch }
@@ -215,6 +216,7 @@ export async function saveEditor(path: unknown, revision: unknown, edits: unknow
       const next = { ...c, ...edit }
       // Graphics absent from the edit means none (undo back to before the first one): don't keep the stored ones.
       if (edit.graphics === undefined) delete next.graphics
+      if (edit.stage_scenes === undefined) delete next.stage_scenes
       // A changed call to action is the member's choice: a re-bake keeps it over the Library clip's.
       if (ctaChoice(edit.cta_id) !== ctaChoice(c.cta_id)) next.cta_edited = true
       if (edit.status === 'baked') {
@@ -414,7 +416,9 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
           let result: WorkerResult
           try {
             result = await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId,
-              ...(graphics.length ? { graphics: graphics.map(({ file, start_ms, duration_ms, size }) => ({ file, start_ms, duration_ms, ...(size ? { size } : {}) })) } : {}) })
+              ...(graphics.length ? { graphics: graphics.map(({ file, start_ms, duration_ms, size }) => ({ file, start_ms, duration_ms, ...(size ? { size } : {}) })) } : {}),
+              // Scenes on the finished clip's clock (vertical clips only).
+              ...(exporting && session.project.aspect_ratio === '9:16' && outputScenes(candidate).length ? { scenes: outputScenes(candidate) } : {}) })
           } catch (error) {
             // A render that failed after its captions were translated still spent that call; so did a review that failed part way.
             const failedResult = (error as WorkerFailure).result

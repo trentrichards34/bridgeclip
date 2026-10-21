@@ -24,6 +24,7 @@ import { EditInspector } from './EditInspector'
 import { ClipChat, clipChatThread, type ChatApplied, type ChatApplyResult } from './ClipChat'
 import { PointButton, PointLayer } from './ChatPoints'
 import { GraphicsInspector, GraphicsOverlay, GraphicsTrack } from './ClipGraphics'
+import { ScenesOverlay, ScenesTrack } from './ClipScenes'
 import { nearestOutputTime, outputTime, type EditorGraphic } from '../../shared/motion-graphics'
 import { EditLog } from './EditLog'
 import { EditorTabs, type EditorTab } from './EditorTabs'
@@ -832,6 +833,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
             <div className="editor-pane-heading">Output <span className="flex items-center gap-2">{candidate.captions && suppressedCaptions.some(([a, b]) => a <= time && time < b) ? 'Captions suppressed' : project.aspect_ratio}
               <PointButton thread={clipChatThread(outputDir, candidate.id)} disabled={!!busy || status === 'discarded'} onStart={() => { video.current?.pause(); setTab('chat') }} /></span></div>
             <canvas ref={canvas} width={aspect < 1 ? 360 : 640} height={aspect < 1 ? 640 : 360} style={{ aspectRatio: aspect }} />
+            {project.aspect_ratio === '9:16' && <ScenesOverlay canvas={canvas} candidate={candidate} time={time} />}
             <GraphicsOverlay canvas={canvas} project={project} candidate={candidate} time={time} outputDir={outputDir} />
             <PointLayer thread={clipChatThread(outputDir, candidate.id)} canvas={canvas} outMs={() => Math.round(nearestOutputTime(candidate, timeRef.current))} />
             {showSubtitlePreview && (tab === 'transcript' || tab === 'captions') && <EditorCaptionPreview canvas={canvas} project={project} candidate={candidate} time={time} disabled={editingDisabled} onMove={moveCaption} onDrag={active => { dragging.current = active; if (active) video.current?.pause() }} />}
@@ -881,6 +883,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
             onSelect={(id) => { setGraphicId(id); setGraphicPicking(false); setTab('graphics') }} onChange={setGraphics}
             onDrag={(active) => { dragging.current = active; if (active) { video.current?.pause(); setDragWindow([viewStart, viewEnd]) } else setDragWindow(null) }}
             onAdd={() => { video.current?.pause(); setGraphicPicking(true); setTab('graphics') }} />
+          {project.aspect_ratio === '9:16' && <ScenesTrack candidate={candidate} viewStart={viewStart} viewEnd={viewEnd} time={time} disabled={editingDisabled} clock={clipClock}
+            onChange={(stage_scenes, remember) => change({ stage_scenes }, remember)}
+            onDrag={(active) => { dragging.current = active; if (active) { video.current?.pause(); setDragWindow([viewStart, viewEnd]) } else setDragWindow(null) }} />}
           {suppressedCaptions.length > 0 && <div className={cn('editor-caption-track', !candidate.captions && 'opacity-40')} aria-label="Caption-free sections">
             {suppressedCaptions.map(([a, b], i) => b > viewStart && a < viewEnd && <button key={i}
               aria-label={`Caption-free section ${i + 1}: ${clock(a)} to ${clock(b)}`} title={`Captions suppressed ${clock(a)} – ${clock(b)}`}

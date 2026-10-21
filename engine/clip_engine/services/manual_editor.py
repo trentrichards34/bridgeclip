@@ -649,10 +649,17 @@ async def run_editor(config, progress=None):
             from clip_engine.services.graphics_overlay import checked_graphics
             with failure_code('invalid_edit'):
                 checked_graphics(run, graphics, 10 ** 9)
+        # Scenes (face / stage / visual) main worked out on the finished clip's clock.
+        scenes = config.get('scenes')
+        if scenes is not None:
+            from clip_engine.services.stage_scenes import parse_scenes
+            with failure_code('invalid_edit'):
+                parse_scenes(scenes)
         if done:
             index = done['clip_index']
         else:
-            index, usage = await export_clip(run, project, c, output, source, transcript, replace_index=target, graphics=graphics)
+            index, usage = await export_clip(run, project, c, output, source, transcript, replace_index=target, graphics=graphics,
+                                             scenes=scenes)
         if target is None:
             c.pop('library_clip', None)  # Its Library clip was deleted: this export is a new clip.
         if index not in c['exports']:
@@ -745,7 +752,7 @@ def attach_usage(error, usage):
     return error
 
 
-async def export_clip(run, project, c, output, source, transcript, replace_index=None, graphics=None):
+async def export_clip(run, project, c, output, source, transcript, replace_index=None, graphics=None, scenes=None):
     """Render one ready candidate: a new Library clip, or (an Automatic run's clip) its replacement in place.
 
     Returns (clip index, translation usage or None). A failure after a paid translation carries its usage.
@@ -773,7 +780,7 @@ async def export_clip(run, project, c, output, source, transcript, replace_index
     translations, usage = await translated_captions(c, render_transcript, a, b)
     try:
         return await render_export(run, project, c, output, source, render_transcript, replace_index, index, renderer,
-                                   a, b, hook, hook_options, extras, translations, usage, graphics)
+                                   a, b, hook, hook_options, extras, translations, usage, graphics, scenes)
     except BaseException as error:
         # The translation was paid for even when the render fails or is cancelled.
         attach_usage(error, usage)
@@ -781,7 +788,7 @@ async def export_clip(run, project, c, output, source, transcript, replace_index
 
 
 async def render_export(run, project, c, output, source, render_transcript, replace_index, index, renderer,
-                        a, b, hook, hook_options, extras, translations, usage, graphics=None):
+                        a, b, hook, hook_options, extras, translations, usage, graphics=None, scenes=None):
     from clip_engine.config import get_caption_preset
     language = {'caption_translations': translations, 'caption_language': c['caption_language']} if translations else {}
     path = run / f'clip_{index:02d}.mp4'
@@ -796,7 +803,9 @@ async def render_export(run, project, c, output, source, render_transcript, repl
             caption_y=c.get('caption_y'),
             apply_padding=False, aspect_ratio=project['aspect_ratio'], pacing='natural', video_speed=c['video_speed'],
             manual_ranges_ms=[tuple(interval) for interval in c['ranges']], manual_plan=manual_plan(project, c, cover=bool(hook)),
-            write_subtitles=replace_index is not None, **hook_options, **extras, **language))
+            write_subtitles=replace_index is not None, **hook_options, **extras, **language,
+            **({'scenes': scenes, 'scene_brand_color': hook['look']['color'] if hook and hook['look'].get('look') == 'brand' else None}
+               if scenes and project['aspect_ratio'] == '9:16' else {})))
         if graphics:
             from clip_engine.services.graphics_overlay import checked_graphics, overlay_graphics
             await overlay_graphics(renderer, result.output_path, checked_graphics(run, graphics, result.duration_ms))

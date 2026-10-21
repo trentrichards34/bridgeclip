@@ -1,0 +1,23 @@
+/* The clip editor's Scenes row (ClipScenes.tsx), under the Graphics row. */
+.editor-scenes-row { margin:8px 8px 0; }
+.editor-scenes-label { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:10px; font-weight:500; color:rgb(var(--ink-muted)); margin-bottom:4px; }
+.editor-scenes-label > span { margin-right:auto; }
+.editor-scenes-tools { display:flex; align-items:center; gap:6px; }
+.editor-scenes-track { position:relative; height:26px; border-radius:5px; background:rgb(var(--editor-well)); }
+.editor-scenes-empty { position:absolute; inset:0; display:grid; place-items:center; font-size:10px; color:rgb(var(--ink-subtle)); pointer-events:none; }
+.editor-scene-block { position:absolute; top:3px; bottom:3px; min-width:8px; display:flex; border-radius:4px; overflow:hidden; background:#2dd4bf2e; border:1px solid #2dd4bf99; }
+.editor-scene-block.scene-visual { background:#fbbf242e; border-color:#fbbf2499; }
+.editor-scene-block.scene-face { background:#ffffff14; border-color:#ffffff40; }
+.editor-scene-block.backdrop-dark { box-shadow:inset 0 -3px 0 #17191d; }
+.editor-scene-block.backdrop-light { box-shadow:inset 0 -3px 0 #e2e5ea; }
+.editor-scene-block.backdrop-brand { box-shadow:inset 0 -3px 0 #3b6bff; }
+.editor-scene-block.selected { outline:1px solid #ffffffcc; outline-offset:0; }
+.editor-scene-body { flex:1; min-width:0; display:flex; align-items:center; gap:6px; padding:0 5px; font-size:10px; color:rgb(var(--ink)); cursor:grab; touch-action:none; overflow:hidden; white-space:nowrap; }
+.editor-scene-body:active { cursor:grabbing; }
+.editor-scene-kind { font-weight:600; flex-shrink:0; }
+.editor-scene-backdrop { overflow:hidden; text-overflow:ellipsis; color:rgb(var(--ink-muted)); }
+.editor-scene-edge { flex-shrink:0; width:7px; cursor:ew-resize; touch-action:none; background:#ffffff22; }
+.editor-scene-edge:hover { background:#ffffffaa; }
+.editor-scenes-overlay { position:absolute; pointer-events:none; overflow:hidden; }
+.editor-scenes-backdrop { position:absolute; inset:0; }
+.editor-scenes-card { position:absolute; box-shadow:0 6px 18px #0003; }
