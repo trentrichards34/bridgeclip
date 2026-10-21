@@ -37,7 +37,8 @@ logger = logging.getLogger(__name__)
 Progress = Callable[[str, float], None]
 
 OUT_W, OUT_H, FPS = 1080, 1920, 30
-MAX_SOURCES = 5
+# Takes of one recording (up to 5), or clips to combine (up to 30).
+MAX_SOURCES = 30
 MAX_SOURCE_SECONDS = 20 * 60
 MAX_WORDS = 8000
 MAX_WORD_CHARS = 60
@@ -454,6 +455,79 @@ PLAN_SCHEMA: dict[str, Any] = {
 PLAN_SCHEMA["required"] = [*PLAN_SCHEMA["required"], "cards"]
 
 
+def combine_schema() -> dict[str, Any]:
+    """Combine clips: the plan also orders the clips and suggests proof graphics on screen clips."""
+    schema = json.loads(json.dumps(PLAN_SCHEMA))
+    schema["properties"]["order"] = {"type": "array", "items": {"type": "integer"},
+                                     "description": "Every clip number once, in the best order to play them"}
+    schema["properties"]["order_why"] = {"type": "string", "description": "One short line: why this order"}
+    schema["properties"]["proof"] = {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["word", "value", "label"],
+        "properties": {"word": {"type": "integer"}, "value": {"type": "string"}, "label": {"type": "string"}}}}
+    schema["required"] = [*schema["required"], "order", "order_why", "proof"]
+    return schema
+
+
+def combine_prompt() -> str:
+    return (
+        "\n\nThis video is COMBINED from several short clips the creator filmed one after another (marked --- Clip N ---, "
+        "numbered in the order they were filmed). The clips are different parts of one video, not retakes of each other: "
+        "keep each clip's content unless it is clearly the same line said again in a later clip, a rejected take, a false "
+        "start or filler. A clip marked SCREEN films a laptop or monitor (a dashboard, results, a page) while they talk.\n"
+        "Also return:\n"
+        "- order: every clip number exactly once, in the best order to play them: a hook first, then the points, then "
+        "the proof (results, numbers on screen), then the close (the call to action last). Keep the filming order when "
+        "it already flows. order_why: one short line (at most 15 words) saying why.\n"
+        "- proof: 0 to 3 stat graphics for numbers they SAY while filming a SCREEN clip (results, earnings, counts): "
+        "word is the index where the number is said, value is the number exactly as said (digits allowed, e.g. $8,188), "
+        "label is 1 to 4 of their own words saying what it is. Only numbers they said; never a number you read or guess."
+    )
+
+
+MAX_PROOF = 3
+
+
+def _order(raw: Any, count: int) -> Optional[list[int]]:
+    """Clip numbers (1-based) from the plan as 0-based sources: every clip exactly once, or None."""
+    if not isinstance(raw, list) or len(raw) != count or any(type(v) is not int for v in raw):
+        return None
+    order = [v - 1 for v in raw]
+    return order if sorted(order) == list(range(count)) else None
+
+
+def proof_graphics(raw: Any, words: list[Word], marks: list[Optional[str]], screens: set[int]) -> list[dict]:
+    """Stat graphics on numbers said in screen clips: the value must be said there, the label's words said nearby."""
+    out: list[dict] = []
+    for item in (raw if isinstance(raw, list) else [])[:8]:
+        if not isinstance(item, dict) or type(item.get("word")) is not int or not 0 <= item["word"] < len(words):
+            continue
+        word = _anchor(item["word"], words, marks)
+        value = _clean_text(item.get("value"), 3, 24)
+        label = _clean_text(item.get("label"), 4, 40)
+        if word is None or words[word].src not in screens or not value or not numbers_in(value) \
+                or unsupported_numbers(value, _said(words, item["word"], 4)):
+            continue
+        if label and not _keyword_supported(label, words, item["word"]):
+            label = ""
+        if any(p["word"] == word for p in out):
+            continue
+        out.append({"word": word, "value": value, "label": label})
+        if len(out) == MAX_PROOF:
+            break
+    return out
+
+
+def basic_proof(words: list[Word], marks: list[Optional[str]], screens: set[int]) -> list[dict]:
+    """Without the AI: the first number said in each screen clip."""
+    found: list[dict] = []
+    for src in sorted(screens):
+        for i, w in enumerate(words):
+            if w.src == src and marks[i] is None and _digits(w.text.strip(".,!?;:")) is not None:
+                found.append({"word": i, "value": w.text.strip(",.!?;:"), "label": ""})
+                break
+    return proof_graphics(found, words, marks, screens)
+
+
 def plan_system_prompt() -> str:
     return (
         "You are a video editor. A creator filmed themselves talking to camera, unedited: there may be several takes of "
@@ -488,14 +562,18 @@ def plan_system_prompt() -> str:
     )
 
 
-def format_transcript(words: list[Word], marks: list[Optional[str]], names: list[str]) -> str:
+def format_transcript(words: list[Word], marks: list[Optional[str]], names: list[str], clips: Optional[list[dict]] = None) -> str:
     out: list[str] = []
     src = -1
     for line in lines_of(words):
         first = words[line[0]]
         if first.src != src:
             src = first.src
-            if len(names) > 1:
+            if clips:
+                clip = clips[src] if src < len(clips) else {}
+                shot = "SCREEN: filming a screen" if clip.get("shot") == "screen" else "FACE: talking to camera"
+                out.append(f"--- Clip {src + 1} ({shot}, {float(clip.get('seconds') or 0):.1f} s): {names[src] if src < len(names) else ''} ---")
+            elif len(names) > 1:
                 out.append(f"--- Take file {src + 1}: {names[src] if src < len(names) else ''} ---")
         hint = " (likely a retake or filler: " + ", ".join(sorted({marks[i] for i in line if marks[i]})) + ")" \
             if any(marks[i] for i in line) else ""
@@ -772,6 +850,18 @@ def basic_plan(words: list[Word], marks: list[Optional[str]]) -> dict:
             "sounds": _sounds([{"word": p["word"], "sound": "pop"} for p in popups], words, marks, popups), "notes": []}
 
 
+def combine_of(raw: Any, words: list[Word], plan: dict, clips: list[dict]) -> dict:
+    """Combine clips: the AI's order (None when it didn't give a whole one), why, and proof graphics on screen clips."""
+    raw = raw if isinstance(raw, dict) else {}
+    screens = {n for n, c in enumerate(clips) if c.get("shot") == "screen"}
+    order = _order(raw.get("order"), len(clips))
+    why = _clean_text(raw.get("order_why"), 20, 160) if order else ""
+    proof = proof_graphics(raw.get("proof"), words, plan["marks"], screens) if raw else []
+    if not proof:
+        proof = basic_proof(words, plan["marks"], screens)
+    return {"ai_order": order, "order_why": why, "proof": proof}
+
+
 def review_of(words: list[Word], plan: dict, planned: str, cost_usd: float, warnings: list[str]) -> dict:
     """What the review screen shows (and what a render is checked against)."""
     marks = plan["marks"]
@@ -787,6 +877,7 @@ def review_of(words: list[Word], plan: dict, planned: str, cost_usd: float, warn
         "hooks": plan["hooks"], "hook": 0 if plan["hooks"] else None, "cta": plan["cta"],
         "popups": plan["popups"], "sounds": plan["sounds"], "planned": planned, "notes": notes[:6],
         "warnings": warnings[:4], "cost_usd": round(cost_usd, 6),
+        **({"combine": plan["combine"]} if plan.get("combine") else {}),
     }
 
 
@@ -796,6 +887,7 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
     import httpx
     words: list[Word] = config["words"]
     names: list[str] = config.get("names") or []
+    clips: list[dict] = (config.get("combine") or {}).get("clips") or []
     base = analyze_takes(words)
     settings = get_settings()
     progress("Planning your edit", 20)
@@ -803,15 +895,16 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
     user = (
         "BRAND (data" + (f": {config.get('brand_name')}" if config.get("brand_name") else "") + ")\n" + (brand or "(none)")
         + ("\n\nWHAT THEY MEANT TO OPEN WITH (data)\n" + config["hook_hint"] if config.get("hook_hint") else "")
-        + "\n\nTRANSCRIPT (data)\n" + format_transcript(words, base, names)
+        + "\n\nTRANSCRIPT (data)\n" + format_transcript(words, base, names, clips or None)
     )
     # "Say what it's for": the purpose line and (when the app found the model accepts images) the reference picture.
     from clip_engine.services.purpose_context import system_rules, with_context
     payload: dict[str, Any] = {
         "model": settings.planner_model,
-        "messages": [{"role": "system", "content": plan_system_prompt() + system_rules(config.get("purpose"), bool(config.get("reference_image")))},
+        "messages": [{"role": "system", "content": plan_system_prompt() + (combine_prompt() if clips else "")
+                      + system_rules(config.get("purpose"), bool(config.get("reference_image")))},
                      {"role": "user", "content": with_context(user, config.get("purpose"), config.get("reference_image"))}],
-        "response_format": json_schema_format("recording_edit", PLAN_SCHEMA),
+        "response_format": json_schema_format("recording_edit", combine_schema() if clips else PLAN_SCHEMA),
         "provider": {"require_parameters": True}, "max_tokens": 12000,
     }
     fallbacks = settings.get_planner_fallback_models()
@@ -831,7 +924,10 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
                 if usage.get("cost") is not None:
                     cost += float(usage["cost"])
                 content, _ = message_text(body)
-                plan = validate_plan(json.loads(content or "{}"), words, base)
+                raw = json.loads(content or "{}")
+                plan = validate_plan(raw, words, base)
+                if clips:
+                    plan["combine"] = combine_of(raw, words, plan, clips)
                 break
             except (OpenRouterError, ValueError) as error:
                 if isinstance(error, OpenRouterError) and not error.retryable:
@@ -845,6 +941,8 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
     if plan is None:
         warnings.append("The AI plan didn’t come back, so this is a basic edit: clear retakes, restarts and filler words are cut and your first line opens the video.")
         plan = basic_plan(words, base)
+        if clips:
+            plan["combine"] = combine_of(None, words, plan, clips)
     progress("Plan ready", 100)
     return review_of(words, plan, "ai" if not warnings else "basic", cost, warnings)
 
@@ -893,14 +991,21 @@ def _frame(t: float, up: bool) -> float:
 
 
 def build_timeline(words: list[Word], keep: list[bool], hook: Optional[Span], cta: Optional[Span], max_gap: float = MAX_INNER_GAP,
-                   short_pause: float = SHORT_PAUSE) -> tuple[list[Piece], list[tuple[str, int, int, int]]]:
+                   short_pause: float = SHORT_PAUSE, order: Optional[list[int]] = None) -> tuple[list[Piece], list[tuple[str, int, int, int]]]:
     """The pieces to play, in order (hook, the rest as recorded, the call to action), and each kept word's time in the
-    reel: (text, start_ms, end_ms, word index). Every piece starts and ends on a frame, between words: never mid-word."""
+    reel: (text, start_ms, end_ms, word index). Every piece starts and ends on a frame, between words: never mid-word.
+    With `order` (combine clips: the sources in the order they play), the body plays clip by clip in that order and
+    words of clips left out of it don't play at all."""
     n = len(words)
+    if order is not None:
+        place = {src: k for k, src in enumerate(order)}
+        keep = [k and words[i].src in place for i, k in enumerate(keep)]
     hook_ids = [i for i in range(hook.start, hook.end + 1) if keep[i]] if hook else []
     cta_ids = [i for i in range(cta.start, cta.end + 1) if keep[i] and i not in hook_ids] if cta else []
     taken = set(hook_ids) | set(cta_ids)
     body = [i for i in range(n) if keep[i] and i not in taken]
+    if order is not None:
+        body.sort(key=lambda i: (place[words[i].src], i))
     pieces: list[Piece] = []
     timed: list[tuple[str, int, int, int]] = []
     clock = 0.0
@@ -989,16 +1094,24 @@ def prepare_source(path: str, out: str, warnings: list[str]) -> str:
     return out
 
 
-def cut_piece(source: str, piece: Piece, out: str, zoom: float = 1.0) -> None:
+def cut_piece(source: str, piece: Piece, out: str, zoom: float = 1.0, pre_vf: str = "", pre_af: str = "",
+              dip_in: bool = False, dip_out: bool = False) -> None:
     """One kept stretch, filling the 9:16 frame (a little tighter with zoom > 1, for the punch-in rhythm), with tiny audio
-    fades so cuts don't click (PCM audio: exact length)."""
+    fades so cuts don't click (PCM audio: exact length). Combine clips: `pre_vf`/`pre_af` are the clip's own framing,
+    brightness and loudness (combine_clips.combine_filters), and `dip_in`/`dip_out` fade through black at a change of
+    clip (the length stays the same, so sound and picture stay in step)."""
     frames = max(1, round(piece.seconds * FPS))
     seconds = frames / FPS
     zw, zh = (round(OUT_W * zoom / 2) * 2, round(OUT_H * zoom / 2) * 2) if zoom > 1 else (OUT_W, OUT_H)
-    vf = (f"scale={zw}:{zh}:force_original_aspect_ratio=increase,crop={OUT_W}:{OUT_H}:(iw-{OUT_W})/2:(ih-{OUT_H})*0.35,"
+    vf = (f"{pre_vf + ',' if pre_vf else ''}scale={zw}:{zh}:force_original_aspect_ratio=increase,crop={OUT_W}:{OUT_H}:(iw-{OUT_W})/2:(ih-{OUT_H})*0.35,"
           f"setsar=1,fps={FPS}")
-    af = (f"aresample=48000,apad,atrim=duration={seconds:.4f},afade=t=in:d=0.008,"
-          f"afade=t=out:st={max(0.0, seconds - 0.012):.4f}:d=0.012")
+    dip = min(0.1, seconds / 4)
+    if dip_in:
+        vf += f",fade=t=in:st=0:d={dip:.3f}"
+    if dip_out:
+        vf += f",fade=t=out:st={max(0.0, seconds - dip):.4f}:d={dip:.3f}"
+    af = (f"{pre_af + ',' if pre_af else ''}aresample=48000,apad,atrim=duration={seconds:.4f},afade=t=in:d={0.04 if dip_in else 0.008},"
+          f"afade=t=out:st={max(0.0, seconds - (0.04 if dip_out else 0.012)):.4f}:d={0.04 if dip_out else 0.012}")
     ffmpeg(["-ss", f"{piece.start:.6f}", *MEDIA_GUARD, "-i", source, "-t", f"{seconds:.4f}", "-vf", vf, "-af", af,
             "-map", "0:v:0", "-map", "0:a:0", "-frames:v", str(frames), *VIDEO_ARGS, "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2", out])
 
@@ -1454,7 +1567,7 @@ def _raw_intro(config: dict, pieces: list[Piece], total: float, folder: str, cac
         levels, lengths = ev.audio_levels(sources, 150)
         raw_seconds = sum(lengths) or sum(probe_seconds(src) for src in sources)
         stills = ev.video_stills(sources[0], [min(1.0, (lengths[0] if lengths else 2) / 3)], folder)
-        name = os.path.basename(sources[0]) if len(sources) == 1 else f"{len(sources)} takes"
+        name = os.path.basename(sources[0]) if len(sources) == 1 else f"{len(sources)} {'clips' if config.get('combine') else 'takes'}"
         frames = ev.raw_intro_frames(stills[0] if stills else None, name, raw_seconds, total, levels,
                                      ev.dropped_ranges(pieces, lengths), RAW_INTRO_SECONDS, 15)
         out = ev.write_raw_intro(os.path.join(folder, "raw-intro.mp4"), frames, RAW_INTRO_SECONDS, 15, sound_path("whoosh", cache))
@@ -1562,14 +1675,34 @@ async def render_edit(config: dict, progress: Progress) -> dict:
     cta: Optional[Span] = config["cta"]
     look: Look = config["look"]
     pacing = config.get("pacing") or {}
-    pieces, timed = build_timeline(words, keep, hook, cta, pacing.get("max_gap", MAX_INNER_GAP), pacing.get("short_pause", SHORT_PAUSE))
+    combine = config.get("combine")
+    pieces, timed = build_timeline(words, keep, hook, cta, pacing.get("max_gap", MAX_INNER_GAP), pacing.get("short_pause", SHORT_PAUSE),
+                                   combine["order"] if combine else None)
     total = reel_seconds(pieces)
     if total < MIN_REEL_SECONDS or not timed:
         raise EditError("Keep a few more words: the video would be under two seconds.")
     warnings: list[str] = []
     used = sorted({p.src for p in pieces})
     prepared: dict[int, str] = {}
-    for n, src in enumerate(used):
+    filters: dict[int, tuple[str, str]] = {}
+    if combine:
+        # Combine clips: each clip's proxy (made before the plan), framed for its shot and evened out to the others.
+        from clip_engine.services import combine_clips as cc
+        try:
+            clips = cc.read_clips(root, len(config["sources"]))
+        except cc.CombineError as error:
+            raise EditError(str(error)) from None
+        if any(src not in clips for src in used):
+            raise EditError("Your clips' working files are missing. Start again with your clips.")
+        lumas = cc.luma_targets(list(clips.values()))
+        for n, src in enumerate(used):
+            progress(f"Getting your clips ready ({n + 1} of {len(used)})", 5 + 20 * n / len(used))
+            try:
+                prepared[src] = await asyncio.to_thread(cc.framed_source, clips[src], work, warnings)
+            except cc.CombineError as error:
+                raise EditError(str(error)) from None
+            filters[src] = cc.combine_filters(clips[src], lumas.get(clips[src].get("shot") or "face"))
+    for n, src in enumerate(used if not combine else []):
         progress(f"Getting your recording ready ({n + 1} of {len(used)})" if len(used) > 1 else "Getting your recording ready", 5 + 20 * n / len(used))
         prepared[src] = await asyncio.to_thread(prepare_source, config["sources"][src], os.path.join(work, f"source-{src}.mp4"), warnings)
     files: list[str] = []
@@ -1587,7 +1720,11 @@ async def render_edit(config: dict, progress: Progress) -> dict:
             progress(f"Cutting ({n + 1} of {len(pieces)})", 25 + 35 * n / len(pieces))
         path = os.path.join(work, f"piece-{n:04d}.mkv")
         # With the punch-in rhythm, every other piece is a little tighter, so each jump cut reads as a change of shot.
-        await asyncio.to_thread(cut_piece, prepared[piece.src], piece, path, PUNCH_ZOOM if punch and n % 2 == 1 else 1.0)
+        pre_vf, pre_af = filters.get(piece.src, ("", ""))
+        dips = bool(combine and combine.get("transitions"))
+        await asyncio.to_thread(cut_piece, prepared[piece.src], piece, path, PUNCH_ZOOM if punch and n % 2 == 1 else 1.0, pre_vf, pre_af,
+                                dips and n > 0 and pieces[n - 1].src != piece.src,
+                                dips and n + 1 < len(pieces) and pieces[n + 1].src != piece.src)
         files.append(path)
     listing = os.path.join(work, "pieces.txt")
     with open(listing, "w", encoding="utf-8") as handle:

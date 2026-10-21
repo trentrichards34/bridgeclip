@@ -12,6 +12,11 @@ import {
   type EditImage, type EditPlan, type EditSource, type EditStatus, type FilmIdea
 } from '../shared/edit-recording'
 import { editRecipe, pacingForEngine } from '../shared/edit-recipes'
+import {
+  COMBINE_MAX_CLIP_SECONDS, COMBINE_MAX_CLIPS, COMBINE_MAX_TOTAL_SECONDS, COMBINE_MIN_CLIP_SECONDS, filmingOrder,
+  type ClipOrderMode, type EditMode, type ShotType
+} from '../shared/combine-clips'
+import { IMPORTS_DIR, cleanupImports, extractZipClips, importFolder, type ImportProgress } from './combine-import'
 import { headlineLookForEngine } from '../shared/headline-look'
 import { lookExtrasForEngine } from '../shared/look-extras-engine'
 import { audioForEngine } from './music'
@@ -56,6 +61,8 @@ interface EditRun {
   reference: string | null
   /** What has already gone to the spending ledger for this run. */
   recordedUsd: number
+  /** Combine clips: start in filming order or the AI's. */
+  order: ClipOrderMode
 }
 
 let run: EditRun | null = null
@@ -132,24 +139,42 @@ export async function mediaSeconds(path: string): Promise<number> {
   } catch { return 0 }
 }
 
-/** A recording the member chose or recorded: a video file under the length limit. */
-export async function describeSource(path: string): Promise<EditSource> {
-  if (!EDIT_VIDEO_EXTENSIONS.includes(extname(path).slice(1).toLowerCase())) throw new Error('Choose a video: MP4, MOV, WebM, M4V or MKV.')
-  const seconds = await mediaSeconds(path)
-  if (seconds < EDIT_MIN_SOURCE_SECONDS) throw new Error(`“${basename(path)}” could not be read, or it’s under ${EDIT_MIN_SOURCE_SECONDS} seconds.`)
-  if (seconds > EDIT_MAX_SOURCE_SECONDS + 1) throw new Error(`“${basename(path)}” is over ${EDIT_MAX_SOURCE_SECONDS / 60} minutes. Trim it, or record it in shorter takes.`)
-  known.set(path, seconds)
-  return { path, name: basename(path), seconds: Math.round(seconds * 100) / 100 }
+/** When the camera wrote the file (the container's creation_time), as ISO; null when it has none. */
+export async function mediaCreated(path: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(resolveBinary('ffprobe'), ['-v', 'error', '-show_entries', 'format_tags=creation_time', '-of', 'default=nw=1:nk=1', path], { timeout: 30_000 })
+    const value = String(stdout).trim().split('\n')[0] ?? ''
+    const time = Date.parse(value)
+    // 1970 (an unset clock) and far-future times aren't filming times.
+    return /^\d{4}-\d\d-\d\dT/.test(value) && Number.isFinite(time) && time > Date.UTC(2000, 0, 1) && time < Date.now() + 86_400_000 ? new Date(time).toISOString() : null
+  } catch { return null }
 }
 
-export interface ParsedEditStart { sources: string[]; brandIdentityId: string | null; hookHint: string; purpose: string; referenceImage: string | null }
+/** A recording the member chose or recorded: a video file under the length limit (a clip to combine: its own limits, and when it was filmed). */
+export async function describeSource(path: string, mode: EditMode = 'takes'): Promise<EditSource> {
+  if (!EDIT_VIDEO_EXTENSIONS.includes(extname(path).slice(1).toLowerCase())) throw new Error('Choose a video: MP4, MOV, WebM, M4V or MKV.')
+  const seconds = await mediaSeconds(path)
+  const [min, max] = mode === 'combine' ? [COMBINE_MIN_CLIP_SECONDS, COMBINE_MAX_CLIP_SECONDS] : [EDIT_MIN_SOURCE_SECONDS, EDIT_MAX_SOURCE_SECONDS]
+  if (seconds < min) throw new Error(`“${basename(path)}” could not be read, or it’s under ${min} second${min === 1 ? '' : 's'}.`)
+  if (seconds > max + 1) throw new Error(mode === 'combine' ? `“${basename(path)}” is over ${max / 60} minutes. Use clips of up to ${max / 60} minutes each.` : `“${basename(path)}” is over ${max / 60} minutes. Trim it, or record it in shorter takes.`)
+  known.set(path, seconds)
+  const createdAt = mode === 'combine' ? await mediaCreated(path) : null
+  return { path, name: basename(path), seconds: Math.round(seconds * 100) / 100, ...(createdAt ? { createdAt } : {}) }
+}
+
+export interface ParsedEditStart { sources: string[]; brandIdentityId: string | null; hookHint: string; purpose: string; referenceImage: string | null; mode: EditMode; order: ClipOrderMode }
 
 /** The start request from the page, checked: recordings the member chose here (or ones in the Library). */
 export function parseEditStart(value: unknown, outputDirectory: string): ParsedEditStart {
   const raw = (value ?? {}) as Record<string, unknown>
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Choose your recording first.')
   if (!Array.isArray(raw.sources) || raw.sources.length === 0) throw new Error('Choose your recording first.')
-  if (raw.sources.length > EDIT_MAX_SOURCES) throw new Error(`Use up to ${EDIT_MAX_SOURCES} takes.`)
+  if (raw.mode !== undefined && raw.mode !== 'takes' && raw.mode !== 'combine') throw new Error('Choose retakes or clips to combine.')
+  if (raw.order !== undefined && raw.order !== 'filmed' && raw.order !== 'ai') throw new Error('Choose how to order your clips.')
+  const mode: EditMode = raw.mode === 'combine' ? 'combine' : 'takes'
+  if (mode === 'takes' && raw.sources.length > EDIT_MAX_SOURCES) throw new Error(`Use up to ${EDIT_MAX_SOURCES} takes.`)
+  if (mode === 'combine' && raw.sources.length > COMBINE_MAX_CLIPS) throw new Error(`Use up to ${COMBINE_MAX_CLIPS} clips.`)
+  if (mode === 'combine' && raw.sources.length < 2) throw new Error('Choose at least two clips to combine.')
   const sources: string[] = []
   for (const source of raw.sources) {
     if (typeof source !== 'string' || !EDIT_VIDEO_EXTENSIONS.includes(extname(source).slice(1).toLowerCase())) throw new Error('Choose a video: MP4, MOV, WebM, M4V or MKV.')
@@ -161,7 +186,41 @@ export function parseEditStart(value: unknown, outputDirectory: string): ParsedE
   const purpose = parsePurpose(raw.purpose)
   if (raw.referenceImage !== undefined && raw.referenceImage !== null && !isReferenceId(raw.referenceImage)) throw new Error('Choose your reference image again.')
   return { sources, brandIdentityId: (raw.brandIdentityId as string | null | undefined) ?? null, hookHint: typeof raw.hookHint === 'string' ? raw.hookHint.replace(/\s+/g, ' ').trim() : '',
-    purpose, referenceImage: isReferenceId(raw.referenceImage) ? raw.referenceImage : null }
+    purpose, referenceImage: isReferenceId(raw.referenceImage) ? raw.referenceImage : null, mode, order: mode === 'combine' && raw.order === 'ai' ? 'ai' : 'filmed' }
+}
+
+/**
+ * Combine clips: the files chosen in the file dialog (videos, or one .zip of them, unpacked here), each checked and
+ * described. Reports each file's progress (copying out of the zip, then checking). Files that can't be used are
+ * skipped with a plain reason.
+ */
+export async function importClips(paths: string[], onProgress: (files: ImportProgress[]) => void = () => undefined): Promise<{ sources: EditSource[]; skipped: string[] }> {
+  const zips = paths.filter((path) => extname(path).toLowerCase() === '.zip')
+  if (zips.length && paths.length > 1) throw new Error('Choose video clips, or one .zip of them (not both).')
+  let files = paths
+  let progress: ImportProgress[] = paths.map((path) => ({ name: basename(path), phase: 'waiting', percent: 0 }))
+  if (zips.length) {
+    const folder = importFolder(loadSettings().outputDirectory)
+    files = await extractZipClips(zips[0], folder, (list) => { progress = list; onProgress(list) })
+    progress = files.map((file) => ({ name: basename(file), phase: 'checking', percent: 100 }))
+  }
+  if (files.length > COMBINE_MAX_CLIPS) throw new Error(`Use up to ${COMBINE_MAX_CLIPS} clips.`)
+  onProgress(progress.map((item) => ({ ...item })))
+  const sources: EditSource[] = [], skipped: string[] = []
+  for (const [n, file] of files.entries()) {
+    progress[n] = { ...progress[n], phase: 'checking', percent: 100 }
+    onProgress(progress.map((item) => ({ ...item })))
+    try {
+      sources.push(await describeSource(authorizeMedia(file), 'combine'))
+      progress[n] = { ...progress[n], phase: 'done' }
+    } catch (error) {
+      const message = (error as Error)?.message || `“${basename(file)}” could not be read.`
+      skipped.push(message)
+      progress[n] = { ...progress[n], phase: 'failed', error: message }
+    }
+    onProgress(progress.map((item) => ({ ...item })))
+  }
+  return { sources, skipped }
 }
 
 /** The spending check's estimate for starting (null when the recordings weren't checked here first). */
@@ -332,10 +391,14 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
   try {
     const settings = loadSettings()
     const request = parseEditStart(value, settings.outputDirectory)
-    const sources: EditSource[] = []
-    for (const path of request.sources) sources.push(await describeSource(path))
+    const combine = request.mode === 'combine'
+    let sources: EditSource[] = []
+    for (const path of request.sources) sources.push(await describeSource(path, request.mode))
+    // Clips play in filming order to start with (the plan's clip numbers): sorted here once.
+    if (combine) sources = filmingOrder(sources).map((i) => sources[i])
     const total = sources.reduce((sum, source) => sum + source.seconds, 0)
-    if (total > EDIT_MAX_TOTAL_SECONDS + 1) throw new Error(`Your takes add up to over ${EDIT_MAX_TOTAL_SECONDS / 60} minutes. Use fewer or shorter takes.`)
+    if (combine && total > COMBINE_MAX_TOTAL_SECONDS + 1) throw new Error(`Your clips add up to over ${COMBINE_MAX_TOTAL_SECONDS / 60} minutes. Use fewer or shorter clips.`)
+    if (!combine && total > EDIT_MAX_TOTAL_SECONDS + 1) throw new Error(`Your takes add up to over ${EDIT_MAX_TOTAL_SECONDS / 60} minutes. Use fewer or shorter takes.`)
     const brand = request.brandIdentityId ? await readBrandIdentity(request.brandIdentityId) : null
     if (request.referenceImage) referencePath(request.referenceImage)
     const folder = join(settings.outputDirectory, `edit-${randomUUID()}`)
@@ -353,11 +416,12 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
     // A plan waiting for review (or a failed one) is replaced by this run.
     await dropUnfinished()
     await cleanupAbandonedEdits(settings.outputDirectory, folder)
+    await cleanupImports(settings.outputDirectory, sources.map((source) => source.path)).catch(() => undefined)
     const current: EditRun = {
-      cancelled: false, brand, hookHint: request.hookHint, purpose: request.purpose, reference, recordedUsd: 0,
+      cancelled: false, brand, hookHint: request.hookHint, purpose: request.purpose, reference, recordedUsd: 0, order: request.order,
       status: {
         id: randomBytes(6).toString('hex'), phase: 'transcribing', detail: 'Starting', percent: 1, sources, folder, plan: null, transcriber: null,
-        output: null, costUsd: 0, estimateUsd: editEstimate(total).total, error: null, warnings, images: []
+        output: null, costUsd: 0, estimateUsd: editEstimate(total).total, error: null, warnings, images: [], ...(combine ? { mode: 'combine' as const } : {})
       }
     }
     run = current
@@ -371,12 +435,16 @@ async function prepare(current: EditRun): Promise<void> {
   const settings = loadSettings()
   const keyterms = [...(current.brand?.name ? [current.brand.name] : []), ...vocabularyTerms(settings.customVocabulary)].slice(0, 200)
   const words: [string, number, number, number][] = []
+  const combine = current.status.mode === 'combine'
   try {
+    if (combine) await readyClips(current)
     const { sources } = current.status
+    // Combine clips: getting the clips ready took 5–45%; listening takes 45–70%.
+    const [from, span] = combine ? [45, 25] : [5, 60]
     for (const [index, source] of sources.entries()) {
       if (current.cancelled) throw new Error('Canceled.')
       const part = sources.length > 1 ? ` (${index + 1} of ${sources.length})` : ''
-      publish(current, { detail: `Listening to your recording${part}`, percent: 5 + (60 * index) / sources.length })
+      publish(current, { detail: `Listening to your ${combine ? 'clips' : 'recording'}${part}`, percent: from + (span * index) / sources.length })
       const heard = await transcribe(current, source, index, keyterms)
       for (const [text, start, end] of heard) words.push([text, start, end, index])
     }
@@ -386,12 +454,16 @@ async function prepare(current: EditRun): Promise<void> {
     const result = await runEngine({
       mode: 'plan', output_dir: current.status.folder, words: words.slice(0, 8000), sources_count: sources.length, names: sources.map((source) => source.name),
       brand_identity: current.brand?.text ?? '', brand_name: current.brand?.name ?? '', hook_hint: current.hookHint,
-      ...(current.purpose ? { purpose: current.purpose } : {}), ...(current.reference ? { reference_image: current.reference } : {})
+      ...(current.purpose ? { purpose: current.purpose } : {}), ...(current.reference ? { reference_image: current.reference } : {}),
+      ...(combine ? { combine: { clips: sources.map((source) => ({ shot: source.shot ?? 'face', seconds: source.seconds })) } } : {})
     }, 15 * 60_000, (detail, percent) => { if (!current.cancelled) publish(current, { detail: detail || 'Planning your edit', percent: 70 + percent * 0.29 }) },
     (child) => { current.child = child })
     spend(current, typeof result.cost_usd === 'number' ? result.cost_usd : 0)
     const plan = parseEditPlan(result, sources.length)
-    if (!plan) throw new Error('The plan for your edit came back unreadable. Try again.')
+    if (!plan || (combine && !plan.combine)) throw new Error('The plan for your edit came back unreadable. Try again.')
+    // Combine clips: the review starts in filming order, or in the AI's when the member asked for it (and it gave one).
+    if (plan.combine) plan.combine.startOrder = current.order === 'ai' && plan.combine.aiOrder ? [...plan.combine.aiOrder] : sources.map((_, i) => i)
+    if (combine && current.order === 'ai' && !plan.combine?.aiOrder) current.status = { ...current.status, warnings: [...current.status.warnings, 'The AI didn’t suggest an order this time, so your clips start in the order they were filmed.'] }
     if (current.cancelled) throw new Error('Canceled.')
     logger.info('edit.planned', { words: plan.words.length, planned: plan.planned, transcriber: current.status.transcriber })
     publish(current, { phase: 'review', detail: 'Ready for review', percent: 100, plan, warnings: [...current.status.warnings, ...plan.warnings].slice(0, 6) })
@@ -402,6 +474,47 @@ async function prepare(current: EditRun): Promise<void> {
     publish(current, cancelled ? { phase: 'cancelled', detail: 'Canceled', error: null }
       : { phase: 'failed', detail: 'Failed', error: (error as Error)?.message?.slice(0, 400) || 'Your recording could not be edited.' })
   } finally { current.abort = undefined; current.child = undefined }
+}
+
+/**
+ * Combine clips: each clip made ready by the engine (a 1080p upright 30 fps proxy, its shot type, framing, brightness
+ * and loudness: combine_clips.py). The proxies stay in the run's .work folder until the reel is made.
+ */
+async function readyClips(current: EditRun): Promise<void> {
+  const { sources, folder } = current.status
+  publish(current, { detail: 'Getting your clips ready', percent: 3 })
+  const result = await runEngine({ mode: 'clips', output_dir: folder, sources: sources.map((source) => source.path) }, 3 * 60 * 60_000,
+    (detail, percent) => { if (!current.cancelled) publish(current, { detail: detail || 'Getting your clips ready', percent: 3 + percent * 0.42 }) },
+    (child) => { current.child = child })
+  if (current.cancelled) throw new Error('Canceled.')
+  const work = join(folder, '.work', 'clips')
+  const inside = (value: unknown, ext: string): string | undefined =>
+    typeof value === 'string' && dirname(value) === work && extname(value) === ext && existsSync(value) ? value : undefined
+  const clips = Array.isArray(result.clips) ? result.clips as Record<string, unknown>[] : []
+  const ready = sources.map((source, i) => {
+    const clip = clips.find((item) => item?.src === i)
+    const proxy = inside(clip?.proxy, '.mp4')
+    if (!clip || !proxy) throw new Error(`“${source.name}” could not be made ready. Check that it plays, then try again.`)
+    const shot: ShotType = clip.shot === 'screen' ? 'screen' : 'face'
+    const thumb = inside(clip.thumb, '.jpg')
+    // The proxy and thumbnail are shown on the review (local files the page may load).
+    authorizeMedia(proxy)
+    if (thumb) authorizeMedia(thumb)
+    return { ...source, proxy, ...(thumb ? { thumb } : {}), shot, ...(clip.steadied === true ? { steadied: true } : {}) }
+  })
+  current.status = { ...current.status, sources: ready }
+}
+
+/**
+ * Unpacked clips (from a .zip) are only needed until the reel is made: then they go. (Others left behind, from a
+ * failed or dropped run, go when the next edit starts.)
+ */
+async function dropImports(current: EditRun): Promise<void> {
+  const root = join(loadSettings().outputDirectory, IMPORTS_DIR)
+  let real = root
+  try { real = realpathSync(root) } catch { return }
+  if (!current.status.sources.some((source) => source.path.startsWith(root) || source.path.startsWith(real))) return
+  await cleanupImports(loadSettings().outputDirectory, run && run !== current ? run.status.sources.map((source) => source.path) : []).catch(() => undefined)
 }
 
 /** Scribe first; the app's usual transcription when Scribe can't take this file right now. */
@@ -461,9 +574,12 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
   }
   const look = headlineLookForEngine(decisions.look.headlineLook)
   const extrasColor = lookExtrasForEngine(decisions.lookExtras, current.brand?.look?.color, decisions.look.headlineLook).look_extras_color
+  const order = plan.combine ? decisions.clipOrder ?? plan.combine.startOrder : null
   const config = {
     mode: 'render', output_dir: current.status.folder, sources: current.status.sources.map((source) => source.path),
-    words: plan.words.map((word) => [word.text, word.startMs, word.endMs, word.src]), keep: plan.words.map((_, i) => !cut.has(i)),
+    words: plan.words.map((word) => [word.text, word.startMs, word.endMs, word.src]), keep: plan.words.map((word, i) => !cut.has(i) && (!order || order.includes(word.src))),
+    // Combine clips: the clips in the member's order (one left out isn't listed) and the dip between them.
+    ...(order ? { combine: { order, transitions: decisions.transitions === true } } : {}),
     hook: hook ? { start: hook.start, end: hook.end } : null, cta: decisions.endOnCta && plan.cta ? { start: plan.cta.start, end: plan.cta.end } : null,
     popups: decisions.popups.filter((item) => item.on).flatMap((item): Record<string, unknown>[] => {
       const popup = plan.popups.find((p) => p.id === item.id)
@@ -521,8 +637,11 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
       const seconds = typeof result.duration_seconds === 'number' ? result.duration_seconds : 0
       const warnings = Array.isArray(result.warnings) ? result.warnings.filter((item): item is string => typeof item === 'string').map((item) => item.slice(0, 300)).slice(0, 4) : []
       await rm(join(current.status.folder, '.work'), { recursive: true, force: true }).catch(() => undefined)
-      logger.info('edit.done', { seconds, cost: current.status.costUsd })
-      publish(current, { phase: 'done', detail: 'Done', percent: 100, output: { path, durationSeconds: seconds }, warnings })
+      logger.info('edit.done', { seconds, cost: current.status.costUsd, clips: order?.length ?? 0 })
+      // The proxies went with .work; the reel no longer needs them.
+      const sources = current.status.sources.map(({ proxy: _proxy, ...rest }) => { void _proxy; return rest })
+      publish(current, { phase: 'done', detail: 'Done', percent: 100, output: { path, durationSeconds: seconds }, warnings, sources })
+      await dropImports(current)
     } catch (error) {
       // The plan stays: back to review to change something and try again.
       publish(current, { phase: 'review', detail: 'Ready for review', percent: 100, error: current.cancelled ? null : (error as Error)?.message?.slice(0, 400) || 'Your video could not be made.' })

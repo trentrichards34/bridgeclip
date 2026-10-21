@@ -20,6 +20,16 @@ if os.environ.get("CREATORCLIPS_FAKE_AI") == "1":
             def first(word):
                 return next(i for i, w in words if w == word)
 
+            if "--- Clip 1 (" in text:
+                # Combine clips: open on the screen clip's last line, play B, A, C, and a proof graphic on "$8,188".
+                plan = {
+                    "hooks": [{"start": first("And"), "end": first("screen."), "text": "Here is my screen", "why": "Shows the result first."}],
+                    "cuts": [], "cta": {"present": False, "start": 0, "end": 0}, "popups": [], "sounds": [], "cards": [],
+                    "order": [2, 1, 3], "order_why": "The story first, then the screen as proof.",
+                    "proof": [{"word": first("$8,188"), "value": "$8,188", "label": "dashboard says"}],
+                }
+                return {"choices": [{"message": {"content": json.dumps(plan)}}]}, {"cost": 0.003}
+
             def last(word):
                 return [i for i, w in words if w == word][-1]
 

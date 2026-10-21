@@ -45,6 +45,7 @@ import type { RemixLookPatch } from '../shared/remix-review-look'
 import type { ListicleScript, ListicleScriptRequest, ListicleStatus } from '../shared/listicle'
 import type { EditDecisions, EditImage, EditSource, EditStartRequest, EditStatus, FilmIdea, FilmIdeasRequest } from '../shared/edit-recording'
 import type { EditChatReply } from '../shared/edit-chat'
+import type { ImportProgress } from '../shared/combine-clips'
 import type { RemixChatReply, RemixChatState } from '../shared/remix-chat'
 import type { EditorGraphic } from '../shared/motion-graphics'
 import type { PauseEvent, PauseSettings, PauseView } from '../shared/pause-react'
@@ -534,6 +535,10 @@ export interface BridgeClipAPI {
     onStatus: (callback: (status: EditStatus) => void) => () => void
     /** Opens a file dialog for one recording or a few takes; [] when cancelled. */
     chooseSources: () => Promise<EditSource[]>
+    /** Combine clips: a file dialog for video clips or one .zip of them (unpacked in main); the clips, and why any were skipped. */
+    chooseClips: () => Promise<{ sources: EditSource[]; skipped: string[] }>
+    /** Each file's progress while clips are added (copied out of a .zip, then checked). */
+    onImportProgress: (callback: (files: ImportProgress[]) => void) => () => void
     /** Transcribe and plan (paid); the status moves to 'review'. */
     start: (request: EditStartRequest) => Promise<EditStatus>
     /** Make the reel from the reviewed edit (local, no AI cost). */
@@ -954,6 +959,8 @@ const api: BridgeClipAPI = {
     status: () => ipcRenderer.invoke('edit:status'),
     onStatus: (callback) => subscribe('edit:status', callback),
     chooseSources: () => ipcRenderer.invoke('edit:chooseSources'),
+    chooseClips: () => ipcRenderer.invoke('edit:chooseClips'),
+    onImportProgress: (callback) => subscribe<ImportProgress[]>('edit:importProgress', callback),
     start: (request) => paid('edit:start', request),
     render: (decisions) => ipcRenderer.invoke('edit:render', decisions),
     chooseImages: () => ipcRenderer.invoke('edit:chooseImages'),
