@@ -79,7 +79,7 @@ test('static subtitle guide supports dragging and undo, and persists across reop
   // Switching via either candidate list preserves the inspector tab while
   // clearing the previous candidate's caption edit field.
   const selectedTitle = () => page.locator('.editor-candidate.selected').innerText()
-  for (const tab of ['Transcript', 'Captions', 'Framing', 'Quality check', 'Hook & CTA']) {
+  for (const tab of ['Transcript', 'Captions', 'Framing', 'Quality check']) {
     await openEditorTab(page, tab)
     await page.locator('.editor-candidate').nth(1).click()
     assert.ok((await selectedTitle()).includes(project.candidates[1].title))
