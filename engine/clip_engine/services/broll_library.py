@@ -93,6 +93,8 @@ class CatalogShot:
     shot_type: str
     me: bool
     ai: bool
+    # Words are written on it (a headline, a screen).
+    text: bool = False
 
     @property
     def seconds(self) -> float:
@@ -180,7 +182,7 @@ def parse_catalog(raw: Any) -> list[CatalogShot]:
         shot_type = item.get("shotType") if item.get("shotType") in SHOT_TYPES else "other"
         seen.add(shot_id)
         shots.append(CatalogShot(shot_id, path, kind, float(in_s) if kind == "video" else 0.0, float(out_s) if kind == "video" else 0.0,
-                                 description, tags, shot_type, item.get("me") is True, item.get("ai") is True))
+                                 description, tags, shot_type, item.get("me") is True, item.get("ai") is True, item.get("text") is True))
     return shots
 
 

@@ -43,6 +43,7 @@ import type { BrandLook } from '../shared/brand-kit'
 import type { BrandIdentity, RecordingPart, RemixDraft, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
 import type { RemixLookPatch } from '../shared/remix-review-look'
 import type { ListicleScript, ListicleScriptRequest, ListicleStatus } from '../shared/listicle'
+import type { BrollVideoEstimate, BrollVideoShot, BrollVideoStatus } from '../shared/broll-video'
 import type { EditDecisions, EditImage, EditSource, EditStartRequest, EditStatus, FilmIdea, FilmIdeasRequest } from '../shared/edit-recording'
 import type { EditChatReply } from '../shared/edit-chat'
 import type { ImportProgress } from '../shared/combine-clips'
@@ -117,7 +118,7 @@ export interface MoreClipsChoices {
 
 export interface HistoryEntry {
   /** What made a finished run: Create, Remix or Avatar Studio. */
-  madeWith?: 'create' | 'remix' | 'avatar' | 'edit' | 'listicle'
+  madeWith?: 'create' | 'remix' | 'avatar' | 'edit' | 'listicle' | 'broll'
   /** Create runs: the video's link or file. */
   sourceUrl?: string
   /** Remix runs: AI presenter, on camera, or over an article or post. */
@@ -410,6 +411,22 @@ export interface BridgeClipAPI {
     cancel: () => Promise<boolean>
     status: () => Promise<ListicleStatus | null>
     onStatus: (callback: (status: ListicleStatus) => void) => () => void
+  }
+  /** B-roll video: a voiceover (or script) covered with the member's own b-roll. */
+  brollVideo: {
+    /** Opens a file dialog in main; null when cancelled. */
+    chooseVoiceover: () => Promise<{ path: string; name: string; seconds: number } | null>
+    /** Saves a voiceover recorded on the page. */
+    saveRecording: (bytes: Uint8Array, mime: string) => Promise<{ path: string; name: string; seconds: number }>
+    estimate: (request: unknown) => Promise<{ estimate: BrollVideoEstimate; seconds: number | null; libraryShots: number; pickedShots: number }>
+    /** Paid: the spending check first. */
+    start: (request: unknown) => Promise<BrollVideoStatus>
+    cancel: () => Promise<boolean>
+    status: () => Promise<BrollVideoStatus | null>
+    onStatus: (callback: (status: BrollVideoStatus) => void) => () => void
+    shots: (outputDir: string) => Promise<BrollVideoShot[]>
+    /** Another library shot in one moment (null: the next best match); bake again in the editor to update the Library. */
+    swapShot: (outputDir: string, slot: number, shotId: string | null) => Promise<BrollVideoShot[]>
   }
   /** Realistic talking avatars on the member's own HeyGen key (Beta). */
   heygen: {
@@ -893,6 +910,17 @@ const api: BridgeClipAPI = {
     cancelRender: () => ipcRenderer.invoke('avatars:cancelRender'),
     renderStatus: () => ipcRenderer.invoke('avatars:renderStatus'),
     onStatus: (callback) => subscribe('avatars:status', callback)
+  },
+  brollVideo: {
+    chooseVoiceover: () => ipcRenderer.invoke('brollVideo:chooseVoiceover'),
+    saveRecording: (bytes, mime) => ipcRenderer.invoke('brollVideo:saveRecording', bytes, mime),
+    estimate: (request) => ipcRenderer.invoke('brollVideo:estimate', request),
+    start: (request) => paid('brollVideo:start', request),
+    cancel: () => ipcRenderer.invoke('brollVideo:cancel'),
+    status: () => ipcRenderer.invoke('brollVideo:status'),
+    onStatus: (callback) => subscribe('brollVideo:status', callback),
+    shots: (outputDir) => ipcRenderer.invoke('brollVideo:shots', outputDir),
+    swapShot: (outputDir, slot, shotId) => ipcRenderer.invoke('brollVideo:swapShot', outputDir, slot, shotId)
   },
   listicle: {
     writeScript: (request) => paid('listicle:writeScript', request),

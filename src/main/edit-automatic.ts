@@ -59,7 +59,7 @@ function readProjectFile(run: string): EditorProject | null {
 /** A run made on Create (not Remix, Avatar Studio or Edit my recording). */
 export function isCreateRun(output: JobOutput): boolean {
   const metrics = (output.metrics ?? {}) as Record<string, unknown>
-  return metrics.remix !== true && typeof metrics.avatar_studio !== 'string' && metrics.edit_recording !== true && metrics.listicle !== true
+  return metrics.remix !== true && typeof metrics.avatar_studio !== 'string' && metrics.edit_recording !== true && metrics.listicle !== true && metrics.broll_video !== true
 }
 
 /** The project's own video files are in place (a project made from a kept copy uses editor-source.mp4). */

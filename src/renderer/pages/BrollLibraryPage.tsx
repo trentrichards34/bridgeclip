@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Eye, FilePlus2, Film, FolderPlus, Image as ImageIcon, Search, Sparkles, Square, Tag, Trash2, UserRound, Wand2 } from 'lucide-react'
+import { AlertTriangle, Clapperboard, Eye, FilePlus2, Film, FolderPlus, Image as ImageIcon, Search, Sparkles, Square, Tag, Trash2, UserRound, Wand2 } from 'lucide-react'
 import {
   aiShotEstimateUsd, INDEX_ESTIMATE_PER_SHOT_USD, parseTagInput, searchLibrary, type BrollLibraryEntry
 } from '../../shared/broll-library'
@@ -81,6 +81,8 @@ export function BrollLibraryPage({ onNavigate }: { onNavigate: (page: Page) => v
         actions={<>
           <Button variant="secondary" icon={<FolderPlus className="h-4 w-4" />} loading={busy === 'add'} disabled={Boolean(busy)} onClick={() => void add('folder')}>Add a folder</Button>
           <Button variant="primary" icon={<FilePlus2 className="h-4 w-4" />} disabled={Boolean(busy)} onClick={() => void add('files')}>Add clips or pictures</Button>
+          <Button variant="secondary" icon={<Clapperboard className="h-4 w-4" />} disabled={!view?.usableShots} onClick={() => onNavigate('brollvideo')}
+            tooltip={view?.usableShots ? 'Your voiceover or script covered with these clips.' : 'Add clips and let the AI look at them first.'}>Make a b-roll video</Button>
         </>} />
 
       <div className="mt-4 space-y-4">

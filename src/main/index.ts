@@ -2,6 +2,7 @@ import { awaitEditorSaveBeforeClose, stopEditorsForQuit } from './clip-editor'
 import { allowMediaCheck, allowMediaRequest } from './media-permissions'
 import { stopAvatarRenderForQuit } from './avatar-studio'
 import { stopListicleForQuit } from './listicle'
+import { stopBrollVideoForQuit } from './broll-video'
 import { cleanupAbandoned, stopRemixForQuit } from './remix'
 import { stopEditForQuit } from './edit-recording'
 import { app, BrowserWindow, dialog, nativeTheme, shell, protocol } from 'electron'
@@ -319,6 +320,7 @@ app.on('will-quit', () => {
   stopEditorsForQuit()
   stopAvatarRenderForQuit()
   stopListicleForQuit()
+  stopBrollVideoForQuit()
   stopRemixForQuit()
   stopEditForQuit()
   cancelQueuedJobsForQuit()

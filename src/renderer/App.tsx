@@ -8,6 +8,7 @@ import { RemixPage } from './pages/RemixPage'
 import { EditRecordingPage } from './pages/EditRecordingPage'
 import { LibraryPage } from './pages/LibraryPage'
 import { BrollLibraryPage } from './pages/BrollLibraryPage'
+import { BrollVideoPage } from './pages/BrollVideoPage'
 import { JobsPage } from './pages/JobsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { AccountsPage } from './pages/AccountsPage'
@@ -196,6 +197,7 @@ export default function App(): React.JSX.Element {
             {page === 'remix' && <RemixPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'library' && <LibraryPage onNavigate={setPage} initialRun={libraryRun?.outputDir} initialClipIndex={libraryRun?.clipIndex} />}
             {page === 'broll' && <BrollLibraryPage onNavigate={setPage} />}
+            {page === 'brollvideo' && <BrollVideoPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'jobs' && <JobsPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'assistant' && <AssistantPage onOpenSettings={openAssistantSettings} />}
             {page === 'accounts' && <AccountsPage onNavigate={setPage} />}

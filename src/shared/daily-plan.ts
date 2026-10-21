@@ -17,7 +17,7 @@ export type PlanKind = 'clip' | 'reaction' | 'talking' | 'listicle' | 'avatar'
 
 /** The Library runs the plan reads (a subset of the history entries). */
 export interface PlanRun {
-  madeWith?: 'create' | 'remix' | 'avatar' | 'edit' | 'listicle'
+  madeWith?: 'create' | 'remix' | 'avatar' | 'edit' | 'listicle' | 'broll'
   status: string
   date: string
   finishedAt: string | null
@@ -27,7 +27,7 @@ export interface PlanRun {
 }
 
 const KIND_OF_MAKER: Record<NonNullable<PlanRun['madeWith']>, PlanKind> = {
-  create: 'clip', remix: 'reaction', edit: 'talking', listicle: 'listicle', avatar: 'avatar'
+  create: 'clip', remix: 'reaction', edit: 'talking', listicle: 'listicle', avatar: 'avatar', broll: 'talking'
 }
 
 export function planKindOf(run: PlanRun): PlanKind | null {
