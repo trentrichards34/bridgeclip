@@ -212,6 +212,9 @@ export async function runSizes(outputDirs: unknown): Promise<RunSize[]> {
 const EDITOR_MEDIA = /^editor-(?:source|preview)(?:-[a-f0-9]{32})?\.mp4(?:\.partial\.mp4)?$/
 const CTA_ORIGINAL = /^clip_(\d{2,4})\.original\.mp4$/
 const REMIX_PART = /^clip_(\d{2,4})$/
+/** A b-roll video's working folder (src/main/broll-video.ts WORK_FOLDER), in its run folder. */
+const BROLL_VIDEO_WORK = '.broll-video'
+const BROLL_VIDEO_RUN_NAME = /^broll-video-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** Names that are never removed, whatever group logic says. */
 const PROTECTED = (name: string): boolean =>
   name === 'job_output.json' || name === 'editor-project.json' || name === 'run-history.json' ||
@@ -295,6 +298,9 @@ async function planRun(run: string, entry: JobHistoryEntry): Promise<RunPlan | n
         if (!partInfo || partInfo.isSymbolicLink() || !partInfo.isDirectory() || !REMIX_PART.test(part)) continue
         await add('remixParts', partPath, path, partInfo, Number(REMIX_PART.exec(part)![1]))
       }
+    } else if (info.isDirectory() && name === BROLL_VIDEO_WORK && BROLL_VIDEO_RUN_NAME.test(basename(run))) {
+      // A b-roll video's voice and shot pieces: kept only to swap shots later (the clip and its editor project stay).
+      await add('remixParts', path, run, info)
     } else if (leftoverName(name, info.isDirectory())) {
       await add('leftovers', path, run, info)
     }

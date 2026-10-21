@@ -72,11 +72,11 @@ test('Free up space lists removable files by group, removes only the chosen ones
   assert.equal(await dialog.getByTestId('group-size-ctaOriginals').textContent(), '3 MB')
   assert.equal(await dialog.getByTestId('group-size-editorMedia').textContent(), '1 MB')
   // Remix parts and CTA originals are opt-in and carry their warning.
-  assert.equal(await dialog.getByRole('checkbox', { name: 'Remix re-edit parts' }).getAttribute('aria-checked'), 'false')
+  assert.equal(await dialog.getByRole('checkbox', { name: 'Remix and b-roll video parts' }).getAttribute('aria-checked'), 'false')
   assert.equal(await dialog.getByRole('checkbox', { name: 'Clip copies without the call to action' }).getAttribute('aria-checked'), 'false')
   await dialog.getByText('You can no longer use “Edit hook text & captions” on these videos.').waitFor()
   assert.equal(await dialog.getByTestId('free-total').textContent(), '7 MB selected')
-  await dialog.getByRole('checkbox', { name: 'Remix re-edit parts' }).click()
+  await dialog.getByRole('checkbox', { name: 'Remix and b-roll video parts' }).click()
   assert.equal(await dialog.getByTestId('free-total').textContent(), '19 MB selected')
   if (process.env.BRIDGECLIP_E2E_SHOTS) {
     fs.mkdirSync(process.env.BRIDGECLIP_E2E_SHOTS, { recursive: true })
@@ -84,7 +84,7 @@ test('Free up space lists removable files by group, removes only the chosen ones
   }
   await dialog.getByRole('button', { name: 'Free up 19 MB' }).click()
   await dialog.getByText('Remove 19 MB from your Library? This cannot be undone.').waitFor()
-  await dialog.getByText(/Remix re-edit parts: You can no longer use/).waitFor()
+  await dialog.getByText(/Remix and b-roll video parts: You can no longer use/).waitFor()
   await dialog.getByRole('button', { name: 'Remove 19 MB' }).click()
   await dialog.getByText(/^Freed 19 MB/).waitFor()
   await dialog.getByRole('button', { name: 'Done' }).click()
