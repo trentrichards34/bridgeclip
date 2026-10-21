@@ -295,6 +295,17 @@ class DownloadResult:
     source_type: VideoSourceType
 
 
+def displayed_sideways(stream: dict) -> bool:
+    """The stream carries a quarter-turn rotation (display matrix or the older rotate tag)."""
+    rotation = next((d.get("rotation") for d in stream.get("side_data_list") or [] if isinstance(d, dict) and "rotation" in d), None)
+    if rotation is None:
+        rotation = (stream.get("tags") or {}).get("rotate")
+    try:
+        return round(float(rotation or 0)) % 180 == 90
+    except (TypeError, ValueError):
+        return False
+
+
 class VideoDownloaderService:
     """
     Service for downloading videos from various sources.
@@ -1044,6 +1055,10 @@ class VideoDownloaderService:
             duration = float(format_info.get("duration", 0))
             width = int(video_stream.get("width", 0))
             height = int(video_stream.get("height", 0))
+            if displayed_sideways(video_stream):
+                # A phone video filmed upright is stored sideways with a rotation flag; FFmpeg turns its frames
+                # upright when it decodes them, so the picture's size is the other way round.
+                width, height = height, width
             if not math.isfinite(duration) or duration <= 0 or width <= 0 or height <= 0:
                 raise VideoDownloadError("Invalid video metadata")
 

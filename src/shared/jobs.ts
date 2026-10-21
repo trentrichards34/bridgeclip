@@ -63,6 +63,12 @@ export interface ClipJobRequest {
    * card (a number, a list, a name said in the clip), drawn over the finished clips and editable in the editor.
    */
   motionGraphics?: boolean
+  /**
+   * Stage layouts (with motion graphics, 9:16, no gameplay background): the big cards (statements, crossed-out
+   * lists, sticky notes, lists) are drawn on a stage at the top while the speaker sits in a card below; the
+   * clip switches to that layout around them and back to the full frame after.
+   */
+  stageLayouts?: boolean
   /** Paid Creators framework grading: keep clips graded at or above this bar, grade but keep all, or skip grading. Defaults to 'b'. */
   qualityBar?: QualityBar
   /** Whose video it is: 'creator' writes headlines in the speaker's own voice (their own channel), 'clipper' in the third person. Defaults to 'clipper'. */

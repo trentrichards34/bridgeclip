@@ -6,7 +6,7 @@ export speed, like the graphics main lays over a render):
 - ``face``: the normal full-frame framing (the default; gaps between scenes are face).
 - ``stage``: a backdrop (soft light-gray gradient, dark charcoal or brand-tinted)
   fills the frame; the speaker sits in a big rounded card along the bottom
-  (face-centered crop of the framed speaker), the top ~55% is free for graphics
+  (face-centered crop of the framed speaker), the top ~53% is free for graphics
   and the captions sit in the band between the two.
 - ``visual``: the card is off-screen; the whole frame is backdrop (for a big graphic or inset).
 
@@ -38,9 +38,9 @@ TRANSITION_MS = 350
 # Geometry at 1080x1920, as shares of the frame (scaled with the output).
 CARD_SIDE = 40 / 1080
 CARD_BOTTOM = 40 / 1920
-CARD_HEIGHT = 0.40
+CARD_HEIGHT = 0.37
 CARD_RADIUS = 48 / 1080
-STAGE_BOTTOM = 0.55
+STAGE_BOTTOM = 0.53
 VISUAL_CAPTION_Y = 0.82
 # Where the face sits in the card (share of the crop height from its top), and the
 # face height assumed in the framed speaker when the plan has no face boxes.
@@ -127,8 +127,35 @@ def to_dicts(scenes: Iterable[Scene]) -> list[dict]:
     return [{"scene": s.scene, "start_ms": s.start_ms, "end_ms": s.end_ms, "backdrop": s.backdrop} for s in scenes]
 
 
+def output_scenes(source_scenes: Iterable[dict], ranges: Sequence[Sequence[float]], video_speed: float) -> list[tuple[dict, dict]]:
+    """Source-time scenes moved onto the finished clip's clock through the cut (`ranges`, source ms) and the
+    speed (outputScenes in src/shared/scenes.ts): (source scene, output scene) pairs; face, cut-out and
+    too-short ones are left out."""
+    out: list[tuple[dict, dict]] = []
+    for s in source_scenes or []:
+        if not isinstance(s, dict) or s.get("scene") not in ("stage", "visual"):
+            continue
+        a0, b0 = s.get("start_ms"), s.get("end_ms")
+        if not _number(a0) or not _number(b0) or b0 <= a0:
+            continue
+        before, start, kept = 0.0, None, 0.0
+        for a, b in ranges:
+            lo, hi = max(a, a0), min(b, b0)
+            if hi > lo:
+                if start is None:
+                    start = before + lo - a
+                kept += hi - lo
+            before += b - a
+        if start is None:
+            continue
+        lo_ms, hi_ms = round(start / video_speed), round((start + kept) / video_speed)
+        if hi_ms - lo_ms >= MIN_RENDER_SCENE_MS:
+            out.append((s, {"scene": s["scene"], "start_ms": lo_ms, "end_ms": hi_ms, "backdrop": s.get("backdrop", "light")}))
+    return out[:MAX_SCENES]
+
+
 # ---------------------------------------------------------------------------
-# Auto-picker helper (not wired yet)
+# Auto-picker (Motion graphics: Auto with Stage layouts on)
 # ---------------------------------------------------------------------------
 
 STAGE_PAD_BEFORE_MS = 400

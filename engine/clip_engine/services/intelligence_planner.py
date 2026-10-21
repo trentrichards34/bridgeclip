@@ -351,7 +351,7 @@ _CHAPTER_SCHEMA: dict[str, Any] = {
 def clip_plan_schema(longform: bool, graphics: bool = False) -> dict[str, Any]:
     """Planner output schema; longform clips also carry skips, chapters and a description.
 
-    With motion graphics on (Automatic runs), every clip also lists 0-3 card moments (auto_graphics)."""
+    With motion graphics on (Automatic runs), every clip also lists its visual moments (auto_graphics)."""
     if not longform and not graphics:
         return CLIP_PLAN_SCHEMA
     schema = copy.deepcopy(CLIP_PLAN_SCHEMA)
@@ -593,6 +593,7 @@ class IntelligencePlannerService:
         brand_name: Optional[str] = None,
         headline_voice: Optional[str] = None,
         motion_graphics: bool = False,
+        graphics_options: Optional[dict] = None,
         purpose: Optional[str] = None,
         reference_image: Optional[str] = None,
     ) -> ClipPlanResponse:
@@ -632,8 +633,9 @@ class IntelligencePlannerService:
                 ([start_ms, end_ms] pairs); new clips must not repeat them.
             output_language: Write titles, headlines, descriptions and tags in
                 this language (captions are translated separately).
-            motion_graphics: Also suggest 0-3 motion graphic moments per clip
+            motion_graphics: Also suggest motion graphic moments per clip
                 (Automatic runs with "Motion graphics: Auto"), in the same call.
+            graphics_options: headline_off and cta_keyword for those suggestions (auto_graphics).
             purpose: What the video is for, in the member's words: steers hooks, titles
                 and graphics (never facts).
             reference_image: A picture of a look the member likes (the app sends it only
@@ -760,6 +762,8 @@ class IntelligencePlannerService:
         self._current_longform = longform
         # Card moments need the words said: only with a transcript.
         self._motion_graphics = bool(motion_graphics) and bool(transcript)
+        # headline_off (a hook headline may be suggested) and cta_keyword (comment prompts), see auto_graphics.
+        self._graphics_options = dict(graphics_options) if isinstance(graphics_options, dict) else {}
         if longform:
             logger.info("Planning longform edits (16:9, 5+ minute clips)")
 
@@ -805,8 +809,8 @@ class IntelligencePlannerService:
         if not longform:
             system_prompt += SCREEN_FOCUS_RULE
         if self._motion_graphics:
-            from clip_engine.services.auto_graphics import MOTION_GRAPHICS_RULE
-            system_prompt += MOTION_GRAPHICS_RULE
+            from clip_engine.services.auto_graphics import motion_graphics_rule
+            system_prompt += motion_graphics_rule(self._graphics_options)
         if getattr(self, "_brand_identity", None):
             system_prompt += BRAND_IDENTITY_RULE
         from clip_engine.services.purpose_context import system_rules
@@ -1806,7 +1810,7 @@ Do not overlap clips by more than 5 seconds."""
         if not getattr(self, '_motion_graphics', False):
             return []
         from clip_engine.services.auto_graphics import parse_planned
-        return parse_planned(clip.get('graphics'), start_ms, end_ms)
+        return parse_planned(clip.get('graphics'), start_ms, end_ms, getattr(self, '_graphics_options', None))
 
     @staticmethod
     def _screen_focus(clip: dict) -> dict:

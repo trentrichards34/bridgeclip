@@ -65,6 +65,8 @@ export interface ClipDraft {
   hookPreview: boolean
   /** Motion graphics: Auto (Automatic): up to 3 animated cards per clip from what's said. Off until turned on (then remembered). */
   motionGraphics: boolean
+  /** Stage layouts with motion graphics (Automatic, 9:16): big cards on a stage over the speaker in a card. */
+  stageLayouts: boolean
   /** Framework grading bar: keep clips graded at or above it. */
   qualityBar: QualityBar
   /** Whose video it is: headlines in the creator's own voice, or a clipper's third person. */
@@ -133,6 +135,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   broll: 'off',
   hookPreview: false,
   motionGraphics: false,
+  stageLayouts: false,
   qualityBar: 'b',
   headlineVoice: 'clipper',
   captionLanguage: 'original',

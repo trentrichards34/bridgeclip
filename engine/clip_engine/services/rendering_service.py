@@ -432,6 +432,9 @@ class RenderRequest:
     scenes: list[dict] = field(default_factory=list)
     # The brand backdrop's tint (#RRGGBB); None uses a default blue.
     scene_brand_color: Optional[str] = None
+    # Scenes in SOURCE time (Motion graphics: Auto with Stage layouts), moved onto the finished clip's clock
+    # once the cut is known; used when `scenes` is empty. RenderResult.stage_scenes says which were drawn.
+    source_scenes: list[dict] = field(default_factory=list)
     editorial_service: Optional[JevService] = field(default=None, repr=False)
     coherence_reviewer: Optional[CoherenceReviewer] = field(default=None, repr=False)
 
@@ -464,6 +467,8 @@ class RenderResult:
     window_start_ms: int = 0
     # Screen share + webcam clips: how the clip was framed and why (ClipLayoutPlan.screen_focus).
     screen_focus: Optional[dict] = None
+    # The request's source_scenes the clip was drawn with (source time; empty when none were).
+    stage_scenes: list[dict] = field(default_factory=list)
 
 
 def shot_record(shot) -> dict:
@@ -631,6 +636,7 @@ class RenderingService:
         """
         validate_video_speed(request.video_speed)
         stage_scenes.parse_scenes(request.scenes)
+        stage_scenes.parse_scenes(request.source_scenes)
         if request.scene_brand_color is not None and not _HEX.match(str(request.scene_brand_color)):
             raise ValueError("Invalid brand color")
         os.makedirs(os.path.dirname(request.output_path), exist_ok=True)
@@ -811,6 +817,8 @@ class RenderingService:
             kept_source_ms=[[round(window_start_ms + a), round(window_start_ms + b)] for a, b in time_map.keeps],
             window_start_ms=round(window_start_ms),
             screen_focus=plan.screen_focus if analyzed else None,
+            stage_scenes=[dict(src) for src, _ in self._source_scene_pairs(request, time_map, window_start_ms)]
+            if not is_landscape and not self._background_video(request, is_landscape) else [],
         )
 
     @staticmethod
@@ -911,7 +919,7 @@ class RenderingService:
         if headline:
             graph = self._pad_for_headline(graph, target_width, target_height, bar_h, parse_headline_look(request.headline_look).pad_color)
         scenes = self._scene_composite(request, graph, plan, time_map, target_width, target_height, speaker_h, bar_h,
-                                       is_landscape, bool(background), fps, 1 + len(looped_inputs))
+                                       is_landscape, bool(background), fps, 1 + len(looped_inputs), window_start_ms)
         still_inputs: list[str] = []
         if scenes:
             graph, still_inputs = scenes.graph, scenes.inputs
@@ -964,15 +972,16 @@ class RenderingService:
 
     def _scene_composite(
         self, request: RenderRequest, graph: str, plan: ClipLayoutPlan, time_map: TimeMap, width: int, height: int,
-        speaker_h: int, bar_h: int, is_landscape: bool, background: bool, fps: str, first_input: int,
+        speaker_h: int, bar_h: int, is_landscape: bool, background: bool, fps: str, first_input: int, window_start_ms: int = 0,
     ) -> Optional["stage_scenes.SceneComposite"]:
         """The scenes laid over the framed video (9:16 without a gameplay background), or None."""
-        if not request.scenes or is_landscape:
+        raw = request.scenes or [out for _, out in self._source_scene_pairs(request, time_map, window_start_ms)]
+        if not raw or is_landscape:
             return None
         if background:
             logger.info("Scenes are skipped on a gameplay background clip")
             return None
-        scenes = stage_scenes.parse_scenes(request.scenes, scaled_duration_ms(time_map.output_ms, request.video_speed))
+        scenes = stage_scenes.parse_scenes(raw, scaled_duration_ms(time_map.output_ms, request.video_speed))
         if not scenes:
             return None
         try:
@@ -984,6 +993,14 @@ class RenderingService:
             os.path.dirname(request.output_path), f"{request.start_time_ms}-{request.end_time_ms}", bar_h=bar_h,
             zones=zones, brand=request.scene_brand_color,
             card_graph=lambda w, h: stage_scenes.card_source_graph(plan, time_map.keeps, width, speaker_h, w, h, fps, request.video_speed))
+
+    @staticmethod
+    def _source_scene_pairs(request: RenderRequest, time_map: TimeMap, window_start_ms: int) -> list[tuple[dict, dict]]:
+        """The request's source-time scenes on the finished clip's clock (none when `scenes` is given)."""
+        if request.scenes or not request.source_scenes:
+            return []
+        ranges = [(window_start_ms + a, window_start_ms + b) for a, b in time_map.keeps]
+        return stage_scenes.output_scenes(request.source_scenes, ranges, request.video_speed)
 
     async def _plan_layout(
         self,
@@ -1828,19 +1845,23 @@ class RenderingService:
             "ffprobe",
             "-v", "error",
             "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
-            "-of", "csv=s=x:p=0",
+            "-show_entries", "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
+            "-of", "json",
             "-protocol_whitelist", "file,pipe,fd", "-format_whitelist", "mov,matroska,webm,avi,flv,mpegts",
             video_path,
         ]
         try:
+            from clip_engine.services.video_downloader import displayed_sideways
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
                 lambda: run_media(cmd, timeout=PROBE_TIMEOUT_SECONDS)
             )
-            dims = result.stdout.decode().strip().split("x")
-            width, height = int(dims[0]), int(dims[1])
+            stream = json.loads(result.stdout.decode() or "{}")["streams"][0]
+            width, height = int(stream["width"]), int(stream["height"])
+            if displayed_sideways(stream):
+                # A phone video filmed upright: FFmpeg turns its frames upright when it decodes them.
+                width, height = height, width
             validate_video_dimensions(width, height)
             return width, height
         except Exception as e:

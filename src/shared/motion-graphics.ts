@@ -32,7 +32,7 @@ export const GRAPHIC_PLACEMENTS: readonly GraphicPlacement[] = ['top', 'middle',
 /**
  * How big a graphic is drawn. `compact`: a smaller card in its band; `card`
  * (the default, also when unset): a card in its band; `stage`: the card takes
- * the top ~55% of a 9:16 frame (the "stage" over the speaker), whatever the
+ * the top ~53% of a 9:16 frame (the "stage" over the speaker), whatever the
  * placement.
  */
 export type GraphicSize = 'compact' | 'card' | 'stage'
@@ -212,6 +212,21 @@ export function browserHighlights(text: string | undefined): GraphicHighlightBox
   }
   // Boxes without a time come in one after another once the window is open.
   return out.map((b, i) => ({ ...b, at_ms: b.at_ms ?? 900 + i * 700 }))
+}
+
+/**
+ * When each item comes in (ms into the graphic), from the optional `item_ms` field: one time per line, in
+ * order (a Crossed-out list may add one more for its final line). Automatic graphics set it so items reveal
+ * as they're said; on a graphic it is SOURCE time from the graphic's start, and the render spec carries it in
+ * output time (graphicSpec). Null when it is missing or doesn't fit `count` items, so the template's even
+ * beats are used.
+ */
+export function graphicItemTimes(fields: Record<string, string>, count: number, durationMs: number): number[] | null {
+  const text = fields.item_ms
+  if (!text || count < 1) return null
+  const times = text.split(/[\s,]+/).filter(Boolean).map(Number)
+  if (times.length < count || times.length > count + 1 || times.some((t, i) => !Number.isFinite(t) || t < 0 || t > durationMs || (i > 0 && t < times[i - 1]))) return null
+  return times.map((t) => Math.round(t))
 }
 
 /** The Icon row's icon for each item (null: none or unknown; the first tile shows the member's picture when there is one). */
