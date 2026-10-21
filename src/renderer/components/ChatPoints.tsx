@@ -123,12 +123,27 @@ export function PointChips({ thread }: { thread: string }): React.JSX.Element | 
   </ul>
 }
 
-/** A small vertical frame to point on, for a review screen with no live preview (a still of `video` when given). */
-export function PointPad({ thread, video }: { thread: string; video?: string | null }): React.JSX.Element {
+/**
+ * A still of `video` at `seek` seconds (a faint grid when there is no video or
+ * it can't be read). The time is set once the video's length is known, not as
+ * a #t= fragment: the local-file protocol refuses URLs with one.
+ */
+export function VideoStill({ video, seek = 0.1 }: { video?: string | null; seek?: number }): React.JSX.Element {
+  const [failed, setFailed] = useState(false)
+  useEffect(() => { setFailed(false) }, [video])
+  if (!video || failed) return <div className="chat-point-pad-grid" aria-hidden />
+  return <video key={video} src={localFileUrl(video)} muted preload="auto" playsInline aria-hidden data-testid="video-still"
+    onError={() => setFailed(true)}
+    onLoadedMetadata={(e) => {
+      const length = e.currentTarget.duration
+      e.currentTarget.currentTime = Number.isFinite(length) && length > 0 ? Math.min(Math.max(0, seek), Math.max(0, length - 0.05)) : Math.max(0, seek)
+    }} />
+}
+
+/** A small vertical frame to point on, for a review screen with no live preview (a still of `video` at `seek` seconds when given). */
+export function PointPad({ thread, video, seek }: { thread: string; video?: string | null; seek?: number }): React.JSX.Element {
   return <div className="chat-point-pad">
-    {/* A media fragment (#t=) leaves some recordings black: seek once the metadata is in instead. */}
-    {video ? <video src={localFileUrl(video)} muted preload="auto" playsInline aria-hidden
-      onLoadedMetadata={(e) => { const v = e.currentTarget; const d = v.duration; v.currentTime = Number.isFinite(d) && d > 0 ? Math.min(0.1, d / 2) : 0.1 }} /> : <div className="chat-point-pad-grid" aria-hidden />}
+    <VideoStill video={video} seek={seek} />
     <PointLayer thread={thread} outMs={() => null} />
   </div>
 }

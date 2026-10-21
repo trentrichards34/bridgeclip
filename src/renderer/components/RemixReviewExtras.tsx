@@ -124,7 +124,7 @@ export function TakeTrimNote({ draft, recordings, disabled, onRecordings, onErro
 interface RemixApplied { before: RemixChatPatch; undo: RemixChatAction[] }
 
 /** The Chat panel for one take: changes the page's text and graphics, and calls main for the rest. */
-export function RemixChatSection({ runId, draft, text, onText, afterMain, disabledReason, label, video, suggestions, onAsked }: {
+export function RemixChatSection({ runId, draft, text, onText, afterMain, disabledReason, label, video, seek, suggestions, onAsked }: {
   runId: string
   draft: RemixDraft
   text: TakeText
@@ -135,6 +135,8 @@ export function RemixChatSection({ runId, draft, text, onText, afterMain, disabl
   label?: string
   /** The member's take: a still of it to point on (none yet: an empty frame). */
   video?: string | null
+  /** Where in the take the still is (seconds; a trimmed take: where the used part starts). */
+  seek?: number
   /** The chips (default: the format's own, see remixChatSuggestions). */
   suggestions?: readonly string[]
   /** What a kept answer set (the hook text, caption, their part, the take's trim), for "What changed". */
@@ -193,7 +195,7 @@ export function RemixChatSection({ runId, draft, text, onText, afterMain, disabl
       disabledReason={disabledReason}
       loadInfo={typeof api?.chatInfo === 'function' ? () => api.chatInfo() : undefined}
       ask={(message, points) => api.chat({ draftId: draft.id, headline: text.headline, postCaption: text.postCaption, graphics: text.graphics }, message, points)}
-      point={{ suggestions: REMIX_CHAT_POINT_SUGGESTIONS, pad: <PointPad thread={`remix\n${runId}\n${draft.id}`} video={video} /> }}
+      point={{ suggestions: REMIX_CHAT_POINT_SUGGESTIONS, pad: <PointPad thread={`remix\n${runId}\n${draft.id}`} video={video} seek={seek} /> }}
       parseSteps={parseRemixChatSteps} isEdit={(s) => Object.keys(s.patch).length > 0 || Boolean(s.action)}
       apply={apply} undo={undo}
       onReset={() => { void api?.chatReset?.(draft.id).catch(() => {}) }}

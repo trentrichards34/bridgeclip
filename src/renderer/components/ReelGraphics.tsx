@@ -33,8 +33,10 @@ export type ReelGraphicPatch = Partial<Pick<EditorGraphic, 'duration_ms' | 'plac
 
 const clock = (seconds: number): string => `${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, '0')}`
 
-export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame, look, disabled, emptyNote, onAdd, onPatch, onRemove, cursorLabel }: {
+export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame, look, disabled, emptyNote, onAdd, onPatch, onRemove, cursorLabel, heading = 'h3' }: {
   label: string
+  /** The title's heading level ('h4' when it sits inside a bigger section). */
+  heading?: 'h3' | 'h4'
   intro: string
   items: ReelGraphicItem[]
   /** The strip's length (the reel, or the member's part). */
@@ -62,6 +64,7 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
   const full = items.length >= MAX_REEL_GRAPHICS
   const style = reelGraphicStyle(look)
   const at = Math.max(0, Math.min(total - 0.5, cursor))
+  const Heading = heading
 
   const add = (template: GraphicTemplateId): void => {
     const id = onAdd(template, at)
@@ -77,7 +80,7 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
   return <section className="space-y-3" aria-label={label}>
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
-        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-ink"><Shapes className="h-4 w-4" aria-hidden />{label} <span className="text-2xs font-normal text-ink-subtle">{items.length} / {MAX_REEL_GRAPHICS}</span></h3>
+        <Heading className="flex items-center gap-1.5 text-sm font-semibold text-ink"><Shapes className="h-4 w-4" aria-hidden />{label} <span className="text-2xs font-normal text-ink-subtle">{items.length} / {MAX_REEL_GRAPHICS}</span></Heading>
         <p className="text-2xs text-ink-subtle">{intro}</p>
       </div>
       <Button size="sm" variant="secondary" icon={<Plus className="h-3.5 w-3.5" />} disabled={disabled || full || !!emptyNote} aria-expanded={picking}
@@ -101,7 +104,10 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
       <div className="flex flex-wrap justify-between gap-2 text-2xs text-ink-subtle"><span>0:00</span><span>New graphics start {cursorLabel(at)}.</span><span>{clock(total)}</span></div>
     </>}
     {picking && <div className="space-y-2" role="region" aria-label="Choose a graphic">
-      <p className="text-2xs text-ink-subtle">It starts {cursorLabel(at)}. You add the words next; the previews use sample words.</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-2xs text-ink-subtle">It starts {cursorLabel(at)}. You add the words next; the previews use sample words.</p>
+        <Button size="sm" variant="ghost" onClick={() => setPicking(false)}>Cancel</Button>
+      </div>
       <div className="reel-graphic-picker">{REEL_GRAPHIC_TEMPLATES.map((t) => <button key={t.id} type="button" disabled={disabled || full} onClick={() => add(t.id)} title={t.detail} aria-label={`Add ${t.label}`}>
         <GraphicView spec={preview(t.id)} width={64} loop />
         <span>{t.label}</span>

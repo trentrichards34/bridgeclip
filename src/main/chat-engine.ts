@@ -8,7 +8,7 @@
 // `onCost` (the caller records it in the spending ledger). Conversations are
 // kept per thread for this app session only.
 
-import { CHAT_MAX_MESSAGE_CHARS, CHAT_MAX_TOOL_CALLS, CHAT_MAX_TURNS, ChatToolError, chatCostNote, type ChatInfo, type ChatReplyOf, type ChatStepBase } from '../shared/chat-core'
+import { CHAT_MAX_MESSAGE_CHARS, CHAT_MAX_STEPS, CHAT_MAX_TOOL_CALLS, CHAT_MAX_TURNS, ChatToolError, chatCostNote, type ChatInfo, type ChatReplyOf, type ChatStepBase } from '../shared/chat-core'
 import { isModelId, type OpenRouterModel } from '../shared/openrouter-models'
 import { runOpenRouterTurn, type OpenRouterMessage, type OpenRouterTool } from './assistant/openrouter-agent'
 
@@ -17,19 +17,25 @@ export const DEFAULT_CHAT_MODEL = 'google/gemini-3.8-flash'
 export const CHAT_TIMEOUT_MS = 120_000
 const MAX_HISTORY_CHARS = 30_000
 const MAX_REPLY_CHARS = 2_000
-/** Rough tokens per message for the price note: context and history in, a short answer and tool calls out, over two steps. */
-const ESTIMATE_INPUT_TOKENS = 2 * 9_000
-const ESTIMATE_OUTPUT_TOKENS = 700
+/** Rough tokens per round trip for the price note: context and history in, a short answer and tool calls out. */
+const STEP_INPUT_TOKENS = 9_000
+const MESSAGE_OUTPUT_TOKENS = 700
+/** A typical message takes two round trips (the edits, then the answer); one can take at most CHAT_MAX_STEPS. */
+const TYPICAL_STEPS = 2
 
 /** The planning model the member chose in Advanced mode, else the default. */
 export function chatModel(create: { clippingMode?: unknown; plannerModel?: unknown } | undefined): string {
   return create?.clippingMode === 'advanced' && isModelId(create.plannerModel) ? create.plannerModel : DEFAULT_CHAT_MODEL
 }
 
-/** A per-message estimate from the model's listed token prices, or null when they're unknown. */
-export function chatEstimateUsd(model: OpenRouterModel | undefined): number | null {
+/**
+ * A per-message estimate from the model's listed token prices, or null when they're unknown. `most`: a message
+ * that uses every round trip it may (what the spending limit is checked against).
+ */
+export function chatEstimateUsd(model: OpenRouterModel | undefined, most = false): number | null {
   if (!model || model.inputPrice === null || model.outputPrice === null) return null
-  const usd = ESTIMATE_INPUT_TOKENS * model.inputPrice + ESTIMATE_OUTPUT_TOKENS * model.outputPrice
+  const steps = most ? CHAT_MAX_STEPS : TYPICAL_STEPS
+  const usd = steps * STEP_INPUT_TOKENS * model.inputPrice + (most ? steps : 1) * MESSAGE_OUTPUT_TOKENS * model.outputPrice
   return Number.isFinite(usd) && usd > 0 ? usd : null
 }
 
@@ -40,7 +46,7 @@ export function chatInfoFor(input: { apiKey: boolean; model: string; catalogMode
     ready: input.apiKey,
     ...(input.apiKey ? {} : { reason: `Add your OpenRouter key in Settings → API keys to chat about ${what}.` }),
     model: input.catalogModel?.name ?? input.model,
-    costNote: chatCostNote(estimateUsd),
+    costNote: chatCostNote(estimateUsd, chatEstimateUsd(input.catalogModel, true)),
     estimateUsd
   }
 }
@@ -78,6 +84,9 @@ export async function runToolChat<Step extends ChatStepBase>(input: ToolChatInpu
     onText: (text, newParagraph) => { if (reply.length < MAX_REPLY_CHARS) reply += `${newParagraph && reply ? '\n\n' : ''}${text}` },
     onActivity: () => {},
     onCost: input.onCost,
+    // A chat message is a few edits: few round trips, and none more once the tool limit is reached.
+    maxSteps: CHAT_MAX_STEPS,
+    toolsDone: () => calls >= limit,
     callTool: async (name, args) => {
       if (++calls > limit) return { text: 'Too many changes for one message. Stop and tell the member what you did.', isError: true }
       try {

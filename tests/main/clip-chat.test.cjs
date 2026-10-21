@@ -252,3 +252,30 @@ test('editorChat checks the request, reads the run transcript and remembers the 
     } finally { globalThis.fetch = originalFetch }
   } finally { cleanup() }
 })
+
+test('a chat message takes at most six round trips and ends once the tool limit is reached', async () => {
+  const { dir, cleanup } = tempDir('bridgeclip-chat-')
+  try {
+    const chat = loadMainChat(dir)
+    // Thirteen edits at once: past the limit of twelve, so the next round trip is the last and text-only.
+    const many = Array.from({ length: 13 }, (_, i) => ({ name: 'set_title', args: { title: `Title ${i}` } }))
+    const busy = fakeOpenRouter([{ calls: many, cost: 0.01 }, { calls: many, text: 'Done.', cost: 0.01 }, { text: 'never asked' }])
+    const result = await turn(chat, clip(), busy)
+    assert.equal(busy.requests.length, 2, 'no paid round trips after the limit')
+    assert.deepEqual(busy.requests.map((r) => r.tool_choice), ['auto', 'none'])
+    assert.equal(result.steps.length, 12)
+    assert.equal(result.reply, 'Done.')
+    assert.equal(result.error, undefined)
+    // A model that keeps calling one tool: six round trips, the last one text-only.
+    const loop = fakeOpenRouter(Array.from({ length: 30 }, () => ({ calls: [{ name: 'set_captions', args: { on: false } }] })))
+    const looped = await turn(chat, clip(), loop)
+    assert.equal(loop.requests.length, 6)
+    assert.equal(loop.requests[5].tool_choice, 'none')
+    assert.equal(looped.steps.length, 5)
+    // The price note says what one message can cost at most.
+    const model = { inputPrice: 0.0000003, outputPrice: 0.0000025 }
+    assert.ok(Math.abs(chat.chatEstimateUsd(model, true) - (6 * 9000 * 0.0000003 + 6 * 700 * 0.0000025)) < 1e-9)
+    assert.equal(shared.chatCostNote(0.00715, chat.chatEstimateUsd(model, true)), 'Each message costs about 1¢ of your OpenRouter credit, up to 3¢ when it makes many changes.')
+    assert.equal(shared.chatCostNote(0.001, 0.003), 'Each message costs less than a cent of your OpenRouter credit.')
+  } finally { cleanup() }
+})

@@ -122,7 +122,7 @@ test('Edit my recording: retakes, filler, the opening, cards, pop-ups and sounds
   assert.deepEqual(plain(lines.map((l) => [l.id, l.text])), [
     ['retakes', 'Cut 1 retake (0.5 s)'], ['false-starts', 'Cut 1 false start (0.2 s)'], ['filler', 'Cut 2 filler words (0.2 s)'],
     ['hook', 'Opened with “Here is why.” (moved from 0:02)'], ['cta', 'Moved your call to action to the end'],
-    ['cards', 'Added 1 card'], ['popups', 'Added 2 pop-ups'], ['sounds', 'Sound effects ×2 (soft whoosh, pop)'], ['cutout', 'Cut-out opening on']])
+    ['cards', 'Added 1 half-screen graphic'], ['popups', 'Added 2 pop-ups'], ['sounds', 'Sound effects ×2 (soft whoosh, pop)'], ['cutout', 'Cut-out opening on']])
   const apply = (id) => ({ ...d, ...lineOf(lines, id).restore })
   assert.deepEqual(plain(apply('retakes').cut), [0, 3, 7], 'only the retake’s words come back')
   assert.deepEqual(plain(apply('filler').cut), [0, 1, 2])
@@ -172,4 +172,18 @@ test('wording: plain, and numbers come from the data', () => {
   assert.equal(log.logSeconds(1000), '1 s')
   assert.equal(log.logClock(864000), '14:24')
   assert.equal(log.graphicPhrase({ template: 'title', fields: { text: 'Raise your prices now please everyone' } }), '“Raise your prices now p…” title')
+})
+
+test('Undo after a Restore takes back only what the Restore changed, and edits made since stay', () => {
+  const decisions = { cut: [1, 2, 3], endOnCta: true, hookText: 'Old hook', popups: [] }
+  const { state, undo } = log.applyRestore(decisions, { endOnCta: false })
+  assert.equal(state.endOnCta, false)
+  // An edit after the Restore, to a field it didn't set.
+  const later = { ...state, cut: [1, 2, 3, 9], hookText: 'New hook' }
+  assert.deepEqual(plain(log.undoRestore(later, undo)), { cut: [1, 2, 3, 9], endOnCta: true, hookText: 'New hook', popups: [] })
+  // The field the Restore set was changed again: Undo is no longer offered (it would throw that change away).
+  const changed = { ...later, endOnCta: true }
+  assert.equal(log.restoreStillApplied(changed, undo), false)
+  assert.equal(log.undoRestore(changed, undo), null)
+  assert.equal(log.restoreStillApplied(later, undo), true)
 })

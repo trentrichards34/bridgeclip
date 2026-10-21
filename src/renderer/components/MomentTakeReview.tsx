@@ -230,7 +230,7 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
             onGraphics={(change) => setGraphics((current) => ({ ...current, [focused.id]: change(current[focused.id] ?? []) }))}
             partMs={recordings[focused.id]?.reaction?.seconds ? Math.round(recordings[focused.id]!.reaction!.seconds * 1000) : null} />
           <RemixChatSection key={`c${focused.id}`} runId={status.id} draft={focused} text={focusText(focused)} onText={(patch) => onText(focused, patch)}
-            video={recordings[focused.id]?.reaction?.path ?? null} onAsked={(next) => setAsked((before) => ({ ...before, [focused.id]: { ...before[focused.id], ...next } }))}
+            video={recordings[focused.id]?.reaction?.path ?? null} seek={(recordings[focused.id]?.reaction?.trim?.startMs ?? 0) / 1000 + 0.1} onAsked={(next) => setAsked((before) => ({ ...before, [focused.id]: { ...before[focused.id], ...next } }))}
             afterMain={async () => { setRecordings(await getApi().remix.recordings()) }} label={drafts.length > 1 ? `Chat · moment ${focused.id + 1}` : 'Chat'}
             disabledReason={busy ? 'Wait for what’s running to finish.' : recording ? 'Close the recorder to chat.' : null} />
         </>}

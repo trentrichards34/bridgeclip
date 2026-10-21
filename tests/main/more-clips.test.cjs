@@ -231,7 +231,9 @@ function startHarness(lib, brands = { brandForJob: () => null }) {
     './settings-store': settings, './file-manager': { ensureOutputDir: () => {} }, './pipeline-runner': runner, './run-history': runHistory,
     './job-manager': manager, './logger': logger, './security': { ...security, authorizeMedia: (p) => { authorized.push(p); return p } },
     './network-policy': { assertPublicWebUrl: async () => {} }, './validation': validation, './openrouter-models': { resolveAdvancedModels: async () => ({}) },
-    './tools': { supportsCaptionFilter: async () => true }, './brands': brands, './reference-image': { addReferenceFile: async () => null, referenceBytes: async () => new Uint8Array(), referenceSupportFor: async () => ({}), referenceForRun: async () => ({ saved: '', send: null, note: null }), referencePath: () => '' }, './more-clips': loadMain('more-clips.ts', {
+    './tools': { supportsCaptionFilter: async () => true }, './brands': brands,
+    './music': loadMain('music.ts', { electron: { app: { getPath: () => lib, isPackaged: false } } }),
+    './reference-image': { addReferenceFile: async () => null, referenceBytes: async () => new Uint8Array(), referenceSupportFor: async () => ({}), referenceForRun: async () => ({ saved: '', send: null, note: null }), referencePath: () => '' }, './more-clips': loadMain('more-clips.ts', {
       './settings-store': settings, './security': security, './validation': validation,
       './file-manager': { getJobOutput: async (run) => { try { return jobOutput.parseJobOutput(JSON.parse(fs.readFileSync(path.join(run, 'job_output.json'), 'utf8'))) } catch { return null } } }
     })
@@ -257,6 +259,11 @@ test('several videos: one job each with the same settings, at most MAX_PARALLEL_
   assert.match((await start.startClipJobRequests([])).error, /Add a video/)
   assert.match((await start.startClipJobRequests(Array.from({ length: 11 }, (_, i) => ({ ...BASE, videoUrl: `https://e.com/${i}` })))).error, /up to 10/)
   assert.match((await start.startClipJobRequests([BASE, BASE])).error, /once/)
+  // Music of my own that was removed (a saved style still points to it): said before anything is queued.
+  const before = manager.listJobs().length
+  const gone = await start.startClipJobRequests([{ ...BASE, videoUrl: 'https://example.com/6.mp4', music: true, musicTrack: 'my:Gone.mp3' }])
+  assert.deepEqual(plain(gone), { started: [], failed: [{ videoUrl: 'https://example.com/6.mp4', error: 'The music "Gone.mp3" is no longer in your music. Choose another track.' }] })
+  assert.equal(manager.listJobs().length, before)
   const mixed = await start.startClipJobRequests([{ ...BASE, videoUrl: 'https://example.com/4.mp4' }, { ...BASE, videoUrl: 'https://example.com/5.mp4', aspectRatio: '1:1' }])
   assert.equal(mixed.started.length, 1)
   assert.equal(mixed.failed[0].videoUrl, 'https://example.com/5.mp4')

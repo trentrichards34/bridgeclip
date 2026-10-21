@@ -220,7 +220,7 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
         <RemixGraphicsSection status={status} draft={draft} text={text} onGraphics={(change) => setGraphics(change)} recordings={recordings}
           partMs={takeSeconds ? Math.round(takeSeconds * 1000) : null} banner={Boolean(layout?.banner && layout.keyword)} disabled={busy} step={step + 2} />
         <RemixChatSection runId={status.id} draft={draft} text={text} onText={onText} afterMain={async () => { await refresh() }}
-          video={recordings[draft.id]?.[take]?.path ?? null} onAsked={(next) => setAsked((before) => ({ ...before, ...next }))}
+          video={recordings[draft.id]?.[take]?.path ?? null} seek={(recordings[draft.id]?.[take]?.trim?.startMs ?? 0) / 1000 + 0.1} onAsked={(next) => setAsked((before) => ({ ...before, ...next }))}
           suggestions={remixChatSuggestions(draft.format === 'react_thoughts' ? 'react_thoughts' : 'clip_then_me', { box: layout?.boxAt ?? null, banner: Boolean(layout && !layout.banner && layout.keyword) })}
           disabledReason={busy ? 'Wait for what’s running to finish.' : recording ? 'Close the recorder to chat.' : null} />
 

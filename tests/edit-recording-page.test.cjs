@@ -136,7 +136,15 @@ test('the review: an edit style, half-screen cards to edit or switch off, my ima
   assert.match(html, /role="radio" aria-checked="true"[^>]*>(?:(?!<\/button>).)*Fast explainer/s)
   assert.match(html, /aria-pressed="true"[^>]*>Keyword pill</)
   assert.match(html, /aria-pressed="false"[^>]*>Zoom punch</)
-  assert.match(html, /Card 1 · List/)
+  assert.match(html, /Half-screen graphic 1 · List/)
+  // One "On-screen extras" section with sub-groups, in the page's order; the header says what costs money.
+  assert.match(html, /Making the reel is free\. Chat messages use your OpenRouter credit\./)
+  const order = ['>Chat<', '>Opens with<', '>Your words<', '>Skills<', '>Edit style<', '>On-screen extras<', '>Graphics', '>Half-screen graphics<', '>Pop-ups<', '>My images<', '>How it opens<', '>Look<'].map((label) => html.indexOf(label))
+  assert.ok(order.every((at, i) => at > 0 && (i === 0 || at > order[i - 1])), JSON.stringify(order))
+  assert.doesNotMatch(html, /Cards, pop-ups and sounds/)
+  // "What changed" is one line until opened; the pop-up row is a boxed row with its switch last.
+  assert.match(html, /aria-label="What changed"[^>]*><button[^>]*aria-expanded="false"/)
+  assert.match(html, /data-testid="edit-popup-0"(?:(?!<\/div><\/div>).)*role="switch"[^>]*aria-label="Pop-up 1"/s)
   assert.match(html, /Fills the top half for 3 s when you say “Write”/)
   assert.match(html, /value="Three steps"/)
   assert.match(html, /My images/)

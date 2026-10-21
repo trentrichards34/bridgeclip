@@ -9,7 +9,9 @@ const { renderToStaticMarkup } = require('react-dom/server')
 const bundled = buildSync({
   stdin: {
     contents: `export { MusicPicker, MusicSettingsPanel } from './src/renderer/components/MusicPicker';
-      export { MUSIC_TRACKS } from './src/shared/music';`,
+      export { MUSIC_TRACKS } from './src/shared/music';
+      export { pickSkillsMusic, musicTrackMissing } from './src/renderer/components/SkillsPanel';
+      export { editSkillPatch, parseAudioSkills } from './src/shared/skills';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
   },
@@ -65,4 +67,27 @@ test('Settings → My music: my tracks to play or remove, the music volume and R
   assert.match(html, /role="switch" aria-checked="false" aria-label="Music under their clip in Remix"/)
   const empty = renderToStaticMarkup(React.createElement(m.MusicSettingsPanel, { initialLibrary: { ...LIBRARY, own: [] } }))
   assert.match(empty, /No music of your own yet/)
+})
+
+test('Skills music: None switches Music off in one update (a second update from the same look would turn it back on)', () => {
+  // Edit my recording: each update replaces the whole look from the same render's copy.
+  let look = { includeCaptions: true, music: true, musicTrack: 'lofi-beat' }
+  const seen = look
+  const onLook = (next) => { look = next }
+  const onToggle = (id, on) => { const patch = m.editSkillPatch({ words: [], popups: [], sounds: [] }, { cut: [], sounds: [], look: seen }, id, on); if (patch.look) onLook({ ...seen, ...patch.look }) }
+  m.pickSkillsMusic(null, onToggle, (track) => onLook({ ...seen, musicTrack: track ?? undefined }))
+  assert.equal(look.music, false)
+  assert.deepEqual(m.parseAudioSkills(look), {}, 'no music is added')
+  const picked = []
+  m.pickSkillsMusic('calm-pad', () => assert.fail('a track does not switch anything'), (track) => picked.push(track))
+  assert.deepEqual(picked, ['calm-pad'])
+})
+
+test('Skills music: a chosen track of my own that was removed reads as missing', () => {
+  const own = [{ id: 'my:Intro theme.mp3' }]
+  assert.equal(m.musicTrackMissing('my:Gone.mp3', own), true)
+  assert.equal(m.musicTrackMissing('my:Intro theme.mp3', own), false)
+  assert.equal(m.musicTrackMissing('lofi-beat', own), false)
+  assert.equal(m.musicTrackMissing('my:Gone.mp3', null), false, 'not known until my music is loaded')
+  assert.equal(m.musicTrackMissing(null, own), false)
 })
