@@ -663,6 +663,7 @@ async def make_pieces(shots: list[TimelineShot], catalog: dict[str, CatalogShot]
     os.makedirs(folder, exist_ok=True)
     edges = frame_edges(shots)
     maker = AiShotMaker(settings, ai) if ai is not None and any(s.ai_prompt for s in shots) else None
+    ai_on = maker is not None
     cost = 0.0
     spent = spent if spent is not None else {"usd": 0.0}
     try:
@@ -671,7 +672,7 @@ async def make_pieces(shots: list[TimelineShot], catalog: dict[str, CatalogShot]
             out = os.path.join(folder, f"piece-{k:03d}-{secrets.token_hex(3)}.mp4")
             if shot.ai_prompt:
                 made = None
-                if maker is not None:
+                if maker is not None and ai_on:
                     raw = os.path.join(folder, f"ai-{k:03d}-{secrets.token_hex(3)}.mp4")
                     try:
                         await maker.make(shot.ai_prompt, raw)
@@ -681,7 +682,7 @@ async def make_pieces(shots: list[TimelineShot], catalog: dict[str, CatalogShot]
                     except BrollLibraryError as error:
                         if "API key" in str(error) or "credits" in str(error):
                             warnings.append(str(error))
-                            maker = None
+                            ai_on = False  # no more AI shots; the ones already paid for are still counted below
                         logger.warning(f"An AI b-roll shot was not made: {error}")
                 if made is None:
                     # The gap gets the best library shot instead.

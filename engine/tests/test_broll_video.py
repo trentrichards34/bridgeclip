@@ -384,3 +384,40 @@ def test_the_catalog_keeps_the_written_on_flag():
         {"id": "l000000000001:s0", "path": "/a/x.mp4", "kind": "video", "inS": 0, "outS": 4, "description": "A headline", "tags": [], "shotType": "text", "text": True},
         {"id": "l000000000002:s0", "path": "/a/y.mp4", "kind": "video", "inS": 0, "outS": 4, "description": "A street", "tags": [], "shotType": "wide"}]})
     assert [s.text for s in shots] == [True, False]
+
+
+def test_ai_shots_paid_for_before_a_rejected_key_are_still_counted(monkeypatch, tmp_path):
+    from clip_engine.services.broll_library import AiSettings, BrollLibraryError
+
+    class FakeMaker:
+        instances = []
+
+        def __init__(self, settings, ai):
+            self.ai, self.cost_usd, self.calls, self.closed = ai, 0.0, 0, False
+            FakeMaker.instances.append(self)
+
+        async def make(self, prompt, out):
+            self.calls += 1
+            if self.calls == 2:
+                raise BrollLibraryError("OpenRouter rejected the API key. Check it in Settings.")
+            self.cost_usd += 0.1
+            Path(out).write_bytes(b"video")
+            return out
+
+        async def aclose(self):
+            self.closed = True
+
+    monkeypatch.setattr(bv, "AiShotMaker", FakeMaker)
+    monkeypatch.setattr(bv, "conform_piece", lambda *args: Path(args[5]).write_bytes(b"piece") or args[5])
+    library = shot(1, "Hands typing on a laptop", ("laptop",), seconds=8)
+    shots = [bv.TimelineShot(k, k * 2000, (k + 1) * 2000, ai_prompt=f"a cup of coffee on a desk {k}", words="coffee") for k in range(3)]
+    ai = AiSettings(kind="video", model="x-ai/grok-imagine-video-1.5-lite", max_shots=3, seconds=5, per_second_usd=0.02)
+    spent, warnings = {"usd": 0.0}, []
+    cost = asyncio.run(bv.make_pieces(shots, {library.id: library}, str(tmp_path / "pieces"), 1080, 1920, False, ai, None, None,
+                                      lambda *a: None, warnings, spent))
+    maker = FakeMaker.instances[0]
+    assert maker.calls == 2, "no more AI shots once the key is rejected"
+    assert cost == pytest.approx(0.1) and spent["usd"] == pytest.approx(0.1), "the shot already paid for is reported"
+    assert maker.closed
+    assert shots[1].shot_id == library.id and shots[2].shot_id == library.id, "the gaps get library shots instead"
+    assert any("API key" in w for w in warnings)
