@@ -59,6 +59,7 @@ from clip_engine.services.layout_renderer import (
     per_shot_expr,
     title_y,
 )
+from clip_engine.services import stage_scenes
 from clip_engine.services.transcription_service import TranscriptSegment
 from clip_engine.services.video_speed import scaled_duration_ms, speed_video_filter, validate_video_speed
 
@@ -393,6 +394,11 @@ class RenderRequest:
     cta_keyword: str = ""
     # Look extras (see look_extras.LookExtras): motion effects on top of the look; None or empty for none.
     look_extras: Optional[Any] = None
+    # Scenes (9:16; see stage_scenes): [{scene: face|stage|visual, start_ms, end_ms, backdrop?}] on the
+    # finished clip's clock (after the cut and the speed). Empty: the normal framing throughout.
+    scenes: list[dict] = field(default_factory=list)
+    # The brand backdrop's tint (#RRGGBB); None uses a default blue.
+    scene_brand_color: Optional[str] = None
     editorial_service: Optional[JevService] = field(default=None, repr=False)
     coherence_reviewer: Optional[CoherenceReviewer] = field(default=None, repr=False)
 
@@ -591,6 +597,9 @@ class RenderingService:
             and frame rate, over a blurred fill when the source isn't 16:9.
         """
         validate_video_speed(request.video_speed)
+        stage_scenes.parse_scenes(request.scenes)
+        if request.scene_brand_color is not None and not _HEX.match(str(request.scene_brand_color)):
+            raise ValueError("Invalid brand color")
         os.makedirs(os.path.dirname(request.output_path), exist_ok=True)
 
         duration_ms = request.end_time_ms - request.start_time_ms
@@ -868,10 +877,15 @@ class RenderingService:
                 looped_inputs = [path for path, _, _ in broll]
         if headline:
             graph = self._pad_for_headline(graph, target_width, target_height, bar_h, parse_headline_look(request.headline_look).pad_color)
+        scenes = self._scene_composite(request, graph, plan, time_map, target_width, target_height, speaker_h, bar_h,
+                                       is_landscape, bool(background), fps, 1 + len(looped_inputs))
+        still_inputs: list[str] = []
+        if scenes:
+            graph, still_inputs = scenes.graph, scenes.inputs
         out_plan = remap_plan(plan, time_map)
         caption_path = await self._generate_captions(
             request, target_width, target_height, window_start_ms, time_map, out_plan, is_landscape, plan,
-            bar_h=bar_h,
+            bar_h=bar_h, scenes=scenes,
         )
         graph += self._caption_graph(caption_path, request.caption_suppression_ranges_ms, window_start_ms, time_map)
         overlays = self._overlays(request, out_plan, target_width, target_height, is_landscape, headline=headline)
@@ -885,7 +899,7 @@ class RenderingService:
         # then speed up the entire composited picture to match the tempo audio.
         filter_complex, extra_inputs = self._compose_overlays(
             graph, overlays, speed_video_filter(request.video_speed, fps),
-            first_index=1 + len(looped_inputs),
+            first_index=1 + len(looped_inputs) + len(still_inputs),
         )
 
         try:
@@ -898,13 +912,14 @@ class RenderingService:
                 audio_label="[aout]" if has_audio else None,
                 extra_inputs=extra_inputs if extra_inputs else None,
                 looped_inputs=looped_inputs,
+                still_inputs=still_inputs,
                 fps=fps,
                 output_size=(target_width, target_height),
                 output_duration_ms=scaled_duration_ms(time_map.output_ms, request.video_speed),
                 **({'progress': lambda percent: request.progress_callback('Rendering video', percent)} if request.progress_callback else {}),
             )
         finally:
-            for path in extra_inputs:
+            for path in [*extra_inputs, *still_inputs]:
                 try:
                     os.remove(path)
                 except OSError:
@@ -912,6 +927,29 @@ class RenderingService:
 
         if not os.path.isfile(request.output_path):
             raise RenderingError("Render failed: output file not created")
+
+    def _scene_composite(
+        self, request: RenderRequest, graph: str, plan: ClipLayoutPlan, time_map: TimeMap, width: int, height: int,
+        speaker_h: int, bar_h: int, is_landscape: bool, background: bool, fps: str, first_input: int,
+    ) -> Optional["stage_scenes.SceneComposite"]:
+        """The scenes laid over the framed video (9:16 without a gameplay background), or None."""
+        if not request.scenes or is_landscape:
+            return None
+        if background:
+            logger.info("Scenes are skipped on a gameplay background clip")
+            return None
+        scenes = stage_scenes.parse_scenes(request.scenes, scaled_duration_ms(time_map.output_ms, request.video_speed))
+        if not scenes:
+            return None
+        try:
+            zones = face_zones(plan, time_map, width, speaker_h) if plan.face_samples or any(s.people for s in plan.shots) else []
+        except Exception:  # noqa: BLE001 - the card then uses the usual framing's face height
+            zones = []
+        return stage_scenes.build_scene_graph(
+            graph, scenes, width, height, time_map.output_ms, request.video_speed, fps, first_input,
+            os.path.dirname(request.output_path), f"{request.start_time_ms}-{request.end_time_ms}", bar_h=bar_h,
+            zones=zones, brand=request.scene_brand_color,
+            card_graph=lambda w, h: stage_scenes.card_source_graph(plan, time_map.keeps, width, speaker_h, w, h, fps, request.video_speed))
 
     async def _plan_layout(
         self,
@@ -1400,6 +1438,7 @@ class RenderingService:
         is_landscape: bool,
         plan: Optional[ClipLayoutPlan] = None,
         bar_h: int = 0,
+        scenes: Optional["stage_scenes.SceneComposite"] = None,
     ) -> Optional[str]:
         """ASS captions on the edited timeline, positioned per shot (9:16).
 
@@ -1438,6 +1477,12 @@ class RenderingService:
             zones = face_zones(plan, time_map, target_width, target_height)
             if zones:
                 placer = CaptionPlacer(anchors, zones, target_width, target_height)
+        windows = stage_scenes.caption_windows(scenes.segments, scenes.geometry) if scenes else []
+        if windows:
+            # Stage and visual scenes: captions in the band between the stage and the speaker card.
+            anchors = stage_scenes.scene_anchors(anchors or [(10**9, 5, round(target_height * 0.7))], windows)
+            if placer is not None:
+                placer = stage_scenes.scene_placer(placer, windows)
 
         caption_path = os.path.join(
             os.path.dirname(request.output_path),
@@ -1448,18 +1493,25 @@ class RenderingService:
             style = self._landscape_caption_style(style or self.settings.get_caption_style(), target_height)
         if request.look_extras:
             style = extras_module.caption_style(style or self.settings.get_caption_style(), request.look_extras)
-        return await self.caption_generator.generate_captions(
-            transcript_segments=segments,
-            clip_start_ms=window_start_ms,
-            clip_end_ms=window_start_ms + time_map.output_ms,
-            output_path=caption_path,
-            caption_style=style,
-            output_width=target_width,
-            output_height=target_height,
-            anchors=anchors,
-            emphasis_words=request.emphasis_words,
-            placer=placer,
-        )
+        options = dict(transcript_segments=segments, clip_start_ms=window_start_ms, clip_end_ms=window_start_ms + time_map.output_ms,
+                       output_width=target_width, output_height=target_height, anchors=anchors,
+                       emphasis_words=request.emphasis_words, placer=placer)
+        path = await self.caption_generator.generate_captions(output_path=caption_path, caption_style=style, **options)
+        if path and any(light for *_, light in windows):
+            # On a light backdrop the same captions in dark text, swapped in event by event.
+            light_path = caption_path + ".light.ass"
+            light_style = stage_scenes.light_backdrop_style(style or self.settings.get_caption_style())
+            try:
+                if await self.caption_generator.generate_captions(output_path=light_path, caption_style=light_style, **options):
+                    with open(path, encoding="utf-8") as f, open(light_path, encoding="utf-8") as g:
+                        merged = stage_scenes.splice_caption_events(
+                            f.read(), g.read(), windows, self.caption_generator._parse_ass_time)
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(merged)
+            finally:
+                if os.path.exists(light_path):
+                    os.remove(light_path)
+        return path
 
     # Pixel-sized caption style fields, scaled together for landscape output.
     _CAPTION_PIXEL_FIELDS = (
@@ -1765,6 +1817,7 @@ class RenderingService:
         audio_label: Optional[str] = None,
         extra_inputs: Optional[list[str]] = None,
         looped_inputs: Optional[list[str]] = None,
+        still_inputs: Optional[list[str]] = None,
         fps: str = "30",
         output_size: tuple[int, int] = (1080, 1920),
         output_duration_ms: Optional[int] = None,
@@ -1799,6 +1852,10 @@ class RenderingService:
                 "-i", looped,
             ])
 
+        for still in (still_inputs or []):
+            # Single still images the graph repeats in memory (scene backdrops, the card's mask and shadow).
+            cmd.extend(["-protocol_whitelist", "file,pipe,fd", "-i", still])
+
         for extra in (extra_inputs or []):
             cmd.extend(["-loop", "1", "-protocol_whitelist", "file,pipe,fd", "-i", extra])
 
@@ -1819,7 +1876,7 @@ class RenderingService:
         else:
             cmd.append("-an")
 
-        if extra_inputs or looped_inputs:
+        if extra_inputs or looped_inputs or still_inputs:
             cmd.append("-shortest")
 
         cmd.append(output_path)

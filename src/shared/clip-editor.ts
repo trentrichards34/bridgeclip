@@ -1,4 +1,5 @@
 import { parseGraphics, type EditorGraphic } from './motion-graphics'
+import { parseScenes, type StageScene } from './scenes'
 /** Persisted source-time edits. Media paths and review results are main-process owned. */
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
 import { isCaptionLanguage, type CaptionLanguage } from './caption-language'
@@ -45,6 +46,9 @@ export interface CandidateEdit {
   cta_id?: string | null
   /** Motion graphics on the clip (motion-graphics.ts). Absent = none. */
   graphics?: EditorGraphic[]
+  /** Scenes (scenes.ts): face / stage / visual stretches in SOURCE time. Absent = face throughout.
+   * (Named apart from `scenes`, the clip's framing layouts.) */
+  stage_scenes?: StageScene[]
 }
 /**
  * What an Automatic run's pass did to a clip, saved when the run is opened in the editor
@@ -283,6 +287,7 @@ export function parseCandidateEdit(value: unknown, duration: number, transcriptC
     ...(v.hook === undefined ? {} : { hook: parseHook(v.hook) }),
     ...(v.cta_id === undefined ? {} : { cta_id: v.cta_id === null ? null : /^[a-f0-9]{16}$/.test(str(v.cta_id, 16)) ? v.cta_id as string : fail() }),
     ...(v.graphics === undefined ? {} : { graphics: parseGraphics(v.graphics) }),
+    ...(v.stage_scenes === undefined ? {} : { stage_scenes: parseScenes(v.stage_scenes, duration) }),
     ...(v.dismissed_camera_markers === undefined ? {} : { dismissed_camera_markers: [...new Set(arr(v.dismissed_camera_markers, 5000).map((t) => num(t, 0, duration)))].sort((a, b) => a - b) }) }
 }
 /** A hook from the project or the renderer: null (none) or text and a look. */
@@ -388,11 +393,13 @@ export function candidateEdit(c: CandidateEdit): CandidateEdit {
   return { id, title, ranges, scenes, captions, caption_preset, video_speed, status, caption_edits, caption_suppression_ranges, caption_y: c.caption_y ?? null,
     ...(dismissed_camera_markers ? { dismissed_camera_markers } : {}), ...(c.hook !== undefined ? { hook: c.hook } : {}), ...(c.cta_id !== undefined ? { cta_id: c.cta_id } : {}),
     // Kept even when empty, so removing a clip's last graphic saves (main merges edits over the stored clip).
-    ...(c.graphics !== undefined ? { graphics: c.graphics } : {}) }
+    ...(c.graphics !== undefined ? { graphics: c.graphics } : {}),
+    ...(c.stage_scenes !== undefined ? { stage_scenes: c.stage_scenes } : {}) }
 }
 export function renderEditKey(c: CandidateEdit): string {
   // The call to action is added after rendering, so changing it doesn't need a new render.
-  return JSON.stringify({ ...candidateEdit(c), status: undefined, dismissed_camera_markers: undefined, cta_id: undefined, graphics: c.graphics?.length ? c.graphics : undefined })
+  return JSON.stringify({ ...candidateEdit(c), status: undefined, dismissed_camera_markers: undefined, cta_id: undefined, graphics: c.graphics?.length ? c.graphics : undefined,
+    stage_scenes: c.stage_scenes?.length ? c.stage_scenes : undefined })
 }
 export function refineEdit<T extends CandidateEdit>(c: T, patch: Partial<CandidateEdit>): T {
   const next = { ...c, ...patch }

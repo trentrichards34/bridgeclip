@@ -13,6 +13,7 @@ import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_LOOKS, headlineBarColor
 import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHICS_PER_CLIP, fitGraphicInCut, isGraphicTemplate, nearestOutputTime, outputTime, parseGraphics, placeInFreeBand, sourceTimeAt, type EditorGraphic, type GraphicPlacement } from './motion-graphics'
 import { MAX_HOOK_CHARS, SPLIT_RANGE, TRANSCRIPT_CLIP_MS, defaultCrop, editDuration, framingAt, normalizeSceneTransitions, panelRows, parseCandidateEdit, parseHook, type CandidateEdit, type Crop, type EditorRange, type EditorScene } from './clip-editor'
 import { hookShare, outputSize } from './graphic-layout'
+import { BACKDROP_LABELS, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_KINDS, SCENE_LABELS, parseScenes, setScene, type SceneBackdrop, type SceneKind } from './scenes'
 import { PIN_PROP, aimGraphic, checkHighlightFields, pinArg, type ChatPoint } from './chat-point'
 
 import { CHAT_MAX_TOOL_CALLS, chatClock, chatFail as fail, chatReason as reasonOf, chatSeconds, chatSentence as sentence, chatText as text, type ChatReplyOf } from './chat-core'
@@ -27,11 +28,11 @@ const MIN_PIECE_MS = 100
 const MAX_PLAY_SECONDS = 15
 
 /** What the chat may change on a clip. */
-export type ChatPatch = Partial<Pick<CandidateEdit, 'ranges' | 'scenes' | 'hook' | 'captions' | 'caption_preset' | 'title' | 'graphics'>>
-const PATCH_KEYS = ['ranges', 'scenes', 'hook', 'captions', 'caption_preset', 'title', 'graphics'] as const
+export type ChatPatch = Partial<Pick<CandidateEdit, 'ranges' | 'scenes' | 'hook' | 'captions' | 'caption_preset' | 'title' | 'graphics' | 'stage_scenes'>>
+const PATCH_KEYS = ['ranges', 'scenes', 'hook', 'captions', 'caption_preset', 'title', 'graphics', 'stage_scenes'] as const
 
 export type ChatToolName = 'set_ranges' | 'extend_start' | 'extend_end' | 'remove_section' | 'add_section' | 'set_hook_text' | 'set_hook_look'
-  | 'set_layout_at' | 'set_captions' | 'set_title' | 'play' | 'add_graphic' | 'update_graphic' | 'remove_graphic'
+  | 'set_layout_at' | 'set_captions' | 'set_title' | 'play' | 'add_graphic' | 'update_graphic' | 'remove_graphic' | 'set_scene'
 
 /** One tool call's result: a plain sentence for the change card, the values it set, and where to look. */
 export interface ChatStep {
@@ -338,6 +339,21 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
       const label = GRAPHIC_TEMPLATES.find((t) => t.id === current.template)?.label.toLowerCase() ?? 'graphic'
       return done(`Removed the ${label} at ${clipClock(c, current.at_ms)}${why}`, { graphics: graphics.filter((g) => g.id !== current.id) }, null)
     }
+    case 'set_scene': {
+      if (project.aspect_ratio !== '9:16') fail('Scenes are for vertical (9:16) clips.')
+      if (!(SCENE_KINDS as readonly unknown[]).includes(args.scene)) fail(`scene must be ${SCENE_KINDS.join(', ')}.`)
+      const scene = args.scene as SceneKind
+      if (args.backdrop !== undefined && !(SCENE_BACKDROPS as readonly unknown[]).includes(args.backdrop)) fail(`backdrop must be ${SCENE_BACKDROPS.join(', ')}.`)
+      if (scene === 'face' && args.backdrop !== undefined) fail('Face has no backdrop. Leave out backdrop.')
+      const start = clipStart(c), end = clipEnd(c)
+      const a = Math.max(start, ms(args.start_ms, 'start_ms', project)), b = Math.min(end, ms(args.end_ms, 'end_ms', project))
+      if (b <= a) fail('start_ms and end_ms must cover part of the clip, with end_ms after start_ms.')
+      if (b - a < MIN_SCENE_MS) fail(`A scene lasts at least ${MIN_SCENE_MS / 1000} seconds. Make end_ms later or start_ms earlier.`)
+      let stage_scenes
+      try { stage_scenes = parseScenes(setScene(c.stage_scenes ?? [], a, b, scene, args.backdrop as SceneBackdrop | undefined, project.duration_ms), project.duration_ms) } catch (error) { return fail((error as Error).message) }
+      const look = scene === 'face' ? '' : ` on the ${BACKDROP_LABELS[(args.backdrop as SceneBackdrop | undefined) ?? 'light'].toLowerCase()} backdrop`
+      return done(`${SCENE_LABELS[scene]} scene${look} from ${clipClock(c, a)} to ${clipClock(c, b)}${why}`, { stage_scenes }, a, 3)
+    }
     default:
       return fail(`There is no tool called ${String(name).slice(0, 40)}.`)
   }
@@ -402,6 +418,7 @@ export function mergeChatSteps(c: CandidateEdit, steps: unknown, project: ChatPr
   if (patch.scenes) next.scenes = normalizeSceneTransitions(next.scenes)
   try { checkChatCandidate(next, project) } catch { throw new Error('The chat’s edit doesn’t fit this clip anymore. Ask again.') }
   if (patch.graphics) patch.graphics = parseGraphics(patch.graphics)
+  if (patch.stage_scenes) patch.stage_scenes = parseScenes(patch.stage_scenes, project.duration_ms)
   if (patch.scenes) patch.scenes = next.scenes
   return patch as ChatPatch
 }
@@ -442,5 +459,6 @@ export const CHAT_TOOLS: { name: ChatToolName; description: string; parameters: 
   { name: 'play', description: 'Play a moment of the source for the member (no edit). Use it to ask "is this the moment you mean?" before editing when you are not sure.', parameters: { type: 'object', properties: { at_ms: msProp('Source ms.'), seconds: { type: 'number', minimum: 1, maximum: MAX_PLAY_SECONDS }, reason }, required: ['at_ms'], additionalProperties: false } },
   { name: 'add_graphic', description: `Add a motion graphic over the clip (${GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo').map((t) => `${t.id}: ${t.detail}`).join(' ')}) With pin ("put an arrow here"): a highlight points at the pin (give fields.shape arrow or circle), another template sits in the band nearest it, and at_ms defaults to the pin's time.`, parameters: { type: 'object', properties: { template: { type: 'string', enum: GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo').map((t) => t.id) }, at_ms: msProp('Source ms, inside the clip. Time it to the words it shows.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['template'], additionalProperties: false } },
   { name: 'update_graphic', description: 'Change a graphic on the clip by id. Give only what changes. With pin ("move the graphic here"): an arrow or circle points at the pin; another graphic moves to the band (top, middle or bottom) nearest it.', parameters: { type: 'object', properties: { id: { type: 'string' }, at_ms: msProp('Source ms.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['id'], additionalProperties: false } },
-  { name: 'remove_graphic', description: 'Remove a graphic from the clip by id.', parameters: { type: 'object', properties: { id: { type: 'string' }, reason }, required: ['id'], additionalProperties: false } }
+  { name: 'remove_graphic', description: 'Remove a graphic from the clip by id.', parameters: { type: 'object', properties: { id: { type: 'string' }, reason }, required: ['id'], additionalProperties: false } },
+  { name: 'set_scene', description: `Set start_ms–end_ms of a vertical clip to a scene (over whatever scene was there). face: the normal full-frame video (the default). stage: a backdrop with the speaker in a card at the bottom and the top free for graphics (use it while a graphic explains something). visual: backdrop only, so a big graphic fills the frame. At least ${MIN_SCENE_MS / 1000} s. The card slides and the backdrop fades between scenes.`, parameters: { type: 'object', properties: { start_ms: msProp('Source ms.'), end_ms: msProp('Source ms.'), scene: { type: 'string', enum: [...SCENE_KINDS] }, backdrop: { type: 'string', enum: [...SCENE_BACKDROPS], description: 'stage/visual only: light (default), dark or brand (the hook color).' }, reason }, required: ['start_ms', 'end_ms', 'scene'], additionalProperties: false } }
 ]

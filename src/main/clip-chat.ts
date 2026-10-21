@@ -140,7 +140,8 @@ Rules:
 - If a tool returns an error, fix the call and try again, or tell the member why it can't be done.
 - Don't say you made a change unless its tool call succeeded.
 - The member may point at the video (pins). "Put an arrow here" or "circle this": add_graphic with template highlight and the pin. "Move the graphic here": update_graphic with the pin. "Zoom in on this": set_layout_at with the pin. "Put the hook/caption here" can't move to a point: say where it can go.
-- Blurring or hiding part of the video isn't supported here: say so plainly and don't call a tool for it.`
+- Blurring or hiding part of the video isn't supported here: say so plainly and don't call a tool for it.
+- Scenes (vertical clips): "put me in a card", "give the graphic room" or "show it big" is set_scene (stage or visual) over the graphic's time; "back to my face" is set_scene face.`
 
 function rangeLabel(segment: { start_ms: number; end_ms: number }, c: CandidateEdit): string {
   const start = c.ranges[0][0], end = c.ranges[c.ranges.length - 1][1]
@@ -163,6 +164,10 @@ export function buildChatContext(project: Pick<EditorProject, 'title' | 'duratio
   lines.push(`Captions: ${c.captions ? `on, style ${c.caption_preset}` : 'off'}. Call to action at the end: ${c.cta_id === undefined ? 'same as the run' : c.cta_id === null ? 'none' : 'one the member chose'}.`)
   const graphics = c.graphics ?? []
   lines.push(graphics.length ? `Graphics: ${graphics.map((g) => `${g.id} ${g.template} at ${g.at_ms} ms for ${g.duration_ms} ms (${g.placement}): ${Object.entries(g.fields).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')}`).join('; ')}.` : 'Graphics: none.')
+  if (project.aspect_ratio === '9:16') {
+    const scenes = (c.stage_scenes ?? []).filter((s) => s.scene !== 'face')
+    lines.push(scenes.length ? `Scenes (face everywhere else): ${scenes.map((s) => `${s.scene} ${s.start_ms}–${s.end_ms} ms (${s.backdrop ?? 'light'} backdrop)`).join('; ')}.` : 'Scenes: face throughout.')
+  }
   lines.push('')
   const tags: string[] = []
   if (segments) {
