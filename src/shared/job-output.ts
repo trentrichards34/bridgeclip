@@ -178,6 +178,8 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
   if (value.edit_recording === true) result.edit_recording = true
   // A Top list video (Avatar Studio → Top list).
   if (value.listicle === true) result.listicle = true
+  // A B-roll video (its one clip opens in the clip editor).
+  if (value.broll_video === true) result.broll_video = true
   if (nonNegative(value.excluded_moment_count)) result.excluded_moment_count = value.excluded_moment_count
   if (nonNegative(value.caption_translation_failures)) result.caption_translation_failures = value.caption_translation_failures
   if (value.captions_status === 'enabled' || value.captions_status === 'disabled_by_request' ||

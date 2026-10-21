@@ -388,6 +388,8 @@ export interface BrollCatalogShot {
   shotType: ShotType
   me: boolean
   ai: boolean
+  /** Words are written on it (a headline, a screen): kept from under hook text when possible. Absent: none seen. */
+  text?: boolean
 }
 
 export interface BrollCatalog {
@@ -414,7 +416,7 @@ export function buildCatalog(items: readonly BrollLibraryItem[], usablePath: (it
       const entry: BrollCatalogShot = {
         id: `${item.id}:${shot.id}`, path, kind: item.kind, inS: shot.inS, outS: shot.outS,
         description: a.description, tags: [...new Set([...item.tags, ...a.tags])].slice(0, 12), shotType: a.shotType,
-        me: item.me || a.memberAppears, ai: item.origin === 'ai'
+        me: item.me || a.memberAppears, ai: item.origin === 'ai', ...(a.onScreenText ? { text: true } : {})
       }
       ;(/blur|dark|shak|out of focus|low light/i.test(a.quality) ? poor : good).push(entry)
     }

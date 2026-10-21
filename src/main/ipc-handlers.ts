@@ -46,6 +46,7 @@ import { PROOF_EXTENSIONS, SCREEN_EXTENSIONS } from '../shared/remix-layouts'
 import { addProofs, addScreenRecording, layoutExtrasView, removeLayoutItem, setLayoutExtras, addBroll, addBrollFromLibrary, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStartEstimate, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen, remixChatFacts, setTakeTrim, setRemixLook } from './remix'
 import { remixChat, remixChatInfo, resetRemixChat } from './remix-chat'
 import { importLegacyAvatarVideos } from './avatar-library'
+import { BROLL_VIDEO_VOICE_EXTENSIONS, brollVideoEstimate, brollVideoRunBusy, brollVideoShots, brollVideoSpendCheck, brollVideoStatus, cancelBrollVideo, describeVoiceover, onBrollVideoSpend, onBrollVideoStatus, saveBrollRecording, startBrollVideo, swapBrollShot } from './broll-video'
 import { cancelListicleRender, LISTICLE_SCRIPT_ESTIMATE_USD, listicleRunBusy, listicleSpendCheck, listicleStatus, onListicleStatus, saveListicleRecording, startListicleRender, writeListicleScript } from './listicle'
 import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
@@ -369,6 +370,30 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return metered('broll', 'B-roll library: AI shot', () => makeAiShot(prompt))
   })
 
+  // B-roll video: the voiceover comes from the dialog here (or a recording on the page); making one is paid (word timings,
+  // the plan, a script's voice, AI shots): the spending check first, every cost to the ledger.
+  onBrollVideoSpend((usd, label, runId) => recordSpend({ kind: 'broll', provider: 'openrouter', usd, label, runId: runId || undefined }))
+  onBrollVideoStatus((status) => sendToWindow('brollVideo:status', status))
+  handle('brollVideo:chooseVoiceover', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose your voiceover', filters: [{ name: 'Audio or video', extensions: [...BROLL_VIDEO_VOICE_EXTENSIONS] }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return describeVoiceover(result.filePaths[0])
+  })
+  handle('brollVideo:saveRecording', (_event, bytes: unknown, mime: unknown) => saveBrollRecording(bytes, mime))
+  handle('brollVideo:estimate', (_event, request: unknown) => brollVideoEstimate(request))
+  handle('brollVideo:start', async (_event, request: unknown) => {
+    let estimate: number | null = null
+    try { estimate = brollVideoSpendCheck(request) } catch { /* the start itself reports a bad request */ }
+    await assertSpendAllowed('brollVideo:start', 'openrouter', estimate)
+    return startBrollVideo(request, { meter: (work) => metered('broll', 'B-roll video: voice', work) })
+  })
+  handle('brollVideo:cancel', () => cancelBrollVideo())
+  handle('brollVideo:status', () => brollVideoStatus())
+  handle('brollVideo:shots', (_event, outputDir: unknown) => brollVideoShots(outputDir))
+  handle('brollVideo:swapShot', (_event, outputDir: unknown, slot: unknown, shotId: unknown) => swapBrollShot(outputDir, slot, shotId))
+
   // Call-to-action library: the dialog opens here, so the renderer never names a file.
   handle('ctas:list', () => listCtas())
   handle('ctas:add', async (_event, name: unknown) => {
@@ -385,7 +410,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('ctas:update', (_event, id: unknown, patch: unknown) => updateCta(id, patch))
   handle('ctas:remove', (_event, id: unknown) => removeCta(id))
   // Library changes wait while a Remix video in that run is being re-made, or an avatar video is finishing.
-  setRunBusyCheck((path) => remixRunBusy(path) ?? avatarRunBusy(path) ?? editRunBusy(path) ?? listicleRunBusy(path))
+  setRunBusyCheck((path) => remixRunBusy(path) ?? avatarRunBusy(path) ?? editRunBusy(path) ?? listicleRunBusy(path) ?? brollVideoRunBusy(path))
   handle('remix:recompose', async (_event, outputDir: unknown, clipIndex: unknown, edit: unknown) => {
     // An edited recording ("Edit my recording") is re-made from its own saved parts the same way.
     const note = isEditRunFolder(outputDir) ? await recomposeEditRun(outputDir, clipIndex, edit) : await recomposeRemix(outputDir, clipIndex, edit)
