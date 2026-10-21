@@ -24,7 +24,7 @@ export function EditStylePicker({ recipe, extras, onRecipe, onExtras }: {
     <section className="mt-4 space-y-2" aria-labelledby="edit-style-title">
       <div>
         <h3 id="edit-style-title" className="text-sm font-semibold text-ink">Edit style</h3>
-        <p className="text-2xs text-ink-subtle">Sets the pace of the cuts and which pop-ups, cards and extras start on. You can change each one below.</p>
+        <p className="text-2xs text-ink-subtle">Sets the pace of the cuts and which pop-ups, half-screen graphics and extras start on. You can change each one below.</p>
       </div>
       <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Edit style">
         {EDIT_RECIPES.map((item) => {
@@ -56,7 +56,7 @@ export function EditStylePicker({ recipe, extras, onRecipe, onExtras }: {
   )
 }
 
-/** One half-screen card on the review screen: switch it off, or change its words. */
+/** One half-screen graphic on the review screen: switch it off, or change its words. */
 export function CardEditor({ index, card, on, removed, where, seconds, onChange, onToggle }: {
   index: number
   card: EditCard
@@ -77,21 +77,24 @@ export function CardEditor({ index, card, on, removed, where, seconds, onChange,
     onChange({ ...card, items })
   }
   const itemCount = card.type === 'list' ? 4 : card.type === 'stat' ? 1 : 2
+  const name = `Half-screen graphic ${index + 1}`
   return (
-    <div className="glass-tile space-y-2 rounded-xl p-3" data-testid={`edit-card-${index}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <Switch label={`Card ${index + 1}`} checked={on && !removed} disabled={removed} onChange={onToggle} />
-        <span className="text-xs font-medium text-ink">Card {index + 1} · {CARD_TYPE_LABELS[card.type]}</span>
-        <span className="text-2xs text-ink-subtle">{removed ? 'Its word is cut, so it won’t show.' : `Fills the top half for ${seconds} s when you say ${where}; you move to the bottom half.`}</span>
+    <div className="glass-tile space-y-2 rounded-xl px-3 py-2" data-testid={`edit-card-${index}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-ink">{name} · {CARD_TYPE_LABELS[card.type]}</p>
+          <p className="mt-0.5 text-2xs leading-relaxed text-ink-subtle">{removed ? 'Its word is cut, so it won’t show.' : `Fills the top half for ${seconds} s when you say ${where}; you move to the bottom half.`}</p>
+        </div>
+        <Switch label={name} checked={on && !removed} disabled={removed} onChange={onToggle} />
       </div>
       {on && !removed && (
         <div className="grid gap-1.5 sm:grid-cols-2">
           {card.type !== 'chat' && (
-            <TextInput aria-label={`Card ${index + 1} ${labels[0].toLowerCase()}`} placeholder={labels[0]} value={card.title} maxLength={MAX_CARD_TITLE_CHARS}
+            <TextInput aria-label={`${name} ${labels[0].toLowerCase()}`} placeholder={labels[0]} value={card.title} maxLength={MAX_CARD_TITLE_CHARS}
               onChange={(e) => onChange({ ...card, title: e.target.value })} />
           )}
           {Array.from({ length: itemCount }, (_, k) => (
-            <TextInput key={k} aria-label={`Card ${index + 1} ${labels[k + 1].toLowerCase()}`} placeholder={labels[k + 1]} value={card.items[k] ?? ''}
+            <TextInput key={k} aria-label={`${name} ${labels[k + 1].toLowerCase()}`} placeholder={labels[k + 1]} value={card.items[k] ?? ''}
               maxLength={MAX_CARD_ITEM_CHARS} onChange={(e) => setItem(k, e.target.value)} />
           ))}
         </div>
@@ -116,7 +119,7 @@ async function dropImages(files: FileList | null, onImages: (images: EditImage[]
  * My images: logos and product shots the member drops here (or chooses), each pinned to words: while "Pin" is on,
  * clicking a word in the transcript pins the picture there.
  */
-export function MyImages({ images, pins, wordText, pinning, onPinning, onUnpin, onImages, onError }: {
+export function MyImages({ images, pins, wordText, pinning, onPinning, onUnpin, onImages, onError, heading = 'h3', className = 'mt-5' }: {
   images: EditImage[]
   pins: { image: string; word: number }[]
   wordText: (index: number) => string
@@ -125,7 +128,11 @@ export function MyImages({ images, pins, wordText, pinning, onPinning, onUnpin, 
   onUnpin: (pin: { image: string; word: number }) => void
   onImages: (images: EditImage[]) => void
   onError: (error: string | null) => void
+  /** The title's heading level ('h4' inside a bigger section). */
+  heading?: 'h3' | 'h4'
+  className?: string
 }): React.JSX.Element {
+  const Heading = heading
   const [dragging, setDragging] = useState(false)
   const depth = useRef(0)
   const full = images.length >= EDIT_MAX_IMAGES
@@ -137,9 +144,9 @@ export function MyImages({ images, pins, wordText, pinning, onPinning, onUnpin, 
     try { onImages(await getApi().edit.removeImage(id)) } catch (err) { onError(errorMessage(err)) }
   }
   return (
-    <section className="mt-5 space-y-2" aria-labelledby="edit-images-title">
+    <section className={cn('space-y-2', className)} aria-labelledby="edit-images-title">
       <div>
-        <h3 id="edit-images-title" className="text-sm font-semibold text-ink">My images</h3>
+        <Heading id="edit-images-title" className="text-sm font-semibold text-ink">My images</Heading>
         <p className="text-2xs text-ink-subtle">Logos or product shots that pop up in the middle of the screen as you say a word. Add one, press Pin, then click the word.</p>
       </div>
       <div

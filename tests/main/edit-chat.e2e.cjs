@@ -124,8 +124,8 @@ test('Edit my recording: a chat request cuts a word and adds a stat graphic, Und
   // One chat request: cut "so" and add a stat graphic on "Fifteen".
   const chat = page.getByRole('region', { name: 'Chat about your edit' })
   await chat.getByText(/OpenRouter credit\. Model: /).waitFor()
-  for (const chip of ['Cut the retakes', 'Punchier hook', 'Add a stat card', 'Turn off the pop-ups']) await chat.getByRole('button', { name: chip, exact: true }).waitFor()
-  await chat.getByRole('textbox', { name: 'Message' }).fill('Cut the “so” and add a stat card when I say fifteen billion')
+  for (const chip of ['Cut the retakes', 'Punchier hook', 'Add a stat graphic', 'Turn off the pop-ups']) await chat.getByRole('button', { name: chip, exact: true }).waitFor()
+  await chat.getByRole('textbox', { name: 'Message' }).fill('Cut the “so” and add a stat graphic when I say fifteen billion')
   await chat.getByRole('textbox', { name: 'Message' }).press('Enter')
   const card = chat.getByRole('group', { name: 'Chat changes' }).first()
   await card.getByText('Cut “so” (1 word) (the extra “so”).').waitFor()
@@ -133,7 +133,7 @@ test('Edit my recording: a chat request cuts a word and adds a stat graphic, Und
   await card.getByText(/^Your reel is now about 0:0\d long\.$/).waitFor()
   await chat.getByText('Done: “so” is cut and a stat shows when you say “Fifteen”.').waitFor()
   assert.equal(await page.locator(`[data-word="${at('so')}"]`).getAttribute('aria-pressed'), 'false')
-  const graphics = page.getByRole('region', { name: 'Graphics' })
+  const graphics = page.getByRole('region', { name: 'Graphics', exact: true })
   await graphics.getByRole('list', { name: 'Your graphics' }).getByText('Stat counter on “Fifteen”').waitFor()
   // The model saw the words with their indexes, and the request went through the paid channel's check.
   assert.match(chats[0].messages[0].content, new RegExp(`${at('Fifteen')}:Fifteen`))
@@ -168,6 +168,14 @@ test('Edit my recording: a chat request cuts a word and adds a stat graphic, Und
   await page.mouse.click(padBox.x + padBox.width * 0.2, padBox.y + padBox.height * 0.15)
   const pins = chat.getByRole('list', { name: 'Pins for your next message' })
   await pins.getByText('Pin 1 · top-left', { exact: true }).waitFor()
+  // The frame is a still of the take (it was black when the video's URL carried a #t= fragment, which the local-file protocol refuses).
+  const still = await chat.locator('.chat-point-pad video').evaluate((video) => new Promise((resolve) => {
+    const done = () => resolve({ ready: video.readyState, at: video.currentTime, error: video.error?.code ?? null, src: video.src })
+    if (video.readyState >= 2 && !video.seeking && video.currentTime > 0) return done()
+    video.addEventListener('seeked', done, { once: true })
+    setTimeout(done, 15000)
+  }))
+  assert.ok(still.ready >= 2 && still.at > 0 && still.error === null && !still.src.includes('#'), JSON.stringify(still))
   for (const chip of ['Put an arrow here', 'Circle this', 'Move the graphic here']) await chat.getByRole('button', { name: chip, exact: true }).waitFor()
   await chat.scrollIntoViewIfNeeded()
   await shot(app, 'edit-review-point.png')

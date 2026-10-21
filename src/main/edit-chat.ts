@@ -23,6 +23,7 @@ Rules:
 - Retakes: when they said a line more than once, the later take is usually the keeper. "Remove the second retake" means the second repeat of the line.
 - Only change what the member asked for. Don't invent words, numbers or quotes: hook text, pop-ups, cards and graphics use what was said or what the member gives you.
 - A graphic starts on a kept word and can't play during a half-screen card.
+- The member sees the same words as the review: call the animated templates "graphics" (a "stat graphic" is add_graphic with template stat) and the half-screen cards "half-screen graphics". Don't add a pop-up that repeats a graphic's number or words.
 - If a tool returns an error, fix the call and try again, or tell the member why it can't be done.
 - Don't say you made a change unless its tool call succeeded.
 - The member may point at the video (pins). "Put an arrow here": add_graphic with template highlight and the pin. "Move the graphic here": update_graphic with the pin. Zooming and blurring part of the video aren't supported here: say so plainly.`

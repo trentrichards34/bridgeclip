@@ -254,7 +254,7 @@ export function editRecordingLog(plan: EditPlan, d: EditDecisions): EditLogLine<
   const cards = d.popups.filter((p) => p.on && plan.popups.find((x) => x.id === p.id)?.kind === 'card' && shown(p.id))
   if (cards.length) {
     const ids = new Set(cards.map((c) => c.id))
-    lines.push({ id: 'cards', text: `Added ${plural(cards.length, 'card')}`, restore: { popups: d.popups.map((p) => ids.has(p.id) ? { ...p, on: false } : p) }, restoreHint: `Turn ${cards.length === 1 ? 'it' : 'them'} off` })
+    lines.push({ id: 'cards', text: `Added ${plural(cards.length, 'half-screen graphic')}`, restore: { popups: d.popups.map((p) => ids.has(p.id) ? { ...p, on: false } : p) }, restoreHint: `Turn ${cards.length === 1 ? 'it' : 'them'} off` })
   }
   const pops = d.popups.filter((p) => p.on && plan.popups.find((x) => x.id === p.id)?.kind !== 'card' && shown(p.id))
   if (pops.length) {

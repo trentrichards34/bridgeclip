@@ -122,7 +122,7 @@ test('Edit my recording: retakes, filler, the opening, cards, pop-ups and sounds
   assert.deepEqual(plain(lines.map((l) => [l.id, l.text])), [
     ['retakes', 'Cut 1 retake (0.5 s)'], ['false-starts', 'Cut 1 false start (0.2 s)'], ['filler', 'Cut 2 filler words (0.2 s)'],
     ['hook', 'Opened with “Here is why.” (moved from 0:02)'], ['cta', 'Moved your call to action to the end'],
-    ['cards', 'Added 1 card'], ['popups', 'Added 2 pop-ups'], ['sounds', 'Sound effects ×2 (soft whoosh, pop)'], ['cutout', 'Cut-out opening on']])
+    ['cards', 'Added 1 half-screen graphic'], ['popups', 'Added 2 pop-ups'], ['sounds', 'Sound effects ×2 (soft whoosh, pop)'], ['cutout', 'Cut-out opening on']])
   const apply = (id) => ({ ...d, ...lineOf(lines, id).restore })
   assert.deepEqual(plain(apply('retakes').cut), [0, 3, 7], 'only the retake’s words come back')
   assert.deepEqual(plain(apply('filler').cut), [0, 1, 2])

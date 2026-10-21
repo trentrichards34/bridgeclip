@@ -176,7 +176,11 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   await page.getByTestId('edit-hook').getByText('“Fifteen billion messages wait.”').waitFor()
   assert.equal(await page.getByLabel('Hook text on screen').inputValue(), '15 billion messages wait')
   // "What changed": what the plan did, each line with a Restore; "Undo restore" takes it back.
+  // It is folded to one line until opened.
   const log = page.getByTestId('edit-log')
+  const logToggle = log.getByRole('button', { name: /^What changed\s*· \d+ things the app did/ })
+  assert.equal(await logToggle.getAttribute('aria-expanded'), 'false')
+  await logToggle.click()
   await log.getByText(/^Cut \d+ retakes? \(/).waitFor()
   await log.getByText(/^Opened with “Fifteen billion messages wait\.” \(moved from take \d, \d:\d\d\)$/).waitFor()
   await log.getByRole('button', { name: /^Restore: Cut 1 filler word/ }).click()
@@ -205,12 +209,25 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   assert.equal(await page.getByRole('switch', { name: 'Soft whoosh as the hook text appears' }).getAttribute('aria-checked'), 'true')
   await page.getByRole('switch', { name: 'End on your call to action' }).waitFor()
   // The edit style: Fast explainer switches its card on and its extras; the card's words can be changed.
-  assert.equal(await page.getByRole('switch', { name: 'Card 1' }).getAttribute('aria-checked'), 'false')
+  assert.equal(await page.getByRole('switch', { name: 'Half-screen graphic 1' }).getAttribute('aria-checked'), 'false')
   await page.getByRole('radiogroup', { name: 'Edit style' }).getByRole('radio', { name: /^Fast explainer/ }).click()
-  assert.equal(await page.getByRole('switch', { name: 'Card 1' }).getAttribute('aria-checked'), 'true')
+  assert.equal(await page.getByRole('switch', { name: 'Half-screen graphic 1' }).getAttribute('aria-checked'), 'true')
   assert.equal(await page.getByRole('group', { name: 'Extras' }).getByRole('button', { name: 'Progress bar' }).getAttribute('aria-pressed'), 'true')
-  assert.equal(await page.getByLabel('Card 1 the number').inputValue(), '15 billion')
-  await page.getByLabel('Card 1 what it is').fill('messages are waiting')
+  assert.equal(await page.getByLabel('Half-screen graphic 1 the number').inputValue(), '15 billion')
+  await page.getByLabel('Half-screen graphic 1 what it is').fill('messages are waiting')
+  // The pop-up says "15 billion" while the half-screen graphic shows it: a warning turns the pop-up off in one click.
+  const duplicate = page.getByTestId('edit-duplicate')
+  await duplicate.getByText(/^“15 billion” shows twice: as a pop-up and in half-screen graphic 1 on “messages”/).waitFor()
+  await duplicate.getByRole('button', { name: 'Turn off the pop-up' }).click()
+  assert.equal(await page.getByRole('switch', { name: 'Pop-up 1' }).getAttribute('aria-checked'), 'false')
+  assert.equal(await duplicate.count(), 0)
+  // The extras show the reel's first kept frame (a still of the take, not a black box).
+  await page.getByTestId('edit-extras').locator('video').evaluate((video) => new Promise((resolve, reject) => {
+    const ready = () => video.readyState >= 2 && !video.seeking && video.currentTime > 0
+    if (ready()) return resolve()
+    const timer = setTimeout(() => reject(new Error(`still not ready: ${video.readyState} ${video.currentTime} ${video.error?.message}`)), 15000)
+    video.addEventListener('seeked', () => { clearTimeout(timer); resolve() }, { once: true })
+  }))
   // My images: a logo dropped on the page (its bytes are checked in main), pinned to "Most".
   const logo = execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=0xF028C8:s=240x240:d=0.1', '-frames:v', '1', '-f', 'image2pipe', '-c:v', 'png', '-'])
   await page.getByTestId('edit-images-drop').evaluate((zone, bytes) => {
