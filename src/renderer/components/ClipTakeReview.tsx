@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Camera, Check, Film, Plus, RotateCcw, Scissors, Sparkles, Upload, Wand2, X } from 'lucide-react'
+import { AlertTriangle, Camera, Check, Film, Images, Plus, RotateCcw, Scissors, Sparkles, Upload, Wand2, X } from 'lucide-react'
+import { BrollLibraryPicker } from './BrollLibraryPicker'
 import { formatSeconds } from '../../shared/pause-react'
 import {
   MAX_POST_CAPTION_CHARS, partsFor, REMIX_WORD_LIMITS, remixEditProblem, wordCount, type RecordingPart, type RemixEdit, type RemixRecordings, type RemixStatus
@@ -245,6 +246,7 @@ function BrollSection({ view, step, busy, working, canPlan, onView, onError, set
   onPlan: (plan: BrollShot[]) => Promise<void>; onOpenKeys: () => void
 }): React.JSX.Element {
   const [dragging, setDragging] = useState(false)
+  const [picking, setPicking] = useState(false)
   const depth = useRef(0)
   const act = async (kind: Working, work: () => Promise<BrollView | null>, fallback: string): Promise<void> => {
     setWorking(kind); onError(null)
@@ -285,9 +287,12 @@ function BrollSection({ view, step, busy, working, canPlan, onView, onError, set
         )}
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="secondary" icon={<Plus className="h-3.5 w-3.5" />} loading={working === 'broll'} disabled={busy || full} onClick={() => void add()}>Add clips or pictures</Button>
+          <Button size="sm" variant="secondary" icon={<Images className="h-3.5 w-3.5" />} disabled={busy || full} onClick={() => setPicking(true)}>Add from my B-roll library</Button>
           <span className="text-2xs text-ink-subtle">{full ? `That’s ${BROLL_MAX_ITEMS}, the most for one video.` : 'Or drop them here. Videos (MP4, MOV, WebM) or pictures (JPG, PNG, WebP).'}</span>
         </div>
       </div>
+      {picking && <BrollLibraryPicker max={BROLL_MAX_ITEMS - view.items.length} onClose={() => setPicking(false)}
+        onPick={(ids) => void act('broll', () => getApi().remix.addBrollFromLibrary(ids), 'Those clips could not be added.')} />}
       <SettingRow title="Fill gaps with stock footage" description={view.stock ? 'Stock clips from Pexels fill the moments your own clips don’t cover.' : 'Off: only your own clips and pictures are used.'}
         control={<Switch label="Fill gaps with stock footage" checked={view.stock} disabled={busy} onChange={(on) => void act('broll', () => getApi().remix.brollStock(on), 'It could not be changed.')} />} />
       {view.stock && !view.pexels && (

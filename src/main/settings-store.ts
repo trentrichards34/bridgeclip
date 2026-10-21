@@ -1,5 +1,6 @@
 import { JEV_DEFAULTS, JEV_FEATURE_DEFAULTS, type JevThresholdSettings } from '../shared/jev-settings'
 import { parseSpendLimit } from '../shared/spending'
+import { DEFAULT_BROLL_AI_SETTINGS, parseBrollAiSettings } from '../shared/broll-library'
 import { app, safeStorage } from 'electron'
 import { closeSync, existsSync, fchmodSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs'
 import { isAbsolute, join } from 'path'
@@ -33,6 +34,12 @@ export interface AppSettings extends JevThresholdSettings {
   downloadLoginBrowser: string
   /** Monthly AI spending limit in USD ('' for none), checked before paid runs (Settings → Spending). */
   monthlySpendLimitUsd: string
+  /** AI b-roll (Settings → AI b-roll): 'video' or 'image' (an AI image with a slow push-in). */
+  brollAiKind: string
+  /** The OpenRouter video model for AI b-roll (shared/broll-library.ts lists them). */
+  brollAiModel: string
+  /** At most this many AI shots per clip, '0' to '6'. */
+  brollAiMaxShots: string
 }
 
 /** Browsers whose login yt-dlp can use for social video links. */
@@ -62,7 +69,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   pythonPath: process.platform === 'win32' ? 'python' : 'python3',
   customVocabulary: '',
   downloadLoginBrowser: '',
-  monthlySpendLimitUsd: ''
+  monthlySpendLimitUsd: '',
+  brollAiKind: DEFAULT_BROLL_AI_SETTINGS.kind,
+  brollAiModel: DEFAULT_BROLL_AI_SETTINGS.model,
+  brollAiMaxShots: String(DEFAULT_BROLL_AI_SETTINGS.maxShots)
 }
 
 const SETTINGS_VERSION = 12
@@ -91,6 +101,9 @@ interface PersistedSettings extends JevThresholdSettings {
   customVocabulary?: string
   downloadLoginBrowser?: string
   monthlySpendLimitUsd?: string
+  brollAiKind?: string
+  brollAiModel?: string
+  brollAiMaxShots?: string
 }
 
 function ensureDir(dir: string): string {
@@ -130,7 +143,8 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
     pythonPath: (settings.pythonPath || DEFAULT_SETTINGS.pythonPath).trim(),
     customVocabulary: vocabularyTerms(settings.customVocabulary ?? DEFAULT_SETTINGS.customVocabulary).join('\n'),
     downloadLoginBrowser: settings.downloadLoginBrowser ?? DEFAULT_SETTINGS.downloadLoginBrowser,
-    monthlySpendLimitUsd: (settings.monthlySpendLimitUsd ?? DEFAULT_SETTINGS.monthlySpendLimitUsd).trim()
+    monthlySpendLimitUsd: (settings.monthlySpendLimitUsd ?? DEFAULT_SETTINGS.monthlySpendLimitUsd).trim(),
+    ...brollAiFields(settings)
   }
   for (const key of Object.keys(JEV_DEFAULTS) as (keyof JevThresholdSettings)[]) {
     const value = probability(normalized[key])
@@ -148,6 +162,12 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
   if (limit === undefined) throw new Error('Enter the monthly spending limit in dollars, like 25 or 12.50, or leave it empty for no limit.')
   normalized.monthlySpendLimitUsd = limit === null ? '' : String(limit)
   return normalized
+}
+
+/** The AI b-roll fields, each one checked on its own (an unknown value falls back to its default). */
+function brollAiFields(settings: Partial<AppSettings>): Pick<AppSettings, 'brollAiKind' | 'brollAiModel' | 'brollAiMaxShots'> {
+  const parsed = parseBrollAiSettings({ kind: settings.brollAiKind, model: settings.brollAiModel, maxShots: settings.brollAiMaxShots === undefined ? undefined : Number(settings.brollAiMaxShots) })
+  return { brollAiKind: parsed.kind, brollAiModel: parsed.model, brollAiMaxShots: String(parsed.maxShots) }
 }
 
 /** A canonical probability string from 0 to 1, or null. */
@@ -244,7 +264,8 @@ export function loadSettings(): AppSettings {
       customVocabulary: typeof raw.customVocabulary === 'string' ? raw.customVocabulary : DEFAULT_SETTINGS.customVocabulary,
       downloadLoginBrowser: typeof raw.downloadLoginBrowser === 'string' && (LOGIN_BROWSERS as readonly string[]).includes(raw.downloadLoginBrowser) ? raw.downloadLoginBrowser : '',
       // An unreadable limit is dropped rather than making the saved keys unreadable.
-      monthlySpendLimitUsd: typeof raw.monthlySpendLimitUsd === 'string' && parseSpendLimit(raw.monthlySpendLimitUsd) !== undefined ? raw.monthlySpendLimitUsd : ''
+      monthlySpendLimitUsd: typeof raw.monthlySpendLimitUsd === 'string' && parseSpendLimit(raw.monthlySpendLimitUsd) !== undefined ? raw.monthlySpendLimitUsd : '',
+      ...brollAiFields({ brollAiKind: typeof raw.brollAiKind === 'string' ? raw.brollAiKind : undefined, brollAiModel: typeof raw.brollAiModel === 'string' ? raw.brollAiModel : undefined, brollAiMaxShots: typeof raw.brollAiMaxShots === 'string' ? raw.brollAiMaxShots : undefined })
     })
 
     if (needsMigration && canEncrypt()) writeSettings(settings)
@@ -280,7 +301,10 @@ function writeSettings(settings: AppSettings): void {
     pythonPath: settings.pythonPath,
     customVocabulary: settings.customVocabulary,
     downloadLoginBrowser: settings.downloadLoginBrowser,
-    monthlySpendLimitUsd: settings.monthlySpendLimitUsd
+    monthlySpendLimitUsd: settings.monthlySpendLimitUsd,
+    brollAiKind: settings.brollAiKind,
+    brollAiModel: settings.brollAiModel,
+    brollAiMaxShots: settings.brollAiMaxShots
   }
 
   let fd: number | undefined

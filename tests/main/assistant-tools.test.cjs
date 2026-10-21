@@ -77,6 +77,10 @@ test('start_clip_job builds a request the Create page’s validator accepts, wit
   const validated = mod.validateJobConfig(custom)
   assert.equal(validated.maxClips, 4)
   assert.equal(validated.captionPreset, 'neon')
+  // B-roll from: one of the four sources, only with B-roll on (Automatic).
+  assert.equal(mod.validateJobConfig({ ...minimal, broll: 'after-hook', brollSource: 'library_ai' }).brollSource, 'library_ai')
+  assert.throws(() => mod.validateJobConfig({ ...minimal, broll: 'after-hook', brollSource: 'giphy' }), /B-roll source/)
+  assert.throws(() => mod.validateJobConfig({ ...minimal, brollSource: 'library' }), /B-roll source/)
 })
 
 test('job validation drops fields it doesn’t know, so a typo can’t ride along in the job record', (t) => {

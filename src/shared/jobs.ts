@@ -1,3 +1,4 @@
+import type { BrollSource } from './broll-library'
 /** Clip grading bar: A only, B or better, C or better, grade but keep everything, or no grading. */
 export type QualityBar = 'a' | 'b' | 'c' | 'all' | 'off'
 export const QUALITY_BARS: readonly QualityBar[] = ['a', 'b', 'c', 'all', 'off']
@@ -56,6 +57,8 @@ export interface ClipJobRequest {
   backgroundVideo?: string
   /** B-roll mode: Pexels stock footage over the speaker, after the hook or for the whole clip. */
   broll?: 'after-hook' | 'full'
+  /** Where the b-roll comes from (with broll on): the member's library, Pexels, AI, or the library then AI. Missing: Pexels (older requests). */
+  brollSource?: BrollSource
   /** Hook preview: open each clip with its strongest line, then play it from the start. */
   hookPreview?: boolean
   /**

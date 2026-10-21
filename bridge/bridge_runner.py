@@ -298,6 +298,10 @@ async def run(config: dict) -> bool:
         background_video_path=config.get("background_video_path"),
         broll_enabled=config.get("broll_enabled", False),
         broll_keep_hook=config.get("broll_keep_hook", True),
+        broll_source=config.get("broll_source"),
+        broll_catalog_path=config.get("broll_catalog_path"),
+        broll_ai=config.get("broll_ai"),
+        broll_ai_dir=config.get("broll_ai_dir"),
         hook_preview=config.get("hook_preview", False),
         motion_graphics=config.get("motion_graphics", False) and config.get("workflow", "automatic") != "review",
         purpose=config.get("purpose") or None,
@@ -442,6 +446,9 @@ def validate_config(config: object) -> dict:
         raise ValueError("Background video must be an existing .mp4, .mov, .m4v or .webm file")
     if background is not None and config.get("broll_enabled"):
         raise ValueError("Choose either a background video or B-roll, not both")
+    # B-roll from the member's library or AI: the catalog and AI settings main wrote for this run.
+    from clip_engine.services.broll_library import validate_broll_config
+    validate_broll_config(config)
     if config.get("pacing", "tight") not in ("tight", "natural"):
         raise ValueError("Invalid pacing")
     speed = config.get("video_speed", 1.0)

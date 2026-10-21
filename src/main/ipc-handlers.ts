@@ -18,6 +18,8 @@ import { measureOutputStorage } from './output-storage'
 import { inspectEdits } from './edit-inspector'
 import { getEnginePath, getBridgeRunnerPath, resolvePythonPath, validatePython } from './pipeline-runner'
 import { cancelTrackedJob, dismissJob, initJobManager, listJobs, liveJobIds, onJobUpdate } from './job-manager'
+import { addLibraryPaths, brollAiSettings, brollRunEstimateUsd, cancelIndexing, indexLibrary, libraryView, makeAiShot, onIndexProgress, onLibraryChange, pendingShotCount, removeLibraryItems, saveBrollAiSettings, updateLibraryItem } from './broll-library'
+import { aiShotEstimateUsd, isBrollSource, usesAi, BROLL_LIBRARY_IMAGE_EXTENSIONS, BROLL_LIBRARY_VIDEO_EXTENSIONS, INDEX_ESTIMATE_PER_SHOT_USD } from '../shared/broll-library'
 import { allowOnce, assertSpendAllowed, friendlyIpcError, initSpending, metered, meteredAvatarRender, onOutOfCredits, onSpendingChange, openRouterBalance, recordSpend, spendOverview, trackAvatarStatus, trackJobSnapshot, trackRemixStatus } from './spending'
 import { readTimecodeScreenshot } from './moment-take'
 import { MAX_TIMECODE_IMAGE_BYTES, type TimecodeRead } from '../shared/moment-take'
@@ -41,7 +43,7 @@ import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePi
 import { SAMPLE_ESTIMATE_USD, voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
 import { PROOF_EXTENSIONS, SCREEN_EXTENSIONS } from '../shared/remix-layouts'
-import { addProofs, addScreenRecording, layoutExtrasView, removeLayoutItem, setLayoutExtras, addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStartEstimate, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen, remixChatFacts, setTakeTrim, setRemixLook } from './remix'
+import { addProofs, addScreenRecording, layoutExtrasView, removeLayoutItem, setLayoutExtras, addBroll, addBrollFromLibrary, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStartEstimate, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen, remixChatFacts, setTakeTrim, setRemixLook } from './remix'
 import { remixChat, remixChatInfo, resetRemixChat } from './remix-chat'
 import { importLegacyAvatarVideos } from './avatar-library'
 import { cancelListicleRender, LISTICLE_SCRIPT_ESTIMATE_USD, listicleRunBusy, listicleSpendCheck, listicleStatus, onListicleStatus, saveListicleRecording, startListicleRender, writeListicleScript } from './listicle'
@@ -339,6 +341,34 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return addMusic(result.filePaths.slice(0, 20))
   })
 
+  // My B-roll library: files and folders come from the dialog in main; indexing and AI shots are paid (the spending check first).
+  onLibraryChange(() => sendToWindow('brollLibrary:changed'))
+  onIndexProgress((progress) => sendToWindow('brollLibrary:progress', progress))
+  handle('brollLibrary:view', () => libraryView())
+  handle('brollLibrary:add', async (_event, mode: unknown) => {
+    const window = getMainWindow()
+    if (!window) return null
+    const folder = mode === 'folder'
+    const result = await dialog.showOpenDialog(window, folder
+      ? { properties: ['openDirectory', 'multiSelections'], title: 'Choose a folder of b-roll' }
+      : { properties: ['openFile', 'multiSelections'], title: 'Add b-roll clips or pictures', filters: [{ name: 'Videos and pictures', extensions: [...BROLL_LIBRARY_VIDEO_EXTENSIONS, ...BROLL_LIBRARY_IMAGE_EXTENSIONS] }] })
+    if (result.canceled || !result.filePaths.length) return null
+    return addLibraryPaths(result.filePaths)
+  })
+  handle('brollLibrary:update', (_event, id: unknown, patch: unknown) => updateLibraryItem(id, patch))
+  handle('brollLibrary:remove', (_event, ids: unknown) => removeLibraryItems(ids))
+  handle('brollLibrary:saveAi', (_event, value: unknown) => saveBrollAiSettings(value))
+  handle('brollLibrary:cancelIndex', () => cancelIndexing())
+  handle('brollLibrary:index', async () => {
+    const shots = await pendingShotCount()
+    await assertSpendAllowed('brollLibrary:index', 'openrouter', shots ? Math.round(shots * INDEX_ESTIMATE_PER_SHOT_USD * 100) / 100 : null)
+    return metered('broll', 'B-roll library: looking at clips', () => indexLibrary())
+  })
+  handle('brollLibrary:makeAiShot', async (_event, prompt: unknown) => {
+    await assertSpendAllowed('brollLibrary:makeAiShot', 'openrouter', aiShotEstimateUsd(brollAiSettings()))
+    return metered('broll', 'B-roll library: AI shot', () => makeAiShot(prompt))
+  })
+
   // Call-to-action library: the dialog opens here, so the renderer never names a file.
   handle('ctas:list', () => listCtas())
   handle('ctas:add', async (_event, name: unknown) => {
@@ -565,6 +595,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (result.canceled || !result.filePaths.length) return null
     return addBroll(result.filePaths)
   })
+  handle('remix:addBrollFromLibrary', (_event, ids: unknown) => addBrollFromLibrary(ids))
   handle('remix:removeBroll', (_event, id: unknown) => removeBroll(id))
   handle('remix:brollStock', (_event, on: unknown) => setBrollStock(on))
   handle('remix:brollPlan', (_event, plan: unknown) => setBrollPlan(plan))
@@ -692,7 +723,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return importClips(result.filePaths, (files) => sendToWindow('edit:importProgress', files))
   })
   paid('edit:start', 'openrouter', (request) => startEstimate(request), (request) => startEdit(request))
-  handle('edit:render', (_event, decisions: unknown) => renderEdit(decisions))
+  handle('edit:render', async (_event, decisions: unknown) => {
+    // AI b-roll is the paid part of making the reel: the spending check first, at most its shots.
+    const broll = (decisions as { look?: { broll?: unknown } } | null)?.look?.broll
+    if (isBrollSource(broll) && usesAi(broll)) await assertSpendAllowed('edit:render', 'openrouter', brollRunEstimateUsd(broll, 1))
+    return renderEdit(decisions)
+  })
   // The review's Chat panel: one paid OpenRouter turn per message (the member's key and planning model). Main checks every
   // change the model makes; the review applies them through its own setters (Keep or Undo on each answer).
   handle('edit:chatInfo', async () => {
@@ -744,9 +780,15 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
 
   // Create runs have no cost estimate: the balance check asks for at least $1.
-  paid('job:start', 'openrouter', () => null, (config) => startClipJobRequest(config))
+  // AI b-roll is the part of a Create run priced up front: at most its shots per clip.
+  const brollEstimate = (value: unknown): number | null => {
+    const v = (value ?? {}) as { broll?: unknown; brollSource?: unknown; maxClips?: unknown; autoClipCount?: unknown }
+    if (!v.broll || !isBrollSource(v.brollSource)) return null
+    return brollRunEstimateUsd(v.brollSource, v.autoClipCount !== true && typeof v.maxClips === 'number' ? Math.min(100, Math.max(1, Math.floor(v.maxClips))) : 5)
+  }
+  paid('job:start', 'openrouter', (config) => brollEstimate(config), (config) => startClipJobRequest(config))
   // Several videos with the same settings: one spending check, then one job per video.
-  paid('job:startMany', 'openrouter', () => null, (requests) => startClipJobRequests(requests))
+  paid('job:startMany', 'openrouter', (requests) => Array.isArray(requests) ? requests.reduce<number | null>((sum, request) => { const one = brollEstimate(request); return one === null ? sum : (sum ?? 0) + one }, null) : null, (requests) => startClipJobRequests(requests))
   // More clips from a finished run: reuses its saved transcript when it still matches the video.
   handle('job:moreClipsInfo', (_event, outputDir: unknown) => moreClipsInfo(outputDir))
   paid('job:moreClips', 'openrouter', () => null, (outputDir, choices) => startMoreClips(outputDir, choices))

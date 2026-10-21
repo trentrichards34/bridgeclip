@@ -1,6 +1,6 @@
 import { JevSettings } from '../components/JevSettings'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Info, KeyRound, ListChecks, Loader2, Music, RefreshCw, ScrollText, ShieldCheck, Sparkles, Wallet } from 'lucide-react'
+import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Images, Info, KeyRound, ListChecks, Loader2, Music, RefreshCw, ScrollText, ShieldCheck, Sparkles, Wallet } from 'lucide-react'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useChangelogStore } from '../store/use-changelog-store'
 import { useApiKeyDrafts } from '../hooks/use-api-key-drafts'
@@ -30,9 +30,10 @@ import { takeSettingsSection } from '../lib/settings-focus'
 import { SpendingSettings } from '../components/spending/SpendingSettings'
 import { SetupChecklist } from '../components/SetupChecklist'
 import { MusicSettingsPanel } from '../components/MusicPicker'
+import { BrollAiSettingsPanel } from '../components/BrollSourcePicker'
 import type { Page as AppPage } from '../components/Sidebar'
 
-type SectionId = 'setup' | 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'music' | 'output' | 'system' | 'about'
+type SectionId = 'setup' | 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'music' | 'broll' | 'output' | 'system' | 'about'
 type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
@@ -81,6 +82,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
     { id: 'jev', label: 'Quality check', icon: <ShieldCheck />, tone: 'idle' },
     { id: 'vocabulary', label: 'Vocabulary', icon: <BookA />, tone: 'idle' },
     { id: 'music', label: 'My music', icon: <Music />, tone: 'idle' },
+    { id: 'broll', label: 'AI b-roll', icon: <Images />, tone: 'idle' },
     { id: 'output', label: 'Output', icon: <FolderOpen />, tone: 'idle' },
     { id: 'system', label: 'System check', icon: <Cpu />, tone: !toolsChecked ? 'idle' : toolsMissing ? 'danger' : 'success' },
     { id: 'about', label: 'About', icon: <Info />, tone: 'idle' }
@@ -296,6 +298,16 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
               description="Your own tracks for background music, and how loud music sits under your voice. Pick music in Create, Edit my recording and Remix."
             />
             <MusicSettingsPanel />
+          </Section>
+
+          <Section id="broll">
+            <PanelHeader
+              icon={<IconTile><Images /></IconTile>}
+              title="AI b-roll"
+              description="When Create or Remix fill b-roll with AI, or you make a shot in your B-roll library: what AI makes, the model, and the most AI shots per clip."
+              action={onNavigate && <Button size="sm" variant="ghost" onClick={() => onNavigate('broll')}>Open my B-roll library</Button>}
+            />
+            <div className="mt-3"><BrollAiSettingsPanel /></div>
           </Section>
 
           <Section id="output">

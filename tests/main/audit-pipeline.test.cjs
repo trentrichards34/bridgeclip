@@ -41,7 +41,7 @@ function fakeChild() {
   return child
 }
 
-function startRunner({ child, env = process.env, onSpawn = () => {}, music = { audioForEngine: () => undefined }, ctas = { applyRunCta: async () => ({ failed: [] }), readCta: () => ({}) }, brands = { brandForJob: () => { throw new Error('That brand identity was deleted. Choose another brand, or no brand, and start again.') } }, moreClips = { refreshReusePlan: (plan) => ({ plan }) }, graphics = { applyRunGraphics: async () => ({ clips: 0, applied: 0, failed: [], cancelled: false }), graphicsNotice: () => null } }) {
+function startRunner({ child, env = process.env, onSpawn = () => {}, music = { audioForEngine: () => undefined }, ctas = { applyRunCta: async () => ({ failed: [] }), readCta: () => ({}) }, brands = { brandForJob: () => { throw new Error('That brand identity was deleted. Choose another brand, or no brand, and start again.') } }, moreClips = { refreshReusePlan: (plan) => ({ plan }) }, graphics = { applyRunGraphics: async () => ({ clips: 0, applied: 0, failed: [], cancelled: false }), graphicsNotice: () => null }, brollLibrary = null }) {
   const sent = []
   const signals = []
   const settings = { openrouterApiKey: SECRET, outputDirectory: WORK_HOME, pythonPath: '/opt/python3', enginePath: WORK_HOME }
@@ -64,7 +64,8 @@ function startRunner({ child, env = process.env, onSpawn = () => {}, music = { a
     './brands': brands,
     './more-clips': moreClips,
     './auto-graphics': graphics,
-    './music': music
+    './music': music,
+    './broll-library': brollLibrary ?? { brollRunFields: () => ({ fields: { broll_source: 'stock' } }) }
   }, {
     process: { ...process, platform: 'darwin', env, kill: (pid, signal) => { signals.push({ pid, signal }) } }
   })
@@ -284,6 +285,33 @@ test('the screen share choice reaches the engine in snake_case', async () => {
     assert.equal(JSON.parse(input).screen_focus, screenFocus)
     child.emit('close', 1, null)
   }
+})
+
+test('B-roll from: the source, the library catalog and AI settings reach the engine; a source that can\'t run stops the run first', async () => {
+  const child = fakeChild()
+  let input = ''
+  child.stdin.on('data', (chunk) => { input += chunk.toString() })
+  const asked = []
+  const brollLibrary = { brollRunFields: (source, keys, folder) => {
+    asked.push({ source, keys, folder })
+    return source === 'library' ? { error: 'B-roll: Add clips to your B-roll library first.' } : { fields: { broll_source: source, broll_catalog_path: path.join(folder, 'broll-catalog.json'), broll_ai: { kind: 'video', model: 'x-ai/grok-imagine-video-1.5-lite', max_shots: 2, seconds: 5, per_second_usd: 0.02, image_usd: 0.08 }, broll_ai_dir: '/user/broll-library/incoming' } }
+  } }
+  let spawned = 0
+  const { runner, window, sent } = startRunner({ child, brollLibrary, onSpawn: () => { spawned++ } })
+  runner.startClipJob('broll-job', { videoUrl: path.join(WORK_HOME, 'video.mp4'), broll: 'after-hook', brollSource: 'library_ai' }, window)
+  await tick()
+  const config = JSON.parse(input)
+  assert.deepEqual([config.broll_enabled, config.broll_keep_hook, config.broll_source], [true, true, 'library_ai'])
+  assert.equal(config.broll_catalog_path, path.join(asked[0].folder, 'broll-catalog.json'))
+  assert.equal(path.basename(asked[0].folder), 'broll-job', 'the catalog goes in the run’s private work folder')
+  assert.deepEqual(JSON.parse(JSON.stringify(asked[0].keys)), { pexels: false, openrouter: true })
+  assert.equal(config.broll_ai.max_shots, 2)
+  child.emit('close', 1, null)
+  // An empty library: the run stops with the plain reason, before the engine starts.
+  runner.startClipJob('broll-empty', { videoUrl: path.join(WORK_HOME, 'video.mp4'), broll: 'full', brollSource: 'library' }, window)
+  await tick()
+  assert.equal(spawned, 1)
+  assert.match(sent.find((event) => event.channel === 'job:error' && event.data.jobId === 'broll-empty').data.message, /library first/)
 })
 
 test('voice cleanup and music reach the engine as one "audio" option; a music file that is gone stops the run before it starts', async () => {

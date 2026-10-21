@@ -53,6 +53,7 @@ import type { BrollShot, BrollView } from '../shared/react-templates'
 import type { LayoutExtrasPatch, LayoutExtrasView } from '../shared/remix-layouts'
 import type { TimecodeRead } from '../shared/moment-take'
 import type { MusicLibrary } from '../shared/music'
+import type { BrollAiSettings, BrollIndexProgress, BrollLibraryView } from '../shared/broll-library'
 import type {
   AppDataScope,
   AssistantConversation,
@@ -505,6 +506,8 @@ export interface BridgeClipAPI {
     brollView: () => Promise<BrollView | null>
     /** Opens a file dialog in main (several clips or pictures); null when cancelled. */
     addBroll: () => Promise<BrollView | null>
+    /** Clips from My B-roll library (by id), copied into this remix's b-roll. */
+    addBrollFromLibrary: (ids: string[]) => Promise<BrollView>
     removeBroll: (id: string) => Promise<BrollView>
     brollStock: (on: boolean) => Promise<BrollView>
     /** The plan as you left it (a shot swapped to another clip, or removed). */
@@ -570,6 +573,21 @@ export interface BridgeClipAPI {
     remove: (name: string) => Promise<string[]>
   }
   /** Background music: the built-in tracks, the member's own (copied into the app) and the music settings. */
+  brollLibrary: {
+    view: () => Promise<BrollLibraryView>
+    /** Opens the file dialog in main (files, or folders when mode is 'folder'); null when cancelled. */
+    add: (mode: 'files' | 'folder') => Promise<{ added: number; skipped: number; view: BrollLibraryView } | null>
+    update: (id: string, patch: { name?: string; tags?: string[]; me?: boolean }) => Promise<BrollLibraryView>
+    remove: (ids: string[]) => Promise<BrollLibraryView>
+    /** Look at the new shots with the vision model (paid: the spending check first). */
+    index: () => Promise<BrollIndexProgress>
+    cancelIndex: () => Promise<boolean>
+    /** Make one AI shot from a description and add it to the library (paid). */
+    makeAiShot: (prompt: string) => Promise<BrollLibraryView>
+    saveAi: (settings: BrollAiSettings) => Promise<BrollAiSettings>
+    onChanged: (callback: () => void) => () => void
+    onProgress: (callback: (progress: BrollIndexProgress) => void) => () => void
+  }
   music: {
     list: () => Promise<MusicLibrary>
     /** Opens a file dialog (MP3, WAV or M4A up to 30 MB each); `added` are the new tracks' ids, `skipped` the files left out. */
@@ -940,6 +958,7 @@ const api: BridgeClipAPI = {
     chatReset: (draftId) => ipcRenderer.invoke('remix:chatReset', draftId),
     brollView: () => ipcRenderer.invoke('remix:brollView'),
     addBroll: () => ipcRenderer.invoke('remix:addBroll'),
+    addBrollFromLibrary: (ids) => ipcRenderer.invoke('remix:addBrollFromLibrary', ids),
     removeBroll: (id) => ipcRenderer.invoke('remix:removeBroll', id),
     brollStock: (on) => ipcRenderer.invoke('remix:brollStock', on),
     brollPlan: (plan) => ipcRenderer.invoke('remix:brollPlan', plan),
@@ -962,7 +981,7 @@ const api: BridgeClipAPI = {
     chooseClips: () => ipcRenderer.invoke('edit:chooseClips'),
     onImportProgress: (callback) => subscribe<ImportProgress[]>('edit:importProgress', callback),
     start: (request) => paid('edit:start', request),
-    render: (decisions) => ipcRenderer.invoke('edit:render', decisions),
+    render: (decisions) => paid('edit:render', decisions),
     chooseImages: () => ipcRenderer.invoke('edit:chooseImages'),
     addImage: (name, data) => ipcRenderer.invoke('edit:addImage', name, data),
     removeImage: (id) => ipcRenderer.invoke('edit:removeImage', id),
@@ -982,6 +1001,18 @@ const api: BridgeClipAPI = {
     list: () => ipcRenderer.invoke('backgrounds:list'),
     add: () => ipcRenderer.invoke('backgrounds:add'),
     remove: (name) => ipcRenderer.invoke('backgrounds:remove', name)
+  },
+  brollLibrary: {
+    view: () => ipcRenderer.invoke('brollLibrary:view'),
+    add: (mode) => ipcRenderer.invoke('brollLibrary:add', mode),
+    update: (id, patch) => ipcRenderer.invoke('brollLibrary:update', id, patch),
+    remove: (ids) => ipcRenderer.invoke('brollLibrary:remove', ids),
+    index: () => paid('brollLibrary:index'),
+    cancelIndex: () => ipcRenderer.invoke('brollLibrary:cancelIndex'),
+    makeAiShot: (prompt) => paid('brollLibrary:makeAiShot', prompt),
+    saveAi: (settings) => ipcRenderer.invoke('brollLibrary:saveAi', settings),
+    onChanged: (callback) => subscribe('brollLibrary:changed', callback),
+    onProgress: (callback) => subscribe('brollLibrary:progress', callback)
   },
   music: {
     list: () => ipcRenderer.invoke('music:list'),

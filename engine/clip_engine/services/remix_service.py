@@ -2014,6 +2014,12 @@ class RemixConfig:
     broll_items: list = field(default_factory=list)
     broll_stock: bool = False
     broll_plan: Optional[list] = None
+    # A voiced remix's beats (format "commentary"): where their b-roll comes from (broll_library.SOURCES; None is
+    # stock as before), the member's library catalog, and AI shot settings with the folder that hands them to the library.
+    broll_source: Optional[str] = None
+    broll_catalog_path: Optional[str] = None
+    broll_ai: Optional[dict] = None
+    broll_ai_dir: Optional[str] = None
     # Pause & react, Their clip then me, React then my thoughts: the reels' layouts (see remix_layouts.parse_layout):
     # whether their clip already has captions, where the hook text sits, part 1 as a phone card, part 2 over a screen
     # recording (banner, circles) and proof screenshots popping in.
@@ -2884,7 +2890,10 @@ class Remixer:
             return {"model": CLONE_TTS_MODEL, "reference": self._voice_reference, "transcript": self.config.voice_transcript}
         return {"model": TTS_MODEL, "voice": self.config.voice}
 
-    async def _broll(self, queries: list[str], cache: str) -> list[Optional[str]]:
+    async def _broll(self, queries: list[str], cache: str, texts: Optional[list[str]] = None) -> list[Optional[str]]:
+        source = getattr(self.config, "broll_source", None)
+        if source in ("library", "ai", "library_ai"):
+            return await self._library_broll(source, queries, texts or [""] * len(queries), cache)
         key = getattr(self.settings, "pexels_api_key", None)
         if not key:
             return [None] * len(queries)
@@ -2901,6 +2910,51 @@ class Remixer:
             return [None] * len(queries)
         found = {id(s): s.path for s in filled}
         return [found.get(id(s)) for s in shots]
+
+    async def _library_broll(self, source: str, queries: list[str], texts: list[str], cache: str) -> list[Optional[str]]:
+        """Beats' b-roll from the member's library (best keyword match per beat) and/or AI shots (up to the limit).
+        A beat with nothing uses a still, as without stock footage. AI costs join this remix's cost."""
+        from clip_engine.services import broll_library as bl
+        os.makedirs(cache, exist_ok=True)
+        results: list[Optional[str]] = [None] * len(queries)
+        try:
+            catalog = bl.load_catalog(self.config.broll_catalog_path) if source != "ai" and self.config.broll_catalog_path else []
+        except bl.BrollLibraryError as error:
+            self.warnings.append(f"{error} Those beats use a still instead.")
+            catalog = []
+        picks = bl.match_beats(catalog, [f"{q} {t}" for q, t in zip(queries, texts)])
+        for i, shot in enumerate(picks):
+            if shot is None:
+                continue
+            out = os.path.join(cache, f"library-{i}-{os.urandom(3).hex()}.mp4")
+            seconds = 8.0 if shot.kind == "image" else min(shot.seconds, 10.0)
+            try:
+                results[i] = await asyncio.to_thread(bl.conform_shot, shot.path, shot.kind, shot.in_s, seconds, out, OUT_W, OUT_H)
+            except bl.BrollLibraryError as error:
+                logger.warning(f"A library shot could not be used: {error}")
+        if source in ("ai", "library_ai") and self.config.broll_ai:
+            ai = bl.parse_ai_settings(self.config.broll_ai)
+            todo = [i for i, path in enumerate(results) if path is None][: ai.max_shots]
+            if todo:
+                maker = bl.AiShotMaker(self.settings, ai)
+                try:
+                    for i in todo:
+                        prompt = f"{queries[i]}: {texts[i]}" if texts[i] else queries[i]
+                        raw = os.path.join(cache, f"ai-{i}-{os.urandom(3).hex()}.mp4")
+                        try:
+                            await maker.make(prompt, raw)
+                        except bl.BrollLibraryError as error:
+                            self.warnings.append(f"An AI b-roll shot was not made: {error}")
+                            if "API key" in str(error) or "credits" in str(error):
+                                break
+                            continue
+                        if self.config.broll_ai_dir:
+                            await asyncio.to_thread(bl.save_for_library, raw, prompt, ai.model, self.config.broll_ai_dir)
+                        results[i] = raw
+                finally:
+                    self.media.cost_usd += maker.cost_usd
+                    await maker.aclose()
+        return results
 
     async def _excerpt(self, video: str, script: RemixScript, width: int, height: int, out: str, work: str,
                        source_meta: dict) -> str:
@@ -3018,10 +3072,10 @@ class Remixer:
         tasks = []
         if heygen and not self.config.heygen_voice:
             tasks += [animate("intro"), animate("close")]
-        broll_task = self._broll([b.broll for b in beats], os.path.join(root, ".work", "broll"))
+        broll_task = self._broll([b.broll for b in beats], os.path.join(root, ".work", "broll"), [b.text for b in beats])
         results = await asyncio.gather(broll_task, *tasks)
         broll = results[0]
-        if any(path is None for path in broll) and getattr(self.settings, "pexels_api_key", None):
+        if any(path is None for path in broll) and getattr(self.settings, "pexels_api_key", None) and self.config.broll_source in (None, "stock"):
             warnings.append("Some B-roll was not found on Pexels, so those beats use a still instead.")
 
         # 3. The borrowed moment.

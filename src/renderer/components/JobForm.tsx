@@ -19,6 +19,9 @@ import { onRadioKeyDown, Segmented } from './ui/Segmented'
 import { CLIP_REQUEST_MAX_CHARS, DURATION_OPTIONS, VIDEO_SPEED_OPTIONS } from '../../shared/job-contract'
 import { isModelId } from '../../shared/openrouter-models'
 import { useModelStore } from '../store/use-model-store'
+import { aiEstimateLine, BROLL_SOURCE_LABELS, effectiveBrollSource, usesAi, type BrollSource } from '../../shared/broll-library'
+import { useBrollContext, useBrollLibrary } from '../store/use-broll-library-store'
+import { BrollSourcePicker, useBrollLibraryLoaded } from './BrollSourcePicker'
 import { useSettingsStore } from '../store/use-settings-store'
 import { ModelPicker } from './ModelPicker'
 import { WorkflowPicker } from './WorkflowPicker'
@@ -61,8 +64,8 @@ export const SCREEN_FOCUS_OPTIONS: { id: ScreenFocus; label: string; hint: strin
 
 const BROLL_OPTIONS = [
   { id: 'off', label: 'Off', hint: 'Just the speaker', summary: 'Off' },
-  { id: 'after-hook', label: 'After the hook', hint: 'Speaker for 3 s first', summary: 'Pexels footage after a 3 s speaker hook' },
-  { id: 'full', label: 'Whole clip', hint: 'Footage from the start', summary: 'Pexels footage for the whole clip' }
+  { id: 'after-hook', label: 'After the hook', hint: 'Speaker for 3 s first', summary: 'Footage after a 3 s speaker hook' },
+  { id: 'full', label: 'Whole clip', hint: 'Footage from the start', summary: 'Footage for the whole clip' }
 ] as const
 
 const MAX_CLIPS = 100
@@ -113,6 +116,12 @@ export function draftSources(draft: Pick<ClipDraft, 'source' | 'sources'>): stri
   return draft.source.trim() ? [draft.source] : []
 }
 
+/** Where the run's b-roll comes from: the member's pick when it can run, otherwise the default (My library when it has shots). */
+export function draftBrollSource(draft: Pick<ClipDraft, 'brollSource'>): BrollSource {
+  const settings = useSettingsStore.getState()
+  return effectiveBrollSource(draft.brollSource, { libraryShots: useBrollLibrary.getState().view?.usableShots ?? 0, pexels: settings.pexelsConfigured, openrouter: settings.openrouterConfigured })
+}
+
 /** One run request per video, all with the same settings. A preferred range only applies to a single video. */
 export function buildJobRequests(draft: ClipDraft, trim: { start: number | null; end: number | null }): ClipJobRequest[] {
   const sources = draftSources(draft)
@@ -146,7 +155,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     ...(draft.workflow !== 'review' && parseLookExtras(draft.lookExtras).length ? { lookExtras: parseLookExtras(draft.lookExtras) } : {}),
     ...(draft.ctaId && draft.workflow !== 'review' ? { ctaId: draft.ctaId } : {}),
     ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo && draft.broll === 'off' ? { backgroundVideo: draft.backgroundVideo } : {}),
-    ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll } : {}),
+    ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll, brollSource: draftBrollSource(draft) } : {}),
     ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
     ...(draft.workflow === 'automatic' && draft.motionGraphics ? { motionGraphics: true } : {}),
     qualityBar: draft.qualityBar,
@@ -452,7 +461,7 @@ function lowerFirst(text: string): string {
 }
 
 /** What the Format step's options will do, in a few words each (framing and format are shown as choices). */
-export function formatSummary(draft: Pick<ClipDraft, 'aspectRatio' | 'layoutStyle' | 'clippingMode' | 'layoutVision' | 'screenFocus' | 'pacing' | 'videoSpeed' | 'workflow' | 'broll' | 'backgroundVideo'>): SummaryPart[] {
+export function formatSummary(draft: Pick<ClipDraft, 'aspectRatio' | 'layoutStyle' | 'clippingMode' | 'layoutVision' | 'screenFocus' | 'pacing' | 'videoSpeed' | 'workflow' | 'broll' | 'backgroundVideo'> & { brollSource?: ClipDraft['brollSource'] }): SummaryPart[] {
   const parts: SummaryPart[] = []
   const smart = draft.aspectRatio === '9:16' && draft.layoutStyle === 'auto'
   if (smart && draft.clippingMode !== 'economy') parts.push(draft.layoutVision === false ? { text: 'no AI shot checks', changed: true } : { text: 'AI checks tricky shots', changed: false })
@@ -463,7 +472,7 @@ export function formatSummary(draft: Pick<ClipDraft, 'aspectRatio' | 'layoutStyl
   parts.push(speed === DEFAULTS.videoSpeed ? { text: 'normal speed', changed: false } : { text: `${speed}× speed`, changed: true })
   if (draft.workflow !== 'review') {
     const broll = draft.broll ?? 'off'
-    if (broll !== 'off') parts.push({ text: `B-roll: ${lowerFirst(BROLL_OPTIONS.find((option) => option.id === broll)?.summary ?? broll)}`, changed: true })
+    if (broll !== 'off') parts.push({ text: `B-roll: ${lowerFirst(BROLL_OPTIONS.find((option) => option.id === broll)?.summary ?? broll)}${draft.brollSource ? ` · ${BROLL_SOURCE_LABELS[draft.brollSource]}` : ''}`, changed: true })
     else if (draft.aspectRatio === '9:16' && draft.backgroundVideo) parts.push({ text: `${draft.backgroundVideo} under the speaker`, changed: true })
     else parts.push({ text: 'no B-roll', changed: false })
   }
@@ -531,6 +540,10 @@ interface StepProps {
 export function FormatStep({ draft, update, customize, onCustomize }: StepProps): React.JSX.Element {
   const setBackground = useCallback((backgroundVideo: string | null) => update(backgroundVideo ? { backgroundVideo, broll: 'off' } : { backgroundVideo }), [update])
   const pexelsConfigured = useSettingsStore((s) => s.pexelsConfigured)
+  const openrouterConfigured = useSettingsStore((s) => s.openrouterConfigured)
+  const { usableShots } = useBrollContext()
+  useBrollLibraryLoaded()
+  const brollAvailable = pexelsConfigured || openrouterConfigured || usableShots > 0
   const jevEnabled = useSettingsStore((s) => s.jevEnabled === 'on')
   const parts = formatSummary(draft)
   const [open, toggle] = useCustomize(parts, customize, onCustomize)
@@ -640,11 +653,11 @@ export function FormatStep({ draft, update, customize, onCustomize }: StepProps)
       )}
 
       {draft.workflow !== 'review' && (
-        <Group label="B-roll" aside="Stock footage from Pexels">
+        <Group label="B-roll" aside="From your library, stock or AI">
           <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="B-roll">
             {BROLL_OPTIONS.map((option) => {
               const selected = draft.broll === option.id
-              const disabled = option.id !== 'off' && !pexelsConfigured
+              const disabled = option.id !== 'off' && !brollAvailable
               return (
                 <button
                   key={option.id}
@@ -667,10 +680,11 @@ export function FormatStep({ draft, update, customize, onCustomize }: StepProps)
             })}
           </div>
           <p className="mt-2 text-2xs text-ink-subtle">
-            {pexelsConfigured
-              ? 'AI picks footage for each beat of what’s said. The speaker’s audio, captions and title stay.'
-              : 'Add a free Pexels API key in Settings → API keys to turn on B-roll.'}
+            {brollAvailable
+              ? 'AI picks footage that matches what’s said. The speaker’s audio, captions and title stay.'
+              : 'Add clips to your B-roll library, or a free Pexels API key in Settings → API keys, to turn on B-roll.'}
           </p>
+          {draft.broll !== 'off' && <div className="mt-3"><BrollSourcePicker value={draft.brollSource} onChange={(brollSource) => update({ brollSource })} /></div>}
         </Group>
       )}
 
@@ -928,6 +942,7 @@ function BrollMoreOptions({ draft, update }: { draft: ClipDraft; update: Update 
         options={BROLL_OPTIONS.map((option) => ({ value: option.id, label: option.label }))}
         onChange={(broll) => update(broll === 'off' ? { broll } : { broll, backgroundVideo: null })} />
       <p className="text-2xs text-ink-subtle">{BROLL_OPTIONS.find((option) => option.id === value)?.hint ?? ''}. The same choice as B-roll in the Format step, where a gameplay background is too.</p>
+      {value !== 'off' && <BrollSourcePicker value={draft.brollSource} onChange={(brollSource) => update({ brollSource })} />}
     </div>
   )
 }
@@ -947,9 +962,11 @@ export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Upda
   const automatic = draft.workflow !== 'review'
   const brand = useBrands((s) => s.brands.find((item) => item.id === draft.brandIdentityId) ?? null)
   const pexels = useSettingsStore((s) => s.pexelsConfigured)
+  const openrouter = useSettingsStore((s) => s.openrouterConfigured)
+  const { usableShots } = useBrollContext()
   const hooks = createHooks(draft)
   const rows: BoardRows = automatic ? { hooks, handle: true, cta: true, keyword: true, extras: true } : {}
-  const skills = createSkillRows(draft, { pexels })
+  const skills = createSkillRows(draft, { pexels, openrouter, library: usableShots })
   // "More options": Captions' style is on the look board below; B-roll's timing opens in place. Rough cut, Motion
   // graphics and Zoom have nothing more to set, so they have no link.
   const more = (id: SkillId): (() => void) | undefined => id === 'captions' ? reveal('create-look') : undefined
@@ -1008,6 +1025,8 @@ export function ReviewStep({ draft, trim, onEdit }: {
 }): React.JSX.Element {
   const active = useActiveJobs()
   const pexels = useSettingsStore((s) => s.pexelsConfigured)
+  const openrouterKey = useSettingsStore((s) => s.openrouterConfigured)
+  const { usableShots, ai: brollAi } = useBrollContext()
   const automatic = draft.workflow !== 'review'
   const brand = useBrands((s) => s.brands.find((item) => item.id === draft.brandIdentityId) ?? null)
   const runningCount = active.filter((job) => job.status !== 'queued').length
@@ -1043,7 +1062,8 @@ export function ReviewStep({ draft, trim, onEdit }: {
     { step: 'video' as const, label: 'Whose video', value: HEADLINE_VOICE_OPTIONS.find((option) => option.id === draft.headlineVoice)?.summary ?? 'Someone else’s' },
     { step: 'clips' as const, label: 'Quality', value: QUALITY_BAR_OPTIONS.find((option) => option.id === draft.qualityBar)?.summary ?? QUALITY_BAR_OPTIONS[0].summary },
     // Skills by their Skills names, so each setting reads the same here as where it's set.
-    ...(automatic ? [{ step: 'captions' as const, label: 'Skills', value: skillsSummary(createSkillRows(draft, { pexels }), draft.musicTrack) }] : []),
+    ...(automatic ? [{ step: 'captions' as const, label: 'Skills', value: skillsSummary(createSkillRows(draft, { pexels, openrouter: openrouterKey, library: usableShots }), draft.musicTrack) }] : []),
+    ...(automatic && draft.broll !== 'off' ? [{ step: 'captions' as const, label: 'B-roll from', value: `${BROLL_SOURCE_LABELS[draftBrollSource(draft)]}${usesAi(draftBrollSource(draft)) ? ` · ${aiEstimateLine(brollAi)}` : ''}` }] : []),
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
   if (draft.workflow !== 'review' && isCaptionLanguage(draft.captionLanguage)) {

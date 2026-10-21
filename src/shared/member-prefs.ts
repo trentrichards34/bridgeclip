@@ -7,6 +7,7 @@
  */
 
 import { isAvatarId } from './avatars'
+import { isBrollSource, type BrollSource } from './broll-library'
 import { DEFAULT_PROFILE, readProfile, type CreatorProfile } from './onboarding'
 import { isBackgroundVideoName } from './backgrounds'
 import { isCaptionLanguage, type CaptionLanguageChoice } from './caption-language'
@@ -51,6 +52,8 @@ export interface CreateStyle {
   ctaId: string | null
   backgroundVideo: string | null
   broll: 'off' | 'after-hook' | 'full'
+  /** Where B-roll comes from (null: the default, My library when it has clips). */
+  brollSource: BrollSource | null
   hookPreview: boolean
   /** Motion graphics: Auto (Automatic runs). Off until the member turns it on once. */
   motionGraphics: boolean
@@ -100,6 +103,8 @@ export interface RemixFormStyle {
   music: boolean
   musicTrack: string
   voiceCleanup: boolean
+  /** Voiced remixes: where the beats' b-roll comes from (null: the default). */
+  brollSource: BrollSource | null
 }
 
 export type StyleOf<K extends StyleKind> = K extends 'create' ? CreateStyle : RemixFormStyle
@@ -137,14 +142,14 @@ export const MAX_SAMPLE_VIDEO_LINK = 2048
 
 export const CREATE_STYLE_KEYS = [
   'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
-  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'hookPreview', 'motionGraphics', 'qualityBar', 'headlineVoice',
+  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'brollSource', 'hookPreview', 'motionGraphics', 'qualityBar', 'headlineVoice',
   'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'captionLanguage', 'music', 'musicTrack', 'voiceCleanup'
 ] as const satisfies readonly (keyof CreateStyle)[]
 
 export const REMIX_STYLE_KEYS = [
   'format', 'angle', 'order', 'host', 'avatarId', 'voice', 'brandIdentityId', 'count', 'includeCaptions', 'captionPreset', 'headlineLook', 'lookExtras',
   'ctaId', 'ctaKeyword', 'ctaOffer', 'camera', 'imageCamera', 'showHandle', 'pauseLayout', 'pauseCaptions', 'pauseCamera',
-  'momentPip', 'momentCamera', 'music', 'musicTrack', 'voiceCleanup'
+  'momentPip', 'momentCamera', 'music', 'musicTrack', 'voiceCleanup', 'brollSource'
 ] as const satisfies readonly (keyof RemixFormStyle)[]
 
 export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE } }
@@ -191,6 +196,7 @@ const CREATE_CHECKS: { [K in keyof CreateStyle]: (value: unknown) => boolean } =
   ctaId: nullOr(isCtaId),
   backgroundVideo: nullOr(isBackgroundVideoName),
   broll: oneOf(['off', 'after-hook', 'full']),
+  brollSource: nullOr(isBrollSource),
   hookPreview: bool,
   motionGraphics: bool,
   qualityBar: oneOf(QUALITY_BARS),
@@ -232,7 +238,8 @@ const REMIX_CHECKS: { [K in keyof RemixFormStyle]: (value: unknown) => boolean }
   momentCamera: () => true,
   music: bool,
   musicTrack: (value) => value === '' || isMusicTrackId(value),
-  voiceCleanup: bool
+  voiceCleanup: bool,
+  brollSource: nullOr(isBrollSource)
 }
 
 /** The valid fields of a saved style; anything else is dropped. */

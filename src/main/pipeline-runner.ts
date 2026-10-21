@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile)
 import { createInterface } from 'readline'
 import { Transform } from 'stream'
 import { loadSettings, getSettingsForBridge, vocabularyTerms } from './settings-store'
+import { brollRunFields } from './broll-library'
 import { logger } from './logger'
 import { parseJobOutput, type JobOutput } from '../shared/job-output'
 import { BRIDGE_CONTRACT_VERSION } from '../shared/job-contract'
@@ -460,10 +461,18 @@ export function startClipJob(
     return
   }
 
-  if (config.broll && !settings.pexelsApiKey) {
-    reportError({ jobId, message: 'B-roll needs a free Pexels API key. Add it in Settings → API keys, then run the job again.' })
-    exitWithoutProcess()
-    return
+  // B-roll: where it comes from (the member's library, Pexels, AI), checked now so a run never starts without it.
+  let brollFields: Record<string, unknown> = {}
+  if (config.broll) {
+    let result: ReturnType<typeof brollRunFields>
+    try { result = brollRunFields(config.brollSource, { pexels: Boolean(settings.pexelsApiKey), openrouter: Boolean(settings.openrouterApiKey) }, join(workRoot(), jobId)) }
+    catch { result = { error: 'Your B-roll library could not be read. Try again.' } }
+    if ('error' in result) {
+      reportError({ jobId, message: result.error })
+      exitWithoutProcess()
+      return
+    }
+    brollFields = result.fields
   }
   let backgroundPath: string | null = null
   if (config.backgroundVideo) {
@@ -551,7 +560,7 @@ export function startClipJob(
     title_style: config.titleStyle ?? 'card',
     ...(headlineLookForEngine(config.headlineLook) ? { headline_look: headlineLookForEngine(config.headlineLook) } : {}),
     ...(backgroundPath ? { background_video_path: backgroundPath } : {}),
-    ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook' } : {}),
+    ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook', ...brollFields } : {}),
     ...(config.hookPreview ? { hook_preview: true } : {}),
     ...(config.motionGraphics && config.workflow !== 'review' ? { motion_graphics: true } : {}),
     ...(audio ? { audio } : {}),

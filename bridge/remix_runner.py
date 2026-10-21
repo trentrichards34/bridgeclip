@@ -361,7 +361,25 @@ def parse_config(raw):
         presenter=presenter, heygen_voice=heygen_voice, heygen_usd_per_second=heygen_price,
         look_extras=look_extras, look_extras_color=look_extras_color, graphics=parse_graphics(raw.get("graphics"), fmt, mode),
         audio=parse_audio_options(raw.get("audio")),
+        **parse_broll_source(raw, fmt),
     )
+
+
+def parse_broll_source(raw, fmt):
+    """A voiced remix's b-roll source (the member's library, stock, AI): checked like a Create run's (broll_library)."""
+    from clip_engine.services.broll_library import validate_broll_config
+    fields = {k: raw.get(k) for k in ("broll_source", "broll_catalog_path", "broll_ai", "broll_ai_dir") if raw.get(k) is not None}
+    if fields and fmt != "commentary":
+        raise ValueError("Invalid b-roll source")
+    # A run made again later may find its catalog gone (with the run's working files): its beats use stills then.
+    from clip_engine.services.broll_library import BrollLibraryError, load_catalog
+    if fields.get("broll_catalog_path") is not None:
+        try:
+            load_catalog(fields["broll_catalog_path"])
+        except BrollLibraryError:
+            fields.pop("broll_catalog_path")
+    validate_broll_config(fields, require_enabled=False, require_catalog=False)
+    return fields
 
 
 def parse_presenter(raw, fmt):
