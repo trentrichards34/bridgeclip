@@ -714,6 +714,7 @@ async function addAiFile(path: string, prompt: string, model: string): Promise<v
 }
 
 const INCOMING_FILE = /^ai-[0-9a-f]{8,32}\.mp4$/
+const INCOMING_ORPHAN_MS = 24 * 60 * 60 * 1000
 
 /** AI shots the engine made during a run: `incoming/ai-<hex>.mp4` with `ai-<hex>.json` ({prompt, model}) written last. */
 export async function adoptIncoming(): Promise<number> {
@@ -722,12 +723,18 @@ export async function adoptIncoming(): Promise<number> {
   let adopted = 0
   for (const name of names.filter((entry) => INCOMING_FILE.test(entry))) {
     const video = join(dirOf('incoming'), name), sidecar = video.replace(/\.mp4$/, '.json')
-    if (!regularFile(video) || !regularFile(sidecar)) continue
+    const file = regularFile(video)
+    if (!file) continue
+    if (!regularFile(sidecar)) {
+      // The engine writes the details right after the video: one still without them a day later was left by a crash.
+      if (Date.now() - file.mtimeMs > INCOMING_ORPHAN_MS) await rm(video, { force: true }).catch(() => undefined)
+      continue
+    }
     let meta: { prompt?: unknown; model?: unknown } = {}
     try {
       if (statSync(sidecar).size > 20_000) throw new Error('too large')
       meta = JSON.parse(await readFile(sidecar, 'utf8')) as typeof meta
-    } catch { await rm(sidecar, { force: true }); continue }
+    } catch { await Promise.all([rm(sidecar, { force: true }), rm(video, { force: true })]).catch(() => undefined); continue }
     const prompt = cleanText(meta.prompt, 600)
     await mkdir(dirOf('ai'), { recursive: true, mode: 0o700 })
     const target = join(dirOf('ai'), name)
