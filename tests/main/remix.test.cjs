@@ -416,8 +416,19 @@ test('Me, on camera: recordings are saved per take and part, uploads copied in, 
   list = await camera.removeRecording(0, 'close')
   assert.equal(list[0].close, undefined)
   list = await camera.uploadRecording(0, 'close', phone)
+  // The review's look and skills: shown on the status, checked, and the video is made with them.
+  assert.equal(status.look.includeCaptions, base.includeCaptions !== false)
+  assert.equal(status.look.music, false)
+  assert.throws(() => camera.setRemixLook({ captionPreset: 'nope' }), /caption style/)
+  assert.throws(() => camera.setRemixLook({ ctaKeyword: 'X' }), /look again/)
+  assert.throws(() => camera.setRemixLook({ music: true, musicTrack: '../x.mp3' }), /Choose the music/)
+  const looked = camera.setRemixLook({ includeCaptions: false, captionPreset: 'neon', lookExtras: ['punch_zoom'], voiceCleanup: true, headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' } })
+  assert.deepEqual(JSON.parse(JSON.stringify([looked.look.includeCaptions, looked.look.captionPreset, looked.look.lookExtras, looked.look.voiceCleanup, looked.look.headlineLook.look])),
+    [false, 'neon', ['punch_zoom'], true, 'black'])
+  assert.equal(statuses.at(-1).look.captionPreset, 'neon')
   await camera.renderRemix([edit(0)])
   const render = configs[1]
+  assert.deepEqual(JSON.parse(JSON.stringify([render.include_captions, render.caption_preset, render.look_extras, render.audio.voice_cleanup, render.headline_look.look])), [false, 'neon', ['punch_zoom'], true, 'black'])
   assert.equal(render.mode, 'render')
   assert.deepEqual(Object.keys(render.recordings), ['0'])
   assert.deepEqual(render.recordings['0'], { intro: list[0].intro.path, beats: [list[0].beat0.path], close: list[0].close.path })

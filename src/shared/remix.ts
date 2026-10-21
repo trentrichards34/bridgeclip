@@ -4,6 +4,7 @@
  * every model call goes through OpenRouter, stock B-roll through Pexels.
  */
 
+import type { RemixReviewLook } from './remix-review-look'
 import type { ImageHighlight } from './look-extras-engine'
 import type { RemixLayoutChoice } from './remix-layouts'
 import type { BrandLook } from './brand-kit'
@@ -452,6 +453,8 @@ export interface RemixStatus {
   pauseLayout?: PauseLayout
   /** On-camera remixes: what decides where graphics go on the member's part (missing: no graphics). */
   graphics?: RemixGraphicContext
+  /** On-camera remixes: the look and skills this video is made with (the review can change them). */
+  look?: RemixReviewLook
 }
 
 export function isRunning(status: RemixStatus | null): boolean {

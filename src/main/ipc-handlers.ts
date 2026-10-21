@@ -41,7 +41,7 @@ import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePi
 import { SAMPLE_ESTIMATE_USD, voiceSample } from './voice-samples'
 import { makeReactions, reactionsInProgress, REACTION_VIDEO_EXTENSIONS, removeReaction, uploadReaction } from './reactions'
 import { PROOF_EXTENSIONS, SCREEN_EXTENSIONS } from '../shared/remix-layouts'
-import { addProofs, addScreenRecording, layoutExtrasView, removeLayoutItem, setLayoutExtras, addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStartEstimate, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen, remixChatFacts, setTakeTrim } from './remix'
+import { addProofs, addScreenRecording, layoutExtrasView, removeLayoutItem, setLayoutExtras, addBroll, brollView, planBroll, removeBroll, setBrollPlan, setBrollStock, anotherMoment, momentTalkingPoints, setMomentBounds, pauseView, setPauseSettings, setRemixTrim, recomposeRemix, remixRunBusy, writeRemix, abortRecording, appendRecording, beginRecording, finishRecording, remixMoment, remixRecordings, removeRecording, uploadRecording, onRemixMomentSpend, BRAND_IDENTITY_EXTENSIONS, importBrandLogo, cancelRemix, discardRemix, renderRemix, listBrandIdentities, onRemixStatus, remixAvatarInUse, remixFolderInUse, readBrandIdentityFile, remixRenderCheck, remixStartEstimate, remixStatus, removeBrandIdentity, saveBrandIdentity, startRemix, setRemixHeygen, remixChatFacts, setTakeTrim, setRemixLook } from './remix'
 import { remixChat, remixChatInfo, resetRemixChat } from './remix-chat'
 import { importLegacyAvatarVideos } from './avatar-library'
 import { cancelListicleRender, LISTICLE_SCRIPT_ESTIMATE_USD, listicleRunBusy, listicleSpendCheck, listicleStatus, onListicleStatus, saveListicleRecording, startListicleRender, writeListicleScript } from './listicle'
@@ -615,6 +615,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('remix:trim', (_event, draftId: unknown, startMs: unknown, endMs: unknown) => setRemixTrim(draftId, startMs, endMs))
   // The part of a single take used (Their clip then me, Moment + my take): free.
   handle('remix:takeTrim', (_event, draftId: unknown, startMs: unknown, endMs: unknown) => setTakeTrim(draftId, startMs, endMs))
+  // The look and skills of the video in review (captions, hook text look, zoom, music, voice cleanup): free.
+  handle('remix:setLook', (_event, value: unknown) => setRemixLook(value))
   // The review's Chat panel: one paid OpenRouter turn per message (the member's key and planning model). Main checks every
   // change the model makes; the review applies them through its own setters (Keep or Undo on each answer).
   handle('remix:chatInfo', async () => {

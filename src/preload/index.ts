@@ -41,6 +41,7 @@ import type { AppPrefsUpdate, MemberPrefs, StyleKind } from '../shared/member-pr
 import type { CreatorProfile } from '../shared/onboarding'
 import type { BrandLook } from '../shared/brand-kit'
 import type { BrandIdentity, RecordingPart, RemixDraft, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
+import type { RemixLookPatch } from '../shared/remix-review-look'
 import type { ListicleScript, ListicleScriptRequest, ListicleStatus } from '../shared/listicle'
 import type { EditDecisions, EditImage, EditSource, EditStartRequest, EditStatus, FilmIdea, FilmIdeasRequest } from '../shared/edit-recording'
 import type { EditChatReply } from '../shared/edit-chat'
@@ -491,6 +492,8 @@ export interface BridgeClipAPI {
     trim: (draftId: number, startMs: number, endMs: number) => Promise<{ draft: RemixDraft; view: PauseView | null }>
     /** Their clip then me / Moment + my take: use only part of the take (ms into it), or all of it again (nulls). */
     takeTrim: (draftId: number, startMs: number | null, endMs: number | null) => Promise<RemixRecordings>
+    /** On camera, in review: change this video's look and skills (captions, hook text look, zoom, music, voice cleanup). */
+    setLook: (patch: RemixLookPatch) => Promise<RemixStatus>
     /** Whether the review's Chat panel can be used, its model and cost note. */
     chatInfo: () => Promise<ChatInfo>
     /** One chat message about a take (its hook text, caption and graphics as they are now). Uses the OpenRouter key; main checks every change. */
@@ -926,6 +929,7 @@ const api: BridgeClipAPI = {
     recordingFinish: (token, offsetSeconds, pause) => ipcRenderer.invoke('remix:recordingFinish', token, offsetSeconds, pause),
     trim: (draftId, startMs, endMs) => ipcRenderer.invoke('remix:trim', draftId, startMs, endMs),
     takeTrim: (draftId, startMs, endMs) => ipcRenderer.invoke('remix:takeTrim', draftId, startMs, endMs),
+    setLook: (patch) => ipcRenderer.invoke('remix:setLook', patch),
     chatInfo: () => ipcRenderer.invoke('remix:chatInfo'),
     chat: (state, message, points) => paid('remix:chat', state, message, points ?? []),
     chatReset: (draftId) => ipcRenderer.invoke('remix:chatReset', draftId),

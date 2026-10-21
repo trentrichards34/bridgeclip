@@ -9,6 +9,7 @@ import { getApi } from '../lib/ipc'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { RemixRecorder } from './RemixRecorder'
 import { RemixChatSection, RemixGraphicsSection, type TakeText } from './RemixReviewExtras'
+import { RemixLookSection } from './RemixReviewLook'
 import type { EditorGraphic } from '../../shared/motion-graphics'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
@@ -170,9 +171,10 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
           {draft.notes.map((note, i) => <p key={i} className="text-2xs text-warning"><AlertTriangle className="mr-1 inline h-3 w-3" />{note}</p>)}
         </section>
 
+        <RemixLookSection status={status} step={view ? 5 : 4} disabled={busy} frame={recorded?.path ?? source} hookText={current.headline} onError={onError} />
         <RemixGraphicsSection status={status} draft={draft} text={text} onGraphics={(change) => setGraphics(change)} recordings={recordings}
-          partMs={view ? Math.round((view.timeline.end - view.timeline.start) * 1000) : null} banner={false} disabled={busy} step={view ? 5 : 4} />
-        <RemixChatSection runId={status.id} draft={draft} text={text} onText={onText} afterMain={refresh}
+          partMs={view ? Math.round((view.timeline.end - view.timeline.start) * 1000) : null} banner={false} disabled={busy} step={view ? 6 : 5} />
+        <RemixChatSection runId={status.id} draft={draft} text={text} onText={onText} afterMain={refresh} video={recorded?.path ?? null}
           disabledReason={busy ? 'Wait for what’s running to finish.' : recording ? 'Close the recorder to chat.' : null} />
 
         <div className="flex flex-wrap items-center gap-2">
@@ -189,41 +191,49 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
 }
 
 /** Start and end of the part to react to, on a preview of their video (at most `maxSeconds` of it). */
-export function TrimControl({ source, startMs, endMs, disabled, saving, uploaded, onTrim, maxSeconds, note }: {
+export function TrimControl({ source, startMs, endMs, disabled, saving, uploaded, onTrim, maxSeconds, note, label, minSeconds = 1, durationSeconds }: {
   source: string; startMs: number; endMs: number; disabled: boolean; saving: boolean; uploaded: boolean; onTrim: (startMs: number, endMs: number) => void
   maxSeconds?: number
   /** What changing it means (instead of Pause & react's note). */
   note?: string
+  /** Whose video it is, when it's not theirs ("Your take"): names the video and its sliders. */
+  label?: string
+  /** The shortest part allowed (seconds). */
+  minSeconds?: number
+  /** The video's length when known (a recording made here may not say it in its file). */
+  durationSeconds?: number
 }): React.JSX.Element {
   const video = useRef<HTMLVideoElement>(null)
-  const [duration, setDuration] = useState(endMs / 1000)
+  const [duration, setDuration] = useState(durationSeconds ?? endMs / 1000)
   const [start, setStart] = useState(startMs / 1000)
   const [end, setEnd] = useState(endMs / 1000)
   const changed = Math.abs(start * 1000 - startMs) > 50 || Math.abs(end * 1000 - endMs) > 50
   const seek = (seconds: number): void => { if (video.current) video.current.currentTime = seconds }
+  const own = label !== undefined
+  const of = own ? ` of ${label.toLowerCase()}` : ' of the part'
   return (
     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-      <video ref={video} src={localFileUrl(source)} controls preload="metadata" playsInline aria-label="Their video"
-        onLoadedMetadata={(e) => { const seconds = e.currentTarget.duration; if (Number.isFinite(seconds) && seconds > 0) setDuration(seconds); e.currentTarget.currentTime = start }}
+      <video ref={video} src={localFileUrl(source)} controls preload="metadata" playsInline aria-label={label ?? 'Their video'}
+        onLoadedMetadata={(e) => { const seconds = e.currentTarget.duration; if (durationSeconds === undefined && Number.isFinite(seconds) && seconds > 0) setDuration(seconds); e.currentTarget.currentTime = start }}
         className="aspect-video w-full rounded-xl bg-black object-contain" />
       <div className="space-y-2.5">
         <label className="block text-2xs text-ink-muted">Start · {formatSeconds(start)}
-          <input type="range" aria-label="Start of the part" min={0} max={duration} step={0.1} value={start} disabled={disabled}
+          <input type="range" aria-label={`Start${of}`} min={0} max={duration} step={0.1} value={start} disabled={disabled}
             onChange={(e) => {
-              const value = Math.max(0, Math.min(Number(e.target.value), end - 1))
+              const value = Math.max(0, Math.min(Number(e.target.value), end - minSeconds))
               setStart(value); seek(value)
               // Moving the start past the longest part brings the end along.
               if (maxSeconds && end - value > maxSeconds) setEnd(Math.min(duration, value + maxSeconds))
             }} className="mt-1 w-full accent-[rgb(var(--accent))]" />
         </label>
         <label className="block text-2xs text-ink-muted">End · {formatSeconds(end)}
-          <input type="range" aria-label="End of the part" min={0} max={duration} step={0.1} value={end} disabled={disabled}
+          <input type="range" aria-label={`End${of}`} min={0} max={duration} step={0.1} value={end} disabled={disabled}
             onChange={(e) => {
-              const value = Math.min(duration, Math.max(Number(e.target.value), start + 1), maxSeconds ? start + maxSeconds : Infinity)
+              const value = Math.min(duration, Math.max(Number(e.target.value), start + minSeconds), maxSeconds ? start + maxSeconds : Infinity)
               setEnd(value); seek(value)
             }} className="mt-1 w-full accent-[rgb(var(--accent))]" />
         </label>
-        <p className="text-2xs text-ink-subtle">{formatSeconds(end - start)} of their video{maxSeconds ? ` (up to ${maxSeconds / 60} minutes)` : ''}. {note ?? (uploaded ? 'Changing it finds the pauses in your phone recording again.' : 'It plays from the start while you record.')}</p>
+        <p className="text-2xs text-ink-subtle">{formatSeconds(end - start)} of {own ? `${formatSeconds(duration)}` : 'their video'}{maxSeconds ? ` (up to ${maxSeconds / 60} minutes)` : ''}. {note ?? (uploaded ? 'Changing it finds the pauses in your phone recording again.' : 'It plays from the start while you record.')}</p>
         {changed && (
           <div className="flex gap-2">
             <Button size="sm" variant="primary" loading={saving} disabled={disabled} onClick={() => onTrim(Math.round(start * 1000), Math.round(end * 1000))}>Use this part</Button>

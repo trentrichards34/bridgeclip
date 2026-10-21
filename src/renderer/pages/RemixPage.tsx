@@ -24,6 +24,7 @@ import { ClipTakeReview } from '../components/ClipTakeReview'
 import { CLIP_MAX_SECONDS, longClipNote } from '../../shared/react-templates'
 import { defaultTheirCaptions, HOOK_AT_LABELS, PART1_CHOICES, THEIR_CAPTION_CHOICES, type RemixLayoutChoice } from '../../shared/remix-layouts'
 import { MomentRanges } from '../components/MomentRanges'
+import { RemixLookSection } from '../components/RemixReviewLook'
 import { formatTimecode, MOMENT_TAKE_MAX_SECONDS, readRanges } from '../../shared/moment-take'
 import { PAUSE_CAPTION_CHOICES, PAUSE_LAYOUTS, PAUSE_REACT_MAX_SECONDS, type PauseLayout } from '../../shared/pause-react'
 import { CAPTION_PRESETS } from '../../shared/caption-presets'
@@ -59,6 +60,8 @@ import { clipFilePath } from '../lib/thumbnails'
 import { parseJobOutput } from '../../shared/job-output'
 
 const COUNTS = [1, 3, 5, 10] as const
+/** On camera, Zoom is a Skill (in the Skills list): not also in the look board's Extras. */
+const REMIX_SKILL_EXTRAS = ['punch_zoom'] as const
 /** "Look & call to action" stays open or closed for the rest of the session once the member chooses. */
 let lookOpenThisSession = false
 /** Switching between "You on camera" and "AI presenter" comes back to the template last picked on each side. */
@@ -120,6 +123,9 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const reviewRef = useRef<HTMLDivElement>(null)
   const errorRef = useRef<HTMLDivElement>(null)
   const [revealReview, setRevealReview] = useState(false)
+  // While a review is open (or its hook text is being written or it's being made), the setup form folds away
+  // behind "Start a new remix": the review has its own look and skills for that video.
+  const [newRemixFor, setNewRemixFor] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
@@ -358,6 +364,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   // The AI presenter's voiced take: avatar photo or voice only (its clip reactions are always the avatar's).
   const hostChoice = mode === 'ai' && !silent
   const cameraValue = image ? form.imageCamera : pause ? form.pauseCamera : momentTake || clip ? form.momentCamera : form.camera
+  const setupFolded = status !== null && (reviewing || (busy && status.drafts.length > 0)) && newRemixFor !== status.id
   const takeWaiting = reviewing && status !== null && (oneTakeRun(status) ? status.drafts.some((draft) => Boolean(draft.quote || draft.headline)) : status.drafts.length > 0)
   // Panel numbers: format, source, (AI presenter) the presenter, the folded look and call to action, then go.
   const lookStep = onCamera ? 3 : 4
@@ -583,7 +590,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
       keywordHelp={keywordHelp} keywordLabel="Comment keyword (optional)"
       ctaHelp="A short video of you (or an image) played at the end of every video. It replaces the presenter’s spoken call to action. You can change it on any video afterward in the Library."
       onUseBrand={() => { if (brand) form.update({ ...brandFormPatch(brand.look, form), ...(brand.look?.captionPreset ? { includeCaptions: true } : {}) }) }}
-      layout={layout} />
+      layout={layout} skillExtras={onCamera ? REMIX_SKILL_EXTRAS : undefined} />
   )
 
   const pauseLayoutChoice = pause && (
@@ -938,11 +945,22 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         </div>
       )}
 
-      <div className="mt-5 space-y-5">
-        <StylePresets kind="remix" />
-        {reviewing && (
-          <Callout tone="info">The takes above use the settings they were planned with. Changes below apply to your next plan.</Callout>
+      {setupFolded && (
+        <div className="glass-tile mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl px-4 py-3" data-testid="new-remix-fold">
+          <span className="min-w-0 text-xs text-ink-muted">
+            {reviewing ? 'Change this video’s look and skills in its review above. Starting a new remix replaces it.' : 'Your video is being made. You can set up the next one.'}
+          </span>
+          <Button size="sm" variant="secondary" icon={<Wand2 className="h-3.5 w-3.5" />} onClick={() => setNewRemixFor(status?.id ?? '')}>Start a new remix</Button>
+        </div>
+      )}
+      {!setupFolded && <div className="mt-5 space-y-5">
+        {status && newRemixFor === status.id && (reviewing || busy) && (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-ink">New remix</p>
+            <Button size="sm" variant="ghost" icon={<X className="h-3.5 w-3.5" />} onClick={() => setNewRemixFor(null)}>Hide</Button>
+          </div>
         )}
+        <StylePresets kind="remix" />
         {formatPanel}
         {sourcePanel}
         {/* The AI presenter's own choice comes first; the look and call to action fold the same way on both sides. */}
@@ -959,7 +977,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
         )}
         {lookPanel}
         {goPanel}
-      </div>
+      </div>}
 
     </Page>
   )
@@ -1208,6 +1226,8 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
             </div>
           )
         })}
+        {onCamera && <RemixLookSection status={status} disabled={working} frame={recordings[ordered[0]?.id ?? 0]?.reaction?.path ?? null}
+          hookText={ordered[0] ? value(ordered[0]).headline : ''} onError={onError} />}
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={working} disabled={working || chosen.length === 0 || blocked}
             tooltip={unrecorded > 0 ? `Record yourself for ${unrecorded === 1 ? 'the take' : `${unrecorded} takes`} still marked “Record”`

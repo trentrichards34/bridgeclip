@@ -132,3 +132,16 @@ test('one turn: the take’s words and facts go to the model, its calls come bac
   assert.deepEqual(main.remixChatHistory('run9', 0), [])
   assert.equal(main.remixChatInfo({ apiKey: false, model: 'm' }).reason, 'Add your OpenRouter key in Settings → API keys to chat about your video.')
 })
+
+test('suggestion chips per format: "Make my part shorter" only where the take can be trimmed; graphics name the part', () => {
+  for (const format of ['clip_then_me', 'moment_take']) assert.ok(shared.remixChatSuggestions(format).includes('Make my part shorter'), format)
+  for (const format of ['react_thoughts', 'pause_react']) assert.ok(!shared.remixChatSuggestions(format, { box: 'auto', banner: true }).includes('Make my part shorter'), format)
+  assert.deepEqual(plain(shared.remixChatSuggestions('react_thoughts')), ['Punchier hook', 'Add a stat graphic', 'Shorter caption'])
+  assert.ok(shared.remixChatSuggestions('react_thoughts', { box: 'auto', banner: true }).includes('Show the comment banner'))
+  assert.ok(shared.remixChatSuggestions('react_thoughts', { box: 'top' }).includes('Put their clip box at the bottom'))
+  assert.ok(!/make my part shorter/.test(shared.remixChatIntro('react_thoughts')))
+  assert.equal(shared.remixPartName('react_thoughts'), 'Part 2 · Your thoughts')
+  const react = { format: 'react_thoughts', theirClip: null, takeMs: 9000, takeTrim: null, trimmable: false, boxAt: 'auto', banner: false, keyword: 'SKIN' }
+  const added = shared.applyRemixChatTool(state(), react, 'add_graphic', { template: 'title', at_ms: 2000, fields: { text: 'Hi there' } }, newId)
+  assert.match(added.step.summary, /of part 2 \(your thoughts\)/)
+})

@@ -8,6 +8,7 @@ import { promisify } from 'util'
 import { isAvatarId } from '../shared/avatars'
 import { isCaptionPresetId } from '../shared/caption-presets'
 import { headlineLookForEngine, parseHeadlineLook } from '../shared/headline-look'
+import { audioAfter, parseRemixLookPatch, reviewLookOf } from '../shared/remix-review-look'
 import { lookExtrasForEngine, parseImageHighlight } from '../shared/look-extras-engine'
 import { parseLookExtras } from '../shared/look-extras'
 import { parseCtaChoice } from '../shared/ctas'
@@ -99,6 +100,8 @@ interface RunContext {
   /** Their clip, then me / React, then my thoughts: part 2's look (a screen recording, banner, circles) and proof
    * screenshots, copied into the run's .layout. `adding`: room held for screenshots still being copied in. */
   extras?: Omit<LayoutExtrasView, 'keyword' | 'format'> & { adding?: number }
+  /** The brand's color when the run started (the zoom and other extras use it when the look changes in review). */
+  brandColor?: string
 }
 
 /**
@@ -463,6 +466,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
     if (pending.cancelled) { await rm(folder, { recursive: true, force: true }); throw new Error('Canceled before it started.') }
     const context: RunContext = {
       request, draftIds: new Set(), planCostUsd: 0, ...(reference.note ? { referenceNote: reference.note } : {}),
+      ...(brand?.look?.color ? { brandColor: brand.look.color } : {}),
       config: {
         sources: image ? [] : request.sources, output_dir: folder,
         ...(imageCopy ? { image_source: { path: imageCopy, credit: request.creator, ...(request.imageHighlight ? { highlight: request.imageHighlight } : {}) } } : {}), angle: request.angle, order: request.order, count: request.count, host: request.host,
@@ -494,6 +498,7 @@ export async function startRemix(value: unknown): Promise<RemixStatus> {
         ...(request.host === 'camera' ? { onCamera: true, cameraTalk: request.camera?.talk === true, ...(request.camera ? { cameraLayout: request.camera.layout } : {}) } : {}),
         ...(request.pause ? { pauseLayout: request.pause.layout } : {}),
         ...(remixGraphicContext(request) ? { graphics: remixGraphicContext(request)! } : {}),
+        ...(request.host === 'camera' ? { look: reviewLookOf(request) } : {}),
         estimateUsd: request.moment ? momentEstimate(request.moment.ranges).total
           : estimateRemixCost(request.host, request.count * request.sources.length, 0.5, request.format).total,
         drafts: [], outputs: [], costUsd: null, warnings: reference.note ? [reference.note] : [], error: null
@@ -1293,6 +1298,40 @@ export async function remixChatFacts(draftId: unknown): Promise<{ facts: RemixCh
     }
   } catch { /* no words saved yet */ }
   return { facts, words: { take, theirs, quote: draft.quote }, runId: run.status.id, folder: run.status.folder }
+}
+
+/**
+ * The review's look and skills for this video (you on camera): captions and their style, the hook text look, zoom,
+ * music and voice cleanup. Free; the video is made with them (and a hook text written next uses them too).
+ */
+export function setRemixLook(value: unknown): RemixStatus {
+  const run = reviewRun()
+  const patch = parseRemixLookPatch(value)
+  const before = run.context.request
+  const audio = audioAfter(before, patch)
+  const request: RemixRequest = {
+    ...before,
+    ...(patch.includeCaptions !== undefined ? { includeCaptions: patch.includeCaptions } : {}),
+    ...(patch.captionPreset !== undefined ? { captionPreset: patch.captionPreset } : {}),
+    ...(patch.headlineLook ? { headlineLook: patch.headlineLook } : {}),
+    ...(patch.lookExtras ? { lookExtras: patch.lookExtras } : {})
+  }
+  delete request.music; delete request.musicTrack; delete request.voiceCleanup
+  Object.assign(request, audio)
+  if (request.lookExtras && !request.lookExtras.length) delete request.lookExtras
+  // Checked before anything changes (a track of the member's own must still be in their music folder).
+  const engineAudio = audioForEngine(request, true)
+  const config: Record<string, unknown> = { ...run.context.config, caption_preset: request.captionPreset, include_captions: request.includeCaptions }
+  delete config.headline_look; delete config.look_extras; delete config.look_extras_color; delete config.audio
+  const headline = headlineLookForEngine(request.headlineLook)
+  Object.assign(config, headline ? { headline_look: headline } : {}, lookExtrasForEngine(request.lookExtras, run.context.brandColor, request.headlineLook), engineAudio ? { audio: engineAudio } : {})
+  run.context.request = request
+  run.context.config = config
+  const graphics = remixGraphicContext(request)
+  run.status = { ...run.status, look: reviewLookOf(request), ...(graphics ? { graphics } : {}) }
+  logger.info('remix.look', { captions: request.includeCaptions, hook: request.headlineLook?.look ?? null, zoom: Boolean(request.lookExtras?.includes('punch_zoom')), music: request.music === true, cleanup: request.voiceCleanup === true })
+  notify(run.status)
+  return run.status
 }
 
 /** The shortest part of a take that can be kept (ms). */

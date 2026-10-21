@@ -21,6 +21,34 @@ import type { BoxAt } from './remix-layouts'
 import { PIN_PROP, aimGraphic, pinArg, pointCenter, type ChatPoint } from './chat-point'
 
 export const REMIX_CHAT_SUGGESTIONS = ['Punchier hook', 'Make my part shorter', 'Add a stat graphic', 'Shorten their clip'] as const
+
+/**
+ * The chat's suggestion chips for a format: only what its tools can do there ("Make my part shorter" trims the
+ * take, which Pause & react and React, then my thoughts can't). `box`: their clip's box can move (React, then my
+ * thoughts, big box: where it is now); `banner`: the comment banner is off and a keyword is set, so it can be turned on.
+ */
+export function remixChatSuggestions(format: RemixGraphicFormat, options: { box?: BoxAt | null; banner?: boolean } = {}): string[] {
+  switch (format) {
+    case 'clip_then_me': return ['Punchier hook', 'Make my part shorter', 'Add a stat graphic', 'Shorten their clip']
+    case 'moment_take': return ['Punchier hook', 'Make my part shorter', 'Cut my first sentence', 'Add a stat graphic']
+    case 'pause_react': return ['Punchier hook', 'Add a stat graphic', 'Shorten their video', 'Shorter caption']
+    case 'react_thoughts': return ['Punchier hook', 'Add a stat graphic', ...(options.box ? [options.box === 'top' ? 'Put their clip box at the bottom' : 'Put their clip box at the top'] : []),
+      ...(options.banner ? ['Show the comment banner'] : []), 'Shorter caption']
+  }
+}
+
+/** The line under the chat's title, with examples that work in this format. */
+export function remixChatIntro(format: RemixGraphicFormat): string {
+  const examples = format === 'clip_then_me' || format === 'moment_take' ? '“make my part shorter”, “change the hook” or “add a stat when I say $1,200”'
+    : format === 'pause_react' ? '“change the hook”, “start their video later” or “add a stat when I say $1,200”'
+      : '“change the hook”, “move their clip box down” or “add a stat when I say $1,200”'
+  return `Ask for a change in your own words, like ${examples}. Each answer shows what changed, with Keep or Undo.`
+}
+
+/** Where graphics go, in the format's own words ("your take", "your video", "Part 2 · Your thoughts"). */
+export function remixPartName(format: RemixGraphicFormat): string {
+  return format === 'pause_react' ? 'your video' : format === 'react_thoughts' ? 'Part 2 · Your thoughts' : 'your take'
+}
 /** Suggestions while the member has pins on the frame. */
 export const REMIX_CHAT_POINT_SUGGESTIONS = ['Put an arrow here', 'Put their clip box here', 'Move the graphic here'] as const
 export const MAX_HEADLINE_CHARS = 160
@@ -174,7 +202,7 @@ export function applyRemixChatTool(state: RemixChatState, facts: RemixChatFacts,
       if (pin) { const aimed = aimGraphic(graphic, pin, typeof (args.fields as Record<string, unknown> | undefined)?.shape === 'string'); graphic = { ...aimed, placement: args.placement !== undefined ? graphic.placement : aimed.placement } }
       const next = (current ? graphics.map((g) => g.id === graphic.id ? graphic : g) : [...graphics, graphic]).sort((x, y) => x.at_ms - y.at_ms)
       try { parseGraphics(next) } catch (error) { fail((error as Error).message) }
-      return step(`${current ? 'Changed the' : 'Added a'} ${templateInfo(template).label.toLowerCase()} at ${chatClock(at)} of your ${facts.format === 'pause_react' ? 'video' : 'take'}${why}`, { graphics: next })
+      return step(`${current ? 'Changed the' : 'Added a'} ${templateInfo(template).label.toLowerCase()} at ${chatClock(at)} of ${facts.format === 'react_thoughts' ? 'part 2 (your thoughts)' : remixPartName(facts.format)}${why}`, { graphics: next })
     }
     case 'remove_graphic': {
       const current = state.graphics.find((g) => g.id === args.id)

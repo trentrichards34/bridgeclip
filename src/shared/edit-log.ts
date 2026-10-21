@@ -23,6 +23,8 @@ export interface EditLogLine<P> {
   restore?: P
   /** What Restore does, in words (the button's tooltip). */
   restoreHint?: string
+  /** Done because the member asked (in a chat), not on the app's own: shown as "you asked". */
+  asked?: boolean
 }
 
 /** What a Restore changed: the fields it set and the values they had before, so Undo puts back only those. */
@@ -272,26 +274,59 @@ export function editRecordingLog(plan: EditPlan, d: EditDecisions): EditLogLine<
 }
 
 // ---------------------------------------------------------------------------
-// Remix reviews (lighter: what was picked, and the take's trim)
+// Remix reviews: what the AI wrote and picked, and what the member asked the chat for
 // ---------------------------------------------------------------------------
 
 export type RemixLogAction = 'use-whole-take'
 
+/** What the review's chat changed, with the values it set (a line shows only while that value is still in place). */
+export interface RemixAsked {
+  headline?: string
+  postCaption?: string
+  theirClip?: { startMs: number; endMs: number }
+  takeTrim?: { startMs: number; endMs: number }
+}
+
+const sameSpan = (a: { startMs: number; endMs: number } | undefined | null, b: { startMs: number; endMs: number } | undefined | null): boolean =>
+  Boolean(a && b && Math.abs(a.startMs - b.startMs) < 50 && Math.abs(a.endMs - b.endMs) < 50)
+
+/**
+ * A remix take's review. Things the app did: the hook text and caption the AI wrote (while unchanged) and, in
+ * Moment + my take, the moment it picked. Things the member asked the chat for are marked `asked`. The member's own
+ * picks (the part of their clip, a trim made with the controls) are not listed: they're on the page already.
+ */
 export function remixEditLog(input: {
   /** The part of their video used (ms in their video). */
   startMs: number; endMs: number
-  /** The member's take as recorded, and the part of it used (from the chat), if trimmed. */
+  /** Moment + my take: the AI picked the moment (false once the member nudged it). */
+  aiMoment?: boolean
+  /** The member's take as recorded, and the part of it used, if trimmed. */
   take?: { seconds: number; trim?: { startMs: number; endMs: number } } | null
-  /** The hook text the AI wrote, and the one on the page now. */
+  /** The hook text and caption the AI wrote, and the ones on the page now. */
   aiHeadline: string; headline: string
+  aiCaption?: string; caption?: string
+  /** Graphics on the take now (the chat's are listed). */
+  graphics?: Pick<EditorGraphic, 'template' | 'fields' | 'origin'>[]
+  asked?: RemixAsked
 }): EditLogLine<RemixLogAction>[] {
   const lines: EditLogLine<RemixLogAction>[] = []
-  if (input.endMs > input.startMs) lines.push({ id: 'their-clip', text: `Used ${logClock(input.startMs)}–${logClock(input.endMs)} of their clip (${logSeconds(input.endMs - input.startMs)})` })
+  const asked = input.asked ?? {}
+  const span = `${logClock(input.startMs)}–${logClock(input.endMs)}`
+  if (input.endMs > input.startMs && sameSpan(asked.theirClip, { startMs: input.startMs, endMs: input.endMs })) {
+    lines.push({ id: 'their-clip', text: `Their part set to ${span} (${logSeconds(input.endMs - input.startMs)})`, asked: true })
+  } else if (input.aiMoment && input.endMs > input.startMs) lines.push({ id: 'moment', text: `Picked the moment ${span} (${logSeconds(input.endMs - input.startMs)})` })
   const trim = input.take?.trim
-  if (trim && input.take) {
+  if (trim && input.take && sameSpan(asked.takeTrim, trim)) {
     lines.push({ id: 'take-trim', text: `Your take trimmed to ${tenths(trim.startMs)}–${tenths(trim.endMs)} (${logSeconds(trim.endMs - trim.startMs)} of ${logSeconds(input.take.seconds * 1000)})`,
-      restore: 'use-whole-take', restoreHint: 'Use all of your take' })
+      restore: 'use-whole-take', restoreHint: 'Use all of your take', asked: true })
   }
-  if (input.aiHeadline.trim() && input.headline.trim() === input.aiHeadline.trim()) lines.push({ id: 'hook', text: `Hook: “${short(input.aiHeadline)}”` })
+  const headline = input.headline.trim()
+  if (headline && asked.headline !== undefined && headline === asked.headline.trim()) lines.push({ id: 'hook', text: `Hook text: “${short(headline)}”`, asked: true })
+  else if (input.aiHeadline.trim() && headline === input.aiHeadline.trim()) lines.push({ id: 'hook', text: `Wrote the hook text: “${short(input.aiHeadline)}”` })
+  const caption = (input.caption ?? '').trim()
+  if (caption && asked.postCaption !== undefined && caption === asked.postCaption.trim()) lines.push({ id: 'caption', text: 'Rewrote the post caption', asked: true })
+  else if (caption && caption === (input.aiCaption ?? '').trim()) lines.push({ id: 'caption', text: 'Wrote the post caption' })
+  const chat = (input.graphics ?? []).filter((g) => g.origin === 'chat')
+  if (chat.length) lines.push({ id: 'graphics', text: `Added ${chat.length === 1 ? `a ${graphicPhrase(chat[0])}` : `${plural(chat.length, 'graphic')}: ${chat.slice(0, 3).map(graphicPhrase).join(', ')}${chat.length > 3 ? '…' : ''}`}`, asked: true })
   return lines
 }
