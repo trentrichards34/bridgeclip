@@ -215,6 +215,8 @@ class CaptionStyle:
     line_box_color: Optional[str] = None
     line_box_opacity: float = 0.6
     line_box_padding: int = 22
+    # "round": the plate follows the words (a soft rounded blob); "rect": a crisp box per line.
+    line_box_shape: Literal["round", "rect"] = "round"
 
     # Keyword emphasis: planner-chosen punch words render in this color
     # (None disables). Chosen per preset to contrast with the highlight.
@@ -252,6 +254,7 @@ class CaptionPreset:
     RETRO = "retro"
     LIME = "lime"
     VINTAGE = "vintage"
+    HIGHLIGHT_BOX = "highlight_box"
 
 
 DEFAULT_CAPTION_PRESET = CaptionPreset.POP
@@ -278,6 +281,7 @@ def get_caption_preset(preset_id: str) -> CaptionStyle:
         CaptionPreset.RETRO: _create_retro_style,
         CaptionPreset.LIME: _create_lime_style,
         CaptionPreset.VINTAGE: _create_vintage_style,
+        CaptionPreset.HIGHLIGHT_BOX: _create_highlight_box_style,
     }
 
     builder = builders.get(preset_id)
@@ -398,6 +402,12 @@ def get_available_presets() -> list[dict]:
             "name": "Vintage",
             "description": "Fraunces Black, a retro ad-style serif in cream with a mustard active word - stories, money & business",
             "preview_colors": {"primary": "#FFF3DD", "highlight": "#FFB547"},
+        },
+        {
+            "id": CaptionPreset.HIGHLIGHT_BOX,
+            "name": "Highlight box",
+            "description": "White bold words on a solid purple box, 1-3 words at a time - clean on any backdrop",
+            "preview_colors": {"primary": "#FFFFFF", "highlight": "#7C3AED"},
         },
     ]
 
@@ -1066,4 +1076,28 @@ def _create_vintage_style() -> CaptionStyle:
     s.shadow_offset = 7
     s.shadow_spread = 0
     s.emphasis_color = "#FF6B4A"
+    return s
+
+
+# The box color of Highlight box captions (a stage scene's grid or gradient backdrop uses the brand color instead).
+HIGHLIGHT_BOX_COLOR = "#7C3AED"
+
+
+def _create_highlight_box_style() -> CaptionStyle:
+    """Highlight box: white bold sans (Montserrat ExtraBold), sentence case, 1-3 words on a crisp solid
+    color box per line; no stroke or shadow."""
+    s = CaptionStyle()
+    s.font_name = "Montserrat ExtraBold"
+    s.font_size = 74
+    s.uppercase = False
+    s.max_words_per_line = 3
+    s.primary_color = "#FFFFFF"
+    s.highlight_color = "#FFFFFF"
+    s.outline_width = 0
+    s.shadow_opacity = 0.0
+    s.line_box_color = HIGHLIGHT_BOX_COLOR
+    s.line_box_opacity = 1.0
+    s.line_box_padding = 16
+    s.line_box_shape = "rect"
+    s.emphasis_color = None
     return s

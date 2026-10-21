@@ -21,8 +21,8 @@ import './graphics.css'
 import { ICONS } from './icons'
 import { bigWordsTemplate } from './big-words'
 import {
-  accentWords, browserHighlights, formatStatValue, graphicIcons, graphicItems, graphicItemTimes, highlightPoint, parseStatValue, templateItems,
-  type GraphicRenderSpec
+  accentWords, browserHighlights, cardWords, formatStatValue, graphicIcons, graphicItems, graphicItemTimes, graphicWordTimes, highlightPoint, orbitNodes, parseStatValue,
+  screenFrameLayout, templateItems, SCREEN_FADE_MS, type GraphicRenderSpec
 } from '../../shared/motion-graphics'
 
 export interface MountedGraphic {
@@ -243,7 +243,7 @@ export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): Mounte
  * so text is drawn crisply at its final size.
  */
 function fitToBand({ band, fit, root, spec, u }: Build): void {
-  if (spec.template === 'highlight' || spec.template === 'big_words') return
+  if (spec.template === 'highlight' || spec.template === 'big_words' || spec.template === 'orbit' || spec.template === 'screen_frame') return
   fit.style.removeProperty('--u')
   fit.style.removeProperty('--card-w')
   const cardW = parseFloat(root.style.getPropertyValue('--card-w'))
@@ -359,6 +359,21 @@ function buildWords(b: Build, words: HTMLElement[], at: number, step: number, ho
   words.forEach((w, i) => how === 'pop' ? popIn(b, w, at + i * step, 1.18, 300) : riseIn(b, w, at + i * step, 26, 340))
   return at + Math.max(0, words.length - 1) * step + 300
 }
+/** Each word's spoken time on a word-timed card (`word_ms`, ms into the graphic), or null (even beats are used). */
+function saidTimes(spec: GraphicRenderSpec): number[] | null {
+  return graphicWordTimes(spec.fields, cardWords(spec.template, spec.fields).length, spec.duration_ms)
+}
+/** How early a word starts coming in before it is said (it is clear about a frame after). */
+const SAID_LEAD = 70
+/** Build each word as it is said (`times`, ms into the graphic); returns when the last one lands. */
+function buildWordsAt(b: Build, words: HTMLElement[], times: number[], how: 'rise' | 'pop' = 'rise'): number {
+  words.forEach((w, i) => {
+    const at = Math.max(0, times[i] - SAID_LEAD)
+    if (how === 'pop') popIn(b, w, at, 1.18, 240)
+    else riseIn(b, w, at, 22, 260)
+  })
+  return Math.max(0, (times[words.length - 1] ?? 0) - SAID_LEAD) + 240
+}
 /** The step between words so `count` of them build within `budget` ms. */
 const wordStep = (count: number, budget: number, max = 120): number => count > 1 ? clamp(budget / (count - 1), 45, max) : 0
 
@@ -445,7 +460,8 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     box.style.setProperty('--title-size', String(Math.round(clamp(Math.min(1500 / Math.max(5, longest * .9), 3400 / Math.max(10, total * .9)), 74, 150))))
     const rich = richText(box, words.slice(0, 14).join(' '), accent, { accentClass: 'tint' })
     const { tin } = phases(spec.duration_ms)
-    const end = buildWords(b, rich.words, tin * .55, wordStep(rich.words.length, 700, 110), 'pop')
+    const said = saidTimes(spec)
+    const end = said ? buildWordsAt(b, rich.words, said, 'pop') : buildWords(b, rich.words, tin * .55, wordStep(rich.words.length, 700, 110), 'pop')
     sweep(b, rich.mark, end - 60)
   },
 
@@ -588,9 +604,11 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     const sub = subline ? el('div', 'mg-sub', card) : null
     const subWords = sub ? richText(sub, subline, null).words : []
     const { tin, hold } = phases(spec.duration_ms)
-    const end = buildWords(b, rich.words, tin * .55, wordStep(rich.words.length, Math.min(900, hold * .35), 130))
+    const said = saidTimes(spec)
+    const end = said ? buildWordsAt(b, rich.words, said.slice(0, rich.words.length)) : buildWords(b, rich.words, tin * .55, wordStep(rich.words.length, Math.min(900, hold * .35), 130))
     sweep(b, rich.mark, end - 40, 520)
-    buildWords(b, subWords, end + 260, wordStep(subWords.length, 360, 60))
+    if (said) buildWordsAt(b, subWords, said.slice(rich.words.length))
+    else buildWords(b, subWords, end + 260, wordStep(subWords.length, 360, 60))
   },
 
   sticky_notes(b) {
@@ -736,24 +754,29 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     const text = clean(spec.fields.text), phrase = clean(spec.fields.phrase)
     const { tin, hold } = phases(spec.duration_ms)
     let t = 0
+    const said = saidTimes(spec)
     // Line 1 should fit on one line when it can (the phrase is drawn 1.2× in a narrower italic).
     const longest = Math.max(text.length, phrase.length * .95, 8)
     push.style.setProperty('--headline-size', String(Math.round(clamp(1420 / longest, 58, 112))))
+    let first = 0
     if (text) {
       const line = el('div', 'mg-hl-line one mg-display', push)
       const words = richText(line, text, null).words
+      first = words.length
       cardIn(b, line, 0)
-      t = buildWords(b, words, 120, wordStep(words.length, Math.min(520, hold * .25), 110))
+      t = said ? buildWordsAt(b, words, said.slice(0, words.length)) : buildWords(b, words, 120, wordStep(words.length, Math.min(520, hold * .25), 110))
     }
     if (phrase) {
       const line = el('div', 'mg-hl-line two', push)
       const fill = el('div', 'mg-hl-fill', line)
       const inner = el('div', 'mg-hl-text', line)
       const words = richText(inner, phrase, null).words
-      const at = text ? t - 120 : 0
+      // Spoken: the box sweeps in just before the phrase's first word.
+      const at = said ? Math.max(0, said[first] - SAID_LEAD - 160) : text ? t - 120 : 0
       tl.add(line, { opacity: [0, 1], duration: 120, ease: 'linear' }, at)
       tl.add(fill, { scaleX: [0, 1], duration: 380, ease: 'outQuart' }, at)
-      buildWords(b, words, at + 160, wordStep(words.length, 420, 120), 'pop')
+      if (said) buildWordsAt(b, words, said.slice(first), 'pop')
+      else buildWords(b, words, at + 160, wordStep(words.length, 420, 120), 'pop')
     }
     pushIn(b, push, .03)
     cardOut(b, box)
@@ -782,7 +805,136 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
   },
 
   // Huge words in the scene (big-words.ts): sized and animated on their own, outside the band's card layout.
-  big_words(b) { bigWordsTemplate(b) }
+  big_words(b) { bigWordsTemplate(b) },
+
+  // A center tile with icon nodes on a ring: the ring draws round from the top and each node pops in as it passes.
+  orbit(b) {
+    const { spec, band, tl, u, root } = b
+    const nodes = orbitNodes(spec.fields)
+    const center = clean(spec.fields.text)
+    const W = spec.width
+    const wrap = el('div', 'mg-orbit', band)
+    const push = el('div', 'mg-push mg-orbit-push', wrap)
+    const ring = svg('svg', { class: 'mg-orbit-ring' }, push)
+    const circle = svg('circle', { pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1 }, ring)
+    const spokes = nodes.map(() => svg('line', { class: 'mg-orbit-spoke', pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1 }, ring))
+    const hub = el('div', `mg-tile glow mg-orbit-hub${spec.image ? ' has-image' : center ? ' has-text' : ''}`, push)
+    if (spec.image) {
+      const img = el('img', '', hub)
+      img.alt = ''; img.decoding = 'sync'; img.src = spec.image
+    } else if (center) el('div', 'mg-orbit-hub-text mg-display', hub, center)
+    else icon(hub, 'sparkles', 'mg-orbit-hub-svg')
+    const els = nodes.map((n) => {
+      const node = el('div', 'mg-orbit-node', push)
+      const dot = el('div', 'mg-orbit-dot', node)
+      if (n.icon) icon(dot, n.icon, 'mg-orbit-svg')
+      else el('span', 'mg-orbit-letter', dot, n.label.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 1).toUpperCase())
+      const label = n.label ? el('div', 'mg-orbit-label', node, n.label) : null
+      return { node, dot, label }
+    })
+    // Sized from the band: the ring as big as the band allows (labels below the lowest nodes).
+    b.fitters.push(() => {
+      const bandH = band.clientHeight, labels = nodes.some((n) => n.label) ? 60 * u : 0
+      const R = Math.max(120 * u, Math.min((bandH - labels) * .5 - 92 * u, W * .34))
+      const node = Math.round(clamp(R * .42, 96 * u, 150 * u)), hubSize = Math.round(clamp(R * .78, 170 * u, 300 * u))
+      const size = 2 * R + node
+      Object.assign(push.style, { width: `${size}px`, height: `${size}px` })
+      ring.setAttribute('viewBox', `0 0 ${size} ${size}`)
+      ring.setAttribute('width', String(size)); ring.setAttribute('height', String(size))
+      circle.setAttribute('cx', String(size / 2)); circle.setAttribute('cy', String(size / 2)); circle.setAttribute('r', String(R))
+      // The ring draws from the top (an SVG circle starts at 3 o'clock).
+      circle.setAttribute('transform', `rotate(-90 ${size / 2} ${size / 2})`)
+      circle.setAttribute('stroke-width', String(4 * u))
+      Object.assign(hub.style, { width: `${hubSize}px`, height: `${hubSize}px`, left: `${(size - hubSize) / 2}px`, top: `${(size - hubSize) / 2}px` })
+      root.style.setProperty('--orbit-node', `${node}px`)
+      els.forEach((e, i) => {
+        // From the top, clockwise, evenly round the ring.
+        const a = -Math.PI / 2 + i * 2 * Math.PI / Math.max(1, nodes.length)
+        const x = size / 2 + R * Math.cos(a), y = size / 2 + R * Math.sin(a)
+        Object.assign(e.node.style, { left: `${x - node / 2}px`, top: `${y - node / 2}px`, width: `${node}px` })
+        const s = spokes[i]
+        const inner = hubSize * .5 + 10 * u, outer = R - node * .5 - 8 * u
+        s.setAttribute('x1', String(size / 2 + inner * Math.cos(a))); s.setAttribute('y1', String(size / 2 + inner * Math.sin(a)))
+        s.setAttribute('x2', String(size / 2 + outer * Math.cos(a))); s.setAttribute('y2', String(size / 2 + outer * Math.sin(a)))
+        s.setAttribute('stroke-width', String(3 * u))
+      })
+    })
+    const { tin, hold } = phases(spec.duration_ms)
+    popIn(b, hub, 0, 1.2, 380)
+    const ringAt = tin * .6, ringFor = clamp(hold * .55, 900, 2400)
+    tl.add(circle, { strokeDashoffset: [1, 0], duration: ringFor, ease: 'inOutSine' }, ringAt)
+    // As each node is said (item_ms), else as the ring passes it.
+    const said = graphicItemTimes(spec.fields, nodes.length, spec.duration_ms)
+    els.forEach((e, i) => {
+      const at = said ? clamp(said[i] - 80, ringAt, spec.duration_ms - 600) : ringAt + ringFor * (i / Math.max(1, nodes.length)) + 60
+      popIn(b, e.dot, at, 1.35, 320)
+      tl.add(spokes[i], { strokeDashoffset: [1, 0], duration: 260, ease: 'outCubic' }, at + 40)
+      if (e.label) riseIn(b, e.label, at + 120, 12, 260)
+    })
+    pushIn(b, push, .03)
+    cardOut(b, wrap)
+  },
+
+  // Frosted pills, each an icon and a short label, stacked; an optional red notification dot on the first.
+  feature_tile(b) {
+    const { spec, fit } = b
+    const labels = templateItems('feature_tile', spec.fields.items)
+    const icons = graphicIcons(spec.fields, 'feature_tile')
+    const stack = el('div', 'mg-features', fit)
+    const push = el('div', 'mg-push mg-features-stack', stack)
+    const longest = labels.reduce((n, t) => Math.max(n, t.length), 1)
+    push.style.setProperty('--feature-size', String(Math.round(clamp(980 / Math.max(10, longest) + 20, 40, 66))))
+    const at = beats(spec, labels.length, .35, 0)
+    labels.forEach((label, i) => {
+      const tile = el('div', 'mg-feature', push)
+      const art = el('div', 'mg-feature-art', tile)
+      const name = icons[i]
+      if (name) icon(art, name, 'mg-feature-svg')
+      else el('span', 'mg-feature-letter', art, label.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 1).toUpperCase())
+      el('div', 'mg-feature-label', tile, label)
+      riseIn(b, tile, at[i], 30, 380)
+      b.tl.add(tile, { scale: [.94, 1], duration: 380, ease: 'outBack' }, at[i])
+      if (i === 0 && spec.fields.dot === 'on') popIn(b, el('div', 'mg-feature-dot', art), at[i] + 380, 1.8, 300)
+    })
+    pushIn(b, push, .025)
+    cardOut(b, stack)
+  },
+
+  // A dark window with a soft accent glow; its view is a transparent hole the engine plays the video under
+  // (graphics_overlay). It fades in and out over SCREEN_FADE_MS, the same as the engine fades the video.
+  screen_frame(b) {
+    const { spec, root, tl, u } = b
+    const box = screenFrameLayout(spec)
+    const wrap = el('div', 'mg-screen', root)
+    const glow = el('div', 'mg-screen-glow', wrap)
+    const win = el('div', 'mg-screen-window', wrap)
+    for (const node of [glow, win]) Object.assign(node.style, { left: `${box.window.x}px`, top: `${box.window.y}px`, width: `${box.window.w}px`, height: `${box.window.h}px`, borderRadius: `${box.radius}px` })
+    Object.assign(win.style, { borderWidth: `${box.bar}px ${box.border}px ${box.border}px` })
+    const bar = el('div', 'mg-screen-bar', win)
+    Object.assign(bar.style, { height: `${box.bar}px`, top: `${-box.bar}px`, left: `${-box.border}px`, right: `${-box.border}px`, padding: `0 ${box.border + 14 * u}px` })
+    const dots = el('div', 'mg-dots', bar)
+    for (let i = 0; i < 3; i++) el('span', `d${i}`, dots)
+    const label = clean(spec.fields.label)
+    if (label) el('div', 'mg-screen-label', bar, label)
+    const preview = spec.preview_video
+    if (preview) {
+      // The editor's preview plays the video in the hole; the render leaves it see-through.
+      const video = el('video', 'mg-screen-video', wrap)
+      Object.assign(video.style, { left: `${box.hole.x}px`, top: `${box.hole.y}px`, width: `${box.hole.w}px`, height: `${box.hole.h}px` })
+      video.muted = true; video.playsInline = true; video.preload = 'auto'; video.src = preview.url
+      b.onSeek.push((t) => { const want = preview.from + t / 1000; if (Math.abs(video.currentTime - want) > .2) video.currentTime = want })
+      tl.add(video, { opacity: [0, 1], duration: SCREEN_FADE_MS, ease: 'linear' }, 0)
+      tl.add(video, { opacity: [1, 0], duration: SCREEN_FADE_MS, ease: 'linear' }, spec.duration_ms - SCREEN_FADE_MS)
+    }
+    tl.add(win, { opacity: [0, 1], duration: SCREEN_FADE_MS, ease: 'linear' }, 0)
+    tl.add(win, { opacity: [1, 0], duration: SCREEN_FADE_MS, ease: 'linear' }, spec.duration_ms - SCREEN_FADE_MS)
+    tl.add(glow, { opacity: [0, .75], duration: 520, ease: 'outQuad' }, 0)
+    if (spec.duration_ms > 2400) {
+      tl.add(glow, { opacity: [.75, 1], duration: 900, ease: 'inOutSine' }, 700)
+      tl.add(glow, { opacity: [1, .8], duration: 900, ease: 'inOutSine' }, 1600)
+    }
+    tl.add(glow, { opacity: [.8, 0], duration: SCREEN_FADE_MS, ease: 'linear' }, spec.duration_ms - SCREEN_FADE_MS)
+  }
 }
 
 function listLike(b: Build, checks: boolean): void {

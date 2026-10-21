@@ -223,8 +223,9 @@ def parse_graphics(raw, fmt, mode):
             raise ValueError("Invalid graphics")
         clean = []
         for g in items:
-            if not isinstance(g, dict) or not {"file", "at_ms", "duration_ms"} <= set(g) <= {"file", "at_ms", "duration_ms", "depth"} \
-                    or g.get("depth", "behind") != "behind" or not isinstance(g.get("file"), str) \
+            if not isinstance(g, dict) or not {"file", "at_ms", "duration_ms"} <= set(g) <= {"file", "at_ms", "duration_ms", "depth", "min_top"} \
+                    or g.get("depth", "behind") != "behind" \
+                    or ("min_top" in g and not (type(g["min_top"]) in (int, float) and 0 <= g["min_top"] <= 0.6)) or not isinstance(g.get("file"), str) \
                     or not re.fullmatch(r"[a-f0-9]{64}\.mov", g["file"]) or type(g.get("at_ms")) is not int or not 0 <= g["at_ms"] <= 3600 * 1000 \
                     or type(g.get("duration_ms")) is not int or not 400 <= g["duration_ms"] <= 8000:
                 raise ValueError("Invalid graphics")

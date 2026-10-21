@@ -654,7 +654,7 @@ async function drawRemixGraphics(run: ActiveRemix, edits: RemixEdit[], value: un
       logger.warn('remix.graphics.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
       throw new Error('Your graphics could not be drawn. Try again, or remove a graphic and make the video again.')
     }
-    out[key] = drawn.map((item) => ({ file: item.file, at_ms: item.start_ms, duration_ms: item.duration_ms, ...(item.depth ? { depth: item.depth } : {}) }))
+    out[key] = drawn.map((item) => ({ file: item.file, at_ms: item.start_ms, duration_ms: item.duration_ms, ...(item.depth ? { depth: item.depth, min_top: item.min_top } : {}) }))
   }
   return out
 }

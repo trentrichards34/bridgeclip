@@ -15,11 +15,12 @@
  */
 import { spawn } from 'child_process'
 import { createHash, randomUUID } from 'crypto'
-import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs'
+import { createReadStream, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs'
+import { copyFile, open as openFile } from 'fs/promises'
 import { extname, join } from 'path'
 import { BrowserWindow, session, type BrowserWindowConstructorOptions, type Session } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import { GRAPHIC_FPS, GRAPHICS_VERSION, graphicDepth, graphicHasContent, graphicUsesImage, graphicWindow, type GraphicRenderSpec, type GraphicSize } from '../shared/motion-graphics'
+import { GRAPHIC_FPS, GRAPHICS_VERSION, SCREEN_FADE_MS, SCREEN_VIDEO_FILE, graphicDepth, graphicHasContent, graphicUsesImage, graphicWindow, screenFrameLayout, screenFrom, screenZoom, type EditorGraphic, type GraphicRenderSpec, type GraphicSize } from '../shared/motion-graphics'
 import { graphicSpec } from '../shared/graphic-layout'
 import type { EditorCandidate, EditorProject } from '../shared/clip-editor'
 import { resolveBinary } from './tools'
@@ -30,6 +31,9 @@ export const GRAPHIC_IMAGES_DIR = 'images'
 export const GRAPHIC_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp']
 export const MAX_GRAPHIC_IMAGE_BYTES = 12 * 1024 * 1024
 export const GRAPHICS_PARTITION = 'graphics-render'
+export const GRAPHIC_VIDEOS_DIR = 'videos'
+export const GRAPHIC_VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'webm']
+export const MAX_GRAPHIC_VIDEO_BYTES = 2 * 1024 * 1024 * 1024
 const RENDER_FILE = /^[a-f0-9]{64}\.mov$/
 const IMAGE_FILE = /^[a-f0-9]{16}\.(png|jpg|webp)$/
 
@@ -38,7 +42,15 @@ const IMAGE_FILE = /^[a-f0-9]{16}\.(png|jpg|webp)$/
  * `size`: 'compact' or 'stage' when the graphic isn't the usual card (a stage scene can make room for a stage-size one).
  * `depth`: 'behind' when the engine lays the speaker back over it (absent: in front).
  */
-export interface RenderedGraphic { id: string; file: string; start_ms: number; duration_ms: number; size?: GraphicSize; depth?: 'behind' }
+export interface RenderedGraphic { id: string; file: string; start_ms: number; duration_ms: number; size?: GraphicSize; depth?: 'behind'; inset?: GraphicInset; min_top?: number }
+
+/**
+ * A Screen recording's video, which the engine plays under the drawn window: a file in the run's
+ * .graphics/videos/ (or 'source': the clip's own video, at source time), where it starts (ms into it), the
+ * window's hole (x, y, w, h as shares of the frame), the slow zoom's target (shares of the view; absent: a gentle
+ * push-in) and the fade in and out (the window's own).
+ */
+export interface GraphicInset { video: string; from_ms: number; rect: [number, number, number, number]; zoom?: [number, number, number, number]; fade_ms: number }
 
 /** The picture type from its first bytes (PNG, JPEG or WebP), or null. */
 export function graphicImageKind(bytes: Uint8Array): 'png' | 'jpg' | 'webp' | null {
@@ -83,6 +95,60 @@ export function importGraphicImage(run: string, file: string): string {
     try { writeFileSync(temporary, bytes, { mode: 0o600, flag: 'wx' }); renameSync(temporary, target) } finally { try { unlinkSync(temporary) } catch { /* moved */ } }
   }
   return name
+}
+
+/** The video file's kind from its first bytes (an ISO media file: MP4 / MOV / M4V; or WebM), or null. */
+export function graphicVideoKind(bytes: Uint8Array): 'iso' | 'webm' | null {
+  const text = (i: number, n: number): string => String.fromCharCode(...bytes.slice(i, i + n))
+  if (bytes.byteLength >= 12 && ['ftyp', 'moov', 'wide', 'mdat', 'free', 'skip'].includes(text(4, 4))) return 'iso'
+  if (bytes.byteLength >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return 'webm'
+  return null
+}
+
+/**
+ * A video the member chose for a Screen recording graphic: checked by its first bytes (MP4, MOV, M4V or WebM, up
+ * to 2 GB) and copied into the run's .graphics/videos/ under a name made from its content. Returns that name (the
+ * graphic's `video` field).
+ */
+export async function importGraphicVideo(run: string, file: string): Promise<string> {
+  const ext = extname(file).slice(1).toLowerCase()
+  if (!GRAPHIC_VIDEO_EXTENSIONS.includes(ext)) throw new Error('Use an MP4, MOV, M4V or WebM video.')
+  const stat = statSync(file)
+  if (!stat.isFile()) throw new Error('Use an MP4, MOV, M4V or WebM video.')
+  if (stat.size > MAX_GRAPHIC_VIDEO_BYTES) throw new Error('Use a video under 2 GB.')
+  const handle = await openFile(file, 'r')
+  const head = Buffer.alloc(16)
+  try { await handle.read(head, 0, 16, 0) } finally { await handle.close() }
+  const kind = graphicVideoKind(head)
+  if (!kind || (kind === 'webm') !== (ext === 'webm')) throw new Error('Use an MP4, MOV, M4V or WebM video.')
+  const hash = createHash('sha256')
+  await new Promise<void>((resolve, reject) => { createReadStream(file).on('data', (chunk) => hash.update(chunk)).on('end', () => resolve()).on('error', reject) })
+  const folder = join(graphicsDir(run, true), GRAPHIC_VIDEOS_DIR)
+  mkdirSync(folder, { recursive: true, mode: 0o700 })
+  if (lstatSync(folder).isSymbolicLink()) throw new Error('Graphics folder is invalid')
+  const name = `${hash.digest('hex').slice(0, 16)}.${ext}`
+  const target = join(folder, name)
+  if (!regularFile(target)) {
+    const temporary = join(folder, `.tmp-${randomUUID()}`)
+    try { await copyFile(file, temporary); renameSync(temporary, target) } finally { try { unlinkSync(temporary) } catch { /* moved */ } }
+  }
+  return name
+}
+
+/** Whether a Screen recording's video is there to play: 'source', or a file in the run's .graphics/videos/. */
+export function graphicVideoReady(run: string, name: string | undefined): boolean {
+  if (name === 'source') return true
+  return !!name && SCREEN_VIDEO_FILE.test(name) && regularFile(join(run, GRAPHICS_DIR, GRAPHIC_VIDEOS_DIR, name))
+}
+
+/** What the engine plays under a Screen recording's window (null when it isn't one). */
+export function screenInset(spec: GraphicRenderSpec, g: Pick<EditorGraphic, 'template' | 'fields'>): GraphicInset | null {
+  if (g.template !== 'screen_frame' || !g.fields.video) return null
+  const { hole } = screenFrameLayout(spec)
+  const share = (v: number, of: number): number => Math.round(v / of * 100000) / 100000
+  const zoom = screenZoom(g.fields)
+  return { video: g.fields.video, from_ms: Math.round(screenFrom(g.fields) * 1000), rect: [share(hole.x, spec.width), share(hole.y, spec.height), share(hole.w, spec.width), share(hole.h, spec.height)],
+    ...(zoom ? { zoom } : {}), fade_ms: SCREEN_FADE_MS }
 }
 
 /** A graphic's image as a data URL (the render page loads nothing else), or null when it is missing or invalid. */
@@ -217,8 +283,14 @@ export function candidateGraphicJobs(run: string, project: EditorProject, candid
     if (!graphicHasContent(g)) continue
     const spec = graphicSpec(project, candidate, g, extra), window = graphicWindow(candidate, g)
     if (!spec || !window) continue
+    let inset: GraphicInset | null = null
+    if (g.template === 'screen_frame') {
+      // Its video must be there (a file the member added, or the clip's own video).
+      if (!graphicVideoReady(run, g.fields.video)) continue
+      inset = screenInset(spec, g)
+    }
     const job = graphicJob(run, g.id, spec, window, g.fields.image, graphicDepth(g))
-    if (job) jobs.push(job)
+    if (job) jobs.push(inset ? { ...job, inset } : job)
   }
   return jobs
 }
@@ -229,7 +301,7 @@ let makeRenderer: RendererFactory = openGraphicRenderer
 export function setGraphicRendererFactory(factory: RendererFactory | null): void { makeRenderer = factory ?? openGraphicRenderer }
 
 /** One graphic to draw: what it shows, its cache name, where it plays (output ms) and whether it sits behind the speaker. */
-export interface GraphicJob { id: string; spec: GraphicRenderSpec; key: string; start_ms: number; duration_ms: number; depth?: 'behind' }
+export interface GraphicJob { id: string; spec: GraphicRenderSpec; key: string; start_ms: number; duration_ms: number; depth?: 'behind'; inset?: GraphicInset }
 
 /** Renders made outside the clip editor (Edit my recording, Remix) are kept in .graphics/reel/: the editor's sweep never removes them. */
 export const REEL_GRAPHICS_DIR = 'reel'
@@ -279,7 +351,9 @@ export async function renderGraphicJobs(run: string, jobs: GraphicJob[], cancell
         } finally { try { unlinkSync(temporary) } catch { /* moved */ } }
         logger.info('graphics.rendered', { template: job.spec.template, ms: Date.now() - started, frames: Math.ceil(job.spec.duration_ms * GRAPHIC_FPS / 1000) })
       }
-      done.push({ id: job.id, file, start_ms: job.start_ms, duration_ms: job.duration_ms, ...(job.spec.size ? { size: job.spec.size } : {}), ...(job.depth === 'behind' ? { depth: job.depth } : {}) })
+      done.push({ id: job.id, file, start_ms: job.start_ms, duration_ms: job.duration_ms, ...(job.spec.size ? { size: job.spec.size } : {}),
+        // Behind the speaker: the highest the engine may move the words to clear the head (the band's top).
+        ...(job.depth === 'behind' ? { depth: job.depth, min_top: Math.round(job.spec.box.top * 10000) / 10000 } : {}), ...(job.inset ? { inset: job.inset } : {}) })
     }
   } finally { renderer?.close() }
   return done

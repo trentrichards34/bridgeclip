@@ -288,7 +288,7 @@ test('new templates only draw the words, picture or icons they were given', () =
   // Icons: known generic names only, one per item.
   assert.deepEqual(plainCopy(mg.graphicIcons({ items: 'Email\nVideo\nChat', icons: 'mail\ninstagram\n' })), ['mail', null, null])
   assert.ok(mg.GRAPHIC_ICONS.every((name) => /^[a-z]+$/.test(name)))
-  assert.deepEqual(plainCopy(mg.GRAPHIC_IMAGE_TEMPLATES), ['logo', 'browser_frame', 'icon_pop'])
+  assert.deepEqual(plainCopy(mg.GRAPHIC_IMAGE_TEMPLATES), ['logo', 'browser_frame', 'icon_pop', 'orbit'])
 })
 
 test('a stage-size graphic takes the top of a 9:16 frame and shares every band', () => {

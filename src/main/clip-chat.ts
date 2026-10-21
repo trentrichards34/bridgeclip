@@ -163,10 +163,10 @@ export function buildChatContext(project: Pick<EditorProject, 'title' | 'duratio
   lines.push(c.hook === undefined ? 'Hook text: the run\'s original (not editable here until set).' : c.hook === null ? 'Hook text: none.' : `Hook text: "${c.hook.text}" (look ${c.hook.look.look}, font ${c.hook.look.font}${c.hook.look.look === 'brand' ? `, color ${c.hook.look.color}` : ''}).`)
   lines.push(`Captions: ${c.captions ? `on, style ${c.caption_preset}` : 'off'}. Call to action at the end: ${c.cta_id === undefined ? 'same as the run' : c.cta_id === null ? 'none' : 'one the member chose'}.`)
   const graphics = c.graphics ?? []
-  lines.push(graphics.length ? `Graphics: ${graphics.map((g) => `${g.id} ${g.template} at ${g.at_ms} ms for ${g.duration_ms} ms (${g.placement}): ${Object.entries(g.fields).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')}`).join('; ')}.` : 'Graphics: none.')
+  lines.push(graphics.length ? `Graphics: ${graphics.map((g) => `${g.id} ${g.template} at ${g.at_ms} ms for ${g.duration_ms} ms (${g.placement}${g.size && g.size !== 'card' ? `, ${g.size} size` : ''}${g.depth === 'behind' ? ', behind the speaker' : ''}): ${Object.entries(g.fields).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')}`).join('; ')}.` : 'Graphics: none.')
   if (project.aspect_ratio === '9:16') {
     const scenes = (c.stage_scenes ?? []).filter((s) => s.scene !== 'face')
-    lines.push(scenes.length ? `Scenes (face everywhere else): ${scenes.map((s) => `${s.scene} ${s.start_ms}–${s.end_ms} ms (${s.backdrop ?? 'light'} backdrop)`).join('; ')}.` : 'Scenes: face throughout.')
+    lines.push(scenes.length ? `Scenes (face everywhere else): ${scenes.map((s) => `${s.scene} ${s.start_ms}–${s.end_ms} ms (${s.backdrop ?? 'light'} backdrop${s.scene === 'stage' ? `, ${s.card ?? 'rounded'} card` : ''})`).join('; ')}.` : 'Scenes: face throughout.')
   }
   lines.push('')
   const tags: string[] = []
@@ -282,7 +282,8 @@ export async function editorChat(candidate: unknown, message: unknown, deps: Edi
     ])
     const result = await runClipChat({
       apiKey: deps.apiKey, model: deps.model, url: deps.url, onCost: deps.onCost,
-      project: { duration_ms: project.duration_ms, width: project.width, height: project.height, aspect_ratio: project.aspect_ratio, transcriptCount: project.transcript.length, title: project.title, transcript: project.transcript },
+      project: { duration_ms: project.duration_ms, width: project.width, height: project.height, aspect_ratio: project.aspect_ratio, transcriptCount: project.transcript.length, title: project.title, transcript: project.transcript,
+        words: (segments ?? []).flatMap((s) => s.words.map((w) => ({ word: w.word, start_ms: w.start_ms, end_ms: w.end_ms }))) },
       candidate: clip, message: text, history: chatHistory(key), segments, loud, signal: AbortSignal.timeout(CHAT_TIMEOUT_MS), points
     })
     // Remembered with its pins, so "the same spot" makes sense in the next message.

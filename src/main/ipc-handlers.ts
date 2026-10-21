@@ -5,9 +5,9 @@ import { randomUUID } from 'crypto'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
 import { BROLL_IMAGE_EXTENSIONS, BROLL_PLAN_ESTIMATE_USD, BROLL_VIDEO_EXTENSIONS } from '../shared/react-templates'
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
-import { addEditorCandidate, addEditorGraphicImage, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorProgress, suggestEditorHooks } from './clip-editor'
+import { addEditorCandidate, addEditorGraphicImage, addEditorGraphicVideo, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorProgress, suggestEditorHooks } from './clip-editor'
 import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
-import { chatEstimateUsd, chatInfo, chatModel, editorChat, resetChat } from './clip-chat'
+import { chatEstimateUsd, chatInfo, chatModel, editorChat, readChatTranscript, resetChat } from './clip-chat'
 import { editChatInfo, editRecordingChat, resetEditChat } from './edit-chat'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
@@ -861,6 +861,21 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose an image for the graphic', filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] })
     if (result.canceled || !result.filePaths[0]) return null
     return addEditorGraphicImage(path, result.filePaths[0])
+  })
+  // A video for a Screen recording graphic: chosen here (never a path from the page), checked and copied into the run.
+  handle('editor:graphicVideo', async (_event, path: unknown) => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a video for the screen recording', filters: [{ name: 'Videos', extensions: ['mp4', 'mov', 'm4v', 'webm'] }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return addEditorGraphicVideo(path, result.filePaths[0])
+  })
+  // The transcript's timed words in a window of the source (for timing text graphics to the voice).
+  handle('editor:words', async (_event, path: unknown, from: unknown, to: unknown) => {
+    await openEditor(path)
+    if (typeof from !== 'number' || typeof to !== 'number' || !Number.isFinite(from) || !Number.isFinite(to) || from < 0 || to < from || to - from > 4 * 3600 * 1000) throw new Error('Invalid time range')
+    const segments = await readChatTranscript(realpathSync(path as string), Math.round(from), Math.round(to))
+    return (segments ?? []).flatMap((s) => s.words.map((w) => ({ word: w.word, start_ms: w.start_ms, end_ms: w.end_ms }))).slice(0, 20000)
   })
   handle('editor:closeReady', (_event, saved: unknown) => editorCloseReady(saved))
   // An Automatic Create run opened in the editor: what it takes, doing it, and its progress.

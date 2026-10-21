@@ -35,25 +35,33 @@ from typing import Any, Iterable, Optional, Sequence
 # Templates the planner may pick (never the logo, the arrow or the browser window: those need the member's
 # picture or eye). headline_pill only when the member's own hook text is off; comment_cta only with a CTA keyword.
 AUTO_TEMPLATES = ('stat', 'title', 'list', 'checklist', 'before_after', 'quote', 'lower_third',
-                  'statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta')
+                  'statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta', 'orbit', 'feature_tile')
 TEMPLATE_FIELDS = {
     'stat': ('value', 'label'), 'title': ('text',), 'list': ('title', 'items'), 'checklist': ('title', 'items'),
     'before_after': ('before', 'after'), 'quote': ('text', 'author'), 'lower_third': ('name', 'role'),
     'statement': ('text', 'accent', 'subline'), 'sticky_notes': ('items',), 'strike_list': ('items', 'final', 'accent'),
     'headline_pill': ('text', 'phrase'), 'icon_pop': ('items', 'icons'), 'comment_cta': ('keyword', 'lead'),
+    'orbit': ('text', 'items', 'icons'), 'feature_tile': ('items', 'icons'),
 }
 # Templates a saved run may carry (the editor's other templates are never automatic).
-SAVED_TEMPLATES = AUTO_TEMPLATES + ('browser_frame',)
-SAVED_FIELDS = {**TEMPLATE_FIELDS, 'browser_frame': ('domain', 'title', 'accent', 'subline')}
+SAVED_TEMPLATES = AUTO_TEMPLATES + ('browser_frame', 'big_words')
+SAVED_FIELDS = {**TEMPLATE_FIELDS, 'browser_frame': ('domain', 'title', 'accent', 'subline'), 'big_words': ('text', 'style', 'vertical', 'motion')}
 ALL_FIELDS = ('value', 'label', 'text', 'title', 'items', 'before', 'after', 'author', 'name', 'role',
               'accent', 'subline', 'final', 'phrase', 'icons', 'keyword', 'lead')
 # The newer templates are held to every word (the older ones to most words, as before).
-STRICT_TEMPLATES = ('statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta')
+STRICT_TEMPLATES = ('statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta', 'orbit', 'feature_tile')
 # Drawn on the stage (top ~56% of a 9:16 frame) when Stage layouts are on; the rest stay cards.
-STAGE_TEMPLATES = ('statement', 'strike_list', 'sticky_notes', 'browser_frame', 'list', 'checklist')
+STAGE_TEMPLATES = ('statement', 'strike_list', 'sticky_notes', 'browser_frame', 'list', 'checklist', 'orbit', 'feature_tile')
 # Most items each template shows (motion-graphics.ts GRAPHIC_ITEM_LIMITS).
-ITEM_LIMITS = {'sticky_notes': 3, 'strike_list': 4, 'icon_pop': 4}
-MIN_ITEMS = {'sticky_notes': 2, 'strike_list': 1, 'icon_pop': 2, 'list': 2, 'checklist': 2}
+ITEM_LIMITS = {'sticky_notes': 3, 'strike_list': 4, 'icon_pop': 4, 'orbit': 6, 'feature_tile': 3}
+MIN_ITEMS = {'sticky_notes': 2, 'strike_list': 1, 'icon_pop': 2, 'list': 2, 'checklist': 2, 'orbit': 3, 'feature_tile': 1}
+# Templates whose items are revealed as they are said (item_ms).
+ITEM_TEMPLATES = ('list', 'checklist', 'sticky_notes', 'strike_list', 'icon_pop', 'orbit', 'feature_tile')
+# Text cards whose words build one by one: each word comes in as it is said (word_ms; motion-graphics.ts WORD_TIMED_TEMPLATES).
+WORD_TIMED = ('big_words', 'title', 'statement', 'headline_pill')
+# A word-timed card starts at most this early and holds this long after its last word ends (WORD_LEAD_MS, WORD_HOLD_MS).
+WORD_LEAD_MS = 100
+WORD_HOLD_MS = 700
 # Generic icons the Icon row can draw (mirror of GRAPHIC_ICONS in src/shared/motion-graphics.ts; never brand logos).
 GRAPHIC_ICONS = (
     'globe', 'mail', 'message', 'video', 'camera', 'mic', 'phone', 'laptop', 'code', 'terminal', 'database', 'file', 'search', 'link',
@@ -63,7 +71,7 @@ GRAPHIC_ICONS = (
 PLACEMENTS = ('top', 'middle', 'bottom')
 DEFAULT_MS = {'stat': 3500, 'title': 2500, 'list': 5000, 'lower_third': 4000, 'before_after': 4000, 'checklist': 5000, 'quote': 5000,
               'statement': 3500, 'sticky_notes': 4000, 'strike_list': 5000, 'headline_pill': 3500, 'icon_pop': 3500, 'comment_cta': 3500,
-              'browser_frame': 5000}
+              'browser_frame': 5000, 'orbit': 4500, 'feature_tile': 3500, 'big_words': 2500}
 # Cards per clip: about one per 6.5 s of the finished clip, at most five a minute (and never more than 12).
 SECONDS_PER_CARD = 6.5
 CARDS_PER_MINUTE = 5
@@ -115,11 +123,14 @@ GRAPHIC_SCHEMA: dict[str, Any] = {
         'placement': {'type': 'string', 'enum': list(PLACEMENTS)},
         'value': {'type': 'string', 'description': 'stat: the number as said, e.g. "15 billion", "$1,200", "25%".'},
         'label': {'type': 'string', 'description': 'stat: a few words said about the number.'},
-        'text': {'type': 'string', 'description': 'title, quote, statement or headline_pill: the words as said.'},
+        'text': {'type': 'string', 'description': 'title, quote, statement or headline_pill: the words as said; orbit: the one thing '
+                                                  'they all connect to (1-2 words as said), or "".'},
         'title': {'type': 'string', 'description': 'list or checklist: a short heading said in the clip, or "".'},
         'items': {'type': 'array', 'items': {'type': 'string'},
                   'description': 'list/checklist: 2-5 points; sticky_notes: 2-3 short phrases; strike_list: 1-4 things rejected; '
-                                 'icon_pop: 2-4 tools, apps or channels named. Each as said, in the order said.'},
+                                 'icon_pop: 2-4 tools, apps or channels named; orbit: 3-6 tools, features or channels said that all '
+                                 'connect to one thing; feature_tile: 1-3 features or capabilities named (1-3 words each). Each as said, '
+                                 'in the order said.'},
         'before': {'type': 'string', 'description': 'before_after: the first side, as said.'},
         'after': {'type': 'string', 'description': 'before_after: the second side, as said.'},
         'author': {'type': 'string', 'description': 'quote: who said it, only if their name is said; else "".'},
@@ -130,7 +141,7 @@ GRAPHIC_SCHEMA: dict[str, Any] = {
         'final': {'type': 'string', 'description': 'strike_list: the better choice, as said (e.g. "just a typed client").'},
         'phrase': {'type': 'string', 'description': 'headline_pill: the key words of the hook, drawn on a color box.'},
         'icons': {'type': 'array', 'items': {'type': 'string', 'enum': list(GRAPHIC_ICONS)},
-                  'description': 'icon_pop: one generic icon per item, in order (never a brand logo).'},
+                  'description': 'icon_pop, orbit, feature_tile: one generic icon per item, in order (never a brand logo).'},
         'keyword': {'type': 'string', 'description': 'comment_cta: the comment keyword, exactly as given.'},
         'lead': {'type': 'string', 'description': 'comment_cta: the word over the keyword ("Comment"), or "".'},
     },
@@ -149,6 +160,9 @@ _RULE_HEAD = (
     '- a number or result said -> "stat": value and label;\n'
     '- tools, apps, sites or channels named -> "icon_pop": items = the names as said, icons = one generic icon each from the list '
     '(e.g. mail for email, video for YouTube, camera for Instagram, message for a chat app, chart for analytics); never a brand logo;\n'
+    '- several tools or features (3-6) said as all part of one thing ("ads, landing pages, emails, all in the same account") -> '
+    '"orbit": items = each as said, icons = one generic icon each, text = the one thing they connect to if said;\n'
+    '- one to three features or capabilities named ("competitor research", "auto reports") -> "feature_tile": items as said, icons;\n'
     '- a person or company introduced -> "lower_third"; a before/after comparison -> "before_after"; a line worth reading -> "quote"; '
     'a few punchy words -> "title".\n'
 )
@@ -239,7 +253,7 @@ def has_content(template: str, fields: dict[str, str]) -> bool:
     items = fields.get('items', '').split('\n') if fields.get('items') else []
     if template == 'stat':
         return bool(_HAS_DIGIT.search(fields.get('value', '')))
-    if template in ('title', 'quote', 'statement'):
+    if template in ('title', 'quote', 'statement', 'big_words'):
         return bool(fields.get('text'))
     if template in MIN_ITEMS and template != 'strike_list':
         return len(items) >= MIN_ITEMS[template]
@@ -415,11 +429,90 @@ def item_times(graphic: dict, segments: Sequence, window_ms: int = STRICT_WINDOW
     return times
 
 
+def _timed_spans(segments: Sequence, lo: float, hi: float) -> list[tuple[str, int, int]]:
+    """(token, start ms, end ms) of each word said between lo and hi (source ms), in order (words with timings only)."""
+    out: list[tuple[str, int, int]] = []
+    for seg in segments:
+        if seg.end_time_ms < lo or seg.start_time_ms > hi:
+            continue
+        for w in getattr(seg, 'words', None) or []:
+            if w.end_time_ms >= lo and w.start_time_ms <= hi:
+                out.extend((t, int(w.start_time_ms), int(w.end_time_ms)) for t in _tokens(w.word))
+    return out
+
+
+def card_words(template: str, fields: dict) -> list[str]:
+    """The words a word-timed card shows, in reading order (motion-graphics.ts cardWords)."""
+    split = lambda text: ' '.join(str(text or '').split()).split(' ') if str(text or '').strip() else []  # noqa: E731
+    if template == 'big_words':
+        return split(fields.get('text'))[:3]
+    if template == 'headline_pill':
+        return split(fields.get('text')) + split(fields.get('phrase'))
+    if template == 'statement':
+        return split(fields.get('text')) + split(fields.get('subline'))
+    return split(fields.get('text'))
+
+
+def word_spans(graphic: dict, segments: Sequence, window_ms: int = STRICT_WINDOW_MS) -> Optional[list[tuple[int, int]]]:
+    """When each word on a word-timed card is said, in order: (start, end) source ms per card word, from the words
+    said near the card (a word may be followed by up to two others before the next); None when they aren't all."""
+    words = card_words(graphic['template'], graphic['fields'])
+    if not words:
+        return None
+    at = graphic['at_ms']
+    said = _timed_spans(segments, at - window_ms, at + graphic['duration_ms'] + window_ms)
+    best = None
+    for start in range(len(said)):
+        out, k, ok = [], start, True
+        for n, word in enumerate(words):
+            tokens = _tokens(word)
+            if not tokens:
+                # Punctuation only: shown with the word before it.
+                out.append(out[-1] if out else (said[start][1], said[start][2]))
+                continue
+            limit = k + 1 if n == 0 else min(len(said), k + 3)
+            hit = next((m for m in range(k, min(limit, len(said))) if _same(tokens[0], said[m][0]) or said[m][0] == tokens[0]), None)
+            if hit is None:
+                ok = False
+                break
+            end = said[min(len(said) - 1, hit + len(tokens) - 1)][2]
+            out.append((said[hit][1], end))
+            k = hit + len(tokens)
+        if ok and (best is None or abs(out[0][0] - at) < abs(best[0][0] - at)):
+            best = out
+    return best
+
+
+def next_start(kept: Sequence[dict], g: dict) -> Optional[int]:
+    """The start of the next card after `g` (source ms), or None."""
+    later = [k['at_ms'] for k in kept if k['at_ms'] > g['at_ms']]
+    return min(later) if later else None
+
+
+def word_timed(g: dict, segments: Sequence, clip_end: float, following: Optional[int]) -> dict:
+    """A word-timed card with each word's spoken time (word_ms, ms into the card) and on screen until WORD_HOLD_MS after
+    its last word ends (within the clip and before the next card). Unchanged when its words can't all be timed."""
+    spans = word_spans(g, segments)
+    if not spans:
+        return g
+    at = g['at_ms']
+    if spans[0][0] - at > WORD_LEAD_MS or spans[0][0] < at:
+        # Start just before the first word (never earlier than it was placed when that was already early enough).
+        at = max(0, spans[0][0] - WORD_LEAD_MS) if spans[0][0] >= at else spans[0][0]
+    end = max(at + g['duration_ms'], spans[-1][1] + WORD_HOLD_MS)
+    limit = min(clip_end, following - GAP_MS if following is not None else clip_end, at + EDITOR_MAX_MS)
+    length = int(max(EDITOR_MIN_MS, min(end, limit) - at))
+    offsets = [max(0, min(length - 300, t - at)) for t, _ in spans]
+    return {**g, 'at_ms': int(at), 'duration_ms': length, 'fields': {**g['fields'], 'word_ms': '\n'.join(str(int(o)) for o in offsets)}}
+
+
 def _strict_said(graphic: dict, segments: Sequence) -> bool:
     """Every word on a newer card is said near it; accents sit inside their text; items are said in order;
     an icon row's icons are generic ones; a comment prompt comes when the speaker asks for comments."""
     t, f = graphic['template'], graphic['fields']
     at, length = graphic['at_ms'], graphic['duration_ms']
+    if t in ('orbit', 'feature_tile') and any(n and n not in GRAPHIC_ICONS for n in f.get('icons', '').split('\n')):
+        return False
     if t == 'statement' and f.get('accent') and not accent_inside(f.get('text', ''), f['accent']):
         return False
     if t == 'strike_list' and f.get('accent') and not accent_inside(f.get('final', ''), f['accent']):
@@ -436,7 +529,7 @@ def _strict_said(graphic: dict, segments: Sequence) -> bool:
             checked.pop('lead', None)
     if not all(_said(w, heard) for text in checked.values() for w in _words(text)):
         return False
-    if t in ('sticky_notes', 'strike_list', 'icon_pop') and item_times(graphic, segments) is None:
+    if t in ('sticky_notes', 'strike_list', 'icon_pop', 'orbit', 'feature_tile') and item_times(graphic, segments) is None:
         return False
     return True
 
@@ -465,7 +558,7 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
 def spoken_start(graphic: dict, segments: Sequence) -> Optional[int]:
     """When the card's first word is said near its suggested time (source ms), or None."""
     f, t = graphic['fields'], graphic['template']
-    first_text = (_card_lines(graphic) or [''])[0] if t in ('list', 'checklist', 'sticky_notes', 'strike_list', 'icon_pop') else ''
+    first_text = (_card_lines(graphic) or [''])[0] if t in ITEM_TEMPLATES else ''
     if t in ('list', 'checklist') and f.get('title'):
         first_text = f['title']
     for key in ('text', 'value', 'name', 'before'):
@@ -541,11 +634,12 @@ def window(ranges: Sequence[Sequence[float]], speed: float, at: float, length: f
 
 
 _PRIORITY = {'stat': 6, 'strike_list': 6, 'list': 5, 'checklist': 5, 'statement': 5, 'headline_pill': 5, 'sticky_notes': 4,
-             'icon_pop': 4, 'before_after': 4, 'lower_third': 4, 'comment_cta': 3, 'quote': 2, 'title': 1, 'browser_frame': 4}
+             'icon_pop': 4, 'before_after': 4, 'lower_third': 4, 'comment_cta': 3, 'quote': 2, 'title': 1, 'browser_frame': 4,
+             'orbit': 5, 'feature_tile': 4}
 
 
 def _priority(g: dict) -> int:
-    fields = ' '.join(v for k, v in g['fields'].items() if k != 'item_ms')
+    fields = ' '.join(v for k, v in g['fields'].items() if k not in ('item_ms', 'word_ms'))
     return _PRIORITY.get(g['template'], 1) + (2 if _HAS_DIGIT.search(fields) else 0)
 
 
@@ -597,7 +691,7 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
             continue
         if template == 'comment_cta' and (not opts['cta_keyword'] or g['fields'].get('keyword', '').lower() != opts['cta_keyword'].lower()):
             continue
-        g = {**g, 'fields': {k: v for k, v in g['fields'].items() if k != 'item_ms'}}
+        g = {**g, 'fields': {k: v for k, v in g['fields'].items() if k not in ('item_ms', 'word_ms')}}
         if not words_said(g, segments):
             continue
         at, length = float(g['at_ms']), float(g['duration_ms'])
@@ -668,25 +762,29 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
     out_list = []
     for g in sorted(kept, key=lambda g: g['at_ms']):
         fields = dict(g['fields'])
-        if g['template'] in ('list', 'checklist', 'sticky_notes', 'strike_list', 'icon_pop'):
+        if g['template'] in ITEM_TEMPLATES:
             times = item_times(g, segments)
             if times and all(g['at_ms'] - 300 <= t < g['at_ms'] + g['duration_ms'] - 300 for t in times):
                 # Each item comes in as it is said (ms into the card, source time).
                 fields['item_ms'] = '\n'.join(str(max(0, t - g['at_ms'])) for t in times)
+        if g['template'] in WORD_TIMED:
+            g = word_timed(g, segments, clip_end, next_start(kept, g))
+            if g.get('fields', {}).get('word_ms'):
+                fields['word_ms'] = g['fields']['word_ms']
         out_list.append({'id': new_id(taken), 'template': g['template'], 'at_ms': g['at_ms'], 'duration_ms': g['duration_ms'],
                          'placement': g['placement'] if g.get('placement') in PLACEMENTS else 'top', 'fields': fields, 'origin': 'auto',
                          'size': graphic_size(g['template'], opts['stage'])})
     return out_list
 
 
-def stage_scenes_for(graphics: Sequence[dict], start_ms: int, end_ms: int, backdrop: str = 'light') -> list[dict]:
+def stage_scenes_for(graphics: Sequence[dict], start_ms: int, end_ms: int, backdrop: str = 'light', card: str = 'rounded') -> list[dict]:
     """Stage scenes (source time, face left out) around a clip's stage-size graphics (stage_scenes.suggest_scenes)."""
     from clip_engine.services.stage_scenes import suggest_scenes
     shifted = [{**g, 'at_ms': g['at_ms'] - start_ms} for g in graphics if isinstance(g, dict) and g.get('size') == 'stage']
     if not shifted or end_ms <= start_ms:
         return []
     return [{**s, 'start_ms': s['start_ms'] + start_ms, 'end_ms': s['end_ms'] + start_ms}
-            for s in suggest_scenes(shifted, end_ms - start_ms, backdrop) if s['scene'] != 'face']
+            for s in suggest_scenes(shifted, end_ms - start_ms, backdrop, card) if s['scene'] != 'face']
 
 
 def on_stage(graphic: dict, scenes: Sequence[dict]) -> bool:
@@ -715,9 +813,10 @@ def checked_saved(raw: Any, duration_ms: int) -> list[dict]:
         clean = clean_fields(g['template'], fields, SAVED_FIELDS)
         if not clean:
             continue
-        item_ms = fields.get('item_ms')
-        if isinstance(item_ms, str) and re.fullmatch(r'\d{1,5}(\n\d{1,5}){0,5}', item_ms):
-            clean['item_ms'] = item_ms
+        for key in ('item_ms', 'word_ms'):
+            times = fields.get(key)
+            if isinstance(times, str) and re.fullmatch(r'\d{1,5}(\n\d{1,5}){0,15}', times):
+                clean[key] = times
         ids.add(gid)
         out.append({'id': gid, 'template': g['template'], 'at_ms': at, 'duration_ms': length,
                     'placement': g.get('placement') if g.get('placement') in PLACEMENTS else 'top', 'fields': clean, 'origin': 'auto',
@@ -731,12 +830,14 @@ def checked_saved_scenes(raw: Any, duration_ms: int) -> list[dict]:
         return []
     out = []
     for s in raw:
-        if not isinstance(s, dict) or s.get('scene') not in ('stage', 'visual') or s.get('backdrop', 'light') not in ('light', 'dark', 'brand'):
+        if not isinstance(s, dict) or s.get('scene') not in ('stage', 'visual') \
+                or s.get('backdrop', 'light') not in ('light', 'dark', 'brand', 'grid', 'gradient') or s.get('card', 'rounded') not in ('rounded', 'arch'):
             return []
         a, b = s.get('start_ms'), s.get('end_ms')
         if type(a) is not int or type(b) is not int or a < 0 or b > duration_ms or b - a < 1200 or (out and a < out[-1]['end_ms']):
             return []
-        out.append({'scene': s['scene'], 'start_ms': a, 'end_ms': b, **({'backdrop': s['backdrop']} if s.get('backdrop', 'light') != 'light' else {})})
+        out.append({'scene': s['scene'], 'start_ms': a, 'end_ms': b, **({'backdrop': s['backdrop']} if s.get('backdrop', 'light') != 'light' else {}),
+                    **({'card': 'arch'} if s['scene'] == 'stage' and s.get('card') == 'arch' else {})})
     return out
 
 

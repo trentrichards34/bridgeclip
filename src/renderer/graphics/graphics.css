@@ -260,3 +260,60 @@
 .mg-big.vertical.right .mg-big-drift { right: calc(var(--u) * 28); }
 .mg-big.vertical .mg-big-line { writing-mode: vertical-rl; }
 .mg-big.vertical.left .mg-big-line { transform: rotate(180deg); }
+
+/* Orbit: a center tile, a thin ring that draws round, icon nodes on it */
+.mg-orbit { display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; }
+.mg-orbit-push { position: relative; }
+.mg-orbit-ring { position: absolute; left: 0; top: 0; overflow: visible; }
+.mg-orbit-ring circle { fill: none; stroke: rgba(var(--accent-rgb), .55); stroke-linecap: round; }
+.mg-orbit-ring .mg-orbit-spoke { stroke: rgba(var(--accent-rgb), .28); stroke-linecap: round; stroke-dasharray: 1; }
+.mg-orbit-hub { position: absolute; display: grid; place-items: center; border-radius: calc(var(--u) * 56); overflow: hidden; }
+.mg-orbit-hub img { width: 100%; height: 100%; object-fit: cover; }
+.mg-orbit-hub-svg { width: 46%; height: 46%; stroke: var(--accent-ink); stroke-width: 1.8; }
+.mg-orbit-hub-text { padding: 0 calc(var(--u) * 18); font-size: calc(var(--u) * 52); line-height: 1.02; text-align: center; color: var(--ink); text-wrap: balance; overflow-wrap: anywhere; }
+.mg-orbit-node { position: absolute; display: flex; flex-direction: column; align-items: center; }
+.mg-orbit-dot {
+  width: var(--orbit-node); height: var(--orbit-node); border-radius: 50%; display: grid; place-items: center; position: relative;
+  background: var(--paper); box-shadow: 0 0 0 calc(var(--u) * 3) rgba(var(--accent-rgb), .35), var(--shadow);
+}
+.mg-orbit-svg { width: 50%; height: 50%; stroke: var(--accent-ink); stroke-width: 1.9; }
+.mg-orbit-letter { font-family: var(--serif); font-style: italic; font-size: calc(var(--orbit-node) * .55); line-height: 1; color: var(--accent-ink); }
+.mg-orbit-label {
+  margin-top: calc(var(--u) * 10); padding: calc(var(--u) * 6) calc(var(--u) * 14); border-radius: 999px; background: rgba(255, 255, 255, .9);
+  font-weight: 700; font-size: calc(var(--u) * 28); line-height: 1.1; color: var(--ink); white-space: nowrap; box-shadow: 0 calc(var(--u) * 4) calc(var(--u) * 14) rgba(15, 23, 42, .12);
+}
+
+/* Feature tile: frosted pills with an icon and a short label */
+.mg-features { display: flex; justify-content: center; width: var(--card-w); }
+.mg-features-stack { display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 26); }
+.mg-feature {
+  display: flex; align-items: center; gap: calc(var(--u) * 26); padding: calc(var(--u) * 20) calc(var(--u) * 46) calc(var(--u) * 20) calc(var(--u) * 20);
+  border-radius: 999px; background: linear-gradient(180deg, rgba(255, 255, 255, .86), rgba(255, 255, 255, .62));
+  box-shadow: inset 0 0 0 calc(var(--u) * 2) rgba(255, 255, 255, .9), inset 0 calc(var(--u) * -10) calc(var(--u) * 24) rgba(var(--accent-rgb), .10),
+    0 calc(var(--u) * 18) calc(var(--u) * 44) rgba(15, 23, 42, .18), 0 0 calc(var(--u) * 40) rgba(var(--accent-rgb), .18);
+}
+.mg-feature-art {
+  position: relative; flex: none; width: calc(var(--u) * 104); height: calc(var(--u) * 104); border-radius: calc(var(--u) * 30); display: grid; place-items: center;
+  background: linear-gradient(145deg, rgba(var(--accent-rgb), .78), var(--accent)); box-shadow: inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, .35);
+}
+.mg-feature-svg { width: 54%; height: 54%; stroke: var(--on-accent); stroke-width: 2; }
+.mg-feature-letter { font-family: var(--serif); font-style: italic; font-size: calc(var(--u) * 64); line-height: 1; color: var(--on-accent); }
+.mg-feature-dot {
+  position: absolute; right: calc(var(--u) * -8); top: calc(var(--u) * -8); width: calc(var(--u) * 34); height: calc(var(--u) * 34); border-radius: 50%;
+  background: #ff3b30; box-shadow: 0 0 0 calc(var(--u) * 5) #fff, 0 calc(var(--u) * 4) calc(var(--u) * 10) rgba(255, 59, 48, .45);
+}
+.mg-feature-label { font-weight: 800; font-size: calc(var(--u) * var(--feature-size, 52)); line-height: 1.05; color: var(--ink); white-space: nowrap; letter-spacing: -.02em; }
+
+/* Screen recording: a dark window with a soft glow; its middle is see-through (the engine plays the video there) */
+.mg-screen-glow, .mg-screen-window, .mg-screen-video { position: absolute; }
+.mg-screen-glow {
+  box-shadow: 0 0 calc(var(--u) * 60) calc(var(--u) * 6) rgba(var(--accent-rgb), .55), 0 0 calc(var(--u) * 150) calc(var(--u) * 30) rgba(var(--accent-rgb), .32),
+    0 calc(var(--u) * 30) calc(var(--u) * 80) rgba(15, 23, 42, .35);
+  -webkit-mask: none; clip-path: none;
+}
+.mg-screen-window { border-style: solid; border-color: #0d0e13; background: transparent; box-shadow: inset 0 0 0 calc(var(--u) * 1) rgba(255, 255, 255, .05), 0 0 0 calc(var(--u) * 2) rgba(255, 255, 255, .10); }
+.mg-screen-bar { position: absolute; left: 0; right: 0; display: flex; align-items: center; gap: calc(var(--u) * 18); padding: 0 calc(var(--u) * 10); }
+.mg-screen-bar .mg-dots { width: auto; }
+.mg-screen-bar .mg-dots span { width: calc(var(--u) * 18); height: calc(var(--u) * 18); }
+.mg-screen-label { flex: 1; min-width: 0; text-align: center; margin-right: calc(var(--u) * 80); font-weight: 700; font-size: calc(var(--u) * 26); color: rgba(255, 255, 255, .78); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-screen-video { object-fit: cover; background: #0d0e13; }

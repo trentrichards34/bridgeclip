@@ -248,7 +248,8 @@ export const ENGINE_CAPTIONS: Record<string, { size: number; emphasis: string | 
   bubble: { size: 96, emphasis: '#FFE234', font: 'LilitaOne' },
   retro: { size: 80, emphasis: '#FFD23F', font: 'BowlbyOne' },
   lime: { size: 78, emphasis: '#C6FF3D', font: 'ArchivoBlack' },
-  vintage: { size: 98, emphasis: '#FF6B4A', font: 'Fraunces72pt' }
+  vintage: { size: 98, emphasis: '#FF6B4A', font: 'Fraunces72pt' },
+  highlight_box: { size: 74, emphasis: null, font: 'Montserrat-ExtraBold' }
 }
 
 /**

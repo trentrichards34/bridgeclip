@@ -105,6 +105,9 @@ export function graphicPhrase(g: Pick<EditorGraphic, 'template' | 'fields'>): st
     case 'headline_pill': return 'headline'
     case 'comment_cta': return f.keyword?.trim() ? `“${short(f.keyword, 24)}” comment prompt` : 'comment prompt'
     case 'big_words': return f.text?.trim() ? `“${short(f.text, 24)}” big words` : 'big words'
+    case 'orbit': return f.text?.trim() ? `“${short(f.text, 24)}” orbit` : 'orbit'
+    case 'feature_tile': { const first = graphicItems(f.items)[0]; return first ? `“${short(first, 24)}” feature tile` : 'feature tile' }
+    case 'screen_frame': return f.video === 'source' ? 'screen recording (from this clip)' : 'screen recording'
   }
 }
 

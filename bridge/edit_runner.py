@@ -186,11 +186,15 @@ def parse_request(raw):
         raise ValueError("Invalid pins")
     if raw.get("recipe", "clean") not in RECIPES or not isinstance(raw.get("cutout_intro", False), bool) or not isinstance(raw.get("raw_intro", False), bool):
         raise ValueError("Invalid edit style")
+    def _min_top_ok(g: dict) -> bool:
+        # Behind the speaker: the highest the engine may move the words (share of the frame).
+        return "min_top" not in g or (type(g["min_top"]) in (int, float) and 0 <= g["min_top"] <= 0.6)
+
     # Motion graphics main drew (in the run's .graphics/reel/), each starting as its word is said.
     graphics = raw.get("graphics") or []
     if not isinstance(graphics, list) or len(graphics) > 8 or any(
-            not isinstance(g, dict) or not {"file", "word", "duration_ms"} <= set(g) <= {"file", "word", "duration_ms", "depth"}
-            or g.get("depth", "behind") != "behind" or not isinstance(g.get("file"), str)
+            not isinstance(g, dict) or not {"file", "word", "duration_ms"} <= set(g) <= {"file", "word", "duration_ms", "depth", "min_top"}
+            or g.get("depth", "behind") != "behind" or not _min_top_ok(g) or not isinstance(g.get("file"), str)
             or not re.fullmatch(r"[a-f0-9]{64}\.mov", g["file"]) or type(g.get("word")) is not int or not 0 <= g["word"] < len(words)
             or type(g.get("duration_ms")) is not int or not 400 <= g["duration_ms"] <= 8000 for g in graphics):
         raise ValueError("Invalid graphics")

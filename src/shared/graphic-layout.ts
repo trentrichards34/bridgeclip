@@ -178,11 +178,13 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
   delete fields.image
   delete fields.color
   delete fields.item_ms
-  // Item reveal times (source ms from the graphic's start) on the finished clip's clock.
-  const items = (graphic.fields.item_ms ?? '').split(/[\s,]+/).filter(Boolean).map(Number)
-  if (items.length && items.every(Number.isFinite)) {
-    const out = items.map((t) => outputTime(candidate, graphic.at_ms + t))
-    if (out.every((t) => t !== null)) fields.item_ms = out.map((t) => String(Math.max(0, Math.round((t as number) - window.start_ms)))).join('\n')
+  delete fields.word_ms
+  // Item and word reveal times (source ms from the graphic's start) on the finished clip's clock.
+  for (const key of ['item_ms', 'word_ms'] as const) {
+    const times = (graphic.fields[key] ?? '').split(/[\s,]+/).filter(Boolean).map(Number)
+    if (!times.length || !times.every(Number.isFinite)) continue
+    const out = times.map((t) => outputTime(candidate, graphic.at_ms + t))
+    if (out.every((t) => t !== null)) fields[key] = out.map((t) => String(Math.max(0, Math.round((t as number) - window.start_ms)))).join('\n')
   }
   let box = graphicBox(graphic.placement, frame, graphicBandSize(graphic))
   // A stage graphic in a Visual scene (the speaker card is away) takes the frame down to just over the captions.

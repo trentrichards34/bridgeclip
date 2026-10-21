@@ -10,10 +10,10 @@
  */
 import { CAPTION_PRESET_IDS, isCaptionPresetId } from './caption-presets'
 import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_HIDE_AFTER_S, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, HOOK_LOOK_TOOL_PROPERTIES, applyHookLookArgs, headlineBarColor, headlineTextBg, hideAfterLabel } from './headline-look'
-import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHICS_PER_CLIP, fitGraphicInCut, isGraphicTemplate, nearestOutputTime, outputTime, parseGraphics, placeInFreeBand, sourceTimeAt, type EditorGraphic, type GraphicPlacement } from './motion-graphics'
+import { GRAPHIC_DEPTHS, GRAPHIC_DEPTH_TEMPLATES, GRAPHIC_ICONS, GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, GRAPHIC_SIZES, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHICS_PER_CLIP, SCREEN_SHAPES, WORD_TIMED_TEMPLATES, fitGraphicInCut, graphicCanGoBehind, isGraphicDepth, isGraphicSize, isGraphicTemplate, isScreenVideo, matchCardWords, nearestOutputTime, outputTime, parseGraphics, placeInFreeBand, sourceTimeAt, type EditorGraphic, type GraphicPlacement, type TimedWord } from './motion-graphics'
 import { MAX_HOOK_CHARS, SPLIT_RANGE, TRANSCRIPT_CLIP_MS, defaultCrop, editDuration, framingAt, normalizeSceneTransitions, panelRows, parseCandidateEdit, parseHook, type CandidateEdit, type Crop, type EditorRange, type EditorScene } from './clip-editor'
 import { hookShare, outputSize } from './graphic-layout'
-import { BACKDROP_LABELS, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_KINDS, SCENE_LABELS, parseScenes, setScene, type SceneBackdrop, type SceneKind } from './scenes'
+import { BACKDROP_LABELS, CARD_LABELS, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_CARDS, SCENE_KINDS, SCENE_LABELS, parseScenes, setScene, type SceneBackdrop, type SceneCard, type SceneKind } from './scenes'
 import { PIN_PROP, aimGraphic, checkHighlightFields, pinArg, type ChatPoint } from './chat-point'
 
 import { CHAT_MAX_TOOL_CALLS, chatClock, chatFail as fail, chatReason as reasonOf, chatSeconds, chatSentence as sentence, chatText as text, type ChatReplyOf } from './chat-core'
@@ -50,6 +50,8 @@ export type ChatReply = ChatReplyOf<ChatStep>
 /** The project facts the tools need. */
 export interface ChatProject {
   duration_ms: number; width: number; height: number; aspect_ratio: '9:16' | '16:9'; transcriptCount: number
+  /** The transcript's timed words near the clip (when saved): word-timed cards snap to them. */
+  words?: TimedWord[]
 }
 
 /** "Clip is now 37.7s." after the steps are applied. */
@@ -318,7 +320,8 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
       const pinAt = pin && args.at_ms === undefined ? pinSourceMs(c, pin) : null
       const range = pinAt === null ? undefined : c.ranges.find(([a, b]) => pinAt >= a && pinAt < b)
       const at = pinAt !== null && range ? Math.max(range[0], pinAt - 400) : args.at_ms
-      const { graphic: fit, note } = fitted(graphicFrom({ id: newId(), template: template.id, at_ms: at, duration_ms: args.duration_ms ?? 2500, placement: args.placement ?? 'middle', fields: {}, origin: 'chat' }, args, c, project, pin), c)
+      const { graphic: fit, note } = fitted(graphicFrom({ id: newId(), template: template.id, at_ms: at, duration_ms: args.duration_ms ?? 2500, placement: args.placement ?? 'middle', fields: {}, origin: 'chat',
+        ...(template.id === 'big_words' && args.depth === undefined ? { depth: 'behind' as const } : {}) }, args, c, project, pin), c)
       // Another graphic in its band at the same time: the next free band (top, bottom, middle).
       const graphic = placeInFreeBand(graphics, fit)
       const band = graphic.placement !== fit.placement ? ` at the ${graphic.placement} (the ${fit.placement} has another graphic then)` : ''
@@ -345,13 +348,15 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
       const scene = args.scene as SceneKind
       if (args.backdrop !== undefined && !(SCENE_BACKDROPS as readonly unknown[]).includes(args.backdrop)) fail(`backdrop must be ${SCENE_BACKDROPS.join(', ')}.`)
       if (scene === 'face' && args.backdrop !== undefined) fail('Face has no backdrop. Leave out backdrop.')
+      if (args.card !== undefined && !(SCENE_CARDS as readonly unknown[]).includes(args.card)) fail(`card must be ${SCENE_CARDS.join(', ')}.`)
+      if (scene !== 'stage' && args.card !== undefined) fail('Only a stage scene has a card. Leave out card.')
       const start = clipStart(c), end = clipEnd(c)
       const a = Math.max(start, ms(args.start_ms, 'start_ms', project)), b = Math.min(end, ms(args.end_ms, 'end_ms', project))
       if (b <= a) fail('start_ms and end_ms must cover part of the clip, with end_ms after start_ms.')
       if (b - a < MIN_SCENE_MS) fail(`A scene lasts at least ${MIN_SCENE_MS / 1000} seconds. Make end_ms later or start_ms earlier.`)
       let stage_scenes
-      try { stage_scenes = parseScenes(setScene(c.stage_scenes ?? [], a, b, scene, args.backdrop as SceneBackdrop | undefined, project.duration_ms), project.duration_ms) } catch (error) { return fail((error as Error).message) }
-      const look = scene === 'face' ? '' : ` on the ${BACKDROP_LABELS[(args.backdrop as SceneBackdrop | undefined) ?? 'light'].toLowerCase()} backdrop`
+      try { stage_scenes = parseScenes(setScene(c.stage_scenes ?? [], a, b, scene, args.backdrop as SceneBackdrop | undefined, project.duration_ms, args.card as SceneCard | undefined), project.duration_ms) } catch (error) { return fail((error as Error).message) }
+      const look = scene === 'face' ? '' : ` on the ${BACKDROP_LABELS[(args.backdrop as SceneBackdrop | undefined) ?? 'light'].toLowerCase()} backdrop${args.card === 'arch' ? ` with the ${CARD_LABELS.arch.toLowerCase()} card` : ''}`
       return done(`${SCENE_LABELS[scene]} scene${look} from ${clipClock(c, a)} to ${clipClock(c, b)}${why}`, { stage_scenes }, a, 3)
     }
     default:
@@ -387,11 +392,25 @@ function graphicFrom(base: GraphicDraft, args: Record<string, unknown>, c: Candi
       const limit = key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS
       const raw = String(value)
       if (raw.length > limit) fail(`fields.${key} must be at most ${limit} characters.`)
-      fields[key] = key === 'items' ? raw.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 5).join('\n') : raw.replace(/\s+/g, ' ').trim()
+      fields[key] = key === 'items' ? raw.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 6).join('\n')
+        : key === 'icons' ? raw.split('\n').map((line) => line.trim().toLowerCase()).slice(0, 6).join('\n') : raw.replace(/\s+/g, ' ').trim()
     }
   }
   if (template.id === 'logo') fail('The chat can’t add a logo graphic. The member can add one in the Graphics row.')
-  let graphic: EditorGraphic = { id: base.id, template: template.id, at_ms: at, duration_ms: Math.round(base.duration_ms as number), placement: base.placement as GraphicPlacement, fields, origin: base.origin ?? 'chat' }
+  if (template.id === 'screen_frame') checkScreenFields(fields, c)
+  if (fields.icons !== undefined) {
+    const bad = fields.icons.split('\n').map((n) => n.trim()).filter((n) => n && !(GRAPHIC_ICONS as readonly string[]).includes(n))
+    if (bad.length) fail(`fields.icons: one per line from ${GRAPHIC_ICONS.join(', ')} (never a brand logo).`)
+  }
+  if (args.size !== undefined && !isGraphicSize(args.size)) fail(`size must be ${GRAPHIC_SIZES.join(', ')}.`)
+  if (args.depth !== undefined) {
+    if (!isGraphicDepth(args.depth)) fail(`depth must be ${GRAPHIC_DEPTHS.join(' or ')}.`)
+    if (args.depth === 'behind' && !graphicCanGoBehind(template.id)) fail(`Only ${GRAPHIC_DEPTH_TEMPLATES.join(', ')} can go behind the speaker.`)
+  }
+  const size = args.size !== undefined ? args.size as EditorGraphic['size'] : base.size
+  const depth = args.depth !== undefined ? args.depth as EditorGraphic['depth'] : base.depth
+  let graphic: EditorGraphic = { id: base.id, template: template.id, at_ms: at, duration_ms: Math.round(base.duration_ms as number), placement: base.placement as GraphicPlacement, fields, origin: base.origin ?? 'chat',
+    ...(size && size !== 'card' ? { size } : {}), ...(depth && graphicCanGoBehind(template.id) ? { depth } : {}) }
   if (template.id === 'highlight') checkHighlightFields(fields)
   if (pin) {
     const aimed = aimGraphic(graphic, pin, typeof (args.fields as Record<string, unknown> | undefined)?.shape === 'string')
@@ -399,7 +418,29 @@ function graphicFrom(base: GraphicDraft, args: Record<string, unknown>, c: Candi
     graphic = { ...aimed, placement: args.placement !== undefined ? graphic.placement : aimed.placement }
   }
   if (!template.fields.some((f) => graphic.fields[f])) fail(`Give the ${template.id} graphic its text: ${template.fields.join(', ')}.`)
+  // Word-timed cards start on their first spoken word, show each word as it is said and hold after the last
+  // (when the words are said near at_ms and the times weren't given).
+  if (WORD_TIMED_TEMPLATES.includes(template.id) && project.words?.length && args.duration_ms === undefined) {
+    const textChanged = ['text', 'phrase', 'subline'].some((k) => (args.fields as Record<string, unknown> | undefined)?.[k] !== undefined)
+    if (!graphic.fields.word_ms || textChanged || args.at_ms !== undefined) {
+      const { word_ms: _old, ...rest } = graphic.fields
+      void _old
+      const matched = matchCardWords({ ...graphic, fields: rest }, project.words, graphic.at_ms)
+      graphic = matched ?? { ...graphic, fields: rest }
+    }
+  }
   return graphic
+}
+
+/** A Screen recording's fields from the chat: the clip's own video ('source') or a video the member already added to this clip. */
+function checkScreenFields(fields: Record<string, string>, c: CandidateEdit): void {
+  const video = fields.video ?? 'source'
+  const known = (c.graphics ?? []).some((g) => g.fields.video === video)
+  if (!isScreenVideo(video) || (video !== 'source' && !known)) fail('fields.video must be "source" (part of this clip\'s own video) or a video the member already added to a Screen recording on this clip.')
+  fields.video = video
+  if (fields.from !== undefined && !(Number(fields.from) >= 0)) fail('fields.from must be the seconds into the video where it starts.')
+  if (fields.shape !== undefined && !(SCREEN_SHAPES as readonly string[]).includes(fields.shape)) fail(`fields.shape must be ${SCREEN_SHAPES.join(', ')}.`)
+  if (fields.zoom !== undefined && fields.zoom.split(/[\s,;]+/).filter(Boolean).map(Number).filter(Number.isFinite).length !== 4) fail('fields.zoom must be "x, y, w, h" (0 to 1 of what the window shows).')
 }
 
 /**
@@ -438,9 +479,11 @@ export function parseChatSteps(value: unknown): ChatStep[] {
 
 const reason = { type: 'string', maxLength: 120, description: 'Optional: why, in a few words for the member (e.g. "to include Joe\'s \'Wowww.\'").' }
 const msProp = (description: string): Record<string, unknown> => ({ type: 'number', minimum: 0, description })
+const SIZE_PROP = { type: 'string', enum: [...GRAPHIC_SIZES], description: 'compact, card (default) or stage (the top half of a vertical clip, over a Stage or Visual scene).' }
+const DEPTH_PROP = { type: 'string', enum: [...GRAPHIC_DEPTHS], description: `behind: the speaker stands in front of the words ("put the words behind me"); only ${GRAPHIC_DEPTH_TEMPLATES.join(', ')}. Big words start behind.` }
 const fieldsProp = {
   type: 'object',
-  description: `Template text. stat: value, label · title: text · list/checklist: title, items (newline-separated, up to 5) · lower_third: name, role · before_after: before, after · quote: text, author · highlight: shape (arrow or circle), x, y (0..1 as text). Up to ${MAX_GRAPHIC_FIELD_CHARS} characters each. Words and numbers must come from what is said in the clip or from the member.`,
+  description: `Template text. stat: value, label · title: text · list/checklist: title, items (newline-separated, up to 5) · lower_third: name, role · before_after: before, after · quote: text, author · highlight: shape (arrow or circle), x, y (0..1 as text) · big_words: text (1-3 words said) · orbit: text (center label), items (3-6 node labels, newline-separated), icons (one per node from ${GRAPHIC_ICONS.join('/')}), labels ("off" hides them) · feature_tile: items (1-3 short labels), icons (one per label), dot ("on": a red notification dot) · screen_frame: video ("source": part of this clip's own video), from (seconds into it), zoom ("x, y, w, h" 0..1 of the view to zoom into slowly), label (window title), shape (wide, square or tall). Up to ${MAX_GRAPHIC_FIELD_CHARS} characters each. Words and numbers must come from what is said in the clip or from the member; never a brand logo. Text cards (big_words, title, statement, headline_pill) are timed to their spoken words automatically when they match the transcript near at_ms.`,
   additionalProperties: { type: 'string' }
 }
 
@@ -457,8 +500,8 @@ export const CHAT_TOOLS: { name: ChatToolName; description: string; parameters: 
   { name: 'set_captions', description: 'Turn burned-in captions on or off, or choose their style.', parameters: { type: 'object', properties: { on: { type: 'boolean' }, preset: { type: 'string', enum: [...CAPTION_PRESET_IDS] }, reason }, additionalProperties: false } },
   { name: 'set_title', description: 'Rename the clip (its title in the editor and Library).', parameters: { type: 'object', properties: { title: { type: 'string', minLength: 1, maxLength: 200 }, reason }, required: ['title'], additionalProperties: false } },
   { name: 'play', description: 'Play a moment of the source for the member (no edit). Use it to ask "is this the moment you mean?" before editing when you are not sure.', parameters: { type: 'object', properties: { at_ms: msProp('Source ms.'), seconds: { type: 'number', minimum: 1, maximum: MAX_PLAY_SECONDS }, reason }, required: ['at_ms'], additionalProperties: false } },
-  { name: 'add_graphic', description: `Add a motion graphic over the clip (${GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo').map((t) => `${t.id}: ${t.detail}`).join(' ')}) With pin ("put an arrow here"): a highlight points at the pin (give fields.shape arrow or circle), another template sits in the band nearest it, and at_ms defaults to the pin's time.`, parameters: { type: 'object', properties: { template: { type: 'string', enum: GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo').map((t) => t.id) }, at_ms: msProp('Source ms, inside the clip. Time it to the words it shows.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['template'], additionalProperties: false } },
-  { name: 'update_graphic', description: 'Change a graphic on the clip by id. Give only what changes. With pin ("move the graphic here"): an arrow or circle points at the pin; another graphic moves to the band (top, middle or bottom) nearest it.', parameters: { type: 'object', properties: { id: { type: 'string' }, at_ms: msProp('Source ms.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['id'], additionalProperties: false } },
+  { name: 'add_graphic', description: `Add a motion graphic over the clip (${GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo').map((t) => `${t.id}: ${t.detail}`).join(' ')}) With pin ("put an arrow here"): a highlight points at the pin (give fields.shape arrow or circle), another template sits in the band nearest it, and at_ms defaults to the pin's time.`, parameters: { type: 'object', properties: { template: { type: 'string', enum: GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo').map((t) => t.id) }, at_ms: msProp('Source ms, inside the clip. Time it to the words it shows.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, size: SIZE_PROP, depth: DEPTH_PROP, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['template'], additionalProperties: false } },
+  { name: 'update_graphic', description: 'Change a graphic on the clip by id. Give only what changes. With pin ("move the graphic here"): an arrow or circle points at the pin; another graphic moves to the band (top, middle or bottom) nearest it.', parameters: { type: 'object', properties: { id: { type: 'string' }, at_ms: msProp('Source ms.'), duration_ms: { type: 'number', minimum: GRAPHIC_MIN_MS, maximum: GRAPHIC_MAX_MS }, placement: { type: 'string', enum: [...GRAPHIC_PLACEMENTS] }, size: SIZE_PROP, depth: DEPTH_PROP, fields: fieldsProp, pin: PIN_PROP, reason }, required: ['id'], additionalProperties: false } },
   { name: 'remove_graphic', description: 'Remove a graphic from the clip by id.', parameters: { type: 'object', properties: { id: { type: 'string' }, reason }, required: ['id'], additionalProperties: false } },
-  { name: 'set_scene', description: `Set start_ms–end_ms of a vertical clip to a scene (over whatever scene was there). face: the normal full-frame video (the default). stage: a backdrop with the speaker in a card at the bottom and the top free for graphics (use it while a graphic explains something). visual: backdrop only, so a big graphic fills the frame. At least ${MIN_SCENE_MS / 1000} s. The card slides and the backdrop fades between scenes.`, parameters: { type: 'object', properties: { start_ms: msProp('Source ms.'), end_ms: msProp('Source ms.'), scene: { type: 'string', enum: [...SCENE_KINDS] }, backdrop: { type: 'string', enum: [...SCENE_BACKDROPS], description: 'stage/visual only: light (default), dark or brand (the hook color).' }, reason }, required: ['start_ms', 'end_ms', 'scene'], additionalProperties: false } }
+  { name: 'set_scene', description: `Set start_ms–end_ms of a vertical clip to a scene (over whatever scene was there). face: the normal full-frame video (the default). stage: a backdrop with the speaker in a card at the bottom and the top free for graphics (use it while a graphic explains something). visual: backdrop only, so a big graphic fills the frame. At least ${MIN_SCENE_MS / 1000} s. The card slides and the backdrop fades between scenes.`, parameters: { type: 'object', properties: { start_ms: msProp('Source ms.'), end_ms: msProp('Source ms.'), scene: { type: 'string', enum: [...SCENE_KINDS] }, backdrop: { type: 'string', enum: [...SCENE_BACKDROPS], description: 'stage/visual only: light (default), dark, brand (a light tint of the hook color), grid (lavender to the brand color with a faint grid; captions go white on a color box) or gradient (a soft brand gradient).' }, card: { type: 'string', enum: [...SCENE_CARDS], description: 'stage only: rounded (default) or arch (full width, big rounded top corners, flush with the bottom).' }, reason }, required: ['start_ms', 'end_ms', 'scene'], additionalProperties: false } }
 ]

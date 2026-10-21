@@ -648,7 +648,7 @@ async def run_editor(config, progress=None):
         if graphics is not None:
             from clip_engine.services.graphics_overlay import checked_graphics
             with failure_code('invalid_edit'):
-                checked_graphics(run, graphics, 10 ** 9)
+                checked_graphics(run, graphics, 10 ** 9, source=source)
         # Scenes (face / stage / visual) main worked out on the finished clip's clock.
         scenes = config.get('scenes')
         if scenes is not None:
@@ -808,7 +808,7 @@ async def render_export(run, project, c, output, source, render_transcript, repl
                if scenes and project['aspect_ratio'] == '9:16' else {})))
         if graphics:
             from clip_engine.services.graphics_overlay import checked_graphics, overlay_graphics
-            await overlay_graphics(renderer, result.output_path, checked_graphics(run, graphics, result.duration_ms))
+            await overlay_graphics(renderer, result.output_path, checked_graphics(run, graphics, result.duration_ms, source=source))
         # The run's voice cleanup and music (Create), the same as on its other clips.
         from clip_engine.services.audio_finish import finish_in_place, load_run_audio
         audio = load_run_audio(run)

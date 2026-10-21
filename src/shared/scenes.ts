@@ -3,8 +3,10 @@
  * instead of floating over the face. Three scenes:
  *
  * - face: the normal full-frame framing (the default: any time without a scene is face).
- * - stage: a backdrop fills the frame, the speaker sits in a rounded card along
- *   the bottom, the top ~53% is free for graphics and the captions sit between.
+ * - stage: a backdrop fills the frame, the speaker sits in a card along the
+ *   bottom (rounded with a margin, or an "arch": full width with big rounded top
+ *   corners, flush with the bottom edge), the top ~53% is free for graphics and
+ *   the captions sit between.
  * - visual: the card is off-screen; the whole frame is backdrop (for a big graphic).
  *
  * The clip editor keeps a clip's scenes in SOURCE time (`CandidateEdit.stage_scenes`,
@@ -14,9 +16,17 @@
  */
 
 export type SceneKind = 'face' | 'stage' | 'visual'
-export type SceneBackdrop = 'light' | 'dark' | 'brand'
+/**
+ * light: soft light gray. dark: charcoal. brand: a light tint of the brand color.
+ * grid: lavender to the brand color (purple without one) with a faint square
+ * grid. gradient: a soft brand gradient, no grid.
+ */
+export type SceneBackdrop = 'light' | 'dark' | 'brand' | 'grid' | 'gradient'
+/** The speaker card in a stage scene: a rounded card with a margin, or an arch (full width, big rounded top corners, flush with the bottom). */
+export type SceneCard = 'rounded' | 'arch'
 export const SCENE_KINDS: readonly SceneKind[] = ['face', 'stage', 'visual']
-export const SCENE_BACKDROPS: readonly SceneBackdrop[] = ['light', 'dark', 'brand']
+export const SCENE_BACKDROPS: readonly SceneBackdrop[] = ['light', 'dark', 'brand', 'grid', 'gradient']
+export const SCENE_CARDS: readonly SceneCard[] = ['rounded', 'arch']
 
 export interface StageScene {
   scene: SceneKind
@@ -24,6 +34,8 @@ export interface StageScene {
   end_ms: number
   /** stage / visual: the backdrop (absent: light). Never set on face. */
   backdrop?: SceneBackdrop
+  /** stage only: the speaker card's shape (absent: rounded). */
+  card?: SceneCard
 }
 
 export const MAX_SCENES = 24
@@ -39,6 +51,8 @@ export const MIN_RENDER_SCENE_MS = 300
 /** Stage geometry as shares of the 9:16 frame (1080 x 1920), the same as the engine's. */
 export const STAGE_LAYOUT = {
   cardSide: 40 / 1080, cardBottom: 40 / 1920, cardHeight: 0.37, cardRadius: 48 / 1080,
+  /** The arch card's top corners (it is full width, its top where the rounded card's is). */
+  archRadius: 120 / 1080,
   /** Graphics own the frame above this line in a stage scene. */
   stageBottom: 0.53,
   /** Caption center in a visual scene. */
@@ -51,7 +65,22 @@ export const SCENE_DETAILS: Record<SceneKind, string> = {
   stage: 'A backdrop with you in a card at the bottom. The top is free for graphics.',
   visual: 'Backdrop only, so a graphic can fill the frame.'
 }
-export const BACKDROP_LABELS: Record<SceneBackdrop, string> = { light: 'Light', dark: 'Dark', brand: 'Brand' }
+export const BACKDROP_LABELS: Record<SceneBackdrop, string> = { light: 'Light', dark: 'Dark', brand: 'Brand', grid: 'Grid', gradient: 'Gradient' }
+export const CARD_LABELS: Record<SceneCard, string> = { rounded: 'Rounded', arch: 'Arch' }
+
+/** The look automatic Stage layouts use: the brand grid with the arch card when there is a brand color, else light and rounded (engine: stage_scenes.auto_look). */
+export function autoSceneLook(brand: string | null | undefined): { backdrop: SceneBackdrop; card: SceneCard } {
+  return typeof brand === 'string' && /^#[0-9a-f]{6}$/i.test(brand) ? { backdrop: 'grid', card: 'arch' } : { backdrop: 'light', card: 'rounded' }
+}
+
+/**
+ * How the captions in a scene's band are drawn on a backdrop (engine: stage_scenes.caption_mode): dark text on
+ * the light ones, white words on a color box on grid and gradient, the clip's own captions on dark.
+ */
+export function sceneCaptionLook(backdrop: SceneBackdrop | undefined): 'dark_text' | 'box' | 'own' {
+  const b = backdrop ?? 'light'
+  return b === 'grid' || b === 'gradient' ? 'box' : b === 'dark' ? 'own' : 'dark_text'
+}
 
 /** Where the captions sit in a scene, as a share of the output height (null: the clip's usual place). */
 export function sceneCaptionY(scene: SceneKind): number | null {
@@ -64,10 +93,12 @@ export function sceneCaptionY(scene: SceneKind): number | null {
 
 const isKind = (x: unknown): x is SceneKind => (SCENE_KINDS as readonly unknown[]).includes(x)
 const isBackdrop = (x: unknown): x is SceneBackdrop => (SCENE_BACKDROPS as readonly unknown[]).includes(x)
+const isCard = (x: unknown): x is SceneCard => (SCENE_CARDS as readonly unknown[]).includes(x)
 const clean = (s: StageScene): StageScene => s.scene === 'face'
   ? { scene: 'face', start_ms: s.start_ms, end_ms: s.end_ms }
-  : { scene: s.scene, start_ms: s.start_ms, end_ms: s.end_ms, ...(s.backdrop && s.backdrop !== 'light' ? { backdrop: s.backdrop } : {}) }
-const same = (a: StageScene, b: StageScene): boolean => a.scene === b.scene && (a.backdrop ?? 'light') === (b.backdrop ?? 'light')
+  : { scene: s.scene, start_ms: s.start_ms, end_ms: s.end_ms, ...(s.backdrop && s.backdrop !== 'light' ? { backdrop: s.backdrop } : {}),
+      ...(s.scene === 'stage' && s.card === 'arch' ? { card: s.card } : {}) }
+const same = (a: StageScene, b: StageScene): boolean => a.scene === b.scene && (a.backdrop ?? 'light') === (b.backdrop ?? 'light') && (a.card ?? 'rounded') === (b.card ?? 'rounded')
 
 /**
  * Validates untrusted scenes (a saved edit, the renderer, the chat): a list of
@@ -80,13 +111,14 @@ export function parseScenes(value: unknown, duration = Number.MAX_SAFE_INTEGER):
   const scenes = value.map((raw): StageScene => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('A scene is malformed.')
     const s = raw as Record<string, unknown>
-    if (Object.keys(s).some((key) => !['scene', 'start_ms', 'end_ms', 'backdrop'].includes(key))) throw new Error('A scene is malformed.')
+    if (Object.keys(s).some((key) => !['scene', 'start_ms', 'end_ms', 'backdrop', 'card'].includes(key))) throw new Error('A scene is malformed.')
     if (!isKind(s.scene)) throw new Error('A scene is face, stage or visual.')
-    if (s.backdrop !== undefined && !isBackdrop(s.backdrop)) throw new Error('A scene’s backdrop is light, dark or brand.')
+    if (s.backdrop !== undefined && !isBackdrop(s.backdrop)) throw new Error('A scene’s backdrop is light, dark, brand, grid or gradient.')
+    if (s.card !== undefined && !isCard(s.card)) throw new Error('A scene’s card is rounded or arch.')
     const start = s.start_ms, end = s.end_ms
     if (typeof start !== 'number' || typeof end !== 'number' || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > duration) throw new Error('A scene must be inside the video.')
     if (end - start < MIN_SCENE_MS - 0.5) throw new Error(`A scene lasts at least ${MIN_SCENE_MS / 1000} seconds.`)
-    return clean({ scene: s.scene, start_ms: Math.round(start), end_ms: Math.round(end), ...(s.backdrop ? { backdrop: s.backdrop as SceneBackdrop } : {}) })
+    return clean({ scene: s.scene, start_ms: Math.round(start), end_ms: Math.round(end), ...(s.backdrop ? { backdrop: s.backdrop as SceneBackdrop } : {}), ...(s.card ? { card: s.card as SceneCard } : {}) })
   })
   scenes.forEach((s, i) => { if (i > 0 && s.start_ms < scenes[i - 1].end_ms) throw new Error('Scenes can’t overlap.') })
   return scenes
@@ -136,14 +168,14 @@ function carve(scenes: readonly StageScene[], start: number, end: number): Stage
  * and the chat use). Pieces of other scenes left under 1.2 s are dropped; face
  * pieces are kept only when `keepFace` (by default face is just "no scene").
  */
-export function setScene(scenes: readonly StageScene[], start: number, end: number, scene: SceneKind, backdrop?: SceneBackdrop, duration?: number): StageScene[] {
+export function setScene(scenes: readonly StageScene[], start: number, end: number, scene: SceneKind, backdrop?: SceneBackdrop, duration?: number, card?: SceneCard): StageScene[] {
   const a = Math.max(0, Math.round(Math.min(start, end))), b = Math.round(Math.min(duration ?? Number.MAX_SAFE_INTEGER, Math.max(start, end)))
   const next = carve(scenes, a, b).filter((s) => s.end_ms - s.start_ms >= MIN_SCENE_MS)
-  if (scene !== 'face') next.push(clean({ scene, start_ms: a, end_ms: b, backdrop }))
+  if (scene !== 'face') next.push(clean({ scene, start_ms: a, end_ms: b, backdrop, card }))
   return normalizeScenes(next.sort((x, y) => x.start_ms - y.start_ms), { duration, keepFace: false })
 }
 
-/** Change one scene (by index): its kind, backdrop or times, kept clear of its neighbors and at least 1.2 s long. */
+/** Change one scene (by index): its kind, backdrop, card or times, kept clear of its neighbors and at least 1.2 s long. */
 export function updateScene(scenes: readonly StageScene[], index: number, patch: Partial<StageScene>, bounds: { start: number; end: number }): StageScene[] {
   const s = scenes[index]
   if (!s) return [...scenes]
@@ -160,12 +192,12 @@ export function updateScene(scenes: readonly StageScene[], index: number, patch:
   }
   if (end - start < MIN_SCENE_MS) return [...scenes]
   const kind = patch.scene ?? s.scene
-  const next = clean({ scene: kind, start_ms: start, end_ms: end, backdrop: 'backdrop' in patch ? patch.backdrop : s.backdrop })
+  const next = clean({ scene: kind, start_ms: start, end_ms: end, backdrop: 'backdrop' in patch ? patch.backdrop : s.backdrop, card: 'card' in patch ? patch.card : s.card })
   return scenes.map((x, i) => i === index ? next : x)
 }
 
 /** A new scene at the playhead: `DEFAULT_SCENE_MS` long, fitted into the free time there inside [start, end). Null when there is no room. */
-export function newSceneAt(scenes: readonly StageScene[], at: number, bounds: { start: number; end: number }, scene: SceneKind = 'stage', backdrop?: SceneBackdrop): StageScene | null {
+export function newSceneAt(scenes: readonly StageScene[], at: number, bounds: { start: number; end: number }, scene: SceneKind = 'stage', backdrop?: SceneBackdrop, card?: SceneCard): StageScene | null {
   if (scenes.length >= MAX_SCENES) return null
   const t = Math.max(bounds.start, Math.min(bounds.end, Math.round(at)))
   if (scenes.some((s) => t >= s.start_ms && t < s.end_ms)) return null
@@ -174,7 +206,7 @@ export function newSceneAt(scenes: readonly StageScene[], at: number, bounds: { 
   if (hi - lo < MIN_SCENE_MS) return null
   const length = Math.min(DEFAULT_SCENE_MS, hi - lo)
   const start = Math.max(lo, Math.min(hi - length, t))
-  return clean({ scene, start_ms: start, end_ms: start + length, backdrop })
+  return clean({ scene, start_ms: start, end_ms: start + length, backdrop, card })
 }
 
 /** The scenes with `s` added in time order. */
@@ -212,9 +244,9 @@ const ease = (p: number): number => { const x = Math.max(0, Math.min(1, p)); ret
 /**
  * How far into a scene change the finished clip is at output time `t` (the same rules as the
  * render: a change starts at the scene boundary and lasts 350 ms): the backdrop on top and its
- * opacity, the one under it, and how far the card is up (0..1).
+ * opacity, the one under it, how far the card is up (0..1) and its shape (the stage's shown or last shown).
  */
-export function sceneMix(scenes: readonly StageScene[], t: number): { backdrop: SceneBackdrop | null; under: SceneBackdrop | null; alpha: number; card: number } {
+export function sceneMix(scenes: readonly StageScene[], t: number): { backdrop: SceneBackdrop | null; under: SceneBackdrop | null; alpha: number; card: number; shape: SceneCard } {
   const at = (ms: number): StageScene | null => scenes.find((s) => ms >= s.start_ms && ms < s.end_ms) ?? null
   const now = at(t)
   // The last boundary at or before t.
@@ -223,7 +255,8 @@ export function sceneMix(scenes: readonly StageScene[], t: number): { backdrop: 
   const before = edge > 0 ? at(edge - 1) : now
   const cardNow = now?.scene === 'stage' ? 1 : 0, cardBefore = before?.scene === 'stage' ? 1 : 0
   const card = cardBefore + (cardNow - cardBefore) * p
+  const shape: SceneCard = (now?.scene === 'stage' ? now.card : before?.scene === 'stage' ? before.card : undefined) ?? 'rounded'
   const bNow = now ? now.backdrop ?? 'light' : null, bBefore = before ? before.backdrop ?? 'light' : null
-  if (bNow) return { backdrop: bNow, under: bBefore && bBefore !== bNow ? bBefore : null, alpha: bBefore === bNow ? 1 : p, card }
-  return { backdrop: bBefore, under: null, alpha: bBefore ? 1 - p : 0, card }
+  if (bNow) return { backdrop: bNow, under: bBefore && bBefore !== bNow ? bBefore : null, alpha: bBefore === bNow ? 1 : p, card, shape }
+  return { backdrop: bBefore, under: null, alpha: bBefore ? 1 - p : 0, card, shape }
 }

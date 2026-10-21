@@ -7,12 +7,12 @@
  * offscreen (src/renderer/graphics/templates.ts).
  */
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes } from 'lucide-react'
+import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes, Film, AudioLines } from 'lucide-react'
 import type { MountedGraphic } from '../graphics/templates'
 import {
   GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
-  bigWordsOptions, clampGraphicMs, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, newGraphic, removeGraphic, templateInfo, templateItems, updateGraphic, withGraphic,
-  MAX_BIG_WORDS, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId
+  bigWordsOptions, clampGraphicMs, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, templateInfo, templateItems, updateGraphic, withGraphic,
+  MAX_BIG_WORDS, SCREEN_VIDEO_FILE, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
 } from '../../shared/motion-graphics'
 import { GRAPHIC_DEFAULT_COLOR, graphicSpec, graphicStyle, outputSize } from '../../shared/graphic-layout'
 import type { CandidateEdit, EditorProject } from '../../shared/clip-editor'
@@ -27,6 +27,11 @@ import { Switch } from './ui/Switch'
 /** Where a graphic's picture lives in the run (copied there by main). */
 export function graphicImageUrl(outputDir: string, name: string | undefined): string | undefined {
   return name && /^[a-f0-9]{16}\.(png|jpg|webp)$/.test(name) ? localFileUrl(`${outputDir.replace(/[\\/]+$/, '')}/.graphics/images/${name}`) : undefined
+}
+
+/** Where a Screen recording's video file lives in the run (copied there by main). */
+export function graphicVideoUrl(outputDir: string, name: string | undefined): string | undefined {
+  return name && SCREEN_VIDEO_FILE.test(name) ? localFileUrl(`${outputDir.replace(/[\\/]+$/, '')}/.graphics/videos/${name}`) : undefined
 }
 
 // The templates (and anime.js) load with the first graphic shown, not with the app.
@@ -64,8 +69,10 @@ export function GraphicView({ spec, time, width, loop, className }: { spec: Grap
 }
 
 /** The real animations over the Output monitor, at the playhead. */
-export function GraphicsOverlay({ canvas, project, candidate, time, outputDir }: {
+export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, sourceUrl }: {
   canvas: RefObject<HTMLCanvasElement | null>; project: EditorProject; candidate: CandidateEdit; time: number; outputDir: string
+  /** The clip's own video (the editor's preview of the source), for a Screen recording that shows part of it. */
+  sourceUrl?: string
 }): React.JSX.Element | null {
   const [bounds, setBounds] = useState({ width: 0, height: 0, left: 0, top: 0 })
   useEffect(() => {
@@ -87,6 +94,11 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir }:
     const spec = graphicSpec(project, candidate, g)
     if (!spec) return []
     if (graphicUsesImage(g.template)) spec.image = graphicImageUrl(outputDir, g.fields.image)
+    if (g.template === 'screen_frame') {
+      // The preview plays the video in the window (the export lays it in with the engine).
+      const url = g.fields.video === 'source' ? sourceUrl : graphicVideoUrl(outputDir, g.fields.video)
+      if (url) spec.preview_video = { url, from: screenFrom(g.fields) }
+    }
     return [{ g, spec, local }]
   })
   if (!bounds.width || !shown.length) return null
@@ -101,7 +113,7 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir }:
 export const SHORT: Record<GraphicTemplateId, string> = {
   stat: 'Stat', title: 'Title', list: 'List', lower_third: 'Name', logo: 'Logo', before_after: 'Before/after', checklist: 'Checklist', quote: 'Quote', highlight: 'Arrow/circle',
   statement: 'Statement', sticky_notes: 'Notes', strike_list: 'Crossed out', browser_frame: 'Browser', icon_pop: 'Icons', headline_pill: 'Headline', comment_cta: 'Comment',
-  big_words: 'Big words'
+  big_words: 'Big words', orbit: 'Orbit', feature_tile: 'Tiles', screen_frame: 'Screen'
 }
 export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): string {
   const f = g.fields
@@ -109,7 +121,8 @@ export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): s
   const words = g.template === 'stat' ? [f.value, f.label] : g.template === 'lower_third' ? [f.name, f.role] : g.template === 'before_after' ? [f.before, f.after]
     : g.template === 'list' || g.template === 'checklist' ? [f.title, first] : g.template === 'logo' ? [f.caption] : g.template === 'highlight' ? [f.shape === 'arrow' ? 'Arrow' : 'Circle']
       : g.template === 'sticky_notes' || g.template === 'icon_pop' ? [first] : g.template === 'strike_list' ? [first, f.final] : g.template === 'browser_frame' ? [f.domain, f.title]
-        : g.template === 'headline_pill' ? [f.text, f.phrase] : g.template === 'comment_cta' ? [f.keyword] : [f.text]
+        : g.template === 'headline_pill' ? [f.text, f.phrase] : g.template === 'comment_cta' ? [f.keyword] : g.template === 'orbit' ? [f.text, first]
+          : g.template === 'feature_tile' ? [first] : g.template === 'screen_frame' ? [f.label || (f.video === 'source' ? 'This clip' : f.video ? 'Your video' : '')] : [f.text]
   return words.map((w) => w?.trim()).filter(Boolean).join(' · ')
 }
 
@@ -203,7 +216,9 @@ export const SAMPLES: Record<GraphicTemplateId, Record<string, string>> = {
   sticky_notes: { items: 'First note\nSecond note' }, strike_list: { items: 'Old way\nOther old way', final: 'The better way', accent: 'better way' },
   browser_frame: { domain: 'yoursite.com', title: 'Your page headline', accent: 'headline' }, icon_pop: { items: 'Email\nVideo\nChat', icons: 'mail\nvideo\nmessage' },
   headline_pill: { text: 'Your first line', phrase: 'Key words' }, comment_cta: { keyword: 'WORD' },
-  big_words: { text: 'Big words', style: 'mixed' }
+  big_words: { text: 'Big words', style: 'mixed' },
+  orbit: { text: 'Hub', items: 'Email\nVideo\nChat\nCalendar\nChart', icons: 'mail\nvideo\nmessage\ncalendar\nchart', labels: 'off' },
+  feature_tile: { items: 'Your feature', icons: 'search', dot: 'on' }, screen_frame: { label: 'Your screen', shape: 'square' }
 }
 
 const NUMBER_WORDS = /[$€£]?\d[\d,]*(?:\.\d+)?\s?(?:%|percent\b|[kKmMxX]\b|thousand\b|million\b|billion\b|hours?\b|days?\b|minutes?\b|years?\b)?/
@@ -219,12 +234,13 @@ export function wordsAtPlayhead(template: GraphicTemplateId, line: string | unde
 }
 
 export const FIELD_LABELS: Record<string, string> = { value: 'Number', label: 'Label', text: 'Words', title: 'Title', items: 'Items (one per line)', name: 'Name', role: 'Role', caption: 'Caption', before: 'Before', after: 'After', author: 'Who said it',
-  accent: 'Words in italics', subline: 'Small line under it', final: 'Last line', domain: 'Website address', highlights: 'Boxes on the picture', phrase: 'Key words (on the color box)', keyword: 'Keyword to comment', lead: 'Word above it' }
+  accent: 'Words in italics', subline: 'Small line under it', final: 'Last line', domain: 'Website address', highlights: 'Boxes on the picture', phrase: 'Key words (on the color box)', keyword: 'Keyword to comment', lead: 'Word above it',
+  from: 'Starts at (seconds into the video)', zoom: 'Zoom into (optional)' }
 /** Per-template field labels where the general one doesn't fit. */
 const TEMPLATE_FIELD_LABELS: Partial<Record<GraphicTemplateId, Record<string, string>>> = {
   sticky_notes: { items: 'Notes (one per line, up to 3)' }, strike_list: { items: 'Crossed-out items (one per line, up to 4)' },
   icon_pop: { items: 'Labels (one per line, up to 4)' }, headline_pill: { text: 'First line' }, browser_frame: { title: 'Headline (when there’s no picture)' },
-  big_words: { text: `Words (up to ${MAX_BIG_WORDS})` }
+  big_words: { text: `Words (up to ${MAX_BIG_WORDS})` }, orbit: { text: 'Center label', items: 'Labels (one per line, 3 to 6)' }, feature_tile: { items: 'Tiles (one per line, up to 3)' }, screen_frame: { label: 'Window title (optional)' }
 }
 /** Hints under a field. */
 const FIELD_HINTS: Partial<Record<GraphicTemplateId, Record<string, string>>> = {
@@ -232,7 +248,9 @@ const FIELD_HINTS: Partial<Record<GraphicTemplateId, Record<string, string>>> = 
   strike_list: { accent: 'Words from the last line, circled. Empty: the last word.' },
   browser_frame: { accent: 'Words from the headline, with a marker.', highlights: 'One box per line: across, down, width, height (0 to 1 of the picture), then the second it shows. For example: 0.1, 0.3, 0.6, 0.08, 1.5' },
   comment_cta: { lead: 'Empty: “Comment”.' },
-  big_words: { text: 'Use words you say here. Each line fills the width; press Enter to choose where a new line starts.' }
+  big_words: { text: 'Use words you say here. Each line fills the width; press Enter to choose where a new line starts.' },
+  orbit: { text: 'Short, like the one thing they all connect to. Empty: an icon (or your image).', items: 'One per node. Each node gets an icon below.' },
+  screen_frame: { from: 'For this clip: the second in the source video where the screen part starts.', zoom: 'Across, down, width, height (0 to 1 of what the window shows), for a slow zoom in. For example: 0.1, 0.2, 0.5, 0.5' }
 }
 export const fieldLabel = (template: GraphicTemplateId, key: string): string => TEMPLATE_FIELD_LABELS[template]?.[key] ?? FIELD_LABELS[key] ?? key
 const ICON_LABELS: Record<string, string> = { message: 'Chat', phone: 'Phone', file: 'Document', chart: 'Bar chart', trending: 'Trending up', dollar: 'Money', cart: 'Shopping cart', card: 'Credit card', bot: 'Robot', book: 'Book', idea: 'Light bulb', dashboard: 'Dashboard' }
@@ -257,15 +275,56 @@ export function BigWordsFields({ fields, onField }: { fields: Record<string, str
 }
 
 /** The Icon row's icon for each label (generic icons only; a brand's logo is an image the member adds). */
-export function IconFields({ fields, onField, imageNote = true }: { fields: Record<string, string>; onField: (key: string, value: string) => void; imageNote?: boolean }): React.JSX.Element | null {
-  const labels = templateItems('icon_pop', fields.items)
+export function IconFields({ fields, onField, imageNote = true, template = 'icon_pop' }: { fields: Record<string, string>; onField: (key: string, value: string) => void; imageNote?: boolean; template?: 'icon_pop' | 'orbit' | 'feature_tile' }): React.JSX.Element | null {
+  const labels = templateItems(template, fields.items)
   if (!labels.length) return null
-  const icons = graphicIcons(fields)
+  const icons = graphicIcons(fields, template)
   return <div className="space-y-1.5"><p className="editor-label">Icons</p>
     {labels.map((label, i) => <div key={i} className="flex items-center justify-between gap-2 text-2xs"><span className="truncate">{label}</span>
       <Select size="sm" aria-label={`Icon for ${label}`} value={icons[i] ?? ''} options={ICON_OPTIONS} searchable
         onChange={(name) => onField('icons', labels.map((_, k) => k === i ? name : icons[k] ?? '').join('\n'))} /></div>)}
     <p className="text-2xs text-ink-subtle">Simple icons only.{imageNote ? ' To show a brand’s logo, choose its image above.' : ' “Letter” shows the label’s first letter.'}</p></div>
+}
+
+const SHAPE_OPTIONS: { value: ScreenShape; label: string }[] = [{ value: 'wide', label: 'Wide' }, { value: 'square', label: 'Square' }, { value: 'tall', label: 'Tall' }]
+
+/** A Screen recording's video (part of this clip, or a video file the member adds) and the window's shape. */
+export function ScreenFields({ fields, outputDir, onField }: { fields: Record<string, string>; outputDir: string; onField: (key: string, value: string) => void }): React.JSX.Element {
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const file = fields.video && fields.video !== 'source' ? fields.video : null
+  const choose = (): void => {
+    setError(null); setBusy(true)
+    void getApi().editor.graphicVideo(outputDir).then((name) => { if (name) onField('video', name) })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : 'Could not add that video.'))
+      .finally(() => setBusy(false))
+  }
+  return <div className="space-y-2">
+    <div className="space-y-1"><p className="editor-label">Video</p>
+      <Segmented<'source' | 'file'> label="Screen recording video" size="sm" value={fields.video === 'source' || !fields.video ? 'source' : 'file'}
+        onChange={(v) => { if (v === 'source') onField('video', 'source'); else if (!file) choose() }}
+        options={[{ value: 'source', label: 'Part of this clip' }, { value: 'file', label: 'A video file' }]} />
+      {fields.video !== 'source' && <div className="flex items-center gap-2"><Button size="sm" icon={<Film size={13} />} loading={busy} onClick={choose}>{file ? 'Change video' : 'Choose video'}</Button>
+        {file && <span className="text-2xs text-ink-subtle">Video added</span>}</div>}
+      <p className="text-2xs text-ink-subtle">{fields.video === 'source' ? 'Shows your own video from “Starts at”, for example the part where you film your screen.' : 'MP4, MOV, M4V or WebM, up to 2 GB. It’s copied into this run and plays with no sound.'}</p>
+      {error && <p role="alert" className="text-2xs text-danger">{error}</p>}</div>
+    <div className="space-y-1"><p className="editor-label">Window shape</p>
+      <Segmented<ScreenShape> label="Window shape" size="sm" value={screenShape(fields)} onChange={(shape) => onField('shape', shape)} options={SHAPE_OPTIONS} />
+      <p className="text-2xs text-ink-subtle">The video fills the window, trimmed at the edges to fit.</p></div>
+  </div>
+}
+
+/** The transcript's timed words around the clip (for timing text cards to the voice), or [] while loading or without them. */
+function useClipWords(outputDir: string, from: number, to: number): TimedWord[] {
+  const [words, setWords] = useState<TimedWord[]>([])
+  useEffect(() => {
+    let live = true
+    const api = getApi().editor
+    if (typeof api.words !== 'function') return
+    void api.words(outputDir, Math.max(0, from - 10000), to + 10000).then((list) => { if (live) setWords(list) }).catch(() => { if (live) setWords([]) })
+    return () => { live = false }
+  }, [outputDir, from, to])
+  return words
 }
 
 /** The Graphics inspector tab: pick a template, then edit the selected graphic's words, place and length. */
@@ -281,16 +340,41 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
   useEffect(() => setImageError(null), [selected])
   const full = graphics.length >= MAX_GRAPHICS_PER_CLIP
   const clipStart = candidate.ranges[0][0], clipEnd = candidate.ranges[candidate.ranges.length - 1][1]
+  const words = useClipWords(outputDir, clipStart, clipEnd)
+  const [matchNote, setMatchNote] = useState<string | null>(null)
+  useEffect(() => setMatchNote(null), [selected])
+  /** A word-timed card snapped to where its words are said (start, length and each word's time), when they are said near it. */
+  const timed = (x: EditorGraphic, windowMs: number): EditorGraphic | null => {
+    if (!WORD_TIMED_TEMPLATES.includes(x.template) || !words.length) return null
+    const matched = matchCardWords(x, words, x.at_ms, windowMs)
+    return matched ? fitGraphicInCut(matched, candidate) : null
+  }
   const add = (template: GraphicTemplateId): void => {
     const at = Math.max(clipStart, Math.min(clipEnd - GRAPHIC_MIN_MS, Math.round(time)))
     const line = project.transcript.find((r) => at >= r.start_ms && at < r.end_ms)?.text
-    const drafted = newGraphic(template, at, { fields: wordsAtPlayhead(template, line), taken: graphics.map((x) => x.id) })
-    // All of it plays inside the cut (near the end it starts earlier), in a band no other graphic uses then.
-    const graphic = placeInFreeBand(graphics, fitGraphicInCut(drafted, candidate) ?? drafted)
+    const drafted = newGraphic(template, at, { fields: { ...(template === 'screen_frame' ? { video: 'source', from: String(Math.round(at / 100) / 10) } : {}), ...wordsAtPlayhead(template, line) }, taken: graphics.map((x) => x.id) })
+    // All of it plays inside the cut (near the end it starts earlier), in a band no other graphic uses then; text cards on their words.
+    const inCut = fitGraphicInCut(drafted, candidate) ?? drafted
+    const graphic = placeInFreeBand(graphics, timed(inCut, 3000) ?? inCut)
     onChange(withGraphic(candidate, graphic))
     onSelect(graphic.id); onPick(false)
   }
-  const field = (key: string, value: string, remember = true): void => { if (g) onChange(updateGraphic(candidate, g.id, { fields: { [key]: value } }), remember) }
+  const field = (key: string, value: string, remember = true): void => {
+    if (!g) return
+    const next = updateGraphic(candidate, g.id, { fields: { [key]: value } })
+    // Text on a word-timed card: when the words are said near it, it moves onto them.
+    const changed = next.find((x) => x.id === g.id)
+    const snapped = changed && ['text', 'phrase', 'subline'].includes(key) ? timed(changed, 3000) : null
+    onChange(snapped ? withGraphic({ ...candidate, graphics: next }, snapped) : next, remember)
+  }
+  const matchWords = (): void => {
+    if (!g) return
+    setMatchNote(null)
+    const snapped = timed({ ...g, at_ms: Math.max(clipStart, Math.min(clipEnd, Math.round(g.at_ms))) }, 6000)
+    if (!snapped) { setMatchNote(words.length ? 'Those words aren’t said near this graphic. Use words from the clip, said within a few seconds of it.' : 'This run has no word timings, so the words can’t be matched.'); return }
+    onChange(withGraphic(candidate, snapped))
+    setMatchNote('Matched: each word now shows as you say it.')
+  }
   if (picking || (!g && !graphics.length)) {
     const preview = (id: GraphicTemplateId): GraphicRenderSpec => {
       // A square crop of the template at full size reads better in a small tile than a whole 9:16 frame.
@@ -327,17 +411,28 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
             void getApi().editor.graphicImage(outputDir).then((name) => { if (name) field('image', name) }).catch((e: unknown) => setImageError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : 'Could not add that image.'))
           }}>{g.fields.image ? 'Change image' : g.template === 'browser_frame' ? 'Choose screenshot' : 'Choose image'}</Button>
           {g.fields.image && g.template !== 'logo' && <Button size="sm" variant="ghost" onClick={() => field('image', '')}>Remove image</Button>}</div>
-        <p className="text-2xs text-ink-subtle">PNG, JPEG or WebP, up to 12 MB. It’s copied into this run.{g.template === 'browser_frame' ? ' A tall screenshot scrolls slowly inside the window.' : g.template === 'icon_pop' ? ' It shows in the first tile.' : ''}</p>
+        <p className="text-2xs text-ink-subtle">PNG, JPEG or WebP, up to 12 MB. It’s copied into this run.{g.template === 'browser_frame' ? ' A tall screenshot scrolls slowly inside the window.' : g.template === 'icon_pop' ? ' It shows in the first tile.' : g.template === 'orbit' ? ' It shows in the center tile.' : ''}</p>
         {imageError && <p role="alert" className="text-2xs text-danger">{imageError}</p>}
       </div>}
-      {templateInfo(g.template).fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'style', 'vertical', 'motion'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
+      {g.template === 'screen_frame' && <ScreenFields fields={g.fields} outputDir={outputDir} onField={field} />}
+      {templateInfo(g.template).fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'style', 'vertical', 'motion', 'video', 'labels', 'dot'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
         {key === 'items' || key === 'text' || key === 'highlights' ? <textarea rows={key === 'items' ? GRAPHIC_ITEM_LIMITS[g.template] ?? MAX_GRAPHIC_ITEMS : key === 'highlights' ? 2 : 3} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`} />
           : <input className="editor-graphic-input" maxLength={MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`}
-            placeholder={key === 'value' ? 'e.g. the number said in the clip' : key === 'domain' ? 'e.g. yoursite.com' : undefined} />}
+            placeholder={key === 'value' ? 'e.g. the number said in the clip' : key === 'domain' ? 'e.g. yoursite.com' : key === 'from' ? 'e.g. 12.5' : undefined} />}
         {FIELD_HINTS[g.template]?.[key] && <span className="block text-2xs text-ink-subtle">{FIELD_HINTS[g.template]?.[key]}</span>}
       </label>)}
       {g.template === 'icon_pop' && <IconFields fields={g.fields} onField={field} />}
       {g.template === 'big_words' && <BigWordsFields fields={g.fields} onField={field} />}
+      {(g.template === 'orbit' || g.template === 'feature_tile') && <IconFields fields={g.fields} onField={field} template={g.template} imageNote={g.template === 'orbit'} />}
+      {g.template === 'orbit' && <div className="flex items-center justify-between gap-2 text-xs"><span>Labels under the icons</span>
+        <Switch label="Labels under the icons" checked={g.fields.labels !== 'off'} onChange={(on) => field('labels', on ? '' : 'off')} /></div>}
+      {g.template === 'feature_tile' && <div className="flex items-center justify-between gap-2 text-xs"><span>Red dot on the first tile</span>
+        <Switch label="Red dot on the first tile" checked={g.fields.dot === 'on'} onChange={(on) => field('dot', on ? 'on' : '')} /></div>}
+      {WORD_TIMED_TEMPLATES.includes(g.template) && <div className="space-y-1">
+        <div className="flex flex-wrap items-center gap-2"><Button size="sm" variant="ghost" icon={<AudioLines size={13} />} onClick={matchWords}
+          tooltip="Find these words in what you say near the graphic. It then starts on your first word, shows each word as you say it and stays until just after the last.">Match my words</Button>
+          <span className="text-2xs text-ink-subtle">{g.fields.word_ms ? 'Timed to your words' : 'Words build in on their own beat'}</span></div>
+        {matchNote && <p role="status" className="text-2xs text-ink-subtle">{matchNote}</p>}</div>}
       {graphicCanGoBehind(g.template) && <div className="space-y-1">
         <div className="flex items-center justify-between gap-2 text-xs"><span>Behind me</span>
           <Switch label="Behind me" checked={graphicDepth(g) === 'behind'} onChange={(on) => onChange(updateGraphic(candidate, g.id, { depth: on ? 'behind' : 'front' }))} /></div>

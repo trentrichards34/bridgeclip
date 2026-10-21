@@ -834,7 +834,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
               <PointButton thread={clipChatThread(outputDir, candidate.id)} disabled={!!busy || status === 'discarded'} onStart={() => { video.current?.pause(); setTab('chat') }} /></span></div>
             <canvas ref={canvas} width={aspect < 1 ? 360 : 640} height={aspect < 1 ? 640 : 360} style={{ aspectRatio: aspect }} />
             {project.aspect_ratio === '9:16' && <ScenesOverlay canvas={canvas} candidate={candidate} time={time} />}
-            <GraphicsOverlay canvas={canvas} project={project} candidate={candidate} time={time} outputDir={outputDir} />
+            <GraphicsOverlay canvas={canvas} project={project} candidate={candidate} time={time} outputDir={outputDir} sourceUrl={session.previewPath ? localFileUrl(session.previewPath) : undefined} />
             <PointLayer thread={clipChatThread(outputDir, candidate.id)} canvas={canvas} outMs={() => Math.round(nearestOutputTime(candidate, timeRef.current))} />
             {showSubtitlePreview && (tab === 'transcript' || tab === 'captions') && <EditorCaptionPreview canvas={canvas} project={project} candidate={candidate} time={time} disabled={editingDisabled} onMove={moveCaption} onDrag={active => { dragging.current = active; if (active) video.current?.pause() }} />}
           </div>

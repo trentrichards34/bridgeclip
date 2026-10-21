@@ -630,7 +630,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
           throw new Error('Your graphics could not be drawn. Try again, or remove a graphic and make the reel again.')
         }
         if (current.cancelled) throw new Error('Canceled.')
-        Object.assign(config, { graphics: drawn.map((item) => ({ file: item.file, word: graphics.find((g) => g.id === item.id)!.word, duration_ms: item.duration_ms, ...(item.depth ? { depth: item.depth } : {}) })) })
+        Object.assign(config, { graphics: drawn.map((item) => ({ file: item.file, word: graphics.find((g) => g.id === item.id)!.word, duration_ms: item.duration_ms, ...(item.depth ? { depth: item.depth, min_top: item.min_top } : {}) })) })
       }
       const result = await runEngine(config, 2 * 60 * 60_000, (detail, percent) => { if (!current.cancelled) publish(current, { detail, percent }) }, (child) => { current.child = child })
       const path = join(current.status.folder, 'clip_00.mp4')

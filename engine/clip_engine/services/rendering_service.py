@@ -984,6 +984,15 @@ class RenderingService:
         scenes = stage_scenes.parse_scenes(raw, scaled_duration_ms(time_map.output_ms, request.video_speed))
         if not scenes:
             return None
+        if any(s.scene == "stage" for s in scenes) and not plan.face_samples and not any(s.people for s in plan.shots):
+            # An editor export's plan knows no faces: find the speaker in a few frames so the card frames them.
+            try:
+                import dataclasses
+                found = stage_scenes.card_faces(request.video_path, plan, window_start_ms)
+                if found:
+                    plan = dataclasses.replace(plan, face_samples=found)
+            except Exception as error:  # noqa: BLE001 - the card then uses the usual framing's face height
+                logger.info(f"Card faces not found: {type(error).__name__}")
         try:
             zones = face_zones(plan, time_map, width, speaker_h) if plan.face_samples or any(s.people for s in plan.shots) else []
         except Exception:  # noqa: BLE001 - the card then uses the usual framing's face height
@@ -1554,20 +1563,29 @@ class RenderingService:
                        output_width=target_width, output_height=target_height, anchors=anchors,
                        emphasis_words=request.emphasis_words, placer=placer)
         path = await self.caption_generator.generate_captions(output_path=caption_path, caption_style=style, **options)
-        if path and any(light for *_, light in windows):
-            # On a light backdrop the same captions in dark text, swapped in event by event.
-            light_path = caption_path + ".light.ass"
-            light_style = stage_scenes.light_backdrop_style(style or self.settings.get_caption_style())
-            try:
-                if await self.caption_generator.generate_captions(output_path=light_path, caption_style=light_style, **options):
-                    with open(path, encoding="utf-8") as f, open(light_path, encoding="utf-8") as g:
-                        merged = stage_scenes.splice_caption_events(
-                            f.read(), g.read(), windows, self.caption_generator._parse_ass_time)
-                    with open(path, "w", encoding="utf-8") as f:
-                        f.write(merged)
-            finally:
-                if os.path.exists(light_path):
-                    os.remove(light_path)
+        base_style = style or self.settings.get_caption_style()
+        modes = {mode for *_, mode in windows if mode}
+        if path and modes:
+            # In a scene's band the same captions in another look, swapped in event by event: dark text on a light
+            # backdrop (captions already on their own solid box keep it), white words on a color box on a grid or
+            # gradient backdrop.
+            variants = []
+            if "light" in modes and not stage_scenes.boxed(base_style):
+                variants.append(("light", stage_scenes.light_backdrop_style(base_style)))
+            if "box" in modes:
+                variants.append(("box", stage_scenes.box_backdrop_style(base_style, request.scene_brand_color)))
+            for mode, variant_style in variants:
+                variant_path = f"{caption_path}.{mode}.ass"
+                try:
+                    if await self.caption_generator.generate_captions(output_path=variant_path, caption_style=variant_style, **options):
+                        with open(path, encoding="utf-8") as f, open(variant_path, encoding="utf-8") as g:
+                            merged = stage_scenes.splice_caption_events(
+                                f.read(), g.read(), windows, self.caption_generator._parse_ass_time, mode)
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.write(merged)
+                finally:
+                    if os.path.exists(variant_path):
+                        os.remove(variant_path)
         return path
 
     # Pixel-sized caption style fields, scaled together for landscape output.

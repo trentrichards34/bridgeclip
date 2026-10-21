@@ -233,7 +233,7 @@ async function applyNow(run: string, worker: RunGraphicsWorker, options: RunGrap
     if (cancelled) break
     if (rendered.length < (c.graphics?.length ?? 0)) failed.add(index)
     if (rendered.length) {
-      requests.push({ clip_index: index, graphics: rendered.map((g) => ({ file: g.file, start_ms: g.start_ms + extra.offset_ms, duration_ms: g.duration_ms, ...(g.depth ? { depth: g.depth } : {}) })) })
+      requests.push({ clip_index: index, graphics: rendered.map((g) => ({ file: g.file, start_ms: g.start_ms + extra.offset_ms, duration_ms: g.duration_ms, ...(g.depth ? { depth: g.depth, min_top: g.min_top } : {}) })) })
       const placements = new Map((c.graphics ?? []).map((g) => [g.id, g.placement] as const))
       ids.set(index, new Map(rendered.flatMap((g) => placements.has(g.id) ? [[g.id, placements.get(g.id) as GraphicPlacement] as const] : [])))
     }
