@@ -151,7 +151,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
     try { patch = mergeEditChatSteps(chatState, edits, chatContext) } catch (error) { return { error: (error as Error).message } }
     const before = editPatchValues(chatState, Object.keys(patch) as (keyof EditChatPatch)[])
     applyPatch(patch)
-    return { applied: { before }, length: `Your reel is now about ${formatClock(reelSeconds(plan, { ...chatState, ...patch }))} long.` }
+    // The card mentions the length only when it changed.
+    const seconds = reelSeconds(plan, { ...chatState, ...patch })
+    return { applied: { before }, length: Math.abs(seconds - reelSeconds(plan, chatState)) < 0.05 ? null : `Your reel is now about ${formatClock(seconds)} long.` }
   }
 
   const clickWord = (i: number, shift: boolean): void => {

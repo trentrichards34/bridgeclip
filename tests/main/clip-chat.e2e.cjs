@@ -81,12 +81,21 @@ test('Chat: "start earlier" moves the first cut through the editor, and Undo res
   const chat = page.getByRole('region', { name: 'Chat about this clip' })
   await chat.getByText(/OpenRouter credit\. Model: /).waitFor()
   for (const chip of ['Start earlier', 'Cut the pauses', 'Punchier hook', 'Add a stat graphic']) await chat.getByRole('button', { name: chip, exact: true }).waitFor()
+  // A suggestion fills the message box to edit; nothing is sent until the member sends it.
+  await chat.getByRole('button', { name: 'Start earlier', exact: true }).click()
+  assert.equal(await chat.getByRole('textbox', { name: 'Message' }).inputValue(), 'Start earlier')
+  assert.equal(await chat.getByRole('textbox', { name: 'Message' }).evaluate((el) => el === document.activeElement), true)
+  assert.equal(requests.length, 0)
   await chat.getByRole('textbox', { name: 'Message' }).fill('Start with Joe’s “wowww” before she answers')
   await chat.getByRole('textbox', { name: 'Message' }).press('Enter')
   const card = chat.getByRole('group', { name: 'Chat changes' })
   await card.getByText(/^Start moved back 0\.8s to include Joe’s “Wowww\.”$/).waitFor()
   await card.getByText(/^Clip is now 6\.2s\.$/).waitFor()
   await chat.getByText('Done. The clip now opens on Joe’s “Wowww.” before she answers.').waitFor()
+  // The answer is scrolled into view, above the message box.
+  const answer = chat.getByText('Done. The clip now opens on Joe’s “Wowww.” before she answers.')
+  const [answerBox, composeBox] = [await answer.boundingBox(), await page.locator('.editor-chat-compose').boundingBox()]
+  assert.ok(answerBox.y + answerBox.height <= composeBox.y + 1, 'the newest answer is not hidden under the message box')
   await settle()
   assert.deepEqual(saved().candidates[0].ranges, [[250, 5000], [7000, 10000]])
   // The model saw the clip's words with their times, and the edit is a normal undoable change.
@@ -99,6 +108,18 @@ test('Chat: "start earlier" moves the first cut through the editor, and Undo res
   assert.ok(tabs <= 1, `the inspector tabs spill ${tabs}px sideways`)
   const shots = process.env.BRIDGECLIP_E2E_SHOTS
   if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, 'editor-chat-tab.png') }) }
+  // A small laptop (1280×800): the tabs stay on one row and the conversation keeps real room above the message box.
+  await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 800))
+  await page.waitForFunction(() => window.innerWidth === 1280)
+  const room = await page.evaluate(() => {
+    const body = document.querySelector('.editor-inspector-body').getBoundingClientRect(), compose = document.querySelector('.editor-chat-compose').getBoundingClientRect()
+    const tabs = [...document.querySelectorAll('.editor-tabs > button')].map((b) => Math.round(b.getBoundingClientRect().top))
+    return { space: Math.min(compose.top, body.bottom) - body.top, rows: new Set(tabs).size }
+  })
+  assert.equal(room.rows, 1, 'the inspector tabs fit one row')
+  assert.ok(room.space >= 200, `the chat history has only ${room.space}px`)
+  if (shots) await page.screenshot({ path: path.join(shots, 'editor-chat-tab-1280.png') })
+  await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1500, 950))
 
   await card.getByRole('button', { name: 'Undo', exact: true }).click()
   await card.getByText('Undone', { exact: true }).waitFor()

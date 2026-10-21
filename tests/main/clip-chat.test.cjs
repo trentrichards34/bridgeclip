@@ -7,7 +7,7 @@ const path = require('node:path')
 const { loadMain, tempDir, fakeElectron } = require('../zernio/support/load-main.cjs')
 const fixture = require('../fixtures/editor/project.json')
 
-const shared = loadMain("export * from './src/shared/clip-chat'; export { parseCandidateEdit, candidateEdit } from './src/shared/clip-editor'; export { parseGraphics } from './src/shared/motion-graphics'")
+const shared = loadMain("export * from './src/shared/clip-chat'; export { parseCandidateEdit, candidateEdit } from './src/shared/clip-editor'; export { parseGraphics, graphicCutFit, graphicClashes, placeInFreeBand, fitGraphicInCut } from './src/shared/motion-graphics'")
 const plain = (x) => JSON.parse(JSON.stringify(x))
 const project = { duration_ms: 12000, width: 1920, height: 1080, aspect_ratio: '9:16', transcriptCount: 4 }
 let ids = 0
@@ -38,6 +38,66 @@ test('range tools move, cut and add source time, and say what changed', () => {
   r = shared.applyChatTool(c, 'set_ranges', { ranges: [[3000, 6000], [1000, 3500]] }, project, newId)
   assert.deepEqual(r.candidate.ranges, [[1000, 6000]], 'sorted and merged')
   assert.equal(shared.clipLengthNote(r.candidate), 'Clip is now 4.0s.', 'export speed counts (5 s at 1.25×)')
+})
+
+test('change cards give times on the clip’s own clock (the playhead’s), not the source’s', () => {
+  // Sections [1000, 5000] and [7000, 10000] at 1.25×: the clip is 5.6 s long.
+  const c = clip()
+  let r = shared.applyChatTool(c, 'remove_section', { start_ms: 4500, end_ms: 7500 }, project, newId)
+  assert.equal(r.step.summary, 'Cut 1.0s at 0:02.8.', 'only the part that was in the clip, where it played')
+  r = shared.applyChatTool(c, 'add_section', { start_ms: 4800, end_ms: 7200 }, project, newId)
+  assert.equal(r.step.summary, 'Added 2.4s of the video at 0:03.0.')
+  r = shared.applyChatTool(c, 'set_ranges', { ranges: [[1000, 3000], [4000, 6000]] }, project, newId)
+  assert.equal(r.step.summary, 'Clip set to 2 sections of the video.')
+  r = shared.applyChatTool(c, 'play', { at_ms: 500, seconds: 2 }, project, newId)
+  assert.equal(r.step.summary, 'Playing 0.5s before the clip starts for 2s.')
+  r = shared.applyChatTool(c, 'play', { at_ms: 8000 }, project, newId)
+  assert.equal(r.step.summary, 'Playing 0:04.0 for 3s.')
+  r = shared.applyChatTool(c, 'set_layout_at', { at_ms: 8000, layout: 'fit' }, project, newId)
+  assert.equal(r.step.summary, 'Layout set to Fit from 0:04.0 to the end.')
+  assert.equal(shared.clipClock(c, 7000), '0:03.2')
+})
+
+test('a graphic added near the end fits inside the cut, and a busy band moves it to a free one', () => {
+  const c = { ...clip(), graphics: [] }
+  // 3.5 s from 9.5 s would run past the end (10 s): it starts earlier, where the last section begins, and is shortened to fit.
+  let r = shared.applyChatTool(c, 'add_graphic', { template: 'stat', at_ms: 9500, duration_ms: 3500, placement: 'top', fields: { value: '3x' } }, project, newId)
+  let g = r.candidate.graphics[0]
+  assert.deepEqual([g.at_ms, g.duration_ms], [7000, 3000])
+  assert.equal(r.step.summary, 'Added a stat counter at 0:03.2 (shortened to 3.0s to fit in the clip).')
+  assert.equal(shared.graphicCutFit(r.candidate, g), 'inside')
+  // Room before the end: only the start moves.
+  r = shared.applyChatTool(c, 'add_graphic', { template: 'stat', at_ms: 9900, duration_ms: 2000, placement: 'top', fields: { value: '3x' } }, project, newId)
+  g = r.candidate.graphics[0]
+  assert.deepEqual([g.at_ms, g.duration_ms], [8000, 2000])
+  assert.match(r.step.summary, /starts a little earlier so all of it plays before the clip ends/)
+  // Less than 0.8 s left: the model is told to start it earlier.
+  toolError(() => shared.applyChatTool({ ...c, ranges: [[1000, 1600], [7000, 7500]] }, 'add_graphic', { template: 'title', at_ms: 7400, duration_ms: 800, fields: { text: 'Big words' } }, project, newId), /can't fit/)
+  // Another graphic in the same band at the same time: the new one moves (top, then bottom, then middle).
+  r = shared.applyChatTool(c, 'add_graphic', { template: 'stat', at_ms: 7500, duration_ms: 2000, placement: 'top', fields: { value: '3x' } }, project, newId)
+  r = shared.applyChatTool(r.candidate, 'add_graphic', { template: 'title', at_ms: 8000, duration_ms: 1500, placement: 'top', fields: { text: 'Big words' } }, project, newId)
+  assert.deepEqual(r.candidate.graphics.map((x) => x.placement), ['top', 'bottom'])
+  assert.match(r.step.summary, /at the bottom \(the top has another graphic then\)/)
+  r = shared.applyChatTool(r.candidate, 'add_graphic', { template: 'quote', at_ms: 8200, duration_ms: 1000, placement: 'top', fields: { text: 'A quote' } }, project, newId)
+  assert.deepEqual(r.candidate.graphics.map((x) => x.placement), ['top', 'bottom', 'middle'])
+  // Every band taken: it stays where it was asked for, and both are flagged.
+  r = shared.applyChatTool(r.candidate, 'add_graphic', { template: 'title', at_ms: 8300, duration_ms: 900, placement: 'top', fields: { text: 'More words' } }, project, newId)
+  const clashes = shared.graphicClashes(r.candidate.graphics)
+  assert.equal(clashes.size, 2)
+  assert.equal(r.candidate.graphics.find((x) => x.fields.text === 'More words').placement, 'top')
+  // An arrow or circle points at a spot and never takes a band.
+  const arrow = { id: 'arrow-1', template: 'highlight', at_ms: 8000, duration_ms: 1000, placement: 'top', fields: {} }
+  assert.equal(shared.placeInFreeBand(r.candidate.graphics, arrow), arrow)
+})
+
+test('graphics that run past the cut are flagged as partly outside', () => {
+  const c = clip()
+  assert.equal(shared.graphicCutFit(c, { at_ms: 8000, duration_ms: 1500 }), 'inside')
+  assert.equal(shared.graphicCutFit(c, { at_ms: 9000, duration_ms: 3000 }), 'partly', 'runs past the end')
+  assert.equal(shared.graphicCutFit(c, { at_ms: 4000, duration_ms: 4000 }), 'inside', 'a removed part inside it only shortens it')
+  assert.equal(shared.graphicCutFit(c, { at_ms: 4800, duration_ms: 2500 }), 'partly', 'mostly in a removed part')
+  assert.equal(shared.graphicCutFit(c, { at_ms: 5200, duration_ms: 1000 }), 'outside')
+  assert.deepEqual(plain(shared.fitGraphicInCut({ at_ms: 500, duration_ms: 1000 }, c)), { at_ms: 1000, duration_ms: 1000 }, 'before the clip: from its start')
 })
 
 test('invalid tool calls come back as errors the model can fix', () => {
