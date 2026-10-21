@@ -319,3 +319,44 @@ def test_edit_requests_carry_the_broll_fields(tmp_path):
     with pytest.raises(ValueError):
         edit_runner.parse_request({**raw, "broll_source": "library", "broll_catalog_path": None})
     assert "broll_source" not in edit_runner.parse_request({k: v for k, v in raw.items() if not k.startswith("broll")})
+
+
+class _Maker:
+    """A stand-in AI maker: each call takes the next outcome (a cost, or an error to raise)."""
+
+    def __init__(self, outcomes):
+        self.ai = bl.AiSettings(kind="video", model="x-ai/grok-imagine-video-1.5-lite", max_shots=4, seconds=5, per_second_usd=0.02)
+        self.outcomes = list(outcomes)
+        self.cost_usd = 0.0
+        self.calls = 0
+
+    async def make(self, prompt, out):
+        self.calls += 1
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        self.cost_usd += outcome
+        with open(out, "wb") as handle:
+            handle.write(b"video")
+        return out
+
+
+def _ai_plan(n):
+    return [bl.PlannedShot(3000 + k * 2000, 4500 + k * 2000, ai_prompt=f"a cup of coffee number {k}") for k in range(n)]
+
+
+def test_a_rejected_key_mid_clip_keeps_the_cost_of_shots_already_made(monkeypatch, tmp_path):
+    monkeypatch.setattr(bl, "conform_shot", lambda source, kind, s, seconds, out, w, h: shutil.copyfile(source, out) and out)
+    maker = _Maker([0.1, bl.BrollLibraryError("OpenRouter rejected the API key. Check it in Settings."), 0.1])
+    made = asyncio.run(bl.make_shots(_ai_plan(3), {}, str(tmp_path / "w"), 1080, 1920, maker=maker))
+    assert made.ai_made == 1 and maker.calls == 2, "no more AI shots after the key is rejected"
+    assert made.cost_usd == pytest.approx(0.1), "the shot already paid for is still counted"
+    assert any("API key" in w for w in made.warnings)
+
+
+def test_a_dropped_download_loses_one_shot_not_the_costs(monkeypatch, tmp_path):
+    monkeypatch.setattr(bl, "conform_shot", lambda source, kind, s, seconds, out, w, h: shutil.copyfile(source, out) and out)
+    maker = _Maker([0.1, httpx.ReadError("connection reset"), OSError("disk full"), 0.2])
+    made = asyncio.run(bl.make_shots(_ai_plan(4), {}, str(tmp_path / "w"), 1080, 1920, maker=maker))
+    assert made.ai_made == 2 and len(made.shots) == 2
+    assert made.cost_usd == pytest.approx(0.3)
