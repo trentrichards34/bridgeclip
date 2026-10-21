@@ -420,3 +420,20 @@ test('a graphic behind the speaker keeps its depth through the render jobs, with
   assert.equal(front.key, jobs[0].key)
   assert.equal(front.depth, undefined)
 })
+
+test('a graphic fitted into the cut keeps its item and word times on the words (audit)', () => {
+  // Cuts [1000,5000] and [7000,10000]: a card running past the end starts 600 ms earlier, so its words come 600 ms later into it.
+  const c = clip()
+  const card = { at_ms: 8000, duration_ms: 2600, fields: { text: 'Big money moves', word_ms: '100\n500\n900' } }
+  const fit = plainCopy(mg.fitGraphicInCut(card, c))
+  assert.equal(fit.at_ms, 7400)
+  assert.equal(fit.fields.word_ms, '700\n1100\n1500')
+  assert.equal(fit.fields.text, 'Big money moves')
+  // Started before the clip: moved later; words already said show at once.
+  const early = plainCopy(mg.fitGraphicInCut({ at_ms: 700, duration_ms: 2000, fields: { items: 'a\nb', item_ms: '100\n800' } }, c))
+  assert.equal(early.at_ms, 1000)
+  assert.equal(early.fields.item_ms, '0\n500')
+  // Unmoved: the same object.
+  const inside = { at_ms: 2000, duration_ms: 1500, fields: { word_ms: '0\n200' } }
+  assert.equal(mg.fitGraphicInCut(inside, c), inside)
+})
