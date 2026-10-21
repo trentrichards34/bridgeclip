@@ -473,14 +473,17 @@ export function brollSourceOptions(context: BrollSourceContext): { id: BrollSour
     .map((id) => ({ id, label: BROLL_SOURCE_LABELS[id], detail: BROLL_SOURCE_DETAILS[id], disabledReason: brollSourceProblem(id, context) }))
 }
 
-/** My library when it has shots, otherwise stock when a Pexels key is saved, otherwise AI. */
-export function defaultBrollSource(context: Pick<BrollSourceContext, 'libraryShots' | 'pexels'>): BrollSource {
+/**
+ * My library when it has shots, otherwise stock when a Pexels key is saved, otherwise none (null).
+ * Never AI: AI shots cost money, so they run only when the member picks them.
+ */
+export function defaultBrollSource(context: Pick<BrollSourceContext, 'libraryShots' | 'pexels'>): BrollSource | null {
   if (context.libraryShots > 0) return 'library'
-  return context.pexels ? 'stock' : 'ai'
+  return context.pexels ? 'stock' : null
 }
 
-/** The source a run uses: the member's pick when it can run, otherwise the default. */
-export function effectiveBrollSource(picked: BrollSource | null | undefined, context: BrollSourceContext): BrollSource {
+/** The source a run uses: the member's pick when it can run, otherwise the default (never AI unless picked). */
+export function effectiveBrollSource(picked: BrollSource | null | undefined, context: BrollSourceContext): BrollSource | null {
   if (picked && !brollSourceProblem(picked, context)) return picked
   return defaultBrollSource(context)
 }

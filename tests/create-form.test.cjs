@@ -123,11 +123,13 @@ test('B-roll and a background video are sent only for Automatic jobs, never toge
     request = buildJobRequest(useDraftStore.getState(), trim)
     assert.equal(request.broll, 'after-hook')
     assert.equal(request.backgroundVideo, undefined)
-    // B-roll from: with nothing in the library and no keys, AI is what can run; a pick that can run is kept.
-    assert.equal(request.brollSource, 'ai')
+    // B-roll from: with nothing in the library and no Pexels key, no source is sent (AI only when picked); a pick that can run is kept.
+    assert.equal(request.brollSource, undefined)
     const settings = form.exports.useSettingsStore
     const keys = settings.getState()
     try {
+      settings.setState({ pexelsConfigured: false, openrouterConfigured: true })
+      assert.equal(buildJobRequest(useDraftStore.getState(), trim).brollSource, undefined, 'an OpenRouter key alone never makes AI the default')
       settings.setState({ pexelsConfigured: true, openrouterConfigured: true })
       assert.equal(buildJobRequest(useDraftStore.getState(), trim).brollSource, 'stock', 'stock is the default without library shots when Pexels is set')
       original.update({ brollSource: 'library' })

@@ -358,7 +358,10 @@ export function brollRunFields(source: BrollSource | undefined, keys: { pexels: 
   const catalog = buildCatalog(indexSync().items, usableFile)
   const picked: BrollSource = source ?? 'stock'
   const problem = brollSourceProblem(picked, { libraryShots: catalog.shots.length, pexels: keys.pexels, openrouter: keys.openrouter })
-  if (problem) return { error: picked === 'stock' ? 'B-roll needs a free Pexels API key. Add it in Settings → API keys, then run the job again.' : `B-roll: ${problem}` }
+  if (problem) {
+    return { error: !source ? 'B-roll needs a source: add clips to your B-roll library or a free Pexels key in Settings → API keys, or choose AI under “B-roll from”. Then run the job again.'
+      : picked === 'stock' ? 'B-roll needs a free Pexels API key. Add it in Settings → API keys, then run the job again.' : `B-roll: ${problem}` }
+  }
   const fields: Record<string, unknown> = { broll_source: picked }
   if (usesLibrary(picked)) {
     mkdirSync(workFolder, { recursive: true, mode: 0o700 })
