@@ -30,15 +30,15 @@ export function PageHeader({ title, description, actions, eyebrow, leading, clas
       <div className="min-w-0 flex-1">
         {leading && <div className="mb-2">{leading}</div>}
         {page?.label && (
-          <p className="tool-chip mb-3">
+          <p className="tool-chip mb-2.5">
             <span aria-hidden className="tool-chip-dot">{Icon && <Icon className="h-3 w-3" strokeWidth={2.6} />}</span>
             {page.label}
           </p>
         )}
         {customEyebrow && <p className="eyebrow mb-1">{customEyebrow}</p>}
         {!page?.label && eyebrow && !customEyebrow && <p className="eyebrow mb-1">{eyebrow}</p>}
-        <h1 className="truncate pb-0.5 font-display text-[28px] font-semibold leading-[1.15] tracking-[-0.03em] text-ink xl:text-[34px]">{title}</h1>
-        {description && <p className="mt-1.5 max-w-2xl text-sm text-ink-muted xl:text-[14px]">{description}</p>}
+        <h1 className="truncate pb-0.5 font-display text-[28px] font-semibold leading-[1.12] tracking-[-0.03em] text-ink xl:text-[34px]">{title}</h1>
+        {description && <p className="mt-1 max-w-[56rem] text-sm text-ink-muted xl:text-[14px]">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </header>

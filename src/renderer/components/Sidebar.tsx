@@ -268,7 +268,7 @@ function ActiveJobsCard({ expanded, onOpen }: { expanded: boolean; onOpen: () =>
       <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.07]">
         <div className="h-full rounded-full bg-[linear-gradient(90deg,rgb(var(--tool-edit)),rgb(var(--accent)))] transition-[width] duration-500 ease-out motion-reduce:transition-none" style={{ width: `${percent}%` }} />
       </div>
-      <div className="mt-1.5 flex items-center gap-2 font-mono text-[10px] text-ink-faint">
+      <div className="mt-1.5 flex items-center gap-2 font-mono text-[10px] text-ink-subtle">
         <span className="truncate">{step}</span>
         <span className="ml-auto shrink-0 tabular text-ink-muted">{percent}%{others ? ` · ${others}` : ''}</span>
       </div>

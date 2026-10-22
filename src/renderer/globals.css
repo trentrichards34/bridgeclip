@@ -393,8 +393,8 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    height: 28px;
-    padding: 0 10px 0 5px;
+    height: 26px;
+    padding: 0 10px 0 4px;
     border-radius: 999px;
     background: rgb(var(--tool) / 0.12);
     color: rgb(var(--tool));

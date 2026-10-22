@@ -44,7 +44,7 @@ export function BrandLookPage(): React.JSX.Element {
 
       <div className="mt-6">
         {!loaded ? (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div aria-busy="true" aria-label="Loading your brands" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {[0, 1, 2].map((i) => <Skeleton key={i} className="h-[132px] rounded-2xl" />)}
           </div>
         ) : brands.length === 0 ? (
