@@ -6,6 +6,7 @@ import { cn, errorMessage } from '../lib/utils'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { Field, TextArea, TextInput } from './ui/Field'
+import { IconTile } from './ui/IconTile'
 import { Panel } from './ui/Panel'
 
 /**
@@ -35,13 +36,14 @@ export function FilmIdeas({ brandIdentityId, brandName, onFilm, onOpenRemix, dis
   }
 
   return (
-    <Panel>
-      <button type="button" className="flex w-full items-start justify-between gap-3 text-left" aria-expanded={open} aria-controls="film-ideas" onClick={() => setOpen(!open)}>
-        <span className="min-w-0">
-          <span className="flex items-center gap-2 text-sm font-semibold leading-5 text-ink"><Lightbulb className="h-4 w-4 text-accent" />What should I film?</span>
-          <span className="mt-0.5 block text-xs text-ink-muted">Five video ideas from your brand and goals, each with a hook and three talking points.</span>
+    <Panel className="p-3.5 xl:p-4">
+      <button type="button" className="flex w-full items-center gap-3 rounded-xl text-left" aria-expanded={open} aria-controls="film-ideas" onClick={() => setOpen(!open)}>
+        <IconTile tone="accent"><Lightbulb /></IconTile>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold leading-5 text-ink">Not sure what to film?</span>
+          <span className="mt-0.5 block text-xs text-ink-muted">Five ideas from your brand and goals, each with a hook and three talking points.</span>
         </span>
-        <ChevronDown className={cn('mt-0.5 h-4 w-4 shrink-0 text-ink-muted transition-transform', open && 'rotate-180')} />
+        <ChevronDown aria-hidden className={cn('h-4 w-4 shrink-0 text-ink-muted transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
         <div id="film-ideas" className="mt-4 space-y-3">
@@ -62,11 +64,11 @@ export function FilmIdeas({ brandIdentityId, brandName, onFilm, onOpenRemix, dis
           </div>
           {error && <p role="alert" className="text-xs text-danger">{error}</p>}
           {ideas.length > 0 && (
-            <ol className="space-y-2" aria-label="Video ideas">
+            <ol className="space-y-1.5" aria-label="Video ideas">
               {ideas.map((idea, i) => {
                 const format = FILM_FORMATS.find((item) => item.id === idea.format) ?? FILM_FORMATS[0]
                 return (
-                  <li key={`${i}-${idea.hook}`} className="glass-tile rounded-xl p-3" aria-label={`Idea ${i + 1}: ${idea.title}`}>
+                  <li key={`${i}-${idea.hook}`} className="glass-well rounded-[10px] p-3" aria-label={`Idea ${i + 1}: ${idea.title}`}>
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-ink">{idea.title}</p>

@@ -17,7 +17,7 @@ import { VoicePreview } from '../VoicePreview'
 import { Button } from '../ui/Button'
 import { Callout } from '../ui/Callout'
 import { Field, TextArea, TextInput } from '../ui/Field'
-import { Panel, PanelHeader } from '../ui/Panel'
+import { MakerAside, MakerSection } from '../maker/Maker'
 import { ProgressBar } from '../ui/ProgressBar'
 import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
@@ -127,11 +127,11 @@ export function ListicleStudio({ avatars, openrouterConfigured, onNavigate, onVi
   return (
     <div className="mt-5 space-y-5">
       {error && <Callout tone="danger" onDismiss={() => setError(null)}>{error}</Callout>}
-      <div className="grid gap-5 lg:grid-cols-[1fr_minmax(220px,260px)]">
-        <div className="space-y-5">
-          <Panel>
-            <PanelHeader title="1 · Your list" description={`A title and ${LISTICLE_MIN_ITEMS} to ${LISTICLE_MAX_ITEMS} items. Add a screenshot to any item and drag on it to box the part that matters.`} />
-            <div className="mt-4 space-y-4">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_288px] xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-w-0 space-y-6">
+          <MakerSection number={1} title="Your list" aside={`${LISTICLE_MIN_ITEMS} to ${LISTICLE_MAX_ITEMS} items`}>
+            <div className="glass space-y-4 rounded-2xl p-4">
+              <p className="text-2xs text-ink-subtle">A title and {LISTICLE_MIN_ITEMS} to {LISTICLE_MAX_ITEMS} items. Add a screenshot to any item and drag on it to box the part that matters.</p>
               <Field label="List title" hint={draft.title ? <AccentPicker title={draft.title} accent={draft.accent} onChange={(accent) => draft.update({ accent })} label="Italic word in the title" /> : 'For example: 5 AI tools that make your videos look different'}>
                 <TextInput aria-label="List title" value={draft.title} maxLength={LISTICLE_LIMITS.title} placeholder="5 AI tools that make your videos look different"
                   onChange={(e) => draft.update({ title: e.target.value })} />
@@ -147,11 +147,11 @@ export function ListicleStudio({ avatars, openrouterConfigured, onNavigate, onVi
                 <Button variant="secondary" size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => { setItems([...items, emptyItem()]); setSelected(items.length) }}>Add item {items.length + 1}</Button>
               )}
             </div>
-          </Panel>
+          </MakerSection>
 
-          <Panel>
-            <PanelHeader title="2 · Script" description="The AI drafts an opening line and a short line for each item from what you wrote. Change anything: the video says only what's here." />
-            <div className="mt-4 space-y-4">
+          <MakerSection number={2} title="Script">
+            <div className="glass space-y-4 rounded-2xl p-4">
+              <p className="text-2xs text-ink-subtle">The AI drafts an opening line and a short line for each item from what you wrote. Change anything: the video says only what’s here.</p>
               <div className="flex flex-wrap items-center gap-3">
                 <Button variant="secondary" icon={<Sparkles className="h-4 w-4" />} loading={writing} disabled={writing || !draft.title.trim() || !itemsReady || !openrouterConfigured}
                   onClick={() => void writeScript()}>{scripted ? 'Write it again' : 'Write the script'}</Button>
@@ -169,11 +169,10 @@ export function ListicleStudio({ avatars, openrouterConfigured, onNavigate, onVi
                 </Field>
               ))}
             </div>
-          </Panel>
+          </MakerSection>
 
-          <Panel>
-            <PanelHeader title="3 · Voice and look" />
-            <div className="mt-4 space-y-4">
+          <MakerSection number={3} title="Voice and look">
+            <div className="glass space-y-4 rounded-2xl p-4">
               <Segmented<ListicleVoiceChoice> label="Voice" value={draft.voiceChoice} onChange={(voiceChoice) => draft.update({ voiceChoice })} options={[
                 { value: 'preset', label: 'AI voice' },
                 { value: 'avatar', label: 'My avatar’s voice', disabled: avatars.length ? undefined : 'Make an avatar first' },
@@ -227,10 +226,13 @@ export function ListicleStudio({ avatars, openrouterConfigured, onNavigate, onVi
                 <CtaPicker value={draft.ctaId} onChange={(ctaId) => draft.update({ ctaId })} />
               </div>
             </div>
-          </Panel>
+          </MakerSection>
+        </div>
 
-          <Panel>
-            <PanelHeader title="4 · Make it" />
+        <aside className="min-w-0 lg:sticky lg:top-0" aria-label="Preview and make it">
+          <MakerAside label={`Preview · item ${selected + 1}`}>
+            <div className="mt-3"><FramePreview header={draft.header} item={current} index={selected} count={items.length} color={draft.accentColor} /></div>
+            <p className="mt-2 text-2xs text-ink-subtle">Click an item to preview it. Captions run along the bottom as it’s read.</p>
             {needsKey && (
               <Callout tone="info" className="mt-3" title="Add your OpenRouter key for the AI voice" action={<Button size="sm" onClick={onOpenKeys}>Open API keys</Button>}>
                 Or choose Record my voice: your own voice needs no key.
@@ -242,19 +244,13 @@ export function ListicleStudio({ avatars, openrouterConfigured, onNavigate, onVi
                   : `About ${seconds} seconds long. The voice costs about ${formatUsd(cost)} through your OpenRouter account (list price for ${spokenText(request).length} characters). Drawing the video is free.`}
             </p>
             {missingRecordings.length > 0 && <p className="mt-1 text-2xs text-danger">Record: {missingRecordings.map((key) => partLabel(key).toLowerCase()).join(', ')}.</p>}
-            <div className="mt-3 flex justify-end">
-              <Button variant="primary" size="lg" icon={<Wand2 className="h-4 w-4" />} loading={launching}
+            <div className="mt-3">
+              <Button variant="primary" size="lg" className="h-12 w-full rounded-[13px] font-display text-[15px] font-semibold" icon={<Wand2 className="h-4 w-4" />} loading={launching}
                 disabled={busy || launching || !draft.title.trim() || !itemsReady || !scripted || needsKey || missingRecordings.length > 0 || (draft.voiceChoice === 'avatar' && !avatar)}
                 onClick={() => void make()}>Make the video</Button>
             </div>
-            {status && <ListicleProgress status={status} onNavigate={onNavigate} onViewLibrary={onViewLibrary} title={draft.title} />}
-          </Panel>
-        </div>
-
-        <aside className="lg:sticky lg:top-4 lg:self-start">
-          <p className="mb-2 text-2xs font-medium uppercase tracking-wide text-ink-subtle">Preview · item {selected + 1}</p>
-          <FramePreview header={draft.header} item={current} index={selected} count={items.length} color={draft.accentColor} />
-          <p className="mt-2 text-2xs text-ink-subtle">Click an item to preview it. Captions run along the bottom as it’s read.</p>
+            {status && <div className="mt-3"><ListicleProgress status={status} onNavigate={onNavigate} onViewLibrary={onViewLibrary} title={draft.title} /></div>}
+          </MakerAside>
         </aside>
       </div>
     </div>
@@ -270,7 +266,7 @@ function AccentPicker({ title, accent, onChange, label }: { title: string; accen
       <span className="text-2xs text-ink-subtle">Italic word:</span>
       {words.slice(0, 14).map((word, i) => (
         <button key={`${word}-${i}`} type="button" role="radio" aria-checked={word === chosen} onClick={() => onChange(word.replace(/[.,!?:;]+$/, ''))}
-          className={cn('rounded-md px-1.5 py-0.5 text-2xs', word === chosen ? 'bg-accent text-accent-ink' : 'bg-white/[0.06] text-ink-muted hover:text-ink')}>{word}</button>
+          className={cn('rounded-md px-1.5 py-0.5 text-2xs', word === chosen ? 'bg-tool text-canvas' : 'bg-white/[0.06] text-ink-muted hover:text-ink')}>{word}</button>
       ))}
     </span>
   )

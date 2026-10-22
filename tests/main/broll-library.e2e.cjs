@@ -86,8 +86,8 @@ test('B-roll library: two clips are added, looked at by the vision model (mocked
   await page.getByRole('button', { name: 'Add clips or pictures' }).first().click()
 
   // Prepared, then looked at once each (the vision model is the mock), and listed with what was seen.
-  await page.getByText(SEEN.beach.description).waitFor({ timeout: 120000 })
-  await page.getByText(SEEN.desk.description).waitFor()
+  await page.getByRole('list', { name: 'B-roll items' }).getByText(SEEN.beach.description).waitFor({ timeout: 120000 })
+  await page.getByRole('list', { name: 'B-roll items' }).getByText(SEEN.desk.description).waitFor()
   const looks = openrouter.requests.filter((request) => request.url === '/chat/completions')
   assert.equal(looks.length, 2)
   const sent = JSON.parse(looks[0].body)
@@ -113,7 +113,7 @@ test('B-roll library: two clips are added, looked at by the vision model (mocked
   // Nothing new: reloading does not look again.
   await page.reload()
   await page.getByRole('button', { name: 'B-roll library', exact: true }).first().click()
-  await page.getByText(SEEN.desk.description).waitFor()
+  await page.getByRole('list', { name: 'B-roll items' }).getByText(SEEN.desk.description).waitFor()
   assert.equal(openrouter.requests.filter((request) => request.url === '/chat/completions').length, 2)
   // The spending ledger has the looks.
   const ledger = fs.readFileSync(path.join(userDataDir, 'spending', 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))

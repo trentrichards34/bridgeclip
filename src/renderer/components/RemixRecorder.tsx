@@ -381,7 +381,7 @@ export function RemixRecorder({ draft, edit, recordings, talk, onRecordings, onC
                   ;(e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[parts.indexOf(next)])?.focus()
                 }}
                 onClick={() => { setPart(item); setReviewing(false) }}
-                className={cn('flex items-center gap-1 rounded-full px-2.5 py-1 text-2xs', item === part ? 'bg-accent text-accent-ink' : 'bg-white/[0.06] text-ink-muted hover:text-ink')}>
+                className={cn('flex items-center gap-1 rounded-full px-2.5 py-1 text-2xs', item === part ? 'bg-tool text-canvas' : 'bg-white/[0.06] text-ink-muted hover:text-ink')}>
                 {recordings[draft.id]?.[item] && <Check className="h-3 w-3" />}{partLabel(item, draft.format)}
               </button>
             ))}

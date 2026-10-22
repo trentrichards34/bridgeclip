@@ -36,7 +36,7 @@ function staticRender(element) {
   try { return renderToStaticMarkup(element) } finally { React.useSyncExternalStore = original }
 }
 
-test('the first screen: choose or film a recording, a brand, the cost line, and What should I film?', () => {
+test('the first screen: choose or film a recording, the look, the cost line, and Not sure what to film?', () => {
   useSettingsStore.setState({ openrouterConfigured: false })
   const html = staticRender(React.createElement(EditRecordingPage, { onNavigate: () => {} }))
   assert.match(html, /Edit my recording/)
@@ -45,7 +45,7 @@ test('the first screen: choose or film a recording, a brand, the cost line, and 
   assert.match(html, /data-testid="edit-sources-drop"/)
   assert.match(html, /You can also drop recordings here\./)
   assert.match(html, /Film it here/)
-  assert.match(html, /What should I film\?/)
+  assert.match(html, /Not sure what to film\?/)
   assert.match(html, /reviewing and making the reel are free/)
   // Nothing chosen: the start button is off.
   assert.match(html, /<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Edit my recording<\/button>/s)

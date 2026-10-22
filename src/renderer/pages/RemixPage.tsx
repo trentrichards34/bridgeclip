@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FirstRunGuide } from '../components/FirstRunGuide'
-import { AlertTriangle, Bot, Camera, Check, ChevronDown, Image as ImageIcon, Copy, FileText, Film, FolderOpen, Library, Send, Sparkles, UserRound, Wand2, X } from 'lucide-react'
+import { AlertTriangle, Camera, Check, Image as ImageIcon, Copy, FileText, Film, FolderOpen, Library, Send, Sparkles, UserRound, Wand2, X } from 'lucide-react'
 import type { AvatarSummary } from '../../shared/avatars'
 import { REACTIONS } from '../../shared/avatars'
 import {
@@ -40,6 +40,8 @@ import { Field, TextArea, TextInput } from '../components/ui/Field'
 import { Page } from '../components/ui/Page'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Panel, PanelHeader } from '../components/ui/Panel'
+import { ChoiceCards, LookCard, lookColors, MakerAside, MakerLayout, MakerSection, onCardRadioKeyDown } from '../components/maker/Maker'
+import { FormatDiagram } from '../components/maker/FormatDiagram'
 import { ProgressBar } from '../components/ui/ProgressBar'
 import { onRadioKeyDown, Segmented } from '../components/ui/Segmented'
 import { Select } from '../components/ui/Select'
@@ -69,19 +71,6 @@ const REMIX_SKILL_EXTRAS = ['punch_zoom'] as const
 let lookOpenThisSession = false
 /** Switching between "You on camera" and "AI presenter" comes back to the template last picked on each side. */
 const lastPick: { camera: FormatCardId; ai: { format: RemixFormat; host: RemixHost } } = { camera: 'pause_react', ai: { format: 'commentary', host: 'still' } }
-
-/** Arrow keys across a radio group whose radios sit inside their own card (onRadioKeyDown looks only at siblings). */
-function onGroupRadioKeyDown(event: React.KeyboardEvent<HTMLButtonElement>): void {
-  const radios = Array.from(event.currentTarget.closest('[role="radiogroup"]')?.querySelectorAll<HTMLButtonElement>('[role="radio"]:not(:disabled)') ?? [])
-  const current = radios.indexOf(event.currentTarget)
-  if (current < 0) return
-  const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0
-  const next = event.key === 'Home' ? 0 : event.key === 'End' ? radios.length - 1 : step ? (current + step + radios.length) % radios.length : -1
-  if (next < 0) return
-  event.preventDefault()
-  radios[next].focus()
-  radios[next].click()
-}
 
 /** Links pasted one per line (or separated by spaces). */
 export function parseLinks(value: string): { links: string[]; invalid: string[] } {
@@ -375,60 +364,40 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const cameraValue = image ? form.imageCamera : pause ? form.pauseCamera : momentTake || clip ? form.momentCamera : form.camera
   const setupFolded = status !== null && (reviewing || (busy && status.drafts.length > 0)) && newRemixFor !== status.id
   const takeWaiting = reviewing && status !== null && (oneTakeRun(status) ? status.drafts.some((draft) => Boolean(draft.quote || draft.headline)) : status.drafts.length > 0)
-  // Panel numbers: format, source, (AI presenter) the presenter, the folded look and call to action, then go.
-  const lookStep = onCamera ? 3 : 4
+  // Section numbers: the video, who's in it, the format, (AI presenter) the presenter, the look and call to action, then the rest.
+  const lookStep = onCamera ? 4 : 5
   const goStep = lookStep + 1
 
   const modePanel = (
-    <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Who is in the video">
-      {([
-        { id: 'camera', label: 'You on camera', detail: 'You react, talk or give your take on camera. Record here or upload a phone video.', icon: <Camera className="h-5 w-5" /> },
-        { id: 'ai', label: 'AI presenter', detail: 'Your avatar or an AI voice presents the take. An early version.', icon: <Bot className="h-5 w-5" /> }
-      ] as const).map((item) => {
-        const selected = mode === item.id
+    <ChoiceCards<RemixMode> label="Who is in the video" value={mode} onChange={pickMode} options={[
+      { value: 'camera', label: 'You on camera', detail: 'You react, talk or give your take. Record here or upload a phone video.' },
+      { value: 'ai', label: 'AI presenter', tag: 'Beta', detail: 'Your avatar or an AI voice presents the take. An early version.',
         // With no avatar yet, the AI presenter says so on its card, with the way to make one.
-        const needsAvatarNote = item.id === 'ai' && noAvatars
-        return (
-          <div key={item.id} className={cn('glass-tile glass-tile-hover flex flex-col rounded-2xl', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
-            <button type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onGroupRadioKeyDown}
-              onClick={() => pickMode(item.id)}
-              className={cn('flex flex-1 items-start gap-3 rounded-2xl px-4 text-left', needsAvatarNote ? 'pb-1.5 pt-3.5' : 'py-3.5')}>
-              <span className={cn('mt-0.5 shrink-0', selected ? 'text-accent' : 'text-ink-subtle')}>{item.icon}</span>
-              <span className="min-w-0">
-                <span className="flex items-center gap-2 text-base font-semibold">{item.label}{item.id === 'ai' && <Badge tone="warning">Beta</Badge>}</span>
-                <span className={cn('mt-0.5 block text-xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{item.detail}</span>
-              </span>
-            </button>
-            {needsAvatarNote && (
-              <p className="pb-3 pl-12 pr-4 text-2xs text-warning" data-testid="ai-needs-avatar">
-                Needs an avatar ·{' '}
-                <button type="button" className="font-medium text-accent hover:underline" onClick={() => onNavigate('avatar')}>Make one</button>
-              </p>
-            )}
-          </div>
-        )
-      })}
-    </div>
+        footer: noAvatars ? (
+          <p className="px-3.5 pb-3 text-2xs text-warning" data-testid="ai-needs-avatar">
+            Needs an avatar ·{' '}
+            <button type="button" className="font-medium text-tool hover:underline" onClick={() => onNavigate('avatar')}>Make one</button>
+          </p>
+        ) : undefined }
+    ]} />
   )
 
   const formatPanel = (
-    <Panel>
-      <PanelHeader title="1 · What are you making?" description="Pick who is in the video, then the kind of video. You can change both any time before you continue." />
-      <div className="mt-4 space-y-4">
-        {modePanel}
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3" role="radiogroup" aria-label="Remix format">
-          {formatCards.map((item) => {
-            const selected = formatSelected(item.id)
-            return (
-              <button key={item.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
-                onClick={() => pickFormat(item.id)}
-                className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
-                <span className="block text-sm font-medium">{item.label}</span>
-                <span className={cn('mt-0.5 block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{item.detail}</span>
-              </button>
-            )
-          })}
-        </div>
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4" role="radiogroup" aria-label="Remix format">
+        {formatCards.map((item) => {
+          const selected = formatSelected(item.id)
+          return (
+            <button key={item.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onCardRadioKeyDown}
+              onClick={() => pickFormat(item.id)}
+              className={cn('glass-tile glass-tile-hover flex flex-col rounded-[13px] p-2 text-left', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
+              <span className="flex h-24 items-center justify-center rounded-[9px] bg-sidebar"><FormatDiagram format={item.id} mode={mode} /></span>
+              <span className="block px-0.5 pt-2 text-xs font-semibold text-ink">{item.label}</span>
+              <span className={cn('block px-0.5 pb-0.5 pt-0.5 text-2xs leading-snug', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{item.detail}</span>
+            </button>
+          )
+        })}
+      </div>
         {form.format === 'clip_then_me' ? (
           <p className="text-2xs text-ink-muted">
             For a reel, a Short, a TikTok or any short clip. You choose the part (up to {CLIP_MAX_SECONDS / 60} minutes) and record your take, here or on your phone. The video plays their clip first, framed for vertical with its captions, then you full screen. The AI writes the hook text and caption from what you said, and you can edit both.
@@ -471,7 +440,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
                   <button key={angle.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} onKeyDown={onRadioKeyDown}
                     onClick={() => form.update({ angle: angle.id })} title={angle.example}
                     className={cn('rounded-lg border px-2.5 py-1.5 text-left transition-colors',
-                      selected ? 'border-accent/50 bg-accent/10 text-ink' : 'border-white/[0.06] bg-white/[0.02] text-ink-muted hover:border-white/[0.12] hover:text-ink')}>
+                      selected ? 'border-tool/50 bg-tool/10 text-ink' : 'border-white/[0.06] bg-white/[0.02] text-ink-muted hover:border-white/[0.12] hover:text-ink')}>
                     <span className="block text-xs font-medium">{angle.label}</span>
                     <span className={cn('block text-2xs', selected ? 'text-ink-muted' : 'text-ink-subtle')}>{onCamera ? angle.cameraDescription ?? angle.description : angle.description}</span>
                   </button>
@@ -488,19 +457,19 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             </div>
           </div>
         )}
-      </div>
-    </Panel>
+    </div>
   )
 
-  const sourcePanel = (
-    <Panel>
-      <PanelHeader title={`2 · ${image ? 'The article or post' : clip ? 'Their clip' : pause ? 'The video you react to' : momentTake ? 'The long video and your times' : 'The videos'}`} description={image
-        ? 'A screenshot of the article, post, tweet or headline you want to talk about. A long screenshot scrolls behind you as you talk.'
-        : clip ? `Paste one link to a reel, Short or TikTok (or any video), or choose a file. From the Library, use ⋯ → Remix this clip. You choose the part next, up to ${CLIP_MAX_SECONDS / 60} minutes.`
-        : pause ? 'Paste one public video link or choose a file. From the Library, use ⋯ → Remix this clip. You can trim it to the part you react to next.'
+  const sourceTitle = image ? 'The article or post' : clip ? 'Their clip' : pause ? 'The video you react to' : momentTake ? 'The long video and your times' : 'The videos'
+  const sourceHelp = image
+    ? 'A screenshot of the article, post, tweet or headline you want to talk about. A long screenshot scrolls behind you as you talk.'
+    : clip ? `Paste one link to a reel, Short or TikTok (or any video), or choose a file. From the Library, use ⋯ → Remix this clip. You choose the part next, up to ${CLIP_MAX_SECONDS / 60} minutes.`
+      : pause ? 'Paste one public video link or choose a file. From the Library, use ⋯ → Remix this clip. You can trim it to the part you react to next.'
         : momentTake ? 'Paste one long video (a podcast or an interview) or choose a file; from the Library, use ⋯ → Remix this clip. Then add the times you noted while listening.'
-        : `Any public videos with a moment worth reacting to. Paste one link per line, up to ${MAX_SOURCES}.`} />
-      <div className="mt-4 space-y-3">
+          : `Any public videos with a moment worth reacting to. Paste one link per line, up to ${MAX_SOURCES}.`
+  const sourcePanel = (
+    <div>
+      <div className="space-y-3">
         <div data-remix-field="source" className={marked('source')}>
         {image ? (
           form.imagePath ? (
@@ -525,21 +494,22 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             </Callout>
           )}
         </>) : (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {/* One-video formats ask for one link; the others take a list. */}
-            <TextArea rows={singleVideo ? 1 : 3} value={form.links} aria-label="Video links"
-              placeholder={singleVideo ? 'https://www.youtube.com/watch?v=…' : 'https://www.youtube.com/watch?v=…\nhttps://www.youtube.com/shorts/…'}
-              onChange={(e) => form.update({ links: e.target.value })} />
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className={cn('text-2xs', invalid.length || (singleVideo && links.length > 1) ? 'text-danger' : 'text-ink-subtle')} data-testid="link-count">
-                {invalid.length ? `Not a full link: ${invalid[0].slice(0, 60)}${invalid.length > 1 ? ` and ${invalid.length - 1} more` : ''}`
-                  : singleVideo ? (links.length === 0 ? 'One video link' : links.length === 1 ? '1 video' : `${links.length} links: this kind uses one video`)
-                  : links.length === 0 ? `One link per line, up to ${MAX_SOURCES}` : `${links.length} video${links.length === 1 ? '' : 's'}`}
-              </span>
-              <Button size="sm" variant="secondary" icon={<Film className="h-3.5 w-3.5" />} disabled={busy} onClick={() => void chooseFile()}>Or choose a file</Button>
+            <div className="flex items-start gap-2">
+              <TextArea rows={singleVideo ? 1 : 3} value={form.links} aria-label="Video links" className={cn('min-h-[44px] flex-1 font-mono text-[13px]', singleVideo && 'resize-none')}
+                placeholder={singleVideo ? 'Paste a public YouTube, TikTok or Instagram link' : 'Paste public video links, one per line'}
+                onChange={(e) => form.update({ links: e.target.value })} />
+              <Button size="lg" variant="secondary" className="h-11" icon={<Film className="h-4 w-4" />} disabled={busy} onClick={() => void chooseFile()}>Or choose a file</Button>
             </div>
+            <span className={cn('block text-2xs', invalid.length || (singleVideo && links.length > 1) ? 'text-danger' : 'text-ink-subtle')} data-testid="link-count">
+              {invalid.length ? `Not a full link: ${invalid[0].slice(0, 60)}${invalid.length > 1 ? ` and ${invalid.length - 1} more` : ''}`
+                : singleVideo ? (links.length === 0 ? 'One video link' : links.length === 1 ? '1 video' : `${links.length} links: this kind uses one video`)
+                : links.length === 0 ? `One link per line, up to ${MAX_SOURCES}` : `${links.length} video${links.length === 1 ? '' : 's'}`}
+            </span>
           </div>
         )}
+        <p className="mt-1.5 text-2xs text-ink-subtle">{sourceHelp}</p>
         </div>
         {momentTake && (
           <div data-remix-field="ranges" className={marked('ranges')}>
@@ -569,8 +539,12 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
             </Field>
           </div>
         )}
+        <p className="text-2xs text-ink-subtle">
+          Your own video? Use Create for straight clips.{' '}
+          <button type="button" className="font-medium text-tool hover:underline" onClick={() => onNavigate('clip')}>Go to Create</button>
+        </p>
       </div>
-    </Panel>
+    </div>
   )
 
   const brandBlock = <BrandPicker value={form.brandIdentityId} onChange={chooseBrand} noneDetail="A neutral expert voice, no results or numbers" />
@@ -585,7 +559,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
           ? <p className="text-2xs text-ink-muted">“Comment {keyword}” shows on screen at the end, and the caption ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>
           : <p className="text-2xs text-ink-muted">Every video ends with: <span className="text-ink">“{ctaLine(keyword, form.ctaOffer)}”</span></p>)
           : brandKeyword ? (
-            <button type="button" className="text-2xs text-accent" onClick={() => form.update({ ctaKeyword: brandKeyword })}>
+            <button type="button" className="text-2xs text-tool" onClick={() => form.update({ ctaKeyword: brandKeyword })}>
               Use “{brandKeyword}” from your Brand Identity
             </button>
           ) : <p className="text-2xs text-ink-subtle">Leave it empty to end on the payoff (or your Brand Identity’s own call to action).</p>}
@@ -689,7 +663,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   // Their clip, then me: the reels show their clip full frame with no hook bar; "No hook text" is a fine choice here.
   const clipHookNote = form.format === 'clip_then_me' && form.headlineLook.look !== 'none' && (
     <p className="text-2xs text-ink-subtle">
-      Tip: <button type="button" className="text-accent hover:underline" onClick={() => form.update({ headlineLook: { ...form.headlineLook, look: 'none' } })}>No hook text</button> lets their clip fill the whole frame, like most “their clip, then me” reels. The hook text is still your video’s title in the Library.
+      Tip: <button type="button" className="text-tool hover:underline" onClick={() => form.update({ headlineLook: { ...form.headlineLook, look: 'none' } })}>No hook text</button> lets their clip fill the whole frame, like most “their clip, then me” reels. The hook text is still your video’s title in the Library.
     </p>
   )
 
@@ -823,10 +797,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   )
 
   const goLabel = image || pause || clip ? 'Continue to recording' : momentTake ? 'Find the moments' : onCamera && !silent ? 'Write and record' : 'Write the takes'
-  const goTitle = image || clip ? 'Record your take' : pause ? 'Record your reaction' : momentTake ? 'Find the moments' : onCamera && !silent ? 'Write and record' : 'Write the takes'
-  const goPanel = (
-    <Panel>
-      <PanelHeader title={`${goStep} · ${goTitle}`} description={momentTake
+  // What happens next and what it costs, under the button.
+  const nextSteps = momentTake
         ? `Next the AI listens to your ranges${rangeMinutes ? ` (${Math.round(rangeMinutes * 10) / 10} min in all)` : ''} and picks a moment in each, you record your take on each one (up to ${MOMENT_TAKE_MAX_SECONDS / 60} minutes), and the AI writes each video’s hook text and caption from what you said. ${momentCost(cost.perRemixLow * Math.max(1, moments.ranges.length), cost.total)} Reading a time from a screenshot is charged when you add it, and shown there.`
         : clip
         ? `Next you choose the part of their clip and record ${form.format === 'react_thoughts' ? 'both parts' : 'your take'} (up to ${CLIP_MAX_SECONDS / 60} minutes each), here or on your phone. Then the AI writes the hook text and caption from what you said${form.format === 'react_thoughts' ? ' and places your b-roll' : ''} (about $${cost.perRemixLow.toFixed(2)}–$${cost.perRemixHigh.toFixed(2)}). You can change it all before the video is made.`
@@ -840,41 +812,47 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
           : `The AI finds the moments and writes and grades a take for each (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You edit the lines, read them on camera from a teleprompter, and making them costs about $0.01 each for captions.`
         : silent
         ? `The AI finds the moments, writes the hook text and caption, and times the reactions (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You review them, and making them is free: your reactions are reused.`
-        : `First the AI finds the moments and writes and grades a take for each (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You review and edit them, and only the ones you approve are made: ${cost.perRemixHigh - cost.perRemixLow < 0.01 ? `about $${cost.perRemixHigh.toFixed(2)}` : `about $${cost.perRemixLow.toFixed(2)}–$${cost.perRemixHigh.toFixed(2)}`} each.`} />
-      <div className="mt-4 space-y-4">
+        : `First the AI finds the moments and writes and grades a take for each (about $${REMIX_PRICES.sourcePerHour.toFixed(2)} per hour of video). You review and edit them, and only the ones you approve are made: ${cost.perRemixHigh - cost.perRemixLow < 0.01 ? `about $${cost.perRemixHigh.toFixed(2)}` : `about $${cost.perRemixLow.toFixed(2)}–$${cost.perRemixHigh.toFixed(2)}`} each.`
+  const detailsPanel = (
+    <div className="space-y-4">
+      <PurposeFields purpose={form.purpose} onPurpose={(purpose) => form.update({ purpose })} reference={form.reference} onReference={(reference) => form.update({ reference })}
+        disabled={launching} purposeHelp="The AI uses it to write the hook text and caption. It’s never shown in the video."
+        onUseLook={(picked) => form.update({ captionPreset: picked.captionPreset, includeCaptions: true, headlineLook: { ...form.headlineLook, color: picked.color, look: 'brand' } })} />
+      {countRow}
+      {form.format === 'commentary' && (
         <div className="glass-tile rounded-2xl p-3">
-          <PurposeFields purpose={form.purpose} onPurpose={(purpose) => form.update({ purpose })} reference={form.reference} onReference={(reference) => form.update({ reference })}
-            disabled={launching} purposeHelp="The AI uses it to write the hook text and caption. It’s never shown in the video."
-            onUseLook={(picked) => form.update({ captionPreset: picked.captionPreset, includeCaptions: true, headlineLook: { ...form.headlineLook, color: picked.color, look: 'brand' } })} />
+          <BrollSourcePicker value={form.brollSource} current={remixBrollSource} onChange={(brollSource) => form.update({ brollSource })} disabled={launching}
+            onOpenLibrary={() => onNavigate('broll')} emptyText="Stills: add clips to your B-roll library or a free Pexels key for moving b-roll under the voice-over." />
         </div>
-        {countRow}
-        {form.format === 'commentary' && (
-          <div className="glass-tile rounded-2xl p-3">
-            <BrollSourcePicker value={form.brollSource} current={remixBrollSource} onChange={(brollSource) => form.update({ brollSource })} disabled={launching}
-              onOpenLibrary={() => onNavigate('broll')} emptyText="Stills: add clips to your B-roll library or a free Pexels key for moving b-roll under the voice-over." />
-          </div>
-        )}
-        {promises}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <Button variant="primary" icon={image || pause || clip ? <Camera className="h-4 w-4" /> : momentTake ? <Sparkles className="h-4 w-4" /> : <Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || busy || blocker !== null}
-            tooltip={busy ? 'A remix run is in progress' : blocker?.text} onClick={() => void plan()}>
-            {goLabel}
-          </Button>
-          {/* What's still missing, said next to the button (not only in its tooltip), with the way to it. */}
-          {blocker && !busy && (
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-ink-muted" data-testid="remix-blocker" role="status">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
-              <span>{/[.!?]$/.test(blocker.text) ? blocker.text : `${blocker.text}.`}</span>
-              <button type="button" className="font-medium text-accent hover:underline" onClick={() => revealField(blocker.target)}>
-                {blocker.target === 'keys' ? 'Open API keys' : 'Show me'}
-              </button>
-            </p>
-          )}
-          {takeWaiting && <span className="text-2xs text-ink-subtle">Starting again replaces the {image || pause || clip ? 'take' : momentTake ? 'moments' : 'takes'} waiting for review above.</span>}
-        </div>
-        <p className="text-2xs text-ink-subtle" data-testid="price-note">{remixPriceNote(lipsync && hostChoice)}</p>
-      </div>
-    </Panel>
+      )}
+      {promises}
+    </div>
+  )
+  const currentCard = formatCards.find((item) => formatSelected(item.id)) ?? formatCards[0]
+  const goPanel = (
+    <MakerAside label={`Preview · ${currentCard.label}`}>
+      <div className="mt-3"><FormatDiagram format={currentCard.id} mode={mode} size="lg" /></div>
+      <h2 className="mt-4 font-display text-[17px] font-semibold text-ink">{currentCard.label}</h2>
+      <p className="mt-1 text-xs leading-relaxed text-ink-muted">{currentCard.detail}.</p>
+      <Button variant="primary" size="lg" className="mt-4 h-12 w-full rounded-[13px] font-display text-[15px] font-semibold"
+        icon={image || pause || clip ? <Camera className="h-4 w-4" /> : momentTake ? <Sparkles className="h-4 w-4" /> : <Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || busy || blocker !== null}
+        tooltip={busy ? 'A remix run is in progress' : undefined} onClick={() => void plan()}>
+        {goLabel}
+      </Button>
+      {/* What's still missing, said under the button (not only in its tooltip), with the way to it. */}
+      {blocker && !busy && (
+        <p className="mt-2 flex min-w-0 flex-wrap items-center justify-center gap-x-1.5 text-center text-xs text-ink-muted" data-testid="remix-blocker" role="status">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+          <span>{/[.!?]$/.test(blocker.text) ? blocker.text : `${blocker.text}.`}</span>
+          <button type="button" className="font-medium text-tool hover:underline" onClick={() => revealField(blocker.target)}>
+            {blocker.target === 'keys' ? 'Open API keys' : 'Show me'}
+          </button>
+        </p>
+      )}
+      {takeWaiting && <p className="mt-2 text-center text-2xs text-ink-subtle">Starting again replaces the {image || pause || clip ? 'take' : momentTake ? 'moments' : 'takes'} waiting for review above.</p>}
+      <p className="mt-3 text-2xs leading-relaxed text-ink-subtle">{nextSteps}</p>
+      <p className="mt-2 text-2xs leading-relaxed text-ink-subtle" data-testid="price-note">{remixPriceNote(lipsync && hostChoice)}</p>
+    </MakerAside>
   )
 
   const summary = lookSummary({
@@ -885,52 +863,67 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
     brandName: brand?.name ?? null, keyword: keyword || null, ctaClip: Boolean(form.ctaId)
   })
   const lookPanel = (
-    <Panel data-remix-field="look" className={marked('look')}>
-      <button type="button" className="flex w-full items-start justify-between gap-3 text-left" aria-expanded={lookOpen} aria-controls="remix-look"
-        onClick={() => setLookOpen(!lookOpen)}>
-        <span className="min-w-0">
-          <span className="block text-sm font-semibold leading-5 text-ink">{lookStep} · Look &amp; call to action</span>
-          <span className="mt-0.5 block text-xs text-ink-muted" data-testid="look-summary">{summary}</span>
-        </span>
-        <ChevronDown className={cn('mt-0.5 h-4 w-4 shrink-0 text-ink-muted transition-transform', lookOpen && 'rotate-180')} />
-      </button>
-      {lookOpen && (
-        <div id="remix-look" className="mt-4 space-y-4">
-          <p className="text-2xs text-ink-subtle">{onCamera ? 'Optional. These start from your Brand Identity’s look and your last choices.'
-            : 'Optional. Your Brand Identity decides what your presenter believes, so every take sounds like your brand and only uses your real proof. Its look fills in the style below.'}</p>
-          {onCamera && <SkillsPanel rows={remixSkillRows(form)} onToggle={(id, on) => form.update(remixSkillPatch(form, id, on))}
-            music={{ track: form.musicTrack || null, onChange: (track) => form.update({ musicTrack: track ?? '' }) }}
-            onMore={(id) => id === 'captions' || id === 'zoom' ? () => document.getElementById('remix-style-board')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }) : undefined} />}
-          {brandBlock}
-          <div id="remix-style-board" className="scroll-mt-4" />
-          {styleBoard(onCamera ? <>{pauseLayoutChoice}{part1Choice}{hookPlaceRow}{clipHookNote}{cameraBlock}{pipRow}{pauseCaptionsRow}{theirCaptionsRow}</> : undefined)}
-        </div>
-      )}
-    </Panel>
+    <div data-remix-field="look" className={marked('look')}>
+      <LookCard name={brand?.name ?? 'No brand'} badge={brand ? 'Brand look' : null} summary={summary} summaryTestId="look-summary"
+        colors={lookColors(form.headlineLook.color, form.includeCaptions ? form.captionPreset : undefined)} open={lookOpen} onToggle={() => setLookOpen(!lookOpen)} controls="remix-look">
+        <p className="text-2xs text-ink-subtle">{onCamera ? 'Optional. These start from your Brand Identity’s look and your last choices.'
+          : 'Optional. Your Brand Identity decides what your presenter believes, so every take sounds like your brand and only uses your real proof. Its look fills in the style below.'}</p>
+        {onCamera && <SkillsPanel rows={remixSkillRows(form)} onToggle={(id, on) => form.update(remixSkillPatch(form, id, on))}
+          music={{ track: form.musicTrack || null, onChange: (track) => form.update({ musicTrack: track ?? '' }) }}
+          onMore={(id) => id === 'captions' || id === 'zoom' ? () => document.getElementById('remix-style-board')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }) : undefined} />}
+        {brandBlock}
+        <div id="remix-style-board" className="scroll-mt-4" />
+        {styleBoard(onCamera ? <>{pauseLayoutChoice}{part1Choice}{hookPlaceRow}{clipHookNote}{cameraBlock}{pipRow}{pauseCaptionsRow}{theirCaptionsRow}</> : undefined)}
+      </LookCard>
+    </div>
   )
+
+  const header = (
+    <PageHeader eyebrow="Studio" title="Their moment hooks. Your take is the video."
+      description="React to someone else’s video. The borrowed part stays short and the creator is credited." />
+  )
+  const notices = (<>
+    <FirstRunGuide page="remix" />
+    {!openrouterConfigured && (
+      <Callout tone="info" className="mt-4" title="Add your OpenRouter key to start" action={<Button size="sm" onClick={openKeys}>Open API keys</Button>}>
+        Remix finds the moments, writes the takes and records the voice through your OpenRouter account.
+      </Callout>
+    )}
+    {error && <div ref={errorRef} className="scroll-mt-4"><Callout tone="danger" className="mt-4" onDismiss={() => setError(null)}><FriendlyError error={error} /></Callout></div>}
+    {lowDisk.element}
+  </>)
+  const runShown = status !== null && (reviewing || busy || status.phase === 'done' || status.phase === 'failed' || status.phase === 'cancelled')
+  const setupMain = (<>
+    {!runShown && <div>{header}{notices}</div>}
+    {status && newRemixFor === status.id && (reviewing || busy) && (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="font-display text-lg font-semibold text-ink">New remix</p>
+        <Button size="sm" variant="ghost" icon={<X className="h-3.5 w-3.5" />} onClick={() => setNewRemixFor(null)}>Hide</Button>
+      </div>
+    )}
+    <MakerSection number={1} title={sourceTitle}>{sourcePanel}</MakerSection>
+    <MakerSection number={2} title="Who’s in it">{modePanel}</MakerSection>
+    <MakerSection number={3} title="Format" aside={`${formatCards.length} formats`}>{formatPanel}</MakerSection>
+    {/* The AI presenter's own choice comes first; the look and call to action fold the same way on both sides. */}
+    {!onCamera && (
+      <MakerSection number={4} title="Presenter" data-remix-field="presenter" className={marked('presenter')}>
+        <p className="-mt-1 mb-3 text-2xs text-ink-subtle">{silent ? 'Your avatar’s reactions play with the clip.' : 'Who delivers the take.'}</p>
+        <div className="space-y-4">
+          {hostCards}
+          {lipsyncNote}
+          {lipsyncCostNote}
+          {avatarBlocks}
+        </div>
+      </MakerSection>
+    )}
+    <MakerSection number={lookStep} title="Look & call to action"><div className="space-y-2.5">{lookPanel}<StylePresets kind="remix" /></div></MakerSection>
+    <MakerSection number={goStep} title="Before you start">{detailsPanel}</MakerSection>
+  </>)
 
   return (
     <Page width="default">
-      <PageHeader
-        eyebrow="Studio"
-        title="Remix"
-        description="Turn any viral moment into your own take. Their moment hooks the viewer; your take, in your brand's voice, is the video."
-      />
-      <FirstRunGuide page="remix" />
-
-      {!openrouterConfigured && (
-        <Callout tone="info" className="mt-4" title="Add your OpenRouter key to start" action={<Button size="sm" onClick={openKeys}>Open API keys</Button>}>
-          Remix finds the moments, writes the takes and records the voice through your OpenRouter account.
-        </Callout>
-      )}
-      <Callout tone="info" className="mt-4" title="Is it your own video, or do you have permission?"
-        action={<Button size="sm" variant="secondary" onClick={() => onNavigate('clip')}>Go to Create</Button>}>
-        Use Create for straight clips. Remix is for other people's videos: it keeps the borrowed part short, credits the creator, and makes your take the content.
-      </Callout>
-      {error && <div ref={errorRef} className="scroll-mt-4"><Callout tone="danger" className="mt-4" onDismiss={() => setError(null)}><FriendlyError error={error} /></Callout></div>}
-      {lowDisk.element}
-
-      {status && (reviewing || busy || status.phase === 'done' || status.phase === 'failed' || status.phase === 'cancelled') && (
+      {runShown && <>{header}{notices}</>}
+      {runShown && status && (
         <div className="mt-5 scroll-mt-4" ref={reviewRef}>
           {/* Moment + my take stays open while a take's hook text is written (the others keep what was typed). */}
           {(reviewing || status.phase === 'planning') && status.drafts.some((draft) => draft.format === 'moment_take')
@@ -963,32 +956,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
           <Button size="sm" variant="secondary" icon={<Wand2 className="h-3.5 w-3.5" />} onClick={() => setNewRemixFor(status?.id ?? '')}>Start a new remix</Button>
         </div>
       )}
-      {!setupFolded && <div className="mt-5 space-y-5">
-        {status && newRemixFor === status.id && (reviewing || busy) && (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm font-semibold text-ink">New remix</p>
-            <Button size="sm" variant="ghost" icon={<X className="h-3.5 w-3.5" />} onClick={() => setNewRemixFor(null)}>Hide</Button>
-          </div>
-        )}
-        <StylePresets kind="remix" />
-        {formatPanel}
-        {sourcePanel}
-        {/* The AI presenter's own choice comes first; the look and call to action fold the same way on both sides. */}
-        {!onCamera && (
-          <Panel data-remix-field="presenter" className={marked('presenter')}>
-            <PanelHeader title="3 · Presenter" description={silent ? 'Your avatar’s reactions play with the clip.' : 'Who delivers the take.'} />
-            <div className="mt-4 space-y-4">
-              {hostCards}
-              {lipsyncNote}
-              {lipsyncCostNote}
-              {avatarBlocks}
-            </div>
-          </Panel>
-        )}
-        {lookPanel}
-        {goPanel}
-      </div>}
-
+      {!setupFolded && <MakerLayout className={runShown ? 'mt-8' : undefined} main={setupMain} aside={goPanel} />}
     </Page>
   )
 }
@@ -1202,7 +1170,7 @@ function ReviewPanel({ status, onError }: { status: RemixStatus; onError: (messa
                 )
               })()}
               {image && !showText && (
-                <button type="button" className="text-2xs text-accent" onClick={() => setWriteOwn(true)}>Or write the headline and caption yourself</button>
+                <button type="button" className="text-2xs text-tool" onClick={() => setWriteOwn(true)}>Or write the headline and caption yourself</button>
               )}
               {!onCamera && draft.format === 'silent' && draft.cues.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5" aria-label={`Reactions, ${take}`}>

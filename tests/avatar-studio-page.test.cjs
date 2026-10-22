@@ -42,7 +42,7 @@ test('without an OpenRouter key the page explains what to add and disables gener
   const html = render({ falConfigured: true, openrouterConfigured: false })
   assert.match(html, /Avatar Studio/)
   assert.match(html, /Add your OpenRouter key to start/)
-  for (const step of ['1 · Script', '2 · Look', '3 · Generate']) assert.ok(html.includes(step), step)
+  for (const step of ['>Video style<', '>Script<', '>Look<', 'Customize for this video']) assert.ok(html.includes(step), step)
   assert.match(html, /<button[^>]*disabled=""[^>]*>.*?Generate video/s)
 })
 
@@ -54,18 +54,19 @@ test('an OpenRouter key alone is enough; fal.ai is only for Recreate', () => {
 
 test('with no avatar yet, the page leads to making one before the script steps', () => {
   const html = render({ falConfigured: false, openrouterConfigured: true }, [])
-  assert.match(html, /<button[^>]*>.*?Create your avatar<\/button>/s)
+  assert.match(html, /<button[^>]*>(?:(?!<\/button>).)*From a photo(?:(?!<\/button>).)*<\/button>/s)
+  assert.match(html, /<button[^>]*>(?:(?!<\/button>).)*Describe a person(?:(?!<\/button>).)*<\/button>/s)
   assert.match(html, /Make an avatar first/)
-  assert.doesNotMatch(html, /1 · Script|Generate video/)
+  assert.doesNotMatch(html, /Hook, promise, payoff|Generate video/)
   assert.doesNotMatch(html, /faceless channels/)
 })
 
 test('with an avatar, the look is the shared Style board, and lip-sync points to HeyGen', () => {
   const html = render({ falConfigured: false, openrouterConfigured: true, heygenConfigured: false }, [MAYA])
-  for (const step of ['1 · Script', '2 · Look', '3 · Generate']) assert.ok(html.includes(step), step)
-  assert.match(html, /data-testid="style-board"/)
-  assert.match(html, /aria-label="Caption style"/)
-  assert.match(html, /aria-label="Hook text look"/)
+  for (const step of ['>Video style<', '>Script<', '>Look<', 'Customize for this video']) assert.ok(html.includes(step), step)
+  // The look is summed up on its card; "Customize for this video" opens the shared Style board.
+  assert.match(html, /aria-expanded="false" aria-controls="avatar-look"/)
+  assert.match(html, /Pop captions · White bar/)
   assert.doesNotMatch(html, /Lip-sync is coming/)
   assert.match(html, /make a HeyGen avatar \(Beta\)/)
   assert.match(html, /Add HeyGen key/)

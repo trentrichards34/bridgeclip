@@ -131,14 +131,14 @@ test('Combine clips: a .zip of three clips, put in the AI’s order, joined upri
   await page.reload()
 
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /^Edit my recording/ }).click()
-  await page.getByRole('heading', { name: 'Edit my recording', level: 1 }).waitFor()
+  await page.getByRole('heading', { name: 'Raw takes in, one finished reel out', level: 1 }).waitFor()
   // Step 1: the mode choice.
   const modes = page.getByRole('radiogroup', { name: 'What did you film?' })
-  assert.equal(await modes.getByRole('radio', { name: /^Retakes of the same thing/ }).getAttribute('aria-checked'), 'true')
-  await modes.getByRole('radio', { name: /^Parts of one video \(combine clips\)/ }).click()
-  assert.equal(await modes.getByRole('radio', { name: /^Parts of one video/ }).getAttribute('aria-checked'), 'true')
-  await page.getByRole('heading', { name: '1 · Your clips' }).waitFor()
-  const top = async () => { await page.evaluate(() => { document.querySelector('main')?.scrollTo?.(0, 0); window.scrollTo(0, 0) }); await page.getByRole('heading', { name: 'Edit my recording', level: 1 }).scrollIntoViewIfNeeded(); await page.waitForTimeout(400) }
+  assert.equal(await modes.getByRole('radio', { name: /^Retakes of one thing/ }).getAttribute('aria-checked'), 'true')
+  await modes.getByRole('radio', { name: /^Parts to combine/ }).click()
+  assert.equal(await modes.getByRole('radio', { name: /^Parts to combine/ }).getAttribute('aria-checked'), 'true')
+  await page.getByRole('heading', { name: '02 · Your clips' }).waitFor()
+  const top = async () => { await page.evaluate(() => { document.querySelector('main')?.scrollTo?.(0, 0); window.scrollTo(0, 0) }); await page.getByRole('heading', { name: 'Raw takes in, one finished reel out', level: 1 }).scrollIntoViewIfNeeded(); await page.waitForTimeout(400) }
   await top()
   await shot(app, 'combine-1-mode-choice.png')
 

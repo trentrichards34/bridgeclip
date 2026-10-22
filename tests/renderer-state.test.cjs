@@ -661,7 +661,7 @@ test('Remix first visit: opens on You on camera (the AI presenter only for an AI
   assert.match(text(html), /Add your OpenRouter key in Settings first\. Open API keys/)
   assert.match(text(html), /All prices here are estimates: OpenRouter prices checked October 2026\. What your accounts bill is what counts\./)
   // One-video formats ask for one link; the creator's handle placeholder isn't the member's own.
-  assert.match(html, /placeholder="https:\/\/www\.youtube\.com\/watch\?v=…"/)
+  assert.match(html, /placeholder="Paste a public YouTube, TikTok or Instagram link"/)
   assert.match(text(html), /One video link/)
   assert.match(html, /placeholder="e\.g\. @theircreator"/)
   assert.doesNotMatch(html, /@coachname/)
@@ -684,12 +684,12 @@ test('Remix first visit: opens on You on camera (the AI presenter only for an AI
   assert.match(html, /Their viral moment hooks the viewer, then you react/)
   assert.doesNotMatch(html, /your presenter/i)
   assert.match(html, /One link per line, up to 10/)
-  assert.match(html, /3 · Look & call to action/)
+  assert.match(html, /04 · Look & call to action/)
 
   // The AI presenter: the presenter, then the same folded look (closed, with its summary line).
   set(useRemixForm, { format: 'commentary', host: 'voice' })
   const ai = render()
-  assert.match(text(ai), /3 · Presenter .*4 · Look & call to action Pop captions · White bar · No brand · No call to action .*5 · Write the takes/)
+  assert.match(text(ai), /04 · Presenter .*05 · Look & call to action No brand Pop captions · White bar · No brand · No call to action .*Write the takes/)
   assert.match(ai, /aria-expanded="false" aria-controls="remix-look"/)
 
   // Moment + my take: times that are clearly placeholders.

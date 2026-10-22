@@ -156,7 +156,7 @@ export function PauseReactReview({ status, onError }: { status: RemixStatus; onE
               onClick={() => void write()}>{draft.headline ? 'Rewrite from what I said' : 'Write my hook text and caption'}</Button>
           )}
           {!showText && (
-            <button type="button" className="block text-2xs text-accent" onClick={() => setWriteOwn(true)}>Or write the hook text and caption yourself</button>
+            <button type="button" className="block text-2xs text-tool" onClick={() => setWriteOwn(true)}>Or write the hook text and caption yourself</button>
           )}
           {showText && <>
             <Field label="Hook text" hint={`${wordCount(current.headline)} / ${REMIX_WORD_LIMITS.headline} words · shown at the top and used as the video’s title in your Library`}>
@@ -264,7 +264,7 @@ export function PauseEditor({ view, disabled, onChange }: { view: PauseView; dis
       <TimelineBar timeline={timeline} onFlip={upload && !disabled ? (index) => onChange(flipSegment(settings, timeline, index)) : undefined} />
       <div className="flex flex-wrap gap-3 text-2xs text-ink-subtle">
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-white/25" />Their video plays</span>
-        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-accent" />Paused while you talk</span>
+        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-tool" />Paused while you talk</span>
         {upload && <span>Click a stretch to switch it.</span>}
       </div>
       {upload ? (
@@ -274,7 +274,7 @@ export function PauseEditor({ view, disabled, onChange }: { view: PauseView; dis
               ? `Their video starts ${formatSeconds(offset)} into your recording (found by its sound).`
               : `Their video couldn’t be heard in your recording, so it starts ${formatSeconds(offset)} in. Watch the preview and nudge it until it lines up.`}
           </p>
-          <button type="button" className="flex items-center gap-1 text-2xs text-accent" aria-expanded={fineTune} onClick={() => setFineTune(!fineTune)}>
+          <button type="button" className="flex items-center gap-1 text-2xs text-tool" aria-expanded={fineTune} onClick={() => setFineTune(!fineTune)}>
             <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', fineTune && 'rotate-180')} />Fine-tune (only if it looks off)
           </button>
           {fineTune && (<>
@@ -315,7 +315,7 @@ function TimelineBar({ timeline, onFlip, playhead }: { timeline: PauseTimeline; 
         {timeline.segments.map((seg, i) => {
           const label = `${seg.kind === 'play' ? 'Plays' : 'Paused'} from ${formatSeconds(seg.start - timeline.start)} to ${formatSeconds(seg.end - timeline.start)}`
           const style = { width: `${((seg.end - seg.start) / total) * 100}%` }
-          const look = cn('h-full border-r border-black/30 last:border-r-0', seg.kind === 'pause' ? 'bg-accent' : 'bg-white/25')
+          const look = cn('h-full border-r border-black/30 last:border-r-0', seg.kind === 'pause' ? 'bg-tool' : 'bg-white/25')
           return onFlip
             ? <button key={i} type="button" role="listitem" title={`${label}. Click to switch.`} aria-label={`${label}. Switch`} style={style} className={cn(look, 'hover:opacity-80')} onClick={() => onFlip(i)} />
             : <span key={i} role="listitem" title={label} aria-label={label} style={style} className={look} />

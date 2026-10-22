@@ -200,7 +200,7 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
                     onClick={() => void write([draft.id])}>{draft.headline ? 'Rewrite from what I said' : 'Write my hook text and caption'}</Button>
                 )}
                 {!showText && (
-                  <button type="button" className="block text-2xs text-accent" onClick={() => setWriteOwn((list) => new Set(list).add(draft.id))}>Or write them yourself</button>
+                  <button type="button" className="block text-2xs text-tool" onClick={() => setWriteOwn((list) => new Set(list).add(draft.id))}>Or write them yourself</button>
                 )}
                 {showText && <>
                   <Field label="Hook text" hint={`${wordCount(current.headline)} / ${REMIX_WORD_LIMITS.headline} words · shown at the top and used as the video’s title in your Library`}>

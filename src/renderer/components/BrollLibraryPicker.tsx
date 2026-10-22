@@ -34,7 +34,7 @@ export function BrollLibraryPicker({ max, onPick, onClose, onOpenLibrary }: {
         <h2 id={titleId} className="text-base font-semibold text-ink">Add from my B-roll library</h2>
         <TextInput leading={<Search className="h-3.5 w-3.5" />} placeholder="Search: “coffee”, “desk”, “me”…" aria-label="Search your b-roll" value={query} onChange={(e) => setQuery(e.target.value)} />
         {usable.length === 0 ? (
-          <p className="text-sm text-ink-muted">Your B-roll library has no clips ready yet.{onOpenLibrary && <> <button type="button" className="text-accent underline" onClick={onOpenLibrary}>Open my B-roll library</button></>}</p>
+          <p className="text-sm text-ink-muted">Your B-roll library has no clips ready yet.{onOpenLibrary && <> <button type="button" className="text-tool underline" onClick={onOpenLibrary}>Open my B-roll library</button></>}</p>
         ) : (
           <ul className="grid max-h-[50vh] gap-2 overflow-y-auto sm:grid-cols-2" aria-label="Library clips">
             {shown.map((item) => {

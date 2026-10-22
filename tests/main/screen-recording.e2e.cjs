@@ -89,7 +89,7 @@ test('Camera + screen: a screen recording lined up by sound, layouts picked per 
   await assert.rejects(page.evaluate((paths) => window.bridgeclip.edit.syncScreen(paths[0], paths[1]), [camera, screen]), /Choose your camera recording again/)
 
   await page.keyboard.press('Control+e')
-  await page.getByRole('heading', { name: 'Edit my recording', level: 1 }).waitFor()
+  await page.getByRole('heading', { name: 'Raw takes in, one finished reel out', level: 1 }).waitFor()
   // Before a camera recording, the screen recording waits.
   assert.equal(await page.getByRole('button', { name: '+ Add a screen recording' }).isDisabled(), true)
   await pick(camera)

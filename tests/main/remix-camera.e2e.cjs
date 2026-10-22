@@ -176,14 +176,14 @@ test('Me, on camera: pick the background, film a reaction in sync with the clip,
     BrowserWindow.getAllWindows()[0].webContents.send('remix:status', { id: 'run9', phase: 'done', detail: 'Done', percent: 100, folder: output, estimateUsd: 0, drafts: [], outputs: [], costUsd: 0.1, warnings: [], error: null })
   }, { shot, output })
   await page.getByRole('radio', { name: /Article or post/ }).click()
-  await page.getByRole('heading', { name: '2 · The article or post' }).waitFor()
+  await page.getByRole('heading', { name: '01 · The article or post' }).waitFor()
   const next = page.getByRole('button', { name: 'Continue to recording' })
   assert.equal(await next.isDisabled(), true)
   await page.getByRole('button', { name: 'Choose a screenshot' }).click()
   await page.getByText('article.png').waitFor()
   await page.getByPlaceholder('e.g. The Wall Street Journal or @handle').fill('The Daily Example')
   // Green screen is the default look for a screenshot (in the folded look section).
-  await page.getByRole('button', { name: /3 · Look & call to action/ }).click()
+  await page.getByRole('button', { name: 'Customize for this video' }).click()
   assert.equal(await page.getByRole('radiogroup', { name: 'Your background' }).getByRole('radio', { name: /Green screen/ }).getAttribute('aria-checked'), 'true')
   // One promise for the run (it stays ticked from the silent react above).
   await page.getByRole('checkbox', { name: "I'm allowed to share this screenshot" }).check()

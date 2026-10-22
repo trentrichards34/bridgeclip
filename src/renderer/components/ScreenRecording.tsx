@@ -86,7 +86,7 @@ export function ScreenRecordingPicker({ camera, value, onChange, onError, disabl
   return (
     <div className="mt-3 space-y-2 rounded-xl border border-white/10 p-3" data-testid="screen-recording">
       <div className="flex items-center justify-between gap-2">
-        <span className="flex min-w-0 items-center gap-2 text-sm text-ink"><MonitorPlay className="h-4 w-4 shrink-0 text-accent" aria-hidden /><span className="truncate">Screen recording · {value.source.name}</span></span>
+        <span className="flex min-w-0 items-center gap-2 text-sm text-ink"><MonitorPlay className="h-4 w-4 shrink-0 text-tool" aria-hidden /><span className="truncate">Screen recording · {value.source.name}</span></span>
         <span className="flex shrink-0 items-center gap-2">
           <span className="font-mono text-2xs tabular text-ink-muted">{formatClock(value.source.seconds)}</span>
           <Button size="sm" variant="ghost" aria-label="Remove the screen recording" icon={<X className="h-3.5 w-3.5" />} onClick={() => { setPreview(null); onChange(null) }} />

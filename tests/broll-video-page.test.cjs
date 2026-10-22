@@ -55,9 +55,9 @@ test('the form: your words, your b-roll and the look; nothing chosen keeps the s
   useBrollLibrary.setState({ view: VIEW })
   useBrollVideoStatus.setState({ status: null })
   const html = staticRender(React.createElement(BrollVideoPage, { onNavigate: () => {}, onViewLibrary: () => {} }))
-  for (const text of ['B-roll video', '1 · Your words', 'My voiceover', 'A script (AI voice)', 'Script + my recording', 'Choose a file', 'Record',
-    '2 · Your b-roll', '3 shots ready in your B-roll library.', 'My whole library', 'Only some clips', 'Fill gaps with AI shots', 'Off: every moment uses your own b-roll.',
-    '3 · The look', 'Hook text', 'Captions', 'Motion graphics', 'Quick crossfades', 'Voice cleanup', 'Music', 'Call to action', 'Choose or record your voiceover first.']) {
+  for (const text of ['Your words, covered in b-roll', '01 · Your words', 'My voiceover', 'A script (AI voice)', 'Script + my recording', 'Choose a file', 'Record',
+    '02 · Your b-roll', '3 shots ready in your B-roll library.', 'My whole library', 'Only some clips', 'Fill gaps with AI shots', 'Off: every moment uses your own b-roll.',
+    '03 · The look', 'Hook text', 'Captions', 'Motion graphics', 'Quick crossfades', 'Voice cleanup', 'Music', 'Call to action', 'Choose or record your voiceover first.']) {
     assert.ok(html.includes(text), text)
   }
   assert.match(html, /<button[^>]*data-testid="broll-video-start"[^>]*disabled=""|<button[^>]*disabled=""[^>]*data-testid="broll-video-start"/)

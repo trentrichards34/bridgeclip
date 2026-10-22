@@ -303,10 +303,10 @@ test('Remix and Edit my recording: Skills on camera and the purpose fields fit t
   // Edit my recording: the purpose fields sit in "3 · Edit it".
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1024, 700))
   await page.getByRole('button', { name: /^Edit my recording/ }).first().click()
-  await page.getByRole('heading', { name: '3 · Edit it' }).waitFor()
+  await page.getByRole('heading', { name: '03 · What’s it for?' }).waitFor()
   const fields = page.getByTestId('purpose-fields')
   assert.equal(await fields.count(), 1)
-  await showTop(page, page.getByRole('heading', { name: '3 · Edit it' }))
+  await showTop(page, page.getByRole('heading', { name: '03 · What’s it for?' }))
   assert.deepEqual(await overflow(page), { page: 0, panel: 0, purpose: 0 })
   await shot(page, 'edit-purpose-1024x700.png')
   assert.deepEqual(errors, [])

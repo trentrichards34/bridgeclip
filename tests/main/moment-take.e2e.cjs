@@ -101,7 +101,7 @@ test('Moment + my take: two ranges (typed and from a screenshot), two uploaded t
   const at = labels.findIndex((text) => text.startsWith('Moment + my take'))
   assert.ok(at === 3 && labels[0].startsWith('Pause & react') && labels[1].startsWith('Their clip, then me') && labels[2].startsWith('React, then my thoughts'), labels.join(' | '))
   await page.getByRole('radio', { name: /Moment \+ my take/ }).click()
-  await page.getByRole('heading', { name: '2 · The long video and your times' }).waitFor()
+  await page.getByRole('heading', { name: '01 · The long video and your times' }).waitFor()
   assert.equal(await page.getByRole('radiogroup', { name: 'Presenter' }).count(), 0)
   const find = page.getByRole('button', { name: 'Find the moments' })
   assert.equal(await find.isDisabled(), true)
@@ -130,7 +130,7 @@ test('Moment + my take: two ranges (typed and from a screenshot), two uploaded t
   await page.getByLabel('Range 2 end').fill('0:55')
   // The moment stays small on screen while you talk, by default (in the folded look section).
   assert.match(await page.getByTestId('look-summary').innerText(), /^Moment small on screen while you talk · As filmed · /)
-  await page.getByRole('button', { name: /3 · Look & call to action/ }).click()
+  await page.getByRole('button', { name: 'Customize for this video' }).click()
   // No green screen behind you here: you fill the frame.
   await page.getByRole('radiogroup', { name: 'Your background' }).getByRole('radio', { name: /As filmed/ }).waitFor()
   assert.equal(await page.getByRole('radiogroup', { name: 'Your background' }).getByRole('radio', { name: /Green screen/ }).count(), 0)
@@ -138,7 +138,7 @@ test('Moment + my take: two ranges (typed and from a screenshot), two uploaded t
   // The cost line: the ranges, a planning call each, a writing call per video, from the existing prices.
   await page.getByText(/^Next the AI listens to your ranges \(0\.8 min in all\).*About \$0\.\d\d–\$0\.\d\d in all\./).waitFor()
   await page.getByRole('checkbox', { name: "I'm allowed to use this video" }).check()
-  if (process.env.BRIDGECLIP_E2E_SHOTS) { await page.getByRole('heading', { name: '2 · The long video and your times' }).scrollIntoViewIfNeeded(); await shot(app, 'moment-take-form.png') }
+  if (process.env.BRIDGECLIP_E2E_SHOTS) { await page.getByRole('heading', { name: '01 · The long video and your times' }).scrollIntoViewIfNeeded(); await shot(app, 'moment-take-form.png') }
   await find.click()
 
   // The moments: one per range, found inside it.

@@ -121,7 +121,7 @@ test('B-roll video: a voiceover and the whole library become a video in the Libr
   // The B-roll library's button leads to the flow (it is in the sidebar too).
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /^B-roll library/ }).click()
   await page.getByRole('button', { name: 'Make a b-roll video' }).click()
-  await page.getByRole('heading', { name: 'B-roll video', level: 1 }).waitFor()
+  await page.getByRole('heading', { name: 'Your words, covered in b-roll', level: 1 }).waitFor()
   await page.getByText('4 shots ready in your B-roll library.').waitFor()
   assert.equal(await page.getByTestId('broll-video-start').isDisabled(), true)
 

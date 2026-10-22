@@ -35,7 +35,7 @@ test('Their clip, then me: You on camera, a short clip trimmed, an uploaded take
   assert.deepEqual(labels.map((text) => text.split('\n')[0]), ['Pause & react', 'Their clip, then me', 'React, then my thoughts', 'Moment + my take', 'Article or post',
     'Green screen over their video', 'Scripted take'])
   await page.getByRole('radio', { name: /^Their clip, then me/ }).click()
-  await page.getByRole('heading', { name: '2 · Their clip' }).waitFor()
+  await page.getByRole('heading', { name: '01 · Their clip' }).waitFor()
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await who.scrollIntoViewIfNeeded(); await shot(app, 'remix-top-on-camera.png') }
   // The AI side: only the avatar and voice templates, marked Beta.
   await who.getByRole('radio', { name: /^AI presenter/ }).click()
@@ -53,7 +53,7 @@ test('Their clip, then me: You on camera, a short clip trimmed, an uploaded take
   await page.getByText('skincare-reel.mp4').waitFor()
   await page.getByPlaceholder('e.g. @theircreator').fill('@skincoach')
   // Like the reels: their clip fills the frame (no hook text bar), and its own captions are left alone.
-  await page.getByRole('button', { name: /Look & call to action/ }).click()
+  await page.getByRole('button', { name: 'Customize for this video' }).click()
   const theirCaptions = page.getByRole('radiogroup', { name: 'Their clip already has captions' })
   assert.equal(await theirCaptions.getByRole('radio', { name: 'Check for me' }).getAttribute('aria-checked'), 'true', 'a file: checked for them')
   await theirCaptions.getByRole('radio', { name: 'It has captions' }).click()
@@ -77,11 +77,11 @@ test('Their clip, then me: You on camera, a short clip trimmed, an uploaded take
   await page.getByText(/^You said: “Honestly that number scared me/).waitFor()
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await page.getByRole('heading', { name: 'Your clip, then you' }).scrollIntoViewIfNeeded(); await shot(app, 'clip-then-me-review.png') }
   // While the review is open the setup form is folded away; "Start a new remix" brings it back (and Hide folds it again).
-  assert.equal(await page.getByRole('heading', { name: '1 · What are you making?' }).count(), 0)
+  assert.equal(await page.getByRole('heading', { name: '02 · Who’s in it' }).count(), 0)
   await page.getByTestId('new-remix-fold').getByRole('button', { name: 'Start a new remix' }).click()
-  await page.getByRole('heading', { name: '1 · What are you making?' }).waitFor()
+  await page.getByRole('heading', { name: '02 · Who’s in it' }).waitFor()
   await page.getByRole('button', { name: 'Hide', exact: true }).click()
-  await page.getByRole('heading', { name: '1 · What are you making?' }).waitFor({ state: 'detached' })
+  await page.getByRole('heading', { name: '02 · Who’s in it' }).waitFor({ state: 'detached' })
   // "What changed", folded to one line: the hook text and caption the AI wrote; their clip's part is the member's own.
   const log = page.getByTestId('edit-log')
   assert.match(await log.getByRole('button').first().innerText(), /What changed\s*· 2 things the app did/)

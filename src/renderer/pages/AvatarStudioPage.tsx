@@ -14,7 +14,7 @@ import { parseJobOutput } from '../../shared/job-output'
 import type { Page as PageName } from '../components/Sidebar'
 import { BackgroundPicker } from '../components/BackgroundPicker'
 import { previewFrame, StyleBoard } from '../components/StyleBoard'
-import { LOOK_HOOKS, withHideAfterPatch, withTextBg, type BoardStyle, type HookChoice } from '../lib/style-board'
+import { LOOK_HOOKS, styleSummary, withHideAfterPatch, withTextBg, type BoardStyle, type HookChoice } from '../lib/style-board'
 import { PostDialog, type PostableClip } from '../components/PostDialog'
 import { VoicePreview } from '../components/VoicePreview'
 import { heygenPriceNote, HeygenCreateForm, HeygenStatus } from '../components/avatar/HeygenAvatar'
@@ -29,6 +29,7 @@ import { Field, TextArea, TextInput } from '../components/ui/Field'
 import { Page } from '../components/ui/Page'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Panel, PanelHeader } from '../components/ui/Panel'
+import { LookCard, lookColors, MakerSection, onCardRadioKeyDown } from '../components/maker/Maker'
 import { ProgressBar } from '../components/ui/ProgressBar'
 import { onRadioKeyDown, Segmented } from '../components/ui/Segmented'
 import { Select } from '../components/ui/Select'
@@ -116,6 +117,9 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
   const [writing, setWriting] = useState(false)
   const [status, setStatus] = useState<AvatarRenderStatus | null>(null)
   const [launching, setLaunching] = useState(false)
+  // "Write it for me" (the topic and AI script writer) and "Customize for this video" (the look).
+  const [writerOpen, setWriterOpen] = useState(() => draft.topic.trim().length > 0)
+  const [lookOpen, setLookOpen] = useState(false)
   const brands = useBrands((s) => s.brands)
   const loadBrands = useBrands((s) => s.load)
   const markBrands = brands.filter((brand) => hasBrandMark(brand.look))
@@ -245,12 +249,211 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
     draft.update({ script: { ...draft.script, scenes: draft.script.scenes.map((scene, i) => i === index ? { ...scene, ...patch } : scene) } })
   }
 
+  const lookRows = { hooks: boardHooks, handle: brands.length > 0, cta: true }
+  const lookName = brands.find((brand) => brand.id === draft.brandIdentityId)?.name
+  const scriptCard = (
+    <div className="glass space-y-5 rounded-[18px] p-4 xl:p-5">
+      <MakerSection title="Video style">
+        <Segmented label="Video style" value={draft.style} onChange={setStyle} options={[
+          { value: 'talking', label: <span className="inline-flex items-center gap-1.5"><UserRound className="h-3.5 w-3.5" />Talking head</span> },
+          { value: 'cinematic', label: <span className="inline-flex items-center gap-1.5"><Clapperboard className="h-3.5 w-3.5" />Cinematic</span> },
+          { value: 'recreate', label: <span className="inline-flex items-center gap-1.5"><Repeat2 className="h-3.5 w-3.5" />Recreate a video</span> }
+        ]} />
+        <p className="mt-2 text-2xs text-ink-subtle">
+          {draft.style === 'talking'
+            ? (heygen ? 'Your HeyGen avatar speaks to camera with realistic lip-sync (Beta). Pairs well with a gameplay split.' : 'Your avatar speaks to camera. Reliable and the cheapest option. Pairs well with a gameplay split.')
+            : draft.style === 'cinematic'
+              ? 'Narrated scenes: your avatar in different settings plus faceless shots. More cinematic, and it costs more.'
+              : `Restage a ${RECREATE_MIN_SECONDS}-${RECREATE_MAX_SECONDS} second clip with your avatar: same motion, timing and camera work, with the original audio.`}
+        </p>
+      </MakerSection>
+
+      <MakerSection title={draft.style === 'recreate' ? 'Source video' : 'Script'} aside={draft.style === 'recreate' ? undefined : 'Hook, promise, payoff'}>
+        {draft.style === 'recreate' ? (
+          <RecreateSource recreate={recreate} title={draft.script.title} disabled={busy} onChange={updateRecreate}
+            onTitle={(title) => draft.update({ script: { ...draft.script, title } })} onError={setError} />
+        ) : (
+          <div className="space-y-4">
+          {draft.script.scenes.map((scene, index) => (
+            <div key={index} className={cn(draft.style === 'cinematic' && 'glass-tile space-y-2 rounded-xl p-3')}>
+              {draft.style === 'cinematic' && (
+                <div className="flex items-center justify-between">
+                  <span className="eyebrow">Scene {index + 1}</span>
+                  {draft.script.scenes.length > 1 && (
+                    <Button size="sm" variant="ghost" iconOnly aria-label={`Remove scene ${index + 1}`} icon={<X className="h-3.5 w-3.5" />}
+                      onClick={() => draft.update({ script: { ...draft.script, scenes: draft.script.scenes.filter((_, i) => i !== index) } })} />
+                  )}
+                </div>
+              )}
+              {draft.style === 'cinematic' ? (
+                <Field label="Narration">
+                  <TextArea aria-label={`Scene ${index + 1} narration`} rows={3} value={scene.narration} onChange={(e) => updateScene(index, { narration: e.target.value })}
+                    placeholder="What your avatar says. Open with the hook, deliver the payoff, end strong." />
+                </Field>
+              ) : (
+                // The section is titled "Script": the box needs no label of its own on screen.
+                <TextArea aria-label="Script" rows={7} value={scene.narration} onChange={(e) => updateScene(index, { narration: e.target.value })}
+                  placeholder="What your avatar says. Open with the hook, deliver the payoff, end strong." />
+              )}
+              {draft.style === 'cinematic' && (
+                <>
+                  <Field label="Shot">
+                    <TextArea rows={2} value={scene.visual} onChange={(e) => updateScene(index, { visual: e.target.value })}
+                      placeholder="e.g. Close-up of hands counting cash on a kitchen table, morning light" />
+                  </Field>
+                  <LabeledCheckbox checked={scene.featuresAvatar} onChange={(featuresAvatar) => updateScene(index, { featuresAvatar })} label="Avatar appears in this shot" />
+                </>
+              )}
+            </div>
+          ))}
+          {draft.style === 'cinematic' && draft.script.scenes.length < MAX_SCENES && (
+            <Button size="sm" variant="secondary" icon={<Plus className="h-3.5 w-3.5" />}
+              onClick={() => draft.update({ script: { ...draft.script, scenes: [...draft.script.scenes, { narration: '', visual: '', featuresAvatar: false }] } })}>
+              Add scene
+            </Button>
+          )}
+          {text && (
+            <p className={cn('text-2xs', seconds > MAX_SPOKEN_SECONDS ? 'text-danger' : 'text-ink-subtle')}>
+              About {seconds}s of speech{seconds > MAX_SPOKEN_SECONDS ? ` · keep it under ${MAX_SPOKEN_SECONDS}s` : ''}
+            </p>
+          )}
+          {longScenes.length > 0 && (
+            <p className="text-2xs text-danger">Scene {longScenes.join(', ')} has more narration than one {MAX_SCENE_SECONDS}-second shot. Split it into two scenes.</p>
+          )}
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" aria-expanded={writerOpen} aria-controls="avatar-writer" onClick={() => setWriterOpen(!writerOpen)}
+                className={cn('inline-flex h-8 items-center gap-1.5 rounded-[10px] px-3 text-xs font-medium text-tool transition-colors', writerOpen ? 'bg-tool/20' : 'bg-tool/[0.12] hover:bg-tool/20')}>
+                <Sparkles aria-hidden className="h-3.5 w-3.5" />Write it for me
+              </button>
+              <span className="text-2xs text-ink-subtle">From a topic, in your brand’s voice. Or write your own above.</span>
+            </div>
+            {writerOpen && (
+              <div id="avatar-writer" className="glass-tile space-y-3 rounded-xl p-3">
+                <div className="grid gap-3 sm:grid-cols-[1fr_200px]">
+                  <Field label="Topic">
+                    <TextInput value={draft.topic} maxLength={500} placeholder="e.g. 3 money habits that keep people broke" onChange={(e) => draft.update({ topic: e.target.value })} />
+                  </Field>
+                  <Field label="Niche (optional)">
+                    <TextInput value={draft.niche} maxLength={200} placeholder="e.g. personal finance" onChange={(e) => draft.update({ niche: e.target.value })} />
+                  </Field>
+                </div>
+                {brands.length > 0 && (
+                  <Field label="Brand identity (optional)" hint="Writes in your brand's voice and beliefs, using only its real proof.">
+                    <Select value={brands.some((brand) => brand.id === draft.brandIdentityId) ? draft.brandIdentityId ?? '' : ''} onChange={(value) => draft.update({ brandIdentityId: value || null })}
+                      options={[{ value: '', label: 'None' }, ...brands.map((brand) => ({ value: brand.id, label: brand.name }))]} />
+                  </Field>
+                )}
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <Segmented label="Length" size="sm" value={String(draft.seconds)} onChange={(value) => draft.update({ seconds: Number(value) as ScriptLength })}
+                    options={SCRIPT_LENGTHS.map((length) => ({ value: String(length), label: `${length}s` }))} />
+                  <Button icon={<Sparkles className="h-4 w-4" />} loading={writing} disabled={!openrouterConfigured || draft.topic.trim().length < 3 || busy}
+                    tooltip={!openrouterConfigured ? 'Add your OpenRouter key in Settings first' : undefined} onClick={() => void writeScript()}>
+                    Write script
+                  </Button>
+                </div>
+              </div>
+            )}
+            <Field label="Hook text (optional)" hint="Shown at the top of the video and used as its title in your Library. 2-7 words, outcome first. Leave it empty to use the script’s first line.">
+              <TextInput aria-label="Hook text" value={draft.script.title} maxLength={MAX_HOOK_CHARS} placeholder={hookFallback || 'e.g. Stop doing this with your paycheck'} onChange={(e) => draft.update({ script: { ...draft.script, title: e.target.value } })} />
+            </Field>
+          </div>
+        )}
+      </MakerSection>
+
+      {draft.style === 'talking' && !heygen && (
+        <Callout tone="info" title="This avatar’s mouth won’t move"
+          action={!heygenConfigured ? <Button size="sm" onClick={openKeys}>Add HeyGen key</Button> : <Button size="sm" onClick={() => startAvatar('heygen')}>New HeyGen avatar</Button>}>
+          It’s a still photo with a slow push-in, voiced in its voice. For a talking avatar with lip-sync, make a HeyGen avatar (Beta). It needs your HeyGen key in Settings → API keys, and HeyGen bills your account.
+        </Callout>
+      )}
+      {draft.style === 'talking' && heygen && <p className="text-2xs text-ink-subtle">{`Realistic lip-sync on HeyGen (Beta), vertical 1080p, then the captions and hook text below are added here. ${heygenVoice ? 'HeyGen speaks the script in its voice for this avatar.' : 'Voiced in the avatar’s app voice, then HeyGen lip-syncs to it.'}`}</p>}
+      {draft.style === 'cinematic' && (
+        <Field label="Scene quality">
+          <Select value={draft.sceneQuality} onChange={(value) => draft.update({ sceneQuality: value as SceneQuality })} options={[
+            { value: 'standard', label: 'Standard', detail: 'Kling 3 Standard · cheaper' },
+            { value: 'pro', label: 'Pro', detail: 'Kling 3 Pro · sharper motion' }
+          ]} />
+        </Field>
+      )}
+
+      <MakerSection title="Look">
+        <LookCard name={lookName ?? 'Your look'} badge={lookName ? 'Brand' : null}
+          summary={styleSummary(board, lookRows, { brandColor: boardBrand?.look?.color ?? null, hasMark: hasBrandMark(boardBrand?.look), corner: boardBrand?.look?.handlePosition })}
+          colors={lookColors(draft.headlineLook.color, captionsOn ? draft.captionPreset : undefined)} open={lookOpen} onToggle={() => setLookOpen(!lookOpen)} controls="avatar-look">
+          {draft.style === 'recreate' && (
+            <p className="text-2xs text-ink-subtle">{recreate.keepAudio ? 'Captions are transcribed from the original audio (uses your OpenRouter key).' : 'Captions need the original audio: turning them on keeps it.'}</p>
+          )}
+          <StyleBoard value={board} onChange={changeLook} rows={lookRows} brand={boardBrand}
+            frame={draft.style === 'recreate' ? previewFrame(recreate.sourcePath, 'video', recreate.startSeconds + 0.1) : previewFrame(selected?.portraitPath, 'image')}
+            hookText={(draft.style === 'recreate' ? draft.script.title.trim() : hook) || undefined}
+            words={text ? text.split(/\s+/).slice(0, 12) : undefined}
+            hookNote={hookIsCard ? 'With a gameplay split the hook text is a title card, like Create’s clips.' : undefined}
+            ctaHelp="Add one of your CTA clips to the end of the video. You can change it later in the Library."
+            layout={draft.style === 'talking' || (handleBrand && markBrands.length > 1) ? (
+              <>
+                {handleBrand && markBrands.length > 1 && (
+                  <Field label="Brand for the handle">
+                    <Select value={handleBrand.id} aria-label="Brand for the handle" onChange={(handleBrandId) => draft.update({ handleBrandId })}
+                      options={markBrands.map((brand) => ({ value: brand.id, label: brand.name, detail: brand.look?.handle || 'Logo' }))} />
+                  </Field>
+                )}
+                {draft.style === 'talking' && (
+                  <div>
+                    <div className="mb-2 flex items-center justify-between"><span className="text-xs font-semibold text-ink">Gameplay split</span><span className="text-2xs text-ink-subtle">Optional</span></div>
+                    <BackgroundPicker value={draft.backgroundVideo} onChange={(backgroundVideo) => draft.update({ backgroundVideo })} />
+                  </div>
+                )}
+              </>
+            ) : undefined} />
+        </LookCard>
+      </MakerSection>
+
+      <div className="space-y-3 border-t border-line pt-4">
+        {heygen && heygenStep !== 'ready' && !busy && (
+          <Callout tone="warning">{heygenStep === 'training' ? 'HeyGen is still training this avatar. Generate once it’s ready (see the avatar on the left).'
+            : heygenStep === 'failed' ? 'HeyGen could not make this avatar. See the avatar on the left.'
+              : 'HeyGen needs your consent recording before this avatar can make videos. Open the consent page from the avatar on the left.'}</Callout>
+        )}
+        {heygen && !heygenConfigured && <Callout tone="info" action={<Button size="sm" onClick={openKeys}>Open API keys</Button>}>This avatar runs on HeyGen. Add your HeyGen key in Settings → API keys.</Callout>}
+        {status && <RenderProgress status={status} onNavigate={onNavigate} onViewLibrary={onViewLibrary} />}
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="min-w-0 flex-1 font-mono text-2xs leading-relaxed text-ink-subtle" data-testid="avatar-cost">{draft.style === 'recreate'
+              ? (recreate.sourcePath ? `Estimated cost about $${cost.toFixed(2)} on fal.ai · ${recreateLength.toFixed(1)}s video` : 'Recreate runs on fal.ai. Choose a video to see the estimated cost.')
+              : !text ? 'Write a script to see the estimated cost.'
+                : heygen ? (heygenUsd !== null
+                  ? `Estimated cost about $${(heygenUsd + (heygenVoice ? 0 : cost)).toFixed(2)}: HeyGen at about $${HEYGEN_PRICES.avatarIvPerSecond.toFixed(2)} a second (${heygenPriceNote()})${heygenVoice ? '' : ' plus the voice on OpenRouter'} · ${seconds}s video`
+                  : `Billed by HeyGen${heygenVoice ? '' : `, plus about $${cost.toFixed(2)} for the voice on OpenRouter`} · ${seconds}s video`)
+                  : `Estimated cost about $${cost.toFixed(2)} on OpenRouter · ${seconds}s video`}</p>
+          {busy ? (
+            <Button variant="secondary" onClick={() => void getApi().avatars.cancelRender()}>Cancel</Button>
+          ) : (
+            <Button variant="primary" size="lg" className="h-11 rounded-[13px] px-6 font-display text-[15px] font-semibold" icon={<Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || (draft.style === 'recreate' ? !falConfigured : needsOpenrouter && !openrouterConfigured) || (heygen !== null && (!heygenConfigured || heygenStep !== 'ready')) || !selected || (draft.style === 'recreate' ? !recreateReady : !text || seconds > MAX_SPOKEN_SECONDS || longScenes.length > 0)}
+              tooltip={draft.style === 'recreate' && !falConfigured ? 'Recreate needs a fal.ai key (Settings → API keys)' : heygen && !heygenConfigured ? 'Add your HeyGen key first' : heygen && heygenStep !== 'ready' ? 'This HeyGen avatar isn’t ready yet' : needsOpenrouter && !openrouterConfigured ? 'Add your OpenRouter key first' : !selected ? 'Create an avatar first' : draft.style === 'recreate' ? (recreateReady ? undefined : 'Choose a video, a 3-30 second range, and confirm your rights') : !text ? 'Write a script first' : undefined} onClick={() => void generate()}>
+              Generate video
+            </Button>
+          )}
+        </div>
+        <p className="text-2xs text-ink-subtle">
+          Talking-head videos take a few minutes; cinematic and recreated ones up to 10-20. You can leave this page while it works.
+          {busy && (heygen ? ' Cancelling stops waiting; HeyGen can’t stop a video it already started, so it may still finish and be billed on your HeyGen account.'
+            : ` Cancelling stops what hasn’t started; a step already running on ${draft.style === 'recreate' ? 'fal.ai' : 'OpenRouter'} may still be charged.`)}
+        </p>
+      </div>
+    </div>
+  )
+
   return (
     <Page width="default">
       <PageHeader
         eyebrow="Studio"
-        title="Avatar Studio"
-        description="Make an avatar of yourself, or an AI presenter, once. Then turn scripts into ready-to-post vertical videos. Or make a Top list video with no avatar or camera."
+        title="Scripts into ready-to-post videos"
+        description="Make an avatar of yourself, or an AI presenter, once. Then write, or let AI write, and generate. Or make a Top list video with no avatar or camera."
+        actions={
+          <Segmented<StudioMode> label="What to make" value={studioMode} onChange={setStudioMode} className="p-1 [&_button]:h-8 [&_button]:px-3.5 [&_button]:text-sm" options={[
+            { value: 'avatar', label: <span className="flex items-center gap-1.5"><UserRound className="h-3.5 w-3.5" />Avatar video</span> },
+            { value: 'listicle', label: <span className="flex items-center gap-1.5"><ListOrdered className="h-3.5 w-3.5" />Top list, no camera</span> }
+          ]} />
+        }
       />
       <FirstRunGuide page="avatar" />
 
@@ -262,222 +465,55 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
       )}
       {error && <Callout tone="danger" className="mt-4" onDismiss={() => setError(null)}>{error}</Callout>}
 
-      {/* Two sides: videos with an avatar, or a faceless Top list (no avatar needed). */}
-      <Segmented<StudioMode> className="mt-5" label="What to make" value={studioMode} onChange={setStudioMode} options={[
-        { value: 'avatar', label: <span className="flex items-center gap-1.5"><UserRound className="h-3.5 w-3.5" />Avatar video</span> },
-        { value: 'listicle', label: <span className="flex items-center gap-1.5"><ListOrdered className="h-3.5 w-3.5" />Top list, no camera</span> }
-      ]} />
-
       {studioMode === 'listicle' ? (
         <ListicleStudio avatars={avatars} openrouterConfigured={openrouterConfigured} onNavigate={onNavigate} onViewLibrary={onViewLibrary} onOpenKeys={openKeys} />
       ) : (
-      <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(280px,360px)_1fr]">
+      <div className="mt-6 grid items-start gap-5 lg:grid-cols-[minmax(260px,300px)_1fr]">
         <div className="space-y-5">
-          <Panel>
-            <PanelHeader title="Your avatars" description="Your own likeness or a fictional AI person."
-              action={<Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => startAvatar()}>New</Button>} />
-            {avatars.length === 0 ? (
-              <EmptyState className="mt-4" icon={<UserRound />} title="No avatars yet"
-                description="Start from a photo of yourself, or describe a person and generate one."
-                action={<Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => startAvatar()}>Create your avatar</Button>} />
-            ) : (
-              <div className="mt-4 grid grid-cols-3 gap-2" role="radiogroup" aria-label="Avatar">
-                {avatars.map((avatar) => (
-                  <button key={avatar.id} type="button" role="radio" aria-checked={selected?.id === avatar.id}
-                    onClick={() => draft.update({ avatarId: avatar.id })}
-                    className={cn('glass-tile glass-tile-hover overflow-hidden rounded-xl text-left', selected?.id === avatar.id && 'glass-selected')}>
-                    <span className="relative block">
-                      <img src={localFileUrl(avatar.portraitPath)} alt="" className="aspect-[9/16] w-full object-cover" />
-                      {avatar.heygen && <span className="pointer-events-none absolute left-1 top-1"><Badge tone="neutral">HeyGen</Badge></span>}
-                    </span>
-                    <span className="block truncate px-2 py-1.5 text-2xs font-medium text-ink">{avatar.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </Panel>
+          <MakerSection title="Your avatars" aside={<Button size="sm" variant="ghost" className="-my-1.5 text-tool hover:text-tool" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => startAvatar()}>New</Button>}>
+            <div className="grid grid-cols-2 gap-2.5">
+              {avatars.length > 0 && (
+                <div className="col-span-2 grid grid-cols-2 gap-2.5" role="radiogroup" aria-label="Avatar">
+                  {avatars.map((avatar) => {
+                    const on = selected?.id === avatar.id
+                    return (
+                      <button key={avatar.id} type="button" role="radio" aria-checked={on} tabIndex={on ? 0 : -1} onKeyDown={onCardRadioKeyDown}
+                        onClick={() => draft.update({ avatarId: avatar.id })}
+                        className={cn('glass-tile glass-tile-hover rounded-[13px] p-[5px] text-left', on && 'glass-selected')}>
+                        <span className="relative block overflow-hidden rounded-[9px] bg-black">
+                          <img src={localFileUrl(avatar.portraitPath)} alt="" className="aspect-[3/4] w-full object-cover" />
+                          {avatar.heygen && <span className="pointer-events-none absolute left-1 top-1"><Badge tone="neutral">HeyGen</Badge></span>}
+                        </span>
+                        <span className="block truncate px-1 pt-1.5 text-xs font-semibold text-ink">{avatar.name}</span>
+                        <span className="block truncate px-1 pb-0.5 text-[10px] text-ink-subtle">{avatar.heygen ? 'On HeyGen' : avatar.kind === 'self' ? 'Your likeness' : 'Fictional AI person'} · {voiceLabel(avatar.voice)}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+              {([['self', 'From a photo', 'Your own likeness'], ['ai', 'Describe a person', 'A fictional presenter']] as const).map(([kind, title, detail]) => (
+                <button key={kind} type="button" onClick={() => startAvatar(kind)}
+                  className="glass-tile glass-tile-hover flex flex-col rounded-[13px] p-[5px] text-left">
+                  <span aria-hidden className="flex aspect-[3/4] w-full items-center justify-center rounded-[9px] border-[1.5px] border-dashed border-tool/40 bg-tool/[0.04] text-tool">
+                    {kind === 'self' ? <Plus className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+                  </span>
+                  <span className="block px-1 pt-1.5 text-xs font-semibold text-ink">{title}</span>
+                  <span className="block px-1 pb-0.5 text-[10px] text-ink-subtle">{detail}</span>
+                </button>
+              ))}
+            </div>
+            {avatars.length === 0 && <p className="mt-3 text-2xs text-ink-subtle">No avatars yet. Start from a photo of yourself, or describe a person and generate one. A realistic talking avatar (HeyGen, Beta) is under New.</p>}
+          </MakerSection>
           {selected && <AvatarDetails avatar={selected} busy={busy} openrouterConfigured={openrouterConfigured} onChange={setAvatars} onError={setError} />}
         </div>
 
         {noAvatar ? (
-          <Panel>
+          <Panel className="rounded-[18px]">
             <EmptyState icon={<Wand2 />} title="Make an avatar first"
               description="Every video uses one. Once it’s made, you write a script here, pick your look and generate the video."
               className="bg-transparent shadow-none" />
           </Panel>
-        ) : (
-        <div className="space-y-5">
-          <Panel>
-            <PanelHeader title={draft.style === 'recreate' ? '1 · Source video' : '1 · Script'}
-              description={draft.style === 'recreate' ? 'Pick a video; your avatar takes over the person in it, with the same moves and timing.' : 'Hook, promise, payoff. Write your own or let AI draft it from a topic.'} />
-            <div className="mt-4 space-y-4">
-              <Segmented label="Video style" value={draft.style} onChange={setStyle} options={[
-                { value: 'talking', label: <span className="inline-flex items-center gap-1.5"><UserRound className="h-3.5 w-3.5" />Talking head</span> },
-                { value: 'cinematic', label: <span className="inline-flex items-center gap-1.5"><Clapperboard className="h-3.5 w-3.5" />Cinematic</span> },
-                { value: 'recreate', label: <span className="inline-flex items-center gap-1.5"><Repeat2 className="h-3.5 w-3.5" />Recreate a video</span> }
-              ]} />
-              <p className="text-2xs text-ink-subtle">
-                {draft.style === 'talking'
-                  ? (heygen ? 'Your HeyGen avatar speaks to camera with realistic lip-sync (Beta). Pairs well with a gameplay split.' : 'Your avatar speaks to camera. Reliable and the cheapest option. Pairs well with a gameplay split.')
-                  : draft.style === 'cinematic'
-                    ? 'Narrated scenes: your avatar in different settings plus faceless shots. More cinematic, and it costs more.'
-                    : `Restage a ${RECREATE_MIN_SECONDS}-${RECREATE_MAX_SECONDS} second clip with your avatar: same motion, timing and camera work, with the original audio.`}
-              </p>
-              {draft.style === 'recreate' ? (
-                <RecreateSource recreate={recreate} title={draft.script.title} disabled={busy} onChange={updateRecreate}
-                  onTitle={(title) => draft.update({ script: { ...draft.script, title } })} onError={setError} />
-              ) : (<>
-              <div className="grid gap-3 sm:grid-cols-[1fr_200px]">
-                <Field label="Topic">
-                  <TextInput value={draft.topic} maxLength={500} placeholder="e.g. 3 money habits that keep people broke" onChange={(e) => draft.update({ topic: e.target.value })} />
-                </Field>
-                <Field label="Niche (optional)">
-                  <TextInput value={draft.niche} maxLength={200} placeholder="e.g. personal finance" onChange={(e) => draft.update({ niche: e.target.value })} />
-                </Field>
-              </div>
-              {brands.length > 0 && (
-                <Field label="Brand identity (optional)" hint="Writes in your brand's voice and beliefs, using only its real proof.">
-                  <Select value={brands.some((brand) => brand.id === draft.brandIdentityId) ? draft.brandIdentityId ?? '' : ''} onChange={(value) => draft.update({ brandIdentityId: value || null })}
-                    options={[{ value: '', label: 'None' }, ...brands.map((brand) => ({ value: brand.id, label: brand.name }))]} />
-                </Field>
-              )}
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <Segmented label="Length" size="sm" value={String(draft.seconds)} onChange={(value) => draft.update({ seconds: Number(value) as ScriptLength })}
-                  options={SCRIPT_LENGTHS.map((length) => ({ value: String(length), label: `${length}s` }))} />
-                <Button icon={<Sparkles className="h-4 w-4" />} loading={writing} disabled={!openrouterConfigured || draft.topic.trim().length < 3 || busy}
-                  tooltip={!openrouterConfigured ? 'Add your OpenRouter key in Settings first' : undefined} onClick={() => void writeScript()}>
-                  Write script
-                </Button>
-              </div>
-
-              <Field label="Hook text (optional)" hint="Shown at the top of the video and used as its title in your Library. 2-7 words, outcome first. Leave it empty to use the script’s first line.">
-                <TextInput aria-label="Hook text" value={draft.script.title} maxLength={MAX_HOOK_CHARS} placeholder={hookFallback || 'e.g. Stop doing this with your paycheck'} onChange={(e) => draft.update({ script: { ...draft.script, title: e.target.value } })} />
-              </Field>
-
-              {draft.script.scenes.map((scene, index) => (
-                <div key={index} className={cn(draft.style === 'cinematic' && 'glass-tile space-y-2 rounded-xl p-3')}>
-                  {draft.style === 'cinematic' && (
-                    <div className="flex items-center justify-between">
-                      <span className="eyebrow">Scene {index + 1}</span>
-                      {draft.script.scenes.length > 1 && (
-                        <Button size="sm" variant="ghost" iconOnly aria-label={`Remove scene ${index + 1}`} icon={<X className="h-3.5 w-3.5" />}
-                          onClick={() => draft.update({ script: { ...draft.script, scenes: draft.script.scenes.filter((_, i) => i !== index) } })} />
-                      )}
-                    </div>
-                  )}
-                  <Field label={draft.style === 'cinematic' ? 'Narration' : 'Script'}>
-                    <TextArea aria-label={draft.style === 'cinematic' ? `Scene ${index + 1} narration` : 'Script'} rows={draft.style === 'cinematic' ? 3 : 8} value={scene.narration} onChange={(e) => updateScene(index, { narration: e.target.value })}
-                      placeholder="What your avatar says. Open with the hook, deliver the payoff, end strong." />
-                  </Field>
-                  {draft.style === 'cinematic' && (
-                    <>
-                      <Field label="Shot">
-                        <TextArea rows={2} value={scene.visual} onChange={(e) => updateScene(index, { visual: e.target.value })}
-                          placeholder="e.g. Close-up of hands counting cash on a kitchen table, morning light" />
-                      </Field>
-                      <LabeledCheckbox checked={scene.featuresAvatar} onChange={(featuresAvatar) => updateScene(index, { featuresAvatar })} label="Avatar appears in this shot" />
-                    </>
-                  )}
-                </div>
-              ))}
-              {draft.style === 'cinematic' && draft.script.scenes.length < MAX_SCENES && (
-                <Button size="sm" variant="secondary" icon={<Plus className="h-3.5 w-3.5" />}
-                  onClick={() => draft.update({ script: { ...draft.script, scenes: [...draft.script.scenes, { narration: '', visual: '', featuresAvatar: false }] } })}>
-                  Add scene
-                </Button>
-              )}
-              {text && (
-                <p className={cn('text-2xs', seconds > MAX_SPOKEN_SECONDS ? 'text-danger' : 'text-ink-subtle')}>
-                  About {seconds}s of speech{seconds > MAX_SPOKEN_SECONDS ? ` · keep it under ${MAX_SPOKEN_SECONDS}s` : ''}
-                </p>
-              )}
-              {longScenes.length > 0 && (
-                <p className="text-2xs text-danger">Scene {longScenes.join(', ')} has more narration than one {MAX_SCENE_SECONDS}-second shot. Split it into two scenes.</p>
-              )}
-              </>)}
-            </div>
-          </Panel>
-
-          <Panel>
-            <PanelHeader title="2 · Look" description="The same looks as Create, Remix and Edit my recording." />
-            <div className="mt-4 space-y-4">
-              {draft.style === 'talking' && (heygen
-                ? <p className="text-2xs text-ink-subtle">{`Realistic lip-sync on HeyGen (Beta), vertical 1080p, then the captions and hook text below are added here. ${heygenVoice ? 'HeyGen speaks the script in its voice for this avatar.' : 'Voiced in the avatar’s app voice, then HeyGen lip-syncs to it.'}`}</p>
-                : <Callout tone="info" title="This avatar’s mouth won’t move"
-                  action={!heygenConfigured ? <Button size="sm" onClick={openKeys}>Add HeyGen key</Button> : <Button size="sm" onClick={() => startAvatar('heygen')}>New HeyGen avatar</Button>}>
-                  It’s a still photo with a slow push-in, voiced in its voice. For a talking avatar with lip-sync, make a HeyGen avatar (Beta). It needs your HeyGen key in Settings → API keys, and HeyGen bills your account.
-                </Callout>)}
-              {draft.style === 'cinematic' && (
-                <Field label="Scene quality">
-                  <Select value={draft.sceneQuality} onChange={(value) => draft.update({ sceneQuality: value as SceneQuality })} options={[
-                    { value: 'standard', label: 'Standard', detail: 'Kling 3 Standard · cheaper' },
-                    { value: 'pro', label: 'Pro', detail: 'Kling 3 Pro · sharper motion' }
-                  ]} />
-                </Field>
-              )}
-              {draft.style === 'recreate' && (
-                <p className="text-2xs text-ink-subtle">{recreate.keepAudio ? 'Captions are transcribed from the original audio (uses your OpenRouter key).' : 'Captions need the original audio: turning them on keeps it.'}</p>
-              )}
-              <StyleBoard value={board} onChange={changeLook} rows={{ hooks: boardHooks, handle: brands.length > 0, cta: true }} brand={boardBrand}
-                frame={draft.style === 'recreate' ? previewFrame(recreate.sourcePath, 'video', recreate.startSeconds + 0.1) : previewFrame(selected?.portraitPath, 'image')}
-                hookText={(draft.style === 'recreate' ? draft.script.title.trim() : hook) || undefined}
-                words={text ? text.split(/\s+/).slice(0, 12) : undefined}
-                hookNote={hookIsCard ? 'With a gameplay split the hook text is a title card, like Create’s clips.' : undefined}
-                ctaHelp="Add one of your CTA clips to the end of the video. You can change it later in the Library."
-                layout={draft.style === 'talking' || (handleBrand && markBrands.length > 1) ? (
-                  <>
-                    {handleBrand && markBrands.length > 1 && (
-                      <Field label="Brand for the handle">
-                        <Select value={handleBrand.id} aria-label="Brand for the handle" onChange={(handleBrandId) => draft.update({ handleBrandId })}
-                          options={markBrands.map((brand) => ({ value: brand.id, label: brand.name, detail: brand.look?.handle || 'Logo' }))} />
-                      </Field>
-                    )}
-                    {draft.style === 'talking' && (
-                      <div>
-                        <div className="mb-2 flex items-center justify-between"><span className="text-xs font-semibold text-ink">Gameplay split</span><span className="text-2xs text-ink-subtle">Optional</span></div>
-                        <BackgroundPicker value={draft.backgroundVideo} onChange={(backgroundVideo) => draft.update({ backgroundVideo })} />
-                      </div>
-                    )}
-                  </>
-                ) : undefined} />
-            </div>
-          </Panel>
-
-          <Panel>
-            <PanelHeader title="3 · Generate" description={draft.style === 'recreate'
-              ? (recreate.sourcePath ? `Estimated cost about $${cost.toFixed(2)} on fal.ai · ${recreateLength.toFixed(1)}s video` : 'Recreate runs on fal.ai. Choose a video to see the estimated cost.')
-              : !text ? 'Write a script to see the estimated cost.'
-                : heygen ? (heygenUsd !== null
-                  ? `Estimated cost about $${(heygenUsd + (heygenVoice ? 0 : cost)).toFixed(2)}: HeyGen at about $${HEYGEN_PRICES.avatarIvPerSecond.toFixed(2)} a second (${heygenPriceNote()})${heygenVoice ? '' : ' plus the voice on OpenRouter'} · ${seconds}s video`
-                  : `Billed by HeyGen${heygenVoice ? '' : `, plus about $${cost.toFixed(2)} for the voice on OpenRouter`} · ${seconds}s video`)
-                  : `Estimated cost about $${cost.toFixed(2)} on OpenRouter · ${seconds}s video`} />
-            <div className="mt-4 space-y-3">
-              {heygen && heygenStep !== 'ready' && !busy && (
-                <Callout tone="warning">{heygenStep === 'training' ? 'HeyGen is still training this avatar. Generate once it’s ready (see the avatar on the left).'
-                  : heygenStep === 'failed' ? 'HeyGen could not make this avatar. See the avatar on the left.'
-                    : 'HeyGen needs your consent recording before this avatar can make videos. Open the consent page from the avatar on the left.'}</Callout>
-              )}
-              {heygen && !heygenConfigured && <Callout tone="info" action={<Button size="sm" onClick={openKeys}>Open API keys</Button>}>This avatar runs on HeyGen. Add your HeyGen key in Settings → API keys.</Callout>}
-              {status && <RenderProgress status={status} onNavigate={onNavigate} onViewLibrary={onViewLibrary} />}
-              <div className="flex flex-wrap gap-2">
-                {busy ? (
-                  <Button variant="secondary" onClick={() => void getApi().avatars.cancelRender()}>Cancel</Button>
-                ) : (
-                  <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={launching} disabled={launching || (draft.style === 'recreate' ? !falConfigured : needsOpenrouter && !openrouterConfigured) || (heygen !== null && (!heygenConfigured || heygenStep !== 'ready')) || !selected || (draft.style === 'recreate' ? !recreateReady : !text || seconds > MAX_SPOKEN_SECONDS || longScenes.length > 0)}
-                    tooltip={draft.style === 'recreate' && !falConfigured ? 'Recreate needs a fal.ai key (Settings → API keys)' : heygen && !heygenConfigured ? 'Add your HeyGen key first' : heygen && heygenStep !== 'ready' ? 'This HeyGen avatar isn’t ready yet' : needsOpenrouter && !openrouterConfigured ? 'Add your OpenRouter key first' : !selected ? 'Create an avatar first' : draft.style === 'recreate' ? (recreateReady ? undefined : 'Choose a video, a 3-30 second range, and confirm your rights') : !text ? 'Write a script first' : undefined} onClick={() => void generate()}>
-                    Generate video
-                  </Button>
-                )}
-              </div>
-              <p className="text-2xs text-ink-subtle">
-                Talking-head videos take a few minutes; cinematic and recreated ones up to 10-20. You can leave this page while it works.
-                {busy && (heygen ? ' Cancelling stops waiting; HeyGen can’t stop a video it already started, so it may still finish and be billed on your HeyGen account.'
-                  : ` Cancelling stops what hasn’t started; a step already running on ${draft.style === 'recreate' ? 'fal.ai' : 'OpenRouter'} may still be charged.`)}
-              </p>
-            </div>
-          </Panel>
-        </div>
-        )}
+        ) : scriptCard}
       </div>
       )}
 
@@ -526,11 +562,11 @@ function RecreateSource({ recreate, title, disabled, onChange, onTitle, onError 
       {recreate.sourcePath && (
         <>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Start (seconds)" aside={<button type="button" className="text-2xs text-accent" onClick={() => onChange({ startSeconds: here() })}>Use current</button>}>
+            <Field label="Start (seconds)" aside={<button type="button" className="text-2xs text-tool" onClick={() => onChange({ startSeconds: here() })}>Use current</button>}>
               <TextInput type="number" min={0} step={0.1} defaultValue={recreate.startSeconds} key={`s-${recreate.sourcePath}-${recreate.startSeconds}`}
                 onBlur={(e) => { const value = seconds(e.target.value); if (value !== null) onChange({ startSeconds: value }) }} />
             </Field>
-            <Field label="End (seconds)" aside={<button type="button" className="text-2xs text-accent" onClick={() => onChange({ endSeconds: here() })}>Use current</button>}>
+            <Field label="End (seconds)" aside={<button type="button" className="text-2xs text-tool" onClick={() => onChange({ endSeconds: here() })}>Use current</button>}>
               <TextInput type="number" min={0} step={0.1} defaultValue={recreate.endSeconds} key={`e-${recreate.sourcePath}-${recreate.endSeconds}`}
                 onBlur={(e) => { const value = seconds(e.target.value); if (value !== null) onChange({ endSeconds: value }) }} />
             </Field>
@@ -921,7 +957,7 @@ function PictureLibrary({ avatar, busy, onChange, onError }: {
             <button type="button" aria-pressed={picture.active} disabled={busy || working !== null}
               aria-label={`${PICTURE_LABELS[picture.source]}${picture.active ? ' (in use)' : ''}`}
               onClick={() => { if (!picture.active) void run(picture.file, () => getApi().avatars.usePicture(avatar.id, picture.file)) }}
-              className={cn('glass-tile block w-full overflow-hidden rounded-lg text-left', picture.active ? 'glass-selected ring-1 ring-accent' : 'glass-tile-hover opacity-80 hover:opacity-100')}>
+              className={cn('glass-tile block w-full overflow-hidden rounded-lg text-left', picture.active ? 'glass-selected ring-1 ring-tool' : 'glass-tile-hover opacity-80 hover:opacity-100')}>
               <img src={localFileUrl(picture.path)} alt="" className="aspect-[9/16] w-full object-cover" />
               <span className="block truncate px-1.5 py-1 text-2xs text-ink">{working === picture.file ? 'Switching…' : picture.active ? 'In use' : PICTURE_LABELS[picture.source]}</span>
             </button>
@@ -998,7 +1034,7 @@ function ReactionLibrary({ avatar, busy, openrouterConfigured, onChange, onError
                 : <div className="flex aspect-[9/16] w-full items-center justify-center rounded-lg bg-white/[0.04] text-2xs text-ink-subtle">Not made yet</div>}
               <div className="flex items-center justify-between gap-1">
                 <span className="truncate text-2xs text-ink">{reaction.label}{clip?.source === 'own' ? ' · yours' : ''}</span>
-                <button type="button" className="shrink-0 text-2xs text-accent disabled:opacity-50" disabled={busy || making}
+                <button type="button" className="shrink-0 text-2xs text-tool disabled:opacity-50" disabled={busy || making}
                   aria-label={`Upload my own ${reaction.label} clip`} onClick={() => void upload(reaction.id)}>{clip ? 'Replace' : 'Upload'}</button>
               </div>
             </div>

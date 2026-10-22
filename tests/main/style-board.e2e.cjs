@@ -323,10 +323,10 @@ test('the style board picks the look in one place, previews it and sends the sam
 
   // Remix, you on camera: the board fills the folded "Look & call to action", with the template's layout under it.
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
-  await page.getByRole('heading', { name: 'Remix', exact: true }).waitFor()
+  await page.getByRole('heading', { name: 'Their moment hooks. Your take is the video.', exact: true }).waitFor()
   await page.getByRole('radio', { name: /You on camera/ }).click()
   await page.getByRole('radio', { name: /Pause & react/ }).click()
-  const fold = page.getByRole('button', { name: /3 · Look & call to action/ })
+  const fold = page.getByRole('button', { name: 'Customize for this video' })
   const foldSummary = await page.getByTestId('look-summary').innerText()
   assert.match(foldSummary, /Pop captions · White bar/)
   await fold.click()
@@ -344,7 +344,7 @@ test('the style board picks the look in one place, previews it and sends the sam
 
   // AI presenter: the same board in the same fold (still open: the choice holds for the session), after the presenter.
   await page.getByRole('radio', { name: /AI presenter/ }).click()
-  const aiFold = page.getByRole('button', { name: /4 · Look & call to action/ })
+  const aiFold = page.getByRole('button', { name: 'Customize for this video' })
   assert.equal(await aiFold.getAttribute('aria-expanded'), 'true')
   await page.getByTestId('style-board').waitFor()
   assert.equal(await checked(page.getByRole('radiogroup', { name: 'Hook text look' }).getByRole('radio', { name: 'Black bar' })), true)
