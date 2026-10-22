@@ -74,7 +74,7 @@ test('Free up space lists removable files by group, removes only the chosen ones
   // Remix parts and CTA originals are opt-in and carry their warning.
   assert.equal(await dialog.getByRole('checkbox', { name: 'Remix and b-roll video parts' }).getAttribute('aria-checked'), 'false')
   assert.equal(await dialog.getByRole('checkbox', { name: 'Clip copies without the call to action' }).getAttribute('aria-checked'), 'false')
-  await dialog.getByText('You can no longer use “Edit hook text & captions” on these videos.').waitFor()
+  await dialog.getByText('You can no longer use “Edit hook text & captions” on these Remix videos, or swap shots in these b-roll videos.').waitFor()
   assert.equal(await dialog.getByTestId('free-total').textContent(), '7 MB selected')
   await dialog.getByRole('checkbox', { name: 'Remix and b-roll video parts' }).click()
   assert.equal(await dialog.getByTestId('free-total').textContent(), '19 MB selected')
