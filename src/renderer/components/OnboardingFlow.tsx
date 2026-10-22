@@ -30,7 +30,7 @@ function ChoiceCard({ checked, onChange, title, detail }: { checked: boolean; on
   return (
     <button type="button" role="checkbox" aria-checked={checked} onClick={() => onChange(!checked)}
       className={cn('glass-tile glass-tile-hover flex items-start gap-2.5 rounded-xl px-3 py-2.5 text-left transition-shadow',
-        checked && 'shadow-[inset_0_0_0_1.5px_rgb(var(--accent)/0.9)]')}>
+        checked && 'glass-selected')}>
       <span aria-hidden className={cn('mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[6px]',
         checked ? 'bg-accent text-accent-ink' : 'shadow-[inset_0_0_0_1.5px_rgb(255_255_255/0.25)]')}>
         {checked && <Check className="h-3 w-3" strokeWidth={3} />}
@@ -113,15 +113,17 @@ export function OnboardingFlow({ onNavigate }: { onNavigate: (page: 'clip') => v
         // Escape inside a dialog opened from here (a brand) belongs to that dialog.
         if (e.key === 'Escape' && !working && ref.current?.contains(e.target as Node)) void close('skipped')
       }}>
-      <div className="flex items-start gap-3 border-b border-white/[0.07] px-5 py-4">
+      <div className="flex items-start gap-3 border-b border-line px-5 pb-4 pt-5">
         <div className="min-w-0 flex-1">
-          <p className="eyebrow text-accent"><Sparkles className="mr-1 inline h-3.5 w-3.5" />{firstTime ? 'Welcome to CreatorClips' : 'Your profile'}</p>
-          <h1 id="onboarding-title" className="mt-0.5 text-lg font-semibold text-ink">Set up your CreatorClips profile</h1>
-          <ol className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-2xs" aria-label="Steps">
+          <p className="eyebrow text-accent"><Sparkles className="mr-1 inline h-3.5 w-3.5 align-[-3px]" />{firstTime ? 'Welcome to CreatorClips' : 'Your profile'}</p>
+          <h1 id="onboarding-title" className="mt-1 font-display text-xl font-semibold tracking-[-0.02em] text-ink">Set up your CreatorClips profile</h1>
+          <ol className="mt-3 grid grid-cols-2 gap-x-2 gap-y-2 sm:grid-cols-4" aria-label="Steps">
             {STEPS.map((item, i) => (
-              <li key={item.id} aria-current={item.id === step ? 'step' : undefined}
-                className={cn(i === index ? 'font-semibold text-ink' : i < index ? 'text-ink-muted' : 'text-ink-subtle')}>
-                {i + 1} · {item.label}
+              <li key={item.id} aria-current={item.id === step ? 'step' : undefined} className="min-w-0">
+                <span aria-hidden className={cn('block h-[3px] rounded-full transition-colors duration-200', i <= index ? 'bg-accent' : 'bg-white/[0.08]')} />
+                <span className={cn('mt-1.5 block text-2xs leading-snug', i === index ? 'font-medium text-ink' : i < index ? 'text-ink-muted' : 'text-ink-subtle')}>
+                  {i + 1} · {item.label}
+                </span>
               </li>
             ))}
           </ol>
@@ -197,7 +199,7 @@ export function OnboardingFlow({ onNavigate }: { onNavigate: (page: 'clip') => v
 function StepHeading({ title, detail }: { title: string; detail: string }): React.JSX.Element {
   return (
     <div>
-      <h2 id="onboarding-step-heading" tabIndex={-1} className="text-base font-semibold text-ink focus:outline-none">{title}</h2>
+      <h2 id="onboarding-step-heading" tabIndex={-1} className="font-display text-base font-semibold tracking-[-0.01em] text-ink focus:outline-none">{title}</h2>
       <p className="mt-0.5 text-xs text-ink-muted">{detail}</p>
     </div>
   )
@@ -220,7 +222,7 @@ function PathSummary({ goals, platforms }: { goals: GoalId[]; platforms: ZernioP
       <ol className="grid gap-1.5 sm:grid-cols-2" aria-label="Your setup path" data-testid="onboarding-path">
         {items.map((item, i) => (
           <li key={item.id} data-setup-item={item.id} className="glass-tile flex items-start gap-2.5 rounded-xl px-3 py-2">
-            <span aria-hidden className="mt-px w-4 shrink-0 text-center text-xs font-semibold text-ink-subtle">{i + 1}</span>
+            <span aria-hidden className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-white/[0.05] font-mono text-[10px] tabular text-ink-muted shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]">{i + 1}</span>
             <span className="min-w-0">
               <span className="block text-sm font-medium leading-snug text-ink">{item.title}{item.optional && <span className="ml-1.5 text-2xs font-normal text-ink-subtle">Optional</span>}</span>
               <span className="mt-0.5 line-clamp-2 text-2xs text-ink-subtle" title={item.why ?? item.detail}>{item.why ?? item.detail}</span>

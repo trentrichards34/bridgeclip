@@ -247,13 +247,20 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
   return (
     <Page width="default">
       <PageHeader
-        eyebrow="Studio"
-        title="Jobs"
-        description="What’s making now and everything you’ve made: Create, Remix, Edit my recording and Avatar Studio."
+        title="Everything that’s running or ran"
+        description={`Up to ${MAX_PARALLEL_JOBS === 2 ? 'two' : MAX_PARALLEL_JOBS} jobs run at once; the rest wait in the queue and start automatically. Completed jobs open in Library.`}
         actions={
           <>
             <Button
               variant="ghost"
+              icon={<Wallet className="h-3.5 w-3.5" />}
+              onClick={onSpending}
+              tooltip="What your AI runs cost (Settings → Spending)"
+            >
+              Spending
+            </Button>
+            <Button
+              variant="secondary"
               iconOnly
               aria-label="Refresh jobs"
               title="Refresh jobs"
@@ -261,74 +268,80 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
               disabled={refreshing}
               icon={<RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />}
             />
-            <Button variant="ghost" icon={<Wallet className="h-3.5 w-3.5" />} onClick={onSpending} title="What your AI runs cost (Settings → Spending)">Spending</Button>
-            <Button variant="primary" icon={<Plus className="h-3.5 w-3.5" />} onClick={onNew}>New job</Button>
+            <Button variant="primary" icon={<Plus className="h-3.5 w-3.5" strokeWidth={2.4} />} onClick={onNew}>New job</Button>
           </>
         }
       />
 
-      <div className="mt-4 space-y-3">
+      <div className="mt-5 space-y-3.5">
         {error && <Callout tone="danger" onDismiss={onDismissError}>{error}</Callout>}
-
-        {active.length > 0 && (
-          <Panel padded={false} className="overflow-hidden">
-            <section aria-label="Active jobs">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] py-2 pl-4 pr-3">
-                <SectionTitle label="Active" count={active.length} />
-                <p className="text-2xs text-ink-subtle">
-                  {running} running{queued > 0 && ` · ${queued} queued`} · up to {MAX_PARALLEL_JOBS} at once
-                </p>
-              </div>
-              <ul className="divide-y divide-white/[0.05]">
-                {active.map((job) => (
-                  <ActiveJobRow
-                    key={job.id}
-                    job={job}
-                    position={job.status === 'queued' ? active.filter((j) => j.status === 'queued').indexOf(job) + 1 : null}
-                    onOpen={() => onOpenJob(job)}
-                    onCancel={() => onCancel(job)}
-                  />
-                ))}
-              </ul>
-            </section>
-          </Panel>
-        )}
 
         {nothingYet ? (
           <EmptyState
             icon={<ListVideo />}
             title="No jobs yet"
             description="Every video you make shows up here while it works, then stays listed when it’s done: Create clips, Remix, Edit my recording and Avatar Studio. Up to two run at once."
-            action={<Button variant="primary" onClick={onNew}>Create clips</Button>}
+            action={<Button variant="primary" icon={<Plus className="h-3.5 w-3.5" strokeWidth={2.4} />} onClick={onNew}>Create clips</Button>}
           />
-        ) : (
+        ) : (<>
+          <Panel padded={false} className="overflow-hidden">
+            <section aria-label="Active jobs">
+              <div className="flex min-h-[44px] flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-2.5">
+                <SectionTitle label="Active" count={active.length} />
+                {active.length > 0 && (
+                  <p className="text-2xs text-ink-subtle">
+                    {running} running{queued > 0 && ` · ${queued} queued`} · up to {MAX_PARALLEL_JOBS} at once
+                  </p>
+                )}
+              </div>
+              {active.length === 0 ? (
+                <p className="px-4 py-3.5 text-xs text-ink-subtle">Nothing running. Start a job from Create, Remix, Edit my recording or Avatar Studio; extra jobs wait here in line.</p>
+              ) : (
+                <ul className="divide-y divide-white/[0.04]">
+                  {active.map((job) => (
+                    <ActiveJobRow
+                      key={job.id}
+                      job={job}
+                      position={job.status === 'queued' ? active.filter((j) => j.status === 'queued').indexOf(job) + 1 : null}
+                      onOpen={() => onOpenJob(job)}
+                      onCancel={() => onCancel(job)}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
+          </Panel>
+
           <Panel padded={false} className="overflow-hidden">
             <section aria-label="Previous jobs">
-              <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.06] py-1.5 pl-4 pr-1.5">
+              <div className="flex min-h-[46px] flex-wrap items-center gap-2 border-b border-line py-2 pl-4 pr-2.5">
                 <SectionTitle label="Previous" count={previous.length} className="mr-auto" />
                 {previous.length > 0 && (
                   <>
-                    <div className="inline-flex flex-wrap items-center gap-0.5" role="group" aria-label="Filter jobs">
+                    <div className="inline-flex flex-wrap items-center gap-1" role="group" aria-label="Filter jobs">
                       {FILTERS.filter((option) => option.id === 'all' || (counts[option.id] ?? 0) > 0).map((option) => {
                         const selected = filter === option.id
                         return (
                           <button
                             key={option.id}
+                            type="button"
                             onClick={() => onFilter(option.id)}
                             aria-pressed={selected}
                             className={cn(
-                              'inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors duration-150',
-                              selected ? 'bg-white/[0.1] text-ink' : 'text-ink-muted hover:bg-white/[0.05] hover:text-ink'
+                              'inline-flex h-[26px] items-center gap-1.5 rounded-full px-2.5 text-xs transition-colors duration-150',
+                              selected ? 'bg-white/[0.09] font-medium text-ink shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]' : 'text-ink-muted hover:bg-white/[0.05] hover:text-ink'
                             )}
                           >
                             {option.label}
-                            <span className={cn('font-mono text-2xs tabular', selected ? 'text-ink-muted' : 'text-ink-faint')}>{counts[option.id] ?? 0}</span>
+                            <span className="font-mono text-[10px] tabular text-ink-subtle">{counts[option.id] ?? 0}</span>
                           </button>
                         )
                       })}
                     </div>
                     <TextInput
-                      className="w-44 rounded-full max-sm:w-full"
+                      inputSize="sm"
+                      type="search"
+                      className="ml-1 w-[170px] rounded-full max-sm:ml-0 max-sm:w-full"
                       value={query}
                       onChange={(event) => onQuery(event.target.value)}
                       placeholder="Search jobs"
@@ -340,9 +353,9 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
               </div>
 
               {entries === null ? (
-                <ul className="divide-y divide-white/[0.05]" aria-busy="true" aria-label="Loading jobs">
+                <ul className="divide-y divide-white/[0.04]" aria-busy="true" aria-label="Loading jobs">
                   {Array.from({ length: 4 }).map((_, i) => (
-                    <li key={i} className="flex h-10 items-center gap-3 px-4">
+                    <li key={i} className="flex h-[52px] items-center gap-3 px-4">
                       <Skeleton className="h-2 w-2 rounded-full" />
                       <Skeleton className="h-3 w-2/5 rounded-full" />
                       <Skeleton className="ml-auto h-3 w-24 rounded-full" />
@@ -350,11 +363,14 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
                   ))}
                 </ul>
               ) : previous.length === 0 ? (
-                <p className="px-4 py-3 text-xs text-ink-subtle">Finished jobs will appear here.</p>
+                <p className="px-4 py-3.5 text-xs text-ink-subtle">Finished jobs will appear here.</p>
               ) : visible.length === 0 ? (
-                <p className="px-4 py-3 text-xs text-ink-subtle">No jobs match this filter.</p>
+                <div className="flex flex-wrap items-center gap-3 px-4 py-3.5 text-xs text-ink-subtle">
+                  <span>{query.trim() ? `No jobs match “${query.trim()}”.` : 'No jobs match this filter.'}</span>
+                  <Button size="sm" variant="ghost" onClick={() => { onFilter('all'); onQuery('') }}>Show all jobs</Button>
+                </div>
               ) : (
-                <ul className="divide-y divide-white/[0.05]">
+                <ul className="divide-y divide-white/[0.04]">
                   {visible.map((entry) => (
                     <PreviousJobRow key={entry.jobId} entry={entry} hasDetails={Boolean(sessionJobs[entry.jobId])} onOpen={() => onOpenEntry(entry)} onOpenFolder={() => onOpenFolder(entry.outputDir)} onMoreClips={() => onMoreClips(entry.outputDir)} />
                   ))}
@@ -362,7 +378,7 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
               )}
             </section>
           </Panel>
-        )}
+        </>)}
       </div>
     </Page>
   )
@@ -370,9 +386,9 @@ function JobsList({ active, entries, filter, query, error, refreshing, onFilter,
 
 function SectionTitle({ label, count, className }: { label: string; count: number; className?: string }): React.JSX.Element {
   return (
-    <h2 className={cn('flex items-center gap-2', className)}>
+    <h2 className={cn('flex items-center gap-2.5', className)}>
       <span className="eyebrow">{label}</span>
-      <span className="font-mono text-2xs tabular text-ink-faint">{count}</span>
+      <span className="font-mono text-2xs tabular text-ink-muted">{count}</span>
     </h2>
   )
 }
@@ -390,31 +406,31 @@ function ActiveJobRow({ job, position, onOpen, onCancel }: { job: Job; position:
   const detail = queued ? 'Starts when a slot frees up' : job.step
 
   return (
-    <li className="flex items-center pr-2 transition-colors duration-150 hover:bg-white/[0.025]">
-      <button onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 py-2 pl-4 pr-3 text-left" title={job.request.videoUrl}>
+    <li className="flex items-center pr-2.5 transition-colors duration-150 hover:bg-white/[0.02]">
+      <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3.5 py-3 pl-4 pr-3 text-left" title={job.request.videoUrl}>
         {queued ? (
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.05] font-mono text-2xs tabular text-ink-muted shadow-[inset_0_0_0_1px_rgb(255_255_255/0.1)]">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.05] font-mono text-[10px] tabular text-ink-muted shadow-[inset_0_0_0_1px_rgb(255_255_255/0.1)]">
             #{position}
           </span>
         ) : (
-          <ProgressRing value={job.percent} size={32} stroke={3}>
-            <span className="font-mono text-[9px] tabular text-accent">{Math.round(job.percent)}%</span>
+          <ProgressRing value={job.percent} size={36} stroke={3.5} tone="tool">
+            <span className="font-mono text-[9px] tabular text-tool">{Math.round(job.percent)}%</span>
           </ProgressRing>
         )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium leading-5 text-ink">{sourceLabel(job.request.videoUrl)}</span>
-          <span className="block truncate text-xs text-ink-muted">
-            <span className={queued ? 'text-ink-subtle' : 'text-accent'}>{stage}</span>
+          <span className="block truncate text-sm font-semibold leading-5 text-ink">{sourceLabel(job.request.videoUrl)}</span>
+          <span className="mt-0.5 block truncate text-xs text-ink-subtle">
+            <span className={queued ? 'text-ink-muted' : 'text-tool'}>{stage}</span>
             {detail && detail !== stage && ` · ${detail}`}
           </span>
         </span>
         {job.clipsTotal > 0 && (
-          <span className="hidden shrink-0 text-right font-mono text-xs tabular text-ink-muted sm:block">
+          <span className="hidden w-[70px] shrink-0 text-right font-mono text-2xs tabular text-ink-muted sm:block">
             {job.clipsDone}/{job.clipsTotal} <span className="font-sans">clips</span>
           </span>
         )}
-        <span className="w-24 shrink-0 text-right text-xs text-ink-subtle">
-          <span className="font-mono tabular">{formatTimecode(elapsed)}</span> {queued ? 'waiting' : 'elapsed'}
+        <span className="w-[110px] shrink-0 text-right text-2xs text-ink-subtle">
+          <span className="font-mono tabular text-ink-muted">{formatTimecode(elapsed)}</span> {queued ? 'waiting' : 'elapsed'}
         </span>
       </button>
       <Button
@@ -438,6 +454,16 @@ const STATUS_DOT: Record<HistoryEntry['status'], 'success' | 'accent' | 'danger'
   cancelled: 'idle',
   interrupted: 'warning',
   incomplete: 'warning'
+}
+
+/** The soft glow around a previous job's status dot, as in the Signal mockup. */
+const DOT_GLOW: Record<HistoryEntry['status'], string> = {
+  completed: 'shadow-[0_0_8px_rgb(var(--success)/0.7)]',
+  running: 'shadow-[0_0_8px_rgb(var(--accent)/0.7)]',
+  failed: 'shadow-[0_0_8px_rgb(var(--danger)/0.7)]',
+  cancelled: '',
+  interrupted: 'shadow-[0_0_8px_rgb(var(--warning)/0.7)]',
+  incomplete: 'shadow-[0_0_8px_rgb(var(--warning)/0.7)]'
 }
 
 const STATUS_TEXT: Record<HistoryEntry['status'], string> = {
@@ -474,37 +500,37 @@ function PreviousJobRow({ entry, hasDetails, onOpen, onOpenFolder, onMoreClips }
   const dated = !entry.date.startsWith('1970-')
   const cells = (
     <>
-      <StatusDot tone={editing ? 'accent' : STATUS_DOT[entry.status]} />
+      <StatusDot tone={editing ? 'accent' : STATUS_DOT[entry.status]} className={cn('rounded-full', DOT_GLOW[editing ? 'running' : entry.status])} />
       <span className="min-w-0 flex-1 truncate text-xs" title={entry.errorMessage ?? entry.videoTitle}>
         {!editing && <span className="sr-only">{status.label}: </span>}
-        <span className="text-sm text-ink">{entry.videoTitle}</span>
+        <span className="text-sm font-medium text-ink">{entry.videoTitle}</span>
         {!completed && <span className={cn('ml-2 font-medium', STATUS_TEXT[entry.status])} aria-hidden>{status.label}</span>}
         {entry.errorMessage && <span className="text-ink-subtle" data-selectable> · {entry.errorMessage}</span>}
       </span>
-      {editing && <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent px-2 py-0.5 text-2xs font-medium text-accent-ink"
+      {editing && <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent px-2.5 py-[3px] text-2xs font-semibold text-accent-ink"
         aria-label={`Editing: ${remaining} clip${remaining === 1 ? '' : 's'} left to finish`} title={`${remaining} clip${remaining === 1 ? '' : 's'} left to finish`}>
         <Pencil className="h-3 w-3" aria-hidden="true" />Editing<span className="hidden opacity-80 sm:inline">· {remaining} left</span>
       </span>}
-      <span className="hidden w-16 shrink-0 text-right text-xs text-ink-muted sm:block">
+      <span className="hidden w-16 shrink-0 text-right text-xs tabular text-ink-muted sm:block">
         {completed ? `${entry.clipCount} clip${entry.clipCount === 1 ? '' : 's'}` : ''}
       </span>
-      <span className="hidden w-16 shrink-0 text-right font-mono text-2xs tabular text-ink-subtle md:block">
+      <span className="hidden w-[64px] shrink-0 text-right font-mono text-2xs tabular text-ink-subtle md:block">
         {entry.durationMs != null ? formatDuration(entry.durationMs) : ''}
       </span>
       <span className="hidden w-14 shrink-0 text-right font-mono text-2xs tabular text-ink-subtle md:block">
         {entry.totalCostUsd != null ? formatUsd(entry.totalCostUsd) : ''}
       </span>
-      <span className="w-28 shrink-0 text-right text-xs text-ink-subtle" title={dated ? formatDate(entry.date) : undefined}>
-        {dated ? formatRelativeDate(entry.date) : 'Date unavailable'}
+      <span className="w-[100px] shrink-0 truncate whitespace-nowrap text-right text-xs text-ink-subtle" title={dated ? formatDate(entry.date) : undefined}>
+        {dated ? formatRelativeDate(entry.date).replace(/^(Today|Yesterday), .*$/, '$1') : 'Date unavailable'}
       </span>
     </>
   )
-  const cellClass = 'flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-4 pr-2 text-left'
+  const cellClass = 'flex min-h-[52px] min-w-0 flex-1 items-center gap-3 py-2.5 pl-4 pr-2 text-left'
 
   return (
-    <li className={cn('group/row flex items-center pr-2 transition-colors duration-150', openable && 'hover:bg-white/[0.025]')}>
+    <li className={cn('group/row flex items-center pr-2.5 transition-colors duration-150', openable && 'hover:bg-white/[0.02]')}>
       {openable ? (
-        <button onClick={onOpen} className={cellClass} title={completed ? 'Open in Library' : 'Open job'}>{cells}</button>
+        <button type="button" onClick={onOpen} className={cellClass} title={completed ? 'Open in Library' : 'Open job'}>{cells}</button>
       ) : (
         <div className={cellClass}>{cells}</div>
       )}
@@ -523,7 +549,7 @@ function JobCancelled({ job, leading, onRetry }: { job: Job; leading: React.Reac
   return (
     <Page width="focus">
       <div className="mb-3">{leading}</div>
-      <h1 className="text-xl font-semibold tracking-[-0.02em] text-ink">Job canceled</h1>
+      <h1 className="font-display text-[28px] font-semibold leading-tight tracking-[-0.02em] text-ink">Job canceled</h1>
       <p className="mt-1 truncate text-sm text-ink-muted" title={job.request.videoUrl}>{sourceLabel(job.request.videoUrl)}</p>
       <div className="mt-4">
         <Button variant="primary" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={onRetry}>Run again</Button>

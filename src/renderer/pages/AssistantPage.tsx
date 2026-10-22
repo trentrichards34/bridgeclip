@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
-import { ArrowUp, CalendarClock, Film, History, Loader2, Scissors, SquarePen, Square, Trash2, Workflow } from 'lucide-react'
+import { ArrowUp, CalendarClock, Film, History, Loader2, Scissors, Sparkles, SquarePen, Square, Trash2, Workflow } from 'lucide-react'
 import {
   ASSISTANT_PROMPT_MAX_CHARS,
   ASSISTANT_PROVIDERS,
@@ -99,7 +99,7 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings: (section?: '
         !checked ? 'Checking your assistants…'
           : !connected.length ? 'Connect Claude, OpenAI or OpenRouter to chat'
             : needsRouterModel ? 'Choose an OpenRouter model below to start'
-              : conversation ? 'Reply to CreatorClips…' : 'Ask CreatorClips to clip, post or organize…'
+              : conversation ? 'Reply to CreatorClips…' : 'Ask about your clips, or ask CreatorClips to do something…'
       }
       picker={(
         <ModelMenu
@@ -113,16 +113,17 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings: (section?: '
     />
   )
 
-  const notices = (
-    <>
-      {elsewhere.length > 0 && (
-        <Callout tone="warning" title="Another chat is waiting for your approval" className="mb-3" action={<Button size="sm" onClick={() => void store.open(elsewhere[0].conversationId)}>Open it</Button>}>
-          {elsewhere[0].title}
-        </Callout>
-      )}
-      {error && <Callout tone="danger" className="mb-3" onDismiss={store.clearError}>{error}</Callout>}
-    </>
+  const waitingBanner = elsewhere.length > 0 && (
+    <div role="status" className="mx-auto mt-3.5 flex w-full max-w-[1100px] flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-warning/30 bg-warning/[0.08] px-3.5 py-2.5">
+      <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-warning shadow-[0_0_8px_rgb(var(--warning)/0.6)]" aria-hidden />
+      <span className="min-w-0 flex-1 text-sm">
+        <span className="font-semibold text-warning">Another chat is waiting for your approval</span>
+        <span className="ml-2 truncate text-xs text-ink-muted">{elsewhere[0].title}</span>
+      </span>
+      <Button size="sm" onClick={() => void store.open(elsewhere[0].conversationId)}>Open it</Button>
+    </div>
   )
+  const errorCallout = error && <Callout tone="danger" className="mb-3" onDismiss={store.clearError}>{error}</Callout>
 
   return (
     <div className="flex h-full min-h-0 animate-fade">
@@ -137,12 +138,12 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings: (section?: '
         onDelete={confirmDelete}
       />
 
-      <section aria-label="Conversation" className="flex min-w-0 flex-1 flex-col">
-        <header className={cn('flex h-11 shrink-0 items-center gap-1 px-3 sm:px-4', conversation ? 'border-b border-white/[0.06]' : 'lg:hidden')}>
+      <section aria-label="Conversation" className="flex min-w-0 flex-1 flex-col px-4 sm:px-6 lg:pl-3 xl:pr-8">
+        <header className={cn('flex h-11 shrink-0 items-center gap-1', conversation ? 'mt-1.5 border-b border-line' : 'lg:hidden')}>
           <div className="lg:hidden">
             <ActionMenu label="Recent chats" icon={<History className="h-4 w-4" />} actions={history} disabled={history.length === 0} />
           </div>
-          <h1 className="min-w-0 flex-1 truncate px-1.5 text-sm font-semibold text-ink">{conversation?.title}</h1>
+          <h1 className="min-w-0 flex-1 truncate px-1.5 font-display text-[15px] font-semibold tracking-[-0.01em] text-ink">{conversation?.title}</h1>
           {conversation && (
             <>
               <Button variant="ghost" size="sm" iconOnly aria-label="Delete this chat" tooltip="Delete this chat" icon={<Trash2 className="h-3.5 w-3.5" />} disabled={busy} onClick={() => confirmDelete(conversation)} />
@@ -150,57 +151,46 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings: (section?: '
             </>
           )}
         </header>
+        {waitingBanner}
 
         {conversation ? (
-          <>
-            <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-              <div className={cn(COLUMN, 'space-y-7 pb-8 pt-6')}>
-                {conversation.messages.map((message, index) => message.role === 'user'
-                  ? <UserMessage key={message.id} message={message} />
-                  : (
-                    <AssistantReply
-                      key={message.id}
-                      message={message}
-                      provider={conversation.provider}
-                      model={conversation.model}
-                      working={busy && index === conversation.messages.length - 1}
-                    />
-                  ))}
-                {pending.map((request) => <ApprovalCard key={request.id} request={request} onAnswer={(allowed) => void store.approve(request.id, allowed)} />)}
-              </div>
+          <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
+            <div className={cn(COLUMN, 'space-y-7 pb-8 pt-6')}>
+              {conversation.messages.map((message, index) => message.role === 'user'
+                ? <UserMessage key={message.id} message={message} />
+                : (
+                  <AssistantReply
+                    key={message.id}
+                    message={message}
+                    provider={conversation.provider}
+                    model={conversation.model}
+                    working={busy && index === conversation.messages.length - 1}
+                  />
+                ))}
+              {pending.map((request) => <ApprovalCard key={request.id} request={request} onAnswer={(allowed) => void store.approve(request.id, allowed)} />)}
             </div>
-            <div className={cn(COLUMN, 'shrink-0 pb-3')}>
-              {notices}
-              {composer}
-              <p className="mt-2 text-center text-2xs text-ink-subtle">
-                Posting, deleting and spending API credit always ask you first.
-              </p>
-            </div>
-          </>
+          </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className={cn(COLUMN, 'flex min-h-full max-w-[680px] flex-col justify-center pb-16 pt-8')}>
-              <div className="flex flex-col items-center text-center">
+            <div className={cn(COLUMN, 'flex min-h-full flex-col justify-end pb-5 pt-8')}>
+              <div className="flex items-start gap-3">
                 {provider && connected.length > 0
-                  ? <ProviderLogo provider={provider} variant="tile" size="lg" />
+                  ? <ProviderLogo provider={provider} variant="tile" size="sm" />
                   : (
-                    <span className="flex -space-x-2">
-                      {ASSISTANT_PROVIDERS.map((id) => <ProviderLogo key={id} provider={id} variant="tile" size="lg" className="ring-4 ring-canvas" />)}
+                    <span aria-hidden className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] bg-[linear-gradient(135deg,rgb(var(--tool-remix)),rgb(var(--tool-avatar)))] text-white">
+                      <Sparkles className="h-3.5 w-3.5" />
                     </span>
                   )}
-                <h1 className="mt-5 text-2xl font-semibold tracking-tight text-ink">What should we make today?</h1>
-                <p className="mt-1.5 max-w-[440px] text-sm text-ink-muted">
-                  Clip a video, review your Library, build an automation or schedule posts. Just ask.
-                </p>
-              </div>
-
-              <div className="mt-7">
-                {notices}
-                {composer}
+                <div className="min-w-0 pt-0.5">
+                  <h1 className="font-display text-lg font-semibold tracking-[-0.01em] text-ink">What should we make today?</h1>
+                  <p className="mt-0.5 text-sm text-ink-muted">
+                    Clip a video, review your Library, build an automation or schedule posts. Just ask.
+                  </p>
+                </div>
               </div>
 
               {checked && connected.length === 0 ? (
-                <div className="glass mt-4 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-3xl p-4">
+                <div className="glass mt-4 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl p-4">
                   <div className="min-w-[220px] flex-1">
                     <p className="text-sm font-semibold text-ink">Connect Claude, OpenAI or OpenRouter to start</p>
                     <p className="mt-0.5 text-xs text-ink-muted">
@@ -210,7 +200,7 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings: (section?: '
                   <Button variant="primary" onClick={() => onOpenSettings()}>Connect</Button>
                 </div>
               ) : (
-                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                <div className="mt-3.5 flex flex-wrap gap-2 pl-10">
                   {STARTERS.map(({ title, icon: Icon, prompt }) => (
                     <button
                       key={title}
@@ -225,7 +215,7 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings: (section?: '
                       }}
                       className="flex h-8 items-center gap-2 rounded-full bg-white/[0.04] px-3.5 text-xs text-ink-muted shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)] transition-colors duration-150 enabled:hover:bg-white/[0.08] enabled:hover:text-ink disabled:opacity-50"
                     >
-                      <Icon aria-hidden className="h-3.5 w-3.5 text-ink-subtle" />
+                      <Icon aria-hidden className="h-3.5 w-3.5 text-tool" />
                       {title}
                     </button>
                   ))}
@@ -234,6 +224,10 @@ export function AssistantPage({ onOpenSettings }: { onOpenSettings: (section?: '
             </div>
           </div>
         )}
+        <div className={cn(COLUMN, 'shrink-0 pb-5')}>
+          {errorCallout}
+          {composer}
+        </div>
       </section>
 
       {confirm && <ConfirmDialog request={confirm} onClose={closeConfirm} />}
@@ -266,7 +260,7 @@ function Composer({ inputRef, draft, onDraft, onSubmit, onStop, busy, sending, c
         if (event.target === event.currentTarget) { event.preventDefault(); inputRef.current?.focus() }
       }}
       className={cn(
-        'glass cursor-text rounded-3xl p-2 transition-shadow duration-200',
+        'glass cursor-text rounded-2xl p-2 transition-shadow duration-200',
         'focus-within:shadow-[inset_0_0_0_1px_rgb(var(--accent)/0.55),0_0_0_3px_rgb(var(--accent)/0.12),0_18px_48px_-24px_rgb(0_0_0/0.6)]'
       )}
     >
@@ -281,24 +275,33 @@ function Composer({ inputRef, draft, onDraft, onSubmit, onStop, busy, sending, c
         onKeyDown={onKeyDown}
         placeholder={placeholder}
         disabled={!canSend}
-        className="block max-h-60 min-h-[52px] w-full resize-none bg-transparent px-2.5 pt-1.5 text-base leading-relaxed text-ink placeholder:text-ink-faint focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed [field-sizing:content]"
+        className="block max-h-60 min-h-[44px] w-full resize-none bg-transparent px-2 pt-1.5 text-base leading-relaxed text-ink placeholder:text-ink-subtle focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed [field-sizing:content]"
       />
-      <div className="flex items-center gap-2">
-        {picker}
-        <span className="ml-auto hidden select-none text-2xs text-ink-faint md:inline">↵ to send · ⇧↵ for a new line</span>
-        {busy ? (
-          <Button variant="secondary" iconOnly aria-label="Stop" tooltip="Stop the reply" className="ml-auto md:ml-0" icon={<Square className="h-3 w-3 fill-current" />} onClick={onStop} />
-        ) : (
-          <Button
-            variant="primary"
-            iconOnly
-            aria-label="Send"
-            className="ml-auto md:ml-0"
-            icon={sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" strokeWidth={2.4} />}
-            disabled={!draft.trim() || sending || !canSend}
-            onClick={onSubmit}
-          />
-        )}
+      <div className="flex items-center gap-2 pl-2">
+        <span className="hidden min-w-0 flex-1 select-none truncate text-2xs text-ink-subtle md:block">
+          Posting, deleting and spending API credit always ask you first
+        </span>
+        <span className="ml-auto flex min-w-0 items-center gap-1.5 md:ml-0">
+          {picker}
+          {busy ? (
+            <Button variant="secondary" iconOnly aria-label="Stop" tooltip="Stop the reply" className="rounded-full" icon={<Square className="h-3 w-3 fill-current" />} onClick={onStop} />
+          ) : (
+            <button
+              type="button"
+              aria-label="Send"
+              title="Send (Enter). Shift+Enter starts a new line."
+              disabled={!draft.trim() || sending || !canSend}
+              onClick={onSubmit}
+              className={cn(
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-[filter,transform,background] duration-150 active:scale-95 motion-reduce:active:scale-100',
+                'enabled:bg-[linear-gradient(135deg,rgb(var(--tool-remix)),rgb(var(--tool-avatar)))] enabled:text-white enabled:shadow-[0_6px_18px_-8px_rgb(var(--tool-remix)/0.8)] enabled:hover:brightness-110',
+                'disabled:bg-white/[0.07] disabled:text-ink-faint'
+              )}
+            >
+              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" strokeWidth={2.4} />}
+            </button>
+          )}
+        </span>
       </div>
     </div>
   )

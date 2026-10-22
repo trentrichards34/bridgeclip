@@ -244,13 +244,12 @@ export function ModelMenu({ provider, models, statuses, onChoose, onConnect }: {
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); openMenu() }
         }}
         className={cn(
-          'flex h-8 min-w-0 max-w-[260px] items-center gap-2 rounded-full pl-2 pr-2.5 text-xs font-medium text-ink',
-          'bg-white/[0.05] shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)] transition-colors duration-150',
-          'hover:bg-white/[0.09] aria-expanded:bg-white/[0.1]'
+          'flex h-8 min-w-0 max-w-[240px] items-center gap-1.5 rounded-lg px-2 font-mono text-2xs text-ink-muted',
+          'transition-colors duration-150 hover:bg-white/[0.06] hover:text-ink aria-expanded:bg-white/[0.08] aria-expanded:text-ink'
         )}
       >
         {provider
-          ? <ProviderLogo provider={provider} className="h-4 w-4 shrink-0" />
+          ? <ProviderLogo provider={provider} className="h-3.5 w-3.5 shrink-0" />
           : <Sparkles aria-hidden className="h-3.5 w-3.5 shrink-0 text-ink-subtle" />}
         <span className="truncate">{current}</span>
         <ChevronDown aria-hidden className={cn('h-3.5 w-3.5 shrink-0 text-ink-subtle transition-transform duration-150', open && 'rotate-180')} />
