@@ -633,7 +633,21 @@ export function fitGraphicInCut<G extends Pick<EditorGraphic, 'at_ms' | 'duratio
   if (!c.ranges.some(([a, b]) => at >= a && at < b)) at = c.ranges.find(([a]) => a > at)?.[0] ?? at
   duration = Math.min(duration, end - at)
   if (duration < GRAPHIC_MIN_MS) return null
-  return at === g.at_ms && duration === g.duration_ms ? g : { ...g, at_ms: at, duration_ms: duration }
+  if (at === g.at_ms && duration === g.duration_ms) return g
+  const moved = { ...g, at_ms: at, duration_ms: duration }
+  // Item and word times are ms from the graphic's start: moved with it, they stay on the words where they're said.
+  const fields = (g as { fields?: Record<string, string> }).fields
+  if (fields && at !== g.at_ms && (fields.item_ms || fields.word_ms)) {
+    const next = { ...fields }
+    for (const key of ['item_ms', 'word_ms'] as const) {
+      if (!next[key]) continue
+      const times = next[key].split(/[\s,]+/).filter(Boolean).map(Number)
+      if (times.every(Number.isFinite)) next[key] = times.map((t) => String(Math.max(0, Math.min(duration, Math.round(t + g.at_ms - at))))).join('\n')
+      else delete next[key]
+    }
+    return { ...moved, fields: next }
+  }
+  return moved
 }
 
 /** Graphics that sit in a band (an arrow or circle points at a spot instead). */

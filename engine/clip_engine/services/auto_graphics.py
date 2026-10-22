@@ -365,9 +365,23 @@ def _tokens(text: str) -> list[str]:
 def _said(token: str, heard: set[str]) -> bool:
     if token in heard:
         return True
-    # Plurals and possessives as said ("tool" / "tools", "brand's").
-    base = token.split("'")[0]
+    # Plurals and possessives as said ("tool" / "tools", "brand's"). Only a possessive 's is dropped: "can't" or
+    # "won't" is never "can" or "won" (that would turn what was said around).
+    if "'" in token and not token.endswith("'s"):
+        return False
+    base = token[:-2] if token.endswith("'s") else token
     return base in heard or base.rstrip('s') in heard or f'{base}s' in heard
+
+
+def _digits_said(graphic: dict, heard: set[str]) -> bool:
+    """A token with a digit that isn't read as a number ("3rd", "v2", "Web3") is said exactly as on the card."""
+    for key, text in graphic['fields'].items():
+        if key in ('icons', 'item_ms', 'word_ms', 'keyword'):
+            continue
+        for token in _tokens(text):
+            if _HAS_DIGIT.search(token) and not _numbers(token) and token not in heard:
+                return False
+    return True
 
 
 def _same(token: str, heard: str) -> bool:
@@ -489,16 +503,18 @@ def next_start(kept: Sequence[dict], g: dict) -> Optional[int]:
     return min(later) if later else None
 
 
-def word_timed(g: dict, segments: Sequence, clip_end: float, following: Optional[int]) -> dict:
+def word_timed(g: dict, segments: Sequence, clip_end: float, following: Optional[int], earliest: Optional[float] = None) -> dict:
     """A word-timed card with each word's spoken time (word_ms, ms into the card) and on screen until WORD_HOLD_MS after
-    its last word ends (within the clip and before the next card). Unchanged when its words can't all be timed."""
+    its last word ends (within the clip and before the next card). Unchanged when its words can't all be timed.
+    `earliest`: it never starts before this (the previous card's end, the clip's first second), even for an early word."""
     spans = word_spans(g, segments)
     if not spans:
         return g
     at = g['at_ms']
     if spans[0][0] - at > WORD_LEAD_MS or spans[0][0] < at:
         # Start just before the first word (never earlier than it was placed when that was already early enough).
-        at = max(0, spans[0][0] - WORD_LEAD_MS) if spans[0][0] >= at else spans[0][0]
+        at = max(0, spans[0][0] - WORD_LEAD_MS) if spans[0][0] >= at else max(spans[0][0], earliest if earliest is not None else 0, 0)
+        at = min(at, g['at_ms']) if spans[0][0] < g['at_ms'] else at
     end = max(at + g['duration_ms'], spans[-1][1] + WORD_HOLD_MS)
     limit = min(clip_end, following - GAP_MS if following is not None else clip_end, at + EDITOR_MAX_MS)
     length = int(max(EDITOR_MIN_MS, min(end, limit) - at))
@@ -547,8 +563,11 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
                 if not any(abs(value - heard) <= 1e-6 * max(1.0, abs(value)) for heard in near_numbers):
                     return False
     if graphic['template'] in STRICT_TEMPLATES:
-        return _strict_said(graphic, segments)
+        strict_heard = {w for w, _ in _timed_words(segments, at - STRICT_WINDOW_MS, at + length + STRICT_WINDOW_MS)}
+        return _digits_said(graphic, strict_heard) and _strict_said(graphic, segments)
     heard = set(_tokens(_words_between(segments, at - WORD_WINDOW_MS, at + length + WORD_WINDOW_MS)))
+    if not _digits_said(graphic, heard):
+        return False
     tokens = [t for key, text in graphic['fields'].items() if key != 'item_ms' for t in _tokens(text) if not _HAS_DIGIT.search(t)]
     if not tokens:
         return True
@@ -760,6 +779,11 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
         kept.append(g)
     taken: set[str] = set()
     out_list = []
+    # Word-timed cards may start a little earlier (on their first word), never over the card before, into the clip's
+    # first second, or into the comment keyword's last seconds.
+    first_src = source_ms(ranges, speed, FIRST_MS) or ranges[0][0]
+    tail_src = source_ms(ranges, speed, tail) or clip_end
+    previous_end: Optional[float] = None
     for g in sorted(kept, key=lambda g: g['at_ms']):
         fields = dict(g['fields'])
         if g['template'] in ITEM_TEMPLATES:
@@ -768,9 +792,12 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
                 # Each item comes in as it is said (ms into the card, source time).
                 fields['item_ms'] = '\n'.join(str(max(0, t - g['at_ms'])) for t in times)
         if g['template'] in WORD_TIMED:
-            g = word_timed(g, segments, clip_end, next_start(kept, g))
+            floor = max(ranges[0][0], previous_end + GAP_MS if previous_end is not None else ranges[0][0],
+                        first_src if g['template'] != 'headline_pill' else ranges[0][0])
+            g = word_timed(g, segments, min(clip_end, tail_src), next_start(kept, g), floor)
             if g.get('fields', {}).get('word_ms'):
                 fields['word_ms'] = g['fields']['word_ms']
+        previous_end = g['at_ms'] + g['duration_ms']
         out_list.append({'id': new_id(taken), 'template': g['template'], 'at_ms': g['at_ms'], 'duration_ms': g['duration_ms'],
                          'placement': g['placement'] if g.get('placement') in PLACEMENTS else 'top', 'fields': fields, 'origin': 'auto',
                          'size': graphic_size(g['template'], opts['stage'])})

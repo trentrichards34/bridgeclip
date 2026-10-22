@@ -282,3 +282,34 @@ def test_a_stage_card_the_render_could_not_stage_is_a_card(monkeypatch, tmp_path
     assert result.status == JobStatus.COMPLETED, result.error
     entry = result.output.metrics['clip_layouts'][0]
     assert entry['graphics'][0]['size'] == 'card' and 'stage_scenes' not in entry
+
+
+# --- Audit: nothing unsaid sneaks onto a card, and word timing keeps the spacing rules ---
+
+def test_a_contraction_or_a_digit_word_that_was_not_said_never_passes_as_said():
+    said = [line(10_000, "You can afford this course today."), line(14_000, "This is the second step that matters.")]
+    # "can't" is not "can" (it would turn what was said around).
+    assert not words_said(card('statement', 10_000, {'text': "You can't afford this course"}, 3000), said)
+    assert words_said(card('statement', 10_000, {'text': 'You can afford this course'}, 3000), said)
+    # A word with a digit that isn't read as a number must be said exactly.
+    assert not words_said(card('statement', 14_000, {'text': 'This is the 3rd step'}, 3000), said)
+    assert not words_said(card('stat', 14_000, {'value': '3rd', 'label': 'step that matters'}, 3000), said)
+    assert not words_said(card('title', 14_000, {'text': 'Web3 step that matters'}, 3000), said)
+    said_web3 = [line(14_000, "This Web3 step is the one that matters.")]
+    assert words_said(card('statement', 14_000, {'text': 'This Web3 step matters'}, 3000), said_web3)
+    # Possessives still match ("brand's" said as "brand").
+    assert words_said(card('statement', 10_000, {'text': "You can afford this course's price"}, 3000),
+                      [line(10_000, "You can afford this course price today.")])
+
+
+def test_a_word_timed_card_never_moves_back_into_the_first_second_or_over_the_card_before():
+    # Said right as the clip starts: the card is moved out of the first second, and word timing keeps it there.
+    said = [line(10_200, "Big money moves fast and then we keep talking about other things for a while longer okay")]
+    out = fit_to_clip([card('title', 10_200, {'text': 'Big money moves'}, 2500)], said, [(10_000, 30_000)], 1.0)
+    assert out and out[0]['at_ms'] >= 11_000
+    # A title whose words were said (with fillers) under the stat before it starts after that stat ends.
+    said = [line(10_000, "Here is the number 500 dollars per month we made then big um uh idea comes here and more words", 300)]
+    planned = [card('stat', 11_200, {'value': '500 dollars', 'label': 'per month'}, 3000), card('title', 14_400, {'text': 'big idea comes'}, 2500)]
+    out = fit_to_clip(planned, said, [(9_000, 30_000)], 1.0)
+    for a, b in zip(out, out[1:]):
+        assert a['at_ms'] + a['duration_ms'] <= b['at_ms']
