@@ -5,7 +5,8 @@ import { randomUUID } from 'crypto'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
 import { BROLL_IMAGE_EXTENSIONS, BROLL_PLAN_ESTIMATE_USD, BROLL_VIDEO_EXTENSIONS } from '../shared/react-templates'
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
-import { addEditorCandidate, addEditorGraphicImage, addEditorGraphicVideo, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorProgress, suggestEditorHooks } from './clip-editor'
+import { addEditorCandidate, addEditorGraphicImage, addEditorGraphicVideo, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorClips, readEditorProgress, suggestEditorHooks } from './clip-editor'
+import { buildLibrarySummary } from '../shared/library-summary'
 import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
 import { chatEstimateUsd, chatInfo, chatModel, editorChat, readChatTranscript, resetChat } from './clip-chat'
 import { editChatInfo, editRecordingChat, resetEditChat } from './edit-chat'
@@ -864,6 +865,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return getJobHistory(settings.outputDirectory, liveJobIds())
   })
 
+  // The Library at a glance (status counts and a light row per clip), read-only. No input.
+  handle('library:summary', async () => {
+    const settings = loadSettings()
+    const runs = await getJobHistory(settings.outputDirectory, liveJobIds())
+    return buildLibrarySummary(runs, { job: (run) => getJobOutput(run, settings.outputDirectory), editor: (run) => readEditorClips(run) })
+  })
   handle('history:postingStatus', (_event, outputDir: unknown) => libraryPostingStatus(outputDir))
   handle('history:postingSummary', (_event, outputDirs: unknown) => libraryPostingSummary(outputDirs))
   handle('history:readyToPost', () => readyToPost())

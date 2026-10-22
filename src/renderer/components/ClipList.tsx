@@ -49,6 +49,8 @@ interface ClipListProps {
   outputDir?: string
   /** Exact clip linked from an automation bank; independent of editable titles. */
   initialClipIndex?: number
+  /** Editor clip (candidate index) to open straight in the editor, from the Library's clip view. */
+  initialEditorCandidate?: number
   /** Shown above the title, e.g. a back link from the Library. */
   leading?: ReactNode
   onNewClip?: () => void
@@ -75,7 +77,7 @@ export function isCreateOutput(output: JobOutput): boolean {
 }
 
 /** Which clip and tab the editor opens on (from a clip's "Edit headline"). */
-interface EditorTarget { clip?: number; tab?: 'hook' }
+interface EditorTarget { clip?: number; tab?: 'hook'; candidate?: number }
 
 function ClipRun(props: ClipListProps): React.JSX.Element {
   const [output, setOutput] = useState(props.output)
@@ -94,7 +96,8 @@ function ClipRun(props: ClipListProps): React.JSX.Element {
       if (!active) return
       const { remaining } = editorProgress(session.project.candidates)
       setRemaining(remaining)
-      if (props.initialClipIndex === undefined && props.output.clips.length === 0 && remaining > 0) setEditing({})
+      if (props.initialEditorCandidate !== undefined) setEditing({ candidate: props.initialEditorCandidate })
+      else if (props.initialClipIndex === undefined && props.output.clips.length === 0 && remaining > 0) setEditing({})
     }).catch((cause) => {
       if (active) setEditorError(errorMessage(cause, 'Could not read editor progress. Open the editor to retry.'))
     }).finally(() => { if (active) setOpening(false) })
@@ -118,7 +121,7 @@ function ClipRun(props: ClipListProps): React.JSX.Element {
     } catch (cause) { setEditorError(errorMessage(cause, 'Could not open the editor.')) }
   }
   if (opening) return <Page width="wide">{props.leading}<p className="mt-4 text-sm text-ink-muted" role="status">Opening clips…</p></Page>
-  if (editing && props.outputDir) return <ClipEditor outputDir={props.outputDir} leading={props.leading} initialClip={editing.clip} initialTab={editing.tab}
+  if (editing && props.outputDir) return <ClipEditor outputDir={props.outputDir} leading={props.leading} initialClip={editing.clip} initialCandidate={editing.candidate} initialTab={editing.tab}
     onNeedSource={() => { setEditing(null); void openEditor() }}
     onExports={async () => {
       await refresh()

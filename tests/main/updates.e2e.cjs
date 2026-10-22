@@ -112,7 +112,7 @@ test('About shows output storage and update state, and restart installs updates'
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.getByRole('region', { name: 'Content storage' }).getByText(message, { exact: false }).waitFor({ timeout: 10000 })
     await page.getByRole('button', { name: 'Library', exact: true }).click()
-    await page.getByRole('heading', { name: 'Library', exact: true }).waitFor()
+    await page.getByRole('heading', { name: 'Your clips', exact: true }).waitFor()
     assert.deepEqual(errors, [], 'an unavailable storage bridge must not unmount the app')
   }
 })

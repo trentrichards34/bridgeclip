@@ -9,6 +9,9 @@ import { StatusDot } from './ui/Badge'
 import { STAGE_LABELS } from './JobProgress'
 import { SidebarUpdateButton } from './Updates'
 import { useAssistantStore } from '../store/use-assistant-store'
+import { useLibrarySummaryStore } from '../store/use-library-summary-store'
+import { useDataVersion } from '../store/use-data-version-store'
+import { useEffect, useId } from 'react'
 
 export type Page = 'clip' | 'edit' | 'remix' | 'avatar' | 'library' | 'broll' | 'brollvideo' | 'brand' | 'jobs' | 'assistant' | 'accounts' | 'posts' | 'automations' | 'guides' | 'settings'
 
@@ -76,6 +79,10 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps): React.JSX.El
   const expanded = useSidebarExpanded()
   const { ready, missingKeys, toolsOk } = useSetupState()
   const state = ready ? 'ready' : missingKeys.length > 0 ? 'setup needed' : toolsOk === false ? 'check failed' : 'checking'
+  // The Library's "N refining" badge: counted again on each page change, when a job ends and when the Library changes.
+  const activeJobs = useActiveJobs().length
+  const libraryVersion = useDataVersion('library')
+  useEffect(() => { void useLibrarySummaryStore.getState().refresh() }, [currentPage, activeJobs, libraryVersion])
   return (
     <aside
       id="sidebar"
@@ -181,12 +188,17 @@ function NavButton({ item, expanded, active, onNavigate }: {
   const badgeLabel = item.id === 'assistant' ? 'waiting for approval' : 'active'
   // What the badge says in the expanded sidebar: "1 running", "2 queued", "1 waiting".
   const badgeText = item.id === 'assistant' ? `${approvals} waiting` : running > 0 ? `${running} running` : `${jobs.length} queued`
+  // Library: clips still being refined. A description, so the button's name stays "Library".
+  const refining = useLibrarySummaryStore((state) => item.id === 'library' ? state.summary?.counts.refining ?? 0 : 0)
+  const describedBy = useId()
+  const note = refining > 0 ? `${refining} clip${refining === 1 ? '' : 's'} refining` : null
   return (
     <button
       onClick={() => onNavigate(item.id)}
       aria-current={active ? 'page' : undefined}
       aria-label={badge ? `${item.label}, ${badge} ${badgeLabel}` : item.label}
-      title={expanded ? undefined : badge ? `${item.label} · ${badge} ${badgeLabel}` : item.label}
+      aria-describedby={note ? describedBy : undefined}
+      title={expanded ? undefined : badge ? `${item.label} · ${badge} ${badgeLabel}` : note ? `${item.label} · ${note}` : item.label}
       className={cn(
         `tool-${item.tool}`,
         'group relative flex h-9 w-full shrink-0 items-center gap-2.5 rounded-[10px] text-[13px] transition-[background,color] duration-150 ease-out',
@@ -202,14 +214,15 @@ function NavButton({ item, expanded, active, onNavigate }: {
       )}>
         <Icon className="h-4 w-4" strokeWidth={2} />
       </span>
-      {!expanded && badge && (
+      {note && <span id={describedBy} className="sr-only">{note}</span>}
+      {!expanded && (badge || note) && (
         <span aria-hidden className="absolute right-1 top-1 h-2 w-2 rounded-full bg-tool-library shadow-[0_0_0_2px_rgb(var(--sidebar))]" />
       )}
       {expanded && (
         <>
           <span className="flex-1 truncate text-left">{item.label}</span>
-          {badge && (
-            <span aria-hidden className="shrink-0 whitespace-nowrap font-mono text-[10px] tabular text-tool-library group-hover:hidden">{badgeText}</span>
+          {(badge || note) && (
+            <span aria-hidden className="shrink-0 whitespace-nowrap font-mono text-[10px] tabular text-tool-library group-hover:hidden">{badge ? badgeText : `${refining} refining`}</span>
           )}
           {item.shortcut && (
             <kbd className={cn('hidden shrink-0 font-mono text-[10px] text-ink-faint', 'group-hover:inline')}>

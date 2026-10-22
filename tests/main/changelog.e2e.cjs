@@ -47,14 +47,14 @@ test('Settings → About and Help → Changelog show the bundled changelog', { t
 
   // Help → Changelog opens it over the current page. Keep the test window hidden.
   await page.getByRole('button', { name: 'Library', exact: true }).click()
-  await page.getByRole('heading', { name: 'Library', exact: true }).waitFor()
+  await page.getByRole('heading', { name: 'Your clips', exact: true }).waitFor()
   await app.evaluate(({ BrowserWindow, Menu }) => {
     BrowserWindow.getAllWindows()[0].show = () => {}
     const help = Menu.getApplicationMenu().items.find((item) => item.label === 'Help')
     help.submenu.items.find((item) => item.label === 'Changelog').click()
   })
   await dialog.waitFor()
-  assert.equal(await page.getByRole('heading', { name: 'Library', exact: true }).count(), 1)
+  assert.equal(await page.getByRole('heading', { name: 'Your clips', exact: true }).count(), 1)
   await dialog.getByRole('button', { name: 'Done' }).click()
   await dialog.waitFor({ state: 'detached' })
   assert.deepEqual(errors, [])
