@@ -243,8 +243,10 @@ def test_pipeline_with_stage_layouts_draws_stage_scenes_and_records_them(monkeyp
                                  headline_look={'look': 'none'}, cta_keyword='API')
     result, _ = run_pipeline(monkeypatch, tmp_path, request, transcribe, plan, render=render)
     assert result.status == JobStatus.COMPLETED, result.error
-    assert seen['graphics_options'] == {'headline_off': True, 'cta_keyword': 'API', 'stage': True}
+    assert seen['graphics_options'] == {'headline_off': True, 'cta_keyword': 'API', 'stage': True, 'chapters': True}
     (sent,) = renders
+    # No "step one… step two…" said: no chapter header, so the hook isn't handed over.
+    assert sent.headline_hide_source_ms is None
     assert sent.source_scenes == [{'scene': 'stage', 'start_ms': 13_000, 'end_ms': 17_700, 'backdrop': 'light'}]
     entry = result.output.metrics['clip_layouts'][0]
     assert [(g['template'], g['size']) for g in entry['graphics']] == [('strike_list', 'stage'), ('icon_pop', 'card')]
