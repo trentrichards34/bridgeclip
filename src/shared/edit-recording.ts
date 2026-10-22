@@ -19,6 +19,7 @@ import { parseAudioSkills } from './skills'
 import { parseClipOrder, type ClipOrderMode, type EditMode, type ShotType } from './combine-clips'
 import { newGraphic } from './motion-graphics'
 import { newEditGraphic } from './reel-graphics'
+import type { ScreenChoice } from './screen-pair'
 
 export const EDIT_MAX_SOURCES = 5
 /** Per recording, and all takes together. */
@@ -48,11 +49,11 @@ export const EDIT_SOUNDS = ['whoosh', 'pop', 'click', 'ding', 'thud'] as const
 export type EditSoundName = (typeof EDIT_SOUNDS)[number]
 export const SOUND_LABELS: Record<EditSoundName, string> = { whoosh: 'Soft whoosh', pop: 'Pop', click: 'Click', ding: 'Ding', thud: 'Soft thud' }
 
-export const CUT_REASONS = ['filler', 'cue', 'rejected', 'retake', 'false_start', 'off_topic', 'member'] as const
+export const CUT_REASONS = ['filler', 'cue', 'rejected', 'retake', 'false_start', 'off_topic', 'member', 'no_screen'] as const
 export type CutReason = (typeof CUT_REASONS)[number]
 export const CUT_LABELS: Record<CutReason, string> = {
   filler: 'Filler word', cue: 'You asked for a retake', rejected: 'A take you rejected', retake: 'An earlier take',
-  false_start: 'A false start', off_topic: 'Not part of the video', member: 'You cut this'
+  false_start: 'A false start', off_topic: 'Not part of the video', member: 'You cut this', no_screen: 'Before or after your screen recording'
 }
 
 export interface EditWord { text: string; startMs: number; endMs: number; src: number; cut: CutReason | null }
@@ -151,6 +152,17 @@ export interface EditStatus {
   images?: EditImage[]
   /** Retakes of one video (missing: this), or clips combined into one. */
   mode?: EditMode
+  /** Camera + screen: the screen recording made with the camera recording, and how they line up. */
+  screen?: EditScreen
+}
+
+/** A run's screen recording (camera + screen). */
+export interface EditScreen {
+  path: string; name: string; seconds: number
+  /** How long after the camera the screen recording started (negative: before). */
+  offsetMs: number
+  /** Where the screen recording runs, in camera time (ms). */
+  overlapMs: [number, number]
 }
 
 export interface EditLook {
@@ -205,6 +217,8 @@ export interface EditDecisions {
   clipOrder?: number[]
   /** Combine clips: a quick dip through black at each change of clip (missing: clean cuts). */
   transitions?: boolean
+  /** Camera + screen: how the two are shown (missing: the defaults). */
+  screen?: ScreenChoice
 }
 
 export interface EditStartRequest {
@@ -220,6 +234,8 @@ export interface EditStartRequest {
   purpose?: string
   /** A reference image ("A look you like"): the id of a picture chosen with reference:choose. */
   referenceImage?: string
+  /** Camera + screen: a screen recording made at the same time as the (one) camera recording, and how they line up. */
+  screen?: { path: string; offsetMs: number }
 }
 
 export function isRunningEdit(status: EditStatus | null | undefined): boolean {

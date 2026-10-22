@@ -3,6 +3,7 @@ import { parseScenes, type StageScene } from './scenes'
 /** Persisted source-time edits. Media paths and review results are main-process owned. */
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
 import { isCaptionLanguage, type CaptionLanguage } from './caption-language'
+import { parseScreenPair, type ScreenPair } from './screen-pair'
 export type Crop = [number, number, number, number]
 export type CropCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 export type EditorRange = [number, number]
@@ -13,13 +14,17 @@ export interface CameraScan {
   markers: { at_ms: number; score: number }[]
 }
 export interface EditorScene {
-  at_ms: number; layout: 'fill' | 'split' | 'fit'; crops: Crop[]
+  /** inset: the crop fitted over a blurred copy of itself; bubble: that, plus crops[1] in a round bubble (camera + screen projects). */
+  at_ms: number; layout: 'fill' | 'split' | 'fit' | 'inset' | 'bubble'; crops: Crop[]
   /** Incoming eased movement, in source milliseconds. Absent/zero is a cut. */
   transition_ms?: number
   /** Split layout: the top panel's share of the output height (SPLIT_RANGE). Absent is an even split. */
   split?: number
 }
 export const SPLIT_RANGE = { min: 0.3, max: 0.7, default: 0.5 } as const
+export const EDITOR_LAYOUTS: readonly EditorScene['layout'][] = ['fill', 'split', 'fit', 'inset', 'bubble']
+/** Layouts with two crops. */
+const TWO_CROPS: readonly string[] = ['split', 'bubble']
 /** The hook text over a 9:16 clip: its words and look. */
 export interface EditorHook { text: string; look: HeadlineLook }
 export const MAX_HOOK_CHARS = 200
@@ -108,6 +113,8 @@ export interface EditorProject {
   /** Whose voice hook ideas are written in (the run's headline voice). Absent: 'clipper'. */
   headline_voice?: 'clipper' | 'creator'
   automatic?: AutomaticOrigin
+  /** Camera + screen (screen-pair.ts): where the camera and the screen are in the source. */
+  pair?: ScreenPair
 }
 export interface EditorProgress { phase: 'scan' | 'preview' | 'download' | 'copy'; percent: number }
 export type EditorOperation = 'save' | 'review' | 'export' | 'export-all' | 'replace-source' | 'scan-cameras' | 'suggest-hooks' | 'prepare'
@@ -248,13 +255,13 @@ export function parseCandidateEdit(value: unknown, duration: number, transcriptC
   if (!ranges.length || ranges.some(([a, b], i) => b - a < 100 || (i > 0 && a < ranges[i - 1][1]))) fail()
   const scenes = arr(v.scenes, 60).map((s): EditorScene => {
     const x = record(s)
-    if (!['fill', 'split', 'fit'].includes(x.layout as string)) fail()
+    if (!EDITOR_LAYOUTS.includes(x.layout as EditorScene['layout'])) fail()
     const crops = arr(x.crops, 2).map((r): Crop => {
       const c = arr(r, 4).map((n) => num(n, 0, 1))
       if (c.length !== 4 || c[2] < .01 || c[3] < .01 || c[0] + c[2] > 1.000001 || c[1] + c[3] > 1.000001) fail()
       return c as Crop
     })
-    if (crops.length !== (x.layout === 'split' ? 2 : 1)) fail()
+    if (crops.length !== (TWO_CROPS.includes(x.layout as string) ? 2 : 1)) fail()
     const transition = x.transition_ms === undefined ? 0 : num(x.transition_ms, 0, 5000)
     if (transition > 0 && (transition < 100 || !Number.isInteger(transition))) fail()
     const split = x.layout === 'split' && x.split !== undefined && x.split !== null ? num(x.split, SPLIT_RANGE.min, SPLIT_RANGE.max) : undefined
@@ -351,6 +358,7 @@ export function parseEditorProject(value: unknown): EditorProject {
     width: num(v.width, 2, 16384), height: num(v.height, 2, 16384), aspect_ratio: v.aspect_ratio as EditorProject['aspect_ratio'], candidates,
     transcript, ...(v.headline_voice === 'creator' || v.headline_voice === 'clipper' ? { headline_voice: v.headline_voice } : {}),
     ...(v.automatic !== undefined ? { automatic: parseAutomaticOrigin(v.automatic) } : {}),
+    ...(v.pair !== undefined ? { pair: parseScreenPair(v.pair) ?? fail() } : {}),
     ...(v.preview_id ? { preview_id: v.preview_id as string } : {}), ...(v.frame_preview === true ? { frame_preview: true } : {}), ...(v.media_freed === true ? { media_freed: true } : {}), ...(v.source_id ? { source_id: v.source_id as string } : {}) }
 }
 /** A saved baseline, or undefined when it is malformed (the clip then just shows fewer "What changed" lines). */
@@ -426,7 +434,7 @@ export function retimeScene(scenes: EditorScene[], index: number, time: number, 
 }
 export function canAnimateScene(scenes: EditorScene[], index: number): boolean {
   // A split animates its crops, never its size: both sides need the same split.
-  return index > 0 && scenes[index].layout !== 'fit' && scenes[index - 1].layout === scenes[index].layout && splitOf(scenes[index - 1]) === splitOf(scenes[index])
+  return index > 0 && (scenes[index].layout === 'fill' || scenes[index].layout === 'split') && scenes[index - 1].layout === scenes[index].layout && splitOf(scenes[index - 1]) === splitOf(scenes[index])
 }
 /** The top panel's share of the height (1 for a single-panel layout). */
 export function splitOf(scene: Pick<EditorScene, 'layout' | 'split'>): number {

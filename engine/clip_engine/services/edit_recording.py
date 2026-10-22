@@ -1675,8 +1675,39 @@ def _layer_graphics(video: str, checked: list[dict]) -> None:
     overlay_graphics_file(video, checked, OUT_W, OUT_H, VIDEO_ARGS, lambda cmd: ffmpeg(cmd[1:]))
 
 
+async def mix_reel_audio(assembled: str, base: str, config: dict, timed: list, look: Look, work: str, warnings: list[str],
+                         progress: Progress) -> tuple[dict, list[tuple[str, float]]]:
+    """The cut recording's sound finished into `base` (its picture copied as is): the voice cleaned up when asked, the
+    sound effects, social loudness and the music. Returns the loudness measured and the sound effects that went in."""
+    audio = config.get("audio")
+    if audio is not None and audio.voice_cleanup:
+        # The voice alone is cleaned up (before the sound effects go in); the loudness pass below evens it out.
+        progress("Cleaning up your voice", 58)
+        assembled = await asyncio.to_thread(_clean_voice, assembled, work, warnings)
+    progress("Mixing the sound", 60)
+    has_title = bool(look.headline) and (look.headline_look or {}).get("look") != "none"
+    events = sound_events(config["sounds"], timed, has_title)
+    cache = config.get("sound_cache") or os.path.join(work, "sounds")
+    sfx_inputs = [arg for name, _ in events for arg in ("-i", sound_path(name, cache))]
+    graph = _mix_graph(events)
+    measured = await asyncio.to_thread(measure_loudness, [*MEDIA_GUARD, "-i", assembled, *sfx_inputs], graph)
+    await asyncio.to_thread(ffmpeg, [*MEDIA_GUARD, "-i", assembled, *sfx_inputs, "-filter_complex", graph + f";[mix]{loudnorm_filter(measured)}[a]",
+                                     "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                                     "-movflags", "+faststart", base])
+    if audio is not None and audio.music is not None:
+        # Music under the finished voice (and sound effects), ducking while they talk. Kept in base.mp4, so a new hook
+        # text or caption style (recompose) keeps it.
+        progress("Adding the music", 64)
+        await asyncio.to_thread(finish_in_place, base, replace(audio, voice_cleanup=False, target_lufs=None), os.path.join(work, "audio"), warnings)
+    return measured, events
+
+
 async def render_edit(config: dict, progress: Progress) -> dict:
     """Mode "render": the reel from the member's reviewed edit."""
+    if config.get("screen"):
+        # Camera + screen: both recordings stacked, one layout per stretch, made editable in the clip editor.
+        from clip_engine.services.screen_pair import render_screen_reel
+        return await render_screen_reel(config, progress)
     root = config["output_dir"]
     work = os.path.join(root, ".work")
     os.makedirs(work, exist_ok=True)
@@ -1742,29 +1773,11 @@ async def render_edit(config: dict, progress: Progress) -> dict:
         handle.writelines(f"file '{os.path.basename(f)}'\n" for f in files)
     assembled = os.path.join(work, "assembled.mkv")
     await asyncio.to_thread(ffmpeg, ["-f", "concat", "-safe", "0", *MEDIA_GUARD, "-i", listing, "-c", "copy", assembled])
-    audio = config.get("audio")
-    if audio is not None and audio.voice_cleanup:
-        # The voice alone is cleaned up (before the sound effects go in); the loudness pass below evens it out.
-        progress("Cleaning up your voice", 58)
-        assembled = await asyncio.to_thread(_clean_voice, assembled, work, warnings)
-    progress("Mixing the sound", 60)
-    has_title = bool(look.headline) and (look.headline_look or {}).get("look") != "none"
-    events = sound_events(config["sounds"], timed, has_title)
-    cache = config.get("sound_cache") or os.path.join(work, "sounds")
-    sfx_inputs = [arg for name, _ in events for arg in ("-i", sound_path(name, cache))]
-    graph = _mix_graph(events)
-    measured = await asyncio.to_thread(measure_loudness, [*MEDIA_GUARD, "-i", assembled, *sfx_inputs], graph)
     folder = edit_dir(root)
     os.makedirs(folder, exist_ok=True)
     base = os.path.join(folder, "base.mp4")
-    await asyncio.to_thread(ffmpeg, [*MEDIA_GUARD, "-i", assembled, *sfx_inputs, "-filter_complex", graph + f";[mix]{loudnorm_filter(measured)}[a]",
-                                     "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-                                     "-movflags", "+faststart", base])
-    if audio is not None and audio.music is not None:
-        # Music under the finished voice (and sound effects), ducking while they talk. Kept in base.mp4, so a new hook
-        # text or caption style (recompose) keeps it.
-        progress("Adding the music", 64)
-        await asyncio.to_thread(finish_in_place, base, replace(audio, voice_cleanup=False, target_lufs=None), os.path.join(work, "audio"), warnings)
+    measured, events = await mix_reel_audio(assembled, base, config, timed, look, work, warnings, progress)
+    cache = config.get("sound_cache") or os.path.join(work, "sounds")
     broll_cost = 0.0
     if config.get("broll_source"):
         # B-roll over the speaker (Skills): the member's library, stock or AI, matched to what is said. In base.mp4, so a

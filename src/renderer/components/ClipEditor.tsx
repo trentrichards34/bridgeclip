@@ -27,6 +27,8 @@ import { GraphicsInspector, GraphicsOverlay, GraphicsTrack } from './ClipGraphic
 import { ScenesOverlay, ScenesTrack } from './ClipScenes'
 import { nearestOutputTime, outputTime, type EditorGraphic } from '../../shared/motion-graphics'
 import { EditLog } from './EditLog'
+import { ScreenLayoutRow } from './ScreenLayouts'
+import { bubbleRect, screenKindOf, screenScene, screenShareOf, type ScreenKind } from '../../shared/screen-pair'
 import { EditorTabs, type EditorTab } from './EditorTabs'
 import { clipEditLog } from '../../shared/edit-log'
 import { clipLengthNote, mergeChatSteps, patchValues, type ChatPatch, type ChatStep } from '../../shared/clip-chat'
@@ -374,6 +376,23 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           const scale = Math.min(out.width / v.videoWidth, out.height / v.videoHeight)
           const w = v.videoWidth * scale, h = v.videoHeight * scale
           ctx.drawImage(v, (out.width - w) / 2, (out.height - h) / 2, w, h)
+        } else if (scene.layout === 'inset' || scene.layout === 'bubble') {
+          // Camera + screen: the screen fitted over a blurred copy of itself (and the face in a round bubble), as the export draws it.
+          const [x, y, w, h] = scene.crops[0], sx = x * v.videoWidth, sy = y * v.videoHeight, sw = w * v.videoWidth, sh = h * v.videoHeight
+          const cover = Math.max(out.width / sw, out.height / sh)
+          ctx.filter = 'blur(16px) brightness(.75)'
+          ctx.drawImage(v, sx + (sw - out.width / cover) / 2, sy + (sh - out.height / cover) / 2, out.width / cover, out.height / cover, 0, 0, out.width, out.height)
+          ctx.filter = 'none'
+          const spot = bubbleRect(scene.crops[0], { width: v.videoWidth, height: v.videoHeight }, { width: out.width, height: out.height })
+          ctx.drawImage(v, sx, sy, sw, sh, spot.inset.x, spot.inset.y, spot.inset.w, spot.inset.h)
+          if (scene.layout === 'bubble') {
+            const [fx, fy, fw, fh] = scene.crops[1], side = Math.min(fw * v.videoWidth, fh * v.videoHeight)
+            const cx = fx * v.videoWidth + (fw * v.videoWidth - side) / 2, cy = fy * v.videoHeight + (fh * v.videoHeight - side) / 2
+            const ring = spot.d * 8 / 368
+            ctx.save(); ctx.beginPath(); ctx.arc(spot.x + spot.d / 2, spot.y + spot.d / 2, spot.d / 2 + ring, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill()
+            ctx.beginPath(); ctx.arc(spot.x + spot.d / 2, spot.y + spot.d / 2, spot.d / 2, 0, Math.PI * 2); ctx.clip()
+            ctx.drawImage(v, cx, cy, side, side, spot.x, spot.y, spot.d, spot.d); ctx.restore()
+          }
         } else {
           // A hook bar takes the top of the frame and the video fills the rest (trimmed around its center, as the export does).
           const barH = hookLayout ? hookLayout.barH : 0, area = out.height - barH
@@ -598,6 +617,16 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   const setSplit = (value: number, remember = true): void => sceneChange(resizeSplit(currentScene, value, aspect, project.width, project.height), remember)
   const sceneChange = (patch: Partial<EditorScene>, remember = true): void => change({ scenes: candidate.scenes.map((s, i) => i === sceneIndex ? { ...s, ...patch } : s) }, remember)
   const cropChange = (c: Crop, remember = true): void => sceneChange({ crops: currentScene.crops.map((r, i) => i === Math.min(panel, currentScene.crops.length - 1) ? c : r) }, remember)
+  // Camera + screen: what this part shows, and the screen's size in a split.
+  const pair = project.pair
+  const screenKind = pair ? screenKindOf(currentScene, pair) : null
+  const screenShare = pair ? screenShareOf(currentScene, pair) : 0
+  const setScreenLayout = (kind: ScreenKind, share = screenShare): void => {
+    if (!pair) return
+    setPanel(0)
+    const fresh = screenScene(kind, currentScene.at_ms, pair, project, share)
+    sceneChange({ layout: fresh.layout, crops: fresh.crops, split: fresh.split, transition_ms: undefined })
+  }
   const setLayout = (layout: EditorScene['layout']): void => {
     setPanel(0)
     sceneChange({ layout, split: undefined, crops: layout === 'split' ? [defaultCrop(project.width, project.height, aspect / SPLIT_RANGE.default, .25), defaultCrop(project.width, project.height, aspect / SPLIT_RANGE.default, .75)] : [defaultCrop(project.width, project.height, aspect)] })
@@ -811,7 +840,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
                   if (v.paused && presentedTime.current === null) setTime(t)
                 }} />
               {tab === 'framing' && currentScene.layout !== 'fit' && currentScene.crops.map((r, i) => {
-                const name = currentScene.layout === 'split' ? (i === 0 ? 'top' : 'bottom') : 'output'
+                const name = currentScene.layout === 'split' ? (i === 0 ? 'top' : 'bottom') : currentScene.layout === 'bubble' ? (i === 0 ? 'screen' : 'bubble') : 'output'
                 return <div key={i} className={cn('editor-crop', i === panel && 'active')} style={{ left: `${r[0] * 100}%`, top: `${r[1] * 100}%`, width: `${r[2] * 100}%`, height: `${r[3] * 100}%` }}>
                   <button className="editor-crop-move" aria-label={`Move ${name} crop`} disabled={editingDisabled} onPointerDown={(e) => startCropDrag(e, i)}>
                     <span>{currentScene.layout === 'split' ? i === 0 ? '1' : '2' : ''}</span>
@@ -911,11 +940,13 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
         note={candidate.auto ? 'Undo takes back a Restore.' : 'This clip was opened in the editor before the app kept a record of its cut, so only the graphics it added are listed.'} />}<EditorTabs tab={tab} onTab={setTab} />
         <div ref={transcriptPanel} className="editor-inspector-body">
           {tab === 'review' && <div className="space-y-3"><p className="text-2xs text-ink-subtle">Checked by Jev, an AI review made by TypeSafe AI.</p><div className="flex items-center justify-between"><span className={cn('text-xs', current ? candidate.review?.decision === 'passes' ? 'text-success' : 'text-warning' : 'text-ink-muted')}>{!current ? 'Review out of date' : candidate.review?.decision === 'passes' ? 'Checks passed' : 'Consider before baking'}</span><Button size="sm" disabled={editingDisabled} onClick={() => { void run('review') }}>Review again</Button></div><p className="text-2xs text-ink-subtle">{current ? 'Review the questions, then adjust the cut and framing. You decide when the clip is ready.' : 'These results describe an earlier edit. Run Jev again to check your changes.'}</p>{candidate.review?.questions.map((q) => <Question key={q.id} q={q} />)}{!candidate.review && <p>No review is available yet. Run Jev to evaluate this candidate.</p>}{candidate.review?.cuts.map((cut, i) => <div key={i}><p className="editor-label">Removed {clock(cut.interval[0])} – {clock(cut.interval[1])}</p>{cut.questions.map((q) => <Question key={q.id} q={q} />)}</div>)}</div>}
-          {tab === 'framing' && <fieldset disabled={editingDisabled} className="space-y-4"><div className="editor-layouts">{(['fill', 'split', 'fit'] as const).map((l) => <button key={l} className={cn(currentScene.layout === l && 'selected')} onClick={() => setLayout(l)}>{l === 'fill' ? 'Full frame' : l === 'split' ? 'Split' : 'Fit'}</button>)}</div>{currentScene.layout === 'split' && <><div className="flex gap-2">{['Top', 'Bottom'].map((name, i) => <Button key={i} size="sm" variant={panel === i ? 'primary' : 'secondary'} onClick={() => setPanel(i)}>{name}</Button>)}</div>
+          {tab === 'framing' && <fieldset disabled={editingDisabled} className="space-y-4">{pair ? <ScreenLayoutRow value={screenKind} share={screenShare} disabled={editingDisabled}
+            onChoose={(kind) => setScreenLayout(kind)} onShare={(share) => { if (screenKind) setScreenLayout(screenKind, share) }} />
+            : <div className="editor-layouts">{(['fill', 'split', 'fit'] as const).map((l) => <button key={l} className={cn(currentScene.layout === l && 'selected')} onClick={() => setLayout(l)}>{l === 'fill' ? 'Full frame' : l === 'split' ? 'Split' : 'Fit'}</button>)}</div>}{currentScene.layout === 'split' && !pair && <><div className="flex gap-2">{['Top', 'Bottom'].map((name, i) => <Button key={i} size="sm" variant={panel === i ? 'primary' : 'secondary'} onClick={() => setPanel(i)}>{name}</Button>)}</div>
             <div className="space-y-2 rounded-lg border border-white/10 p-2.5"><label className="editor-label">Split size <span className="float-right">Top {Math.round(topShare * 100)}% · Bottom {Math.round((1 - topShare) * 100)}%</span>
               <input aria-label="Split size" type="range" min={SPLIT_RANGE.min * 100} max={SPLIT_RANGE.max * 100} step={1} value={Math.round(topShare * 100)} onChange={(e) => setSplit(Number(e.target.value) / 100)} /></label>
               <div className="flex flex-wrap gap-1">{([['Bigger top', .6], ['Even', .5], ['Bigger bottom', .4]] as const).map(([label, value]) => <Button key={label} size="sm" variant={Math.abs(topShare - value) < .005 ? 'secondary' : 'ghost'} onClick={() => setSplit(value)}>{label}</Button>)}</div>
-              <p className="text-2xs text-ink-subtle">Applies to this layout section. Use “Use layout for whole clip” to apply it everywhere.</p></div></>}{currentScene.layout !== 'fit' && <><label className="editor-label">Zoom<input aria-label="Crop zoom" type="range" min={1} max={4} step={.02} value={Math.min(4, defaultCrop(project.width, project.height, panelAspect)[2] / crop[2])} onChange={(e) => cropChange(defaultCrop(project.width, project.height, panelAspect, crop[0] + crop[2] / 2, crop[1] + crop[3] / 2, Number(e.target.value)))} /></label>{([0, 1] as const).map((axis) => <label key={axis} className="editor-label">{axis === 0 ? 'Horizontal' : 'Vertical'}<input type="range" aria-label={axis === 0 ? 'Horizontal crop position' : 'Vertical crop position'} min={0} max={Math.max(0, 1 - crop[axis + 2])} step={.001} value={crop[axis]} onChange={(e) => { const c = [...crop] as Crop; c[axis] = Number(e.target.value); cropChange(c) }} /></label>)}</>}{sceneIndex > 0 && <div className="editor-motion"><label className="flex items-center justify-between gap-2 text-xs"><span>Smooth movement</span><input type="checkbox" aria-label="Smooth movement" checked={!!currentScene.transition_ms} disabled={!canAnimate || editingDisabled} onChange={(e) => sceneChange({ transition_ms: e.target.checked ? 600 : undefined })} /></label>{canAnimate && currentScene.transition_ms ? <label className="editor-label mt-3">Duration <span className="float-right">{(currentScene.transition_ms / 1000).toFixed(1)}s</span><input aria-label="Movement duration" type="range" min={100} max={5000} step={100} value={currentScene.transition_ms} onChange={(e) => sceneChange({ transition_ms: Number(e.target.value) })} /></label> : !canAnimate ? <p className="text-2xs text-ink-subtle mt-2">Use the same layout as the previous section to animate its crops.</p> : null}{!!currentScene.transition_ms && <Button size="sm" variant="ghost" onClick={() => { seek(Math.max(start, currentScene.at_ms)); void video.current?.play() }}>Preview movement</Button>}</div>}<div className="space-y-2 border-t border-white/10 pt-3"><div className="editor-layout-time">
+              <p className="text-2xs text-ink-subtle">Applies to this layout section. Use “Use layout for whole clip” to apply it everywhere.</p></div></>}{(currentScene.layout === 'fill' || currentScene.layout === 'split') && <><label className="editor-label">Zoom<input aria-label="Crop zoom" type="range" min={1} max={4} step={.02} value={Math.min(4, defaultCrop(project.width, project.height, panelAspect)[2] / crop[2])} onChange={(e) => cropChange(defaultCrop(project.width, project.height, panelAspect, crop[0] + crop[2] / 2, crop[1] + crop[3] / 2, Number(e.target.value)))} /></label>{([0, 1] as const).map((axis) => <label key={axis} className="editor-label">{axis === 0 ? 'Horizontal' : 'Vertical'}<input type="range" aria-label={axis === 0 ? 'Horizontal crop position' : 'Vertical crop position'} min={0} max={Math.max(0, 1 - crop[axis + 2])} step={.001} value={crop[axis]} onChange={(e) => { const c = [...crop] as Crop; c[axis] = Number(e.target.value); cropChange(c) }} /></label>)}</>}{sceneIndex > 0 && <div className="editor-motion"><label className="flex items-center justify-between gap-2 text-xs"><span>Smooth movement</span><input type="checkbox" aria-label="Smooth movement" checked={!!currentScene.transition_ms} disabled={!canAnimate || editingDisabled} onChange={(e) => sceneChange({ transition_ms: e.target.checked ? 600 : undefined })} /></label>{canAnimate && currentScene.transition_ms ? <label className="editor-label mt-3">Duration <span className="float-right">{(currentScene.transition_ms / 1000).toFixed(1)}s</span><input aria-label="Movement duration" type="range" min={100} max={5000} step={100} value={currentScene.transition_ms} onChange={(e) => sceneChange({ transition_ms: Number(e.target.value) })} /></label> : !canAnimate ? <p className="text-2xs text-ink-subtle mt-2">Use the same layout as the previous section to animate its crops.</p> : null}{!!currentScene.transition_ms && <Button size="sm" variant="ghost" onClick={() => { seek(Math.max(start, currentScene.at_ms)); void video.current?.play() }}>Preview movement</Button>}</div>}<div className="space-y-2 border-t border-white/10 pt-3"><div className="editor-layout-time">
             {sceneIndex > 0 ? <label className="flex items-center justify-between gap-3 text-xs"><span>Layout starts</span><TimeInput key={sceneIndex} label="Layout start" value={currentScene.at_ms} disabled={editingDisabled} onChange={(t) => moveScene(sceneIndex, t)} /></label>
               : <p className="text-2xs text-ink-muted">Initial layout</p>}
             {sceneIndex > 0 && frames.length > 0 && <div className="flex gap-2 mt-2"><Button size="sm" variant="ghost" disabled={editingDisabled} onClick={() => moveScene(sceneIndex, stepFrame(frames, currentScene.at_ms, -1))}>One frame earlier</Button><Button size="sm" variant="ghost" disabled={editingDisabled} onClick={() => moveScene(sceneIndex, stepFrame(frames, currentScene.at_ms, 1))}>One frame later</Button></div>}

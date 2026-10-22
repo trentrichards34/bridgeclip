@@ -11,7 +11,8 @@ import { constants, statSync } from 'fs'
 import { open } from 'fs/promises'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
-import { CHAT_TOOLS, applyChatTool, chatClock, chatPlainText, clipLengthNote, pinSourceMs, type ChatInfo, type ChatProject, type ChatReply, type ChatStep } from '../shared/clip-chat'
+import { applyChatTool, chatToolsFor, chatClock, chatPlainText, clipLengthNote, pinSourceMs, type ChatInfo, type ChatProject, type ChatReply, type ChatStep } from '../shared/clip-chat'
+import { SCREEN_KIND_LABELS, screenKindOf, screenShareOf } from '../shared/screen-pair'
 import { messageWithPoints, parseChatPoints, type ChatPoint } from '../shared/chat-point'
 import { editDuration, parseCandidateEdit, type CandidateEdit, type EditorProject } from '../shared/clip-editor'
 import { parseGraphics } from '../shared/motion-graphics'
@@ -141,6 +142,7 @@ Rules:
 - Don't say you made a change unless its tool call succeeded.
 - The member may point at the video (pins). "Put an arrow here" or "circle this": add_graphic with template highlight and the pin. "Move the graphic here": update_graphic with the pin. "Zoom in on this": set_layout_at with the pin. "Put the hook/caption here" can't move to a point: say where it can go.
 - Blurring or hiding part of the video isn't supported here: say so plainly and don't call a tool for it.
+- Camera + screen clips: "show only my screen here" is set_screen_layout screen over that part; "just me" is face; "back to the split" is screen_top.
 - Scenes (vertical clips): "put me in a card", "give the graphic room" or "show it big" is set_scene (stage or visual) over the graphic's time; "back to my face" is set_scene face.`
 
 function rangeLabel(segment: { start_ms: number; end_ms: number }, c: CandidateEdit): string {
@@ -152,14 +154,18 @@ function rangeLabel(segment: { start_ms: number; end_ms: number }, c: CandidateE
   return kept >= segment.end_ms - segment.start_ms - 1 ? 'in clip' : 'partly in clip'
 }
 
-export function buildChatContext(project: Pick<EditorProject, 'title' | 'duration_ms' | 'aspect_ratio' | 'transcript'>, c: CandidateEdit, segments: ChatSegment[] | null, loud: LoudMoment[] | null, windowMs = CHAT_CONTEXT_MS): string {
+export function buildChatContext(project: Pick<EditorProject, 'title' | 'duration_ms' | 'aspect_ratio' | 'transcript' | 'pair'>, c: CandidateEdit, segments: ChatSegment[] | null, loud: LoudMoment[] | null, windowMs = CHAT_CONTEXT_MS): string {
   const start = c.ranges[0][0], end = c.ranges[c.ranges.length - 1][1]
   const from = Math.max(0, start - windowMs), to = Math.min(project.duration_ms, end + windowMs)
   const lines: string[] = []
   lines.push(`Clip title: "${c.title}" (status ${c.status}). Source video: "${project.title}", ${project.duration_ms} ms long. Output ${project.aspect_ratio}.`)
   const sourceMs = c.ranges.reduce((n, [a, b]) => n + b - a, 0)
   lines.push(`Sections kept (source ms): ${c.ranges.map(([a, b]) => `[${a}, ${b}]`).join(', ')}. ${sourceMs} ms of source at ${c.video_speed}× speed → ${(editDuration(c) / 1000).toFixed(1)} s long.`)
-  lines.push(`Layouts (each runs until the next): ${c.scenes.map((s) => `${s.layout} from ${s.at_ms} ms${s.layout === 'split' && s.split ? ` (top ${Math.round(s.split * 100)}%)` : ''}`).join('; ')}.`)
+  if (project.pair) {
+    const pair = project.pair
+    lines.push('This clip is a camera + screen reel: a camera recording and a screen recording, played together. Switch what shows with set_screen_layout.')
+    lines.push(`Layouts (each runs until the next): ${c.scenes.map((s) => { const kind = screenKindOf(s, pair); return `${kind ? `${kind} (${SCREEN_KIND_LABELS[kind]})` : `${s.layout} (custom crop)`} from ${s.at_ms} ms${kind === 'screen_top' || kind === 'face_top' ? `, screen ${Math.round(screenShareOf(s, pair) * 100)}% of the height` : ''}` }).join('; ')}.`)
+  } else lines.push(`Layouts (each runs until the next): ${c.scenes.map((s) => `${s.layout} from ${s.at_ms} ms${s.layout === 'split' && s.split ? ` (top ${Math.round(s.split * 100)}%)` : ''}`).join('; ')}.`)
   lines.push(c.hook === undefined ? 'Hook text: the run\'s original (not editable here until set).' : c.hook === null ? 'Hook text: none.' : `Hook text: "${c.hook.text}" (look ${c.hook.look.look}, font ${c.hook.look.font}${c.hook.look.look === 'brand' ? `, color ${c.hook.look.color}` : ''}).`)
   lines.push(`Captions: ${c.captions ? `on, style ${c.caption_preset}` : 'off'}. Call to action at the end: ${c.cta_id === undefined ? 'same as the run' : c.cta_id === null ? 'none' : 'one the member chose'}.`)
   const graphics = c.graphics ?? []
@@ -221,7 +227,7 @@ export async function runClipChat(input: ChatTurnInput): Promise<ChatReply> {
   return runToolChat<ChatStep>({
     apiKey: input.apiKey, model: input.model, signal: input.signal, url: input.url, fetch: input.fetch, onCost: input.onCost,
     systemPrompt: `${SYSTEM_PROMPT}\n\nThe clip right now:\n${context}`,
-    history: input.history, message: chatTurnMessage(input.message, input.candidate, points), tools: CHAT_TOOLS,
+    history: input.history, message: chatTurnMessage(input.message, input.candidate, points), tools: chatToolsFor(input.project),
     apply: (name, args) => {
       const { step, candidate } = applyChatTool(working, name, args, input.project, newId, points)
       working = candidate
@@ -283,6 +289,7 @@ export async function editorChat(candidate: unknown, message: unknown, deps: Edi
     const result = await runClipChat({
       apiKey: deps.apiKey, model: deps.model, url: deps.url, onCost: deps.onCost,
       project: { duration_ms: project.duration_ms, width: project.width, height: project.height, aspect_ratio: project.aspect_ratio, transcriptCount: project.transcript.length, title: project.title, transcript: project.transcript,
+        ...(project.pair ? { pair: project.pair } : {}),
         words: (segments ?? []).flatMap((s) => s.words.map((w) => ({ word: w.word, start_ms: w.start_ms, end_ms: w.end_ms }))) },
       candidate: clip, message: text, history: chatHistory(key), segments, loud, signal: AbortSignal.timeout(CHAT_TIMEOUT_MS), points
     })

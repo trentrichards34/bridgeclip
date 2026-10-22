@@ -30,6 +30,14 @@ if os.environ.get("CREATORCLIPS_FAKE_AI") == "1":
                 }
                 return {"choices": [{"message": {"content": json.dumps(plan)}}]}, {"cost": 0.003}
 
+            if any(w == "dashboard." for _, w in words):
+                # Camera + screen: open on the dashboard line, end on the call to action.
+                plan = {
+                    "hooks": [{"start": first("Watch"), "end": first("dashboard."), "text": "Watch this dashboard", "why": "Shows the screen first."}],
+                    "cuts": [], "cta": {"present": True, "start": first("Follow"), "end": first("more.")}, "popups": [], "sounds": [], "cards": [],
+                }
+                return {"choices": [{"message": {"content": json.dumps(plan)}}]}, {"cost": 0.002}
+
             def last(word):
                 return [i for i, w in words if w == word][-1]
 

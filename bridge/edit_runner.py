@@ -14,7 +14,7 @@ import sys
 from bridge_runner import reserve_stdout_for_protocol, emit
 
 MAX_REQUEST = 4 * 1024 * 1024
-MODES = ("transcribe", "plan", "render", "recompose", "clips")
+MODES = ("transcribe", "plan", "render", "recompose", "clips", "sync", "screen_preview")
 
 
 def _abs_path(value):
@@ -115,6 +115,22 @@ def parse_request(raw):
                 or not all(_abs_path(s) for s in sources):
             raise ValueError("Invalid request")
         return {"mode": mode, "output_dir": raw["output_dir"], "sources": list(sources)}
+    if mode == "sync":
+        # Camera + screen: line the screen recording up with the camera (local, no AI).
+        if not set(raw) <= {"mode", "output_dir", "camera", "screen"} or not _abs_path(raw.get("camera")) or not _abs_path(raw.get("screen")):
+            raise ValueError("Invalid request")
+        return {"mode": mode, "output_dir": raw["output_dir"], "camera": raw["camera"], "screen": raw["screen"]}
+    if mode == "screen_preview":
+        from clip_engine.services.screen_pair import MAX_OFFSET_MS
+        out = raw.get("output_path")
+        if not set(raw) <= {"mode", "output_dir", "camera", "screen", "offset_ms", "at_ms", "output_path"} or not _abs_path(raw.get("camera")) \
+                or not _abs_path(raw.get("screen")) or type(raw.get("offset_ms")) is not int or not -MAX_OFFSET_MS <= raw["offset_ms"] <= MAX_OFFSET_MS \
+                or type(raw.get("at_ms")) is not int or not 0 <= raw["at_ms"] <= 4 * 3600_000:
+            raise ValueError("Invalid request")
+        if not _abs_path(out) or not out.lower().endswith(".mp4") or os.path.dirname(os.path.realpath(out)) != os.path.realpath(raw["output_dir"]):
+            raise ValueError("Invalid output")
+        return {"mode": mode, "output_dir": raw["output_dir"], "camera": raw["camera"], "screen": raw["screen"], "offset_ms": raw["offset_ms"],
+                "at_ms": raw["at_ms"], "output_path": out}
     if mode == "recompose":
         out = raw.get("output_path")
         if not set(raw) <= {"mode", "output_dir", "output_path", "headline", "headline_look", "include_captions", "caption_preset", "look_extras"}:
@@ -211,7 +227,23 @@ def parse_request(raw):
             "cost_usd": float(cost), "pacing": _pacing(raw.get("pacing")), "recipe": raw.get("recipe", "clean"), "images": images,
             "pins": [dict(p) for p in pins], "cutout_intro": raw.get("cutout_intro", False), "raw_intro": raw.get("raw_intro", False),
             "graphics": [dict(g) for g in graphics], "audio": audio, **broll, **({"combine": _render_combine(raw.get("combine"), len(sources))}
-                                                                     if raw.get("combine") is not None else {})}
+                                                                     if raw.get("combine") is not None else {}),
+            **({"screen": _screen(raw.get("screen"), len(sources))} if raw.get("screen") is not None else {})}
+
+
+def _screen(raw, count):
+    """Camera + screen, for the render: the screen recording, how it lines up, the reel's style and its choices."""
+    from clip_engine.services.screen_pair import FITS, MAX_OFFSET_MS, SPLIT_RANGE, STYLES
+    if count != 1 or not isinstance(raw, dict) or set(raw) != {"path", "offset_ms", "style", "split", "fit", "zoom", "auto"}:
+        raise ValueError("Invalid screen recording")
+    split = raw["split"]
+    if not _abs_path(raw["path"]) or type(raw["offset_ms"]) is not int or not -MAX_OFFSET_MS <= raw["offset_ms"] <= MAX_OFFSET_MS \
+            or raw["style"] not in STYLES or raw["fit"] not in FITS or isinstance(split, bool) or not isinstance(split, (int, float)) \
+            or not math.isfinite(split) or not SPLIT_RANGE[0] <= split <= SPLIT_RANGE[1] \
+            or not isinstance(raw["zoom"], bool) or not isinstance(raw["auto"], bool):
+        raise ValueError("Invalid screen recording")
+    return {"path": raw["path"], "offset_ms": raw["offset_ms"], "style": raw["style"], "split": float(split), "fit": raw["fit"],
+            "zoom": raw["zoom"], "auto": raw["auto"]}
 
 
 def _plan_combine(raw, count):
@@ -266,6 +298,20 @@ def main():
                 return await edit_recording.plan_edit(config, progress)
             if mode == "recompose":
                 return await edit_recording.recompose_edit(config, progress)
+            if mode in ("sync", "screen_preview"):
+                from clip_engine.services import screen_pair
+                try:
+                    if mode == "sync":
+                        return await asyncio.to_thread(screen_pair.sync_pair, config["camera"], config["screen"],
+                                                       os.path.join(config["output_dir"], ".sync-work"))
+                    path = await asyncio.to_thread(screen_pair.preview_pair, config["camera"], config["screen"], config["offset_ms"],
+                                                   config["at_ms"], config["output_path"])
+                    return {"path": path}
+                except screen_pair.PairError as error:
+                    raise edit_recording.EditError(str(error)) from None
+                finally:
+                    import shutil
+                    shutil.rmtree(os.path.join(config["output_dir"], ".sync-work"), ignore_errors=True)
             if mode == "clips":
                 from clip_engine.services import combine_clips
                 try:

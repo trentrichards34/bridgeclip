@@ -15,6 +15,7 @@ import { MAX_HOOK_CHARS, SPLIT_RANGE, TRANSCRIPT_CLIP_MS, defaultCrop, editDurat
 import { hookShare, outputSize } from './graphic-layout'
 import { BACKDROP_LABELS, CARD_LABELS, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_CARDS, SCENE_KINDS, SCENE_LABELS, parseScenes, setScene, type SceneBackdrop, type SceneCard, type SceneKind } from './scenes'
 import { PIN_PROP, aimGraphic, checkHighlightFields, pinArg, type ChatPoint } from './chat-point'
+import { SCREEN_KINDS, SCREEN_KIND_LABELS, SCREEN_SPLIT, isScreenKind, screenKindOf, screenScene, setScreenKind, type ScreenPair } from './screen-pair'
 
 import { CHAT_MAX_TOOL_CALLS, chatClock, chatFail as fail, chatReason as reasonOf, chatSeconds, chatSentence as sentence, chatText as text, type ChatReplyOf } from './chat-core'
 
@@ -32,7 +33,7 @@ export type ChatPatch = Partial<Pick<CandidateEdit, 'ranges' | 'scenes' | 'hook'
 const PATCH_KEYS = ['ranges', 'scenes', 'hook', 'captions', 'caption_preset', 'title', 'graphics', 'stage_scenes'] as const
 
 export type ChatToolName = 'set_ranges' | 'extend_start' | 'extend_end' | 'remove_section' | 'add_section' | 'set_hook_text' | 'set_hook_look'
-  | 'set_layout_at' | 'set_captions' | 'set_title' | 'play' | 'add_graphic' | 'update_graphic' | 'remove_graphic' | 'set_scene'
+  | 'set_layout_at' | 'set_captions' | 'set_title' | 'play' | 'add_graphic' | 'update_graphic' | 'remove_graphic' | 'set_scene' | 'set_screen_layout'
 
 /** One tool call's result: a plain sentence for the change card, the values it set, and where to look. */
 export interface ChatStep {
@@ -52,6 +53,8 @@ export interface ChatProject {
   duration_ms: number; width: number; height: number; aspect_ratio: '9:16' | '16:9'; transcriptCount: number
   /** The transcript's timed words near the clip (when saved): word-timed cards snap to them. */
   words?: TimedWord[]
+  /** Camera + screen projects: where the camera and the screen are in the source (set_screen_layout). */
+  pair?: ScreenPair
 }
 
 /** "Clip is now 37.7s." after the steps are applied. */
@@ -135,11 +138,13 @@ export function pinSourceMs(c: Pick<CandidateEdit, 'ranges' | 'video_speed'>, pi
 export function sourcePointAt(c: CandidateEdit, project: Pick<ChatProject, 'width' | 'height' | 'aspect_ratio'>, x: number, y: number, t: number): { x: number; y: number } | null {
   const scene = framingAt(c, t), out = outputSize(project.aspect_ratio)
   const clamp = (n: number): number => Math.max(0, Math.min(1, n))
-  if (scene.layout === 'fit') {
-    const scale = Math.min(out.width / project.width, out.height / project.height)
-    const w = project.width * scale / out.width, h = project.height * scale / out.height
+  if (scene.layout === 'fit' || scene.layout === 'inset' || scene.layout === 'bubble') {
+    // Fit: the whole source; inset and bubble: their first crop, fitted the same way (the bubble itself counts as the screen).
+    const [bx, by, bw, bh] = scene.layout === 'fit' ? [0, 0, 1, 1] : scene.crops[0]
+    const scale = Math.min(out.width / (project.width * bw), out.height / (project.height * bh))
+    const w = project.width * bw * scale / out.width, h = project.height * bh * scale / out.height
     const u = (x - (1 - w) / 2) / w, v = (y - (1 - h) / 2) / h
-    return u < 0 || u > 1 || v < 0 || v > 1 ? null : { x: clamp(u), y: clamp(v) }
+    return u < 0 || u > 1 || v < 0 || v > 1 ? null : { x: clamp(bx + u * bw), y: clamp(by + v * bh) }
   }
   const bar = c.hook && headlineBarColor(c.hook.look) ? hookShare(c, project.aspect_ratio) : 0
   const ya = clamp((y - bar) / (1 - bar))
@@ -175,6 +180,11 @@ export function zoomCropAt(c: CandidateEdit, project: ChatProject, pin: ChatPoin
   return { crop, zoom: z }
 }
 
+/** A split scene again with the screen taking `share` of the height. */
+function setShare(scene: EditorScene, kind: 'screen_top' | 'face_top', share: number, project: ChatProject): EditorScene {
+  const fresh = screenScene(kind, scene.at_ms, project.pair!, project, share)
+  return { ...fresh, ...(scene.transition_ms ? { transition_ms: scene.transition_ms } : {}) }
+}
 const layoutName = (layout: string): string => layout === 'fill' ? 'Full frame' : layout === 'split' ? 'Split' : 'Fit'
 const clipStart = (c: CandidateEdit): number => c.ranges[0][0]
 const clipEnd = (c: CandidateEdit): number => c.ranges[c.ranges.length - 1][1]
@@ -292,6 +302,30 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
       if (scenes.length > MAX_SCENES) fail(`A clip can have up to ${MAX_SCENES} layout changes.`)
       const span = `from ${at <= start ? 'the start' : clipClock(c, at)} ${restore ? `to ${clipClock(c, until!)}` : 'to the end'}`
       return done(zoomed ? `Zoomed in ${zoomed.zoom.toFixed(1)}× on pin ${pin!.n} ${span}${why}` : `Layout set to ${layoutName(layout)} ${span}${why}`, { scenes }, Math.max(start, at), 3)
+    }
+    case 'set_screen_layout': {
+      if (!project.pair) return fail('This clip has one video. Use set_layout_at.')
+      if (!isScreenKind(args.layout)) return fail(`layout must be one of ${SCREEN_KINDS.join(', ')}.`)
+      const start = clipStart(c), end = clipEnd(c)
+      const at = args.at_ms === undefined || args.at_ms === null ? start : ms(args.at_ms, 'at_ms', project)
+      if (at >= end) fail(`at_ms must be before the clip ends (${end}).`)
+      const until = args.until_ms === undefined || args.until_ms === null ? null : ms(args.until_ms, 'until_ms', project)
+      if (until !== null && until <= at) fail('until_ms must be after at_ms.')
+      if (args.screen_share !== undefined && (typeof args.screen_share !== 'number' || !Number.isFinite(args.screen_share) || args.screen_share < SCREEN_SPLIT.min || args.screen_share > SCREEN_SPLIT.max)) fail(`screen_share must be between ${SCREEN_SPLIT.min} and ${SCREEN_SPLIT.max}.`)
+      // From the clip's start: the layout in use there changes.
+      const from = at <= start ? ([...c.scenes].reverse().find((s) => s.at_ms <= start) ?? c.scenes[0]).at_ms : at
+      let scenes = setScreenKind(c.scenes, args.layout, from, until !== null && until < end ? until : null, end, project.pair, project)
+      if (typeof args.screen_share === 'number') {
+        const share = args.screen_share
+        const stop = until ?? Infinity
+        scenes = scenes.map((scene) => {
+          const kind = screenKindOf(scene, project.pair!)
+          return (kind === 'screen_top' || kind === 'face_top') && scene.at_ms >= from && scene.at_ms < stop ? setShare(scene, kind, share, project) : scene
+        })
+      }
+      if (scenes.length > MAX_SCENES) fail(`A clip can have up to ${MAX_SCENES} layout changes.`)
+      const span = `from ${at <= start ? 'the start' : clipClock(c, at)} ${until !== null && until < end ? `to ${clipClock(c, until)}` : 'to the end'}`
+      return done(`Layout set to ${SCREEN_KIND_LABELS[args.layout]} ${span}${why}`, { scenes }, Math.max(start, at), 3)
     }
     case 'set_captions': {
       const patch: ChatPatch = {}
@@ -497,6 +531,7 @@ export const CHAT_TOOLS: { name: ChatToolName; description: string; parameters: 
   { name: 'set_hook_text', description: `Set the hook text drawn at the top of a vertical clip: 2+ words, up to ${MAX_HOOK_CHARS} characters, true to what is said.`, parameters: { type: 'object', properties: { text: { type: 'string', minLength: 3, maxLength: MAX_HOOK_CHARS }, reason }, required: ['text'], additionalProperties: false } },
   { name: 'set_hook_look', description: 'Change how the hook text looks. Give only what changes.', parameters: { type: 'object', properties: { look: { type: 'string', enum: HEADLINE_LOOKS.map((l) => l.id) }, font: { type: 'string', enum: HEADLINE_FONTS.map((f) => f.id) }, color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$', description: 'Bar color for the brand look.' }, ...HOOK_LOOK_TOOL_PROPERTIES, reason }, additionalProperties: false } },
   { name: 'set_layout_at', description: 'Frame the clip as fill (full frame, cropped), split (two panels stacked) or fit (whole frame, blurred background) from at_ms to until_ms (or to the end). at_ms at or before the clip start changes it from the start. With pin ("zoom in on this"): a fill crop centered on the pin, zoomed in (zoom, or about 1.6×; a box pin fills the frame); at_ms defaults to the pin\'s time. Give until_ms to zoom back out.', parameters: { type: 'object', properties: { at_ms: msProp('Source ms (optional with a pin).'), layout: { type: 'string', enum: ['fill', 'split', 'fit'] }, until_ms: msProp('Optional end, source ms.'), pin: PIN_PROP, zoom: { type: 'number', minimum: 1, maximum: MAX_POINT_ZOOM, description: 'With pin: how far to zoom in (1 = no zoom).' }, reason }, additionalProperties: false } },
+  { name: 'set_screen_layout', description: 'Camera + screen clips only (the clip has a camera recording and a screen recording): show screen_top (screen on top, the speaker below, split), face_top (the speaker on top, the screen below), face (just the speaker), screen (just the screen, all of it) or bubble (the screen with the speaker in a round bubble) from at_ms (or the clip start) to until_ms (or the end). "Show only my screen here" is screen; "just me" is face. screen_share sets how much of the height the screen takes in a split.', parameters: { type: 'object', properties: { layout: { type: 'string', enum: [...SCREEN_KINDS] }, at_ms: msProp('Source ms; leave out for the clip start.'), until_ms: msProp('Optional end, source ms.'), screen_share: { type: 'number', minimum: SCREEN_SPLIT.min, maximum: SCREEN_SPLIT.max, description: 'Split only: the screen\'s part of the height (0.45 is the usual).' }, reason }, required: ['layout'], additionalProperties: false } },
   { name: 'set_captions', description: 'Turn burned-in captions on or off, or choose their style.', parameters: { type: 'object', properties: { on: { type: 'boolean' }, preset: { type: 'string', enum: [...CAPTION_PRESET_IDS] }, reason }, additionalProperties: false } },
   { name: 'set_title', description: 'Rename the clip (its title in the editor and Library).', parameters: { type: 'object', properties: { title: { type: 'string', minLength: 1, maxLength: 200 }, reason }, required: ['title'], additionalProperties: false } },
   { name: 'play', description: 'Play a moment of the source for the member (no edit). Use it to ask "is this the moment you mean?" before editing when you are not sure.', parameters: { type: 'object', properties: { at_ms: msProp('Source ms.'), seconds: { type: 'number', minimum: 1, maximum: MAX_PLAY_SECONDS }, reason }, required: ['at_ms'], additionalProperties: false } },
@@ -505,3 +540,8 @@ export const CHAT_TOOLS: { name: ChatToolName; description: string; parameters: 
   { name: 'remove_graphic', description: 'Remove a graphic from the clip by id.', parameters: { type: 'object', properties: { id: { type: 'string' }, reason }, required: ['id'], additionalProperties: false } },
   { name: 'set_scene', description: `Set start_ms–end_ms of a vertical clip to a scene (over whatever scene was there). face: the normal full-frame video (the default). stage: a backdrop with the speaker in a card at the bottom and the top free for graphics (use it while a graphic explains something). visual: backdrop only, so a big graphic fills the frame. At least ${MIN_SCENE_MS / 1000} s. The card slides and the backdrop fades between scenes.`, parameters: { type: 'object', properties: { start_ms: msProp('Source ms.'), end_ms: msProp('Source ms.'), scene: { type: 'string', enum: [...SCENE_KINDS] }, backdrop: { type: 'string', enum: [...SCENE_BACKDROPS], description: 'stage/visual only: light (default), dark, brand (a light tint of the hook color), grid (lavender to the brand color with a faint grid; captions go white on a color box) or gradient (a soft brand gradient).' }, card: { type: 'string', enum: [...SCENE_CARDS], description: 'stage only: rounded (default) or arch (full width, big rounded top corners, flush with the bottom).' }, reason }, required: ['start_ms', 'end_ms', 'scene'], additionalProperties: false } }
 ]
+
+/** The tools for a project: camera + screen projects switch layouts with set_screen_layout (set_layout_at's crops would show both recordings at once). */
+export function chatToolsFor(project: Pick<ChatProject, 'pair'>): typeof CHAT_TOOLS {
+  return project.pair ? CHAT_TOOLS.filter((tool) => tool.name !== 'set_layout_at') : CHAT_TOOLS.filter((tool) => tool.name !== 'set_screen_layout')
+}

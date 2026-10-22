@@ -354,6 +354,26 @@ def content_view(
     return (x, y, w, h), ((out_w - fw) // 2, (out_h - fh) // 2, fw, fh)
 
 
+BUBBLE_SIZE = 0.34
+BUBBLE_MARGIN = 0.05
+BUBBLE_RING = 8
+
+
+def bubble_view(shot: ShotLayout, src_w: int, src_h: int, out_w: int, out_h: int):
+    """Camera + screen bubble: the face's square crop in the source (x, y, w, h px) and where the round bubble goes
+    ((x, y) of its top-left, its diameter and the ring's width): over the inset's lower right corner. Mirrors
+    bubbleRect in src/shared/screen-pair.ts."""
+    _, (dx, dy, fw, fh) = content_view(shot, src_w, src_h, out_w, out_h)
+    d = even(out_w * BUBBLE_SIZE)
+    cx = out_w - out_w * BUBBLE_MARGIN - d / 2
+    cy = min(max(dy + fh, out_h * 0.3), out_h * 0.8)
+    ox, oy = int(cx - d / 2), int(cy - d / 2)
+    x, y, w, h = cover_crop(list(shot.manual_bubble), src_w, src_h, 1, 1, True)
+    px, py = max(0, int(x * src_w) // 2 * 2), max(0, int(y * src_h) // 2 * 2)
+    pw, ph = min(even(w * src_w), src_w - px), min(even(h * src_h), src_h - py)
+    return (px, py, pw, ph), (ox, oy, d, BUBBLE_RING)
+
+
 def foreground_geometry(shot: ShotLayout, src_w: int, src_h: int, out_w: int, out_h: int) -> tuple[int, int]:
     if shot.content_box is not None:
         _, (_, y, _, h) = content_view(shot, src_w, src_h, out_w, out_h)
@@ -426,12 +446,30 @@ def shot_chain(
     if shot.content_box is not None:
         (x, y, w, h), (dx, dy, fw, fh) = content_view(shot, src_w, src_h, out_w, out_h)
         bg_w, bg_h = even(out_w // 4), even(out_h // 4)
-        return (
-            f"[t{i}]crop={w}:{h}:{x}:{y},split=2[ib{i}][if{i}];"
+        inset = (
+            f"crop={w}:{h}:{x}:{y},split=2[ib{i}][if{i}];"
             f"[ib{i}]scale={bg_w}:{bg_h}:force_original_aspect_ratio=increase,crop={bg_w}:{bg_h},"
             f"gblur=sigma=10,lutyuv=y=val-20,scale={out_w}:{out_h}[ibg{i}];"
             f"[if{i}]scale={fw}:{fh}:{scale}[ifg{i}];"
-            f"[ibg{i}][ifg{i}]overlay={dx}:{dy},setsar=1[v{i}]"
+            f"[ibg{i}][ifg{i}]overlay={dx}:{dy},setsar=1"
+        )
+        if shot.manual_bubble is None:
+            return f"[t{i}]{inset}[v{i}]"
+        # The face in a round bubble with a thin white ring, over the inset's lower right corner. The round masks are
+        # drawn once and repeated (geq per frame would be slow).
+        (bx, by, bw, bh), (ox, oy, d, ring) = bubble_view(shot, src_w, src_h, out_w, out_h)
+        outer = d + 2 * ring
+        def disc(size: int, radius: float) -> str:
+            return (f"color=c=black:s={size}x{size}:r=30:d=0.1,format=gray,"
+                    f"geq=lum='255*clip({radius:.2f}-hypot(X-{size / 2:.2f}+0.5,Y-{size / 2:.2f}+0.5)+0.5,0,1)',loop=loop=-1:size=1:start=0")
+        return (
+            f"[t{i}]split=2[bt{i}][bb{i}];[bt{i}]{inset}[bin{i}];"
+            f"{disc(d, d / 2)}[bm{i}];{disc(outer, outer / 2)}[rm{i}];"
+            f"color=c=white:s={outer}x{outer}:r=30:d=0.1,format=yuv420p,loop=loop=-1:size=1:start=0[rw{i}];"
+            f"[rw{i}][rm{i}]alphamerge[ring{i}];"
+            f"[bb{i}]crop={bw}:{bh}:{bx}:{by},scale={d}:{d}:{scale},format=yuv420p[bf{i}];[bf{i}][bm{i}]alphamerge[bface{i}];"
+            f"[bin{i}][ring{i}]overlay={ox - ring}:{oy - ring}:shortest=1[bo{i}];"
+            f"[bo{i}][bface{i}]overlay={ox}:{oy}:shortest=1,setsar=1[v{i}]"
         )
     if shot.layout == LayoutType.TALKING_HEAD:
         w, h, x_expr, y_expr = fill_crop(shot, src_w, src_h, out_w, out_h)
