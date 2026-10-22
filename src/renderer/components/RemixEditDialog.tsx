@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check, Pencil } from 'lucide-react'
 import type { ClipArtifact, JobOutput } from '../../shared/job-output'
 import { remixEditProblem } from '../../shared/remix'
@@ -27,6 +27,8 @@ export function RemixEditDialog({ outputDir, clip, onDone, onClose }: {
   outputDir: string; clip: ClipArtifact; onDone: (output: JobOutput | null, note: string | null) => void; onClose: () => void
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
+  // Focus moves into the dialog, so Escape and Tab work from the start.
+  useEffect(() => { ref.current?.focus() }, [])
   const settings = clip.remix_settings
   const [headline, setHeadline] = useState(settings?.headline || clip.headline || clip.summary || '')
   const [look, setLook] = useState<HeadlineLook>(() => startLook(clip))
