@@ -59,12 +59,16 @@ test('trim validation matches main process bounds, including an end at zero', ()
   assert.deepEqual(parseTrimRange(false, 'oops', '0'), { start: null, end: null, error: null })
 })
 
-test('the wizard opens on the video step with the steps listed in order', () => {
+test('the form opens on the video step with the steps listed in order', () => {
   const html = renderToStaticMarkup(React.createElement(JobForm, { onSubmit() {} }))
-  const labels = [...html.matchAll(/aria-label="Create steps"[^>]*>(.*?)<\/nav>/gs)][0]?.[1] ?? ''
-  const order = ['Video', 'Format', 'Clips', 'Look', 'Review'].map((label) => labels.indexOf(label))
-  assert.ok(order.every((index, i) => index > -1 && (i === 0 || index > order[i - 1])))
+  const steps = [...html.matchAll(/data-step="([a-z]+)"/g)].map((match) => match[1])
+  assert.deepEqual(steps, ['workflow', 'video', 'clips', 'captions', 'format', 'review'])
+  const titles = [...html.matchAll(/id="create-step-[a-z]+-title"[^>]*>([^<]+)</g)].map((match) => match[1])
+  assert.deepEqual(titles, ['Workflow', 'Video', 'Clips', 'Look', 'More options', 'Review'])
   assert.match(html, /aria-current="step"[^>]*>.*?Video/s)
+  // The workflow (nothing chosen yet) and the video are open; the preview panel says what's missing.
+  assert.match(html, /data-testid="create-preview"/)
+  assert.match(html, /Choose a workflow to continue/)
   assert.match(html, /Choose a video/)
   // What the video is for and a reference picture belong to the video: on step 1, right after the source.
   assert.ok(html.indexOf('What’s this video for?') > html.indexOf('Choose a video'))
@@ -556,13 +560,13 @@ test('a valid link left in the video field counts: Next is enabled and uses it',
   try {
     Object.assign(initial, { workflow: 'automatic', pendingLink: 'not a link' })
     const blocked = renderToStaticMarkup(React.createElement(JobForm, { onSubmit() {} }))
-    assert.match(blocked, /<button[^>]*disabled=""[^>]*>Next: Format/)
+    assert.match(blocked, /<button[^>]*disabled=""[^>]*>Next: Clips/)
     initial.pendingLink = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
     const ready = renderToStaticMarkup(React.createElement(JobForm, { onSubmit() {} }))
-    assert.doesNotMatch(ready, /<button[^>]*disabled=""[^>]*>Next: Format/)
-    assert.match(ready, /Next: Format/)
-    // Format and the later steps can be reached too.
-    assert.doesNotMatch(ready, /<button type="button" disabled=""[^>]*>.*?Format<\/span>/)
+    assert.doesNotMatch(ready, /<button[^>]*disabled=""[^>]*>Next: Clips/)
+    assert.match(ready, /Next: Clips/)
+    // More options and the later steps can be reached too.
+    assert.doesNotMatch(ready, /<button type="button" disabled=""[^>]*>(?:(?!<\/button>).)*More options<\/span>/)
     useDraftStore.setState({ pendingLink: 'https://example.com/v.mp4' })
     useDraftStore.getState().startAnother()
     assert.equal(useDraftStore.getState().pendingLink, '')

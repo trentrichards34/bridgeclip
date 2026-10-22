@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Palette, Pencil, Save, Trash2 } from 'lucide-react'
+import { History, Palette, Pencil, Plus, RotateCcw, Save, Trash2 } from 'lucide-react'
 import { MAX_PRESET_NAME, MAX_PRESETS, pickStyle, presetName, type StyleKind } from '../../shared/member-prefs'
 import { useDraftStore } from '../store/use-draft-store'
+import { useBrands } from '../store/use-brand-store'
+import { brandFormPatch } from '../../shared/brand-kit'
+import { cn } from '../lib/utils'
 import { useRemixForm } from '../store/use-remix-form-store'
 import { useMemberPrefsStore } from '../store/use-member-prefs-store'
 import { errorMessage } from '../lib/utils'
@@ -140,7 +143,7 @@ export function SaveStyleButton({ kind }: { kind: StyleKind }): React.JSX.Elemen
   )
 }
 
-function NameDialog({ kind, mode, initial, taken, onClose, onSave }: {
+export function NameDialog({ kind, mode, initial, taken, onClose, onSave }: {
   kind: StyleKind; mode: 'save' | 'rename'; initial: string; taken: string[]; onClose: () => void; onSave: (name: string) => Promise<void>
 }): React.JSX.Element {
   const [name, setName] = useState(initial)
@@ -179,5 +182,132 @@ function NameDialog({ kind, mode, initial, taken, onClose, onSave }: {
         </Button>
       </DialogFooter>
     </Dialog>
+  )
+}
+
+/** The Create defaults (the app's), with the member's default brand look on top. */
+export function createDefaultStyle(): Record<string, unknown> {
+  const initial = useDraftStore.getInitialState()
+  const draft = useDraftStore.getState()
+  const defaults = pickStyle('create', initial) as Record<string, unknown>
+  const brand = useBrands.getState().brands.find((item) => item.id === draft.brandIdentityId) ?? null
+  if (!brand) return defaults
+  return { ...defaults, brandIdentityId: brand.id, ...brandFormPatch(brand.look, { ...initial, ...(defaults as object) } as Parameters<typeof brandFormPatch>[1]),
+    ...(brand.look?.captionPreset ? { includeCaptions: true } : {}) }
+}
+
+/** True when every field of `style` matches the form's current style. */
+function matches(style: Record<string, unknown> | null, current: Record<string, unknown>): boolean {
+  if (!style || !Object.keys(style).length) return false
+  return Object.entries(style).every(([key, value]) => JSON.stringify(current[key] ?? null) === JSON.stringify(value ?? null))
+}
+
+const START_CHIP = 'inline-flex h-8 items-center gap-1.5 rounded-[9px] px-3 text-sm transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50'
+
+/**
+ * Create's "Start from" row: the settings of the last run, the defaults (with
+ * the default brand look), the member's saved styles, and saving the current
+ * settings as a new one. Applying one changes only style fields, never the video.
+ */
+export function CreateStartFrom({ className }: { className?: string }): React.JSX.Element | null {
+  const presets = useMemberPrefsStore((state) => state.presets.create)
+  const loaded = useMemberPrefsStore((state) => state.loaded)
+  const lastRun = useDraftStore((state) => state.lastRun)
+  const json = useStyleJson('create')
+  useBrands((state) => state.brands)
+  const current = JSON.parse(json || '{}') as Record<string, unknown>
+  const match = presets.find((preset) => JSON.stringify(preset.style) === json) ?? null
+  const [picked, setPicked] = useState<string | null>(null)
+  const active = presets.find((preset) => preset.id === picked && JSON.stringify(preset.style) === json) ?? match
+  const [naming, setNaming] = useState<{ mode: 'save' | 'rename'; id?: string; name: string } | null>(null)
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const closeConfirm = useCallback(() => setConfirm(null), [])
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(null), 3000)
+    return () => clearTimeout(timer)
+  }, [notice])
+  if (!loaded) return null
+
+  const defaults = createDefaultStyle()
+  const onLast = matches(lastRun as Record<string, unknown> | null, current)
+  const onDefaults = !onLast && matches(defaults, current)
+  const apply = (style: object, message: string): void => {
+    setError(null)
+    useDraftStore.getState().update(style)
+    setNotice(message)
+  }
+  const applyPreset = (id: string): void => {
+    if (!id) return
+    setError(null)
+    setPicked(id)
+    useMemberPrefsStore.getState().applyPreset('create', id)
+    const name = presets.find((preset) => preset.id === id)?.name
+    if (name) setNotice(`Applied “${name}”`)
+  }
+  const remove = (id: string, name: string): void => setConfirm({
+    title: `Delete “${name}”?`,
+    body: 'This removes the saved style. Your current settings stay as they are.',
+    confirmLabel: 'Delete style',
+    onConfirm: () => {
+      setError(null)
+      void useMemberPrefsStore.getState().deletePreset('create', id).catch((err) => setError(errorMessage(err, 'The style could not be deleted.')))
+    }
+  })
+  const chip = (on: boolean): string => cn(START_CHIP, on
+    ? 'bg-tool/[0.1] text-tool shadow-[inset_0_0_0_1px_rgb(var(--tool)/0.5)]'
+    : 'bg-surface/80 text-ink shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)] hover:bg-overlay')
+
+  return (
+    <div className={className} data-testid="create-start-from">
+      <div role="group" aria-label="Start from" className="flex flex-wrap items-center gap-2">
+        <span className="mr-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle" aria-hidden>Start from</span>
+        <button type="button" className={chip(onLast)} aria-pressed={onLast} disabled={!lastRun || !Object.keys(lastRun).length}
+          title={lastRun ? 'The settings you last clipped with' : 'Shows up once you’ve clipped a video'}
+          onClick={() => lastRun && apply(lastRun, 'Back to your last run’s settings')}>
+          <History aria-hidden className="h-3.5 w-3.5" />Same as last run
+        </button>
+        <button type="button" className={chip(onDefaults)} aria-pressed={onDefaults}
+          title="The recommended settings, with your default brand look"
+          onClick={() => apply(createDefaultStyle(), 'Back to the defaults')}>
+          <RotateCcw aria-hidden className="h-3.5 w-3.5" />Defaults
+        </button>
+        <div className="w-[200px] max-w-full">
+          <Select size="sm" aria-label="Saved style" value={active?.id ?? ''} onChange={applyPreset}
+            placeholder={presets.length ? 'Choose a saved style' : 'No saved styles yet'} emptyText="Save your current settings to reuse them."
+            options={presets.map((preset) => ({ value: preset.id, label: preset.name }))} />
+        </div>
+        {active && <ActionMenu label={`Actions for style “${active.name}”`} actions={[
+          { label: 'Rename…', icon: <Pencil className="h-3.5 w-3.5" />, onSelect: () => { setError(null); setNaming({ mode: 'rename', id: active.id, name: active.name }) } },
+          { label: 'Delete', icon: <Trash2 className="h-3.5 w-3.5" />, danger: true, onSelect: () => remove(active.id, active.name) }
+        ]} />}
+        <button type="button" className={cn(START_CHIP, 'border border-dashed border-white/[0.16] text-ink-muted hover:border-white/30 hover:text-ink')}
+          disabled={presets.length >= MAX_PRESETS && !active}
+          title={presets.length >= MAX_PRESETS ? `You can save up to ${MAX_PRESETS} styles. Delete one first.` : undefined}
+          onClick={() => { setError(null); setNaming({ mode: 'save', name: active?.name ?? '' }) }}>
+          <Plus aria-hidden className="h-3.5 w-3.5" />Save current settings
+        </button>
+        {notice && <span role="status" className="text-2xs text-success">{notice}</span>}
+      </div>
+      {error && <p role="alert" className="mt-1.5 px-1 text-2xs text-danger">{error}</p>}
+      {naming && <NameDialog kind="create" mode={naming.mode} initial={naming.name} taken={presets.filter((preset) => preset.id !== naming.id).map((preset) => preset.name)}
+        onClose={() => setNaming(null)}
+        onSave={async (name) => {
+          const store = useMemberPrefsStore.getState()
+          if (naming.mode === 'rename' && naming.id) {
+            await store.renamePreset('create', naming.id, name)
+            setNotice(`Renamed to “${name}”`)
+          } else {
+            await store.savePreset('create', name)
+            const saved = useMemberPrefsStore.getState().presets.create.find((preset) => preset.name.toLowerCase() === name.toLowerCase())
+            if (saved) setPicked(saved.id)
+            setNotice(`Saved “${name}”`)
+          }
+          setNaming(null)
+        }} />}
+      {confirm && <ConfirmDialog request={confirm} onClose={closeConfirm} />}
+    </div>
   )
 }

@@ -30,7 +30,7 @@ test('Signal frame: grouped sidebar, tool chip, the top bar starts clips from a 
   for (const group of ['Make', 'Manage', 'Publish']) await page.getByText(group, { exact: true }).first().waitFor()
 
   // The page header carries the tool chip; the glow and chip take the tool colour.
-  await page.getByRole('heading', { level: 1, name: 'Create clips' }).waitFor()
+  await page.getByRole('heading', { level: 1, name: 'Turn a long video into clips' }).waitFor()
   assert.equal(await page.locator('main').getAttribute('data-tool'), 'create')
   await page.locator('header .tool-chip', { hasText: 'Create' }).waitFor()
 
@@ -49,7 +49,7 @@ test('Signal frame: grouped sidebar, tool chip, the top bar starts clips from a 
   await page.getByRole('heading', { level: 1, name: 'Library' }).waitFor()
   await bar.fill('https://example.com/talk.mp4')
   await page.getByRole('button', { name: 'Start clips from this link' }).click()
-  await page.getByRole('heading', { level: 1, name: 'Create clips' }).waitFor()
+  await page.getByRole('heading', { level: 1, name: 'Turn a long video into clips' }).waitFor()
   await page.getByText('example.com/talk.mp4', { exact: true }).waitFor()
   assert.equal(await bar.inputValue(), '')
 
@@ -68,9 +68,9 @@ test('Signal frame: grouped sidebar, tool chip, the top bar starts clips from a 
 
   // Brand look hosts the brand identities: add one with the existing dialog.
   await nav.getByRole('button', { name: 'Brand look', exact: true }).click()
-  await page.getByRole('heading', { level: 1, name: 'Your brand look' }).waitFor()
+  await page.getByRole('heading', { level: 1, name: 'Set your style once' }).waitFor()
   assert.equal(await page.locator('main').getAttribute('data-tool'), 'brand')
-  await page.getByText('No brand yet', { exact: true }).waitFor()
+  await page.getByText('No look yet', { exact: true }).waitFor()
   await app.evaluate(({ ipcMain }) => {
     const brand = { id: 'b1', name: 'Coach Jess', text: 'Pricing coach for creators.', look: { color: '#22AA88', captionPreset: 'pop', handle: '@coachjess' }, createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z' }
     ipcMain.removeHandler('brandIdentities:list')
@@ -78,12 +78,16 @@ test('Signal frame: grouped sidebar, tool chip, the top bar starts clips from a 
   })
   await nav.getByRole('button', { name: 'Library', exact: true }).click()
   await nav.getByRole('button', { name: 'Brand look', exact: true }).click()
-  const list = page.getByRole('list', { name: 'Your brands' })
-  await list.getByText('Coach Jess', { exact: true }).waitFor()
-  await list.getByText('Pop captions', { exact: true }).waitFor()
-  await list.getByRole('button', { name: 'Edit Coach Jess' }).click()
-  await page.getByRole('dialog').waitFor()
-  await page.keyboard.press('Escape')
+  const looks = page.getByRole('radiogroup', { name: 'Your looks' })
+  await looks.getByText('Coach Jess', { exact: true }).waitFor()
+  await looks.getByText(/Pop captions/).waitFor()
+  // The look opens in the editor below its card.
+  await looks.getByRole('radio', { name: /^Coach Jess/ }).click()
+  await page.getByRole('heading', { name: 'Editing “Coach Jess”' }).waitFor()
+  assert.equal(await page.getByRole('radiogroup', { name: 'Caption style' }).getByRole('radio', { name: 'Pop', exact: true }).getAttribute('aria-checked'), 'true')
+  // The primary action takes the page's tool color (Brand look green), with dark ink.
+  const primary = await page.getByRole('button', { name: 'New look' }).evaluate((el) => getComputedStyle(el).backgroundColor)
+  assert.equal(primary, 'rgb(58, 214, 147)')
 
   // The sidebar collapses to icons and back (⌘\ / Ctrl+\).
   await page.getByRole('button', { name: 'Collapse sidebar' }).click()

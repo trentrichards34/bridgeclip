@@ -1,9 +1,10 @@
 import { normalizeVideoSource, twitchSourceError } from '../../shared/video-source'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, Clock3, ListVideo, Minus, Plus, Sparkles } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, Clock3, ListVideo, Minus, Plus } from 'lucide-react'
 import { cn, MOD_KEY, parseTimecode, sourceLabel } from '../lib/utils'
 import { useDraftStore, type ClipDraft, type WizardStep } from '../store/use-draft-store'
-import { StylePresets } from './StylePresets'
+import { CreateStartFrom } from './StylePresets'
+import { CreatePreview, createSentence, type SummaryTarget } from './CreatePreview'
 import { useActiveJobs } from '../store/use-job-store'
 import type { ClipJobRequest, HeadlineVoice, QualityBar, ScreenFocus } from '../../shared/jobs'
 import { MAX_PARALLEL_JOBS } from '../../shared/jobs'
@@ -82,9 +83,9 @@ export const CLIPPING_MODE_OPTIONS = [
 
 export const WIZARD_STEPS: { id: WizardStep; label: string; title: string; description: string }[] = [
   { id: 'video', label: 'Video', title: 'Choose a video', description: 'A local file, YouTube link or Twitch VOD link. Optionally suggest where to find clips.' },
-  { id: 'format', label: 'Format', title: 'Format, framing and speed', description: 'Choose the look and pace of every clip in this job.' },
   { id: 'clips', label: 'Clips', title: 'What to clip, length and count', description: 'Optionally describe the moments you want. Pick one or more lengths, or none for any length.' },
   { id: 'captions', label: 'Look', title: 'Look', description: 'Choose how captions look. Word-by-word captions are burned into each clip; silent videos are clipped without them.' },
+  { id: 'format', label: 'More options', title: 'Format, framing and speed', description: 'Choose the format, framing and pace of every clip in this job.' },
   { id: 'review', label: 'Review', title: 'Review and generate', description: 'Check the run, then generate. You can queue another video right after.' }
 ]
 
@@ -194,16 +195,17 @@ interface JobFormProps {
   submitting?: boolean
   /** Opens Remix (the Video step's note for reacting to someone else's video). */
   onOpenRemix?: () => void
+  /** Opens the Brand look page (the Look step's "Edit looks"). */
+  onOpenBrandLook?: () => void
+  /** The page header, then what sits above the steps (the setup checklist) and below them (Today's 3), in the left column. */
+  header?: ReactNode
+  lead?: ReactNode
+  trail?: ReactNode
   className?: string
 }
 
 type Update = (patch: Partial<ClipDraft>) => void
 
-/**
- * The Create wizard: Video → Format → Clips → Captions → Review. Each step is
- * one compact panel with Back/Next pinned below it. After Generate the job is
- * queued and the wizard offers the next video, so several runs can go at once.
- */
 /** Links typed in the empty video field and not used yet (none if any part isn't a valid link). */
 function pendingLinks(draft: Pick<ClipDraft, 'source'> & { pendingLink: string }): string[] {
   if (draft.source.trim() || !draft.pendingLink.trim()) return []
@@ -211,11 +213,52 @@ function pendingLinks(draft: Pick<ClipDraft, 'source'> & { pendingLink: string }
   return invalid.length ? [] : mergeSources([], links).sources
 }
 
-export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, onOpenRemix, className }: JobFormProps): React.JSX.Element {
+/** The workflow row's one-line summary. */
+const WORKFLOW_SUMMARY = { automatic: 'Automatic · export when done', review: 'Review & edit · you make the final cut' } as const
+
+/** A step's one-line summary when it's folded. */
+function stepSummary(id: WizardStep, draft: ClipDraft, brandName: string | null): string {
+  if (id === 'video') {
+    const sources = draftSources(draft)
+    if (sources.length > 1) return `${sources.length} videos · ${sourceLabel(sources[0])} and ${sources.length - 1} more`
+    return sources.length ? sourceLabel(sources[0]) : 'No video yet'
+  }
+  if (id === 'clips') {
+    const parts = clipsSummary(draft).map((part) => part.text)
+    return [draft.clipRequest?.trim() ? `“${draft.clipRequest.trim()}”` : null, ...parts].filter(Boolean).join(' · ')
+  }
+  if (id === 'captions') {
+    const board = createBoardStyle(draft)
+    return [
+      draft.includeCaptions ? `${CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset} captions` : 'No captions',
+      draft.workflow !== 'review' ? HOOK_LABELS[board.hook] : null,
+      brandName,
+      draft.workflow !== 'review' && draft.ctaId ? 'call to action at the end' : null
+    ].filter(Boolean).join(' · ')
+  }
+  if (id === 'format') {
+    const format = FORMATS.find((item) => item.id === draft.aspectRatio)?.label ?? draft.aspectRatio
+    const framing = draft.aspectRatio === '9:16' ? LAYOUT_STYLES.find((item) => item.id === draft.layoutStyle)?.label : null
+    return [format, framing, ...formatSummary({ ...draft, brollSource: draft.brollSource }).map((part) => part.text)].filter(Boolean).join(' · ')
+  }
+  return 'Every setting in one list, each with Edit'
+}
+
+/**
+ * Create: a vertical list of steps (Workflow, Video, Clips, Look, More
+ * options, Review). The open step expands in place; the others fold to one
+ * line with Change. The preview panel beside them shows the look on three
+ * sample tiles, the run in one sentence and the Generate button. After
+ * Generate the job is queued and the form offers the next video.
+ */
+export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, onOpenRemix, onOpenBrandLook, header, lead, trail, className }: JobFormProps): React.JSX.Element {
   const draft = useDraftStore()
   const { update, step, setStep } = draft
   // Customize on Format and Clips: unset until the member opens or closes it (then each step starts open only when something differs from the defaults).
   const [customize, setCustomize] = useState<Partial<Record<'format' | 'clips', boolean>>>({})
+  // The workflow row stays open until one is chosen and the member moves on (Change opens it again).
+  const [workflowOpen, setWorkflowOpen] = useState(() => useDraftStore.getState().workflow === null)
+  const brand = useBrands((s) => s.brands.find((item) => item.id === draft.brandIdentityId) ?? null)
 
   const sourceCount = draftSources(draft).length
   // A preferred range applies to a single video only.
@@ -226,7 +269,6 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, onOpen
   )
 
   const index = WIZARD_STEPS.findIndex((s) => s.id === step)
-  const meta = WIZARD_STEPS[index]
   const sourceError = twitchSourceError(draft.source)
   // A valid link still in the field counts: Next and Generate use it.
   const pending = pendingLinks(draft)
@@ -261,118 +303,165 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, onOpen
   })
 
   if (draft.started) {
-    return <StartedPanel className={className} onViewJob={onViewJob} />
+    return <div className={cn('space-y-4', className)}>{header}{lead}<StartedPanel onViewJob={onViewJob} />{trail}</div>
   }
 
   const goTo = (target: WizardStep): void => {
     takePendingLink()
+    setWorkflowOpen(false)
     setStep(target)
-    // Bring the step bar (and the top of the new step) into view, below the setup notes above it.
-    requestAnimationFrame(() => document.getElementById('create-steps')?.scrollIntoView({ block: 'start' }))
+    // Bring the opened step's row into view.
+    requestAnimationFrame(() => document.getElementById(`create-step-${target}`)?.scrollIntoView?.({ block: 'nearest' }))
+  }
+  const go = (target: SummaryTarget): void => {
+    if (target === 'workflow') {
+      setWorkflowOpen(true)
+      requestAnimationFrame(() => document.getElementById('create-step-workflow')?.scrollIntoView?.({ block: 'nearest' }))
+      return
+    }
+    if (target !== 'video' && !videoValid) { goTo('video'); return }
+    goTo(target)
   }
   const next = WIZARD_STEPS[index + 1]
   const back = WIZARD_STEPS[index - 1]
+  const automatic = draft.workflow !== 'review'
+  const board = createBoardStyle(draft)
+  const rows: BoardRows = automatic ? { hooks: createHooks(draft), handle: true, cta: true, keyword: true, extras: true } : {}
+  const sentence = createSentence(draft, { sources: hasSource ? (pending.length ? pending : draftSources(draft)) : [], trimError: trim.error, modelsValid })
+  const actionLabel = !draft.workflow ? 'Choose a workflow to continue'
+    : !hasSource ? 'Add a video to continue'
+      : trim.error ? 'Fix the preferred part to continue'
+        : !modelsValid ? 'Choose both models to continue'
+          : draft.workflow === 'review' ? 'Find candidates' : sourceCount > 1 ? `Generate clips for ${sourceCount} videos` : 'Generate clips'
+  const hint = blockedReason ?? (!videoValid || !modelsValid ? null
+    : sourceCount > 1 ? `${sourceCountLabel(sourceCount)}, one job each.` : 'Runs on this computer. Transcription and planning bill your OpenRouter account.')
+
+  const body = (id: WizardStep): ReactNode => {
+    switch (id) {
+      case 'video': return <VideoStep draft={draft} update={update} trimError={trim.error} disabled={submitting} onOpenRemix={onOpenRemix} />
+      case 'format': return <FormatStep draft={draft} update={update} customize={customize.format} onCustomize={(format) => setCustomize((value) => ({ ...value, format }))} />
+      case 'clips': return <ClipsStep draft={draft} update={update} customize={customize.clips} onCustomize={(clips) => setCustomize((value) => ({ ...value, clips }))} />
+      case 'captions': return <>
+        {draft.workflow === 'review' && (
+          <aside aria-labelledby="caption-editor-note" className="mb-3 rounded-xl border border-accent/20 bg-accent/5 p-3">
+            <span className="eyebrow text-accent">Review &amp; edit</span>
+            <h2 id="caption-editor-note" className="mt-1 text-sm font-semibold text-ink">Adjust captions in the editor</h2>
+            <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+              Choose a starting style below. Before exporting, you can change how captions look, reposition them, or hide them from selected parts of each clip.
+            </p>
+          </aside>
+        )}
+        <CaptionsStep draft={draft} update={update} onOpenBrandLook={onOpenBrandLook} />
+      </>
+      default: return <ReviewStep draft={draft} trim={trim} onEdit={goTo} />
+    }
+  }
+  const description = (id: WizardStep): string | null => {
+    if (id === 'video') return null
+    if (id === 'review' && draft.workflow === 'review') return 'A quality check reviews each candidate before the editor opens for your final cut.'
+    if (id === 'captions' && draft.workflow === 'automatic') return 'Turn parts of the edit on or off in Skills, then choose how captions and hook text look. Silent videos are clipped without captions.'
+    return WIZARD_STEPS.find((item) => item.id === id)?.description ?? null
+  }
 
   return (
-    <div className={cn('space-y-3', className)}>
-      <StylePresets kind="create" />
-      <Stepper current={step} reachable={videoValid ? WIZARD_STEPS.length - 1 : 0} onSelect={goTo} />
-
-      {step === 'captions' && draft.workflow === 'review' && (
-        <aside aria-labelledby="caption-editor-note" className="rounded-2xl border border-accent/20 bg-accent/5 p-4 xl:p-5">
-          <span className="eyebrow text-accent">Review &amp; edit</span>
-          <h2 id="caption-editor-note" className="mt-1.5 text-sm font-semibold text-ink">Adjust captions in the editor</h2>
-          <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-            Choose a starting style below. Before exporting, you can change how captions look, reposition them, or hide them from selected parts of each clip.
-          </p>
-        </aside>
-      )}
-
-      <Panel className="p-4 xl:p-5">
-        {step !== 'video' && <div className="mb-3">
-          <h2 className="text-sm font-semibold text-ink">{step === 'review' && draft.workflow === 'review' ? 'Ready to find candidates' : meta.title}</h2>
-          <p className="mt-0.5 text-xs text-ink-muted">{step === 'review' && draft.workflow === 'review' ? 'A quality check reviews each candidate before the editor opens for your final cut.'
-            : step === 'captions' && draft.workflow === 'automatic' ? 'Turn parts of the edit on or off in Skills, then choose how captions and hook text look. Silent videos are clipped without captions.' : meta.description}</p>
-        </div>}
-        {sourceError && <p role="alert" className="text-sm text-danger">{sourceError}</p>}
-        {step === 'video' && <VideoStep draft={draft} update={update} trimError={trim.error} disabled={submitting} onOpenRemix={onOpenRemix} />}
-        {step === 'format' && <FormatStep draft={draft} update={update} customize={customize.format} onCustomize={(format) => setCustomize((value) => ({ ...value, format }))} />}
-        {step === 'clips' && <ClipsStep draft={draft} update={update} customize={customize.clips} onCustomize={(clips) => setCustomize((value) => ({ ...value, clips }))} />}
-        {step === 'captions' && <CaptionsStep draft={draft} update={update} />}
-        {step === 'review' && <ReviewStep draft={draft} trim={trim} onEdit={goTo} />}
-        {step !== 'video' && sourceCount > 1 && <p className="mt-3 text-2xs text-ink-subtle" data-testid="batch-note">{sourceCountLabel(sourceCount)} with these settings, one job each.</p>}
-      </Panel>
-
-      {/* Actions stay pinned to the bottom edge on a solid strip. */}
-      <div className="sticky bottom-0 z-10 -mb-3 flex items-center gap-3 bg-canvas pb-3 pt-2">
-        {back ? (
-          <Button variant="ghost" icon={<ArrowLeft className="h-3.5 w-3.5" />} onClick={() => goTo(back.id)}>
-            Back
-          </Button>
-        ) : <span />}
-        <p className="min-w-0 flex-1 truncate text-center text-2xs text-ink-subtle">
-          {blockedReason ?? (!draft.workflow ? 'Choose a workflow to continue.' : !modelsValid ? 'Choose both models in Advanced mode.' : step === 'video' && !hasSource ? 'Add a video to continue.' : `${MOD_KEY}↵ generates from any step`)}
-        </p>
-        {next && step !== 'review' ? (
-          <div className="flex items-center gap-2">
-            {step !== 'video' && (
-              <Button variant="ghost" onClick={submit} disabled={!canSubmit} loading={submitting} className="max-sm:hidden">
-                {draft.workflow === 'review' ? 'Find candidates' : 'Generate now'}
-              </Button>
-            )}
-            <Button variant="primary" trailingIcon={<ArrowRight className="h-3.5 w-3.5" />} onClick={() => goTo(next.id)} disabled={!stepValid}>
-              Next: {next.label}
-            </Button>
-          </div>
-        ) : (
-          <Button variant="primary" size="lg" icon={<Sparkles className="h-4 w-4" />} onClick={submit} disabled={!canSubmit} loading={submitting}>
-            {draft.workflow === 'review' ? 'Find candidates' : sourceCount > 1 ? `Generate clips for ${sourceCount} videos` : 'Generate clips'}
-          </Button>
-        )}
+    <div className={cn('grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start 2xl:grid-cols-[minmax(0,1fr)_360px]', className)}>
+      <div className="min-w-0 space-y-4">
+        {header}
+        {lead}
+        <CreateStartFrom />
+        <nav aria-label="Create steps" id="create-steps" className="scroll-mt-4">
+          <ol className="flex flex-col">
+            <StepRow id="workflow" number={1} title="Workflow" done={draft.workflow !== null} open={workflowOpen || draft.workflow === null}
+              summary={draft.workflow ? WORKFLOW_SUMMARY[draft.workflow] : 'Choose one to continue'} missing={!draft.workflow}
+              onToggle={() => setWorkflowOpen(!(workflowOpen || draft.workflow === null))} canFold={draft.workflow !== null}>
+              <WorkflowPicker value={draft.workflow} onChange={(workflow) => update({ workflow })} disabled={submitting} />
+            </StepRow>
+            {WIZARD_STEPS.map((s, i) => {
+              const active = s.id === step
+              const enabled = s.id === 'video' || videoValid
+              const done = !active && enabled && (s.id === 'video' ? hasSource && !trim.error : s.id === 'clips' ? modelsValid : s.id !== 'review')
+              return (
+                <StepRow key={s.id} id={s.id} number={i + 2} title={s.label} active={active} done={done} open={active} disabled={!enabled}
+                  last={i === WIZARD_STEPS.length - 1}
+                  summary={active ? '' : stepSummary(s.id, draft, brand?.name ?? null)}
+                  missing={!active && s.id === 'video' && !hasSource} onToggle={() => goTo(s.id)}>
+                  {description(s.id) && <p className="-mt-1 mb-3 text-xs text-ink-muted">{description(s.id)}</p>}
+                  {sourceError && s.id === 'video' && <p role="alert" className="mb-2 text-sm text-danger">{sourceError}</p>}
+                  {body(s.id)}
+                  {s.id !== 'video' && sourceCount > 1 && <p className="mt-3 text-2xs text-ink-subtle" data-testid="batch-note">{sourceCountLabel(sourceCount)} with these settings, one job each.</p>}
+                  <div className="mt-4 flex items-center gap-2 border-t border-white/[0.06] pt-3">
+                    {back ? (
+                      <Button variant="ghost" size="sm" icon={<ArrowLeft className="h-3.5 w-3.5" />} onMouseDown={keepFocus} onClick={() => goTo(back.id)}>Back</Button>
+                    ) : <span />}
+                    <p className="min-w-0 flex-1 truncate text-center text-2xs text-ink-subtle">
+                      {!draft.workflow ? 'Choose a workflow to continue.' : !modelsValid && step === 'clips' ? 'Choose both models in Advanced mode.' : step === 'video' && !hasSource ? 'Add a video to continue.' : `${MOD_KEY}↵ generates from any step`}
+                    </p>
+                    {next && <Button variant="secondary" size="sm" trailingIcon={<ArrowRight className="h-3.5 w-3.5" />} onMouseDown={keepFocus} onClick={() => goTo(next.id)} disabled={!stepValid}>
+                      Next: {next.label}
+                    </Button>}
+                  </div>
+                </StepRow>
+              )
+            })}
+          </ol>
+        </nav>
+        {trail}
       </div>
+      <CreatePreview board={board} rows={rows} aspect={draft.aspectRatio === '16:9' ? '16:9' : '9:16'} source={pending[0] ?? draft.source} durations={draft.durations}
+        sentence={sentence} onGo={go} actionLabel={actionLabel} canSubmit={canSubmit} submitting={submitting} onSubmit={submit} hint={hint} blocked={Boolean(blockedReason)} />
     </div>
   )
 }
 
-function Stepper({ current, reachable, onSelect }: { current: WizardStep; reachable: number; onSelect: (step: WizardStep) => void }): React.JSX.Element {
-  const currentIndex = WIZARD_STEPS.findIndex((s) => s.id === current)
+/**
+ * Mouse presses on the step buttons keep focus where it is: leaving the link
+ * field would use the link and resize the open step under the pointer before
+ * the click lands. The click itself uses a link still in the field.
+ */
+function keepFocus(e: React.MouseEvent): void {
+  if (document.activeElement instanceof HTMLInputElement) e.preventDefault()
+}
+
+/**
+ * One row of the step list: a numbered (or checked) node on the rail, the
+ * step's name and a one-line summary with Change; the open step's settings
+ * below it.
+ */
+function StepRow({ id, number, title, summary, active = false, done, open, disabled = false, missing = false, last = false, canFold = true, onToggle, children }: {
+  id: WizardStep | 'workflow'; number: number; title: string; summary: string; active?: boolean; done: boolean; open: boolean; disabled?: boolean
+  missing?: boolean; last?: boolean; canFold?: boolean; onToggle: () => void; children: ReactNode
+}): React.JSX.Element {
+  const titleId = `create-step-${id}-title`
+  const summaryId = `create-step-${id}-summary`
+  const node = active || (open && !done) ? 'active' : done ? 'done' : disabled ? 'off' : 'idle'
   return (
-    <nav aria-label="Create steps" id="create-steps" className="scroll-mt-4">
-      <ol className="flex items-center gap-1.5">
-        {WIZARD_STEPS.map((s, i) => {
-          const active = i === currentIndex
-          const done = i < currentIndex
-          const enabled = i <= reachable
-          return (
-            <li key={s.id} className="flex min-w-0 flex-1 items-center gap-1.5 last:flex-none">
-              <button
-                type="button"
-                onClick={() => onSelect(s.id)}
-                disabled={!enabled}
-                aria-current={active ? 'step' : undefined}
-                className={cn(
-                  'group flex min-w-0 items-center gap-2 rounded-full py-1 pl-1 pr-2.5 text-xs transition-colors duration-200',
-                  active ? 'bg-white/[0.08] font-medium text-ink' : enabled ? 'text-ink-muted hover:bg-white/[0.05] hover:text-ink' : 'text-ink-faint'
-                )}
-              >
-                <span
-                  className={cn(
-                    'flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-mono text-2xs tabular',
-                    active ? 'bg-accent text-accent-ink' : done ? 'bg-ink text-canvas' : 'bg-white/[0.06] shadow-[inset_0_0_0_1px_rgb(255_255_255/0.1)]'
-                  )}
-                >
-                  {done ? <Check className="h-3 w-3" strokeWidth={3} /> : i + 1}
-                </span>
-                <span className={cn('truncate', !active && 'max-md:hidden')}>{s.label}</span>
-              </button>
-              {i < WIZARD_STEPS.length - 1 && (
-                <span aria-hidden className={cn('h-px min-w-3 flex-1', done ? 'bg-ink/40' : 'bg-white/[0.08]')} />
-              )}
-            </li>
-          )
-        })}
-      </ol>
-    </nav>
+    <li id={`create-step-${id}`} className="flex scroll-mt-3 gap-4" data-step={id} data-state={node}>
+      <div className="flex w-[30px] shrink-0 flex-col items-center">
+        <span aria-hidden className={cn('flex h-[30px] w-[30px] items-center justify-center rounded-full font-mono text-xs font-medium tabular transition-colors duration-200',
+          node === 'active' ? 'bg-tool text-accent-ink shadow-[0_0_0_4px_rgb(var(--tool)/0.15),0_0_18px_rgb(var(--tool)/0.35)]'
+            : node === 'done' ? 'border border-tool/40 bg-tool/[0.12] text-tool'
+              : node === 'off' ? 'border border-white/[0.06] text-ink-faint' : 'border border-white/[0.12] text-ink-muted')}>
+          {node === 'done' ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : number}
+        </span>
+        {!last && <span aria-hidden className={cn('my-1 w-0.5 flex-1 rounded-full', done ? 'bg-tool/30' : 'bg-white/[0.07]')} />}
+      </div>
+      <div className={cn('min-w-0 flex-1', last ? 'pb-1' : 'pb-3.5')}>
+        <button type="button" onMouseDown={keepFocus} onClick={() => { if (!(active && open) && !(open && !canFold)) onToggle() }} disabled={disabled} aria-current={active ? 'step' : undefined}
+          aria-expanded={disabled ? undefined : open} aria-controls={open ? `create-step-${id}-body` : undefined} aria-labelledby={`${id}-step-number ${titleId}`} aria-describedby={summaryId}
+          className="group flex min-h-[30px] w-full items-center gap-3 rounded-lg text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-default">
+          <span id={`${id}-step-number`} className="sr-only">Step {number}:</span>
+          <span id={titleId} className={cn('shrink-0 font-display text-base font-semibold tracking-[-0.01em]', disabled ? 'text-ink-faint' : 'text-ink')}>{title}</span>
+          <span id={summaryId} className={cn('min-w-0 flex-1 truncate text-xs', missing ? 'text-warning' : 'text-ink-muted')}>{summary}</span>
+          {!disabled && !open && <span aria-hidden className="shrink-0 text-xs text-ink-muted group-hover:text-ink">Change</span>}
+          {!disabled && open && canFold && !active && <span aria-hidden className="shrink-0 text-xs text-ink-muted group-hover:text-ink">Done</span>}
+        </button>
+        {open && (
+          <div id={`create-step-${id}-body`} role="group" aria-labelledby={titleId} className="glass mt-2.5 rounded-[14px] p-4 animate-fade-in xl:p-5">
+            {children}
+          </div>
+        )}
+      </div>
+    </li>
   )
 }
 
@@ -407,8 +496,7 @@ function HeadlineVoicePicker({ value, onChange, disabled }: { value: HeadlineVoi
 function VideoStep({ draft, update, trimError, disabled, onOpenRemix }: { draft: ClipDraft; update: Update; trimError: string | null; disabled?: boolean; onOpenRemix?: () => void }): React.JSX.Element {
   return (
     <div className="space-y-3">
-      <WorkflowPicker value={draft.workflow} onChange={(workflow) => update({ workflow })} disabled={disabled} />
-      <section aria-labelledby="video-source-heading" className="space-y-3 border-t border-white/[0.06] pt-4">
+      <section aria-labelledby="video-source-heading" className="space-y-3">
         <div>
           <h2 id="video-source-heading" className="text-sm font-semibold text-ink">{WIZARD_STEPS[0].title}</h2>
           <p className="mt-0.5 text-xs text-ink-muted">{WIZARD_STEPS[0].description}</p>
@@ -967,7 +1055,7 @@ export function createReferencePatch(draft: ClipDraft, look: ReferenceLook): Par
   }
 }
 
-export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
+export function CaptionsStep({ draft, update, onOpenBrandLook }: { draft: ClipDraft; update: Update; onOpenBrandLook?: () => void }): React.JSX.Element {
   const automatic = draft.workflow !== 'review'
   const brand = useBrands((s) => s.brands.find((item) => item.id === draft.brandIdentityId) ?? null)
   const pexels = useSettingsStore((s) => s.pexelsConfigured)
@@ -986,7 +1074,7 @@ export function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Upda
     <div className="space-y-3">
       {automatic && <SkillsPanel rows={skills} onToggle={(id, on) => update(createSkillPatch(draft, id, on))} onMore={more} expand={expand}
         music={{ track: draft.musicTrack || null, onChange: (track) => update({ musicTrack: track ?? '' }) }} />}
-      <CreateBrandSection draft={draft} update={update} />
+      <CreateBrandSection draft={draft} update={update} onOpenBrandLook={onOpenBrandLook} />
       <div id="create-look" className="scroll-mt-4">
       <StyleBoard value={createBoardStyle(draft)} onChange={(patch) => update(createBoardPatch(draft, patch))} rows={rows} brand={brand}
         frame={previewFrame(draft.source)} aspect={draft.aspectRatio === '16:9' ? '16:9' : '9:16'} saveKind="create" skillExtras={automatic ? CREATE_SKILL_EXTRAS : undefined}

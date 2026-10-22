@@ -18,7 +18,7 @@ import { Callout } from '../components/ui/Callout'
 import type { Page as PageId } from '../components/Sidebar'
 
 /**
- * Create: the setup checklist (which asks for the OpenRouter key in its first
+ * Create ("Turn a long video into clips"): the setup checklist (which asks for the OpenRouter key in its first
  * row, or the setup card when the checklist is closed) and the clipping wizard. Runs go
  * to the main process's queue and are followed on the Jobs page, so this page
  * is always ready for the next video.
@@ -88,25 +88,24 @@ export function ClipPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pag
 
   return (
     <Page width="default">
-      <PageHeader
-        eyebrow="Studio"
-        title="Create clips"
-        description="Clips from your videos or ones you have permission to use. CreatorClips finds the strongest moments and cuts them into captioned clips."
-      />
-
-      <SetupCard className="mt-4" askForKey={!checklistShown} onOpenSettings={() => onNavigate('settings')} />
-      <SetupChecklist className="mt-4" onNavigate={onNavigate} />
-      <TodaysPlan className="mt-4" onNavigate={onNavigate} onViewLibrary={onViewLibrary} />
-      <FirstRunGuide page="clip" />
-      {lowDisk.element}
-
-      {startError && (
-        <Callout tone="danger" className="mt-3" onDismiss={() => setStartError(null)}>
-          <span className="whitespace-pre-line">{startError}</span>
-        </Callout>
-      )}
-
-      <JobForm className="mt-4" onSubmit={handleSubmit} onViewJob={viewJob} blockedReason={blockedReason} submitting={starting} onOpenRemix={() => onNavigate('remix')} />
+      <JobForm onSubmit={handleSubmit} onViewJob={viewJob} blockedReason={blockedReason} submitting={starting}
+        onOpenRemix={() => onNavigate('remix')} onOpenBrandLook={() => onNavigate('brand')}
+        header={<PageHeader
+          title="Turn a long video into clips"
+          description="Clips from your videos or ones you have permission to use. Every step already has a sensible default."
+        />}
+        lead={<>
+          <FirstRunGuide page="clip" />
+          {lowDisk.element}
+          {startError && (
+            <Callout tone="danger" onDismiss={() => setStartError(null)}>
+              <span className="whitespace-pre-line">{startError}</span>
+            </Callout>
+          )}
+          <SetupCard askForKey={!checklistShown} onOpenSettings={() => onNavigate('settings')} />
+          <SetupChecklist onNavigate={onNavigate} />
+        </>}
+        trail={<TodaysPlan onNavigate={onNavigate} onViewLibrary={onViewLibrary} />} />
     </Page>
   )
 }

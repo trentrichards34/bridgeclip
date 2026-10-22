@@ -54,11 +54,11 @@ test('Create: the key is asked for once, setup folds to a progress line, a typed
   // A link typed into the field counts without Use link; Next uses it.
   await page.getByRole('radio', { name: 'Automatic', exact: true }).click()
   await page.getByRole('textbox', { name: 'Video link' }).fill('https://example.com/talk.mp4')
-  await page.getByRole('button', { name: 'Next: Format', exact: true }).click()
-  await page.getByTestId('format-summary').getByText('Recommended', { exact: true }).waitFor()
-  assert.equal(await page.getByRole('radiogroup', { name: 'Video speed' }).count(), 0)
+  await page.getByRole('button', { name: 'Next: Clips', exact: true }).click()
+  await page.getByTestId('clips-summary').getByText('Recommended', { exact: true }).waitFor()
+  assert.equal(await page.getByRole('radiogroup', { name: 'Clipping mode' }).count(), 0)
   // Back on Video: leaving the field also uses a link.
-  await stepsBar.getByRole('button', { name: /Video/ }).click()
+  await stepsBar.getByRole('button', { name: /^Step \d: Video$/ }).click()
   await page.getByRole('button', { name: 'Remove video' }).click()
   await page.getByRole('textbox', { name: 'Video link' }).fill('https://example.com/other.mp4')
   await page.keyboard.press('Tab')
@@ -66,12 +66,15 @@ test('Create: the key is asked for once, setup folds to a progress line, a typed
   await page.getByTestId('remix-note').getByRole('button', { name: 'Use Remix' }).waitFor()
 
   // Format: Customize reveals the options; Clips: plain mode names and help for the selected mode.
-  await page.getByRole('button', { name: 'Next: Format', exact: true }).click()
+  // More options (format, framing, speed): Customize reveals the options.
+  const inView = async (id) => { const box = await page.locator(`#create-step-${id}`).boundingBox(); return box.y >= 0 && box.y < 800 }
+  await stepsBar.getByRole('button', { name: /^Step \d: More options$/ }).click()
   await page.getByTestId('format-summary').getByRole('button', { name: 'Customize' }).click()
   await page.getByRole('radiogroup', { name: 'Video speed' }).waitFor()
-  assert.ok((await stepsBar.boundingBox()).y >= 0, 'the step bar is in view after changing steps')
-  await page.getByRole('button', { name: 'Next: Clips', exact: true }).click()
-  assert.ok((await stepsBar.boundingBox()).y >= 0)
+  assert.ok(await inView('format'), 'the opened step is in view')
+  await stepsBar.getByRole('button', { name: /^Step \d: Clips$/ }).click()
+  await page.waitForTimeout(300)
+  assert.ok(await inView('clips'))
   await page.getByTestId('clips-summary').getByRole('button', { name: 'Customize' }).click()
   const help = page.getByTestId('clipping-mode-help')
   assert.match(await help.innerText(), /^Uses the most accurate AI/)

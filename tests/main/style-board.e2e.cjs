@@ -99,7 +99,7 @@ test('the style board picks the look in one place, previews it and sends the sam
   await page.getByRole('button', { name: 'Browse', exact: true }).click()
   await page.getByText('my talk.mp4').first().waitFor()
   const steps = page.getByRole('navigation', { name: 'Create steps' })
-  await steps.getByRole('button', { name: /Look/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Look$/ }).click()
   const board = page.getByTestId('style-board')
   await board.waitFor()
   const summary = board.getByTestId('style-board-summary')
@@ -304,7 +304,7 @@ test('the style board picks the look in one place, previews it and sends the sam
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 1000))
 
   // The request: the same fields the separate pickers used to set.
-  await steps.getByRole('button', { name: /Review/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Review$/ }).click()
   await page.getByText('Keyword pill, Progress bar').first().waitFor()
   await page.getByRole('button', { name: 'Generate clips', exact: true }).click()
   await page.getByRole('button', { name: 'View job' }).waitFor()
@@ -392,7 +392,7 @@ test('floating text with a text background: the row, the preview\'s per-line box
   await page.getByRole('button', { name: 'Browse', exact: true }).click()
   await page.getByText('my talk.mp4').first().waitFor()
   const steps = page.getByRole('navigation', { name: 'Create steps' })
-  await steps.getByRole('button', { name: /Look/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Look$/ }).click()
   const board = page.getByTestId('style-board')
   await board.waitFor()
   const summary = board.getByTestId('style-board-summary')
@@ -457,7 +457,7 @@ test('floating text with a text background: the row, the preview\'s per-line box
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 1000))
 
   // The request carries it.
-  await steps.getByRole('button', { name: /Review/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Review$/ }).click()
   await page.getByRole('button', { name: 'Generate clips', exact: true }).click()
   await page.getByRole('button', { name: 'View job' }).waitFor()
   const request = await app.evaluate(() => globalThis.styleTest.submitted)

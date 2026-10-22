@@ -185,7 +185,7 @@ test('Create: the screen share choice shows under Smart framing, is remembered, 
     await page.getByRole('radiogroup', { name: 'Workflow', exact: true }).getByRole('radio', { name: 'Automatic', exact: true }).click()
     await page.getByPlaceholder('YouTube, Twitch VOD or direct video link').fill('https://example.com/video.mp4')
     await page.getByRole('button', { name: 'Use link', exact: true }).click()
-    await page.getByRole('button', { name: 'Next: Format', exact: true }).click()
+    await page.getByRole('navigation', { name: 'Create steps' }).getByRole('button', { name: /^Step \d: More options$/ }).click()
     // Screen share is under Customize, open already when it was changed.
     const customize = page.getByTestId('format-summary').getByRole('button', { name: /^(Customize|Hide options)/ })
     if (await customize.getAttribute('aria-expanded') === 'false') await customize.click()
@@ -213,8 +213,8 @@ test('Create: the screen share choice shows under Smart framing, is remembered, 
   page = session.page
   await toFormat(page)
   assert.equal(await choice(page, 'Presenter only').getAttribute('aria-checked'), 'true', 'the choice is remembered')
-  await page.getByRole('navigation', { name: 'Create steps' }).getByRole('button', { name: /Review/ }).click()
-  await page.getByText('Just you in every clip').waitFor()
+  await page.getByRole('navigation', { name: 'Create steps' }).getByRole('button', { name: /^Step \d: Review$/ }).click()
+  await page.getByText('Just you in every clip', { exact: true }).waitFor()
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter')
   await page.getByRole('button', { name: 'Clip another video' }).waitFor()
   assert.equal(await session.app.evaluate(() => globalThis.screenShareTest[0].screenFocus), 'presenter')

@@ -111,7 +111,7 @@ test('Create: Skills over existing settings, plus what the video is for and a re
   await page.getByRole('button', { name: 'Browse', exact: true }).click()
   await page.getByText('my talk.mp4').first().waitFor()
   const steps = page.getByRole('navigation', { name: 'Create steps' })
-  await steps.getByRole('button', { name: /Look/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Look$/ }).click()
 
   // The Skills list comes first on the look step, above the style board.
   const panel = page.getByTestId('skills-panel')
@@ -152,17 +152,17 @@ test('Create: Skills over existing settings, plus what the video is for and a re
   // Rough cut off here shows as "Cut dead air" off in Format, and back.
   await skill('Rough cut').click()
   assert.equal(await checked(skill('Rough cut')), false)
-  await steps.getByRole('button', { name: /Format/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: More options$/ }).click()
   const deadAir = page.getByRole('switch', { name: 'Cut dead air and filler words' })
   await deadAir.waitFor()
   assert.equal(await checked(deadAir), false)
   await deadAir.click()
-  await steps.getByRole('button', { name: /Look/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Look$/ }).click()
   assert.equal(await checked(skill('Rough cut')), true, 'the Skills switch follows the detailed control')
   assert.equal(await page.getByTestId('purpose-fields').count(), 0, 'what it’s for is on the Video step now')
 
   // What it's for, and a reference picture chosen in the file dialog: on the Video step, after the source.
-  await steps.getByRole('button', { name: /Video/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Video$/ }).click()
   const fields = page.getByTestId('purpose-fields')
   await fields.waitFor()
   assert.ok((await fields.boundingBox()).y > (await page.getByRole('heading', { name: 'Choose a video' }).boundingBox()).y)
@@ -198,19 +198,19 @@ test('Create: Skills over existing settings, plus what the video is for and a re
     await showTop(page, page.getByTestId('purpose-fields'))
     assert.deepEqual(await overflow(page), { page: 0, panel: 0, purpose: 0 })
     await shot(page, `create-purpose-${width}x${height}.png`)
-    await steps.getByRole('button', { name: /Look/ }).click()
+    await steps.getByRole('button', { name: /^Step \d: Look$/ }).click()
     await showTop(page, panel)
     assert.deepEqual(await overflow(page), { page: 0, panel: 0, purpose: 0 })
     await shot(page, `create-skills-${width}x${height}.png`)
     await extras.evaluate((el) => el.scrollIntoView({ block: 'center' }))
     await page.waitForTimeout(250)
     await shot(page, `create-extras-${width}x${height}.png`)
-    await steps.getByRole('button', { name: /Video/ }).click()
+    await steps.getByRole('button', { name: /^Step \d: Video$/ }).click()
   }
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 800))
 
   // Review lists them; the request carries the same fields the detailed controls set.
-  await steps.getByRole('button', { name: /Review/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Review$/ }).click()
   const value = (label) => page.locator('dl > div').filter({ has: page.getByText(label, { exact: true }) }).locator('dd').innerText()
   assert.equal(await value('For'), 'Instagram reel selling my coaching call')
   assert.equal(await value('Reference'), 'a look I like.png')

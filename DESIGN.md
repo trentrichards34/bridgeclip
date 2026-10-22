@@ -32,7 +32,7 @@ The reference mockup is `docs/design/signal/` (README with tokens, the clickable
 | `glass-well` | `sidebar` at 85% with a white-8% border. | Text inputs, selects, text areas, inset lists. |
 | `glass-chip` | Small frosted label with blur. | Anything overlaid on video or artwork. |
 | `tool-chip` (+ `tool-chip-dot`) | Pill in the tool colour at 12% with a solid dot and an uppercase JetBrains Mono label. | Above every page title (`PageHeader` adds it). |
-| `btn-primary` / `btn-glass` | Solid lime with dark ink and a soft lime glow / dark surface with a hairline. | Used by `Button`; don't apply directly. |
+| `btn-primary` / `btn-glass` | Solid in the current tool colour (`--tool`: lime on Create, cyan on Edit my recording, pink on Remix, violet on Avatar Studio, amber on Library, teal on Jobs, orange on B-roll, green on Brand look) with dark ink and a soft glow / dark surface with a hairline. | Used by `Button`; don't apply directly. The focus ring stays lime. |
 | `tool-<id>` | Sets `--tool` (and so `bg-tool`, `text-tool`, `glass-selected`, `tool-chip`) to a tool's colour. | Layout sets it on `<main>` and `<html>` for the current page; the sidebar sets it per item. |
 
 `prefers-reduced-transparency` makes cards solid and drops blur. `prefers-reduced-motion` stops animation and transitions.
@@ -120,8 +120,8 @@ Corners are soft and **concentric**: a shape nested inside another with padding 
 - **Page header** (`PageHeader`): the tool chip, a large Space Grotesk title, a muted subtitle and right-aligned actions. Old `eyebrow="Studio"`/`"Workspace"` labels give way to the chip; any other eyebrow still shows.
 - Pages scroll in `#page-scroll` below the top bar (top gap `--shell-gap`, 14px). Sticky elements use `top-0`. Wrap every page except Chat in `<Page width>`: `focus` 720, `narrow` 880, `default` 1280, `wide` 1680. Gutters are `px-4`, `sm:px-6`, `xl:px-8`.
 - **Compact by default.** Panels pad `p-4` (`xl:p-5`), stacks use `space-y-3`/`gap-3`, sections `mt-4`/`mt-5`. Media grids use `repeat(auto-fill, minmax(…))`.
-- **Create is a wizard**: Video → Format → Clips → Captions → Review, one compact panel per step under a clickable stepper, with Back/Next (and Generate) pinned to the bottom. Each new video starts with neither workflow selected. ⌘↵ generates from any step once a video and workflow are chosen. Step and draft live in `use-draft-store`.
-- **Brand look** (`pages/BrandLookPage.tsx`) lists the brand identities Create, Remix and Avatar Studio pick from, with Add, Edit and Delete through `BrandIdentityDialog`.
+- **Create is a vertical step list** (`JobForm`): Workflow, Video, Clips, Look, More options (format, framing, B-roll, pacing, speed), Review. Numbered nodes on a rail; the open step expands in place with Back/Next, the others fold to one line with Change. Above it, **Start from**: Same as last run, Defaults (with the default brand look), the saved styles and Save current settings. Beside it (`CreatePreview`, sticky; a bar pinned to the bottom below `xl`): three 9:16 tiles in the member's look on their own video frame, the run as one sentence (settings are buttons to their step; what's still needed is amber) and the one primary action, whose label says what's missing. Each new video starts with neither workflow selected. ⌘↵ generates from any step once a video and workflow are chosen. Step and draft live in `use-draft-store`.
+- **Brand look** (`pages/BrandLookPage.tsx`, "Set your style once"): each brand identity is a look, shown as a card with a 9:16 still of its hook and captions and a Default badge. Picking one opens the editor below it (accent color, headline type, hook look, caption style, handle and corner, logo, comment keyword, the CTA library, brand voice) with a live 9:16 preview. The default look is the brand Create and Remix use; Make default sets it on both. Create's extras and graphics switches are shown there too, marked as Create settings. `BrandIdentityDialog` still edits a brand from the Create and Remix pickers.
 
 ---
 
@@ -138,7 +138,7 @@ Compact editor actions use `Button`’s `tooltip` prop for short explanations on
 | `Page` | Page column with width presets and the entry animation. |
 | `PageHeader` | Tool chip (from Layout's `PageToolContext`), title, description, right-aligned actions; optional `leading` (back link) and a custom `eyebrow`. |
 | `Panel` / `PanelHeader` | `glass rounded-2xl p-4`. The header takes an `icon` (an `IconTile`), a 15px Space Grotesk title, a description and an action. |
-| `Button` | Rounded rectangles. `primary` (solid lime, dark ink, soft glow) · `secondary` (dark surface, hairline) · `ghost` · `danger`. Sizes `sm` 28px, `md` 32px, `lg` 40px. `iconOnly` (needs `aria-label`). `loading`, `tooltip`. Pressing scales to 0.97 unless reduced motion is on. |
+| `Button` | Rounded rectangles. `primary` (solid tool colour, dark ink, soft glow) · `secondary` (dark surface, hairline) · `ghost` · `danger`. Sizes `sm` 28px, `md` 32px, `lg` 40px. `iconOnly` (needs `aria-label`). `loading`, `tooltip`. Pressing scales to 0.97 unless reduced motion is on. |
 | `TextInput` · `TextArea` | `glass-well`s with a lime border and 3px lime ring on focus. `TextInput` `sm` 28px, `md` 32px, `lg` 40px, with `leading`/`trailing` slots and `mono`. |
 | `Select` | The app's dropdown (never a native `<select>`): a `glass-well` combobox that opens a `glass-thick` menu with a lime check on the chosen option. Keyboard: arrows, Home/End, Page Up/Down, type-ahead, Enter/Space, Escape. `MENU_SURFACE` and `menuOptionClass` style any other menu. |
 | `Field` | Label, optional `aside` (e.g. "Get a key"), hint. |

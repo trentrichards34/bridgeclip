@@ -82,6 +82,8 @@ export const useMemberPrefsStore = create<MemberPrefsState>((set) => {
       if (!getApi().prefs) return Promise.resolve()
       loading ??= getApi().prefs.load().then((prefs) => {
         applyStyle('create', prefs.create)
+        // "Same as last run" on Create starts from the style the member last used.
+        if (Object.keys(prefs.create).length && !useDraftStore.getState().lastRun) useDraftStore.setState({ lastRun: prefs.create })
         applyStyle('remix', prefs.remix)
         // Never chosen before: open where the setup profile points (a remembered choice wins).
         if (prefs.remix.format === undefined && prefs.remix.host === undefined) applyStyle('remix', remixStartStyle(prefs.profile?.goals ?? []))
