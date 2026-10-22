@@ -26,7 +26,7 @@ test('caption styles preview word progression in the style board, pause and play
   await page.getByRole('button', { name: 'Use link', exact: true }).click()
   await page.getByRole('radio', { name: 'Automatic', exact: true }).click()
   const steps = page.getByRole('navigation', { name: 'Create steps' })
-  await steps.getByRole('button', { name: /Look/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Look$/ }).click()
   const board = page.getByTestId('style-board')
   const preview = board.getByTestId('style-preview')
   const presets = page.getByRole('radiogroup', { name: 'Caption style' })
@@ -107,7 +107,7 @@ test('caption styles preview word progression in the style board, pause and play
   // No captions: the preview has no caption line.
   await presets.getByRole('radio', { name: 'No captions' }).click()
   assert.equal(await preview.locator('[data-caption-preset]').count(), 0)
-  await steps.getByRole('button', { name: /Review/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Review$/ }).click()
   assert.equal(await page.getByTestId('style-preview').count(), 0)
   assert.deepEqual(errors, [])
 })

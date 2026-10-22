@@ -71,7 +71,7 @@ test('Create: the Motion graphics skill starts Off, one click turns it on, Revie
   await page.getByRole('button', { name: 'Browse', exact: true }).click()
   await page.getByText('my talk.mp4').first().waitFor()
   const steps = page.getByRole('navigation', { name: 'Create steps' })
-  await steps.getByRole('button', { name: /Look/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Look$/ }).click()
   await page.getByTestId('style-board').waitFor()
   // One home: Motion graphics is a skill (Off the first time), with no second Auto/Off row under the look.
   const panel = page.getByTestId('skills-panel')
@@ -87,7 +87,7 @@ test('Create: the Motion graphics skill starts Off, one click turns it on, Revie
   await shot(page, 'create-motion-graphics.png')
 
   // Review lists it under Skills, by the same name, with a way back to change it.
-  await steps.getByRole('button', { name: /Review/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Review$/ }).click()
   const row = page.locator('dl > div').filter({ has: page.getByText('Skills', { exact: true }) })
   assert.match(await row.locator('dd').innerText(), /(^| · )Motion graphics( · |$)/)
   await row.getByRole('button', { name: 'Edit skills' }).waitFor()
@@ -107,7 +107,7 @@ test('Create: the Motion graphics skill starts Off, one click turns it on, Revie
   await page.getByRole('radio', { name: 'Automatic', exact: true }).click()
   await page.getByRole('button', { name: 'Browse', exact: true }).click()
   await page.getByText('my talk.mp4').first().waitFor()
-  await steps.getByRole('button', { name: /Look/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Look$/ }).click()
   assert.equal(await checked(page.getByTestId('skills-panel').getByRole('switch', { name: 'Motion graphics', exact: true })), true)
   assert.deepEqual(errors, [])
 })

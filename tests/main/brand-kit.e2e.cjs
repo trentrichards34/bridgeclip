@@ -90,7 +90,7 @@ test('picking a brand fills the Remix and Create style fields once; re-picking i
   await page.getByRole('button', { name: 'Use link', exact: true }).click()
   await page.getByRole('radio', { name: 'Automatic', exact: true }).click()
   const steps = page.getByRole('navigation', { name: 'Create steps' })
-  await steps.getByRole('button', { name: /Look/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Look$/ }).click()
   // The style board's hook row: a headline look (the white bar) rather than the title card.
   await page.getByRole('radiogroup', { name: 'Hook text look' }).getByRole('radio', { name: 'White bar' }).click()
   assert.equal(await page.getByLabel('Comment keyword').inputValue(), '')
@@ -113,7 +113,7 @@ test('picking a brand fills the Remix and Create style fields once; re-picking i
     await page.screenshot({ path: path.join(shots, 'create-brand.png'), fullPage: true, timeout: 10000 }).catch(() => undefined)
   }
 
-  await steps.getByRole('button', { name: /Review/ }).click()
+  await steps.getByRole('button', { name: /^Step \d: Review$/ }).click()
   // Review lists the brand, the keyword line and the handle.
   await page.getByText('Pull-Up Lab · titles in its voice', { exact: true }).waitFor()
   await page.getByText('Caption ends with “Comment PULL and I\'ll send you my free plan.”', { exact: true }).waitFor()

@@ -8,7 +8,7 @@ import { BrandPicker } from './BrandIdentityDialog'
  * for; picking one fills the style board's look below (its handle and comment
  * keyword are set on the board).
  */
-export function CreateBrandSection({ draft, update }: { draft: ClipDraft; update: (patch: Partial<ClipDraft>) => void }): React.JSX.Element {
+export function CreateBrandSection({ draft, update, onOpenBrandLook }: { draft: ClipDraft; update: (patch: Partial<ClipDraft>) => void; onOpenBrandLook?: () => void }): React.JSX.Element {
   const choose = (next: BrandIdentity | null): void => {
     if (!next) { update({ brandIdentityId: null, showHandle: false }); return }
     // Only on a change of brand: re-picking the same one never overwrites what the member changed since.
@@ -16,11 +16,17 @@ export function CreateBrandSection({ draft, update }: { draft: ClipDraft; update
   }
   return (
     <section aria-labelledby="create-brand-heading" className="glass-tile space-y-3 rounded-xl p-3">
-      <div>
-        <h3 id="create-brand-heading" className="text-sm font-medium text-ink">Your brand <span className="font-normal text-ink-subtle">(optional)</span></h3>
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
+        <div className="min-w-0 flex-1 basis-64">
+        <h3 id="create-brand-heading" className="text-sm font-medium text-ink">Your brand look <span className="font-normal text-ink-subtle">(optional)</span></h3>
         <p className="mt-0.5 text-2xs text-ink-subtle">
           Titles and hook text are written for your niche and in your voice. They only use facts from the video, or proof your Brand Identity states. Picking a brand fills in its look below.
         </p>
+        </div>
+        {onOpenBrandLook && <button type="button" onClick={onOpenBrandLook}
+          className="shrink-0 rounded text-2xs font-medium text-ink-muted hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+          Open Brand look →
+        </button>}
       </div>
       <BrandPicker value={draft.brandIdentityId} onChange={choose} noneLabel="No brand" noneDetail="Titles in a neutral voice" />
     </section>

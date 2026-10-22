@@ -418,17 +418,20 @@
 
   /* ─── Controls ───────────────────────────────────────────────────────── */
 
-  /* The one primary action: solid lime with dark ink and a soft glow. */
+  /* The one primary action: solid in the current tool's colour (lime on Create,
+     cyan on Edit my recording, pink on Remix, green on Brand look…) with dark
+     ink and a soft glow. Every tool colour is light enough for dark ink
+     (≥ 7:1). The focus ring stays lime everywhere. */
   .btn-primary {
     color: rgb(var(--accent-ink));
-    background: rgb(var(--accent));
+    background: rgb(var(--tool));
     font-weight: 600;
-    box-shadow: 0 0 0 1px rgb(var(--accent) / 0.6), 0 8px 24px -10px rgb(var(--accent) / 0.55);
+    box-shadow: 0 0 0 1px rgb(var(--tool) / 0.6), 0 8px 24px -10px rgb(var(--tool) / 0.55);
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: rgb(var(--accent-button-hover));
-    box-shadow: 0 0 0 1px rgb(var(--accent-button-hover) / 0.7), 0 10px 28px -10px rgb(var(--accent) / 0.7);
+    background: color-mix(in srgb, rgb(var(--tool)) 78%, white);
+    box-shadow: 0 0 0 1px rgb(var(--tool) / 0.7), 0 10px 28px -10px rgb(var(--tool) / 0.7);
   }
 
   .btn-primary:disabled {

@@ -5,8 +5,9 @@ import type { LookExtraId } from '../../shared/look-extras'
 import type { HeadlineVoice, QualityBar, ScreenFocus, TitleStyle } from '../../shared/jobs'
 import type { CaptionLanguageChoice } from '../../shared/caption-language'
 import type { ReferenceImage } from '../../shared/purpose'
+import { pickStyle, type CreateStyle } from '../../shared/member-prefs'
 
-/** The Create wizard's steps, in order. */
+/** The Create steps (the workflow choice sits above them). */
 export type WizardStep = 'video' | 'format' | 'clips' | 'captions' | 'review'
 
 /** The run the wizard just queued, shown as a confirmation until the next video. */
@@ -99,6 +100,11 @@ export interface ClipDraft {
 interface DraftState extends ClipDraft {
   step: WizardStep
   started: StartedJob | null
+  /**
+   * "Same as last run": the style of the last run started here, or (before one
+   * starts) the style Create opened with, i.e. the one the member last used.
+   */
+  lastRun: Partial<CreateStyle> | null
   /** Text typed into the empty video link field, not yet used: Next uses it when it's a valid link. */
   pendingLink: string
   update: (patch: Partial<ClipDraft>) => void
@@ -157,10 +163,11 @@ export const useDraftStore = create<DraftState>((set) => ({
   trimEnd: '',
   step: 'video',
   started: null,
+  lastRun: null,
   pendingLink: '',
   update: (patch) => set(patch),
   setStep: (step) => set({ step }),
   clearSource: () => set({ source: '', sources: [], trimStart: '', trimEnd: '', pendingLink: '' }),
-  markStarted: (started) => set({ started }),
+  markStarted: (started) => set((state) => ({ started, lastRun: pickStyle('create', state) })),
   startAnother: () => set({ workflow: null, source: '', sources: [], pendingLink: '', clipRequest: '', purpose: '', reference: null, trimOpen: false, trimStart: '', trimEnd: '', step: 'video', started: null })
 }))
