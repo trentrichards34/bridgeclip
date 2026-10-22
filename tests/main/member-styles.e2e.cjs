@@ -214,7 +214,7 @@ test('Create: the screen share choice shows under Smart framing, is remembered, 
   await toFormat(page)
   assert.equal(await choice(page, 'Presenter only').getAttribute('aria-checked'), 'true', 'the choice is remembered')
   await page.getByRole('navigation', { name: 'Create steps' }).getByRole('button', { name: /^Step \d: Review$/ }).click()
-  await page.getByText('Just you in every clip').waitFor()
+  await page.getByText('Just you in every clip', { exact: true }).waitFor()
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter')
   await page.getByRole('button', { name: 'Clip another video' }).waitFor()
   assert.equal(await session.app.evaluate(() => globalThis.screenShareTest[0].screenFocus), 'presenter')

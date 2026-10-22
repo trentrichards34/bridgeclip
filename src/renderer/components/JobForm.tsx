@@ -391,12 +391,12 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, onOpen
                   {s.id !== 'video' && sourceCount > 1 && <p className="mt-3 text-2xs text-ink-subtle" data-testid="batch-note">{sourceCountLabel(sourceCount)} with these settings, one job each.</p>}
                   <div className="mt-4 flex items-center gap-2 border-t border-white/[0.06] pt-3">
                     {back ? (
-                      <Button variant="ghost" size="sm" icon={<ArrowLeft className="h-3.5 w-3.5" />} onClick={() => goTo(back.id)}>Back</Button>
+                      <Button variant="ghost" size="sm" icon={<ArrowLeft className="h-3.5 w-3.5" />} onMouseDown={keepFocus} onClick={() => goTo(back.id)}>Back</Button>
                     ) : <span />}
                     <p className="min-w-0 flex-1 truncate text-center text-2xs text-ink-subtle">
                       {!draft.workflow ? 'Choose a workflow to continue.' : !modelsValid && step === 'clips' ? 'Choose both models in Advanced mode.' : step === 'video' && !hasSource ? 'Add a video to continue.' : `${MOD_KEY}↵ generates from any step`}
                     </p>
-                    {next && <Button variant="secondary" size="sm" trailingIcon={<ArrowRight className="h-3.5 w-3.5" />} onClick={() => goTo(next.id)} disabled={!stepValid}>
+                    {next && <Button variant="secondary" size="sm" trailingIcon={<ArrowRight className="h-3.5 w-3.5" />} onMouseDown={keepFocus} onClick={() => goTo(next.id)} disabled={!stepValid}>
                       Next: {next.label}
                     </Button>}
                   </div>
@@ -411,6 +411,15 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, onOpen
         sentence={sentence} onGo={go} actionLabel={actionLabel} canSubmit={canSubmit} submitting={submitting} onSubmit={submit} hint={hint} blocked={Boolean(blockedReason)} />
     </div>
   )
+}
+
+/**
+ * Mouse presses on the step buttons keep focus where it is: leaving the link
+ * field would use the link and resize the open step under the pointer before
+ * the click lands. The click itself uses a link still in the field.
+ */
+function keepFocus(e: React.MouseEvent): void {
+  if (document.activeElement instanceof HTMLInputElement) e.preventDefault()
 }
 
 /**
@@ -437,7 +446,7 @@ function StepRow({ id, number, title, summary, active = false, done, open, disab
         {!last && <span aria-hidden className={cn('my-1 w-0.5 flex-1 rounded-full', done ? 'bg-tool/30' : 'bg-white/[0.07]')} />}
       </div>
       <div className={cn('min-w-0 flex-1', last ? 'pb-1' : 'pb-3.5')}>
-        <button type="button" onClick={() => { if (!(active && open) && !(open && !canFold)) onToggle() }} disabled={disabled} aria-current={active ? 'step' : undefined}
+        <button type="button" onMouseDown={keepFocus} onClick={() => { if (!(active && open) && !(open && !canFold)) onToggle() }} disabled={disabled} aria-current={active ? 'step' : undefined}
           aria-expanded={disabled ? undefined : open} aria-controls={open ? `create-step-${id}-body` : undefined} aria-labelledby={`${id}-step-number ${titleId}`} aria-describedby={summaryId}
           className="group flex min-h-[30px] w-full items-center gap-3 rounded-lg text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-default">
           <span id={`${id}-step-number`} className="sr-only">Step {number}:</span>

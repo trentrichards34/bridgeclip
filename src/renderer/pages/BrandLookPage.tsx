@@ -246,6 +246,8 @@ function LookEditor({ brand, isDefault, firstLook, onSaved, onCancelNew, onDelet
 }): React.JSX.Element {
   const initial = useMemo(() => draftOf(brand), [brand])
   const [draft, setDraft] = useState<LookDraft>(initial)
+  // A save (here, or a corner chosen on a style board) shows the look as stored.
+  useEffect(() => { setDraft(draftOf(brand)) }, [brand?.updatedAt])
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fileNotice, setFileNotice] = useState<string | null>(null)

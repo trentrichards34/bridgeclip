@@ -13,7 +13,7 @@ import { previewFrame } from './StyleBoard'
 export type SummaryTarget = WizardStep | 'workflow'
 
 /** One piece of the summary sentence: plain words, or a setting (amber while it still needs the member). */
-export type SentencePart = { text: string } | { token: string; go: SummaryTarget; missing?: boolean }
+export type SentencePart = { text: string } | { token: string; go: SummaryTarget; missing?: boolean; title?: string }
 
 function shorten(text: string, max: number): string {
   const clean = text.replace(/\s+/g, ' ').trim()
@@ -41,7 +41,7 @@ export function createSentence(draft: Pick<ClipDraft, 'workflow' | 'clipRequest'
   parts.push({ text: ', from ' })
   const count = state.sources.length
   parts.push(count === 0 ? { token: 'a video', go: 'video', missing: true }
-    : count === 1 ? { token: shorten(sourceLabel(state.sources[0]), 28), go: 'video' }
+    : count === 1 ? { token: 'your video', go: 'video', title: sourceLabel(state.sources[0]) }
       : { token: `${count} videos`, go: 'video' })
   if (state.trimError) parts.push({ text: ' (' }, { token: 'fix the preferred part', go: 'video', missing: true }, { text: ')' })
   parts.push({ text: '. Then ' })
@@ -133,7 +133,7 @@ export function CreatePreview({ board, rows, aspect, source, durations, sentence
       </div>
       <p className="text-[15px] leading-[1.7] tracking-[-0.01em] text-ink-muted max-xl:line-clamp-2 max-xl:min-w-0 max-xl:flex-1 max-xl:basis-72 max-xl:text-sm max-xl:leading-6 xl:mt-4" data-testid="create-sentence">
         {sentence.map((part, i) => 'token' in part
-          ? <button key={i} type="button" onClick={() => onGo(part.go)} data-missing={part.missing || undefined}
+          ? <button key={i} type="button" onClick={() => onGo(part.go)} data-missing={part.missing || undefined} title={part.title}
             className={cn('rounded-[5px] px-1.5 py-px transition-[filter] hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
               part.missing ? 'bg-warning/15 text-warning' : 'bg-white/[0.07] text-ink')}>{part.token}</button>
           : <span key={i}>{part.text}</span>)}
