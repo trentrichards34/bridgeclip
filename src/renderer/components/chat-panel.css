@@ -39,7 +39,7 @@
 .chat-point-layer { position:absolute; inset:0; pointer-events:none; z-index:3; }
 .chat-point-layer.pointing { pointer-events:auto; cursor:crosshair; z-index:6; touch-action:none; box-shadow:inset 0 0 0 2px rgb(var(--accent)); background:rgb(var(--accent) / .06); }
 .chat-point-prompt { position:absolute; left:50%; top:12px; transform:translateX(-50%); padding:5px 10px; border-radius:999px; font-size:11px; white-space:nowrap; color:white; background:rgb(0 0 0 / .72); pointer-events:none; }
-.chat-point-pin { display:grid; place-items:center; width:20px; height:20px; border-radius:50%; font-size:11px; font-weight:700; line-height:1; color:white; background:rgb(var(--accent)); box-shadow:0 0 0 2px white, 0 2px 6px rgb(0 0 0 / .5); pointer-events:none; }
+.chat-point-pin { display:grid; place-items:center; width:20px; height:20px; border-radius:50%; font-size:11px; font-weight:700; line-height:1; color:rgb(var(--accent-ink)); background:rgb(var(--accent)); box-shadow:0 0 0 2px white, 0 2px 6px rgb(0 0 0 / .5); pointer-events:none; }
 .chat-point-pin.at { position:absolute; transform:translate(-50%, -50%); }
 .chat-point-box { position:absolute; border:2px solid rgb(var(--accent)); border-radius:4px; background:rgb(var(--accent) / .12); box-shadow:0 0 0 1px rgb(0 0 0 / .5); pointer-events:none; }
 .chat-point-box .chat-point-pin { position:absolute; left:-10px; top:-10px; }

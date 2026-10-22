@@ -95,7 +95,7 @@ export function HoverCard({ content, children, label, className, cardClassName, 
           role="tooltip"
           title=""
           popover="manual"
-          className={cn('glass-thick pointer-events-none fixed inset-auto z-[120] m-0 overflow-hidden rounded-2xl border-0 p-0 text-ink animate-menu-in', cardClassName)}
+          className={cn('glass-thick pointer-events-none fixed inset-auto z-[120] m-0 overflow-hidden rounded-xl border-0 p-0 text-ink animate-menu-in', cardClassName)}
           style={{ top: -9999, left: -9999 }}
         >
           {content}

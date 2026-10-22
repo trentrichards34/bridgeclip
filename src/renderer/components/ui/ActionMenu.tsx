@@ -63,7 +63,7 @@ export function ActionMenu({ label, actions, disabled, icon, triggerClassName }:
 
   return <>
     <button ref={trigger} type="button" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined}
-      disabled={disabled} className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-ink-muted hover:bg-white/[0.08] hover:text-ink disabled:opacity-40', triggerClassName)}
+      disabled={disabled} className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-ink-muted transition-colors hover:bg-white/[0.07] hover:text-ink disabled:opacity-40', triggerClassName)}
       onClick={() => { last.current = false; setOpen(!open) }}
       onKeyDown={(event) => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); last.current = event.key === 'ArrowUp'; setOpen(true) }
@@ -82,7 +82,7 @@ export function ActionMenu({ label, actions, disabled, icon, triggerClassName }:
         }
       }}>
       {actions.map((action) => <button key={action.label} type="button" role="menuitem" disabled={action.disabled}
-        className={cn('flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs hover:bg-white/[0.08] focus:bg-white/[0.08] disabled:opacity-40', action.danger ? 'text-danger' : 'text-ink')}
+        className={cn('flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs hover:bg-white/[0.07] focus:bg-white/[0.07] focus-visible:outline-none disabled:opacity-40', action.danger ? 'text-danger' : 'text-ink')}
         onClick={() => { close(true); action.onSelect() }}>{action.icon}{action.label}</button>)}
     </div>}
   </>

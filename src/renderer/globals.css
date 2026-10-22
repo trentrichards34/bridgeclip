@@ -78,8 +78,9 @@
   font-display: swap;
 }
 
-/* Geist is vendored (SIL OFL 1.1, see assets/fonts/Geist-OFL.txt) so the app
-   renders identically offline. */
+/* Geist (body), Space Grotesk (headings) and JetBrains Mono (labels and
+   numbers) are vendored (SIL OFL 1.1, see assets/fonts/*-OFL.txt) so the app
+   renders identically offline. No font is fetched at runtime. */
 @font-face {
   font-family: 'Geist';
   src: url('./assets/fonts/Geist-Variable.woff2') format('woff2');
@@ -96,30 +97,87 @@
   font-display: swap;
 }
 
-/* CreatorClips glass. Surfaces are flat translucent layers over one solid dark
-   backdrop. No gradients anywhere: every fill is a single colour. Ink stays
-   opaque; colour comes from the video, the one primary action, chosen options
-   and status. */
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('./assets/fonts/space-grotesk-latin-wght-normal.woff2') format('woff2');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('./assets/fonts/space-grotesk-latin-ext-wght-normal.woff2') format('woff2');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./assets/fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./assets/fonts/jetbrains-mono-latin-ext-wght-normal.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* CreatorClips Signal. One near-black backdrop, a slightly lighter sidebar,
+   translucent dark cards with hairline borders. Colour is a signal: the lime
+   accent marks the one primary action, chosen options, live progress and
+   focus; each tool has its own colour for its icon tile, page chip and the
+   soft glow at the top of its page. See DESIGN.md. */
 @layer base {
   :root {
-    --canvas: 7 8 12;          /* backdrop base under the ambient light */
-    --surface: 14 15 21;
-    --raised: 22 24 31;
-    --overlay: 26 28 36;
+    --canvas: 7 8 12;           /* #07080C backdrop */
+    --sidebar: 10 12 17;        /* #0A0C11 sidebar and recessed wells */
+    --surface: 17 20 27;        /* #11141B cards (used at 85%) */
+    --raised: 19 22 30;         /* #13161E idle nodes, nested tiles */
+    --overlay: 26 30 39;        /* #1A1E27 menus, chips, solid fallbacks */
 
-    --ink: 247 248 252;
-    --ink-muted: 170 174 188;
-    --ink-subtle: 124 129 144;
-    --ink-faint: 84 89 103;
+    --ink: 241 243 248;         /* #F1F3F8 */
+    --ink-muted: 144 151 166;   /* #9097A6 */
+    --ink-subtle: 120 127 143;  /* #787F8F, 4.6:1 on the backdrop */
+    --ink-faint: 94 101 117;    /* #5E6575 */
 
-    --accent: 26 95 223;        /* Primary blue: #1A5FDF */
-    --accent-button-hover: 40 107 229;
-    --accent-ink: 255 255 255;
-    --accent-cyan: 56 204 255;  /* BridgeMind mark */
+    --accent: 183 246 82;       /* Signal lime, oklch(0.9 0.2 128) */
+    --accent-button-hover: 205 251 128;
+    --accent-ink: 7 8 12;       /* dark ink on solid lime */
+    --accent-cyan: 19 220 246;
 
     --success: 74 222 128;
     --danger: 255 107 110;
-    --warning: 251 191 36;
+    --warning: 255 190 77;      /* amber: needs a look */
+
+    /* Tool colours (sRGB of the Signal oklch values). */
+    --tool-create: 183 246 82;      /* oklch(0.9 0.2 128) */
+    --tool-edit: 19 220 246;        /* oklch(0.82 0.14 210) */
+    --tool-remix: 255 86 211;       /* oklch(0.72 0.24 340) */
+    --tool-avatar: 170 126 255;     /* oklch(0.7 0.2 295) */
+    --tool-library: 255 190 77;     /* oklch(0.85 0.15 75) */
+    --tool-jobs: 123 230 223;       /* oklch(0.86 0.1 190) */
+    --tool-broll: 255 125 92;       /* oklch(0.74 0.17 35) */
+    --tool-brand: 58 214 147;       /* oklch(0.78 0.16 160) */
+    --tool-chat: 255 86 211;        /* Chat shares Remix's pink, like Ask */
+    --tool-publish: 122 189 255;    /* oklch(0.78 0.12 250): Posts, Accounts, Automations */
+    --tool-settings: 151 159 171;   /* oklch(0.7 0.02 260): Guides, Settings */
+    /* The current page's tool colour (Layout sets it per page). */
+    --tool: var(--tool-create);
+
+    /* Height of the top bar above the page scroll area, and the gap above pages. */
+    --shell-top: 60px;
+    --shell-gap: 14px;
 
     color-scheme: dark;
   }
@@ -136,13 +194,19 @@
 
   body {
     @apply bg-canvas font-sans text-sm text-ink antialiased;
-    font-feature-settings: 'cv11', 'ss01';
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     -webkit-app-region: no-drag;
     overflow: hidden;
     -webkit-user-select: text;
     user-select: text;
+  }
+
+  /* Headings use Space Grotesk; body text stays Geist. */
+  h1,
+  h2 {
+    font-family: theme('fontFamily.display');
+    letter-spacing: -0.01em;
   }
 
   /* macOS: the window has native vibrancy (see main/index.ts); the opaque
@@ -182,13 +246,15 @@
     accent-color: rgb(var(--accent));
   }
 
+  /* Every control shows a clear lime ring when reached by keyboard. */
   :focus-visible {
-    outline: 2px solid rgb(var(--accent) / 0.75);
+    outline: 2px solid rgb(var(--accent));
     outline-offset: 2px;
   }
 
   ::selection {
-    background: rgb(var(--accent) / 0.35);
+    background: rgb(var(--accent) / 0.3);
+    color: rgb(var(--ink));
   }
 
   select option {
@@ -226,140 +292,177 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Uppercase micro-label used above groups of controls. */
+  /* Uppercase micro-label used above groups of controls (JetBrains Mono). */
   .eyebrow {
-    @apply text-2xs font-semibold uppercase tracking-[0.1em] text-ink-subtle;
+    @apply font-mono text-[10px] font-medium uppercase leading-[14px] tracking-[0.12em] text-ink-subtle;
   }
+
 
   /* ─── Backdrop ───────────────────────────────────────────────────────── */
 
-  /* Window background: one solid colour shared by the sidebar and the page. */
+  /* Window background, opaque. */
   .app-backdrop {
     background: rgb(var(--canvas));
   }
 
-  /* Title bar: content scrolls under a solid strip in the backdrop colour. */
+  /* The sidebar's own, slightly lighter surface. */
+  .app-sidebar {
+    background: rgb(var(--sidebar));
+  }
+
+  /* Soft glow in the page's tool colour, behind the top of every page. */
+  .page-glow {
+    background: radial-gradient(closest-side, rgb(var(--tool) / 0.14), rgb(var(--tool) / 0));
+    transition: background 400ms ease-out;
+  }
+
+  /* Kept for older markup: the top bar strip. */
   .scroll-edge {
     background: rgb(var(--canvas));
   }
 
   /* ─── Materials ──────────────────────────────────────────────────────── */
 
-  /* Panel glass: flat translucent fill, a 1px rim drawn as an inset ring, and
-     a soft floating shadow. Don't add a `border` utility; the rim is the edge.
-     Needs a rounded-* class. */
+  /* Card: translucent dark surface, hairline rim drawn as an inset ring, a
+     faint top highlight and a soft black shadow. Needs a rounded-* class. */
   .glass {
     position: relative;
-    background: rgb(255 255 255 / 0.045);
+    background: rgb(var(--surface) / 0.85);
     box-shadow:
-      inset 0 0 0 1px rgb(255 255 255 / 0.08),
-      0 1px 2px rgb(0 0 0 / 0.25),
-      0 18px 48px -24px rgb(0 0 0 / 0.6);
+      inset 0 0 0 1px rgb(255 255 255 / 0.07),
+      inset 0 1px 0 rgb(255 255 255 / 0.04),
+      0 1px 2px rgb(0 0 0 / 0.3),
+      0 18px 48px -24px rgb(0 0 0 / 0.7);
   }
 
-  /* Heavier glass for surfaces that float over content: dialogs, sticky
-     toolbars, popovers. Blurs whatever scrolls beneath it. */
+  /* Floating surfaces over content: dialogs, sticky toolbars, popovers. */
   .glass-thick {
     position: relative;
-    background: rgb(25 27 36 / 0.8);
-    -webkit-backdrop-filter: blur(40px) saturate(170%);
-    backdrop-filter: blur(40px) saturate(170%);
+    background: rgb(var(--surface) / 0.94);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    backdrop-filter: blur(24px) saturate(140%);
     box-shadow:
-      inset 0 0 0 1px rgb(255 255 255 / 0.1),
-      0 40px 100px -24px rgb(0 0 0 / 0.8),
-      0 12px 32px -12px rgb(0 0 0 / 0.55);
+      inset 0 0 0 1px rgb(255 255 255 / 0.09),
+      inset 0 1px 0 rgb(255 255 255 / 0.05),
+      0 40px 100px -24px rgb(0 0 0 / 0.85),
+      0 12px 32px -12px rgb(0 0 0 / 0.6);
   }
 
-  /* Nested tile inside a panel: rows, option cards, sub-sections. */
+  /* Nested tile inside a card: rows, option cards, sub-sections. */
   .glass-tile {
-    background: rgb(255 255 255 / 0.033);
-    border: 1px solid rgb(255 255 255 / 0.08);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05);
+    background: rgb(var(--sidebar) / 0.7);
+    border: 1px solid rgb(255 255 255 / 0.07);
   }
 
   .glass-tile-hover {
     transition-property: background-color, border-color, box-shadow, transform;
-    transition-duration: 180ms;
+    transition-duration: 160ms;
     transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .glass-tile-hover:hover {
-    background: rgb(255 255 255 / 0.055);
-    border-color: rgb(255 255 255 / 0.14);
+    background: rgb(255 255 255 / 0.035);
+    border-color: rgb(255 255 255 / 0.16);
   }
 
-  /* Chosen option: accent-tinted glass with a soft halo. */
+  /* Chosen option: tinted, bordered and softly ringed in the page's tool
+     colour (lime on Create, pink on Remix, violet on Avatar Studio...). */
   .glass-selected,
   .glass-selected:hover {
-    background: rgb(var(--accent) / 0.12);
-    border-color: rgb(var(--accent) / 0.7);
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.12),
-      0 0 0 3px rgb(var(--accent) / 0.14);
+    background: rgb(var(--tool) / 0.08);
+    border-color: rgb(var(--tool) / 0.85);
+    box-shadow: 0 0 0 3px rgb(var(--tool) / 0.12);
   }
 
   /* Recessed well for text inputs and inset lists. */
   .glass-well {
-    background: rgb(0 0 0 / 0.26);
-    border: 1px solid rgb(255 255 255 / 0.085);
-    box-shadow:
-      inset 0 1px 2px rgb(0 0 0 / 0.35),
-      0 1px 0 rgb(255 255 255 / 0.035);
+    background: rgb(var(--sidebar) / 0.85);
+    border: 1px solid rgb(255 255 255 / 0.08);
   }
 
   /* Small label floating over video or artwork. */
   .glass-chip {
-    background: rgb(10 12 18 / 0.45);
-    border: 1px solid rgb(255 255 255 / 0.14);
-    -webkit-backdrop-filter: blur(14px) saturate(160%);
-    backdrop-filter: blur(14px) saturate(160%);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12);
+    background: rgb(7 8 12 / 0.55);
+    border: 1px solid rgb(255 255 255 / 0.12);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    backdrop-filter: blur(14px) saturate(140%);
+  }
+
+  /* Tool chip above a page title: coloured dot and an uppercase mono label. */
+  .tool-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 26px;
+    padding: 0 10px 0 4px;
+    border-radius: 999px;
+    background: rgb(var(--tool) / 0.12);
+    color: rgb(var(--tool));
+    font-family: theme('fontFamily.mono');
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .tool-chip-dot {
+    display: flex;
+    height: 18px;
+    width: 18px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: rgb(var(--tool));
+    color: rgb(var(--canvas));
   }
 
   /* ─── Controls ───────────────────────────────────────────────────────── */
 
-  /* The one primary action: a solid accent capsule. */
+  /* The one primary action: solid lime with dark ink and a soft glow. */
   .btn-primary {
     color: rgb(var(--accent-ink));
     background: rgb(var(--accent));
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.16),
-      inset 0 -1px 0 rgb(0 0 0 / 0.12),
-      0 0 0 1px rgb(var(--accent) / 0.6);
+    font-weight: 600;
+    box-shadow: 0 0 0 1px rgb(var(--accent) / 0.6), 0 8px 24px -10px rgb(var(--accent) / 0.55);
   }
 
   .btn-primary:hover:not(:disabled) {
     background: rgb(var(--accent-button-hover));
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.2),
-      inset 0 -1px 0 rgb(0 0 0 / 0.12),
-      0 0 0 1px rgb(var(--accent-button-hover) / 0.7);
+    box-shadow: 0 0 0 1px rgb(var(--accent-button-hover) / 0.7), 0 10px 28px -10px rgb(var(--accent) / 0.7);
   }
 
   .btn-primary:disabled {
-    color: rgb(255 255 255 / 0.45);
-    background: rgb(var(--accent) / 0.22);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 0 0 1px rgb(var(--accent) / 0.25);
-    text-shadow: none;
+    color: rgb(var(--ink-faint));
+    background: rgb(255 255 255 / 0.07);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
   }
 
-  /* Glass capsule for secondary actions. */
+  /* Secondary actions: dark surface with a hairline border. */
   .btn-glass {
-    background: rgb(255 255 255 / 0.075);
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.14),
-      inset 0 0 0 1px rgb(255 255 255 / 0.09),
-      0 1px 2px rgb(0 0 0 / 0.3);
+    background: rgb(var(--surface) / 0.9);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
   }
 
   .btn-glass:hover:not(:disabled) {
-    background: rgb(255 255 255 / 0.11);
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.18),
-      inset 0 0 0 1px rgb(255 255 255 / 0.14),
-      0 4px 12px -4px rgb(0 0 0 / 0.4);
+    background: rgb(var(--overlay));
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18);
   }
 }
+
+
+/* Tool colour helpers: set --tool on an element (outside @layer so class
+   names built at runtime, like `tool-${tool}`, are never purged). */
+.tool-create { --tool: var(--tool-create); }
+.tool-edit { --tool: var(--tool-edit); }
+.tool-remix { --tool: var(--tool-remix); }
+.tool-avatar { --tool: var(--tool-avatar); }
+.tool-library { --tool: var(--tool-library); }
+.tool-jobs { --tool: var(--tool-jobs); }
+.tool-broll { --tool: var(--tool-broll); }
+.tool-brand { --tool: var(--tool-brand); }
+.tool-chat { --tool: var(--tool-chat); }
+.tool-publish { --tool: var(--tool-publish); }
+.tool-settings { --tool: var(--tool-settings); }
 
 /* Scrollbars: thin, neutral, invisible until hovered. */
 ::-webkit-scrollbar {
@@ -409,8 +512,15 @@
     backdrop-filter: none;
   }
 
-  .glass-thick {
-    background: rgb(var(--overlay));
+  .glass-thick,
+  .glass {
+    background: rgb(var(--surface));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-glow {
+    transition: none;
   }
 }
 
@@ -422,9 +532,9 @@
   background: rgba(255, 255, 255, .07);
 }
 .stage-progress::-webkit-progress-bar { background: rgba(255, 255, 255, .07); border-radius: 9999px; }
-.stage-progress::-webkit-progress-value { background: var(--color-accent, #2563eb); border-radius: 9999px; transition: width .2s ease; }
+.stage-progress::-webkit-progress-value { background: rgb(var(--accent)); border-radius: 9999px; transition: width .2s ease; }
 .stage-progress:indeterminate {
-  background: linear-gradient(90deg, transparent, #2563eb 50%, transparent) -100% 0 / 50% 100% no-repeat, rgba(255, 255, 255, .07);
+  background: linear-gradient(90deg, transparent, rgb(var(--accent)) 50%, transparent) -100% 0 / 50% 100% no-repeat, rgba(255, 255, 255, .07);
   animation: stage-progress-pulse 1.8s ease-in-out infinite;
 }
 @keyframes stage-progress-pulse { to { background-position: 200% 0; } }
