@@ -48,7 +48,7 @@ The reference mockup is `docs/design/signal/` (README with tokens, the clickable
 | `surface` · `raised` · `overlay` | `#11141B` · `#13161E` · `#1A1E27` | Cards (at 85%), idle nodes, menus and chips |
 | `ink` | `#F1F3F8` | Primary text |
 | `ink-muted` | `#9097A6` | Secondary text, descriptions |
-| `ink-subtle` | `#787F8F` | Hints, metadata, eyebrows (4.6:1 on the backdrop) |
+| `ink-subtle` | `#808797` | Hints, metadata, eyebrows (4.5:1 or more on cards, menus and chips) |
 | `ink-faint` | `#5E6575` | Placeholders, disabled, group labels; never for text the user must read |
 | `line` / `line-strong` | white 7% / 14% | Hairlines and dividers |
 | `accent` | `#B7F652` (oklch 0.9 0.2 128) | Primary buttons, progress, focus ring, Create |

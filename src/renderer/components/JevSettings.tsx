@@ -119,7 +119,7 @@ export function JevSettings(): React.JSX.Element {
                   aria-label={`${label} setting`} aria-describedby={`${key}-help`} aria-valuetext={`${draft[key]} percent`}
                   value={valid(draft[key]) ? draft[key] : 0} onChange={(e) => change(key, e.target.value)}
                 />
-                <div className="flex justify-between text-2xs text-ink-faint"><span>Lets more through</span><span>Recommended {defaults[key]}%</span><span>Stricter</span></div>
+                <div className="flex justify-between text-2xs text-ink-subtle"><span>Lets more through</span><span>Recommended {defaults[key]}%</span><span>Stricter</span></div>
               </div>
             ))}
           </fieldset>

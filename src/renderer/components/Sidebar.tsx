@@ -99,7 +99,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps): React.JSX.El
         {expanded && (
           <div className="min-w-0 flex-1 whitespace-nowrap">
             <p className="font-display text-[15px] font-bold leading-5 tracking-[-0.01em] text-ink">{APP_NAME}</p>
-            <p className="font-mono text-[9px] leading-3 text-ink-faint tabular">v{APP_VERSION} · {state}</p>
+            <p className="font-mono text-[9px] leading-3 text-ink-subtle tabular">v{APP_VERSION} · {state}</p>
           </div>
         )}
         <SidebarToggle rail={!expanded} />

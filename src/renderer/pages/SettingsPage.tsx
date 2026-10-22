@@ -688,7 +688,7 @@ function ToolList({ rows, checking }: { rows: ToolRow[]; checking: boolean }): R
                 )}
               </div>
               {row.ok == null ? (
-                <span className="shrink-0 text-xs text-ink-faint">{checking ? 'Checking…' : 'Not checked'}</span>
+                <span className="shrink-0 text-xs text-ink-subtle">{checking ? 'Checking…' : 'Not checked'}</span>
               ) : (
                 <Badge tone={row.ok ? 'neutral' : row.optional ? 'warning' : 'danger'} className="shrink-0">
                   {row.ok ? 'Found' : row.optional ? 'Unavailable' : row.failureLabel ?? 'Missing'}

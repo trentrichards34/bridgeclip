@@ -345,7 +345,7 @@ function SourceList({ sources, disabled, onRemove, onAdd, onBrowse }: {
           const link = isUrl(source)
           return (
             <li key={source} className="flex items-center gap-2.5 py-1.5 pl-2.5 pr-1">
-              <span className="w-4 shrink-0 text-right font-mono text-2xs tabular text-ink-faint">{index + 1}</span>
+              <span className="w-4 shrink-0 text-right font-mono text-2xs tabular text-ink-subtle">{index + 1}</span>
               <span className="shrink-0 text-ink-subtle">
                 {twitch ? <Twitch className="h-3.5 w-3.5" /> : youtube ? <Youtube className="h-3.5 w-3.5" /> : link ? <Link2 className="h-3.5 w-3.5" /> : <FileVideo className="h-3.5 w-3.5" />}
               </span>

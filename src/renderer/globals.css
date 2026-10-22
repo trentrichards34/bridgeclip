@@ -148,7 +148,7 @@
 
     --ink: 241 243 248;         /* #F1F3F8 */
     --ink-muted: 144 151 166;   /* #9097A6 */
-    --ink-subtle: 120 127 143;  /* #787F8F, 4.6:1 on the backdrop */
+    --ink-subtle: 128 135 151;  /* #808797: 4.5:1+ on cards, menus and chips */
     --ink-faint: 94 101 117;    /* #5E6575 */
 
     --accent: 183 246 82;       /* Signal lime, oklch(0.9 0.2 128) */
