@@ -10,8 +10,8 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes, Film, AudioLines } from 'lucide-react'
 import type { MountedGraphic } from '../graphics/templates'
 import {
-  GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
-  bigWordsOptions, clampGraphicMs, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, templateInfo, templateItems, updateGraphic, withGraphic,
+  CHAPTER_STYLES, DIAGRAM_ACCENT, GRAPHIC_DEFAULT_MS, GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
+  bigWordsOptions, chapterStyle, clampGraphicMs, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, templateInfo, templateItems, updateGraphic, withGraphic,
   MAX_BIG_WORDS, SCREEN_VIDEO_FILE, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
 } from '../../shared/motion-graphics'
 import { GRAPHIC_DEFAULT_COLOR, graphicSpec, graphicStyle, outputSize } from '../../shared/graphic-layout'
@@ -113,7 +113,8 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, s
 export const SHORT: Record<GraphicTemplateId, string> = {
   stat: 'Stat', title: 'Title', list: 'List', lower_third: 'Name', logo: 'Logo', before_after: 'Before/after', checklist: 'Checklist', quote: 'Quote', highlight: 'Arrow/circle',
   statement: 'Statement', sticky_notes: 'Notes', strike_list: 'Crossed out', browser_frame: 'Browser', icon_pop: 'Icons', headline_pill: 'Headline', comment_cta: 'Comment',
-  big_words: 'Big words', orbit: 'Orbit', feature_tile: 'Tiles', screen_frame: 'Screen'
+  big_words: 'Big words', orbit: 'Orbit', feature_tile: 'Tiles', screen_frame: 'Screen',
+  chapter: 'Chapter', staircase: 'Stairs', funnel: 'Funnel', journey: 'Journey', growth: 'Growth', idea_hub: 'Idea hub', compare_marks: 'Wrong/right'
 }
 export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): string {
   const f = g.fields
@@ -122,7 +123,9 @@ export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): s
     : g.template === 'list' || g.template === 'checklist' ? [f.title, first] : g.template === 'logo' ? [f.caption] : g.template === 'highlight' ? [f.shape === 'arrow' ? 'Arrow' : 'Circle']
       : g.template === 'sticky_notes' || g.template === 'icon_pop' ? [first] : g.template === 'strike_list' ? [first, f.final] : g.template === 'browser_frame' ? [f.domain, f.title]
         : g.template === 'headline_pill' ? [f.text, f.phrase] : g.template === 'comment_cta' ? [f.keyword] : g.template === 'orbit' ? [f.text, first]
-          : g.template === 'feature_tile' ? [first] : g.template === 'screen_frame' ? [f.label || (f.video === 'source' ? 'This clip' : f.video ? 'Your video' : '')] : [f.text]
+          : g.template === 'feature_tile' ? [first] : g.template === 'screen_frame' ? [f.label || (f.video === 'source' ? 'This clip' : f.video ? 'Your video' : '')]
+            : g.template === 'chapter' ? [[f.label, f.title].map((w) => w?.trim()).filter(Boolean).join(' ')] : g.template === 'idea_hub' ? [f.text, first]
+              : isDiagram(g.template) ? [f.title, first] : [f.text]
   return words.map((w) => w?.trim()).filter(Boolean).join(' · ')
 }
 
@@ -154,8 +157,8 @@ export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disable
       const dt = Math.round((event.clientX - x) / track.width * span)
       const end = g.at_ms + g.duration_ms
       const patch = mode === 'move' ? { at_ms: Math.max(clipStart, Math.min(clipEnd - Math.min(g.duration_ms, clipEnd - clipStart), g.at_ms + dt)) }
-        : mode === 'start' ? (() => { const at = Math.max(clipStart, end - GRAPHIC_MAX_MS, Math.min(end - GRAPHIC_MIN_MS, g.at_ms + dt)); return { at_ms: at, duration_ms: end - at } })()
-        : { duration_ms: clampGraphicMs(Math.min(clipEnd - g.at_ms, g.duration_ms + dt)) }
+        : mode === 'start' ? (() => { const at = Math.max(clipStart, end - graphicMaxMs(g.template), Math.min(end - GRAPHIC_MIN_MS, g.at_ms + dt)); return { at_ms: at, duration_ms: end - at } })()
+        : { duration_ms: clampGraphicMs(Math.min(clipEnd - g.at_ms, g.duration_ms + dt), g.template) }
       onChange(updateGraphic(candidate, g.id, patch), !moved)
       moved = true
     }
@@ -218,7 +221,12 @@ export const SAMPLES: Record<GraphicTemplateId, Record<string, string>> = {
   headline_pill: { text: 'Your first line', phrase: 'Key words' }, comment_cta: { keyword: 'WORD' },
   big_words: { text: 'Big words', style: 'mixed' },
   orbit: { text: 'Hub', items: 'Email\nVideo\nChat\nCalendar\nChart', icons: 'mail\nvideo\nmessage\ncalendar\nchart', labels: 'off' },
-  feature_tile: { items: 'Your feature', icons: 'search', dot: 'on' }, screen_frame: { label: 'Your screen', shape: 'square' }
+  feature_tile: { items: 'Your feature', icons: 'search', dot: 'on' }, screen_frame: { label: 'Your screen', shape: 'square' },
+  chapter: { label: 'Step #1.', title: 'Your section title' },
+  staircase: { items: 'First step\nSecond step\nThird step\nFourth step', icons: 'idea\nuser\nsettings\nrocket' },
+  funnel: { items: 'Stage one\nStage two\nStage three' }, journey: { items: 'Start\nMiddle\nGoal' },
+  growth: { items: 'Small\nBigger\nBiggest' }, idea_hub: { items: 'First\nSecond\nThird\nFourth' },
+  compare_marks: { items: 'The old way\nThe better way', wrong: 'first' }
 }
 
 const NUMBER_WORDS = /[$€£]?\d[\d,]*(?:\.\d+)?\s?(?:%|percent\b|[kKmMxX]\b|thousand\b|million\b|billion\b|hours?\b|days?\b|minutes?\b|years?\b)?/
@@ -235,12 +243,16 @@ export function wordsAtPlayhead(template: GraphicTemplateId, line: string | unde
 
 export const FIELD_LABELS: Record<string, string> = { value: 'Number', label: 'Label', text: 'Words', title: 'Title', items: 'Items (one per line)', name: 'Name', role: 'Role', caption: 'Caption', before: 'Before', after: 'After', author: 'Who said it',
   accent: 'Words in italics', subline: 'Small line under it', final: 'Last line', domain: 'Website address', highlights: 'Boxes on the picture', phrase: 'Key words (on the color box)', keyword: 'Keyword to comment', lead: 'Word above it',
-  from: 'Starts at (seconds into the video)', zoom: 'Zoom into (optional)' }
+  from: 'Starts at (seconds into the video)', zoom: 'Zoom into (optional)', notes: 'Short line under each (one per line)' }
 /** Per-template field labels where the general one doesn't fit. */
 const TEMPLATE_FIELD_LABELS: Partial<Record<GraphicTemplateId, Record<string, string>>> = {
   sticky_notes: { items: 'Notes (one per line, up to 3)' }, strike_list: { items: 'Crossed-out items (one per line, up to 4)' },
   icon_pop: { items: 'Labels (one per line, up to 4)' }, headline_pill: { text: 'First line' }, browser_frame: { title: 'Headline (when there’s no picture)' },
-  big_words: { text: `Words (up to ${MAX_BIG_WORDS})` }, orbit: { text: 'Center label', items: 'Labels (one per line, 3 to 6)' }, feature_tile: { items: 'Tiles (one per line, up to 3)' }, screen_frame: { label: 'Window title (optional)' }
+  big_words: { text: `Words (up to ${MAX_BIG_WORDS})` }, orbit: { text: 'Center label', items: 'Labels (one per line, 3 to 6)' }, feature_tile: { items: 'Tiles (one per line, up to 3)' }, screen_frame: { label: 'Window title (optional)' },
+  chapter: { label: 'Label (optional)', title: 'Section title' },
+  staircase: { title: 'Title (optional)', items: 'Steps, bottom to top (one per line, 3 to 6)' }, funnel: { title: 'Title (optional)', items: 'Stages, wide end first (one per line, 3 to 5)' },
+  journey: { title: 'Title (optional)', items: 'Milestones in order (one per line, 3 to 5)' }, growth: { title: 'Title (optional)', items: 'Labels, smallest first (one per line, 3 to 6)' },
+  idea_hub: { text: 'Words under the icon (optional)', items: 'Labels around it (one per line, 3 to 6)' }, compare_marks: { items: 'The two cards (one per line)' }
 }
 /** Hints under a field. */
 const FIELD_HINTS: Partial<Record<GraphicTemplateId, Record<string, string>>> = {
@@ -250,6 +262,9 @@ const FIELD_HINTS: Partial<Record<GraphicTemplateId, Record<string, string>>> = 
   comment_cta: { lead: 'Empty: “Comment”.' },
   big_words: { text: 'Use words you say here. Each line fills the width; press Enter to choose where a new line starts.' },
   orbit: { text: 'Short, like the one thing they all connect to. Empty: an icon (or your image).', items: 'One per node. Each node gets an icon below.' },
+  chapter: { label: 'Like “Step #1.” Use the number you say.', title: 'Words you say at the start of this section. It stays at the top until the next chapter.' },
+  staircase: { items: 'Each step lights up as you say it.' }, funnel: { items: 'Each stage lights up as you say it.' }, journey: { items: 'A small figure walks to each card as you say it.' },
+  growth: { items: 'Each one grows as you say it.' }, idea_hub: { items: 'Each label appears as you say it.' }, compare_marks: { notes: 'Optional.' },
   screen_frame: { from: 'For this clip: the second in the source video where the screen part starts.', zoom: 'Across, down, width, height (0 to 1 of what the window shows), for a slow zoom in. For example: 0.1, 0.2, 0.5, 0.5' }
 }
 export const fieldLabel = (template: GraphicTemplateId, key: string): string => TEMPLATE_FIELD_LABELS[template]?.[key] ?? FIELD_LABELS[key] ?? key
@@ -275,7 +290,7 @@ export function BigWordsFields({ fields, onField }: { fields: Record<string, str
 }
 
 /** The Icon row's icon for each label (generic icons only; a brand's logo is an image the member adds). */
-export function IconFields({ fields, onField, imageNote = true, template = 'icon_pop' }: { fields: Record<string, string>; onField: (key: string, value: string) => void; imageNote?: boolean; template?: 'icon_pop' | 'orbit' | 'feature_tile' }): React.JSX.Element | null {
+export function IconFields({ fields, onField, imageNote = true, template = 'icon_pop' }: { fields: Record<string, string>; onField: (key: string, value: string) => void; imageNote?: boolean; template?: 'icon_pop' | 'orbit' | 'feature_tile' | 'staircase' }): React.JSX.Element | null {
   const labels = templateItems(template, fields.items)
   if (!labels.length) return null
   const icons = graphicIcons(fields, template)
@@ -284,6 +299,27 @@ export function IconFields({ fields, onField, imageNote = true, template = 'icon
       <Select size="sm" aria-label={`Icon for ${label}`} value={icons[i] ?? ''} options={ICON_OPTIONS} searchable
         onChange={(name) => onField('icons', labels.map((_, k) => k === i ? name : icons[k] ?? '').join('\n'))} /></div>)}
     <p className="text-2xs text-ink-subtle">Simple icons only.{imageNote ? ' To show a brand’s logo, choose its image above.' : ' “Letter” shows the label’s first letter.'}</p></div>
+}
+
+const CHAPTER_STYLE_OPTIONS: { value: ChapterStyle; label: string }[] = [{ value: 'serif_caps', label: 'Serif' }, { value: 'sans', label: 'Bold' }, { value: 'pill', label: 'Pill' }]
+
+/** The extra choices of a chapter header and the diagrams: look, which card is wrong, the center icon, the step icons. */
+export function DiagramFields({ template, fields, onField }: { template: GraphicTemplateId; fields: Record<string, string>; onField: (key: string, value: string) => void }): React.JSX.Element | null {
+  if (template === 'chapter') {
+    const style = chapterStyle(fields)
+    return <div className="space-y-1"><p className="editor-label">Look</p>
+      <Segmented<ChapterStyle> label="Chapter header look" size="sm" value={style} onChange={(value) => onField('style', value)} options={CHAPTER_STYLE_OPTIONS.filter((o) => CHAPTER_STYLES.includes(o.value))} />
+      <p className="text-2xs text-ink-subtle">{style === 'serif_caps' ? 'White small capitals in a serif, with a soft shadow.' : style === 'sans' ? 'Bold white type, the label in your color.' : 'White type on a dark pill.'} It sits at the very top; your hook text hides when the first chapter starts.</p></div>
+  }
+  if (template === 'staircase') return <IconFields fields={fields} onField={onField} template="staircase" imageNote={false} />
+  if (template === 'growth') return <div className="space-y-1"><p className="editor-label">Drawn as</p>
+    <Segmented<'plants' | 'bars'> label="Growth drawn as" size="sm" value={growthStyle(fields)} onChange={(value) => onField('style', value === 'plants' ? '' : value)} options={[{ value: 'plants', label: 'Plants' }, { value: 'bars', label: 'Bars' }]} /></div>
+  if (template === 'idea_hub') return <div className="flex items-center justify-between gap-2 text-2xs"><span>Center icon</span>
+    <Select size="sm" aria-label="Center icon" value={hubIcon(fields)} options={ICON_OPTIONS.filter((o) => o.value)} searchable onChange={(name) => onField('icon', name === 'idea' ? '' : name)} /></div>
+  if (template === 'compare_marks') return <div className="space-y-1"><p className="editor-label">Red ✗ on</p>
+    <Segmented<'first' | 'second'> label="Card with the red cross" size="sm" value={compareWrong(fields) ? 'second' : 'first'} onChange={(value) => onField('wrong', value)} options={[{ value: 'first', label: 'First card' }, { value: 'second', label: 'Second card' }]} />
+    <p className="text-2xs text-ink-subtle">The other card gets the green ✓.</p></div>
+  return null
 }
 
 const SHAPE_OPTIONS: { value: ScreenShape; label: string }[] = [{ value: 'wide', label: 'Wide' }, { value: 'square', label: 'Square' }, { value: 'tall', label: 'Tall' }]
@@ -352,7 +388,11 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
   const add = (template: GraphicTemplateId): void => {
     const at = Math.max(clipStart, Math.min(clipEnd - GRAPHIC_MIN_MS, Math.round(time)))
     const line = project.transcript.find((r) => at >= r.start_ms && at < r.end_ms)?.text
-    const drafted = newGraphic(template, at, { fields: { ...(template === 'screen_frame' ? { video: 'source', from: String(Math.round(at / 100) / 10) } : {}), ...wordsAtPlayhead(template, line) }, taken: graphics.map((x) => x.id) })
+    // A diagram or chapter header (long ones) is cut to the time left rather than moved earlier.
+    const left = clipEnd - at
+    const long = template === 'chapter' || isDiagram(template)
+    const drafted = newGraphic(template, at, { fields: { ...(template === 'screen_frame' ? { video: 'source', from: String(Math.round(at / 100) / 10) } : {}), ...wordsAtPlayhead(template, line) }, taken: graphics.map((x) => x.id),
+      ...(long && left >= GRAPHIC_MIN_MS ? { duration_ms: Math.min(GRAPHIC_DEFAULT_MS[template], left) } : {}) })
     // All of it plays inside the cut (near the end it starts earlier), in a band no other graphic uses then; text cards on their words.
     const inCut = fitGraphicInCut(drafted, candidate) ?? drafted
     const graphic = placeInFreeBand(graphics, timed(inCut, 3000) ?? inCut)
@@ -364,12 +404,23 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
     const next = updateGraphic(candidate, g.id, { fields: { [key]: value } })
     // Text on a word-timed card: when the words are said near it, it moves onto them.
     const changed = next.find((x) => x.id === g.id)
+    // A diagram's items light up as they're said, when they are all said while it shows.
+    const items = changed && key === 'items' && isDiagram(changed.template) && words.length ? matchItemTimes(changed, words) : null
+    if (items) { onChange(withGraphic({ ...candidate, graphics: next }, items), remember); return }
     const snapped = changed && ['text', 'phrase', 'subline'].includes(key) ? timed(changed, 3000) : null
     onChange(snapped ? withGraphic({ ...candidate, graphics: next }, snapped) : next, remember)
   }
   const matchWords = (): void => {
     if (!g) return
     setMatchNote(null)
+    if (!WORD_TIMED_TEMPLATES.includes(g.template)) {
+      // Items: each lights up (or comes in) as it is said.
+      const matched = words.length ? matchItemTimes(g, words) : null
+      if (!matched) { setMatchNote(words.length ? 'Those items aren’t all said, in order, while this graphic is on screen. Use words from the clip, or move or lengthen the graphic.' : 'This run has no word timings, so the items can’t be matched.'); return }
+      onChange(updateGraphic(candidate, g.id, { fields: { item_ms: matched.fields.item_ms } }))
+      setMatchNote('Matched: each item now shows as you say it.')
+      return
+    }
     const snapped = timed({ ...g, at_ms: Math.max(clipStart, Math.min(clipEnd, Math.round(g.at_ms))) }, 6000)
     if (!snapped) { setMatchNote(words.length ? 'Those words aren’t said near this graphic. Use words from the clip, said within a few seconds of it.' : 'This run has no word timings, so the words can’t be matched.'); return }
     onChange(withGraphic(candidate, snapped))
@@ -379,7 +430,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
     const preview = (id: GraphicTemplateId): GraphicRenderSpec => {
       // A square crop of the template at full size reads better in a small tile than a whole 9:16 frame.
       const { width, height } = outputSize('1:1')
-      return { template: id, fields: id === 'highlight' ? { ...SAMPLES[id], y: '0.5' } : SAMPLES[id], width, height, duration_ms: 2600, box: { top: .06, bottom: .94 }, placement: 'middle', ...style }
+      return { template: id, fields: id === 'highlight' ? { ...SAMPLES[id], y: '0.5' } : isDiagram(id) ? { ...SAMPLES[id], panel: 'on' } : SAMPLES[id], width, height, duration_ms: isDiagram(id) ? 4200 : 2600, box: { top: .06, bottom: .94 }, placement: 'middle', ...style, ...(isDiagram(id) ? { color: DIAGRAM_ACCENT } : {}) }
     }
     return <section className="editor-graphics-panel" aria-label="Choose a graphic">
       <div className="flex items-center justify-between gap-2"><p className="text-xs">Choose a graphic</p>{(picking && graphics.length > 0) && <Button size="sm" variant="ghost" onClick={() => onPick(false)}>Cancel</Button>}</div>
@@ -415,23 +466,24 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
         {imageError && <p role="alert" className="text-2xs text-danger">{imageError}</p>}
       </div>}
       {g.template === 'screen_frame' && <ScreenFields fields={g.fields} outputDir={outputDir} onField={field} />}
-      {templateInfo(g.template).fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'style', 'vertical', 'motion', 'video', 'labels', 'dot'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
-        {key === 'items' || key === 'text' || key === 'highlights' ? <textarea rows={key === 'items' ? GRAPHIC_ITEM_LIMITS[g.template] ?? MAX_GRAPHIC_ITEMS : key === 'highlights' ? 2 : 3} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`} />
+      {templateInfo(g.template).fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'style', 'vertical', 'motion', 'video', 'labels', 'dot', 'icon', 'wrong'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
+        {key === 'items' || key === 'text' || key === 'highlights' || key === 'notes' ? <textarea rows={key === 'items' ? GRAPHIC_ITEM_LIMITS[g.template] ?? MAX_GRAPHIC_ITEMS : key === 'highlights' || key === 'notes' ? 2 : 3} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`} />
           : <input className="editor-graphic-input" maxLength={MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`}
             placeholder={key === 'value' ? 'e.g. the number said in the clip' : key === 'domain' ? 'e.g. yoursite.com' : key === 'from' ? 'e.g. 12.5' : undefined} />}
         {FIELD_HINTS[g.template]?.[key] && <span className="block text-2xs text-ink-subtle">{FIELD_HINTS[g.template]?.[key]}</span>}
       </label>)}
       {g.template === 'icon_pop' && <IconFields fields={g.fields} onField={field} />}
       {g.template === 'big_words' && <BigWordsFields fields={g.fields} onField={field} />}
+      <DiagramFields template={g.template} fields={g.fields} onField={field} />
       {(g.template === 'orbit' || g.template === 'feature_tile') && <IconFields fields={g.fields} onField={field} template={g.template} imageNote={g.template === 'orbit'} />}
       {g.template === 'orbit' && <div className="flex items-center justify-between gap-2 text-xs"><span>Labels under the icons</span>
         <Switch label="Labels under the icons" checked={g.fields.labels !== 'off'} onChange={(on) => field('labels', on ? '' : 'off')} /></div>}
       {g.template === 'feature_tile' && <div className="flex items-center justify-between gap-2 text-xs"><span>Red dot on the first tile</span>
         <Switch label="Red dot on the first tile" checked={g.fields.dot === 'on'} onChange={(on) => field('dot', on ? 'on' : '')} /></div>}
-      {WORD_TIMED_TEMPLATES.includes(g.template) && <div className="space-y-1">
+      {(WORD_TIMED_TEMPLATES.includes(g.template) || isDiagram(g.template)) && <div className="space-y-1">
         <div className="flex flex-wrap items-center gap-2"><Button size="sm" variant="ghost" icon={<AudioLines size={13} />} onClick={matchWords}
-          tooltip="Find these words in what you say near the graphic. It then starts on your first word, shows each word as you say it and stays until just after the last.">Match my words</Button>
-          <span className="text-2xs text-ink-subtle">{g.fields.word_ms ? 'Timed to your words' : 'Words build in on their own beat'}</span></div>
+          tooltip={isDiagram(g.template) ? 'Find each item in what you say while the graphic is on screen, so each one lights up as you say it.' : 'Find these words in what you say near the graphic. It then starts on your first word, shows each word as you say it and stays until just after the last.'}>Match my words</Button>
+          <span className="text-2xs text-ink-subtle">{(isDiagram(g.template) ? g.fields.item_ms : g.fields.word_ms) ? 'Timed to your words' : isDiagram(g.template) ? 'Items light up on their own beat' : 'Words build in on their own beat'}</span></div>
         {matchNote && <p role="status" className="text-2xs text-ink-subtle">{matchNote}</p>}</div>}
       {graphicCanGoBehind(g.template) && <div className="space-y-1">
         <div className="flex items-center justify-between gap-2 text-xs"><span>Behind me</span>
@@ -442,7 +494,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
         <Segmented label="Shape" size="sm" value={highlightPoint(g.fields).shape} onChange={(shape) => field('shape', shape)} options={[{ value: 'circle', label: 'Circle' }, { value: 'arrow', label: 'Arrow' }]} />
         {(['x', 'y'] as const).map((axis) => <label key={axis} className="editor-label">{axis === 'x' ? 'Across' : 'Down'} <span className="float-right">{Math.round(highlightPoint(g.fields)[axis] * 100)}%</span>
           <input type="range" min={0} max={100} step={1} aria-label={axis === 'x' ? 'Point across' : 'Point down'} value={Math.round(highlightPoint(g.fields)[axis] * 100)} onChange={(e) => field(axis, String(Number(e.target.value) / 100))} /></label>)}
-      </div> : <div className="space-y-1">{g.template !== 'big_words' && <><p className="editor-label">Size</p>
+      </div> : g.template === 'chapter' ? <p className="text-2xs text-ink-subtle">A chapter header sits at the very top. Other graphics stay under it while it shows.</p> : <div className="space-y-1">{g.template !== 'big_words' && <><p className="editor-label">Size</p>
         <Segmented<GraphicSize> label="Graphic size" size="sm" value={g.size ?? 'card'} onChange={(size) => onChange(updateGraphic(candidate, g.id, { size }))} options={SIZE_OPTIONS} /></>}
         {g.size === 'stage' && g.template !== 'big_words' ? <p className="text-2xs text-ink-subtle">Stage: a big card over the top half of the video. Keep it short, so the speaker shows again.</p> : <>
           <p className="editor-label pt-1">Place</p>
@@ -450,14 +502,19 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
             options={[{ value: 'top', label: 'Top' }, { value: 'middle', label: 'Middle' }, { value: 'bottom', label: 'Bottom' }]} /></>}
         <p className="text-2xs text-ink-subtle">Graphics stay clear of the hook and the captions.</p></div>}
       <label className="editor-label">Length <span className="float-right">{(g.duration_ms / 1000).toFixed(1)}s</span>
-        <input type="range" aria-label="Graphic length" min={GRAPHIC_MIN_MS} max={GRAPHIC_MAX_MS} step={100} value={g.duration_ms} onChange={(e) => onChange(updateGraphic(candidate, g.id, { duration_ms: Number(e.target.value) }))} /></label>
+        <input type="range" aria-label="Graphic length" min={GRAPHIC_MIN_MS} max={Math.min(graphicMaxMs(g.template), Math.max(GRAPHIC_MIN_MS, clipEnd - g.at_ms))} step={100} value={g.duration_ms} onChange={(e) => onChange(updateGraphic(candidate, g.id, { duration_ms: Number(e.target.value) }))} /></label>
+      {g.template === 'chapter' && <Button size="sm" variant="ghost" disabled={disabled} onClick={() => {
+        // Until the next chapter starts (or the clip ends).
+        const next = graphics.filter((x) => x.template === 'chapter' && x.at_ms > g.at_ms).reduce((min, x) => Math.min(min, x.at_ms), clipEnd)
+        onChange(updateGraphic(candidate, g.id, { duration_ms: Math.max(GRAPHIC_MIN_MS, next - g.at_ms - (next < clipEnd ? 100 : 0)) }))
+      }} tooltip="Keep this header up until the next chapter header starts, or until the clip ends.">Last until the next chapter</Button>}
       <div className="flex flex-wrap items-center gap-2 text-2xs text-ink-subtle"><span>Starts {clock(g.at_ms)}</span>
         <Button size="sm" variant="ghost" disabled={time < clipStart || time > clipEnd} onClick={() => onChange(updateGraphic(candidate, g.id, { at_ms: Math.round(time) }))}>Start at playhead</Button></div>
       <div className="flex items-center justify-between gap-2 text-xs"><span>Color</span>
-        <span className="flex items-center gap-2"><input type="color" className="editor-graphic-color" aria-label="Graphic color" value={(isHexColor(g.fields.color) ? g.fields.color : style.color).toLowerCase()}
+        <span className="flex items-center gap-2"><input type="color" className="editor-graphic-color" aria-label="Graphic color" value={(isHexColor(g.fields.color) ? g.fields.color : isDiagram(g.template) ? DIAGRAM_ACCENT : style.color).toLowerCase()}
           onChange={(e) => field('color', e.target.value.toUpperCase())} />
-          {isHexColor(g.fields.color) && <Button size="sm" variant="ghost" onClick={() => onChange(updateGraphic(candidate, g.id, { fields: { color: '' } }))}>Use hook color</Button>}</span></div>
-      <p className="text-2xs text-ink-subtle">{isHexColor(g.fields.color) ? 'This graphic has its own color.' : style.color === GRAPHIC_DEFAULT_COLOR ? 'Uses blue. Give the hook a brand color to use yours.' : 'Uses the hook’s brand color.'} The font follows the hook.</p>
+          {isHexColor(g.fields.color) && <Button size="sm" variant="ghost" onClick={() => onChange(updateGraphic(candidate, g.id, { fields: { color: '' } }))}>{isDiagram(g.template) ? 'Use green' : 'Use hook color'}</Button>}</span></div>
+      <p className="text-2xs text-ink-subtle">{isHexColor(g.fields.color) ? 'This graphic has its own color.' : isDiagram(g.template) ? 'Lights up in green. Pick a color to use yours.' : style.color === GRAPHIC_DEFAULT_COLOR ? 'Uses blue. Give the hook a brand color to use yours.' : 'Uses the hook’s brand color.'} {isDiagram(g.template) ? 'Over your video it sits on a blue panel; in a Visual scene with the Solid backdrop it is drawn right on the backdrop.' : 'The font follows the hook.'}</p>
     </fieldset>}
   </section>
 }

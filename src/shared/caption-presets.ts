@@ -22,7 +22,8 @@ export const CAPTION_PRESETS = [
   { id: 'retro', name: 'Retro', description: 'Cream type, hard orange shadow' },
   { id: 'lime', name: 'Lime', description: 'Word on a lime pill' },
   { id: 'vintage', name: 'Vintage', description: 'Retro ad-style serif' },
-  { id: 'highlight_box', name: 'Highlight box', description: 'White words on a purple box' }
+  { id: 'highlight_box', name: 'Highlight box', description: 'White words on a purple box' },
+  { id: 'serif_clean', name: 'Serif clean', description: 'Plain white serif, lowercase' }
 ] as const
 
 export type CaptionPresetId = (typeof CAPTION_PRESETS)[number]['id']

@@ -13,7 +13,7 @@
 import { sceneAt, type CandidateEdit, type EditorProject } from './clip-editor'
 import { HEADLINE_FONTS, isHexColor } from './headline-look'
 import { STAGE_LAYOUT, sceneAt as stageSceneAt } from './scenes'
-import { graphicWindow, outputTime, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize } from './motion-graphics'
+import { DIAGRAM_ACCENT, graphicWindow, isDiagram, outputTime, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize } from './motion-graphics'
 
 /** The editor's default brand color for graphics (the engine's cards use the same calm blue). */
 export const GRAPHIC_DEFAULT_COLOR = '#2F5BFF'
@@ -61,6 +61,21 @@ export interface GraphicFrame {
 
 /** Share of the height a corner handle takes, with its margin (brand_mark.py: about 4% tall). */
 const HANDLE_SHARE = .06
+
+/**
+ * A chapter header's band: the very top of the frame, where the hook was (the hook hands over to the first chapter).
+ * While a chapter is up, other graphics keep below CHAPTER_SHARE.
+ */
+export const CHAPTER_TOP = .045
+export const CHAPTER_HEIGHT = .12
+export const CHAPTER_SHARE = .175
+
+/** The band a chapter header sits in (shares of the height): the top of the frame, under a top-corner handle. */
+export function chapterBox(frame: Pick<GraphicFrame, 'aspect' | 'handle'>): { top: number; bottom: number } {
+  const wide = frame.aspect === '16:9'
+  const top = (wide ? .04 : CHAPTER_TOP) + (frame.handle === 'top' ? HANDLE_SHARE : 0)
+  return { top, bottom: top + (wide ? .16 : frame.aspect === '1:1' ? .15 : CHAPTER_HEIGHT) }
+}
 
 /** On a 9:16 frame a stage-size graphic ends here: the top ~53% is the stage, the speaker sits below. */
 export const STAGE_BOTTOM = .53
@@ -121,10 +136,12 @@ export function graphicBandSize(graphic: Pick<EditorGraphic, 'template' | 'size'
 }
 
 /** A graphic's brand color and font: its own color field, else the hook's brand color, else a calm blue; the hook's font. */
-export function graphicStyle(candidate: Pick<CandidateEdit, 'hook'>, graphic?: Pick<EditorGraphic, 'fields'>): { color: string; font: string } {
+export function graphicStyle(candidate: Pick<CandidateEdit, 'hook'>, graphic?: Pick<EditorGraphic, 'fields'> & { template?: string }): { color: string; font: string } {
   const own = graphic?.fields.color
   const look = candidate.hook?.look
-  const color = isHexColor(own) ? own.toUpperCase() : look?.look === 'brand' && isHexColor(look.color) ? look.color.toUpperCase() : GRAPHIC_DEFAULT_COLOR
+  // Diagrams light up in green unless the graphic has its own color (the member can pick the brand color).
+  const color = isHexColor(own) ? own.toUpperCase() : graphic?.template && isDiagram(graphic.template) ? DIAGRAM_ACCENT
+    : look?.look === 'brand' && isHexColor(look.color) ? look.color.toUpperCase() : GRAPHIC_DEFAULT_COLOR
   const font = look && HEADLINE_FONTS.some((f) => f.id === look.font) ? look.font : 'clean'
   return { color, font }
 }
@@ -174,7 +191,9 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
   const { width, height } = outputSize(project.aspect_ratio)
   const at = Math.max(graphic.at_ms, candidate.ranges[0][0])
   const top = Math.max(0, Math.min(.4, extra.top ?? 0))
-  const frame: GraphicFrame = { aspect: project.aspect_ratio, hook: Math.max(hookShare(candidate, project.aspect_ratio), top),
+  // While a chapter header is up, the others keep below it.
+  const chapter = graphic.template !== 'chapter' && (candidate.graphics ?? []).some((c) => c.template === 'chapter' && c.at_ms < graphic.at_ms + graphic.duration_ms && graphic.at_ms < c.at_ms + c.duration_ms)
+  const frame: GraphicFrame = { aspect: project.aspect_ratio, hook: Math.max(hookShare(candidate, project.aspect_ratio), top, chapter ? CHAPTER_SHARE : 0),
     captions: candidate.captions ? captionAnchorAt(project, candidate, at) : null, handle: handleEdge(project) }
   const fields = { ...graphic.fields }
   delete fields.image
@@ -188,11 +207,18 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
     const out = times.map((t) => outputTime(candidate, graphic.at_ms + t))
     if (out.every((t) => t !== null)) fields[key] = out.map((t) => String(Math.max(0, Math.round((t as number) - window.start_ms)))).join('\n')
   }
-  let box = graphicBox(graphic.placement, frame, graphicBandSize(graphic))
+  let box = graphic.template === 'chapter' ? chapterBox(frame) : graphicBox(graphic.placement, frame, graphicBandSize(graphic))
+  const scene = stageSceneAt(candidate.stage_scenes, at)
   // A stage graphic in a Visual scene (the speaker card is away) takes the frame down to just over the captions.
-  if (graphic.size === 'stage' && project.aspect_ratio === '9:16' && stageSceneAt(candidate.stage_scenes, at).scene === 'visual') {
+  if (graphic.size === 'stage' && project.aspect_ratio === '9:16' && scene.scene === 'visual') {
     box = { top: box.top, bottom: Math.max(box.bottom, STAGE_LAYOUT.visualCaptionY - .08) }
   }
+  // A diagram's white lines need a dark backdrop: over the video or a light backdrop it is drawn on a blue panel.
+  if (isDiagram(graphic.template) && !(scene.scene !== 'face' && (scene.backdrop === 'solid' || scene.backdrop === 'dark'))) fields.panel = 'on'
+  else delete fields.panel
+  // A chapter header over a white hook bar is drawn in dark ink.
+  if (graphic.template === 'chapter' && candidate.hook?.look.look === 'white' && hookShare(candidate, project.aspect_ratio) > 0) fields.ink = 'dark'
+  else delete fields.ink
   return { template: graphic.template, fields, width, height, duration_ms: window.duration_ms, box, placement: graphic.placement,
     ...graphicStyle(candidate, graphic), ...(graphic.size && graphic.size !== 'card' ? { size: graphic.size } : {}) }
 }

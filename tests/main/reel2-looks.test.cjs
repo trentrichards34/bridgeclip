@@ -23,7 +23,7 @@ test('scenes: grid and gradient backdrops and the arch card parse, save and stay
   // Rounded is the default (not stored); old scenes read as before.
   assert.deepEqual(plain(m.parseScenes([{ scene: 'stage', start_ms: 0, end_ms: 2000, card: 'rounded' }])), [{ scene: 'stage', start_ms: 0, end_ms: 2000 }])
   assert.throws(() => m.parseScenes([{ scene: 'stage', start_ms: 0, end_ms: 2000, card: 'oval' }]), /rounded or arch/)
-  assert.throws(() => m.parseScenes([{ scene: 'stage', start_ms: 0, end_ms: 2000, backdrop: 'neon' }]), /grid or gradient/)
+  assert.throws(() => m.parseScenes([{ scene: 'stage', start_ms: 0, end_ms: 2000, backdrop: 'neon' }]), /grid, gradient or solid/)
   // Neighbors with different cards stay apart; a change of card is kept by updateScene.
   const two = m.normalizeScenes([{ scene: 'stage', start_ms: 0, end_ms: 2000 }, { scene: 'stage', start_ms: 2000, end_ms: 4000, card: 'arch' }])
   assert.equal(two.length, 2)

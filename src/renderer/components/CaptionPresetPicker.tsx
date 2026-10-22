@@ -333,6 +333,20 @@ const PRESETS: CaptionPreset[] = [
     uppercase: false,
     plate: '#7C3AED',
     words: ['built my', 'own ads', 'manager']
+  },
+  {
+    id: 'serif_clean',
+    name: 'Serif clean',
+    description: 'Plain white serif, lowercase',
+    font: '"Instrument Serif", Georgia, serif',
+    weight: 400,
+    size: 19,
+    primary: '#FFFFFF',
+    highlight: '#FFFFFF',
+    stroke: 0,
+    shadow: 'soft',
+    uppercase: false,
+    words: ['step one', 'your idea', 'comes first']
   }
 ]
 

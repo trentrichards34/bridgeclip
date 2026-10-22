@@ -108,6 +108,12 @@ export function graphicPhrase(g: Pick<EditorGraphic, 'template' | 'fields'>): st
     case 'orbit': return f.text?.trim() ? `“${short(f.text, 24)}” orbit` : 'orbit'
     case 'feature_tile': { const first = graphicItems(f.items)[0]; return first ? `“${short(first, 24)}” feature tile` : 'feature tile' }
     case 'screen_frame': return f.video === 'source' ? 'screen recording (from this clip)' : 'screen recording'
+    case 'chapter': { const t = [f.label, f.title].map((x) => x?.trim()).filter(Boolean).join(' '); return t ? `“${short(t, 32)}” chapter header` : 'chapter header' }
+    case 'staircase': case 'funnel': case 'journey': case 'growth': case 'idea_hub': case 'compare_marks': {
+      const name = { staircase: 'staircase', funnel: 'funnel', journey: 'journey', growth: 'growth diagram', idea_hub: 'idea hub', compare_marks: 'wrong/right' }[g.template]
+      const n = graphicItems(f.items).length
+      return f.title?.trim() ? `“${short(f.title, 24)}” ${name}` : n && g.template !== 'compare_marks' ? `${n}-step ${name}` : name
+    }
   }
 }
 

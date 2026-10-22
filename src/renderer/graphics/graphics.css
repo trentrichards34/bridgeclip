@@ -317,3 +317,59 @@
 .mg-screen-bar .mg-dots span { width: calc(var(--u) * 18); height: calc(var(--u) * 18); }
 .mg-screen-label { flex: 1; min-width: 0; text-align: center; margin-right: calc(var(--u) * 80); font-weight: 700; font-size: calc(var(--u) * 26); color: rgba(255, 255, 255, .78); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mg-screen-video { object-fit: cover; background: #0d0e13; }
+
+/* Chapter headers and diagrams (diagrams.ts): sizes in --fu (one pixel of a 1080-wide frame) or set inline. */
+.dg-chapter { position: absolute; display: flex; align-items: center; justify-content: center; }
+.dg-chapter-line { text-align: center; color: #fff; line-height: 1.08; text-wrap: balance; }
+.dg-chapter-word { display: inline-block; white-space: pre; }
+.dg-chapter.style-serif_caps .dg-chapter-line {
+  font-family: 'MG Instrument Serif', Georgia, serif; font-style: normal; font-weight: 400; font-variant-caps: small-caps; font-synthesis: small-caps;
+  letter-spacing: .015em; text-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(0, 0, 0, .7), 0 calc(var(--u) * 4) calc(var(--u) * 16) rgba(0, 0, 0, .55), 0 0 calc(var(--u) * 40) rgba(0, 0, 0, .35);
+}
+.dg-chapter.style-sans .dg-chapter-line {
+  font-family: var(--sans); font-weight: 800; letter-spacing: -.015em; line-height: 1.12;
+  text-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 5) rgba(0, 0, 0, .5), 0 calc(var(--u) * 6) calc(var(--u) * 24) rgba(0, 0, 0, .35);
+}
+.dg-chapter.style-sans .label { opacity: .78; }
+.dg-chapter.style-pill .dg-chapter-line {
+  font-family: var(--sans); font-weight: 700; letter-spacing: -.01em; line-height: 1.2;
+  background: rgba(12, 14, 20, .82); border-radius: calc(var(--u) * 999); padding: calc(var(--u) * 18) calc(var(--u) * 40);
+  box-shadow: 0 calc(var(--u) * 10) calc(var(--u) * 30) rgba(0, 0, 0, .3);
+}
+.dg-chapter.style-pill .label { color: var(--accent); }
+.dg-chapter.ink-dark .dg-chapter-line { color: #111; text-shadow: none; }
+.dg-chapter.ink-dark.style-pill .dg-chapter-line { color: #fff; }
+
+.dg-box { position: absolute; transform-origin: 50% 50%; color: #fff; font-family: var(--sans); }
+.dg-panel { position: absolute; border-radius: calc(var(--fu) * 44); box-shadow: 0 calc(var(--fu) * 20) calc(var(--fu) * 60) rgba(8, 20, 50, .35); }
+.dg-panel::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: radial-gradient(110% 70% at 50% 0%, rgba(255, 255, 255, .10), transparent 65%); }
+.dg-layer { position: absolute; left: 0; top: 0; overflow: visible; }
+.dg-title {
+  position: absolute; text-align: center; font-weight: 800; line-height: 1.12; letter-spacing: -.015em; text-wrap: balance;
+  text-shadow: 0 calc(var(--fu) * 3) calc(var(--fu) * 14) rgba(0, 0, 0, .25);
+}
+.dg-tag {
+  position: absolute; transform-origin: 50% 50%; display: flex; align-items: center; justify-content: center;
+  padding: .32em .5em; border: calc(var(--fu) * 3.5) solid #fff; border-radius: calc(var(--fu) * 16);
+  background: color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 100%), transparent);
+  border-color: color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 100%), #fff);
+  box-shadow: 0 0 calc(var(--fu) * 30) color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 55%), transparent);
+}
+.dg-tag.pill { border-radius: calc(var(--fu) * 999); padding: .36em .8em; }
+.dg-tag-text { width: 100%; text-align: center; font-weight: 700; line-height: 1.16; letter-spacing: -.005em; overflow-wrap: normal; word-break: keep-all; text-wrap: balance; }
+.dg-tag.lit .dg-tag-text { color: var(--on-accent); }
+.dg-card {
+  position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  padding: calc(var(--fu) * 22) calc(var(--fu) * 16); border: calc(var(--fu) * 4.5) solid #fff; border-radius: calc(var(--fu) * 26);
+  transform-origin: 50% 100%;
+  background: color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 100%), transparent);
+  border-color: color-mix(in srgb, var(--accent) calc(max(var(--lit, 0), var(--passed, 0)) * 100%), #fff);
+  box-shadow: 0 0 calc(var(--fu) * 40) color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 50%), transparent);
+}
+.dg-card-text { width: 100%; font-weight: 700; line-height: 1.15; overflow-wrap: normal; word-break: keep-all; text-wrap: balance; }
+.dg-card.lit .dg-card-text { color: var(--on-accent); }
+.dg-compare-card { justify-content: center; gap: calc(var(--fu) * 18); padding: calc(var(--fu) * 34) calc(var(--fu) * 26); }
+.dg-compare-title { width: 100%; font-weight: 800; line-height: 1.12; letter-spacing: -.015em; text-wrap: balance; overflow-wrap: normal; }
+.dg-compare-note { font-weight: 600; line-height: 1.25; opacity: .85; text-wrap: balance; }
+.dg-compare-card.right { box-shadow: 0 0 calc(var(--fu) * 46) color-mix(in srgb, var(--accent) calc(var(--passed, 0) * 60%), transparent); }
+.dg-hub-caption { position: absolute; transform: translateX(-50%); text-align: center; font-weight: 700; letter-spacing: .02em; opacity: .9; }

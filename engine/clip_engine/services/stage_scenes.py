@@ -32,7 +32,9 @@ from typing import Callable, Iterable, Optional, Sequence
 from PIL import Image, ImageDraw, ImageFilter
 
 SCENE_KINDS = ("face", "stage", "visual")
-BACKDROPS = ("light", "dark", "brand", "grid", "gradient")
+BACKDROPS = ("light", "dark", "brand", "grid", "gradient", "solid")
+# The solid backdrop without a brand color: royal blue (motion-graphics.ts DIAGRAM_PANEL), for white line-art diagrams.
+SOLID_DEFAULT = "#1F4E9C"
 # The speaker card's shape in a stage scene.
 CARDS = ("rounded", "arch")
 MAX_SCENES = 24
@@ -67,7 +69,7 @@ DARK_ACCENT = "#1F5BFF"
 DEFAULT_BOX = "#7C3AED"
 # How captions in a scene's band are drawn: dark text (light backdrops), white on a color box (grid and
 # gradient backdrops), or the member's own captions (dark backdrop).
-CAPTION_MODES = {"light": "light", "brand": "light", "grid": "box", "gradient": "box", "dark": ""}
+CAPTION_MODES = {"light": "light", "brand": "light", "grid": "box", "gradient": "box", "dark": "", "solid": ""}
 
 
 @dataclass(frozen=True)
@@ -294,6 +296,10 @@ def backdrop_colors(backdrop: str, brand: Optional[str] = None) -> tuple[tuple[i
     """Top and bottom colors of a backdrop's vertical gradient. Brand: the brand color mixed into white (stays light)."""
     if backdrop in BACKDROP_COLORS:
         return BACKDROP_COLORS[backdrop]
+    if backdrop == "solid":
+        # The color itself, a touch deeper at the bottom.
+        r, g, b = _hex(brand if brand and len(brand) == 7 else SOLID_DEFAULT)
+        return (r, g, b), (round(r * .86), round(g * .86), round(b * .86))
     r, g, b = _hex(brand if brand and len(brand) == 7 else DEFAULT_BRAND if backdrop == "brand" else DEFAULT_BOX)
     mix = lambda share: tuple(round(255 + (c - 255) * share) for c in (r, g, b))  # noqa: E731
     if backdrop == "grid":
@@ -305,7 +311,7 @@ def backdrop_colors(backdrop: str, brand: Optional[str] = None) -> tuple[tuple[i
 
 
 def is_light(backdrop: str) -> bool:
-    return backdrop != "dark"
+    return backdrop not in ("dark", "solid")
 
 
 def caption_mode(backdrop: Optional[str]) -> str:
@@ -325,7 +331,7 @@ def draw_backdrop(path: str, width: int, height: int, backdrop: str, brand: Opti
     img = column.resize((width, height), Image.BICUBIC)
     # A faint light pool behind the stage area, so the backdrop isn't flat.
     glow = Image.new("L", (width, height), 0)
-    ImageDraw.Draw(glow).ellipse((-width * 0.2, -height * 0.15, width * 1.2, height * 0.55), fill=60 if backdrop != "dark" else 28)
+    ImageDraw.Draw(glow).ellipse((-width * 0.2, -height * 0.15, width * 1.2, height * 0.55), fill=28 if backdrop == "dark" else 22 if backdrop == "solid" else 60)
     glow = glow.filter(ImageFilter.GaussianBlur(radius=width * 0.18))
     img = Image.composite(Image.new("RGB", (width, height), (255, 255, 255)), img, glow)
     if backdrop == "grid":

@@ -659,6 +659,10 @@ async def run_editor(config, progress=None):
             from clip_engine.services.graphics_overlay import checked_graphics
             with failure_code('invalid_edit'):
                 checked_graphics(run, graphics, 10 ** 9, source=source)
+        # The hook hands over to the first chapter header there (source ms).
+        hook_end = config.get('hook_end_source_ms')
+        if hook_end is not None and (type(hook_end) is not int or not 0 <= hook_end <= project['duration_ms']):
+            raise EditorError('invalid_edit', 'Invalid chapter time')
         # Scenes (face / stage / visual) main worked out on the finished clip's clock.
         scenes = config.get('scenes')
         if scenes is not None:
@@ -669,7 +673,7 @@ async def run_editor(config, progress=None):
             index = done['clip_index']
         else:
             index, usage = await export_clip(run, project, c, output, source, transcript, replace_index=target, graphics=graphics,
-                                             scenes=scenes)
+                                             scenes=scenes, hook_end=hook_end)
         if target is None:
             c.pop('library_clip', None)  # Its Library clip was deleted: this export is a new clip.
         if index not in c['exports']:
@@ -762,7 +766,7 @@ def attach_usage(error, usage):
     return error
 
 
-async def export_clip(run, project, c, output, source, transcript, replace_index=None, graphics=None, scenes=None):
+async def export_clip(run, project, c, output, source, transcript, replace_index=None, graphics=None, scenes=None, hook_end=None):
     """Render one ready candidate: a new Library clip, or (an Automatic run's clip) its replacement in place.
 
     Returns (clip index, translation usage or None). A failure after a paid translation carries its usage.
@@ -785,7 +789,8 @@ async def export_clip(run, project, c, output, source, transcript, replace_index
     # Absent hook (a project made before hooks were editable): the run's
     # original is not recorded for those, so none is drawn, as before.
     hook = parse_hook(c.get('hook')) if project['aspect_ratio'] == '9:16' else None
-    hook_options = {'title_style': 'headline', 'headline_text': hook['text'], 'headline_look': hook['look']} if hook else {}
+    hook_options = {'title_style': 'headline', 'headline_text': hook['text'], 'headline_look': hook['look'],
+                    **({'headline_hide_source_ms': hook_end} if type(hook_end) is int else {})} if hook else {}
     extras = automatic_extras(run, project)
     translations, usage = await translated_captions(c, render_transcript, a, b)
     try:

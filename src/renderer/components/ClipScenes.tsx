@@ -10,7 +10,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Clapperboard, Plus, Trash2 } from 'lucide-react'
 import type { CandidateEdit } from '../../shared/clip-editor'
 import {
-  BACKDROP_LABELS, CARD_LABELS, MAX_SCENES, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_DETAILS, SCENE_LABELS, STAGE_LAYOUT, newSceneAt, outputScenes, sceneMix, updateScene, withScene,
+  BACKDROP_LABELS, CARD_LABELS, MAX_SCENES, SOLID_BACKDROP_COLOR, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_DETAILS, SCENE_LABELS, STAGE_LAYOUT, newSceneAt, outputScenes, sceneMix, updateScene, withScene,
   type SceneBackdrop, type SceneCard, type SceneKind, type StageScene
 } from '../../shared/scenes'
 import { nearestOutputTime } from '../../shared/motion-graphics'
@@ -118,7 +118,9 @@ const BACKDROP_CSS: Record<SceneBackdrop, (brand: string) => string> = {
   brand: (c) => `linear-gradient(color-mix(in srgb, ${c} 10%, white), color-mix(in srgb, ${c} 24%, white))`,
   // The engine's grid: lavender easing into the brand color low in the frame, a faint white square grid fading out.
   grid: (c) => `linear-gradient(rgba(255,255,255,.28) 1px, transparent 1px) 0 0 / 7.1428% 4.0179%, linear-gradient(90deg, rgba(255,255,255,.28) 1px, transparent 1px) 0 0 / 7.1428% 4.0179%, linear-gradient(color-mix(in srgb, ${c} 16%, white), color-mix(in srgb, ${c} 30%, white) 45%, color-mix(in srgb, ${c} 82%, white))`,
-  gradient: (c) => `linear-gradient(color-mix(in srgb, ${c} 8%, white), color-mix(in srgb, ${c} 20%, white) 45%, color-mix(in srgb, ${c} 50%, white))`
+  gradient: (c) => `linear-gradient(color-mix(in srgb, ${c} 8%, white), color-mix(in srgb, ${c} 20%, white) 45%, color-mix(in srgb, ${c} 50%, white))`,
+  // The engine's solid: the color itself, a touch deeper at the bottom.
+  solid: (c) => `radial-gradient(120% 60% at 50% 18%, color-mix(in srgb, ${c} 92%, white), transparent 70%), linear-gradient(${c}, color-mix(in srgb, ${c} 86%, black))`
 }
 
 /** A preview of the scenes over the Output monitor: the backdrop and the speaker card (cut from the preview's own frame). */
@@ -159,7 +161,7 @@ export function ScenesOverlay({ canvas, candidate, time }: { canvas: RefObject<H
   if (!bounds.width || !visible) return null
   const own = candidate.hook?.look.look === 'brand' && isHexColor(candidate.hook.look.color) ? candidate.hook.look.color : null
   // Grid and gradient without a brand color are purple, like the engine's.
-  const brandFor = (b: SceneBackdrop): string => own ?? (b === 'grid' || b === 'gradient' ? '#7C3AED' : '#3B6BFF')
+  const brandFor = (b: SceneBackdrop): string => own ?? (b === 'grid' || b === 'gradient' ? '#7C3AED' : b === 'solid' ? SOLID_BACKDROP_COLOR : '#3B6BFF')
   const w = bounds.width, h = bounds.height
   const arch = mix.shape === 'arch'
   const cardW = arch ? w : w * (1 - 2 * STAGE_LAYOUT.cardSide), cardH = h * STAGE_LAYOUT.cardHeight + (arch ? h * STAGE_LAYOUT.cardBottom : 0)

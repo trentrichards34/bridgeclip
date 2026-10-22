@@ -131,7 +131,8 @@ def checked_graphics(run: Path, raw: object, clip_ms: int, sub: str = "", source
         name, start, length = item.get("file"), item.get("start_ms"), item.get("duration_ms")
         if not isinstance(name, str) or not RENDER_FILE.fullmatch(name) or type(start) is not int or type(length) is not int:
             raise ValueError("Invalid graphic")
-        if start < 0 or length < MIN_MS or length > 60_000:
+        # A chapter header can stay for a whole section (motion-graphics.ts CHAPTER_MAX_MS).
+        if start < 0 or length < MIN_MS or length > 180_000:
             raise ValueError("Invalid graphic time")
         path = folder / name
         if path.is_symlink() or not path.is_file():

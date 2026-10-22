@@ -195,6 +195,23 @@ def headline_hide_fade(look: HeadlineLook, total_s: float, speed: float = 1.0) -
     return look.hide_after_s * speed, HEADLINE_HIDE_FADE_S * speed
 
 
+def chapter_hand_over_s(source_ms: Optional[int], keeps: list, window_start_ms: int) -> Optional[float]:
+    """When the hook hands over to the first chapter header, on the edited clock (seconds, before the speed-up): the
+    source time through the kept parts; one in cut-out footage moves to where the clip picks up again. None: no
+    chapter, or it comes after the clip."""
+    if type(source_ms) is not int or source_ms < 0:
+        return None
+    t = source_ms - window_start_ms
+    before = 0
+    for a, b in keeps:
+        if t < a:
+            return before / 1000
+        if t <= b:
+            return (before + t - a) / 1000
+        before += b - a
+    return None
+
+
 def headline_hide_overlay(fade: tuple[float, float]) -> tuple[str, str]:
     """The overlay's (enable expression, image filter) for a fade from headline_hide_fade. The image must be a
     looped input so the fade has a clock. Over a bar look the image fades into the padding's same color: the bar
@@ -375,6 +392,9 @@ class RenderRequest:
     headline_text: Optional[str] = None
     # The headline's look (bar color or floating, and font); see HeadlineLook.
     headline_look: Optional[dict] = None
+    # The hook text hands over to the first chapter header: it fades out as the chapter starts (SOURCE ms; a time
+    # in cut-out footage hands over where the clip picks up again). None: the look's own "hide after", or never.
+    headline_hide_source_ms: Optional[int] = None
     # Planner-chosen punch words highlighted in the captions.
     emphasis_words: list[str] = field(default_factory=list)
     # Caption language: translated text per original transcript line (keyed by
@@ -930,7 +950,8 @@ class RenderingService:
         )
         graph += self._caption_graph(caption_path, request.caption_suppression_ranges_ms, window_start_ms, time_map)
         overlays = self._overlays(request, out_plan, target_width, target_height, is_landscape, headline=headline,
-                                  end_s=time_map.output_ms / 1000)
+                                  end_s=time_map.output_ms / 1000,
+                                  hand_over_s=chapter_hand_over_s(request.headline_hide_source_ms, time_map.keeps, window_start_ms))
         overlays += self._brand_overlays(request, target_width, target_height, is_landscape, bar_h, bool(background),
                                          time_map.output_ms / 1000)
         overlays += extras_module.create_layers(
@@ -1089,6 +1110,7 @@ class RenderingService:
         is_landscape: bool,
         headline: Optional[tuple[str, int]] = None,
         end_s: Optional[float] = None,
+        hand_over_s: Optional[float] = None,
     ) -> list[Overlay]:
         """Title card or headline bar, and channel banner, positioned per shot on the output timeline.
 
@@ -1106,6 +1128,9 @@ class RenderingService:
         if headline:
             look = parse_headline_look(request.headline_look)
             fade = headline_hide_fade(look, (end_s or 0) / request.video_speed, request.video_speed) if end_s else None
+            if hand_over_s is not None and end_s and hand_over_s < end_s and (fade is None or hand_over_s < fade[0]):
+                # The first chapter header takes the top: the hook fades out as it comes in (edited clock).
+                fade = (max(0.0, hand_over_s - HEADLINE_HIDE_FADE_S * request.video_speed), HEADLINE_HIDE_FADE_S * request.video_speed)
             overlays.append((headline[0], "0", "0", *headline_hide_overlay(fade)) if fade else (headline[0], "0", "0"))
         if title:
             path, _, height = title

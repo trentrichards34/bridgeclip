@@ -925,7 +925,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
         text = " ".join(word.split()).replace("{", "").replace("}", "").replace("\\", "")
         if len(text) > 1 and text[-1] in ",.;:":
             text = text.rstrip(",.;:")
-        return text.upper() if style.uppercase else text
+        return text.upper() if style.uppercase else text.lower() if getattr(style, "lowercase", False) else text
 
     def _split_segment_into_words(
         self, segment: TranscriptSegment,

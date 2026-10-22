@@ -130,7 +130,8 @@ def stage_brand(request) -> Optional[str]:
 
 
 def graphics_options(request) -> dict:
-    return {'headline_off': headline_off(request), 'cta_keyword': request.cta_keyword or '', 'stage': stages_on(request)}
+    # Chapter headers come with motion graphics: a talk with an explicit structure gets a title per section.
+    return {'headline_off': headline_off(request), 'cta_keyword': request.cta_keyword or '', 'stage': stages_on(request), 'chapters': True}
 
 
 @dataclass
@@ -944,14 +945,19 @@ class AIClippingPipeline:
                     # Stage layouts: the stage scenes around the clip's stage-size cards, worked out before the render
                     # (on the uncut clip; the render moves them onto its cut).
                     source_scenes: list[dict] = []
-                    if segment.graphics and stages_on(request) and not longform:
+                    # The hook hands over to the first chapter header (source ms), when the talk has chapters.
+                    hook_end: Optional[int] = None
+                    graphics_on = request.motion_graphics and request.workflow != 'review' and not longform
+                    if graphics_on:
                         try:
-                            planned_cards = fit_to_clip(segment.graphics, transcription_result.segments,
+                            planned_cards = fit_to_clip(segment.graphics or [], transcription_result.segments,
                                                         [(segment.start_time_ms, segment.end_time_ms)], request.video_speed,
                                                         graphics_options(request))
-                            # The brand grid and the arch card with a brand color; the light backdrop otherwise.
-                            backdrop, card = auto_look(stage_brand(request))
-                            source_scenes = stage_scenes_for(planned_cards, segment.start_time_ms, segment.end_time_ms, backdrop, card)
+                            hook_end = min((g['at_ms'] for g in planned_cards if g['template'] == 'chapter'), default=None)
+                            if stages_on(request):
+                                # The brand grid and the arch card with a brand color; the light backdrop otherwise.
+                                backdrop, card = auto_look(stage_brand(request))
+                                source_scenes = stage_scenes_for(planned_cards, segment.start_time_ms, segment.end_time_ms, backdrop, card)
                         except Exception as exc:
                             logger.warning(f"Stage layouts skipped for clip {i + 1}: {exc}")
                     render_request = RenderRequest(
@@ -973,6 +979,7 @@ class AIClippingPipeline:
                         title_style=request.title_style,
                         headline_look=request.headline_look,
                         headline_text=segment.headline,
+                        headline_hide_source_ms=hook_end,
                         emphasis_words=segment.emphasis_words,
                         caption_translations=caption_translations,
                         caption_language=request.caption_language if caption_translations else None,
@@ -1018,10 +1025,10 @@ class AIClippingPipeline:
                         audio_done = await asyncio.to_thread(finish_in_place, render_result.output_path, audio_plan,
                                                              os.path.join(work_dir, 'audio'))
                     graphics = []
-                    if segment.graphics:
+                    if graphics_on:
                         # The planner's card moments that survive the finished cut, with words actually said.
                         try:
-                            graphics = fit_to_clip(segment.graphics, transcription_result.segments,
+                            graphics = fit_to_clip(segment.graphics or [], transcription_result.segments,
                                                    getattr(render_result, "kept_source_ms", []) or [], request.video_speed,
                                                    graphics_options(request))
                         except Exception as exc:

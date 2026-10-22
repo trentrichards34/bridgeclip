@@ -25,7 +25,7 @@ import { ClipChat, clipChatThread, type ChatApplied, type ChatApplyResult } from
 import { PointButton, PointLayer } from './ChatPoints'
 import { GraphicsInspector, GraphicsOverlay, GraphicsTrack } from './ClipGraphics'
 import { ScenesOverlay, ScenesTrack } from './ClipScenes'
-import { nearestOutputTime, outputTime, type EditorGraphic } from '../../shared/motion-graphics'
+import { hookEndMs, nearestOutputTime, outputTime, type EditorGraphic } from '../../shared/motion-graphics'
 import { EditLog } from './EditLog'
 import { ScreenLayoutRow } from './ScreenLayouts'
 import { bubbleRect, screenKindOf, screenScene, screenShareOf, type ScreenKind } from '../../shared/screen-pair'
@@ -414,7 +414,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           if (bar) { ctx.fillStyle = bar; ctx.fillRect(0, 0, out.width, hookLayout.barH) }
         }
         // "Hide hook text": past its time in the exported clip, the text is gone (a bar stays as a plain band).
-        if (hook && hookLayout && headlineShownAt(hook.look, outputTimeAt(c, t) / 1000)) {
+        // The hook hands over to the first chapter header: gone once it starts.
+        const handOver = hookEndMs(c)
+        if (hook && hookLayout && headlineShownAt(hook.look, outputTimeAt(c, t) / 1000) && (handOver === null || outputTimeAt(c, t) < handOver)) {
           const { bar, size, lines: shown, top, lineH } = hookLayout
           ctx.textAlign = 'center'; ctx.textBaseline = 'top'
           const box = bar ? null : headlineTextBox(hook.look)

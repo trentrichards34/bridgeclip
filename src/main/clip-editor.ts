@@ -13,6 +13,7 @@ import { resolveBinary } from './tools'
 import { logger } from './logger'
 import { importGraphicImage, importGraphicVideo, renderCandidateGraphics, sweepGraphicRenders, type RenderedGraphic } from './graphics-render'
 import { outputScenes } from '../shared/scenes'
+import { firstChapterSourceMs } from '../shared/motion-graphics'
 
 type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source' | 'suggest-hooks' | 'prepare'
 interface EditorOperation { progress?: EditorSession['progress']; action: NonNullable<EditorSession['operation']>; child?: ChildProcess; cancelled?: boolean; abort?: AbortController; batch?: EditorBatch }
@@ -417,6 +418,8 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
           try {
             result = await runWorker(run, operation, action, env, python, limitMs, { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidate.id, action: action === 'export-all' ? 'export' : action, source_id: sourceId, preview_id: previewId,
               ...(graphics.length ? { graphics: graphics.map(({ file, start_ms, duration_ms, size, depth, min_top, inset }) => ({ file, start_ms, duration_ms, ...(size ? { size } : {}), ...(depth ? { depth } : {}), ...(min_top !== undefined ? { min_top } : {}), ...(inset ? { inset } : {}) })) } : {}),
+              // The hook hands over to the first chapter header (it fades out as that starts).
+              ...(exporting && firstChapterSourceMs(candidate) !== null ? { hook_end_source_ms: firstChapterSourceMs(candidate) } : {}),
               // Scenes on the finished clip's clock (vertical clips only).
               ...(exporting && session.project.aspect_ratio === '9:16' && outputScenes(candidate).length ? { scenes: outputScenes(candidate) } : {}) })
           } catch (error) {
