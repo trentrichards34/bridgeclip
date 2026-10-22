@@ -656,7 +656,7 @@ export function createStudioTools(host: ToolHost): AssistantToolSpec[] {
       },
       run: async () => {
         if (!cancelRemix()) throw new AssistantToolError('No remix is being planned or made right now.')
-        return { cancelling: true, summary: 'Cancelling' }
+        return { cancelling: true, summary: 'Canceling' }
       }
     },
     {

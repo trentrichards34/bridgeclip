@@ -456,8 +456,8 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
         </div>
         <p className="text-2xs text-ink-subtle">
           Talking-head videos take a few minutes; cinematic and recreated ones up to 10-20. You can leave this page while it works.
-          {busy && (heygen ? ' Cancelling stops waiting; HeyGen can’t stop a video it already started, so it may still finish and be billed on your HeyGen account.'
-            : ` Cancelling stops what hasn’t started; a step already running on ${draft.style === 'recreate' ? 'fal.ai' : 'OpenRouter'} may still be charged.`)}
+          {busy && (heygen ? ' Canceling stops waiting; HeyGen can’t stop a video it already started, so it may still finish and be billed on your HeyGen account.'
+            : ` Canceling stops what hasn’t started; a step already running on ${draft.style === 'recreate' ? 'fal.ai' : 'OpenRouter'} may still be charged.`)}
         </p>
       </div>
     </div>

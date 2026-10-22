@@ -242,7 +242,7 @@ export function MomentTakeReview({ status, onError }: { status: RemixStatus; onE
           <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={working === 'make'} disabled={busy || blocker !== null} tooltip={blocker ?? undefined}
             onClick={() => void make()}>Make {chosen.length === 1 ? '1 video' : `${chosen.length} videos`}</Button>
           {writing
-            ? <Button variant="secondary" disabled={status.detail === 'Cancelling…'} onClick={() => void getApi().remix.cancel()}>Cancel</Button>
+            ? <Button variant="secondary" disabled={status.detail === 'Canceling…'} onClick={() => void getApi().remix.cancel()}>Cancel</Button>
             : <Button variant={confirmDiscard ? 'danger' : 'ghost'} icon={<X className="h-4 w-4" />} disabled={busy} onClick={() => void discard()}>
                 {confirmDiscard ? 'Click again to discard' : 'Discard all'}
               </Button>}

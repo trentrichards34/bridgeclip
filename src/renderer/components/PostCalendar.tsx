@@ -26,7 +26,7 @@ const POST_STATUS: Record<PostStatus, { label: string; tone: string }> = {
 
 const SLOT_STATE: Record<UpcomingState, { label: string; tone: string }> = {
   zernio: { label: 'Scheduled with Zernio', tone: 'text-accent' },
-  cancelling: { label: 'Cancelling', tone: 'text-warning' },
+  cancelling: { label: 'Canceling', tone: 'text-warning' },
   app: { label: 'Posts while the app is open', tone: 'text-ink-muted' },
   skipped: { label: 'Skipped', tone: 'text-ink-subtle' },
   uncertain: { label: 'Held for review', tone: 'text-warning' },
