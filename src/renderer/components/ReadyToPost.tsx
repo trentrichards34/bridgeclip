@@ -118,7 +118,7 @@ export function ReadyToPost({ onOpenRun, onNavigate }: {
   ]
 
   return (
-    <section aria-label="Ready to post" className="mt-5">
+    <section aria-label="Ready to post" className="mt-3">
       <div className="flex flex-wrap items-center gap-3">
         <TextInput className="max-w-sm flex-1 rounded-full" value={filters.query} onChange={(event) => update({ query: event.target.value })}
           placeholder="Search titles, hooks and captions" leading={<Search className="h-3.5 w-3.5" />} aria-label="Search clips ready to post" />

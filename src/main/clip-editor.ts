@@ -3,8 +3,9 @@ import { constants, closeSync, createWriteStream, fstatSync, lstatSync, openSync
 import { pipeline } from 'stream/promises'
 import { delimiter, dirname, join } from 'path'
 import { createHash, randomUUID } from 'crypto'
-import { EDITOR_REVISION_CONFLICT, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, editorFailureMessage, editorProgress, isEditorErrorCode, parseCandidateEdit, parseEditorProject, parseHookIdeas, renderEditKey, type CandidateEdit, type EditorBatch, type EditorCandidate, type EditorErrorCode, type EditorProgressSummary, type EditorProject, type EditorSession, type HookIdea } from '../shared/clip-editor'
+import { EDITOR_REVISION_CONFLICT, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, editDuration, editorFailureMessage, editorProgress, isEditorErrorCode, parseCandidateEdit, parseEditorProject, parseHookIdeas, renderEditKey, type CandidateEdit, type EditorBatch, type EditorCandidate, type EditorErrorCode, type EditorProgressSummary, type EditorProject, type EditorSession, type HookIdea } from '../shared/clip-editor'
 import { isCaptionLanguage } from '../shared/caption-language'
+import type { SummaryEditorClip } from '../shared/library-summary'
 import { loadSettings, getSettingsForBridge } from './settings-store'
 import { assertAbsolutePath, assertMediaPath, isWithinDirectory, openAuthorizedMedia } from './security'
 import { getJobOutput } from './file-manager'
@@ -196,6 +197,24 @@ export async function readEditorProgress(path: unknown): Promise<EditorProgressS
   const operation = operations.get(run)
   return { ...summary.summary, counts: { ...summary.summary.counts }, operation: operation?.action ?? null,
     ...(operation?.batch ? { batch: { ...operation.batch } } : {}), ...(operation?.progress ? { progress: { ...operation.progress } } : {}) }
+}
+
+/** Each clip's title, status, length and score for the Library's clip grid, cached until the project file changes. */
+const clipListCache = new Map<string, { mtimeMs: number; size: number; ino: number; value: { clips: SummaryEditorClip[]; previewPath: string | null } }>()
+export async function readEditorClips(path: unknown): Promise<{ clips: SummaryEditorClip[]; previewPath: string | null }> {
+  const run = runPath(path)
+  const stat = lstatSync(join(run, 'editor-project.json'))
+  if (!stat.isFile()) throw new Error('This run has no editor project')
+  const cached = clipListCache.get(run)
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size && cached.ino === stat.ino) return cached.value
+  const project = readProject(run)
+  let previewPath: string | null = project.media_freed ? null : join(run, mediaNames(project).preview)
+  try { if (previewPath && (lstatSync(previewPath).isSymbolicLink() || !isWithinDirectory(previewPath, run))) previewPath = null } catch { previewPath = null }
+  const value = { previewPath, clips: project.candidates.map((c) => ({ title: c.title, status: c.status, durationMs: editDuration(c), score: c.score, startMs: c.ranges[0][0] })) }
+  clipListCache.delete(run)
+  clipListCache.set(run, { mtimeMs: stat.mtimeMs, size: stat.size, ino: stat.ino, value })
+  if (clipListCache.size > 1000) clipListCache.delete(clipListCache.keys().next().value!)
+  return value
 }
 
 const ctaChoice = (id: string | null | undefined): string => id === undefined ? 'run' : id ?? 'none'

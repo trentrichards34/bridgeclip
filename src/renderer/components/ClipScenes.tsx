@@ -77,8 +77,10 @@ export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onC
   }
   const full = scenes.length >= MAX_SCENES
   return <div className="editor-scenes-row">
-    <div className="editor-scenes-label"><Clapperboard size={12} aria-hidden /><span>Scenes</span>
-      {current && <div className="editor-scenes-tools" role="group" aria-label="Selected scene">
+    <div className="editor-scenes-label editor-lane-head"><Clapperboard size={11} aria-hidden /><span className="editor-lane-name">Scenes</span>
+      <Button size="sm" variant="ghost" iconOnly aria-label="Add scene at playhead" icon={<Plus size={13} />} disabled={disabled || full || !draft} onClick={add}
+        tooltip={full ? `A clip can have up to ${MAX_SCENES} scenes.` : !draft ? `There’s no room at the playhead. A scene needs ${MIN_SCENE_MS / 1000} seconds of the clip that has no other scene.` : 'Add scene at playhead: a Stage scene, a backdrop with you in a card at the bottom, so a graphic has room at the top.'} /></div>
+    {current && <div className="editor-scenes-tools" role="group" aria-label="Selected scene">
         <Segmented<SceneKind> label="Scene" size="sm" value={current.scene} onChange={pick}
           options={(['face', 'stage', 'visual'] as const).map((value) => ({ value, label: SCENE_LABELS[value], ...(disabled ? { disabled: 'Editing is off right now.' } : {}) }))} />
         <Select size="sm" aria-label="Backdrop" value={current.backdrop ?? 'light'} disabled={disabled}
@@ -89,8 +91,6 @@ export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onC
           options={(['rounded', 'arch'] as const).map((value) => ({ value, label: CARD_LABELS[value], ...(disabled ? { disabled: 'Editing is off right now.' } : {}) }))} />}
         <Button size="sm" variant="ghost" iconOnly icon={<Trash2 size={12} />} aria-label="Remove scene" tooltip="Remove this scene. That part goes back to the normal full-frame video." disabled={disabled} onClick={() => remove(selected!)} />
       </div>}
-      <Button size="sm" variant="ghost" icon={<Plus size={12} />} disabled={disabled || full || !draft} onClick={add}
-        tooltip={full ? `A clip can have up to ${MAX_SCENES} scenes.` : !draft ? `There’s no room at the playhead. A scene needs ${MIN_SCENE_MS / 1000} seconds of the clip that has no other scene.` : 'Add a Stage scene at the playhead: a backdrop with you in a card at the bottom, so a graphic has room at the top.'}>Add scene at playhead</Button></div>
     <div className="editor-scenes-track" aria-label="Scenes">
       {scenes.map((s, i) => {
         const a = Math.max(s.start_ms, viewStart), b = Math.min(s.end_ms, viewEnd)

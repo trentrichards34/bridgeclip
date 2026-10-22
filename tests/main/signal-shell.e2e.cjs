@@ -46,7 +46,7 @@ test('Signal frame: grouped sidebar, tool chip, the top bar starts clips from a 
   const bar = page.getByRole('textbox', { name: 'Start from a link, or search' })
   assert.equal(await bar.evaluate((el) => el === document.activeElement), true)
   await nav.getByRole('button', { name: 'Library', exact: true }).click()
-  await page.getByRole('heading', { level: 1, name: 'Library' }).waitFor()
+  await page.getByRole('heading', { level: 1, name: 'Your clips' }).waitFor()
   await bar.fill('https://example.com/talk.mp4')
   await page.getByRole('button', { name: 'Start clips from this link' }).click()
   await page.getByRole('heading', { level: 1, name: 'Turn a long video into clips' }).waitFor()
@@ -56,7 +56,7 @@ test('Signal frame: grouped sidebar, tool chip, the top bar starts clips from a 
   // Anything else searches the Library.
   await bar.fill('pricing talk')
   await page.keyboard.press('Enter')
-  await page.getByRole('heading', { level: 1, name: 'Library' }).waitFor()
+  await page.getByRole('heading', { level: 1, name: 'Your clips' }).waitFor()
   assert.equal(await nav.getByRole('button', { name: 'Library', exact: true }).getAttribute('aria-current'), 'page')
 
   // Ask (and ⌘J / Ctrl+J) opens Chat.

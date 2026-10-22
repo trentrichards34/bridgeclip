@@ -129,6 +129,19 @@ export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): s
   return words.map((w) => w?.trim()).filter(Boolean).join(' · ')
 }
 
+/** The picker's groups (and each graphic's color on the timeline). A template missing here shows under "More". */
+export type GraphicGroup = 'text' | 'lists' | 'diagrams' | 'media' | 'ending'
+export const GRAPHIC_GROUPS: { id: GraphicGroup; label: string; templates: readonly GraphicTemplateId[] }[] = [
+  { id: 'text', label: 'Text', templates: ['title', 'statement', 'big_words', 'headline_pill', 'stat', 'quote', 'lower_third', 'chapter'] },
+  { id: 'lists', label: 'Lists & steps', templates: ['list', 'checklist', 'sticky_notes', 'strike_list', 'before_after', 'icon_pop', 'feature_tile'] },
+  { id: 'diagrams', label: 'Diagrams', templates: ['staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks', 'orbit'] },
+  { id: 'media', label: 'Media', templates: ['logo', 'browser_frame', 'screen_frame', 'highlight'] },
+  { id: 'ending', label: 'Ending', templates: ['comment_cta'] }
+]
+export function graphicGroup(template: GraphicTemplateId): GraphicGroup | 'other' {
+  return GRAPHIC_GROUPS.find((g) => g.templates.includes(template))?.id ?? 'other'
+}
+
 /** The Graphics row on the timeline: one block per graphic at its source time. */
 export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disabled, onSelect, onChange, onDrag, onAdd, clock }: {
   candidate: CandidateEdit; viewStart: number; viewEnd: number; selected: string | null; disabled: boolean
@@ -174,9 +187,9 @@ export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disable
     onChange(updateGraphic(candidate, g.id, { at_ms: g.at_ms + step }), true)
   }
   return <div className="editor-graphics-row">
-    <div className="editor-graphics-label"><Shapes size={12} aria-hidden /><span>Graphics</span>
-      <Button size="sm" variant="ghost" icon={<Plus size={12} />} disabled={disabled || graphics.length >= MAX_GRAPHICS_PER_CLIP} onClick={onAdd}
-        tooltip={graphics.length >= MAX_GRAPHICS_PER_CLIP ? `A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics.` : 'Add an animated graphic (a stat, title, list and more) that starts at the playhead.'}>Add graphic at playhead</Button></div>
+    <div className="editor-graphics-label editor-lane-head"><Shapes size={11} aria-hidden /><span className="editor-lane-name">Graphics</span>
+      <Button size="sm" variant="ghost" iconOnly aria-label="Add graphic at playhead" icon={<Plus size={13} />} disabled={disabled || graphics.length >= MAX_GRAPHICS_PER_CLIP} onClick={onAdd}
+        tooltip={graphics.length >= MAX_GRAPHICS_PER_CLIP ? `A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics.` : 'Add graphic at playhead: an animated graphic (a stat, title, list and more) that starts at the playhead.'} /></div>
     <div className={cn('editor-graphics-track', stacked && 'stacked')} aria-label="Graphics">
       {graphics.map((g, i) => {
         const a = Math.max(g.at_ms, viewStart), b = Math.min(g.at_ms + g.duration_ms, viewEnd)
@@ -184,7 +197,7 @@ export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disable
         const fit = graphicCutFit(candidate, g), offscreen = fit === 'outside', clash = clashes.has(g.id)
         const warning = graphicWarning(fit, clash, g.placement)
         const label = `${templateInfo(g.template).label} at ${clock(g.at_ms)}, ${(g.duration_ms / 1000).toFixed(1)} seconds${warning ? `. ${warning}` : ''}`
-        return <div key={g.id} className={cn('editor-graphic-block', selected === g.id && 'selected', offscreen && 'cut-out', fit === 'partly' && 'partly', clash && 'clash', !graphicHasContent(g) && 'empty', stacked && (lanes[i] ? 'lane-2' : 'lane-1'))}
+        return <div key={g.id} className={cn('editor-graphic-block', `group-${graphicGroup(g.template)}`, selected === g.id && 'selected', offscreen && 'cut-out', fit === 'partly' && 'partly', clash && 'clash', !graphicHasContent(g) && 'empty', stacked && (lanes[i] ? 'lane-2' : 'lane-1'))}
           style={{ left: `${(a - viewStart) / span * 100}%`, width: `${(b - a) / span * 100}%` }}>
           <button className="editor-graphic-edge" aria-label={`Change when ${label} starts`} disabled={disabled} onPointerDown={(e) => startDrag(e, g, 'start')} tabIndex={-1} />
           <button className="editor-graphic-body" aria-label={label} aria-pressed={selected === g.id}
@@ -435,15 +448,22 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
     return <section className="editor-graphics-panel" aria-label="Choose a graphic">
       <div className="flex items-center justify-between gap-2"><p className="text-xs">Choose a graphic</p>{(picking && graphics.length > 0) && <Button size="sm" variant="ghost" onClick={() => onPick(false)}>Cancel</Button>}</div>
       <p className="text-2xs text-ink-subtle">It starts at the playhead ({clock(Math.max(clipStart, Math.min(clipEnd, time)))}). You add the words next; the previews use sample words.</p>
-      <div className="editor-graphic-picker">{GRAPHIC_TEMPLATES.map((t) => <button key={t.id} className="editor-graphic-tile" disabled={disabled || full} onClick={() => add(t.id)} title={t.detail} aria-label={`Add ${t.label}`}>
-        <GraphicView spec={preview(t.id)} width={76} loop />
-        <span>{t.label}</span>
-      </button>)}</div>
+      {[...GRAPHIC_GROUPS, { id: 'other' as const, label: 'More', templates: GRAPHIC_TEMPLATES.map((t) => t.id).filter((id) => graphicGroup(id) === 'other') }].map((group) => {
+        const items = GRAPHIC_TEMPLATES.filter((t) => group.templates.includes(t.id))
+        if (!items.length) return null
+        return <div key={group.id} className={cn('editor-graphic-group', `group-${group.id}`)} role="group" aria-label={group.label}>
+          <p className="editor-graphic-group-label"><span aria-hidden className="editor-graphic-group-dot" />{group.label}<span className="editor-graphic-group-count">{items.length}</span></p>
+          <div className="editor-graphic-picker">{items.map((t) => <button key={t.id} className="editor-graphic-tile" disabled={disabled || full} onClick={() => add(t.id)} title={t.detail} aria-label={`Add ${t.label}`}>
+            <GraphicView spec={preview(t.id)} width={88} loop />
+            <span>{t.label}</span>
+          </button>)}</div>
+        </div>
+      })}
       {full && <p className="text-2xs text-warning">A clip can have up to {MAX_GRAPHICS_PER_CLIP} graphics.</p>}
     </section>
   }
   const clashes = graphicClashes(graphics)
-  const list = <div className="editor-graphic-list" role="list" aria-label="Graphics on this clip">{graphics.map((x) => <button key={x.id} role="listitem" className={cn(x.id === selected && 'selected')}
+  const list = <div className="editor-graphic-list" role="list" aria-label="Graphics on this clip">{graphics.map((x) => <button key={x.id} role="listitem" className={cn(`group-${graphicGroup(x.template)}`, x.id === selected && 'selected')}
     onClick={() => { onSelect(x.id); if (time < x.at_ms || time >= x.at_ms + x.duration_ms) seek(x.at_ms + Math.min(1200, x.duration_ms * .45)) }}>
     <span>{templateInfo(x.template).label}</span>{graphicWarning(graphicCutFit(candidate, x), clashes.has(x.id), x.placement) && <AlertTriangle size={11} className="text-warning" aria-label="Needs a look" />}<span className="text-ink-subtle">{clock(x.at_ms)}</span></button>)}</div>
   return <section className="editor-graphics-panel" aria-label="Graphics">

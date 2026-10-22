@@ -835,6 +835,24 @@ test('progress summaries report counts without the project and refresh when the 
   } finally { f.cleanup() }
 })
 
+test('the Library clip list reads titles, statuses and lengths, refreshes when the file changes, and stays inside the library', async () => {
+  const f = setup()
+  try {
+    const first = await f.main.readEditorClips(f.run)
+    assert.equal(path.basename(first.previewPath), 'editor-preview.mp4')
+    assert.deepEqual(first.clips.map((c) => [c.title, c.status, c.startMs]), fixture.candidates.map((c) => [c.title, 'refining', c.ranges[0][0]]))
+    assert.ok(first.clips.every((c) => c.durationMs > 0 && Number.isFinite(c.score)))
+    assert.equal(JSON.stringify(first).includes('transcript'), false)
+    const project = (await f.main.openEditor(f.run)).project
+    project.candidates[1].status = 'ready'; project.candidates[1].title = 'Renamed'
+    await f.main.saveEditor(f.run, 0, project.candidates)
+    const second = await f.main.readEditorClips(f.run)
+    assert.deepEqual([second.clips[1].status, second.clips[1].title], ['ready', 'Renamed'])
+    await assert.rejects(f.main.readEditorClips(path.join(f.dir, 'elsewhere')), /./)
+    await assert.rejects(f.main.readEditorClips('relative/run'), /./)
+  } finally { f.cleanup() }
+})
+
 test('idle editor runs sweep temporary folders and unreferenced media, never the active pair', async () => {
   const f = setup()
   try {

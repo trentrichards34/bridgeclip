@@ -30,6 +30,7 @@ import type { CaptionLanguage } from '../shared/caption-language'
 import type { MetadataEnhancement, AutomationSourceGroup, AutomationBatchResult, AutomationSourceContext, Automation, AutomationUpdate, AutomationTikTokReview, AutomationTikTokReviewUpdate } from '../shared/automations'
 import type { LibraryClipPostingStatus, LibraryEnhancementOptions, LibraryRunPostingCounts } from '../shared/library-posting'
 import type { ReadyToPostResult } from '../shared/ready-to-post'
+import type { LibrarySummary } from '../shared/library-summary'
 import type { OpenRouterCatalog } from '../shared/openrouter-models'
 import type { UpdateState } from '../shared/updates'
 import type { OutputStorageUsage } from '../shared/output-storage'
@@ -351,6 +352,8 @@ export interface BridgeClipAPI {
     postingSummary: (outputDirs: string[]) => Promise<LibraryRunPostingCounts[]>
     /** Not-posted clips from every Library run (Ready to post). */
     readyToPost: () => Promise<ReadyToPostResult>
+    /** Clip counts by status (refining, ready, exported) and a light row per clip, for the Library and the sidebar. */
+    summary: () => Promise<LibrarySummary>
     setPosted: (outputDir: string, clipIndex: number, posted: boolean) => Promise<boolean>
     metadataSource: (outputDir: string, clipIndex: number) => Promise<AutomationSourceContext | null>
     enhanceMetadata: (outputDir: string, clipIndex: number, options: LibraryEnhancementOptions) => Promise<MetadataEnhancement>
@@ -882,6 +885,7 @@ const api: BridgeClipAPI = {
     postingStatus: (outputDir) => ipcRenderer.invoke('history:postingStatus', outputDir),
     postingSummary: (outputDirs) => ipcRenderer.invoke('history:postingSummary', outputDirs),
     readyToPost: () => ipcRenderer.invoke('history:readyToPost'),
+    summary: () => ipcRenderer.invoke('library:summary'),
     setPosted: (outputDir, clipIndex, posted) => ipcRenderer.invoke('history:setPosted', outputDir, clipIndex, posted),
     metadataSource: (outputDir, clipIndex) => ipcRenderer.invoke('history:metadataSource', outputDir, clipIndex),
     enhanceMetadata: (outputDir, clipIndex, options) => paid('history:enhanceMetadata', outputDir, clipIndex, options),

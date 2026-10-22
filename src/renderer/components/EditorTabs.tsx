@@ -14,6 +14,8 @@ export const EDITOR_TAB_LABELS: Record<EditorTab, string> = {
 }
 const MAIN_TABS: readonly EditorTab[] = ['captions', 'hook', 'graphics', 'chat']
 const MORE_TABS: readonly EditorTab[] = ['framing', 'transcript', 'review']
+/** A shorter name on the menu button, so the row fits a narrow inspector (the button's label keeps the full name). */
+const MORE_SHORT: Partial<Record<EditorTab, string>> = { review: 'Quality' }
 
 export function EditorTabs({ tab, onTab }: { tab: EditorTab; onTab: (tab: EditorTab) => void }): React.JSX.Element {
   const [open, setOpen] = useState(false)
@@ -38,7 +40,7 @@ export function EditorTabs({ tab, onTab }: { tab: EditorTab; onTab: (tab: Editor
       aria-label={inMore ? `${EDITOR_TAB_LABELS[tab]}, more tabs` : 'More tabs'} title="Framing, Transcript and Quality check"
       onClick={() => { fromEnd.current = false; setOpen(!open) }}
       onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); fromEnd.current = e.key === 'ArrowUp'; setOpen(true) } }}>
-      <span>{inMore ? EDITOR_TAB_LABELS[tab] : 'More'}</span><ChevronDown size={12} aria-hidden />
+      <span>{inMore ? MORE_SHORT[tab] ?? EDITOR_TAB_LABELS[tab] : 'More'}</span><ChevronDown size={12} aria-hidden />
     </button>
     {open && <div ref={menu} role="menu" aria-label="More tabs" className="editor-tabs-menu"
       onKeyDown={(e) => {
