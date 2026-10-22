@@ -829,7 +829,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       <div className="editor-center">
         <div className="editor-monitors">
           <div className="editor-source-monitor"><div className="editor-pane-heading">Source <span>{project.width} × {project.height}</span><Button size="sm" variant="ghost" disabled={!!busy || saving} onClick={() => { void chooseReplacement() }}>Replace source video</Button></div>
-            <div className="editor-source-frame" style={{ aspectRatio: project.width / project.height }}>
+            <div className="editor-source-frame" style={{ aspectRatio: project.width / project.height, '--ratio': project.width / project.height } as React.CSSProperties}>
               <video ref={video} src={localFileUrl(session.previewPath)} preload="auto" playsInline
                 onLoadedMetadata={() => { seek(start); if (video.current) video.current.playbackRate = candidate.video_speed * reviewSpeed }}
                 onPlay={() => setPlaying(true)} onPause={() => {
