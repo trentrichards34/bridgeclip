@@ -31,6 +31,7 @@ import { Skeleton } from '../components/ui/Skeleton'
 import { Switch } from '../components/ui/Switch'
 import { useBrands } from '../store/use-brand-store'
 import { useDraftStore } from '../store/use-draft-store'
+import { useMemberPrefsStore } from '../store/use-member-prefs-store'
 import { useRemixForm } from '../store/use-remix-form-store'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, formatRelativeDate, localFileUrl } from '../lib/utils'
@@ -89,8 +90,14 @@ function boardOf(look: BrandLook, extras: readonly LookExtraId[]): BoardStyle {
 const PREVIEW_ROWS: BoardRows = { hooks: LOOK_HOOKS, handle: true, cta: true, keyword: true, extras: true }
 const CARD_ROWS: BoardRows = { hooks: LOOK_HOOKS }
 
-/** Make a brand the default look: Create and Remix pick it, and its look fills their forms (as picking it there does). */
+/**
+ * Make a brand the default look: it's saved as the default every tool starts
+ * from, Create and Remix pick it, and its look fills their forms (as picking
+ * it there does).
+ */
 export function makeDefaultLook(brand: BrandIdentity): void {
+  useMemberPrefsStore.setState({ defaultBrandId: brand.id })
+  void useMemberPrefsStore.getState().saveApp({ defaultBrandId: brand.id }).catch(() => undefined)
   const draft = useDraftStore.getState()
   draft.update({ brandIdentityId: brand.id, ...brandFormPatch(brand.look, draft), ...(brand.look?.captionPreset ? { includeCaptions: true } : {}) })
   const remix = useRemixForm.getState()
@@ -115,7 +122,7 @@ function lookSummary(look: BrandLook): string {
  */
 export function BrandLookPage(): React.JSX.Element {
   const { brands, loaded, load, setBrands, error: loadError } = useBrands()
-  const defaultId = useDraftStore((state) => state.brandIdentityId)
+  const defaultId = useMemberPrefsStore((state) => state.defaultBrandId)
   const [selected, setSelected] = useState<string | 'new' | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -155,7 +162,7 @@ export function BrandLookPage(): React.JSX.Element {
           <EmptyState
             icon={<Star />}
             title="No look yet"
-            description="Make your look once: your color, hook type, caption style, handle and call to action, plus your brand’s voice for titles. Create and Remix start from it."
+            description="Make your look once: your color, hook type, caption style, handle and call to action, plus your brand’s voice for titles. Every tool starts from it."
             action={<Button variant="primary" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setSelected('new')}>New look</Button>}
           />
         ) : (
@@ -178,10 +185,16 @@ export function BrandLookPage(): React.JSX.Element {
           onCancelNew={() => setSelected(brands.find((item) => item.id === defaultId)?.id ?? brands[0]?.id ?? null)}
           onDelete={(target) => setConfirm({
             title: `Delete “${target.name}”?`,
-            body: target.id === defaultId ? 'This is your default look. Create and Remix go back to no brand.' : 'Its look and voice are removed. Clips already made keep their look.',
+            body: target.id === defaultId ? 'This is your default look. New videos start with no brand look until you make another one the default.' : 'Its look and voice are removed. Clips already made keep their look.',
             confirmLabel: 'Delete look',
             onConfirm: () => {
-              void getApi().brandIdentities.remove(target.id).then((list) => { setBrands(list); setSelected(null); setNotice(`Deleted “${target.name}”`) })
+              void getApi().brandIdentities.remove(target.id).then((list) => {
+                if (target.id === defaultId) {
+                  useMemberPrefsStore.setState({ defaultBrandId: null })
+                  void useMemberPrefsStore.getState().saveApp({ defaultBrandId: null }).catch(() => undefined)
+                }
+                setBrands(list); setSelected(null); setNotice(`Deleted “${target.name}”`)
+              })
                 .catch((err) => setNotice(errorMessage(err, 'The look could not be deleted.')))
             }
           })} />
@@ -332,7 +345,7 @@ function LookEditor({ brand, isDefault, firstLook, onSaved, onCancelNew, onDelet
           {brand && (isDefault
             ? <span className="inline-flex items-center gap-1 text-xs font-medium text-tool" data-testid="default-look"><Check className="h-3.5 w-3.5" />Default look</span>
             : <Button size="sm" variant="secondary" icon={<Star className="h-3.5 w-3.5" />} disabled={working || (dirty && !canSave)} onClick={() => void makeDefault()}
-              tooltip="Create and Remix start from this look">Make default</Button>)}
+              tooltip="Every tool starts from this look">Make default</Button>)}
           {brand && <Button size="sm" variant="ghost" iconOnly aria-label={`Delete ${brand.name}`} icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => onDelete(brand)} tooltip="Delete this look" />}
         </div>
 
@@ -394,7 +407,7 @@ function LookEditor({ brand, isDefault, firstLook, onSaved, onCancelNew, onDelet
               )
             })}
           </div>
-          <p className="text-2xs text-ink-subtle">{hook ? HEADLINE_LOOKS.find((item) => item.id === hook.look)?.hint : 'Pick one to save a hook look with this look. Until then Create and Remix keep their own.'}</p>
+          <p className="text-2xs text-ink-subtle">{hook ? HEADLINE_LOOKS.find((item) => item.id === hook.look)?.hint : 'Pick one to save a hook look with this look. Until then each tool keeps its own.'}</p>
           {hook?.look === 'floating' && (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold text-ink">Text background</span>

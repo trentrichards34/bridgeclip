@@ -19,6 +19,8 @@ interface MemberPrefsState {
   sampleVideoLink: string
   /** What the member wants to make and where they post; 'new' opens the guided setup. */
   profile: CreatorProfile
+  /** The brand look every tool starts from (Brand look → Make default); null for none. */
+  defaultBrandId: string | null
   /** Load once at startup: applies the remembered styles, then keeps them saved. */
   load: () => Promise<void>
   savePreset: (kind: StyleKind, name: string) => Promise<void>
@@ -68,7 +70,7 @@ function startPersisting(): void {
 let loading: Promise<void> | null = null
 
 export const useMemberPrefsStore = create<MemberPrefsState>((set) => {
-  const take = (prefs: MemberPrefs): void => set({ loaded: true, presets: prefs.presets, supportLink: prefs.supportLink, notifyOnFinish: prefs.notifyOnFinish, setupChecklistDismissed: prefs.setupChecklistDismissed, sampleVideoLink: prefs.sampleVideoLink, profile: prefs.profile ?? { ...DEFAULT_PROFILE, onboarding: 'skipped' } })
+  const take = (prefs: MemberPrefs): void => set({ loaded: true, presets: prefs.presets, supportLink: prefs.supportLink, notifyOnFinish: prefs.notifyOnFinish, setupChecklistDismissed: prefs.setupChecklistDismissed, sampleVideoLink: prefs.sampleVideoLink, profile: prefs.profile ?? { ...DEFAULT_PROFILE, onboarding: 'skipped' }, defaultBrandId: prefs.defaultBrandId ?? null })
   return {
     loaded: false,
     presets: { create: [], remix: [] },
@@ -77,6 +79,7 @@ export const useMemberPrefsStore = create<MemberPrefsState>((set) => {
     setupChecklistDismissed: false,
     sampleVideoLink: '',
     profile: { ...DEFAULT_PROFILE },
+    defaultBrandId: null,
     load: () => {
       // Optional: a renderer hot-reloaded over an older preload has no prefs bridge.
       if (!getApi().prefs) return Promise.resolve()

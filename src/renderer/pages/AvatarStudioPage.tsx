@@ -36,6 +36,8 @@ import { Select } from '../components/ui/Select'
 import { SettingRow } from '../components/ui/SettingRow'
 import { Switch } from '../components/ui/Switch'
 import { getApi } from '../lib/ipc'
+import { brandHeadlineLook, useDefaultLookSeed } from '../lib/default-look'
+import type { BrandIdentity } from '../../shared/remix'
 import { requestSettingsSection } from '../lib/settings-focus'
 import { clipFilePath } from '../lib/thumbnails'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
@@ -92,6 +94,22 @@ const useStudioDraft = create<StudioDraft>((set) => ({
   update: (patch) => set(patch)
 }))
 
+type AvatarLookFields = Pick<StudioDraft, 'brandIdentityId' | 'captionPreset' | 'headlineLook' | 'ctaId' | 'handleBrandId'>
+
+/** The look fields a brand sets on an avatar video. */
+function avatarLookFields(draft: AvatarLookFields): AvatarLookFields {
+  return { brandIdentityId: draft.brandIdentityId, captionPreset: draft.captionPreset, headlineLook: draft.headlineLook, ctaId: draft.ctaId, handleBrandId: draft.handleBrandId }
+}
+
+/** A brand's look as an avatar video's look (the app's defaults where it saved nothing). */
+function avatarLookFromBrand(brand: BrandIdentity | null): AvatarLookFields {
+  const look = brand?.look
+  return {
+    brandIdentityId: brand?.id ?? null, captionPreset: look?.captionPreset ?? DEFAULT_CAPTION_PRESET, headlineLook: brandHeadlineLook(look, DEFAULT_HEADLINE_LOOK),
+    ctaId: look?.ctaId ?? null, handleBrandId: brand && hasBrandMark(look) ? brand.id : null
+  }
+}
+
 /** The member's avatars; null until the first load. Kept across visits so the page doesn't flash empty. */
 export const useAvatarList = create<{ avatars: AvatarSummary[] | null }>(() => ({ avatars: null }))
 const setAvatars = (avatars: AvatarSummary[]): void => useAvatarList.setState({ avatars })
@@ -125,6 +143,9 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
   const markBrands = brands.filter((brand) => hasBrandMark(brand.look))
   const handleBrand = markBrands.find((brand) => brand.id === draft.handleBrandId) ?? null
   const handleChoice = handleBrand ? { brandIdentityId: handleBrand.id, showHandle: true } : {}
+  // Starts from the default brand look (Brand look); a look picked here is for this video only.
+  useDefaultLookSeed('avatar-studio', () => avatarLookFields(useStudioDraft.getState()), avatarLookFields(useStudioDraft.getInitialState()),
+    avatarLookFromBrand, (fields) => useStudioDraft.getState().update(fields))
 
   useEffect(() => {
     let live = true

@@ -134,6 +134,30 @@ test('a library that could not be read keeps its saved ids (only items known to 
   assert.deepEqual(plain(kept.presets.remix[0].style), { avatarId: AVATAR, brandIdentityId: BRAND })
 })
 
+test('the default brand look: its own pref (older prefs use the last Create brand), checked, saved and dropped when deleted', () => {
+  const OTHER = 'c'.repeat(16)
+  // Older prefs had no default of their own: the brand of the last Create style was the default.
+  assert.equal(shared.parseMemberPrefs({ create: { brandIdentityId: BRAND } }).defaultBrandId, BRAND)
+  assert.equal(shared.parseMemberPrefs({}).defaultBrandId, null)
+  // Once saved, it is its own setting: a brand picked on Create for one video doesn't change it.
+  assert.equal(shared.parseMemberPrefs({ create: { brandIdentityId: OTHER }, defaultBrandId: BRAND }).defaultBrandId, BRAND)
+  assert.equal(shared.parseMemberPrefs({ create: { brandIdentityId: OTHER }, defaultBrandId: null }).defaultBrandId, null)
+  assert.equal(shared.parseMemberPrefs({ defaultBrandId: '../brand' }).defaultBrandId, null)
+  // A deleted brand stops being the default (an unreadable list keeps it).
+  const prefs = shared.parseMemberPrefs({ defaultBrandId: BRAND })
+  assert.equal(shared.dropMissing(prefs, { ctaIds: null, avatarIds: null, brandIds: new Set([OTHER]), backgrounds: null }).defaultBrandId, null)
+  assert.equal(shared.dropMissing(prefs, { ctaIds: null, avatarIds: null, brandIds: null, backgrounds: null }).defaultBrandId, BRAND)
+
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'member-prefs-default-'))
+  const main = load('main/member-prefs.ts', { electron: { app: { getPath: () => userData } } })
+  assert.equal(main.saveAppPrefs({ defaultBrandId: BRAND }).defaultBrandId, BRAND)
+  main.saveLastStyle('create', { brandIdentityId: OTHER })
+  assert.equal(main.readMemberPrefs().defaultBrandId, BRAND, 'the last Create style never moves the default')
+  assert.equal(main.saveAppPrefs({ defaultBrandId: null }).defaultBrandId, null)
+  assert.throws(() => main.saveAppPrefs({ defaultBrandId: 'not-a-brand' }), /no longer exists/)
+  assert.equal(main.readMemberPrefs().defaultBrandId, null)
+})
+
 test('prefs:load treats a failed library read as unknown, not as empty', () => {
   const handlers = fs.readFileSync(path.join(__dirname, '../../src/main/ipc-handlers.ts'), 'utf8')
   assert.match(handlers, /listCtas\(\)\.catch\(\(\) => null\), listAvatars\(\)\.catch\(\(\) => null\), listBrandIdentities\(\)\.catch\(\(\) => null\), listBackgrounds\(\)\.catch\(\(\) => null\)/)
