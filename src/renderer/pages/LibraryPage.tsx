@@ -264,7 +264,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
   const openClip = (item: LibraryClipItem, editor: boolean): void => {
     const entry = entryFor(item.outputDir)
     if (!entry) { setError('This run is no longer in the Library list. Refresh the Library and try again.'); void load(); return }
-    void openRun(entry, editor || item.status !== 'exported' ? undefined : item.index, false, editor ? item.index : undefined)
+    void openRun(entry, undefined, false, editor ? item.index : undefined)
   }
   const pickStatus = (status: ClipFilter): void => {
     setView('clips')
@@ -319,7 +319,7 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
       {entries && entries.length > 0 && (
         <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-3">
           <h2 className="font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">
-            {view === 'runs' ? 'All runs' : view === 'ready' ? 'Ready to post' : clipFilter === 'all' ? 'All clips' : `${clipFilter === 'processing' ? 'Processing' : clipFilter === 'refining' ? 'Refining' : clipFilter === 'ready' ? 'Ready' : 'Exported'} clips`}
+            {view === 'runs' ? 'Runs' : view === 'ready' ? 'Ready to post' : clipFilter === 'all' ? 'All clips' : `${clipFilter === 'processing' ? 'Processing' : clipFilter === 'refining' ? 'Refining' : clipFilter === 'ready' ? 'Ready' : 'Exported'} clips`}
           </h2>
           {view === 'runs' && <span className="font-mono text-xs tabular text-ink-subtle">{filtered.length}</span>}
           {view === 'clips' && clipFilter !== 'all' && <Button size="sm" variant="ghost" onClick={() => setClipFilter('all')}>Show every status</Button>}
@@ -423,8 +423,8 @@ export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNa
               ...(bookmarked.length ? [{ key: 'bookmarked', title: 'Bookmarked', items: bookmarked }] : []),
               ...(recent.length ? [{ key: 'recent', title: bookmarked.length ? 'Recent runs' : 'All runs', items: recent }] : [])
             ].flatMap(group => [
-              // With no bookmarks, the list's own "All runs" heading above says it all.
-              bookmarked.length > 0 && <div key={`heading:${group.key}`} data-library-layout={`heading:${group.key}`} className="library-section-heading">
+              // Always a heading, so bookmarking the only card never shifts it (no layout animation).
+              <div key={`heading:${group.key}`} data-library-layout={`heading:${group.key}`} className="library-section-heading">
                 {group.key === 'bookmarked' && <Bookmark size={14} className="text-tool" fill="currentColor" aria-hidden />}
                 <h2 className="eyebrow !text-ink-muted">{group.title}</h2>
                 <span className="font-mono text-2xs tabular text-ink-subtle">{group.items.length}</span>

@@ -66,8 +66,8 @@ test('an Automatic clip shows what the run did; Restore puts back the pauses and
   // It fits the inspector: nothing spills sideways.
   const overflow = await page.locator('.editor-inspector').evaluate((el) => el.scrollWidth - el.clientWidth)
   assert.ok(overflow <= 1, `the inspector spills ${overflow}px sideways`)
-  const box = await log.boundingBox()
-  assert.ok(box.width <= 320, `the log is ${box.width}px wide`)
+  const box = await log.boundingBox(), panel = await page.locator('.editor-inspector').boundingBox()
+  assert.ok(box.width <= panel.width && box.x >= panel.x - 1 && box.x + box.width <= panel.x + panel.width + 1, `the log is ${box.width}px wide in a ${panel.width}px inspector`)
   const shots = process.env.BRIDGECLIP_E2E_SHOTS
   if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, 'edit-log-editor.png') }) }
 
