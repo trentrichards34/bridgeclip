@@ -34,7 +34,7 @@ export function referenceLookLine(look: ReferenceLook): string {
  * "Say what it's for": an optional one-line purpose and an optional reference picture ("A look you like"), both
  * passed to the AI planning call. A suggested look is worked out from the picture on this computer.
  */
-export function PurposeFields({ purpose, onPurpose, reference, onReference, model, onUseLook, purposeHelp, disabled }: {
+export function PurposeFields({ purpose, onPurpose, reference, onReference, model, onUseLook, purposeHelp, disabled, labelHidden }: {
   purpose: string
   onPurpose: (purpose: string) => void
   reference: ReferenceImage | null
@@ -45,6 +45,8 @@ export function PurposeFields({ purpose, onPurpose, reference, onReference, mode
   onUseLook?: (look: ReferenceLook) => void
   purposeHelp?: string
   disabled?: boolean
+  /** The page already titles the section "What's it for?": the field's own label is for screen readers only. */
+  labelHidden?: boolean
 }): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [choosing, setChoosing] = useState(false)
@@ -88,7 +90,7 @@ export function PurposeFields({ purpose, onPurpose, reference, onReference, mode
   return (
     <section className="space-y-3" aria-label="Say what it’s for" data-testid="purpose-fields">
       <label className="block">
-        <span className="mb-1 flex items-baseline justify-between gap-2">
+        <span className={cn('mb-1 flex items-baseline justify-between gap-2', labelHidden && 'sr-only')}>
           <span className="text-sm font-medium text-ink">What’s this video for?</span>
           <span className="text-2xs text-ink-subtle">Optional</span>
         </span>

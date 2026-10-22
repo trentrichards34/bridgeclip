@@ -116,7 +116,7 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
     </div>}
     {items.length > 0 && !picking && <div className="flex flex-wrap gap-1.5" role="list" aria-label="Your graphics">
       {items.map((item) => <button key={item.id} type="button" role="listitem" onClick={() => setSelected(item.id)}
-        className={cn('rounded-full border px-2.5 py-1 text-2xs', item.id === selected ? 'border-accent/70 bg-accent/15 text-ink' : 'border-white/10 text-ink-muted hover:text-ink')}>
+        className={cn('rounded-full border px-2.5 py-1 text-2xs', item.id === selected ? 'border-tool/70 bg-tool/15 text-ink' : 'border-white/10 text-ink-muted hover:text-ink')}>
         {item.problem && <AlertTriangle className="mr-1 inline h-3 w-3 text-warning" aria-hidden />}{templateInfo(item.template).label} {item.where}
       </button>)}
     </div>}
@@ -189,7 +189,7 @@ export function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, on
         {(frame.blocked ?? []).map(([a, b], i) => <div key={i} className="absolute inset-x-0 border-y border-white/30 bg-white/10" style={{ top: `${a * 100}%`, height: `${(b - a) * 100}%` }} />)}
         {frame.captions && <div className="absolute inset-x-6 h-[3px] rounded bg-white/50" style={{ top: `${frame.captions.y * 100}%` }} />}
         <div className="absolute inset-0" style={{ outline: 'none' }}><GraphicView spec={spec} time={Math.round(spec.duration_ms * 0.8)} width={132} /></div>
-        <div className="pointer-events-none absolute inset-x-0 border border-dashed border-accent/60" style={{ top: `${box.top * 100}%`, height: `${(box.bottom - box.top) * 100}%` }} />
+        <div className="pointer-events-none absolute inset-x-0 border border-dashed border-tool/60" style={{ top: `${box.top * 100}%`, height: `${(box.bottom - box.top) * 100}%` }} />
       </div>
       <p className="text-[10px] leading-tight text-ink-subtle">{(frame.blocked ?? []).length ? 'Graphics stay clear of the hook text, the captions and their clip.' : 'Graphics stay clear of the hook text and the captions.'}</p>
     </div>

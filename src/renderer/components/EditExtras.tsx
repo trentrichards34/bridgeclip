@@ -46,7 +46,7 @@ export function EditStylePicker({ recipe, extras, onRecipe, onExtras }: {
           return (
             <button key={extra.id} type="button" aria-pressed={on} title={extra.detail}
               onClick={() => onExtras(on ? extras.filter((id) => id !== extra.id) : [...extras, extra.id])}
-              className={cn('rounded-full px-2.5 py-1 text-2xs transition-colors', on ? 'bg-accent/20 text-accent' : 'bg-white/[0.05] text-ink-muted hover:text-ink')}>
+              className={cn('rounded-full px-2.5 py-1 text-2xs transition-colors', on ? 'bg-tool/20 text-tool' : 'bg-white/[0.05] text-ink-muted hover:text-ink')}>
               {extra.label}
             </button>
           )
@@ -154,7 +154,7 @@ export function MyImages({ images, pins, wordText, pinning, onPinning, onUnpin, 
         onDragOver={(e) => e.preventDefault()}
         onDragLeave={() => { depth.current = Math.max(0, depth.current - 1); if (depth.current === 0) setDragging(false) }}
         onDrop={(e) => { e.preventDefault(); depth.current = 0; setDragging(false); if (!full) void dropImages(e.dataTransfer.files, onImages, onError) }}
-        className={cn('space-y-2 rounded-xl border border-dashed p-3', dragging ? 'border-accent bg-accent/10' : 'border-white/15')}
+        className={cn('space-y-2 rounded-xl border border-dashed p-3', dragging ? 'border-tool bg-tool/10' : 'border-white/15')}
         data-testid="edit-images-drop">
         {images.length > 0 && (
           <ul className="space-y-1.5" aria-label="My images">
@@ -165,7 +165,7 @@ export function MyImages({ images, pins, wordText, pinning, onPinning, onUnpin, 
                   <img src={localFileUrl(image.path)} alt="" className="h-10 w-10 rounded-lg bg-black/30 object-contain" />
                   <span className="min-w-0 max-w-[12rem] truncate text-xs text-ink">{image.name}</span>
                   {mine.map((pin) => (
-                    <span key={pin.word} className="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-2xs text-accent">
+                    <span key={pin.word} className="inline-flex items-center gap-1 rounded-full bg-tool/15 px-2 py-0.5 text-2xs text-tool">
                       on {wordText(pin.word)}
                       <button type="button" aria-label={`Unpin from ${wordText(pin.word)}`} onClick={() => onUnpin(pin)}><X className="h-3 w-3" /></button>
                     </span>

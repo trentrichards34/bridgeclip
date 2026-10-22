@@ -55,7 +55,7 @@ export function SkillsPanel({ rows, onToggle, onMore, expand, intro, className, 
   return (
     <section aria-labelledby="skills-title" className={cn('glass-tile rounded-2xl p-3', className)} data-testid="skills-panel">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-        <h3 id="skills-title" className="flex items-center gap-1.5 text-sm font-semibold text-ink"><Wand2 className="h-4 w-4 text-accent" aria-hidden />Skills</h3>
+        <h3 id="skills-title" className="flex items-center gap-1.5 text-sm font-semibold text-ink"><Wand2 className="h-4 w-4 text-tool" aria-hidden />Skills</h3>
         <p className="text-2xs text-ink-subtle">{intro ?? 'Turn each part on or off. The detailed settings stay below.'}</p>
       </div>
       <ul className="grid gap-1.5 sm:grid-cols-2" aria-label="Skills">
@@ -73,7 +73,7 @@ export function SkillsPanel({ rows, onToggle, onMore, expand, intro, className, 
                 <p className="mt-0.5 text-2xs leading-snug text-ink-subtle">{skill.disabledReason ?? skill.note ?? skill.detail}</p>
                 {more && (
                   <button type="button" onClick={more} aria-expanded={detail ? expanded : undefined} aria-controls={detail ? `skill-more-${skill.id}` : undefined}
-                    className="mt-0.5 rounded text-2xs font-medium text-accent hover:underline focus-visible:underline">
+                    className="mt-0.5 rounded text-2xs font-medium text-tool hover:underline focus-visible:underline">
                     {expanded ? 'Fewer options' : 'More options'}
                   </button>
                 )}
@@ -89,7 +89,7 @@ export function SkillsPanel({ rows, onToggle, onMore, expand, intro, className, 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="flex min-w-0 items-center gap-1.5 text-2xs text-ink-muted"><Music2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
               Music: <span className="truncate font-medium text-ink">{missing ? 'Your track was removed. Choose another.' : musicTrackLabel(music.track ?? MUSIC_TRACKS[0].id)}</span></p>
-            <button type="button" aria-expanded={picking} onClick={() => setPicking(!picking)} className="rounded text-2xs font-medium text-accent hover:underline focus-visible:underline">
+            <button type="button" aria-expanded={picking} onClick={() => setPicking(!picking)} className="rounded text-2xs font-medium text-tool hover:underline focus-visible:underline">
               {picking ? 'Done' : missing ? 'Choose music' : 'Change music'}
             </button>
           </div>

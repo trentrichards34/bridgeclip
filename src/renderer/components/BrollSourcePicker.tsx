@@ -56,7 +56,7 @@ export function BrollSourcePicker({ value, onChange, onOpenLibrary, disabled = f
         {picked?.detail ?? noneText}
         {current && usesLibrary(current) && ` ${usableShots} shot${usableShots === 1 ? '' : 's'} ready in your library.`}
         {onOpenLibrary && (
-          <> <button type="button" className="text-accent hover:underline" onClick={onOpenLibrary}>Open my B-roll library</button></>
+          <> <button type="button" className="text-tool hover:underline" onClick={onOpenLibrary}>Open my B-roll library</button></>
         )}
       </p>
       {current && usesAi(current) && <p className="text-2xs text-ink-subtle" data-testid="broll-ai-estimate">AI shots: {aiEstimateLine(ai)} Set the model and limit in Settings → AI b-roll.</p>}

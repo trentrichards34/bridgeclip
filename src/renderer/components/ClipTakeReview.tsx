@@ -202,7 +202,7 @@ export function ClipTakeReview({ status, onError, onOpenKeys }: { status: RemixS
               onClick={() => void write()}>{draft.headline ? 'Rewrite from what I said' : react ? 'Write my hook text, caption and b-roll plan' : 'Write my hook text and caption'}</Button>
           )}
           {!showText && (
-            <button type="button" className="block text-2xs text-accent" onClick={() => setWriteOwn(true)}>Or write the hook text and caption yourself</button>
+            <button type="button" className="block text-2xs text-tool" onClick={() => setWriteOwn(true)}>Or write the hook text and caption yourself</button>
           )}
           {showText && <>
             <Field label="Hook text" hint={`${wordCount(current.headline)} / ${REMIX_WORD_LIMITS.headline} words · shown at the top and used as the video’s title in your Library`}>
@@ -269,7 +269,7 @@ function BrollSection({ view, step, busy, working, canPlan, onView, onError, set
         onDragOver={(e) => e.preventDefault()}
         onDragLeave={() => { depth.current = Math.max(0, depth.current - 1); if (depth.current === 0) setDragging(false) }}
         onDrop={(e) => { e.preventDefault(); depth.current = 0; setDragging(false); if (!busy && !full && e.dataTransfer.files?.length) void add() }}
-        className={cn('space-y-2 rounded-xl border border-dashed p-3', dragging ? 'border-accent bg-accent/10' : 'border-white/15')}
+        className={cn('space-y-2 rounded-xl border border-dashed p-3', dragging ? 'border-tool bg-tool/10' : 'border-white/15')}
         data-testid="broll-drop">
         {view.items.length > 0 && (
           <ul className="grid gap-2 sm:grid-cols-2" aria-label="Your b-roll clips">
@@ -296,7 +296,7 @@ function BrollSection({ view, step, busy, working, canPlan, onView, onError, set
       <SettingRow title="Fill gaps with stock footage" description={view.stock ? 'Stock clips from Pexels fill the moments your own clips don’t cover.' : 'Off: only your own clips and pictures are used.'}
         control={<Switch label="Fill gaps with stock footage" checked={view.stock} disabled={busy} onChange={(on) => void act('broll', () => getApi().remix.brollStock(on), 'It could not be changed.')} />} />
       {view.stock && !view.pexels && (
-        <p className="text-2xs text-warning">Stock footage needs a free Pexels key. <button type="button" className="text-accent underline" onClick={onOpenKeys}>Add it in Settings → API keys</button></p>
+        <p className="text-2xs text-warning">Stock footage needs a free Pexels key. <button type="button" className="text-tool underline" onClick={onOpenKeys}>Add it in Settings → API keys</button></p>
       )}
       {view.plan && (
         <div className="space-y-2">

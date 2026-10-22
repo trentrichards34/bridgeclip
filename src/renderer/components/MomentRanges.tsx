@@ -106,7 +106,7 @@ export function MomentRanges({ value, lengthSeconds, disabled, onChange }: {
         onDragOver={(e) => { if (!disabled) { e.preventDefault(); setDragging(-1) } }} onDragLeave={() => setDragging(null)}
         onDrop={(e) => { e.preventDefault(); setDragging(null); take(null, imageFrom(e.dataTransfer.items, e.dataTransfer.files)) }}
         className={cn('flex items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 px-3 py-3 text-2xs text-ink-muted outline-none focus-visible:border-accent',
-          dragging === -1 && 'border-accent text-ink')}>
+          dragging === -1 && 'border-tool text-ink')}>
         <ImagePlus className="h-3.5 w-3.5" />{reading !== null ? 'Reading the time on your screenshot…' : 'Click here and paste (Ctrl+V or ⌘V), or drop a screenshot of the player, to add a range'}
       </div>
       {problem?.row === -1 && <p className="text-2xs text-warning" role="alert">{problem.text}</p>}
@@ -118,7 +118,7 @@ export function MomentRanges({ value, lengthSeconds, disabled, onChange }: {
           <div key={index} role="group" aria-label={`Range ${index + 1}`}
             onDragOver={(e) => { if (!disabled) { e.preventDefault(); setDragging(index) } }} onDragLeave={() => setDragging(null)}
             onDrop={(e) => { e.preventDefault(); setDragging(null); take(index, imageFrom(e.dataTransfer.items, e.dataTransfer.files)) }}
-            className={cn('glass-tile space-y-2 rounded-xl p-2.5', dragging === index && 'ring-2 ring-accent')}>
+            className={cn('glass-tile space-y-2 rounded-xl p-2.5', dragging === index && 'ring-2 ring-tool')}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="w-16 text-2xs font-medium text-ink-muted">Range {index + 1}</span>
               <TextInput aria-label={`Range ${index + 1} start`} value={row.start} placeholder="mm:ss" maxLength={12} disabled={disabled} className="w-24"

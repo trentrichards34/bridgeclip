@@ -42,7 +42,7 @@ export function EditLog<P>({ lines, onRestore, onUndo, disabled, note, className
           ? <span className="min-w-0 truncate text-xs font-semibold text-ink">{lines.length ? `${lines.length} ${lines.length === 1 ? 'change' : 'changes'} the app made` : 'What changed: all restored'}</span>
           : <><span className="text-xs font-semibold text-ink">What changed</span>
             <span className="text-2xs text-ink-subtle">· {lines.length ? count : 'all restored'}</span></>}
-        <span className="ml-auto shrink-0 text-2xs text-accent" aria-hidden={variant !== 'strip'}>{open ? 'Hide' : 'Show'}</span>
+        <span className="ml-auto shrink-0 text-2xs text-tool" aria-hidden={variant !== 'strip'}>{open ? 'Hide' : 'Show'}</span>
         <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform", open && "rotate-180")} aria-hidden />
       </button>
       {open && <>

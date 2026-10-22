@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, Check, Combine, FolderOpen, Library, Scissors, Video, X } from 'lucide-react'
+import { Check, Combine, Library, Loader2, Plus, Scissors, Video, X } from 'lucide-react'
 import {
   DEFAULT_EDIT_LOOK, EDIT_MAX_SOURCES, EDIT_MAX_TOTAL_SECONDS, aboutUsd, editEstimate, formatClock, formatUsd, isRunningEdit,
   type EditLook, type EditPlan, type EditSource, type EditStatus, type FilmIdea
@@ -26,6 +26,10 @@ import { Callout } from '../components/ui/Callout'
 import { Page } from '../components/ui/Page'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Panel, PanelHeader } from '../components/ui/Panel'
+import { IconTile } from '../components/ui/IconTile'
+import { Checklist, LookCard, lookColors, MakerAside, MakerLayout, MakerSection, PhoneFrame } from '../components/maker/Maker'
+import { previewFrame, StyleBoard } from '../components/StyleBoard'
+import { boardFromLook, LOOK_HOOKS, lookPatch, styleSummary } from '../lib/style-board'
 import { ProgressBar } from '../components/ui/ProgressBar'
 import { Segmented } from '../components/ui/Segmented'
 import { getApi } from '../lib/ipc'
@@ -75,6 +79,8 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const [starting, setStarting] = useState(false)
   const [recorder, setRecorder] = useState<{ hook: string; points: string[] } | null | false>(false)
   const [hookHint, setHookHint] = useState('')
+  // "Customize for this video": the look controls under the Look card.
+  const [lookOpen, setLookOpen] = useState(false)
   // "Say what it's for" (this recording only).
   const [purpose, setPurpose] = useState('')
   const [reference, setReference] = useState<ReferenceImage | null>(null)
@@ -177,11 +183,12 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
 
   const openKeys = (): void => { requestSettingsSection('keys'); onNavigate('settings') }
 
-  return (
-    <Page width="default">
-      <PageHeader eyebrow="Studio" title="Edit my recording"
-        description="Drop in a raw recording of you talking to camera, a few takes of it, or several short clips to combine. You get back one finished vertical reel: retakes and filler words cut, your strongest hook first, captions, pop-ups and sound." />
-
+  const header = (
+    <PageHeader eyebrow="Studio" title="Raw takes in, one finished reel out"
+      description="Fluffed lines and “let me say that again” are fine. The edit keeps your best take, cuts filler and puts the strongest hook first." />
+  )
+  const notices = (
+    <>
       {!openrouterConfigured && (
         <Callout tone="info" className="mt-4" title="Add your OpenRouter key to start" action={<Button size="sm" onClick={openKeys}>Open API keys</Button>}>
           Your recording is transcribed and the edit is planned through your OpenRouter account. The reel itself is made on this computer.
@@ -192,6 +199,162 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
         <Callout tone="danger" className="mt-4"><FriendlyError error={status.error} /></Callout>
       )}
       {lowDisk.element}
+    </>
+  )
+  const setup = !busy && !reviewing && status?.phase !== 'done'
+
+  // What still stands between the member and "Edit my recording", said under the button.
+  const blocker = !openrouterConfigured ? 'Add your OpenRouter key first.'
+    : importing ? 'Your clips are still being added.'
+      : !sources.length ? (combine ? 'Add your clips first.' : 'Add a take first.')
+        : combine && sources.length < 2 ? 'Add at least one more clip to combine.'
+          : tooLong ? (combine ? 'Your clips are too long in all.' : 'Your takes are too long in all.')
+            : withScreen && sources.length !== 1 ? 'A screen recording goes with one camera recording.'
+              : !screenReady ? 'Your screen recording is still being lined up.' : null
+  const canStart = !blocker && !starting
+  const label = combine ? 'clip' : 'take'
+  const tileClass = 'flex aspect-[9/15] w-full flex-col items-center justify-center gap-2 rounded-xl border-[1.5px] border-dashed px-2 text-center text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50'
+  const brandColor = brand?.look?.color ?? null
+  const lookRows = { hooks: LOOK_HOOKS, handle: true } as const
+  const lookSummary = styleSummary(boardFromLook(look), lookRows, { brandColor, hasMark: hasBrandMark(brand?.look), corner: brand?.look?.handlePosition })
+  const firstSource = listed[0] ?? null
+
+  const takes = (
+    <MakerSection number={2} title={combine ? 'Your clips' : 'Your takes'}
+      aside={combine ? `Up to ${COMBINE_MAX_CLIPS} clips, or a .zip` : `Up to ${EDIT_MAX_SOURCES} · MP4, MOV, WebM, M4V or MKV`}>
+      <div data-testid="edit-sources-drop"
+        onDragEnter={(e) => { e.preventDefault(); dragDepth.current += 1; if (sources.length < maxSources) setDragging(true) }}
+        onDragOver={(e) => e.preventDefault()}
+        onDragLeave={() => { dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragging(false) }}
+        // A dropped file can't grant access to itself: the file dialog opens (in main), as everywhere else in the app.
+        onDrop={(e) => { e.preventDefault(); dragDepth.current = 0; setDragging(false); if (e.dataTransfer.files?.length && sources.length < maxSources && !importing) void choose() }}
+        className={cn('rounded-2xl transition-shadow', dragging && 'shadow-[0_0_0_2px_rgb(var(--tool)/0.7)]')}>
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-2.5">
+          <ul className="contents" aria-label={combine ? 'Your clips' : 'Your recordings'}>
+            {listed.map((source, i) => (
+              <li key={source.path} className="glass flex min-w-0 flex-col rounded-2xl p-[5px]">
+                <div className="relative aspect-[9/14] overflow-hidden rounded-lg bg-black">
+                  <video src={`${localFileUrl(source.path)}#t=0.1`} preload="metadata" muted playsInline aria-hidden tabIndex={-1} className="h-full w-full object-cover" />
+                  {(combine || sources.length > 1) && <span aria-hidden className="absolute left-1.5 top-1.5 rounded bg-tool/90 px-1.5 py-px font-mono text-[9px] font-medium text-canvas">{combine ? `Clip ${i + 1}` : `Take ${i + 1}`}</span>}
+                  <span className="absolute bottom-1.5 right-1.5 rounded bg-canvas/75 px-1.5 py-px font-mono text-[9px] tabular text-ink">{formatClock(source.seconds)}</span>
+                  <Button size="sm" variant="ghost" iconOnly aria-label={`Remove ${source.name}`} icon={<X className="h-3.5 w-3.5" />}
+                    className="absolute right-1 top-1 h-7 w-7 bg-canvas/70 text-ink hover:bg-canvas/90"
+                    onClick={() => setSources((current) => current.filter((item) => item.path !== source.path))} />
+                </div>
+                <p className="truncate px-1 pb-0.5 pt-1.5 font-mono text-[10px] text-ink-muted" title={source.name}>{combine ? `Clip ${i + 1} · ` : sources.length > 1 ? `Take ${i + 1} · ` : ''}{source.name}</p>
+                {combine && source.createdAt && <p className="truncate px-1 pb-0.5 text-[10px] text-ink-subtle">Filmed {filmedAt(source.createdAt)}</p>}
+              </li>
+            ))}
+          </ul>
+          <button type="button" disabled={sources.length >= maxSources || Boolean(importing)} onClick={() => void choose()}
+            className={cn(tileClass, 'border-tool/40 bg-tool/[0.04] text-tool hover:bg-tool/[0.08]')}>
+            {importing ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Plus aria-hidden className="h-4 w-4" />}
+            {combine ? 'Choose clips or a .zip' : 'Choose recordings'}
+          </button>
+          <button type="button" disabled={sources.length >= maxSources || Boolean(importing)} onClick={() => setRecorder(null)}
+            className={cn(tileClass, 'border-line-strong text-ink-muted hover:border-white/25 hover:text-ink')}>
+            <span aria-hidden className="h-3 w-3 rounded-full bg-[#FF4D4D] shadow-[0_0_12px_#FF4D4D]" />
+            Film it here
+          </button>
+        </div>
+        <p className="mt-2 text-2xs text-ink-subtle">{dragging ? `Drop to choose ${combine ? 'these clips' : 'this recording'} in the file picker.` : combine
+          ? `Short clips filmed one after another. They’re joined in the order you filmed them (or the order the AI finds best), ${COMBINE_MAX_TOTAL_SECONDS / 60} minutes in all. You can also drop clips or a .zip here.`
+          : `One recording, or up to ${EDIT_MAX_SOURCES} takes of the same video. You can also drop recordings here.`}</p>
+      </div>
+      {importing && <ClipImport className="mt-3" files={importing} />}
+      {!combine && (sources.length <= 1 || screen) && (
+        <ScreenRecordingPicker camera={sources.length === 1 ? { path: sources[0].path, seconds: sources[0].seconds } : null} value={screen} onChange={setScreen}
+          onError={setError} disabledReason={screenBlocked} />
+      )}
+      {combine && sources.length > 1 && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <Segmented label="Clip order" value={orderMode} onChange={setOrderMode}
+            options={[{ value: 'filmed', label: 'Filming order' }, { value: 'ai', label: 'Let AI find the best order' }]} />
+          <span className="min-w-0 flex-1 text-2xs text-ink-subtle">{orderMode === 'ai'
+            ? 'The AI reads what you say and puts the clips in order: hook, points, proof, then your call to action. You can change it on the review screen.'
+            : orderedBy(sources) === 'time' ? 'In the order your camera filmed them. You can change it on the review screen.' : 'These clips don’t say when they were filmed, so they’re in file-name order. You can change it on the review screen.'}</span>
+        </div>
+      )}
+      {combine && sources.length === 1 && <p className="mt-2 text-2xs text-ink-muted">Add at least one more clip to combine.</p>}
+      {hookHint && sources.length > 0 && <p className="mt-2 text-2xs text-ink-muted">Planned hook: “{hookHint}”. The edit looks for it first.</p>}
+      {tooLong && <p className="mt-2 text-2xs text-danger">{combine ? `Your clips add up to over ${maxTotal / 60} minutes. Use fewer or shorter clips.` : `Your takes add up to over ${maxTotal / 60} minutes. Use fewer or shorter takes.`}</p>}
+    </MakerSection>
+  )
+
+  const aside = (
+    <MakerAside label={`Your reel · 9:16`}>
+      <PhoneFrame>
+        {firstSource
+          ? <video key={firstSource.path} src={`${localFileUrl(firstSource.path)}#t=0.1`} preload="metadata" muted playsInline aria-hidden tabIndex={-1} className="h-full w-full object-cover" />
+          : <span className="absolute inset-x-4 top-1/2 -translate-y-1/2 text-center text-2xs text-ink-subtle">Your first {label} shows here</span>}
+        {hookHint && sources.length > 0 && (
+          <span className="absolute inset-x-[8%] top-[9%] text-center font-display text-sm font-bold leading-tight text-white [text-shadow:0_2px_6px_rgb(0_0_0/0.7)]">{hookHint}</span>
+        )}
+      </PhoneFrame>
+      <Checklist items={combine
+        ? ['Your clips joined into one reel, in order', 'Brightness and loudness evened out', 'Captions, pop-ups and sound in your look']
+        : ['Retakes and filler words cut', 'Strongest hook moved first', withScreen ? 'Your screen and you share the frame' : 'Captions, pop-ups and sound in your look']} />
+      <Button variant="primary" size="lg" className="mt-4 h-12 w-full rounded-[13px] font-display text-[15px] font-semibold"
+        icon={combine ? <Combine className="h-4 w-4" /> : <Scissors className="h-4 w-4" />} loading={starting} disabled={!canStart}
+        onClick={() => void start()}>{combine ? 'Combine my clips' : 'Edit my recording'}</Button>
+      {blocker && <p className="mt-2 text-center text-2xs text-ink-muted" role="status">{blocker}</p>}
+      <p className="mt-2.5 text-center text-2xs leading-relaxed text-ink-subtle" data-testid="edit-cost">
+        {sources.length
+          ? `Listening to ${formatClock(total)}${combine ? ` (${sources.length} clip${sources.length === 1 ? '' : 's'})` : ''} with ElevenLabs Scribe v2 costs ${aboutUsd(estimate.transcribeUsd)}, and planning the edit ${aboutUsd(estimate.planUsd)}, through your OpenRouter account. Your custom vocabulary is sent as key terms, which may cost a little extra. Reviewing and making the reel are free.`
+          : 'Add your recording first. Transcribing and planning go through your OpenRouter account; reviewing and making the reel are free.'}
+      </p>
+    </MakerAside>
+  )
+
+  const main = (
+    <>
+      <div>
+        {header}
+        {notices}
+      </div>
+
+      <MakerSection number={1} title="What did you record?">
+        <ModeChoice value={mode} onChange={chooseMode} disabled={Boolean(importing)} />
+      </MakerSection>
+
+      {takes}
+
+      <MakerSection number={3} title="What’s it for?" aside="Optional">
+        <PurposeFields purpose={purpose} onPurpose={setPurpose} reference={reference} onReference={setReference} disabled={starting} labelHidden
+          purposeHelp="Guides the hook, title and pop-ups. Never shown in the video."
+          onUseLook={(picked) => setLook({ ...look, captionPreset: picked.captionPreset, headlineLook: { ...look.headlineLook, color: picked.color, look: 'brand' } })} />
+      </MakerSection>
+
+      <MakerSection number={4} title="Look">
+        <LookCard name={brand?.name ?? 'Plain look'} badge={brand ? 'Brand look' : null} summary={lookSummary} summaryTestId="edit-setup-look"
+          colors={lookColors(look.headlineLook.color, look.includeCaptions ? look.captionPreset : undefined)} open={lookOpen} onToggle={() => setLookOpen(!lookOpen)} controls="edit-setup-look-controls">
+          <div className="space-y-1.5">
+            <p className="text-xs font-semibold text-ink">Brand</p>
+            <p className="text-2xs text-ink-subtle">The edit reads your brand to know your offer and voice, and your words are listened for by name. Its look fills in your captions and hook text.</p>
+            <BrandPicker value={brandId} onChange={chooseBrand} noneDetail="Plain look, no brand words" />
+          </div>
+          <StyleBoard value={boardFromLook(look)} onChange={(patch) => setLook({ ...look, ...lookPatch(look, patch) })}
+            rows={lookRows} brand={brand} frame={previewFrame(firstSource?.path ?? null, 'video', 0.1)} hookText={hookHint || undefined} />
+          <p className="text-2xs text-ink-subtle">Extras, skills, graphics and sound are picked on the review screen, once the edit is planned. You can change this look there too.</p>
+        </LookCard>
+      </MakerSection>
+
+      <FilmIdeas brandIdentityId={brandId} brandName={brand?.name ?? null} onFilm={film} onOpenRemix={() => onNavigate('remix')} disabled={!openrouterConfigured} />
+    </>
+  )
+
+  return (
+    <Page width="default">
+      {setup ? (
+        <div ref={startRef}>
+          <MakerLayout main={main} aside={aside} />
+        </div>
+      ) : (
+        <>
+          {header}
+          {notices}
+        </>
+      )}
 
       {busy && status && (
         <Panel className="mt-5">
@@ -213,10 +376,10 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
 
       {status?.phase === 'done' && status.output && (
         <Panel className="mt-5">
-          <PanelHeader title="Your reel is ready" icon={<Check className="h-4 w-4 text-success" />}
+          <PanelHeader title="Your reel is ready" icon={<IconTile tone="success"><Check /></IconTile>}
             description={`${formatClock(status.output.durationSeconds)} long, saved to your Library.${status.costUsd > 0 ? ` The AI steps cost ${formatUsd(status.costUsd)}.` : ''}`} />
-          <div className="mt-3 flex flex-wrap items-start gap-4">
-            <video src={localFileUrl(status.output.path)} controls playsInline className="aspect-[9/16] w-[220px] rounded-xl bg-black object-contain" aria-label="Your reel" />
+          <div className="mt-4 flex flex-wrap items-start gap-5">
+            <video src={localFileUrl(status.output.path)} controls playsInline className="aspect-[9/16] w-[220px] rounded-xl bg-black object-contain shadow-[0_20px_50px_rgb(0_0_0/0.5)]" aria-label="Your reel" />
             <div className="flex flex-col gap-2">
               {onViewLibrary && <Button variant="primary" icon={<Library className="h-4 w-4" />} onClick={() => onViewLibrary(status.folder)}>Open in Library</Button>}
               <Button variant="secondary" icon={<Video className="h-4 w-4" />} onClick={startOver}>Edit another recording</Button>
@@ -225,91 +388,6 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
             </div>
           </div>
         </Panel>
-      )}
-
-      {!busy && !reviewing && status?.phase !== 'done' && (
-        <div className="mt-5 space-y-4" ref={startRef}>
-          <div data-testid="edit-sources-drop"
-            onDragEnter={(e) => { e.preventDefault(); dragDepth.current += 1; if (sources.length < maxSources) setDragging(true) }}
-            onDragOver={(e) => e.preventDefault()}
-            onDragLeave={() => { dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragging(false) }}
-            // A dropped file can't grant access to itself: the file dialog opens (in main), as everywhere else in the app.
-            onDrop={(e) => { e.preventDefault(); dragDepth.current = 0; setDragging(false); if (e.dataTransfer.files?.length && sources.length < maxSources && !importing) void choose() }}
-            className={cn('rounded-2xl transition-shadow', dragging && 'shadow-[0_0_0_2px_rgb(var(--accent)/0.7)]')}>
-          <Panel>
-            <PanelHeader title={combine ? '1 · Your clips' : '1 · Your recording'} description={combine
-              ? `Short clips you filmed one after another, each a part of the video. They’re joined into one reel, in the order you filmed them (or the order the AI finds best). Up to ${COMBINE_MAX_CLIPS} clips, ${COMBINE_MAX_TOTAL_SECONDS / 60} minutes in all.`
-              : 'One recording, or a few takes of the same video. Fluffed lines, retakes and “let me say that again” are fine: the edit keeps your last complete take of each line.'} />
-            <ModeChoice className="mt-3" value={mode} onChange={chooseMode} disabled={Boolean(importing)} />
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button variant="secondary" icon={<FolderOpen className="h-4 w-4" />} disabled={sources.length >= maxSources || Boolean(importing)} loading={Boolean(importing)}
-                onClick={() => void choose()}>{combine ? 'Choose clips or a .zip' : 'Choose recordings'}</Button>
-              <Button variant="secondary" icon={<Camera className="h-4 w-4" />} disabled={sources.length >= maxSources || Boolean(importing)} onClick={() => setRecorder(null)}>Film it here</Button>
-            </div>
-            {importing && <ClipImport className="mt-3" files={importing} />}
-            {sources.length > 0 && (
-              <ul className="mt-3 space-y-1.5" aria-label={combine ? 'Your clips' : 'Your recordings'}>
-                {listed.map((source, i) => (
-                  <li key={source.path} className="glass-tile flex items-center justify-between gap-2 rounded-xl px-3 py-2">
-                    <span className="min-w-0 truncate text-sm text-ink">{combine ? `Clip ${i + 1} · ` : sources.length > 1 ? `Take ${i + 1} · ` : ''}{source.name}</span>
-                    <span className="flex shrink-0 items-center gap-2">
-                      {combine && source.createdAt && <span className="text-2xs text-ink-subtle">Filmed {filmedAt(source.createdAt)}</span>}
-                      <span className="font-mono text-2xs tabular text-ink-muted">{formatClock(source.seconds)}</span>
-                      <Button size="sm" variant="ghost" aria-label={`Remove ${source.name}`} icon={<X className="h-3.5 w-3.5" />}
-                        onClick={() => setSources((current) => current.filter((item) => item.path !== source.path))} />
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {!combine && (sources.length <= 1 || screen) && (
-              <ScreenRecordingPicker camera={sources.length === 1 ? { path: sources[0].path, seconds: sources[0].seconds } : null} value={screen} onChange={setScreen}
-                onError={setError} disabledReason={screenBlocked} />
-            )}
-            {combine && sources.length > 1 && (
-              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                <Segmented label="Clip order" value={orderMode} onChange={setOrderMode}
-                  options={[{ value: 'filmed', label: 'Filming order' }, { value: 'ai', label: 'Let AI find the best order' }]} />
-                <span className="text-2xs text-ink-subtle">{orderMode === 'ai'
-                  ? 'The AI reads what you say and puts the clips in order: hook, points, proof, then your call to action. You can change it on the review screen.'
-                  : orderedBy(sources) === 'time' ? 'In the order your camera filmed them. You can change it on the review screen.' : 'These clips don’t say when they were filmed, so they’re in file-name order. You can change it on the review screen.'}</span>
-              </div>
-            )}
-            {combine && sources.length === 1 && <p className="mt-2 text-2xs text-ink-muted">Add at least one more clip to combine.</p>}
-            {hookHint && sources.length > 0 && <p className="mt-2 text-2xs text-ink-muted">Planned hook: “{hookHint}”. The edit looks for it first.</p>}
-            {tooLong && <p className="mt-2 text-2xs text-danger">{combine ? `Your clips add up to over ${maxTotal / 60} minutes. Use fewer or shorter clips.` : `Your takes add up to over ${maxTotal / 60} minutes. Use fewer or shorter takes.`}</p>}
-            <p className="mt-2 text-2xs text-ink-subtle">{dragging ? `Drop to choose ${combine ? 'these clips' : 'this recording'} in the file picker.` : combine ? 'You can also drop clips or a .zip here.' : 'You can also drop recordings here.'}</p>
-          </Panel>
-          </div>
-
-          <Panel>
-            <PanelHeader title="2 · Your brand" description="The edit reads your brand to know your offer and voice, and your words are listened for by name. Its look sets your captions and hook text (change them on the review screen)." />
-            <div className="mt-3">
-              <BrandPicker value={brandId} onChange={chooseBrand} noneDetail="Plain look, no brand words" />
-            </div>
-          </Panel>
-
-          <Panel>
-            <PanelHeader title="3 · Edit it" />
-            <div className="mt-3">
-              <PurposeFields purpose={purpose} onPurpose={setPurpose} reference={reference} onReference={setReference} disabled={starting}
-                purposeHelp="The AI uses it to choose your hook, title and pop-ups. It’s never shown in the video."
-                onUseLook={(picked) => setLook({ ...look, captionPreset: picked.captionPreset, headlineLook: { ...look.headlineLook, color: picked.color, look: 'brand' } })} />
-            </div>
-            <p className="mt-3 text-xs text-ink-muted" data-testid="edit-cost">
-              {sources.length
-                ? `Listening to ${formatClock(total)}${combine ? ` (${sources.length} clip${sources.length === 1 ? '' : 's'})` : ''} with ElevenLabs Scribe v2 costs ${aboutUsd(estimate.transcribeUsd)}, and planning the edit ${aboutUsd(estimate.planUsd)}, through your OpenRouter account. Your custom vocabulary is sent as key terms, which may cost a little extra. Reviewing and making the reel are free.`
-                : 'Add your recording first. Transcribing and planning go through your OpenRouter account; reviewing and making the reel are free.'}
-            </p>
-            <div className="mt-3 flex justify-end">
-              <Button variant="primary" size="lg" icon={combine ? <Combine className="h-4 w-4" /> : <Scissors className="h-4 w-4" />} loading={starting}
-                disabled={!sources.length || (combine && sources.length < 2) || starting || tooLong || !openrouterConfigured || Boolean(importing) || !screenReady || (withScreen && sources.length !== 1)}
-                onClick={() => void start()}>{combine ? 'Combine my clips' : 'Edit my recording'}</Button>
-            </div>
-          </Panel>
-
-          <FilmIdeas brandIdentityId={brandId} brandName={brand?.name ?? null} onFilm={film} onOpenRemix={() => onNavigate('remix')} disabled={!openrouterConfigured} />
-        </div>
       )}
 
       {recorder !== false && (

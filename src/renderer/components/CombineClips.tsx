@@ -1,40 +1,23 @@
 import { useState } from 'react'
-import { ArrowLeft, ArrowRight, Clapperboard, GripVertical, Layers, ListOrdered, MonitorSmartphone, RotateCcw, Sparkles, User, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, GripVertical, ListOrdered, MonitorSmartphone, RotateCcw, Sparkles, User, X } from 'lucide-react'
 import { SHOT_LABELS, clipFirstWords, moveClip, removeClip, restoreClip, sameOrder, type EditMode, type ImportProgress } from '../../shared/combine-clips'
 import { formatClock, type EditPlan, type EditSource } from '../../shared/edit-recording'
 import { cn, localFileUrl } from '../lib/utils'
+import { ChoiceCards, type ChoiceOption } from './maker/Maker'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { ProgressBar } from './ui/ProgressBar'
-import { onRadioKeyDown } from './ui/Segmented'
 import { SettingRow } from './ui/SettingRow'
 import { Switch } from './ui/Switch'
 
-const MODES: { id: EditMode; label: string; detail: string; icon: React.JSX.Element }[] = [
-  { id: 'takes', label: 'Retakes of the same thing', detail: 'One recording, or a few takes of the same video. The edit keeps your best take of each line.', icon: <Clapperboard className="h-4 w-4" aria-hidden /> },
-  { id: 'combine', label: 'Parts of one video (combine clips)', detail: 'Short clips filmed one after another. They’re joined into one reel, in order.', icon: <Layers className="h-4 w-4" aria-hidden /> }
+const MODES: readonly ChoiceOption<EditMode>[] = [
+  { value: 'takes', label: 'Retakes of one thing', detail: 'Keeps your last complete take of each line' },
+  { value: 'combine', label: 'Parts to combine', detail: 'Joins short clips into one reel, in order' }
 ]
 
 /** Step 1's choice: retakes of one video, or parts of one video to combine. */
 export function ModeChoice({ value, onChange, disabled, className }: { value: EditMode; onChange: (mode: EditMode) => void; disabled?: boolean; className?: string }): React.JSX.Element {
-  return (
-    <div className={cn('grid gap-2 sm:grid-cols-2', className)} role="radiogroup" aria-label="What did you film?">
-      {MODES.map((mode) => {
-        const selected = value === mode.id
-        return (
-          <button key={mode.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1} disabled={disabled} onKeyDown={onRadioKeyDown}
-            onClick={() => onChange(mode.id)}
-            className={cn('glass-tile glass-tile-hover flex items-start gap-2.5 rounded-xl px-3 py-2.5 text-left disabled:opacity-60', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
-            <span className={cn('mt-0.5', selected ? 'text-accent' : 'text-ink-subtle')}>{mode.icon}</span>
-            <span>
-              <span className="block text-sm font-medium">{mode.label}</span>
-              <span className="block text-2xs text-ink-muted">{mode.detail}</span>
-            </span>
-          </button>
-        )
-      })}
-    </div>
-  )
+  return <ChoiceCards label="What did you film?" value={value} options={MODES} onChange={onChange} disabled={disabled} className={className} />
 }
 
 const PHASES: Record<ImportProgress['phase'], string> = { waiting: 'Waiting', copying: 'Copying out of the .zip', checking: 'Checking', done: 'Ready', failed: 'Left out' }

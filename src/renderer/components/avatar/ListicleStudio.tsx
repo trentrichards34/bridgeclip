@@ -270,7 +270,7 @@ function AccentPicker({ title, accent, onChange, label }: { title: string; accen
       <span className="text-2xs text-ink-subtle">Italic word:</span>
       {words.slice(0, 14).map((word, i) => (
         <button key={`${word}-${i}`} type="button" role="radio" aria-checked={word === chosen} onClick={() => onChange(word.replace(/[.,!?:;]+$/, ''))}
-          className={cn('rounded-md px-1.5 py-0.5 text-2xs', word === chosen ? 'bg-accent text-accent-ink' : 'bg-white/[0.06] text-ink-muted hover:text-ink')}>{word}</button>
+          className={cn('rounded-md px-1.5 py-0.5 text-2xs', word === chosen ? 'bg-tool text-canvas' : 'bg-white/[0.06] text-ink-muted hover:text-ink')}>{word}</button>
       ))}
     </span>
   )

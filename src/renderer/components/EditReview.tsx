@@ -330,8 +330,8 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                           onClick={(e) => clickWord(i, e.shiftKey)}
                           className={cn('mr-1 rounded px-0.5 transition-colors hover:bg-white/10',
                             isCut ? 'text-ink-faint line-through decoration-danger/70' : 'text-ink',
-                            !isCut && inHook(i) && 'bg-accent/15 text-accent', !isCut && inCta(i) && 'underline decoration-accent decoration-2 underline-offset-4',
-                            pinned && 'ring-1 ring-accent/70', pinning && 'cursor-copy')}>
+                            !isCut && inHook(i) && 'bg-tool/15 text-tool', !isCut && inCta(i) && 'underline decoration-tool decoration-2 underline-offset-4',
+                            pinned && 'ring-1 ring-tool/70', pinning && 'cursor-copy')}>
                           {word.text}
                         </button>
                       )
@@ -340,7 +340,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                 </div>
               ))}
             </div>
-            <p className="mt-1 text-2xs text-ink-subtle"><span className="text-accent">Highlighted</span>: plays first, as your hook.{plan.cta ? ' Underlined: your call to action, at the end.' : ''}</p>
+            <p className="mt-1 text-2xs text-ink-subtle"><span className="text-tool">Highlighted</span>: plays first, as your hook.{plan.cta ? ' Underlined: your call to action, at the end.' : ''}</p>
           </section>
 
           {screen && decisions.screen && (
