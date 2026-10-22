@@ -89,8 +89,8 @@ test('Pause & react: an uploaded video and phone recording, the detected pauses,
   assert.equal(await page.getByText('Your avatar’s voice', { exact: true }).count(), 0)
   await presenters.getByRole('radio', { name: /Voice only.*Beta/ }).waitFor()
   // Two big choices at the top: you on camera (no Beta) or the AI presenter (Beta).
-  assert.doesNotMatch(await page.getByRole('radio', { name: /^You on camera/ }).innerText(), /Beta/)
-  assert.match(await page.getByRole('radio', { name: /^AI presenter/ }).innerText(), /Beta/)
+  assert.doesNotMatch(await page.getByRole('radio', { name: /^You on camera/ }).innerText(), /Beta/i)
+  assert.match(await page.getByRole('radio', { name: /^AI presenter/ }).innerText(), /Beta/i)
   assert.equal(await presenters.getByRole('radio', { name: /Me, on camera/ }).count(), 0)
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await presenters.scrollIntoViewIfNeeded(); await shot(app, 'remix-presenters-beta.png') }
   await page.getByRole('radio', { name: /^You on camera/ }).click()

@@ -80,6 +80,7 @@ test('a finished avatar video is in the Library with its hook text, ready to pos
   assert.equal(await hook.getAttribute('placeholder'), 'Stop buying coffee every morning.')
   await hook.fill('Stop buying coffee')
   // The same Style board as Create and Remix: captions off from its caption row.
+  await page.getByRole('button', { name: 'Customize for this video' }).click()
   await page.getByRole('radiogroup', { name: 'Caption style' }).getByRole('radio', { name: 'No captions' }).click()
   await page.getByRole('radiogroup', { name: 'Hook text look' }).getByRole('radio', { name: /Black bar/ }).click()
   await page.getByRole('radiogroup', { name: 'Call to action' }).waitFor()

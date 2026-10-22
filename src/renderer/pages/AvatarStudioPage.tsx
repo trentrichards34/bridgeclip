@@ -343,9 +343,6 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
                       options={[{ value: '', label: 'None' }, ...brands.map((brand) => ({ value: brand.id, label: brand.name }))]} />
                   </Field>
                 )}
-          <Field label="Hook text (optional)" hint="Shown at the top of the video and used as its title in your Library. 2-7 words, outcome first. Leave it empty to use the script’s first line.">
-            <TextInput aria-label="Hook text" value={draft.script.title} maxLength={MAX_HOOK_CHARS} placeholder={hookFallback || 'e.g. Stop doing this with your paycheck'} onChange={(e) => draft.update({ script: { ...draft.script, title: e.target.value } })} />
-          </Field>
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <Segmented label="Length" size="sm" value={String(draft.seconds)} onChange={(value) => draft.update({ seconds: Number(value) as ScriptLength })}
                     options={SCRIPT_LENGTHS.map((length) => ({ value: String(length), label: `${length}s` }))} />
@@ -354,9 +351,11 @@ export function AvatarStudioPage({ onNavigate, onViewLibrary }: { onNavigate: (p
                     Write script
                   </Button>
                 </div>
-
               </div>
             )}
+            <Field label="Hook text (optional)" hint="Shown at the top of the video and used as its title in your Library. 2-7 words, outcome first. Leave it empty to use the script’s first line.">
+              <TextInput aria-label="Hook text" value={draft.script.title} maxLength={MAX_HOOK_CHARS} placeholder={hookFallback || 'e.g. Stop doing this with your paycheck'} onChange={(e) => draft.update({ script: { ...draft.script, title: e.target.value } })} />
+            </Field>
           </div>
         )}
       </MakerSection>
