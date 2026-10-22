@@ -36,14 +36,14 @@ test('React, then my thoughts: both parts uploaded, your b-roll added, planned, 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
   await page.getByRole('radiogroup', { name: 'Who is in the video' }).getByRole('radio', { name: /^You on camera/ }).click()
   await page.getByRole('radio', { name: /^React, then my thoughts/ }).click()
-  await page.getByRole('heading', { name: '2 · Their clip' }).waitFor()
+  await page.getByRole('heading', { name: '01 · Their clip' }).waitFor()
   await page.getByText(/^Part 1: their clip plays in a big box/).waitFor()
   await page.getByRole('button', { name: 'Or choose a file' }).click()
   await page.getByText('serum-ad.mp4').waitFor()
   await page.getByPlaceholder('e.g. @theircreator').fill('@serumbrand')
   await page.getByRole('checkbox', { name: "I'm allowed to use this video" }).check()
   // Part 1 as a phone card: you fill the frame, their clip floats in the lower right, the hook text beside you.
-  await page.getByRole('button', { name: /Look & call to action/ }).click()
+  await page.getByRole('button', { name: 'Customize for this video' }).click()
   await page.getByRole('radiogroup', { name: 'While you react' }).getByRole('radio', { name: /^Phone card/ }).click()
   assert.equal(await page.getByRole('radiogroup', { name: 'Where the hook text goes' }).getByRole('radio', { name: 'Beside me' }).getAttribute('aria-checked'), 'true')
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await page.getByRole('radiogroup', { name: 'Who is in the video' }).scrollIntoViewIfNeeded(); await shot(app, 'remix-top-react-thoughts.png') }

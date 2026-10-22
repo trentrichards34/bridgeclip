@@ -119,7 +119,7 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   const at = nav.findIndex((label) => label.startsWith('Edit my recording'))
   assert.ok(at > 0 && nav[at - 1].startsWith('Create') && nav[at + 1].startsWith('Remix'), nav.join(' | '))
   await page.keyboard.press('Control+e')
-  await page.getByRole('heading', { name: 'Edit my recording', level: 1 }).waitFor()
+  await page.getByRole('heading', { name: 'Raw takes in, one finished reel out', level: 1 }).waitFor()
   const start = page.getByRole('button', { name: 'Edit my recording', exact: true }).last()
   assert.equal(await start.isDisabled(), true)
   await page.getByRole('button', { name: 'Choose recordings' }).click()
@@ -129,7 +129,7 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   assert.match(await page.getByTestId('edit-cost').innerText(), /^Listening to 0:08 with ElevenLabs Scribe v2 costs under 1¢, and planning the edit about \$0\.02, through your OpenRouter account\./)
 
   // What should I film? Five ideas from a topic; the first one is filmed here with its hook and points as a teleprompter.
-  await page.getByRole('button', { name: /What should I film\?/ }).click()
+  await page.getByRole('button', { name: /Not sure what to film\?/ }).click()
   await page.getByLabel('Topic').fill('client retention')
   await page.getByRole('button', { name: 'Give me 5 ideas' }).click()
   const ideas = page.getByRole('list', { name: 'Video ideas' })

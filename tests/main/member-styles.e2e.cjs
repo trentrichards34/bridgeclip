@@ -8,7 +8,7 @@ const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
 
 async function openRemix(page) {
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
-  await page.getByRole('heading', { name: 'Remix', exact: true }).waitFor()
+  await page.getByRole('heading', { name: 'Their moment hooks. Your take is the video.', exact: true }).waitFor()
 }
 
 const radio = (page, group, name) => page.getByRole('radiogroup', { name: group }).getByRole('radio', { name: new RegExp(`^${name}`) })
@@ -30,7 +30,7 @@ test('saved styles: save the Remix style, restart, the last style comes back and
   await radio(page, 'Style of your take', 'Myth vs. truth').click()
   await page.getByRole('radiogroup', { name: 'Takes per video' }).getByRole('radio', { name: '5', exact: true }).click()
   // The look and call to action are folded (with a summary line) until opened.
-  await page.getByRole('button', { name: /4 · Look & call to action/ }).click()
+  await page.getByRole('button', { name: 'Customize for this video' }).click()
   await page.getByLabel('Comment keyword').fill('sales')
   await page.getByLabel('What they get').fill('my free playbook')
   // Extras are part of the style.
@@ -75,7 +75,7 @@ test('saved styles: save the Remix style, restart, the last style comes back and
   assert.equal(await radio(page, 'Style of your take', 'Lessons from this').getAttribute('aria-checked'), 'true', 'the last style is remembered')
   assert.equal(await page.getByRole('radiogroup', { name: 'Takes per video' }).getByRole('radio', { name: '1', exact: true }).getAttribute('aria-checked'), 'true')
   assert.equal(await page.getByLabel('Video links').inputValue(), '', 'links start empty')
-  await page.getByRole('button', { name: /4 · Look & call to action/ }).click()
+  await page.getByRole('button', { name: 'Customize for this video' }).click()
   assert.equal(await page.getByLabel('Comment keyword').inputValue(), 'SALES')
   assert.equal(await extras(page).getByRole('checkbox', { name: 'Keyword pill' }).getAttribute('aria-checked'), 'true', 'extras are remembered')
   await extras(page).getByRole('checkbox', { name: 'Keyword pill' }).click()
@@ -155,7 +155,7 @@ test('Remix result: Post or schedule opens the post dialog with the Library clip
   // Library → Remix: the clip becomes the source file, with its creator.
   await page.getByRole('button', { name: `Actions for “${headline}”` }).click()
   await page.getByRole('menuitem', { name: 'Remix this clip' }).click()
-  await page.getByRole('heading', { name: 'Remix', exact: true }).waitFor()
+  await page.getByRole('heading', { name: 'Their moment hooks. Your take is the video.', exact: true }).waitFor()
   await page.getByText(path.basename(video), { exact: true }).waitFor()
   assert.equal(await page.getByPlaceholder('e.g. @theircreator').inputValue(), 'Coach Example')
   assert.deepEqual(errors, [])

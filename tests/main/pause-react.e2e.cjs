@@ -95,14 +95,14 @@ test('Pause & react: an uploaded video and phone recording, the detected pauses,
   if (process.env.BRIDGECLIP_E2E_SHOTS) { await presenters.scrollIntoViewIfNeeded(); await shot(app, 'remix-presenters-beta.png') }
   await page.getByRole('radio', { name: /^You on camera/ }).click()
   await page.getByRole('radio', { name: /Pause & react/ }).click()
-  await page.getByRole('heading', { name: '2 · The video you react to' }).waitFor()
-  // What you make comes first, then the video, then the look (folded, with a summary), then Continue.
-  const headings = await page.getByRole('heading').allInnerTexts()
-  assert.ok(headings.indexOf('1 · What are you making?') < headings.indexOf('2 · The video you react to'), headings.join(' | '))
-  const look = page.getByRole('button', { name: /3 · Look & call to action/ })
+  await page.getByRole('heading', { name: '01 · The video you react to' }).waitFor()
+  // The video comes first, then who's in it and the format, then the look (folded, with a summary); Continue is in the summary card.
+  const headings = (await page.getByRole('heading').allTextContents()).map((text) => text.trim())
+  assert.ok(headings.indexOf('01 · The video you react to') < headings.indexOf('02 · Who’s in it') && headings.indexOf('02 · Who’s in it') < headings.indexOf('03 · Format'), headings.join(' | '))
+  const look = page.getByRole('button', { name: 'Customize for this video' })
   assert.equal(await look.getAttribute('aria-expanded'), 'false')
   assert.equal(await page.getByTestId('look-summary').innerText(), 'Box at the top · As filmed · Pop captions · White bar · No brand · No call to action')
-  assert.equal(await page.getByRole('heading', { name: '4 · Record your reaction' }).count(), 1)
+  assert.equal(await page.getByRole('button', { name: 'Continue to recording' }).count(), 1)
   // No presenter to choose and no AI label: it's really you.
   assert.equal(await page.getByRole('radiogroup', { name: 'Presenter' }).count(), 0)
   assert.equal(await page.getByRole('checkbox', { name: "I'll turn on the AI-content label when I post" }).count(), 0)

@@ -816,7 +816,7 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
   const detailsPanel = (
     <div className="space-y-4">
       <PurposeFields purpose={form.purpose} onPurpose={(purpose) => form.update({ purpose })} reference={form.reference} onReference={(reference) => form.update({ reference })}
-        disabled={launching} labelHidden purposeHelp="The AI uses it to write the hook text and caption. It’s never shown in the video."
+        disabled={launching} purposeHelp="The AI uses it to write the hook text and caption. It’s never shown in the video."
         onUseLook={(picked) => form.update({ captionPreset: picked.captionPreset, includeCaptions: true, headlineLook: { ...form.headlineLook, color: picked.color, look: 'brand' } })} />
       {countRow}
       {form.format === 'commentary' && (

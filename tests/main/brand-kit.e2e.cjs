@@ -61,7 +61,7 @@ test('picking a brand fills the Remix and Create style fields once; re-picking i
 
   // Remix: the brand's look fills hook look, captions, keyword and the handle toggle.
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
-  await page.getByRole('heading', { name: 'Remix', exact: true }).waitFor()
+  await page.getByRole('heading', { name: 'Their moment hooks. Your take is the video.', exact: true }).waitFor()
   await openRemixLook(page)
   const hookLooks = page.getByRole('radiogroup', { name: 'Hook text look' })
   assert.equal(await checked(hookLooks.getByRole('radio', { name: /^White bar/ })), true)
@@ -144,7 +144,7 @@ test('the brand dialog saves a look with a handle and keeps old brands working',
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
-  await page.getByRole('heading', { name: 'Remix', exact: true }).waitFor()
+  await page.getByRole('heading', { name: 'Their moment hooks. Your take is the video.', exact: true }).waitFor()
   await openRemixLook(page)
   await pickBrand(page, 'Old brand')
   await page.getByRole('button', { name: 'Edit', exact: true }).click()

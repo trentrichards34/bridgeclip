@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeftRight, Clapperboard, FileAudio, Images, Library, Mic, Shuffle, Sparkles, Square, Wand2 } from 'lucide-react'
+import { ArrowLeftRight, Clapperboard, FileAudio, Images, Mic, Shuffle, Sparkles, Square } from 'lucide-react'
 import {
   BROLL_VIDEO_MAX_SCRIPT_CHARS, BROLL_VIDEO_MAX_SECONDS, estimateLine, shotsNeeded, scriptSeconds,
   type BrollVideoEstimate, type BrollVideoShot, type BrollVoiceKind
@@ -33,6 +33,7 @@ import { Segmented } from '../components/ui/Segmented'
 import { Select } from '../components/ui/Select'
 import { SettingRow } from '../components/ui/SettingRow'
 import { Switch } from '../components/ui/Switch'
+import { Checklist, MakerAside, MakerLayout, MakerSection } from '../components/maker/Maker'
 import type { Page } from '../components/Sidebar'
 
 /**
@@ -51,8 +52,8 @@ export function BrollVideoPage({ onNavigate, onViewLibrary }: { onNavigate: (pag
     leading={<Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Back to B-roll video</Button>} />
 
   return (
-    <PageColumn width="wide">
-      <PageHeader eyebrow="Studio" title="B-roll video"
+    <PageColumn width="default">
+      <PageHeader eyebrow="Studio" title="Your words, covered in b-roll"
         description="Your voiceover covered start to end with your own b-roll, with captions, hook text and motion graphics. Add more clips to your B-roll library any time: the next video uses them."
         actions={<Button variant="secondary" icon={<Images className="h-4 w-4" />} onClick={() => onNavigate('broll')}>B-roll library</Button>} />
       <div className="mt-4 space-y-4">
@@ -101,17 +102,18 @@ function Form({ onStarted, onNavigate }: { onStarted: () => void; onNavigate: (p
     finally { setStarting(false) }
   }
 
-  return (
-    <>
-      {error && <Callout tone="danger" onDismiss={() => setError(null)}>{error}</Callout>}
-      {status?.phase === 'failed' && status.error && !error && <Callout tone="danger">{status.error}</Callout>}
-      {!openrouter && (
-        <Callout tone="warning">Making a b-roll video uses your OpenRouter key: it listens to your voiceover for the word timings and plans the shots. <button type="button" className="text-accent underline" onClick={() => onNavigate('settings')}>Add it in Settings → API keys</button></Callout>
-      )}
+  const vertical = draft.look.aspect === '9:16'
+  const blocker = !openrouter ? 'Add your OpenRouter key first.' : !ready ? (needsFile ? 'Choose or record your voiceover first.' : 'Write your script first.')
+    : usable === 0 && !draft.fillWithAi ? 'Add b-roll to your library, or fill gaps with AI shots.' : null
+  const main = (<>
+    {error && <Callout tone="danger" onDismiss={() => setError(null)}>{error}</Callout>}
+    {status?.phase === 'failed' && status.error && !error && <Callout tone="danger">{status.error}</Callout>}
+    {!openrouter && (
+      <Callout tone="warning">Making a b-roll video uses your OpenRouter key: it listens to your voiceover for the word timings and plans the shots. <button type="button" className="text-tool underline" onClick={() => onNavigate('settings')}>Add it in Settings → API keys</button></Callout>
+    )}
 
-      <Panel>
-        <PanelHeader icon={<IconTile><Mic /></IconTile>} title="1 · Your words" description="Your own voiceover, a script read by an AI voice, or both: a script and your recording of it." />
-        <div className="mt-3 space-y-3">
+    <MakerSection number={1} title="Your words" aside="Your voiceover, a script, or both">
+      <div className="space-y-3">
           <Segmented<BrollVoiceKind> label="Your words" value={draft.voiceKind} onChange={(voiceKind) => draft.update({ voiceKind })} options={[
             { value: 'recording', label: 'My voiceover' }, { value: 'script', label: 'A script (AI voice)' }, { value: 'both', label: 'Script + my recording' }]} />
           {needsScript && (
@@ -129,14 +131,12 @@ function Form({ onStarted, onNavigate }: { onStarted: () => void; onNavigate: (p
             </div>
           )}
           {needsFile && <VoiceoverChooser onError={setError} />}
-        </div>
-      </Panel>
+      </div>
+    </MakerSection>
 
-      <Panel>
-        <PanelHeader icon={<IconTile><Library /></IconTile>} title="2 · Your b-roll"
-          description={view ? `${usable} shot${usable === 1 ? '' : 's'} ready in your B-roll library.${needed ? ` This video needs about ${needed} (one per phrase).` : ''}` : 'Loading your library…'}
-          action={<Button size="sm" variant="ghost" onClick={() => onNavigate('broll')}>Add b-roll</Button>} />
-        <div className="mt-3 space-y-3">
+    <MakerSection number={2} title="Your b-roll" aside={<Button size="sm" variant="ghost" className="-my-1.5 text-tool hover:text-tool" onClick={() => onNavigate('broll')}>Add b-roll</Button>}>
+      <div className="space-y-3">
+        <p className="text-xs text-ink-muted">{view ? `${usable} shot${usable === 1 ? '' : 's'} ready in your B-roll library.${needed ? ` This video needs about ${needed} (one per phrase).` : ''}` : 'Loading your library…'}</p>
           <Segmented<'all' | 'pick'> label="Which b-roll" value={draft.all ? 'all' : 'pick'} onChange={(choice) => draft.update({ all: choice === 'all' })}
             options={[{ value: 'all', label: 'My whole library' }, { value: 'pick', label: 'Only some clips' }]} />
           {!draft.all && <BrollPicker items={view?.items ?? []} />}
@@ -146,12 +146,11 @@ function Form({ onStarted, onNavigate }: { onStarted: () => void; onNavigate: (p
           {usable === 0 && view && <p className="text-2xs text-warning">Your B-roll library has no shots ready yet. Add clips there, and let the AI look at them.</p>}
           <SettingRow title="Fill gaps with AI shots" description={draft.fillWithAi && view ? `Moments nothing in your library fits get a new AI shot (saved to your library). ${aiEstimateLine(view.ai)}` : 'Off: every moment uses your own b-roll.'}
             control={<Switch label="Fill gaps with AI shots" checked={draft.fillWithAi} onChange={(fillWithAi) => draft.update({ fillWithAi })} />} />
-        </div>
-      </Panel>
+      </div>
+    </MakerSection>
 
-      <Panel>
-        <PanelHeader icon={<IconTile><Wand2 /></IconTile>} title="3 · The look" description="All of this stays editable in the clip editor afterwards." />
-        <div className="mt-3 space-y-4">
+    <MakerSection number={3} title="The look" aside="All of it stays editable in the clip editor">
+      <div className="glass space-y-4 rounded-2xl p-4">
           <Segmented<'9:16' | '16:9'> label="Shape" value={draft.look.aspect} onChange={(aspect) => draft.setLook({ aspect })}
             options={[{ value: '9:16', label: 'Vertical 9:16' }, { value: '16:9', label: 'Wide 16:9' }]} />
           {draft.look.aspect === '9:16' ? (
@@ -185,18 +184,36 @@ function Form({ onStarted, onNavigate }: { onStarted: () => void; onNavigate: (p
           <Field label="Name in your Library" hint="Optional. Otherwise the hook text or the first words.">
             <TextInput aria-label="Name in your Library" maxLength={120} value={draft.title} onChange={(e) => draft.update({ title: e.target.value })} />
           </Field>
-        </div>
-      </Panel>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="primary" icon={<Clapperboard className="h-4 w-4" />} loading={starting} disabled={!ready || starting || !openrouter || (usable === 0 && !draft.fillWithAi)}
-          onClick={() => void start()} data-testid="broll-video-start">Make my b-roll video</Button>
-        <p className="max-w-2xl text-2xs text-ink-subtle" data-testid="broll-video-cost">
-          {info ? estimateLine(info.estimate) : ready ? 'Working out the cost…' : needsFile ? 'Choose or record your voiceover first.' : 'Write your script first.'}
-        </p>
       </div>
-    </>
+    </MakerSection>
+  </>)
+
+  const aside = (
+    <MakerAside label={`Your video · ${draft.look.aspect}`}>
+      <div className={cn('relative mx-auto mt-3 overflow-hidden rounded-[14px] bg-[radial-gradient(ellipse_40%_28%_at_50%_52%,#3A3F4C_0%,rgba(58,63,76,0)_100%),linear-gradient(180deg,#232733,#101218)] shadow-[0_20px_50px_rgb(0_0_0/0.5)]',
+        vertical ? 'aspect-[9/16] w-[180px]' : 'aspect-video w-full')}>
+        {vertical && draft.look.hookText.trim() && (
+          <span className="absolute inset-x-[8%] top-[9%] text-center font-display text-sm font-bold leading-tight text-white [text-shadow:0_2px_6px_rgb(0_0_0/0.7)]">{draft.look.hookText.trim()}</span>
+        )}
+        <span className="absolute inset-x-3 bottom-3 text-center font-mono text-[9px] uppercase tracking-[0.08em] text-ink-muted">{needsFile ? draft.voiceover ? `${formatClock(draft.voiceover.seconds)} voiceover` : 'Your voiceover' : 'AI voice'}</span>
+      </div>
+      <Checklist items={[
+        'Your b-roll on every phrase',
+        draft.look.captions ? 'Word-by-word captions' : 'No captions',
+        draft.look.graphics ? 'Motion graphics on numbers and key lines' : 'No motion graphics',
+        draft.look.crossfade ? 'Quick crossfades between shots' : 'Clean cuts on your phrases'
+      ]} />
+      <Button variant="primary" size="lg" className="mt-4 h-12 w-full rounded-[13px] font-display text-[15px] font-semibold" icon={<Clapperboard className="h-4 w-4" />} loading={starting}
+        disabled={!ready || starting || !openrouter || (usable === 0 && !draft.fillWithAi)}
+        onClick={() => void start()} data-testid="broll-video-start">Make my b-roll video</Button>
+      {blocker && <p className="mt-2 text-center text-2xs text-ink-muted" role="status">{blocker}</p>}
+      <p className="mt-2.5 text-center text-2xs leading-relaxed text-ink-subtle" data-testid="broll-video-cost">
+        {info ? estimateLine(info.estimate) : ready ? 'Working out the cost…' : 'The cost shows here once your words are in.'}
+      </p>
+    </MakerAside>
   )
+
+  return <MakerLayout main={main} aside={aside} />
 }
 
 function VoiceoverChooser({ onError }: { onError: (message: string) => void }): React.JSX.Element {
@@ -284,7 +301,7 @@ function BrollPicker({ items }: { items: BrollLibraryEntry[] }): React.JSX.Eleme
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Tags">
           {tags.map((tag) => (
             <button key={tag} type="button" aria-pressed={draft.tags.includes(tag)} onClick={() => draft.update({ tags: toggle(draft.tags, tag) })}
-              className={cn('rounded-full px-2.5 py-1 text-2xs', draft.tags.includes(tag) ? 'bg-accent text-accent-ink' : 'bg-white/[0.06] text-ink-muted hover:text-ink')}>{tag}</button>
+              className={cn('rounded-full px-2.5 py-1 text-2xs', draft.tags.includes(tag) ? 'bg-tool text-canvas' : 'bg-white/[0.06] text-ink-muted hover:text-ink')}>{tag}</button>
           ))}
         </div>
       )}

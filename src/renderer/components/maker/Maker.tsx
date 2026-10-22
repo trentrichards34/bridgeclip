@@ -138,7 +138,7 @@ export function LookCard({ name, badge, summary, colors, open, onToggle, control
         </div>
         <button type="button" aria-expanded={open} aria-controls={controls} onClick={onToggle}
           className="ml-auto inline-flex min-h-[32px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-tool hover:bg-tool/10">
-          {open ? 'Done customizing' : 'Customize for this video'}
+          Customize for this video
           <ArrowRight aria-hidden className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')} />
         </button>
       </div>

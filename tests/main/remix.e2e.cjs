@@ -50,7 +50,7 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   await page.reload()
 
   await page.getByRole('button', { name: 'Remix', exact: true }).first().click()
-  await page.getByRole('heading', { name: 'Remix', exact: true }).waitFor()
+  await page.getByRole('heading', { name: 'Their moment hooks. Your take is the video.', exact: true }).waitFor()
   // A first visit opens on You on camera; this member has an avatar, so the AI presenter needs nothing more.
   assert.equal(await page.getByRole('radio', { name: /^You on camera/ }).getAttribute('aria-checked'), 'true')
   assert.equal(await page.getByTestId('ai-needs-avatar').count(), 0)
@@ -64,7 +64,7 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Video links')
   // The take's style is its own labeled choice; the look and call to action fold here too.
   await page.getByRole('radiogroup', { name: 'Style of your take' }).waitFor()
-  const look = page.getByRole('button', { name: /4 · Look & call to action/ })
+  const look = page.getByRole('button', { name: 'Customize for this video' })
   assert.equal(await look.getAttribute('aria-expanded'), 'false')
   await look.click()
 
@@ -211,7 +211,7 @@ test('Remix: add a brand identity, pick a style and presenter, start, and review
   if (shots) {
     fs.mkdirSync(shots, { recursive: true })
     await page.setViewportSize({ width: 1280, height: 900 })
-    await page.getByRole('heading', { name: 'Remix', exact: true }).scrollIntoViewIfNeeded()
+    await page.getByRole('heading', { name: 'Their moment hooks. Your take is the video.', exact: true }).scrollIntoViewIfNeeded()
     await page.screenshot({ path: path.join(shots, 'remix-top.png'), timeout: 10000 }).catch(() => undefined)
     await page.getByText(/1 remix ready/).scrollIntoViewIfNeeded()
     // Best effort: a playing <video> can stall screenshots on some headless setups.
