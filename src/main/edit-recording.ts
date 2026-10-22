@@ -9,8 +9,9 @@ import {
   EDIT_VIDEO_EXTENSIONS, MAX_HOOK_HINT_CHARS, MAX_IDEA_MATERIAL_CHARS, MAX_IDEA_TOPIC_CHARS, SCRIBE_MODEL, SCRIBE_PRICE_PER_SECOND,
   EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGE_BYTES, EDIT_MAX_IMAGES, CARD_MAX_SECONDS, CARD_MIN_SECONDS,
   editEstimate, livePins, parseEditDecisions, parseEditPlan, parseFilmIdeas, FILM_IDEA_COUNT,
-  type EditImage, type EditPlan, type EditSource, type EditStatus, type FilmIdea
+  type EditImage, type EditPlan, type EditScreen, type EditSource, type EditStatus, type FilmIdea
 } from '../shared/edit-recording'
+import { DEFAULT_SCREEN_CHOICE, parseScreenChoice, parseScreenOffset, parseScreenSync, screenOverlap, type ScreenSource, type ScreenSync } from '../shared/screen-pair'
 import { editRecipe, pacingForEngine } from '../shared/edit-recipes'
 import {
   COMBINE_MAX_CLIP_SECONDS, COMBINE_MAX_CLIPS, COMBINE_MAX_TOTAL_SECONDS, COMBINE_MIN_CLIP_SECONDS, filmingOrder,
@@ -163,7 +164,11 @@ export async function describeSource(path: string, mode: EditMode = 'takes'): Pr
   return { path, name: basename(path), seconds: Math.round(seconds * 100) / 100, ...(createdAt ? { createdAt } : {}) }
 }
 
-export interface ParsedEditStart { sources: string[]; brandIdentityId: string | null; hookHint: string; purpose: string; referenceImage: string | null; mode: EditMode; order: ClipOrderMode }
+export interface ParsedEditStart {
+  sources: string[]; brandIdentityId: string | null; hookHint: string; purpose: string; referenceImage: string | null; mode: EditMode; order: ClipOrderMode
+  /** Camera + screen: the screen recording and how it lines up with the camera. */
+  screen: { path: string; offsetMs: number } | null
+}
 
 /** The start request from the page, checked: recordings the member chose here (or ones in the Library). */
 export function parseEditStart(value: unknown, outputDirectory: string): ParsedEditStart {
@@ -186,8 +191,77 @@ export function parseEditStart(value: unknown, outputDirectory: string): ParsedE
   if (raw.hookHint !== undefined && (typeof raw.hookHint !== 'string' || raw.hookHint.length > MAX_HOOK_HINT_CHARS)) throw new Error('That hook is too long.')
   const purpose = parsePurpose(raw.purpose)
   if (raw.referenceImage !== undefined && raw.referenceImage !== null && !isReferenceId(raw.referenceImage)) throw new Error('Choose your reference image again.')
-  return { sources, brandIdentityId: (raw.brandIdentityId as string | null | undefined) ?? null, hookHint: typeof raw.hookHint === 'string' ? raw.hookHint.replace(/\s+/g, ' ').trim() : '',
+  const screen = raw.screen === undefined || raw.screen === null ? null : parseStartScreen(raw.screen, sources, mode, outputDirectory)
+  return { screen, sources, brandIdentityId: (raw.brandIdentityId as string | null | undefined) ?? null, hookHint: typeof raw.hookHint === 'string' ? raw.hookHint.replace(/\s+/g, ' ').trim() : '',
     purpose, referenceImage: isReferenceId(raw.referenceImage) ? raw.referenceImage : null, mode, order: mode === 'combine' && raw.order === 'ai' ? 'ai' : 'filmed' }
+}
+
+/** The start request's screen recording: one camera recording (not combined clips), a video the member chose. */
+function parseStartScreen(value: unknown, sources: string[], mode: EditMode, outputDirectory: string): { path: string; offsetMs: number } {
+  const raw = value as Record<string, unknown>
+  if (typeof value !== 'object' || Array.isArray(value) || !value) throw new Error('Add your screen recording again.')
+  if (mode !== 'takes' || sources.length !== 1) throw new Error('A screen recording goes with one camera recording. Remove the other takes, or remove the screen recording.')
+  const path = raw.path
+  if (typeof path !== 'string' || !EDIT_VIDEO_EXTENSIONS.includes(extname(path).slice(1).toLowerCase())) throw new Error('Choose a video for your screen recording: MP4, MOV, WebM, M4V or MKV.')
+  try { assertMediaPath(path, outputDirectory) } catch { throw new Error('Choose your screen recording again with + Add a screen recording.') }
+  let same = path === sources[0]
+  try { same ||= realpathSync(path) === realpathSync(sources[0]) } catch { /* checked above */ }
+  if (same) throw new Error('Choose a different file for your screen recording: this one is your camera recording.')
+  return { path, offsetMs: parseScreenOffset(raw.offsetMs) }
+}
+
+/** A screen recording the member chose: a video under the length limit. */
+export async function describeScreen(path: string): Promise<ScreenSource> {
+  const source = await describeSource(path)
+  return { path: source.path, name: source.name, seconds: source.seconds }
+}
+
+const SYNC_FOLDER = '.screen-sync'
+let syncing = false
+
+/** The folder for lining up and its previews (in the output folder, cleared of old previews). */
+async function syncFolder(): Promise<string> {
+  const folder = join(loadSettings().outputDirectory, SYNC_FOLDER)
+  await mkdir(folder, { recursive: true })
+  return folder
+}
+
+function checkPair(camera: unknown, screen: unknown): { camera: string; screen: string } {
+  const outputDirectory = loadSettings().outputDirectory
+  for (const [path, what] of [[camera, 'camera recording'], [screen, 'screen recording']] as const) {
+    if (typeof path !== 'string' || !EDIT_VIDEO_EXTENSIONS.includes(extname(path).slice(1).toLowerCase())) throw new Error(`Choose your ${what} again.`)
+    try { assertMediaPath(path, outputDirectory) } catch { throw new Error(`Choose your ${what} again.`) }
+  }
+  if (camera === screen) throw new Error('Choose a different file for your screen recording: this one is your camera recording.')
+  return { camera: camera as string, screen: screen as string }
+}
+
+/** Camera + screen: line the screen recording up with the camera, by sound or by when the files were made (local, free). */
+export async function syncScreen(camera: unknown, screen: unknown): Promise<ScreenSync> {
+  const pair = checkPair(camera, screen)
+  if (syncing) throw new Error('Your recordings are being lined up. Wait a moment.')
+  syncing = true
+  try {
+    const result = await runEngine({ mode: 'sync', output_dir: await syncFolder(), camera: pair.camera, screen: pair.screen }, 10 * 60_000)
+    const sync = parseScreenSync(result)
+    if (!sync) throw new Error('Your recordings could not be lined up. Try again.')
+    return sync
+  } finally { syncing = false }
+}
+
+/** A few seconds of both recordings side by side as lined up at `offsetMs`, from `atMs` of the camera (local, free). */
+export async function previewScreen(camera: unknown, screen: unknown, offsetMs: unknown, atMs: unknown): Promise<string> {
+  const pair = checkPair(camera, screen)
+  const offset = parseScreenOffset(offsetMs)
+  if (typeof atMs !== 'number' || !Number.isInteger(atMs) || atMs < 0 || atMs > 4 * 3600_000) throw new Error('Choose a moment to preview.')
+  const folder = await syncFolder()
+  // Older previews go (one is shown at a time).
+  for (const name of await readdir(folder).catch(() => [] as string[])) if (/^preview-[0-9a-f]{8}\.mp4$/.test(name)) await rm(join(folder, name), { force: true }).catch(() => undefined)
+  const out = join(folder, `preview-${randomBytes(4).toString('hex')}.mp4`)
+  await runEngine({ mode: 'screen_preview', output_dir: folder, camera: pair.camera, screen: pair.screen, offset_ms: offset, at_ms: atMs, output_path: out }, 5 * 60_000)
+  if (!existsSync(out)) throw new Error('The preview could not be made. Try again.')
+  // The page plays it.
+  return authorizeMedia(out)
 }
 
 /**
@@ -400,6 +474,14 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
     const total = sources.reduce((sum, source) => sum + source.seconds, 0)
     if (combine && total > COMBINE_MAX_TOTAL_SECONDS + 1) throw new Error(`Your clips add up to over ${COMBINE_MAX_TOTAL_SECONDS / 60} minutes. Use fewer or shorter clips.`)
     if (!combine && total > EDIT_MAX_TOTAL_SECONDS + 1) throw new Error(`Your takes add up to over ${EDIT_MAX_TOTAL_SECONDS / 60} minutes. Use fewer or shorter takes.`)
+    // Camera + screen: the screen recording's length, and where it runs at this offset (it has to overlap the camera).
+    let screen: EditScreen | undefined
+    if (request.screen) {
+      const described = await describeScreen(request.screen.path)
+      const overlap = screenOverlap(request.screen.offsetMs, sources[0].seconds, described.seconds)
+      if (!overlap) throw new Error('At this offset your screen recording doesn’t overlap your camera recording. Line them up again.')
+      screen = { ...described, offsetMs: request.screen.offsetMs, overlapMs: overlap }
+    }
     const brand = request.brandIdentityId ? await readBrandIdentity(request.brandIdentityId) : null
     if (request.referenceImage) referencePath(request.referenceImage)
     const folder = join(settings.outputDirectory, `edit-${randomUUID()}`)
@@ -422,7 +504,8 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
       cancelled: false, brand, hookHint: request.hookHint, purpose: request.purpose, reference, recordedUsd: 0, order: request.order,
       status: {
         id: randomBytes(6).toString('hex'), phase: 'transcribing', detail: 'Starting', percent: 1, sources, folder, plan: null, transcriber: null,
-        output: null, costUsd: 0, estimateUsd: editEstimate(total).total, error: null, warnings, images: [], ...(combine ? { mode: 'combine' as const } : {})
+        output: null, costUsd: 0, estimateUsd: editEstimate(total).total, error: null, warnings, images: [], ...(combine ? { mode: 'combine' as const } : {}),
+        ...(screen ? { screen } : {})
       }
     }
     run = current
@@ -466,6 +549,18 @@ async function prepare(current: EditRun): Promise<void> {
     if (plan.combine) plan.combine.startOrder = current.order === 'ai' && plan.combine.aiOrder ? [...plan.combine.aiOrder] : sources.map((_, i) => i)
     if (combine && current.order === 'ai' && !plan.combine?.aiOrder) current.status = { ...current.status, warnings: [...current.status.warnings, 'The AI didn’t suggest an order this time, so your clips start in the order they were filmed.'] }
     if (current.cancelled) throw new Error('Canceled.')
+    // Camera + screen: what's said before or after the screen recording starts out cut (it can be kept: it shows just the camera).
+    const screen = current.status.screen
+    if (screen) {
+      const [a, b] = screen.overlapMs
+      let outside = 0
+      plan.words = plan.words.map((word) => {
+        if (word.cut || (word.endMs > a && word.startMs < b)) return word
+        outside++
+        return { ...word, cut: 'no_screen' as const }
+      })
+      if (outside) current.status = { ...current.status, warnings: [...current.status.warnings, `${outside} word${outside === 1 ? ' was' : 's were'} said before or after your screen recording, so ${outside === 1 ? 'it starts' : 'they start'} cut. Keep ${outside === 1 ? 'it' : 'them'} to show just your camera there.`] }
+    }
     logger.info('edit.planned', { words: plan.words.length, planned: plan.planned, transcriber: current.status.transcriber })
     publish(current, { phase: 'review', detail: 'Ready for review', percent: 100, plan, warnings: [...current.status.warnings, ...plan.warnings].slice(0, 6) })
   } catch (error) {
@@ -573,6 +668,13 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     publish(current, { phase: 'review', detail: 'Ready for review', percent: 100, error: null })
     return current.status
   }
+  // Camera + screen: how they're shown. Pop-ups, cards, images, graphics, b-roll, openings and extras aren't made for these reels.
+  const screen = current.status.screen
+  const screenChoice = screen ? parseScreenChoice((value as { screen?: unknown } | null)?.screen ?? DEFAULT_SCREEN_CHOICE) : null
+  if (screen) {
+    Object.assign(decisions, { popups: decisions.popups.map((item) => ({ ...item, on: false })), pins: [], graphics: [], cutoutIntro: false, rawIntro: false, lookExtras: [] })
+    decisions.look = { ...decisions.look, broll: null, lookExtras: undefined }
+  }
   const look = headlineLookForEngine(decisions.look.headlineLook)
   const extrasColor = lookExtrasForEngine(decisions.lookExtras, current.brand?.look?.color, decisions.look.headlineLook).look_extras_color
   const order = plan.combine ? decisions.clipOrder ?? plan.combine.startOrder : null
@@ -604,7 +706,9 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     // The extras' color (the brand's), and the keyword the comment box types (none: the box is left out).
     ...(extrasColor ? { look_extras_color: extrasColor } : {}),
     ...(decisions.lookExtras.includes('comment_box') && current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}),
-    title: decisions.hookText || current.status.sources[0]?.name.replace(/\.[^.]+$/, '') || '', cost_usd: current.status.costUsd
+    title: decisions.hookText || current.status.sources[0]?.name.replace(/\.[^.]+$/, '') || '', cost_usd: current.status.costUsd,
+    ...(screen && screenChoice ? { screen: { path: screen.path, offset_ms: screen.offsetMs, style: screenChoice.style, split: screenChoice.split, fit: screenChoice.fit,
+      zoom: screenChoice.zoom, auto: screenChoice.auto } } : {})
   }
   // Voice cleanup and music (a member's own track must still be in their music folder).
   let audio: Record<string, unknown> | undefined

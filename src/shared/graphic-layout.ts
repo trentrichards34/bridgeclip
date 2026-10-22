@@ -23,9 +23,11 @@ export function captionAnchorAt(project: Pick<EditorProject, 'aspect_ratio' | 'w
   if (candidate.caption_y != null) return { y: candidate.caption_y, bottom: false }
   if (project.aspect_ratio === '16:9') return { y: 1 - 100 / 1080, bottom: true }
   const scene = sceneAt(candidate as CandidateEdit, time)
-  if (scene.layout === 'split') return { y: .5, bottom: false }
-  if (scene.layout === 'fit') {
-    const height = Math.min(1920, 1080 * project.height / project.width)
+  if (scene.layout === 'split') return { y: scene.split ?? .5, bottom: false }
+  if (scene.layout === 'fit' || scene.layout === 'inset' || scene.layout === 'bubble') {
+    // Fit shows the whole source; inset and bubble (camera + screen) the crop, fitted the same way.
+    const [w, h] = scene.layout === 'fit' ? [project.width, project.height] : [scene.crops[0][2] * project.width, scene.crops[0][3] * project.height]
+    const height = Math.min(1920, 1080 * h / w)
     const bar = (1920 - height) / 2
     if (bar >= 200) return { y: (1920 - Math.floor(bar * .55)) / 1920, bottom: true }
   }

@@ -14,7 +14,7 @@ from clip_engine.error_policy import NoClipCandidatesError
 
 from clip_engine.services.coherence_review import CLIP_QUESTIONS, CUT_QUESTIONS, CoherenceReviewer, check_threshold, dialogue
 from clip_engine.services.jev_service import JevService
-from clip_engine.services.layout_analyzer import ClipLayoutPlan, ShotLayout, LayoutType, focus_for_window
+from clip_engine.services.layout_analyzer import Box, ClipLayoutPlan, ShotLayout, LayoutType, focus_for_window
 from clip_engine.services.layout_renderer import shot_views
 from clip_engine.services.rendering_service import RenderRequest, RenderingService
 from clip_engine.services.transcription_service import TranscriptSegment, TranscriptWord
@@ -330,6 +330,9 @@ def read_json(run, name, limit=32 * 1024 * 1024):
 # A split scene's top panel share of the output height (absent: even).
 SPLIT_RANGE = (0.3, 0.7)
 DEFAULT_SPLIT = 0.5
+# Layouts a scene can have (inset and bubble: camera + screen projects), and those whose crops can move between scenes.
+LAYOUTS = ('fill', 'split', 'fit', 'inset', 'bubble')
+MOVING_LAYOUTS = ('fill', 'split')
 MAX_HOOK_CHARS = 200
 
 
@@ -395,7 +398,7 @@ def validate_candidate(c, duration, transcript_count=100000):
         raise ValueError('Invalid layouts')
     previous = -1
     for i, s in enumerate(c['scenes']):
-        if not number(s['at_ms'], previous + .001, duration) or s['layout'] not in ('fill', 'split', 'fit'):
+        if not number(s['at_ms'], previous + .001, duration) or s['layout'] not in LAYOUTS:
             raise ValueError('Invalid layout')
         previous = s['at_ms']
         split = s.get('split')
@@ -403,10 +406,10 @@ def validate_candidate(c, duration, transcript_count=100000):
             raise ValueError('Invalid split size')
         transition = s.get('transition_ms', 0)
         if not number(transition, 0, 5000) or (transition and (transition < 100 or transition != int(transition)
-                or i == 0 or s['layout'] == 'fit' or c['scenes'][i - 1]['layout'] != s['layout']
+                or i == 0 or s['layout'] not in MOVING_LAYOUTS or c['scenes'][i - 1]['layout'] != s['layout']
                 or split_of(c['scenes'][i - 1]) != split_of(s))):
             raise ValueError('Invalid layout movement')
-        if len(s['crops']) != (2 if s['layout'] == 'split' else 1):
+        if len(s['crops']) != (2 if s['layout'] in ('split', 'bubble') else 1):
             raise ValueError('Invalid crops')
         for x, y, w, h in s['crops']:
             if not all(number(n, 0, 1) for n in (x, y, w, h)) or min(w, h) < .01 or x + w > 1.000001 or y + h > 1.000001:
@@ -493,7 +496,7 @@ def scene_motion(c):
     origin = None
     for scene in c['scenes']:
         duration = scene.get('transition_ms', 0)
-        if duration and previous and previous['layout'] == scene['layout'] and scene['layout'] != 'fit':
+        if duration and previous and previous['layout'] == scene['layout'] and scene['layout'] in MOVING_LAYOUTS:
             p = min(1, (scene['at_ms'] - previous['at_ms']) / previous['transition_ms']) if previous.get('transition_ms') else 1
             ease = p * p * (3 - 2 * p)
             origin = [[a + (b - a) * ease for a, b in zip(start, end)] for start, end in zip(origin, previous['crops'])]
@@ -511,7 +514,14 @@ def manual_plan(project, c, cover=False):
         start, end = max(a, scene['at_ms']), min(b, c['scenes'][i + 1]['at_ms'] if i + 1 < len(c['scenes']) else b)
         if start >= end:
             continue
-        layout = {'split': LayoutType.TWO_SHOT, 'fit': LayoutType.SCREEN, 'fill': LayoutType.TALKING_HEAD}[scene['layout']]
+        layout = {'split': LayoutType.TWO_SHOT, 'fit': LayoutType.SCREEN, 'fill': LayoutType.TALKING_HEAD,
+                  'inset': LayoutType.SCREEN, 'bubble': LayoutType.SCREEN}[scene['layout']]
+        if scene['layout'] in ('inset', 'bubble'):
+            # Camera + screen: a part of the source fitted over a blurred copy of itself (and the face in a bubble).
+            x, y, w, h = scene['crops'][0]
+            bubble = tuple(scene['crops'][1]) if scene['layout'] == 'bubble' else None
+            shots.append(ShotLayout(start - a, end - a, layout, source='manual', content_box=Box(x, y, w, h), manual_bubble=bubble))
+            continue
         crops = [] if scene['layout'] == 'fit' else scene['crops']
         split = split_of(scene) if scene['layout'] == 'split' else None
         duration = scene.get('transition_ms', 0)

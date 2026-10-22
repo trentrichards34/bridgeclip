@@ -60,7 +60,7 @@ test('the start request takes recordings chosen here (or in the Library), a bran
   const file = path.join(userData, 'take-1.mp4')
   selected.add(file)
   const parsed = main.parseEditStart({ sources: [file, file], brandIdentityId: BRAND.id, hookHint: '  Most   coaches undercharge ' }, userData)
-  assert.deepEqual(plain(parsed), { sources: [file], brandIdentityId: BRAND.id, hookHint: 'Most coaches undercharge', purpose: '', referenceImage: null, mode: 'takes', order: 'filmed' })
+  assert.deepEqual(plain(parsed), { sources: [file], brandIdentityId: BRAND.id, hookHint: 'Most coaches undercharge', purpose: '', referenceImage: null, mode: 'takes', order: 'filmed', screen: null })
   // "Say what it's for": one plain line of up to 200 characters, and a reference picture's id.
   const REF = 'a'.repeat(24)
   const withPurpose = main.parseEditStart({ sources: [file], brandIdentityId: null, purpose: '  Instagram reel   selling my call ', referenceImage: REF }, userData)

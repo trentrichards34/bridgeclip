@@ -18,6 +18,8 @@ import { ClipOrder } from './CombineClips'
 import { SHOT_LABELS } from '../../shared/combine-clips'
 import { applyRestore, editRecordingLog, restoreStillApplied, undoRestore, type RestoreUndo } from '../../shared/edit-log'
 import { SkillsPanel } from './SkillsPanel'
+import { ScreenChoicePanel } from './ScreenRecording'
+import { DEFAULT_SCREEN_CHOICE } from '../../shared/screen-pair'
 import { editSkillPatch, editSkillRows } from '../../shared/skills'
 import { BrollSourcePicker, useBrollLibraryLoaded, useEffectiveBrollSource } from './BrollSourcePicker'
 import { useSettingsStore } from '../store/use-settings-store'
@@ -74,7 +76,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
     const fresh = initialDecisions(plan, look, useEditRecordingStore.getState().recipe)
     const saved = useEditRecordingStore.getState().reviewFor(status.id)
     // Saved choices win; anything they don't have (a newer field) starts from the plan.
-    return saved ? { ...fresh, ...saved } : fresh
+    const start = saved ? { ...fresh, ...saved } : fresh
+    // Camera + screen: how the two share the frame.
+    return status.screen && !start.screen ? { ...start, screen: { ...DEFAULT_SCREEN_CHOICE } } : start
   })
   // Images can be added or removed (here, or by main); kept in step with the status.
   const [images, setImages] = useState<EditImage[]>(status.images ?? [])
@@ -103,6 +107,8 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const showMark = hasBrandMark(brand?.look)
   const cardTrouble = decisions.popups.some((item) => item.on && item.card && !cut.has(plan.popups.find((p) => p.id === item.id)?.word ?? -1) && cardProblem(item.card) !== null)
   const sources = status.sources
+  // Camera + screen reels: no pop-ups, cards, images, graphics, b-roll, openings or extras (the screen is the visual).
+  const screen = status.screen ?? null
   // The preview shows the reel's own opening words.
   const previewWords = useMemo(() => plan.words.filter((_, i) => !cut.has(i)).slice(0, 8).map((word) => word.text), [plan.words, decisions.cut])
 
@@ -337,12 +343,16 @@ export function EditReview({ status, brand, look, onLook, onError }: {
             <p className="mt-1 text-2xs text-ink-subtle"><span className="text-accent">Highlighted</span>: plays first, as your hook.{plan.cta ? ' Underlined: your call to action, at the end.' : ''}</p>
           </section>
 
+          {screen && decisions.screen && (
+            <ScreenChoicePanel value={decisions.screen} disabled={making} onChange={(next) => setDecisions((current) => ({ ...current, screen: next }))} />
+          )}
+
           {plan.cta && (
             <SettingRow className="mt-4" title="End on your call to action" description={`“${spanText(plan.cta.start, plan.cta.end)}” moves to the end.`}
               control={<Switch label="End on your call to action" checked={decisions.endOnCta} onChange={(endOnCta) => setDecisions((current) => ({ ...current, endOnCta }))} />} />
           )}
 
-          <SkillsPanel className="mt-5" rows={editSkillRows(plan, { ...decisions, look }, { brollSource: brollDefault })}
+          <SkillsPanel className="mt-5" rows={editSkillRows(plan, { ...decisions, look }, { brollSource: brollDefault }).filter((row) => !screen || (row.id !== 'broll' && row.id !== 'zoom'))}
             music={{ track: look.musicTrack ?? null, onChange: (track) => onLook({ ...look, musicTrack: track ?? undefined }) }}
             expand={(id) => id === 'broll' && look.broll ? <BrollSourcePicker value={look.broll} onChange={(broll) => onLook({ ...look, broll })} disabled={making} /> : undefined}
             onToggle={(id, on) => {
@@ -354,11 +364,11 @@ export function EditReview({ status, brand, look, onLook, onError }: {
               : id === 'sound_effects' ? () => scrollTo('edit-sounds-title')
                 : id === 'rough_cut' ? () => scrollTo('edit-transcript-title') : undefined} />
 
-          <EditStylePicker recipe={decisions.recipe} extras={decisions.lookExtras}
+          {!screen && <EditStylePicker recipe={decisions.recipe} extras={decisions.lookExtras}
             onRecipe={(id) => { useEditRecordingStore.getState().setRecipe(id); setDecisions((current) => applyRecipe(plan, current, id)) }}
-            onExtras={(lookExtras) => setDecisions((current) => ({ ...current, lookExtras }))} />
+            onExtras={(lookExtras) => setDecisions((current) => ({ ...current, lookExtras }))} />}
 
-          <section className="mt-5 space-y-3" aria-labelledby="edit-extras-title" data-testid="edit-extras">
+          {!screen && <section className="mt-5 space-y-3" aria-labelledby="edit-extras-title" data-testid="edit-extras">
             <div>
               <h3 id="edit-extras-title" className="flex items-center gap-1.5 text-sm font-semibold text-ink"><Layers className="h-4 w-4" aria-hidden />On-screen extras</h3>
               <p className="text-2xs text-ink-subtle">Everything that shows over your video: graphics, half-screen graphics, pop-ups and your own images. Each one starts as a word is said.</p>
@@ -430,7 +440,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                   onUnpin={(gone) => setDecisions((current) => ({ ...current, pins: current.pins.filter((pin) => pin.image !== gone.image || pin.word !== gone.word) }))} />
               </div>
             </div>
-          </section>
+          </section>}
 
           {plan.sounds.length > 0 && (
             <section className="mt-5 space-y-2" aria-labelledby="edit-sounds-title">
@@ -447,13 +457,13 @@ export function EditReview({ status, brand, look, onLook, onError }: {
             </section>
           )}
 
-          <section className="mt-5 space-y-2" aria-labelledby="edit-openings-title">
+          {!screen && <section className="mt-5 space-y-2" aria-labelledby="edit-openings-title">
             <h3 id="edit-openings-title" className="text-sm font-semibold text-ink">How it opens</h3>
             <SettingRow title="Cut-out opening" description={`For the first ${CUTOUT_INTRO_SECONDS} seconds your background is removed and you stand in front of a blurred collage of your images (or stills of your video).`}
               control={<Switch label="Cut-out opening" checked={decisions.cutoutIntro} onChange={(cutoutIntro) => setDecisions((current) => ({ ...current, cutoutIntro }))} />} />
             <SettingRow title="Raw-to-edited opening" description={`A ${RAW_INTRO_SECONDS}-second clip first shows your raw take, with the pauses and retakes that were cut marked in red, then your reel starts.`}
               control={<Switch label="Raw-to-edited opening" checked={decisions.rawIntro} onChange={(rawIntro) => setDecisions((current) => ({ ...current, rawIntro }))} />} />
-          </section>
+          </section>}
 
           <section className="mt-5 rounded-2xl bg-white/[0.03] p-3">
             <button type="button" className="flex w-full items-start justify-between gap-3 text-left" aria-expanded={lookOpen} aria-controls="edit-look" onClick={() => setLookOpen(!lookOpen)}>
@@ -476,7 +486,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                   void _extras
                   onLook({ ...look, ...lookPatch(look, rest) })
                 }}
-                  rows={{ hooks: LOOK_HOOKS, handle: true, extras: true }} brand={brand} frame={previewFrame(media(decisions.clipOrder?.[0] ?? 0), 'video', 0.1)}
+                  rows={{ hooks: LOOK_HOOKS, handle: true, extras: !screen }} brand={brand} frame={previewFrame(media(decisions.clipOrder?.[0] ?? 0), 'video', 0.1)}
                   hookText={decisions.hookText} words={previewWords} skillExtras={['punch_zoom']} />
               </div>
             )}

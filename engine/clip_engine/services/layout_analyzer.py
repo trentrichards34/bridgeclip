@@ -263,6 +263,8 @@ class ShotLayout:
     # Manual crops are always cut to cover their panel (under a hook bar the
     # panels are shorter than the editor's full-frame ones).
     manual_cover: bool = False
+    # Camera + screen "bubble": the face's crop (normalized x, y, w, h), drawn round over the content box's lower corner.
+    manual_bubble: Optional[tuple[float, float, float, float]] = None
 
     def summary(self) -> dict:
         return {

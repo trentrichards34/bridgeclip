@@ -258,7 +258,7 @@ test('one turn: tool calls become checked edits, errors go back to the model, co
     const second = openrouter.requests[1].messages
     assert.match(second.at(-1).content, /^Error: to_ms must be between 0 and 12000/)
     assert.match(second[0].content, /Sections kept \(source ms\): \[1000, 5000\], \[7000, 10000\]/)
-    assert.deepEqual(openrouter.requests[0].tools.map((t) => t.function.name).sort(), plain(shared.CHAT_TOOLS.map((t) => t.name)).sort())
+    assert.deepEqual(openrouter.requests[0].tools.map((t) => t.function.name).sort(), plain(shared.chatToolsFor({}).map((t) => t.name)).sort())
     assert.equal(openrouter.requests[0].model, 'google/gemini-3.8-flash')
     // Edits from the third reply's tool results reach the model as the new state.
     assert.match(openrouter.requests[2].messages.at(-1).content, /"sections":\[\[300,5000\],\[7000,10000\]\]/)

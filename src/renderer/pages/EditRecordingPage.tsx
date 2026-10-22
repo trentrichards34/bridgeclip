@@ -16,6 +16,8 @@ import { EditRecorder } from '../components/EditRecorder'
 import { EditReview } from '../components/EditReview'
 import { FilmIdeas } from '../components/FilmIdeas'
 import { FriendlyError } from '../components/FriendlyError'
+import { ScreenRecordingPicker, type ScreenPick } from '../components/ScreenRecording'
+import { screenOverlap } from '../../shared/screen-pair'
 import { PurposeFields } from '../components/PurposeFields'
 import type { ReferenceImage } from '../../shared/purpose'
 import { useLowDiskGate } from '../components/LowDiskGate'
@@ -63,6 +65,8 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const [mode, setMode] = useState<EditMode>('takes')
   const [orderMode, setOrderMode] = useState<ClipOrderMode>('filmed')
   const [importing, setImporting] = useState<ImportProgress[] | null>(null)
+  // Camera + screen: a screen recording made with the (one) camera recording, and how they line up.
+  const [screen, setScreen] = useState<ScreenPick | null>(null)
   // The brand and look are kept in a store, so leaving the page and coming back keeps them.
   const brandId = useEditRecordingStore((s) => s.brandId)
   const look = useEditRecordingStore((s) => s.look)
@@ -98,6 +102,10 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const tooLong = total > maxTotal
   // Clips are listed (and combined) in the order they were filmed.
   const listed = combine ? filmingOrder(sources).map((i) => sources[i]) : sources
+  const withScreen = !combine && screen !== null
+  // The screen recording is ready once lined up (and overlapping the camera at the chosen offset).
+  const screenReady = !withScreen || Boolean(screen?.sync && screenOverlap(screen.offsetMs, screen.sync.cameraSeconds, screen.sync.screenSeconds))
+  const screenBlocked = sources.length === 0 ? 'Choose your camera recording first.' : sources.length > 1 ? 'A screen recording goes with one camera recording: keep one take to add one.' : null
 
   const addSources = (added: EditSource[], limit = maxSources): void => {
     setSources((current) => {
@@ -140,6 +148,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
     try {
       setStatus(await getApi().edit.start({ sources: listed.map((source) => source.path), brandIdentityId: brandId, ...(hookHint ? { hookHint } : {}),
         ...(combine ? { mode: 'combine' as const, order: orderMode } : {}),
+        ...(withScreen && screen ? { screen: { path: screen.source.path, offsetMs: screen.offsetMs } } : {}),
         ...(purpose.trim() ? { purpose: purpose.replace(/\s+/g, ' ').trim() } : {}), ...(reference ? { referenceImage: reference.id } : {}) }))
     } catch (err) { setError(errorMessage(err)) } finally { setStarting(false) }
   }
@@ -162,7 +171,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   }, [])
 
   const startOver = (): void => {
-    setSources([]); setImporting(null); setHookHint(''); setPurpose(''); setReference(null); setStatus(null)
+    setSources([]); setImporting(null); setScreen(null); setHookHint(''); setPurpose(''); setReference(null); setStatus(null)
     void getApi().edit.discard().catch(() => undefined)
   }
 
@@ -211,6 +220,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
             <div className="flex flex-col gap-2">
               {onViewLibrary && <Button variant="primary" icon={<Library className="h-4 w-4" />} onClick={() => onViewLibrary(status.folder)}>Open in Library</Button>}
               <Button variant="secondary" icon={<Video className="h-4 w-4" />} onClick={startOver}>Edit another recording</Button>
+              {status.screen && <p className="max-w-sm text-2xs text-ink-muted" data-testid="screen-done">Your screen and camera play together. To show just you, just your screen or a different split in any part, open it in the Library and edit the clip.</p>}
               {status.warnings.map((warning) => <p key={warning} className="max-w-sm text-2xs text-ink-muted">{warning}</p>)}
             </div>
           </div>
@@ -252,6 +262,10 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
                 ))}
               </ul>
             )}
+            {!combine && (sources.length <= 1 || screen) && (
+              <ScreenRecordingPicker camera={sources.length === 1 ? { path: sources[0].path, seconds: sources[0].seconds } : null} value={screen} onChange={setScreen}
+                onError={setError} disabledReason={screenBlocked} />
+            )}
             {combine && sources.length > 1 && (
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                 <Segmented label="Clip order" value={orderMode} onChange={setOrderMode}
@@ -289,7 +303,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
             </p>
             <div className="mt-3 flex justify-end">
               <Button variant="primary" size="lg" icon={combine ? <Combine className="h-4 w-4" /> : <Scissors className="h-4 w-4" />} loading={starting}
-                disabled={!sources.length || (combine && sources.length < 2) || starting || tooLong || !openrouterConfigured || Boolean(importing)}
+                disabled={!sources.length || (combine && sources.length < 2) || starting || tooLong || !openrouterConfigured || Boolean(importing) || !screenReady || (withScreen && sources.length !== 1)}
                 onClick={() => void start()}>{combine ? 'Combine my clips' : 'Edit my recording'}</Button>
             </div>
           </Panel>
