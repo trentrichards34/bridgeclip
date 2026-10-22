@@ -1,19 +1,20 @@
-# CreatorClips Design System: Flat Glass
+# CreatorClips Design System: Signal
 
-CreatorClips is built from flat translucent layers over one solid dark backdrop. **There are no gradients anywhere, and no coloured glows**: every fill is a single colour, and the only shadows are black depth shadows and crisp 1px rings. Surfaces float, and the controls are capsules. It is still a working tool people keep open for hours, so the glass stays calm and the video stays the loudest thing on screen.
+CreatorClips is a dark studio. One near-black backdrop, a slightly lighter sidebar, translucent dark cards with hairline borders, and **colour as a signal**: a lime accent for the one primary action, chosen options, live progress and focus, and one colour per tool for its icon tile, its page chip and a soft glow at the top of its page. People keep it open for hours, so surfaces stay quiet and the video stays the loudest thing on screen.
 
-Tokens live in `src/renderer/globals.css` (as RGB channels, plus the material classes) and are mapped to Tailwind names in `tailwind.config.ts`. Reusable pieces live in `src/renderer/components/ui/`. Use those before writing new class strings.
+The reference mockup is `docs/design/signal/` (README with tokens, the clickable `CreatorClips Signal.dc.html`, and `screens/*.png`). Tokens live in `src/renderer/globals.css` (RGB channels plus the material classes) and are mapped to Tailwind names in `tailwind.config.ts`. Reusable pieces live in `src/renderer/components/ui/`. Use those before writing new class strings.
 
 ---
 
 ## Principles
 
-1. **Layers, not boxes.** Every surface is a material (below) sitting at a depth: backdrop → panels → tiles inside panels → floating bars and dialogs. Don't draw a flat grey rectangle.
-2. **Flat fills, crisp edges.** Every fill is one colour (no `linear-`/`radial-gradient`, no `bg-gradient-*`, no blurred colour blobs, no coloured blurred shadows). Panels have an even 1px rim; controls may have a 1px inner highlight on their top edge. Only black shadows blur.
-3. **Video first.** Thumbnails, previews and caption samples carry the colour. Glass is neutral so it never competes with footage.
-4. **Accent is solid and scarce.** The blue accent is for the primary action, chosen options, live progress, the active nav icon and the drop target. Selection elsewhere is a brighter pane of glass, not blue.
-5. **Only failure earns a hue.** Red means something broke, amber means setup is incomplete or a result needs a look, green means found/ready/saved.
-6. **Say what happened.** Errors show the engine's actual message and a suggested fix, never just "Something went wrong".
+1. **Layers, not boxes.** Backdrop → sidebar → cards (`glass`) → tiles and wells inside cards → floating menus and dialogs (`glass-thick`). Don't draw raw grey rectangles.
+2. **Hairlines and soft depth.** Cards are 85% dark surfaces with a 1px white-7% rim and a black shadow. Borders are `line` (white 7%) or `line-strong` (white 14%).
+3. **Video first.** Thumbnails, previews and caption samples carry the colour.
+4. **Lime is the signal.** The accent (`#B7F652`, oklch 0.9 0.2 128) is for the primary action, live progress, the focus ring and Create. Text on solid lime is dark (`accent-ink`).
+5. **Every tool has a colour.** It marks the tool's nav tile, its page chip, its page glow and, on that page, the chosen option (`glass-selected`). Don't use tool colours for status.
+6. **Only failure earns a status hue.** Red means something broke, amber means setup is incomplete or something needs a look, green means found/ready/saved.
+7. **Say what happened.** Errors show the engine's actual message and a suggested fix, never just "Something went wrong".
 
 ---
 
@@ -21,19 +22,20 @@ Tokens live in `src/renderer/globals.css` (as RGB channels, plus the material cl
 
 | Class | What it is | Use |
 | --- | --- | --- |
-| `app-backdrop` | Solid `canvas`, opaque, so the macOS vibrancy under the window never tints the UI. Shared by the sidebar and the page. | The window background (Layout, loading screen). |
-| `glass` | Flat translucent fill, 1px inset rim, floating black shadow. `position: relative`. | Panels, cards, empty states. Needs a `rounded-*`. Don't add a `border` utility; the rim is the edge. |
-| `glass-thick` | Flat darker tint with `backdrop-filter: blur(40px) saturate(170%)`, rim and deep shadow. | Anything floating over scrolling content: dialogs, sticky toolbars, popovers. |
-| `glass-tile` (+ `glass-tile-hover`) | Flat lighter fill, hairline border, inner highlight. No blur. | Rows, option cards and sub-sections inside a panel. |
-| `glass-selected` | Flat accent tint with an accent border and a crisp 3px ring. Combine with `glass-tile`. | The chosen option card or tile. |
-| `glass-well` | Recessed dark well with inner shadow. | Text inputs, selects, text areas, inset lists (system check). |
-| `glass-chip` | Small frosted label with blur. | Anything overlaid on video or artwork (score, duration, counts). |
-| `btn-primary` / `btn-glass` | Solid accent capsule / flat glass capsule. | Used by `Button`; don't apply directly. |
-| `scroll-edge` | Solid `canvas` title-bar strip that content scrolls under. | Layout only. |
+| `app-backdrop` | Solid `canvas` (#07080C), opaque, so macOS vibrancy never tints the UI. | The window background. |
+| `app-sidebar` | Solid `sidebar` (#0A0C11). | The sidebar only. |
+| `page-glow` | A radial glow in the page's tool colour at 14%. | Layout draws it behind the top of every page. |
+| `glass` | `surface` (#11141B) at 85%, 1px white-7% inset rim, faint top highlight, black shadow. `position: relative`. | Cards, panels, empty states. Needs a `rounded-*`. Don't add a `border` utility; the rim is the edge. |
+| `glass-thick` | `surface` at 94% with a light blur, a white-9% rim and a deep shadow. | Anything floating over content: dialogs, menus, popovers, sticky toolbars. |
+| `glass-tile` (+ `glass-tile-hover`) | `sidebar` at 70% with a white-7% border; hover lifts the border to 16%. | Rows, option cards and sub-sections inside a card. |
+| `glass-selected` | Tool-colour tint with a tool-colour border and a 3px ring. Combine with `glass-tile`. | The chosen option. Lime on Create, pink on Remix, violet on Avatar Studio… |
+| `glass-well` | `sidebar` at 85% with a white-8% border. | Text inputs, selects, text areas, inset lists. |
+| `glass-chip` | Small frosted label with blur. | Anything overlaid on video or artwork. |
+| `tool-chip` (+ `tool-chip-dot`) | Pill in the tool colour at 12% with a solid dot and an uppercase JetBrains Mono label. | Above every page title (`PageHeader` adds it). |
+| `btn-primary` / `btn-glass` | Solid lime with dark ink and a soft lime glow / dark surface with a hairline. | Used by `Button`; don't apply directly. |
+| `tool-<id>` | Sets `--tool` (and so `bg-tool`, `text-tool`, `glass-selected`, `tool-chip`) to a tool's colour. | Layout sets it on `<main>` and `<html>` for the current page; the sidebar sets it per item. |
 
-Blur is expensive. Only `glass-thick` and `glass-chip` use `backdrop-filter`. Panels and tiles don't need it: they sit on the solid backdrop.
-
-`prefers-reduced-transparency` turns the materials solid and drops blur. `prefers-reduced-motion` stops animation.
+`prefers-reduced-transparency` makes cards solid and drops blur. `prefers-reduced-motion` stops animation and transitions.
 
 ---
 
@@ -41,86 +43,91 @@ Blur is expensive. Only `glass-thick` and `glass-chip` use `backdrop-filter`. Pa
 
 | Token | Value | Use |
 | --- | --- | --- |
-| `canvas` | `#07080C` | Backdrop base |
-| `surface` · `raised` · `overlay` | `#0E0F15` · `#16181F` · `#1A1C24` | Solid fallbacks (options menus, reduced transparency) |
-| `ink` | `#F7F8FC` | Primary text, active icons |
-| `ink-muted` | `#AAAEBC` | Secondary text, descriptions |
-| `ink-subtle` | `#7C8190` | Hints, metadata, eyebrows |
-| `ink-faint` | `#545967` | Placeholders, disabled, nav group labels |
-| `line` / `line-strong` | white 9% / 16% | Hairlines and dividers (`divide-white/[0.06]` inside tiles) |
-| `fill` / `fill-hover` / `fill-selected` | white 5% / 8% / 11% | Plain hover and pressed surfaces |
-| `accent` | `#1A5FDF` | Deep blue: primary buttons, chosen options, progress, focus ring |
-| `--accent-button-hover` | `#286BE5` | Solid hover fill for primary buttons and editor trim handles |
-| `accent-ink` | `#FFFFFF` | White text and icons on solid accent fills |
-| `accent-cyan` | `#38CCFF` | The BridgeMind mark's blue |
-| `success` · `warning` · `danger` | `#4ADE80` · `#FBBF24` · `#FF6B6E` | Status only |
-| `brand.gold` | `#FFD500` | The virality score icon |
+| `canvas` | `#07080C` | Backdrop |
+| `sidebar` | `#0A0C11` | Sidebar, wells, tiles |
+| `surface` · `raised` · `overlay` | `#11141B` · `#13161E` · `#1A1E27` | Cards (at 85%), idle nodes, menus and chips |
+| `ink` | `#F1F3F8` | Primary text |
+| `ink-muted` | `#9097A6` | Secondary text, descriptions |
+| `ink-subtle` | `#787F8F` | Hints, metadata, eyebrows (4.6:1 on the backdrop) |
+| `ink-faint` | `#5E6575` | Placeholders, disabled, group labels; never for text the user must read |
+| `line` / `line-strong` | white 7% / 14% | Hairlines and dividers |
+| `accent` | `#B7F652` (oklch 0.9 0.2 128) | Primary buttons, progress, focus ring, Create |
+| `--accent-button-hover` | `#CDFB80` | Primary button hover |
+| `accent-ink` | `#07080C` | Text and icons on solid lime |
+| `success` · `warning` · `danger` | `#4ADE80` · `#FFBE4D` · `#FF6B6E` | Status only |
 
-Every token supports alpha modifiers: `bg-accent/10`, `text-danger`. Don't use `from-`/`via-`/`to-` gradient stops.
+Tool colours (`tool-*`, sRGB of the mockup's oklch values): Create `#B7F652` (lime) · Edit my recording `#13DCF6` (cyan) · Remix and Chat `#FF56D3` (pink) · Avatar Studio `#AA7EFF` (violet) · Library `#FFBE4D` (amber) · Jobs `#7BE6DF` (teal) · B-roll video and B-roll library `#FF7D5C` (orange) · Brand look `#3AD693` (green) · Posts, Accounts, Automations `#7ABDFF` (blue) · Guides, Settings `#979FAB` (grey). `tool` (no suffix) is the current page's colour.
 
-Use the same `accent` blue for active navigation icons, selected options, progress and editor controls. Do not introduce a softer blue for active states. Use `accent-ink` for foregrounds on solid accent fills: `text-accent-ink` for text and icons, `bg-accent-ink` for switch thumbs. Keep buttons dark blue on hover so white labels stay legible. Keep buttons crisp with a subtle edge and no text shadow. Editor selections, crops and timeline controls use these same tokens rather than separate blues.
+Every token supports alpha modifiers: `bg-accent/10`, `bg-tool/[0.12]`, `text-danger`. Gradients are allowed only where the design has them: the page glow, the Ask button (pink → violet), progress fills (cyan → lime) and the app icon.
 
 ---
 
 ## Typography
 
-- **Geist** for UI and **Geist Mono** for numbers, timecodes, paths and costs. Both are vendored in `assets/fonts/` (SIL OFL 1.1), so the app renders the same offline.
+- **Space Grotesk** for headings (`font-display`; `h1` and `h2` use it by default), **Geist** for body text, **JetBrains Mono** (`font-mono`) for labels, numbers, timecodes, paths, costs and keyboard hints. All are vendored in `assets/fonts/` (SIL OFL 1.1, with their license files), so the app renders the same offline and never fetches a font.
 - UI text is 13px (`text-sm`). The scale is `2xs` 11, `xs` 12, `sm` 13, `base` 14, `lg` 16, `xl` 20, `2xl` 24, `3xl` 30, `4xl` 40.
-- Page titles: `text-xl` (`text-2xl` from `xl`) `font-semibold`, optionally with an `.eyebrow` above. Panel titles: `text-sm font-semibold`; panel descriptions `text-xs`.
-- Numbers that change or line up (percentages, timecodes, costs) use `font-mono tabular`.
+- Page titles are 28px (34px from `xl`) Space Grotesk semibold with -0.03em tracking, under the tool chip. Panel titles are 15px Space Grotesk. `.eyebrow` is a 10px uppercase JetBrains Mono label with 0.12em tracking.
+- Numbers that change or line up use `font-mono tabular`.
 
 ---
 
 ## Shape and depth
 
-Corners are soft and **concentric**. A shape nested inside another with padding `p` uses the outer radius minus `p`. For example, a clip card is `rounded-2xl` with `p-1.5`, and its media is `rounded-xl`.
+Corners are soft and **concentric**: a shape nested inside another with padding `p` uses the outer radius minus `p`.
 
 | Radius | Px | Use |
 | --- | --- | --- |
-| `rounded-full` | — | Buttons, badges, chips, segmented controls, switches, status pills |
-| `rounded-xl` | 12 | Inputs (`lg`), nested media, small tiles, setting rows, callouts |
-| `rounded-2xl` | 14 | Tiles, cards, rows |
-| `rounded-3xl` | 18 | Panels, dialogs, the drop zone |
-
-Depth, back to front: `app-backdrop` → `glass` panel → `glass-tile` / `glass-well` inside it → `glass-thick` floating bar or dialog. `shadow-accent-ring` marks a selected card. `shadow-pop` is for anything custom that floats.
+| `rounded-lg` | 10 | Small buttons, inputs, menu rows, nav items |
+| `rounded-[10px]` / `rounded-xl` | 10 / 12 | Buttons (`md` / `lg`), selects, segmented tracks, tiles, callouts |
+| `rounded-2xl` | 16 | Cards and panels |
+| `rounded-3xl` / `rounded-[18px]` | 18 | Dialogs, large hero cards |
+| `rounded-full` | — | Status dots, switches, the tool chip, avatars |
 
 ---
 
 ## Layout
 
 ```
-┌ app-backdrop (solid canvas) ──────────────────────────────────────────┐
-│ ┌ sidebar (flush, border-r) ───────┐   ┌ title-bar strip: drag + scroll-edge ┐
-│ │ ● ● ●                            │   └──────────────────────────────────────┘
-│ │ [CreatorClips]                [⇤]  │     #page-scroll (pt-10)
-│ │ STUDIO                           │     <Page width="…">
-│ │  ✦ Create        ⌘1              │       PageHeader
-│ │  ▦ Library       ⌘2              │       glass panels …
-│ │  ≡ Jobs          ⌘3              │
-│ │  ◫ Chat          ⌘7              │
-│ │ WORKSPACE                        │
-│ │  ⋈ Accounts      ⌘4              │
-│ │  ➤ Posts         ⌘5              │
-│ │  ⇄ Automations   ⌘6              │
-│ │  ⚙ Settings      ⌘,              │
-│ │ [running job card]               │
-│ │ ● Ready to clip           v0.x   │
-│ └──────────────────────────────────┘
-└────────────────────────────────────────────────────────────────────────┘
+┌ sidebar (#0A0C11, 236px) ─┐┌ main ────────────────────────────────────────────────┐
+│ [▶] CreatorClips      [⇤] ││ (page glow in the tool colour, top left)              │
+│     v0.1.19 · ready       ││ [⌕ Paste a link to start clips, or search  ⌘K Start↵] [✦ Ask ⌘J] (TR) │
+│ MAKE                      ││                                                        │
+│  [+] Create               ││  (● CREATE)                                            │
+│  [▭] Edit my recording    ││  Turn a long video into clips      ← PageHeader        │
+│  [⇄] Remix                ││  muted subtitle                                        │
+│  [☺] Avatar Studio        ││  cards …                         #page-scroll           │
+│  [▤] B-roll video         ││                                                        │
+│ MANAGE                    ││                                                        │
+│  [▦] Library              ││                                                        │
+│  [∿] Jobs      1 running  ││                                                        │
+│  [▢] Chat                 ││                                                        │
+│  [▤] B-roll library       ││                                                        │
+│  [☆] Brand look           ││                                                        │
+│ PUBLISH                   ││                                                        │
+│  [➤] Posts  [⛓] Accounts  ││                                                        │
+│  [ϟ] Automations          ││                                                        │
+│  ───                      ││                                                        │
+│  [▯] Guides  [≡] Settings ││                                                        │
+│ ┌ running job card ─────┐ ││                                                        │
+│ │● title · bar · step % │ ││                                                        │
+│ └───────────────────────┘ ││                                                        │
+│ ● Ready to clip           ││                                                        │
+└───────────────────────────┘└────────────────────────────────────────────────────────┘
 ```
 
-- The sidebar is collapsible: a 200px column, or a 72px icon rail (mark-only logo, icons with `aria-label`/tooltips, group labels hidden). The toggle lives inside the sidebar: expanded, it sits at the right of the logo row; in the rail, the brand mark is the toggle and shows the expand icon on hover or focus. ⌘\ also toggles it, and the choice is remembered (`store/use-sidebar-store.ts`). Windows narrower than 1024px always get the rail, where the mark is only a mark. The app version sits in the footer beside the setup status. It has no background of its own: it shares `app-backdrop` with the page and is separated by a `border-white/[0.06]` hairline. The macOS traffic lights sit in its top 40px strip (`trafficLightPosition` 16,12). The window's minimum size is 720×520.
-- Pages scroll under a solid 40px title-bar strip (`scroll-edge`). The strip and the backdrop are drag handles; interactive elements opt out with `.no-drag`.
-- Sticky elements inside a page use `top-0`; the scroll area's top padding already clears the 40px title-bar strip. Toolbars use `z-20`, below the title-bar strip (`z-30`); media cards isolate their overlay labels in their own stacking context.
-- Wrap every page except Chat in `<Page width>`: `focus` 720 (progress, failure), `narrow` 880 (Settings, Accounts, Posts), `default` 1280 (Jobs), `wide` 1680 (Library, results). Create uses `narrow`. Gutters are `px-4`, `sm:px-6`, `xl:px-8`.
-- **Compact by default.** Panels pad `p-4` (`xl:p-5`), stacks use `space-y-3`/`gap-3`, sections `mt-4`/`mt-5`. Don't reintroduce `p-6`+ or `mt-8`+. Media grids use `repeat(auto-fill, minmax(…))` so column count follows the window.
-- **Create is a wizard**: Video → Format → Clips → Captions → Review, one compact panel per step under a clickable stepper, with Back/Next (and Generate) pinned to the bottom edge on a solid strip. Each new video starts with neither workflow selected. The illustrated Automatic (Beginner friendly) and Review & edit (For advanced users) cards require an explicit choice before continuing or submitting. ⌘↵ generates from any step once a video and workflow are chosen. After Generate the job is queued and the wizard offers "Clip another video", so several runs can be queued back to back. Step and draft live in `use-draft-store`.
+- **Sidebar** (`Sidebar.tsx`, `NAV_ITEMS`): groups Make, Manage, Publish, then Guides and Settings. Each item has a 26px icon tile tinted in its tool colour (solid when active, with a 3px bar at the sidebar edge). Jobs shows "N running" (or "N queued") and Chat "N waiting" in mono amber. It collapses to a 72px icon rail (group labels become hairlines, badges become dots, the running card becomes a progress ring); the toggle sits at the right of the logo row, the app icon is the toggle in the rail, and ⌘\ toggles it. The choice is remembered (`store/use-sidebar-store.ts`); windows narrower than 1024px always get the rail. The version line reads `v0.1.19 · ready` (or "setup needed", "checking", "check failed"). On macOS the traffic lights sit in a 32px strip above the logo (`trafficLightPosition` 16,12).
+- **Top bar** (`TopBar.tsx`, 60px, `--shell-top`): a pasted video link (one or more) starts clips on Create with the link filled in; anything else searches the Library (handed over through `use-shell-store`). ⌘K focuses it. **Ask** (⌘J) opens Chat. The round chip opens Settings and shows the first connected account's initials when there is one. The strip is a window drag handle; its controls opt out with `.no-drag`.
+- **Page header** (`PageHeader`): the tool chip, a large Space Grotesk title, a muted subtitle and right-aligned actions. Old `eyebrow="Studio"`/`"Workspace"` labels give way to the chip; any other eyebrow still shows.
+- Pages scroll in `#page-scroll` below the top bar (top gap `--shell-gap`, 14px). Sticky elements use `top-0`. Wrap every page except Chat in `<Page width>`: `focus` 720, `narrow` 880, `default` 1280, `wide` 1680. Gutters are `px-4`, `sm:px-6`, `xl:px-8`.
+- **Compact by default.** Panels pad `p-4` (`xl:p-5`), stacks use `space-y-3`/`gap-3`, sections `mt-4`/`mt-5`. Media grids use `repeat(auto-fill, minmax(…))`.
+- **Create is a wizard**: Video → Format → Clips → Captions → Review, one compact panel per step under a clickable stepper, with Back/Next (and Generate) pinned to the bottom. Each new video starts with neither workflow selected. ⌘↵ generates from any step once a video and workflow are chosen. Step and draft live in `use-draft-store`.
+- **Brand look** (`pages/BrandLookPage.tsx`) lists the brand identities Create, Remix and Avatar Studio pick from, with Add, Edit and Delete through `BrandIdentityDialog`.
 
 ---
 
 ### Editor surfaces
 
-The editor uses scoped surface tokens in `components/clip-editor.css` to make its work areas distinct: near-black previews and timeline, neutral charcoal sidebars, and a dark transport strip. The timeline stays darker than the sidebars; avoid blue-gray or lighter slate fills. Hairline dividers reinforce these boundaries. Inputs and timeline lanes use recessed dark wells; blue remains the selection/action accent, with amber camera suggestions and lavender layout markers. Keep these colors scoped to the editor.
+The editor uses scoped surface tokens in `components/clip-editor.css` to make its work areas distinct: near-black previews and timeline, neutral charcoal sidebars, and a dark transport strip. The timeline stays darker than the sidebars; avoid blue-gray or lighter slate fills. Hairline dividers reinforce these boundaries. Inputs and timeline lanes use recessed dark wells; lime is the selection/action accent, with amber camera suggestions and lavender layout markers. The editor's height follows the frame (`100vh - --shell-top - --shell-gap`). Keep these colors scoped to the editor.
 
 Compact editor actions use `Button`’s `tooltip` prop for short explanations on hover or keyboard focus. Include shortcuts where useful. Tooltips reuse `HoverCard`, stay above clipped panels, and do not introduce extra keyboard stops around buttons. Custom-tooltip buttons and wrappers explicitly use an empty native `title` to prevent inherited browser tooltips.
 
@@ -129,32 +136,33 @@ Compact editor actions use `Button`’s `tooltip` prop for short explanations on
 | Component | Notes |
 | --- | --- |
 | `Page` | Page column with width presets and the entry animation. |
-| `PageHeader` | Optional `eyebrow` and `leading` (back link), title, description, right-aligned actions. |
-| `Panel` / `PanelHeader` | `glass rounded-3xl p-6`. The header takes an `icon` (an `IconTile`), a title, a description and an action. |
-| `Button` | Capsules. `primary` (solid accent) · `secondary` (glass) · `ghost` · `danger`. Sizes `sm` 28px, `md` 32px, `lg` 40px. `iconOnly` makes it round (needs `aria-label`). `loading`. |
-| `TextInput` · `TextArea` | Recessed `glass-well`s with a crisp accent focus ring. `TextInput` `sm` is 28px, `md` 32px and `lg` 40px, matching Button heights, with `leading`/`trailing` slots and `mono`. |
-| `Select` | The app's dropdown (never a native `<select>`): a `glass-well` combobox button (`md` 32px, `sm` 28px) that opens a `glass-thick` menu with a check on the chosen option, muted `detail` text and disabled rows. Takes `options`, `placeholder`, `emptyText`, and `searchable` for long lists (time zones). Keyboard: arrows, Home/End, Page Up/Down, type-ahead, Enter/Space, Escape (closes only the menu, never the dialog around it). The menu is a top-layer popover, so panels and dialogs never clip it. `MENU_SURFACE` and `menuOptionClass` style any other menu (the model picker uses them). |
+| `PageHeader` | Tool chip (from Layout's `PageToolContext`), title, description, right-aligned actions; optional `leading` (back link) and a custom `eyebrow`. |
+| `Panel` / `PanelHeader` | `glass rounded-2xl p-4`. The header takes an `icon` (an `IconTile`), a 15px Space Grotesk title, a description and an action. |
+| `Button` | Rounded rectangles. `primary` (solid lime, dark ink, soft glow) · `secondary` (dark surface, hairline) · `ghost` · `danger`. Sizes `sm` 28px, `md` 32px, `lg` 40px. `iconOnly` (needs `aria-label`). `loading`, `tooltip`. Pressing scales to 0.97 unless reduced motion is on. |
+| `TextInput` · `TextArea` | `glass-well`s with a lime border and 3px lime ring on focus. `TextInput` `sm` 28px, `md` 32px, `lg` 40px, with `leading`/`trailing` slots and `mono`. |
+| `Select` | The app's dropdown (never a native `<select>`): a `glass-well` combobox that opens a `glass-thick` menu with a lime check on the chosen option. Keyboard: arrows, Home/End, Page Up/Down, type-ahead, Enter/Space, Escape. `MENU_SURFACE` and `menuOptionClass` style any other menu. |
 | `Field` | Label, optional `aside` (e.g. "Get a key"), hint. |
-| `Segmented` | Single choice in a glass track, with the chosen option as a raised pill. Roving tab stop. Also exports `onRadioKeyDown` for custom radio groups. |
-| `SettingRow` | Title and description with a control (usually `Switch`) on a `glass-tile`. `bare` drops the tile. |
-| `Switch`, `Checkbox` | Solid accent when on. The checkbox supports `indeterminate` and `variant="overlay"` for use on video. |
-| `Badge`, `StatusDot` | Tinted glass pills, or solid blue with white text for `accent`; tones `neutral` · `accent` · `success` · `warning` · `danger`. Dots are solid and can pulse. |
-| `IconTile` | A flat tinted tile holding an icon; `accent` uses solid blue with a white icon. Sizes `sm`–`xl`, same tones. |
-| `Callout` | Tinted glass strip for errors, warnings, info and success, with optional title, action and dismiss. `role` is alert for danger, status otherwise. |
-| `ProgressBar` / `ProgressRing` | Solid accent fill, red when failed. The ring renders its children in the centre. |
-| `EmptyState` | Glass panel with an icon tile, title, one sentence and one action. |
-| `Skeleton` | Flat loading block that pulses. |
-| `HoverCard` | A read-only rich tooltip: hover or focus shows a `glass-thick` card under the trigger (above it when there's no room), as a top-layer popover. Escape closes it. |
-| `Dialog` / `DialogFooter` | Dimmed, blurred backdrop and a `glass-thick` panel (`layer="system"` for the update prompt). Callers own focus trapping and Escape. |
+| `Segmented` | Single choice in a dark rounded track; the chosen option is a raised `overlay` tile. Roving tab stop; exports `onRadioKeyDown`. |
+| `SettingRow` | Title and description with a control on a `glass-tile`. `bare` drops the tile. |
+| `Switch`, `Checkbox` | Solid lime with dark ink when on; the switch glows softly. The checkbox supports `indeterminate` and `variant="overlay"` for video. |
+| `Badge`, `StatusDot` | Small rounded tags tinted by tone (`neutral` · `accent` · `success` · `warning` · `danger`); `accent` is a lime tint. Dots can pulse (not with reduced motion). |
+| `IconTile` | A tinted tile holding an icon; `accent` takes the page's tool colour. Sizes `sm`–`xl`. |
+| `Callout` | Tinted strip for errors, warnings, info and success, with optional title, action and dismiss. |
+| `ProgressBar` / `ProgressRing` | Cyan → lime fill (red when failed) / lime stroke; no transition with reduced motion. |
+| `EmptyState` | Card with a tool-coloured icon tile, a Space Grotesk title, one sentence and one action. |
+| `Skeleton` | Flat loading block that pulses (still with reduced motion). |
+| `HoverCard` | A read-only rich tooltip on a `glass-thick` card, as a top-layer popover. |
+| `ActionMenu` | Keyboard-accessible "more" menu on `MENU_SURFACE`. |
+| `Dialog` / `DialogFooter` | Dimmed, blurred backdrop and an 18px `glass-thick` card. Callers own focus trapping and Escape. |
 
-Brand: `components/brand/BridgeClipLogo` renders the CreatorClips lockup (`variant="lockup"`, size by height), the app-icon tile (`variant="icon"`) or the emblem alone (`variant="mark"`, for the icon rail). The emblem is a lime 9:16 frame with a play button on a near-black tile; the wordmark is Montserrat Black outlines with "Clips" in lime. All brand artwork is generated by `scripts/icon/build-creatorclips-brand.py` (`npm run icons`), which writes the SVGs in `resources/` and the PNG, ICO and ICNS app icons in `build/`. Edit the script, not the exports.
+Brand: the sidebar shows the app icon tile with the name in Space Grotesk. `components/brand/BridgeClipLogo` renders the CreatorClips lockup (`variant="lockup"`, size by height), the app-icon tile (`variant="icon"`) or the emblem alone (`variant="mark"`, for the icon rail). The emblem is a lime 9:16 frame with a play button on a near-black tile; the wordmark is Montserrat Black outlines with "Clips" in lime. All brand artwork is generated by `scripts/icon/build-creatorclips-brand.py` (`npm run icons`), which writes the SVGs in `resources/` and the PNG, ICO and ICNS app icons in `build/`. Edit the script, not the exports.
 
 ---
 
 ## Patterns
 
 - **Option cards** (format, framing, caption style): `glass-tile glass-tile-hover` at rest, plus `glass-selected` when chosen. Visual tiles also get a check badge.
-- **Chips** (clip length, job filters): capsules. Chosen chips use the accent tint.
+- **Chips** (clip length, job filters): small rounded tags. Chosen chips use the accent tint.
 - **Media cards** (clips, runs): `glass` card with the media inset concentrically, and only a title and one line of metadata under it. Overlays are `glass-chip`s (no gradient scrims over media). The media is the play button. On hover the card lifts 2px, a frosted play lens appears, and the card's actions (post, add to automation, show in Finder) show as small frosted buttons on the media; selected cards get `shadow-accent-ring`. A run opens with a stats bar (`RunStats`): clips, processing time, API cost and when it was created. Numbers count up once, with one quiet line under each. When a run beat OpusClip, processing and cost say so in green ("5× faster than OpusClip", "94% less than OpusClip") and hovering shows a small card with OpusClip's logo, that one number and its basis. OpusClip's numbers live in `config/opus-clip.ts` (update them with their `checked` date); no claim is shown when the run didn't win.
 - **Floating toolbars** (clip selection): `glass-thick` bar, sticky at `top-0 z-20`.
 - **Caption previews** mirror the clipping engine presets in `engine/clip_engine/config.py` (colours, outline, glow, casing, spacing, box and karaoke effects). If a preset changes in the engine, update `CaptionPresetPicker.tsx`.
@@ -177,17 +185,18 @@ Brand: `components/brand/BridgeClipLogo` renders the CreatorClips lockup (`varia
 
 ## Accessibility
 
-- A focus ring (`:focus-visible`, accent at 75%) appears on every control. Icon-only buttons carry `aria-label`.
+- A 2px lime focus ring (`:focus-visible`, offset 2px) appears on every control. Icon-only buttons carry `aria-label`.
 - Radio-like groups use `role="radiogroup"`/`role="radio"` with `aria-checked` and a roving tab stop; toggles use `aria-pressed`; switches use `role="switch"`.
 - Critical text is `ink` or `ink-muted`. `ink-subtle` is for secondary metadata only, and `ink-faint` is never for anything the user must read.
-- Keyboard: ⌘1–⌘7 and ⌘, switch pages (⌘7 is Chat), ⌘\ collapses or expands the sidebar, and ⌘↵ generates clips (Ctrl on Windows and Linux).
+- Keyboard: ⌘1–⌘9, ⌘E, ⌘B, ⌘0 and ⌘, switch pages (⌘7 is Chat), ⌘K focuses the top bar, ⌘J opens Chat (Ask), ⌘\ collapses or expands the sidebar, and ⌘↵ generates clips (Ctrl on Windows and Linux).
+- Motion respects `prefers-reduced-motion`: animations and transitions stop, pulses and press-scale are dropped.
 
 ---
 
 ## Adding UI
 
 1. Reach for `components/ui/` first. If you're writing the same class string twice, it belongs there.
-2. Pick a material for every surface (`glass`, `glass-tile`, `glass-well`, `glass-thick`, `glass-chip`). Don't use raw greys, gradients, or blurred colour glows.
-3. Keep corners concentric and controls pill-shaped.
-4. Colour needs a reason: status, the one primary action, or a chosen option.
+2. Pick a material for every surface (`glass`, `glass-tile`, `glass-well`, `glass-thick`, `glass-chip`). Don't use raw greys or new gradients.
+3. Keep corners concentric: 10–12px controls, 16–18px cards.
+4. Colour needs a reason: the one primary action (lime), the page's tool (`tool`), a chosen option, or status.
 5. Give every async action a loading state, and every failure the real message and a next step.

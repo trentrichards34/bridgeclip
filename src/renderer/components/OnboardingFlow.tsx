@@ -32,7 +32,7 @@ function ChoiceCard({ checked, onChange, title, detail }: { checked: boolean; on
       className={cn('glass-tile glass-tile-hover flex items-start gap-2.5 rounded-xl px-3 py-2.5 text-left transition-shadow',
         checked && 'shadow-[inset_0_0_0_1.5px_rgb(var(--accent)/0.9)]')}>
       <span aria-hidden className={cn('mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[6px]',
-        checked ? 'bg-accent text-white' : 'shadow-[inset_0_0_0_1.5px_rgb(255_255_255/0.25)]')}>
+        checked ? 'bg-accent text-accent-ink' : 'shadow-[inset_0_0_0_1.5px_rgb(255_255_255/0.25)]')}>
         {checked && <Check className="h-3 w-3" strokeWidth={3} />}
       </span>
       <span className="min-w-0">

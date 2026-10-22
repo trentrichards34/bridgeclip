@@ -43,10 +43,10 @@ const VIEW = {
   pendingShots: 0, usableShots: 3, preparing: 0, indexing: null, ai: { kind: 'video', model: 'x-ai/grok-imagine-video-1.5-lite', maxShots: 2 }
 }
 
-test('the sidebar has B-roll video in the studio, with no shortcut', () => {
+test('the sidebar has B-roll video under Make, with no shortcut', () => {
   const item = NAV_ITEMS.find((entry) => entry.id === 'brollvideo')
   assert.equal(item.label, 'B-roll video')
-  assert.equal(item.group, 'studio')
+  assert.equal(item.group, 'make')
   assert.equal(item.shortcut, '')
 })
 

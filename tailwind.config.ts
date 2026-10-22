@@ -1,7 +1,7 @@
 import type { Config } from 'tailwindcss'
 
 // Tokens live in globals.css as RGB channels so every colour supports
-// Tailwind's `/alpha` modifier (e.g. `bg-accent/15`). The glass materials
+// Tailwind's `/alpha` modifier (e.g. `bg-accent/15`). The Signal materials
 // themselves (.glass, .glass-thick, .glass-tile, …) are component classes in
 // globals.css; see DESIGN.md.
 const channel = (name: string): string => `rgb(var(--${name}) / <alpha-value>)`
@@ -13,6 +13,7 @@ const config: Config = {
     extend: {
       colors: {
         canvas: channel('canvas'),
+        sidebar: channel('sidebar'),
         surface: channel('surface'),
         raised: channel('raised'),
         overlay: channel('overlay'),
@@ -23,8 +24,8 @@ const config: Config = {
           faint: channel('ink-faint')
         },
         line: {
-          DEFAULT: 'rgb(255 255 255 / 0.09)',
-          strong: 'rgb(255 255 255 / 0.16)'
+          DEFAULT: 'rgb(255 255 255 / 0.07)',
+          strong: 'rgb(255 255 255 / 0.14)'
         },
         fill: {
           DEFAULT: 'rgb(255 255 255 / 0.05)',
@@ -36,6 +37,21 @@ const config: Config = {
           ink: channel('accent-ink'),
           cyan: channel('accent-cyan')
         },
+        // Per-tool colours; `tool` is the current page's (set by Layout).
+        tool: {
+          DEFAULT: channel('tool'),
+          create: channel('tool-create'),
+          edit: channel('tool-edit'),
+          remix: channel('tool-remix'),
+          avatar: channel('tool-avatar'),
+          library: channel('tool-library'),
+          jobs: channel('tool-jobs'),
+          broll: channel('tool-broll'),
+          brand: channel('tool-brand'),
+          chat: channel('tool-chat'),
+          publish: channel('tool-publish'),
+          settings: channel('tool-settings')
+        },
         success: channel('success'),
         danger: channel('danger'),
         warning: channel('warning'),
@@ -46,7 +62,8 @@ const config: Config = {
       },
       fontFamily: {
         sans: ['Geist', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'sans-serif'],
-        mono: ['"Geist Mono"', '"SF Mono"', 'ui-monospace', 'Menlo', 'monospace']
+        display: ['"Space Grotesk"', 'Geist', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        mono: ['"JetBrains Mono"', '"Geist Mono"', '"SF Mono"', 'ui-monospace', 'Menlo', 'monospace']
       },
       fontSize: {
         '2xs': ['11px', '14px'],
@@ -59,23 +76,24 @@ const config: Config = {
         '3xl': ['30px', '36px'],
         '4xl': ['40px', '44px']
       },
-      // Compact, soft corners. Nested shapes step down one size so corners
-      // stay concentric (card 2xl → media xl).
+      // Signal corners: 10–12px controls, 16–18px cards. Nested shapes step
+      // down one size so corners stay concentric (card 2xl → media xl).
       borderRadius: {
         sm: '6px',
         DEFAULT: '8px',
         md: '8px',
         lg: '10px',
         xl: '12px',
-        '2xl': '14px',
+        '2xl': '16px',
         '3xl': '18px'
       },
       boxShadow: {
-        panel: 'inset 0 1px 0 0 rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.25), 0 18px 48px -24px rgb(0 0 0 / 0.6)',
+        panel: 'inset 0 0 0 1px rgb(255 255 255 / 0.07), inset 0 1px 0 0 rgb(255 255 255 / 0.04), 0 1px 2px rgb(0 0 0 / 0.3), 0 18px 48px -24px rgb(0 0 0 / 0.7)',
         pop: 'inset 0 1px 0 rgb(255 255 255 / 0.1), 0 40px 100px -24px rgb(0 0 0 / 0.8), 0 12px 32px -12px rgb(0 0 0 / 0.55)',
         accent: '0 0 0 1px rgb(var(--accent) / 0.5)',
         'accent-ring':
-          'inset 0 1px 0 rgb(255 255 255 / 0.12), 0 0 0 1px rgb(var(--accent) / 0.9), 0 0 0 4px rgb(var(--accent) / 0.18)'
+          '0 0 0 1px rgb(var(--accent) / 0.9), 0 0 0 4px rgb(var(--accent) / 0.16)',
+        glow: '0 0 0 5px rgb(var(--accent) / 0.14), 0 0 20px rgb(var(--accent) / 0.4)'
       },
       transitionTimingFunction: {
         out: 'cubic-bezier(0.16, 1, 0.3, 1)',

@@ -27,13 +27,15 @@ import { ReadyToPost } from '../components/ReadyToPost'
 import { Segmented } from '../components/ui/Segmented'
 import { formatBytes } from '../../shared/library-storage'
 import './library.css'
+import { useShellStore } from '../store/use-shell-store'
 import type { Page as AppPage } from '../components/Sidebar'
 
 export function LibraryPage({ onNavigate, initialRun, initialClipIndex }: { onNavigate: (page: AppPage) => void; initialRun?: string | null; initialClipIndex?: number }): React.JSX.Element {
   const initialRunOpened = useRef(false)
   const outputDirectory = useSettingsStore((s) => s.outputDirectory)
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null)
-  const [query, setQuery] = useState('')
+  // A search typed in the top bar opens the Library with it.
+  const [query, setQuery] = useState(() => useShellStore.getState().takeLibrarySearch())
   const [open, setOpen] = useState<{ entry: HistoryEntry; output: JobOutput; clipIndex?: number; earlierFolder?: boolean } | null>(null)
   const [sort, setSort] = useState<'newest' | 'largest'>('newest')
   const [view, setView] = useState<'runs' | 'ready'>('runs')

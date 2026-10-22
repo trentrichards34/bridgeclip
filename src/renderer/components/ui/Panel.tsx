@@ -5,9 +5,9 @@ interface PanelProps extends HTMLAttributes<HTMLDivElement> {
   padded?: boolean
 }
 
-/** Glass panel: the standard surface for a group of related content. */
+/** Card: the standard surface for a group of related content. */
 export function Panel({ padded = true, className, ...props }: PanelProps): React.JSX.Element {
-  return <div className={cn('glass rounded-3xl', padded && 'p-4 xl:p-5', className)} {...props} />
+  return <div className={cn('glass rounded-2xl', padded && 'p-4 xl:p-5', className)} {...props} />
 }
 
 interface PanelHeaderProps {
@@ -25,7 +25,7 @@ export function PanelHeader({ title, description, action, icon, className }: Pan
       <div className="flex min-w-0 items-start gap-3">
         {icon}
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold leading-5 text-ink">{title}</h2>
+          <h2 className="text-[15px] font-semibold leading-5 tracking-[-0.01em] text-ink">{title}</h2>
           {description && <p className="mt-0.5 text-xs text-ink-muted">{description}</p>}
         </div>
       </div>

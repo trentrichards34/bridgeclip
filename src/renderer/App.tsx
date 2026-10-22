@@ -16,6 +16,7 @@ import { PostsPage } from './pages/PostsPage'
 import { AutomationsPage } from './pages/AutomationsPage'
 import { AssistantPage } from './pages/AssistantPage'
 import { GuidesPage } from './pages/GuidesPage'
+import { BrandLookPage } from './pages/BrandLookPage'
 import { OnboardingFlow } from './components/OnboardingFlow'
 import { useOnboarding } from './store/use-onboarding-store'
 import { BridgeClipLogo } from './components/brand/BridgeClipLogo'
@@ -160,6 +161,7 @@ export default function App(): React.JSX.Element {
     useChangelogStore.getState().setOpen(true)
   }), [])
 
+  // ⌘K (top bar) and ⌘J (Ask) live in TopBar.
   // ⌘1 Create, ⌘E Edit my recording, ⌘2 Library, ⌘3 Jobs, ⌘4 Accounts, ⌘5 Posts, ⌘6 Automations, ⌘7 Chat, ⌘, Settings,
   // ⌘\ collapse or expand the sidebar (Ctrl on Windows/Linux).
   useEffect(() => {
@@ -198,6 +200,7 @@ export default function App(): React.JSX.Element {
             {page === 'library' && <LibraryPage onNavigate={setPage} initialRun={libraryRun?.outputDir} initialClipIndex={libraryRun?.clipIndex} />}
             {page === 'broll' && <BrollLibraryPage onNavigate={setPage} />}
             {page === 'brollvideo' && <BrollVideoPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
+            {page === 'brand' && <BrandLookPage />}
             {page === 'jobs' && <JobsPage onNavigate={setPage} onViewLibrary={viewLibraryRun} />}
             {page === 'assistant' && <AssistantPage onOpenSettings={openAssistantSettings} />}
             {page === 'accounts' && <AccountsPage onNavigate={setPage} />}

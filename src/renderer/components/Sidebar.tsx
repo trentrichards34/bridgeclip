@@ -1,37 +1,63 @@
-import { BookOpen, ChevronRight, Clapperboard, Film, Images, Scissors, ScanFace, Layers, MessagesSquare, PanelLeftClose, PanelLeftOpen, Send, Settings, UsersRound, Video, WandSparkles, Workflow, type LucideIcon } from 'lucide-react'
-import { cn, MOD_KEY, sourceLabel } from '../lib/utils'
+import { Activity, BookOpen, Clapperboard, Film, LayoutGrid, Link2, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Send, Shuffle, SlidersHorizontal, Star, UserRound, Video, Zap, type LucideIcon } from 'lucide-react'
+import { cn, isMac, MOD_KEY, sourceLabel } from '../lib/utils'
 import { useIsWide, useSidebarExpanded, useSidebarStore } from '../store/use-sidebar-store'
 import { useActiveJobs } from '../store/use-job-store'
 import { useSetupState } from '../store/use-settings-store'
-import { APP_VERSION } from '../config/brand'
+import { APP_NAME, APP_VERSION } from '../config/brand'
 import { BridgeClipLogo } from './brand/BridgeClipLogo'
-import { ProgressBar } from './ui/ProgressBar'
 import { StatusDot } from './ui/Badge'
 import { STAGE_LABELS } from './JobProgress'
 import { SidebarUpdateButton } from './Updates'
 import { useAssistantStore } from '../store/use-assistant-store'
 
-export type Page = 'clip' | 'edit' | 'remix' | 'avatar' | 'library' | 'broll' | 'brollvideo' | 'jobs' | 'assistant' | 'accounts' | 'posts' | 'automations' | 'guides' | 'settings'
+export type Page = 'clip' | 'edit' | 'remix' | 'avatar' | 'library' | 'broll' | 'brollvideo' | 'brand' | 'jobs' | 'assistant' | 'accounts' | 'posts' | 'automations' | 'guides' | 'settings'
 
-export const NAV_ITEMS: { id: Page; label: string; icon: LucideIcon; shortcut: string; group: 'studio' | 'app' }[] = [
-  { id: 'clip', label: 'Create', icon: WandSparkles, shortcut: '1', group: 'studio' },
+/** Each tool's colour (see `--tool-*` in globals.css). */
+export type Tool = 'create' | 'edit' | 'remix' | 'avatar' | 'library' | 'jobs' | 'broll' | 'brand' | 'chat' | 'publish' | 'settings'
+
+/** Sidebar groups: Make, Manage, Publish, then Guides and Settings. */
+export type NavGroupId = 'make' | 'manage' | 'publish' | 'help'
+
+export interface NavItem { id: Page; label: string; icon: LucideIcon; shortcut: string; group: NavGroupId; tool: Tool }
+
+export const NAV_ITEMS: NavItem[] = [
+  { id: 'clip', label: 'Create', icon: Plus, shortcut: '1', group: 'make', tool: 'create' },
   // No number is free: ⌘E (Ctrl+E) for Edit.
-  { id: 'edit', label: 'Edit my recording', icon: Scissors, shortcut: 'E', group: 'studio' },
-  { id: 'remix', label: 'Remix', icon: Clapperboard, shortcut: '9', group: 'studio' },
-  { id: 'avatar', label: 'Avatar Studio', icon: ScanFace, shortcut: '8', group: 'studio' },
+  { id: 'edit', label: 'Edit my recording', icon: Video, shortcut: 'E', group: 'make', tool: 'edit' },
+  { id: 'remix', label: 'Remix', icon: Shuffle, shortcut: '9', group: 'make', tool: 'remix' },
+  { id: 'avatar', label: 'Avatar Studio', icon: UserRound, shortcut: '8', group: 'make', tool: 'avatar' },
   // No shortcut is free: none shown.
-  { id: 'brollvideo', label: 'B-roll video', icon: Video, shortcut: '', group: 'studio' },
-  { id: 'library', label: 'Library', icon: Film, shortcut: '2', group: 'studio' },
+  { id: 'brollvideo', label: 'B-roll video', icon: Clapperboard, shortcut: '', group: 'make', tool: 'broll' },
+  { id: 'library', label: 'Library', icon: LayoutGrid, shortcut: '2', group: 'manage', tool: 'library' },
+  { id: 'jobs', label: 'Jobs', icon: Activity, shortcut: '3', group: 'manage', tool: 'jobs' },
+  { id: 'assistant', label: 'Chat', icon: MessageSquare, shortcut: '7', group: 'manage', tool: 'chat' },
   // ⌘B (Ctrl+B): no number is free.
-  { id: 'broll', label: 'B-roll library', icon: Images, shortcut: 'B', group: 'studio' },
-  { id: 'jobs', label: 'Jobs', icon: Layers, shortcut: '3', group: 'studio' },
-  { id: 'assistant', label: 'Chat', icon: MessagesSquare, shortcut: '7', group: 'studio' },
-  { id: 'accounts', label: 'Accounts', icon: UsersRound, shortcut: '4', group: 'app' },
-  { id: 'posts', label: 'Posts', icon: Send, shortcut: '5', group: 'app' },
-  { id: 'automations', label: 'Automations', icon: Workflow, shortcut: '6', group: 'app' },
-  { id: 'guides', label: 'Guides', icon: BookOpen, shortcut: '0', group: 'app' },
-  { id: 'settings', label: 'Settings', icon: Settings, shortcut: ',', group: 'app' }
+  { id: 'broll', label: 'B-roll library', icon: Film, shortcut: 'B', group: 'manage', tool: 'broll' },
+  // No shortcut is free: none shown.
+  { id: 'brand', label: 'Brand look', icon: Star, shortcut: '', group: 'manage', tool: 'brand' },
+  { id: 'posts', label: 'Posts', icon: Send, shortcut: '5', group: 'publish', tool: 'publish' },
+  { id: 'accounts', label: 'Accounts', icon: Link2, shortcut: '4', group: 'publish', tool: 'publish' },
+  { id: 'automations', label: 'Automations', icon: Zap, shortcut: '6', group: 'publish', tool: 'publish' },
+  { id: 'guides', label: 'Guides', icon: BookOpen, shortcut: '0', group: 'help', tool: 'settings' },
+  { id: 'settings', label: 'Settings', icon: SlidersHorizontal, shortcut: ',', group: 'help', tool: 'settings' }
 ]
+
+const GROUPS: { id: NavGroupId; label: string | null }[] = [
+  { id: 'make', label: 'Make' },
+  { id: 'manage', label: 'Manage' },
+  { id: 'publish', label: 'Publish' },
+  { id: 'help', label: null }
+]
+
+/** The tool (and its colour) for a page. */
+export function toolFor(page: Page): Tool {
+  return NAV_ITEMS.find((item) => item.id === page)?.tool ?? 'create'
+}
+
+/** The sidebar label for a page. */
+export function pageLabel(page: Page): string {
+  return NAV_ITEMS.find((item) => item.id === page)?.label ?? ''
+}
 
 interface SidebarProps {
   currentPage: Page
@@ -42,53 +68,51 @@ interface SidebarProps {
 export const SIDEBAR_SHORTCUT_KEY = '\\'
 
 /**
- * Full sidebar (200px), or a 72px icon rail when the user collapses it or the
+ * Full sidebar (236px), or a 72px icon rail when the user collapses it or the
  * window is narrower than 1024px. Labels stay available to screen readers and
  * as tooltips in the rail.
  */
 export function Sidebar({ currentPage, onNavigate }: SidebarProps): React.JSX.Element {
   const expanded = useSidebarExpanded()
+  const { ready, missingKeys, toolsOk } = useSetupState()
+  const state = ready ? 'ready' : missingKeys.length > 0 ? 'setup needed' : toolsOk === false ? 'check failed' : 'checking'
   return (
     <aside
       id="sidebar"
       className={cn(
-        'no-drag relative flex shrink-0 flex-col overflow-hidden border-r border-white/[0.06] transition-[width] duration-200 ease-out',
-        expanded ? 'w-[200px]' : 'w-[72px]'
+        'app-sidebar no-drag relative z-10 flex shrink-0 flex-col overflow-hidden border-r border-white/[0.06] transition-[width] duration-200 ease-out motion-reduce:transition-none',
+        expanded ? 'w-[236px] px-3' : 'w-[72px] px-2.5'
       )}
     >
-      {/* Title-bar strip: the macOS traffic lights sit here. Matches Layout's strip height. */}
-      <div className="drag h-10 shrink-0" />
+      {/* macOS: the traffic lights sit in this strip. */}
+      <div className={cn('drag shrink-0', isMac ? 'h-8' : 'h-3')} />
 
-      <div className={cn('flex h-9 items-center pb-3', expanded ? 'justify-between pl-4 pr-2.5' : 'justify-center px-2')}>
-        {expanded ? (
-          <>
-            <BridgeClipLogo className="h-5" />
-            <SidebarToggle />
-          </>
-        ) : (
-          <SidebarToggle rail />
+      <div className={cn('flex items-center gap-2.5 pb-1.5 pt-1', expanded ? 'px-2' : 'flex-col justify-center')}>
+        {expanded && <BridgeClipLogo variant="icon" alt="" className="h-7 rounded-lg" />}
+        {expanded && (
+          <div className="min-w-0 flex-1 whitespace-nowrap">
+            <p className="font-display text-[15px] font-bold leading-5 tracking-[-0.01em] text-ink">{APP_NAME}</p>
+            <p className="font-mono text-[9px] leading-3 text-ink-faint tabular">v{APP_VERSION} · {state}</p>
+          </div>
         )}
+        <SidebarToggle rail={!expanded} />
       </div>
 
-      <nav className={expanded ? 'px-2.5' : 'px-3'} aria-label="Main">
-        <NavGroup label="Studio" expanded={expanded}>
-          {NAV_ITEMS.filter((item) => item.group === 'studio').map((item) => (
-            <NavButton key={item.id} item={item} expanded={expanded} active={currentPage === item.id} onNavigate={onNavigate} />
-          ))}
-        </NavGroup>
-        <NavGroup label="Workspace" expanded={expanded} className={cn('mt-4', !expanded && 'mx-2 border-t border-white/[0.06] pt-3 [&>div]:-mx-2')}>
-          {NAV_ITEMS.filter((item) => item.group === 'app').map((item) => (
-            <NavButton key={item.id} item={item} expanded={expanded} active={currentPage === item.id} onNavigate={onNavigate} />
-          ))}
-        </NavGroup>
+      <nav className={cn('-mx-1 min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1 pb-2')} aria-label="Main">
+        {GROUPS.map((group) => (
+          <NavGroup key={group.id} label={group.label} expanded={expanded}>
+            {NAV_ITEMS.filter((item) => item.group === group.id).map((item) => (
+              <NavButton key={item.id} item={item} expanded={expanded} active={currentPage === item.id} onNavigate={onNavigate} />
+            ))}
+          </NavGroup>
+        ))}
       </nav>
 
-      <div className={cn('mt-auto space-y-1.5', expanded ? 'p-2.5' : 'p-2')}>
+      <div className="shrink-0 space-y-1.5 pb-3 pt-2">
         {currentPage !== 'jobs' && <ActiveJobsCard expanded={expanded} onOpen={() => onNavigate('jobs')} />}
         <SidebarUpdateButton expanded={expanded} />
         <div className={cn('flex items-center gap-1', !expanded && 'justify-center')}>
           <SetupStatus expanded={expanded} onOpenSettings={() => onNavigate('settings')} />
-          {expanded && <span className="shrink-0 pr-2 font-mono text-[10px] tabular text-ink-faint">v{APP_VERSION}</span>}
         </div>
       </div>
     </aside>
@@ -96,16 +120,15 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps): React.JSX.El
 }
 
 /**
- * Collapse/expand control, part of the sidebar itself. Expanded, it sits at
- * the right of the logo row. In the rail, the brand mark is the control and
- * turns into the expand icon on hover or focus. Narrow windows force the rail,
- * so there the mark is only a mark.
+ * Collapse/expand control. Expanded, it sits at the right of the logo row. In
+ * the rail, the app icon is the control and turns into the expand icon on
+ * hover or focus. Narrow windows force the rail, so there the icon is only an icon.
  */
 function SidebarToggle({ rail = false }: { rail?: boolean }): React.JSX.Element {
   const wide = useIsWide()
   const expanded = useSidebarExpanded()
   const toggle = useSidebarStore((s) => s.toggle)
-  if (rail && !wide) return <BridgeClipLogo variant="mark" className="h-6" />
+  if (rail && !wide) return <BridgeClipLogo variant="icon" className="h-8 rounded-lg" />
   const label = expanded ? 'Collapse sidebar' : 'Expand sidebar'
   const hint = `${label} (${MOD_KEY}${SIDEBAR_SHORTCUT_KEY})`
   if (!rail && !wide) return <span />
@@ -117,42 +140,47 @@ function SidebarToggle({ rail = false }: { rail?: boolean }): React.JSX.Element 
       aria-controls="sidebar"
       title={hint}
       className={cn(
-        'group/toggle relative flex shrink-0 items-center justify-center text-ink-subtle transition-colors duration-150 hover:bg-white/[0.07] hover:text-ink',
-        rail ? 'h-9 w-9 rounded-xl' : 'h-7 w-7 rounded-lg'
+        'group/toggle relative flex shrink-0 items-center justify-center text-ink-muted transition-colors duration-150 hover:bg-white/[0.06] hover:text-ink',
+        rail ? 'h-9 w-9 rounded-[10px]' : 'h-7 w-7 rounded-lg border border-white/[0.08]'
       )}
     >
       {rail ? (
         <>
-          <BridgeClipLogo variant="mark" className="h-6 transition-opacity duration-150 group-hover/toggle:opacity-0 group-focus-visible/toggle:opacity-0" />
+          <BridgeClipLogo variant="icon" alt="" className="h-8 rounded-lg transition-opacity duration-150 group-hover/toggle:opacity-0 group-focus-visible/toggle:opacity-0" />
           <PanelLeftOpen className="absolute h-4 w-4 opacity-0 transition-opacity duration-150 group-hover/toggle:opacity-100 group-focus-visible/toggle:opacity-100" strokeWidth={1.9} />
         </>
       ) : (
-        <PanelLeftClose className="h-4 w-4" strokeWidth={1.9} />
+        <PanelLeftClose className="h-3.5 w-3.5" strokeWidth={1.9} />
       )}
     </button>
   )
 }
 
-function NavGroup({ label, expanded, className, children }: { label: string; expanded: boolean; className?: string; children: React.ReactNode }): React.JSX.Element {
+function NavGroup({ label, expanded, children }: { label: string | null; expanded: boolean; children: React.ReactNode }): React.JSX.Element {
   return (
-    <div className={className}>
-      {expanded && <p aria-hidden className="eyebrow mb-1 px-2.5 text-[10px] text-ink-faint">{label}</p>}
-      <div className="space-y-0.5">{children}</div>
+    <div>
+      {expanded && label
+        ? <p aria-hidden className="px-2.5 pb-1.5 pt-4 font-mono text-[10px] uppercase leading-3 tracking-[0.12em] text-ink-faint">{label}</p>
+        : <div aria-hidden className={cn(expanded ? 'h-3' : 'mx-2.5 my-3 h-px bg-white/[0.07]')} />}
+      <div className="flex flex-col gap-0.5">{children}</div>
     </div>
   )
 }
 
 function NavButton({ item, expanded, active, onNavigate }: {
-  item: (typeof NAV_ITEMS)[number]
+  item: NavItem
   expanded: boolean
   active: boolean
   onNavigate: (page: Page) => void
 }): React.JSX.Element {
   const Icon = item.icon
-  const liveJobs = useActiveJobs().length
+  const jobs = useActiveJobs()
+  const running = jobs.filter((job) => job.status !== 'queued').length
   const approvals = useAssistantStore((state) => state.approvals.length)
-  const badge = item.id === 'jobs' && liveJobs > 0 ? liveJobs : item.id === 'assistant' && approvals > 0 ? approvals : null
+  const badge = item.id === 'jobs' && jobs.length > 0 ? jobs.length : item.id === 'assistant' && approvals > 0 ? approvals : null
   const badgeLabel = item.id === 'assistant' ? 'waiting for approval' : 'active'
+  // What the badge says in the expanded sidebar: "1 running", "2 queued", "1 waiting".
+  const badgeText = item.id === 'assistant' ? `${approvals} waiting` : running > 0 ? `${running} running` : `${jobs.length} queued`
   return (
     <button
       onClick={() => onNavigate(item.id)}
@@ -160,31 +188,31 @@ function NavButton({ item, expanded, active, onNavigate }: {
       aria-label={badge ? `${item.label}, ${badge} ${badgeLabel}` : item.label}
       title={expanded ? undefined : badge ? `${item.label} · ${badge} ${badgeLabel}` : item.label}
       className={cn(
-        'group relative flex w-full items-center gap-2.5 text-sm transition-[background,color,box-shadow] duration-200 ease-out',
-        expanded ? 'h-8 justify-start rounded-full px-3' : 'h-9 justify-center rounded-xl',
-        active
-          ? 'bg-white/[0.1] font-medium text-ink shadow-[inset_0_1px_0_rgb(255_255_255/0.16),inset_0_0_0_1px_rgb(255_255_255/0.08)]'
-          : 'text-ink-muted hover:bg-white/[0.05] hover:text-ink'
+        `tool-${item.tool}`,
+        'group relative flex h-9 w-full shrink-0 items-center gap-2.5 rounded-[10px] text-[13px] transition-[background,color] duration-150 ease-out',
+        expanded ? 'justify-start px-2.5' : 'justify-center',
+        active ? 'bg-white/[0.06] font-semibold text-ink' : 'text-ink-muted hover:bg-white/[0.045] hover:text-ink'
       )}
     >
-      <Icon
-        className={cn(
-          'h-4 w-4 shrink-0 transition-colors',
-          active ? 'text-accent' : 'text-ink-subtle group-hover:text-ink-muted'
-        )}
-        strokeWidth={active ? 2.2 : 1.9}
-      />
+      {/* Active bar at the sidebar's edge, in the tool's colour. */}
+      <span aria-hidden className={cn('absolute bottom-[9px] top-[9px] w-[3px] rounded-r-[3px] transition-colors', expanded ? '-left-3' : '-left-2.5', active ? 'bg-tool' : 'bg-transparent')} />
+      <span aria-hidden className={cn(
+        'flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg transition-colors',
+        active ? 'bg-tool text-canvas' : 'bg-tool/[0.12] text-tool'
+      )}>
+        <Icon className="h-4 w-4" strokeWidth={2} />
+      </span>
       {!expanded && badge && (
-        <span aria-hidden className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_0_2px_rgb(var(--canvas))]" />
+        <span aria-hidden className="absolute right-1 top-1 h-2 w-2 rounded-full bg-tool-library shadow-[0_0_0_2px_rgb(var(--sidebar))]" />
       )}
       {expanded && (
         <>
           <span className="flex-1 truncate text-left">{item.label}</span>
           {badge && (
-            <span aria-hidden className="rounded-full bg-accent px-1.5 font-mono text-2xs tabular text-accent-ink group-hover:hidden">{badge}</span>
+            <span aria-hidden className="shrink-0 whitespace-nowrap font-mono text-[10px] tabular text-tool-library group-hover:hidden">{badgeText}</span>
           )}
           {item.shortcut && (
-            <kbd className="hidden font-sans text-2xs text-ink-faint group-hover:inline">
+            <kbd className={cn('hidden shrink-0 font-mono text-[10px] text-ink-faint', 'group-hover:inline')}>
               {MOD_KEY}
               {item.shortcut}
             </kbd>
@@ -195,37 +223,55 @@ function NavButton({ item, expanded, active, onNavigate }: {
   )
 }
 
-/** Live jobs at a glance: one job shows its stage; several show a count and their average progress. */
+/**
+ * The running job at a glance: its title, step and progress, and how many
+ * others are waiting. Several running jobs show the first and a count.
+ */
 function ActiveJobsCard({ expanded, onOpen }: { expanded: boolean; onOpen: () => void }): React.JSX.Element | null {
   const jobs = useActiveJobs()
   if (jobs.length === 0) return null
   const running = jobs.filter((job) => job.status !== 'queued')
   const queued = jobs.length - running.length
-  const percent = running.length > 0 ? Math.round(running.reduce((sum, job) => sum + job.percent, 0) / running.length) : 0
-  const single = jobs.length === 1 ? jobs[0] : null
-  const title = single
-    ? (STAGE_LABELS[single.status] ?? 'Working')
-    : `${running.length} running${queued > 0 ? ` · ${queued} queued` : ''}`
+  const lead = running[0] ?? jobs[0]
+  const percent = Math.round(Math.max(0, Math.min(100, lead.status === 'queued' ? 0 : lead.percent)))
+  const average = running.length > 0 ? Math.round(running.reduce((sum, job) => sum + job.percent, 0) / running.length) : 0
+  const step = STAGE_LABELS[lead.status] ?? 'Working'
+  const title = sourceLabel(lead.request.videoUrl)
+  const others = [running.length > 1 ? `${running.length - 1} more running` : null, queued > 0 ? `${queued} queued` : null].filter(Boolean).join(' · ')
+  const summary = jobs.length === 1 ? step : `${running.length} running${queued > 0 ? ` · ${queued} queued` : ''}`
+
+  if (!expanded) {
+    const ring = running.length > 1 ? average : percent
+    return (
+      <button
+        onClick={onOpen}
+        aria-label={`${summary}, ${ring}%. Open jobs`}
+        title={`${summary} · ${ring}%`}
+        className="mx-auto flex h-10 w-10 items-center justify-center rounded-full animate-fade-in"
+        style={{ background: `conic-gradient(rgb(var(--accent)) ${ring * 3.6}deg, rgb(255 255 255 / 0.08) 0deg)` }}
+      >
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-sidebar font-mono text-[9px] tabular text-accent">{ring}%</span>
+      </button>
+    )
+  }
 
   return (
     <button
       onClick={onOpen}
-      aria-label={`${title}, ${percent}%. Open jobs`}
-      title={expanded ? undefined : `${title} · ${percent}%`}
-      className={cn('glass-tile glass-tile-hover group w-full rounded-xl text-left animate-fade-in', expanded ? 'p-2.5' : 'p-1.5')}
+      aria-label={`${summary}, ${running.length > 1 ? average : percent}%. Open jobs`}
+      className="group w-full rounded-xl border border-white/[0.07] bg-surface p-3 text-left transition-colors hover:border-white/[0.14] animate-fade-in"
     >
-      <div className={cn('flex items-center gap-2 text-xs', !expanded && 'justify-center')}>
-        {expanded && <StatusDot tone="accent" pulse />}
-        {expanded && <span className="truncate font-medium text-ink">{title}</span>}
-        <span className={cn('font-mono text-2xs tabular text-accent', expanded && 'ml-auto')}>{percent}%</span>
+      <div className="flex items-center gap-2">
+        <span aria-hidden className="h-[7px] w-[7px] shrink-0 rounded-full bg-accent motion-safe:animate-pulse" />
+        <span className="truncate text-xs font-medium text-ink" title={lead.request.videoUrl}>{title}</span>
       </div>
-      <ProgressBar value={percent} className={cn('h-1', expanded ? 'mt-2' : 'mt-1.5')} />
-      {expanded && (
-        <p className="mt-1.5 flex items-center gap-1 text-2xs text-ink-subtle">
-          <span className="truncate">{single ? sourceLabel(single.request.videoUrl) : 'View all jobs'}</span>
-          <ChevronRight className="ml-auto h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
-        </p>
-      )}
+      <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.07]">
+        <div className="h-full rounded-full bg-[linear-gradient(90deg,rgb(var(--tool-edit)),rgb(var(--accent)))] transition-[width] duration-500 ease-out motion-reduce:transition-none" style={{ width: `${percent}%` }} />
+      </div>
+      <div className="mt-1.5 flex items-center gap-2 font-mono text-[10px] text-ink-faint">
+        <span className="truncate">{step}</span>
+        <span className="ml-auto shrink-0 tabular text-ink-muted">{percent}%{others ? ` · ${others}` : ''}</span>
+      </div>
     </button>
   )
 }
@@ -255,8 +301,8 @@ function SetupStatus({ expanded, onOpenSettings }: { expanded: boolean; onOpenSe
       aria-label={fullLabel ?? label}
       title={fullLabel ?? (expanded ? undefined : label)}
       className={cn(
-        'flex h-8 min-w-0 items-center gap-2 rounded-full text-xs transition-colors hover:bg-white/[0.06]',
-        expanded ? 'flex-1 justify-start px-3' : 'w-9 justify-center',
+        'flex h-8 min-w-0 items-center gap-2 rounded-[10px] text-xs transition-colors hover:bg-white/[0.05]',
+        expanded ? 'flex-1 justify-start px-2.5' : 'w-9 justify-center',
         ready ? 'text-ink-subtle hover:text-ink-muted' : 'text-ink-muted hover:text-ink'
       )}
     >
