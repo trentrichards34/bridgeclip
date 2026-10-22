@@ -58,7 +58,7 @@ export function JevSettings(): React.JSX.Element {
   const open = (url: string): void => { void getApi().shell.openPath(url).catch((err) => setError(errorMessage(err, 'Could not open the page'))) }
 
   return (
-    <section id="settings-jev" className="scroll-mt-14" aria-labelledby="jev-heading">
+    <section id="settings-jev" className="scroll-mt-4" aria-labelledby="jev-heading">
       <Panel>
         <PanelHeader
           icon={<IconTile><ShieldCheck /></IconTile>}

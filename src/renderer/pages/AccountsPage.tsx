@@ -46,9 +46,9 @@ function ZernioSetup(): React.JSX.Element {
     <>
       <PageHeader eyebrow="Workspace" title={TITLE} description="Connect the social accounts you post to, through Zernio." />
       <Panel padded={false} className="mt-4 overflow-hidden">
-        <div className="flex items-center gap-3 px-4 py-3">
+        <div className="flex items-center gap-3 px-4 py-3.5">
           <div className="min-w-0 flex-1">
-            <h2 className="text-sm font-semibold text-ink">Connect with Zernio</h2>
+            <h2 className="font-display text-[15px] font-semibold tracking-[-0.01em] text-ink">Connect with Zernio</h2>
             <p className="mt-0.5 text-xs text-ink-muted">
               Post and schedule clips to {ZERNIO_PLATFORMS.length} platforms. CreatorClips only holds your Zernio key; platform sign-in happens in your browser.
             </p>
@@ -59,7 +59,7 @@ function ZernioSetup(): React.JSX.Element {
             ))}
           </div>
         </div>
-        <ol className="divide-y divide-white/[0.06] border-t border-white/[0.06]">
+        <ol className="divide-y divide-white/[0.05] border-t border-line">
           <SetupStep
             step={1}
             action={
@@ -99,8 +99,8 @@ function ZernioSetup(): React.JSX.Element {
 
 function SetupStep({ step, action, children }: { step: number; action?: ReactNode; children: ReactNode }): React.JSX.Element {
   return (
-    <li className="flex items-start gap-3 px-4 py-3">
-      <span className="mt-px flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-white/[0.08] font-mono text-2xs tabular text-ink-muted shadow-[inset_0_0_0_1px_rgb(255_255_255/0.1)]">
+    <li className="flex items-start gap-3 px-4 py-3.5">
+      <span className="mt-px flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-tool/[0.12] font-mono text-2xs tabular text-tool shadow-[inset_0_0_0_1px_rgb(var(--tool)/0.25)]">
         {step}
       </span>
       <div className="min-w-0 flex-1">{children}</div>

@@ -41,7 +41,7 @@ test('Jobs actions inspect runs and open completed jobs in the shared Library vi
   })
   const jobs = async () => {
     await page.getByRole('button', { name: /^Jobs(?:,|$)/ }).click()
-    await page.getByRole('heading', { name: 'Jobs', exact: true }).waitFor()
+    await page.getByRole('heading', { name: 'Everything that’s running or ran', exact: true }).waitFor()
   }
   const expectLibrary = async title => {
     await page.getByRole('heading', { name: title, exact: true }).waitFor()

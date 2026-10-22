@@ -469,8 +469,8 @@ export function AutomationsPage({ onNavigate, onViewLibrary }: { onNavigate: (pa
       {!loaded && (
         <div className="mt-3 space-y-2">
           <div className="flex gap-1">{[0, 1].map((key) => <Skeleton key={key} className="h-7 w-28 rounded-full" />)}</div>
-          <Skeleton className="h-[260px] rounded-3xl" />
-          <Skeleton className="h-[160px] rounded-3xl" />
+          <Skeleton className="h-[260px] rounded-2xl" />
+          <Skeleton className="h-[160px] rounded-2xl" />
         </div>
       )}
 
@@ -922,7 +922,7 @@ function AutomationTab({ automation, selected, onSelect }: { automation: Automat
       className={cn(
         'inline-flex h-7 max-w-[220px] items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors duration-150',
         selected
-          ? 'border-white/[0.16] bg-white/[0.1] font-medium text-ink'
+          ? 'border-tool/50 bg-tool/[0.12] font-medium text-ink shadow-[0_0_0_3px_rgb(var(--tool)/0.08)]'
           : 'border-transparent text-ink-muted hover:bg-white/[0.05] hover:text-ink'
       )}
     >

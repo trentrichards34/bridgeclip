@@ -36,10 +36,12 @@ interface ProgressRingProps {
   stroke?: number
   className?: string
   children?: React.ReactNode
+  /** Stroke colour: lime (default) or the current page's tool colour. */
+  tone?: 'accent' | 'tool'
 }
 
-/** Circular progress with a lime stroke; children render in the center. */
-export function ProgressRing({ value, size = 200, stroke = 10, className, children }: ProgressRingProps): React.JSX.Element {
+/** Circular progress with a lime (or tool-coloured) stroke; children render in the center. */
+export function ProgressRing({ value, size = 200, stroke = 10, className, children, tone = 'accent' }: ProgressRingProps): React.JSX.Element {
   const pct = Math.max(0, Math.min(100, value))
   const r = (size - stroke) / 2
   const c = 2 * Math.PI * r
@@ -60,7 +62,7 @@ export function ProgressRing({ value, size = 200, stroke = 10, className, childr
           cy={size / 2}
           r={r}
           fill="none"
-          stroke="rgb(var(--accent))"
+          stroke={tone === 'tool' ? 'rgb(var(--tool))' : 'rgb(var(--accent))'}
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={c}

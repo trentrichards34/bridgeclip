@@ -21,6 +21,8 @@ import { Badge, StatusDot } from '../components/ui/Badge'
 import { Select } from '../components/ui/Select'
 import { IconTile } from '../components/ui/IconTile'
 import { Callout } from '../components/ui/Callout'
+import { SettingRow } from '../components/ui/SettingRow'
+import { Switch } from '../components/ui/Switch'
 import { UpdatesRow } from '../components/Updates'
 import { OutputStorage } from '../components/OutputStorage'
 import { useOutputFolderChange } from '../components/OutputFolderChange'
@@ -35,6 +37,7 @@ import type { Page as AppPage } from '../components/Sidebar'
 
 type SectionId = 'setup' | 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'music' | 'broll' | 'output' | 'system' | 'about'
 type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
+type SectionGroup = 'Set up' | 'Your clips' | 'This computer'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
 /** Safari and the macOS prompts only exist on a Mac. */
@@ -74,19 +77,25 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
   const vocabularyTerms = customVocabulary.split('\n').filter((line) => line.trim()).length
   const assistantConnected = useAssistantStore((state) => Object.values(state.statuses).some((status) => status?.state === 'connected'))
 
-  const sections: { id: SectionId; label: string; icon: ReactNode; tone: SectionTone }[] = [
-    ...(onNavigate ? [{ id: 'setup' as const, label: 'Get set up', icon: <ListChecks />, tone: 'idle' as const }] : []),
-    { id: 'keys', label: 'API keys', icon: <KeyRound />, tone: keysMissing ? 'warning' : 'success' },
-    { id: 'spending', label: 'Spending', icon: <Wallet />, tone: 'idle' },
-    { id: 'assistant', label: 'Assistant', icon: <Sparkles />, tone: assistantConnected ? 'success' : 'idle' },
-    { id: 'jev', label: 'Quality check', icon: <ShieldCheck />, tone: 'idle' },
-    { id: 'vocabulary', label: 'Vocabulary', icon: <BookA />, tone: 'idle' },
-    { id: 'music', label: 'My music', icon: <Music />, tone: 'idle' },
-    { id: 'broll', label: 'AI b-roll', icon: <Images />, tone: 'idle' },
-    { id: 'output', label: 'Output', icon: <FolderOpen />, tone: 'idle' },
-    { id: 'system', label: 'System check', icon: <Cpu />, tone: !toolsChecked ? 'idle' : toolsMissing ? 'danger' : 'success' },
-    { id: 'about', label: 'About', icon: <Info />, tone: 'idle' }
+  const sections: { id: SectionId; label: string; icon: ReactNode; tone: SectionTone; group: SectionGroup }[] = [
+    ...(onNavigate ? [{ id: 'setup' as const, label: 'Get set up', icon: <ListChecks />, tone: 'idle' as const, group: 'Set up' as const }] : []),
+    { id: 'keys', label: 'API keys', icon: <KeyRound />, tone: keysMissing ? 'warning' : 'success', group: 'Set up' },
+    { id: 'spending', label: 'Spending', icon: <Wallet />, tone: 'idle', group: 'Set up' },
+    { id: 'assistant', label: 'Assistant', icon: <Sparkles />, tone: assistantConnected ? 'success' : 'idle', group: 'Set up' },
+    { id: 'jev', label: 'Quality check', icon: <ShieldCheck />, tone: 'idle', group: 'Your clips' },
+    { id: 'vocabulary', label: 'Vocabulary', icon: <BookA />, tone: 'idle', group: 'Your clips' },
+    { id: 'music', label: 'My music', icon: <Music />, tone: 'idle', group: 'Your clips' },
+    { id: 'broll', label: 'AI b-roll', icon: <Images />, tone: 'idle', group: 'Your clips' },
+    { id: 'output', label: 'Output', icon: <FolderOpen />, tone: 'idle', group: 'Your clips' },
+    { id: 'system', label: 'System check', icon: <Cpu />, tone: !toolsChecked ? 'idle' : toolsMissing ? 'danger' : 'success', group: 'This computer' },
+    { id: 'about', label: 'About', icon: <Info />, tone: 'idle', group: 'This computer' }
   ]
+  const groups = sections.reduce<{ group: SectionGroup; items: typeof sections }[]>((acc, section) => {
+    const last = acc[acc.length - 1]
+    if (last?.group === section.group) last.items.push(section)
+    else acc.push({ group: section.group, items: [section] })
+    return acc
+  }, [])
   const [active, jump] = useActiveSection(sections.map((section) => section.id))
   useEffect(() => {
     if (!showUpdates) return
@@ -118,23 +127,39 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
         actions={<SaveIndicator saving={saving} savedAt={lastSaved || null} error={error} />}
       />
 
-      <div className="mt-5 grid items-start gap-4 lg:grid-cols-[184px_minmax(0,1fr)]">
-        <nav aria-label="Settings sections" className="hidden space-y-0.5 lg:sticky lg:top-12 lg:block">
-          {sections.map((section) => (
-            <button
-              key={section.id}
-              type="button"
-              onClick={() => jump(section.id)}
-              aria-current={active === section.id ? 'true' : undefined}
-              className={cn(
-                'flex h-8 w-full items-center gap-2.5 rounded-full px-3 text-left text-sm transition-colors duration-150 [&_svg]:h-3.5 [&_svg]:w-3.5',
-                active === section.id ? 'bg-white/[0.09] text-ink' : 'text-ink-muted hover:bg-white/[0.05] hover:text-ink'
-              )}
-            >
-              {section.icon}
-              <span className="flex-1">{section.label}</span>
-              {section.tone !== 'idle' && <StatusDot tone={section.tone} />}
-            </button>
+      <div className="mt-5 grid items-start gap-4 lg:grid-cols-[200px_minmax(0,1fr)] xl:gap-5">
+        <nav aria-label="Settings sections" className="glass hidden rounded-2xl p-2 lg:sticky lg:top-3 lg:block">
+          {groups.map(({ group, items }, index) => (
+            <div key={group} className={cn(index > 0 && 'mt-2 border-t border-line pt-2')}>
+              <p className="eyebrow px-2.5 pb-1 pt-1">{group}</p>
+              {items.map((section) => {
+                const current = active === section.id
+                return (
+                  <button
+                    key={section.id}
+                    type="button"
+                    onClick={() => jump(section.id)}
+                    aria-current={current ? 'true' : undefined}
+                    className={cn(
+                      'relative flex h-9 w-full items-center gap-2.5 rounded-[10px] pl-1.5 pr-2.5 text-left text-sm transition-colors duration-150',
+                      current ? 'bg-white/[0.07] text-ink' : 'text-ink-muted hover:bg-white/[0.04] hover:text-ink'
+                    )}
+                  >
+                    <span
+                      aria-hidden
+                      className={cn(
+                        'flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors duration-150 [&_svg]:h-3.5 [&_svg]:w-3.5',
+                        current ? 'bg-tool text-canvas' : 'bg-white/[0.05] text-ink-subtle'
+                      )}
+                    >
+                      {section.icon}
+                    </span>
+                    <span className="flex-1 truncate">{section.label}</span>
+                    {section.tone !== 'idle' && <StatusDot tone={section.tone} />}
+                  </button>
+                )
+              })}
+            </div>
           ))}
         </nav>
 
@@ -167,6 +192,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
             </div>
           </Panel>
 
+          <GroupLabel>Set up</GroupLabel>
           {onNavigate && <Section id="setup">
             <PanelHeader icon={<IconTile><ListChecks /></IconTile>} title="Get set up" description="The steps to go from a fresh install to your first posted clip." />
             <SetupChecklist inSettings onNavigate={onNavigate} className="mt-1" />
@@ -192,16 +218,16 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
                   getKeyUrl={PROVIDER_LINKS.openrouter}
                 />
               </KeyRow>
-              <label className="flex items-start gap-3 px-3 py-2 text-sm text-ink-muted">
-                <input type="checkbox" className="mt-1" checked={sourceContextWebResearch === 'on'}
-                  onChange={(e) => commit({ sourceContextWebResearch: e.target.checked ? 'on' : 'off' })} />
-                <span>Research the source before clipping <Badge tone="warning" className="ml-1 align-middle">Beta</Badge>
-                  <span className="mt-1 block text-xs text-ink-subtle">Off by default. When on, the video’s title, description and channel go to OpenRouter web search (up to two searches) and Gemini builds a channel and video overview before transcription. Uses extra OpenRouter credit and adds time. Only YouTube and Twitch sources are researched; local files never are. View the brief and sources in the transcript inspector.</span>
-                </span>
-              </label>
-              <div className="flex items-start gap-3 px-3 py-2 text-sm text-ink-muted">
-                <span className="flex-1">Instagram, TikTok, X and Facebook links
-                  <span className="mt-1 block text-xs text-ink-subtle">These sites often only share a video with someone logged in. Choose the browser you’re logged in with and CreatorClips downloads with that login (it reads the browser’s cookies on this computer, nothing is sent anywhere else). {IS_MAC ? 'For Chrome, Edge or Brave your Mac asks once to allow it; Safari needs Full Disk Access for CreatorClips in System Settings → Privacy & Security.' : 'Close the browser first if it can’t be read while open.'}</span>
+              <SettingRow
+                className="items-start"
+                title={<>Research the source before clipping <Badge tone="warning" className="ml-1 align-middle">Beta</Badge></>}
+                description="Off by default. When on, the video’s title, description and channel go to OpenRouter web search (up to two searches) and Gemini builds a channel and video overview before transcription. Uses extra OpenRouter credit and adds time. Only YouTube and Twitch sources are researched; local files never are. View the brief and sources in the transcript inspector."
+                control={<Switch className="mt-0.5" label="Research the source before clipping" checked={sourceContextWebResearch === 'on'}
+                  onChange={(on) => void commit({ sourceContextWebResearch: on ? 'on' : 'off' })} />}
+              />
+              <div className="glass-tile flex items-start gap-3 rounded-xl px-3 py-2.5">
+                <span className="flex-1 text-sm font-medium text-ink">Instagram, TikTok, X and Facebook links
+                  <span className="mt-0.5 block text-2xs font-normal leading-relaxed text-ink-subtle">These sites often only share a video with someone logged in. Choose the browser you’re logged in with and CreatorClips downloads with that login (it reads the browser’s cookies on this computer, nothing is sent anywhere else). {IS_MAC ? 'For Chrome, Edge or Brave your Mac asks once to allow it; Safari needs Full Disk Access for CreatorClips in System Settings → Privacy & Security.' : 'Close the browser first if it can’t be read while open.'}</span>
                 </span>
                 <Select aria-label="Browser login for social links" size="sm" className="mt-0.5 w-44 shrink-0" value={downloadLoginBrowser ?? ''}
                   onChange={(value) => void commit({ downloadLoginBrowser: value })}
@@ -214,7 +240,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
                     { value: 'brave', label: 'Brave' }
                   ]} />
               </div>
-              <p className="eyebrow px-1 pt-2">Optional</p>
+              <p className="eyebrow px-1 pb-0.5 pt-3">Optional keys</p>
               <KeyRow>
                 <ApiKeyInput
                   label="Zernio (optional)"
@@ -279,6 +305,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
             <AssistantSettings />
           </Section>
 
+          <GroupLabel>Your clips</GroupLabel>
           <JevSettings />
 
           <Section id="vocabulary">
@@ -320,6 +347,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
             {folderChange.dialog}
           </Section>
 
+          <GroupLabel>This computer</GroupLabel>
           <Section id="system">
             <PanelHeader
               icon={<IconTile tone={toolsChecked && toolsMissing ? 'danger' : 'neutral'}><Cpu /></IconTile>}
@@ -401,9 +429,14 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
   )
 }
 
+/** Mono uppercase label over a run of Settings cards; matches the group names in the side nav. */
+function GroupLabel({ children }: { children: ReactNode }): React.JSX.Element {
+  return <p className="eyebrow px-1 pt-2 first:pt-0" aria-hidden>{children}</p>
+}
+
 function Section({ id, className, children }: { id: SectionId; className?: string; children: ReactNode }): React.JSX.Element {
   return (
-    <section id={`settings-${id}`} className="scroll-mt-14">
+    <section id={`settings-${id}`} className="scroll-mt-4">
       <Panel className={className}>{children}</Panel>
     </section>
   )
@@ -457,7 +490,7 @@ function useActiveSection(ids: SectionId[]): [SectionId, (id: SectionId) => void
 }
 
 function KeyRow({ children }: { children: ReactNode }): React.JSX.Element {
-  return <div className="glass-tile rounded-2xl px-3 py-2.5">{children}</div>
+  return <div className="glass-tile rounded-xl px-3 py-2.5">{children}</div>
 }
 
 function SaveIndicator({ saving, savedAt, error }: { saving: boolean; savedAt: number | null; error: string | null }): React.JSX.Element | null {

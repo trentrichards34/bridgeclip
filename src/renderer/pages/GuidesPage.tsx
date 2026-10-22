@@ -1,4 +1,4 @@
-import { ArrowRight, UserRoundCog } from 'lucide-react'
+import { ArrowRight, Lightbulb, UserRoundCog } from 'lucide-react'
 import { GOALS, GUIDES, isVideoGoal, type GoalId } from '../../shared/onboarding'
 import { useMemberPrefsStore } from '../store/use-member-prefs-store'
 import { startGoal, useOnboarding } from '../store/use-onboarding-store'
@@ -23,7 +23,7 @@ export function GuidesPage({ onNavigate }: { onNavigate: (page: Page) => void })
         </Button>} />
       <nav aria-label="Guides" className="mt-4 flex flex-wrap gap-1.5">
         {order.map((id) => (
-          <a key={id} href={`#guide-${id}`} className="glass-tile glass-tile-hover rounded-full px-3 py-1 text-xs text-ink-muted"
+          <a key={id} href={`#guide-${id}`} className="glass-tile glass-tile-hover rounded-full px-3 py-1.5 text-xs text-ink-muted transition-colors hover:text-ink"
             onClick={(e) => { e.preventDefault(); document.getElementById(`guide-${id}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }) }}>
             {GUIDES[id].title}
           </a>
@@ -34,11 +34,11 @@ export function GuidesPage({ onNavigate }: { onNavigate: (page: Page) => void })
           const guide = GUIDES[id]
           const mine = goals.includes(id)
           return (
-            <section key={id} id={`guide-${id}`} aria-labelledby={`guide-${id}-title`} className="glass scroll-mt-4 rounded-3xl p-4" data-testid="guide">
+            <section key={id} id={`guide-${id}`} aria-labelledby={`guide-${id}-title`} className="glass scroll-mt-4 rounded-2xl p-4 xl:p-5" data-testid="guide">
               <div className="flex flex-wrap items-start gap-3">
                 <div className="min-w-0 flex-1">
                   {mine && <p className="eyebrow text-accent">In your profile</p>}
-                  <h2 id={`guide-${id}-title`} className="mt-0.5 text-base font-semibold text-ink">{guide.title}</h2>
+                  <h2 id={`guide-${id}-title`} className="mt-0.5 font-display text-[17px] font-semibold tracking-[-0.01em] text-ink">{guide.title}</h2>
                   <p className="mt-0.5 text-sm text-ink-muted">{guide.summary}</p>
                 </div>
                 {isVideoGoal(id)
@@ -47,13 +47,26 @@ export function GuidesPage({ onNavigate }: { onNavigate: (page: Page) => void })
                     ? <Button size="sm" variant={mine ? 'primary' : 'secondary'} onClick={() => onNavigate('edit')} aria-label={`Start: ${guide.title}`}>Start<ArrowRight className="h-3.5 w-3.5" /></Button>
                     : <Button size="sm" variant={mine ? 'primary' : 'secondary'} onClick={() => onNavigate('accounts')} aria-label={`Open Accounts: ${guide.title}`}>Open Accounts<ArrowRight className="h-3.5 w-3.5" /></Button>}
               </div>
-              <p className="mt-3 text-xs text-ink-subtle"><span className="font-medium text-ink-muted">You’ll need: </span>{guide.needs.join(' · ')}</p>
-              <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-ink">
-                {guide.steps.map((step) => <li key={step}>{step}</li>)}
+              <p className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-ink-muted">
+                <span className="eyebrow">You’ll need</span>
+                {guide.needs.join(' · ')}
+              </p>
+              <ol className="mt-3 space-y-2 border-t border-line pt-3 text-sm text-ink">
+                {guide.steps.map((step, index) => (
+                  <li key={step} className="flex gap-3">
+                    <span aria-hidden className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-white/[0.05] font-mono text-[10px] tabular text-ink-muted shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]">{index + 1}</span>
+                    <span className="min-w-0 flex-1 leading-relaxed">{step}</span>
+                  </li>
+                ))}
               </ol>
               {guide.tips.length > 0 && (
-                <ul className="mt-2 space-y-0.5 text-xs text-ink-subtle">
-                  {guide.tips.map((tip) => <li key={tip}>Tip: {tip}</li>)}
+                <ul className="glass-tile mt-3 space-y-1 rounded-xl px-3 py-2.5 text-xs text-ink-muted">
+                  {guide.tips.map((tip) => (
+                    <li key={tip} className="flex gap-2">
+                      <Lightbulb aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-subtle" />
+                      <span><span className="sr-only">Tip: </span>{tip}</span>
+                    </li>
+                  ))}
                 </ul>
               )}
             </section>

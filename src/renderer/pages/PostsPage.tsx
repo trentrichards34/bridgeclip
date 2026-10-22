@@ -254,12 +254,12 @@ function PostDetail({ post, onClose }: { post: PostRecord; onClose: () => void }
 function PostGroup({ title, posts }: { title: string; posts: PostRecord[] }): React.JSX.Element | null {
   if (posts.length === 0) return null
   return (
-    <section className="border-t border-white/[0.06] first:border-t-0" aria-label={title}>
-      <h2 className="eyebrow flex items-center gap-2 px-4 pb-0.5 pt-2">
-        {title}
-        <span className="rounded-full bg-white/[0.07] px-1.5 py-px font-mono text-[10px] tabular tracking-normal text-ink-muted">{posts.length}</span>
+    <section className="border-t border-line first:border-t-0" aria-label={title}>
+      <h2 className="flex min-h-[40px] items-center gap-2.5 border-b border-line px-4 py-2">
+        <span className="eyebrow">{title}</span>
+        <span className="font-mono text-2xs tabular text-ink-muted">{posts.length}</span>
       </h2>
-      <ul className="divide-y divide-white/[0.05]">
+      <ul className="divide-y divide-white/[0.04]">
         {posts.map((post) => <PostRow key={post.id} post={post} />)}
       </ul>
     </section>
@@ -360,7 +360,7 @@ function PostRow({ post }: { post: PostRecord }): React.JSX.Element {
   }
 
   return (
-    <li className="py-2 pl-4 pr-2.5 transition-colors duration-150 hover:bg-white/[0.02]">
+    <li className="py-2.5 pl-4 pr-2.5 transition-colors duration-150 hover:bg-white/[0.02]">
       <div className="flex items-start gap-3">
         <PostThumb clipPath={post.clipPath} />
         <div className="min-w-0 flex-1">
