@@ -20,6 +20,7 @@ import { createTimeline } from 'animejs'
 import './graphics.css'
 import { ICONS } from './icons'
 import { bigWordsTemplate } from './big-words'
+import { chapterTemplate, compareMarksTemplate, funnelTemplate, growthTemplate, ideaHubTemplate, journeyTemplate, staircaseTemplate } from './diagrams'
 import {
   accentWords, browserHighlights, cardWords, formatStatValue, graphicIcons, graphicItems, graphicItemTimes, graphicWordTimes, highlightPoint, orbitNodes, parseStatValue,
   screenFrameLayout, templateItems, SCREEN_FADE_MS, type GraphicRenderSpec
@@ -243,7 +244,7 @@ export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): Mounte
  * so text is drawn crisply at its final size.
  */
 function fitToBand({ band, fit, root, spec, u }: Build): void {
-  if (spec.template === 'highlight' || spec.template === 'big_words' || spec.template === 'orbit' || spec.template === 'screen_frame') return
+  if (['highlight', 'big_words', 'orbit', 'screen_frame', 'chapter', 'staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks'].includes(spec.template)) return
   fit.style.removeProperty('--u')
   fit.style.removeProperty('--card-w')
   const cardW = parseFloat(root.style.getPropertyValue('--card-w'))
@@ -934,7 +935,16 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
       tl.add(glow, { opacity: [1, .8], duration: 900, ease: 'inOutSine' }, 1600)
     }
     tl.add(glow, { opacity: [.8, 0], duration: SCREEN_FADE_MS, ease: 'linear' }, spec.duration_ms - SCREEN_FADE_MS)
-  }
+  },
+
+  // A title at the top for a whole section, and the diagrams (diagrams.ts: worked out per frame, like Big words).
+  chapter(b) { chapterTemplate(b) },
+  staircase(b) { staircaseTemplate(b) },
+  funnel(b) { funnelTemplate(b) },
+  journey(b) { journeyTemplate(b) },
+  growth(b) { growthTemplate(b) },
+  idea_hub(b) { ideaHubTemplate(b) },
+  compare_marks(b) { compareMarksTemplate(b) }
 }
 
 function listLike(b: Build, checks: boolean): void {

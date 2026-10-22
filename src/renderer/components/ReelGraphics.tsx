@@ -12,11 +12,11 @@ import type { GraphicFrame } from '../../shared/graphic-layout'
 import { graphicBox } from '../../shared/graphic-layout'
 import type { HeadlineLook } from '../../shared/headline-look'
 import { isHexColor } from '../../shared/headline-look'
-import { GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHIC_ITEMS, graphicCanGoBehind, graphicDepth, graphicHasContent, highlightPoint, templateInfo, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from '../../shared/motion-graphics'
+import { DIAGRAM_ACCENT, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHIC_ITEMS, graphicCanGoBehind, graphicMaxMs, isDiagram, graphicDepth, graphicHasContent, highlightPoint, templateInfo, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { MAX_REEL_GRAPHICS, REEL_GRAPHIC_TEMPLATES, reelGraphicSpec, reelGraphicStyle } from '../../shared/reel-graphics'
 import { outputSize } from '../../shared/graphic-layout'
 import { cn } from '../lib/utils'
-import { BigWordsFields, GraphicView, IconFields, SAMPLES, SHORT, fieldLabel, graphicSummary } from './ClipGraphics'
+import { BigWordsFields, DiagramFields, GraphicView, IconFields, SAMPLES, SHORT, fieldLabel, graphicSummary } from './ClipGraphics'
 import { Button } from './ui/Button'
 import { Segmented } from './ui/Segmented'
 import { Switch } from './ui/Switch'
@@ -75,7 +75,7 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
   const field = (key: string, value: string): void => { if (g) onPatch(g.id, { fields: { [key]: value } }) }
   const preview = (id: GraphicTemplateId): GraphicRenderSpec => {
     const { width, height } = outputSize('1:1')
-    return { template: id, fields: id === 'highlight' ? { ...SAMPLES[id], y: '0.5' } : SAMPLES[id], width, height, duration_ms: 2600, box: { top: .06, bottom: .94 }, placement: 'middle', ...style }
+    return { template: id, fields: id === 'highlight' ? { ...SAMPLES[id], y: '0.5' } : isDiagram(id) ? { ...SAMPLES[id], panel: 'on' } : SAMPLES[id], width, height, duration_ms: isDiagram(id) ? 4200 : 2600, box: { top: .06, bottom: .94 }, placement: 'middle', ...style, ...(isDiagram(id) ? { color: DIAGRAM_ACCENT } : {}) }
   }
 
   return <section className="space-y-3" aria-label={label}>
@@ -144,15 +144,16 @@ export function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, on
       </div>
       {g.problem && <p className="text-2xs text-warning" role="note">{g.problem}</p>}
       {!graphicHasContent(g) && <p className="text-2xs text-warning">Add its words to show it.</p>}
-      {info.fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'highlights', 'style', 'vertical', 'motion', 'labels', 'dot'].includes(k)).map((key) => <label key={key} className="block space-y-1 text-2xs text-ink-muted">{fieldLabel(g.template, key)}
-        {key === 'items' || key === 'text'
-          ? <textarea className={cn(input, 'resize-y')} rows={key === 'items' ? MAX_GRAPHIC_ITEMS : 2} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''}
+      {info.fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'highlights', 'style', 'vertical', 'motion', 'labels', 'dot', 'icon', 'wrong'].includes(k)).map((key) => <label key={key} className="block space-y-1 text-2xs text-ink-muted">{fieldLabel(g.template, key)}
+        {key === 'items' || key === 'text' || key === 'notes'
+          ? <textarea className={cn(input, 'resize-y')} rows={key === 'items' ? GRAPHIC_ITEM_LIMITS[g.template] ?? MAX_GRAPHIC_ITEMS : 2} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''}
             onChange={(e) => onField(key, e.target.value)} aria-label={`${info.label} ${fieldLabel(g.template, key).toLowerCase()}`} />
           : <input className={input} maxLength={MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => onField(key, e.target.value)}
             aria-label={`${info.label} ${fieldLabel(g.template, key).toLowerCase()}`} placeholder={key === 'value' ? 'e.g. a number you said, like 40%' : undefined} />}
       </label>)}
       {g.template === 'icon_pop' && <IconFields fields={g.fields} onField={onField} imageNote={false} />}
       {g.template === 'big_words' && <BigWordsFields fields={g.fields} onField={onField} />}
+      <DiagramFields template={g.template} fields={g.fields} onField={onField} />
       {(g.template === 'orbit' || g.template === 'feature_tile') && <IconFields fields={g.fields} onField={onField} template={g.template} imageNote={false} />}
       {g.template === 'orbit' && <div className="flex items-center justify-between gap-2 text-xs text-ink"><span>Labels under the icons</span>
         <Switch label="Labels under the icons" checked={g.fields.labels !== 'off'} onChange={(on) => onField('labels', on ? '' : 'off')} /></div>}
@@ -172,14 +173,14 @@ export function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, on
         <Segmented<GraphicPlacement> label="Graphic placement" size="sm" value={g.placement} onChange={(placement) => onPatch({ placement })}
           options={[{ value: 'top', label: 'Top' }, { value: 'middle', label: 'Middle' }, { value: 'bottom', label: 'Bottom' }]} /></div>}
       <label className="block text-2xs text-ink-muted">Length <span className="float-right">{(g.duration_ms / 1000).toFixed(1)}s</span>
-        <input type="range" className="w-full accent-[rgb(var(--accent))]" aria-label="Graphic length" min={GRAPHIC_MIN_MS} max={GRAPHIC_MAX_MS} step={100} value={g.duration_ms}
+        <input type="range" className="w-full accent-[rgb(var(--accent))]" aria-label="Graphic length" min={GRAPHIC_MIN_MS} max={graphicMaxMs(g.template)} step={100} value={g.duration_ms}
           onChange={(e) => onPatch({ duration_ms: Number(e.target.value) })} /></label>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="ghost" onClick={onMoveHere}>Start it {cursorLabel}</Button>
         <span className="ml-auto flex items-center gap-2 text-2xs text-ink-muted">Color
-          <input type="color" className="h-6 w-8 cursor-pointer rounded border border-white/10 bg-transparent" aria-label="Graphic color" value={(isHexColor(g.fields.color) ? g.fields.color : style.color).toLowerCase()}
+          <input type="color" className="h-6 w-8 cursor-pointer rounded border border-white/10 bg-transparent" aria-label="Graphic color" value={(isHexColor(g.fields.color) ? g.fields.color : isDiagram(g.template) ? DIAGRAM_ACCENT : style.color).toLowerCase()}
             onChange={(e) => onField('color', e.target.value.toUpperCase())} />
-          {isHexColor(g.fields.color) && <Button size="sm" variant="ghost" onClick={() => onPatch({ fields: { color: '' } })}>Use hook color</Button>}</span>
+          {isHexColor(g.fields.color) && <Button size="sm" variant="ghost" onClick={() => onPatch({ fields: { color: '' } })}>{isDiagram(g.template) ? 'Use green' : 'Use hook color'}</Button>}</span>
       </div>
     </fieldset>
     <div className="space-y-1">

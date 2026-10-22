@@ -167,6 +167,8 @@ class CaptionStyle:
     bold: bool = False
     italic: bool = False
     uppercase: bool = True
+    # Words drawn all lowercase (when not uppercase), as a quiet editorial look.
+    lowercase: bool = False
     letter_spacing: int = 0
     position: Literal["top", "center", "bottom"] = "bottom"
     alignment: Literal["left", "center", "right"] = "center"
@@ -255,6 +257,7 @@ class CaptionPreset:
     LIME = "lime"
     VINTAGE = "vintage"
     HIGHLIGHT_BOX = "highlight_box"
+    SERIF_CLEAN = "serif_clean"
 
 
 DEFAULT_CAPTION_PRESET = CaptionPreset.POP
@@ -282,6 +285,7 @@ def get_caption_preset(preset_id: str) -> CaptionStyle:
         CaptionPreset.LIME: _create_lime_style,
         CaptionPreset.VINTAGE: _create_vintage_style,
         CaptionPreset.HIGHLIGHT_BOX: _create_highlight_box_style,
+        CaptionPreset.SERIF_CLEAN: _create_serif_clean_style,
     }
 
     builder = builders.get(preset_id)
@@ -514,6 +518,25 @@ def _create_editorial_style() -> CaptionStyle:
     s.shadow_spread = 8
     s.future_words = "dim"
     s.dim_opacity = 0.6
+    s.entrance_pop = False
+    return s
+
+
+def _create_serif_clean_style() -> CaptionStyle:
+    """Serif clean: plain white upright serif, lowercase, 1-3 words, a soft shadow; no highlight, no pop."""
+    s = CaptionStyle()
+    s.font_name = "Instrument Serif"
+    s.font_size = 104
+    s.italic = False
+    s.uppercase = False
+    s.lowercase = True
+    s.max_words_per_line = 3
+    s.highlight_color = "#FFFFFF"
+    s.outline_width = 0
+    s.shadow_opacity = 0.85
+    s.shadow_blur = 18
+    s.shadow_offset = 3
+    s.shadow_spread = 6
     s.entrance_pop = False
     return s
 

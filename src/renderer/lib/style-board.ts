@@ -249,7 +249,8 @@ export const ENGINE_CAPTIONS: Record<string, { size: number; emphasis: string | 
   retro: { size: 80, emphasis: '#FFD23F', font: 'BowlbyOne' },
   lime: { size: 78, emphasis: '#C6FF3D', font: 'ArchivoBlack' },
   vintage: { size: 98, emphasis: '#FF6B4A', font: 'Fraunces72pt' },
-  highlight_box: { size: 74, emphasis: null, font: 'Montserrat-ExtraBold' }
+  highlight_box: { size: 74, emphasis: null, font: 'Montserrat-ExtraBold' },
+  serif_clean: { size: 104, emphasis: null, font: 'InstrumentSerif' }
 }
 
 /**

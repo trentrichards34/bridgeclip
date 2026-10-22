@@ -20,10 +20,10 @@ import { chatFail as fail, chatPlainText } from './chat-core'
 import { checkHighlightFields } from './chat-point'
 import { graphicBandSize, graphicBox, GRAPHIC_DEFAULT_COLOR, outputSize, type GraphicFrame } from './graphic-layout'
 import { HEADLINE_FONTS, isHexColor, type HeadlineLook } from './headline-look'
-import { GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, graphicDepth, MAX_GRAPHICS_PER_CLIP, clampGraphicMs, templateInfo, graphicHasContent, parseGraphics, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from './motion-graphics'
+import { DIAGRAM_ACCENT, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, isDiagram, graphicDepth, MAX_GRAPHICS_PER_CLIP, clampGraphicMs, templateInfo, graphicHasContent, parseGraphics, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from './motion-graphics'
 
-/** The templates offered on review screens (every one but Logo pop and Screen recording, which need the clip editor's files). */
-export const REEL_GRAPHIC_TEMPLATES = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo' && t.id !== 'screen_frame')
+/** The templates offered on review screens (every one but Logo pop and Screen recording, which need the clip editor's files, and the chapter header, which belongs to a clip's sections). */
+export const REEL_GRAPHIC_TEMPLATES = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo' && t.id !== 'screen_frame' && t.id !== 'chapter')
 export const MAX_REEL_GRAPHICS = 8
 
 /** The hook text's share of the frame's height at the top (0: none, too short to draw, or not at the top). */
@@ -35,9 +35,10 @@ export function hookShareFor(text: string, look: Pick<HeadlineLook, 'look'> | nu
 }
 
 /** A graphic's color and font on a reel: its own color, else the brand look's color, else a calm blue; the hook's font. */
-export function reelGraphicStyle(look: HeadlineLook | null | undefined, graphic?: Pick<EditorGraphic, 'fields'>): { color: string; font: string } {
+export function reelGraphicStyle(look: HeadlineLook | null | undefined, graphic?: Pick<EditorGraphic, 'fields'> & { template?: string }): { color: string; font: string } {
   const own = graphic?.fields.color
-  const color = isHexColor(own) ? own.toUpperCase() : look?.look === 'brand' && isHexColor(look.color) ? look.color.toUpperCase() : GRAPHIC_DEFAULT_COLOR
+  // Diagrams light up in green unless they have their own color.
+  const color = isHexColor(own) ? own.toUpperCase() : graphic?.template && isDiagram(graphic.template) ? DIAGRAM_ACCENT : look?.look === 'brand' && isHexColor(look.color) ? look.color.toUpperCase() : GRAPHIC_DEFAULT_COLOR
   const font = look && HEADLINE_FONTS.some((f) => f.id === look.font) ? look.font : 'clean'
   return { color, font }
 }
@@ -48,6 +49,8 @@ export function reelGraphicSpec(graphic: Pick<EditorGraphic, 'template' | 'field
   const fields = { ...graphic.fields }
   delete fields.image
   delete fields.color
+  // On a reel a diagram sits over the video: on its blue panel.
+  if (isDiagram(graphic.template)) fields.panel = 'on'
   return { template: graphic.template, fields, width, height, duration_ms: Math.round(durationMs), box: graphicBox(graphic.placement, frame, graphicBandSize(graphic)), placement: graphic.placement,
     ...reelGraphicStyle(look, graphic), ...(graphic.size && graphic.size !== 'card' ? { size: graphic.size } : {}) }
 }
@@ -97,7 +100,7 @@ export function patchEditGraphic(graphics: EditGraphic[], id: string, patch: Par
       fields[key] = value.slice(0, key === 'items' ? 800 : 160)
     }
     return { ...g, ...(patch.word !== undefined ? { word: patch.word } : {}), ...(patch.placement ? { placement: patch.placement } : {}), ...(patch.depth ? { depth: patch.depth } : {}),
-      ...(patch.duration_ms !== undefined ? { duration_ms: clampGraphicMs(patch.duration_ms) } : {}), fields }
+      ...(patch.duration_ms !== undefined ? { duration_ms: clampGraphicMs(patch.duration_ms, g.template) } : {}), fields }
   }).sort((a, b) => a.word - b.word)
 }
 
@@ -163,7 +166,7 @@ export function parseRemixGraphics(value: unknown, format: RemixGraphicFormat, p
 /** Keep a Remix graphic inside the member's part, 0.8–8 s long. */
 export function fitRemixGraphic(g: EditorGraphic, format: RemixGraphicFormat, partMs: number): EditorGraphic {
   const from = format === 'pause_react' ? 0 : TAKE_GRAPHIC_FROM_MS
-  const duration_ms = clampGraphicMs(Math.min(g.duration_ms, Math.max(800, partMs - from)))
+  const duration_ms = clampGraphicMs(Math.min(g.duration_ms, Math.max(800, partMs - from)), g.template)
   const at_ms = Math.round(Math.max(from, Math.min(partMs - Math.min(duration_ms, partMs - from), g.at_ms)))
   return { ...g, at_ms, duration_ms }
 }

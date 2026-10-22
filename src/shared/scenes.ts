@@ -19,13 +19,16 @@ export type SceneKind = 'face' | 'stage' | 'visual'
 /**
  * light: soft light gray. dark: charcoal. brand: a light tint of the brand color.
  * grid: lavender to the brand color (purple without one) with a faint square
- * grid. gradient: a soft brand gradient, no grid.
+ * grid. gradient: a soft brand gradient, no grid. solid: the brand color itself (royal blue without one), for
+ * white line-art diagrams.
  */
-export type SceneBackdrop = 'light' | 'dark' | 'brand' | 'grid' | 'gradient'
+export type SceneBackdrop = 'light' | 'dark' | 'brand' | 'grid' | 'gradient' | 'solid'
 /** The speaker card in a stage scene: a rounded card with a margin, or an arch (full width, big rounded top corners, flush with the bottom). */
 export type SceneCard = 'rounded' | 'arch'
 export const SCENE_KINDS: readonly SceneKind[] = ['face', 'stage', 'visual']
-export const SCENE_BACKDROPS: readonly SceneBackdrop[] = ['light', 'dark', 'brand', 'grid', 'gradient']
+export const SCENE_BACKDROPS: readonly SceneBackdrop[] = ['light', 'dark', 'brand', 'grid', 'gradient', 'solid']
+/** The Solid backdrop's color without a brand color (motion-graphics DIAGRAM_PANEL). */
+export const SOLID_BACKDROP_COLOR = '#1F4E9C'
 export const SCENE_CARDS: readonly SceneCard[] = ['rounded', 'arch']
 
 export interface StageScene {
@@ -65,7 +68,7 @@ export const SCENE_DETAILS: Record<SceneKind, string> = {
   stage: 'A backdrop with you in a card at the bottom. The top is free for graphics.',
   visual: 'Backdrop only, so a graphic can fill the frame.'
 }
-export const BACKDROP_LABELS: Record<SceneBackdrop, string> = { light: 'Light', dark: 'Dark', brand: 'Brand', grid: 'Grid', gradient: 'Gradient' }
+export const BACKDROP_LABELS: Record<SceneBackdrop, string> = { light: 'Light', dark: 'Dark', brand: 'Brand', grid: 'Grid', gradient: 'Gradient', solid: 'Solid' }
 export const CARD_LABELS: Record<SceneCard, string> = { rounded: 'Rounded', arch: 'Arch' }
 
 /** The look automatic Stage layouts use: the brand grid with the arch card when there is a brand color, else light and rounded (engine: stage_scenes.auto_look). */
@@ -75,11 +78,11 @@ export function autoSceneLook(brand: string | null | undefined): { backdrop: Sce
 
 /**
  * How the captions in a scene's band are drawn on a backdrop (engine: stage_scenes.caption_mode): dark text on
- * the light ones, white words on a color box on grid and gradient, the clip's own captions on dark.
+ * the light ones, white words on a color box on grid and gradient, the clip's own captions on dark and solid.
  */
 export function sceneCaptionLook(backdrop: SceneBackdrop | undefined): 'dark_text' | 'box' | 'own' {
   const b = backdrop ?? 'light'
-  return b === 'grid' || b === 'gradient' ? 'box' : b === 'dark' ? 'own' : 'dark_text'
+  return b === 'grid' || b === 'gradient' ? 'box' : b === 'dark' || b === 'solid' ? 'own' : 'dark_text'
 }
 
 /** Where the captions sit in a scene, as a share of the output height (null: the clip's usual place). */
@@ -113,7 +116,7 @@ export function parseScenes(value: unknown, duration = Number.MAX_SAFE_INTEGER):
     const s = raw as Record<string, unknown>
     if (Object.keys(s).some((key) => !['scene', 'start_ms', 'end_ms', 'backdrop', 'card'].includes(key))) throw new Error('A scene is malformed.')
     if (!isKind(s.scene)) throw new Error('A scene is face, stage or visual.')
-    if (s.backdrop !== undefined && !isBackdrop(s.backdrop)) throw new Error('A scene’s backdrop is light, dark, brand, grid or gradient.')
+    if (s.backdrop !== undefined && !isBackdrop(s.backdrop)) throw new Error('A scene’s backdrop is light, dark, brand, grid, gradient or solid.')
     if (s.card !== undefined && !isCard(s.card)) throw new Error('A scene’s card is rounded or arch.')
     const start = s.start_ms, end = s.end_ms
     if (typeof start !== 'number' || typeof end !== 'number' || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > duration) throw new Error('A scene must be inside the video.')

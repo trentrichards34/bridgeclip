@@ -26,7 +26,14 @@ export const GRAPHIC_TEMPLATES = [
   { id: 'big_words', label: 'Big words (behind you)', detail: '1 to 3 huge words placed in the scene, behind your head.', fields: ['text', 'style', 'vertical', 'motion'] },
   { id: 'orbit', label: 'Orbit', detail: 'A center tile with 3 to 6 icons that draw in around it on a ring.', fields: ['text', 'items', 'icons', 'image', 'labels'] },
   { id: 'feature_tile', label: 'Feature tile', detail: 'Up to 3 frosted tiles, each an icon and a short label, with an optional red dot.', fields: ['items', 'icons', 'dot'] },
-  { id: 'screen_frame', label: 'Screen recording', detail: 'A video playing in a dark window with a soft glow: your screen recording, or part of this clip.', fields: ['video', 'from', 'zoom', 'label', 'shape'] }
+  { id: 'screen_frame', label: 'Screen recording', detail: 'A video playing in a dark window with a soft glow: your screen recording, or part of this clip.', fields: ['video', 'from', 'zoom', 'label', 'shape'] },
+  { id: 'chapter', label: 'Chapter header', detail: 'A title at the top that stays for a whole section, like “Step #1. Come up with your idea”.', fields: ['label', 'title', 'style'] },
+  { id: 'staircase', label: 'Staircase', detail: '3 to 6 steps climbing up. Each step lights up as you say it.', fields: ['title', 'items', 'icons'] },
+  { id: 'funnel', label: 'Funnel', detail: 'A funnel with 3 to 5 stages. Each stage lights up as you say it.', fields: ['title', 'items'] },
+  { id: 'journey', label: 'Journey', detail: '3 to 5 milestone cards. A small figure walks from one to the next as you say them.', fields: ['title', 'items'] },
+  { id: 'growth', label: 'Growth', detail: '3 to 6 plants (or bars) that get bigger, with a label under each.', fields: ['title', 'items', 'style'] },
+  { id: 'idea_hub', label: 'Idea hub', detail: 'An icon in the middle with 3 to 6 labels around it. Each label appears as you say it.', fields: ['text', 'items', 'icon'] },
+  { id: 'compare_marks', label: 'Wrong / right', detail: 'Two cards side by side, then a red ✗ on one and a green ✓ on the other.', fields: ['items', 'notes', 'wrong'] }
 ] as const
 
 export type GraphicTemplateId = (typeof GRAPHIC_TEMPLATES)[number]['id']
@@ -83,8 +90,30 @@ export interface EditorGraphic {
 
 export const MAX_GRAPHICS_PER_CLIP = 12
 export const GRAPHIC_MIN_MS = 800
+/** The longest most graphics last (a diagram or a chapter header may last longer: graphicMaxMs). */
 export const GRAPHIC_MAX_MS = 8000
+/** A diagram stays while the speaker talks it through. */
+export const DIAGRAM_MAX_MS = 16000
+/** A chapter header can stay for a whole section (up to the clip's length, at most 3 minutes). */
+export const CHAPTER_MAX_MS = 180000
 export const MAX_GRAPHIC_FIELD_CHARS = 160
+
+/**
+ * Diagrams: white line art on the scene's backdrop (or on a blue panel over the video) whose labels light up in
+ * the accent color one by one, as each is said (item_ms).
+ */
+export const DIAGRAM_TEMPLATES: readonly string[] = ['staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks']
+export function isDiagram(template: string): boolean { return DIAGRAM_TEMPLATES.includes(template) }
+/** The longest a graphic of this kind may last. */
+export function graphicMaxMs(template: string | undefined): number {
+  return template === 'chapter' ? CHAPTER_MAX_MS : template && isDiagram(template) ? DIAGRAM_MAX_MS : GRAPHIC_MAX_MS
+}
+/** The light-up color diagrams use unless the graphic has its own color. */
+export const DIAGRAM_ACCENT = '#7CB82F'
+/** The panel behind a diagram drawn over the video (and the Solid backdrop's color without a brand color): royal blue. */
+export const DIAGRAM_PANEL = '#1F4E9C'
+/** Fewest items a diagram needs to draw (a Wrong / right takes exactly two). */
+export const DIAGRAM_MIN_ITEMS: Record<string, number> = { staircase: 3, funnel: 3, journey: 3, growth: 3, idea_hub: 3, compare_marks: 2 }
 
 export function isGraphicTemplate(value: unknown): value is GraphicTemplateId {
   return typeof value === 'string' && (GRAPHIC_TEMPLATE_IDS as readonly string[]).includes(value)
@@ -102,7 +131,7 @@ export function parseGraphics(value: unknown): EditorGraphic[] {
     seen.add(g.id)
     if (!isGraphicTemplate(g.template)) throw new Error('Choose one of the graphic templates.')
     if (typeof g.at_ms !== 'number' || !Number.isFinite(g.at_ms) || g.at_ms < 0) throw new Error('A graphic needs a start time.')
-    if (typeof g.duration_ms !== 'number' || !Number.isFinite(g.duration_ms) || g.duration_ms < GRAPHIC_MIN_MS || g.duration_ms > GRAPHIC_MAX_MS) throw new Error('A graphic lasts between 0.8 and 8 seconds.')
+    if (typeof g.duration_ms !== 'number' || !Number.isFinite(g.duration_ms) || g.duration_ms < GRAPHIC_MIN_MS || g.duration_ms > graphicMaxMs(g.template)) throw new Error(`A graphic lasts between 0.8 and ${graphicMaxMs(g.template) / 1000} seconds.`)
     const placement = (GRAPHIC_PLACEMENTS as readonly unknown[]).includes(g.placement) ? g.placement as GraphicPlacement : 'middle'
     const fields: Record<string, string> = {}
     if (g.fields && typeof g.fields === 'object') {
@@ -137,7 +166,8 @@ export type GraphicHighlightShape = 'circle' | 'arrow'
 export const GRAPHIC_DEFAULT_MS: Record<GraphicTemplateId, number> = {
   stat: 3500, title: 2500, list: 5000, lower_third: 4000, logo: 3000, before_after: 4000, checklist: 5000, quote: 5000, highlight: 2500,
   statement: 3500, sticky_notes: 4000, strike_list: 5000, browser_frame: 5000, icon_pop: 3500, headline_pill: 3500, comment_cta: 3500,
-  big_words: 2500, orbit: 4500, feature_tile: 3500, screen_frame: 5000
+  big_words: 2500, orbit: 4500, feature_tile: 3500, screen_frame: 5000,
+  chapter: 15000, staircase: 9000, funnel: 8000, journey: 9000, growth: 9000, idea_hub: 8000, compare_marks: 7000
 }
 
 /** Templates that can show a picture the member chose (Logo pop needs one; the others draw without it). */
@@ -145,7 +175,8 @@ export const GRAPHIC_IMAGE_TEMPLATES: readonly GraphicTemplateId[] = ['logo', 'b
 export function graphicUsesImage(template: GraphicTemplateId): boolean { return GRAPHIC_IMAGE_TEMPLATES.includes(template) }
 
 /** Most items a template shows (the rest of `items` is left out). */
-export const GRAPHIC_ITEM_LIMITS: Partial<Record<GraphicTemplateId, number>> = { sticky_notes: 3, strike_list: 4, icon_pop: 4, orbit: 6, feature_tile: 3 }
+export const GRAPHIC_ITEM_LIMITS: Partial<Record<GraphicTemplateId, number>> = { sticky_notes: 3, strike_list: 4, icon_pop: 4, orbit: 6, feature_tile: 3,
+  staircase: 6, funnel: 5, journey: 5, growth: 6, idea_hub: 6, compare_marks: 2 }
 /** Orbit: 3 to 6 nodes on its ring. */
 export const MIN_ORBIT_NODES = 3
 export const MAX_ORBIT_NODES = 6
@@ -266,10 +297,10 @@ export function graphicItemTimes(fields: Record<string, string>, count: number, 
  * The icon for each item (null: none or unknown). Icon row: the first tile shows the member's picture when there is
  * one. Orbit and Feature tile: one per item, or (with no labels) one node per icon given.
  */
-export function graphicIcons(fields: Record<string, string>, template: 'icon_pop' | 'orbit' | 'feature_tile' = 'icon_pop'): (GraphicIcon | null)[] {
+export function graphicIcons(fields: Record<string, string>, template: 'icon_pop' | 'orbit' | 'feature_tile' | 'staircase' = 'icon_pop'): (GraphicIcon | null)[] {
   const names = (fields.icons ?? '').split(/\r?\n/).map((line) => line.trim().toLowerCase())
   const items = templateItems(template, fields.items)
-  const count = template === 'icon_pop' ? items.length : Math.max(items.length, Math.min(GRAPHIC_ITEM_LIMITS[template] ?? MAX_GRAPHIC_ITEMS, names.filter(isGraphicIcon).length))
+  const count = template === 'icon_pop' || template === 'staircase' ? items.length : Math.max(items.length, Math.min(GRAPHIC_ITEM_LIMITS[template] ?? MAX_GRAPHIC_ITEMS, names.filter(isGraphicIcon).length))
   return Array.from({ length: count }, (_, i) => isGraphicIcon(names[i]) ? names[i] as GraphicIcon : null)
 }
 
@@ -278,6 +309,104 @@ export function orbitNodes(fields: Record<string, string>): { icon: GraphicIcon 
   const items = templateItems('orbit', fields.items)
   const showLabels = fields.labels !== 'off'
   return graphicIcons(fields, 'orbit').map((icon, i) => ({ icon, label: showLabels ? items[i] ?? '' : '' }))
+}
+
+// ---------------------------------------------------------------------------
+// Chapter headers and diagrams.
+// ---------------------------------------------------------------------------
+
+export type ChapterStyle = 'serif_caps' | 'sans' | 'pill'
+export const CHAPTER_STYLES: readonly ChapterStyle[] = ['serif_caps', 'sans', 'pill']
+/** A chapter header's look (`style`): white small-caps serif (the default), bold sans, or a dark pill. */
+export function chapterStyle(fields: Record<string, string>): ChapterStyle {
+  return (CHAPTER_STYLES as readonly string[]).includes(fields.style) ? fields.style as ChapterStyle : 'serif_caps'
+}
+/** What a chapter header shows: its label ("Step #1.") and title, cleaned. */
+export function chapterText(fields: Record<string, string>): { label: string; title: string } {
+  const clean = (t: string | undefined): string => (t ?? '').replace(/\s+/g, ' ').trim()
+  return { label: clean(fields.label), title: clean(fields.title) }
+}
+export type GrowthStyle = 'plants' | 'bars'
+export function growthStyle(fields: Record<string, string>): GrowthStyle { return fields.style === 'bars' ? 'bars' : 'plants' }
+/** Which card of a Wrong / right gets the red ✗ (`wrong`: first, the default, or second). */
+export function compareWrong(fields: Record<string, string>): 0 | 1 { return fields.wrong === 'second' ? 1 : 0 }
+/** A Wrong / right's short line under each card title (`notes`, one per line). */
+export function compareNotes(fields: Record<string, string>): string[] {
+  return (fields.notes ?? '').split(/\r?\n/).map((line) => line.replace(/\s+/g, ' ').trim()).slice(0, 2)
+}
+/** An Idea hub's center icon (`icon`): one of GRAPHIC_ICONS, else the light bulb. */
+export function hubIcon(fields: Record<string, string>): GraphicIcon {
+  const name = (fields.icon ?? '').trim().toLowerCase()
+  return isGraphicIcon(name) ? name : 'idea'
+}
+/**
+ * A Wrong / right's beats (ms into the graphic) from `item_ms`: each card as it is said, then the ✗ and the ✓.
+ * Two times: the cards; the marks follow the second card. Four: the cards, then the ✗, then the ✓. Null: even beats.
+ */
+export function compareTimes(fields: Record<string, string>, durationMs: number): { cards: number[]; cross: number; check: number } | null {
+  const text = fields.item_ms
+  if (!text) return null
+  const t = text.split(/[\s,]+/).filter(Boolean).map(Number)
+  if ((t.length !== 2 && t.length !== 4) || t.some((v, i) => !Number.isFinite(v) || v < 0 || v > durationMs || (i > 0 && v < t[i - 1]))) return null
+  const cards = t.slice(0, 2).map(Math.round)
+  if (t.length === 4) return { cards, cross: Math.round(t[2]), check: Math.round(t[3]) }
+  const cross = Math.min(durationMs - 1200, cards[1] + 900)
+  return { cards, cross: Math.max(cards[1] + 200, cross), check: Math.max(cards[1] + 500, cross + 650) }
+}
+
+/** The finished clip's time (output ms) at which the hook text hands over to the first chapter header, or null with none. */
+export function hookEndMs(c: Timing & { graphics?: EditorGraphic[] }): number | null {
+  let first: number | null = null
+  for (const g of c.graphics ?? []) {
+    if (g.template !== 'chapter' || !graphicHasContent(g)) continue
+    const w = graphicWindow(c, g)
+    if (w && (first === null || w.start_ms < first)) first = w.start_ms
+  }
+  return first
+}
+
+/** Where (SOURCE ms) the first chapter header that plays starts: the bake fades the hook out there. Null with none. */
+export function firstChapterSourceMs(c: Timing & { graphics?: EditorGraphic[] }): number | null {
+  let first: number | null = null
+  for (const g of c.graphics ?? []) {
+    if (g.template !== 'chapter' || !graphicHasContent(g) || !graphicWindow(c, g)) continue
+    if (first === null || g.at_ms < first) first = g.at_ms
+  }
+  return first
+}
+
+/** Templates whose items can be timed to the words said (item_ms) by matchItemTimes. */
+export const ITEM_TIMED_TEMPLATES: readonly string[] = ['list', 'checklist', 'sticky_notes', 'icon_pop', 'orbit', 'feature_tile', ...DIAGRAM_TEMPLATES]
+
+/**
+ * A graphic with each item's spoken time (`item_ms`, ms from its start): each item's words found in what is said
+ * from just before the graphic to just after it, in order. Null when they aren't all said there in that order.
+ */
+export function matchItemTimes<G extends Pick<EditorGraphic, 'template' | 'fields' | 'at_ms' | 'duration_ms'>>(g: G, words: readonly TimedWord[], slackMs = 2000): G | null {
+  if (!ITEM_TIMED_TEMPLATES.includes(g.template)) return null
+  const items = templateItems(g.template, g.fields.items)
+  if (!items.length) return null
+  const said = words.filter((w) => w.start_ms >= g.at_ms - slackMs && w.start_ms <= g.at_ms + g.duration_ms + slackMs).map((w) => ({ ...w, key: wordKey(w.word) })).filter((w) => w.key)
+  const times: number[] = []
+  let cursor = 0
+  for (const item of items) {
+    const want = item.split(' ').map(wordKey).filter(Boolean)
+    if (!want.length) return null
+    let found = -1
+    for (let i = cursor; i < said.length && found < 0; i++) {
+      if (said[i].key !== want[0]) continue
+      let k = i + 1, ok = true
+      for (const w of want.slice(1)) {
+        const hit = said.slice(k, k + 3).findIndex((x) => x.key === w)
+        if (hit < 0) { ok = false; break }
+        k += hit + 1
+      }
+      if (ok) { found = i; cursor = k }
+    }
+    if (found < 0) return null
+    times.push(Math.max(0, Math.min(g.duration_ms - 300, said[found].start_ms - g.at_ms)))
+  }
+  return { ...g, fields: { ...g.fields, item_ms: times.join('\n') } }
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +580,9 @@ export function graphicHasContent(g: Pick<EditorGraphic, 'template' | 'fields'>)
     case 'orbit': return orbitNodes(f).length >= 1 || !!f.text?.trim() || !!f.image
     case 'feature_tile': return graphicItems(f.items).length > 0
     case 'screen_frame': return isScreenVideo(f.video)
+    case 'chapter': return !!(f.title?.trim() || f.label?.trim())
+    case 'staircase': case 'funnel': case 'journey': case 'growth': case 'idea_hub': case 'compare_marks':
+      return templateItems(g.template, f.items).length >= DIAGRAM_MIN_ITEMS[g.template]
   }
 }
 
@@ -479,15 +611,18 @@ export function newGraphic(template: GraphicTemplateId, at_ms: number, options: 
   while (taken.has(id)) id = randomId()
   const fields: Record<string, string> = template === 'highlight' ? { shape: 'circle', x: '0.5', y: '0.45' } : {}
   for (const [key, value] of Object.entries(options.fields ?? {})) if (/^[a-z_]{1,20}$/.test(key) && typeof value === 'string') fields[key] = value.slice(0, key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS)
-  const placement = options.placement ?? (template === 'lower_third' ? 'bottom' : template === 'title' || template === 'comment_cta' ? 'middle' : 'top')
+  const placement = options.placement ?? (template === 'lower_third' ? 'bottom' : template === 'title' || template === 'comment_cta' || isDiagram(template) ? 'middle' : 'top')
   // Big words start behind the speaker; the others in front unless asked.
   const depth = options.depth ?? (template === 'big_words' ? 'behind' : undefined)
-  return { id, template, at_ms: Math.max(0, Math.round(at_ms)), duration_ms: clampGraphicMs(options.duration_ms ?? GRAPHIC_DEFAULT_MS[template]), placement, fields, origin: options.origin ?? 'member', ...(isGraphicSize(options.size) ? { size: options.size } : {}),
+  // Diagrams start stage size: they fill the middle of the frame (under a chapter header).
+  const size = isGraphicSize(options.size) ? options.size : isDiagram(template) ? 'stage' : undefined
+  return { id, template, at_ms: Math.max(0, Math.round(at_ms)), duration_ms: clampGraphicMs(options.duration_ms ?? GRAPHIC_DEFAULT_MS[template], template), placement, fields, origin: options.origin ?? 'member', ...(size ? { size } : {}),
     ...(depth && graphicCanGoBehind(template) ? { depth } : {}) }
 }
 
-export function clampGraphicMs(ms: number): number {
-  return Math.round(Math.max(GRAPHIC_MIN_MS, Math.min(GRAPHIC_MAX_MS, Number.isFinite(ms) ? ms : GRAPHIC_MIN_MS)))
+/** A length kept to 0.8 s to the template's longest (graphicMaxMs: 8 s for most). */
+export function clampGraphicMs(ms: number, template?: string): number {
+  return Math.round(Math.max(GRAPHIC_MIN_MS, Math.min(graphicMaxMs(template), Number.isFinite(ms) ? ms : GRAPHIC_MIN_MS)))
 }
 
 type Timing = { ranges: [number, number][]; video_speed: number }
@@ -495,7 +630,7 @@ type Timing = { ranges: [number, number][]; video_speed: number }
 /** Keep a graphic inside its clip: it starts within the clip's span and is 0.8–8 s long. */
 export function fitGraphicToClip(g: EditorGraphic, c: Timing): EditorGraphic {
   const start = c.ranges[0][0], end = c.ranges[c.ranges.length - 1][1]
-  const duration_ms = clampGraphicMs(Math.min(g.duration_ms, Math.max(GRAPHIC_MIN_MS, end - start)))
+  const duration_ms = clampGraphicMs(Math.min(g.duration_ms, Math.max(GRAPHIC_MIN_MS, end - start)), g.template)
   const at_ms = Math.round(Math.max(start, Math.min(end - Math.min(duration_ms, end - start), g.at_ms)))
   return at_ms === g.at_ms && duration_ms === g.duration_ms ? g : { ...g, at_ms, duration_ms }
 }
@@ -522,9 +657,12 @@ export function updateGraphic(c: Timing & { graphics?: EditorGraphic[] }, id: st
   }
   // Word times belong to the words where they were said: a card moved or reworded loses them (its own beats are used).
   if (fields.word_ms && ((patch.at_ms !== undefined && Math.round(patch.at_ms) !== g.at_ms) || ['text', 'phrase', 'subline'].some((k) => patch.fields?.[k] !== undefined && patch.fields[k] !== g.fields[k]))) delete fields.word_ms
+  // A diagram's item times belong to its items as said: changed items lose them (even beats are used until matched again).
+  if (fields.item_ms && isDiagram(g.template) && patch.fields?.items !== undefined && patch.fields.items !== g.fields.items) delete fields.item_ms
   const { fields: _ignored, size, depth, ...rest } = patch
   void _ignored
-  const next: EditorGraphic = { ...g, ...rest, ...(rest.duration_ms !== undefined ? { duration_ms: clampGraphicMs(rest.duration_ms) } : {}), fields }
+  const template = rest.template ?? g.template
+  const next: EditorGraphic = { ...g, ...rest, ...(rest.duration_ms !== undefined ? { duration_ms: clampGraphicMs(rest.duration_ms, template) } : {}), fields }
   if (size !== undefined) { if (isGraphicSize(size) && size !== 'card') next.size = size; else delete next.size }
   // Depth is kept as set (Big words keeps an explicit 'front'); a template that can't go behind has none.
   if (depth !== undefined) { if (isGraphicDepth(depth) && graphicCanGoBehind(next.template)) next.depth = depth; else delete next.depth }
@@ -628,7 +766,7 @@ export function graphicCutFit(c: Timing, g: Pick<EditorGraphic, 'at_ms' | 'durat
  */
 export function fitGraphicInCut<G extends Pick<EditorGraphic, 'at_ms' | 'duration_ms'>>(g: G, c: Timing): G | null {
   const start = c.ranges[0][0], end = c.ranges[c.ranges.length - 1][1]
-  let at = Math.max(start, Math.round(g.at_ms)), duration = clampGraphicMs(g.duration_ms)
+  let at = Math.max(start, Math.round(g.at_ms)), duration = clampGraphicMs(g.duration_ms, (g as { template?: string }).template)
   if (at + duration > end) at = Math.max(start, end - duration)
   if (!c.ranges.some(([a, b]) => at >= a && at < b)) at = c.ranges.find(([a]) => a > at)?.[0] ?? at
   duration = Math.min(duration, end - at)
@@ -652,6 +790,8 @@ export function fitGraphicInCut<G extends Pick<EditorGraphic, 'at_ms' | 'duratio
 
 /** Graphics that sit in a band (an arrow or circle points at a spot instead). */
 const usesBand = (g: Pick<EditorGraphic, 'template'>): boolean => g.template !== 'highlight'
+/** A chapter header has a band of its own at the very top (where the hook was): other graphics keep below it. */
+const isChapter = (g: Pick<EditorGraphic, 'template'>): boolean => g.template === 'chapter'
 /** A stage-size graphic takes the top of the frame over every band. */
 const onStage = (g: { size?: GraphicSize }): boolean => g.size === 'stage'
 /** The order a new graphic tries the bands in when its own is taken. */
@@ -660,8 +800,10 @@ export const GRAPHIC_BAND_ORDER: readonly GraphicPlacement[] = ['top', 'bottom',
 type Placed = Pick<EditorGraphic, 'id' | 'template' | 'at_ms' | 'duration_ms' | 'placement'> & { size?: GraphicSize }
 /** True when two graphics share a band (a stage-size one shares every band) and are on screen at the same time. */
 export function graphicsClash(a: Placed, b: Placed): boolean {
-  return a.id !== b.id && usesBand(a) && usesBand(b) && (a.placement === b.placement || onStage(a) || onStage(b)) &&
-    a.at_ms < b.at_ms + b.duration_ms && b.at_ms < a.at_ms + a.duration_ms
+  const overlap = a.at_ms < b.at_ms + b.duration_ms && b.at_ms < a.at_ms + a.duration_ms
+  // Chapter headers only clash with each other (two headers at once); the rest stay under them.
+  if (isChapter(a) || isChapter(b)) return a.id !== b.id && isChapter(a) && isChapter(b) && overlap
+  return a.id !== b.id && usesBand(a) && usesBand(b) && (a.placement === b.placement || onStage(a) || onStage(b)) && overlap
 }
 
 /** The ids of graphics that cover another one (same band, same time). */
@@ -677,7 +819,7 @@ export function graphicClashes(graphics: readonly Placed[]): Set<string> {
  * Unchanged when its band is free or no band is.
  */
 export function placeInFreeBand<G extends Placed>(others: readonly Placed[], g: G): G {
-  if (!usesBand(g) || onStage(g)) return g
+  if (!usesBand(g) || onStage(g) || isChapter(g)) return g
   const free = (placement: GraphicPlacement): boolean => !others.some((o) => graphicsClash(o, { ...g, placement }))
   if (free(g.placement)) return g
   const band = GRAPHIC_BAND_ORDER.find(free)
