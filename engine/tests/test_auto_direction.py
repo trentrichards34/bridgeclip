@@ -302,6 +302,14 @@ def test_a_contraction_or_a_digit_word_that_was_not_said_never_passes_as_said():
                       [line(10_000, "You can afford this course price today.")])
 
 
+def test_a_word_that_flips_the_meaning_must_be_said_even_on_the_older_templates():
+    said = [line(10_000, "You should run ads to your best offer every single week from now on.")]
+    # 7 of 8 words said (over the 75% share), but "never" turns it around: refused.
+    assert not words_said(card('title', 10_000, {'text': 'You should never run ads to your offer'}, 3000), said)
+    assert not words_said(card('quote', 10_000, {'text': "You shouldn't run ads to your best offer", 'author': ''}, 3000), said)
+    assert words_said(card('title', 10_000, {'text': 'You should run ads to your best offer weekly'}, 3000), said)
+
+
 def test_a_word_timed_card_never_moves_back_into_the_first_second_or_over_the_card_before():
     # Said right as the clip starts: the card is moved out of the first second, and word timing keeps it there.
     said = [line(10_200, "Big money moves fast and then we keep talking about other things for a while longer okay")]

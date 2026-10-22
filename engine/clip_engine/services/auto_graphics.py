@@ -96,6 +96,9 @@ CTA_TAIL_MS = 4000
 NUMBER_WINDOW_MS = 3000
 WORD_WINDOW_MS = 6000
 MIN_WORD_SHARE = 0.75
+# Words that flip what a line means: on a card they must always be said (the 75% share can't carry them).
+MEANING_WORDS = frozenset(('not', 'no', 'never', 'none', 'nothing', 'nobody', 'without', 'cannot', 'neither', 'nor', 'less', 'more',
+                           'least', 'most', 'only', 'stop', 'avoid', 'lose', 'lost'))
 # A strict card's words (and its items, in order) are said within this much of it.
 STRICT_WINDOW_MS = 2000
 # A card starts on its first spoken word when that word is said this close to the suggested time.
@@ -571,6 +574,8 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
     tokens = [t for key, text in graphic['fields'].items() if key != 'item_ms' for t in _tokens(text) if not _HAS_DIGIT.search(t)]
     if not tokens:
         return True
+    if any((t in MEANING_WORDS or t.replace('’', "'").endswith("n't")) and not _said(t, heard) for t in tokens):
+        return False
     return sum(_said(t, heard) for t in tokens) / len(tokens) >= MIN_WORD_SHARE
 
 
