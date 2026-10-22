@@ -91,7 +91,7 @@ export function ClipOrder({ plan, sources, order, transitions, onOrder, onTransi
               <div className="relative aspect-[9/16] w-full overflow-hidden rounded-lg bg-black">
                 {source?.thumb
                   ? <img src={localFileUrl(source.thumb)} alt="" className="h-full w-full object-cover" draggable={false} />
-                  : <div className="flex h-full items-center justify-center text-2xs text-ink-faint">Clip {src + 1}</div>}
+                  : <div className="flex h-full items-center justify-center text-2xs text-ink-subtle">Clip {src + 1}</div>}
                 <span className="absolute left-1 top-1 cursor-grab rounded bg-black/55 p-0.5 text-white/80" aria-hidden><GripVertical className="h-3.5 w-3.5" /></span>
                 <span className="absolute right-1 top-1 rounded bg-black/60 px-1 font-mono text-[10px] tabular text-white">{formatClock(source?.seconds ?? 0)}</span>
                 {source?.shot && (

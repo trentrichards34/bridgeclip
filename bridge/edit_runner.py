@@ -332,7 +332,7 @@ def main():
             if isinstance(cost, (int, float)) and cost > 0:
                 spent["usd"] += float(cost)
         elif isinstance(error, asyncio.CancelledError):
-            message = "Cancelled"
+            message = "Canceled"
         else:
             described = describe_failure(error)
             if described["message"] == "The clipping pipeline failed.":

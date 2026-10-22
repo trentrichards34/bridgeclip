@@ -844,7 +844,7 @@ function slotLabel(at: string, timezone: string): string {
 
 const UPCOMING_STATE: Record<UpcomingPost['state'], { label: string; tone: 'success' | 'warning' | 'neutral' }> = {
   zernio: { label: 'Scheduled with Zernio · safe to close the app', tone: 'success' },
-  cancelling: { label: 'Cancelling with Zernio…', tone: 'warning' },
+  cancelling: { label: 'Canceling with Zernio…', tone: 'warning' },
   app: { label: 'Waits for CreatorClips · keep the app open', tone: 'neutral' },
   skipped: { label: 'Skipped · its Zernio post was canceled', tone: 'neutral' },
   uncertain: { label: 'Held · check this clip before its slot', tone: 'warning' },
@@ -1000,7 +1000,7 @@ function ContentRow({ item, nextUp, tiktokReviewNeeded, tiktokSelected, onReview
           {item.metadataDraft && <Badge tone="warning">Draft to review</Badge>}
           {item.status === 'posting' && <Badge tone="accent">Submitting…</Badge>}
           {nextUp && <Badge tone="accent" className="h-4 px-1.5 text-[10px]">Next up</Badge>}
-          {ahead && <Badge tone={ahead.cancel ? 'warning' : 'success'}>{ahead.cancel ? 'Cancelling with Zernio…' : `Zernio posts it ${slotLabel(ahead.at, timezone)}`}</Badge>}
+          {ahead && <Badge tone={ahead.cancel ? 'warning' : 'success'}>{ahead.cancel ? 'Canceling with Zernio…' : `Zernio posts it ${slotLabel(ahead.at, timezone)}`}</Badge>}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           {item.status === 'queued' && !item.postId && item.error && <Button size="sm" variant="secondary" icon={<RefreshCw className="h-3 w-3" />} disabled={busy || retryDisabled || Boolean(item.metadataDraft)} onClick={onRetry} title="Retry this clip now, using the saved automation settings">Retry clip</Button>}

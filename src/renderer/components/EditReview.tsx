@@ -314,7 +314,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
               {lines.map((line, n) => (
                 <div key={n}>
                   {sources.length > 1 && (n === 0 || lines[n - 1].src !== line.src) && (
-                    <p className="eyebrow mt-2 text-[10px] text-ink-faint first:mt-0">
+                    <p className="eyebrow mt-2 text-[10px] text-ink-subtle first:mt-0">
                       {plan.combine ? `Clip ${line.src + 1}${sources[line.src]?.shot ? ` (${SHOT_LABELS[sources[line.src].shot!].toLowerCase()})` : ''}${decisions.clipOrder && !decisions.clipOrder.includes(line.src) ? ' · left out' : ''}` : `Take ${line.src + 1}`} · {sources[line.src]?.name}
                     </p>
                   )}

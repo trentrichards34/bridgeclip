@@ -938,8 +938,8 @@ export function RemixPage({ onNavigate, onViewLibrary }: { onNavigate: (page: Pa
               <div className="mt-4 space-y-3">
                 <RemixProgress status={status} onNavigate={onNavigate} onViewLibrary={onViewLibrary} />
                 {busy && (
-                  <Button variant="secondary" disabled={status.detail === 'Cancelling…'} onClick={() => void getApi().remix.cancel()}>
-                    {status.detail === 'Cancelling…' ? 'Cancelling…' : 'Cancel'}
+                  <Button variant="secondary" disabled={status.detail === 'Canceling…'} onClick={() => void getApi().remix.cancel()}>
+                    {status.detail === 'Canceling…' ? 'Canceling…' : 'Cancel'}
                   </Button>
                 )}
               </div>

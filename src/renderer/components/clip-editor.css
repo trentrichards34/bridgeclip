@@ -44,9 +44,10 @@
 .editor-center { min-width:0; min-height:0; display:flex; flex-direction:column; padding:0 6px; }
 .editor-monitors { flex:1; min-height:200px; display:flex; align-items:center; gap:24px; padding:6px 20px 10px; overflow:hidden; border-radius:18px 18px 0 0;
   background:radial-gradient(ellipse at 60% 45%, #141824 0%, rgb(var(--editor-preview)) 70%); box-shadow:inset 0 0 0 1px rgb(255 255 255 / .05); }
-.editor-source-monitor { flex:1; min-width:0; }
+/* The source monitor is as tall as the row; its frame keeps its shape and fits under its heading and hint (short windows too). */
+.editor-source-monitor { flex:1; min-width:0; align-self:stretch; display:flex; flex-direction:column; justify-content:center; container-type:size; }
 .editor-source-monitor .editor-pane-heading { padding:8px 0; }
-.editor-source-frame { width:100%; max-height:48vh; position:relative; background:black; border-radius:10px; box-shadow:0 18px 50px rgb(0 0 0 / .5), 0 0 0 1px rgb(255 255 255 / .06); }
+.editor-source-frame { width:min(100%, calc((100cqh - 72px) * var(--ratio, 1.7778))); max-height:48vh; margin-inline:auto; flex:none; position:relative; background:black; border-radius:10px; box-shadow:0 18px 50px rgb(0 0 0 / .5), 0 0 0 1px rgb(255 255 255 / .06); }
 .editor-source-frame video { display:block; width:100%; height:100%; border-radius:10px; }
 .editor-output-monitor { position:relative; flex:0 1 34%; display:flex; flex-direction:column; align-items:center; min-width:0; height:100%; justify-content:center; }
 .editor-output-monitor .editor-pane-heading { width:100%; padding:8px 0; }
@@ -263,6 +264,8 @@
 .editor-tabs > .editor-tabs-more { flex:0 0 auto; display:flex; align-items:center; justify-content:center; gap:2px; padding-inline:8px; }
 .editor-tabs-more > span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .editor-tabs-more > svg { flex:none; }
+/* A narrow inspector: the tabs go on two rows instead of cutting their names short. */
+@media(max-width:1200px) { .editor-tabs { flex-wrap:wrap; } .editor-tabs > button { flex:1 1 30%; } .editor-tabs > .editor-tabs-more { flex:1 1 30%; } }
 .editor-tabs-menu { position:absolute; right:4px; top:calc(100% + 6px); z-index:30; min-width:170px; padding:4px; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgb(255 255 255 / .09); background:rgb(var(--surface) / .97); box-shadow:0 18px 40px rgb(0 0 0 / .55); }
 .editor-tabs-menu button { display:flex; align-items:center; justify-content:space-between; gap:8px; height:auto; padding:8px 10px; border-radius:8px; font-size:12px; color:rgb(var(--ink)); text-align:left; }
 .editor-tabs-menu button svg { color:rgb(var(--accent)); }

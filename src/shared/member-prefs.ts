@@ -132,10 +132,16 @@ export interface MemberPrefs {
   sampleVideoLink: string
   /** What the member wants to make and where they post (onboarding). */
   profile: CreatorProfile
+  /**
+   * The brand look every tool starts from (Brand look → Make default). Picking
+   * another brand for one video never changes it. Older prefs without it use
+   * the brand of the last Create style.
+   */
+  defaultBrandId: string | null
 }
 
 /** The app preferences Settings and the setup checklist can change. */
-export type AppPrefsUpdate = Partial<Pick<MemberPrefs, 'supportLink' | 'notifyOnFinish' | 'setupChecklistDismissed' | 'sampleVideoLink'>>
+export type AppPrefsUpdate = Partial<Pick<MemberPrefs, 'supportLink' | 'notifyOnFinish' | 'setupChecklistDismissed' | 'sampleVideoLink' | 'defaultBrandId'>>
 
 export const MAX_PRESETS = 30
 export const MAX_PRESET_NAME = 40
@@ -154,7 +160,7 @@ export const REMIX_STYLE_KEYS = [
   'momentPip', 'momentCamera', 'music', 'musicTrack', 'voiceCleanup', 'brollSource'
 ] as const satisfies readonly (keyof RemixFormStyle)[]
 
-export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE } }
+export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE }, defaultBrandId: null }
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -349,18 +355,27 @@ export function parseSampleVideoLink(value: unknown): string {
 }
 
 export function parseMemberPrefs(value: unknown): MemberPrefs {
-  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: readProfile(null) }
+  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: readProfile(null), defaultBrandId: null }
   const presets = record(value.presets) ? value.presets : {}
+  const create = parseCreateStyle(value.create)
   return {
-    create: parseCreateStyle(value.create),
+    create,
     remix: parseRemixStyle(value.remix),
     presets: { create: parsePresets('create', presets.create), remix: parsePresets('remix', presets.remix) },
     supportLink: typeof value.supportLink === 'string' && supportTarget(value.supportLink) ? value.supportLink.trim() : '',
     notifyOnFinish: value.notifyOnFinish !== false,
     setupChecklistDismissed: value.setupChecklistDismissed === true,
     sampleVideoLink: sampleVideoTarget(value.sampleVideoLink) ?? '',
-    profile: readProfile(value.profile)
+    profile: readProfile(value.profile),
+    defaultBrandId: 'defaultBrandId' in value ? (isBrandId(value.defaultBrandId) ? value.defaultBrandId : null) : create.brandIdentityId ?? null
   }
+}
+
+/** A default brand look id from Settings-like input: a brand id, or null for none. */
+export function parseDefaultBrandId(value: unknown): string | null {
+  if (value === null) return null
+  if (!isBrandId(value)) throw new Error('That look no longer exists.')
+  return value
 }
 
 /**
@@ -384,6 +399,7 @@ function dropMissingFrom<K extends StyleKind>(kind: K, style: Partial<StyleOf<K>
 export function dropMissing(prefs: MemberPrefs, known: KnownItems): MemberPrefs {
   return {
     ...prefs,
+    defaultBrandId: prefs.defaultBrandId && known.brandIds && !known.brandIds.has(prefs.defaultBrandId) ? null : prefs.defaultBrandId,
     create: dropMissingFrom('create', prefs.create, known),
     remix: dropMissingFrom('remix', prefs.remix, known),
     presets: {

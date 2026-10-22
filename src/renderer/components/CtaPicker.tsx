@@ -159,6 +159,8 @@ export function ClipCtaDialog({ title, current, onApply, onClose }: {
   title: string; current: string | null; onApply: (ctaId: string | null) => Promise<void>; onClose: () => void
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
+  // Focus moves into the dialog, so Escape and Tab work from the start.
+  useEffect(() => { ref.current?.focus() }, [])
   const [choice, setChoice] = useState<string | null>(current)
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)

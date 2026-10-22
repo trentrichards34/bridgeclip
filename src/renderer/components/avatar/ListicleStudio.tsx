@@ -9,6 +9,8 @@ import type { BrandIdentity } from '../../../shared/remix'
 import { emptyItem, useListicleDraft, type ListicleVoiceChoice } from '../../store/use-listicle-store'
 import { useBrands } from '../../store/use-brand-store'
 import { getApi } from '../../lib/ipc'
+import { defaultBrand } from '../../lib/default-look'
+import { useMemberPrefsStore } from '../../store/use-member-prefs-store'
 import { cn, errorMessage, localFileUrl } from '../../lib/utils'
 import type { Page as PageName } from '../Sidebar'
 import { CtaPicker } from '../CtaPicker'
@@ -67,14 +69,15 @@ export function ListicleStudio({ avatars, openrouterConfigured, onNavigate, onVi
     const off = getApi().listicle.onStatus((next) => setStatus(next))
     return () => { live = false; off() }
   }, [loadBrands])
-  // The member's first brand fills the header, handle and color the first time.
+  // The default brand look (or the member's first brand) fills the header, handle, color and call to action the first time.
   const filled = useRef(false)
+  const prefsLoaded = useMemberPrefsStore((state) => state.loaded)
   useEffect(() => {
-    if (filled.current || !brands.length) return
+    if (filled.current || !brands.length || !prefsLoaded) return
     filled.current = true
     const state = useListicleDraft.getState()
-    if (!state.brandIdentityId && !state.header && !state.handle) state.update(brandDefaults(brands[0], state))
-  }, [brands])
+    if (!state.brandIdentityId && !state.header && !state.handle) state.update(brandDefaults(defaultBrand(brands) ?? brands[0], state))
+  }, [brands, prefsLoaded])
 
   const brand = brands.find((item) => item.id === draft.brandIdentityId) ?? null
   const avatar = avatars.find((item) => item.id === draft.avatarId) ?? avatars[0] ?? null

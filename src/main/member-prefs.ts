@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import {
-  MAX_PRESETS, isPresetId, parseMemberPrefs, parseSampleVideoLink, parseStyleOf, parseSupportLink, presetName,
+  MAX_PRESETS, isPresetId, parseDefaultBrandId, parseMemberPrefs, parseSampleVideoLink, parseStyleOf, parseSupportLink, presetName,
   type MemberPrefs, type StyleKind, type StylePreset
 } from '../shared/member-prefs'
 import { parseProfileUpdate } from '../shared/onboarding'
@@ -100,7 +100,7 @@ export function deletePreset(kind: unknown, id: unknown): MemberPrefs {
   return write({ ...prefs, presets: { ...prefs.presets, [k]: (prefs.presets[k] as StylePreset[]).filter((preset) => preset.id !== id) } })
 }
 
-/** The support link (or email), the finished-job notifications switch, the setup checklist and its sample video link. */
+/** The support link (or email), the finished-job notifications switch, the setup checklist and its sample video link, the default brand look. */
 export function saveAppPrefs(update: unknown): MemberPrefs {
   if (!update || typeof update !== 'object' || Array.isArray(update)) throw new Error('Invalid preferences')
   const raw = update as Record<string, unknown>
@@ -116,6 +116,7 @@ export function saveAppPrefs(update: unknown): MemberPrefs {
     next.setupChecklistDismissed = raw.setupChecklistDismissed
   }
   if ('sampleVideoLink' in raw) next.sampleVideoLink = parseSampleVideoLink(raw.sampleVideoLink)
+  if ('defaultBrandId' in raw) next.defaultBrandId = parseDefaultBrandId(raw.defaultBrandId)
   return write(next)
 }
 

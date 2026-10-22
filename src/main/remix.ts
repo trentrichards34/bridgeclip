@@ -2109,7 +2109,7 @@ export function cancelRemix(): boolean {
   run.ctaAbort?.abort()
   // Stops waiting for HeyGen (it has no cancel: a video it already started may still finish and be billed there).
   if (run.heygen) stopWaitingForHeygen(run.heygen)
-  run.status = { ...run.status, detail: 'Cancelling…' }
+  run.status = { ...run.status, detail: 'Canceling…' }
   notify(run.status)
   kill(run.child)
   // A download or upload in progress can ignore the polite stop; force it shortly after.

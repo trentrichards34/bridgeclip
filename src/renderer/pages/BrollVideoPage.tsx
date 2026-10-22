@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeftRight, Clapperboard, FileAudio, Images, Mic, Shuffle, Sparkles, Square } from 'lucide-react'
 import {
-  BROLL_VIDEO_MAX_SCRIPT_CHARS, BROLL_VIDEO_MAX_SECONDS, estimateLine, shotsNeeded, scriptSeconds,
+  BROLL_VIDEO_MAX_SCRIPT_CHARS, BROLL_VIDEO_MAX_SECONDS, defaultBrollVideoLook, estimateLine, shotsNeeded, scriptSeconds,
   type BrollVideoEstimate, type BrollVideoShot, type BrollVoiceKind
 } from '../../shared/broll-video'
 import { aiEstimateLine, type BrollLibraryEntry } from '../../shared/broll-library'
 import { PRESET_VOICES } from '../../shared/avatars'
-import { setHideAfter } from '../../shared/headline-look'
+import { setHideAfter, type HeadlineLook } from '../../shared/headline-look'
+import type { BrandIdentity } from '../../shared/remix'
 import { formatClock } from '../../shared/edit-recording'
 import { getApi } from '../lib/ipc'
+import { brandHeadlineLook, useDefaultLookSeed } from '../lib/default-look'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
-import { brollVideoRequest, useBrollVideoDraft, useBrollVideoStatus } from '../store/use-broll-video-store'
+import { brollVideoRequest, useBrollVideoDraft, useBrollVideoStatus, type BrollVideoDraft } from '../store/use-broll-video-store'
 import { useBrollLibrary } from '../store/use-broll-library-store'
 import { useSettingsStore } from '../store/use-settings-store'
 import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
@@ -69,8 +71,23 @@ export function BrollVideoPage({ onNavigate, onViewLibrary }: { onNavigate: (pag
 // The form
 // ---------------------------------------------------------------------------
 
+type BrollLookFields = { captionPreset: string; hookLook: HeadlineLook; ctaId: string | null }
+
+function brollLookFields(draft: Pick<BrollVideoDraft, 'look' | 'ctaId'>): BrollLookFields {
+  return { captionPreset: draft.look.captionPreset, hookLook: draft.look.hookLook, ctaId: draft.ctaId }
+}
+
+/** A brand's look on a b-roll video: caption style, hook text look and call to action (the video's defaults where it saved nothing). */
+function brollLookFromBrand(brand: BrandIdentity | null): BrollLookFields {
+  const initial = defaultBrollVideoLook()
+  return { captionPreset: brand?.look?.captionPreset ?? initial.captionPreset, hookLook: brandHeadlineLook(brand?.look, initial.hookLook), ctaId: brand?.look?.ctaId ?? null }
+}
+
 function Form({ onStarted, onNavigate }: { onStarted: () => void; onNavigate: (page: Page) => void }): React.JSX.Element {
   const draft = useBrollVideoDraft()
+  // Starts from the default brand look (Brand look); a look picked here is for this video only.
+  useDefaultLookSeed('broll-video', () => brollLookFields(useBrollVideoDraft.getState()), brollLookFields(useBrollVideoDraft.getInitialState()), brollLookFromBrand,
+    ({ ctaId, ...look }) => { const state = useBrollVideoDraft.getState(); state.setLook(look); state.update({ ctaId }) })
   const status = useBrollVideoStatus((s) => s.status)
   const openrouter = useSettingsStore((s) => s.openrouterConfigured)
   const { view, load } = useBrollLibrary()

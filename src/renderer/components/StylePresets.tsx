@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { History, Palette, Pencil, Plus, RotateCcw, Save, Trash2 } from 'lucide-react'
 import { MAX_PRESET_NAME, MAX_PRESETS, pickStyle, presetName, type StyleKind } from '../../shared/member-prefs'
 import { useDraftStore } from '../store/use-draft-store'
+import { defaultBrand } from '../lib/default-look'
 import { useBrands } from '../store/use-brand-store'
 import { brandFormPatch } from '../../shared/brand-kit'
 import { cn } from '../lib/utils'
@@ -188,9 +189,8 @@ export function NameDialog({ kind, mode, initial, taken, onClose, onSave }: {
 /** The Create defaults (the app's), with the member's default brand look on top. */
 export function createDefaultStyle(): Record<string, unknown> {
   const initial = useDraftStore.getInitialState()
-  const draft = useDraftStore.getState()
   const defaults = pickStyle('create', initial) as Record<string, unknown>
-  const brand = useBrands.getState().brands.find((item) => item.id === draft.brandIdentityId) ?? null
+  const brand = defaultBrand()
   if (!brand) return defaults
   return { ...defaults, brandIdentityId: brand.id, ...brandFormPatch(brand.look, { ...initial, ...(defaults as object) } as Parameters<typeof brandFormPatch>[1]),
     ...(brand.look?.captionPreset ? { includeCaptions: true } : {}) }
@@ -215,6 +215,7 @@ export function CreateStartFrom({ className }: { className?: string }): React.JS
   const lastRun = useDraftStore((state) => state.lastRun)
   const json = useStyleJson('create')
   useBrands((state) => state.brands)
+  useMemberPrefsStore((state) => state.defaultBrandId)
   const current = JSON.parse(json || '{}') as Record<string, unknown>
   const match = presets.find((preset) => JSON.stringify(preset.style) === json) ?? null
   const [picked, setPicked] = useState<string | null>(null)

@@ -536,7 +536,7 @@ def main():
         if isinstance(error, (RemixError, PauseReactError, MomentTakeError, ReactTemplateError)):
             message = str(error)
         elif isinstance(error, asyncio.CancelledError):
-            message = "Cancelled"
+            message = "Canceled"
         else:
             # Download and transcription failures get the same plain-language
             # explanations as the clip pipeline.

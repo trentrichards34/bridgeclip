@@ -181,7 +181,7 @@ function ProviderRow({ id, status, signIn, preferred, model, onPrefer, onModel }
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-ink">{info.name}</span>
             {statusBadge(status)}
-            {status?.version && <span className="font-mono text-2xs tabular text-ink-faint">v{status.version}</span>}
+            {status?.version && <span className="font-mono text-2xs tabular text-ink-subtle">v{status.version}</span>}
           </div>
           <p className="mt-0.5 truncate text-xs text-ink-muted">
             {status?.state === 'connected' && status.account ? status.account : `Uses your ${info.subscription} subscription`}

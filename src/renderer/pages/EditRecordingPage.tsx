@@ -33,6 +33,7 @@ import { boardFromLook, LOOK_HOOKS, lookPatch, styleSummary } from '../lib/style
 import { ProgressBar } from '../components/ui/ProgressBar'
 import { Segmented } from '../components/ui/Segmented'
 import { getApi } from '../lib/ipc'
+import { useDefaultLookSeed } from '../lib/default-look'
 import { requestSettingsSection } from '../lib/settings-focus'
 import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { useBrands } from '../store/use-brand-store'
@@ -46,6 +47,11 @@ export function lookFromBrand(brand: BrandIdentity | null): EditLook {
   if (!kit) return DEFAULT_EDIT_LOOK
   const headlineLook = kit.headlineLook ? { ...kit.headlineLook, color: kit.color ?? kit.headlineLook.color } : kit.color ? { ...DEFAULT_HEADLINE_LOOK, color: kit.color } : DEFAULT_HEADLINE_LOOK
   return { includeCaptions: true, captionPreset: kit.captionPreset ?? DEFAULT_CAPTION_PRESET, headlineLook, showHandle: hasBrandMark(kit) }
+}
+
+/** The look fields a brand sets (the default look seeds these; extras and audio stay as picked). */
+function brandLookFields(brandId: string | null, look: EditLook): { brandId: string | null } & Pick<EditLook, 'includeCaptions' | 'captionPreset' | 'headlineLook' | 'showHandle'> {
+  return { brandId, includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: look.headlineLook, showHandle: look.showHandle }
 }
 
 /** When a clip was filmed, in the member's own clock ("Oct 21, 9:27 AM"). */
@@ -89,6 +95,12 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
   const brand = brands.find((item) => item.id === brandId) ?? null
+  // Starts from the default brand look (Brand look); a brand or look picked here is for this recording only.
+  useDefaultLookSeed('edit-recording',
+    () => { const state = useEditRecordingStore.getState(); return brandLookFields(state.brandId, state.look) },
+    brandLookFields(null, DEFAULT_EDIT_LOOK),
+    (next) => brandLookFields(next?.id ?? null, lookFromBrand(next)),
+    ({ brandId: id, ...fields }) => useEditRecordingStore.getState().setBrand(id, { ...useEditRecordingStore.getState().look, ...fields }))
 
   useEffect(() => {
     let live = true

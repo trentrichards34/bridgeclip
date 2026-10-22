@@ -56,7 +56,7 @@ export function OnboardingFlow({ onNavigate }: { onNavigate: (page: 'clip') => v
   const [step, setStep] = useState<Step>('goals')
   const [goals, setGoals] = useState<GoalId[]>(profile.goals)
   const [platforms, setPlatforms] = useState<ZernioPlatform[]>(profile.platforms)
-  const [brandId, setBrandId] = useState<string | null>(() => useDraftStore.getState().brandIdentityId ?? useRemixForm.getState().brandIdentityId)
+  const [brandId, setBrandId] = useState<string | null>(() => useMemberPrefsStore.getState().defaultBrandId ?? useDraftStore.getState().brandIdentityId ?? useRemixForm.getState().brandIdentityId)
   const [ctaId, setCtaId] = useState<string | null>(() => useDraftStore.getState().ctaId)
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -83,6 +83,9 @@ export function OnboardingFlow({ onNavigate }: { onNavigate: (page: 'clip') => v
   /** Use the brand (and call to action) as the default on Create and Remix: fills each form's look the same way picking it there does. */
   const chooseBrand = (brand: BrandIdentity | null): void => {
     setBrandId(brand?.id ?? null)
+    // It becomes the default look every tool starts from (Brand look shows it as the default).
+    useMemberPrefsStore.setState({ defaultBrandId: brand?.id ?? null })
+    void useMemberPrefsStore.getState().saveApp({ defaultBrandId: brand?.id ?? null }).catch(() => undefined)
     const draft = useDraftStore.getState()
     const remix = useRemixForm.getState()
     if (!brand) {
