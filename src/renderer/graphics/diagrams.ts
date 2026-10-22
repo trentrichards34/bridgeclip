@@ -335,7 +335,8 @@ export function journeyTemplate(b: DiagramBuild): void {
   const cw = (w - gap * (n - 1)) / n
   const figure = 136 * fu
   const yg = f.y1 - 10 * fu
-  const ch = clamp(h - figure - 70 * fu, 160 * fu, cw * 2.1)
+  // Room above the cards for the goal's flag.
+  const ch = clamp(h - figure - 140 * fu, 120 * fu, cw * 2.1)
   const cb = yg - figure - 40 * fu, ct = cb - ch
   const size = clamp(cw * .19, 26 * fu, 46 * fu)
   const cx = (i: number): number => f.x0 + i * (cw + gap) + cw / 2
@@ -579,7 +580,7 @@ export function compareMarksTemplate(b: DiagramBuild): void {
     if (note) note.style.fontSize = `${36 * fu}px`
     b.fitters.push(() => {
       let s = parseFloat(head.style.fontSize)
-      while (card.scrollHeight > card.clientHeight + 1 && s > 22 * fu) { s -= 1; head.style.fontSize = `${s}px` }
+      while ((card.scrollHeight > card.clientHeight + 1 || head.scrollWidth > head.clientWidth + 1) && s > 18 * fu) { s -= 1; head.style.fontSize = `${s}px` }
     })
     return card
   })

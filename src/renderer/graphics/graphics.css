@@ -369,7 +369,7 @@
 .dg-card-text { width: 100%; font-weight: 700; line-height: 1.15; overflow-wrap: normal; word-break: keep-all; text-wrap: balance; }
 .dg-card.lit .dg-card-text { color: var(--on-accent); }
 .dg-compare-card { justify-content: center; gap: calc(var(--fu) * 18); padding: calc(var(--fu) * 34) calc(var(--fu) * 26); }
-.dg-compare-title { font-weight: 800; line-height: 1.12; letter-spacing: -.015em; text-wrap: balance; overflow-wrap: normal; }
+.dg-compare-title { width: 100%; font-weight: 800; line-height: 1.12; letter-spacing: -.015em; text-wrap: balance; overflow-wrap: normal; }
 .dg-compare-note { font-weight: 600; line-height: 1.25; opacity: .85; text-wrap: balance; }
 .dg-compare-card.right { box-shadow: 0 0 calc(var(--fu) * 46) color-mix(in srgb, var(--accent) calc(var(--passed, 0) * 60%), transparent); }
 .dg-hub-caption { position: absolute; transform: translateX(-50%); text-align: center; font-weight: 700; letter-spacing: .02em; opacity: .9; }
