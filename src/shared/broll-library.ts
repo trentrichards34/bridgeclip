@@ -36,6 +36,18 @@ export const MAX_TEXT_CHARS = 120
 /** Frames looked at per shot, and the estimate used for the spending check (a small vision call). */
 export const FRAMES_PER_SHOT = 3
 export const INDEX_ESTIMATE_PER_SHOT_USD = 0.002
+/** New clips are looked at on their own only while that is this cheap; a bigger batch waits for "Look at new clips". */
+export const AUTO_INDEX_MAX_USD = 0.25
+
+/** What looking at `shots` shots would cost, about (at least a cent). */
+export function indexEstimateUsd(shots: number): number {
+  return Math.max(0.01, Math.round(Math.max(0, shots) * INDEX_ESTIMATE_PER_SHOT_USD * 100) / 100)
+}
+
+/** Whether new clips may be looked at without the member pressing "Look at new clips" (a small batch only). */
+export function autoIndexAllowed(shots: number): boolean {
+  return shots > 0 && shots * INDEX_ESTIMATE_PER_SHOT_USD <= AUTO_INDEX_MAX_USD
+}
 
 export const SHOT_TYPES = ['wide', 'medium', 'close', 'top-down', 'screen', 'product', 'hands', 'talking', 'text', 'other'] as const
 export type ShotType = (typeof SHOT_TYPES)[number]
@@ -473,14 +485,17 @@ export function brollSourceOptions(context: BrollSourceContext): { id: BrollSour
     .map((id) => ({ id, label: BROLL_SOURCE_LABELS[id], detail: BROLL_SOURCE_DETAILS[id], disabledReason: brollSourceProblem(id, context) }))
 }
 
-/** My library when it has shots, otherwise stock when a Pexels key is saved, otherwise AI. */
-export function defaultBrollSource(context: Pick<BrollSourceContext, 'libraryShots' | 'pexels'>): BrollSource {
+/**
+ * My library when it has shots, otherwise stock when a Pexels key is saved, otherwise none (null).
+ * Never AI: AI shots cost money, so they run only when the member picks them.
+ */
+export function defaultBrollSource(context: Pick<BrollSourceContext, 'libraryShots' | 'pexels'>): BrollSource | null {
   if (context.libraryShots > 0) return 'library'
-  return context.pexels ? 'stock' : 'ai'
+  return context.pexels ? 'stock' : null
 }
 
-/** The source a run uses: the member's pick when it can run, otherwise the default. */
-export function effectiveBrollSource(picked: BrollSource | null | undefined, context: BrollSourceContext): BrollSource {
+/** The source a run uses: the member's pick when it can run, otherwise the default (never AI unless picked). */
+export function effectiveBrollSource(picked: BrollSource | null | undefined, context: BrollSourceContext): BrollSource | null {
   if (picked && !brollSourceProblem(picked, context)) return picked
   return defaultBrollSource(context)
 }

@@ -116,11 +116,19 @@ export function draftSources(draft: Pick<ClipDraft, 'source' | 'sources'>): stri
   return draft.source.trim() ? [draft.source] : []
 }
 
-/** Where the run's b-roll comes from: the member's pick when it can run, otherwise the default (My library when it has shots). */
-export function draftBrollSource(draft: Pick<ClipDraft, 'brollSource'>): BrollSource {
+/** Where the run's b-roll comes from: the member's pick when it can run, otherwise the default (My library when it has shots). Never AI unless picked. */
+export function draftBrollSource(draft: Pick<ClipDraft, 'brollSource'>): BrollSource | null {
   const settings = useSettingsStore.getState()
   return effectiveBrollSource(draft.brollSource, { libraryShots: useBrollLibrary.getState().view?.usableShots ?? 0, pexels: settings.pexelsConfigured, openrouter: settings.openrouterConfigured })
 }
+
+/** The review line for "B-roll from" (none chosen yet says so). */
+export function brollFromSummary(source: BrollSource | null, ai: Parameters<typeof aiEstimateLine>[0]): string {
+  if (!source) return 'Not chosen yet: pick where b-roll comes from'
+  return `${BROLL_SOURCE_LABELS[source]}${usesAi(source) ? ` · ${aiEstimateLine(ai)}` : ''}`
+}
+
+const brollSourceField = (source: BrollSource | null): { brollSource?: BrollSource } => source ? { brollSource: source } : {}
 
 /** One run request per video, all with the same settings. A preferred range only applies to a single video. */
 export function buildJobRequests(draft: ClipDraft, trim: { start: number | null; end: number | null }): ClipJobRequest[] {
@@ -155,7 +163,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     ...(draft.workflow !== 'review' && parseLookExtras(draft.lookExtras).length ? { lookExtras: parseLookExtras(draft.lookExtras) } : {}),
     ...(draft.ctaId && draft.workflow !== 'review' ? { ctaId: draft.ctaId } : {}),
     ...(draft.workflow === 'automatic' && draft.aspectRatio === '9:16' && draft.backgroundVideo && draft.broll === 'off' ? { backgroundVideo: draft.backgroundVideo } : {}),
-    ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll, brollSource: draftBrollSource(draft) } : {}),
+    ...(draft.workflow === 'automatic' && draft.broll !== 'off' ? { broll: draft.broll, ...brollSourceField(draftBrollSource(draft)) } : {}),
     ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
     ...(draft.workflow === 'automatic' && draft.motionGraphics ? { motionGraphics: true } : {}),
     ...(draft.workflow === 'automatic' && stageLayoutsOn(draft) ? { stageLayouts: true } : {}),
@@ -1064,7 +1072,7 @@ export function ReviewStep({ draft, trim, onEdit }: {
     { step: 'clips' as const, label: 'Quality', value: QUALITY_BAR_OPTIONS.find((option) => option.id === draft.qualityBar)?.summary ?? QUALITY_BAR_OPTIONS[0].summary },
     // Skills by their Skills names, so each setting reads the same here as where it's set.
     ...(automatic ? [{ step: 'captions' as const, label: 'Skills', value: skillsSummary(createSkillRows(draft, { pexels, openrouter: openrouterKey, library: usableShots }), draft.musicTrack) }] : []),
-    ...(automatic && draft.broll !== 'off' ? [{ step: 'captions' as const, label: 'B-roll from', value: `${BROLL_SOURCE_LABELS[draftBrollSource(draft)]}${usesAi(draftBrollSource(draft)) ? ` · ${aiEstimateLine(brollAi)}` : ''}` }] : []),
+    ...(automatic && draft.broll !== 'off' ? [{ step: 'captions' as const, label: 'B-roll from', value: brollFromSummary(draftBrollSource(draft), brollAi) }] : []),
     { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
   ]
   if (draft.workflow !== 'review' && isCaptionLanguage(draft.captionLanguage)) {

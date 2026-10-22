@@ -570,6 +570,9 @@ export async function swapBrollShot(outputDir: unknown, slot: unknown, shotId: u
   if (!Number.isInteger(slot) || (slot as number) < 0 || (slot as number) > 999) throw new Error('Choose a shot to swap.')
   if (shotId !== null && shotId !== undefined && !isLibraryShotRef(shotId)) throw new Error('Choose a shot from your library.')
   if (swapping) throw new Error('Another shot is being swapped. Wait for it to finish.')
+  // Free up space can remove the voice and shot pieces a swap needs (the video itself stays).
+  try { if (!lstatSync(join(folder, WORK_FOLDER, 'voice.m4a')).isFile()) throw new Error('gone') }
+  catch { throw new Error('This video’s working files were removed to free up space, so its shots can’t be swapped.') }
   swapping = folder
   try {
     await withEditorPreparation(folder, async (prep) => {

@@ -15,8 +15,8 @@ export function useBrollLibraryLoaded(): void {
   useEffect(() => { if (!useBrollLibrary.getState().view) void useBrollLibrary.getState().load() }, [])
 }
 
-/** The source a form sends: the member's pick when it can run, otherwise the default (My library when it has clips). */
-export function useEffectiveBrollSource(picked: BrollSource | null): BrollSource {
+/** The source a form sends: the member's pick when it can run, otherwise the default (My library when it has clips; never AI unless picked). */
+export function useEffectiveBrollSource(picked: BrollSource | null): BrollSource | null {
   const { usableShots } = useBrollContext()
   const pexels = useSettingsStore((s) => s.pexelsConfigured)
   const openrouter = useSettingsStore((s) => s.openrouterConfigured)
@@ -45,14 +45,15 @@ export function BrollSourcePicker({ value, onChange, onOpenLibrary, disabled = f
   const effective = useEffectiveBrollSource(value)
   const current = given === undefined ? effective : given
   const picked = options.find((option) => option.id === current)
+  const noneText = emptyText ?? 'Choose where b-roll comes from. AI shots are made only when you pick them.'
   return (
     <div className="space-y-1.5" data-testid="broll-source">
       <p className="text-xs font-medium text-ink">B-roll from</p>
-      <Select size="sm" aria-label="B-roll from" value={current ?? ''} placeholder={emptyText} disabled={disabled}
+      <Select size="sm" aria-label="B-roll from" value={current ?? ''} placeholder={noneText} disabled={disabled}
         options={options.map((option) => ({ value: option.id, label: option.label, disabled: option.disabledReason !== null, ...(option.disabledReason ? { detail: option.disabledReason } : {}) }))}
         onChange={(next) => onChange(next as BrollSource)} />
       <p className="text-2xs text-ink-subtle">
-        {picked?.detail ?? emptyText}
+        {picked?.detail ?? noneText}
         {current && usesLibrary(current) && ` ${usableShots} shot${usableShots === 1 ? '' : 's'} ready in your library.`}
         {onOpenLibrary && (
           <> <button type="button" className="text-accent hover:underline" onClick={onOpenLibrary}>Open my B-roll library</button></>

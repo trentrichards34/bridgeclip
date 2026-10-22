@@ -169,6 +169,8 @@ test('main: only a b-roll video run in the output folder can have its shots swap
     await assert.rejects(main.brollVideoShots(path.join(root, 'broll-video-12345678-1234-1234-1234-123456789abc')), /Only b-roll videos/)
     await assert.rejects(main.swapBrollShot(run, -1, null), /Choose a shot to swap/)
     await assert.rejects(main.swapBrollShot(run, 0, '../etc'), /Choose a shot from your library/)
+    // Free up space removed the voice and pieces: a plain reason, not an engine failure.
+    await assert.rejects(main.swapBrollShot(run, 0, null), /removed to free up space/)
     assert.equal(main.isBrollVideoRun(run), true)
     assert.equal(main.brollVideoRunBusy(run), null)
   } finally { fs.rmSync(root, { recursive: true, force: true }) }

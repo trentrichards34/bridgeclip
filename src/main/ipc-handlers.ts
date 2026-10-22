@@ -134,11 +134,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   /** Writing one clip's post captions: transcription, an optional web search and one writing call (the check's estimate). */
   const POST_CAPTIONS_ESTIMATE_USD = 0.02
   /** A paid handler: the spending check (monthly limit, OpenRouter balance) runs first. */
-  const paid = (channel: string, provider: SpendProvider, estimate: (...args: unknown[]) => number | null,
+  const paid = (channel: string, provider: SpendProvider, estimate: (...args: unknown[]) => number | null | Promise<number | null>,
     run: (...args: unknown[]) => unknown): void => {
     handle(channel, async (_event, ...args: unknown[]) => {
       let estimateUsd: number | null = null
-      try { estimateUsd = estimate(...args) } catch { estimateUsd = null }
+      try { estimateUsd = await estimate(...args) } catch { estimateUsd = null }
       await assertSpendAllowed(channel, provider, estimateUsd)
       return run(...args)
     })
@@ -816,7 +816,13 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   paid('job:startMany', 'openrouter', (requests) => Array.isArray(requests) ? requests.reduce<number | null>((sum, request) => { const one = brollEstimate(request); return one === null ? sum : (sum ?? 0) + one }, null) : null, (requests) => startClipJobRequests(requests))
   // More clips from a finished run: reuses its saved transcript when it still matches the video.
   handle('job:moreClipsInfo', (_event, outputDir: unknown) => moreClipsInfo(outputDir))
-  paid('job:moreClips', 'openrouter', () => null, (outputDir, choices) => startMoreClips(outputDir, choices))
+  // The earlier run's b-roll source rides along: AI b-roll there is priced here too (its shots per clip).
+  const moreClipsEstimate = async (outputDir: unknown, choices: unknown): Promise<number | null> => {
+    const info = await moreClipsInfo(outputDir)
+    const picked = (choices ?? {}) as { maxClips?: unknown; autoClipCount?: unknown }
+    return brollEstimate({ ...info.request, maxClips: picked.maxClips, autoClipCount: picked.autoClipCount })
+  }
+  paid('job:moreClips', 'openrouter', (outputDir, choices) => moreClipsEstimate(outputDir, choices), (outputDir, choices) => startMoreClips(outputDir, choices))
 
   handle('job:cancel', (_event, jobId: unknown) => {
     if (typeof jobId !== 'string') return false

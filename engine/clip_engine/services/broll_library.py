@@ -32,6 +32,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -760,6 +761,7 @@ async def make_shots(plan: list[PlannedShot], catalog: dict[str, CatalogShot], w
     owns = maker is None and ai is not None and any(shot.ai_prompt for shot in plan)
     if owns:
         maker = AiShotMaker(settings or get_settings(), ai)  # type: ignore[arg-type]
+    ai_on = maker is not None
     try:
         for k, shot in enumerate(plan):
             seconds = (shot.end_ms - shot.start_ms) / 1000 + 0.2
@@ -769,7 +771,7 @@ async def make_shots(plan: list[PlannedShot], catalog: dict[str, CatalogShot], w
                     entry = catalog[shot.shot_id]
                     await asyncio.to_thread(conform_shot, entry.path, entry.kind, shot.source_s, seconds, out, width, height)
                     made.library_used += 1
-                elif shot.ai_prompt and maker is not None:
+                elif shot.ai_prompt and maker is not None and ai_on:
                     raw = os.path.join(work_dir, f"ai-{k:02d}-{secrets.token_hex(3)}.mp4")
                     await maker.make(shot.ai_prompt, raw)
                     if ai_dir:
@@ -782,7 +784,11 @@ async def make_shots(plan: list[PlannedShot], catalog: dict[str, CatalogShot], w
                 logger.warning(f"A b-roll shot was left out: {error}")
                 if "API key" in str(error) or "credits" in str(error):
                     made.warnings.append(str(error))
-                    maker = None  # no more AI shots this clip
+                    ai_on = False  # no more AI shots this clip (what was already made is still counted below)
+                continue
+            except (OSError, httpx.HTTPError, subprocess.SubprocessError) as error:
+                # A dropped download or a full disk loses this shot only: the run's costs so far are still returned.
+                logger.warning(f"A b-roll shot was left out: {error}")
                 continue
             made.shots.append(BrollShot(shot.start_ms, shot.end_ms, shot.shot_id or "ai", out))
     finally:

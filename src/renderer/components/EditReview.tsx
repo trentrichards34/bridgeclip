@@ -20,6 +20,7 @@ import { applyRestore, editRecordingLog, restoreStillApplied, undoRestore, type 
 import { SkillsPanel } from './SkillsPanel'
 import { editSkillPatch, editSkillRows } from '../../shared/skills'
 import { BrollSourcePicker, useBrollLibraryLoaded, useEffectiveBrollSource } from './BrollSourcePicker'
+import { useSettingsStore } from '../store/use-settings-store'
 import { hasBrandMark } from '../../shared/brand-kit'
 import type { BrandIdentity } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
@@ -65,7 +66,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const plan = status.plan
   // B-roll (Skills): where it comes from when switched on (My library when it has shots).
   useBrollLibraryLoaded()
-  const brollDefault = useEffectiveBrollSource(null)
+  // With no library shots and no Pexels key, switching B-roll on here picks AI (the picker then shows its estimate before anything is made).
+  const openrouter = useSettingsStore((s) => s.openrouterConfigured)
+  const brollDefault = useEffectiveBrollSource(null) ?? (openrouter ? 'ai' : null)
   // Choices made here outlive the page (by run id), so leaving and coming back keeps them.
   const [decisions, setDecisions] = useState<EditDecisions>(() => {
     const fresh = initialDecisions(plan, look, useEditRecordingStore.getState().recipe)
