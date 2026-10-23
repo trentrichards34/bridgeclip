@@ -277,8 +277,11 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   // The plan's statement and the pinned logo (a Logo pop on "Fifteen"); the Fast explainer's card came while the logo showed,
   // so it gave way (as pop-ups and cards always have). The test's camera shows no face (like a filmed screen), so no stage
   // goes over it and the statement is a card.
+  // The call to action said at the end ("Follow me for more") gets its graphic with those words (spoken_cta).
   const kinds = candidate.graphics.map((g) => g.template).sort()
-  assert.deepEqual(kinds, ['logo', 'statement'], JSON.stringify(candidate.graphics))
+  assert.deepEqual(kinds, ['link_cta', 'logo', 'statement'], JSON.stringify(candidate.graphics))
+  const cta = candidate.graphics.find((g) => g.template === 'link_cta')
+  assert.deepEqual([cta.origin, cta.fields.text, cta.fields.kind], ['auto', 'Follow me for more', 'follow'])
   await page.getByText(/1 pop-up or pinned image left out/).waitFor()
   const statement = candidate.graphics.find((g) => g.template === 'statement')
   assert.deepEqual([statement.origin, statement.size, statement.fields.text], ['auto', 'card', 'Most coaches lose clients.'])
