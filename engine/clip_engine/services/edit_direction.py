@@ -557,7 +557,7 @@ def screen_aware(graphics: list[dict], windows: Sequence[tuple[int, int]], stage
             continue
         a, b = int(spot[0]), int(spot[1])
         frames.append({'id': ag.new_id(taken), 'template': 'screen_frame', 'at_ms': a, 'duration_ms': b - a, 'placement': 'top',
-                       'fields': {'video': 'source', 'from': f'{a / 1000:.3f}', 'shape': 'tall'}, 'origin': 'auto', 'size': 'stage'})
+                       'fields': {'video': 'source', 'from': f'{a / 1000:.3f}', 'shape': 'square'}, 'origin': 'auto', 'size': 'stage'})
         scenes.append({'scene': 'visual', 'start_ms': a, 'end_ms': b, 'backdrop': 'dark'})
     return sorted(out + frames, key=lambda g: g['at_ms']), scenes
 
