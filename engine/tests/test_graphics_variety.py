@@ -163,6 +163,11 @@ def test_cards_over_a_filmed_screen_take_a_dark_look_and_a_long_screen_gets_fram
     out, scenes = ed.screen_aware(graphics, [(9000, 20000)], stage=True)
     by = {g['id']: g for g in out}
     assert by['g-aaaa1']['fields']['variant'] == 'glass' and by['g-aaaa2']['fields']['variant'] == 'card'
+    # Two over screens in a row take different dark looks; one already dark keeps its own.
+    two = [{**graphics[0], 'id': f'g-bbbb{i}', 'at_ms': 10000 + i * 4000, 'duration_ms': 3000} for i in range(3)]
+    two[2]['fields'] = {'text': 'x y', 'variant': 'bold'}
+    looks = [g['fields']['variant'] for g in ed.screen_aware(two, [(9000, 30000)], stage=False)[0]]
+    assert looks == ['glass', 'bold', 'bold'], looks
     assert 'variant' not in by['g-aaaa3']['fields']  # the member's own stays as set
     frames = [g for g in out if g['template'] == 'screen_frame']
     assert len(frames) == 1 and frames[0]['at_ms'] >= 13000 and frames[0]['duration_ms'] <= ed.FRAME_MAX_MS

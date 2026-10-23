@@ -95,8 +95,10 @@ ROTATION = {
     'sticky_notes': ('polaroid', 'index', 'notes'), 'list': ('chips', 'pills', 'card'), 'checklist': ('rows', 'dark', 'card'),
     'stat': ('gradient', 'badge', 'card'),
 }
-# Looks that read on a busy screen (no white slab over the page): used for a card over a filmed screen.
-SCREEN_VARIANTS = {'statement': 'glass', 'title': 'pill', 'quote': 'dark', 'list': 'pills', 'checklist': 'dark', 'stat': 'gradient', 'sticky_notes': 'polaroid'}
+# Looks that read on a busy screen (no big white slab over the page), for a card over a filmed screen; taken in turn
+# so repeats still differ.
+SCREEN_VARIANTS = {'statement': ('glass', 'bold'), 'title': ('pill', 'shadow'), 'quote': ('dark', 'accent'), 'list': ('pills', 'chips'),
+                   'checklist': ('dark', 'rows'), 'stat': ('gradient', 'badge'), 'sticky_notes': ('polaroid', 'index')}
 DEFAULT_MS = {'stat': 3500, 'title': 2500, 'list': 5000, 'lower_third': 4000, 'before_after': 4000, 'checklist': 5000, 'quote': 5000,
               'statement': 3500, 'sticky_notes': 4000, 'strike_list': 5000, 'headline_pill': 3500, 'icon_pop': 3500, 'comment_cta': 3500,
               'browser_frame': 5000, 'orbit': 4500, 'feature_tile': 3500, 'big_words': 2500,

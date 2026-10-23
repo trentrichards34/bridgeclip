@@ -445,7 +445,7 @@ test('looks: optional and backward compatible, mirrored by the engine, kept thro
     { cwd: path.join(__dirname, '../../engine'), env: { ...process.env, PYTHONPATH: path.join(__dirname, '../../engine') } }).toString())
   assert.deepEqual(Object.fromEntries(Object.entries(mg.GRAPHIC_VARIANTS).map(([t, looks]) => [t, looks.map((v) => v.id)])), engine.v)
   for (const [t, order] of Object.entries(engine.r)) assert.deepEqual([...order].sort(), [...engine.v[t]].sort(), t)
-  for (const [t, look] of Object.entries(engine.s)) assert.ok(engine.v[t].includes(look), t)
+  for (const [t, looks] of Object.entries(engine.s)) for (const look of looks) assert.ok(engine.v[t].includes(look), t)
   // No look (an older graphic) or an unknown one draws the classic; one-look templates have none.
   assert.equal(mg.graphicVariant('statement', {}), 'card')
   assert.equal(mg.graphicVariant('statement', { variant: 'neon' }), 'card')

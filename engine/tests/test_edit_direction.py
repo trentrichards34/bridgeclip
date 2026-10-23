@@ -349,7 +349,7 @@ def test_a_render_with_the_direction_makes_an_editor_project_with_its_graphics_a
     assert [(s['scene'], s['start_ms'], s['end_ms'], s.get('backdrop')) for s in c['stage_scenes']] == [('visual', frame['at_ms'], frame['at_ms'] + frame['duration_ms'], 'dark')]
     assert all(g.get('size') != 'stage' for g in c['graphics'] if g['template'] != 'screen_frame')
     stat = next(g for g in c['graphics'] if g['template'] == 'stat')
-    assert stat['fields']['variant'] == ag.SCREEN_VARIANTS['stat']
+    assert stat['fields']['variant'] in ag.SCREEN_VARIANTS['stat']
     assert os.path.isfile(os.path.join(root, 'editor-source.mp4')) and os.path.isfile(os.path.join(root, f"editor-preview-{project['preview_id']}.mp4"))
     job = json.load(open(os.path.join(root, 'job_output.json')))
     assert job['editor_project'] is True and job['clips'][0]['clip_index'] == 0 and 'editor_candidate' not in job['clips'][0]

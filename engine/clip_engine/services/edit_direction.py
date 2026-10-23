@@ -526,11 +526,17 @@ def screen_aware(graphics: list[dict], windows: Sequence[tuple[int, int]], stage
     screen window is framed: that very footage in a Screen recording window on a dark Visual scene. Returns
     (graphics, the Visual scenes for the frames)."""
     out = []
-    for g in graphics:
+    last: dict[str, str] = {}
+    for g in sorted(graphics, key=lambda g: g['at_ms']):
         a, b = g['at_ms'], g['at_ms'] + g['duration_ms']
         inside = sum(max(0, min(b, hi) - max(a, lo)) for lo, hi in windows)
-        if g.get('origin') == 'auto' and g['template'] in ag.SCREEN_VARIANTS and inside >= SCREEN_SHARE * (b - a):
-            g = {**g, 'fields': {**g['fields'], 'variant': ag.SCREEN_VARIANTS[g['template']]}}
+        looks = ag.SCREEN_VARIANTS.get(g['template'])
+        if g.get('origin') == 'auto' and looks and inside >= SCREEN_SHARE * (b - a) and g['fields'].get('variant') not in looks:
+            # A darker look, not the one the last card of this template had.
+            pick = next((v for v in looks if v != last.get(g['template'])), looks[0])
+            g = {**g, 'fields': {**g['fields'], 'variant': pick}}
+        if g['fields'].get('variant'):
+            last[g['template']] = g['fields']['variant']
         out.append(g)
     if not stage:
         return out, []
