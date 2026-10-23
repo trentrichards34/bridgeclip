@@ -217,6 +217,8 @@ test('Combine clips: a .zip of three clips, put in the AI’s order, joined upri
   await log.getByRole('button', { name: /^Restore: Added a \$8,188 stat/ }).click()
 
   await page.getByRole('button', { name: 'Make my reel' }).click()
+  // The beat sheet is offered first (beat-sheet.e2e covers it): make the reel now.
+  await page.getByRole('dialog', { name: 'See your beats first?' }).getByRole('button', { name: 'Render now' }).click()
   await page.getByText('Your reel is ready').waitFor({ timeout: 600000 })
   const run = fs.readdirSync(library).find((name) => /^edit-[0-9a-f-]{36}$/.test(name))
   const reel = path.join(library, run, 'clip_00.mp4')

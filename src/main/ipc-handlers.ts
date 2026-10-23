@@ -53,7 +53,7 @@ import { cancelListicleRender, LISTICLE_SCRIPT_ESTIMATE_USD, listicleRunBusy, li
 import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
   isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate, addEditImage, addEditImageFiles, removeEditImage, importClips,
-  describeScreen, previewScreen, syncScreen, editSavedHeadline, editorHeadlineSaved
+  describeScreen, previewScreen, syncScreen, editSavedHeadline, editorHeadlineSaved, editBeatFrame
 } from './edit-recording'
 import { EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGES, EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
 import { COMBINE_MAX_CLIPS } from '../shared/combine-clips'
@@ -779,6 +779,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('edit:syncScreen', (_event, camera: unknown, screen: unknown) => syncScreen(camera, screen))
   handle('edit:previewScreen', (_event, camera: unknown, screen: unknown, offsetMs: unknown, atMs: unknown) => previewScreen(camera, screen, offsetMs, atMs))
   handle('edit:savedHeadline', (_event, request: unknown) => editSavedHeadline(request))
+  // The beat sheet's frames (local, free): one source frame per beat, cached in the run.
+  handle('edit:beatFrame', (_event, src: unknown, ms: unknown) => editBeatFrame(src, ms))
   paid('edit:start', 'openrouter', (request) => startEstimate(request), (request) => startEdit(request))
   handle('edit:render', async (_event, decisions: unknown) => {
     // AI b-roll is the paid part of making the reel: the spending check first, at most its shots.

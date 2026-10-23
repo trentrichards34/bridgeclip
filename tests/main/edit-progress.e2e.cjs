@@ -152,6 +152,8 @@ test('Combine clips progress: steps, clip strip, words heard, plan finds, the re
 
   await page.getByRole('heading', { name: 'Review your edit' }).waitFor({ timeout: 300000 })
   await page.getByRole('button', { name: 'Make my reel' }).click()
+  // The beat sheet is offered first (beat-sheet.e2e covers it): make the reel now.
+  await page.getByRole('dialog', { name: 'See your beats first?' }).getByRole('button', { name: 'Render now' }).click()
   // Making the reel: the steps after the review, the opening frame and what goes in it.
   await view.waitFor({ timeout: 60000 })
   await view.getByText('Your opening').waitFor({ timeout: 60000 })
