@@ -227,8 +227,11 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
   host.appendChild(frame)
   const empty: MountedEffect = { seek: () => {}, destroy: () => frame.remove(), ready: Promise.resolve() }
   const load = effect && loadEffect(effect.id)
-  // Without its needed words a unit would fall back to its own sample words: nothing is drawn instead.
-  if (!effect || !load || !fxHasContent(spec.fields)) return empty
+  // Without its needed words a unit would fall back to its own sample words: nothing is drawn instead. Its pictures
+  // come with the spec (spec.image, spec.image_b), not in its fields: they count as given when the spec has them.
+  const given = { ...spec.fields }
+  for (const [field, url] of Object.entries(pictureUrls(spec))) if (url) given[field] = field
+  if (!effect || !load || !fxHasContent(given)) return empty
   const timing = fxTiming(effect, spec.fields, spec.duration_ms)
   const ownExit = effect.own_exit === true || (effect.fixed?.exit !== undefined && effect.fixed.exit !== 'none')
   const box = fxBox(spec, effect)
