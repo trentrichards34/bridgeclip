@@ -211,7 +211,8 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   // The automatic direction: the plan's graphic is on the strip, and Motion graphics and Stage layouts start on.
   assert.equal(await page.locator('[data-skill="motion_graphics"] [role="switch"]').getAttribute('aria-checked'), 'true')
   assert.equal(await page.locator('[data-skill="stage_layouts"] [role="switch"]').getAttribute('aria-checked'), 'true')
-  await page.getByRole('button', { name: /^Statement on “Most”/ }).waitFor()
+  // (The planner's plain statement comes out as a richer visual its words fit: a marker on its key word.)
+  await page.getByRole('button', { name: /^Marker on “Most”/ }).waitFor()
   // The edit style: Fast explainer switches its card on and its extras; the card's words can be changed.
   assert.equal(await page.getByRole('switch', { name: 'Half-screen graphic 1' }).getAttribute('aria-checked'), 'false')
   await page.getByRole('radiogroup', { name: 'Edit style' }).getByRole('radio', { name: /^Fast explainer/ }).click()
@@ -274,20 +275,20 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   const candidate = project.candidates[0]
   assert.equal(candidate.status, 'baked')
   assert.equal(candidate.hook.text, '15 billion messages are waiting')
-  // The plan's statement and the pinned logo (a Logo pop on "Fifteen"); the Fast explainer's card came while the logo showed,
-  // so it gave way (as pop-ups and cards always have). The test's camera shows no face (like a filmed screen), so no stage
-  // goes over it and the statement is a card.
+  // The plan's statement (a plain card: it comes out as a Marker effect on its line) and the pinned logo (a Logo pop on
+  // "Fifteen"); the Fast explainer's card came while the logo showed, so it gave way (as pop-ups and cards always have). The
+  // test's camera shows no face (like a filmed screen), so no stage goes over it and the effect is a card.
   // The call to action said at the end ("Follow me for more") gets its graphic with those words (spoken_cta).
   const kinds = candidate.graphics.map((g) => g.template).sort()
-  assert.deepEqual(kinds, ['link_cta', 'logo', 'statement'], JSON.stringify(candidate.graphics))
+  assert.deepEqual(kinds, ['fx', 'link_cta', 'logo'], JSON.stringify(candidate.graphics))
   const cta = candidate.graphics.find((g) => g.template === 'link_cta')
   assert.deepEqual([cta.origin, cta.fields.text, cta.fields.kind], ['auto', 'Follow me for more', 'follow'])
   await page.getByText(/1 pop-up or pinned image left out/).waitFor()
-  const statement = candidate.graphics.find((g) => g.template === 'statement')
-  assert.deepEqual([statement.origin, statement.size, statement.fields.text], ['auto', 'card', 'Most coaches lose clients.'])
-  assert.ok(statement.fields.word_ms, 'its words come in as they are said')
-  // Over a filmed screen (no face) a card takes one of its darker looks, never a white slab over the page.
-  assert.ok(['glass', 'bold'].includes(statement.fields.variant), statement.fields.variant)
+  const statement = candidate.graphics.find((g) => g.template === 'fx')
+  assert.deepEqual([statement.origin, statement.size, statement.fields.effect, statement.fields.text], ['auto', 'card', 'marker-highlight', 'Most coaches lose clients.'])
+  assert.ok(statement.fields.cue_ms, 'its marker lands on the word as it is said')
+  // The video's one look: light ink on dark (never a white slab over a filmed page).
+  assert.equal(statement.fields.theme, 'dark')
   assert.equal(candidate.stage_scenes, undefined)
   // The hook floats and hides after a few seconds (a directed reel); the Fast explainer's extras are the clip's, for the bake.
   assert.equal(candidate.hook.look.hideAfterS, 5)
@@ -319,14 +320,14 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   // The done screen opens the reel in the clip editor: its graphics are there to change (and Bake makes it again).
   await page.getByTestId('edit-open-editor').click()
   await page.getByRole('region', { name: 'Clip editor' }).waitFor()
-  await page.getByRole('button', { name: /^Statement at / }).first().waitFor()
-  await page.getByRole('button', { name: /^Statement at / }).first().click()
-  const statementWords = page.locator('textarea[aria-label^="Statement "]').first()
+  await page.getByRole('button', { name: /^Effect at / }).first().waitFor()
+  await page.getByRole('button', { name: /^Effect at / }).first().click()
+  const statementWords = page.getByLabel('Marker line', { exact: true }).first()
   assert.equal(await statementWords.inputValue(), 'Most coaches lose clients.')
   await statementWords.fill('Most coaches lose their clients.')
   await page.getByText('All changes saved', { exact: true }).waitFor()
   const saved = JSON.parse(fs.readFileSync(path.join(library, run, 'editor-project.json'), 'utf8'))
-  assert.equal(saved.candidates[0].graphics.find((g) => g.template === 'statement').fields.text, 'Most coaches lose their clients.')
+  assert.equal(saved.candidates[0].graphics.find((g) => g.template === 'fx').fields.text, 'Most coaches lose their clients.')
   await shot(app, 'edit-reel-editor.png')
   await page.getByRole('button', { name: 'Back to Edit my recording' }).click()
   await page.getByText('Your reel is ready').waitFor()

@@ -14,7 +14,7 @@ import { isCaptionLanguage, type CaptionLanguageChoice } from './caption-languag
 import { isCaptionPresetId } from './caption-presets'
 import { isCtaId } from './ctas'
 import { parseHeadlineLook, type HeadlineLook } from './headline-look'
-import { parseLookExtras, type LookExtraId } from './look-extras'
+import { isGraphicsRegister, parseLookExtras, type GraphicsRegister, type LookExtraId } from './look-extras'
 import { DURATION_IDS, isVideoSpeed } from './job-contract'
 import { HEADLINE_VOICES, QUALITY_BARS, SCREEN_FOCUS_MODES, TITLE_STYLES, type HeadlineVoice, type QualityBar, type ScreenFocus, type TitleStyle } from './jobs'
 import { isModelId } from './openrouter-models'
@@ -59,6 +59,8 @@ export interface CreateStyle {
   motionGraphics: boolean
   /** Stage layouts with motion graphics (Automatic, 9:16). */
   stageLayouts: boolean
+  /** How dense the motion graphics are (null: read from what is said; look-extras.ts GRAPHICS_REGISTERS). */
+  register: GraphicsRegister | null
   qualityBar: QualityBar
   headlineVoice: HeadlineVoice
   /** The brand whose niche, voice and offer guide the titles, and whose handle can be drawn. */
@@ -150,7 +152,7 @@ export const MAX_SAMPLE_VIDEO_LINK = 2048
 
 export const CREATE_STYLE_KEYS = [
   'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
-  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'brollSource', 'hookPreview', 'motionGraphics', 'stageLayouts', 'qualityBar', 'headlineVoice',
+  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'brollSource', 'hookPreview', 'motionGraphics', 'stageLayouts', 'register', 'qualityBar', 'headlineVoice',
   'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'captionLanguage', 'music', 'musicTrack', 'voiceCleanup'
 ] as const satisfies readonly (keyof CreateStyle)[]
 
@@ -208,6 +210,7 @@ const CREATE_CHECKS: { [K in keyof CreateStyle]: (value: unknown) => boolean } =
   hookPreview: bool,
   motionGraphics: bool,
   stageLayouts: bool,
+  register: nullOr(isGraphicsRegister),
   qualityBar: oneOf(QUALITY_BARS),
   headlineVoice: oneOf(HEADLINE_VOICES),
   brandIdentityId: nullOr(isBrandId),

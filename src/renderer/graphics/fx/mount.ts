@@ -60,14 +60,23 @@ const mixRgb = (a: [number, number, number], b: [number, number, number], k: num
 
 const px = (n: number): string => `${Math.round(n * 10) / 10}px`
 
-/** The theme tokens for a brand color and hook font: light ink over the video, the brand as the accent. */
-export function fxTokens(color: string, font: string, frame = 1080): Record<string, string> {
+/**
+ * The theme tokens for a brand color and hook font, the brand as the accent. `tone` is the video's one look (the
+ * engine's graphics director sets it on every effect): 'dark' (default) light ink on dark glass over the video,
+ * 'light' dark ink on white.
+ */
+export function fxTokens(color: string, font: string, frame = 1080, tone: 'dark' | 'light' = 'dark'): Record<string, string> {
   const c = rgb(color)
-  // On dark glass and over video a very dark brand color is lifted so it still reads.
-  const brand = lum(c) >= 90 ? `rgb(${c.join(', ')})` : mixRgb(c, [255, 255, 255], Math.min(.55, (90 - lum(c)) / 160 + .18))
+  const light = tone === 'light'
+  // On dark glass and over video a very dark brand color is lifted so it still reads (on white, a very light one is deepened).
+  const brand = light ? (lum(c) <= 170 ? `rgb(${c.join(', ')})` : mixRgb(c, [0, 0, 0], Math.min(.5, (lum(c) - 170) / 170 + .15)))
+    : lum(c) >= 90 ? `rgb(${c.join(', ')})` : mixRgb(c, [255, 255, 255], Math.min(.55, (90 - lum(c)) / 160 + .18))
+  const ink = light
+    ? { '--fg': '#0F172A', '--muted': 'rgba(51, 65, 85, 0.78)', '--surface': 'rgba(255, 255, 255, 0.96)', '--border': 'rgba(15, 23, 42, 0.12)' }
+    : { '--fg': '#F8FAFC', '--muted': 'rgba(226, 232, 240, 0.74)', '--surface': 'rgba(15, 18, 26, 0.9)', '--border': 'rgba(255, 255, 255, 0.16)' }
   return {
-    '--bg': 'transparent', '--fg': '#F8FAFC', '--muted': 'rgba(226, 232, 240, 0.74)', '--surface': 'rgba(15, 18, 26, 0.9)', '--border': 'rgba(255, 255, 255, 0.16)',
-    '--brand': brand, '--accent': brand, '--accent-2': mixRgb(c, [255, 255, 255], .38),
+    '--bg': 'transparent', ...ink,
+    '--brand': brand, '--accent': brand, '--accent-2': mixRgb(c, light ? [0, 0, 0] : [255, 255, 255], light ? .25 : .38),
     '--font-display': DISPLAY[font] ?? DISPLAY.clean, '--font-body': '"MG Jakarta", sans-serif', '--font-mono': 'MG Mono, ui-monospace, monospace',
     // Spacing is measured against the whole frame, as in a HyperFrames composition (its theme packs say 1.2cqmin of a
     // 1080-high frame): inside our box `cqmin` would be the band's, and gaps between words would shrink to nothing.
@@ -101,14 +110,15 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
   const ownExit = effect.fixed?.exit !== undefined && effect.fixed.exit !== 'none'
   const box = fxBox(spec, effect)
   const stage = document.createElement('div')
-  stage.className = `fx-stage${effect.backing === 'glass' && spec.fields.backing !== 'none' ? ' fx-glass' : ''}`
+  const tone = spec.fields.theme === 'light' ? 'light' : 'dark'
+  stage.className = `fx-stage${effect.backing === 'glass' && spec.fields.backing !== 'none' ? ' fx-glass' : ''}${tone === 'light' ? ' fx-light' : ''}`
   // The unit's scale is applied only once it is built (apply), so anything it measures while building is unscaled.
   Object.assign(stage.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px`, visibility: 'hidden' })
   // The glass keeps its size on a scaled unit (it backs the words, not the box).
   if (effect.scale && effect.scale > 1) stage.style.setProperty('--fx-glass-inset', `${((1 - .92 / effect.scale) / 2 * 100).toFixed(2)}% ${((1 - .96 / effect.scale) / 2 * 100).toFixed(2)}%`)
   frame.appendChild(stage)
   const shadow = stage.attachShadow({ mode: 'open' })
-  const tokens = fxTokens(spec.color, spec.font, Math.min(spec.width, spec.height))
+  const tokens = fxTokens(spec.color, spec.font, Math.min(spec.width, spec.height), tone)
   let timeline: Timeline | null = null
   let context: gsap.Context | null = null
   let pending = -1

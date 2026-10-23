@@ -30,6 +30,21 @@ export function parseLookExtras(value: unknown): LookExtraId[] {
   return LOOK_EXTRA_IDS.filter((id) => picked.has(id))
 }
 
+/**
+ * `register`: how dense the automatic motion graphics are (the engine's graphics director). Teaching: a graphic on
+ * every number, list and key point; story: about half as many, the face carries personal moments; minimal: only the
+ * hook, numbers and the call to action. Unset: the engine reads it from what is said.
+ */
+export const GRAPHICS_REGISTERS = [
+  { id: 'teaching', label: 'Teaching', detail: 'A graphic on each number, list and key point.' },
+  { id: 'story', label: 'Story', detail: 'About half as many. Personal moments stay on your face.' },
+  { id: 'minimal', label: 'Minimal', detail: 'Only the hook, the numbers and the call to action.' }
+] as const
+export type GraphicsRegister = (typeof GRAPHICS_REGISTERS)[number]['id']
+export function isGraphicsRegister(value: unknown): value is GraphicsRegister {
+  return typeof value === 'string' && GRAPHICS_REGISTERS.some((r) => r.id === value)
+}
+
 /** Hook text fonts, including the pairings seen in current reels (a headline font plus an accent font). */
 export const HOOK_FONT_PAIRS = [
   { id: 'marker', label: 'Marker', detail: 'Hand-drawn capitals, like a marker on the screen.' },

@@ -562,7 +562,7 @@ export function startClipJob(
     ...(backgroundPath ? { background_video_path: backgroundPath } : {}),
     ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook', ...brollFields } : {}),
     ...(config.hookPreview ? { hook_preview: true } : {}),
-    ...(config.motionGraphics && config.workflow !== 'review' ? { motion_graphics: true, ...(config.stageLayouts ? { stage_layouts: true } : {}) } : {}),
+    ...(config.motionGraphics && config.workflow !== 'review' ? { motion_graphics: true, ...(config.stageLayouts ? { stage_layouts: true } : {}), ...(config.register ? { register: config.register } : {}) } : {}),
     ...(audio ? { audio } : {}),
     quality_bar: config.qualityBar ?? 'b',
     headline_voice: config.headlineVoice ?? 'clipper',

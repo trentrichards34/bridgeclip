@@ -38,8 +38,17 @@ from typing import Any, Iterable, Optional, Sequence
 # picture or eye). headline_pill only when the member's own hook text is off; comment_cta only with a CTA keyword.
 # Diagrams: white line art (on a solid backdrop in a Visual scene, or a blue panel over the video) whose labels light up as said.
 DIAGRAMS = ('staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks')
+# 'fx': an Effect (a HyperFrames unit; data/fx_catalog.json, from src/shared/fx-catalog.ts) with its own fields: the planner
+# may place the AUTO_FX ones (graphics_director.py picks and checks them).
 AUTO_TEMPLATES = ('stat', 'title', 'list', 'checklist', 'before_after', 'quote', 'lower_third',
-                  'statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta', 'orbit', 'feature_tile') + DIAGRAMS
+                  'statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta', 'orbit', 'feature_tile') + DIAGRAMS + ('fx',)
+AUTO_FX = (
+    'count-up', 'number-pop-in', 'conic-progress-ring', 'star-rating-fill', 'chart-story', 'decline-chart', 'trust-strip',
+    'headline-slam', 'per-word-rise', 'kinetic-center-build', 'kinetic-type-swap', 'line-swap', 'caret-swap', 'marker-highlight',
+    'vox-annotate', 'scramble-reveal', 'ticker-takeover', 'typed-prompt', 'typing-indicator', 'strikethrough-replace',
+    'marker-checklist-card', 'constellation-hub', 'locked-nucleus-orbit', 'radial-surround', 'overwhelm-surround', 'state-chip-rail',
+    'notification-stack', 'testimonial-proof-card', 'cta-lockup',
+)
 TEMPLATE_FIELDS = {
     'stat': ('value', 'label'), 'title': ('text',), 'list': ('title', 'items', 'icons'), 'checklist': ('title', 'items', 'icons'),
     'before_after': ('before', 'after'), 'quote': ('text', 'author'), 'lower_third': ('name', 'role'),
@@ -48,11 +57,10 @@ TEMPLATE_FIELDS = {
     'orbit': ('text', 'items', 'icons'), 'feature_tile': ('items', 'icons'),
     'staircase': ('title', 'items', 'icons'), 'funnel': ('title', 'items'), 'journey': ('title', 'items'),
     'idea_hub': ('text', 'items', 'icon'), 'compare_marks': ('items', 'notes', 'wrong'), 'growth': ('title', 'items', 'style'),
+    'fx': ('effect',),
 }
 # Templates a saved run may carry (the editor's other templates are never automatic).
-# 'fx': an Effect (a HyperFrames unit; data/fx_catalog.json, from src/shared/fx-catalog.ts) with its own fields. The
-# planner doesn't place effects yet; saved runs and the review may carry ones the member added.
-SAVED_TEMPLATES = AUTO_TEMPLATES + ('browser_frame', 'big_words', 'chapter', 'link_cta', 'fx')
+SAVED_TEMPLATES = AUTO_TEMPLATES + ('browser_frame', 'big_words', 'chapter', 'link_cta')
 SAVED_FIELDS = {**TEMPLATE_FIELDS, 'browser_frame': ('domain', 'title', 'accent', 'subline'), 'big_words': ('text', 'style', 'vertical', 'motion'),
                 'chapter': ('label', 'title', 'style'), 'growth': ('title', 'items', 'style'),
                 # The spoken call to action (spoken_cta.py): added after the planner's cards, never planned.
@@ -83,7 +91,8 @@ GRAPHIC_ICONS = (
 )
 PLACEMENTS = ('top', 'middle', 'bottom')
 # Fields that hold choices, icons or times rather than words said (never checked against the transcript).
-NON_WORD_FIELDS = ('icons', 'item_ms', 'word_ms', 'keyword', 'icon', 'wrong', 'style', 'variant', 'panel', 'labels', 'dot')
+NON_WORD_FIELDS = ('icons', 'item_ms', 'word_ms', 'cue_ms', 'keyword', 'icon', 'wrong', 'style', 'variant', 'panel', 'labels', 'dot',
+                   'effect', 'backing', 'theme')
 # Each template's looks (mirror of GRAPHIC_VARIANTS in src/shared/motion-graphics.ts). The first is the classic look, drawn
 # when a graphic has no `variant` field (graphics saved before looks existed); ROTATION is the order automatic graphics
 # take them in, so repeats of a template never look the same twice in a row.
@@ -169,6 +178,20 @@ _WORD = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
 _HAS_DIGIT = re.compile(r'\d')
 _KEYWORD = re.compile(r'^[A-Za-z0-9][A-Za-z0-9 _-]{0,23}$')
 
+FX_CATALOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'fx_catalog.json')
+
+
+@lru_cache(maxsize=1)
+def fx_catalog() -> dict[str, dict]:
+    """The Effects catalog by effect id (data/fx_catalog.json): fields, jobs, use_when, avoid_when, hold, sound."""
+    try:
+        with open(FX_CATALOG_PATH, encoding='utf-8') as f:
+            data = json.load(f)
+        return {e['id']: e for e in data.get('effects', []) if isinstance(e, dict) and isinstance(e.get('id'), str)}
+    except (OSError, ValueError):
+        return {}
+
+
 GRAPHIC_SCHEMA: dict[str, Any] = {
     'type': 'object',
     'properties': {
@@ -204,8 +227,13 @@ GRAPHIC_SCHEMA: dict[str, Any] = {
         'wrong': {'type': 'string', 'enum': ['first', 'second', ''], 'description': 'compare_marks: which card is the wrong way (gets the red cross).'},
         'icon': {'type': 'string', 'enum': ['', *GRAPHIC_ICONS], 'description': 'idea_hub: the center icon (default "idea", a light bulb).'},
         'lead': {'type': 'string', 'description': 'comment_cta: the word over the keyword ("Comment"), or "".'},
+        'effect': {'type': 'string', 'enum': ['', *AUTO_FX], 'description': 'fx: the effect (see EFFECTS); else "".'},
+        'fx_fields': {'type': 'array', 'description': 'fx: the effect\'s fields as said, e.g. [{"key": "value", "value": "4,215"}, '
+                                                      '{"key": "prefix", "value": "$"}]; else [].',
+                      'items': {'type': 'object', 'additionalProperties': False, 'required': ['key', 'value'],
+                                'properties': {'key': {'type': 'string'}, 'value': {'type': 'string'}}}},
     },
-    'required': ['template', 'time', 'seconds', 'placement', *ALL_FIELDS],
+    'required': ['template', 'time', 'seconds', 'placement', *ALL_FIELDS, 'effect', 'fx_fields'],
     'additionalProperties': False,
 }
 
@@ -214,7 +242,7 @@ _RULE_HEAD = (
     'Not every second needs one, but a good clip has a visual about every 6-8 seconds while the speaker explains something '
     '(at most {limit} per minute). Pick the pattern that fits what is said:\n'
     '- a contrast like "not X, not Y, just Z" -> "strike_list": items X, Y (the rejected things), final Z, accent the key word of Z;\n'
-    '- a core claim or a punchy one-liner -> "statement": text as said, accent = its key word(s) (inside text), subline only if said;\n'
+    '- a core claim (rarely: see PICK THE VISUAL) -> "statement": text as said, accent = its key word(s) (inside text), subline only if said;\n'
     '- 2-3 short parallel phrases said one after another -> "sticky_notes": items, each 1-4 words;\n'
     '- steps or a list -> "list" (or "checklist" for things to do), items in order;\n'
     '- a number or result said -> "stat": value and label;\n'
@@ -257,7 +285,10 @@ def motion_graphics_rule(options: Optional[dict] = None) -> str:
     if keyword:
         rule += (f'- the speaker asks viewers to comment: "comment_cta" with keyword exactly "{keyword}" and lead "Comment", at the moment '
                  'they ask (never in the last 4 seconds: the keyword shows there already);\n')
-    return rule + _RULE_TAIL
+    from clip_engine.services.graphics_director import director_rule, hints_block
+    register = options.get('register') if options.get('register') in ('teaching', 'story', 'minimal') else None
+    hints = options.get('hints') if isinstance(options.get('hints'), str) else ''
+    return rule + director_rule(register, bool(keyword)) + hints_block(hints[:6000]) + _RULE_TAIL
 
 
 MOTION_GRAPHICS_RULE = motion_graphics_rule()
@@ -286,20 +317,6 @@ def _lines(value: Any, limit: int) -> list[str]:
     return [line for line in lines if line][:limit]
 
 
-FX_CATALOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'fx_catalog.json')
-
-
-@lru_cache(maxsize=1)
-def fx_catalog() -> dict[str, dict]:
-    """The Effects catalog by effect id (data/fx_catalog.json): fields, jobs, use_when, avoid_when, hold, sound."""
-    try:
-        with open(FX_CATALOG_PATH, encoding='utf-8') as f:
-            data = json.load(f)
-        return {e['id']: e for e in data.get('effects', []) if isinstance(e, dict) and isinstance(e.get('id'), str)}
-    except (OSError, ValueError):
-        return {}
-
-
 def fx_clean_fields(raw: dict) -> dict[str, str]:
     """An effect's fields: a known effect, then its own fields by kind (text, number, list one per line, choice);
     nothing else. Empty when the effect is unknown."""
@@ -312,7 +329,7 @@ def fx_clean_fields(raw: dict) -> dict[str, str]:
         if f['kind'] == 'list':
             lines = _lines(value, 8)
             if lines:
-                fields[f['key']] = '\n'.join(line[:f.get('max', MAX_ITEM_CHARS)] for line in lines)
+                fields[f['key']] = '\n'.join(_cut(line, f.get('max', MAX_ITEM_CHARS)) for line in lines)
         elif f['kind'] == 'choice':
             if value in f.get('options', ()):
                 fields[f['key']] = value
@@ -321,12 +338,36 @@ def fx_clean_fields(raw: dict) -> dict[str, str]:
             if _HAS_DIGIT.search(text):
                 fields[f['key']] = text
         else:
-            text = _text(value, f.get('max', MAX_FIELD_CHARS))
+            text = _cut(_text(value), f.get('max', MAX_FIELD_CHARS))
             if text:
                 fields[f['key']] = text
     if raw.get('backing') == 'none':
         fields['backing'] = 'none'
+    # The video's one look (graphics_director.with_look): 'light' or 'dark' theme tokens.
+    if raw.get('theme') in ('light', 'dark'):
+        fields['theme'] = raw['theme']
     return fields
+
+
+def _cut(text: str, limit: int) -> str:
+    """Text at most `limit` characters, cut at a word (never half a word on screen)."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit + 1].rsplit(' ', 1)[0] if ' ' in text[:limit + 1] else ''
+    return cut.rstrip(' ,;:-')
+
+
+def fx_too_long(raw: dict) -> bool:
+    """A planned effect with a text or item longer than the effect holds (cut, it would show words not said as said)."""
+    effect = fx_catalog().get(raw.get('effect')) if isinstance(raw.get('effect'), str) else None
+    for f in (effect or {}).get('fields', []):
+        value, limit = raw.get(f['key']), f.get('max')
+        if not limit or f['kind'] not in ('text', 'list'):
+            continue
+        parts = value if isinstance(value, list) else str(value or '').split('\n') if f['kind'] == 'list' else [str(value or '')]
+        if any(len(' '.join(str(p).split())) > limit for p in parts):
+            return True
+    return False
 
 
 def fx_has_content(fields: dict[str, str]) -> bool:
@@ -426,7 +467,10 @@ def _options(options: Optional[dict]) -> dict:
             # Headline pills as cards anywhere in the video (Edit my recording), not only as the clip's hook.
             'pill_cards': bool(options.get('pill_cards')),
             # Free time kept between two graphics (ms), so they don't run back to back.
-            'gap_ms': int(options['gap_ms']) if type(options.get('gap_ms')) is int and 0 <= options['gap_ms'] <= 10000 else 0}
+            'gap_ms': int(options['gap_ms']) if type(options.get('gap_ms')) is int and 0 <= options['gap_ms'] <= 10000 else 0,
+            # How dense (teaching | story | minimal; None: detected from the words) and the video's one look.
+            'register': options.get('register') if options.get('register') in ('teaching', 'story', 'minimal') else None,
+            'tone': options.get('tone') if options.get('tone') in ('light', 'dark') else None}
 
 
 def parse_planned(raw: Any, start_ms: int, end_ms: int, options: Optional[dict] = None) -> list[dict]:
@@ -448,6 +492,13 @@ def parse_planned(raw: Any, start_ms: int, end_ms: int, options: Optional[dict] 
             if not opts['cta_keyword'] or clean_keyword(item.get('keyword')).lower() != opts['cta_keyword'].lower():
                 continue
             item = {**item, 'keyword': opts['cta_keyword']}
+        if template == 'fx':
+            from clip_engine.services.graphics_director import fx_raw_fields
+            if item.get('effect') not in AUTO_FX:
+                continue
+            item = {**item, **fx_raw_fields(item)}
+            if fx_too_long(item):
+                continue
         time, seconds = _number(item.get('time')), _number(item.get('seconds'))
         if time is None:
             continue
@@ -456,6 +507,11 @@ def parse_planned(raw: Any, start_ms: int, end_ms: int, options: Optional[dict] 
             continue
         duration = round(seconds * 1000) if seconds is not None else DEFAULT_MS[template]
         fields = clean_fields(template, item, SAVED_FIELDS)
+        if template == 'fx' and fields:
+            # An effect holds about its catalog time (short punches 1-3 s); its words then place it (graphics_director.fx_timed).
+            from clip_engine.services.graphics_director import fx_hold_ms
+            hold = fx_hold_ms(fields['effect'])
+            duration = max(hold, min(duration, hold + 2500))
         if not has_content(template, fields):
             continue
         placement = item.get('placement') if item.get('placement') in PLACEMENTS else (
@@ -713,8 +769,17 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
         effect = fx_catalog().get(graphic['fields'].get('effect'))
         if not effect:
             return False
-        said = {f['key'] for f in effect['fields'] if f['said']}
-        graphic = {**graphic, 'fields': {k: v for k, v in graphic['fields'].items() if k in said}}
+        from clip_engine.services.graphics_director import UNIT_FIELDS, fx_words_ok
+        if not fx_words_ok(graphic, segments):
+            return False
+        # (Units like "x" or "k" on a number are checked by fx_words_ok.)
+        said = {f['key'] for f in effect['fields'] if f['said'] and f['key'] not in UNIT_FIELDS}
+        fields = {k: v for k, v in graphic['fields'].items() if k in said}
+        if fields.get('value') and _HAS_DIGIT.search(fields['value']):
+            # A number with its unit as said ("3" + " million" is 3 million; "10" + "x" is 10).
+            unit = graphic['fields'].get('suffix') or graphic['fields'].get('unit') or ''
+            fields['value'] = f"{fields['value']}{unit if unit[:1] in ('%', ' ') or len(unit) <= 2 else ' ' + unit}"
+        graphic = {**graphic, 'fields': fields}
     near_numbers = _numbers(_words_between(segments, at - NUMBER_WINDOW_MS, at + NUMBER_WINDOW_MS))
     for key, text in graphic['fields'].items():
         if key in NON_WORD_FIELDS:
@@ -1058,19 +1123,29 @@ def window(ranges: Sequence[Sequence[float]], speed: float, at: float, length: f
     return round(start / speed), round(kept / speed)
 
 
-_PRIORITY = {'stat': 6, 'strike_list': 6, 'list': 5, 'checklist': 5, 'statement': 5, 'headline_pill': 5, 'sticky_notes': 4,
+_PRIORITY = {'stat': 6, 'strike_list': 6, 'list': 5, 'checklist': 5, 'statement': 3, 'headline_pill': 5, 'sticky_notes': 3,
              'icon_pop': 4, 'before_after': 4, 'lower_third': 4, 'comment_cta': 3, 'quote': 2, 'title': 1, 'browser_frame': 4,
-             'orbit': 5, 'feature_tile': 4, 'big_words': 3, **{t: 7 for t in DIAGRAMS}}
+             'orbit': 5, 'feature_tile': 4, 'big_words': 3, **{t: 7 for t in DIAGRAMS}, 'fx': 5}
+# Effects by kind: the proof and the frameworks first, the emphasis effects like a headline pill.
+_FX_PRIORITY = {'chart-story': 7, 'decline-chart': 7, 'marker-checklist-card': 7, 'constellation-hub': 6, 'radial-surround': 6,
+                'state-chip-rail': 6, 'strikethrough-replace': 6, 'count-up': 6, 'number-pop-in': 6, 'conic-progress-ring': 6,
+                'star-rating-fill': 6, 'testimonial-proof-card': 6, 'cta-lockup': 3}
 
 
 def _priority(g: dict) -> int:
-    fields = ' '.join(v for k, v in g['fields'].items() if k not in ('item_ms', 'word_ms'))
-    return _PRIORITY.get(g['template'], 1) + (2 if _HAS_DIGIT.search(fields) else 0)
+    fields = ' '.join(v for k, v in g['fields'].items() if k not in ('item_ms', 'word_ms', 'cue_ms', 'effect'))
+    base = _FX_PRIORITY.get(g['fields'].get('effect'), 5) if g['template'] == 'fx' else _PRIORITY.get(g['template'], 1)
+    return base + (2 if _HAS_DIGIT.search(fields) else 0)
 
 
-def max_cards(output_length_ms: float) -> int:
-    """How many cards a clip of this (finished) length gets: about one per 6.5 s, at most five a minute."""
+def max_cards(output_length_ms: float, register: Optional[str] = None) -> int:
+    """How many cards a clip of this (finished) length gets: about one per 6.5 s, at most five a minute; with a register
+    (graphics_director.seconds_per_graphic), its pace: teaching one per 6.5 s under a minute and one per 10 s up to three,
+    a story about half, minimal only a few."""
     seconds = max(0.0, output_length_ms / 1000)
+    if register:
+        from clip_engine.services.graphics_director import graphics_count
+        return graphics_count(seconds, register, MAX_PER_CLIP)
     by_pace = int(seconds // SECONDS_PER_CARD)
     by_minute = max(4, math.ceil(CARDS_PER_MINUTE * seconds / 60))
     return max(1, min(MAX_PER_CLIP, by_pace, by_minute))
@@ -1105,6 +1180,9 @@ VARIETY_CAPS = {
     'stat': (3, 6), 'list': (1, 3), 'checklist': (1, 3), 'before_after': (1, 2), 'strike_list': (1, 2), 'icon_pop': (1.5, 4),
     'orbit': (1, 3), 'feature_tile': (1.5, 4), 'lower_third': (1, 2), 'comment_cta': (1, 2), 'browser_frame': (1, 3),
     **{d: (1, 2) for d in DIAGRAMS},
+    # Effects count as their own kinds ("fx:count-up"); numbers come back more often than the rest.
+    'fx:count-up': (3, 6), 'fx:number-pop-in': (2, 4), 'fx:conic-progress-ring': (1, 2), 'fx:star-rating-fill': (1, 2),
+    'fx:chart-story': (1, 2), 'fx:decline-chart': (1, 2), 'fx:marker-highlight': (1.5, 4), 'fx:cta-lockup': (1, 1),
 }
 VARIETY_DEFAULT = (1.5, 4)
 # A template never comes back sooner than this after itself (a short clip: a quarter of its length, at least 8 s) and
@@ -1168,8 +1246,14 @@ def icon_for(text: str) -> str:
     return ''
 
 
+def kind_of(g: dict) -> str:
+    """A graphic's kind for the variety rules: its template, or "fx:<effect>" for an effect."""
+    from clip_engine.services.graphics_director import kind_of as kind
+    return kind(g)
+
+
 def template_cap(template: str, seconds: float) -> int:
-    """The most graphics of one template a video this long keeps."""
+    """The most graphics of one kind (a template, or fx:<effect>) a video this long keeps."""
     per_minute, total = VARIETY_CAPS.get(template, VARIETY_DEFAULT)
     return max(1, min(total, math.ceil(per_minute * max(0.0, seconds) / 60 - 1e-9)))
 
@@ -1196,6 +1280,9 @@ def _items_of(g: dict) -> list[str]:
     t = g['template']
     if t in ('statement', 'quote', 'title', 'big_words', 'headline_pill'):
         return []
+    if t == 'fx':
+        from clip_engine.services.graphics_director import fx_cue_units
+        return fx_cue_units(f) if (fx_catalog().get(f.get('effect')) or {}).get('cue', {}).get('unit') == 'item' else []
     return [line for line in f.get('items', '').split('\n') if line.strip()]
 
 
@@ -1204,6 +1291,8 @@ def _line_of(g: dict) -> str:
     f = g['fields']
     if g['template'] == 'headline_pill':
         return ' '.join(x for x in (f.get('text', ''), f.get('phrase', '')) if x)
+    if g['template'] == 'fx':
+        return f.get('text', '') if 'text' in f else ''
     return f.get('text', '')
 
 
@@ -1287,7 +1376,8 @@ def converted(g: dict, to: str) -> Optional[dict]:
 
 def _same_too_close(g: dict, kept: Sequence[dict], seconds: float, adjacent: bool = True) -> bool:
     gap = same_gap_ms(seconds)
-    same = [k for k in kept if k['template'] == g['template']]
+    kind = kind_of(g)
+    same = [k for k in kept if kind_of(k) == kind]
     if any(abs(k['at_ms'] - g['at_ms']) < gap for k in same):
         return True
     if not adjacent:
@@ -1295,7 +1385,7 @@ def _same_too_close(g: dict, kept: Sequence[dict], seconds: float, adjacent: boo
     # The very next graphic of the same template (nothing else between them), unless far apart.
     for k in same:
         lo, hi = sorted((k['at_ms'], g['at_ms']))
-        if hi - lo < gap * SAME_ADJACENT and not any(lo < o['at_ms'] < hi for o in kept if o['template'] not in ('chapter', g['template'])):
+        if hi - lo < gap * SAME_ADJACENT and not any(lo < o['at_ms'] < hi for o in kept if o['template'] != 'chapter' and kind_of(o) != kind):
             return True
     return False
 
@@ -1305,7 +1395,9 @@ def variety_allows(g: dict, kept: Sequence[dict], seconds: float, adjacent: bool
     as the very next graphic, unless far apart; checked once every card is placed: no_repeats_in_a_row)."""
     if g['template'] == 'chapter':
         return True
-    if sum(1 for k in kept if k['template'] == g['template']) >= template_cap(g['template'], seconds):
+    from clip_engine.services.graphics_director import group_allows
+    kind = kind_of(g)
+    if sum(1 for k in kept if kind_of(k) == kind) >= template_cap(kind, seconds) or not group_allows(kind, kept, seconds):
         return False
     return not _same_too_close(g, kept, seconds, adjacent)
 
@@ -1314,6 +1406,9 @@ def _fits_words(g: dict, segments: Sequence) -> Optional[dict]:
     """A converted card checked like a planned one: its words said, items in order; a diagram on its span. None when not."""
     if not has_content(g['template'], g['fields']) or not words_said(g, segments):
         return None
+    if g['template'] == 'fx':
+        from clip_engine.services.graphics_director import fx_timed
+        return fx_timed(g, segments)
     if g['template'] in DIAGRAMS:
         span = diagram_span(g, segments)
         if span is None:
@@ -1328,17 +1423,23 @@ def varied(g: dict, kept: Sequence[dict], segments: Sequence, seconds: float, al
     """`g` as it can join `kept`: unchanged when the variety rules allow it, else the first richer template its words fit
     (and that the rules allow), else None. (Cards are placed strongest first: a weaker one placed later between two of a
     kind is fine; no_repeats_in_a_row checks the final order once more.)"""
-    if variety_allows(g, kept, seconds, adjacent):
+    from clip_engine.services.graphics_director import CONVERSIONS as TO, PLAIN, convert
+    kind = kind_of(g)
+    # A plain text card is a fallback: a richer visual its words fit comes first.
+    plain = kind in PLAIN
+    if not plain and variety_allows(g, kept, seconds, adjacent):
         return g
-    for to in CONVERSIONS.get(g['template'], ()):
-        if to not in allowed:
+    for to in TO.get(kind, ()):
+        if (to.split(':')[0] if to.startswith('fx:') else to) not in allowed:
             continue
-        c = converted(g, to)
+        c = convert(g, to)
         if c is None or not variety_allows(c, kept, seconds, adjacent):
             continue
         c = _fits_words(c, segments)
         if c is not None and variety_allows(c, kept, seconds, adjacent):
             return c
+    if plain and variety_allows(g, kept, seconds, adjacent):
+        return g
     return None
 
 
@@ -1351,12 +1452,12 @@ def no_repeats_in_a_row(kept: list[dict], segments: Sequence, seconds: float, al
         changed = False
         shown = [g for g in out if g['template'] != 'chapter']
         for a, b in zip(shown, shown[1:]):
-            if a['template'] != b['template'] or b['at_ms'] - a['at_ms'] >= same_gap_ms(seconds) * SAME_ADJACENT:
+            if kind_of(a) != kind_of(b) or b['at_ms'] - a['at_ms'] >= same_gap_ms(seconds) * SAME_ADJACENT:
                 continue
             weak = a if _priority(a) < _priority(b) else b
             rest = [g for g in out if g is not weak]
             c = varied(weak, rest, segments, seconds, allowed, adjacent=True)
-            if c is not None and c['template'] != weak['template'] and not clash(c, rest):
+            if c is not None and kind_of(c) != kind_of(weak) and not clash(c, rest):
                 out[out.index(weak)] = c
             else:
                 out.remove(weak)
@@ -1368,23 +1469,24 @@ def no_repeats_in_a_row(kept: list[dict], segments: Sequence, seconds: float, al
 def widen(kept: list[dict], segments: Sequence, seconds: float, allowed: Sequence[str], clash: Any) -> list[dict]:
     """A video that still uses too few templates: some cards of the most used ones become templates not used yet (when
     their words fit and the rules allow). `clash(g, others)`: True when g would overlap another card."""
+    from clip_engine.services.graphics_director import CONVERSIONS as TO, convert
     want = min_distinct(seconds)
-    used = {k['template'] for k in kept if k['template'] != 'chapter'}
+    used = {kind_of(k) for k in kept if k['template'] != 'chapter'}
     if not want or len(used) >= want:
         return kept
     out = list(kept)
     for _ in range(len(out)):
-        used = {k['template'] for k in out if k['template'] != 'chapter'}
+        used = {kind_of(k) for k in out if k['template'] != 'chapter'}
         if len(used) >= want:
             break
-        counts = {t: sum(1 for k in out if k['template'] == t) for t in used}
+        counts = {t: sum(1 for k in out if kind_of(k) == t) for t in used}
         changed = False
-        for k in sorted((k for k in out if counts.get(k['template'], 0) > 1), key=lambda k: (-counts[k['template']], k['at_ms'])):
+        for k in sorted((k for k in out if counts.get(kind_of(k), 0) > 1), key=lambda k: (-counts[kind_of(k)], k['at_ms'])):
             rest = [x for x in out if x is not k]
-            for to in CONVERSIONS.get(k['template'], ()):
-                if to in used or to not in allowed:
+            for to in TO.get(kind_of(k), ()):
+                if to in used or (to.split(':')[0] if to.startswith('fx:') else to) not in allowed:
                     continue
-                c = converted(k, to)
+                c = convert(k, to)
                 c = _fits_words(c, segments) if c is not None else None
                 if c is None or not variety_allows(c, rest, seconds, adjacent=True) or clash(c, rest):
                     continue
@@ -1438,8 +1540,17 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
     ranges = [(float(a), float(b)) for a, b in ranges if b > a]
     if not ranges or not 1 <= speed <= 2:
         return []
+    from clip_engine.services import graphics_director as director
     clip_end = ranges[-1][1]
     total_out = sum(b - a for a, b in ranges) / speed
+    # The director (with the variety rules on: planning, not re-timing one graphic): the moments in the clip, its register,
+    # the story stretches that stay on the face.
+    register, stories = None, []
+    if opts['variety']:
+        clip_segments = [seg for seg in segments if seg.end_time_ms >= ranges[0][0] and seg.start_time_ms <= clip_end]
+        cues = director.find_cues(clip_segments)
+        register = opts['register'] or director.detect_register(cues, total_out * speed)
+        stories = director.story_spans(cues)
     # The comment keyword's tail (output time), when the clip shows one.
     tail = max(total_out / 2, total_out - CTA_TAIL_MS) if opts['cta_keyword'] else total_out
     candidates = []
@@ -1451,9 +1562,11 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
             continue
         if template == 'comment_cta' and (not opts['cta_keyword'] or g['fields'].get('keyword', '').lower() != opts['cta_keyword'].lower()):
             continue
-        g = {**g, 'fields': {k: v for k, v in g['fields'].items() if k not in ('item_ms', 'word_ms')}}
+        g = {**g, 'fields': {k: v for k, v in g['fields'].items() if k not in ('item_ms', 'word_ms', 'cue_ms')}}
         g = drop_unsaid_extras(g, segments)
         if not words_said(g, segments):
+            continue
+        if register and not director.register_allows(director.kind_of(g), register):
             continue
         if template in DIAGRAMS:
             # On screen while it is talked through: from its first item to a little after its last.
@@ -1461,8 +1574,13 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
             if span is None:
                 continue
             g = {**g, 'at_ms': span[0], 'duration_ms': span[1]}
+        if template == 'fx':
+            # Its beat lands on the spoken word; it holds its catalog time.
+            g = director.fx_timed(g, segments)
+        if stories and director.kind_of(g) not in director.STORY_EXEMPT and director.in_story(g, stories):
+            continue
         at, length = float(g['at_ms']), float(g['duration_ms'])
-        start = spoken_start(g, segments) if template not in DIAGRAMS else None
+        start = spoken_start(g, segments) if template not in DIAGRAMS and template != 'fx' else None
         if start is not None and start != at:
             # On its first word, ending when it would have (at least its usual length when it moved later).
             end = max(at + length, start + min(length, DEFAULT_MS[template]))
@@ -1510,7 +1628,7 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
     # One diagram per section: the sections are the chapters when there are some.
     section = lambda t: sum(1 for c in chapters if c['at_ms'] <= t)  # noqa: E731
     kept: list[dict] = []
-    limit = opts['max_cards'] or max_cards(total_out)
+    limit = opts['max_cards'] or max_cards(total_out, register)
     seconds = total_out / 1000
     # The templates a card may become to keep the video varied (a headline pill only where it is a card, not the hook).
     allowed = [t for t in opts['templates'] if t not in ('headline_pill', 'comment_cta') or (t == 'headline_pill' and opts['pill_cards'])]
@@ -1532,6 +1650,13 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
                 continue
         if diagram_near(g, kept):
             continue
+        if g['template'] == 'fx':
+            # An effect that leads its beat may start a little later (its beat lands a touch late) rather than crowd the one before.
+            before = [k['at_ms'] + k['duration_ms'] + pad + GAP_MS for k in kept
+                      if k['at_ms'] <= g['at_ms'] < k['at_ms'] + k['duration_ms'] + pad + GAP_MS]
+            shift = max(before) - g['at_ms'] if before else 0
+            if 0 < shift <= director.FX_MAX_LEAD_MS:
+                g = {**g, 'at_ms': g['at_ms'] + shift}
         # (With free time kept between graphics, `pad` counts as part of each one.)
         clash = [k for k in kept if g['at_ms'] < k['at_ms'] + k['duration_ms'] + pad and k['at_ms'] < g['at_ms'] + g['duration_ms'] + pad]
         if clash:
@@ -1555,7 +1680,8 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
         kept = no_repeats_in_a_row(kept, segments, seconds, allowed, crowded)
         kept = widen(kept, segments, seconds, allowed, crowded)
         kept = [with_list_icons({k: v for k, v in g.items() if k != 'converted_from'}) for g in kept]
-        kept = with_variants(kept)
+        # One look for the whole video (the member's tone, else light ink on dark), effects themed the same way.
+        kept = director.with_look(kept, director.video_look(opts))
     taken: set[str] = set()
     out_list = []
     # Word-timed cards may start a little earlier (on their first word), never over the card before, into the clip's
@@ -1570,6 +1696,11 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
             if times and all(g['at_ms'] - 300 <= t < g['at_ms'] + g['duration_ms'] - 300 for t in times):
                 # Each item comes in as it is said (ms into the card, source time).
                 fields['item_ms'] = '\n'.join(str(max(0, t - g['at_ms'])) for t in times)
+        if g['template'] == 'fx':
+            # The effect's beats on the spoken words (ms into it): its cue words or items as said.
+            cues = director.fx_cue_ms(g, segments)
+            if cues:
+                fields['cue_ms'] = cues
         if g['template'] in WORD_TIMED:
             floor = max(ranges[0][0], previous_end + GAP_MS if previous_end is not None else ranges[0][0],
                         first_src if g['template'] != 'headline_pill' or opts['pill_cards'] else ranges[0][0])

@@ -11,7 +11,7 @@ import {
   type HeadlineFont, type HeadlineLook, type HeadlineLookStyle, type HeadlineTextBg
 } from '../../shared/headline-look'
 import { IMAGE_CTA_SECONDS, type CtaSummary } from '../../shared/ctas'
-import { LOOK_EXTRAS, type LookExtraId } from '../../shared/look-extras'
+import { GRAPHICS_REGISTERS, LOOK_EXTRAS, type LookExtraId } from '../../shared/look-extras'
 import { BAR_HOOKS, COLOR_PRESETS, HOOK_LABELS, LOOK_HOOKS, captionName, fontName, toggleExtra, type BoardRows, type BoardStyle } from '../lib/style-board'
 import { CaptionSample, captionPreviewPreset, SCENE } from '../components/CaptionPresetPicker'
 import { CtaThumb, useCtaLibrary, CTA_HELP } from '../components/CtaPicker'
@@ -594,6 +594,7 @@ function CreateDefaults(): React.JSX.Element {
   const extras = useDraftStore((state) => state.lookExtras)
   const motionGraphics = useDraftStore((state) => state.motionGraphics)
   const stageLayouts = useDraftStore((state) => state.stageLayouts)
+  const register = useDraftStore((state) => state.register)
   const update = useDraftStore((state) => state.update)
   const shown = LOOK_EXTRAS.filter((extra) => !CREATE_SKILL_EXTRAS.includes(extra.id))
   return (
@@ -619,6 +620,12 @@ function CreateDefaults(): React.JSX.Element {
           <span className="min-w-0 flex-1"><span className="block text-xs font-medium text-ink">Stage layouts</span><span className="block text-2xs text-ink-subtle">Big cards on a stage over you, with motion graphics.</span></span>
           <Switch label="Stage layouts on Create" checked={stageLayouts} disabled={!motionGraphics} onChange={(on) => update({ stageLayouts: on })} />
         </label>
+      </div>
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-ink">How many graphics</p>
+        <Segmented label="How many graphics" size="sm" value={register ?? 'auto'} onChange={(value) => update({ register: value === 'auto' ? null : value })}
+          options={[{ value: 'auto', label: 'Auto' }, ...GRAPHICS_REGISTERS.map((r) => ({ value: r.id, label: r.label }))]} />
+        <p className="text-2xs text-ink-subtle">{register ? GRAPHICS_REGISTERS.find((r) => r.id === register)?.detail : 'Picked from what you say: a lesson gets more graphics, a personal story fewer.'} Used on Create and Edit my recording.</p>
       </div>
       <p className="text-2xs text-ink-subtle">Extras use your accent color when the look has one. Zoom is in Create’s Skills.</p>
     </Section>

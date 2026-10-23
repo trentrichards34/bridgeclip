@@ -26,7 +26,7 @@ def test_catalog_is_loaded_with_its_guidance():
     count = catalog['count-up']
     assert count['jobs'] == ['prove'] and count['sound'] == 'tick' and count['use_when'] and count['avoid_when']
     assert {f['key'] for f in count['fields']} >= {'value', 'prefix', 'suffix'}
-    assert 'fx' in ag.SAVED_TEMPLATES and 'fx' not in ag.AUTO_TEMPLATES
+    assert 'fx' in ag.SAVED_TEMPLATES and 'fx' in ag.AUTO_TEMPLATES
 
 
 def test_fields_are_cleaned_by_the_effects_own_schema():

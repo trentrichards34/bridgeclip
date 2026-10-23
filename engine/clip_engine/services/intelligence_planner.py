@@ -810,7 +810,13 @@ class IntelligencePlannerService:
             system_prompt += SCREEN_FOCUS_RULE
         if self._motion_graphics:
             from clip_engine.services.auto_graphics import motion_graphics_rule
-            system_prompt += motion_graphics_rule(self._graphics_options)
+            from clip_engine.services.graphics_director import cue_hints
+            # What each moment is (a number, a list, a story…), from the words, as hints (long videos: the first ones).
+            try:
+                hints = cue_hints(transcript or [], 60) if not longform else ''
+            except Exception:  # noqa: BLE001 - hints are a nicety
+                hints = ''
+            system_prompt += motion_graphics_rule({**self._graphics_options, 'hints': hints})
         if getattr(self, "_brand_identity", None):
             system_prompt += BRAND_IDENTITY_RULE
         from clip_engine.services.purpose_context import system_rules

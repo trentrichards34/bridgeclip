@@ -261,7 +261,8 @@
       "sync_s": 1.3,
       "cue": {
         "field": "marks",
-        "unit": "item"
+        "unit": "item",
+        "cues": true
       },
       "fields": [
         {
@@ -326,7 +327,8 @@
       "frame": "band",
       "cue": {
         "field": "text",
-        "unit": "word"
+        "unit": "word",
+        "cues": true
       },
       "fields": [
         {
@@ -365,7 +367,8 @@
       "frame": "band",
       "cue": {
         "field": "options",
-        "unit": "item"
+        "unit": "item",
+        "cues": true
       },
       "fields": [
         {
@@ -1023,7 +1026,8 @@
       "frame": "band",
       "cue": {
         "field": "nodes",
-        "unit": "item"
+        "unit": "item",
+        "cues": true
       },
       "fields": [
         {
@@ -1084,7 +1088,8 @@
       "frame": "band",
       "cue": {
         "field": "chips",
-        "unit": "item"
+        "unit": "item",
+        "cues": true
       },
       "fields": [
         {
@@ -1145,7 +1150,8 @@
       "frame": "band",
       "cue": {
         "field": "states",
-        "unit": "item"
+        "unit": "item",
+        "cues": true
       },
       "fields": [
         {
@@ -1239,7 +1245,8 @@
       "frame": "band",
       "cue": {
         "field": "titles",
-        "unit": "item"
+        "unit": "item",
+        "cues": true
       },
       "fields": [
         {

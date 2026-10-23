@@ -8,7 +8,7 @@ import { isModelId } from '../shared/openrouter-models'
 import { HEADLINE_VOICES, QUALITY_BARS, SCREEN_FOCUS_MODES, TITLE_STYLES, type ClipJobRequest } from '../shared/jobs'
 import { isBackgroundVideoName } from '../shared/backgrounds'
 import { parseHeadlineLook } from '../shared/headline-look'
-import { parseLookExtras } from '../shared/look-extras'
+import { isGraphicsRegister, parseLookExtras } from '../shared/look-extras'
 import { isCtaId } from '../shared/ctas'
 import { isCaptionLanguage } from '../shared/caption-language'
 import { parseAudioSkills } from '../shared/skills'
@@ -42,6 +42,7 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   if (v.motionGraphics !== undefined && typeof v.motionGraphics !== 'boolean') throw new Error('Invalid motion graphics option')
   if (v.motionGraphics && v.workflow === 'review') throw new Error('Automatic motion graphics work with the Automatic workflow')
   if (v.stageLayouts !== undefined && typeof v.stageLayouts !== 'boolean') throw new Error('Invalid stage layouts option')
+  if (v.register !== undefined && !isGraphicsRegister(v.register)) throw new Error('Invalid graphics amount')
   if (v.qualityBar !== undefined && !QUALITY_BARS.includes(v.qualityBar)) throw new Error('Invalid quality bar')
   if (v.headlineVoice !== undefined && !HEADLINE_VOICES.includes(v.headlineVoice)) throw new Error('Invalid headline voice')
   if (v.titleStyle !== undefined && !TITLE_STYLES.includes(v.titleStyle)) throw new Error('Invalid title style')
@@ -104,7 +105,7 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   if (purpose) known.purpose = purpose
   else delete known.purpose
   if (known.referenceImage !== undefined && !isReferenceId(known.referenceImage)) throw new Error('Choose your reference image again.')
-  if (!known.motionGraphics) delete known.motionGraphics
+  if (!known.motionGraphics) { delete known.motionGraphics; delete known.register }
   // Stage layouts ride on motion graphics, on vertical clips without a gameplay background.
   if (!known.stageLayouts || !known.motionGraphics || (known.aspectRatio ?? '9:16') !== '9:16' || known.backgroundVideo) delete known.stageLayouts
   // Extras are drawn on Automatic renders; the review editor exports without them.
@@ -115,5 +116,5 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
   'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'brollSource', 'hookPreview', 'motionGraphics', 'stageLayouts', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'music', 'musicTrack', 'voiceCleanup', 'purpose', 'referenceImage', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'brollSource', 'hookPreview', 'motionGraphics', 'stageLayouts', 'register', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'music', 'musicTrack', 'voiceCleanup', 'purpose', 'referenceImage', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

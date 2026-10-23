@@ -7,6 +7,8 @@ import {
 import { EDIT_CHAT_POINT_SUGGESTIONS, EDIT_CHAT_SUGGESTIONS, editPatchValues, mergeEditChatSteps, parseEditChatSteps, type EditChatPatch, type EditChatStep } from '../../shared/edit-chat'
 import { MAX_EDIT_GRAPHICS, editGraphicFrame, newEditGraphic, patchEditGraphic, type EditGraphic } from '../../shared/reel-graphics'
 import { newGraphic, templateInfo, type GraphicTemplateId } from '../../shared/motion-graphics'
+import { FX_EFFECTS, fxEffect } from '../../shared/fx-catalog'
+import { prefillEffect } from '../../shared/graphic-prefill'
 import { findDuplicateExtras, type DuplicateShown } from '../../shared/edit-duplicates'
 import { ChatPanel, type ChatApplyOutcome } from './ChatPanel'
 import { PointPad, VideoStill } from './ChatPoints'
@@ -143,11 +145,16 @@ export function EditReview({ status, brand, look, onLook, onError }: {
     return at !== undefined && graphicItems.some((g) => !g.problem && g.at !== null && at < g.at + g.duration_ms / 1000 && at + 1.6 > g.at)
   }
   const setGraphics = (change: (list: EditGraphic[]) => EditGraphic[]): void => setDecisions((current) => ({ ...current, graphics: change(current.graphics ?? []) }))
-  const addGraphic = (template: GraphicTemplateId, at: number): string | null => {
+  const addGraphic = (template: GraphicTemplateId, at: number, effectId?: string): string | null => {
     const word = wordAt(at)
     if (word === null) return null
     const line = lines.find((l) => l.words.includes(word))?.words.filter((i) => i >= word).map((i) => plan.words[i].text).join(' ')
-    const graphic = newEditGraphic(newGraphic(template, 0, { fields: wordsAtPlayhead(template, line), taken: graphics.map((g) => g.id) }), word)
+    // An effect: the words said here for its fields, at its own length and size.
+    const effect = template === 'fx' ? fxEffect(effectId) ?? FX_EFFECTS[0] : null
+    const base = effect
+      ? newGraphic('fx', 0, { fields: { effect: effect.id, ...prefillEffect(effect.id, [], 0, { line }).fields }, taken: graphics.map((g) => g.id), duration_ms: effect.default_ms, ...(effect.size ? { size: effect.size } : {}) })
+      : newGraphic(template, 0, { fields: wordsAtPlayhead(template, line), taken: graphics.map((g) => g.id) })
+    const graphic = newEditGraphic(base, word)
     setGraphics((list) => [...list, graphic].sort((a, b) => a.word - b.word))
     return graphic.id
   }

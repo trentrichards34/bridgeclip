@@ -338,6 +338,7 @@ async def run(config: dict) -> bool:
         brand_mark=config.get("brand_mark"),
         look_extras=config.get("look_extras"),
         look_extras_color=config.get("look_extras_color"),
+        graphics_register=config.get("register") if config.get("register") in ("teaching", "story", "minimal") else None,
     )
 
     emit({

@@ -13,7 +13,8 @@ const bundled = buildSync({
       export { EffectFields, draftGraphic, graphicsWithEffect, graphicSummary, effectSample } from './src/renderer/components/ClipGraphics';
       export { FX_EFFECTS, FX_GROUPS } from './src/shared/fx-catalog';
       export { GRAPHIC_TEMPLATES } from './src/shared/motion-graphics';
-      export { REEL_GRAPHIC_TEMPLATES } from './src/shared/reel-graphics';`,
+      export { REEL_GRAPHIC_TEMPLATES, REEL_CHAT_TEMPLATES } from './src/shared/reel-graphics';
+      export { GraphicForm } from './src/renderer/components/ReelGraphics';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
   },
@@ -44,9 +45,10 @@ test('the gallery lists every effect as its own tile, in Effects groups after th
   assert.doesNotMatch(html, /aria-label="Add Effect"/)
   // Text templates still come first.
   assert.ok(html.indexOf('Add Title slam') < html.indexOf('Add effect Count up'))
-  // A reel's gallery has no effects yet.
+  // Edit my recording and Remix galleries list every effect too (the chats add templates only).
   const reel = renderToStaticMarkup(React.createElement(m.GraphicGallery, { templates: m.REEL_GRAPHIC_TEMPLATES, where: 'here', style: STYLE, full: false, limitNote: '', onPick: () => {}, onClose: () => {} }))
-  assert.doesNotMatch(reel, /Add effect/)
+  assert.equal([...reel.matchAll(/aria-label="Add effect ([^"]+)"/g)].length, m.FX_EFFECTS.length)
+  assert.ok(!m.REEL_CHAT_TEMPLATES.some((t) => t.id === 'fx') && m.REEL_GRAPHIC_TEMPLATES.some((t) => t.id === 'fx'))
 })
 
 test('a tile previews the words said there when they fill the effect, else its sample words', () => {
@@ -86,4 +88,14 @@ test('adding an effect fills it with words said there and lands its beats on the
   // An unknown effect falls back to the first one; nothing is made up without words.
   const empty = m.draftGraphic(fixture, c, 'fx', start + 200, [], 'count-up')
   assert.deepEqual(Object.keys(empty.fields), ['effect'])
+})
+
+test('a reel graphic form edits an effect with its own fields', () => {
+  const g = { id: 'g-1', template: 'fx', fields: { effect: 'count-up', value: '1200', prefix: '$' }, duration_ms: 3500, placement: 'top', at: 2, where: 'at 0:02', problem: null }
+  const frame = { aspect: '9:16', hook: 0.2, captions: null }
+  const html = renderToStaticMarkup(React.createElement(m.GraphicForm, { g, frame, look: null, disabled: false, cursorLabel: 'here', onField: () => {}, onPatch: () => {}, onMoveHere: () => {}, onRemove: () => {} }))
+  assert.match(html, /Count up/)
+  assert.match(html, /inputMode="decimal"|inputmode="decimal"/)
+  // No raw "effect" text box.
+  assert.doesNotMatch(html, /aria-label="Effect effect"/)
 })

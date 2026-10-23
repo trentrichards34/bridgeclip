@@ -119,7 +119,11 @@ def test_planned_graphics_keep_only_what_was_said_and_anchor_on_kept_words():
     flipped = item('statement', at(words, 'organic'), 3, text='organic content going viral', accent='viral')
     assert ed.plan_graphics([flipped], words, marks) == []
     kept_line = item('statement', at(words, 'organic') - 1, 3, text='Not organic content, not going viral', accent='viral')
-    assert [g['template'] for g in ed.plan_graphics([kept_line], words, marks)] == ['statement']
+    (line,) = ed.plan_graphics([kept_line], words, marks)
+    assert line['fields']['text'] == 'Not organic content, not going viral'
+    # An effect that drops "not" is left out the same way.
+    fx_flipped = {**item('fx', at(words, 'organic'), 3), 'effect': 'headline-slam', 'fx_fields': [{'key': 'text', 'value': 'organic content going viral'}]}
+    assert ed.plan_graphics([fx_flipped], words, marks) == []
     # About one per 9-10 s of a 40-s talk: the strongest (the diagram, the number, the contrast) win; nothing made up.
     kinds = [g['template'] for g in out]
     assert kinds == ['staircase', 'stat', 'strike_list'], kinds
@@ -134,18 +138,20 @@ def test_planned_graphics_keep_only_what_was_said_and_anchor_on_kept_words():
     assert all(starts[i] + out[i]['duration_ms'] <= starts[i + 1] for i in range(len(out) - 1))
     # Alone, the others are kept as planned: the statement on its first word, big words behind the speaker.
     alone = ed.plan_graphics([raw[0]], words, marks, {'stage': True}, [hook, cta])
-    assert [g['template'] for g in alone] == ['statement'] and words[alone[0]['word']].text == 'We'
+    # (A plain statement is a fallback: its line comes out as a marker highlight on its key word.)
+    assert [ag.kind_of(g) for g in alone] == ['fx:marker-highlight'] and words[alone[0]['word']].text == 'We'
     big = ed.plan_graphics([raw[7]], words, marks, {'stage': True}, [hook, cta])
-    assert [g['template'] for g in big] == ['big_words'] and big[0]['depth'] == 'behind'
+    # (Big words are a plain fallback too: a short punch comes out as a headline slam.)
+    assert [ag.kind_of(g) for g in big] == ['fx:headline-slam'] and 'depth' not in big[0]
     # Every kept card has a look, and a statement's is one of its own.
-    assert alone[0]['fields']['variant'] in ag.VARIANTS['statement'] and out[1]['fields']['variant'] in ag.VARIANTS['stat']
+    assert alone[0]['fields']['theme'] == 'dark' and out[1]['fields']['variant'] == 'gradient'
 
 
 def test_a_graphic_on_the_first_kept_word_is_kept_the_reel_opens_on_its_hook():
     words = say('Most coaches lose so many clients.', 0.3) + say('Fifteen billion messages wait.', 3.0)
     marks = er.analyze_takes(words)
     out = ed.plan_graphics([item('statement', 0, 2.5, text='Most coaches lose clients.', accent='clients')], words, marks, {}, [(6, 9)])
-    assert [(g['template'], g['word']) for g in out] == [('statement', 0)]
+    assert [(ag.kind_of(g), g['word']) for g in out] == [('fx:marker-highlight', 0)]
 
 
 def test_takes_and_clips_never_collide_on_the_plans_clock():

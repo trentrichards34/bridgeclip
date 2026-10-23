@@ -4,6 +4,7 @@ must be said near them (accents inside their text, items in order), each starts 
 its items revealed as said, about one per 6.5 s without overlaps or the comment keyword's last seconds, and
 the big ones are stage size with a stage scene around them that the render draws and the editor shows."""
 
+from clip_engine.services import auto_graphics as ag
 import json
 import re
 from pathlib import Path
@@ -166,10 +167,11 @@ def test_about_one_card_per_six_and_a_half_seconds_at_most_five_a_minute():
 def test_cards_never_overlap_and_a_weaker_one_is_cut_short_before_a_stronger_one():
     notes = {**NOTES, 'at_ms': 20_000, 'duration_ms': 5000}  # runs into the icon row at 24.4 s
     kept = fit_to_clip([notes, ICONS, STRIKE], SAID, CLIP, 1.0, STAGE)
-    assert [g['template'] for g in kept] == ['strike_list', 'sticky_notes', 'icon_pop']
+    # (Sticky notes are a fallback: the notes come out as the richer chip rail their words fit.)
+    assert [ag.kind_of(g) for g in kept] == ['strike_list', 'fx:state-chip-rail', 'icon_pop']
     for a, b in zip(kept, kept[1:]):
         assert a['at_ms'] + a['duration_ms'] <= b['at_ms']
-    assert kept[1]['duration_ms'] == kept[2]['at_ms'] - 150 - kept[1]['at_ms']
+    assert kept[1]['at_ms'] + kept[1]['duration_ms'] <= kept[2]['at_ms'] - 150
     # A short clip keeps fewer.
     assert len(fit_to_clip([STRIKE, STATEMENT, ICONS], SAID, [(10_000, 22_000)], 1.0, STAGE)) == 1
 
@@ -243,7 +245,7 @@ def test_pipeline_with_stage_layouts_draws_stage_scenes_and_records_them(monkeyp
                                  headline_look={'look': 'none'}, cta_keyword='API')
     result, _ = run_pipeline(monkeypatch, tmp_path, request, transcribe, plan, render=render)
     assert result.status == JobStatus.COMPLETED, result.error
-    assert seen['graphics_options'] == {'headline_off': True, 'cta_keyword': 'API', 'stage': True, 'chapters': True}
+    assert seen['graphics_options'] == {'headline_off': True, 'cta_keyword': 'API', 'stage': True, 'chapters': True, 'tone': 'dark'}
     (sent,) = renders
     # No "step one… step two…" said: no chapter header, so the hook isn't handed over.
     assert sent.headline_hide_source_ms is None
