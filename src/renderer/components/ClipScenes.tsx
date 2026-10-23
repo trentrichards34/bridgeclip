@@ -10,7 +10,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Clapperboard, Plus, Trash2 } from 'lucide-react'
 import type { CandidateEdit } from '../../shared/clip-editor'
 import {
-  BACKDROP_LABELS, CARD_LABELS, MAX_SCENES, SOLID_BACKDROP_COLOR, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_DETAILS, SCENE_LABELS, STAGE_LAYOUT, newSceneAt, outputScenes, sceneMix, updateScene, withScene,
+  BACKDROP_LABELS, CARD_LABELS, MAX_SCENES, SOLID_BACKDROP_COLOR, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_DETAILS, SCENE_LABELS, STAGE_LAYOUT, PREVIEW_CARD_SPAN, PREVIEW_CARD_TOP, previewCard, newSceneAt, outputScenes, sceneMix, updateScene, withScene,
   type SceneBackdrop, type SceneCard, type SceneKind, type StageScene
 } from '../../shared/scenes'
 import { nearestOutputTime } from '../../shared/motion-graphics'
@@ -124,10 +124,6 @@ const BACKDROP_CSS: Record<SceneBackdrop, (brand: string) => string> = {
 }
 
 /** A preview of the scenes over the Output monitor: the backdrop and the speaker card (cut from the preview's own frame). */
-/** The share of the framed preview the card shows (from PREVIEW_CARD_TOP down): head and shoulders on a close selfie. */
-const PREVIEW_CARD_SPAN = 0.62
-const PREVIEW_CARD_TOP = 0.07
-
 export function ScenesOverlay({ canvas, candidate, time }: { canvas: RefObject<HTMLCanvasElement | null>; candidate: CandidateEdit; time: number }): React.JSX.Element | null {
   const [bounds, setBounds] = useState({ width: 0, height: 0, left: 0, top: 0 })
   const card = useRef<HTMLCanvasElement>(null)
@@ -147,6 +143,10 @@ export function ScenesOverlay({ canvas, candidate, time }: { canvas: RefObject<H
   const scenes = outputScenes(candidate)
   const mix = sceneMix(scenes, nearestOutputTime(candidate, time))
   const visible = !!scenes.length && (mix.alpha > 0 || mix.card > 0)
+  // How much wider than the framed preview the source is (a fill crop of part of it), for the card's width.
+  const framing = [...candidate.scenes].reverse().find((s) => s.at_ms <= time) ?? candidate.scenes[0]
+  const sourceShare = framing?.layout === 'fill' && framing.crops[0]?.[2] > 0 ? 1 / framing.crops[0][2] : 1
+  const look = useRef({ span: PREVIEW_CARD_SPAN })
   useEffect(() => {
     if (!visible) return
     let frame = 0
@@ -157,7 +157,8 @@ export function ScenesOverlay({ canvas, candidate, time }: { canvas: RefObject<H
         // Head and shoulders from the preview frame: its upper part (the framing puts the face about 40% down), zoomed
         // out over a blurred copy where that is narrower than the card. The export frames from the detected face.
         const tw = target.width, th = target.height
-        const sh = source.height * PREVIEW_CARD_SPAN, sy = source.height * PREVIEW_CARD_TOP, sw = Math.min(source.width, sh * tw / th)
+        const sh = source.height * look.current.span, sy = Math.min(source.height * PREVIEW_CARD_TOP, source.height - sh)
+        const sw = Math.min(source.width, sh * tw / th)
         const dw = sw * th / sh
         if (dw < tw - 1) {
           const ch = Math.min(sh, source.width * th / tw)
@@ -178,13 +179,16 @@ export function ScenesOverlay({ canvas, candidate, time }: { canvas: RefObject<H
   const brandFor = (b: SceneBackdrop): string => own ?? (b === 'grid' || b === 'gradient' ? '#7C3AED' : b === 'solid' ? SOLID_BACKDROP_COLOR : '#3B6BFF')
   const w = bounds.width, h = bounds.height
   const arch = mix.shape === 'arch'
-  const cardW = arch ? w : w * (1 - 2 * STAGE_LAYOUT.cardSide), cardH = h * STAGE_LAYOUT.cardHeight + (arch ? h * STAGE_LAYOUT.cardBottom : 0)
+  const fullW = arch ? w : w * (1 - 2 * STAGE_LAYOUT.cardSide), cardH = h * STAGE_LAYOUT.cardHeight + (arch ? h * STAGE_LAYOUT.cardBottom : 0)
+  // Narrower than full width when the video is (a close selfie), as the export draws it.
+  const { width: cardW, span } = previewCard(w, h, fullW, cardH, sourceShare)
+  look.current.span = span
   const rest = h * (1 - STAGE_LAYOUT.cardBottom) - h * STAGE_LAYOUT.cardHeight, off = h + 8
   const radius = arch ? `${w * STAGE_LAYOUT.archRadius}px ${w * STAGE_LAYOUT.archRadius}px 0 0` : w * STAGE_LAYOUT.cardRadius
   return <div className="editor-scenes-overlay" style={bounds} aria-hidden data-scene={mix.card > 0.5 ? 'stage' : mix.alpha > 0.5 ? 'visual' : 'face'}>
     {mix.under && <div className="editor-scenes-backdrop" style={{ background: BACKDROP_CSS[mix.under](brandFor(mix.under)) }} />}
     {mix.backdrop && <div className="editor-scenes-backdrop" style={{ background: BACKDROP_CSS[mix.backdrop](brandFor(mix.backdrop)), opacity: mix.alpha }} />}
-    <canvas ref={card} className="editor-scenes-card" data-card={mix.shape} width={360} height={Math.round(360 * cardH / cardW)}
+    <canvas ref={card} className="editor-scenes-card" data-card={mix.shape} width={Math.round(360 * cardW / fullW)} height={Math.round(360 * cardH / fullW)}
       style={{ width: cardW, height: cardH, left: (w - cardW) / 2, top: off - (off - rest) * mix.card, borderRadius: radius, visibility: mix.card > 0 ? 'visible' : 'hidden' }} />
   </div>
 }

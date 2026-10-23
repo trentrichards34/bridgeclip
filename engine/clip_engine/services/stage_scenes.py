@@ -540,6 +540,9 @@ CARD_EYE_Y = 0.36
 # shoulders starting below); a speaker far from the camera is brought in no closer than CARD_FACE_MAX.
 CARD_FACE_MIN = 2.3
 CARD_FACE_MAX = 4.0
+# The closest a narrowed card comes in (MIN_CARD_SHARE) before a blur fills its sides: the head box (1.75 face
+# heights) with a little room.
+CARD_FACE_FLOOR = 1.9
 # The face size a stretch is framed for: a high percentile over it, so leaning in stays inside the card.
 CARD_FACE_PERCENTILE = 0.8
 # Faces for the card are looked at every half second of a stage scene (when the plan has fewer); the path is
@@ -550,6 +553,9 @@ CARD_KEY_TOLERANCE = 0.012
 # The plan's own face samples are enough when they come at least this often.
 CARD_PLAN_SAMPLE_MS = 1500
 MAX_CARD_SAMPLES = 480
+# The narrowest the card gets (share of the frame's width) when the source is narrower than a full-width card at
+# head-and-shoulders framing (scenes.ts MIN_CARD_SHARE).
+MIN_CARD_SHARE = 0.6
 # Long side of the frames the card's faces are found in.
 CARD_DETECT_PX = 480
 
@@ -624,7 +630,7 @@ def _simplify(points: list[tuple[int, float, float]], tolerance: float) -> list[
     return _simplify(points[:at + 1], tolerance)[:-1] + _simplify(points[at:], tolerance)
 
 
-def card_crop(faces: Sequence[tuple[int, Rect4]], bounds: Rect4, aspect: float, start_ms: int = 0) -> CardCrop:
+def card_crop(faces: Sequence[tuple[int, Rect4]], bounds: Rect4, aspect: float, start_ms: int = 0, min_share: float = 0.0) -> CardCrop:
     """The card's crop for one stretch: head and shoulders around the speaker's face, smoothed over time.
 
     `faces`: (window ms, face box) in source pixels, the speaker's face in each sample; `bounds`: the speaker's
@@ -632,7 +638,8 @@ def card_crop(faces: Sequence[tuple[int, Rect4]], bounds: Rect4, aspect: float, 
     tighter than CARD_FACE_MIN face heights, no looser than CARD_FACE_MAX or the largest crop inside `bounds`,
     whichever is tighter), keeps the head's top HEAD_MARGIN of the card below its edge and the eyes near
     CARD_EYE_Y; when the source is too tight for that it reaches past `bounds` (zoomed out) instead of
-    cutting the head.
+    cutting the head. `min_share`: the narrowest card (share of its full width, card_width); a crop whose video
+    would come out narrower is brought in to fill that much, as long as the head still fits (CARD_FACE_FLOOR).
     """
     bx, by, bw, bh = bounds
     fit_h = min(bh, bw / aspect)
@@ -644,8 +651,12 @@ def card_crop(faces: Sequence[tuple[int, Rect4]], bounds: Rect4, aspect: float, 
         return CardCrop(cw, ch, ((start_ms, bx + (bw - cw) / 2, by + (bh - ch) * 0.1),), bounds)
     face_h = _percentile([f[3] for _, f in faces], CARD_FACE_PERCENTILE)
     ch = max(min(fit_h, CARD_FACE_MAX * face_h), CARD_FACE_MIN * face_h)
+    if min_share > 0 and ch * aspect > bw:
+        # The card narrows to the video; not below min_share of its width while the head fits closer in.
+        ch = min(ch, max(bw / (min_share * aspect), CARD_FACE_FLOOR * face_h))
     cw = ch * aspect
-    x_lo, x_hi = (bx, bx + bw - cw) if cw <= bw else (bx + bw - cw, bx)
+    # Wider than the speaker's area: the area centered (the card narrows to it, card_width), else follow the face.
+    x_lo, x_hi = (bx, bx + bw - cw) if cw <= bw else (bx + (bw - cw) / 2, bx + (bw - cw) / 2)
     y_lo, y_hi = (by, by + bh - ch) if ch <= bh else (by + bh - ch, by)
     times, xs, ys, tops = [], [], [], []
     for t, face in sorted(faces):
@@ -722,7 +733,7 @@ def _shot_face(shot) -> Optional[Box]:
 
 
 def card_crops(plan, keeps, runs: Sequence[tuple[float, float]], transition: float, aspect: float,
-               faces: Sequence[tuple[int, Sequence[Box]]] = ()) -> dict[tuple[int, int], CardCrop]:
+               faces: Sequence[tuple[int, Sequence[Box]]] = (), min_share: float = 0.0) -> dict[tuple[int, int], CardCrop]:
     """The crop for each (card run, shot) the card shows: from the face samples (window ms, normalized boxes) in
     the run's stretch of that shot (the largest face inside the speaker's area)."""
     src_w, src_h = plan.source_width, plan.source_height
@@ -746,7 +757,7 @@ def card_crops(plan, keeps, runs: Sequence[tuple[float, float]], transition: flo
             if not picked and _shot_face(shot) is not None:
                 f = _shot_face(shot)
                 picked = [(parts[0][0], (f.x * src_w, f.y * src_h, f.w * src_w, f.h * src_h))]
-            out[(r, i)] = card_crop(picked, bounds, aspect, parts[0][0])
+            out[(r, i)] = card_crop(picked, bounds, aspect, parts[0][0], min_share)
     return out
 
 
@@ -839,15 +850,30 @@ def card_chain(label: str, out: str, crop: CardCrop, lo_ms: int, hi_ms: int, car
             f"[{out}_bg][{out}_fg]overlay=x='{x}':y='{y}':eval=frame,setsar=1[{out}]")
 
 
+def card_width(crop: CardCrop, card_w: int, card_h: int, min_w: int) -> int:
+    """How wide the card is drawn for a crop (frame pixels, even): its full width, or, when the speaker's area is
+    narrower than the crop (a close selfie at head-and-shoulders framing), just the video's own width there (the
+    backdrop shows either side), never under `min_w` (below that a light blur fills the rest)."""
+    bx, _, bw, _ = crop.bounds
+    if crop.w <= bw + 0.5:
+        return card_w
+    ix = int(bx) // 2 * 2
+    iw = max(2, int(bx + bw - ix) // 2 * 2)
+    return max(min(card_w, even(min_w)), min(card_w, int(iw * card_h / crop.h) // 2 * 2))
+
+
 def card_source_graph(plan, keeps, card_w: int, card_h: int, fps: str, runs: Sequence[tuple[float, float]],
-                      transition: float, faces: Sequence = ()) -> str:
+                      transition: float, faces: Sequence = (), min_w: Optional[int] = None) -> tuple[str, list[int]]:
     """The card's own framing chain, from [sc_card_src] (the source) to [sc_card_frames] (card_w x card_h), cut
     like the main framing (the same frames): each run's head-and-shoulders crop (card_crops), switching between
-    runs while the card is down."""
+    runs while the card is down. Also each run's card width (card_width; the widest its shots need), the video
+    centered in the frames."""
     from fractions import Fraction
     from clip_engine.services.layout_renderer import video_frame_pieces
     rate = Fraction(fps)
-    crops = card_crops(plan, keeps, runs, transition, card_w / card_h, faces)
+    least = round(card_w * MIN_CARD_SHARE) if min_w is None else min_w
+    crops = card_crops(plan, keeps, runs, transition, card_w / card_h, faces, least / card_w)
+    widths = [max([card_width(c, card_w, card_h, least) for (r, _), c in crops.items() if r == k] or [card_w]) for k in range(len(runs))]
     switches = [round((runs[k][1] + runs[k + 1][0]) / 2 * rate) for k in range(len(runs) - 1)]
     window_end = plan.shots[-1].end_ms
     parts = [f"[sc_card_src]fps={fps}:start_time=0:round=near,tpad=stop_mode=clone:stop_duration={window_end / 1000:.3f}[cd_clocked]"]
@@ -874,7 +900,7 @@ def card_source_graph(plan, keeps, card_w: int, card_h: int, fps: str, runs: Seq
             parts.append(card_chain(f"cd_t{k}", f"cd_c{k}", crop, lo, hi, card_w, card_h))
         parts.append(f"[cd_c{k}]setpts=PTS-STARTPTS[cd_v{k}]")
     parts.append("".join(f"[cd_v{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=0,settb=expr=1/({fps}),setpts=N,fps={fps}[sc_card_frames]")
-    return ";".join(parts)
+    return ";".join(parts), widths
 
 
 @dataclass
@@ -898,13 +924,13 @@ def face_center_y(zones, start_ms: float, end_ms: float, panel_h: int) -> int:
 def build_scene_graph(
     graph: str, scenes: Sequence[Scene], width: int, height: int, edited_ms: int, video_speed: float, fps: str,
     first_input: int, work_dir: str, stem: str, bar_h: int = 0, zones: Sequence = (), brand: Optional[str] = None,
-    card_graph: Optional[Callable[[int, int, list, float], str]] = None,
+    card_graph: Optional[Callable[[int, int, list, float], tuple[str, list[int]]]] = None,
 ) -> Optional[SceneComposite]:
     """Lay the scenes over a graph ending in a single full-frame [base] (W x H); output stays [base].
 
     `first_input` is the index the first still input gets. None when every scene is face.
     `card_graph(card_w, card_h, runs, transition)` gives the card's own framing chain from the source
-    (card_source_graph; runs and transition on the edited clock, seconds);
+    (card_source_graph; runs and transition on the edited clock, seconds) and each run's card width;
     without it the card is cut from the framed video.
     """
     assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
@@ -957,38 +983,55 @@ def build_scene_graph(
         for a, b in runs:
             cy = face_center_y(zones, a * 1000, b * 1000, panel_h)
             tops.append(bar_h + max(0, min(panel_h - crop_h, round(cy - crop_h * CARD_FACE_Y))))
+        widths: list[int] = [frame_w] * len(runs)
         if own_card:
-            parts.append(card_graph(frame_w, frame_h, runs, transition))
+            graph_text, widths = card_graph(frame_w, frame_h, runs, transition)
+            parts.append(graph_text)
             parts.append("[sc_card_frames]format=yuva420p[sc_card_rgb]")
         else:
             parts.append(f"[sc_src]crop={width}:{crop_h}:0:'{crop_y_expr(runs, tops)}',"
                          f"scale={frame_w}:{frame_h}:flags=bicubic,format=yuva420p[sc_card_rgb]")
-        if len(shapes) > 1:
-            parts.append("[sc_card_rgb]split=2" + "".join(f"[sc_card_rgb_{c}]" for c in shapes))
-        off = height + 2 * geo.shadow_pad
+        # One overlay per card shape and width: a run whose video is narrower than the card at head-and-shoulders
+        # framing gets a narrower card (centered, the same height, corners and shadow).
+        groups: list[tuple[str, int, int, list[tuple[float, float]]]] = []
         for shape in shapes:
-            shape_runs = card_runs(segments, shape)
-            frames = f"sc_card_rgb_{shape}" if len(shapes) > 1 else "sc_card_rgb"
-            tag = "" if shape == "rounded" else "-arch"
+            full = width if shape == "arch" else geo.card_w
+            by_width: dict[int, list[tuple[float, float]]] = {}
+            for a, b in card_runs(segments, shape):
+                k = next((i for i, (ra, rb) in enumerate(runs) if ra <= a + 1e-6 and b <= rb + 1e-6), 0)
+                by_width.setdefault(min(full, widths[k]), []).append((a, b))
+            for w in sorted(by_width, reverse=True):
+                groups.append((shape, w, full, by_width[w]))
+        counts = {shape: sum(1 for g in groups if g[0] == shape) for shape in shapes}
+        names = [shape if counts[shape] == 1 else f"{shape}_{w}" for shape, w, _, _ in groups]
+        if len(groups) > 1:
+            parts.append(f"[sc_card_rgb]split={len(groups)}" + "".join(f"[sc_card_rgb_{n}]" for n in names))
+        off = height + 2 * geo.shadow_pad
+        for (shape, w, full, shape_runs), name in zip(groups, names):
+            frames = f"sc_card_rgb_{name}" if len(groups) > 1 else "sc_card_rgb"
+            narrow = w < full
+            tag = ("" if shape == "rounded" else "-arch") + (f"-{w}" if narrow else "")
             mask = os.path.join(work_dir, f"scene-{stem}-mask{tag}.png")
             shadow = os.path.join(work_dir, f"scene-{stem}-shadow{tag}.png")
             if shape == "arch":
-                cx, cw, ch = 0, width, geo.arch_h
-                draw_arch_mask(mask, cw, ch, geo.arch_radius)
-                draw_arch_shadow(shadow, cw, ch, geo.arch_radius, geo.shadow_pad)
+                ch = geo.arch_h
+                cx = (width - w) // 2
+                draw_arch_mask(mask, w, ch, geo.arch_radius)
+                draw_arch_shadow(shadow, w, ch, geo.arch_radius, geo.shadow_pad)
             else:
-                cx, cw, ch = geo.card_x, geo.card_w, geo.card_h
-                draw_mask(mask, cw, ch, geo.radius)
-                draw_shadow(shadow, cw, ch, geo.radius, geo.shadow_pad)
-                if arch:
-                    parts.append(f"[{frames}]crop={cw}:{ch}:{(frame_w - cw) // 2}:{(frame_h - ch) // 2}[{frames}_c]")
-                    frames = f"{frames}_c"
+                ch = geo.card_h
+                cx = geo.card_x + (geo.card_w - w) // 2
+                draw_mask(mask, w, ch, geo.radius)
+                draw_shadow(shadow, w, ch, geo.radius, geo.shadow_pad)
+            if w < frame_w or ch < frame_h:
+                parts.append(f"[{frames}]crop={w}:{ch}:{(frame_w - w) // 2}:{(frame_h - ch) // 2}[{frames}_c]")
+                frames = f"{frames}_c"
             mask_index, shadow_index = first_input + len(inputs), first_input + len(inputs) + 1
             inputs += [mask, shadow]
             visible = card_visibility_expr(shape_runs, total, transition)
             y = f"{off}-({off - geo.card_y})*({visible})"
             enable = card_enable_expr(shape_runs, transition)
-            k = "" if shape == "rounded" else "_arch"
+            k = ("" if shape == "rounded" else "_arch") + (f"_{w}" if narrow else "")
             parts.append(f"[{mask_index}:v]format=gray[sc_mask{k}]")
             parts.append(f"[{frames}][sc_mask{k}]alphamerge[sc_card{k}]")
             parts.append(f"[{shadow_index}:v]format=yuva420p[sc_shadow{k}]")

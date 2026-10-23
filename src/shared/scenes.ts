@@ -243,6 +243,31 @@ export function outputScenes(c: Timing & { stage_scenes?: StageScene[] }): Stage
   return normalizeScenes(out, { keepFace: false }).slice(0, MAX_SCENES)
 }
 
+/**
+ * A stage card narrows to the speaker's video when the source is narrower than a full-width card at head-and-shoulders
+ * framing (a close selfie): centered, the same height, corners and shadow, the backdrop either side. Never under this
+ * share of the frame's width (engine: stage_scenes.MIN_CARD_SHARE).
+ */
+export const MIN_CARD_SHARE = 0.6
+/** The editor preview's card (it has no face boxes): this share of the framed preview's height, from PREVIEW_CARD_TOP down. */
+export const PREVIEW_CARD_SPAN = 0.72
+export const PREVIEW_CARD_TOP = 0.05
+
+/**
+ * The editor preview's card, like the export's: its width (px, at most `cardW`) and the share of the framed frame's
+ * height it shows. `sourceShare`: the source's width over the framed frame's (1 when the frame is the whole width).
+ * A source narrower than the card at that framing narrows the card to the video (not under MIN_CARD_SHARE of the
+ * frame; closer in down to half the frame's height first).
+ */
+export function previewCard(frameW: number, frameH: number, cardW: number, cardH: number, sourceShare: number): { width: number; span: number } {
+  const videoW = (span: number): number => Math.max(1, sourceShare) * frameW * cardH / (span * frameH)
+  let span = PREVIEW_CARD_SPAN
+  if (videoW(span) >= cardW) return { width: cardW, span: Math.min(span, frameW * cardH / (cardW * frameH)) }
+  const least = Math.min(cardW, MIN_CARD_SHARE * frameW)
+  if (videoW(span) < least) span = Math.max(0.5, Math.max(1, sourceShare) * frameW * cardH / (least * frameH))
+  return { width: Math.max(least, Math.min(cardW, videoW(span))), span }
+}
+
 /** The hook text never shows over the stage: it fades out as the first stage or visual scene starts, unless that is in the clip's first 2.5 s (engine: stage_scenes.hook_hand_over_s). */
 export const STAGE_HOOK_MIN_MS = 2500
 

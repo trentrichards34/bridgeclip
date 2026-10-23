@@ -6,6 +6,7 @@ import re
 import subprocess
 
 import numpy as np
+from PIL import Image
 import pytest
 
 from clip_engine.services import rendering_service as module
@@ -94,6 +95,7 @@ def test_card_frames_come_from_their_own_framing_when_the_graph_reads_the_source
     graph = "[0:v]fps=30[clocked];[clocked]null[base]"
     comp = ss.build_scene_graph(graph, [ss.Scene("stage", 0, 2000)], 1080, 1920, 4000, 1.0, "30", 1, str(tmp_path), "t",
                                 card_graph=lambda w, h, runs, transition: ss.card_source_graph(plan, [(0, 4000)], w, h, "30", runs, transition))
+    assert ss.card_source_graph(plan, [(0, 4000)], 1000, 806, "30", [(0.0, 2.0)], 0.35)[1] == [1000]  # a wide shot: full width
     assert comp.graph.startswith("[0:v]split=2[sc_v0][sc_card_src];[sc_v0]fps=30")
     assert "[sc_card_frames]format=yuva420p" in comp.graph and "[sc_src]" not in comp.graph
     labels = re.findall(r"\[([A-Za-z_][A-Za-z0-9_]*)\]", comp.graph)
@@ -131,8 +133,21 @@ def test_card_crop_zooms_out_instead_of_cutting_a_close_selfie_head():
     top, bottom, eyes, cx = _head_in_card(crop, 1000, face)
     assert top >= ss.HEAD_MARGIN - 1e-6 and bottom <= 1  # hair allowance to chin inside the card
     x, y = crop.at(1000)
-    assert x < 0 and x + crop.w > 1080 and abs(cx - 0.5) < 0.01  # the frame sits inside the card, centered on the face
-    # The render draws it over a blurred copy.
+    assert abs(x - (1080 - crop.w) / 2) < 1e-6  # the frame centered in the crop
+    # The card narrows to the video's own width at that framing (the backdrop shows either side) ...
+    loose = ss.card_crop([(0, (380.0, 700.0, 320.0, 450.0))], (0, 0, 1080, 1920), 1080 / 838, min_share=0.6)
+    w = ss.card_width(loose, 1080, 838, 648)
+    assert w == int(1080 * 838 / loose.h) // 2 * 2 and 648 < w < 1080
+    # ... not under 60% of the frame: this selfie (570 px at 2.3 face heights) comes in to fill 648 px while
+    # the head fits ...
+    narrow = ss.card_crop([(t, face) for t in range(0, 3000, 500)], (0, 0, 1080, 1920), 1080 / 838, min_share=0.6)
+    assert ss.card_width(crop, 1080, 838, 648) == 648 and ss.card_width(narrow, 1080, 838, 648) == 648
+    assert abs(narrow.h - 1080 / (0.6 * 1080 / 838)) < 1 and _head_in_card(narrow, 0, face)[0] >= -1e-6
+    assert _head_in_card(narrow, 0, face)[1] <= 1
+    # ... and only a face too big for that gets a light blur beside the video.
+    huge = (290.0, 560.0, 520.0, 800.0)
+    tight = ss.card_crop([(0, huge)], (0, 0, 1080, 1920), 1080 / 838, min_share=0.6)
+    assert abs(tight.h - ss.CARD_FACE_FLOOR * 800) < 1 and tight.zoomed_out
     chain = ss.card_chain("in", "out", crop, 0, 3000, 1080, 838)
     assert "gblur" in chain and "overlay=x=" in chain and chain.endswith("[out]")
     # A face whose hair allowance just runs off the top: the card shows a thin band above the frame rather than cut
@@ -184,10 +199,27 @@ def test_card_source_graph_switches_crops_between_runs_while_the_card_is_down():
     plan = ClipLayoutPlan([ShotLayout(0, 9000, LayoutType.TALKING_HEAD)], 1920, 1080,
                           face_samples=[(t, [Box(0.1, 0.2, 0.08, 0.2)]) for t in range(0, 3000, 500)]
                           + [(t, [Box(0.7, 0.3, 0.08, 0.2)]) for t in range(5000, 9000, 500)])
-    graph = ss.card_source_graph(plan, [(0, 9000)], 1080, 838, "30", [(0.0, 2.0), (5.0, 8.0)], 0.35)
+    graph, widths = ss.card_source_graph(plan, [(0, 9000)], 1080, 838, "30", [(0.0, 2.0), (5.0, 8.0)], 0.35)
+    assert widths == [1080, 1080]
     # One piece per run, split halfway between them (3.5 s = frame 105).
     assert "trim=start_frame=0:end_frame=105[cd_t0]" in graph and "trim=start_frame=105:end_frame=270[cd_t1]" in graph
     assert graph.endswith("[sc_card_frames]") and "concat=n=2" in graph
+
+
+def test_a_narrow_video_gets_a_narrower_card_centered_with_its_own_mask_and_shadow(tmp_path):
+    graph = "[0:v]fps=30[clocked];[clocked]null[base]"
+    scenes = [ss.Scene("stage", 0, 2000, "grid", "arch"), ss.Scene("stage", 3000, 5000, "grid", "arch")]
+    comp = ss.build_scene_graph(graph, scenes, 1080, 1920, 6000, 1.0, "30", 1, str(tmp_path), "n",
+                                card_graph=lambda w, h, runs, transition: ("[sc_card_src]null[sc_card_frames]", [700, 1080]))
+    geo = comp.geometry
+    # Two cards: the 700 px one centered (x 190), cut from the middle of the frames; the full one as before.
+    assert "split=2[sc_card_rgb_arch_1080][sc_card_rgb_arch_700]" in comp.graph
+    assert f"crop=700:{geo.arch_h}:190:0" in comp.graph and "overlay=x=190:" in comp.graph and "overlay=x=0:" in comp.graph
+    mask = next(p for p in comp.inputs if p.endswith("mask-arch-700.png"))
+    assert Image.open(mask).size == (700, geo.arch_h)
+    rounded = ss.build_scene_graph(graph, [ss.Scene("stage", 0, 2000)], 1080, 1920, 3000, 1.0, "30", 1, str(tmp_path), "r",
+                                   card_graph=lambda w, h, runs, transition: ("[sc_card_src]null[sc_card_frames]", [648]))
+    assert f"crop=648:{geo.card_h}:176:0" in rounded.graph and f"overlay=x={40 + (1000 - 648) // 2}:" in rounded.graph
 
 
 def test_hook_hands_over_to_the_first_stage_scene():

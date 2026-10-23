@@ -1036,7 +1036,8 @@ class RenderingService:
             graph, scenes, width, height, time_map.output_ms, request.video_speed, fps, first_input,
             os.path.dirname(request.output_path), f"{request.start_time_ms}-{request.end_time_ms}", bar_h=bar_h,
             zones=zones, brand=request.scene_brand_color,
-            card_graph=lambda w, h, runs, transition: stage_scenes.card_source_graph(plan, time_map.keeps, w, h, fps, runs, transition))
+            card_graph=lambda w, h, runs, transition: stage_scenes.card_source_graph(
+                plan, time_map.keeps, w, h, fps, runs, transition, min_w=round(width * stage_scenes.MIN_CARD_SHARE)))
 
     @staticmethod
     def _source_scene_pairs(request: RenderRequest, time_map: TimeMap, window_start_ms: int) -> list[tuple[dict, dict]]:
