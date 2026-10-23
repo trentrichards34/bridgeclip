@@ -90,7 +90,9 @@ test('Edit my recording: rows only for what the plan has; Rough cut changes only
   const rows = skills.editSkillRows(PLAN, EDIT, context)
   assert.deepEqual(plain(rows.map((row) => row.id)), ['rough_cut', 'captions', 'zoom', 'broll', 'sound_effects', 'music', 'voice_cleanup'])
   assert.deepEqual(on(rows), { rough_cut: true, captions: true, zoom: false, broll: false, sound_effects: true, music: false, voice_cleanup: false })
-  assert.deepEqual(plain(skills.editSkillRows({ words: [{ cut: null }], sounds: [] }, EDIT).map((row) => row.id)), ['captions', 'zoom', 'broll', 'music', 'voice_cleanup'])
+  // Sound effects follow the graphics, so the switch is there even when the plan suggested no sounds of its own.
+  assert.deepEqual(plain(skills.editSkillRows({ words: [{ cut: null }], sounds: [] }, { ...EDIT, sounds: [] }).map((row) => row.id)), ['captions', 'zoom', 'broll', 'sound_effects', 'music', 'voice_cleanup'])
+  assert.equal(on(skills.editSkillRows({ words: [], sounds: [] }, { ...EDIT, sounds: [], soundEffects: false })).sound_effects, false)
   // B-roll: on with the page's source (My library when it has shots); it can't be turned on when no source can run.
   assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'broll', true, context)), { look: { broll: 'library' } })
   assert.deepEqual(plain(skills.editSkillPatch(PLAN, { ...EDIT, look: { ...EDIT.look, broll: 'ai' } }, 'broll', false, context)), { look: { broll: null } })
@@ -101,6 +103,7 @@ test('Edit my recording: rows only for what the plan has; Rough cut changes only
   const back = skills.editSkillPatch(PLAN, { ...EDIT, cut: [4] }, 'rough_cut', true)
   assert.deepEqual(plain(back.decisions.cut), [0, 2, 4])
   assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'sound_effects', false).decisions.sounds), [{ id: 0, on: false }, { id: 1, on: false }])
+  assert.equal(skills.editSkillPatch(PLAN, EDIT, 'sound_effects', false).decisions.soundEffects, false)
   assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'captions', false)), { look: { includeCaptions: false } })
   assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'zoom', true)), { decisions: { lookExtras: ['punch_zoom'] } })
   assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'music', true)), { look: { music: true } })

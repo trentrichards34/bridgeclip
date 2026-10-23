@@ -5,6 +5,7 @@ import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './h
 import { isCaptionLanguage, type CaptionLanguage } from './caption-language'
 import { parseScreenPair, type ScreenPair } from './screen-pair'
 import { parseLookExtras, type LookExtraId } from './look-extras'
+import { parseCandidateSound, type CandidateSound } from './sound-design'
 export type Crop = [number, number, number, number]
 export type CropCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 export type EditorRange = [number, number]
@@ -57,6 +58,8 @@ export interface CandidateEdit {
   stage_scenes?: StageScene[]
   /** Look extras drawn by the bake (look-extras.ts): caption styling, progress bar, comment box, zoom. Absent = none. */
   look_extras?: CandidateLookExtras
+  /** Sound effects that follow the clip's graphics and scenes (sound-design.ts), mixed by the bake. Absent = none. */
+  sound?: CandidateSound
 }
 /** The extras a clip can carry in the editor (the rest belong to their own tools). */
 export const EDITOR_LOOK_EXTRAS: readonly LookExtraId[] = ['keyword_pill', 'accent_words', 'progress_bar', 'comment_box', 'punch_zoom', 'broll_tags']
@@ -321,6 +324,7 @@ export function parseCandidateEdit(value: unknown, duration: number, transcriptC
     ...(v.graphics === undefined ? {} : { graphics: parseGraphics(v.graphics) }),
     ...(v.stage_scenes === undefined ? {} : { stage_scenes: parseScenes(v.stage_scenes, duration) }),
     ...(v.look_extras === undefined ? {} : { look_extras: parseCandidateLookExtras(v.look_extras) }),
+    ...(v.sound === undefined ? {} : { sound: parseCandidateSound(v.sound, duration) }),
     ...(v.dismissed_camera_markers === undefined ? {} : { dismissed_camera_markers: [...new Set(arr(v.dismissed_camera_markers, 5000).map((t) => num(t, 0, duration)))].sort((a, b) => a - b) }) }
 }
 /** A hook from the project or the renderer: null (none) or text and a look. */
@@ -431,7 +435,8 @@ export function candidateEdit(c: CandidateEdit): CandidateEdit {
     // Kept even when empty, so removing a clip's last graphic saves (main merges edits over the stored clip).
     ...(c.graphics !== undefined ? { graphics: c.graphics } : {}),
     ...(c.stage_scenes !== undefined ? { stage_scenes: c.stage_scenes } : {}),
-    ...(c.look_extras !== undefined ? { look_extras: c.look_extras } : {}) }
+    ...(c.look_extras !== undefined ? { look_extras: c.look_extras } : {}),
+    ...(c.sound !== undefined ? { sound: c.sound } : {}) }
 }
 export function renderEditKey(c: CandidateEdit): string {
   // The call to action is added after rendering, so changing it doesn't need a new render.

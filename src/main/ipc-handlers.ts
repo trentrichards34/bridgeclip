@@ -38,6 +38,7 @@ import { moreClipsInfo, startClipJobRequest, startClipJobRequests, startMoreClip
 import { MAX_CREATE_SOURCES } from '../shared/create-sources'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { addMusic, listMusic, musicPreview, removeMusic, saveMusicSettings } from './music'
+import { addSoundsFromPicker, listSounds, removeSound, setSoundAction, soundPreview } from './sound-library'
 import { addCta, applyRunCta, applyRunCtaInLock, listCtas, removeCta, updateCta, withRunLock } from './ctas'
 import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../shared/ctas'
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, readReactions, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
@@ -345,6 +346,22 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (result.canceled) return { library: await listMusic(), added: [], skipped: [] }
     return addMusic(result.filePaths.slice(0, 20))
   })
+
+  // My sounds: the member's own sound effects, each tagged with an action. The dialog opens here; sounds are named by id.
+  handle('sounds:list', () => listSounds())
+  handle('sounds:remove', (_event, id: unknown) => removeSound(id))
+  handle('sounds:preview', (_event, id: unknown) => soundPreview(id))
+  handle('sounds:setAction', (_event, id: unknown, action: unknown) => setSoundAction(id, action))
+  handle('sounds:add', (_event, action: unknown) => addSoundsFromPicker(action, async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, {
+      properties: ['openFile', 'multiSelections'],
+      title: 'Add your own sounds',
+      filters: [{ name: 'Sounds', extensions: ['mp3', 'wav', 'm4a', 'ogg'] }]
+    })
+    return result.canceled ? null : result.filePaths
+  }))
 
   // My B-roll library: files and folders come from the dialog in main; indexing and AI shots are paid (the spending check first).
   onLibraryChange(() => sendToWindow('brollLibrary:changed'))

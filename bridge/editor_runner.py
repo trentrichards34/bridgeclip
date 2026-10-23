@@ -12,8 +12,8 @@ logger = logging.getLogger('editor_runner')
 ACTIONS = ('review', 'export', 'replace-source', 'scan-cameras', 'suggest-hooks', 'prepare')
 # Main reads one result line of at most 16 KiB.
 MAX_RESULT_CHARS = 15000
-# One request (graphics and scenes for a long reel: up to 60 of each).
-MAX_REQUEST = 65536
+# One request (graphics and scenes for a long reel: up to 60 of each; sound events and the member's own sounds).
+MAX_REQUEST = 131072
 # Keep in sync with EDITOR_ERROR_CODES in manual_editor.py and editorErrorCodes
 # in src/shared/clip-editor.ts. Only these codes cross the bridge.
 ERROR_CODES = frozenset({'duration', 'geometry', 'audio', 'invalid', 'project_changed', 'invalid_edit', 'not_ready',

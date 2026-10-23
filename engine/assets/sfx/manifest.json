@@ -1,0 +1,327 @@
+{
+  "version": 1,
+  "rate": 48000,
+  "peak_dbfs": -3.0,
+  "actions": {
+    "whoosh": 4,
+    "swipe": 4,
+    "pop": 4,
+    "tick": 4,
+    "click": 4,
+    "impact": 4,
+    "riser": 2,
+    "paper": 5
+  },
+  "sounds": [
+    {
+      "file": "whoosh/air-short.ogg",
+      "action": "whoosh",
+      "take": 0,
+      "peak_ms": 204,
+      "duration_ms": 381,
+      "level_db": -16.78,
+      "source": "CreatorClips shaped noise (whoosh, seed 11)",
+      "license": "Made for CreatorClips from shaped noise (scripts/sfx/build_library.py); MIT, with the engine"
+    },
+    {
+      "file": "whoosh/air-medium.ogg",
+      "action": "whoosh",
+      "take": 1,
+      "peak_ms": 283,
+      "duration_ms": 529,
+      "level_db": -16.71,
+      "source": "CreatorClips shaped noise (whoosh, seed 12)",
+      "license": "Made for CreatorClips from shaped noise (scripts/sfx/build_library.py); MIT, with the engine"
+    },
+    {
+      "file": "whoosh/air-long.ogg",
+      "action": "whoosh",
+      "take": 2,
+      "peak_ms": 359,
+      "duration_ms": 674,
+      "level_db": -15.99,
+      "source": "CreatorClips shaped noise (whoosh, seed 13)",
+      "license": "Made for CreatorClips from shaped noise (scripts/sfx/build_library.py); MIT, with the engine"
+    },
+    {
+      "file": "whoosh/air-quick.ogg",
+      "action": "whoosh",
+      "take": 3,
+      "peak_ms": 169,
+      "duration_ms": 313,
+      "level_db": -19.68,
+      "source": "CreatorClips shaped noise (whoosh, seed 14)",
+      "license": "Made for CreatorClips from shaped noise (scripts/sfx/build_library.py); MIT, with the engine"
+    },
+    {
+      "file": "swipe/card-shove-1.ogg",
+      "action": "swipe",
+      "take": 0,
+      "peak_ms": 122,
+      "duration_ms": 766,
+      "level_db": -23.21,
+      "source": "Kenney, Casino Audio (kenney_casino-audio/card-shove-1.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "swipe/card-shove-3.ogg",
+      "action": "swipe",
+      "take": 1,
+      "peak_ms": 142,
+      "duration_ms": 693,
+      "level_db": -23.07,
+      "source": "Kenney, Casino Audio (kenney_casino-audio/card-shove-3.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "swipe/card-shove-4.ogg",
+      "action": "swipe",
+      "take": 2,
+      "peak_ms": 233,
+      "duration_ms": 809,
+      "level_db": -20.03,
+      "source": "Kenney, Casino Audio (kenney_casino-audio/card-shove-4.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "swipe/card-slide-3.ogg",
+      "action": "swipe",
+      "take": 3,
+      "peak_ms": 86,
+      "duration_ms": 598,
+      "level_db": -20.28,
+      "source": "Kenney, Casino Audio (kenney_casino-audio/card-slide-3.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "pop/pluck-1.ogg",
+      "action": "pop",
+      "take": 0,
+      "peak_ms": 2,
+      "duration_ms": 100,
+      "level_db": -23.92,
+      "source": "Kenney, Interface Sounds (kenney_interface-sounds/pluck_001.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "pop/pluck-2.ogg",
+      "action": "pop",
+      "take": 1,
+      "peak_ms": 2,
+      "duration_ms": 149,
+      "level_db": -23.74,
+      "source": "Kenney, Interface Sounds (kenney_interface-sounds/pluck_002.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "pop/select-4.ogg",
+      "action": "pop",
+      "take": 2,
+      "peak_ms": 13,
+      "duration_ms": 225,
+      "level_db": -15.68,
+      "source": "Kenney, Interface Sounds (kenney_interface-sounds/select_004.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "pop/chip-lay-3.ogg",
+      "action": "pop",
+      "take": 3,
+      "peak_ms": 99,
+      "duration_ms": 254,
+      "level_db": -23.01,
+      "source": "Kenney, Casino Audio (kenney_casino-audio/chip-lay-3.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "tick/tick-1.ogg",
+      "action": "tick",
+      "take": 0,
+      "peak_ms": 2,
+      "duration_ms": 13,
+      "level_db": -29.49,
+      "source": "Kenney, Interface Sounds (kenney_interface-sounds/tick_001.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "tick/tick-2.ogg",
+      "action": "tick",
+      "take": 1,
+      "peak_ms": 2,
+      "duration_ms": 20,
+      "level_db": -28.34,
+      "source": "Kenney, Interface Sounds (kenney_interface-sounds/tick_002.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "tick/tick-4.ogg",
+      "action": "tick",
+      "take": 2,
+      "peak_ms": 48,
+      "duration_ms": 55,
+      "level_db": -20.74,
+      "source": "Kenney, Interface Sounds (kenney_interface-sounds/tick_004.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "tick/chip-tap.ogg",
+      "action": "tick",
+      "take": 3,
+      "peak_ms": 12,
+      "duration_ms": 137,
+      "level_db": -28.73,
+      "source": "Kenney, Casino Audio (kenney_casino-audio/chips-collide-3.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "click/click-1.ogg",
+      "action": "click",
+      "take": 0,
+      "peak_ms": 3,
+      "duration_ms": 97,
+      "level_db": -28.06,
+      "source": "Kenney, Interface Sounds (kenney_interface-sounds/click_001.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "click/click-5.ogg",
+      "action": "click",
+      "take": 1,
+      "peak_ms": 3,
+      "duration_ms": 7,
+      "level_db": -25.46,
+      "source": "Kenney, Interface Sounds (kenney_interface-sounds/click_005.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "click/switch-2.ogg",
+      "action": "click",
+      "take": 2,
+      "peak_ms": 3,
+      "duration_ms": 145,
+      "level_db": -21.51,
+      "source": "Kenney, Interface Sounds (kenney_interface-sounds/switch_002.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "click/toggle-4.ogg",
+      "action": "click",
+      "take": 3,
+      "peak_ms": 3,
+      "duration_ms": 60,
+      "level_db": -20.17,
+      "source": "Kenney, Interface Sounds (kenney_interface-sounds/toggle_004.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "impact/punch-heavy-0.ogg",
+      "action": "impact",
+      "take": 0,
+      "peak_ms": 55,
+      "duration_ms": 593,
+      "level_db": -12.84,
+      "source": "Kenney, Impact Sounds (kenney_impact-sounds/impactPunch_heavy_000.ogg) layered with (kenney_impact-sounds/impactSoft_heavy_000.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "impact/punch-heavy-2.ogg",
+      "action": "impact",
+      "take": 1,
+      "peak_ms": 24,
+      "duration_ms": 569,
+      "level_db": -12.01,
+      "source": "Kenney, Impact Sounds (kenney_impact-sounds/impactPunch_heavy_002.ogg) layered with (kenney_impact-sounds/impactSoft_heavy_002.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "impact/punch-heavy-1.ogg",
+      "action": "impact",
+      "take": 2,
+      "peak_ms": 30,
+      "duration_ms": 569,
+      "level_db": -10.78,
+      "source": "Kenney, Impact Sounds (kenney_impact-sounds/impactPunch_heavy_001.ogg) layered with (kenney_impact-sounds/impactSoft_heavy_001.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "impact/punch-heavy-4.ogg",
+      "action": "impact",
+      "take": 3,
+      "peak_ms": 4,
+      "duration_ms": 502,
+      "level_db": -12.73,
+      "source": "Kenney, Impact Sounds (kenney_impact-sounds/impactPunch_heavy_004.ogg) layered with (kenney_impact-sounds/impactSoft_heavy_004.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "riser/air-rise-short.ogg",
+      "action": "riser",
+      "take": 0,
+      "peak_ms": 999,
+      "duration_ms": 1041,
+      "level_db": -16.64,
+      "source": "CreatorClips shaped noise (riser, seed 21)",
+      "license": "Made for CreatorClips from shaped noise (scripts/sfx/build_library.py); MIT, with the engine"
+    },
+    {
+      "file": "riser/air-rise-long.ogg",
+      "action": "riser",
+      "take": 1,
+      "peak_ms": 1565,
+      "duration_ms": 1573,
+      "level_db": -15.09,
+      "source": "CreatorClips shaped noise (riser, seed 22)",
+      "license": "Made for CreatorClips from shaped noise (scripts/sfx/build_library.py); MIT, with the engine"
+    },
+    {
+      "file": "paper/card-place-2.ogg",
+      "action": "paper",
+      "take": 0,
+      "peak_ms": 199,
+      "duration_ms": 455,
+      "level_db": -26.68,
+      "source": "Kenney, Casino Audio (kenney_casino-audio/card-place-2.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "paper/card-place-3.ogg",
+      "action": "paper",
+      "take": 1,
+      "peak_ms": 455,
+      "duration_ms": 882,
+      "level_db": -25.66,
+      "source": "Kenney, Casino Audio (kenney_casino-audio/card-place-3.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "paper/card-place-4.ogg",
+      "action": "paper",
+      "take": 2,
+      "peak_ms": 338,
+      "duration_ms": 601,
+      "level_db": -23.54,
+      "source": "Kenney, Casino Audio (kenney_casino-audio/card-place-4.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "paper/book-flip-3.ogg",
+      "action": "paper",
+      "take": 3,
+      "peak_ms": 35,
+      "duration_ms": 231,
+      "level_db": -26.64,
+      "source": "Kenney, Rpg Audio (kenney_rpg-audio/bookFlip3.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    },
+    {
+      "file": "paper/book-place-1.ogg",
+      "action": "paper",
+      "take": 4,
+      "peak_ms": 71,
+      "duration_ms": 274,
+      "level_db": -17.3,
+      "source": "Kenney, Rpg Audio (kenney_rpg-audio/bookPlace1.ogg)",
+      "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
+    }
+  ]
+}

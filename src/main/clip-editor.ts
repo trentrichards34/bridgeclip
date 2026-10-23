@@ -15,6 +15,8 @@ import { logger } from './logger'
 import { importGraphicImage, importGraphicVideo, renderCandidateGraphics, sweepGraphicRenders, type RenderedGraphic } from './graphics-render'
 import { outputScenes } from '../shared/scenes'
 import { firstChapterSourceMs } from '../shared/motion-graphics'
+import { bakeSoundEvents } from '../shared/sound-design'
+import { soundPaletteForEngine } from './sound-library'
 
 type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source' | 'suggest-hooks' | 'prepare'
 interface EditorOperation { progress?: EditorSession['progress']; action: NonNullable<EditorSession['operation']>; child?: ChildProcess; cancelled?: boolean; abort?: AbortController; batch?: EditorBatch }
@@ -244,6 +246,7 @@ export async function saveEditor(path: unknown, revision: unknown, edits: unknow
       if (edit.graphics === undefined) delete next.graphics
       if (edit.stage_scenes === undefined) delete next.stage_scenes
       if (edit.look_extras === undefined) delete next.look_extras
+      if (edit.sound === undefined) delete next.sound
       // A changed call to action is the member's choice: a re-bake keeps it over the Library clip's.
       if (ctaChoice(edit.cta_id) !== ctaChoice(c.cta_id)) next.cta_edited = true
       if (edit.status === 'baked') {
@@ -388,6 +391,12 @@ function batchFailure(batch: EditorBatch, failed: { title: string; error: Error 
   if (batch.completed < batch.total) parts.push('Clips that were not baked are still ready.')
   return new BatchError(parts.join(' '))
 }
+/** A bake's `sound` (engine sound_design.parse_request): the register, the music's level and what happens on screen. */
+export function candidateSoundRequest(project: EditorProject, candidate: EditorCandidate): Record<string, unknown> {
+  const sound = candidate.sound!
+  return { register: sound.register, ...(sound.music_db !== undefined ? { music_db: sound.music_db } : {}),
+    events: bakeSoundEvents(candidate, project.aspect_ratio === '9:16' && !!candidate.hook), palette: soundPaletteForEngine().slice(0, 60) }
+}
 function workerSetup(settings: ReturnType<typeof loadSettings>): { env: Record<string, string | undefined>; python: string } {
   const engine = getEnginePath()
   const env: Record<string, string | undefined> = { ...runtimeEnvironment(), ...getSettingsForBridge({ ...settings, jevEnabled: 'on' }), PYTHONPATH: engine, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1' }
@@ -448,7 +457,9 @@ async function executeEditor(path: unknown, revision: unknown, candidateId: unkn
               // The hook hands over to the first chapter header (it fades out as that starts).
               ...(exporting && firstChapterSourceMs(candidate) !== null ? { hook_end_source_ms: firstChapterSourceMs(candidate) } : {}),
               // Scenes on the finished clip's clock (vertical clips only).
-              ...(exporting && session.project.aspect_ratio === '9:16' && outputScenes(candidate).length ? { scenes: outputScenes(candidate) } : {}) })
+              ...(exporting && session.project.aspect_ratio === '9:16' && outputScenes(candidate).length ? { scenes: outputScenes(candidate) } : {}),
+              // Sound effects that follow this clip's graphics, scenes and cuts (with the member's own sounds first).
+              ...(exporting && candidate.sound?.on ? { sound: candidateSoundRequest(session.project, candidate) } : {}) })
           } catch (error) {
             // A render that failed after its captions were translated still spent that call; so did a review that failed part way.
             const failedResult = (error as WorkerFailure).result

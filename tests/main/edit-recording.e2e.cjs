@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const http = require('node:http')
 const os = require('node:os')
 const path = require('node:path')
-const { execFileSync } = require('node:child_process')
+const { execFileSync, spawnSync } = require('node:child_process')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
 const { editorTools, linkEngine } = require('./editor-e2e-tools.cjs')
 
@@ -206,7 +206,8 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   assert.equal(await page.getByRole('switch', { name: 'Pop-up 1' }).getAttribute('aria-checked'), 'true')
   assert.equal(await page.getByLabel('Pop-up 1 text').inputValue(), '15 billion')
   await page.getByRole('switch', { name: 'Pop on “billion”' }).click()
-  assert.equal(await page.getByRole('switch', { name: 'Soft whoosh as the hook text appears' }).getAttribute('aria-checked'), 'true')
+  // Sound effects follow the graphics: how much plays starts at Teaching.
+  assert.equal(await page.getByRole('radiogroup', { name: 'How much sound' }).getByRole('radio', { name: 'Teaching' }).getAttribute('aria-checked'), 'true')
   await page.getByRole('switch', { name: 'End on your call to action' }).waitFor()
   // The automatic direction: the plan's graphic is on the strip, and Motion graphics and Stage layouts start on.
   assert.equal(await page.locator('[data-skill="motion_graphics"] [role="switch"]').getAttribute('aria-checked'), 'true')
@@ -294,7 +295,23 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   assert.notEqual(candidate.hook.look.look, 'white')
   assert.deepEqual(candidate.look_extras.ids, ['keyword_pill', 'progress_bar'])
   assert.ok(fs.existsSync(path.join(library, run, 'editor-source.mp4')))
+  // Its sound effects are the clip's, mixed by the bake from its graphics: the call to action's riser and impact land on
+  // it (the bake's reel has much more high-band energy there than the plain cut), and the reel is at social loudness.
+  assert.deepEqual([candidate.sound.on, candidate.sound.register], [true, 'teaching'])
   const reel = path.join(library, run, 'clip_00.mp4')
+  const stderrOf = (args) => spawnSync(ffmpeg, ['-nostdin', '-hide_banner', '-nostats', ...args, '-f', 'null', '-'], { encoding: 'utf8' }).stderr
+  const highBand = (file, at) => {
+    const found = [...stderrOf(['-ss', String(Math.max(0, at - 0.3)), '-i', file, '-t', '0.6', '-af', 'highpass=f=2500,highpass=f=2500,astats=metadata=0:reset=0'])
+      .matchAll(/RMS level dB:\s*(-?[\d.]+|-inf)/g)]
+    const value = found.length ? found[found.length - 1][1] : '-inf'
+    return value === '-inf' ? -200 : Number(value)
+  }
+  const ctaAt = (cta.at_ms + 33) / 1000
+  const baked = highBand(reel, ctaAt), plainCut = highBand(path.join(library, run, 'editor-source.mp4'), ctaAt)
+  assert.ok(baked > plainCut + 10, `high band at the call to action: ${baked} dB baked vs ${plainCut} dB plain`)
+  const summary = stderrOf(['-i', reel, '-af', 'ebur128=peak=true']).split('Summary:').pop()
+  const integrated = Number(/I:\s+(-?[\d.]+) LUFS/.exec(summary)[1]), truePeak = Number(/Peak:\s+(-?[\d.]+) dBFS/.exec(summary)[1])
+  assert.ok(Math.abs(integrated + 14) <= 1 && truePeak <= -1, `${integrated} LUFS, ${truePeak} dBTP`)
   const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height', '-show_entries', 'format=duration', '-of', 'json', reel]).toString())
   const video = probe.streams.find((s) => s.codec_type === 'video')
   assert.deepEqual([video.width, video.height], [1080, 1920])

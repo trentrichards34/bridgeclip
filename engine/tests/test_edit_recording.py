@@ -6,14 +6,12 @@ import os
 import re
 import shutil
 import subprocess
-import wave
 
 import numpy as np
 import pytest
 from PIL import Image
 
 from clip_engine.services import edit_recording as er
-from clip_engine.services.sound_effects import SOUNDS, sound_path, synthesize
 
 
 def say(text, start, step=0.32, src=0, gap=0.04):
@@ -225,24 +223,6 @@ def test_a_long_pause_inside_kept_speech_is_tightened():
 
 
 # ---------------------------------------------------------------------------
-# Sound effects
-# ---------------------------------------------------------------------------
-
-def test_every_sound_effect_is_made_here_short_and_peaking_below_full_scale(tmp_path):
-    for name in SOUNDS:
-        samples = synthesize(name)
-        assert 0.02 < len(samples) / 48000 < 1.0
-        assert 0.85 < float(np.max(np.abs(samples))) <= 0.9 + 1e-6
-        path = sound_path(name, str(tmp_path))
-        with wave.open(path) as wav:
-            assert (wav.getframerate(), wav.getnchannels(), wav.getsampwidth()) == (48000, 1, 2)
-    # The whoosh is broadband noise; the ding is a tone.
-    whoosh, ding = synthesize("whoosh"), synthesize("ding")
-    spectrum = lambda s: np.abs(np.fft.rfft(s))  # noqa: E731
-    assert np.count_nonzero(spectrum(whoosh) > spectrum(whoosh).max() * 0.1) > 10 * np.count_nonzero(spectrum(ding) > spectrum(ding).max() * 0.1)
-
-
-# ---------------------------------------------------------------------------
 # A real render
 # ---------------------------------------------------------------------------
 
@@ -319,7 +299,7 @@ def test_a_render_cuts_on_words_frames_to_9_16_mixes_sound_effects_and_normalize
     integrated, peak = loudness(out)
     assert abs(integrated - er.TARGET_LUFS) <= 1.0, integrated
     assert peak <= -1.0, peak
-    # The whoosh under the title: broadband sound in the first half second, which the 300 Hz voice never has.
+    # The hook text's swipe: broadband sound in the first half second, which the 300 Hz voice never has.
     voice_only = timed[2][1] / 1000
     assert band_rms(out, 0.0, 0.5) > band_rms(out, voice_only, 0.4) + 15
     # The pop-up: a light card over the picture while "billion" is said, gone two seconds later.

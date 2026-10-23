@@ -862,13 +862,15 @@ def overlay_shots(base: str, shots: list[BrollShot], out: str) -> str:
 
 
 async def overlay_reel_broll(base: str, timed: list, total_s: float, config: dict, work: str, warnings: list[str],
-                             settings: Optional[Settings] = None, width: int = 1080, height: int = 1920) -> float:
+                             settings: Optional[Settings] = None, width: int = 1080, height: int = 1920,
+                             placed: Optional[list] = None) -> float:
     """B-roll over a finished reel (in place): never in the first 3 s or the last 1.5 s. Returns what it cost.
-    A failure leaves the reel as it was, with a note."""
+    A failure leaves the reel as it was, with a note. `placed` gets each shot's (start_ms, end_ms) once it is in
+    (its sound effect cues)."""
     settings = settings or get_settings()
     source = config.get("broll_source")
     if source == "stock":
-        return await _stock_over_reel(base, timed, total_s, work, warnings, settings, width, height)
+        return await _stock_over_reel(base, timed, total_s, work, warnings, settings, width, height, placed)
     if source not in ("library", "ai", "library_ai"):
         return 0.0
     try:
@@ -895,6 +897,8 @@ async def overlay_reel_broll(base: str, timed: list, total_s: float, config: dic
     try:
         await asyncio.to_thread(overlay_shots, base, made.shots, out)
         os.replace(out, base)
+        if placed is not None:
+            placed.extend((shot.start_ms, shot.end_ms) for shot in made.shots)
     except (BrollLibraryError, OSError) as error:
         logger.warning(f"B-roll could not be laid over the reel: {error}")
         warnings.append("The b-roll could not be added, so the reel shows you throughout.")
@@ -904,7 +908,7 @@ async def overlay_reel_broll(base: str, timed: list, total_s: float, config: dic
 
 
 async def _stock_over_reel(base: str, timed: list, total_s: float, work: str, warnings: list[str], settings: Settings,
-                           width: int, height: int) -> float:
+                           width: int, height: int, placed: Optional[list] = None) -> float:
     """Stock footage (Pexels, the member's key) over a finished reel, as Create's B-roll does."""
     from clip_engine.services.broll_service import PexelsClient, PexelsKeyRejected, plan_shots
     key = getattr(settings, "pexels_api_key", None)
@@ -935,6 +939,8 @@ async def _stock_over_reel(base: str, timed: list, total_s: float, work: str, wa
         try:
             await asyncio.to_thread(overlay_shots, base, shots, out)
             os.replace(out, base)
+            if placed is not None:
+                placed.extend((shot.start_ms, shot.end_ms) for shot in shots)
         except (BrollLibraryError, OSError):
             warnings.append("The b-roll could not be added, so the reel shows you throughout.")
             if os.path.exists(out):
