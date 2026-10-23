@@ -517,15 +517,52 @@ def size_for_scenes(graphics: list[dict], scenes: Sequence[dict]) -> list[dict]:
 CANDIDATE_ID = 'edit-reel'
 
 
+# Directed reels: the hook text fades out after this many seconds (or hands over to the first chapter header).
+DIRECTED_HOOK_HIDE_S = 5
+# A hook bar pads the whole reel down; on a directed reel it floats on a matching box instead, so the stage gets the top.
+FLOATING_BOX = {'white': 'light', 'black': 'dark', 'brand': 'brand'}
+
+
+def directed_hook_look(raw: Optional[dict]) -> dict:
+    """The hook look on a directed reel (Motion graphics on): a bar becomes floating text on the same colors, and it
+    hides after DIRECTED_HOOK_HIDE_S unless the member chose when it hides. Both can be changed in the editor's Hook tab."""
+    from clip_engine.services.rendering_service import parse_headline_look
+    look = parse_headline_look(raw)
+    if look.look == 'none':
+        return look.as_dict()
+    if look.look in FLOATING_BOX:
+        look.text_bg = FLOATING_BOX[look.look]
+        look.look = 'floating'
+    if look.hide_after_s is None:
+        look.hide_after_s = DIRECTED_HOOK_HIDE_S
+    return look.as_dict()
+
+
+def candidate_look_extras(look: Any) -> Optional[dict]:
+    """The member's look extras for the editor's clip (the ones its bake draws), with their color and keyword."""
+    ids = [x for x in getattr(look, 'look_extras', ()) or () if x in ('keyword_pill', 'accent_words', 'progress_bar', 'comment_box', 'punch_zoom', 'broll_tags')]
+    if not ids:
+        return None
+    color = getattr(look, 'look_extras_color', None)
+    keyword = getattr(look, 'look_extras_keyword', '') or ''
+    return {'ids': ids, **({'color': color.upper()} if isinstance(color, str) and re.fullmatch(r'#[0-9A-Fa-f]{6}', color) else {}),
+            **({'keyword': keyword} if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,23}', keyword) else {})}
+
+
 def edit_project(title: str, total_ms: int, segments: Sequence[TranscriptSegment], look: Any, graphics: list[dict],
-                 scenes: list[dict], brand_mark: Optional[dict], preview_id: str, width: int = 1080, height: int = 1920) -> dict:
+                 scenes: list[dict], brand_mark: Optional[dict], preview_id: str, width: int = 1080, height: int = 1920,
+                 directed: bool = False) -> dict:
     """The editor project for an edited reel: one ready clip covering the whole reel (the editor's source), with its
-    hook text, captions, graphics and scenes. Baking it (main) replaces the reel in the Library (clip 0)."""
+    hook text, captions, look extras, graphics and scenes. Baking it (main) replaces the reel in the Library (clip 0).
+    `directed`: Motion graphics on (the hook floats and hides after a few seconds: directed_hook_look)."""
     from clip_engine.services.automatic_editor import editor_rows
     from clip_engine.services.manual_editor import default_crop, utf16_prefix, validate_candidate, validate_candidate_list
     hook_text = ' '.join((look.headline or '').split())
-    hook = {'text': utf16_prefix(hook_text, 200), 'look': dict(look.headline_look or {'look': 'white', 'color': '#FFFFFF', 'font': 'clean'})} \
-        if hook_text else None
+    hook_look = dict(look.headline_look or {'look': 'white', 'color': '#FFFFFF', 'font': 'clean'})
+    if directed:
+        hook_look = directed_hook_look(hook_look)
+    hook = {'text': utf16_prefix(hook_text, 200), 'look': hook_look} if hook_text else None
+    extras = candidate_look_extras(look)
     candidate = {
         'id': CANDIDATE_ID, 'title': utf16_prefix(title, 200) or 'My recording', 'ranges': [[0, int(total_ms)]],
         'scenes': [{'at_ms': 0, 'layout': 'fill', 'crops': [default_crop(width, height, width / height)]}],
@@ -533,6 +570,7 @@ def edit_project(title: str, total_ms: int, segments: Sequence[TranscriptSegment
         'caption_edits': [], 'caption_suppression_ranges': [], 'caption_y': None, 'hook': hook, 'cta_id': None,
         'score': 0, 'reason': 'Edit my recording', 'review': None, 'exports': [], 'requires_visual_context': False, 'library_clip': 0,
         **({'graphics': graphics} if graphics else {}), **({'stage_scenes': scenes} if scenes else {}),
+        **({'look_extras': extras} if extras else {}),
     }
     validate_candidate(candidate, int(total_ms), len(segments))
     validate_candidate_list([candidate])

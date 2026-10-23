@@ -1935,17 +1935,17 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
     cache = config.get("sound_cache") or os.path.join(work, "sounds")
     timed_list = [list(t) for t in timed]
     source = base
-    # Made into the picture (the editor has no such layers): the extras (comment box, progress bar, zoom punch) and the
-    # cut-out opening. To change them, make the reel again from the review.
+    # Made into the picture (the editor has no such layer): the cut-out opening. To change it, make the reel again from the
+    # review. The look extras (keyword pill, accent words, progress bar, comment box, zoom) go on the editor's clip: its
+    # bake draws them, and they can be switched there.
     cutout = None
     if config.get("cutout_intro"):
         progress("Cutting you out for the opening", 68)
         cutout = await asyncio.to_thread(_cutout_layer, config, base, folder, work, total, warnings)
-    if look.look_extras or cutout:
+    if cutout:
         progress("Adding your extras", 70)
-        baked = os.path.join(work, "with-extras.mp4")
-        plain = Look("", None, False, look.caption_preset, None, tuple(look.look_extras), look.look_extras_color, look.look_extras_keyword,
-                     look.punched)
+        baked = os.path.join(work, "with-opening-cutout.mp4")
+        plain = Look("", None, False, look.caption_preset, None)
         await overlay_reel(base, baked, work, plain, timed_list, [], total, root, Layers([], [], cutout), warnings)
         source = baked
     offset_ms = 0
@@ -1980,7 +1980,8 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
     progress("Getting the editor ready", 80)
     await RenderingService().capture_framing_source(target, os.path.join(root, f"editor-preview-{preview_id}.mp4"), duration_ms=total_ms)
     title = config.get("title") or look.headline or "My recording"
-    project = ed.edit_project(title, total_ms, segments, look, graphics, scenes, ed.saved_brand_mark(look.brand_mark, root), preview_id)
+    project = ed.edit_project(title, total_ms, segments, look, graphics, scenes, ed.saved_brand_mark(look.brand_mark, root), preview_id,
+                              directed=options["motion"])
     _atomic_json(os.path.join(root, "transcript.json"), ed.transcript_json(segments))
     # Clip 0 starts as the plain cut (its sound finished); the editor's bake replaces it in place.
     final = os.path.join(root, "clip_00.mp4")

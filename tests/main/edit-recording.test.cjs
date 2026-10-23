@@ -659,3 +659,16 @@ test('the plan\'s graphics are checked; proof stats join them without doubling; 
   assert.equal(patched[0].origin, 'member')
   assert.equal(reel.patchEditGraphic(decisions.graphics, 'g-good01', { duration_ms: 2000 })[0].origin, 'auto')
 })
+
+test('an editor clip carries its look extras (keyword pill, accent words, progress bar, comment box), checked', () => {
+  const editor = load('shared/clip-editor.ts')
+  assert.deepEqual(plain(editor.parseCandidateLookExtras({ ids: ['keyword_pill', 'proof_underline', 'nope', 'comment_box'], color: '#ff5500', keyword: 'GUIDE' })),
+    { ids: ['keyword_pill', 'comment_box'], color: '#FF5500', keyword: 'GUIDE' })
+  for (const bad of [null, [], { ids: 'x' }, { ids: [], color: 'red' }, { ids: [], keyword: '<b>' }]) assert.throws(() => editor.parseCandidateLookExtras(bad))
+  const base = { id: 'edit-reel', title: 'Reel', ranges: [[0, 5000]], scenes: [{ at_ms: 0, layout: 'fill', crops: [[0, 0, 1, 1]] }], captions: true, caption_preset: 'pop',
+    video_speed: 1, status: 'ready', caption_edits: [], caption_suppression_ranges: [] }
+  const withExtras = editor.parseCandidateEdit({ ...base, look_extras: { ids: ['accent_words'] } }, 5000, 1)
+  assert.deepEqual(plain(withExtras.look_extras), { ids: ['accent_words'] })
+  // Switching one changes what the bake makes (a baked clip goes back to refining).
+  assert.notEqual(editor.renderEditKey(withExtras), editor.renderEditKey(editor.parseCandidateEdit(base, 5000, 1)))
+})

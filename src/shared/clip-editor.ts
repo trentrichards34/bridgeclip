@@ -4,6 +4,7 @@ import { parseScenes, type StageScene } from './scenes'
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
 import { isCaptionLanguage, type CaptionLanguage } from './caption-language'
 import { parseScreenPair, type ScreenPair } from './screen-pair'
+import { parseLookExtras, type LookExtraId } from './look-extras'
 export type Crop = [number, number, number, number]
 export type CropCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 export type EditorRange = [number, number]
@@ -54,6 +55,27 @@ export interface CandidateEdit {
   /** Scenes (scenes.ts): face / stage / visual stretches in SOURCE time. Absent = face throughout.
    * (Named apart from `scenes`, the clip's framing layouts.) */
   stage_scenes?: StageScene[]
+  /** Look extras drawn by the bake (look-extras.ts): caption styling, progress bar, comment box, zoom. Absent = none. */
+  look_extras?: CandidateLookExtras
+}
+/** The extras a clip can carry in the editor (the rest belong to their own tools). */
+export const EDITOR_LOOK_EXTRAS: readonly LookExtraId[] = ['keyword_pill', 'accent_words', 'progress_bar', 'comment_box', 'punch_zoom', 'broll_tags']
+export interface CandidateLookExtras {
+  ids: LookExtraId[]
+  /** Their color (the brand's); absent: each extra's own. */
+  color?: string
+  /** The keyword the comment box types; absent: no comment box. */
+  keyword?: string
+}
+/** A clip's look extras from the project or the renderer (unknown ids dropped); throws on anything malformed. */
+export function parseCandidateLookExtras(value: unknown): CandidateLookExtras {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid look extras')
+  const v = value as Record<string, unknown>
+  if (!Array.isArray(v.ids) || v.ids.length > 10) throw new Error('Invalid look extras')
+  const ids = parseLookExtras(v.ids).filter((id) => EDITOR_LOOK_EXTRAS.includes(id))
+  if (v.color !== undefined && (typeof v.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(v.color))) throw new Error('Invalid look extras')
+  if (v.keyword !== undefined && (typeof v.keyword !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9-]{0,23}$/.test(v.keyword))) throw new Error('Invalid look extras')
+  return { ids, ...(v.color ? { color: (v.color as string).toUpperCase() } : {}), ...(v.keyword ? { keyword: v.keyword as string } : {}) }
 }
 /**
  * What an Automatic run's pass did to a clip, saved when the run is opened in the editor
@@ -298,6 +320,7 @@ export function parseCandidateEdit(value: unknown, duration: number, transcriptC
     ...(v.cta_id === undefined ? {} : { cta_id: v.cta_id === null ? null : /^[a-f0-9]{16}$/.test(str(v.cta_id, 16)) ? v.cta_id as string : fail() }),
     ...(v.graphics === undefined ? {} : { graphics: parseGraphics(v.graphics) }),
     ...(v.stage_scenes === undefined ? {} : { stage_scenes: parseScenes(v.stage_scenes, duration) }),
+    ...(v.look_extras === undefined ? {} : { look_extras: parseCandidateLookExtras(v.look_extras) }),
     ...(v.dismissed_camera_markers === undefined ? {} : { dismissed_camera_markers: [...new Set(arr(v.dismissed_camera_markers, 5000).map((t) => num(t, 0, duration)))].sort((a, b) => a - b) }) }
 }
 /** A hook from the project or the renderer: null (none) or text and a look. */
@@ -407,7 +430,8 @@ export function candidateEdit(c: CandidateEdit): CandidateEdit {
     ...(dismissed_camera_markers ? { dismissed_camera_markers } : {}), ...(c.hook !== undefined ? { hook: c.hook } : {}), ...(c.cta_id !== undefined ? { cta_id: c.cta_id } : {}),
     // Kept even when empty, so removing a clip's last graphic saves (main merges edits over the stored clip).
     ...(c.graphics !== undefined ? { graphics: c.graphics } : {}),
-    ...(c.stage_scenes !== undefined ? { stage_scenes: c.stage_scenes } : {}) }
+    ...(c.stage_scenes !== undefined ? { stage_scenes: c.stage_scenes } : {}),
+    ...(c.look_extras !== undefined ? { look_extras: c.look_extras } : {}) }
 }
 export function renderEditKey(c: CandidateEdit): string {
   // The call to action is added after rendering, so changing it doesn't need a new render.

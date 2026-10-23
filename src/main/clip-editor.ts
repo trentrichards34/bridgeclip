@@ -237,6 +237,7 @@ export async function saveEditor(path: unknown, revision: unknown, edits: unknow
       // Graphics absent from the edit means none (undo back to before the first one): don't keep the stored ones.
       if (edit.graphics === undefined) delete next.graphics
       if (edit.stage_scenes === undefined) delete next.stage_scenes
+      if (edit.look_extras === undefined) delete next.look_extras
       // A changed call to action is the member's choice: a re-bake keeps it over the Library clip's.
       if (ctaChoice(edit.cta_id) !== ctaChoice(c.cta_id)) next.cta_edited = true
       if (edit.status === 'baked') {

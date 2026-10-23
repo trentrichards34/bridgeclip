@@ -322,11 +322,12 @@ def test_a_render_with_the_direction_makes_an_editor_project_with_its_graphics_a
               'popups': [], 'sounds': [], 'look': look, 'title': 'My reel', 'cost_usd': 0, 'sound_cache': str(tmp_path / 'sounds'),
               'editor': {'graphics': planned, 'pins': [], 'motion': True, 'stage': True, 'brand_color': None, 'cta_keyword': ''}}
     result = asyncio.run(er.render_edit(config, lambda *_: None))
-    assert result['editor'] is True and result['graphics'] >= 3 and result['scenes'] >= 1
+    # The test picture has no face (like a filmed screen): no stage over it, the big cards drawn as cards.
+    assert result['editor'] is True and result['graphics'] >= 3 and result['scenes'] == 0
     project = json.load(open(os.path.join(root, 'editor-project.json')))
     c = project['candidates'][0]
     assert {g['template'] for g in c['graphics']} >= {'statement', 'stat', 'strike_list'}
-    assert any(s['scene'] == 'stage' for s in c['stage_scenes'])
+    assert 'stage_scenes' not in c and all(g.get('size') != 'stage' for g in c['graphics'])
     assert os.path.isfile(os.path.join(root, 'editor-source.mp4')) and os.path.isfile(os.path.join(root, f"editor-preview-{project['preview_id']}.mp4"))
     job = json.load(open(os.path.join(root, 'job_output.json')))
     assert job['editor_project'] is True and job['clips'][0]['clip_index'] == 0 and 'editor_candidate' not in job['clips'][0]
@@ -355,3 +356,25 @@ def test_a_stretch_without_a_face_is_found_so_no_stage_goes_over_a_filmed_screen
     assert ed.faceless_windows(video, 0, 6000) == [(0, 6000)]
     # Too short to tell: nothing.
     assert ed.faceless_windows(video, 0, 2000) == []
+
+
+def test_a_directed_reel_floats_its_hook_and_hides_it_and_keeps_the_look_extras_for_the_bake():
+    words = talk()
+    timed = reel(words)
+    total = timed[-1][2] + 300
+    segments = ed.reel_segments(timed)
+    look = er.Look('You do not need a huge audience', {'look': 'white', 'color': '#FFFFFF', 'font': 'serif'}, True, 'pop', None,
+                   ('keyword_pill', 'accent_words', 'progress_bar', 'comment_box', 'proof_underline'), '#ff5500', 'GUIDE')
+    project = ed.edit_project('My reel', total, segments, look, [], [], None, 'a' * 32, directed=True)
+    c = project['candidates'][0]
+    assert c['hook']['look'] == {'look': 'floating', 'color': '#FFFFFF', 'font': 'serif', 'textBg': 'light', 'hideAfterS': 5}
+    assert c['look_extras'] == {'ids': ['keyword_pill', 'accent_words', 'progress_bar', 'comment_box'], 'color': '#FF5500', 'keyword': 'GUIDE'}
+    validate_candidate(c, total, len(segments))
+    from clip_engine.services.manual_editor import clip_look_extras
+    extras = clip_look_extras(c)
+    assert extras.has('keyword_pill') and extras.has('comment_box') and extras.keyword == 'GUIDE'
+    # The member's own hide time and a floating look stay as they are; without the direction the bar stays.
+    kept = ed.directed_hook_look({'look': 'floating', 'color': '#FFFFFF', 'font': 'clean', 'textBg': 'dark', 'hideAfterS': 10})
+    assert kept == {'look': 'floating', 'color': '#FFFFFF', 'font': 'clean', 'textBg': 'dark', 'hideAfterS': 10}
+    plain = ed.edit_project('My reel', total, segments, look, [], [], None, 'a' * 32)
+    assert plain['candidates'][0]['hook']['look']['look'] == 'white'
