@@ -43,6 +43,8 @@ import { useBrands } from '../store/use-brand-store'
 import { useEditRecordingStore } from '../store/use-edit-recording-store'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useDailyPlan } from '../store/use-daily-plan-store'
+import { useMemberPrefsStore } from '../store/use-member-prefs-store'
+import { lookWithMyLook, myLookSummary } from '../../shared/my-look'
 
 /** The brand's look as the starting look (captions, hook text, its handle when it has one). */
 export function lookFromBrand(brand: BrandIdentity | null): EditLook {
@@ -183,6 +185,8 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
     if (!sources.length) return
     if (!(await lowDisk.ensureSpace())) return
     setStarting(true); setError(null)
+    // "Use my look": the saved look's captions, hook text and grade (its style, sound and transitions start the review).
+    if (useMyLook && myLook) setLook(lookWithMyLook(useEditRecordingStore.getState().look, myLook))
     try {
       setStatus(await getApi().edit.start({ sources: listed.map((source) => source.path), brandIdentityId: brandId, ...(hookHint ? { hookHint } : {}),
         ...(combine ? { mode: 'combine' as const, order: orderMode } : {}), ...(lastHeadline && !keepHeadline ? { newHeadline: true } : {}),
@@ -191,6 +195,10 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
         ...(purpose.trim() ? { purpose: purpose.replace(/\s+/g, ' ').trim() } : {}), ...(reference ? { referenceImage: reference.id } : {}) }))
     } catch (err) { setError(errorMessage(err)) } finally { setStarting(false) }
   }
+
+  const myLook = useMemberPrefsStore((s) => s.myLook)
+  const useMyLook = useMemberPrefsStore((s) => s.useMyLook)
+  const setUseMyLook = (on: boolean): void => { void useMemberPrefsStore.getState().saveApp({ useMyLook: on }).catch((err: unknown) => setError(errorMessage(err))) }
 
   const chooseBrand = (next: BrandIdentity | null): void => {
     // The extras and the audio skills aren't part of a brand: they stay as picked.
@@ -372,6 +380,13 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
       </MakerSection>
 
       <MakerSection number={4} title="Look">
+        {myLook && <div className="mb-2 flex items-start justify-between gap-3 rounded-xl bg-white/[0.03] px-3 py-2" data-testid="edit-use-my-look">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-ink">Use my look</p>
+            <p className="text-2xs text-ink-subtle">{useMyLook ? `Starts from the look you saved: ${myLookSummary(myLook)}.` : 'Off: starts from your brand look.'}</p>
+          </div>
+          <Switch label="Use my look" checked={useMyLook} onChange={setUseMyLook} />
+        </div>}
         <LookCard name={brand?.name ?? 'Plain look'} badge={brand ? 'Brand look' : null} summary={lookSummary} summaryTestId="edit-setup-look"
           colors={lookColors(look.headlineLook.color, look.includeCaptions ? look.captionPreset : undefined)} open={lookOpen} onToggle={() => setLookOpen(!lookOpen)} controls="edit-setup-look-controls">
           <div className="space-y-1.5">

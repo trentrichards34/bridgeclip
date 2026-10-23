@@ -174,3 +174,32 @@ def test_depth_and_camera_on_a_real_person(tmp_path, monkeypatch):
 
     assert os.path.getsize(out) > 10000
     assert dx.CUE_ZOOM > 1
+
+
+def test_a_color_grade_reaches_the_footage_the_card_and_the_escaped_head_but_never_the_backdrop(tmp_path):
+    """Mono: the full-frame shot, the stage card and the head breaking out of it turn gray; the brand backdrop keeps its
+    color (it is a graphic), and the head still escapes."""
+    source = str(tmp_path / "person.mp4")
+    person_video(source)
+    c = {"ranges": [[0, 9000]], "scenes": [{"at_ms": 0, "layout": "fill", "crops": [[0, 0, 1.0, 1.0]]}]}
+    request = RenderRequest(source, str(tmp_path / "clip.mp4"), 0, 9000, 720, 1280, include_captions=False, include_title=False,
+                            apply_padding=False, pacing="natural", video_speed=1.0, manual_ranges_ms=[(0, 9000)],
+                            manual_plan=manual_plan({"width": 720, "height": 1280}, c), transcript_segments=words(),
+                            scenes=[{"scene": "stage", "start_ms": 3600, "end_ms": 5800, "backdrop": "grid", "card": "arch"}],
+                            scene_brand_color="#7C3AED", color_grade="mono")
+    result = asyncio.run(RenderingService().render_clip(request))
+    assert result.escaped_runs == 1
+
+    def saturation(pixels: np.ndarray) -> float:
+        p = pixels.reshape(-1, 3).astype(int)
+        return float((p.max(axis=1) - p.min(axis=1)).mean())
+
+    face, stage = frame(result.output_path, 1.2), frame(result.output_path, 4.6)
+    from clip_engine.services.stage_scenes import geometry
+    g = geometry(W, H)
+    assert saturation(face[H // 3:2 * H // 3, W // 4:3 * W // 4]) < 6
+    card = stage[g.card_y + 60:g.card_y + 300, W // 2 - 120:W // 2 + 120]
+    head = stage[g.card_y - 40:g.card_y - 10, W // 2 - 40:W // 2 + 40]
+    backdrop = stage[g.card_y - 220:g.card_y - 120, 30:150]
+    assert saturation(card) < 6 and saturation(head) < 8, (saturation(card), saturation(head))
+    assert saturation(backdrop) > 30, saturation(backdrop)

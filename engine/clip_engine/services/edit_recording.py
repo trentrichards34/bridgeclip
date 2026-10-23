@@ -956,6 +956,26 @@ def _planned_graphics(raw: Any, words: list[Word], plan: dict, options: dict) ->
         return []
 
 
+SPARE_GAP_WORDS = 6
+
+
+def spare_graphics(raw: Any, words: list[Word], plan: dict, options: dict, used: list[dict]) -> list[dict]:
+    """The planned graphics at teaching density that the plan didn't use: none within a few words of a used one or of
+    each other, at most eight (none on any failure)."""
+    try:
+        teaching = _planned_graphics(raw, words, plan, {**options, "register": "teaching"})
+    except Exception:  # noqa: BLE001 - only an extra for the review
+        return []
+    taken = [g["word"] for g in used]
+    out: list[dict] = []
+    for g in teaching:
+        if any(abs(g["word"] - w) < SPARE_GAP_WORDS for w in taken):
+            continue
+        taken.append(g["word"])
+        out.append(g)
+    return out[:8]
+
+
 def review_of(words: list[Word], plan: dict, planned: str, cost_usd: float, warnings: list[str]) -> dict:
     """What the review screen shows (and what a render is checked against)."""
     marks = plan["marks"]
@@ -973,6 +993,7 @@ def review_of(words: list[Word], plan: dict, planned: str, cost_usd: float, warn
         "warnings": warnings[:4], "cost_usd": round(cost_usd, 6),
         **({"combine": plan["combine"]} if plan.get("combine") else {}),
         **({"graphics": plan["graphics"]} if plan.get("graphics") else {}),
+        **({"spare_graphics": plan["spare_graphics"]} if plan.get("spare_graphics") else {}),
         **({"register": plan["register"]} if plan.get("register") else {}),
         **({"kept_hook": plan["kept_hook"]} if plan.get("kept_hook") else {}),
     }
@@ -1039,6 +1060,9 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
                     plan["combine"] = combine_of(raw, words, plan, clips)
                 if direction:
                     plan["graphics"] = _planned_graphics(raw.get("graphics"), words, plan, direction_options)
+                    # "Dress it up" on the review: the planner's other graphics that pass the same checks at teaching
+                    # density (only words said), kept aside so the review can add them without another AI call.
+                    plan["spare_graphics"] = spare_graphics(raw.get("graphics"), words, plan, direction_options, plan["graphics"])
                     # The style the graphics were planned in (the member's, else read from the words): the review starts
                     # its Style (graphics and sound) there.
                     from clip_engine.services.edit_direction import plan_register
@@ -2103,6 +2127,11 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
     project = ed.edit_project(title, total_ms, segments, look, graphics, scenes, ed.saved_brand_mark(look.brand_mark, root), preview_id,
                               directed=options["motion"])
     project["candidates"][0]["sound"] = editor_sound(config, timed, look, offset_ms, total_ms, broll_windows or [])
+    # The member's color grade (footage only): the editor's bake applies it under the graphics and captions.
+    from clip_engine.services.color_grade import parse_grade
+    grade = parse_grade(editor.get("grade"))
+    if grade:
+        project["candidates"][0]["grade"] = grade
     _atomic_json(os.path.join(root, "transcript.json"), ed.transcript_json(segments))
     # Clip 0 starts as the plain cut (its sound finished); the editor's bake replaces it in place.
     final = os.path.join(root, "clip_00.mp4")

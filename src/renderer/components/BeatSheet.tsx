@@ -8,6 +8,7 @@
  * A still is the source frame at the beat's key moment (one FFmpeg seek in main, cached by content) with the
  * beat's graphic drawn over it by the editor's own live renderer (GraphicView) and its scene laid out around it.
  */
+import { gradePreviewFilter } from '../../shared/color-grade'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, Loader2, MessageSquarePlus, Pencil, Play, RotateCcw, Shuffle, Trash2, X } from 'lucide-react'
 import {
@@ -246,7 +247,10 @@ export function BeatStill({ beat, frame, loading, look, brand, images, width, ti
   const height = width * 16 / 9
   const graphicFrame = useMemo(() => editGraphicFrame(beat.hookText, look), [beat.hookText, look])
   const spec = useMemo(() => beat.visual?.type === 'graphic' ? reelGraphicSpec(beat.visual.graphic, graphicFrame, beat.visual.graphic.duration_ms, look.headlineLook) : null, [beat.visual, graphicFrame, look.headlineLook])
-  const picture = video ?? (frame ? <img src={localFileUrl(frame)} alt="" draggable={false} className="h-full w-full object-cover" data-testid="beat-frame" /> : null)
+  const footage = video ?? (frame ? <img src={localFileUrl(frame)} alt="" draggable={false} className="h-full w-full object-cover" data-testid="beat-frame" /> : null)
+  // The color grade previews on the footage only (the graphics and text over it keep their colors).
+  const grade = gradePreviewFilter(look.grade)
+  const picture = footage && grade ? <div className="h-full w-full" style={{ filter: grade }}>{footage}</div> : footage
   const image = beat.visual?.type === 'image' ? images.find((item) => item.id === (beat.visual as { image: string }).image) : undefined
   const arch = autoSceneLook(brand?.look?.color).card === 'arch'
   const at = time === undefined ? (beat.visual?.type === 'graphic' ? beat.visual.atMs : null) : time

@@ -68,6 +68,8 @@ export interface ClipJobRequest {
   motionGraphics?: boolean
   /** How dense the motion graphics are: teaching, story or minimal (missing: read from what is said). */
   register?: GraphicsRegister
+  /** Sound effects (Skills, with motion graphics): whooshes, pops and clicks as the cards, scenes and hook come in. Missing: off. */
+  soundEffects?: boolean
   /**
    * Stage layouts (with motion graphics, 9:16, no gameplay background): the big cards (statements, crossed-out
    * lists, sticky notes, lists) are drawn on a stage at the top while the speaker sits in a card below; the

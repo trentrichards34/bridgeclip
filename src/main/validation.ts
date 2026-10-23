@@ -43,6 +43,7 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   if (v.motionGraphics && v.workflow === 'review') throw new Error('Automatic motion graphics work with the Automatic workflow')
   if (v.stageLayouts !== undefined && typeof v.stageLayouts !== 'boolean') throw new Error('Invalid stage layouts option')
   if (v.register !== undefined && !isGraphicsRegister(v.register)) throw new Error('Invalid graphics amount')
+  if (v.soundEffects !== undefined && typeof v.soundEffects !== 'boolean') throw new Error('Invalid sound effects option')
   if (v.qualityBar !== undefined && !QUALITY_BARS.includes(v.qualityBar)) throw new Error('Invalid quality bar')
   if (v.headlineVoice !== undefined && !HEADLINE_VOICES.includes(v.headlineVoice)) throw new Error('Invalid headline voice')
   if (v.titleStyle !== undefined && !TITLE_STYLES.includes(v.titleStyle)) throw new Error('Invalid title style')
@@ -106,6 +107,8 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   else delete known.purpose
   if (known.referenceImage !== undefined && !isReferenceId(known.referenceImage)) throw new Error('Choose your reference image again.')
   if (!known.motionGraphics) { delete known.motionGraphics; delete known.register }
+  // Sound effects follow the motion graphics (their cards, scenes and hook).
+  if (!known.soundEffects || !known.motionGraphics) delete known.soundEffects
   // Stage layouts ride on motion graphics, on vertical clips without a gameplay background.
   if (!known.stageLayouts || !known.motionGraphics || (known.aspectRatio ?? '9:16') !== '9:16' || known.backgroundVideo) delete known.stageLayouts
   // Extras are drawn on Automatic renders; the review editor exports without them.
@@ -116,5 +119,5 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
 const JOB_REQUEST_FIELDS: readonly (keyof ClipJobRequest)[] = [
   'workflow', 'videoUrl', 'clippingMode', 'plannerModel', 'transcriptionModel', 'clipRequest', 'maxClips', 'autoClipCount',
   'durationRanges', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'includeCaptions', 'captionPreset',
-  'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'brollSource', 'hookPreview', 'motionGraphics', 'stageLayouts', 'register', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'music', 'musicTrack', 'voiceCleanup', 'purpose', 'referenceImage', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
+  'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'brollSource', 'hookPreview', 'motionGraphics', 'stageLayouts', 'register', 'soundEffects', 'qualityBar', 'headlineVoice', 'captionLanguage', 'reuseFrom', 'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'music', 'musicTrack', 'voiceCleanup', 'purpose', 'referenceImage', 'startTimeSeconds', 'endTimeSeconds', 'bannerPlatform', 'bannerChannelUrl'
 ]

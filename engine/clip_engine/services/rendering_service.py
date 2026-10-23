@@ -448,6 +448,9 @@ class RenderRequest:
     cta_keyword: str = ""
     # Look extras (see look_extras.LookExtras): motion effects on top of the look; None or empty for none.
     look_extras: Optional[Any] = None
+    # Color grade on the footage only (color_grade.py: warm, cinematic, film, cool, mono; None: as filmed). Applied to
+    # the framed video before the headline bar, scenes, captions, extras and graphics go over it.
+    color_grade: Optional[str] = None
     # Scenes (9:16; see stage_scenes): [{scene: face|stage|visual, start_ms, end_ms, backdrop?}] on the
     # finished clip's clock (after the cut and the speed). Empty: the normal framing throughout.
     scenes: list[dict] = field(default_factory=list)
@@ -950,6 +953,9 @@ class RenderingService:
             if broll:
                 graph = self._overlay_broll(graph, broll, target_width, speaker_h, fps)
                 looped_inputs = [path for path, _, _ in broll]
+        if request.color_grade:
+            from clip_engine.services.color_grade import with_grade
+            graph = with_grade(graph, request.color_grade)
         if headline:
             graph = self._pad_for_headline(graph, target_width, target_height, bar_h, parse_headline_look(request.headline_look).pad_color)
         scenes = self._scene_composite(request, graph, plan, time_map, target_width, target_height, speaker_h, bar_h,
@@ -1064,8 +1070,8 @@ class RenderingService:
         return stage_scenes.build_scene_graph(
             graph, scenes, width, height, time_map.output_ms, request.video_speed, fps, first_input,
             work, stem, bar_h=bar_h, zones=zones, brand=request.scene_brand_color,
-            card_graph=lambda w, h, runs, transition, escape=None: stage_scenes.card_source_graph(
-                plan, time_map.keeps, w, h, fps, runs, transition, min_w=round(width * stage_scenes.MIN_CARD_SHARE), escape=escape),
+            card_graph=lambda w, h, runs, transition, escape=None: graded_card(request.color_grade, stage_scenes.card_source_graph(
+                plan, time_map.keeps, w, h, fps, runs, transition, min_w=round(width * stage_scenes.MIN_CARD_SHARE), escape=escape)),
             escape_matte=escape_matte, matte_size=depth_fx.matte_size(plan.source_width, plan.source_height))
 
     @staticmethod
@@ -2218,3 +2224,13 @@ class RenderingService:
 class RenderingError(Exception):
     """Exception raised when rendering fails."""
     pass
+
+
+def graded_card(grade: Optional[str], card: tuple[str, list[int]]) -> tuple[str, list[int]]:
+    """A stage scene's speaker card (its own framing chain from the source) with the clip's color grade: the card and the
+    head that escapes it are footage, so they match the full-frame shots; the backdrop and graphics are not graded."""
+    if not grade:
+        return card
+    from clip_engine.services.color_grade import with_grade
+    graph, widths = card
+    return with_grade(graph, grade, "sc_card_frames"), widths

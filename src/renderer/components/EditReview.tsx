@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Clapperboard, LayoutGrid, Layers, MessageSquare, RotateCcw, Sparkles, Wand2 } from 'lucide-react'
+import { BookmarkPlus, ChevronDown, Clapperboard, Eraser, LayoutGrid, Layers, MessageSquare, RotateCcw, Sparkles, Wand2 } from 'lucide-react'
 import {
   CUT_LABELS, CUTOUT_INTRO_SECONDS, SOUND_LABELS, soundEffectsOn, MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, RAW_INTRO_SECONDS, applyRecipe, cardProblem, chooseHook,
   formatClock, hookTextProblem, initialDecisions, reelCardWindows, reelOrder, reelSeconds, reelWordStarts, toggleSpan, toggleWord, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditStatus
@@ -23,6 +23,10 @@ import { SkillsPanel } from './SkillsPanel'
 import { BeatSheet } from './BeatSheet'
 import { beforeRender } from '../../shared/beat-sheet'
 import { useMemberPrefsStore } from '../store/use-member-prefs-store'
+import { densityCount, densitySummary, dressItUp, keepItClean, type DensityChange } from '../../shared/edit-density'
+import { decisionsWithEditStyle, decisionsWithMyLook, myLookFrom } from '../../shared/my-look'
+import { COLOR_GRADE_INFO } from '../../shared/color-grade'
+import { ColorGradePicker } from './ColorGradePicker'
 import { Dialog, DialogFooter } from './ui/Dialog'
 import { ScreenChoicePanel } from './ScreenRecording'
 import { DEFAULT_SCREEN_CHOICE } from '../../shared/screen-pair'
@@ -83,8 +87,12 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const [decisions, setDecisions] = useState<EditDecisions>(() => {
     const fresh = initialDecisions(plan, look, useEditRecordingStore.getState().recipe)
     const saved = useEditRecordingStore.getState().reviewFor(status.id)
+    // A new review starts from the Style and sound of the member's last reel, then their saved look ("Use my look").
+    const prefs = useMemberPrefsStore.getState()
+    const remembered = decisionsWithEditStyle(fresh, prefs.editStyle)
+    const first = prefs.useMyLook && prefs.myLook ? decisionsWithMyLook(remembered, prefs.myLook) : remembered
     // Saved choices win; anything they don't have (a newer field) starts from the plan.
-    const start = saved ? { ...fresh, ...saved } : fresh
+    const start = saved ? { ...fresh, ...saved } : first
     // Camera + screen: how the two share the frame.
     return status.screen && !start.screen ? { ...start, screen: { ...DEFAULT_SCREEN_CHOICE } } : start
   })
@@ -98,6 +106,30 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   // A field the Restore set changed again since: Undo would throw that away, so it's no longer offered.
   useEffect(() => { if (lastRestore && !restoreStillApplied(decisions, lastRestore)) setLastRestore(null) }, [decisions, lastRestore])
   const logLines = useMemo(() => editRecordingLog(plan, decisions, status.sources), [plan, decisions, status.sources])
+  // Style and sound are remembered for the next video once the member changes them here.
+  const firstStyle = useRef({ soundStyle: decisions.soundStyle, soundEffects: decisions.soundEffects })
+  useEffect(() => {
+    const first = firstStyle.current
+    if (decisions.soundStyle === first.soundStyle && decisions.soundEffects === first.soundEffects) return
+    firstStyle.current = { soundStyle: decisions.soundStyle, soundEffects: decisions.soundEffects }
+    const editStyle = { ...(decisions.soundStyle ? { register: decisions.soundStyle } : {}), ...(decisions.soundEffects !== undefined ? { soundEffects: decisions.soundEffects } : {}) }
+    void useMemberPrefsStore.getState().saveApp({ editStyle }).catch(() => undefined)
+  }, [decisions.soundStyle, decisions.soundEffects])
+  // Quick controls: "Dress it up" / "Keep it clean" (what changed, with Undo) and "Save as my look".
+  const [density, setDensity] = useState<{ change: DensityChange; before: EditDecisions } | null>(null)
+  const [lookSaved, setLookSaved] = useState<string | null>(null)
+  const applyDensity = (kind: 'dress' | 'clean'): void => {
+    const change = kind === 'dress' ? dressItUp(plan, decisions) : keepItClean(plan, decisions)
+    setDensity({ change, before: decisions })
+    if (densityCount(change)) setDecisions(change.decisions)
+  }
+  const densityUndo = density && densityCount(density.change) > 0 && density.change.decisions === decisions ? density.before : null
+  const saveMyLook = (): void => {
+    setLookSaved(null)
+    void useMemberPrefsStore.getState().saveApp({ myLook: myLookFrom(look, decisions) })
+      .then(() => setLookSaved('Saved as your look. Your next Edit my recording or Combine starts from it.'))
+      .catch((err: unknown) => onError(errorMessage(err)))
+  }
   const [hooksOpen, setHooksOpen] = useState(false)
   const [lookOpen, setLookOpen] = useState(false)
   const [making, setMaking] = useState(false)
@@ -274,6 +306,30 @@ export function EditReview({ status, brand, look, onLook, onError }: {
         <Segmented label="Review view" value={view} onChange={setView}
           options={[{ value: 'edit', label: 'Your edit' }, { value: 'beats', label: <span className="inline-flex items-center gap-1.5"><LayoutGrid className="h-3.5 w-3.5" aria-hidden />Beat sheet</span> }]} />
         <span className="min-w-0 flex-1 text-2xs text-ink-subtle">{view === 'beats' ? 'Every on-screen moment as a numbered still. Give notes by number before your reel is made.' : 'See every planned on-screen moment as a numbered still in the beat sheet.'}</span>
+      </div>}
+
+      {!screen && <div className="mt-2 space-y-1.5" data-testid="edit-quick-controls">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="secondary" icon={<Sparkles className="h-3.5 w-3.5" />} disabled={making} onClick={() => applyDensity('dress')}
+            title="Teaching style: more graphics on what you say, pop-ups and sound effects on. No AI call.">Dress it up</Button>
+          <Button size="sm" variant="secondary" icon={<Eraser className="h-3.5 w-3.5" />} disabled={making} onClick={() => applyDensity('clean')}
+            title="Keep only the hook, numbers, key diagrams and the call to action.">Keep it clean</Button>
+          <label className="flex items-center gap-1.5 text-2xs text-ink-muted" htmlFor="edit-grade">Color
+            <ColorGradePicker id="edit-grade" value={look.grade} disabled={making} onChange={(grade) => {
+              const { grade: _old, ...rest } = look
+              void _old
+              onLook(grade === 'none' ? rest : { ...rest, grade })
+            }} />
+          </label>
+          <Button size="sm" variant="ghost" icon={<BookmarkPlus className="h-3.5 w-3.5" />} disabled={making} onClick={saveMyLook}
+            title="Your style, captions, hook text, grade, sound and transitions become the start of your next video.">Save as my look</Button>
+        </div>
+        {density && <p className="flex flex-wrap items-center gap-2 text-2xs text-ink-muted" data-testid="edit-density-note" role="status">
+          <span>{densitySummary(density.change)}</span>
+          {densityUndo && <Button size="sm" variant="ghost" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => { setDecisions(densityUndo); setDensity(null) }}>Undo</Button>}
+        </p>}
+        {look.grade && look.grade !== 'none' && <p className="text-2xs text-ink-subtle">{COLOR_GRADE_INFO[look.grade].detail} On your footage only: graphics, captions and text keep their colors.</p>}
+        {lookSaved && <p className="text-2xs text-ink-muted" role="status" data-testid="edit-look-saved">{lookSaved}</p>}
       </div>}
 
       <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(300px,340px)] xl:items-start xl:gap-5">

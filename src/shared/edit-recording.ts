@@ -1,3 +1,4 @@
+import { isColorGrade, type ColorGrade } from './color-grade'
 import type { EditProgress } from './edit-progress'
 import { isBrollSource, type BrollSource } from './broll-library'
 /**
@@ -125,6 +126,8 @@ export interface EditPlan {
   graphics?: EditGraphic[]
   /** The style the graphics were planned in (register.ts: the member's, else read from the words); the review's Style starts there. */
   register?: Register
+  /** Planned graphics the plan didn't use (teaching density, only words said): what "Dress it up" adds without another AI call. */
+  spareGraphics?: EditGraphic[]
   /**
    * The same recording made before: whether its last headline was kept on the first hook (it must use only words
    * said in this recording), and the AI's new headline for that hook (offered as "New headline").
@@ -215,6 +218,8 @@ export interface EditLook {
   voiceCleanup?: boolean
   /** B-roll over the speaker (Skills), and where it comes from (broll-library.ts). Missing or null: off. */
   broll?: BrollSource | null
+  /** Color grade on the footage only (color-grade.ts). Missing: none. */
+  grade?: ColorGrade
 }
 
 export const DEFAULT_EDIT_LOOK: EditLook = { includeCaptions: true, captionPreset: DEFAULT_CAPTION_PRESET, headlineLook: DEFAULT_HEADLINE_LOOK, showHandle: false }
@@ -551,12 +556,17 @@ export function parseEditPlan(value: unknown, sources: number): EditPlan | null 
       try { graphics.push(...parseEditGraphics([raw], n).filter((g) => !graphics!.some((x) => x.id === g.id))) } catch { /* left out */ }
     }
   }
+  const spare: EditGraphic[] = []
+  const spareRaw = value.spareGraphics ?? value.spare_graphics
+  for (const raw of Array.isArray(spareRaw) ? spareRaw.slice(0, 8) : []) {
+    try { spare.push(...parseEditGraphics([raw], n).filter((g) => g.origin === 'auto' && !spare.some((x) => x.id === g.id) && !(graphics ?? []).some((x) => x.id === g.id))) } catch { /* left out */ }
+  }
   const keptRaw = value.keptHook ?? value.kept_hook
   const keptHook = record(keptRaw) && typeof keptRaw.kept === 'boolean' && hooks.length
     ? { kept: keptRaw.kept, text: (text(keptRaw.text, MAX_HOOK_TEXT_CHARS) ?? '').trim(), fresh: (text(keptRaw.fresh, MAX_HOOK_TEXT_CHARS) ?? '').trim() } : null
   return { words, hooks, hook, cta: span(value.cta), popups, sounds, planned: value.planned === 'basic' ? 'basic' : 'ai', notes: lines(value.notes, 6), warnings: lines(value.warnings, 4),
     ...(combine ? { combine } : {}), ...(graphics ? { graphics } : {}), ...(keptHook && (!keptHook.kept || keptHook.text) ? { keptHook } : {}),
-    ...(isRegister(value.register) ? { register: value.register } : {}) }
+    ...(isRegister(value.register) ? { register: value.register } : {}), ...(spare.length ? { spareGraphics: spare } : {}) }
 }
 
 /** The plan's combine part (engine: ai_order, order_why, proof; or already parsed), checked; null when it isn't one. */
@@ -654,6 +664,7 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
   for (const key of ['cutoutIntro', 'rawIntro'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose how your video opens.')
   for (const key of ['motionGraphics', 'stageLayouts', 'soundEffects'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose your skills again.')
   if (value.soundStyle !== undefined && !isSoundRegister(value.soundStyle)) throw new Error('Choose how much sound plays.')
+  if (look.grade !== undefined && !isColorGrade(look.grade)) throw new Error('Choose a color grade from the list.')
   let graphics: EditGraphic[]
   try { graphics = parseEditGraphics(value.graphics, n) } catch (error) { throw new Error(`Check your graphics: ${(error as Error).message}`) }
   if (look.lookExtras !== undefined && !Array.isArray(look.lookExtras)) throw new Error('Choose your extras again.')
@@ -666,7 +677,8 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
   })
   const decisions: EditDecisions = { cut, hookId: value.hookId as number | null, hookText, endOnCta: value.endOnCta, popups, sounds,
     look: { includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: parseHeadlineLook(look.headlineLook), showHandle: look.showHandle,
-      ...(lookExtras.length ? { lookExtras } : {}), ...audio, ...(isBrollSource(look.broll) ? { broll: look.broll } : {}) },
+      ...(lookExtras.length ? { lookExtras } : {}), ...audio, ...(isBrollSource(look.broll) ? { broll: look.broll } : {}),
+      ...(isColorGrade(look.grade) && look.grade !== 'none' ? { grade: look.grade } : {}) },
     recipe: isEditRecipeId(value.recipe) ? value.recipe : DEFAULT_EDIT_RECIPE, lookExtras, pins,
     cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true, graphics, ...audio,
     ...(typeof value.motionGraphics === 'boolean' ? { motionGraphics: value.motionGraphics } : {}),

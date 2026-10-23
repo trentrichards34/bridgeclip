@@ -431,6 +431,9 @@ def validate_candidate(c, duration, transcript_count=100000):
     if 'sound' in c:
         from clip_engine.services.sound_design import validate_candidate_sound
         validate_candidate_sound(c['sound'], duration)
+    if 'grade' in c:
+        from clip_engine.services.color_grade import parse_grade
+        parse_grade(c['grade'])
     cta = c.get('cta_id')
     if cta is not None and (not isinstance(cta, str) or not re.fullmatch(r'[a-f0-9]{16}', cta)):
         raise ValueError('Invalid call to action')
@@ -853,6 +856,8 @@ async def render_export(run, project, c, output, source, render_transcript, repl
             apply_padding=False, aspect_ratio=project['aspect_ratio'], pacing='natural', video_speed=c['video_speed'],
             manual_ranges_ms=[tuple(interval) for interval in c['ranges']], manual_plan=manual_plan(project, c, cover=bool(hook)),
             write_subtitles=replace_index is not None, **hook_options, **extras, **language,
+            # The clip's color grade, on the footage only (before the captions, hook text and graphics go on).
+            color_grade=c.get('grade') if c.get('grade') != 'none' else None,
             # Frame-escape mattes are kept with the run's graphics, so baking the clip again reuses them.
             matte_cache_dir=str(run / '.graphics' / 'mattes'),
             **({'scenes': scenes, 'scene_brand_color': hook['look']['color'] if hook and hook['look'].get('look') == 'brand' else None}

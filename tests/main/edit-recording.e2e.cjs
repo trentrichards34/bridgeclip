@@ -257,6 +257,21 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   await page.waitForTimeout(800)
   await board.evaluate((el) => el.scrollIntoView({ block: 'start' }))
   await shot(app, 'style-board-edit.png')
+  // Quick controls: Keep it clean says what it changed and can be undone (no AI call); then again, and a Mono color grade
+  // for the footage only.
+  const quick = page.getByTestId('edit-quick-controls')
+  await quick.getByRole('button', { name: 'Keep it clean' }).click()
+  await quick.getByTestId('edit-density-note').getByText(/^Kept it clean: removed 1 graphic, turned off 1 pop-up\.$/).waitFor()
+  assert.equal(await page.getByRole('button', { name: /^Marker on “Most”/ }).count(), 0)
+  assert.equal(await page.getByRole('switch', { name: 'Half-screen graphic 1' }).getAttribute('aria-checked'), 'false')
+  await quick.getByRole('button', { name: 'Undo' }).click()
+  await page.getByRole('button', { name: /^Marker on “Most”/ }).waitFor()
+  assert.equal(await page.getByRole('switch', { name: 'Half-screen graphic 1' }).getAttribute('aria-checked'), 'true')
+  await quick.getByRole('button', { name: 'Keep it clean' }).click()
+  await quick.getByTestId('edit-density-note').getByText(/^Kept it clean:/).waitFor()
+  await quick.getByRole('combobox', { name: 'Color grade' }).click()
+  await page.getByRole('option', { name: 'Mono', exact: true }).click()
+  await quick.getByText(/^Black and white\. On your footage only/).waitFor()
   await page.getByRole('heading', { name: 'Review your edit' }).scrollIntoViewIfNeeded()
   await shot(app, 'edit-review.png')
 
@@ -278,21 +293,16 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   const candidate = project.candidates[0]
   assert.equal(candidate.status, 'baked')
   assert.equal(candidate.hook.text, '15 billion messages are waiting')
-  // The plan's statement (a plain card: it comes out as a Marker effect on its line) and the pinned logo (a Logo pop on
-  // "Fifteen"); the Fast explainer's card came while the logo showed, so it gave way (as pop-ups and cards always have). The
-  // test's camera shows no face (like a filmed screen), so no stage goes over it and the effect is a card.
-  // The call to action said at the end ("Follow me for more") gets its graphic with those words (spoken_cta).
+  // Kept clean: the plan's statement (a Marker effect) and the Fast explainer's card are gone; the pinned logo (a Logo pop
+  // on "Fifteen", the member's own) stays, and the call to action said at the end ("Follow me for more") gets its graphic
+  // with those words (spoken_cta).
   const kinds = candidate.graphics.map((g) => g.template).sort()
-  assert.deepEqual(kinds, ['fx', 'link_cta', 'logo'], JSON.stringify(candidate.graphics))
+  assert.deepEqual(kinds, ['link_cta', 'logo'], JSON.stringify(candidate.graphics))
   const cta = candidate.graphics.find((g) => g.template === 'link_cta')
   assert.deepEqual([cta.origin, cta.fields.text, cta.fields.kind], ['auto', 'Follow me for more', 'follow'])
-  await page.getByText(/1 pop-up or pinned image left out/).waitFor()
-  const statement = candidate.graphics.find((g) => g.template === 'fx')
-  assert.deepEqual([statement.origin, statement.size, statement.fields.effect, statement.fields.text], ['auto', 'card', 'marker-highlight', 'Most coaches lose clients.'])
-  assert.ok(statement.fields.cue_ms, 'its marker lands on the word as it is said')
-  // The video's one look: light ink on dark (never a white slab over a filmed page).
-  assert.equal(statement.fields.theme, 'dark')
   assert.equal(candidate.stage_scenes, undefined)
+  // The grade is the clip's, for the bake (and the editor).
+  assert.equal(candidate.grade, 'mono')
   // The hook floats and hides after a few seconds (a directed reel); the Fast explainer's extras are the clip's, for the bake.
   assert.equal(candidate.hook.look.hideAfterS, 5)
   assert.notEqual(candidate.hook.look.look, 'white')
@@ -315,6 +325,12 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   const summary = stderrOf(['-i', reel, '-af', 'ebur128=peak=true']).split('Summary:').pop()
   const integrated = Number(/I:\s+(-?[\d.]+) LUFS/.exec(summary)[1]), truePeak = Number(/Peak:\s+(-?[\d.]+) dBFS/.exec(summary)[1])
   assert.ok(Math.abs(integrated + 14) <= 1 && truePeak <= -1, `${integrated} LUFS, ${truePeak} dBTP`)
+  // Mono on the footage: the colored test picture is gray in the baked reel (left of the logo, under the hook text, above
+  // the captions), while the plain cut it was made from keeps its color.
+  const saturation = (file, at) => Number(/SATAVG=([\d.]+)/.exec(spawnSync(ffmpeg, ['-nostdin', '-v', 'error', '-ss', String(at), '-i', file, '-frames:v', '1',
+    '-vf', 'crop=200:200:20:700,signalstats,metadata=print:file=-', '-f', 'null', '-'], { encoding: 'utf8' }).stdout)?.[1] ?? 'NaN')
+  const gradedSat = saturation(reel, 5), plainSat = saturation(path.join(library, run, 'editor-source.mp4'), 5)
+  assert.ok(gradedSat < 2 && plainSat > 10, `saturation: ${gradedSat} graded vs ${plainSat} plain`)
   const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height', '-show_entries', 'format=duration', '-of', 'json', reel]).toString())
   const video = probe.streams.find((s) => s.codec_type === 'video')
   assert.deepEqual([video.width, video.height], [1080, 1920])
@@ -324,7 +340,7 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   assert.ok(seconds > 7 && seconds < 10.5, `${seconds}s`)
   assert.ok(Math.abs(seconds * 1000 - project.duration_ms) < 200, `${seconds}s vs ${project.duration_ms}ms`)
   // The progress bar (an extra the bake draws) fills along the very top: brighter there near the end than at the start.
-  const stageAt = (statement.at_ms + 600) / 1000
+  const stageAt = (cta.at_ms + 600) / 1000
   const topRow = (at) => execFileSync(ffmpeg, ['-v', 'error', '-ss', String(at), '-i', reel, '-frames:v', '1', '-vf', 'crop=1080:8:0:0,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'gray', '-'])[0]
   assert.notEqual(topRow(seconds - 0.4), topRow(0.3), 'the progress bar fills the top row')
   assert.ok(fs.existsSync(path.join(library, run, 'images')))
@@ -336,17 +352,17 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   assert.ok(ledger.some((entry) => entry.kind === 'edit' && entry.label === 'Edit my recording: transcript and plan' && Math.abs(entry.usd - (0.0008 + 0.004)) < 1e-6), JSON.stringify(ledger))
   assert.ok(ledger.some((entry) => entry.kind === 'edit' && entry.label === 'Edit my recording: film ideas' && Math.abs(entry.usd - 0.0012) < 1e-6))
 
-  // The done screen opens the reel in the clip editor: its graphics are there to change (and Bake makes it again).
+  // The done screen opens the reel in the clip editor: its grade is there to change in the look area (Bake makes it again).
   await page.getByTestId('edit-open-editor').click()
   await page.getByRole('region', { name: 'Clip editor' }).waitFor()
-  await page.getByRole('button', { name: /^Effect at / }).first().waitFor()
-  await page.getByRole('button', { name: /^Effect at / }).first().click()
-  const statementWords = page.getByLabel('Marker line', { exact: true }).first()
-  assert.equal(await statementWords.inputValue(), 'Most coaches lose clients.')
-  await statementWords.fill('Most coaches lose their clients.')
+  await page.getByRole('button', { name: 'Captions', exact: true }).click()
+  const editorGrade = page.getByTestId('editor-color-grade').getByRole('combobox', { name: 'Color grade' })
+  assert.match(await editorGrade.innerText(), /Mono/)
+  await editorGrade.click()
+  await page.getByRole('option', { name: 'Warm', exact: true }).click()
   await page.getByText('All changes saved', { exact: true }).waitFor()
   const saved = JSON.parse(fs.readFileSync(path.join(library, run, 'editor-project.json'), 'utf8'))
-  assert.equal(saved.candidates[0].graphics.find((g) => g.template === 'fx').fields.text, 'Most coaches lose their clients.')
+  assert.equal(saved.candidates[0].grade, 'warm')
   await shot(app, 'edit-reel-editor.png')
   await page.getByRole('button', { name: 'Back to Edit my recording' }).click()
   await page.getByText('Your reel is ready').waitFor()

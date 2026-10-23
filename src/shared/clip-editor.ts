@@ -1,3 +1,4 @@
+import { isColorGrade, type ColorGrade } from './color-grade'
 import { parseGraphics, type EditorGraphic } from './motion-graphics'
 import { parseScenes, type StageScene } from './scenes'
 /** Persisted source-time edits. Media paths and review results are main-process owned. */
@@ -60,6 +61,8 @@ export interface CandidateEdit {
   look_extras?: CandidateLookExtras
   /** Sound effects that follow the clip's graphics and scenes (sound-design.ts), mixed by the bake. Absent = none. */
   sound?: CandidateSound
+  /** Color grade on the footage only (color-grade.ts), applied by the bake under the captions and graphics. Absent = none. */
+  grade?: ColorGrade
 }
 /** The extras a clip can carry in the editor (the rest belong to their own tools). */
 export const EDITOR_LOOK_EXTRAS: readonly LookExtraId[] = ['keyword_pill', 'accent_words', 'progress_bar', 'comment_box', 'punch_zoom', 'broll_tags']
@@ -325,6 +328,7 @@ export function parseCandidateEdit(value: unknown, duration: number, transcriptC
     ...(v.stage_scenes === undefined ? {} : { stage_scenes: parseScenes(v.stage_scenes, duration) }),
     ...(v.look_extras === undefined ? {} : { look_extras: parseCandidateLookExtras(v.look_extras) }),
     ...(v.sound === undefined ? {} : { sound: parseCandidateSound(v.sound, duration) }),
+    ...(v.grade === undefined || v.grade === 'none' ? {} : { grade: isColorGrade(v.grade) ? v.grade : fail() }),
     ...(v.dismissed_camera_markers === undefined ? {} : { dismissed_camera_markers: [...new Set(arr(v.dismissed_camera_markers, 5000).map((t) => num(t, 0, duration)))].sort((a, b) => a - b) }) }
 }
 /** A hook from the project or the renderer: null (none) or text and a look. */
@@ -436,7 +440,8 @@ export function candidateEdit(c: CandidateEdit): CandidateEdit {
     ...(c.graphics !== undefined ? { graphics: c.graphics } : {}),
     ...(c.stage_scenes !== undefined ? { stage_scenes: c.stage_scenes } : {}),
     ...(c.look_extras !== undefined ? { look_extras: c.look_extras } : {}),
-    ...(c.sound !== undefined ? { sound: c.sound } : {}) }
+    ...(c.sound !== undefined ? { sound: c.sound } : {}),
+    ...(c.grade !== undefined ? { grade: c.grade } : {}) }
 }
 export function renderEditKey(c: CandidateEdit): string {
   // The call to action is added after rendering, so changing it doesn't need a new render.
