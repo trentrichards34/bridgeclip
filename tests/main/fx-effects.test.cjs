@@ -158,3 +158,23 @@ test('words: an effect’s beats match the words said; its starting words are on
   assert.ok(rise.fields.text && rise.fields.text.split(' ').every((w) => words.some((x) => x.word.toLowerCase() === w.toLowerCase())), rise.fields.text)
   assert.deepEqual(plain(m.prefillEffect('star-rating-fill', words.slice(6), 2300).fields), {})
 })
+
+test('testimonials: no invented name; a name only when typed or said, and nothing shows for one not given', () => {
+  for (const id of ['testimonial-card', 'testimonial-proof-card']) {
+    const e = m.fxEffect(id)
+    for (const f of e.fields.filter((x) => ['author', 'handle', 'name', 'role', 'company'].includes(x.key))) {
+      assert.equal(f.manual, true, `${id}.${f.key} is never filled from the transcript`)
+      assert.equal(f.sample, '', `${id}.${f.key} has no sample name`)
+      assert.equal(f.said, true, `${id}.${f.key} must be said when the planner places it`)
+    }
+    // An empty name reaches the unit as blank, never its own default ("Ken Tanaka", "Maya Chen").
+    const v = m.fxVariables(e, { effect: id, quote: 'It works' })
+    for (const key of ['author', 'name']) if (key in v) assert.equal(v[key], '\u200B')
+    // The parts hidden while empty exist in the unit's markup.
+    const markup = m.compileEffectHtml(fs.readFileSync(path.join(VENDOR, `${id}.html`), 'utf8')).markup
+    for (const h of e.hide_empty) assert.match(markup, new RegExp(`class="${h.selector.slice(1)}"`), `${id}: ${h.selector}`)
+  }
+  const words = ['Sarah', 'said', 'this', 'changed', 'how', 'I', 'work'].map((word, i) => ({ word, start_ms: i * 300, end_ms: i * 300 + 250 }))
+  const pre = m.prefillEffect('testimonial-card', words, 0)
+  assert.deepEqual(Object.keys(pre.fields), ['quote'])
+})

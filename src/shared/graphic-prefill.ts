@@ -278,7 +278,7 @@ export function prefillEffect(effectId: string, words: readonly TimedWord[], at:
   const fields: Record<string, string> = {}
   const used: TimedWord[] = []
   // A number said from here on: its digits, and what is said around it (%, $) for the effect's own affixes.
-  const numberField = effect.fields.find((f) => f.kind === 'number' && f.said) ?? effect.fields.find((f) => f.key === 'value' && f.kind === 'text')
+  const numberField = effect.fields.find((f) => f.kind === 'number' && f.said && f.required) ?? effect.fields.find((f) => f.key === 'value' && f.kind === 'text')
   if (numberField) {
     for (let i = from; i < Math.min(said.length, from + 40); i++) {
       const n = spokenNumber(said, i)
@@ -296,7 +296,8 @@ export function prefillEffect(effectId: string, words: readonly TimedWord[], at:
   }
   let next = 0
   // With a number, the effect is about it: its other words (a label, a unit) are left to the member.
-  const texts = numberField ? [] : effect.fields.filter((f) => f.kind === 'text' && f.said && !FROM_LINE.includes(f.key))
+  // Names are never filled from what is said near it (only the member types one).
+  const texts = numberField ? [] : effect.fields.filter((f) => f.kind === 'text' && f.said && !f.manual && !FROM_LINE.includes(f.key))
   for (const f of texts.filter((t) => t.required).concat(texts.filter((t) => !t.required)).slice(0, 2)) {
     const phrase = list[next++]
     if (!phrase) break

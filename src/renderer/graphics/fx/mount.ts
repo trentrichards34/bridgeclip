@@ -43,6 +43,11 @@ const DISPLAY: Record<string, string> = {
   clean: '"MG Jakarta", "MG Montserrat", sans-serif', serif: '"MG Fraunces", Georgia, serif', condensed: '"MG Anton", Impact, sans-serif',
   marker: '"MG Caveat Brush", cursive', sans_serif_accent: '"MG Jakarta", "MG Montserrat", sans-serif'
 }
+/**
+ * The units are set in Inter; the bundled face standing in for it (Plus Jakarta Sans) has a narrower word space, and
+ * with the units' tight tracking the words ran together. This restores Inter's word space.
+ */
+export const WORD_SPACING = '0.08em'
 const FONT_LOADS = ['800 40px "MG Jakarta"', '600 40px "MG Jakarta"', '400 40px "MG Jakarta"', '900 40px "MG Montserrat"', '40px "MG Anton"', '40px "MG Fraunces"', '40px "MG Caveat Brush"',
   'italic 40px "MG Instrument Serif"', '40px "MG Instrument Serif"', '400 40px "MG Mono"', '700 40px "MG Mono"', '800 40px "MG Poppins"']
 
@@ -53,8 +58,10 @@ function rgb(hex: string): [number, number, number] {
 const lum = ([r, g, b]: [number, number, number]): number => 0.2126 * r + 0.7152 * g + 0.0722 * b
 const mixRgb = (a: [number, number, number], b: [number, number, number], k: number): string => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * k)).join(', ')})`
 
+const px = (n: number): string => `${Math.round(n * 10) / 10}px`
+
 /** The theme tokens for a brand color and hook font: light ink over the video, the brand as the accent. */
-export function fxTokens(color: string, font: string): Record<string, string> {
+export function fxTokens(color: string, font: string, frame = 1080): Record<string, string> {
   const c = rgb(color)
   // On dark glass and over video a very dark brand color is lifted so it still reads.
   const brand = lum(c) >= 90 ? `rgb(${c.join(', ')})` : mixRgb(c, [255, 255, 255], Math.min(.55, (90 - lum(c)) / 160 + .18))
@@ -62,7 +69,9 @@ export function fxTokens(color: string, font: string): Record<string, string> {
     '--bg': 'transparent', '--fg': '#F8FAFC', '--muted': 'rgba(226, 232, 240, 0.74)', '--surface': 'rgba(15, 18, 26, 0.9)', '--border': 'rgba(255, 255, 255, 0.16)',
     '--brand': brand, '--accent': brand, '--accent-2': mixRgb(c, [255, 255, 255], .38),
     '--font-display': DISPLAY[font] ?? DISPLAY.clean, '--font-body': '"MG Jakarta", sans-serif', '--font-mono': 'MG Mono, ui-monospace, monospace',
-    '--radius': '3cqmin', '--space-1': '1.2cqmin', '--space-2': '2.4cqmin', '--space-3': '4cqmin',
+    // Spacing is measured against the whole frame, as in a HyperFrames composition (its theme packs say 1.2cqmin of a
+    // 1080-high frame): inside our box `cqmin` would be the band's, and gaps between words would shrink to nothing.
+    '--radius': px(frame * .03), '--space-1': px(frame * .012), '--space-2': px(frame * .024), '--space-3': px(frame * .04),
     '--dur-beat': '0.4s', '--ease-standard': 'cubic-bezier(0.215, 0.61, 0.355, 1)', '--ease-emphasis': 'cubic-bezier(0.19, 1, 0.22, 1)'
   }
 }
@@ -93,13 +102,13 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
   const box = fxBox(spec, effect)
   const stage = document.createElement('div')
   stage.className = `fx-stage${effect.backing === 'glass' && spec.fields.backing !== 'none' ? ' fx-glass' : ''}`
-  Object.assign(stage.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px`, visibility: 'hidden',
-    ...(effect.scale && effect.scale !== 1 ? { transform: `scale(${effect.scale})` } : {}) })
+  // The unit's scale is applied only once it is built (apply), so anything it measures while building is unscaled.
+  Object.assign(stage.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px`, visibility: 'hidden' })
   // The glass keeps its size on a scaled unit (it backs the words, not the box).
   if (effect.scale && effect.scale > 1) stage.style.setProperty('--fx-glass-inset', `${((1 - .92 / effect.scale) / 2 * 100).toFixed(2)}% ${((1 - .96 / effect.scale) / 2 * 100).toFixed(2)}%`)
   frame.appendChild(stage)
   const shadow = stage.attachShadow({ mode: 'open' })
-  const tokens = fxTokens(spec.color, spec.font)
+  const tokens = fxTokens(spec.color, spec.font, Math.min(spec.width, spec.height))
   let timeline: Timeline | null = null
   let context: gsap.Context | null = null
   let pending = -1
@@ -128,6 +137,8 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
     const tokenCss = Object.entries(tokens).map(([k, v]) => `${k}: ${v} !important;`).join(' ')
     // Tokens on the host and re-declared on the unit's roots, as the theme contract's QA harness does.
     shadow.innerHTML = `<style>:host, #root, [data-composition-id] { ${tokenCss} } :host { all: initial; position: absolute; inset: 0; display: block; container-type: size; }
+      :where(#root, #root *) { word-spacing: ${WORD_SPACING}; }
+      ${effect.css_rules ?? ''}
       .cc-fx-snippet { position: absolute; inset: 0; display: grid; place-items: center; container-type: size; overflow: visible; font-family: var(--font-body); color: var(--fg); }
       ${unit.styles}</style>${unit.markup}`
     const seconds = String(Math.max(0.1, timing.unit_ms / 1000))
@@ -171,6 +182,11 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
       console.error(`Effect ${effect.id} failed to build`, error)
     }
     context = ctx
+    // Nothing is shown for words that weren't given (a byline without a name, stars without a rating).
+    for (const { field, selector } of effect.hide_empty ?? []) {
+      if ((spec.fields[field] ?? '').trim()) continue
+      for (const el of shadow.querySelectorAll<HTMLElement>(selector)) el.style.setProperty('display', 'none', 'important')
+    }
     // A unit may build after its fonts are ready (a promise turn or two).
     for (let i = 0; i < 6 && !Object.keys(registry).length; i++) await new Promise((r) => setTimeout(r, 16))
     timeline = registry[effect.id] ?? Object.values(registry)[0] ?? null

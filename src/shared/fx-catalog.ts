@@ -30,6 +30,8 @@ export interface FxField {
   max?: number
   /** Sample words for the gallery's preview only (never put in a clip). */
   sample?: string
+  /** Never filled from what is said near it when the effect is added (a name: only the member types it). */
+  manual?: boolean
 }
 export type FxGroup = 'numbers' | 'words' | 'compare' | 'ideas' | 'screens' | 'ending'
 export type FxSound = 'whoosh' | 'pop' | 'tick' | 'riser' | 'none'
@@ -60,6 +62,10 @@ export interface FxEffect {
   aspect?: number
   /** Drawn this much bigger than its box, around its center (units whose content sits small in their box). */
   scale?: number
+  /** Parts of the unit hidden while a field is empty (no name said: no byline; no rating said: no stars). */
+  hide_empty?: readonly { field: string; selector: string }[]
+  /** Extra CSS rules for the unit's shadow root (room around a marked word, for the bundled font's metrics). */
+  css_rules?: string
   /** CSS custom properties set on the unit (its color variables: the runtime binds those as properties). */
   css?: Readonly<Record<string, string>>
   /** A soft dark glass behind it (bare type over busy video); the member can turn it off (`backing: none`). */
@@ -127,7 +133,7 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     hold_s: 2, sound: 'whoosh', scale: 1.5, default_ms: 2500, aspect: 2.6, cue: { field: 'text', unit: 'word' }, sync_s: .58 },
   { id: 'per-word-rise', label: 'Word rise', detail: 'Each word rises into place as you say it.', group: 'words',
     fields: [text('text', 'text', 'Words', 'Words as you say them', { required: true, max: 60 }), choice('split', 'split', 'Rises by', [['word', 'Word'], ['char', 'Letter']])],
-    fixed: { ...ACCENT, ...FADE }, jobs: ['reveal'], use_when: 'A key line should land word by word, in time with the voice.', avoid_when: 'The line swaps one word for another (use Word swap).',
+    fixed: { ...ACCENT, ...FADE }, css_rules: '#root .pwr-stage:not(.pwr-char) { column-gap: 0.24em; }', jobs: ['reveal'], use_when: 'A key line should land word by word, in time with the voice.', avoid_when: 'The line swaps one word for another (use Word swap).',
     hold_s: 3, sound: 'none', scale: 1.15, default_ms: 3000, backing: 'glass', aspect: 2.6, cue: { field: 'text', unit: 'word', variable: 'cues' } },
   { id: 'kinetic-type-swap', label: 'Word swap', detail: 'One word in a line rolls through options and lands on the last.', group: 'words',
     fields: [text('prefix', 'prefix', 'Words before', 'Make it', { max: 30 }), list('options', 'options', 'Words that swap (one per line, last stays)', 'faster\nsimpler\nyours', ',', { required: true, max: 20 }),
@@ -171,13 +177,13 @@ export const FX_EFFECTS: readonly FxEffect[] = [
   { id: 'marker-highlight', label: 'Marker', detail: 'A line with one word highlighted, circled or underlined by marker.', group: 'words',
     fields: [text('text', 'text', 'Line', 'This is the part that matters', { required: true, max: 60 }), text('word', 'emphasis_word', 'Word to mark (from the line)', 'matters', { required: true, max: 24 }),
       choice('style', 'style', 'Mark', [['highlight', 'Highlight'], ['circle', 'Circle'], ['underline', 'Underline'], ['scribble', 'Scribble']])],
-    fixed: { ...ACCENT, ...FADE }, jobs: ['emphasize'], use_when: 'A line has one word that carries it.', avoid_when: 'Every word matters equally.',
+    fixed: { ...ACCENT, ...FADE }, css_rules: '.mh-em { margin: 0 0.16em; } .mh-em[data-marker-style="circle"] { margin: 0 0.5em 0 0.4em; }', jobs: ['emphasize'], use_when: 'A line has one word that carries it.', avoid_when: 'Every word matters equally.',
     hold_s: 3, sound: 'none', scale: 1.2, default_ms: 3500, backing: 'glass', aspect: 2.6, cue: { field: 'word', unit: 'word' }, sync_s: .9 },
   { id: 'vox-annotate', label: 'Annotate', detail: 'A word in a line is marked, with a short note drawn beside it.', group: 'words',
     fields: [text('text', 'text', 'Line', 'Tell the story not the spec', { required: true, max: 50 }), text('word', 'keyword', 'Word to mark', 'story', { required: true, max: 20 }),
       text('note', 'note', 'Note', 'the part people remember', { max: 30 }),
       choice('style', 'style', 'Mark', [['highlight', 'Highlight'], ['circle', 'Circle'], ['underline', 'Underline'], ['scribble', 'Scribble']])],
-    fixed: { ...ACCENT, ...FADE }, jobs: ['emphasize'], use_when: 'A phrase needs an aside or a short explanation.', avoid_when: 'Plain emphasis is enough (use Marker).',
+    fixed: { ...ACCENT, ...FADE }, css_rules: '.va-em { margin: 0 0.16em; } .va-em[data-marker-style="circle"] { margin: 0 0.5em 0 0.4em; }', jobs: ['emphasize'], use_when: 'A phrase needs an aside or a short explanation.', avoid_when: 'Plain emphasis is enough (use Marker).',
     hold_s: 3.5, sound: 'none', default_ms: 4000, backing: 'glass', aspect: 2.4, cue: { field: 'word', unit: 'word' }, sync_s: .9 },
   { id: 'kinetic-center-build', label: 'Word push', detail: 'Words arrive from the right and push the line until it locks in the center.', group: 'words',
     fields: [text('text', 'text', 'Words', 'Say it once', { required: true, max: 40 })], fixed: { font_size: 84, font_weight: '700', entry_offset: 88 },
@@ -242,14 +248,14 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     avoid_when: 'Nothing arrives.', hold_s: 4, sound: 'pop', scale: 1.5, default_ms: 4500, size: 'stage', aspect: 1.2, cue: { field: 'titles', unit: 'item', variable: 'cues' } },
   // Proof.
   { id: 'testimonial-card', label: 'Testimonial', detail: 'A quote card with who said it and their stars.', group: 'numbers',
-    fields: [text('quote', 'quote', 'Quote (as said)', 'This changed how I work.', { required: true, max: 90 }), text('author', 'author', 'Who said it', 'Their name', { max: 30 }),
-      text('handle', 'handle', 'Their handle or role', '', { max: 30 }), num('rating', 'rating', 'Stars (0 to 5)', '5')],
-    fixed: { rating: 0 }, jobs: ['prove'], use_when: 'The speaker reads out a real customer\'s words.', avoid_when: 'The words were not said; never make a testimonial up.',
+    fields: [text('quote', 'quote', 'Quote (as said)', 'This changed how I work.', { required: true, max: 90 }), text('author', 'author', 'Who said it (only a name that is said)', '', { max: 30, manual: true }),
+      text('handle', 'handle', 'Their handle or role', '', { max: 30, manual: true }), num('rating', 'rating', 'Stars (0 to 5)', '5')],
+    fixed: { rating: 0 }, hide_empty: [{ field: 'rating', selector: '.tc-rating' }, { field: 'author', selector: '.tc-attribution' }], jobs: ['prove'], use_when: 'The speaker reads out a real customer\'s words.', avoid_when: 'The words were not said; never make a testimonial up.',
     hold_s: 4.5, sound: 'pop', scale: 1.5, default_ms: 5000, aspect: 2, sync_s: .82 },
   { id: 'testimonial-proof-card', label: 'Quote card', detail: 'A quote reveals line by line, a phrase underlined, with who said it.', group: 'numbers',
-    fields: [text('quote', 'quote', 'Quote (as said)', 'I finally got my first ten clients', { required: true, max: 90 }), text('name', 'name', 'Who said it', 'Their name', { max: 30 }),
-      text('role', 'role', 'Their role', '', { max: 30 }), text('company', 'company', 'Company', '', { max: 24 }), text('emphasis', 'emphasis', 'Phrase to underline (from the quote)', 'first ten clients', { max: 30 })],
-    fixed: { ...ACCENT, ...FADE }, jobs: ['prove'], use_when: 'A real customer quote is read out.', avoid_when: 'The words were not said; never make one up.',
+    fields: [text('quote', 'quote', 'Quote (as said)', 'I finally got my first ten clients', { required: true, max: 90 }), text('name', 'name', 'Who said it (only a name that is said)', '', { max: 30, manual: true }),
+      text('role', 'role', 'Their role', '', { max: 30, manual: true }), text('company', 'company', 'Company', '', { max: 24, manual: true }), text('emphasis', 'emphasis', 'Phrase to underline (from the quote)', 'first ten clients', { max: 30 })],
+    fixed: { ...ACCENT, ...FADE }, hide_empty: [{ field: 'name', selector: '.tq-byline' }, { field: 'role', selector: '.tq-role' }, { field: 'company', selector: '.tq-company' }], jobs: ['prove'], use_when: 'A real customer quote is read out.', avoid_when: 'The words were not said; never make one up.',
     hold_s: 5, sound: 'none', scale: 1.4, default_ms: 5500, aspect: 1.9, sync_s: 1.6 },
   // Ending.
   { id: 'cta-close', label: 'Closing ask', detail: 'One line and a button, the last thing on screen.', group: 'ending',
