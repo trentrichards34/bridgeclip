@@ -284,8 +284,10 @@ def main():
         install()
         from clip_engine.services import edit_recording
 
-        def progress(detail, percent):
-            emit({"type": "progress", "detail": str(detail)[:160], "percent": max(0, min(100, float(percent)))})
+        def progress(detail, percent, found=None):
+            # found: what the step found so far (counts, the hook), for the app's progress view only.
+            emit({"type": "progress", "detail": str(detail)[:160], "percent": max(0, min(100, float(percent))),
+                  **({"found": found} if isinstance(found, dict) and found else {})})
 
         async def work():
             task = asyncio.current_task()

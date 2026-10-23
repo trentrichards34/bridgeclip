@@ -137,6 +137,18 @@ test('B-roll video: a voiceover and the whole library become a video in the Libr
 
   await page.getByTestId('broll-video-start').click()
   await page.getByTestId('broll-video-progress').waitFor()
+  // The steps of the whole job, the current one marked.
+  const steps = page.getByTestId('broll-video-steps')
+  if (await steps.waitFor({ timeout: 5000 }).then(() => true, () => false)) {
+    assert.deepEqual(await steps.locator(':scope > li').evaluateAll((items) => items.map((li) => li.textContent.split(' · ')[0].replace(/[\d:]+$/, ''))),
+      ['Your voiceover', 'Listening', 'Planning your b-roll', 'Placing your b-roll', 'Captions and finishing'])
+    if (process.env.BRIDGECLIP_E2E_SHOTS) {
+      await page.getByTestId('broll-video-progress').evaluate((el) => el.scrollIntoView({ block: 'center' })).catch(() => null)
+      await page.waitForTimeout(500)
+      const png = await app.evaluate(async ({ BrowserWindow }) => (await (BrowserWindow.getAllWindows().find((w) => w.isVisible()) ?? BrowserWindow.getAllWindows()[0]).webContents.capturePage()).toPNG().toString('base64')).catch(() => null)
+      if (png) { fs.mkdirSync(process.env.BRIDGECLIP_E2E_SHOTS, { recursive: true }); fs.writeFileSync(path.join(process.env.BRIDGECLIP_E2E_SHOTS, 'broll-video-progress.png'), Buffer.from(png, 'base64')) }
+    }
+  }
   await page.getByText('Your b-roll video is ready').waitFor({ timeout: 600000 })
   // One transcription (the balance checks ask too).
   assert.deepEqual(scribe.calls.filter((url) => url.includes('/audio/')), ['/api/v1/audio/transcriptions'])
