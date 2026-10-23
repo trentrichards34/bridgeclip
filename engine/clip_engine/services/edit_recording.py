@@ -1957,6 +1957,8 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
     scenes: list[dict] = []
     if options["stage"]:
         avoid = ed.screen_windows(timed, config["words"], screens or set(), offset_ms)
+        # And wherever no face shows for a while (a screen or a page filmed mid-take, b-roll).
+        avoid += await asyncio.to_thread(ed.faceless_windows, target, offset_ms, total_ms)
         scenes = ed.editor_scenes(graphics, total_ms, editor.get("brand_color"), avoid)
         graphics = ed.size_for_scenes(graphics, scenes)
     segments = ed.reel_segments(timed, offset_ms)

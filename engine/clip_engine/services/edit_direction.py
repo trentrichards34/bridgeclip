@@ -577,6 +577,54 @@ def screen_windows(timed: Sequence[Sequence[Any]], words: Sequence[Any], screens
     return [(a, b) for a, b in out if b - a >= 800]
 
 
+# Faceless stretches: sampled every FACE_STEP_MS; this many in a row without a face is a filmed screen (or b-roll).
+FACE_STEP_MS = 1500
+FACELESS_RUN = 2
+
+
+def faceless_windows(video: str, start_ms: int, end_ms: int) -> list[tuple[int, int]]:
+    """Stretches of the reel (ms) where no face shows for a while: a screen, a page or b-roll filmed mid-take. They are
+    the visual already, so no stage goes over them (the speaker card would show a cropped screen). One small, fast pass
+    over the video (a frame every FACE_STEP_MS)."""
+    try:
+        import cv2
+        import numpy as np
+        from clip_engine.services.look_extras import FACE_MODEL
+        from clip_engine.services.media_process import run_media
+        if not os.path.isfile(FACE_MODEL) or end_ms - start_ms < FACE_STEP_MS * FACELESS_RUN:
+            return []
+        w, h = 270, 480
+        result = run_media(["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{start_ms / 1000:.3f}", "-i", video, "-t", f"{(end_ms - start_ms) / 1000:.3f}",
+                            "-an", "-vf", f"fps=1000/{FACE_STEP_MS},scale={w}:{h}", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"], timeout=900,
+                           max_output=(math.ceil((end_ms - start_ms) / FACE_STEP_MS) + 4) * w * h * 3)
+        data = result.stdout or b""
+        frames = len(data) // (w * h * 3)
+        if result.returncode != 0 or not frames:
+            return []
+        detector = cv2.FaceDetectorYN.create(FACE_MODEL, "", (w, h), 0.7, 0.3, 50)
+        seen = []
+        for k in range(frames):
+            frame = np.frombuffer(data, dtype=np.uint8, count=w * h * 3, offset=k * w * h * 3).reshape(h, w, 3)
+            _, faces = detector.detect(frame)
+            seen.append(faces is not None and len(faces) > 0)
+    except Exception as error:  # noqa: BLE001 - without it the stage may go over a screen; the reel is still made
+        logger.warning(f"Face check skipped: {type(error).__name__}")
+        return []
+    out: list[tuple[int, int]] = []
+    k = 0
+    while k < len(seen):
+        if seen[k]:
+            k += 1
+            continue
+        j = k
+        while j < len(seen) and not seen[j]:
+            j += 1
+        if j - k >= FACELESS_RUN:
+            out.append((int(start_ms + k * FACE_STEP_MS), int(min(end_ms, start_ms + j * FACE_STEP_MS))))
+        k = j
+    return out
+
+
 def overlaps(a: tuple[float, float], windows: Sequence[tuple[float, float]]) -> bool:
     return any(a[0] < hi and a[1] > lo for lo, hi in windows)
 

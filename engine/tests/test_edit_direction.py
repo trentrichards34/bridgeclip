@@ -345,3 +345,13 @@ def test_two_graphics_the_cut_brings_together_share_the_time_instead_of_one_vani
     # Too close to share: the weaker one goes; a shortened word card keeps its words' times inside it.
     assert [g['id'] for g in ed.settle([strike, word])] == ['g-strike']
     assert ed.shortened(word, 1000)['fields']['word_ms'] == '0\n700'
+
+
+@pytest.mark.skipif(not _ffmpeg_ok(), reason='needs FFmpeg')
+def test_a_stretch_without_a_face_is_found_so_no_stage_goes_over_a_filmed_screen(tmp_path):
+    video = str(tmp_path / 'screen.mp4')
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=540x960:r=30:d=6', '-c:v', 'libx264', '-preset', 'ultrafast',
+                    '-pix_fmt', 'yuv420p', video], check=True)
+    assert ed.faceless_windows(video, 0, 6000) == [(0, 6000)]
+    # Too short to tell: nothing.
+    assert ed.faceless_windows(video, 0, 2000) == []
