@@ -67,8 +67,9 @@ test('helpers keep graphics inside the clip, merge field edits and respect the l
   list = mg.updateGraphic({ ...c, graphics: list }, id, { duration_ms: 99999, fields: { text: 'New words', color: '#ff0000' } })
   assert.deepEqual([list[0].duration_ms, list[0].fields.text, list[0].fields.color], [8000, 'New words', '#ff0000'])
   assert.equal(mg.removeGraphic({ graphics: list }, id).length, 1)
-  const full = { ...c, graphics: Array.from({ length: 12 }, (_, i) => mg.newGraphic('title', 1000 + i)) }
-  assert.throws(() => mg.withGraphic(full, mg.newGraphic('title', 2000)), /up to 12/)
+  const full = { ...c, graphics: Array.from({ length: mg.MAX_GRAPHICS_PER_CLIP }, (_, i) => mg.newGraphic('title', 1000 + i)) }
+  assert.equal(mg.MAX_GRAPHICS_PER_CLIP, 60)
+  assert.throws(() => mg.withGraphic(full, mg.newGraphic('title', 2000)), /up to 60/)
   assert.equal(mg.graphicHasContent({ template: 'stat', fields: {} }), false)
   assert.equal(mg.graphicHasContent({ template: 'list', fields: { items: '\n  \nOne' } }), true)
   assert.deepEqual(mg.graphicItems('a\n\n b \nc\nd\ne\nf'), ['a', 'b', 'c', 'd', 'e'])

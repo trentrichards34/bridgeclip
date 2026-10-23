@@ -222,7 +222,10 @@ test('Combine clips: a .zip of three clips, put in the AI’s order, joined upri
   const reel = path.join(library, run, 'clip_00.mp4')
   const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height,r_frame_rate,duration', '-show_entries', 'format=duration', '-of', 'json', reel]).toString())
   const video = probe.streams.find((s) => s.codec_type === 'video'), audio = probe.streams.find((s) => s.codec_type === 'audio')
-  assert.deepEqual([video.width, video.height, video.r_frame_rate], [1080, 1920, '30/1'])
+  // 30 fps (the editor's bake can report the rate as a near fraction, e.g. 240000/7999).
+  const [num, den] = video.r_frame_rate.split('/').map(Number)
+  assert.deepEqual([video.width, video.height], [1080, 1920])
+  assert.ok(Math.abs(num / den - 30) < 0.05, video.r_frame_rate)
   assert.ok(Math.abs(Number(video.duration) - Number(audio.duration)) < 0.1, `${video.duration} vs ${audio.duration}`)
   // The reel is a clip editor project (the joined, upright clips are its source), baked by the editor.
   const project = JSON.parse(fs.readFileSync(path.join(library, run, 'editor-project.json'), 'utf8'))

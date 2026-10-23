@@ -327,6 +327,35 @@ def _start_of(word: int, starts: dict[int, int], order: Sequence[int]) -> Option
     return None
 
 
+def shortened(g: dict, length: int) -> dict:
+    """A graphic made shorter, its words' and items' times kept inside it."""
+    fields = dict(g['fields'])
+    for key in ('word_ms', 'item_ms'):
+        if fields.get(key):
+            fields[key] = '\n'.join(str(min(int(t), max(0, length - 300))) for t in fields[key].split('\n'))
+    return {**g, 'duration_ms': int(length), 'fields': fields}
+
+
+def settle(graphics: list[dict]) -> list[dict]:
+    """Graphics in time order that never overlap: one that runs into the next ends just before it when enough is left
+    (MIN_TRIMMED_MS), else the weaker of the two goes."""
+    out: list[dict] = []
+    for g in sorted(graphics, key=lambda g: g['at_ms']):
+        while out and g['at_ms'] < out[-1]['at_ms'] + out[-1]['duration_ms']:
+            prev = out[-1]
+            room = g['at_ms'] - ag.GAP_MS - prev['at_ms']
+            if room >= ag.MIN_TRIMMED_MS:
+                out[-1] = shortened(prev, room)
+                break
+            if ag._priority(prev) >= ag._priority(g):
+                g = None
+                break
+            out.pop()
+        if g is not None:
+            out.append(g)
+    return out
+
+
 def card_graphic(card: dict) -> Optional[tuple[str, dict[str, str]]]:
     """A half-screen card (edit_recording.clean_card) as the editor graphic that says the same."""
     kind, title, items = card.get('type'), card.get('title') or '', [i for i in card.get('items') or [] if i]
@@ -402,16 +431,21 @@ def editor_graphics(specs: Sequence[dict], timed: Sequence[Sequence[Any]], total
             continue
         extras.append({'id': ag.new_id(taken), 'template': 'logo', 'at_ms': at + offset_ms, 'duration_ms': 1500, 'placement': 'middle',
                        'fields': {'image': pin['image']}, 'origin': 'member'})
-    # The automatic ones: on their first spoken word, items as said, diagrams while talked through; chapter headers.
-    opts = {'stage': bool(options.get('stage')), 'chapters': bool(options.get('chapters')) and options.get('motion', True),
-            'cta_keyword': options.get('cta_keyword') or '', 'templates': ['big_words'], 'max_cards': MAX_GRAPHICS}
-    fitted = ag.fit_to_clip(auto, segments, [(offset_ms, end_ms)], 1.0, opts) if auto or opts['chapters'] else []
-    if auto:
-        dropped = len(auto) - sum(1 for g in fitted if g['template'] != 'chapter')
-        lost += max(0, dropped)
-    for g in fitted:
-        if g['template'] == 'big_words':
-            g['depth'] = 'behind'
+    # The automatic ones: on their first spoken word, items as said, diagrams while talked through (each on its own: they
+    # were picked and spaced at plan time; the cut can bring two closer, which is settled below); chapter headers.
+    opts = {'stage': bool(options.get('stage')), 'chapters': False, 'cta_keyword': options.get('cta_keyword') or '',
+            'templates': ['big_words'], 'max_cards': MAX_GRAPHICS}
+    ranges = [(offset_ms, end_ms)]
+    fitted: list[dict] = []
+    for g in auto:
+        one = ag.fit_to_clip([g], segments, ranges, 1.0, opts)
+        if not one:
+            lost += 1
+            continue
+        fitted.append({**one[0], 'id': g['id'], **({'depth': 'behind'} if g['template'] == 'big_words' else {})})
+    fitted = settle(fitted)
+    if options.get('chapters') and options.get('motion', True):
+        fitted += ag.fit_to_clip([], segments, ranges, 1.0, {**opts, 'chapters': True})
     # The member's graphics win their time: an automatic one that would play over one gives way (chapters stay: own band).
     kept = [g for g in fitted if g['template'] == 'chapter' or not any(
         g['at_ms'] < m['at_ms'] + m['duration_ms'] and m['at_ms'] < g['at_ms'] + g['duration_ms'] for m in member)]

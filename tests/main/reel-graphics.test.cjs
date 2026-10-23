@@ -13,7 +13,9 @@ test('Edit graphics start on a word of the plan; Logo pop stays in the clip edit
   assert.deepEqual(plain(shared.parseEditGraphics(undefined, 10)), [])
   assert.throws(() => shared.parseEditGraphics([g({ word: 10 })], 10), /start time/)
   assert.throws(() => shared.parseEditGraphics([g({ word: 1, template: 'logo', fields: { image: 'aaaaaaaaaaaaaaaa.png' } })], 10), /only in the clip editor/)
-  assert.throws(() => shared.parseEditGraphics(Array.from({ length: 9 }, (_, i) => g({ word: i, id: `g-aaaa000${i}` })), 10), /up to 8/)
+  // An edited reel takes up to 60 (the automatic direction plans about one per 6 s of a long reel).
+  assert.equal(shared.parseEditGraphics(Array.from({ length: 60 }, (_, i) => g({ word: i % 10, id: `g-aaaa${String(i).padStart(4, '0')}` })), 10).length, 60)
+  assert.throws(() => shared.parseEditGraphics(Array.from({ length: 61 }, (_, i) => g({ word: i % 10, id: `g-aaaa${String(i).padStart(4, '0')}` })), 10), /up to 60/)
   assert.throws(() => shared.parseEditGraphics([g({ word: 1, duration_ms: 20000 })], 10), /0\.8 and 8 seconds/)
   // The review's choices carry them (and older saved choices without any still parse).
   const plan = shared.parseEditPlan({ words: [['Most', 0, 300, 0, null], ['coaches', 320, 700, 0, null], ['lose', 720, 900, 0, null], ['clients.', 920, 1300, 0, null]], hooks: [], popups: [], sounds: [] }, 1)

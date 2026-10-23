@@ -334,3 +334,14 @@ def test_a_render_with_the_direction_makes_an_editor_project_with_its_graphics_a
     segments = json.load(open(os.path.join(root, 'transcript.json')))['segments']
     assert segments and segments[0]['words'][0]['word'] == 'You'
     assert os.path.isfile(result['path'])
+
+
+def test_two_graphics_the_cut_brings_together_share_the_time_instead_of_one_vanishing():
+    stat = {'id': 'g-stat01', 'template': 'stat', 'at_ms': 1000, 'duration_ms': 3500, 'placement': 'top', 'fields': {'value': '$5'}}
+    strike = {'id': 'g-strike', 'template': 'strike_list', 'at_ms': 3000, 'duration_ms': 4000, 'placement': 'top', 'fields': {'items': 'a', 'final': 'b'}}
+    word = {'id': 'g-words1', 'template': 'statement', 'at_ms': 3200, 'duration_ms': 2000, 'placement': 'top', 'fields': {'text': 'x y', 'word_ms': '0\n1900'}}
+    out = ed.settle([stat, strike])
+    assert [(g['id'], g['at_ms'], g['duration_ms']) for g in out] == [('g-stat01', 1000, 1850), ('g-strike', 3000, 4000)]
+    # Too close to share: the weaker one goes; a shortened word card keeps its words' times inside it.
+    assert [g['id'] for g in ed.settle([strike, word])] == ['g-strike']
+    assert ed.shortened(word, 1000)['fields']['word_ms'] == '0\n700'
