@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeftRight, Clapperboard, FileAudio, Images, Mic, Shuffle, Sparkles, Square } from 'lucide-react'
+import { ArrowLeftRight, AudioLines, Clapperboard, FileAudio, Images, Layers, Mic, Shuffle, Sparkles, Square, Wand2, type LucideIcon } from 'lucide-react'
 import {
   BROLL_VIDEO_MAX_SCRIPT_CHARS, BROLL_VIDEO_MAX_SECONDS, defaultBrollVideoLook, estimateLine, shotsNeeded, scriptSeconds,
-  type BrollVideoEstimate, type BrollVideoShot, type BrollVoiceKind
+  type BrollVideoEstimate, type BrollVideoPhase, type BrollVideoShot, type BrollVoiceKind
 } from '../../shared/broll-video'
 import { aiEstimateLine, type BrollLibraryEntry } from '../../shared/broll-library'
 import { PRESET_VOICES } from '../../shared/avatars'
@@ -16,6 +16,9 @@ import { brollVideoRequest, useBrollVideoDraft, useBrollVideoStatus, type BrollV
 import { useBrollLibrary } from '../store/use-broll-library-store'
 import { useSettingsStore } from '../store/use-settings-store'
 import { CaptionPresetPicker } from '../components/CaptionPresetPicker'
+import { useNow } from '../components/EditProgressView'
+import { StepList, type StepItem } from '../components/StepList'
+import { clockOf } from '../lib/edit-timings'
 import { ClipEditor } from '../components/ClipEditor'
 import { CtaPicker } from '../components/CtaPicker'
 import { HeadlineLookPicker } from '../components/HeadlineLookPicker'
@@ -348,14 +351,39 @@ function BrollPicker({ items }: { items: BrollLibraryEntry[] }): React.JSX.Eleme
 // Making it, and the result
 // ---------------------------------------------------------------------------
 
+/** The steps of a b-roll video, in order (the phases main reports). */
+const BROLL_STEPS: { phase: BrollVideoPhase; label: string; icon: LucideIcon }[] = [
+  { phase: 'voice', label: 'Your voiceover', icon: Mic }, { phase: 'listening', label: 'Listening', icon: AudioLines },
+  { phase: 'planning', label: 'Planning your b-roll', icon: Wand2 }, { phase: 'making', label: 'Placing your b-roll', icon: Clapperboard },
+  { phase: 'finishing', label: 'Captions and finishing', icon: Layers }
+]
+/** When this page saw each step start, per run (only what was seen: a step that started while away has no time). */
+const brollStepSeen = new Map<string, Partial<Record<BrollVideoPhase, number>>>()
+
 function Making(): React.JSX.Element {
   const status = useBrollVideoStatus((s) => s.status)!
   const [cancelling, setCancelling] = useState(false)
+  const now = useNow(true)
+  const seen = brollStepSeen.get(status.id) ?? {}
+  if (!seen[status.phase]) { seen[status.phase] = Date.now(); brollStepSeen.set(status.id, seen) }
+  const at = BROLL_STEPS.findIndex((item) => item.phase === status.phase)
+  const started = Date.parse(status.startedAt)
+  const step = /\((\d+) of (\d+)\)/.exec(status.detail)
+  const items = BROLL_STEPS.map((item, i): StepItem => {
+    const state = i < at ? 'done' : i === at ? 'current' : 'next'
+    const from = seen[item.phase], next = BROLL_STEPS.slice(i + 1).map((later) => seen[later.phase]).find((value) => value !== undefined)
+    const note = state === 'done' && from && next ? clockOf(next - from) : state === 'current' && from ? clockOf(now - from) : null
+    return { id: item.phase, label: item.label, icon: item.icon, state, note, step: state === 'current' && step ? `${step[1]} of ${step[2]}` : null }
+  })
   return (
     <Panel data-testid="broll-video-progress">
       <PanelHeader icon={<IconTile><Clapperboard /></IconTile>} title="Making your b-roll video" description={status.detail}
-        action={<Button size="sm" variant="secondary" icon={<Square className="h-3.5 w-3.5" />} loading={cancelling}
-          onClick={() => { setCancelling(true); void getApi().brollVideo.cancel().finally(() => setCancelling(false)) }}>Cancel</Button>} />
+        action={<>
+          {Number.isFinite(started) && <span className="glass-tile inline-flex h-7 items-center rounded-full px-3 font-mono text-[11px] tabular text-ink-muted">{clockOf(now - started)} elapsed</span>}
+          <Button size="sm" variant="secondary" icon={<Square className="h-3.5 w-3.5" />} loading={cancelling}
+            onClick={() => { setCancelling(true); void getApi().brollVideo.cancel().finally(() => setCancelling(false)) }}>Cancel</Button>
+        </>} />
+      <div className="mt-4"><StepList items={items} testId="broll-video-steps" /></div>
       <div className="mt-3 space-y-1">
         <ProgressBar value={status.percent} />
         <p className="text-2xs text-ink-subtle">{status.percent}% · {status.costUsd > 0 ? `$${status.costUsd.toFixed(3)} spent so far` : 'Nothing spent yet'}</p>

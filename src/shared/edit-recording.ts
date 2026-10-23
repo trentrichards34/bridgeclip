@@ -1,3 +1,4 @@
+import type { EditProgress } from './edit-progress'
 import { isBrollSource, type BrollSource } from './broll-library'
 /**
  * Edit my recording: a member drops in one raw talking-to-camera recording
@@ -154,6 +155,8 @@ export interface EditStatus {
   mode?: EditMode
   /** Camera + screen: the screen recording made with the camera recording, and how they line up. */
   screen?: EditScreen
+  /** The run in stages, for the progress view (edit-progress.ts). Missing on runs from before it. */
+  progress?: EditProgress
 }
 
 /** A run's screen recording (camera + screen). */

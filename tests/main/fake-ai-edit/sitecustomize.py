@@ -14,6 +14,11 @@ if os.environ.get("CREATORCLIPS_FAKE_AI") == "1":
         from clip_engine.services import edit_recording
 
         async def chat_completion(client, payload):
+            # A slower stand-in when the test asks (to look at the progress view while the edit is planned).
+            delay = float(os.environ.get("CREATORCLIPS_FAKE_AI_DELAY") or 0)
+            if delay > 0:
+                import asyncio
+                await asyncio.sleep(min(delay, 30))
             text = payload["messages"][1]["content"].split("TRANSCRIPT (data)", 1)[1]
             words = [(int(i), w) for i, w in re.findall(r"(?<![\w.])(\d+):(\S+)", text)]
 

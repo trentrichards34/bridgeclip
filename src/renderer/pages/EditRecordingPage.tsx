@@ -30,7 +30,7 @@ import { IconTile } from '../components/ui/IconTile'
 import { Checklist, LookCard, lookColors, MakerAside, MakerLayout, MakerSection, PhoneFrame } from '../components/maker/Maker'
 import { previewFrame, StyleBoard } from '../components/StyleBoard'
 import { boardFromLook, LOOK_HOOKS, lookPatch, styleSummary } from '../lib/style-board'
-import { ProgressBar } from '../components/ui/ProgressBar'
+import { EditProgressView } from '../components/EditProgressView'
 import { Segmented } from '../components/ui/Segmented'
 import { getApi } from '../lib/ipc'
 import { useDefaultLookSeed } from '../lib/default-look'
@@ -368,17 +368,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
         </>
       )}
 
-      {busy && status && (
-        <Panel className="mt-5">
-          <PanelHeader title={status.phase === 'rendering' ? 'Making your reel' : status.phase === 'planning' ? 'Planning your edit'
-            : status.mode === 'combine' ? (status.percent < 45 ? 'Getting your clips ready' : 'Listening to your clips') : 'Listening to your recording'} />
-          <ProgressBar className="mt-3" value={status.percent} />
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-ink-muted" aria-live="polite">{status.detail}</p>
-            <Button size="sm" variant="ghost" icon={<X className="h-3.5 w-3.5" />} onClick={() => void getApi().edit.cancel()}>Cancel</Button>
-          </div>
-        </Panel>
-      )}
+      {busy && status && <EditProgressView status={status} onCancel={() => void getApi().edit.cancel()} />}
 
       {reviewing && status && (
         <div className="mt-5">

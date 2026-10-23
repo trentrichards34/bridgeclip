@@ -18,6 +18,7 @@ import {
   type ClipOrderMode, type EditMode, type ShotType
 } from '../shared/combine-clips'
 import { IMPORTS_DIR, cleanupImports, extractZipClips, importFolder, type ImportProgress } from './combine-import'
+import { closeStages, enterStage, editStageOf, firstWords, newEditProgress, parseFound, stepOf, type EditFound } from '../shared/edit-progress'
 import { headlineLookForEngine } from '../shared/headline-look'
 import { lookExtrasForEngine } from '../shared/look-extras-engine'
 import { audioForEngine } from './music'
@@ -87,9 +88,10 @@ function running(current: EditRun): boolean {
   return current.status.phase === 'transcribing' || current.status.phase === 'planning' || current.status.phase === 'rendering'
 }
 
-function publish(current: EditRun, patch: Partial<EditStatus>): void {
+function publish(current: EditRun, patch: Partial<EditStatus>, found?: EditFound): void {
   if (current !== run) return
   current.status = { ...current.status, ...patch, ...(patch.percent !== undefined ? { percent: Math.max(0, Math.min(100, Math.round(patch.percent))) } : {}) }
+  current.status.progress = tracked(current.status, Date.now(), found)
   // What was spent goes to the ledger as soon as it's known (a failed or cancelled run paid for its calls too).
   const unrecorded = current.status.costUsd - current.recordedUsd
   if (unrecorded > 1e-9 && !running(current)) {
@@ -98,6 +100,26 @@ function publish(current: EditRun, patch: Partial<EditStatus>): void {
     try { recordSpend(unrecorded, label, basename(current.status.folder), false) } catch { /* never breaks the run */ }
   }
   notify(current.status)
+}
+
+/** The run's stages, step and finds, from what it just reported (for the progress view only). */
+function tracked(status: EditStatus, now: number, found?: EditFound): EditStatus['progress'] {
+  let progress = status.progress ?? newEditProgress(now)
+  if (status.phase === 'done' || status.phase === 'failed' || status.phase === 'cancelled') return closeStages(progress, now)
+  const combine = status.mode === 'combine'
+  const stage = editStageOf(status.phase, status.detail, combine)
+  if (status.phase === 'rendering' && progress.stages.some((item) => item.id === 'review' && item.endedAt === null)) progress = { ...progress, renderStartedAt: now }
+  if (stage) progress = enterStage(progress, stage, now)
+  if (found) progress = { ...progress, found: { ...progress.found, ...found } }
+  const current = progress.stages[progress.stages.length - 1]?.id
+  const step = stepOf(status.detail)
+  if (step && (current === 'ready' || current === 'listen' || current === 'cut')) {
+    // Getting clips ready and listening go clip by clip in order; making the reel readies the clips it uses, lowest first.
+    const used = current === 'cut' ? (combine && /^Getting your clips ready/.test(status.detail) ? [...(progress.order ?? [])].sort((a, b) => a - b) : null) : null
+    const clip = current === 'cut' ? (used?.[step.n - 1] ?? null) : step.n - 1 < status.sources.length ? step.n - 1 : null
+    progress = { ...progress, step, clip }
+  } else if (stage && current === 'cut' && !step) progress = { ...progress, step: null, clip: null }
+  return progress
 }
 
 function spend(current: EditRun, usd: number): void {
@@ -405,7 +427,7 @@ function engineEnv(): Record<string, string | undefined> {
 }
 
 /** One engine run; resolves with its result line (rejects with what it said, and what it paid, when it fails). */
-function runEngine(config: Record<string, unknown>, limitMs: number, onProgress?: (detail: string, percent: number) => void,
+function runEngine(config: Record<string, unknown>, limitMs: number, onProgress?: (detail: string, percent: number, found?: EditFound) => void,
   onChild?: (child: ChildProcess | undefined) => void): Promise<Record<string, unknown>> {
   const settings = loadSettings(), engine = getEnginePath()
   const child = spawn(resolvePythonPath(engine, settings.pythonPath), [join(dirname(getBridgeRunnerPath()), 'edit_runner.py')], {
@@ -422,7 +444,7 @@ function runEngine(config: Record<string, unknown>, limitMs: number, onProgress?
         const line = buffer.slice(0, end); buffer = buffer.slice(end + 1)
         try {
           const message = JSON.parse(line) as Record<string, unknown>
-          if (message.type === 'progress' && typeof message.percent === 'number') onProgress?.(typeof message.detail === 'string' ? message.detail.slice(0, 160) : '', message.percent)
+          if (message.type === 'progress' && typeof message.percent === 'number') onProgress?.(typeof message.detail === 'string' ? message.detail.slice(0, 160) : '', message.percent, message.found === undefined ? undefined : parseFound(message.found))
           else if (typeof message.ok === 'boolean') result = message
         } catch { /* not protocol */ }
       }
@@ -508,6 +530,7 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
         ...(screen ? { screen } : {})
       }
     }
+    current.status.progress = tracked(current.status, Date.now())
     run = current
     notify(current.status)
     void prepare(current).catch((error: unknown) => logger.warn('edit.prepare.crashed', { message: String(error).slice(0, 200) }))
@@ -531,6 +554,12 @@ async function prepare(current: EditRun): Promise<void> {
       publish(current, { detail: `Listening to your ${combine ? 'clips' : 'recording'}${part}`, percent: from + (span * index) / sources.length })
       const heard = await transcribe(current, source, index, keyterms)
       for (const [text, start, end] of heard) words.push([text, start, end, index])
+      // What was heard in this clip, for the progress view (its first words).
+      if (current.status.progress) {
+        const said = firstWords(heard.map(([text]) => text))
+        current.status.progress = { ...current.status.progress, wordsHeard: current.status.progress.wordsHeard + heard.length,
+          heard: said ? [...current.status.progress.heard, { src: index, text: said }].slice(-24) : current.status.progress.heard }
+      }
     }
     if (current.cancelled) throw new Error('Canceled.')
     if (!words.length) throw new Error('No speech was heard in your recording. Check that your microphone was on, then try again.')
@@ -540,7 +569,7 @@ async function prepare(current: EditRun): Promise<void> {
       brand_identity: current.brand?.text ?? '', brand_name: current.brand?.name ?? '', hook_hint: current.hookHint,
       ...(current.purpose ? { purpose: current.purpose } : {}), ...(current.reference ? { reference_image: current.reference } : {}),
       ...(combine ? { combine: { clips: sources.map((source) => ({ shot: source.shot ?? 'face', seconds: source.seconds })) } } : {})
-    }, 15 * 60_000, (detail, percent) => { if (!current.cancelled) publish(current, { detail: detail || 'Planning your edit', percent: 70 + percent * 0.29 }) },
+    }, 15 * 60_000, (detail, percent, found) => { if (!current.cancelled) publish(current, { detail: detail || 'Planning your edit', percent: 70 + percent * 0.29 }, found) },
     (child) => { current.child = child })
     spend(current, typeof result.cost_usd === 'number' ? result.cost_usd : 0)
     const plan = parseEditPlan(result, sources.length)
@@ -654,7 +683,13 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
   const hook = plan.hooks.find((item) => item.id === decisions.hookId) ?? null
   // Rendering from here on (before the first await), so a second click, Start over or a new run can't slip in.
   current.cancelled = false
-  publish(current, { phase: 'rendering', detail: 'Starting', percent: 1, error: null })
+  // What the reel is made of, for the progress view (the member's choices, as made).
+  const reelOrder = plan.combine ? decisions.clipOrder ?? plan.combine.startOrder : null
+  if (current.status.progress) current.status.progress = { ...current.status.progress, order: reelOrder ? [...reelOrder] : null }
+  publish(current, { phase: 'rendering', detail: 'Starting', percent: 1, error: null }, {
+    ...(decisions.hookText.trim() ? { hook: decisions.hookText.replace(/\s+/g, ' ').trim().slice(0, 160) } : {}), cuts: cut.size,
+    popups: decisions.popups.filter((item) => item.on).length, graphics: current.status.screen ? 0 : drawableGraphics(decisions.graphics ?? []).filter((g) => !cut.has(g.word)).length,
+    broll: Boolean(decisions.look.broll) && !current.status.screen })
   let brandMark: Awaited<ReturnType<typeof brandMarkForRun>>
   try {
     brandMark = await brandMarkForRun(current.brand, decisions.look.showHandle, current.status.folder)
@@ -749,7 +784,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
         if (current.cancelled) throw new Error('Canceled.')
         Object.assign(config, { graphics: drawn.map((item) => ({ file: item.file, word: graphics.find((g) => g.id === item.id)!.word, duration_ms: item.duration_ms, ...(item.depth ? { depth: item.depth, min_top: item.min_top } : {}) })) })
       }
-      const result = await runEngine(config, 2 * 60 * 60_000, (detail, percent) => { if (!current.cancelled) publish(current, { detail, percent }) }, (child) => { current.child = child })
+      const result = await runEngine(config, 2 * 60 * 60_000, (detail, percent, found) => { if (!current.cancelled) publish(current, { detail, percent }, found) }, (child) => { current.child = child })
       // B-roll planning and AI shots are the only paid part of making the reel.
       spend(current, typeof result.cost_usd === 'number' ? result.cost_usd : 0)
       const path = join(current.status.folder, 'clip_00.mp4')

@@ -14,7 +14,8 @@ const bundled = buildSync({
       export { useSettingsStore } from './src/renderer/store/use-settings-store';
       export { useEditRecordingStore } from './src/renderer/store/use-edit-recording-store';
       export { isCreateOutput } from './src/renderer/components/ClipList';
-      export { GraphicForm as ReelGraphicForm } from './src/renderer/components/ReelGraphics';`,
+      export { GraphicForm as ReelGraphicForm } from './src/renderer/components/ReelGraphics';
+      export { EditProgressView } from './src/renderer/components/EditProgressView';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
   },
@@ -28,7 +29,7 @@ const pending = () => new Promise(() => {})
 globalThis.window = { bridgeclip: { edit: { status: pending, onStatus: () => () => {} }, brandIdentities: { list: pending }, settings: { load: pending } } }
 const mod = { exports: {} }
 new Function('module', 'exports', 'require', bundled)(mod, mod.exports, require)
-const { EditRecordingPage, EditReview, lookFromBrand, transcriptLines, parseEditPlan, useSettingsStore, useEditRecordingStore, isCreateOutput, ReelGraphicForm } = mod.exports
+const { EditRecordingPage, EditReview, lookFromBrand, transcriptLines, parseEditPlan, useSettingsStore, useEditRecordingStore, isCreateOutput, ReelGraphicForm, EditProgressView } = mod.exports
 
 function staticRender(element) {
   const original = React.useSyncExternalStore
@@ -171,4 +172,34 @@ test('a reel graphic form: Orbit and Feature tile get icon pickers and switches,
   assert.doesNotMatch(tiles, /aria-label="Feature tile dot"/)
   assert.match(tiles, /aria-label="Red dot on the first tile"/)
   assert.match(tiles, /aria-label="Icon for Auto reports"/)
+})
+
+test('the progress view: the job’s steps with times, the clip strip with the current clip, the words heard, and Cancel', () => {
+  const now = Date.now()
+  const sources = Array.from({ length: 13 }, (_, i) => ({ path: `/clips/IMG_${i}.MOV`, name: `IMG_${i}.MOV`, seconds: 5 }))
+  const status = {
+    id: 'p1', phase: 'transcribing', detail: 'Listening to your clips (7 of 13)', percent: 59, folder: '/out/edit-1', plan: null, transcriber: 'scribe', output: null,
+    costUsd: 0, estimateUsd: 0.02, error: null, warnings: [], mode: 'combine', sources,
+    progress: { startedAt: now - 150000, renderStartedAt: null, step: { n: 7, of: 13 }, clip: 6, wordsHeard: 80, found: {}, order: null,
+      stages: [{ id: 'ready', startedAt: now - 150000, endedAt: now - 90000 }, { id: 'listen', startedAt: now - 90000, endedAt: null }],
+      heard: [{ src: 5, text: 'And that is how I doubled my rate.' }] }
+  }
+  const html = staticRender(React.createElement(EditProgressView, { status, onCancel: () => {} }))
+  assert.match(html, /Listening to your clips/)
+  assert.match(html, /<ol aria-label="Steps"/)
+  assert.match(html, /data-state="done"[^>]*>.*Getting your clips ready.*1:00/s)
+  assert.match(html, /aria-current="step"[^>]*>.*Listening/s)
+  assert.match(html, /Planning the edit/)
+  assert.match(html, /Saving your reel/)
+  assert.match(html, /Listening to clip 7 of 13/)
+  assert.match(html, /<ul aria-label="Your clips"/)
+  assert.equal((html.match(/aria-label="Clip \d+, done"/g) ?? []).length, 6)
+  assert.match(html, /aria-label="Clip 7, working on it"/)
+  assert.match(html, /Heard in clip 6/)
+  assert.match(html, /doubled/)
+  // Six clips in 90 s of listening: about 2 minutes left for the other 7 (from what was measured). With no earlier runs to
+  // go on, the planning time isn't known, so there's no total: only this step's time left.
+  assert.match(html, /this step: about 2 min left/)
+  assert.match(html, /Timing it as it goes: 13 clips, 1:05 of video\./)
+  assert.match(html, />Cancel</)
 })
