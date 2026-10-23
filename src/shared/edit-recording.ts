@@ -105,7 +105,14 @@ export interface EditPlan {
   combine?: EditCombine
   /** The automatic direction: the motion graphics the plan suggests, each on the word where it starts (origin 'auto'). */
   graphics?: EditGraphic[]
+  /**
+   * The same recording made before: whether its last headline was kept on the first hook (it must use only words
+   * said in this recording), and the AI's new headline for that hook (offered as "New headline").
+   */
+  keptHook?: EditKeptHook
 }
+
+export interface EditKeptHook { kept: boolean; text: string; fresh: string }
 
 /** A stat graphic the plan suggests on a number said while filming a screen (value as said, label in their words). */
 export interface EditProof { word: number; value: string; label: string }
@@ -247,6 +254,8 @@ export interface EditStartRequest {
   referenceImage?: string
   /** Camera + screen: a screen recording made at the same time as the (one) camera recording, and how they line up. */
   screen?: { path: string; offsetMs: number }
+  /** Write a new headline even when these recordings were made before (missing: keep the last one). */
+  newHeadline?: boolean
 }
 
 export function isRunningEdit(status: EditStatus | null | undefined): boolean {
@@ -510,8 +519,11 @@ export function parseEditPlan(value: unknown, sources: number): EditPlan | null 
       try { graphics.push(...parseEditGraphics([raw], n).filter((g) => !graphics!.some((x) => x.id === g.id))) } catch { /* left out */ }
     }
   }
+  const keptRaw = value.keptHook ?? value.kept_hook
+  const keptHook = record(keptRaw) && typeof keptRaw.kept === 'boolean' && hooks.length
+    ? { kept: keptRaw.kept, text: (text(keptRaw.text, MAX_HOOK_TEXT_CHARS) ?? '').trim(), fresh: (text(keptRaw.fresh, MAX_HOOK_TEXT_CHARS) ?? '').trim() } : null
   return { words, hooks, hook, cta: span(value.cta), popups, sounds, planned: value.planned === 'basic' ? 'basic' : 'ai', notes: lines(value.notes, 6), warnings: lines(value.warnings, 4),
-    ...(combine ? { combine } : {}), ...(graphics ? { graphics } : {}) }
+    ...(combine ? { combine } : {}), ...(graphics ? { graphics } : {}), ...(keptHook && (!keptHook.kept || keptHook.text) ? { keptHook } : {}) }
 }
 
 /** The plan's combine part (engine: ai_order, order_why, proof; or already parsed), checked; null when it isn't one. */

@@ -48,7 +48,7 @@ import type { BrollVideoEstimate, BrollVideoShot, BrollVideoStatus } from '../sh
 import type { EditDecisions, EditImage, EditSource, EditStartRequest, EditStatus, FilmIdea, FilmIdeasRequest } from '../shared/edit-recording'
 import type { ScreenSource, ScreenSync } from '../shared/screen-pair'
 import type { EditChatReply } from '../shared/edit-chat'
-import type { ImportProgress } from '../shared/combine-clips'
+import type { EditMode, ImportProgress } from '../shared/combine-clips'
 import type { RemixChatReply, RemixChatState } from '../shared/remix-chat'
 import type { EditorGraphic } from '../shared/motion-graphics'
 import type { PauseEvent, PauseSettings, PauseView } from '../shared/pause-react'
@@ -571,6 +571,8 @@ export interface BridgeClipAPI {
     syncScreen: (camera: string, screen: string) => Promise<ScreenSync>
     /** A few seconds of both side by side at this offset, from atMs of the camera: the preview file's path. */
     previewScreen: (camera: string, screen: string, offsetMs: number, atMs: number) => Promise<string>
+    /** The headline these recordings were made with last time (null: not made here before). */
+    savedHeadline: (request: { sources: string[]; mode?: EditMode }) => Promise<{ headline: string | null }>
     /** Transcribe and plan (paid); the status moves to 'review'. */
     start: (request: EditStartRequest) => Promise<EditStatus>
     /** Make the reel from the reviewed edit (local, no AI cost). */
@@ -1026,6 +1028,7 @@ const api: BridgeClipAPI = {
     chooseScreen: () => ipcRenderer.invoke('edit:chooseScreen'),
     syncScreen: (camera, screen) => ipcRenderer.invoke('edit:syncScreen', camera, screen),
     previewScreen: (camera, screen, offsetMs, atMs) => ipcRenderer.invoke('edit:previewScreen', camera, screen, offsetMs, atMs),
+    savedHeadline: (request) => ipcRenderer.invoke('edit:savedHeadline', request),
     start: (request) => paid('edit:start', request),
     render: (decisions) => paid('edit:render', decisions),
     chooseImages: () => ipcRenderer.invoke('edit:chooseImages'),

@@ -238,6 +238,22 @@ test('editor saves only editable fields, survives reload and refuses stale revis
   } finally { f.cleanup() }
 })
 
+test('a changed hook text is reported once the save is written (so an edited recording keeps it next time)', async () => {
+  const f = setup()
+  try {
+    const heard = []
+    f.main.onEditorHookSaved((run, id, text) => heard.push([path.basename(run), id, text]))
+    const edits = (await f.main.openEditor(f.run)).project.candidates
+    const look = { look: 'white', color: '#FFFFFF', font: 'clean' }
+    edits[0].hook = { text: 'My own headline', look }
+    await f.main.saveEditor(f.run, 0, edits)
+    assert.deepEqual(heard, [['review-run', edits[0].id, 'My own headline']])
+    // Saved again unchanged: nothing new is reported.
+    await f.main.saveEditor(f.run, 1, edits)
+    assert.equal(heard.length, 1)
+  } finally { f.cleanup() }
+})
+
 test('only ready candidates render and only a completed render can mark a candidate baked', async () => {
   const f = setup()
   try {

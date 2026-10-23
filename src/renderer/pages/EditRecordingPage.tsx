@@ -33,6 +33,7 @@ import { previewFrame, StyleBoard } from '../components/StyleBoard'
 import { boardFromLook, LOOK_HOOKS, lookPatch, styleSummary } from '../lib/style-board'
 import { EditProgressView } from '../components/EditProgressView'
 import { Segmented } from '../components/ui/Segmented'
+import { Switch } from '../components/ui/Switch'
 import { getApi } from '../lib/ipc'
 import { useDefaultLookSeed } from '../lib/default-look'
 import { requestSettingsSection } from '../lib/settings-focus'
@@ -88,6 +89,9 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const [starting, setStarting] = useState(false)
   const [recorder, setRecorder] = useState<{ hook: string; points: string[] } | null | false>(false)
   const [hookHint, setHookHint] = useState('')
+  // The headline these recordings were made with before (null: never made here), and whether to keep it.
+  const [lastHeadline, setLastHeadline] = useState<string | null>(null)
+  const [keepHeadline, setKeepHeadline] = useState(true)
   // "Customize for this video": the look controls under the Look card.
   const [lookOpen, setLookOpen] = useState(false)
   // "Say what it's for" (this recording only).
@@ -126,6 +130,16 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const withScreen = !combine && screen !== null
   // The screen recording is ready once lined up (and overlapping the camera at the chosen offset).
   const screenReady = !withScreen || Boolean(screen?.sync && screenOverlap(screen.offsetMs, screen.sync.cameraSeconds, screen.sync.screenSeconds))
+  // Made before? Then the same headline is kept unless a new one is asked for.
+  const sourceList = listed.map((source) => source.path).join('\n')
+  useEffect(() => {
+    let live = true
+    setLastHeadline(null); setKeepHeadline(true)
+    const paths = sourceList ? sourceList.split('\n') : []
+    if (!paths.length || !getApi().edit.savedHeadline) return
+    getApi().edit.savedHeadline({ sources: paths, mode }).then((found) => { if (live) setLastHeadline(found.headline) }).catch(() => undefined)
+    return () => { live = false }
+  }, [sourceList, mode])
   const screenBlocked = sources.length === 0 ? 'Choose your camera recording first.' : sources.length > 1 ? 'A screen recording goes with one camera recording: keep one take to add one.' : null
 
   const addSources = (added: EditSource[], limit = maxSources): void => {
@@ -168,7 +182,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
     setStarting(true); setError(null)
     try {
       setStatus(await getApi().edit.start({ sources: listed.map((source) => source.path), brandIdentityId: brandId, ...(hookHint ? { hookHint } : {}),
-        ...(combine ? { mode: 'combine' as const, order: orderMode } : {}),
+        ...(combine ? { mode: 'combine' as const, order: orderMode } : {}), ...(lastHeadline && !keepHeadline ? { newHeadline: true } : {}),
         ...(withScreen && screen ? { screen: { path: screen.source.path, offsetMs: screen.offsetMs } } : {}),
         ...(purpose.trim() ? { purpose: purpose.replace(/\s+/g, ' ').trim() } : {}), ...(reference ? { referenceImage: reference.id } : {}) }))
     } catch (err) { setError(errorMessage(err)) } finally { setStarting(false) }
@@ -292,6 +306,17 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
       )}
       {combine && sources.length === 1 && <p className="mt-2 text-2xs text-ink-muted">Add at least one more clip to combine.</p>}
       {hookHint && sources.length > 0 && <p className="mt-2 text-2xs text-ink-muted">Planned hook: “{hookHint}”. The edit looks for it first.</p>}
+      {lastHeadline && sources.length > 0 && (
+        <div className="glass-tile mt-3 flex items-start gap-3 rounded-xl px-3 py-2.5" data-testid="edit-last-headline">
+          <Switch checked={keepHeadline} onChange={setKeepHeadline} label="Keep my last headline" className="mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-ink">Keep my last headline</p>
+            <p className="text-2xs text-ink-muted">{keepHeadline
+              ? `You made a video from ${combine ? 'these clips' : 'this recording'} before. It opens with “${lastHeadline}” again. Turn this off for a new headline.`
+              : 'The AI writes a new headline this time.'}</p>
+          </div>
+        </div>
+      )}
       {tooLong && <p className="mt-2 text-2xs text-danger">{combine ? `Your clips add up to over ${maxTotal / 60} minutes. Use fewer or shorter clips.` : `Your takes add up to over ${maxTotal / 60} minutes. Use fewer or shorter takes.`}</p>}
     </MakerSection>
   )
@@ -302,8 +327,8 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
         {firstSource
           ? <video key={firstSource.path} src={`${localFileUrl(firstSource.path)}#t=0.1`} preload="metadata" muted playsInline aria-hidden tabIndex={-1} className="h-full w-full object-cover" />
           : <span className="absolute inset-x-4 top-1/2 -translate-y-1/2 text-center text-2xs text-ink-subtle">Your first {label} shows here</span>}
-        {hookHint && sources.length > 0 && (
-          <span className="absolute inset-x-[8%] top-[9%] text-center font-display text-sm font-bold leading-tight text-white [text-shadow:0_2px_6px_rgb(0_0_0/0.7)]">{hookHint}</span>
+        {(hookHint || (keepHeadline && lastHeadline)) && sources.length > 0 && (
+          <span className="absolute inset-x-[8%] top-[9%] text-center font-display text-sm font-bold leading-tight text-white [text-shadow:0_2px_6px_rgb(0_0_0/0.7)]">{hookHint || lastHeadline}</span>
         )}
       </PhoneFrame>
       <Checklist items={combine

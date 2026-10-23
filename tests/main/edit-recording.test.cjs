@@ -55,6 +55,7 @@ const main = load('main/edit-recording.ts', {
   './ctas': { applyRunCtaInLock: async () => ({ failed: [] }), originalPath: (p) => p + '.original.mp4', withRunLock: async (_f, work) => work() },
   './graphics-render': graphicsRender,
   './clip-editor': clipEditor,
+  './hook-memory': { rememberHeadline() {}, rememberRunHeadline() {}, savedHeadline: () => null, sourcesKey: async () => null },
   './logger': { logger: { info() {}, warn() {} } },
   './member-prefs': { readMemberPrefs: () => ({ profile: { goals: ['clips', 'edit-recording'], platforms: ['tiktok'] } }) },
   './openrouter-media': { openRouterBase: () => 'https://openrouter.test/api/v1' },
@@ -69,7 +70,7 @@ test('the start request takes recordings chosen here (or in the Library), a bran
   const file = path.join(userData, 'take-1.mp4')
   selected.add(file)
   const parsed = main.parseEditStart({ sources: [file, file], brandIdentityId: BRAND.id, hookHint: '  Most   coaches undercharge ' }, userData)
-  assert.deepEqual(plain(parsed), { sources: [file], brandIdentityId: BRAND.id, hookHint: 'Most coaches undercharge', purpose: '', referenceImage: null, mode: 'takes', order: 'filmed', screen: null })
+  assert.deepEqual(plain(parsed), { sources: [file], brandIdentityId: BRAND.id, hookHint: 'Most coaches undercharge', purpose: '', referenceImage: null, mode: 'takes', order: 'filmed', screen: null, newHeadline: false })
   // "Say what it's for": one plain line of up to 200 characters, and a reference picture's id.
   const REF = 'a'.repeat(24)
   const withPurpose = main.parseEditStart({ sources: [file], brandIdentityId: null, purpose: '  Instagram reel   selling my call ', referenceImage: REF }, userData)
@@ -319,7 +320,8 @@ function loadWithGlobals(relative, mocks, globals) {
 }
 
 /** An edit-recording module whose FFmpeg extraction waits for `extract` and whose engine answers from `engine`. */
-function runHarness({ brandMark = async () => null } = {}) {
+const NO_HOOK_MEMORY = { rememberHeadline() {}, rememberRunHeadline() {}, savedHeadline: () => null, sourcesKey: async () => null }
+function runHarness({ brandMark = async () => null, hookMemory = NO_HOOK_MEMORY } = {}) {
   const state = { extractions: [], fetches: 0, engineModes: [], statuses: [], configs: [] }
   const execFile = (bin, args, options, callback) => {
     if (typeof options === 'function') { callback = options; options = {} }
@@ -360,6 +362,7 @@ function runHarness({ brandMark = async () => null } = {}) {
     './ctas': { applyRunCtaInLock: async () => ({ failed: [] }), originalPath: (p) => p + '.original.mp4', withRunLock: async (_f, work) => work() },
     './graphics-render': graphicsRender,
   './clip-editor': clipEditor,
+    './hook-memory': hookMemory,
     './logger': { logger: { info() {}, warn() {} } },
     './member-prefs': { readMemberPrefs: () => ({ profile: { goals: [], platforms: [] } }) },
     './openrouter-media': { openRouterBase: () => 'https://openrouter.test/api/v1' },
@@ -671,4 +674,42 @@ test('an editor clip carries its look extras (keyword pill, accent words, progre
   assert.deepEqual(plain(withExtras.look_extras), { ids: ['accent_words'] })
   // Switching one changes what the bake makes (a baked clip goes back to refining).
   assert.notEqual(editor.renderEditKey(withExtras), editor.renderEditKey(editor.parseCandidateEdit(base, 5000, 1)))
+})
+
+test('the same recording keeps its last headline: sent to the plan, saved when the reel is made, unless a new one is asked for', async () => {
+  const saved = new Map([['takes:' + 'a'.repeat(64), 'Most coaches undercharge']])
+  const remembered = []
+  const keys = []
+  const hookMemory = {
+    sourcesKey: async (mode, sources) => { keys.push([mode, sources.map((source) => source.path)]); return 'takes:' + 'a'.repeat(64) },
+    savedHeadline: (key) => saved.get(key) ?? null,
+    rememberHeadline: (key, headline, run) => remembered.push([key, headline, run]),
+    rememberRunHeadline() {}
+  }
+  const { main: edit, state } = runHarness({ hookMemory })
+  const take = path.join(userData, 'kept-take.mp4')
+  await edit.startEdit({ sources: [take] })
+  await waitFor(() => edit.editStatus()?.phase === 'review', 'the review')
+  assert.deepEqual(plain(keys), [['takes', [take]]])
+  assert.equal(state.configs.find((config) => config.mode === 'plan').fixed_hook, 'Most coaches undercharge')
+  const plan = edit.editStatus().plan
+  await edit.renderEdit({ ...shared.initialDecisions(plan), hookText: 'Coaches charge too little' })
+  await waitFor(() => edit.editStatus()?.phase === 'done', 'the reel')
+  assert.deepEqual(remembered, [['takes:' + 'a'.repeat(64), 'Coaches charge too little', path.basename(edit.editStatus().folder)]])
+
+  // "Keep my last headline" off: the plan writes a new one.
+  await edit.startEdit({ sources: [take], newHeadline: true })
+  await waitFor(() => edit.editStatus()?.phase === 'review', 'the second review')
+  const plans = state.configs.filter((config) => config.mode === 'plan')
+  assert.equal(plans.length, 2)
+  assert.equal('fixed_hook' in plans[1], false)
+  await assert.rejects(edit.startEdit({ sources: [take], newHeadline: 'yes' }), /keep your last headline/)
+})
+
+test('a plan that kept (or could not keep) the last headline says so on the review', () => {
+  const base = { words: [['Hi', 0, 300, 0, null], ['there', 300, 600, 0, null]], hooks: [{ id: 0, start: 0, end: 1, text: 'Hi there', why: '' }], hook: 0, cta: null, popups: [], sounds: [] }
+  assert.deepEqual(plain(shared.parseEditPlan({ ...base, kept_hook: { kept: true, text: 'Hi there', fresh: 'Hello' } }, 1).keptHook), { kept: true, text: 'Hi there', fresh: 'Hello' })
+  assert.deepEqual(plain(shared.parseEditPlan({ ...base, kept_hook: { kept: false, text: '', fresh: 'Hi there' } }, 1).keptHook), { kept: false, text: '', fresh: 'Hi there' })
+  assert.equal(shared.parseEditPlan({ ...base, kept_hook: { kept: 'yes' } }, 1).keptHook, undefined)
+  assert.equal(shared.parseEditPlan(base, 1).keptHook, undefined)
 })

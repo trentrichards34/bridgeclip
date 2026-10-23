@@ -197,7 +197,9 @@ def parse_request(raw):
         combine = _plan_combine(raw.get("combine"), count)
         return {"mode": mode, "output_dir": raw["output_dir"], "words": words, "names": names, **({"combine": combine} if combine else {}),
                 "brand_identity": _text(raw.get("brand_identity"), 60000, "brand"), "brand_name": _text(raw.get("brand_name"), 120, "brand"),
-                "hook_hint": _text(raw.get("hook_hint"), 600, "hook hint"), "purpose": _text(raw.get("purpose"), 200, "purpose"),
+                "hook_hint": _text(raw.get("hook_hint"), 600, "hook hint"),
+                # The same recording again: the headline it had last time (the engine checks it against the words).
+                **({"fixed_hook": _text(raw.get("fixed_hook"), 300, "headline")} if raw.get("fixed_hook") else {}), "purpose": _text(raw.get("purpose"), 200, "purpose"),
                 "reference_image": _reference(raw.get("reference_image")),
                 **({"direction": _direction(raw.get("direction"))} if raw.get("direction") is not None else {})}
     sources = raw.get("sources")
