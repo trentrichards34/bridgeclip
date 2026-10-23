@@ -389,7 +389,8 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                   items={graphicItems} totalSeconds={reelLength} blocked={cardWindows.map((w) => ({ start: w.start, end: w.end, label: 'A half-screen graphic plays here' }))}
                   frame={graphicFrame} look={look.headlineLook} disabled={making} emptyNote={null}
                   onAdd={addGraphic} onPatch={patchGraphic} onRemove={(id) => setGraphics((list) => list.filter((g) => g.id !== id))}
-                  cursorLabel={(at) => { const word = wordAt(at); return word === null ? 'at the start' : `on ${wordWhere(word)} (${formatClock(starts.get(word) ?? 0)})` }} />
+                  cursorLabel={(at) => { const word = wordAt(at); return word === null ? 'at the start' : `on ${wordWhere(word)} (${formatClock(starts.get(word) ?? 0)})` }}
+                  prefill={(template, at) => { const word = wordAt(at); return word === null ? {} : wordsAtPlayhead(template, lines.find((l) => l.words.includes(word))?.words.filter((i) => i >= word).map((i) => plan.words[i].text).join(' ')) }} />
 
                 {cardPopups.length > 0 && (
                   <section className="space-y-2" aria-labelledby="edit-cards-title">

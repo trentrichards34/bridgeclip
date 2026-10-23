@@ -316,6 +316,80 @@
 .editor-graphic-input:focus-visible { border-color:rgb(var(--accent)); }
 .editor-graphic-thumb { width:44px; height:44px; object-fit:contain; border-radius:6px; background:white; }
 .editor-graphic-color { width:28px; height:22px; padding:0; border:0; background:transparent; cursor:pointer; }
+/* Adding and editing graphics (GraphicPreviewEditor.tsx, the Graphics tab's actions). */
+/* Working on graphics: the Output preview gets most of the row (the source monitor stays, smaller). */
+.editor-monitors.graphics-focus .editor-source-monitor { flex:0 1 26%; min-width:150px; }
+.editor-monitors.graphics-focus .editor-source-monitor .editor-pane-heading { flex-wrap:wrap; row-gap:2px; }
+.editor-monitors.graphics-focus .editor-source-monitor .editor-monitor-hint { display:none; }
+.editor-graphic-toolbar.beside { transform:none; left:auto; justify-content:flex-start; padding:5px; }
+.editor-graphic-toolbar.beside.right { left:auto; }
+.editor-graphic-toolbar.beside .editor-graphic-type { flex:1 1 100%; }
+.editor-graphic-toolbar.beside .editor-graphic-type select { max-width:none; flex:1; }
+.editor-graphic-toolbar.beside .editor-graphic-tool-sep:first-of-type { display:none; }
+.editor-monitors.graphics-focus .editor-output-monitor { flex:1 1 74%; align-items:flex-start; }
+.editor-monitors.graphics-focus .editor-output-monitor canvas { margin-left:12px; }
+.editor-word-editor.beside::before { content:''; position:absolute; top:16px; width:10px; height:10px; background:inherit; border:inherit; transform:rotate(45deg); }
+.editor-word-editor.beside.right::before { left:-6px; border-width:0 0 1px 1px; }
+.editor-word-editor.beside.left::before { right:-6px; border-width:1px 1px 0 0; }
+.editor-timeline-tools .editor-add-graphic { margin-left:6px; }
+.editor-output-monitor .editor-pane-heading .editor-add-graphic-here { height:24px; padding:0 9px; border-radius:999px; }
+.editor-graphic-icon { flex:none; color:rgb(var(--g)); }
+.editor-graphic-stage { position:absolute; pointer-events:none; z-index:3; }
+.editor-graphic-hit { position:absolute; pointer-events:auto; border-radius:12px; background:transparent; border:1px dashed transparent; cursor:pointer; }
+.editor-graphic-hit:hover, .editor-graphic-hit:focus-visible { border-color:rgb(255 255 255 / .55); background:rgb(255 255 255 / .04); }
+.editor-graphic-frame { position:absolute; pointer-events:auto; border-radius:12px; outline:2px solid rgb(var(--accent)); outline-offset:2px; box-shadow:0 0 0 9999px rgb(0 0 0 / 0); cursor:grab; touch-action:none; }
+.editor-graphic-frame:active { cursor:grabbing; }
+.editor-graphic-frame.round { border-radius:999px; cursor:move; }
+.editor-graphic-frame.empty { background:rgb(0 0 0 / .35); outline-style:dashed; display:grid; place-items:center; }
+.editor-graphic-frame:focus-visible { outline-color:rgb(var(--accent)); outline-width:3px; }
+.editor-graphic-frame-hint { font-size:11px; color:#fff; padding:3px 8px; border-radius:999px; background:rgb(0 0 0 / .55); }
+.editor-graphic-size-handle { position:absolute; left:50%; bottom:-9px; width:34px; height:12px; margin-left:-17px; border-radius:999px; background:rgb(var(--accent)); box-shadow:0 2px 8px rgb(0 0 0 / .5); cursor:ns-resize; touch-action:none; }
+.editor-graphic-size-handle::after { content:''; position:absolute; inset:5px 10px; border-top:1px solid rgb(0 0 0 / .45); border-bottom:1px solid rgb(0 0 0 / .45); }
+.editor-graphic-slot { position:absolute; left:3%; right:3%; border-radius:10px; border:1.5px dashed rgb(255 255 255 / .45); background:rgb(255 255 255 / .05); }
+.editor-graphic-slot.active { border-color:rgb(var(--accent)); background:rgb(var(--accent) / .12); }
+.editor-graphic-slot span { position:absolute; right:6px; top:4px; font:500 9.5px/1 'JetBrains Mono', ui-monospace, monospace; letter-spacing:.08em; text-transform:uppercase; color:#fff; padding:3px 5px; border-radius:4px; background:rgb(0 0 0 / .55); }
+.editor-graphic-toolbar { position:absolute; left:50%; transform:translateX(-50%); pointer-events:auto; display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:2px; width:max-content; padding:3px; border-radius:11px; background:rgb(18 20 28 / .96); border:1px solid rgb(255 255 255 / .12); box-shadow:0 12px 30px rgb(0 0 0 / .55); z-index:4; }
+.editor-graphic-toolbar > button, .editor-graphic-sizes > button { height:26px; min-width:26px; padding:0 6px; display:grid; place-items:center; border-radius:7px; color:rgb(var(--ink-muted)); font-size:11px; font-weight:600; }
+.editor-graphic-toolbar > button:hover:not(:disabled), .editor-graphic-sizes > button:hover:not(:disabled) { background:rgb(255 255 255 / .08); color:rgb(var(--ink)); }
+.editor-graphic-toolbar > button[aria-pressed="true"], .editor-graphic-sizes > button[aria-pressed="true"] { background:rgb(var(--accent) / .18); color:rgb(var(--accent)); }
+.editor-graphic-toolbar > button.danger:hover:not(:disabled) { color:rgb(var(--danger)); background:rgb(var(--danger) / .12); }
+.editor-graphic-toolbar button:disabled { opacity:.4; }
+.editor-graphic-sizes { display:flex; gap:1px; }
+.editor-graphic-tool-sep { width:1px; height:16px; margin:0 3px; background:rgb(255 255 255 / .12); }
+.editor-graphic-type { display:flex; align-items:center; gap:4px; height:26px; padding:0 4px 0 7px; border-radius:7px; color:rgb(var(--ink)); background:rgb(255 255 255 / .06); }
+.editor-graphic-type svg { color:rgb(var(--accent)); }
+.editor-graphic-type select { max-width:118px; height:24px; background:transparent; border:0; font-size:11px; color:rgb(var(--ink)); cursor:pointer; }
+.editor-graphic-type select option, .editor-graphic-type select optgroup { background:rgb(var(--surface)); color:rgb(var(--ink)); }
+.editor-graphic-swatch { position:relative; width:22px; height:22px; margin:0 1px; border-radius:999px; background:rgb(255 255 255 / .06); display:grid; place-items:center; cursor:pointer; }
+.editor-graphic-swatch::before { content:''; width:14px; height:14px; border-radius:999px; background:var(--swatch, #2F5BFF); box-shadow:inset 0 0 0 1px rgb(255 255 255 / .35); }
+.editor-graphic-swatch.custom::before { background:conic-gradient(#ff5d5d, #ffd23f, #5dff8f, #3fc8ff, #8a5dff, #ff5dd8, #ff5d5d); }
+.editor-graphic-swatch.custom.selected::before { background:var(--swatch); }
+.editor-graphic-swatch.selected { box-shadow:0 0 0 2px rgb(var(--accent)); }
+.editor-graphic-swatch input { position:absolute; inset:0; opacity:0; cursor:pointer; }
+.editor-graphic-stage-note { position:absolute; left:8px; right:8px; pointer-events:auto; display:flex; align-items:flex-start; gap:6px; padding:6px 8px; border-radius:9px; font-size:11px; line-height:1.35; color:#fff; background:rgb(10 12 18 / .88); }
+.editor-graphic-stage-note button { margin-left:auto; flex:none; color:rgb(255 255 255 / .7); }
+.editor-word-editor { position:absolute; pointer-events:auto; display:flex; flex-direction:column; gap:7px; padding:9px 10px 8px; border-radius:12px; background:rgb(12 14 20 / .94); border:1px solid rgb(var(--accent) / .55); box-shadow:0 14px 34px rgb(0 0 0 / .6); z-index:5; }
+.editor-word-editor-title { font:500 9.5px/1.2 'JetBrains Mono', ui-monospace, monospace; letter-spacing:.08em; text-transform:uppercase; color:rgb(var(--ink-muted)); }
+.editor-word-editor-done { height:24px; padding:0 10px; border-radius:7px; font-size:11.5px; font-weight:600; color:rgb(var(--accent-ink, 10 12 18)); background:rgb(var(--accent)); }
+.editor-word-editor-field { display:flex; flex-direction:column; gap:3px; font-size:10px; color:rgb(var(--ink-subtle)); }
+.editor-word-field { min-height:26px; padding:4px 8px; border-radius:8px; font-size:13px; line-height:1.35; color:#fff; background:rgb(255 255 255 / .07); border:1px solid rgb(255 255 255 / .1); white-space:pre-wrap; overflow-wrap:anywhere; outline:none; cursor:text; }
+.editor-word-field.multiline { min-height:52px; }
+.editor-word-field:focus { border-color:rgb(var(--accent)); background:rgb(255 255 255 / .1); }
+.editor-graphics-empty-card { display:flex; flex-direction:column; align-items:flex-start; gap:8px; padding:14px; border-radius:14px; border:1px dashed rgb(var(--accent) / .45); background:rgb(var(--accent) / .05); }
+.editor-graphics-actions { display:flex; flex-direction:column; gap:8px; }
+.editor-graphics-quick { display:flex; flex-direction:column; gap:4px; }
+.editor-graphics-quick button { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:9px; font-size:12px; text-align:left; color:rgb(var(--ink)); background:rgb(255 255 255 / .04); border:1px solid rgb(255 255 255 / .07); }
+.editor-graphics-quick button svg { color:rgb(var(--accent)); flex:none; }
+.editor-graphics-quick button:hover:not(:disabled) { border-color:rgb(var(--accent) / .5); background:rgb(var(--accent) / .07); }
+.editor-graphics-quick button:disabled { opacity:.45; cursor:default; }
+.editor-graphics-styles { display:flex; flex-direction:column; gap:5px; }
+.editor-graphics-styles > div { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:4px; }
+.editor-graphics-styles button { display:flex; align-items:center; justify-content:center; gap:5px; height:30px; border-radius:8px; font-size:11.5px; color:rgb(var(--ink-muted)); background:rgb(255 255 255 / .04); border:1px solid rgb(255 255 255 / .08); }
+.editor-graphics-styles button.quick-signature { font-family:'Fraunces 72pt Black', Georgia, serif; }
+.editor-graphics-styles button.quick-bold { font-family:Anton, Impact, sans-serif; text-transform:uppercase; letter-spacing:.03em; }
+.editor-graphics-styles button.quick-minimal { font-family:Montserrat, system-ui, sans-serif; font-weight:500; }
+.editor-graphics-styles button.selected { color:rgb(var(--ink)); border-color:rgb(var(--accent)); background:rgb(var(--accent) / .12); }
+.editor-graphics-styles button:hover:not(:disabled) { color:rgb(var(--ink)); }
 @media (prefers-reduced-motion:reduce) { .editor-graphic-tile, .editor-candidate, .editor-tabs button { transition:none; } .editor-graphic-tile:hover:not(:disabled) { transform:none; } }
 /* Color per graphic group and per layout: last, so they win over each block's default. */
 .group-text { --g:var(--group-text); } .group-lists { --g:var(--group-lists); } .group-diagrams { --g:var(--group-diagrams); } .group-media { --g:var(--group-media); } .group-ending { --g:var(--group-ending); } .group-other { --g:var(--group-other); }

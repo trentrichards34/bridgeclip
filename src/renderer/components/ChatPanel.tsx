@@ -30,6 +30,8 @@ interface ChatEntry<Applied> { id: number; role: 'member' | 'assistant' | 'error
 
 // Each thread's conversation for this app session (main keeps the model's side the same way).
 const threads = new Map<string, ChatEntry<unknown>[]>()
+// One-click messages already sent (by id), so reopening the panel doesn't send one again.
+const autoSentIds = new Set<number>()
 let nextId = 1
 
 export interface ChatPanelProps<Step extends ChatStepBase, Applied> {
@@ -59,6 +61,8 @@ export interface ChatPanelProps<Step extends ChatStepBase, Applied> {
   clearTooltip: string
   /** Shown when the answer comes back after the member moved to another thread. */
   switchedMessage?: string
+  /** A message to send on its own once the chat is ready (a one-click action elsewhere, like "Suggest graphics"); a new id sends again. */
+  autoSend?: { id: number; text: string } | null
   /** Pointing at the preview: pins are kept per thread and go with the next message. */
   point?: {
     /** Suggestions shown while there are pins ("Put an arrow here"). */
@@ -155,6 +159,13 @@ export function ChatPanel<Step extends ChatStepBase, Applied>(props: ChatPanelPr
       if (pendingKey.current === thread) { pendingKey.current = null; setPending(false) }
     }
   }
+  // A one-click action's message: sent once, when the chat can take it.
+  useEffect(() => {
+    const auto = props.autoSend
+    if (!auto || autoSentIds.has(auto.id) || disabled) return
+    autoSentIds.add(auto.id)
+    void send(auto.text)
+  })
   const setCard = (id: number, state: ChatCard<Applied>['state']): void => update(key, (list) => list.map((e) => e.id === id && e.card ? { ...e, card: { ...e.card, state } } : e))
   const [undoing, setUndoing] = useState(false)
   const undoCard = async (entry: ChatEntry<Applied>): Promise<void> => {

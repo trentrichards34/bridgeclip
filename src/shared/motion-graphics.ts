@@ -670,6 +670,87 @@ export function updateGraphic(c: Timing & { graphics?: EditorGraphic[] }, id: st
   return withGraphic(c, next)
 }
 
+/** Fields every template keeps when it is switched to another: its own color and font. */
+const STYLE_FIELDS = ['color', 'font'] as const
+const cleanLine = (t: string | undefined): string => (t ?? '').replace(/\s+/g, ' ').trim()
+
+/** The words a graphic shows: its main line and its items (for switching it to another template). */
+export function graphicWords(g: Pick<EditorGraphic, 'template' | 'fields'>): { line: string; items: string[]; title: string } {
+  const f = g.fields
+  const items = (f.items ?? '').split(/\r?\n/).map(cleanLine).filter(Boolean)
+  const title = cleanLine(f.title)
+  switch (g.template) {
+    case 'stat': return { line: [f.value, f.label].map(cleanLine).filter(Boolean).join(' '), items, title }
+    case 'headline_pill': return { line: [f.text, f.phrase].map(cleanLine).filter(Boolean).join(' '), items: [f.text, f.phrase].map(cleanLine).filter(Boolean), title }
+    case 'before_after': return { line: cleanLine(f.before || f.after), items: [f.before, f.after].map(cleanLine).filter(Boolean), title }
+    case 'strike_list': return { line: cleanLine(f.final) || items[0] || '', items: [...items, cleanLine(f.final)].filter(Boolean), title }
+    case 'lower_third': return { line: cleanLine(f.name), items: [f.name, f.role].map(cleanLine).filter(Boolean), title }
+    case 'chapter': return { line: title, items: title ? [title] : [], title: '' }
+    case 'comment_cta': return { line: cleanLine(f.keyword), items, title }
+    case 'browser_frame': return { line: title, items, title: '' }
+    case 'logo': return { line: cleanLine(f.caption), items, title }
+    default: {
+      const line = cleanLine(f.text) || title || items[0] || ''
+      // A title over items (a list, a diagram) stays a title; a lone title is the line.
+      return { line, items: items.length ? items : line ? [line] : [], title: items.length ? title : '' }
+    }
+  }
+}
+
+/**
+ * The graphic as another template, keeping its words: the main line goes to the new template's words, its items
+ * (or its line) to the new one's items, and its time, place, color and font stay. Word and item times are dropped
+ * (match them again). A diagram starts stage size; a graphic leaving a diagram goes back to card size.
+ */
+export function switchGraphicTemplate(g: EditorGraphic, to: GraphicTemplateId): EditorGraphic {
+  if (g.template === to) return g
+  const { line, items, title } = graphicWords(g)
+  const fields: Record<string, string> = {}
+  for (const key of STYLE_FIELDS) if (g.fields[key]) fields[key] = g.fields[key]
+  const target = templateInfo(to).fields as readonly string[]
+  const list = items.length ? items : line ? [line] : []
+  const limit = GRAPHIC_ITEM_LIMITS[to] ?? MAX_GRAPHIC_ITEMS
+  if (to === 'stat') {
+    const n = /[$€£]?\d[\d,]*(?:\.\d+)?\s?(?:%|[kKmMxX]\b|thousand\b|million\b|billion\b)?/.exec(line)
+    if (n) { fields.value = n[0].trim(); const rest = cleanLine(line.replace(n[0], '')); if (rest) fields.label = rest } else if (line) fields.label = line
+  } else if (to === 'headline_pill') {
+    if (list.length > 1) { fields.text = list[0]; fields.phrase = list[1] } else if (line) {
+      const words = line.split(' '), half = Math.max(1, Math.ceil(words.length / 2))
+      fields.text = words.slice(0, half).join(' '); if (words.length > half) fields.phrase = words.slice(half).join(' ')
+    }
+  } else if (to === 'before_after') { if (list[0]) fields.before = list[0]; if (list[1]) fields.after = list[1] }
+  else if (to === 'strike_list') {
+    if (list.length > 1) { fields.items = list.slice(0, -1).slice(0, limit).join('\n'); fields.final = list[list.length - 1] } else if (line) fields.final = line
+  } else if (to === 'lower_third') { if (list[0]) fields.name = list[0]; if (list[1]) fields.role = list[1] }
+  else if (to === 'chapter') { if (line) fields.title = line; if (g.template === 'chapter' && g.fields.label) fields.label = g.fields.label }
+  else if (to === 'comment_cta') { const word = line.split(' ')[0]; if (word) fields.keyword = word.replace(/[^\p{L}\p{N}]+/gu, '').toUpperCase() }
+  else if (to === 'browser_frame') { if (line) fields.title = line }
+  else if (to === 'logo') { if (line) fields.caption = line; if (g.fields.image) fields.image = g.fields.image }
+  else if (to === 'big_words') { const words = line.split(' ').filter(Boolean).slice(0, MAX_BIG_WORDS); if (words.length) fields.text = words.join(' ') }
+  else if (target.includes('items')) {
+    if (list.length) fields.items = list.slice(0, limit).join('\n')
+    if (target.includes('title') && title) fields.title = title
+    if (target.includes('text') && (to === 'orbit' || to === 'idea_hub') && (g.template === 'orbit' || g.template === 'idea_hub') && g.fields.text) fields.text = g.fields.text
+  } else if (target.includes('text')) { const text = line || list.join(' '); if (text) fields.text = text }
+  if (graphicUsesImage(to) && g.fields.image && !fields.image) fields.image = g.fields.image
+  if (to === 'highlight') Object.assign(fields, { shape: g.fields.shape === 'arrow' ? 'arrow' : 'circle', x: g.fields.x ?? '0.5', y: g.fields.y ?? '0.45' })
+  if (to === 'screen_frame') { fields.video = 'source'; if (g.fields.from) fields.from = g.fields.from }
+  for (const key of Object.keys(fields)) if (key !== 'items') fields[key] = fields[key].slice(0, MAX_GRAPHIC_FIELD_CHARS)
+  const size: GraphicSize | undefined = isDiagram(to) ? 'stage' : isDiagram(g.template) ? undefined : g.size
+  const depth: GraphicDepth | undefined = graphicCanGoBehind(to) ? (g.depth ?? (to === 'big_words' ? 'behind' : undefined)) : undefined
+  const { size: _size, depth: _depth, ...rest } = g
+  void _size; void _depth
+  return { ...rest, template: to, duration_ms: clampGraphicMs(g.duration_ms, to), fields, ...(size && size !== 'card' ? { size } : {}), ...(depth ? { depth } : {}) }
+}
+
+/** A copy of a graphic with a new id (and the member as its author), starting at `at_ms` (default: right after it). */
+export function duplicateGraphic(g: EditorGraphic, taken: Iterable<string>, at_ms = g.at_ms + g.duration_ms): EditorGraphic {
+  const ids = new Set(taken)
+  let id = randomId()
+  while (ids.has(id)) id = randomId()
+  return { ...g, id, at_ms: Math.max(0, Math.round(at_ms)), origin: 'member', fields: { ...g.fields } }
+}
+
 export function removeGraphic(c: { graphics?: EditorGraphic[] }, id: string): EditorGraphic[] {
   return (c.graphics ?? []).filter((g) => g.id !== id)
 }

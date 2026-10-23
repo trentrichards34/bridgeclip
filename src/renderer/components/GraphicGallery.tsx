@@ -1,0 +1,102 @@
+/**
+ * The graphics gallery: every motion graphic template as a live animated tile, in groups, with a plain line about
+ * what it does and a search. Picking one adds it where the member is (the playhead, or the review strip's spot),
+ * already filled with the words said there when the place can find them. Used by the clip editor (the "+ Add
+ * graphic" buttons, the Graphics row, the G key) and by the review screens' Graphics forms.
+ */
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ALargeSmall, AppWindow, Bookmark, CircleCheckBig, Columns2, Contact, Crosshair, Filter, Footprints, Hash, Highlighter, Image, LayoutGrid, Lightbulb, ListChecks, ListOrdered,
+  MessageCircle, MonitorPlay, Orbit, Pilcrow, Quote, Search, Shapes, Sprout, StickyNote, Strikethrough, TrendingUp, Type, X, type LucideIcon
+} from 'lucide-react'
+import { DIAGRAM_ACCENT, graphicHasContent, isDiagram, type GraphicRenderSpec, type GraphicTemplateId } from '../../shared/motion-graphics'
+import { outputSize } from '../../shared/graphic-layout'
+import { cn } from '../lib/utils'
+import { GRAPHIC_GROUPS, GraphicView, SAMPLES, graphicGroup } from './ClipGraphics'
+import { Button } from './ui/Button'
+import { Dialog } from './ui/Dialog'
+import './graphic-gallery.css'
+
+/** Each template's icon (the gallery, the timeline blocks and the preview toolbar). */
+export const TEMPLATE_ICONS: Record<GraphicTemplateId, LucideIcon> = {
+  stat: Hash, title: Type, list: ListOrdered, lower_third: Contact, logo: Image, before_after: Columns2, checklist: ListChecks, quote: Quote, highlight: Crosshair,
+  statement: Pilcrow, sticky_notes: StickyNote, strike_list: Strikethrough, browser_frame: AppWindow, icon_pop: Shapes, headline_pill: Highlighter, comment_cta: MessageCircle,
+  big_words: ALargeSmall, orbit: Orbit, feature_tile: LayoutGrid, screen_frame: MonitorPlay, chapter: Bookmark, staircase: TrendingUp, funnel: Filter, journey: Footprints,
+  growth: Sprout, idea_hub: Lightbulb, compare_marks: CircleCheckBig
+}
+
+export interface GalleryTemplate { id: GraphicTemplateId; label: string; detail: string }
+
+/** A tile's animation: the words said at the spot when there are some, else sample words, on a square crop. */
+export function galleryPreview(id: GraphicTemplateId, style: { color: string; font: string }, words?: Record<string, string>): GraphicRenderSpec {
+  const { width, height } = outputSize('1:1')
+  const own = words && graphicHasContent({ template: id, fields: words }) ? words : null
+  const sample = id === 'highlight' ? { ...SAMPLES[id], y: '0.5' } : SAMPLES[id]
+  const fields = { ...(own ? { ...sample, ...own } : sample), ...(isDiagram(id) ? { panel: 'on' } : {}) }
+  // Keep a picture-only sample's own fields (a Logo pop never has words to show).
+  return { template: id, fields, width, height, duration_ms: isDiagram(id) ? 4200 : 2600, box: { top: .06, bottom: .94 }, placement: 'middle', ...style, ...(isDiagram(id) ? { color: DIAGRAM_ACCENT } : {}) }
+}
+
+export function GraphicGallery({ templates, where, style, prefill, full, limitNote, onPick, onClose }: {
+  templates: readonly GalleryTemplate[]
+  /** Where it goes, in words ("at 0:03.2, on “three things”"). */
+  where: string
+  style: { color: string; font: string }
+  /** The words each template would start with here (empty: it starts with none). */
+  prefill?: (template: GraphicTemplateId) => Record<string, string>
+  /** No more graphics fit. */
+  full: boolean
+  limitNote: string
+  onPick: (template: GraphicTemplateId) => void
+  onClose: () => void
+}): React.JSX.Element {
+  const [query, setQuery] = useState('')
+  const search = useRef<HTMLInputElement>(null)
+  const opener = useRef<Element | null>(typeof document === 'undefined' ? null : document.activeElement)
+  useEffect(() => {
+    search.current?.focus({ preventScroll: true })
+    const back = opener.current
+    return () => { if (back instanceof HTMLElement && back.isConnected) back.focus({ preventScroll: true }) }
+  }, [])
+  const words = useMemo(() => Object.fromEntries(templates.map((t) => [t.id, prefill?.(t.id) ?? {}])) as Record<GraphicTemplateId, Record<string, string>>, [templates, prefill])
+  const q = query.trim().toLowerCase()
+  const match = (t: GalleryTemplate): boolean => !q || `${t.label} ${t.detail} ${t.id.replace(/_/g, ' ')} ${groupLabel(t.id)}`.toLowerCase().includes(q)
+  const groups = [...GRAPHIC_GROUPS, { id: 'other' as const, label: 'More', templates: templates.map((t) => t.id).filter((id) => graphicGroup(id) === 'other') }]
+    .map((group) => ({ ...group, items: templates.filter((t) => group.templates.includes(t.id) && match(t)) })).filter((group) => group.items.length)
+  const first = groups[0]?.items[0]
+  const filled = Object.values(words).some((f) => Object.keys(f).length > 0)
+  return <Dialog aria-label="Add a graphic" panelClassName="graphic-gallery max-w-[980px] h-[min(780px,100%)]" onBackdropMouseDown={onClose}
+    onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose() } }}>
+    <header className="graphic-gallery-head">
+      <div className="min-w-0">
+        <h2 className="graphic-gallery-title">Add a graphic</h2>
+        <p className="text-2xs text-ink-subtle">Starts {where}. {filled ? 'Each one starts with the words you say there; you can change them after.' : 'You add the words next; the previews use sample words.'}</p>
+      </div>
+      <label className="graphic-gallery-search"><Search size={14} aria-hidden />
+        <input ref={search} type="search" aria-label="Search graphics" placeholder="Search: stat, list, steps…" value={query} onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && first && !full) { e.preventDefault(); onPick(first.id) } }} /></label>
+      <Button size="sm" variant="ghost" iconOnly icon={<X size={15} />} aria-label="Close" onClick={onClose} />
+    </header>
+    <section className="graphic-gallery-body" aria-label="Choose a graphic">
+      {full && <p role="note" className="graphic-gallery-note">{limitNote}</p>}
+      {groups.map((group) => <div key={group.id} className={cn('graphic-gallery-group', `group-${group.id}`)} role="group" aria-label={group.label}>
+        <p className="graphic-gallery-group-label"><span aria-hidden className="graphic-gallery-dot" />{group.label}<span className="graphic-gallery-count">{group.items.length}</span></p>
+        <div className="graphic-gallery-grid">{group.items.map((t, i) => {
+          const Icon = TEMPLATE_ICONS[t.id]
+          const own = graphicHasContent({ template: t.id, fields: words[t.id] }) && Object.keys(words[t.id]).length > 0
+          return <button key={t.id} type="button" className="editor-graphic-tile graphic-gallery-tile" disabled={full} onClick={() => onPick(t.id)} title={t.detail} aria-label={`Add ${t.label}`}>
+            <span className="graphic-gallery-thumb"><GraphicView spec={galleryPreview(t.id, style, words[t.id])} width={150} loop offset={900 + i * 370} />
+              {own && <span className="graphic-gallery-yours">Your words</span>}</span>
+            <span className="graphic-gallery-name"><Icon size={13} aria-hidden />{t.label}</span>
+            <span className="graphic-gallery-detail">{t.detail}</span>
+          </button>
+        })}</div>
+      </div>)}
+      {!groups.length && <p className="graphic-gallery-note">No graphic matches “{query.trim()}”. Try a word like stat, list, steps, quote or words.</p>}
+    </section>
+  </Dialog>
+}
+
+function groupLabel(id: GraphicTemplateId): string {
+  return GRAPHIC_GROUPS.find((g) => g.templates.includes(id))?.label ?? 'More'
+}
