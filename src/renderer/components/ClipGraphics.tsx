@@ -11,11 +11,12 @@ import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes, Film, AudioLines, Spark
 import type { MountedGraphic } from '../graphics/templates'
 import {
   CHAPTER_STYLES, DIAGRAM_ACCENT, GRAPHIC_DEFAULT_MS, GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
-  ITEM_TIMED_TEMPLATES, graphicVariant, graphicVariants, bigWordsOptions, chapterStyle, clampGraphicMs, duplicateGraphic, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, switchGraphicTemplate, templateInfo, templateItems, updateGraphic, withGraphic,
+  ITEM_TIMED_TEMPLATES, matchFxCues, graphicVariant, graphicVariants, bigWordsOptions, chapterStyle, clampGraphicMs, duplicateGraphic, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, switchGraphicTemplate, templateInfo, templateItems, updateGraphic, withGraphic,
   MAX_BIG_WORDS, SCREEN_VIDEO_FILE, ctaKind, type CtaKind, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
 } from '../../shared/motion-graphics'
 import { GRAPHIC_DEFAULT_COLOR, graphicOwnFont, graphicSpec, graphicStyle } from '../../shared/graphic-layout'
-import { prefillGraphic, spokenSteps } from '../../shared/graphic-prefill'
+import { prefillEffect, prefillGraphic, spokenSteps } from '../../shared/graphic-prefill'
+import { FX_EFFECTS, FX_GROUPS, fxEffect, fxLine } from '../../shared/fx-catalog'
 import type { CandidateEdit, EditorProject } from '../../shared/clip-editor'
 import { isHexColor } from '../../shared/headline-look'
 import { cn, localFileUrl } from '../lib/utils'
@@ -125,10 +126,11 @@ export const SHORT: Record<GraphicTemplateId, string> = {
   stat: 'Stat', title: 'Title', list: 'List', lower_third: 'Name', logo: 'Logo', before_after: 'Before/after', checklist: 'Checklist', quote: 'Quote', highlight: 'Arrow/circle',
   statement: 'Statement', sticky_notes: 'Notes', strike_list: 'Crossed out', browser_frame: 'Browser', icon_pop: 'Icons', headline_pill: 'Headline', comment_cta: 'Comment', link_cta: 'Call to action',
   big_words: 'Big words', orbit: 'Orbit', feature_tile: 'Tiles', screen_frame: 'Screen',
-  chapter: 'Chapter', staircase: 'Stairs', funnel: 'Funnel', journey: 'Journey', growth: 'Growth', idea_hub: 'Idea hub', compare_marks: 'Wrong/right'
+  chapter: 'Chapter', staircase: 'Stairs', funnel: 'Funnel', journey: 'Journey', growth: 'Growth', idea_hub: 'Idea hub', compare_marks: 'Wrong/right', fx: 'Effect'
 }
 export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): string {
   const f = g.fields
+  if (g.template === 'fx') return [fxEffect(f.effect)?.label, fxLine(f)].filter(Boolean).join(' · ')
   const first = (f.items ?? '').split('\n')[0]
   const words = g.template === 'stat' ? [f.value, f.label] : g.template === 'lower_third' ? [f.name, f.role] : g.template === 'before_after' ? [f.before, f.after]
     : g.template === 'list' || g.template === 'checklist' ? [f.title, first] : g.template === 'logo' ? [f.caption] : g.template === 'highlight' ? [f.shape === 'arrow' ? 'Arrow' : 'Circle']
@@ -268,7 +270,16 @@ export const SAMPLES: Record<GraphicTemplateId, Record<string, string>> = {
   staircase: { items: 'First step\nSecond step\nThird step\nFourth step', icons: 'idea\nuser\nsettings\nrocket' },
   funnel: { items: 'Stage one\nStage two\nStage three' }, journey: { items: 'Start\nMiddle\nGoal' },
   growth: { items: 'Small\nBigger\nBiggest' }, idea_hub: { items: 'First\nSecond\nThird\nFourth' },
-  compare_marks: { items: 'The old way\nThe better way', wrong: 'first' }
+  compare_marks: { items: 'The old way\nThe better way', wrong: 'first' },
+  fx: { effect: 'per-word-rise', text: 'Words as you say them' }
+}
+
+/** An effect's sample fields for the gallery's preview only (never put in a clip). */
+export function effectSample(id: string): Record<string, string> {
+  const effect = fxEffect(id)
+  const fields: Record<string, string> = { effect: id }
+  for (const f of effect?.fields ?? []) if (f.sample) fields[f.key] = f.sample
+  return fields
 }
 
 /** Starting words for a new graphic, from the transcript line said at the playhead (nothing is made up). */
@@ -426,11 +437,22 @@ function timedCard(c: CandidateEdit, g: EditorGraphic, words: readonly TimedWord
  * words said there (only words said; empty when none fit), on its words (a text card starts on its first word, a
  * list's items show as they're said) and in a band no other graphic uses then.
  */
-export function draftGraphic(project: Pick<EditorProject, 'transcript'>, c: CandidateEdit, template: GraphicTemplateId, time: number, words: readonly TimedWord[]): EditorGraphic {
+export function draftGraphic(project: Pick<EditorProject, 'transcript'>, c: CandidateEdit, template: GraphicTemplateId, time: number, words: readonly TimedWord[], effectId?: string): EditorGraphic {
   const graphics = c.graphics ?? []
   const [clipStart, clipEnd] = clipSpan(c)
   let at = Math.max(clipStart, Math.min(clipEnd - GRAPHIC_MIN_MS, Math.round(time)))
   const line = project.transcript.find((r) => at >= r.start_ms && at < r.end_ms)?.text
+  const effect = template === 'fx' ? fxEffect(effectId) ?? FX_EFFECTS[0] : null
+  if (effect) {
+    // An effect: the words said here for its fields, its own length and size, its beats on the words as said.
+    const prefill = prefillEffect(effect.id, words, at, { line, until: clipEnd })
+    if (prefill.first_ms !== null && prefill.first_ms < at && at - prefill.first_ms < 4000) at = Math.max(clipStart, prefill.first_ms - 150)
+    const until = prefill.last_ms !== null ? prefill.last_ms + 1000 - at : 0
+    const drafted = newGraphic('fx', at, { fields: { effect: effect.id, ...prefill.fields }, taken: graphics.map((x) => x.id), duration_ms: Math.max(effect.default_ms, until), ...(effect.size ? { size: effect.size } : {}) })
+    let g = fitGraphicInCut(drafted, c) ?? drafted
+    if (words.length) g = matchFxCues(g, words) ?? g
+    return placeInFreeBand(graphics, g)
+  }
   const prefill = prefillGraphic(template, words, at, { line, until: clipEnd })
   // A list whose first item was said just before the playhead starts on it.
   if (words.length && ITEM_TIMED_TEMPLATES.includes(template) && prefill.first_ms !== null && prefill.first_ms < at && at - prefill.first_ms < 4000) at = Math.max(clipStart, prefill.first_ms - 150)
@@ -452,6 +474,9 @@ export function draftGraphic(project: Pick<EditorProject, 'transcript'>, c: Cand
 export function graphicsWithField(c: CandidateEdit, g: EditorGraphic, key: string, value: string, words: readonly TimedWord[]): EditorGraphic[] {
   const next = updateGraphic(c, g.id, { fields: { [key]: value } })
   const changed = next.find((x) => x.id === g.id)
+  // An effect's beats follow its words as said (when they are said while it shows).
+  const cued = changed && changed.template === 'fx' && words.length && fxEffect(changed.fields.effect)?.cue ? matchFxCues(changed, words) : null
+  if (cued) return withGraphic({ ...c, graphics: next }, cued)
   const items = changed && key === 'items' && isDiagram(changed.template) && words.length ? matchItemTimes(changed, words) : null
   if (items) return withGraphic({ ...c, graphics: next }, items)
   const snapped = changed && ['text', 'phrase', 'subline'].includes(key) ? timedCard(c, changed, words, 3000) : null
@@ -461,6 +486,11 @@ export function graphicsWithField(c: CandidateEdit, g: EditorGraphic, key: strin
 /** "Match my words": the graphic timed to where its words (or items) are said, or a note why it can't be. */
 export function matchGraphicWords(c: CandidateEdit, g: EditorGraphic, words: readonly TimedWord[]): { graphics: EditorGraphic[] | null; note: string } {
   const [clipStart, clipEnd] = clipSpan(c)
+  if (g.template === 'fx') {
+    const matched = words.length ? matchFxCues(g, words) : null
+    if (!matched) return { graphics: null, note: words.length ? 'Those words aren’t all said, in order, while this effect is on screen. Use words from the clip, or move or lengthen it.' : 'This run has no word timings, so the words can’t be matched.' }
+    return { graphics: updateGraphic(c, g.id, { fields: { cue_ms: matched.fields.cue_ms } }), note: 'Matched: the effect’s beats now land on your words.' }
+  }
   if (!WORD_TIMED_TEMPLATES.includes(g.template)) {
     const matched = words.length ? matchItemTimes(g, words) : null
     if (!matched) return { graphics: null, note: words.length ? 'Those items aren’t all said, in order, while this graphic is on screen. Use words from the clip, or move or lengthen the graphic.' : 'This run has no word timings, so the items can’t be matched.' }
@@ -477,6 +507,26 @@ export function graphicsWithTemplate(c: CandidateEdit, g: EditorGraphic, to: Gra
   if (to === 'screen_frame' && !next.fields.from) next = { ...next, fields: { ...next.fields, from: String(Math.round(next.at_ms / 100) / 10) } }
   next = fitGraphicInCut(next, c) ?? next
   if (words.length) next = timedCard(c, next, words, 3000) ?? (ITEM_TIMED_TEMPLATES.includes(to) ? matchItemTimes(next, words) : null) ?? next
+  return withGraphic(c, next)
+}
+
+/**
+ * The clip's graphics with effect graphic `g` switched to another effect: fields both share keep their words, else
+ * its line goes to the new one's first text (or list) field; color, font and backing stay; its beats follow the words.
+ */
+export function graphicsWithEffect(c: CandidateEdit, g: EditorGraphic, to: string, words: readonly TimedWord[]): EditorGraphic[] {
+  const effect = fxEffect(to)
+  if (!effect) return c.graphics ?? []
+  const fields: Record<string, string> = { effect: effect.id }
+  for (const key of ['color', 'font', 'backing']) if (g.fields[key]) fields[key] = g.fields[key]
+  for (const f of effect.fields) if (g.fields[f.key]) fields[f.key] = g.fields[f.key]
+  const line = fxLine(g.fields)
+  const first = effect.fields.find((f) => (f.kind === 'text' || f.kind === 'list') && f.said)
+  if (line && first && !fields[first.key]) fields[first.key] = line.slice(0, first.max ?? MAX_GRAPHIC_FIELD_CHARS)
+  let next: EditorGraphic = { ...g, fields }
+  if (effect.size && !g.size) next = { ...next, size: effect.size }
+  next = fitGraphicInCut(next, c) ?? next
+  if (words.length) next = matchFxCues(next, words) ?? next
   return withGraphic(c, next)
 }
 
@@ -564,6 +614,26 @@ function GraphicsActions({ candidate, words, disabled, onChange, onSuggest, onNo
 }
 
 const TYPE_OPTIONS = GRAPHIC_GROUPS.flatMap((group) => GRAPHIC_TEMPLATES.filter((t) => group.templates.includes(t.id)).map((t) => ({ value: t.id, label: t.label, detail: group.label })))
+const EFFECT_OPTIONS = FX_GROUPS.flatMap((group) => FX_EFFECTS.filter((e) => e.group === group.id).map((e) => ({ value: e.id, label: e.label, detail: group.label.replace(/^Effects: /, '') })))
+
+/** An effect's own fields (fx-catalog.ts): words, numbers, lists (one per line) and choices. */
+export function EffectFields({ fields, onField }: { fields: Record<string, string>; onField: (key: string, value: string) => void }): React.JSX.Element | null {
+  const effect = fxEffect(fields.effect)
+  if (!effect) return null
+  return <div className="space-y-2">
+    <p className="text-2xs text-ink-subtle">{effect.detail}</p>
+    {effect.fields.map((f) => f.kind === 'choice' ? <div key={f.key} className="space-y-1"><p className="editor-label">{f.label}</p>
+      <Select size="sm" aria-label={`${effect.label} ${f.label.toLowerCase()}`} value={f.options?.some((o) => o.value === fields[f.key]) ? fields[f.key] : f.options?.[0]?.value ?? ''}
+        options={(f.options ?? []).map((o) => ({ value: o.value, label: o.label }))} onChange={(value) => onField(f.key, value)} /></div>
+      : <label key={f.key} className="editor-label">{f.label}
+        {f.kind === 'list' ? <textarea rows={4} maxLength={MAX_GRAPHIC_FIELD_CHARS * 5} value={fields[f.key] ?? ''} onChange={(e) => onField(f.key, e.target.value)} aria-label={`${effect.label} ${f.label.toLowerCase()}`} />
+          : <input className="editor-graphic-input" inputMode={f.kind === 'number' ? 'decimal' : undefined} maxLength={f.max ?? MAX_GRAPHIC_FIELD_CHARS} value={fields[f.key] ?? ''} onChange={(e) => onField(f.key, e.target.value)}
+            aria-label={`${effect.label} ${f.label.toLowerCase()}`} placeholder={f.kind === 'number' ? 'A number said in the clip' : undefined} />}
+      </label>)}
+    {effect.backing === 'glass' && <div className="flex items-center justify-between gap-2 text-xs"><span>Dark glass behind it</span>
+      <Switch label="Dark glass behind it" checked={fields.backing !== 'none'} onChange={(on) => onField('backing', on ? '' : 'none')} /></div>}
+  </div>
+}
 
 /** The Graphics inspector tab: add graphics (the gallery), one-click actions, then the selected graphic's words, place and length. */
 export function GraphicsInspector({ project, candidate, outputDir, time, selected, words, disabled, onGallery, onSuggest, onSelect, onChange, seek, clock }: {
@@ -617,9 +687,12 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
     {!g ? <p className="text-2xs text-ink-subtle">Select a graphic on the timeline or in the list to edit it.</p> : <fieldset disabled={disabled} className="space-y-3 border-t border-white/10 pt-3">
       <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">{templateInfo(g.template).label}</p>
         <Button size="sm" variant="ghost" icon={<Trash2 size={12} />} onClick={() => { onChange(removeGraphic(candidate, g.id)); onSelect(null) }}>Remove</Button></div>
-      <div className="flex items-center justify-between gap-2 text-2xs"><span className="text-ink-muted">Type</span>
+      {g.template === 'fx' ? <div className="flex items-center justify-between gap-2 text-2xs"><span className="text-ink-muted">Effect</span>
+        <Select size="sm" aria-label="Effect" value={g.fields.effect ?? ''} options={EFFECT_OPTIONS} searchable
+          onChange={(to) => { if (to !== g.fields.effect) onChange(graphicsWithEffect(candidate, g, to, words)) }} /></div>
+        : <div className="flex items-center justify-between gap-2 text-2xs"><span className="text-ink-muted">Type</span>
         <Select size="sm" aria-label="Graphic type" value={g.template} options={TYPE_OPTIONS} searchable
-          onChange={(to) => { if (to !== g.template) onChange(graphicsWithTemplate(candidate, g, to as GraphicTemplateId, words)) }} /></div>
+          onChange={(to) => { if (to !== g.template) onChange(graphicsWithTemplate(candidate, g, to as GraphicTemplateId, words)) }} /></div>}
       <VariantField template={g.template} fields={g.fields} onField={field} />
       {(() => { const warning = graphicWarning(graphicCutFit(candidate, g), graphicClashes(graphics).has(g.id), g.placement); return warning && <p role="note" className="text-2xs text-warning">{warning}</p> })()}
       {!graphicHasContent(g) && <p className="text-2xs text-warning">{g.template === 'logo' ? 'Choose an image to show it.' : g.template === 'browser_frame' ? 'Choose a screenshot or add a headline to show it.' : 'Add its words to show it.'}</p>}
@@ -634,7 +707,8 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
         {imageError && <p role="alert" className="text-2xs text-danger">{imageError}</p>}
       </div>}
       {g.template === 'screen_frame' && <ScreenFields fields={g.fields} outputDir={outputDir} onField={field} />}
-      {templateInfo(g.template).fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'style', 'vertical', 'motion', 'video', 'labels', 'dot', 'icon', 'wrong', 'kind'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
+      {g.template === 'fx' && <EffectFields fields={g.fields} onField={field} />}
+      {templateInfo(g.template).fields.filter((k) => !['effect', 'image', 'shape', 'x', 'y', 'icons', 'style', 'vertical', 'motion', 'video', 'labels', 'dot', 'icon', 'wrong', 'kind'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
         {key === 'items' || key === 'text' || key === 'highlights' || key === 'notes' ? <textarea rows={key === 'items' ? GRAPHIC_ITEM_LIMITS[g.template] ?? MAX_GRAPHIC_ITEMS : key === 'highlights' || key === 'notes' ? 2 : 3} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`} />
           : <input className="editor-graphic-input" maxLength={MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`}
             placeholder={key === 'value' ? 'e.g. the number said in the clip' : key === 'domain' ? 'e.g. yoursite.com' : key === 'from' ? 'e.g. 12.5' : undefined} />}
@@ -649,10 +723,10 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
         <Switch label="Labels under the icons" checked={g.fields.labels !== 'off'} onChange={(on) => field('labels', on ? '' : 'off')} /></div>}
       {g.template === 'feature_tile' && <div className="flex items-center justify-between gap-2 text-xs"><span>Red dot on the first tile</span>
         <Switch label="Red dot on the first tile" checked={g.fields.dot === 'on'} onChange={(on) => field('dot', on ? 'on' : '')} /></div>}
-      {(WORD_TIMED_TEMPLATES.includes(g.template) || isDiagram(g.template)) && <div className="space-y-1">
+      {(WORD_TIMED_TEMPLATES.includes(g.template) || isDiagram(g.template) || (g.template === 'fx' && !!fxEffect(g.fields.effect)?.cue)) && <div className="space-y-1">
         <div className="flex flex-wrap items-center gap-2"><Button size="sm" variant="ghost" icon={<AudioLines size={13} />} onClick={matchWords}
           tooltip={isDiagram(g.template) ? 'Find each item in what you say while the graphic is on screen, so each one lights up as you say it.' : 'Find these words in what you say near the graphic. It then starts on your first word, shows each word as you say it and stays until just after the last.'}>Match my words</Button>
-          <span className="text-2xs text-ink-subtle">{(isDiagram(g.template) ? g.fields.item_ms : g.fields.word_ms) ? 'Timed to your words' : isDiagram(g.template) ? 'Items light up on their own beat' : 'Words build in on their own beat'}</span></div>
+          <span className="text-2xs text-ink-subtle">{(isDiagram(g.template) ? g.fields.item_ms : g.template === 'fx' ? g.fields.cue_ms : g.fields.word_ms) ? 'Timed to your words' : isDiagram(g.template) ? 'Items light up on their own beat' : g.template === 'fx' ? 'Plays on its own beat' : 'Words build in on their own beat'}</span></div>
         {matchNote && <p role="status" className="text-2xs text-ink-subtle">{matchNote}</p>}</div>}
       {graphicCanGoBehind(g.template) && <div className="space-y-1">
         <div className="flex items-center justify-between gap-2 text-xs"><span>Behind me</span>

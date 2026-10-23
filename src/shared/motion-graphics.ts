@@ -3,8 +3,10 @@
  * on a clip's timeline. This file is the contract shared by the template
  * renderer, the clip editor's Graphics row, the editor chat and the engine that
  * layers the rendered graphics over the video. Templates are our own designs;
- * the words in a graphic come from the member or from what was said in the clip.
+ * the words in a graphic come from the member or from what was said in the clip. Effects (`fx`) are HyperFrames units
+ * (Apache-2.0) drawn the same way; src/shared/fx-catalog.ts lists them and their fields.
  */
+import { fxCueUnits, fxEffect, fxHasContent, fxLine } from './fx-catalog'
 
 export const GRAPHIC_TEMPLATES = [
   { id: 'stat', label: 'Stat counter', detail: 'A number that counts up, with a short label.', fields: ['value', 'label'] },
@@ -34,7 +36,9 @@ export const GRAPHIC_TEMPLATES = [
   { id: 'journey', label: 'Journey', detail: '3 to 5 milestone cards. A small figure walks from one to the next as you say them.', fields: ['title', 'items'] },
   { id: 'growth', label: 'Growth', detail: '3 to 6 plants (or bars) that get bigger, with a label under each.', fields: ['title', 'items', 'style'] },
   { id: 'idea_hub', label: 'Idea hub', detail: 'An icon in the middle with 3 to 6 labels around it. Each label appears as you say it.', fields: ['text', 'items', 'icon'] },
-  { id: 'compare_marks', label: 'Wrong / right', detail: 'Two cards side by side, then a red ✗ on one and a green ✓ on the other.', fields: ['items', 'notes', 'wrong'] }
+  { id: 'compare_marks', label: 'Wrong / right', detail: 'Two cards side by side, then a red ✗ on one and a green ✓ on the other.', fields: ['items', 'notes', 'wrong'] },
+  // One template for every effect: `effect` names the unit, its other fields are the unit's (fx-catalog.ts).
+  { id: 'fx', label: 'Effect', detail: 'A designed motion effect: a count up, a word rise, a chart, a marker and more.', fields: ['effect'] }
 ] as const
 
 export type GraphicTemplateId = (typeof GRAPHIC_TEMPLATES)[number]['id']
@@ -143,6 +147,7 @@ export function parseGraphics(value: unknown): EditorGraphic[] {
     }
     if (fields.image !== undefined && !/^[A-Za-z0-9._-]{1,80}$/.test(fields.image)) throw new Error('A graphic’s image must be one of the clip’s images.')
     if (fields.video !== undefined && fields.video !== '' && !isScreenVideo(fields.video)) throw new Error('A graphic’s video must be one of the clip’s videos.')
+    if (g.template === 'fx' && !fxEffect(fields.effect)) throw new Error('Choose one of the effects.')
     const origin: EditorGraphic['origin'] = g.origin === 'auto' || g.origin === 'chat' || g.origin === 'member' ? g.origin : undefined
     const size = isGraphicSize(g.size) ? g.size : undefined
     const depth = isGraphicDepth(g.depth) && graphicCanGoBehind(g.template) ? g.depth : undefined
@@ -155,7 +160,7 @@ export function parseGraphics(value: unknown): EditorGraphic[] {
 // ---------------------------------------------------------------------------
 
 /** Bump when a template's look changes, so cached renders are made again. */
-export const GRAPHICS_VERSION = 4
+export const GRAPHICS_VERSION = 5
 
 /**
  * Looks: the most used templates come in two or three designs (`fields.variant`), so a video that shows a template
@@ -221,7 +226,7 @@ export const GRAPHIC_DEFAULT_MS: Record<GraphicTemplateId, number> = {
   stat: 3500, title: 2500, list: 5000, lower_third: 4000, logo: 3000, before_after: 4000, checklist: 5000, quote: 5000, highlight: 2500,
   statement: 3500, sticky_notes: 4000, strike_list: 5000, browser_frame: 5000, icon_pop: 3500, headline_pill: 3500, comment_cta: 3500, link_cta: 3500,
   big_words: 2500, orbit: 4500, feature_tile: 3500, screen_frame: 5000,
-  chapter: 15000, staircase: 9000, funnel: 8000, journey: 9000, growth: 9000, idea_hub: 8000, compare_marks: 7000
+  chapter: 15000, staircase: 9000, funnel: 8000, journey: 9000, growth: 9000, idea_hub: 8000, compare_marks: 7000, fx: 3500
 }
 
 /** Templates that can show a picture the member chose (Logo pop needs one; the others draw without it). */
@@ -463,6 +468,38 @@ export function matchItemTimes<G extends Pick<EditorGraphic, 'template' | 'field
   return { ...g, fields: { ...g.fields, item_ms: times.join('\n') } }
 }
 
+/**
+ * An effect with its spoken cue times (`cue_ms`, ms from its start): its cue words (or list items) found, in order, in
+ * what is said from just before it to just after it. Null when it has no cue or they aren't all said there in order.
+ */
+export function matchFxCues<G extends Pick<EditorGraphic, 'template' | 'fields' | 'at_ms' | 'duration_ms'>>(g: G, words: readonly TimedWord[], slackMs = 2000): G | null {
+  const effect = g.template === 'fx' ? fxEffect(g.fields.effect) : null
+  if (!effect?.cue) return null
+  const units = fxCueUnits(effect, g.fields)
+  if (!units.length) return null
+  const said = words.filter((w) => w.start_ms >= g.at_ms - slackMs && w.start_ms <= g.at_ms + g.duration_ms + slackMs).map((w) => ({ ...w, key: wordKey(w.word) })).filter((w) => w.key)
+  const times: number[] = []
+  let cursor = 0
+  for (const unit of units) {
+    const want = unit.split(' ').map(wordKey).filter(Boolean)
+    if (!want.length) return null
+    let found = -1
+    for (let i = cursor; i < said.length && found < 0; i++) {
+      if (said[i].key !== want[0]) continue
+      let k = i + 1, ok = true
+      for (const w of want.slice(1)) {
+        const hit = said.slice(k, k + 3).findIndex((x) => x.key === w)
+        if (hit < 0) { ok = false; break }
+        k += hit + 1
+      }
+      if (ok) { found = i; cursor = k }
+    }
+    if (found < 0) return null
+    times.push(Math.max(0, Math.min(g.duration_ms - 300, said[found].start_ms - g.at_ms)))
+  }
+  return { ...g, fields: { ...g.fields, cue_ms: times.join('\n') } }
+}
+
 // ---------------------------------------------------------------------------
 // Screen recording: a video in a dark window. The page draws the window with a
 // transparent hole; the engine plays the video under it (graphics_overlay).
@@ -652,6 +689,7 @@ export function graphicHasContent(g: Pick<EditorGraphic, 'template' | 'fields'>)
     case 'chapter': return !!(f.title?.trim() || f.label?.trim())
     case 'staircase': case 'funnel': case 'journey': case 'growth': case 'idea_hub': case 'compare_marks':
       return templateItems(g.template, f.items).length >= DIAGRAM_MIN_ITEMS[g.template]
+    case 'fx': return fxHasContent(f)
   }
 }
 
@@ -726,6 +764,11 @@ export function updateGraphic(c: Timing & { graphics?: EditorGraphic[] }, id: st
   }
   // Word times belong to the words where they were said: a card moved or reworded loses them (its own beats are used).
   if (fields.word_ms && ((patch.at_ms !== undefined && Math.round(patch.at_ms) !== g.at_ms) || ['text', 'phrase', 'subline'].some((k) => patch.fields?.[k] !== undefined && patch.fields[k] !== g.fields[k]))) delete fields.word_ms
+  // An effect's cue times belong to its words where they were said: moved, reworded or another effect, they go.
+  if (fields.cue_ms && g.template === 'fx') {
+    const cue = fxEffect(g.fields.effect)?.cue?.field
+    if ((patch.at_ms !== undefined && Math.round(patch.at_ms) !== g.at_ms) || (patch.fields?.effect !== undefined && patch.fields.effect !== g.fields.effect) || (cue && patch.fields?.[cue] !== undefined && patch.fields[cue] !== g.fields[cue])) delete fields.cue_ms
+  }
   // A diagram's item times belong to its items as said: changed items lose them (even beats are used until matched again).
   if (fields.item_ms && isDiagram(g.template) && patch.fields?.items !== undefined && patch.fields.items !== g.fields.items) delete fields.item_ms
   const { fields: _ignored, size, depth, ...rest } = patch
@@ -758,6 +801,7 @@ export function graphicWords(g: Pick<EditorGraphic, 'template' | 'fields'>): { l
     case 'comment_cta': return { line: cleanLine(f.keyword), items, title }
     case 'browser_frame': return { line: title, items, title: '' }
     case 'logo': return { line: cleanLine(f.caption), items, title }
+    case 'fx': { const line = fxLine(f); return { line, items: line ? [line] : [], title: '' } }
     default: {
       const line = cleanLine(f.text) || title || items[0] || ''
       // A title over items (a list, a diagram) stays a title; a lone title is the line.
@@ -795,6 +839,7 @@ export function switchGraphicTemplate(g: EditorGraphic, to: GraphicTemplateId): 
   else if (to === 'comment_cta') { const word = line.split(' ')[0]; if (word) fields.keyword = word.replace(/[^\p{L}\p{N}]+/gu, '').toUpperCase() }
   else if (to === 'browser_frame') { if (line) fields.title = line }
   else if (to === 'logo') { if (line) fields.caption = line; if (g.fields.image) fields.image = g.fields.image }
+  else if (to === 'fx') { fields.effect = 'per-word-rise'; if (line) fields.text = line }
   else if (to === 'big_words') { const words = line.split(' ').filter(Boolean).slice(0, MAX_BIG_WORDS); if (words.length) fields.text = words.join(' ') }
   else if (target.includes('items')) {
     if (list.length) fields.items = list.slice(0, limit).join('\n')
@@ -925,9 +970,9 @@ export function fitGraphicInCut<G extends Pick<EditorGraphic, 'at_ms' | 'duratio
   const moved = { ...g, at_ms: at, duration_ms: duration }
   // Item and word times are ms from the graphic's start: moved with it, they stay on the words where they're said.
   const fields = (g as { fields?: Record<string, string> }).fields
-  if (fields && at !== g.at_ms && (fields.item_ms || fields.word_ms)) {
+  if (fields && at !== g.at_ms && (fields.item_ms || fields.word_ms || fields.cue_ms)) {
     const next = { ...fields }
-    for (const key of ['item_ms', 'word_ms'] as const) {
+    for (const key of ['item_ms', 'word_ms', 'cue_ms'] as const) {
       if (!next[key]) continue
       const times = next[key].split(/[\s,]+/).filter(Boolean).map(Number)
       if (times.every(Number.isFinite)) next[key] = times.map((t) => String(Math.max(0, Math.min(duration, Math.round(t + g.at_ms - at))))).join('\n')

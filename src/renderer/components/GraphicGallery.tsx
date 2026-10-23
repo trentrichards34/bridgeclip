@@ -7,12 +7,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ALargeSmall, AppWindow, Bookmark, CircleCheckBig, Columns2, Contact, Crosshair, Filter, Footprints, Hash, Highlighter, Image, LayoutGrid, Lightbulb, ListChecks, ListOrdered,
-  MessageCircle, MonitorPlay, MousePointerClick, Orbit, Pilcrow, Quote, Search, Shapes, Sprout, StickyNote, Strikethrough, TrendingUp, Type, X, type LucideIcon
+  MessageCircle, MonitorPlay, MousePointerClick, Orbit, Pilcrow, Quote, Search, Shapes, Sparkles, Sprout, StickyNote, Strikethrough, TrendingUp, Type, X, type LucideIcon
 } from 'lucide-react'
 import { DIAGRAM_ACCENT, graphicHasContent, graphicVariants, isDiagram, type GraphicRenderSpec, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { outputSize } from '../../shared/graphic-layout'
 import { cn } from '../lib/utils'
-import { GRAPHIC_GROUPS, GraphicView, SAMPLES, graphicGroup } from './ClipGraphics'
+import { GRAPHIC_GROUPS, GraphicView, SAMPLES, effectSample, graphicGroup } from './ClipGraphics'
+import { FX_EFFECTS, FX_GROUPS, fxEffect, fxHasContent } from '../../shared/fx-catalog'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import './graphic-gallery.css'
@@ -22,7 +23,7 @@ export const TEMPLATE_ICONS: Record<GraphicTemplateId, LucideIcon> = {
   stat: Hash, title: Type, list: ListOrdered, lower_third: Contact, logo: Image, before_after: Columns2, checklist: ListChecks, quote: Quote, highlight: Crosshair,
   statement: Pilcrow, sticky_notes: StickyNote, strike_list: Strikethrough, browser_frame: AppWindow, icon_pop: Shapes, headline_pill: Highlighter, comment_cta: MessageCircle, link_cta: MousePointerClick,
   big_words: ALargeSmall, orbit: Orbit, feature_tile: LayoutGrid, screen_frame: MonitorPlay, chapter: Bookmark, staircase: TrendingUp, funnel: Filter, journey: Footprints,
-  growth: Sprout, idea_hub: Lightbulb, compare_marks: CircleCheckBig
+  growth: Sprout, idea_hub: Lightbulb, compare_marks: CircleCheckBig, fx: Sparkles
 }
 
 export interface GalleryTemplate { id: GraphicTemplateId; label: string; detail: string }
@@ -30,6 +31,13 @@ export interface GalleryTemplate { id: GraphicTemplateId; label: string; detail:
 /** A tile's animation: the words said at the spot when there are some, else sample words, on a square crop. */
 export function galleryPreview(id: GraphicTemplateId, style: { color: string; font: string }, words?: Record<string, string>, look?: string): GraphicRenderSpec {
   const { width, height } = outputSize('1:1')
+  if (id === 'fx') {
+    // An effect (`look` is its id): the words said here when they fill it, else its sample words.
+    const effect = fxEffect(look) ?? FX_EFFECTS[0]
+    const own = words && fxHasContent({ ...words, effect: effect.id }) ? { ...words, effect: effect.id } : null
+    return { template: 'fx', fields: own ?? effectSample(effect.id), width, height, duration_ms: Math.min(5000, effect.default_ms), box: { top: .12, bottom: .88 }, placement: 'middle', ...style,
+      ...(effect.size === 'compact' ? { size: 'compact' as const } : {}) }
+  }
   const own = words && graphicHasContent({ template: id, fields: words }) ? words : null
   const sample = id === 'highlight' ? { ...SAMPLES[id], y: '0.5' } : SAMPLES[id]
   const fields = { ...(own ? { ...sample, ...own } : sample), ...(isDiagram(id) ? { panel: 'on' } : {}), ...(look ? { variant: look } : {}) }
@@ -37,18 +45,21 @@ export function galleryPreview(id: GraphicTemplateId, style: { color: string; fo
   return { template: id, fields, width, height, duration_ms: isDiagram(id) ? 4200 : 2600, box: { top: .06, bottom: .94 }, placement: 'middle', ...style, ...(isDiagram(id) ? { color: DIAGRAM_ACCENT } : {}) }
 }
 
-export function GraphicGallery({ templates, where, style, prefill, full, limitNote, looks = false, onPick, onClose }: {
+export function GraphicGallery({ templates, where, style, prefill, prefillEffect, full, limitNote, looks = false, onPick, onClose }: {
   templates: readonly GalleryTemplate[]
   /** Where it goes, in words ("at 0:03.2, on “three things”"). */
   where: string
   style: { color: string; font: string }
   /** The words each template would start with here (empty: it starts with none). */
   prefill?: (template: GraphicTemplateId) => Record<string, string>
+  /** The words each effect would start with here (offered when `templates` includes the Effect template). */
+  prefillEffect?: (effect: string) => Record<string, string>
   /** No more graphics fit. */
   full: boolean
   limitNote: string
   /** Offer each template's looks (GRAPHIC_VARIANTS) as small buttons under its tile. */
   looks?: boolean
+  /** `look`: the look picked (GRAPHIC_VARIANTS), or for an effect (template 'fx') the effect's id. */
   onPick: (template: GraphicTemplateId, look?: string) => void
   onClose: () => void
 }): React.JSX.Element {
@@ -62,13 +73,20 @@ export function GraphicGallery({ templates, where, style, prefill, full, limitNo
     const back = opener.current
     return () => { if (back instanceof HTMLElement && back.isConnected) back.focus({ preventScroll: true }) }
   }, [])
-  const words = useMemo(() => Object.fromEntries(templates.map((t) => [t.id, prefill?.(t.id) ?? {}])) as Record<GraphicTemplateId, Record<string, string>>, [templates, prefill])
+  const plain = useMemo(() => templates.filter((t) => t.id !== 'fx'), [templates])
+  const withEffects = plain.length < templates.length
+  const words = useMemo(() => Object.fromEntries(plain.map((t) => [t.id, prefill?.(t.id) ?? {}])) as Record<GraphicTemplateId, Record<string, string>>, [plain, prefill])
+  const effectWords = useMemo(() => withEffects ? Object.fromEntries(FX_EFFECTS.map((e) => [e.id, prefillEffect?.(e.id) ?? {}])) as Record<string, Record<string, string>> : {}, [withEffects, prefillEffect])
   const q = query.trim().toLowerCase()
   const match = (t: GalleryTemplate): boolean => !q || `${t.label} ${t.detail} ${t.id.replace(/_/g, ' ')} ${groupLabel(t.id)}`.toLowerCase().includes(q)
-  const groups = [...GRAPHIC_GROUPS, { id: 'other' as const, label: 'More', templates: templates.map((t) => t.id).filter((id) => graphicGroup(id) === 'other') }]
-    .map((group) => ({ ...group, items: templates.filter((t) => group.templates.includes(t.id) && match(t)) })).filter((group) => group.items.length)
+  const groups = [...GRAPHIC_GROUPS, { id: 'other' as const, label: 'More', templates: plain.map((t) => t.id).filter((id) => graphicGroup(id) === 'other') }]
+    .map((group) => ({ ...group, items: plain.filter((t) => group.templates.includes(t.id) && match(t)) })).filter((group) => group.items.length)
+  // Effects: one tile per effect (HyperFrames units, fx-catalog.ts), in their own groups after the templates.
+  const effectGroups = withEffects ? FX_GROUPS.map((group) => ({ ...group, items: FX_EFFECTS.filter((e) => e.group === group.id && (!q || `${e.label} ${e.detail} ${group.label} effect ${e.jobs.join(' ')}`.toLowerCase().includes(q))) }))
+    .filter((group) => group.items.length) : []
   const first = groups[0]?.items[0]
-  const filled = Object.values(words).some((f) => Object.keys(f).length > 0)
+  const firstEffect = effectGroups[0]?.items[0]
+  const filled = Object.values(words).some((f) => Object.keys(f).length > 0) || Object.values(effectWords).some((f) => Object.keys(f).length > 0)
   return <Dialog aria-label="Add a graphic" panelClassName="graphic-gallery max-w-[980px] h-[min(780px,100%)]" onBackdropMouseDown={onClose}
     onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose() } }}>
     <header className="graphic-gallery-head">
@@ -78,7 +96,7 @@ export function GraphicGallery({ templates, where, style, prefill, full, limitNo
       </div>
       <label className="graphic-gallery-search"><Search size={14} aria-hidden />
         <input ref={search} type="search" aria-label="Search graphics" placeholder="Search: stat, list, steps…" value={query} onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && first && !full) { e.preventDefault(); onPick(first.id) } }} /></label>
+          onKeyDown={(e) => { if (e.key === 'Enter' && (first || firstEffect) && !full) { e.preventDefault(); if (first) onPick(first.id); else if (firstEffect) onPick('fx', firstEffect.id) } }} /></label>
       <Button size="sm" variant="ghost" iconOnly icon={<X size={15} />} aria-label="Close" onClick={onClose} />
     </header>
     <section className="graphic-gallery-body" aria-label="Choose a graphic">
@@ -102,7 +120,19 @@ export function GraphicGallery({ templates, where, style, prefill, full, limitNo
               onMouseLeave={() => setPeek(null)} onBlur={() => setPeek(null)}>{v.label}</button>)}</div></div>
         })}</div>
       </div>)}
-      {!groups.length && <p className="graphic-gallery-note">No graphic matches “{query.trim()}”. Try a word like stat, list, steps, quote or words.</p>}
+      {effectGroups.map((group) => <div key={group.id} className="graphic-gallery-group group-other" role="group" aria-label={group.label}>
+        <p className="graphic-gallery-group-label"><span aria-hidden className="graphic-gallery-dot" />{group.label}<span className="graphic-gallery-count">{group.items.length}</span></p>
+        <div className="graphic-gallery-grid">{group.items.map((e, i) => {
+          const own = Object.keys(effectWords[e.id] ?? {}).length > 0 && fxHasContent({ ...effectWords[e.id], effect: e.id })
+          return <button key={e.id} type="button" className="editor-graphic-tile graphic-gallery-tile" disabled={full} onClick={() => onPick('fx', e.id)} title={e.detail} aria-label={`Add effect ${e.label}`}>
+            <span className="graphic-gallery-thumb"><GraphicView spec={galleryPreview('fx', style, effectWords[e.id], e.id)} width={150} loop offset={700 + i * 410} />
+              {own && <span className="graphic-gallery-yours">Your words</span>}</span>
+            <span className="graphic-gallery-name"><Sparkles size={13} aria-hidden />{e.label}</span>
+            <span className="graphic-gallery-detail">{e.detail}</span>
+          </button>
+        })}</div>
+      </div>)}
+      {!groups.length && !effectGroups.length && <p className="graphic-gallery-note">No graphic matches “{query.trim()}”. Try a word like stat, list, steps, quote or words.</p>}
     </section>
   </Dialog>
 }

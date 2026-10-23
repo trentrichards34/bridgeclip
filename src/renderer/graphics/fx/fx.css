@@ -1,0 +1,16 @@
+/*
+ * Effects (mount.ts): the frame each unit draws in, and the bundled faces the units' web fonts are mapped to
+ * (src/shared/fx-html.ts MG_FONTS) that graphics.css doesn't declare. Paths are the app's own files: nothing loads
+ * from the network.
+ */
+@font-face { font-family: 'MG Mono'; src: url('../../assets/fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2'); font-weight: 100 800; }
+@font-face { font-family: 'MG Poppins'; src: url('../../../../engine/assets/fonts/Poppins-ExtraBold.ttf') format('truetype'); font-weight: 800; }
+@font-face { font-family: 'MG Poppins'; src: url('../../../../engine/assets/fonts/Poppins-Black.ttf') format('truetype'); font-weight: 900; }
+
+.fx-frame { position: absolute; left: 0; top: 0; overflow: hidden; pointer-events: none; }
+.fx-stage { position: absolute; overflow: visible; }
+/* A soft dark glass behind bare type over busy video (an effect's `backing`). */
+.fx-stage.fx-glass::before {
+  content: ''; position: absolute; inset: var(--fx-glass-inset, 4% 2%); border-radius: 28px;
+  background: radial-gradient(120% 140% at 50% 40%, rgba(12, 14, 20, 0.62), rgba(12, 14, 20, 0.38));
+}

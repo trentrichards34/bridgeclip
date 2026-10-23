@@ -1,0 +1,1491 @@
+{
+  "version": 1,
+  "effects": [
+    {
+      "id": "count-up",
+      "label": "Count up",
+      "detail": "A big number counts up and lands with a small pulse.",
+      "group": "numbers",
+      "jobs": [
+        "prove"
+      ],
+      "use_when": "One number is the proof (users, revenue, a percent) and it should land as it is said.",
+      "avoid_when": "The number needs context or a comparison; a lone number reads hollow (use a chart).",
+      "hold_s": 3,
+      "sound": "tick",
+      "default_ms": 3500,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 1.72,
+      "cue": {
+        "field": "value",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "value",
+          "kind": "number",
+          "said": true,
+          "required": true
+        },
+        {
+          "key": "prefix",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 6
+        },
+        {
+          "key": "suffix",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 12
+        }
+      ]
+    },
+    {
+      "id": "number-pop-in",
+      "label": "Number pop",
+      "detail": "A short number pops in digit by digit with a small unit.",
+      "group": "numbers",
+      "jobs": [
+        "prove",
+        "emphasize"
+      ],
+      "use_when": "A short figure (\"10x\", \"3k\", \"24h\") is the punchline of the sentence.",
+      "avoid_when": "The number is long or needs a label to make sense.",
+      "hold_s": 2,
+      "sound": "pop",
+      "default_ms": 2500,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 0.4,
+      "cue": {
+        "field": "value",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "value",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 10
+        },
+        {
+          "key": "unit",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 8
+        }
+      ]
+    },
+    {
+      "id": "conic-progress-ring",
+      "label": "Progress ring",
+      "detail": "A ring fills to a percent with the number in the middle.",
+      "group": "numbers",
+      "jobs": [
+        "prove",
+        "demonstrate"
+      ],
+      "use_when": "A share or completion rate is said (\"80% of people…\").",
+      "avoid_when": "The number is not a percent of something.",
+      "hold_s": 3,
+      "sound": "riser",
+      "default_ms": 3500,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 1.2,
+      "cue": {
+        "field": "progress",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "progress",
+          "kind": "number",
+          "said": true,
+          "required": true
+        },
+        {
+          "key": "label",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 8
+        }
+      ]
+    },
+    {
+      "id": "star-rating-fill",
+      "label": "Star rating",
+      "detail": "Stars fill to a rating, with the score beside them.",
+      "group": "numbers",
+      "jobs": [
+        "prove"
+      ],
+      "use_when": "A real rating is said (\"rated 4.9 stars\").",
+      "avoid_when": "There is no rating said; never invent one.",
+      "hold_s": 2.5,
+      "sound": "tick",
+      "default_ms": 3000,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 1.3,
+      "cue": {
+        "field": "rating",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "rating",
+          "kind": "number",
+          "said": true,
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "chart-story",
+      "label": "Chart",
+      "detail": "Bars, a line or a donut build from the numbers said, one stands out.",
+      "group": "numbers",
+      "jobs": [
+        "prove"
+      ],
+      "use_when": "Several numbers are said as a trend or comparison and one carries the story.",
+      "avoid_when": "Only one number is said (use Count up).",
+      "hold_s": 4.5,
+      "sound": "riser",
+      "default_ms": 5000,
+      "size": "stage",
+      "frame": "band",
+      "sync_s": 3.05,
+      "fields": [
+        {
+          "key": "data",
+          "kind": "list",
+          "said": true,
+          "required": true,
+          "max": 12
+        },
+        {
+          "key": "labels",
+          "kind": "list",
+          "said": true,
+          "required": false,
+          "max": 14
+        },
+        {
+          "key": "emphasize",
+          "kind": "number",
+          "said": false,
+          "required": false
+        },
+        {
+          "key": "unit",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 6
+        },
+        {
+          "key": "type",
+          "kind": "choice",
+          "said": false,
+          "required": false,
+          "options": [
+            "bars",
+            "line",
+            "donut",
+            "progress"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "decline-chart",
+      "label": "Drop chart",
+      "detail": "A line falls from one number to another, the drop marked.",
+      "group": "numbers",
+      "jobs": [
+        "agitate"
+      ],
+      "use_when": "A loss is said with both numbers (\"from 82 down to 34\").",
+      "avoid_when": "The numbers go up (use Chart).",
+      "hold_s": 3.5,
+      "sound": "whoosh",
+      "default_ms": 4000,
+      "size": "card",
+      "frame": "band",
+      "fields": [
+        {
+          "key": "label",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 30
+        },
+        {
+          "key": "start",
+          "kind": "number",
+          "said": true,
+          "required": true
+        },
+        {
+          "key": "end",
+          "kind": "number",
+          "said": true,
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "trust-strip",
+      "label": "Name row",
+      "detail": "A calm row of names (clients, places, tools) fades in left to right.",
+      "group": "numbers",
+      "jobs": [
+        "prove"
+      ],
+      "use_when": "The speaker names who they worked with or where they were featured.",
+      "avoid_when": "The names are not said; never list logos or names that were not.",
+      "hold_s": 3,
+      "sound": "none",
+      "default_ms": 3500,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 1.3,
+      "cue": {
+        "field": "marks",
+        "unit": "item"
+      },
+      "fields": [
+        {
+          "key": "marks",
+          "kind": "list",
+          "said": true,
+          "required": true,
+          "max": 20
+        }
+      ]
+    },
+    {
+      "id": "headline-slam",
+      "label": "Headline slam",
+      "detail": "A short line slams in, one word in your color.",
+      "group": "words",
+      "jobs": [
+        "emphasize"
+      ],
+      "use_when": "A short claim (2 to 5 words) is the line to remember.",
+      "avoid_when": "The line is long or needs to build word by word.",
+      "hold_s": 2,
+      "sound": "whoosh",
+      "default_ms": 2500,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 0.58,
+      "cue": {
+        "field": "text",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 40
+        },
+        {
+          "key": "accent_word",
+          "kind": "number",
+          "said": false,
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "per-word-rise",
+      "label": "Word rise",
+      "detail": "Each word rises into place as you say it.",
+      "group": "words",
+      "jobs": [
+        "reveal"
+      ],
+      "use_when": "A key line should land word by word, in time with the voice.",
+      "avoid_when": "The line swaps one word for another (use Word swap).",
+      "hold_s": 3,
+      "sound": "none",
+      "default_ms": 3000,
+      "size": "card",
+      "frame": "band",
+      "cue": {
+        "field": "text",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 60
+        },
+        {
+          "key": "split",
+          "kind": "choice",
+          "said": false,
+          "required": false,
+          "options": [
+            "word",
+            "char"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kinetic-type-swap",
+      "label": "Word swap",
+      "detail": "One word in a line rolls through options and lands on the last.",
+      "group": "words",
+      "jobs": [
+        "reveal"
+      ],
+      "use_when": "One sentence lists alternatives for one slot (\"faster, cheaper, better\").",
+      "avoid_when": "The words differ a lot in length, or there are more than four.",
+      "hold_s": 3,
+      "sound": "tick",
+      "default_ms": 3500,
+      "size": "card",
+      "frame": "band",
+      "cue": {
+        "field": "options",
+        "unit": "item"
+      },
+      "fields": [
+        {
+          "key": "prefix",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 30
+        },
+        {
+          "key": "options",
+          "kind": "list",
+          "said": true,
+          "required": true,
+          "max": 20
+        },
+        {
+          "key": "suffix",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 30
+        }
+      ]
+    },
+    {
+      "id": "text-stagger",
+      "label": "Blur in",
+      "detail": "Words sharpen in from a soft blur, one after another.",
+      "group": "words",
+      "jobs": [
+        "reveal"
+      ],
+      "use_when": "A calm line or a title for a section.",
+      "avoid_when": "The moment needs energy (use Headline slam).",
+      "hold_s": 2.5,
+      "sound": "none",
+      "default_ms": 3000,
+      "size": "card",
+      "frame": "band",
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 50
+        }
+      ]
+    },
+    {
+      "id": "line-swap",
+      "label": "Line swap",
+      "detail": "One line exits up as the answer slides in, a word underlined.",
+      "group": "words",
+      "jobs": [
+        "emphasize"
+      ],
+      "use_when": "A setup line is answered by a second line (\"Everyone says X. The truth is Y.\").",
+      "avoid_when": "There is only one line.",
+      "hold_s": 3.5,
+      "sound": "whoosh",
+      "default_ms": 4000,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 1.5,
+      "cue": {
+        "field": "second",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "first",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 50
+        },
+        {
+          "key": "second",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 50
+        },
+        {
+          "key": "underline",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 20
+        }
+      ]
+    },
+    {
+      "id": "caret-swap",
+      "label": "Caret retype",
+      "detail": "A caret wipes one phrase away and types the replacement.",
+      "group": "words",
+      "jobs": [
+        "emphasize"
+      ],
+      "use_when": "The speaker corrects or reframes a phrase (\"not X, it's Y\").",
+      "avoid_when": "The phrases are long.",
+      "hold_s": 3,
+      "sound": "tick",
+      "default_ms": 3500,
+      "size": "card",
+      "frame": "band",
+      "fields": [
+        {
+          "key": "from",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 40
+        },
+        {
+          "key": "to",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 40
+        }
+      ]
+    },
+    {
+      "id": "scramble-reveal",
+      "label": "Scramble",
+      "detail": "Letters scramble and lock into a word, left to right.",
+      "group": "words",
+      "jobs": [
+        "reveal"
+      ],
+      "use_when": "A product, tool or technical term is named.",
+      "avoid_when": "The tone is calm or premium.",
+      "hold_s": 2.5,
+      "sound": "tick",
+      "default_ms": 3000,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 1.5,
+      "cue": {
+        "field": "text",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 20
+        },
+        {
+          "key": "style",
+          "kind": "choice",
+          "said": false,
+          "required": false,
+          "options": [
+            "clean",
+            "terminal"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "text-shimmer",
+      "label": "Shimmer",
+      "detail": "A word catches one clean light sweep.",
+      "group": "words",
+      "jobs": [
+        "emphasize"
+      ],
+      "use_when": "One quality word should feel premium (\"effortless\", \"simple\").",
+      "avoid_when": "More than a few words.",
+      "hold_s": 2.5,
+      "sound": "whoosh",
+      "default_ms": 3000,
+      "size": "card",
+      "frame": "band",
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 24
+        }
+      ]
+    },
+    {
+      "id": "titlecard-lockup",
+      "label": "Title card",
+      "detail": "A calm centered title with a small line above and below.",
+      "group": "words",
+      "jobs": [
+        "orient"
+      ],
+      "use_when": "A new section starts, or a name is introduced, and a calm beat fits.",
+      "avoid_when": "The moment needs energy.",
+      "hold_s": 3,
+      "sound": "none",
+      "default_ms": 3500,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 1.8,
+      "fields": [
+        {
+          "key": "title",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 24
+        },
+        {
+          "key": "kicker",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 30
+        },
+        {
+          "key": "label",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 40
+        }
+      ]
+    },
+    {
+      "id": "char-slam-explode",
+      "label": "Letter slam",
+      "detail": "Scattered letters slam together into one word.",
+      "group": "words",
+      "jobs": [
+        "emphasize"
+      ],
+      "use_when": "One word should hit hard (\"Done.\", \"Never.\").",
+      "avoid_when": "More than one word.",
+      "hold_s": 2,
+      "sound": "whoosh",
+      "default_ms": 2500,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 1.52,
+      "cue": {
+        "field": "text",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 14
+        },
+        {
+          "key": "spread",
+          "kind": "choice",
+          "said": false,
+          "required": false,
+          "options": [
+            "tight",
+            "wild"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stitched-text-draw",
+      "label": "Stitched word",
+      "detail": "A word is stitched in thread, stroke by stroke.",
+      "group": "words",
+      "jobs": [
+        "reveal"
+      ],
+      "use_when": "A crafted, handmade or personal word.",
+      "avoid_when": "The word is long or the tone is techy.",
+      "hold_s": 3.5,
+      "sound": "none",
+      "default_ms": 4000,
+      "size": "card",
+      "frame": "band",
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 12
+        }
+      ]
+    },
+    {
+      "id": "marker-highlight",
+      "label": "Marker",
+      "detail": "A line with one word highlighted, circled or underlined by marker.",
+      "group": "words",
+      "jobs": [
+        "emphasize"
+      ],
+      "use_when": "A line has one word that carries it.",
+      "avoid_when": "Every word matters equally.",
+      "hold_s": 3,
+      "sound": "none",
+      "default_ms": 3500,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 0.9,
+      "cue": {
+        "field": "word",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 60
+        },
+        {
+          "key": "word",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 24
+        },
+        {
+          "key": "style",
+          "kind": "choice",
+          "said": false,
+          "required": false,
+          "options": [
+            "highlight",
+            "circle",
+            "underline",
+            "scribble"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vox-annotate",
+      "label": "Annotate",
+      "detail": "A word in a line is marked, with a short note drawn beside it.",
+      "group": "words",
+      "jobs": [
+        "emphasize"
+      ],
+      "use_when": "A phrase needs an aside or a short explanation.",
+      "avoid_when": "Plain emphasis is enough (use Marker).",
+      "hold_s": 3.5,
+      "sound": "none",
+      "default_ms": 4000,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 0.9,
+      "cue": {
+        "field": "word",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 50
+        },
+        {
+          "key": "word",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 20
+        },
+        {
+          "key": "note",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 30
+        },
+        {
+          "key": "style",
+          "kind": "choice",
+          "said": false,
+          "required": false,
+          "options": [
+            "highlight",
+            "circle",
+            "underline",
+            "scribble"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kinetic-center-build",
+      "label": "Word push",
+      "detail": "Words arrive from the right and push the line until it locks in the center.",
+      "group": "words",
+      "jobs": [
+        "reveal"
+      ],
+      "use_when": "A short line builds word by word with momentum.",
+      "avoid_when": "The line is long (over six words).",
+      "hold_s": 2.5,
+      "sound": "whoosh",
+      "default_ms": 3000,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 1.2,
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 40
+        }
+      ]
+    },
+    {
+      "id": "wordmark-tiles",
+      "label": "Tile word",
+      "detail": "A word resolves from colored noise into clean tiles.",
+      "group": "words",
+      "jobs": [
+        "reveal"
+      ],
+      "use_when": "A launch, a name or a big reveal word.",
+      "avoid_when": "More than one word.",
+      "hold_s": 2.5,
+      "sound": "riser",
+      "default_ms": 3000,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 0.2,
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 12
+        }
+      ]
+    },
+    {
+      "id": "ticker-takeover",
+      "label": "Ticker",
+      "detail": "A ticker rolls through words and locks on one with a flash.",
+      "group": "words",
+      "jobs": [
+        "reveal"
+      ],
+      "use_when": "Several options are rattled off and one wins.",
+      "avoid_when": "Only one word is said.",
+      "hold_s": 3,
+      "sound": "tick",
+      "default_ms": 3500,
+      "size": "card",
+      "frame": "band",
+      "cue": {
+        "field": "final",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "options",
+          "kind": "list",
+          "said": true,
+          "required": true,
+          "max": 16
+        },
+        {
+          "key": "final",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 16
+        }
+      ]
+    },
+    {
+      "id": "typed-prompt",
+      "label": "Typed line",
+      "detail": "A line types out in a prompt box with a caret.",
+      "group": "words",
+      "jobs": [
+        "demonstrate"
+      ],
+      "use_when": "The speaker says what they typed or asked a tool.",
+      "avoid_when": "It is not something typed.",
+      "hold_s": 3.5,
+      "sound": "tick",
+      "default_ms": 4000,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 2.9,
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 60
+        }
+      ]
+    },
+    {
+      "id": "strikethrough-replace",
+      "label": "Strike & replace",
+      "detail": "One word is struck out and a better one rises beside it.",
+      "group": "compare",
+      "jobs": [
+        "compare"
+      ],
+      "use_when": "One word replaces another (\"not hard, simple\").",
+      "avoid_when": "Whole sentences (use Line swap).",
+      "hold_s": 2.5,
+      "sound": "whoosh",
+      "default_ms": 3000,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 0.84,
+      "cue": {
+        "field": "after",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "before",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 20
+        },
+        {
+          "key": "after",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 20
+        }
+      ]
+    },
+    {
+      "id": "marker-checklist-card",
+      "label": "Marker checklist",
+      "detail": "A hand-marked title with three ticked lines.",
+      "group": "ideas",
+      "jobs": [
+        "exhibit"
+      ],
+      "use_when": "A short framework is said: a title and three short steps.",
+      "avoid_when": "The steps are long sentences.",
+      "hold_s": 5,
+      "sound": "tick",
+      "default_ms": 6000,
+      "size": "stage",
+      "frame": "band",
+      "fields": [
+        {
+          "key": "top",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 18
+        },
+        {
+          "key": "mid",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 6
+        },
+        {
+          "key": "circled",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 10
+        },
+        {
+          "key": "rest",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 12
+        },
+        {
+          "key": "line_one",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 12
+        },
+        {
+          "key": "answer_one",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 14
+        },
+        {
+          "key": "line_two",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 12
+        },
+        {
+          "key": "answer_two",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 14
+        },
+        {
+          "key": "line_three",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 12
+        },
+        {
+          "key": "answer_three",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 14
+        }
+      ]
+    },
+    {
+      "id": "constellation-hub",
+      "label": "Hub",
+      "detail": "A center word with ideas that light up around it as you say them.",
+      "group": "ideas",
+      "jobs": [
+        "exhibit"
+      ],
+      "use_when": "Several parts of one idea are named.",
+      "avoid_when": "The parts are steps in order (use Staircase).",
+      "hold_s": 5,
+      "sound": "pop",
+      "default_ms": 5500,
+      "size": "stage",
+      "frame": "band",
+      "cue": {
+        "field": "nodes",
+        "unit": "item"
+      },
+      "fields": [
+        {
+          "key": "hub",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 18
+        },
+        {
+          "key": "nodes",
+          "kind": "list",
+          "said": true,
+          "required": true,
+          "max": 16
+        }
+      ]
+    },
+    {
+      "id": "locked-nucleus-orbit",
+      "label": "Core orbit",
+      "detail": "Small dots orbit one locked center word.",
+      "group": "ideas",
+      "jobs": [
+        "reveal"
+      ],
+      "use_when": "One central idea everything else turns around.",
+      "avoid_when": "The things around it need names (use Hub).",
+      "hold_s": 3.5,
+      "sound": "riser",
+      "default_ms": 4000,
+      "size": "card",
+      "frame": "band",
+      "fields": [
+        {
+          "key": "label",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 14
+        }
+      ]
+    },
+    {
+      "id": "radial-surround",
+      "label": "Surrounded",
+      "detail": "Labels ring a center word, then close in on it.",
+      "group": "ideas",
+      "jobs": [
+        "agitate"
+      ],
+      "use_when": "The speaker lists what piles up on someone (\"emails, calls, meetings…\").",
+      "avoid_when": "The list is a set of good options.",
+      "hold_s": 5,
+      "sound": "riser",
+      "default_ms": 5500,
+      "size": "stage",
+      "frame": "band",
+      "cue": {
+        "field": "chips",
+        "unit": "item"
+      },
+      "fields": [
+        {
+          "key": "center",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 16
+        },
+        {
+          "key": "chips",
+          "kind": "list",
+          "said": true,
+          "required": true,
+          "max": 14
+        }
+      ]
+    },
+    {
+      "id": "overwhelm-surround",
+      "label": "Overwhelm",
+      "detail": "Pings and tabs swarm in around one calm center word.",
+      "group": "ideas",
+      "jobs": [
+        "agitate"
+      ],
+      "use_when": "The speaker describes being overwhelmed or pulled in every direction.",
+      "avoid_when": "The things around need names (use Surrounded).",
+      "hold_s": 4,
+      "sound": "riser",
+      "default_ms": 4500,
+      "size": "stage",
+      "frame": "band",
+      "fields": [
+        {
+          "key": "center",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 14
+        }
+      ]
+    },
+    {
+      "id": "state-chip-rail",
+      "label": "Status rail",
+      "detail": "A row of steps that light up one after another.",
+      "group": "ideas",
+      "jobs": [
+        "demonstrate"
+      ],
+      "use_when": "A short process is said step by step.",
+      "avoid_when": "More than five steps.",
+      "hold_s": 4,
+      "sound": "tick",
+      "default_ms": 4500,
+      "size": "card",
+      "frame": "band",
+      "cue": {
+        "field": "states",
+        "unit": "item"
+      },
+      "fields": [
+        {
+          "key": "states",
+          "kind": "list",
+          "said": true,
+          "required": true,
+          "max": 14
+        }
+      ]
+    },
+    {
+      "id": "whiteboard-ink",
+      "label": "Sketch",
+      "detail": "A light bulb, flow or rocket sketches itself with a caption.",
+      "group": "ideas",
+      "jobs": [
+        "reveal"
+      ],
+      "use_when": "An idea, a plan or a launch is explained.",
+      "avoid_when": "None of the three sketches fits.",
+      "hold_s": 4,
+      "sound": "none",
+      "default_ms": 4500,
+      "size": "stage",
+      "frame": "band",
+      "sync_s": 3.3,
+      "fields": [
+        {
+          "key": "caption",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 30
+        },
+        {
+          "key": "sketch",
+          "kind": "choice",
+          "said": false,
+          "required": false,
+          "options": [
+            "bulb",
+            "flow",
+            "rocket"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "typing-indicator",
+      "label": "Typing dots",
+      "detail": "A chat bubble with three typing dots.",
+      "group": "screens",
+      "jobs": [
+        "demonstrate"
+      ],
+      "use_when": "A beat of suspense: someone is about to reply.",
+      "avoid_when": "Nothing is being typed or answered.",
+      "hold_s": 2,
+      "sound": "tick",
+      "default_ms": 2500,
+      "size": "compact",
+      "frame": "band",
+      "fields": [
+        {
+          "key": "tone",
+          "kind": "choice",
+          "said": false,
+          "required": false,
+          "options": [
+            "dark",
+            "light"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "notification-stack",
+      "label": "Notifications",
+      "detail": "Notification cards stack up as you say them.",
+      "group": "screens",
+      "jobs": [
+        "demonstrate"
+      ],
+      "use_when": "Alerts or results arriving are described (\"sale, sale, another sale\").",
+      "avoid_when": "Nothing arrives.",
+      "hold_s": 4,
+      "sound": "pop",
+      "default_ms": 4500,
+      "size": "stage",
+      "frame": "band",
+      "cue": {
+        "field": "titles",
+        "unit": "item"
+      },
+      "fields": [
+        {
+          "key": "titles",
+          "kind": "list",
+          "said": true,
+          "required": true,
+          "max": 30
+        },
+        {
+          "key": "bodies",
+          "kind": "list",
+          "said": true,
+          "required": false,
+          "max": 40
+        }
+      ]
+    },
+    {
+      "id": "testimonial-card",
+      "label": "Testimonial",
+      "detail": "A quote card with who said it and their stars.",
+      "group": "numbers",
+      "jobs": [
+        "prove"
+      ],
+      "use_when": "The speaker reads out a real customer's words.",
+      "avoid_when": "The words were not said; never make a testimonial up.",
+      "hold_s": 4.5,
+      "sound": "pop",
+      "default_ms": 5000,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 0.82,
+      "fields": [
+        {
+          "key": "quote",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 90
+        },
+        {
+          "key": "author",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 30
+        },
+        {
+          "key": "handle",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 30
+        },
+        {
+          "key": "rating",
+          "kind": "number",
+          "said": true,
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "testimonial-proof-card",
+      "label": "Quote card",
+      "detail": "A quote reveals line by line, a phrase underlined, with who said it.",
+      "group": "numbers",
+      "jobs": [
+        "prove"
+      ],
+      "use_when": "A real customer quote is read out.",
+      "avoid_when": "The words were not said; never make one up.",
+      "hold_s": 5,
+      "sound": "none",
+      "default_ms": 5500,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 1.6,
+      "fields": [
+        {
+          "key": "quote",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 90
+        },
+        {
+          "key": "name",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 30
+        },
+        {
+          "key": "role",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 30
+        },
+        {
+          "key": "company",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 24
+        },
+        {
+          "key": "emphasis",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 30
+        }
+      ]
+    },
+    {
+      "id": "cta-close",
+      "label": "Closing ask",
+      "detail": "One line and a button, the last thing on screen.",
+      "group": "ending",
+      "jobs": [
+        "ask"
+      ],
+      "use_when": "The video ends on an ask (\"start today\", \"join now\").",
+      "avoid_when": "It is not the end.",
+      "hold_s": 3,
+      "sound": "pop",
+      "default_ms": 3500,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 1.32,
+      "cue": {
+        "field": "button",
+        "unit": "word"
+      },
+      "fields": [
+        {
+          "key": "line",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 40
+        },
+        {
+          "key": "button",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 24
+        }
+      ]
+    },
+    {
+      "id": "cta-lockup",
+      "label": "Ask lockup",
+      "detail": "A line, a button and a small line under it.",
+      "group": "ending",
+      "jobs": [
+        "ask"
+      ],
+      "use_when": "An ask with a detail (\"free\", \"link in bio\").",
+      "avoid_when": "It is not the end.",
+      "hold_s": 3.5,
+      "sound": "pop",
+      "default_ms": 4000,
+      "size": "card",
+      "frame": "band",
+      "sync_s": 1.6,
+      "fields": [
+        {
+          "key": "line",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 40
+        },
+        {
+          "key": "button",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 24
+        },
+        {
+          "key": "small",
+          "kind": "text",
+          "said": true,
+          "required": false,
+          "max": 30
+        }
+      ]
+    },
+    {
+      "id": "gloss-sweep",
+      "label": "Gloss badge",
+      "detail": "A short badge slams in and catches a gloss.",
+      "group": "ending",
+      "jobs": [
+        "celebrate"
+      ],
+      "use_when": "A win or a level is named (\"Pro\", \"Done\", \"Free\").",
+      "avoid_when": "More than two words.",
+      "hold_s": 2,
+      "sound": "whoosh",
+      "default_ms": 2500,
+      "size": "compact",
+      "frame": "band",
+      "sync_s": 1.35,
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 14
+        }
+      ]
+    },
+    {
+      "id": "spring-pop",
+      "label": "Badge pop",
+      "detail": "A small badge pops in and settles.",
+      "group": "ending",
+      "jobs": [
+        "reveal"
+      ],
+      "use_when": "A short label appears (\"New\", \"Free\", \"Step 1\").",
+      "avoid_when": "More than two words.",
+      "hold_s": 2,
+      "sound": "pop",
+      "default_ms": 2500,
+      "size": "compact",
+      "frame": "band",
+      "sync_s": 0.6,
+      "fields": [
+        {
+          "key": "text",
+          "kind": "text",
+          "said": true,
+          "required": true,
+          "max": 14
+        }
+      ]
+    }
+  ]
+}

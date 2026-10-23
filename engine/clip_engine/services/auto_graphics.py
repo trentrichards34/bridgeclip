@@ -26,10 +26,12 @@ Graphics row when the clip is opened, editable like any other graphic.
 """
 from __future__ import annotations
 
+import json
 import os
 import math
 import re
 import secrets
+from functools import lru_cache
 from typing import Any, Iterable, Optional, Sequence
 
 # Templates the planner may pick (never the logo, the arrow or the browser window: those need the member's
@@ -48,7 +50,9 @@ TEMPLATE_FIELDS = {
     'idea_hub': ('text', 'items', 'icon'), 'compare_marks': ('items', 'notes', 'wrong'), 'growth': ('title', 'items', 'style'),
 }
 # Templates a saved run may carry (the editor's other templates are never automatic).
-SAVED_TEMPLATES = AUTO_TEMPLATES + ('browser_frame', 'big_words', 'chapter', 'link_cta')
+# 'fx': an Effect (a HyperFrames unit; data/fx_catalog.json, from src/shared/fx-catalog.ts) with its own fields. The
+# planner doesn't place effects yet; saved runs and the review may carry ones the member added.
+SAVED_TEMPLATES = AUTO_TEMPLATES + ('browser_frame', 'big_words', 'chapter', 'link_cta', 'fx')
 SAVED_FIELDS = {**TEMPLATE_FIELDS, 'browser_frame': ('domain', 'title', 'accent', 'subline'), 'big_words': ('text', 'style', 'vertical', 'motion'),
                 'chapter': ('label', 'title', 'style'), 'growth': ('title', 'items', 'style'),
                 # The spoken call to action (spoken_cta.py): added after the planner's cards, never planned.
@@ -104,7 +108,7 @@ SCREEN_VARIANTS = {'statement': ('glass', 'bold'), 'title': ('pill', 'shadow'), 
 DEFAULT_MS = {'stat': 3500, 'title': 2500, 'list': 5000, 'lower_third': 4000, 'before_after': 4000, 'checklist': 5000, 'quote': 5000,
               'statement': 3500, 'sticky_notes': 4000, 'strike_list': 5000, 'headline_pill': 3500, 'icon_pop': 3500, 'comment_cta': 3500,
               'browser_frame': 5000, 'orbit': 4500, 'feature_tile': 3500, 'big_words': 2500,
-              'staircase': 9000, 'funnel': 8000, 'journey': 9000, 'growth': 9000, 'idea_hub': 8000, 'compare_marks': 7000, 'chapter': 15000}
+              'staircase': 9000, 'funnel': 8000, 'journey': 9000, 'growth': 9000, 'idea_hub': 8000, 'compare_marks': 7000, 'chapter': 15000, 'fx': 3500}
 # Cards per clip: about one per 6.5 s of the finished clip, at most five a minute (and never more than 12).
 SECONDS_PER_CARD = 6.5
 CARDS_PER_MINUTE = 5
@@ -282,8 +286,59 @@ def _lines(value: Any, limit: int) -> list[str]:
     return [line for line in lines if line][:limit]
 
 
+FX_CATALOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'fx_catalog.json')
+
+
+@lru_cache(maxsize=1)
+def fx_catalog() -> dict[str, dict]:
+    """The Effects catalog by effect id (data/fx_catalog.json): fields, jobs, use_when, avoid_when, hold, sound."""
+    try:
+        with open(FX_CATALOG_PATH, encoding='utf-8') as f:
+            data = json.load(f)
+        return {e['id']: e for e in data.get('effects', []) if isinstance(e, dict) and isinstance(e.get('id'), str)}
+    except (OSError, ValueError):
+        return {}
+
+
+def fx_clean_fields(raw: dict) -> dict[str, str]:
+    """An effect's fields: a known effect, then its own fields by kind (text, number, list one per line, choice);
+    nothing else. Empty when the effect is unknown."""
+    effect = fx_catalog().get(raw.get('effect')) if isinstance(raw.get('effect'), str) else None
+    if not effect:
+        return {}
+    fields = {'effect': effect['id']}
+    for f in effect['fields']:
+        value = raw.get(f['key'])
+        if f['kind'] == 'list':
+            lines = _lines(value, 8)
+            if lines:
+                fields[f['key']] = '\n'.join(line[:f.get('max', MAX_ITEM_CHARS)] for line in lines)
+        elif f['kind'] == 'choice':
+            if value in f.get('options', ()):
+                fields[f['key']] = value
+        elif f['kind'] == 'number':
+            text = _text(str(value) if type(value) in (int, float) else value, 24)
+            if _HAS_DIGIT.search(text):
+                fields[f['key']] = text
+        else:
+            text = _text(value, f.get('max', MAX_FIELD_CHARS))
+            if text:
+                fields[f['key']] = text
+    if raw.get('backing') == 'none':
+        fields['backing'] = 'none'
+    return fields
+
+
+def fx_has_content(fields: dict[str, str]) -> bool:
+    """A known effect with its required fields filled (fx-catalog.ts fxHasContent)."""
+    effect = fx_catalog().get(fields.get('effect'))
+    return bool(effect) and all(not f['required'] or bool(fields.get(f['key'])) for f in effect['fields'])
+
+
 def clean_fields(template: str, raw: dict, fields_of: Optional[dict] = None) -> dict[str, str]:
     """The template's own fields, trimmed to the editor's limits; list items and icons newline-separated."""
+    if template == 'fx':
+        return fx_clean_fields(raw)
     fields: dict[str, str] = {}
     for key in (fields_of or TEMPLATE_FIELDS)[template]:
         if key == 'items':
@@ -332,6 +387,8 @@ def clean_fields(template: str, raw: dict, fields_of: Optional[dict] = None) -> 
 def has_content(template: str, fields: dict[str, str]) -> bool:
     """Enough words to draw a useful card (stricter than the editor: a stat needs its number, a list two points)."""
     items = fields.get('items', '').split('\n') if fields.get('items') else []
+    if template == 'fx':
+        return fx_has_content(fields)
     if template == 'stat':
         return bool(_HAS_DIGIT.search(fields.get('value', '')))
     if template in ('title', 'quote', 'statement', 'big_words'):
@@ -651,6 +708,13 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
     """Every number on the card is said within 3 s of it; most of its words are said near it (every word, close
     by and in order, for the newer templates)."""
     at, length = graphic['at_ms'], graphic['duration_ms']
+    if graphic['template'] == 'fx':
+        # An effect: only the fields it shows as words or numbers (fx_catalog 'said'), every word said near it.
+        effect = fx_catalog().get(graphic['fields'].get('effect'))
+        if not effect:
+            return False
+        said = {f['key'] for f in effect['fields'] if f['said']}
+        graphic = {**graphic, 'fields': {k: v for k, v in graphic['fields'].items() if k in said}}
     near_numbers = _numbers(_words_between(segments, at - NUMBER_WINDOW_MS, at + NUMBER_WINDOW_MS))
     for key, text in graphic['fields'].items():
         if key in NON_WORD_FIELDS:
@@ -659,7 +723,7 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
             for value in _numbers(line):
                 if not any(abs(value - heard) <= 1e-6 * max(1.0, abs(value)) for heard in near_numbers):
                     return False
-    if graphic['template'] in STRICT_TEMPLATES:
+    if graphic['template'] in STRICT_TEMPLATES or graphic['template'] == 'fx':
         strict_heard = {w for w, _ in _timed_words(segments, at - STRICT_WINDOW_MS, at + length + STRICT_WINDOW_MS)}
         return _digits_said(graphic, strict_heard) and _strict_said(graphic, segments)
     heard = set(_tokens(_words_between(segments, at - WORD_WINDOW_MS, at + length + WORD_WINDOW_MS)))
@@ -1581,7 +1645,7 @@ def checked_saved(raw: Any, duration_ms: int) -> list[dict]:
         clean = clean_fields(g['template'], fields, SAVED_FIELDS)
         if not clean:
             continue
-        for key in ('item_ms', 'word_ms'):
+        for key in ('item_ms', 'word_ms', 'cue_ms'):
             times = fields.get(key)
             if isinstance(times, str) and re.fullmatch(r'\d{1,5}(\n\d{1,5}){0,15}', times):
                 clean[key] = times

@@ -339,7 +339,7 @@ def _member_fields(raw: Any) -> dict[str, str]:
         return {}
     out = {}
     for key, value in raw.items():
-        if isinstance(key, str) and re.fullmatch(r'[a-z_]{1,20}', key) and isinstance(value, str) and key not in ('item_ms', 'word_ms'):
+        if isinstance(key, str) and re.fullmatch(r'[a-z_]{1,20}', key) and isinstance(value, str) and key not in ('item_ms', 'word_ms', 'cue_ms'):
             out[key] = re.sub(r'[\x00-\x09\x0b-\x1f\x7f]', ' ', value)[:MEMBER_FIELD_CHARS]
     return out
 

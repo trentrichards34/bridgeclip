@@ -211,8 +211,9 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
   delete fields.font
   delete fields.item_ms
   delete fields.word_ms
-  // Item and word reveal times (source ms from the graphic's start) on the finished clip's clock.
-  for (const key of ['item_ms', 'word_ms'] as const) {
+  delete fields.cue_ms
+  // Item, word and effect cue times (source ms from the graphic's start) on the finished clip's clock.
+  for (const key of ['item_ms', 'word_ms', 'cue_ms'] as const) {
     const times = (graphic.fields[key] ?? '').split(/[\s,]+/).filter(Boolean).map(Number)
     if (!times.length || !times.every(Number.isFinite)) continue
     const out = times.map((t) => outputTime(candidate, graphic.at_ms + t))

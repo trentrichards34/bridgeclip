@@ -10,6 +10,7 @@
  * A line only shows while the app's change is still in place, so a Restore
  * makes its line go away (and Undo brings it back).
  */
+import { fxEffect, fxLine } from './fx-catalog'
 import { CAPTION_PRESETS } from './caption-presets'
 import { fitCropToAspect, type CandidateEdit, type EditorCandidate, type EditorProject, type EditorRange, type EditorScene } from './clip-editor'
 import { graphicItems, type EditorGraphic } from './motion-graphics'
@@ -115,6 +116,7 @@ export function graphicPhrase(g: Pick<EditorGraphic, 'template' | 'fields'>): st
       const n = graphicItems(f.items).length
       return f.title?.trim() ? `“${short(f.title, 24)}” ${name}` : n && g.template !== 'compare_marks' ? `${n}-step ${name}` : name
     }
+    case 'fx': { const name = fxEffect(f.effect)?.label.toLowerCase() ?? 'effect'; const line = fxLine(f); return line ? `“${short(line, 24)}” ${name}` : `${name} effect` }
   }
 }
 
