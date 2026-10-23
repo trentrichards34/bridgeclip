@@ -1,0 +1,19 @@
+{
+  "name": "onboarding-stepper-flow",
+  "title": "Stepper",
+  "source": "CreatorClips' own unit, remade from HyperFrames registry/components/onboarding-stepper-flow (Apache-2.0)",
+  "variables": [
+    {
+      "id": "steps",
+      "type": "string",
+      "label": "Steps in order (\"|\"-separated)",
+      "default": ""
+    },
+    {
+      "id": "cues",
+      "type": "string",
+      "label": "Comma seconds: when each step is said",
+      "default": ""
+    }
+  ]
+}

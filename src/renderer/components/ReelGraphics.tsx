@@ -15,8 +15,8 @@ import { isHexColor } from '../../shared/headline-look'
 import { DIAGRAM_ACCENT, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHIC_ITEMS, graphicCanGoBehind, graphicMaxMs, isDiagram, graphicDepth, graphicHasContent, highlightPoint, templateInfo, type EditorGraphic, type GraphicPlacement, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { MAX_REEL_GRAPHICS, REEL_GRAPHIC_TEMPLATES, reelGraphicSpec, reelGraphicStyle } from '../../shared/reel-graphics'
 import { cn } from '../lib/utils'
-import { BigWordsFields, DiagramFields, EffectFields, GraphicView, IconFields, SHORT, fieldLabel, graphicSummary } from './ClipGraphics'
-import { fxEffect } from '../../shared/fx-catalog'
+import { BigWordsFields, DiagramFields, EffectFields, GraphicView, IconFields, SHORT, fieldLabel, graphicSummary, type EffectPictures } from './ClipGraphics'
+import { fxEffect, fxPictureFields } from '../../shared/fx-catalog'
 import { GraphicGallery, TEMPLATE_ICONS } from './GraphicGallery'
 import { Button } from './ui/Button'
 import { Segmented } from './ui/Segmented'
@@ -38,7 +38,7 @@ const nameOf = (g: Pick<EditorGraphic, 'template' | 'fields'>): string => g.temp
 
 const clock = (seconds: number): string => `${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, '0')}`
 
-export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame, look, disabled, emptyNote, onAdd, onPatch, onRemove, cursorLabel, prefill, heading = 'h3', limit = MAX_REEL_GRAPHICS }: {
+export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame, look, disabled, emptyNote, onAdd, onPatch, onRemove, cursorLabel, prefill, pictures, heading = 'h3', limit = MAX_REEL_GRAPHICS }: {
   label: string
   /** The most graphics this video takes (an edited reel takes more). */
   limit?: number
@@ -63,6 +63,8 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
   cursorLabel: (at: number) => string
   /** The words a new graphic of this template starts with at `at` (the gallery's previews show them). */
   prefill?: (template: GraphicTemplateId, at: number) => Record<string, string>
+  /** The member's pictures for this video (an edited reel's screenshots): the effects on them are offered then. */
+  pictures?: EffectPictures
 }): React.JSX.Element {
   const [selected, setSelected] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
@@ -78,6 +80,12 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
 
   const add = (template: GraphicTemplateId, look?: string): void => {
     const id = onAdd(template, at, template === 'fx' ? look : undefined)
+    // An effect on the member's pictures starts with their first screenshots (they can pick others).
+    const wanted = template === 'fx' ? fxPictureFields(fxEffect(look)).filter((f) => f.required) : []
+    if (id && wanted.length && pictures?.options?.length) {
+      const options = pictures.options
+      onPatch(id, { fields: Object.fromEntries(wanted.map((f, i) => [f.key, options[Math.min(i, options.length - 1)].value])) })
+    }
     if (id) setSelected(id)
     setPicking(false)
   }
@@ -110,27 +118,32 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
       <div className="flex flex-wrap justify-between gap-2 text-2xs text-ink-subtle"><span>0:00</span><span>New graphics start {cursorLabel(at)}.</span><span>{clock(total)}</span></div>
     </>}
     {picking && <GraphicGallery templates={REEL_GRAPHIC_TEMPLATES} where={cursorLabel(at)} style={style} full={full || disabled} limitNote={`Add up to ${limit} graphics.`}
-      prefill={prefill ? (template) => prefill(template, at) : undefined} onPick={add} onClose={() => setPicking(false)} />}
+      prefill={prefill ? (template) => prefill(template, at) : undefined} pictures={!!pictures?.options?.length} onPick={add} onClose={() => setPicking(false)} />}
     {items.length > 0 && <div className="flex flex-wrap gap-1.5" role="list" aria-label="Your graphics">
       {items.map((item) => <button key={item.id} type="button" role="listitem" onClick={() => setSelected(item.id)}
         className={cn('rounded-full border px-2.5 py-1 text-2xs', item.id === selected ? 'border-tool/70 bg-tool/15 text-ink' : 'border-white/10 text-ink-muted hover:text-ink')}>
         {item.problem && <AlertTriangle className="mr-1 inline h-3 w-3 text-warning" aria-hidden />}{nameOf(item)} {item.where}
       </button>)}
     </div>}
-    {g && <GraphicForm key={g.id} g={g} frame={frame} look={look} disabled={disabled} cursorLabel={cursorLabel(at)}
+    {g && <GraphicForm key={g.id} g={g} frame={frame} look={look} disabled={disabled} cursorLabel={cursorLabel(at)} pictures={pictures}
       onField={field} onPatch={(patch) => onPatch(g.id, patch)} onMoveHere={() => onPatch(g.id, { at })}
       onRemove={() => { onRemove(g.id); setSelected(null) }} />}
   </section>
 }
 
 /** One reel graphic's form (exported for tests). */
-export function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, onPatch, onMoveHere, onRemove }: {
-  g: ReelGraphicItem; frame: GraphicFrame; look: HeadlineLook | null; disabled: boolean; cursorLabel: string
+export function GraphicForm({ g, frame, look, disabled, cursorLabel, pictures, onField, onPatch, onMoveHere, onRemove }: {
+  g: ReelGraphicItem; frame: GraphicFrame; look: HeadlineLook | null; disabled: boolean; cursorLabel: string; pictures?: EffectPictures
   onField: (key: string, value: string) => void; onPatch: (patch: ReelGraphicPatch) => void; onMoveHere: () => void; onRemove: () => void
 }): React.JSX.Element {
   const info = templateInfo(g.template)
   const style = reelGraphicStyle(look, g)
-  const spec = useMemo(() => reelGraphicSpec(g, frame, g.duration_ms, look), [g, frame, look])
+  const spec = useMemo(() => {
+    const drawn = reelGraphicSpec(g, frame, g.duration_ms, look)
+    // An effect's pictures (the reel's screenshots) show in the small preview too.
+    if (g.template === 'fx' && pictures) for (const f of fxPictureFields(fxEffect(g.fields.effect))) if (f.key === 'image' || f.key === 'image_b') drawn[f.key] = pictures.url(g.fields[f.key])
+    return drawn
+  }, [g, frame, look, pictures])
   const box = graphicBox(g.placement, frame)
   const input = 'w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-faint focus:border-accent/70 focus:outline-none'
   return <div className="grid gap-4 rounded-xl border border-white/10 p-3 sm:grid-cols-[minmax(0,1fr)_132px]">
@@ -141,7 +154,7 @@ export function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, on
       </div>
       {g.problem && <p className="text-2xs text-warning" role="note">{g.problem}</p>}
       {!graphicHasContent(g) && <p className="text-2xs text-warning">Add its words to show it.</p>}
-      {g.template === 'fx' && <EffectFields fields={g.fields} onField={onField} />}
+      {g.template === 'fx' && <EffectFields fields={g.fields} onField={onField} pictures={pictures} />}
       {info.fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'highlights', 'style', 'vertical', 'motion', 'labels', 'dot', 'icon', 'wrong', 'effect'].includes(k)).map((key) => <label key={key} className="block space-y-1 text-2xs text-ink-muted">{fieldLabel(g.template, key)}
         {key === 'items' || key === 'text' || key === 'notes'
           ? <textarea className={cn(input, 'resize-y')} rows={key === 'items' ? GRAPHIC_ITEM_LIMITS[g.template] ?? MAX_GRAPHIC_ITEMS : 2} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''}

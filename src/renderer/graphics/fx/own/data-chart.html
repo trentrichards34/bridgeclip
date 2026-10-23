@@ -1,0 +1,71 @@
+<!--
+  CreatorClips unit "data-chart": a labeled bar chart, remade from HyperFrames' data-chart block
+  (https://github.com/heygen-com/hyperframes, registry/blocks/data-chart, Copyright 2026 HeyGen, Inc., Apache License 2.0;
+  see ../vendor/LICENSE and ../vendor/NOTICE). The original is a fixed 1920x1080 composition with its numbers baked in;
+  this one keeps its idea (bars that grow with their values, labels under them, one bar in the accent) and takes
+  everything as variables, sized to its box (cq units), timed by CreatorClips' shared motion (window.__ccMotion).
+
+  Variables: data (numbers, "|"-separated, as said), labels ("|"-separated), title, unit (after each value),
+  cues (comma seconds: when each number is said; a bar grows on its number).
+-->
+<template>
+  <div id="root" data-composition-id="data-chart" data-duration="5">
+    <style>
+      #root { position: absolute; inset: 0; container-type: size; display: grid; place-items: center; font-family: var(--font-body, sans-serif); color: var(--fg, #f8fafc); }
+      .dc-card { box-sizing: border-box; width: 94cqw; height: 92cqh; padding: 5cqmin 5cqmin 4cqmin; border-radius: var(--radius, 28px); background: var(--surface, rgba(15, 18, 26, 0.9));
+        border: 0.25cqmin solid var(--border, rgba(255, 255, 255, 0.16)); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 3cqmin; }
+      .dc-title { font: 800 6.4cqmin/1.1 var(--font-display, sans-serif); letter-spacing: -0.02em; }
+      .dc-title:empty { display: none; }
+      .dc-plot { display: flex; align-items: stretch; gap: 3cqmin; border-bottom: 0.45cqmin solid var(--border, rgba(255, 255, 255, 0.16)); min-height: 0; }
+      .dc-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 0; }
+      .dc-val { font: 800 5.6cqmin/1 var(--font-display, sans-serif); margin-bottom: 1.4cqmin; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .dc-bar { width: 100%; border-radius: 1.8cqmin 1.8cqmin 0.4cqmin 0.4cqmin; background: color-mix(in srgb, var(--fg, #f8fafc) 28%, transparent); transform-origin: 50% 100%; }
+      .dc-bar.dc-top { background: var(--brand, #22c55e); }
+      .dc-labels { display: flex; gap: 3cqmin; }
+      .dc-labels:empty { display: none; }
+      .dc-label { flex: 1; min-width: 0; text-align: center; font: 600 4.2cqmin/1.15 var(--font-body, sans-serif); color: var(--muted, rgba(226, 232, 240, 0.74)); overflow-wrap: anywhere; }
+    </style>
+    <div class="dc-card"><div class="dc-title"></div><div class="dc-plot"></div><div class="dc-labels"></div></div>
+    <script>
+      (function () {
+        var vars = window.__hyperframes && window.__hyperframes.getVariables ? window.__hyperframes.getVariables() : {};
+        var M = window.__ccMotion || { move_s: 0.333, enter: 'expo.out', exit: 'power2.in', from_scale: 1.08, stagger_s: 0.2 };
+        var root = document.getElementById('root');
+        var words = function (v) { return String(v == null ? '' : v).replace(/​/g, '').trim(); };
+        var items = function (v) { return String(v == null ? '' : v).split('|').map(words); };
+        var data = items(vars.data).filter(Boolean).slice(0, 8);
+        var labels = items(vars.labels);
+        var unit = words(vars.unit);
+        var cues = String(vars.cues || '').split(',').map(parseFloat);
+        var value = function (t) { var m = /-?\d[\d,]*(?:\.\d+)?/.exec(t); return m ? Math.max(0, parseFloat(m[0].replace(/,/g, ''))) : 0; };
+        var max = Math.max.apply(null, data.map(value).concat([1e-9]));
+        var top = data.map(value).indexOf(max);
+        root.querySelector('.dc-title').textContent = words(vars.title);
+        var plot = root.querySelector('.dc-plot'), row = root.querySelector('.dc-labels');
+        var bars = [], vals = [];
+        data.forEach(function (text, i) {
+          var col = document.createElement('div'); col.className = 'dc-col';
+          var val = document.createElement('div'); val.className = 'dc-val'; val.textContent = text + (unit && text.indexOf(unit) < 0 ? unit : '');
+          var bar = document.createElement('div'); bar.className = 'dc-bar' + (i === top ? ' dc-top' : '');
+          bar.style.height = (Math.max(0.04, value(text) / max) * 82).toFixed(2) + '%';
+          col.appendChild(val); col.appendChild(bar); plot.appendChild(col); bars.push(bar); vals.push(val);
+        });
+        if (labels.some(Boolean)) data.forEach(function (_, i) { var l = document.createElement('div'); l.className = 'dc-label'; l.textContent = labels[i] || ''; row.appendChild(l); });
+        var tl = gsap.timeline({ paused: true });
+        tl.fromTo('.dc-card', { opacity: 0, scale: M.from_scale }, { opacity: 1, scale: 1, duration: M.move_s * 1.4, ease: M.enter }, 0);
+        tl.fromTo('.dc-title, .dc-label', { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: M.move_s, ease: M.enter, stagger: 0.04 }, 0.15);
+        var last = 0.35;
+        bars.forEach(function (bar, i) {
+          // A bar grows on its number as said (a little before the word, so it lands on it); else one after another.
+          var at = isFinite(cues[i]) ? Math.max(0.3, cues[i] - 0.15) : last + (i ? M.stagger_s * 1.6 : 0.2);
+          at = Math.max(at, last);
+          last = at;
+          tl.fromTo(bar, { scaleY: 0 }, { scaleY: 1, duration: 0.6, ease: M.enter }, at);
+          tl.fromTo(vals[i], { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: M.move_s, ease: M.enter }, at + 0.12);
+        });
+        window.__timelines = window.__timelines || {};
+        window.__timelines['data-chart'] = tl;
+      })();
+    </script>
+  </div>
+</template>

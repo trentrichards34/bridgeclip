@@ -72,16 +72,26 @@ CUE_VISUALS = {
     'count': ('fx:count-up', 'fx:number-pop-in', 'stat'),
     'percent': ('fx:conic-progress-ring', 'fx:count-up', 'stat'),
     'rating': ('fx:star-rating-fill',),
-    'trend': ('fx:chart-story', 'fx:decline-chart'),
-    'steps': ('staircase', 'funnel', 'journey', 'fx:state-chip-rail'),
+    'trend': ('fx:chart-story', 'fx:mk-line-graph', 'fx:data-chart', 'fx:decline-chart', 'fx:animated-bar-chart'),
+    'steps': ('staircase', 'funnel', 'journey', 'fx:flowchart', 'fx:onboarding-stepper-flow', 'fx:state-chip-rail'),
     'list': ('fx:marker-checklist-card', 'fx:state-chip-rail', 'checklist'),
     'contrast': ('fx:strikethrough-replace', 'compare_marks', 'strike_list'),
     'typing': ('fx:typed-prompt', 'fx:typing-indicator'),
     'brand': ('icon_pop',),
-    'screen': ('browser_frame', 'screen_frame'),
+    'screen': ('fx:browser-device-stage', 'fx:device-frame-stage', 'browser_frame', 'screen_frame'),
     'cta': ('comment_cta', 'link_cta', 'fx:cta-lockup'),
     'story': (),
+    # Only with the member's own screenshots (place_media): a result shown, a before and after.
+    'proof': ('fx:light-sweep-pass', 'fx:device-frame-stage', 'fx:browser-device-stage'),
+    'before_after': ('fx:before-after-wipe', 'fx:split-tilt-cards', 'fx:comparison-split'),
 }
+# The cues whose visual is the member's own picture: offered (as hints and placements) only when they added some.
+MEDIA_CUES = ('screen', 'proof', 'before_after')
+_PROOF = (('the', 'results'), ('my', 'results'), ('proof',), ('screenshot',), ('look', 'at', 'this'), ('check', 'this', 'out'),
+          ('here', 'it', 'is'), ("here's", 'what'), ('this', 'post'), ('this', 'comment'), ('this', 'review'), ('this', 'message'),
+          ('they', 'sent'), ('she', 'sent'), ('he', 'sent'), ('went', 'viral'), ('got', 'paid'), ('first', 'sale'), ('payout',))
+_BEFORE_AFTER = (('before', 'and', 'after'), ('before',), ('used', 'to', 'look'), ('this', 'is', 'what', 'it', 'looked'))
+_AFTER_WORDS = ('after', 'now', 'today', 'became', 'turned', 'into')
 _MONEY = re.compile(r'^\$|^(dollars?|bucks|grand|revenue|sales|profit|income|earned|made|spent|paid)$')
 _PERCENT_WORDS = ('percent', 'percentage', '%')
 _RATING_WORDS = ('stars', 'star', 'rated', 'rating', 'reviews')
@@ -249,6 +259,10 @@ def find_cues(segments: Sequence) -> list[dict]:
             add('screen', start)
         if any(_has(toks, p) is not None for p in _CTA):
             add('cta', start)
+        if any(_has(toks, p) is not None for p in _PROOF):
+            add('proof', start)
+        if any(_has(toks, p) is not None for p in _BEFORE_AFTER) and any(t in _AFTER_WORDS for t in toks):
+            add('before_after', start)
         index += len(sentence)
     for a, b in stories:
         if b - a >= STORY_MIN_MS:
@@ -267,17 +281,28 @@ def in_story(g: dict, spans: Sequence[tuple[int, int]]) -> bool:
     return inside >= 0.5 * max(1, b - a)
 
 
-def cue_hints(segments: Sequence, limit: int = 40, label: Any = None) -> str:
+def cue_hints(segments: Sequence, limit: int = 40, label: Any = None, media: bool = False) -> str:
     """The cues as short planner hints, one per line ("12.4s money "$2,586 in sales" -> fx:count-up, stat"); `label(ms)`
-    names a moment differently (Edit: the word index). Empty when there are none."""
+    names a moment differently (Edit: the word index). Empty when there are none. The member's own screenshots go where a
+    screen, a proof or a before and after is said (`media`: they added some; place_media puts them there, not the model)."""
     lines = []
     for c in find_cues(segments):
+        if c['kind'] in ('proof', 'before_after') and not media:
+            continue
+        if media and c['kind'] in MEDIA_CUES:
+            where = label(c['at_ms']) if label else f"{c['at_ms'] / 1000:.1f}s"
+            lines.append(f'{where} {c["kind"]} "{c["text"][:50]}" -> the member\'s screenshot (added by the app: leave this moment free)')
+            if len(lines) >= limit:
+                break
+            continue
         where = label(c['at_ms']) if label else f"{c['at_ms'] / 1000:.1f}s"
         if c['kind'] == 'story':
             end = label(c['end_ms']) if label else f"{c['end_ms'] / 1000:.1f}s"
             lines.append(f'{where}-{end} story/emotion -> NO graphic (face only)')
         else:
-            lines.append(f'{where} {c["kind"]} "{c["text"][:50]}" -> {", ".join(c["prefer"])}')
+            # (The picture effects are never the model's to place.)
+            prefer = [p for p in c['prefer'] if effect_of(p) not in ag.MEDIA_FX]
+            lines.append(f'{where} {c["kind"]} "{c["text"][:50]}" -> {", ".join(prefer)}')
         if len(lines) >= limit:
             break
     return '\n'.join(lines)
@@ -421,6 +446,20 @@ def fx_sane(fields: dict) -> bool:
         return sum(1 for line in fields.get('data', '').split('\n') if _num(line) is not None) >= 2
     if e in ('marker-highlight', 'vox-annotate'):
         return ag.accent_inside(fields.get('text', ''), fields.get('word', ''))
+    if e in ('data-chart', 'mk-line-graph', 'animated-bar-chart'):
+        # Numbers for every bar or point (three at least for a chart or a line), no more labels than numbers.
+        data = [line for line in fields.get('data', '').split('\n') if line.strip()]
+        labels = [line for line in fields.get('labels', '').split('\n') if line.strip()]
+        least = 2 if e == 'animated-bar-chart' else 3
+        return least <= len(data) <= 8 and all(_num(line) is not None for line in data) and len(labels) <= len(data) \
+            and (e != 'animated-bar-chart' or _num(fields.get('value', '')) is not None)
+    if e in ('flowchart', 'onboarding-stepper-flow'):
+        steps = [line for line in fields.get('steps', '').split('\n') if line.strip()]
+        return 2 <= len(steps) <= (6 if e == 'flowchart' else 5)
+    if e in ag.MEDIA_FX:
+        # A picture effect shows the member's own pictures: never placed without them.
+        effect = ag.fx_catalog().get(e) or {}
+        return all(fields.get(f['key']) for f in effect.get('fields', []) if f['kind'] == 'image' and f['required'])
     return True
 
 
@@ -773,3 +812,86 @@ def graphics_count(seconds: float, register: str, base_limit: int) -> int:
 
 def ceil_div(a: float, b: float) -> int:
     return int(math.ceil(a / b)) if b else 0
+
+
+# ---------------------------------------------------------------------------
+# The member's own screenshots: placed in code where a screen, a proof or a before and after is said.
+# ---------------------------------------------------------------------------
+
+# Two picture effects stay at least this far apart (each picture gets its moment, the face shows between).
+MEDIA_GAP_MS = 6000
+
+
+def clean_media(raw: Any) -> list[dict]:
+    """The member's screenshots for the video ({id, box?, tall?}: an image id of the run, the part that matters as shares
+    of the picture, a phone-shaped picture), checked; [] when there are none."""
+    out = []
+    for m in (raw if isinstance(raw, list) else [])[:6]:
+        if not isinstance(m, dict) or not isinstance(m.get('id'), str) or not ag._PICTURE.match(m['id']):
+            continue
+        out.append({'id': m['id'], 'box': ag.fx_region(m.get('box')) if m.get('box') is not None else None, 'tall': m.get('tall') is True})
+    return out
+
+
+def media_graphic(kind: str, cue: dict, shots: Sequence[dict], segments: Sequence) -> Optional[dict]:
+    """The picture effect for a media cue: a before and after (two pictures), a proof under a light sweep (or in a phone
+    when the picture is phone-shaped) or a screen in a browser window or a phone; the member's box gets a hand-drawn
+    circle (a screen) or underline (a proof). Words on it only as said: the chips say "Before" / "After" when those
+    words are said."""
+    fields: dict[str, str] = {}
+    shot = shots[0]
+    if kind == 'before_after':
+        if len(shots) < 2:
+            return None
+        fields = {'effect': 'before-after-wipe', 'image': shots[0]['id'], 'image_b': shots[1]['id']}
+        heard = {w for w, _ in ag._timed_words(segments, cue['at_ms'] - 1500, cue['end_ms'] + 1500)}
+        if 'before' in heard:
+            fields['label_a'] = 'Before'
+        if 'after' in heard:
+            fields['label_b'] = 'After'
+    elif kind == 'proof':
+        fields = {'effect': 'device-frame-stage' if shot['tall'] else 'light-sweep-pass', 'image': shot['id']}
+        if shot['box']:
+            fields.update(mark='underline', mark_box=', '.join(f'{round(n, 3):g}' for n in shot['box']))
+    elif kind == 'screen':
+        fields = {'effect': 'device-frame-stage' if shot['tall'] else 'browser-device-stage', 'image': shot['id']}
+        if shot['box']:
+            fields.update(mark='circle', mark_box=', '.join(f'{round(n, 3):g}' for n in shot['box']))
+    else:
+        return None
+    hold = fx_hold_ms(fields['effect'])
+    at = max(0, int(cue['at_ms']) - 250)
+    length = int(max(ag.EDITOR_MIN_MS, min(ag.EDITOR_MAX_MS, max(hold, int(cue['end_ms']) + 700 - at))))
+    return {'template': 'fx', 'at_ms': at, 'duration_ms': length, 'placement': 'middle', 'size': 'stage', 'fields': fields}
+
+
+def place_media(graphics: Sequence[dict], segments: Sequence, media: Any, ranges: Sequence[Sequence[float]] = (),
+                register: Optional[str] = None) -> list[dict]:
+    """The member's screenshots on the moments they fit (a screen talked about, a result shown, a before and after),
+    in the order they were added, each once; a graphic planned over one gives way to it. Nothing changes without
+    screenshots, in the minimal register, or during a personal story."""
+    shots = clean_media(media)
+    if not shots or register == 'minimal':
+        return list(graphics)
+    cues = find_cues(segments)
+    stories = story_spans(cues)
+    lo = ranges[0][0] if ranges else 0
+    hi = ranges[-1][1] if ranges else float('inf')
+    out, placed, queue = list(graphics), [], list(shots)
+    for c in cues:
+        if c['kind'] not in MEDIA_CUES or not queue:
+            continue
+        need = 2 if c['kind'] == 'before_after' else 1
+        if len(queue) < need:
+            continue
+        g = media_graphic(c['kind'], c, queue[:need], segments)
+        if not g or g['at_ms'] < lo or g['at_ms'] + ag.EDITOR_MIN_MS > hi or in_story(g, stories):
+            continue
+        if any(abs(g['at_ms'] - p['at_ms']) < MEDIA_GAP_MS for p in placed):
+            continue
+        g['duration_ms'] = int(min(g['duration_ms'], hi - g['at_ms']))
+        # The member's picture takes its moment: what was planned over it gives way.
+        out = [k for k in out if not (k['at_ms'] < g['at_ms'] + g['duration_ms'] + ag.GAP_MS and g['at_ms'] < k['at_ms'] + k['duration_ms'] + ag.GAP_MS)]
+        placed.append({**g, 'origin': 'auto'})
+        queue = queue[need:]
+    return sorted(out + placed, key=lambda g: g['at_ms'])

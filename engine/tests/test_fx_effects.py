@@ -22,7 +22,7 @@ def fx(fields, at=10_000, length=3500):
 
 def test_catalog_is_loaded_with_its_guidance():
     catalog = ag.fx_catalog()
-    assert 35 <= len(catalog) <= 45
+    assert 50 <= len(catalog) <= 60
     count = catalog['count-up']
     assert count['jobs'] == ['prove'] and count['sound'] == 'tick' and count['use_when'] and count['avoid_when']
     assert {f['key'] for f in count['fields']} >= {'value', 'prefix', 'suffix'}

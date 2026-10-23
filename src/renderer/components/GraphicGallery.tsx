@@ -13,7 +13,8 @@ import { DIAGRAM_ACCENT, graphicHasContent, graphicVariants, isDiagram, type Gra
 import { outputSize } from '../../shared/graphic-layout'
 import { cn } from '../lib/utils'
 import { GRAPHIC_GROUPS, GraphicView, SAMPLES, effectSample, graphicGroup } from './ClipGraphics'
-import { FX_EFFECTS, FX_GROUPS, fxEffect, fxHasContent } from '../../shared/fx-catalog'
+import { FX_EFFECTS, FX_GROUPS, fxEffect, fxHasContent, fxNeedsPicture, fxPictureFields, type FxEffect } from '../../shared/fx-catalog'
+import { FX_SAMPLE_PICTURES } from '../graphics/fx/samples'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import './graphic-gallery.css'
@@ -34,9 +35,11 @@ export function galleryPreview(id: GraphicTemplateId, style: { color: string; fo
   if (id === 'fx') {
     // An effect (`look` is its id): the words said here when they fill it, else its sample words.
     const effect = fxEffect(look) ?? FX_EFFECTS[0]
-    const own = words && fxHasContent({ ...words, effect: effect.id }) ? { ...words, effect: effect.id } : null
+    // An effect on the member's pictures previews with plain stand-in pictures (never their words: there are none to show yet).
+    const samples = samplePictures(effect)
+    const own = !samples && words && fxHasContent({ ...words, effect: effect.id }) ? { ...words, effect: effect.id } : null
     return { template: 'fx', fields: own ?? effectSample(effect.id), width, height, duration_ms: Math.min(5000, effect.default_ms), box: { top: .12, bottom: .88 }, placement: 'middle', ...style,
-      ...(effect.size === 'compact' ? { size: 'compact' as const } : {}) }
+      ...(effect.size === 'compact' ? { size: 'compact' as const } : {}), ...(samples ?? {}) }
   }
   const own = words && graphicHasContent({ template: id, fields: words }) ? words : null
   const sample = id === 'highlight' ? { ...SAMPLES[id], y: '0.5' } : SAMPLES[id]
@@ -45,7 +48,22 @@ export function galleryPreview(id: GraphicTemplateId, style: { color: string; fo
   return { template: id, fields, width, height, duration_ms: isDiagram(id) ? 4200 : 2600, box: { top: .06, bottom: .94 }, placement: 'middle', ...style, ...(isDiagram(id) ? { color: DIAGRAM_ACCENT } : {}) }
 }
 
-export function GraphicGallery({ templates, where, style, prefill, prefillEffect, full, limitNote, looks = false, onPick, onClose }: {
+/** The stand-in pictures an effect previews with in the gallery (null: it shows no pictures). */
+function samplePictures(effect: FxEffect): { image?: string; image_b?: string } | null {
+  const fields = fxPictureFields(effect).filter((f) => f.required)
+  if (!fields.length) return null
+  return Object.fromEntries(fields.map((f) => [f.key, FX_SAMPLE_PICTURES[f.sample ?? 'page'] ?? FX_SAMPLE_PICTURES.page]))
+}
+
+/**
+ * The effects a gallery lists: the ones that need the member's own pictures only where pictures can be added
+ * (`pictures`: the clip editor, or an edited reel with screenshots); never one that would show an empty frame.
+ */
+export function galleryEffects(pictures: boolean): FxEffect[] {
+  return FX_EFFECTS.filter((e) => pictures || !fxNeedsPicture(e))
+}
+
+export function GraphicGallery({ templates, where, style, prefill, prefillEffect, full, limitNote, looks = false, pictures = false, onPick, onClose }: {
   templates: readonly GalleryTemplate[]
   /** Where it goes, in words ("at 0:03.2, on “three things”"). */
   where: string
@@ -59,6 +77,8 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
   limitNote: string
   /** Offer each template's looks (GRAPHIC_VARIANTS) as small buttons under its tile. */
   looks?: boolean
+  /** The member can add pictures here: the effects on their own screenshots and photos are offered (they ask for one). */
+  pictures?: boolean
   /** `look`: the look picked (GRAPHIC_VARIANTS), or for an effect (template 'fx') the effect's id. */
   onPick: (template: GraphicTemplateId, look?: string) => void
   onClose: () => void
@@ -76,13 +96,14 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
   const plain = useMemo(() => templates.filter((t) => t.id !== 'fx'), [templates])
   const withEffects = plain.length < templates.length
   const words = useMemo(() => Object.fromEntries(plain.map((t) => [t.id, prefill?.(t.id) ?? {}])) as Record<GraphicTemplateId, Record<string, string>>, [plain, prefill])
-  const effectWords = useMemo(() => withEffects ? Object.fromEntries(FX_EFFECTS.map((e) => [e.id, prefillEffect?.(e.id) ?? {}])) as Record<string, Record<string, string>> : {}, [withEffects, prefillEffect])
+  const offered = useMemo(() => galleryEffects(pictures), [pictures])
+  const effectWords = useMemo(() => withEffects ? Object.fromEntries(offered.map((e) => [e.id, fxNeedsPicture(e) ? {} : prefillEffect?.(e.id) ?? {}])) as Record<string, Record<string, string>> : {}, [withEffects, prefillEffect, offered])
   const q = query.trim().toLowerCase()
   const match = (t: GalleryTemplate): boolean => !q || `${t.label} ${t.detail} ${t.id.replace(/_/g, ' ')} ${groupLabel(t.id)}`.toLowerCase().includes(q)
   const groups = [...GRAPHIC_GROUPS, { id: 'other' as const, label: 'More', templates: plain.map((t) => t.id).filter((id) => graphicGroup(id) === 'other') }]
     .map((group) => ({ ...group, items: plain.filter((t) => group.templates.includes(t.id) && match(t)) })).filter((group) => group.items.length)
   // Effects: one tile per effect (HyperFrames units, fx-catalog.ts), in their own groups after the templates.
-  const effectGroups = withEffects ? FX_GROUPS.map((group) => ({ ...group, items: FX_EFFECTS.filter((e) => e.group === group.id && (!q || `${e.label} ${e.detail} ${group.label} effect ${e.jobs.join(' ')}`.toLowerCase().includes(q))) }))
+  const effectGroups = withEffects ? FX_GROUPS.map((group) => ({ ...group, items: offered.filter((e) => e.group === group.id && (!q || `${e.label} ${e.detail} ${group.label} effect ${e.jobs.join(' ')}`.toLowerCase().includes(q))) }))
     .filter((group) => group.items.length) : []
   const first = groups[0]?.items[0]
   const firstEffect = effectGroups[0]?.items[0]
@@ -124,9 +145,11 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
         <p className="graphic-gallery-group-label"><span aria-hidden className="graphic-gallery-dot" />{group.label}<span className="graphic-gallery-count">{group.items.length}</span></p>
         <div className="graphic-gallery-grid">{group.items.map((e, i) => {
           const own = Object.keys(effectWords[e.id] ?? {}).length > 0 && fxHasContent({ ...effectWords[e.id], effect: e.id })
-          return <button key={e.id} type="button" className="editor-graphic-tile graphic-gallery-tile" disabled={full} onClick={() => onPick('fx', e.id)} title={e.detail} aria-label={`Add effect ${e.label}`}>
+          const needs = fxNeedsPicture(e)
+          return <button key={e.id} type="button" className="editor-graphic-tile graphic-gallery-tile" disabled={full} onClick={() => onPick('fx', e.id)} title={needs ? `${e.detail} You choose your picture next.` : e.detail}
+            aria-label={`Add effect ${e.label}${needs ? ' (choose your picture)' : ''}`}>
             <span className="graphic-gallery-thumb"><GraphicView spec={galleryPreview('fx', style, effectWords[e.id], e.id)} width={150} loop offset={700 + i * 410} />
-              {own && <span className="graphic-gallery-yours">Your words</span>}</span>
+              {needs ? <span className="graphic-gallery-yours">Needs your picture</span> : own && <span className="graphic-gallery-yours">Your words</span>}</span>
             <span className="graphic-gallery-name"><Sparkles size={13} aria-hidden />{e.label}</span>
             <span className="graphic-gallery-detail">{e.detail}</span>
           </button>

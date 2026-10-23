@@ -28,7 +28,10 @@ export const UNITS = [
   'marker-highlight', 'vox-annotate', 'strikethrough-replace',
   'marker-checklist-card', 'constellation-hub', 'locked-nucleus-orbit', 'radial-surround', 'overwhelm-surround', 'state-chip-rail', 'whiteboard-ink',
   'typing-indicator', 'notification-stack',
-  'cta-close', 'cta-lockup', 'gloss-sweep', 'spring-pop'
+  'cta-close', 'cta-lockup', 'gloss-sweep', 'spring-pop',
+  // Media units: the member's own screenshots and photos go in their slots (mount.ts fills them).
+  'browser-device-stage', 'device-frame-stage', 'before-after-wipe', 'comparison-split', 'split-tilt-cards',
+  'paper-collage-reveal', 'torn-paper-rip', 'light-sweep-pass'
 ]
 
 /**
@@ -89,8 +92,35 @@ export const ADAPT = {
   })();`
 }
 
-/** Exact replacements: units that hard-code their accent colors take the member's brand color (--brand) instead. */
+/**
+ * Units whose slots are host-page <template>s read them through `root.ownerDocument`; CreatorClips hands them the
+ * member's picture through `window.__ccSlotDoc` instead (mount.ts), so one effect never sees another's slots.
+ */
+const SLOT_DOC = ['var hostDoc = root.ownerDocument;', 'var hostDoc = window.__ccSlotDoc || root.ownerDocument;']
+
+/**
+ * Exact replacements: units that hard-code their accent colors take the member's brand color (--brand) instead;
+ * slotted units take the member's pictures (SLOT_DOC); sample words baked into a unit are replaced by its variables.
+ */
 export const PATCH = {
+  'browser-device-stage': [SLOT_DOC],
+  // Its screen is measured with the layout width (getBoundingClientRect includes its own entrance scale and the
+  // preview's zoom, which left a strip of the screen empty).
+  'device-frame-stage': [[`            var rect = screen.getBoundingClientRect();
+            if (rect.width > 0)
+              viewport.style.setProperty("--screen-scale", String(rect.width / logicalWidth));`, `            var width = screen.offsetWidth || screen.getBoundingClientRect().width;
+            if (width > 0)
+              viewport.style.setProperty("--screen-scale", String(width / logicalWidth));`]],
+  'paper-collage-reveal': [SLOT_DOC, ['aria-hidden="true">Revealed</span>', 'aria-hidden="true"></span>']],
+  'torn-paper-rip': [SLOT_DOC,
+    ['aria-hidden="true">Chapter two</span>', 'aria-hidden="true"></span>'],
+    ['aria-hidden="true">Chapter one</span>', 'aria-hidden="true"></span>'],
+    ['mountSlot("torn-paper-rip-from", fromClip);', `// CreatorClips: the sheets' words are variables (first_text on the top sheet, second_text under it), never sample words.
+            var ccFirst = root.querySelector(".tpr-from .tpr-default-mark");
+            var ccSecond = root.querySelector(".tpr-to .tpr-default-mark");
+            if (ccFirst) ccFirst.textContent = vars.first_text == null ? "" : String(vars.first_text);
+            if (ccSecond) ccSecond.textContent = vars.second_text == null ? "" : String(vars.second_text);
+            mountSlot("torn-paper-rip-from", fromClip);`]],
   'text-stagger': [['green: "#34d399"', 'green: "var(--brand, #34d399)"']],
   'gloss-sweep': [[`surface: "#123b2c",
                 surfaceBright: "#1a513c",
@@ -99,6 +129,14 @@ export const PATCH = {
                 surfaceBright: "color-mix(in srgb, var(--brand, #39d98a) 52%, #0b0d12)",
                 edge: "var(--brand, #39d98a)",
                 label: "#ffffff",`]]
+}
+
+/** What each PATCH changes, for the file's notice (default: the accent). */
+const NOTES = {
+  'device-frame-stage': 'its screen is measured by its layout width (not its transformed box), so the screen content fills it',
+  'browser-device-stage': 'its screen slot reads the member\'s picture from window.__ccSlotDoc (not the page)',
+  'paper-collage-reveal': 'its content slot reads the member\'s picture from window.__ccSlotDoc (not the page); its sample word ("Revealed") is removed',
+  'torn-paper-rip': 'its slots read the member\'s picture from window.__ccSlotDoc (not the page); its sample words ("Chapter one", "Chapter two") are replaced by the variables first_text and second_text'
 }
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- a plain Node script
@@ -120,7 +158,7 @@ function vendor(hf) {
       if (!html.includes(from)) throw new Error(`${name}: patch target not found`)
       html = html.replace(from, to)
     }
-    if (PATCH[name]) changes.push('its hard-coded green accent takes the brand color (--brand)')
+    if (PATCH[name]) changes.push(NOTES[name] ?? 'its hard-coded green accent takes the brand color (--brand)')
     if (ADAPT[name]) {
       html = `${html.trimEnd()}\n\n<!-- CreatorClips adaptation: the paused timeline from this snippet's "Timeline integration" note. -->\n<script>${ADAPT[name]}\n</script>\n`
       changes.push('a paused timeline built from the snippet\'s own "Timeline integration" note is added at the end')

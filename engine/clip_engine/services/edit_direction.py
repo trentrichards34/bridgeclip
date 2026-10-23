@@ -152,6 +152,10 @@ def direction_rule(seconds: float, options: Optional[dict] = None) -> str:
     if keyword:
         rule += (f'- the speaker asks viewers to comment: "comment_cta" with keyword exactly "{keyword}" and lead "Comment", where they '
                  'ask.\n')
+    if options.get('media'):
+        rule += ('The member added screenshots for this video: the app shows them (in a browser or phone frame, a before and after, '
+                 'a proof under a light) where a page, an app, a result or a before and after is talked about. Leave those moments '
+                 'free (marked in the hints) and never describe a screenshot in a card.\n')
     hints = options.get('hints') if isinstance(options.get('hints'), str) else ''
     rule += hints_block(hints[:6000])
     rule += (
@@ -235,7 +239,7 @@ def anchor_word(at_ms: float, clock: Sequence[tuple[int, int]]) -> Optional[int]
     return None
 
 
-def word_hints(words: Sequence[Any], marks: Sequence[Optional[str]], limit: int = 40) -> str:
+def word_hints(words: Sequence[Any], marks: Sequence[Optional[str]], limit: int = 40, media: bool = False) -> str:
     """The transcript's cues (graphics_director.find_cues) as planner hints anchored on word indices ("w123 money …"),
     from the words likely kept."""
     from clip_engine.services.graphics_director import cue_hints
@@ -249,7 +253,7 @@ def word_hints(words: Sequence[Any], marks: Sequence[Optional[str]], limit: int 
         word = anchor_word(ms, clock)
         return f'w{word}' if word is not None else f'w{clock[-1][1]}' if clock else 'w0'
     try:
-        return cue_hints(kept_segments(words, keep, offsets), limit, label)
+        return cue_hints(kept_segments(words, keep, offsets), limit, label, media)
     except Exception as error:  # noqa: BLE001 - hints are a nicety: the plan goes ahead without them
         logger.warning(f"Cue hints skipped: {type(error).__name__}")
         return ''
@@ -338,6 +342,10 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
     checked = ag.parse_planned(planned, 0, ranges[-1][1] + 1, opts)
     checked = [g for g in checked if not drops_meaning(g, segments)]
     fitted = ag.fit_to_clip(checked, segments, ranges, 1.0, opts)
+    if options.get('media'):
+        # The member's screenshots on the moments they fit (graphics_director.place_media): never the model's to place.
+        from clip_engine.services.graphics_director import place_media, with_look, video_look
+        fitted = with_look(place_media(fitted, segments, options['media'], ranges, options.get('register')), video_look(options))
     clock = _clock(words, keep, offsets)
     out, taken = [], set()
     for g in fitted:
@@ -348,7 +356,7 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
             continue
         fields = {k: v for k, v in g['fields'].items() if k not in ('item_ms', 'word_ms', 'cue_ms')}
         out.append({'id': ag.new_id(taken), 'template': g['template'], 'word': word, 'duration_ms': int(g['duration_ms']),
-                    'placement': g['placement'], 'fields': fields, 'origin': 'auto',
+                    'placement': g['placement'], 'fields': fields, 'origin': 'auto', **({'size': g['size']} if g.get('size') == 'stage' and g['template'] == 'fx' else {}),
                     **({'depth': 'behind'} if g['template'] == 'big_words' else {})})
     return sorted(out, key=lambda g: g['word'])[:MAX_GRAPHICS]
 
