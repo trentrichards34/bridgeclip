@@ -15,7 +15,11 @@ export speed, like the graphics main lays over a render):
 - ``visual``: the card is off-screen; the whole frame is backdrop (for a big graphic or inset).
 
 Between scenes the card slides up/down with an ease (~350 ms) and the backdrop
-crossfades. Everything is drawn in the render's single FFmpeg pass: the
+crossfades, through a short camera move (a subtle zoom by default, a whip, or none:
+a scene's ``transition``; depth_fx.scene_transitions). In a stage scene the speaker's
+head breaks out above the card's top edge (``escape``, on by default) when the face
+framing and the cut-out allow it (depth_fx; the escape matte is made for the stage
+stretches only and kept between renders). Everything is drawn in the render's single FFmpeg pass: the
 backdrops, the card's rounded-corner alpha mask and its shadow are small still
 PNG inputs (decoded once and repeated in memory), the slide is an
 expression-driven overlay ``y``.
@@ -24,6 +28,7 @@ Mirror of src/shared/scenes.ts (field names, limits and geometry).
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import os
 import re
@@ -31,6 +36,9 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Optional, Sequence
 
 from PIL import Image, ImageDraw, ImageFilter
+
+from clip_engine.services import depth_fx
+from clip_engine.services.depth_fx import DEFAULT_TRANSITION, TRANSITIONS
 
 SCENE_KINDS = ("face", "stage", "visual")
 BACKDROPS = ("light", "dark", "brand", "grid", "gradient", "solid")
@@ -82,6 +90,14 @@ class Scene:
     backdrop: str = "light"
     # stage only: the speaker card's shape.
     card: str = "rounded"
+    # stage only: the head may break out above the card's top edge (frame escape; on unless turned off).
+    escape: bool = True
+    # The camera move into this scene (and out of it, back to face): "slide" (the card's slide alone), "zoom", "whip".
+    transition: str = DEFAULT_TRANSITION
+
+
+def _same_look(a: "Scene", b: "Scene") -> bool:
+    return (a.scene, a.backdrop, a.card, a.escape, a.transition) == (b.scene, b.backdrop, b.card, b.escape, b.transition)
 
 
 def _number(value) -> bool:
@@ -99,14 +115,15 @@ def parse_scenes(raw: object, duration_ms: Optional[int] = None) -> list[Scene]:
         raise ValueError("Invalid scenes")
     items: list[Scene] = []
     for item in raw:
-        if not isinstance(item, dict) or set(item) - {"scene", "start_ms", "end_ms", "backdrop", "card"}:
+        if not isinstance(item, dict) or set(item) - {"scene", "start_ms", "end_ms", "backdrop", "card", "escape", "transition"}:
             raise ValueError("Invalid scene")
         kind, start, end, backdrop = item.get("scene"), item.get("start_ms"), item.get("end_ms"), item.get("backdrop", "light")
-        card = item.get("card", "rounded")
+        card, escape, transition = item.get("card", "rounded"), item.get("escape", True), item.get("transition", DEFAULT_TRANSITION)
         if kind not in SCENE_KINDS or backdrop not in BACKDROPS or card not in CARDS or not _number(start) or not _number(end) \
-                or start < 0 or end <= start:
+                or start < 0 or end <= start or type(escape) is not bool or transition not in TRANSITIONS:
             raise ValueError("Invalid scene")
-        items.append(Scene(kind, round(start), round(end), backdrop, card if kind == "stage" else "rounded"))
+        items.append(Scene(kind, round(start), round(end), backdrop, card if kind == "stage" else "rounded", escape or kind != "stage",
+                           transition))
     return normalize_scenes(items, duration_ms)
 
 
@@ -118,10 +135,10 @@ def normalize_scenes(scenes: Iterable[Scene], duration_ms: Optional[int] = None,
         end = s.end_ms if duration_ms is None else min(s.end_ms, duration_ms)
         if end <= s.start_ms:
             continue
-        s = Scene(s.scene, s.start_ms, end, s.backdrop, s.card)
+        s = dataclasses.replace(s, end_ms=end)
         if out and out[-1].end_ms > s.start_ms:
             prev = out[-1]
-            out[-1] = Scene(prev.scene, prev.start_ms, s.start_ms, prev.backdrop, prev.card)
+            out[-1] = dataclasses.replace(prev, end_ms=s.start_ms)
             if out[-1].end_ms <= out[-1].start_ms:
                 out.pop()
         out.append(s)
@@ -129,9 +146,8 @@ def normalize_scenes(scenes: Iterable[Scene], duration_ms: Optional[int] = None,
     for s in out:
         if s.scene == "face" or s.end_ms - s.start_ms < min_ms:
             continue
-        if merged and merged[-1].scene == s.scene and merged[-1].backdrop == s.backdrop and merged[-1].card == s.card \
-                and s.start_ms - merged[-1].end_ms <= 1:
-            merged[-1] = Scene(s.scene, merged[-1].start_ms, s.end_ms, s.backdrop, s.card)
+        if merged and _same_look(merged[-1], s) and s.start_ms - merged[-1].end_ms <= 1:
+            merged[-1] = dataclasses.replace(s, start_ms=merged[-1].start_ms)
         else:
             merged.append(s)
     return merged
@@ -145,9 +161,17 @@ def scene_at(scenes: Sequence[Scene], t_ms: float) -> str:
     return "face"
 
 
+def _extra(scene: str, item) -> dict:
+    """A scene's optional fields as kept in a request (only when they differ from the default)."""
+    get = (lambda k, d: item.get(k, d)) if isinstance(item, dict) else (lambda k, d: getattr(item, k, d))  # noqa: E731
+    card, escape, transition = get("card", "rounded"), get("escape", True), get("transition", DEFAULT_TRANSITION)
+    return {**({"card": card} if scene == "stage" and card in CARDS and card != "rounded" else {}),
+            **({"escape": False} if scene == "stage" and escape is False else {}),
+            **({"transition": transition} if transition in TRANSITIONS and transition != DEFAULT_TRANSITION else {})}
+
+
 def to_dicts(scenes: Iterable[Scene]) -> list[dict]:
-    return [{"scene": s.scene, "start_ms": s.start_ms, "end_ms": s.end_ms, "backdrop": s.backdrop,
-             **({"card": s.card} if s.card != "rounded" else {})} for s in scenes]
+    return [{"scene": s.scene, "start_ms": s.start_ms, "end_ms": s.end_ms, "backdrop": s.backdrop, **_extra(s.scene, s)} for s in scenes]
 
 
 def output_scenes(source_scenes: Iterable[dict], ranges: Sequence[Sequence[float]], video_speed: float) -> list[tuple[dict, dict]]:
@@ -173,9 +197,8 @@ def output_scenes(source_scenes: Iterable[dict], ranges: Sequence[Sequence[float
             continue
         lo_ms, hi_ms = round(start / video_speed), round((start + kept) / video_speed)
         if hi_ms - lo_ms >= MIN_RENDER_SCENE_MS:
-            card = s.get("card") if s["scene"] == "stage" and s.get("card") in CARDS else "rounded"
             out.append((s, {"scene": s["scene"], "start_ms": lo_ms, "end_ms": hi_ms, "backdrop": s.get("backdrop", "light"),
-                            **({"card": card} if card != "rounded" else {})}))
+                            **_extra(s["scene"], s)}))
     return out[:MAX_SCENES]
 
 
@@ -415,6 +438,8 @@ class Segment:
     end: float
     backdrop: Optional[str]
     card: str = "rounded"
+    escape: bool = False
+    transition: str = DEFAULT_TRANSITION
 
 
 def edited_segments(scenes: Sequence[Scene], edited_ms: int, video_speed: float) -> list[Segment]:
@@ -431,7 +456,7 @@ def edited_segments(scenes: Sequence[Scene], edited_ms: int, video_speed: float)
             continue
         if a > cursor + 1e-6:
             segments.append(Segment("face", cursor, a, None))
-        segments.append(Segment(s.scene, max(a, cursor), b, s.backdrop, s.card))
+        segments.append(Segment(s.scene, max(a, cursor), b, s.backdrop, s.card, s.scene == "stage" and s.escape, s.transition))
         cursor = b
     if cursor < total - 1e-6:
         segments.append(Segment("face", cursor, total, None))
@@ -574,6 +599,8 @@ class CardCrop:
     h: float
     keys: tuple[tuple[int, float, float], ...]
     bounds: Rect4
+    # Frame escape: source pixels above the crop drawn as a strip over the card's top edge (0: none).
+    ext: float = 0.0
 
     @property
     def zoomed_out(self) -> bool:
@@ -683,6 +710,57 @@ def card_crop(faces: Sequence[tuple[int, Rect4]], bounds: Rect4, aspect: float, 
     return CardCrop(cw, ch, tuple(_simplify(points, CARD_KEY_TOLERANCE * ch)), bounds)
 
 
+def escape_crop(faces: Sequence[tuple[int, Rect4]], base: CardCrop, start_ms: int = 0) -> Optional[CardCrop]:
+    """The card's crop for a frame escape (the same size as `base`, the usual crop): framed lower, so the eye line sits
+    depth_fx.ESCAPE_EYE_Y of the card below its top edge and the forehead and hair rise over it, with a strip
+    depth_fx.ESCAPE_EXT of the crop's height above it to draw them from. None when the escape can't be drawn well: no
+    face seen, the top of the head cut off by the speaker's area (it would break out with a flat top), the card's top
+    edge above the speaker's area, or the face too low for its eyes to come near the card's top."""
+    if not faces:
+        return None
+    bx, by, bw, bh = base.bounds
+    aspect = base.w / base.h
+    # Framed lower, the card may come in closer (down to ESCAPE_MIN_FACES face heights) so the eyes reach near its top
+    # while its bottom stays inside the speaker's area (a close selfie has little picture under the chin).
+    fh = _percentile([f[3] for _, f in faces], CARD_FACE_PERCENTILE)
+    eye_low = _percentile([f[1] + EYE_IN_FACE * f[3] for _, f in faces], CARD_FACE_PERCENTILE)
+    fit = (by + bh - eye_low) / (1 - depth_fx.ESCAPE_EYE_Y)
+    ch = min(base.h, max(depth_fx.ESCAPE_MIN_FACES * fh, fit))
+    cw = ch * aspect
+    ext = depth_fx.ESCAPE_EXT * ch
+    # Wider than the speaker's area (a narrowed card): centered, as the usual crop.
+    x_lo, x_hi = (bx, bx + bw - cw) if cw <= bw else (bx + (bw - cw) / 2, bx + (bw - cw) / 2)
+    y_hi = by + bh - ch if ch <= bh else by
+    times, xs, ys = [], [], []
+    for t, face in sorted(faces):
+        fx, fy, fw, fh = face
+        times.append(int(t))
+        xs.append(fx + fw / 2 - cw / 2)
+        ys.append(fy + EYE_IN_FACE * fh - depth_fx.ESCAPE_EYE_Y * ch)
+    xs = _mean3(_median_filter(xs, CARD_MEDIAN))
+    ys = _mean3(_median_filter(ys, CARD_MEDIAN))
+    points, misses = [], 0
+    for (t, face), x, y in zip(sorted(faces), xs, ys):
+        y = min(y, y_hi)
+        fx, fy, fw, fh = face
+        eye = fy + EYE_IN_FACE * fh
+        hair = fy - depth_fx.HAIR_ABOVE * fh
+        if y < by - 0.5:
+            return None
+        # A sample whose head would be cut by the picture's top, or that doesn't rise over the card, or sits too low.
+        misses += hair < by + 1 or hair >= y or (eye - y) / ch > depth_fx.ESCAPE_MAX_EYE
+        points.append((t, max(x_lo, min(x_hi, x)), y))
+    if misses > len(points) * (1 - depth_fx.ESCAPE_MIN_SHARE):
+        return None
+    return CardCrop(cw, ch, tuple(_simplify(points, CARD_KEY_TOLERANCE * ch)), base.bounds, ext)
+
+
+def _escape_fast(crop: CardCrop) -> bool:
+    """Whether an escape crop's strip is all inside the speaker's area (a plain taller crop draws it)."""
+    bx, by, bw, bh = crop.bounds
+    return not crop.zoomed_out and min(y for _, _, y in crop.keys) - crop.ext >= by - 0.5
+
+
 def edited_to_window(spans: Sequence[tuple[float, float]], keeps: Sequence[Sequence[int]]) -> list[tuple[int, int]]:
     """Edited-clock spans (seconds) as window-time pieces (ms) through the kept parts."""
     out: list[tuple[int, int]] = []
@@ -733,9 +811,12 @@ def _shot_face(shot) -> Optional[Box]:
 
 
 def card_crops(plan, keeps, runs: Sequence[tuple[float, float]], transition: float, aspect: float,
-               faces: Sequence[tuple[int, Sequence[Box]]] = (), min_share: float = 0.0) -> dict[tuple[int, int], CardCrop]:
+               faces: Sequence[tuple[int, Sequence[Box]]] = (), min_share: float = 0.0, escape: Sequence[bool] = (),
+               escapes: Optional[dict] = None) -> dict[tuple[int, int], CardCrop]:
     """The crop for each (card run, shot) the card shows: from the face samples (window ms, normalized boxes) in
-    the run's stretch of that shot (the largest face inside the speaker's area)."""
+    the run's stretch of that shot (the largest face inside the speaker's area). For the runs `escape` asks a frame
+    escape for, the escape's crop (escape_crop) goes into `escapes` where it can be drawn."""
+    escapes = {} if escapes is None else escapes
     src_w, src_h = plan.source_width, plan.source_height
     samples = sorted(list(plan.face_samples) + list(faces), key=lambda s: s[0])
     out: dict[tuple[int, int], CardCrop] = {}
@@ -758,6 +839,10 @@ def card_crops(plan, keeps, runs: Sequence[tuple[float, float]], transition: flo
                 f = _shot_face(shot)
                 picked = [(parts[0][0], (f.x * src_w, f.y * src_h, f.w * src_w, f.h * src_h))]
             out[(r, i)] = card_crop(picked, bounds, aspect, parts[0][0], min_share)
+            if r < len(escape) and escape[r]:
+                crop = escape_crop(picked, out[(r, i)], parts[0][0])
+                if crop is not None:
+                    escapes[(r, i)] = crop
     return out
 
 
@@ -826,10 +911,38 @@ def _keys_expr(crop: CardCrop, lo_ms: int, hi_ms: int, axis: int, transform: Cal
     return piecewise_expr([(k[0] / 1000, transform(k[axis])) for k in chosen])
 
 
-def card_chain(label: str, out: str, crop: CardCrop, lo_ms: int, hi_ms: int, card_w: int, card_h: int) -> str:
+def card_chain(label: str, out: str, crop: CardCrop, lo_ms: int, hi_ms: int, card_w: int, card_h: int, ext_h: int = 0) -> str:
     """Filters from [label] (a trimmed piece of the clocked source) to [out] (card_w x card_h): the crop moving
-    along its keys; zoomed out, the source scaled over a blurred copy of itself."""
+    along its keys; zoomed out, the source scaled over a blurred copy of itself.
+
+    `ext_h` (frame escape): the frames are that many rows taller, the extra rows on top: an escape crop (crop.ext)
+    fills them from the source above it; any other is padded with black there (nothing escapes)."""
     bx, by, bw, bh = crop.bounds
+    if ext_h and crop.ext > 0 and _escape_fast(crop):
+        w, h = min(int(bw), max(2, int(round(crop.w)))), min(int(bh), max(2, int(round(crop.h + crop.ext))))
+        ext = crop.ext
+        x = _keys_expr(crop, lo_ms, hi_ms, 1, lambda v: max(bx, min(bx + bw - w, v)))
+        y = _keys_expr(crop, lo_ms, hi_ms, 2, lambda v: max(by, min(by + bh - h, v - ext)))
+        return f"[{label}]crop=w={w}:h={h}:x='{x}':y='{y}',scale={card_w}:{card_h + ext_h}:flags=lanczos,setsar=1[{out}]"
+    if ext_h and crop.ext > 0:
+        # The strip reaches past the speaker's area (or the card is zoomed out): the speaker's area scaled so the crop
+        # fills the card, placed over a blurred copy of itself on the taller frame.
+        ix, iy = int(bx) // 2 * 2, int(by) // 2 * 2
+        iw, ih = max(2, int(bx + bw - ix) // 2 * 2), max(2, int(by + bh - iy) // 2 * 2)
+        zoom = card_h / crop.h
+        fw, fh = max(2, int(round(iw * zoom))), max(2, int(round(ih * zoom)))
+        x = _keys_expr(crop, lo_ms, hi_ms, 1, lambda v: (ix - v) * zoom)
+        y = _keys_expr(crop, lo_ms, hi_ms, 2, lambda v: (iy - v) * zoom + ext_h)
+        th = card_h + ext_h
+        qw, qh = even(card_w / 4), even(th / 4)
+        return (f"[{label}]crop={iw}:{ih}:{ix}:{iy},split=2[{out}_b][{out}_f];"
+                f"[{out}_b]scale={qw}:{qh}:force_original_aspect_ratio=increase,crop={qw}:{qh},gblur=sigma=8,"
+                f"lutyuv=y=val*0.82,scale={card_w}:{th}[{out}_bg];"
+                f"[{out}_f]scale={fw}:{fh}:flags=lanczos[{out}_fg];"
+                f"[{out}_bg][{out}_fg]overlay=x='{x}':y='{y}':eval=frame,setsar=1[{out}]")
+    if ext_h:
+        return card_chain(label, f"{out}_p", dataclasses.replace(crop, ext=0.0), lo_ms, hi_ms, card_w, card_h) + \
+            f";[{out}_p]pad={card_w}:{card_h + ext_h}:0:{ext_h}:color=black[{out}]"
     if not crop.zoomed_out:
         w, h = min(int(bw), max(2, int(round(crop.w)))), min(int(bh), max(2, int(round(crop.h))))
         x = _keys_expr(crop, lo_ms, hi_ms, 1, lambda v: max(bx, min(bx + bw - w, v)))
@@ -850,6 +963,51 @@ def card_chain(label: str, out: str, crop: CardCrop, lo_ms: int, hi_ms: int, car
             f"[{out}_bg][{out}_fg]overlay=x='{x}':y='{y}':eval=frame,setsar=1[{out}]")
 
 
+def card_matte_chain(label: str, out: str, crop: CardCrop, lo_ms: int, hi_ms: int, card_w: int, card_h: int, ext_h: int,
+                     scale: tuple[float, float]) -> str:
+    """The escape matte's chain for one piece, from [label] (the clocked matte, `scale` = matte px per source px) to
+    [out] (card_w x card_h + ext_h, gray): the same crop as the card's escape frames (card_chain); black for a crop
+    with no escape."""
+    if not crop.ext > 0:
+        return f"[{label}]scale={card_w}:{card_h + ext_h},drawbox=c=black:t=fill[{out}]"
+    kx, ky = scale
+    bx, by, bw, bh = crop.bounds
+    if not _escape_fast(crop):
+        # As card_chain's zoomed-out escape: the speaker's area scaled and placed, here over black (nobody there).
+        ix, iy = int(bx) // 2 * 2, int(by) // 2 * 2
+        iw, ih = max(2, int(bx + bw - ix) // 2 * 2), max(2, int(by + bh - iy) // 2 * 2)
+        zoom = card_h / crop.h
+        fw, fh = max(2, int(round(iw * zoom))), max(2, int(round(ih * zoom)))
+        x = _keys_expr(crop, lo_ms, hi_ms, 1, lambda v: (ix - v) * zoom)
+        y = _keys_expr(crop, lo_ms, hi_ms, 2, lambda v: (iy - v) * zoom + ext_h)
+        return (f"[{label}]crop={max(2, round(iw * kx))}:{max(2, round(ih * ky))}:{round(ix * kx)}:{round(iy * ky)},split=2[{out}_b][{out}_f];"
+                f"[{out}_b]scale={card_w}:{card_h + ext_h},drawbox=c=black:t=fill[{out}_bg];"
+                f"[{out}_f]scale={fw}:{fh}:flags=bicubic[{out}_fg];"
+                f"[{out}_bg][{out}_fg]overlay=x='{x}':y='{y}':eval=frame,setsar=1[{out}]")
+    w, h = min(int(bw), max(2, int(round(crop.w)))), min(int(bh), max(2, int(round(crop.h + crop.ext))))
+    ext = crop.ext
+    mw, mh = max(2, int(round(w * kx))), max(2, int(round(h * ky)))
+    x = _keys_expr(crop, lo_ms, hi_ms, 1, lambda v: max(bx, min(bx + bw - w, v)) * kx)
+    y = _keys_expr(crop, lo_ms, hi_ms, 2, lambda v: max(by, min(by + bh - h, v - ext)) * ky)
+    return f"[{label}]crop=w={mw}:h={mh}:x='{x}':y='{y}',scale={card_w}:{card_h + ext_h}:flags=bicubic,setsar=1[{out}]"
+
+
+@dataclass
+class EscapeSource:
+    """A frame escape the card's framing chain is asked for: which card runs want one, how to make the matte for some
+    window-time spans (`make(spans) -> (matte path or None, good per span)`), the input index the matte goes in at,
+    the matte's size and the strip's height. card_source_graph fills in the result: the matte's path and which runs
+    escape."""
+
+    wanted: list[bool]
+    make: Callable[[list[tuple[int, int]]], tuple[Optional[str], list[bool]]]
+    input_index: int
+    matte_size: tuple[int, int]
+    ext_h: int
+    path: Optional[str] = None
+    escaped: list[bool] = dataclasses.field(default_factory=list)
+
+
 def card_width(crop: CardCrop, card_w: int, card_h: int, min_w: int) -> int:
     """How wide the card is drawn for a crop (frame pixels, even): its full width, or, when the speaker's area is
     narrower than the crop (a close selfie at head-and-shoulders framing), just the video's own width there (the
@@ -863,16 +1021,48 @@ def card_width(crop: CardCrop, card_w: int, card_h: int, min_w: int) -> int:
 
 
 def card_source_graph(plan, keeps, card_w: int, card_h: int, fps: str, runs: Sequence[tuple[float, float]],
-                      transition: float, faces: Sequence = (), min_w: Optional[int] = None) -> tuple[str, list[int]]:
+                      transition: float, faces: Sequence = (), min_w: Optional[int] = None,
+                      escape: Optional[EscapeSource] = None) -> tuple[str, list[int]]:
     """The card's own framing chain, from [sc_card_src] (the source) to [sc_card_frames] (card_w x card_h), cut
     like the main framing (the same frames): each run's head-and-shoulders crop (card_crops), switching between
     runs while the card is down. Also each run's card width (card_width; the widest its shots need), the video
-    centered in the frames."""
+    centered in the frames.
+
+    `escape`: for the runs that want a frame escape and can have one (escape_crop) the matte is made for their stretch
+    and checked; where it is good the card is framed for the escape, the frames get `escape.ext_h` rows on top and the
+    matte, cut the same way, comes out as [sc_card_matte] (input `escape.input_index`)."""
     from fractions import Fraction
     from clip_engine.services.layout_renderer import video_frame_pieces
     rate = Fraction(fps)
     least = round(card_w * MIN_CARD_SHARE) if min_w is None else min_w
-    crops = card_crops(plan, keeps, runs, transition, card_w / card_h, faces, least / card_w)
+    escapes: dict[tuple[int, int], CardCrop] = {}
+    crops = card_crops(plan, keeps, runs, transition, card_w / card_h, faces, least / card_w,
+                       escape.wanted if escape else (), escapes)
+    ext_h = 0
+    if escape is not None:
+        escape.escaped = [False] * len(runs)
+        feasible = sorted({r for r, _ in escapes})
+        spans = {r: edited_to_window([runs[r]], keeps) for r in feasible}
+        flat = [span for r in feasible for span in spans[r]]
+        path, oks = escape.make(flat) if flat else (None, [])
+        good, k = set(), 0
+        for r in feasible:
+            n = len(spans[r])
+            if path and n and all(oks[k:k + n]):
+                good.add(r)
+            k += n
+        if path and not good:
+            # Not used: the render won't take it in (nor clean it up).
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        if good:
+            escape.path, ext_h = path, escape.ext_h
+            for (r, i), crop in escapes.items():
+                if r in good:
+                    crops[(r, i)] = crop
+            escape.escaped = [r in good for r in range(len(runs))]
     widths = [max([card_width(c, card_w, card_h, least) for (r, _), c in crops.items() if r == k] or [card_w]) for k in range(len(runs))]
     switches = [round((runs[k][1] + runs[k + 1][0]) / 2 * rate) for k in range(len(runs) - 1)]
     window_end = plan.shots[-1].end_ms
@@ -890,16 +1080,30 @@ def card_source_graph(plan, keeps, card_w: int, card_h: int, fps: str, runs: Seq
         edited += count
     n = len(pieces)
     parts.append("[cd_clocked]null[cd_s0]" if n == 1 else "[cd_clocked]split=" + str(n) + "".join(f"[cd_s{k}]" for k in range(n)))
+    if ext_h:
+        mw, mh = escape.matte_size
+        scale = (mw / plan.source_width, mh / plan.source_height)
+        parts.append(f"[{escape.input_index}:v]format=gray,fps={fps}:start_time=0:round=near,"
+                     f"tpad=stop_mode=clone:stop_duration={window_end / 1000:.3f}[cm_clocked]")
+        parts.append("[cm_clocked]null[cm_s0]" if n == 1 else "[cm_clocked]split=" + str(n) + "".join(f"[cm_s{k}]" for k in range(n)))
     for k, (i, start, count, run) in enumerate(pieces):
         crop = crops.get((run, i)) or next((c for (r, j), c in crops.items() if j == i), None) or next(iter(crops.values()), None)
         parts.append(f"[cd_s{k}]trim=start_frame={start}:end_frame={start + count}[cd_t{k}]")
         lo, hi = int(start / rate * 1000), int((start + count) / rate * 1000) + 1
         if crop is None:
-            parts.append(f"[cd_t{k}]scale={card_w}:{card_h}:force_original_aspect_ratio=increase,crop={card_w}:{card_h},setsar=1[cd_c{k}]")
+            parts.append(f"[cd_t{k}]scale={card_w}:{card_h}:force_original_aspect_ratio=increase,crop={card_w}:{card_h},setsar=1"
+                         + (f",pad={card_w}:{card_h + ext_h}:0:{ext_h}:color=black" if ext_h else "") + f"[cd_c{k}]")
         else:
-            parts.append(card_chain(f"cd_t{k}", f"cd_c{k}", crop, lo, hi, card_w, card_h))
+            parts.append(card_chain(f"cd_t{k}", f"cd_c{k}", crop, lo, hi, card_w, card_h, ext_h))
         parts.append(f"[cd_c{k}]setpts=PTS-STARTPTS[cd_v{k}]")
+        if ext_h:
+            parts.append(f"[cm_s{k}]trim=start_frame={start}:end_frame={start + count}[cm_t{k}]")
+            parts.append(card_matte_chain(f"cm_t{k}", f"cm_c{k}", crop or CardCrop(2, 2, ((0, 0.0, 0.0),), (0, 0, 2, 2)), lo, hi,
+                                          card_w, card_h, ext_h, scale))
+            parts.append(f"[cm_c{k}]setpts=PTS-STARTPTS[cm_v{k}]")
     parts.append("".join(f"[cd_v{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=0,settb=expr=1/({fps}),setpts=N,fps={fps}[sc_card_frames]")
+    if ext_h:
+        parts.append("".join(f"[cm_v{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=0,settb=expr=1/({fps}),setpts=N,fps={fps}[sc_card_matte]")
     return ";".join(parts), widths
 
 
@@ -911,6 +1115,11 @@ class SceneComposite:
     inputs: list[str]
     segments: list[Segment]
     geometry: StageGeometry
+    # The camera moves at scene changes (edited clock) and which card runs' heads break out of the card.
+    transitions: list = dataclasses.field(default_factory=list)
+    escaped: list[bool] = dataclasses.field(default_factory=list)
+    # The card runs (edited seconds) whose head breaks out (captions move onto the card there).
+    escaped_spans: list[tuple[float, float]] = dataclasses.field(default_factory=list)
 
 
 def face_center_y(zones, start_ms: float, end_ms: float, panel_h: int) -> int:
@@ -924,14 +1133,18 @@ def face_center_y(zones, start_ms: float, end_ms: float, panel_h: int) -> int:
 def build_scene_graph(
     graph: str, scenes: Sequence[Scene], width: int, height: int, edited_ms: int, video_speed: float, fps: str,
     first_input: int, work_dir: str, stem: str, bar_h: int = 0, zones: Sequence = (), brand: Optional[str] = None,
-    card_graph: Optional[Callable[[int, int, list, float], tuple[str, list[int]]]] = None,
+    card_graph: Optional[Callable[..., tuple[str, list[int]]]] = None,
+    escape_matte: Optional[Callable[[list[tuple[int, int]]], tuple[Optional[str], list[bool]]]] = None,
+    matte_size: Optional[tuple[int, int]] = None,
 ) -> Optional[SceneComposite]:
     """Lay the scenes over a graph ending in a single full-frame [base] (W x H); output stays [base].
 
     `first_input` is the index the first still input gets. None when every scene is face.
-    `card_graph(card_w, card_h, runs, transition)` gives the card's own framing chain from the source
+    `card_graph(card_w, card_h, runs, transition, escape=None)` gives the card's own framing chain from the source
     (card_source_graph; runs and transition on the edited clock, seconds) and each run's card width;
-    without it the card is cut from the framed video.
+    without it the card is cut from the framed video. `escape_matte(spans)` (with `matte_size`) makes the frame
+    escape's matte for window-time spans (depth_fx.escape_matte); without it no head breaks out of the card.
+    Each change of scene goes through its camera move (depth_fx.scene_transitions) unless the scene's is "slide".
     """
     assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
     segments = edited_segments(scenes, edited_ms, video_speed)
@@ -971,6 +1184,8 @@ def build_scene_graph(
         nxt = f"sc_b{k}"
         parts.append(f"[{current}][sc_bd{k}]overlay=0:0:eof_action=pass:enable='between(t,{a:.4f},{e:.4f})'[{nxt}]")
         current = nxt
+    escape: Optional[EscapeSource] = None
+    reported: list[bool] = []
     if runs:
         panel_h = height - bar_h
         shapes = [c for c in CARDS if card_runs(segments, c)]
@@ -985,9 +1200,25 @@ def build_scene_graph(
             tops.append(bar_h + max(0, min(panel_h - crop_h, round(cy - crop_h * CARD_FACE_Y))))
         widths: list[int] = [frame_w] * len(runs)
         if own_card:
-            graph_text, widths = card_graph(frame_w, frame_h, runs, transition)
+            wanted = [any(s.escape for s in segments if s.scene == "stage" and a - 1e-6 <= s.start < b) for a, b in runs]
+            if escape_matte is not None and matte_size is not None and any(wanted):
+                escape = EscapeSource(wanted, escape_matte, first_input + len(inputs), matte_size, even(frame_h * depth_fx.ESCAPE_EXT))
+                graph_text, widths = card_graph(frame_w, frame_h, runs, transition, escape=escape)
+            else:
+                graph_text, widths = card_graph(frame_w, frame_h, runs, transition)
             parts.append(graph_text)
-            parts.append("[sc_card_frames]format=yuva420p[sc_card_rgb]")
+            if escape is not None and escape.path:
+                inputs.append(escape.path)
+                parts.append("[sc_card_frames]split=2[sc_cf_card][sc_cf_esc]")
+                parts.append(f"[sc_cf_card]crop={frame_w}:{frame_h}:0:{escape.ext_h},format=yuva420p[sc_card_rgb]")
+                # The speaker cut out of the same (taller) frames, the cut-out's edge softened a touch.
+                parts.append("[sc_cf_esc]format=yuva420p[sc_esc_v];[sc_card_matte]gblur=sigma=1.2,format=gray[sc_esc_m];"
+                             "[sc_esc_v][sc_esc_m]alphamerge[sc_esc_full]")
+            else:
+                if escape is not None:
+                    reported = list(escape.escaped) or [False] * len(runs)
+                escape = None
+                parts.append("[sc_card_frames]format=yuva420p[sc_card_rgb]")
         else:
             parts.append(f"[sc_src]crop={width}:{crop_h}:0:'{crop_y_expr(runs, tops)}',"
                          f"scale={frame_w}:{frame_h}:flags=bicubic,format=yuva420p[sc_card_rgb]")
@@ -1006,8 +1237,18 @@ def build_scene_graph(
         names = [shape if counts[shape] == 1 else f"{shape}_{w}" for shape, w, _, _ in groups]
         if len(groups) > 1:
             parts.append(f"[sc_card_rgb]split={len(groups)}" + "".join(f"[sc_card_rgb_{n}]" for n in names))
+        # The card runs whose head breaks out, per group.
+        escaping = []
+        for shape, w, full, shape_runs in groups:
+            ok = [(a, b) for a, b in shape_runs
+                  if escape is not None and any(e and ra <= a + 1e-6 and b <= rb + 1e-6 for e, (ra, rb) in zip(escape.escaped, runs))]
+            escaping.append(ok)
+        esc_groups = [k for k, ok in enumerate(escaping) if ok]
+        if escape is not None and esc_groups:
+            parts.append("[sc_esc_full]null[sc_esc_0]" if len(esc_groups) == 1 else
+                         f"[sc_esc_full]split={len(esc_groups)}" + "".join(f"[sc_esc_{k}]" for k in range(len(esc_groups))))
         off = height + 2 * geo.shadow_pad
-        for (shape, w, full, shape_runs), name in zip(groups, names):
+        for g_index, ((shape, w, full, shape_runs), name) in enumerate(zip(groups, names)):
             frames = f"sc_card_rgb_{name}" if len(groups) > 1 else "sc_card_rgb"
             narrow = w < full
             tag = ("" if shape == "rounded" else "-arch") + (f"-{w}" if narrow else "")
@@ -1038,8 +1279,25 @@ def build_scene_graph(
             parts.append(f"[{current}][sc_shadow{k}]overlay=x={cx - geo.shadow_pad}:y='{y}-{geo.shadow_pad}':enable='{enable}'[sc_shadowed{k}]")
             parts.append(f"[sc_shadowed{k}][sc_card{k}]overlay=x={cx}:y='{y}':enable='{enable}'[sc_carded{k}]")
             current = f"sc_carded{k}"
+            if escape is not None and escaping[g_index]:
+                # Frame escape: the speaker cut out over the card's top edge (the part of the head above it), moving with
+                # the card: the frames' whole width (hair past a narrow card's sides too) and down through the card's
+                # rounded top corners (the cut-out redraws the card's own pixels inside it).
+                e = esc_groups.index(g_index)
+                ext = escape.ext_h
+                corner = geo.arch_radius if shape == "arch" else geo.radius
+                parts.append(f"[sc_esc_{e}]crop={frame_w}:{ext + corner}:0:{(frame_h - ch) // 2}[sc_strip{k}]")
+                parts.append(f"[{current}][sc_strip{k}]overlay=x={cx - (frame_w - w) // 2}:y='{y}-{ext}':"
+                             f"enable='{card_enable_expr(escaping[g_index], transition)}'[sc_escaped{k}]")
+                current = f"sc_escaped{k}"
+    from fractions import Fraction
+    moves = depth_fx.scene_transitions(segments, float(Fraction(fps)), video_speed, total)
+    if moves:
+        parts.append(depth_fx.transitions_graph(current, "sc_moved", moves, fps, width, height))
+        current = "sc_moved"
     parts.append(f"[{current}]format=yuv420p[base]")
-    return SceneComposite(";".join(parts), inputs, segments, geo)
+    escaped = list(escape.escaped) if escape else reported
+    return SceneComposite(";".join(parts), inputs, segments, geo, moves, escaped, [r for r, e in zip(runs, escaped) if e])
 
 
 # ---------------------------------------------------------------------------
@@ -1047,14 +1305,24 @@ def build_scene_graph(
 # ---------------------------------------------------------------------------
 
 
-def caption_windows(segments: Sequence[Segment], geo: StageGeometry) -> list[tuple[int, int, int, str]]:
+# With the head breaking out of the card, the captions sit on the card (over the chest) instead of in the band above
+# it (where the head is): this share of the card's height down from its top, in the member's own caption style.
+ESCAPE_CAPTION_Y = 0.74
+
+
+def caption_windows(segments: Sequence[Segment], geo: StageGeometry,
+                    escaped: Sequence[tuple[float, float]] = ()) -> list[tuple[int, int, int, str]]:
     """(start ms, end ms, y, caption mode) on the edited clock where captions move off the face default.
 
     The mode (caption_mode): "light" for dark text on a light backdrop, "box" for white words on a color box
-    (grid and gradient backdrops), "" for the member's own captions (dark backdrop)."""
+    (grid and gradient backdrops), "" for the member's own captions (dark backdrop). A stage stretch inside an
+    `escaped` span (edited seconds: a card whose head breaks out) has its captions on the card, in the member's style."""
     out = []
     for s in segments:
         if s.scene == "face":
+            continue
+        if s.scene == "stage" and any(a - 1e-6 <= s.start and s.end <= b + 1e-6 for a, b in escaped):
+            out.append((round(s.start * 1000), round(s.end * 1000), geo.card_y + round(geo.card_h * ESCAPE_CAPTION_Y), ""))
             continue
         y = geo.caption_y if s.scene == "stage" else geo.visual_caption_y
         out.append((round(s.start * 1000), round(s.end * 1000), y, caption_mode(s.backdrop)))

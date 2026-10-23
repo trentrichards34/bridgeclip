@@ -187,8 +187,10 @@ CTA_TEMPLATES = frozenset({"link_cta", "comment_cta"})
 # The AI's planned sound names (edit_recording's plan): the action each stands for. No tones: a "ding" is a pop.
 AI_SOUND_ACTION = {"whoosh": "whoosh", "pop": "pop", "click": "click", "ding": "pop", "thud": "impact"}
 EVENT_KINDS = ("hook", "graphic", "scene", "broll", "punch", "extra")
-PRIORITY = {"cta": 95, "hook": 90, "scene": 80, "big": 75, "graphic": 70, "broll": 55, "scene_out": 50, "graphic_out": 40,
-            "punch": 30, "extra": 20}
+PRIORITY = {"cta": 95, "hook": 90, "scene": 80, "big": 75, "graphic": 70, "punch_cue": 60, "broll": 55, "scene_out": 50,
+            "graphic_out": 40, "punch": 30, "extra": 20}
+# The sounds a punch-in on a cue may ask for.
+PUNCH_SOUNDS = ("whoosh", "impact")
 
 
 @dataclass
@@ -235,7 +237,9 @@ def cues_from_events(events: Iterable[Any], total_ms: int) -> list[Cue]:
     - graphic: template, end_ms, optional size ('compact' | 'card' | 'stage'), effect (an 'fx' unit) and sound (a hint
       that wins over the template's own sound; 'none' for silence)
     - scene: a stage scene, at_ms to end_ms (a whoosh in, and one back to the speaker)
-    - hook: the hook text arriving; broll: a b-roll shot cutting in; punch: a punch-in zoom
+    - hook: the hook text arriving; broll: a b-roll shot cutting in; punch: a punch-in zoom (sound: 'whoosh' or
+      'impact' for a punch-in on a cue, landing on its word at at_ms)
+    - scene: at_ms is the cut, the middle of the scene's camera move (depth_fx.scene_transitions), where the whoosh peaks
     - extra: one of the AI's planned sounds (sound: its name)
     Anything malformed is left out."""
     hints = fx_hints()
@@ -253,7 +257,13 @@ def cues_from_events(events: Iterable[Any], total_ms: int) -> list[Cue]:
         elif kind == "broll":
             cues.append(Cue(at, "whoosh", "broll", PRIORITY["broll"], window=(at, end or at + 1500)))
         elif kind == "punch":
-            cues.append(Cue(at, "swipe", "punch", PRIORITY["punch"]))
+            # A punch-in on a cue (depth_fx: a turn or a number) carries its sound: a whoosh on a turn, an impact on a
+            # number, and it matters more than the phrase rhythm's cuts (a soft swipe).
+            hint = event.get("sound")
+            if hint in PUNCH_SOUNDS:
+                cues.append(Cue(at, hint, "punch", PRIORITY["punch_cue"]))
+            else:
+                cues.append(Cue(at, "swipe", "punch", PRIORITY["punch"]))
         elif kind == "scene":
             cues.append(Cue(at, "whoosh", "scene", PRIORITY["scene"], window=(at, end or at)))
             if end is not None and end < total_ms - 300:

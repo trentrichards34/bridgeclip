@@ -20,6 +20,7 @@ import { createTimeline } from 'animejs'
 import './graphics.css'
 import { ICONS } from './icons'
 import { bigWordsTemplate } from './big-words'
+import { takeoverTemplate } from './takeover'
 import { mountEffect } from './fx/mount'
 import { ctaTemplate } from './cta'
 import { chapterTemplate, compareMarksTemplate, funnelTemplate, growthTemplate, ideaHubTemplate, journeyTemplate, staircaseTemplate } from './diagrams'
@@ -266,7 +267,7 @@ export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): Mounte
  * so text is drawn crisply at its final size.
  */
 function fitToBand({ band, fit, root, spec, u }: Build): void {
-  if (['highlight', 'big_words', 'orbit', 'screen_frame', 'chapter', 'staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks'].includes(spec.template)) return
+  if (['highlight', 'big_words', 'takeover', 'orbit', 'screen_frame', 'chapter', 'staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks'].includes(spec.template)) return
   fit.style.removeProperty('--u')
   fit.style.removeProperty('--card-w')
   const cardW = parseFloat(root.style.getPropertyValue('--card-w'))
@@ -847,6 +848,9 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
 
   // Huge words in the scene (big-words.ts): sized and animated on their own, outside the band's card layout.
   big_words(b) { bigWordsTemplate(b) },
+
+  // The key line in huge type over the whole frame (takeover.ts); the engine puts the speaker's head between its lines.
+  takeover(b) { takeoverTemplate(b) },
 
   // A center tile with icon nodes on a ring: the ring draws round from the top and each node pops in as it passes.
   orbit(b) {

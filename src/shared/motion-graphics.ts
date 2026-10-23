@@ -37,6 +37,7 @@ export const GRAPHIC_TEMPLATES = [
   { id: 'growth', label: 'Growth', detail: '3 to 6 plants (or bars) that get bigger, with a label under each.', fields: ['title', 'items', 'style'] },
   { id: 'idea_hub', label: 'Idea hub', detail: 'An icon in the middle with 3 to 6 labels around it. Each label appears as you say it.', fields: ['text', 'items', 'icon'] },
   { id: 'compare_marks', label: 'Wrong / right', detail: 'Two cards side by side, then a red ✗ on one and a green ✓ on the other.', fields: ['items', 'notes', 'wrong'] },
+  { id: 'takeover', label: 'Type takeover', detail: 'Your key line in huge type over the whole frame, your head between its lines. Use it once or twice a video.', fields: ['text', 'accent'] },
   // One template for every effect: `effect` names the unit, its other fields are the unit's (fx-catalog.ts).
   { id: 'fx', label: 'Effect', detail: 'A designed motion effect: a count up, a word rise, a chart, a marker and more.', fields: ['effect'] }
 ] as const
@@ -61,19 +62,29 @@ export function isGraphicSize(value: unknown): value is GraphicSize {
  * Where a graphic sits in depth. `front` (the default, also when unset): over
  * the video. `behind`: in the scene, behind the speaker (the engine lays the
  * speaker, cut out of the same frames, back on top while it plays). Only the
- * templates in GRAPHIC_DEPTH_TEMPLATES can go behind.
+ * templates in GRAPHIC_DEPTH_TEMPLATES can go behind. `between`: a Type takeover's
+ * own depth (its lines above the speaker's chin behind them, the rest in front of
+ * their chest, over the room darkened and blurred); a takeover set to `front` lies over everything.
  */
-export type GraphicDepth = 'front' | 'behind'
+export type GraphicDepth = 'front' | 'behind' | 'between'
 export const GRAPHIC_DEPTHS: readonly GraphicDepth[] = ['front', 'behind']
 export function isGraphicDepth(value: unknown): value is GraphicDepth {
-  return value === 'front' || value === 'behind'
+  return value === 'front' || value === 'behind' || value === 'between'
 }
+/** Templates whose words sit between the speaker's head and chest (Type takeover). */
+export const GRAPHIC_BETWEEN_TEMPLATES: readonly string[] = ['takeover']
 /** Templates that can sit behind the speaker (big words and big type; Big words starts there). */
 export const GRAPHIC_DEPTH_TEMPLATES: readonly string[] = ['big_words', 'title', 'statement', 'headline_pill']
 export function graphicCanGoBehind(template: string): boolean { return GRAPHIC_DEPTH_TEMPLATES.includes(template) }
-/** A graphic's depth: its own when its template can go behind, else front. */
+/** A graphic's depth: its own when its template can go behind, else front; a takeover sits between unless set to front. */
 export function graphicDepth(g: { template: string; depth?: GraphicDepth }): GraphicDepth {
+  if (GRAPHIC_BETWEEN_TEMPLATES.includes(g.template)) return g.depth === 'front' ? 'front' : 'between'
   return g.depth === 'behind' && graphicCanGoBehind(g.template) ? 'behind' : 'front'
+}
+/** Whether a depth can be stored on a graphic of this template. */
+function depthFits(template: string, depth: unknown): depth is GraphicDepth {
+  if (GRAPHIC_BETWEEN_TEMPLATES.includes(template)) return depth === 'front' || depth === 'between'
+  return (depth === 'front' || depth === 'behind') && graphicCanGoBehind(template)
 }
 
 /** One graphic on a clip. Times are SOURCE time (like the clip's ranges), so it stays on its words when the cut changes. */
@@ -150,7 +161,7 @@ export function parseGraphics(value: unknown): EditorGraphic[] {
     if (g.template === 'fx' && !fxEffect(fields.effect)) throw new Error('Choose one of the effects.')
     const origin: EditorGraphic['origin'] = g.origin === 'auto' || g.origin === 'chat' || g.origin === 'member' ? g.origin : undefined
     const size = isGraphicSize(g.size) ? g.size : undefined
-    const depth = isGraphicDepth(g.depth) && graphicCanGoBehind(g.template) ? g.depth : undefined
+    const depth = depthFits(g.template, g.depth) ? g.depth : undefined
     return { id: g.id, template: g.template, at_ms: Math.round(g.at_ms), duration_ms: Math.round(g.duration_ms), placement, fields, ...(origin ? { origin } : {}), ...(size ? { size } : {}), ...(depth ? { depth } : {}) }
   }).sort((a, b) => a.at_ms - b.at_ms)
 }
@@ -226,7 +237,7 @@ export const GRAPHIC_DEFAULT_MS: Record<GraphicTemplateId, number> = {
   stat: 3500, title: 2500, list: 5000, lower_third: 4000, logo: 3000, before_after: 4000, checklist: 5000, quote: 5000, highlight: 2500,
   statement: 3500, sticky_notes: 4000, strike_list: 5000, browser_frame: 5000, icon_pop: 3500, headline_pill: 3500, comment_cta: 3500, link_cta: 3500,
   big_words: 2500, orbit: 4500, feature_tile: 3500, screen_frame: 5000,
-  chapter: 15000, staircase: 9000, funnel: 8000, journey: 9000, growth: 9000, idea_hub: 8000, compare_marks: 7000, fx: 3500
+  chapter: 15000, staircase: 9000, funnel: 8000, journey: 9000, growth: 9000, idea_hub: 8000, compare_marks: 7000, fx: 3500, takeover: 2500
 }
 
 /** Templates that can show a picture the member chose (Logo pop needs one; the others draw without it). */
@@ -571,7 +582,7 @@ export function screenFrameLayout(spec: Pick<GraphicRenderSpec, 'width' | 'heigh
 // ---------------------------------------------------------------------------
 
 /** Templates whose words build one by one and may carry `word_ms` (each word's spoken time). */
-export const WORD_TIMED_TEMPLATES: readonly string[] = ['big_words', 'title', 'statement', 'headline_pill']
+export const WORD_TIMED_TEMPLATES: readonly string[] = ['big_words', 'title', 'statement', 'headline_pill', 'takeover']
 /** A word-timed card holds at least this long after its last word starts being said. */
 export const WORD_HOLD_MS = 700
 /** A word-timed card starts at most this much before its first word. */
@@ -583,6 +594,7 @@ export function cardWords(template: string, fields: Record<string, string>): str
   if (template === 'big_words') return bigWords(fields.text).flat()
   if (template === 'headline_pill') return [...split(fields.text), ...split(fields.phrase)]
   if (template === 'statement') return [...split(fields.text), ...split(fields.subline)]
+  if (template === 'takeover') return takeoverLines(fields.text).flat()
   return split(fields.text)
 }
 
@@ -673,6 +685,31 @@ export function ctaPointsDown(fields: Record<string, string>): boolean {
   return /\b(below|bio|profile|description|caption|comments?|down)\b/i.test(`${fields.where ?? ''} ${fields.text ?? ''}`)
 }
 
+/** A Type takeover's most words (one short line said). */
+export const MAX_TAKEOVER_WORDS = 9
+/**
+ * A Type takeover's lines: its words (at most MAX_TAKEOVER_WORDS) in reading order, broken into short lines of one to
+ * three words (about 11 letters a line, at most five lines), so each line can be set huge across the frame.
+ */
+export function takeoverLines(text: string | undefined): string[][] {
+  const words = (text ?? '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).slice(0, MAX_TAKEOVER_WORDS)
+  if (!words.length) return []
+  const lines: string[][] = []
+  for (const word of words) {
+    const last = lines.at(-1)
+    if (last && last.length < 3 && last.join(' ').length + 1 + word.length <= 11) last.push(word)
+    else lines.push([word])
+  }
+  // Too many short lines: join the shortest neighbors until five are left.
+  const size = (i: number): number => lines[i].join(' ').length + lines[i + 1].join(' ').length
+  while (lines.length > 5) {
+    let best = 0
+    for (let i = 1; i < lines.length - 1; i++) if (size(i) < size(best)) best = i
+    lines.splice(best, 2, [...lines[best], ...lines[best + 1]])
+  }
+  return lines
+}
+
 /** True when a graphic has the words (or image) it needs to draw something. */
 export function graphicHasContent(g: Pick<EditorGraphic, 'template' | 'fields'>): boolean {
   const f = g.fields
@@ -700,6 +737,7 @@ export function graphicHasContent(g: Pick<EditorGraphic, 'template' | 'fields'>)
     case 'staircase': case 'funnel': case 'journey': case 'growth': case 'idea_hub': case 'compare_marks':
       return templateItems(g.template, f.items).length >= DIAGRAM_MIN_ITEMS[g.template]
     case 'fx': return fxHasContent(f)
+    case 'takeover': return takeoverLines(f.text).length > 0
   }
 }
 
@@ -734,7 +772,7 @@ export function newGraphic(template: GraphicTemplateId, at_ms: number, options: 
   // Diagrams start stage size: they fill the middle of the frame (under a chapter header).
   const size = isGraphicSize(options.size) ? options.size : isDiagram(template) ? 'stage' : undefined
   return { id, template, at_ms: Math.max(0, Math.round(at_ms)), duration_ms: clampGraphicMs(options.duration_ms ?? GRAPHIC_DEFAULT_MS[template], template), placement, fields, origin: options.origin ?? 'member', ...(size ? { size } : {}),
-    ...(depth && graphicCanGoBehind(template) ? { depth } : {}) }
+    ...(depth && depthFits(template, depth) ? { depth } : {}) }
 }
 
 /** A length kept to 0.8 s to the template's longest (graphicMaxMs: 8 s for most). */
@@ -787,8 +825,8 @@ export function updateGraphic(c: Timing & { graphics?: EditorGraphic[] }, id: st
   const next: EditorGraphic = { ...g, ...rest, ...(rest.duration_ms !== undefined ? { duration_ms: clampGraphicMs(rest.duration_ms, template) } : {}), fields }
   if (size !== undefined) { if (isGraphicSize(size) && size !== 'card') next.size = size; else delete next.size }
   // Depth is kept as set (Big words keeps an explicit 'front'); a template that can't go behind has none.
-  if (depth !== undefined) { if (isGraphicDepth(depth) && graphicCanGoBehind(next.template)) next.depth = depth; else delete next.depth }
-  if (next.depth && !graphicCanGoBehind(next.template)) delete next.depth
+  if (depth !== undefined) { if (depthFits(next.template, depth)) next.depth = depth; else delete next.depth }
+  if (next.depth && !depthFits(next.template, next.depth)) delete next.depth
   return withGraphic(c, next)
 }
 
@@ -861,7 +899,7 @@ export function switchGraphicTemplate(g: EditorGraphic, to: GraphicTemplateId): 
   if (to === 'screen_frame') { fields.video = 'source'; if (g.fields.from) fields.from = g.fields.from }
   for (const key of Object.keys(fields)) if (key !== 'items') fields[key] = fields[key].slice(0, MAX_GRAPHIC_FIELD_CHARS)
   const size: GraphicSize | undefined = isDiagram(to) ? 'stage' : isDiagram(g.template) ? undefined : g.size
-  const depth: GraphicDepth | undefined = graphicCanGoBehind(to) ? (g.depth ?? (to === 'big_words' ? 'behind' : undefined)) : undefined
+  const depth: GraphicDepth | undefined = depthFits(to, g.depth) ? g.depth : graphicCanGoBehind(to) && to === 'big_words' ? 'behind' : undefined
   const { size: _size, depth: _depth, ...rest } = g
   void _size; void _depth
   return { ...rest, template: to, duration_ms: clampGraphicMs(g.duration_ms, to), fields, ...(size && size !== 'card' ? { size } : {}), ...(depth ? { depth } : {}) }

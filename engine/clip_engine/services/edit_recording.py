@@ -1298,6 +1298,14 @@ def reel_sound_events(config: dict, timed: list, look: "Look", total_s: float) -
                            "end_ms": min(total_ms, starts[g["word"]] + int(g.get("duration_ms") or 0))})
     for a, _b in getattr(look, "punched", ()) or ():
         events.append({"kind": "punch", "at_ms": round(a * 1000)})
+    if "punch_zoom" in (getattr(look, "look_extras", ()) or ()):
+        # The Zoom extra's punch-ins on cues (placed as overlay_reel places them: never during a card or the rhythm).
+        from clip_engine.services import look_extras as lx
+        cards = [(starts[p["word"]] / 1000, starts[p["word"]] / 1000 + float(p.get("seconds") or 3.0))
+                 for p in config.get("popups") or [] if p.get("kind") == "card" and p.get("word") in starts]
+        words = [(s / 1000, e / 1000, str(t)) for t, s, e, *_ in timed]
+        for p in lx.punch_plan(words, total_s, None, [*cards, *[tuple(w) for w in getattr(look, "punched", ()) or ()]]).cues:
+            events.append({"kind": "punch", "at_ms": round(p.land * 1000), "sound": "impact" if p.kind == "number" else "whoosh"})
     events += extra_events(config.get("sounds") or [], starts)
     return events
 
@@ -1787,7 +1795,7 @@ def place_graphics(raw: Any, starts: dict, cards: list[dict], total_s: float, wa
         if any(start / 1000 < b and (start + length) / 1000 > a for a, b in windows):
             during += 1
             continue
-        placed.append({"file": g["file"], "start_ms": int(start), "duration_ms": int(length), **({"depth": "behind"} if g.get("depth") == "behind" else {}),
+        placed.append({"file": g["file"], "start_ms": int(start), "duration_ms": int(length), **({"depth": g["depth"]} if g.get("depth") in ("behind", "between") else {}),
                        **({"min_top": g["min_top"]} if g.get("depth") == "behind" and "min_top" in g else {})})
     if cut:
         warnings.append(f"{cut} graphic{'s were' if cut != 1 else ' was'} left out: {'their words were' if cut != 1 else 'its word was'} cut or came right at the end.")

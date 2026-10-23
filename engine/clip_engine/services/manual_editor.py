@@ -848,11 +848,13 @@ async def render_export(run, project, c, output, source, render_transcript, repl
         result = await renderer.render_clip(RenderRequest(video_path=source, output_path=str(Path(work) / 'clip.mp4'),
             start_time_ms=a, end_time_ms=b, source_width=project['width'], source_height=project['height'],
             transcript_segments=render_transcript, include_captions=c['captions'], caption_style=get_caption_preset(c['caption_preset']),
-            caption_suppression_ranges_ms=[tuple(interval) for interval in c.get('caption_suppression_ranges', [])],
+            caption_suppression_ranges_ms=[tuple(interval) for interval in c.get('caption_suppression_ranges', [])] + takeover_quiet(c, graphics),
             caption_y=c.get('caption_y'),
             apply_padding=False, aspect_ratio=project['aspect_ratio'], pacing='natural', video_speed=c['video_speed'],
             manual_ranges_ms=[tuple(interval) for interval in c['ranges']], manual_plan=manual_plan(project, c, cover=bool(hook)),
             write_subtitles=replace_index is not None, **hook_options, **extras, **language,
+            # Frame-escape mattes are kept with the run's graphics, so baking the clip again reuses them.
+            matte_cache_dir=str(run / '.graphics' / 'mattes'),
             **({'scenes': scenes, 'scene_brand_color': hook['look']['color'] if hook and hook['look'].get('look') == 'brand' else None}
                if scenes and project['aspect_ratio'] == '9:16' else {})))
         if graphics:
@@ -864,6 +866,8 @@ async def render_export(run, project, c, output, source, render_transcript, repl
         if audio is not None:
             await asyncio.to_thread(finish_in_place, result.output_path, audio, str(Path(work) / 'audio'))
         if sound is not None:
+            # The Zoom extra's punch-ins on cues were placed by the render: each one's sound lands on its word.
+            sound.events = [*sound.events, *punch_events(result.punches)][:400]
             # Last, over the finished sound: each effect a few dB over the music and under the voice, then -14 LUFS.
             from clip_engine.services.sound_design import design_in_place
             await asyncio.to_thread(design_in_place, result.output_path, sound, result.duration_ms, str(Path(work) / 'sounds'))
@@ -878,6 +882,23 @@ async def render_export(run, project, c, output, source, render_transcript, repl
     output['total_clips'] = len(output['clips'])
     atomic_json(run / 'job_output.json', output)
     return index, usage
+
+
+def takeover_quiet(c, graphics):
+    """Source spans where a Type takeover plays (depth "between"): the captions give way to its huge type there."""
+    from clip_engine.services.depth_fx import output_to_source
+    spans = []
+    for g in graphics or []:
+        if isinstance(g, dict) and g.get('depth') == 'between' and type(g.get('start_ms')) is int and type(g.get('duration_ms')) is int:
+            spans += output_to_source(c['ranges'], c['video_speed'], g['start_ms'], g['start_ms'] + g['duration_ms'])
+    return spans
+
+
+def punch_events(punches):
+    """Sound design events for the punch-ins a render placed on cues (RenderResult.punches): a whoosh on a turn, an
+    impact on a number."""
+    return [{'kind': 'punch', 'at_ms': int(p['at_ms']), 'sound': 'impact' if p.get('kind') == 'number' else 'whoosh'}
+            for p in punches or [] if isinstance(p, dict) and type(p.get('at_ms')) is int and p['at_ms'] >= 0]
 
 
 def replace_library_clip(run, output, index, result, c, project, hook, a, b, caption_language=None):

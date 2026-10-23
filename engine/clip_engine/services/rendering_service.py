@@ -60,6 +60,7 @@ from clip_engine.services.layout_renderer import (
     title_y,
 )
 from clip_engine.services import stage_scenes
+from clip_engine.services import depth_fx, segmentation
 from clip_engine.services.transcription_service import TranscriptSegment
 from clip_engine.services.video_speed import scaled_duration_ms, speed_video_filter, validate_video_speed
 
@@ -455,6 +456,8 @@ class RenderRequest:
     # Scenes in SOURCE time (Motion graphics: Auto with Stage layouts), moved onto the finished clip's clock
     # once the cut is known; used when `scenes` is empty. RenderResult.stage_scenes says which were drawn.
     source_scenes: list[dict] = field(default_factory=list)
+    # Where frame-escape mattes are kept between renders of the same clip (None: a folder next to the output).
+    matte_cache_dir: Optional[str] = None
     editorial_service: Optional[JevService] = field(default=None, repr=False)
     coherence_reviewer: Optional[CoherenceReviewer] = field(default=None, repr=False)
 
@@ -489,6 +492,12 @@ class RenderResult:
     screen_focus: Optional[dict] = None
     # The request's source_scenes the clip was drawn with (source time; empty when none were).
     stage_scenes: list[dict] = field(default_factory=list)
+    # Depth and camera moves on the finished clip's clock (ms): the Zoom extra's punch-ins on cues
+    # ({at_ms, end_ms, kind}: at_ms is when the push-in lands on its word), the camera moves at scene changes
+    # ({at_ms, kind}: the cut in the middle of the move) and how many stage runs had the head break out of the card.
+    punches: list[dict] = field(default_factory=list)
+    scene_moves: list[dict] = field(default_factory=list)
+    escaped_runs: int = 0
 
 
 def shot_record(shot) -> dict:
@@ -763,6 +772,7 @@ class RenderingService:
             ladder.append((letterbox, natural_map, "letterbox_natural"))
 
         render_fallback: Optional[str] = None
+        depth: dict = {}
         attempted_plan = plan
         attempts = []
         for step, (step_plan, step_map, fallback) in enumerate(ladder):
@@ -772,7 +782,7 @@ class RenderingService:
                     request.editorial_context['coherence']['status'] = 'rejected'
                     raise CoherenceRejected('Clip omitted: rendering fallback failed coherence review.')
             try:
-                await self._render_edit(
+                depth = await self._render_edit(
                     request, step_plan, step_map, window_start_ms, window_ms,
                     target_width, target_height, is_landscape, fps, loudness_filter,
                 )
@@ -839,6 +849,8 @@ class RenderingService:
             screen_focus=plan.screen_focus if analyzed else None,
             stage_scenes=[dict(src) for src, _ in self._source_scene_pairs(request, time_map, window_start_ms)]
             if not is_landscape and not self._background_video(request, is_landscape) else [],
+            punches=(depth or {}).get("punches", []), scene_moves=(depth or {}).get("scene_moves", []),
+            escaped_runs=(depth or {}).get("escaped_runs", 0),
         )
 
     @staticmethod
@@ -910,8 +922,9 @@ class RenderingService:
         is_landscape: bool,
         fps: str = "30",
         loudness_filter: Optional[str] = None,
-    ) -> None:
-        """Build the graph, captions and overlays for one edit and run FFmpeg."""
+    ) -> dict:
+        """Build the graph, captions and overlays for one edit and run FFmpeg. Returns the depth and camera moves made
+        (RenderResult.punches, scene_moves, escaped_runs)."""
         has_audio = request.include_audio and await self._has_audio(request.video_path)
         background = self._background_video(request, is_landscape)
         headline = None if background else self._headline_bar_image(request, target_width, target_height, is_landscape)
@@ -925,10 +938,11 @@ class RenderingService:
         looped_inputs: list[str] = []
         extras = request.look_extras or LookExtras()
         broll = [] if background else self._broll_windows(request, time_map, window_start_ms)
+        cue_punches: list = []
         if extras.has("punch_zoom") and not background:
             graph = extras_module.create_punch(
                 graph, extras, plan, remap_plan(plan, time_map), time_map, self._extras_words(request, window_start_ms, time_map),
-                target_width, speaker_h, [(a, b) for _, a, b in broll])
+                target_width, speaker_h, [(a, b) for _, a, b in broll], fps=fps, found=cue_punches)
         if background:
             graph = self._stack_background(graph, target_width, target_height - speaker_h, fps)
             looped_inputs = [background]
@@ -939,7 +953,7 @@ class RenderingService:
         if headline:
             graph = self._pad_for_headline(graph, target_width, target_height, bar_h, parse_headline_look(request.headline_look).pad_color)
         scenes = self._scene_composite(request, graph, plan, time_map, target_width, target_height, speaker_h, bar_h,
-                                       is_landscape, bool(background), fps, 1 + len(looped_inputs), window_start_ms)
+                                       is_landscape, bool(background), fps, 1 + len(looped_inputs), window_start_ms, window_ms)
         still_inputs: list[str] = []
         if scenes:
             graph, still_inputs = scenes.graph, scenes.inputs
@@ -987,6 +1001,12 @@ class RenderingService:
                     os.remove(path)
                 except OSError:
                     pass
+        speed = request.video_speed or 1.0
+        return {
+            "punches": [{"at_ms": round(p.land * 1000 / speed), "end_ms": round(p.end * 1000 / speed), "kind": p.kind} for p in cue_punches],
+            "scene_moves": [{"at_ms": round(m.at * 1000 / speed), "kind": m.kind} for m in (scenes.transitions if scenes else [])],
+            "escaped_runs": sum(1 for e in (scenes.escaped if scenes else []) if e),
+        }
 
         if not os.path.isfile(request.output_path):
             raise RenderingError("Render failed: output file not created")
@@ -1004,6 +1024,7 @@ class RenderingService:
     def _scene_composite(
         self, request: RenderRequest, graph: str, plan: ClipLayoutPlan, time_map: TimeMap, width: int, height: int,
         speaker_h: int, bar_h: int, is_landscape: bool, background: bool, fps: str, first_input: int, window_start_ms: int = 0,
+        window_ms: Optional[int] = None,
     ) -> Optional["stage_scenes.SceneComposite"]:
         """The scenes laid over the framed video (9:16 without a gameplay background), or None."""
         raw = request.scenes or [out for _, out in self._source_scene_pairs(request, time_map, window_start_ms)]
@@ -1032,12 +1053,20 @@ class RenderingService:
             zones = face_zones(plan, time_map, width, speaker_h) if plan.face_samples or any(s.people for s in plan.shots) else []
         except Exception:  # noqa: BLE001 - the card then uses the usual framing's face height
             zones = []
+        work = os.path.dirname(request.output_path)
+        stem = f"{request.start_time_ms}-{request.end_time_ms}"
+        span_ms = window_ms if window_ms is not None else (plan.shots[-1].end_ms if plan.shots else 0)
+        cache = request.matte_cache_dir or os.path.join(work, ".scene-mattes")
+        # Frame escape: the speaker's matte for the stage scenes' stretches of the render window (kept between renders).
+        escape_matte = (lambda spans: depth_fx.escape_matte(request.video_path, cache, work, window_start_ms, span_ms, fps,
+                                                            plan.source_width, plan.source_height, spans, stem)) \
+            if span_ms > 0 and segmentation.available() else None
         return stage_scenes.build_scene_graph(
             graph, scenes, width, height, time_map.output_ms, request.video_speed, fps, first_input,
-            os.path.dirname(request.output_path), f"{request.start_time_ms}-{request.end_time_ms}", bar_h=bar_h,
-            zones=zones, brand=request.scene_brand_color,
-            card_graph=lambda w, h, runs, transition: stage_scenes.card_source_graph(
-                plan, time_map.keeps, w, h, fps, runs, transition, min_w=round(width * stage_scenes.MIN_CARD_SHARE)))
+            work, stem, bar_h=bar_h, zones=zones, brand=request.scene_brand_color,
+            card_graph=lambda w, h, runs, transition, escape=None: stage_scenes.card_source_graph(
+                plan, time_map.keeps, w, h, fps, runs, transition, min_w=round(width * stage_scenes.MIN_CARD_SHARE), escape=escape),
+            escape_matte=escape_matte, matte_size=depth_fx.matte_size(plan.source_width, plan.source_height))
 
     @staticmethod
     def _source_scene_pairs(request: RenderRequest, time_map: TimeMap, window_start_ms: int) -> list[tuple[dict, dict]]:
@@ -1583,7 +1612,7 @@ class RenderingService:
             zones = face_zones(plan, time_map, target_width, target_height)
             if zones:
                 placer = CaptionPlacer(anchors, zones, target_width, target_height)
-        windows = stage_scenes.caption_windows(scenes.segments, scenes.geometry) if scenes else []
+        windows = stage_scenes.caption_windows(scenes.segments, scenes.geometry, scenes.escaped_spans) if scenes else []
         if windows:
             # Stage and visual scenes: captions in the band between the stage and the speaker card.
             anchors = stage_scenes.scene_anchors(anchors or [(10**9, 5, round(target_height * 0.7))], windows)
