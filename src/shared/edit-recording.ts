@@ -129,6 +129,11 @@ export interface EditPlan {
   /** Planned graphics the plan didn't use (teaching density, only words said): what "Dress it up" adds without another AI call. */
   spareGraphics?: EditGraphic[]
   /**
+   * My logos the director popped in where their names are said (one of the run's images per logo, pinned to the word):
+   * the review starts with them as pins (engine: logo_pins with library ids; main swaps those for the run's image ids).
+   */
+  logoPins?: { image: string; word: number }[]
+  /**
    * The same recording made before: whether its last headline was kept on the first hook (it must use only words
    * said in this recording), and the AI's new headline for that hook (offered as "New headline").
    */
@@ -342,7 +347,7 @@ export function initialDecisions(plan: EditPlan, look: EditLook = DEFAULT_EDIT_L
     endOnCta: plan.cta !== null,
     popups: plan.popups.map((popup) => ({ id: popup.id, on: true, text: popup.text, ...(popup.card ? { card: copyCard(popup.card) } : {}) })),
     sounds: plan.sounds.map((sound) => ({ id: sound.id, on: true })),
-    look, recipe, lookExtras: [], pins: [], cutoutIntro: false, rawIntro: false, graphics, ...combine, ...direction
+    look, recipe, lookExtras: [], pins: (plan.logoPins ?? []).map((pin) => ({ ...pin })), cutoutIntro: false, rawIntro: false, graphics, ...combine, ...direction
   }, recipe)
 }
 
@@ -561,12 +566,19 @@ export function parseEditPlan(value: unknown, sources: number): EditPlan | null 
   for (const raw of Array.isArray(spareRaw) ? spareRaw.slice(0, 8) : []) {
     try { spare.push(...parseEditGraphics([raw], n).filter((g) => g.origin === 'auto' && !spare.some((x) => x.id === g.id) && !(graphics ?? []).some((x) => x.id === g.id))) } catch { /* left out */ }
   }
+  const pinsRaw = value.logoPins ?? value.logo_pins
+  const logoPins: { image: string; word: number }[] = []
+  for (const raw of Array.isArray(pinsRaw) ? pinsRaw.slice(0, EDIT_MAX_PINS) : []) {
+    const image = record(raw) ? (raw.image ?? raw.logo) : null
+    if (record(raw) && typeof image === 'string' && /^[A-Za-z0-9._-]{1,80}$/.test(image) && int(raw.word, 0, n - 1)) logoPins.push({ image, word: raw.word as number })
+  }
   const keptRaw = value.keptHook ?? value.kept_hook
   const keptHook = record(keptRaw) && typeof keptRaw.kept === 'boolean' && hooks.length
     ? { kept: keptRaw.kept, text: (text(keptRaw.text, MAX_HOOK_TEXT_CHARS) ?? '').trim(), fresh: (text(keptRaw.fresh, MAX_HOOK_TEXT_CHARS) ?? '').trim() } : null
   return { words, hooks, hook, cta: span(value.cta), popups, sounds, planned: value.planned === 'basic' ? 'basic' : 'ai', notes: lines(value.notes, 6), warnings: lines(value.warnings, 4),
     ...(combine ? { combine } : {}), ...(graphics ? { graphics } : {}), ...(keptHook && (!keptHook.kept || keptHook.text) ? { keptHook } : {}),
-    ...(isRegister(value.register) ? { register: value.register } : {}), ...(spare.length ? { spareGraphics: spare } : {}) }
+    ...(isRegister(value.register) ? { register: value.register } : {}), ...(spare.length ? { spareGraphics: spare } : {}),
+    ...(logoPins.length ? { logoPins } : {}) }
 }
 
 /** The plan's combine part (engine: ai_order, order_why, proof; or already parsed), checked; null when it isn't one. */

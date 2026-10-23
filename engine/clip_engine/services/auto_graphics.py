@@ -52,6 +52,8 @@ AUTO_FX = (
     'notification-stack', 'testimonial-proof-card', 'cta-lockup',
     # Charts and flows with every number and label said (CreatorClips' own units, remade from HyperFrames blocks).
     'data-chart', 'animated-bar-chart', 'mk-line-graph', 'flowchart', 'onboarding-stepper-flow',
+    # Shares, steps and identity moments (CreatorClips' own units in HyperFrames' style).
+    'gauge-dial', 'waffle-chart', 'flanking-words', 'magazine-cover',
 )
 # Effects on the member's own screenshots and photos: never asked of the model (it can't see the pictures); the
 # director places them in code where a screen, a proof or a before and after is said, only when the member added
@@ -513,7 +515,9 @@ def _options(options: Optional[dict]) -> dict:
             'gap_ms': int(options['gap_ms']) if type(options.get('gap_ms')) is int and 0 <= options['gap_ms'] <= 10000 else 0,
             # How dense (teaching | story | minimal; None: detected from the words) and the video's one look.
             'register': options.get('register') if options.get('register') in ('teaching', 'story', 'minimal') else None,
-            'tone': options.get('tone') if options.get('tone') in ('light', 'dark') else None}
+            'tone': options.get('tone') if options.get('tone') in ('light', 'dark') else None,
+            # The member's logos (My logos), already in the run's images: popped in where they are named.
+            'logos': options.get('logos') if isinstance(options.get('logos'), list) else []}
 
 
 def parse_planned(raw: Any, start_ms: int, end_ms: int, options: Optional[dict] = None) -> list[dict]:
@@ -1209,7 +1213,7 @@ def graphic_size(template: str, stage: bool, effect: Optional[str] = None) -> st
     """'stage' for the big pattern cards when Stage layouts are on; 'card' otherwise. Diagrams are always stage size: in a
     Visual scene with Stage layouts on, else over the video on their blue panel; so are the member's screenshots (a
     picture needs the room to be read)."""
-    return 'stage' if template in DIAGRAMS or (stage and template in STAGE_TEMPLATES) or (template == 'fx' and effect in MEDIA_FX) else 'card'
+    return 'stage' if template in DIAGRAMS or (stage and template in STAGE_TEMPLATES) or (template == 'fx' and (effect in MEDIA_FX or (stage and effect == 'flanking-words'))) else 'card'
 
 
 def new_id(taken: set[str]) -> str:
@@ -1624,6 +1628,8 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
             continue
         if register and not director.register_allows(director.kind_of(g), register):
             continue
+        if template == 'fx' and g['fields'].get('effect') in director.STAGE_ONLY_FX and not opts['stage']:
+            continue  # Flanking words sit around the speaker's card: only with the stage up.
         if template in DIAGRAMS:
             # On screen while it is talked through: from its first item to a little after its last.
             span = diagram_span(g, segments)
@@ -1738,6 +1744,10 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
         kept = [with_list_icons({k: v for k, v in g.items() if k != 'converted_from'}) for g in kept]
         # One look for the whole video (the member's tone, else light ink on dark), effects themed the same way.
         kept = director.with_look(kept, director.video_look(opts))
+        if opts['logos']:
+            # The member's logos where they are named (My logos): out of the first second and the comment keyword's seconds.
+            kept = director.place_logos(kept, segments, opts['logos'], ranges, speed, register,
+                                        source_ms(ranges, speed, FIRST_MS) or ranges[0][0], source_ms(ranges, speed, tail) or clip_end)
     taken: set[str] = set()
     out_list = []
     # Word-timed cards may start a little earlier (on their first word), never over the card before, into the clip's

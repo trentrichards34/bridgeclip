@@ -1,0 +1,30 @@
+{
+  "name": "flanking-words",
+  "title": "Flanking words",
+  "source": "CreatorClips' own unit in the style of HyperFrames registry/components/headline-slam (Apache-2.0)",
+  "variables": [
+    {
+      "id": "words",
+      "type": "string",
+      "label": "Two words as said (\"|\"-separated)",
+      "default": ""
+    },
+    {
+      "id": "layout",
+      "type": "string",
+      "label": "Layout",
+      "default": "auto",
+      "options": [
+        { "value": "auto", "label": "Fit the box" },
+        { "value": "sides", "label": "Left and right" },
+        { "value": "stack", "label": "Stacked" }
+      ]
+    },
+    {
+      "id": "cues",
+      "type": "string",
+      "label": "Comma seconds: when each word is said",
+      "default": ""
+    }
+  ]
+}

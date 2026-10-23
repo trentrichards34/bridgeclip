@@ -1,0 +1,25 @@
+{
+  "name": "waffle-chart",
+  "title": "Waffle chart",
+  "source": "CreatorClips' own unit in the style of HyperFrames registry/blocks/data-chart (Apache-2.0)",
+  "variables": [
+    {
+      "id": "figure",
+      "type": "string",
+      "label": "The share as said (90%, 1 in 10)",
+      "default": ""
+    },
+    {
+      "id": "label",
+      "type": "string",
+      "label": "What the filled squares are",
+      "default": ""
+    },
+    {
+      "id": "compare",
+      "type": "string",
+      "label": "What the rest are",
+      "default": ""
+    }
+  ]
+}

@@ -63,6 +63,7 @@ function startRunner({ child, env = process.env, onSpawn = () => {}, music = { a
     './tools': { resolveBinary: () => '/staged/engine-bin/ffmpeg' },
     './backgrounds': { resolveBackground: (name) => '/library/' + name },
     './ctas': ctas,
+    './logo-library': { logosForEngine: () => [] },
     './brands': brands,
     './more-clips': moreClips,
     './auto-graphics': graphics,

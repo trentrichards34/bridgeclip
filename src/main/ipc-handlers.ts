@@ -1,3 +1,4 @@
+import { LOGO_IMAGE_EXTENSIONS } from '../shared/logos'
 import { openEditor, saveEditor, runEditor, cancelEditor, replaceEditorSource } from './clip-editor'
 import { mediaAccessStatus, requestMediaAccess } from './media-permissions'
 import { uniqueFileName, writeZip } from './clip-zip'
@@ -5,7 +6,7 @@ import { randomUUID } from 'crypto'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
 import { BROLL_IMAGE_EXTENSIONS, BROLL_PLAN_ESTIMATE_USD, BROLL_VIDEO_EXTENSIONS } from '../shared/react-templates'
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
-import { addEditorCandidate, addEditorGraphicImage, addEditorGraphicVideo, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorHookSaved, onEditorRunLock, onEditorSpend, readEditorClips, readEditorProgress, suggestEditorHooks } from './clip-editor'
+import { addEditorCandidate, addEditorGraphicImage, addEditorLogoImage, addEditorGraphicVideo, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorHookSaved, onEditorRunLock, onEditorSpend, readEditorClips, readEditorProgress, suggestEditorHooks } from './clip-editor'
 import { buildLibrarySummary } from '../shared/library-summary'
 import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
 import { chatEstimateUsd, chatInfo, chatModel, editorChat, readChatTranscript, resetChat } from './clip-chat'
@@ -39,6 +40,7 @@ import { MAX_CREATE_SOURCES } from '../shared/create-sources'
 import { addBackgrounds, listBackgrounds, removeBackground } from './backgrounds'
 import { addMusic, listMusic, musicPreview, removeMusic, saveMusicSettings } from './music'
 import { addSoundsFromPicker, listSounds, removeSound, setSoundAction, soundPreview } from './sound-library'
+import { addLogoFromPicker, listLogos, removeLogo, updateLogo } from './logo-library'
 import { addCta, applyRunCta, applyRunCtaInLock, listCtas, removeCta, updateCta, withRunLock } from './ctas'
 import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../shared/ctas'
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, readReactions, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
@@ -429,6 +431,18 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return addCta(result.filePaths[0], name)
   })
   handle('ctas:update', (_event, id: unknown, patch: unknown) => updateCta(id, patch))
+  // My logos: chosen in main's file dialog (never a path from the page), checked by their bytes and kept in the app's folder.
+  handle('logos:list', () => listLogos())
+  handle('logos:add', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    return addLogoFromPicker(async () => {
+      const result = await dialog.showOpenDialog(window, { properties: ['openFile'], title: 'Choose a logo', filters: [{ name: 'Logo images', extensions: [...LOGO_IMAGE_EXTENSIONS] }] })
+      return result.canceled || !result.filePaths[0] ? null : result.filePaths[0]
+    })
+  })
+  handle('logos:update', (_event, id: unknown, patch: unknown) => updateLogo(id, patch))
+  handle('logos:remove', (_event, id: unknown) => removeLogo(id))
   handle('ctas:remove', (_event, id: unknown) => removeCta(id))
   // Library changes wait while a Remix video in that run is being re-made, or an avatar video is finishing.
   setRunBusyCheck((path) => remixRunBusy(path) ?? avatarRunBusy(path) ?? editRunBusy(path) ?? listicleRunBusy(path) ?? brollVideoRunBusy(path))
@@ -983,6 +997,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (result.canceled || !result.filePaths[0]) return null
     return addEditorGraphicImage(path, result.filePaths[0])
   })
+  // One of My logos for a Logo pop graphic: copied into the run by its id (the page never names a file).
+  handle('editor:logoImage', async (_event, path: unknown, logoId: unknown) => addEditorLogoImage(path, logoId))
   // A video for a Screen recording graphic: chosen here (never a path from the page), checked and copied into the run.
   handle('editor:graphicVideo', async (_event, path: unknown) => {
     const window = getMainWindow()

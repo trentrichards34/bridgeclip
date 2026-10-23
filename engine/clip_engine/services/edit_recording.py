@@ -969,6 +969,8 @@ def spare_graphics(raw: Any, words: list[Word], plan: dict, options: dict, used:
     taken = [g["word"] for g in used]
     out: list[dict] = []
     for g in teaching:
+        if g["template"] == "logo":
+            continue
         if any(abs(g["word"] - w) < SPARE_GAP_WORDS for w in taken):
             continue
         taken.append(g["word"])
@@ -994,6 +996,7 @@ def review_of(words: list[Word], plan: dict, planned: str, cost_usd: float, warn
         **({"combine": plan["combine"]} if plan.get("combine") else {}),
         **({"graphics": plan["graphics"]} if plan.get("graphics") else {}),
         **({"spare_graphics": plan["spare_graphics"]} if plan.get("spare_graphics") else {}),
+        **({"logo_pins": plan["logo_pins"]} if plan.get("logo_pins") else {}),
         **({"register": plan["register"]} if plan.get("register") else {}),
         **({"kept_hook": plan["kept_hook"]} if plan.get("kept_hook") else {}),
     }
@@ -1059,7 +1062,10 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
                 if clips:
                     plan["combine"] = combine_of(raw, words, plan, clips)
                 if direction:
-                    plan["graphics"] = _planned_graphics(raw.get("graphics"), words, plan, direction_options)
+                    planned_graphics = _planned_graphics(raw.get("graphics"), words, plan, direction_options)
+                    plan["graphics"] = [g for g in planned_graphics if g["template"] != "logo"]
+                    # The member's logos where they are named (My logos): pinned to their words like the member's own images.
+                    plan["logo_pins"] = [{"logo": g["fields"].get("image"), "word": g["word"]} for g in planned_graphics if g["template"] == "logo"]
                     # "Dress it up" on the review: the planner's other graphics that pass the same checks at teaching
                     # density (only words said), kept aside so the review can add them without another AI call.
                     plan["spare_graphics"] = spare_graphics(raw.get("graphics"), words, plan, direction_options, plan["graphics"])

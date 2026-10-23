@@ -79,6 +79,22 @@ test('Brand look: make looks, set color, type, captions and a CTA, make one the 
   await page.getByText('Saved “Signature”', { exact: true }).waitFor()
   await editor.getByText('All changes saved.').waitFor()
 
+  // My logos: add one (checked by its bytes, kept for every look), name it and the other words for it.
+  const logoFile = path.join(root, 'meta_logo.png')
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x1877F2:s=64x64', '-frames:v', '1', logoFile])
+  await app.evaluate(({ dialog }, file) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] }) }, logoFile)
+  const logos = editor.getByRole('list', { name: 'Your logos' })
+  await logos.getByText(/No logos yet/).waitFor()
+  await editor.getByRole('button', { name: 'Add logo' }).click()
+  const logoName = logos.getByRole('textbox', { name: 'Name of meta logo' })
+  await logoName.fill('Meta')
+  await logoName.press('Enter')
+  const others = logos.getByRole('textbox', { name: 'Other words for Meta' })
+  await others.fill('Facebook, Instagram ads')
+  await others.press('Enter')
+  await page.waitForFunction(async () => JSON.stringify((await window.bridgeclip.logos.list()).map((l) => [l.name, l.aliases])) === '[["Meta",["Facebook","Instagram ads"]]]')
+  await logos.getByRole('img').or(logos.locator('img')).first().waitFor()
+
   const stored = () => fs.readdirSync(path.join(userData, 'brand-identities')).filter((file) => file.endsWith('.json'))
     .map((file) => JSON.parse(fs.readFileSync(path.join(userData, 'brand-identities', file), 'utf8')))
   const signature = stored().find((brand) => brand.name === 'Signature')

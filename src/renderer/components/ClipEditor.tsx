@@ -1,3 +1,4 @@
+import type { LogoSummary } from '../../shared/logos'
 import { SavedStageTimings } from './StageBreakdown'
 import { registerNavigationCommit } from '../lib/navigation'
 import { nextCaptionRange } from '../lib/caption-ranges'
@@ -641,6 +642,17 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       place(pictures)
     })()
   }
+  // One of My logos from the gallery: copied into the run, then a Logo pop with it at the playhead.
+  const insertLogo = (logo: LogoSummary): void => {
+    if (gallery === null || editingDisabled) return
+    const at = gallery
+    void getApi().editor.logoImage(outputDir, logo.id).then((name) => {
+      const draft = draftGraphic(project, candidate, 'logo', at, clipWords)
+      const g = { ...draft, fields: { ...draft.fields, image: name } }
+      setGraphics(withGraphic(candidate, g)); setGraphicId(g.id); setGallery(null); setTab('graphics')
+      showGraphic(g)
+    }).catch((e: unknown) => setError(errorMessage(e)))
+  }
   const selectGraphic = (id: string | null): void => {
     setGraphicId(id)
     if (!id) return
@@ -1192,7 +1204,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       where={(() => { const words = clipWords.filter((w) => w.end_ms > gallery - 150).slice(0, 5).map((w) => w.word).join(' '); return `at ${clipClock(gallery)}${words ? `, on “${words}…”` : ''}` })()}
       prefill={(template) => prefillGraphic(template, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
       prefillEffect={(effect) => prefillEffect(effect, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
-      looks pictures onPick={insertGraphic} onClose={() => setGallery(null)} />}
+      looks pictures onPick={insertGraphic} onLogo={insertLogo} onClose={() => setGallery(null)} />}
   </section>
 }
 /** Where the preview draws a clip's hook text (vertical clips with at least two words, like the export). */

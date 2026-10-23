@@ -4,6 +4,8 @@
  * already filled with the words said there when the place can find them. Used by the clip editor (the "+ Add
  * graphic" buttons, the Graphics row, the G key) and by the review screens' Graphics forms.
  */
+import type { LogoSummary } from '../../shared/logos'
+import { LogoPickRow } from './MyLogos'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ALargeSmall, AppWindow, Bookmark, Heading, CircleCheckBig, Columns2, Contact, Crosshair, Filter, Footprints, Hash, Highlighter, Image, LayoutGrid, Lightbulb, ListChecks, ListOrdered,
@@ -63,7 +65,7 @@ export function galleryEffects(pictures: boolean): FxEffect[] {
   return FX_EFFECTS.filter((e) => pictures || !fxNeedsPicture(e))
 }
 
-export function GraphicGallery({ templates, where, style, prefill, prefillEffect, full, limitNote, looks = false, pictures = false, title = 'Add a graphic', onPick, onClose }: {
+export function GraphicGallery({ templates, where, style, prefill, prefillEffect, full, limitNote, looks = false, pictures = false, title = 'Add a graphic', onPick, onLogo, onClose }: {
   templates: readonly GalleryTemplate[]
   /** Where it goes, in words ("at 0:03.2, on “three things”"). */
   where: string
@@ -83,6 +85,8 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
   pictures?: boolean
   /** `look`: the look picked (GRAPHIC_VARIANTS), or for an effect (template 'fx') the effect's id. */
   onPick: (template: GraphicTemplateId, look?: string) => void
+  /** One of My logos picked (a Logo pop with it); the row shows only when the member has logos. */
+  onLogo?: (logo: LogoSummary) => void
   onClose: () => void
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
@@ -124,6 +128,7 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
     </header>
     <section className="graphic-gallery-body" aria-label="Choose a graphic">
       {full && <p role="note" className="graphic-gallery-note">{limitNote}</p>}
+      {onLogo && !full && !query.trim() && <div className="graphic-gallery-group" role="group" aria-label="My logos"><LogoPickRow label="My logos: pops in on a white tile" onPick={onLogo} /></div>}
       {groups.map((group) => <div key={group.id} className={cn('graphic-gallery-group', `group-${group.id}`)} role="group" aria-label={group.label}>
         <p className="graphic-gallery-group-label"><span aria-hidden className="graphic-gallery-dot" />{group.label}<span className="graphic-gallery-count">{group.items.length}</span></p>
         <div className="graphic-gallery-grid">{group.items.map((t, i) => {

@@ -1,3 +1,4 @@
+import { logosForEngine } from './logo-library'
 import { parseRunDiagnostics } from '../shared/run-diagnostics'
 import { parseStages } from '../shared/job-progress'
 import { ChildProcess, spawn, execFile, execFileSync } from 'child_process'
@@ -566,7 +567,9 @@ export function startClipJob(
     ...(backgroundPath ? { background_video_path: backgroundPath } : {}),
     ...(config.broll ? { broll_enabled: true, broll_keep_hook: config.broll === 'after-hook', ...brollFields } : {}),
     ...(config.hookPreview ? { hook_preview: true } : {}),
-    ...(config.motionGraphics && config.workflow !== 'review' ? { motion_graphics: true, ...(config.stageLayouts ? { stage_layouts: true } : {}), ...(config.register ? { register: config.register } : {}) } : {}),
+    ...(config.motionGraphics && config.workflow !== 'review' ? { motion_graphics: true, ...(config.stageLayouts ? { stage_layouts: true } : {}), ...(config.register ? { register: config.register } : {}),
+      // My logos: popped in where their names are said (their pictures are copied into the run before its graphics are drawn).
+      ...engineLogos() } : {}),
     ...(audio ? { audio } : {}),
     quality_bar: config.qualityBar ?? 'b',
     headline_voice: config.headlineVoice ?? 'clipper',
@@ -983,3 +986,7 @@ function terminateProcessTree(child: ChildProcess, force: boolean): void {
   }
 }
 
+/** The member's logos for Create's request (none when the library can't be read). */
+function engineLogos(): { logos?: ReturnType<typeof logosForEngine> } {
+  try { const logos = logosForEngine(); return logos.length ? { logos } : {} } catch { return {} }
+}

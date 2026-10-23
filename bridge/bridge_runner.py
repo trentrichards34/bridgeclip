@@ -340,6 +340,8 @@ async def run(config: dict) -> bool:
         look_extras=config.get("look_extras"),
         look_extras_color=config.get("look_extras_color"),
         graphics_register=config.get("register") if config.get("register") in ("teaching", "story", "minimal") else None,
+        # My logos (already copied into the run's graphics images by the app): popped in where they are named.
+        graphics_logos=config.get("logos") if isinstance(config.get("logos"), list) else None,
     )
 
     emit({

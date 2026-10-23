@@ -1,3 +1,4 @@
+import { importLogoIntoRun } from './logo-library'
 import { execFile, spawn, type ChildProcess } from 'child_process'
 import { constants, closeSync, createWriteStream, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, type Dirent } from 'fs'
 import { pipeline } from 'stream/promises'
@@ -671,6 +672,11 @@ export function addEditorGraphicImage(path: unknown, file: unknown): string {
   const run = runPath(path)
   assertAbsolutePath(file)
   return importGraphicImage(run, file)
+}
+
+/** One of My logos for a Logo pop graphic: copied into the run's .graphics/images/. Returns its name for `image`. */
+export function addEditorLogoImage(path: unknown, logoId: unknown): string {
+  return importLogoIntoRun(runPath(path), logoId)
 }
 
 /**

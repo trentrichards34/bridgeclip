@@ -33,7 +33,14 @@ from clip_engine.services import auto_graphics as ag
 # ---------------------------------------------------------------------------
 
 AUTO_FX = ag.AUTO_FX
-NUMBER_FX = ('count-up', 'number-pop-in', 'conic-progress-ring', 'star-rating-fill', 'chart-story', 'decline-chart')
+NUMBER_FX = ('count-up', 'number-pop-in', 'conic-progress-ring', 'star-rating-fill', 'chart-story', 'decline-chart', 'gauge-dial', 'waffle-chart')
+# A share said as a number: the ring, the gauge and the waffle chart take turns (one look per share, not the same dial each time).
+SHARE_FX = ('conic-progress-ring', 'gauge-dial', 'waffle-chart')
+# The magazine cover: an identity or title moment, at most once a video.
+COVER_KINDS = frozenset(('fx:magazine-cover',))
+COVER_MAX = 1
+# Flanking words ("STEP [speaker] ONE"): only for a numbered step said, and only with the stage up.
+STAGE_ONLY_FX = ('flanking-words',)
 # "The single most important line": at most SLAM_MAX of these in a whole video (emphasis is spent, not spread).
 SLAM_FX = ('headline-slam', 'per-word-rise', 'kinetic-center-build')
 # The same family: the type takeover (the line in huge type over the whole frame, the head between its lines).
@@ -72,10 +79,14 @@ def effect_of(kind: str) -> Optional[str]:
 CUE_VISUALS = {
     'money': ('fx:count-up', 'fx:number-pop-in', 'stat'),
     'count': ('fx:count-up', 'fx:number-pop-in', 'stat'),
-    'percent': ('fx:conic-progress-ring', 'fx:count-up', 'stat'),
+    'percent': ('fx:conic-progress-ring', 'fx:gauge-dial', 'fx:waffle-chart', 'fx:count-up', 'stat'),
     'rating': ('fx:star-rating-fill',),
     'trend': ('fx:chart-story', 'fx:mk-line-graph', 'fx:data-chart', 'fx:decline-chart', 'fx:animated-bar-chart'),
     'steps': ('staircase', 'funnel', 'journey', 'fx:flowchart', 'fx:onboarding-stepper-flow', 'fx:state-chip-rail'),
+    # A numbered step said ("step one"): the two words huge around the speaker (with the stage up).
+    'numbered_step': ('fx:flanking-words',),
+    # Who the speaker is or what this is ("I'm a full-time creator"): the frame as a magazine cover (once a video).
+    'identity': ('fx:magazine-cover',),
     'list': ('fx:marker-checklist-card', 'fx:state-chip-rail', 'checklist'),
     'contrast': ('fx:strikethrough-replace', 'compare_marks', 'strike_list'),
     'typing': ('fx:typed-prompt', 'fx:typing-indicator'),
@@ -109,6 +120,13 @@ _RATING_WORDS = ('stars', 'star', 'rated', 'rating', 'reviews')
 _COUNT_NOUNS_AFTER = ('million', 'thousand', 'billion', 'k', 'people', 'users', 'customers', 'clients', 'followers', 'views', 'sales',
                       'students', 'members', 'subscribers', 'times', 'hours', 'days', 'weeks', 'months', 'years', 'videos', 'posts')
 _STEP_WORDS = ('step', 'steps', 'phase', 'stage', 'process', 'framework')
+# A numbered step: one of these words then a number ("step one", "rule #2", "part three").
+_NUMBERED = ('step', 'rule', 'part', 'phase', 'tip', 'lesson', 'day', 'level', 'stage', 'pillar', 'secret', 'mistake')
+_ORDINALS = frozenset(('one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'first', 'second', 'third',
+                       'fourth', 'fifth', 'last', 'final'))
+# An identity or title moment: the speaker says who they are or what this is.
+_IDENTITY = (("i'm", 'a'), ("i'm", 'an'), ('i', 'am', 'a'), ('i', 'am', 'an'), ('my', 'name', 'is'), ('welcome', 'to'), ('i', 'became', 'a'),
+             ('i', 'became', 'the'), ('they', 'call', 'me'), ('this', 'is', 'the', 'story'), ('meet', 'the'))
 _CONTRAST = (('instead', 'of'), ('rather', 'than'), ('not', 'but'), ('wrong', 'way'), ('right', 'way'), ('stop',), ('versus',), ('vs',),
              ('it', "isn't"), ('it', 'is', 'not'), ("it's", 'not'))
 _CTA = (('comment',), ('link', 'in', 'bio'), ('the', 'link'), ('click',), ('subscribe',), ('follow', 'me'), ('follow', 'for'), ('dm', 'me'),
@@ -211,6 +229,16 @@ def _list_items(sentence: list[dict]) -> list[str]:
     return []
 
 
+def numbered_step(sentence: list[dict]) -> Optional[tuple[int, str]]:
+    """(when, "step one") for a numbered step said in the sentence (a step word, then a number or ordinal), else None."""
+    for i, w in enumerate(sentence[:-1]):
+        nxt = sentence[i + 1]
+        num = nxt['tok'].lstrip('#')
+        if w['tok'] in _NUMBERED and (num in _ORDINALS or (num.isdigit() and 0 < int(num) <= 20)):
+            return int(w['start']), f"{w['raw'].strip(' ,.!?:;')} {nxt['raw'].strip(' ,.!?:;')}"
+    return None
+
+
 def is_story(sentence: list[dict]) -> bool:
     """A personal story or emotional line: first person, and a story marker ("I remember", "my dad", "years ago") or an
     emotion word, with no money or percent said (a result said is proof, not story)."""
@@ -253,6 +281,11 @@ def find_cues(segments: Sequence) -> list[dict]:
         if any(index + k in marker_at for k in range(len(sentence))) or any(t in _STEP_WORDS for t in toks):
             steps_seen += 1
             add('steps', start)
+        step = numbered_step(sentence)
+        if step:
+            add('numbered_step', step[0], step[1])
+        if any(_has(toks, p) is not None for p in _IDENTITY):
+            add('identity', start)
         items = _list_items(sentence)
         if items:
             add('list', start, ', '.join(items))
@@ -362,6 +395,8 @@ def group_allows(kind: str, kept: Sequence[dict], seconds: float) -> bool:
         return sum(1 for k in kept if kind_of(k) in PLAIN) < plain_cap(seconds)
     if kind in SLAM_KINDS:
         return sum(1 for k in kept if kind_of(k) in SLAM_KINDS) < SLAM_MAX
+    if kind in COVER_KINDS:
+        return sum(1 for k in kept if kind_of(k) in COVER_KINDS) < COVER_MAX
     return True
 
 
@@ -442,6 +477,17 @@ def _num(text: str) -> Optional[float]:
         return None
 
 
+def waffle_share(figure: str) -> Optional[float]:
+    """The share (0-100) a waffle chart's figure says: "1 in 10" / "3 out of 4" / "2 of 5" or a percent ("90%", "90 percent");
+    None when no number is said ("most" is not a number)."""
+    text = (figure or '').lower()
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:in|out\s+of|of)\s*(\d+(?:\.\d+)?)', text)
+    if m and float(m.group(2)) > 0:
+        return float(m.group(1)) / float(m.group(2)) * 100
+    m = re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s*(?:%|percent)?\s*', text)
+    return float(m.group(1)) if m else None
+
+
 def fx_sane(fields: dict) -> bool:
     """An effect whose own fields make sense: a rating 0-5, a percent 0-100, a drop that drops, a chart with two
     numbers, a marked word inside its line."""
@@ -452,6 +498,18 @@ def fx_sane(fields: dict) -> bool:
     if e == 'conic-progress-ring':
         p = _num(fields.get('progress', ''))
         return p is not None and 0 < p <= 100
+    if e == 'gauge-dial':
+        v, top = _num(fields.get('value', '')), _num(fields.get('max', '')) or 100.0
+        return v is not None and top > 0 and 0 < v <= top
+    if e == 'waffle-chart':
+        share = waffle_share(fields.get('figure', ''))
+        return share is not None and 0 < share <= 100
+    if e == 'flanking-words':
+        pair = [line.strip() for line in fields.get('words', '').split('\n') if line.strip()]
+        return len(pair) == 2 and all(1 <= len(p.split()) <= 2 for p in pair)
+    if e == 'magazine-cover':
+        lines = [line.strip() for line in fields.get('lines', '').split('\n') if line.strip()]
+        return 1 <= len(fields.get('masthead', '').split()) <= 2 and 2 <= len(lines) <= 3 and all(len(x.split()) <= 6 for x in lines)
     if e == 'decline-chart':
         a, b = _num(fields.get('start', '')), _num(fields.get('end', ''))
         return a is not None and b is not None and a > b
@@ -554,6 +612,19 @@ def fx_words_ok(g: dict, segments: Sequence) -> bool:
         return False
     if fields.get('effect') in TYPING_FX and not heard & TYPING_WORDS:
         return False
+    if fields.get('effect') == 'flanking-words':
+        # A numbered step said: its words are the step word and its number ("Step" / "One").
+        pair = [line.strip().lower() for line in fields.get('words', '').split('\n') if line.strip()]
+        if not (pair and pair[0].split()[0].strip('#') in _NUMBERED and (pair[-1].lstrip('#') in _ORDINALS or pair[-1].lstrip('#').isdigit())):
+            return False
+    if fields.get('effect') == 'magazine-cover':
+        # An identity or title moment said near it.
+        spoken = [w for w in ag._spoken(segments) if at - ag.STRICT_WINDOW_MS <= w['start'] <= at + length + ag.STRICT_WINDOW_MS]
+        toks = [w['tok'] for w in spoken]
+        if not any(_has(toks, p) is not None for p in _IDENTITY):
+            return False
+    if fields.get('effect') == 'waffle-chart' and not ag._HAS_DIGIT.search(fields.get('figure', '')):
+        return False
     effect = ag.fx_catalog().get(fields.get('effect')) or {}
     for f in effect.get('fields', []):
         if f['kind'] == 'list' and f['said'] and fields.get(f['key']) and any(ag._words(x) for x in fields[f['key']].split('\n')):
@@ -633,6 +704,29 @@ def _split_number(value: str) -> Optional[tuple[str, str, str]]:
     return m.group(1), m.group(2), (f' {suffix}' if suffix and suffix[0].isalpha() and len(suffix) > 1 else suffix)
 
 
+def share_of(g: dict) -> Optional[tuple[str, str]]:
+    """A percent a graphic shows (a ring, a gauge in percent, a waffle chart, a stat or count up in percent) as (number, its
+    figure "72%"), or None."""
+    t, f = g['template'], g['fields']
+    e = f.get('effect') if t == 'fx' else None
+    value: Optional[float] = None
+    if e == 'conic-progress-ring':
+        value = _num(f.get('progress', ''))
+    elif e == 'gauge-dial' and (_num(f.get('max', '')) or 100.0) == 100 and f.get('unit', '%') in ('%', ''):
+        value = _num(f.get('value', ''))
+    elif e == 'waffle-chart':
+        value = waffle_share(f.get('figure', ''))
+        if value is not None and '%' not in f.get('figure', '') and 'percent' not in f.get('figure', '').lower():
+            # "1 in 10" stays a waffle (the ring would show a percent that was never said).
+            return None
+    elif (t == 'stat' and '%' in f.get('value', '')) or (e == 'count-up' and f.get('suffix', '').strip() == '%'):
+        value = _num(f.get('value', ''))
+    if value is None or not 0 < value <= 100:
+        return None
+    number = f'{value:g}'
+    return number, f'{number}%'
+
+
 def to_fx(g: dict, effect: str) -> Optional[dict]:
     """`g` as effect `effect`, with its own words (None when they don't fit it)."""
     t, f = g['template'], g['fields']
@@ -672,6 +766,17 @@ def to_fx(g: dict, effect: str) -> Optional[dict]:
             if prefix or len(number) > 5 or len(suffix.strip()) > 3:
                 return None
             fields.update(value=number, **({'unit': suffix.strip()} if suffix.strip() else {}))
+    elif effect in SHARE_FX:
+        share = share_of(g)
+        if share is None:
+            return None
+        number, said = share
+        if effect == 'conic-progress-ring':
+            fields.update(progress=number, label=f'{number}%')
+        elif effect == 'gauge-dial':
+            fields.update(value=number, unit='%', **({'label': f['label']} if t == 'fx' and f.get('label') and f.get('effect') == 'waffle-chart' else {}))
+        else:
+            fields.update(figure=said, **({'label': f['label']} if t == 'fx' and f.get('label') and f.get('effect') == 'gauge-dial' else {}))
     elif effect == 'strikethrough-replace':
         if t == 'strike_list' and len(items) == 1:
             before, after = items[0], f.get('final', '')
@@ -752,6 +857,9 @@ CONVERSIONS = {
     'before_after': ('fx:line-swap', 'fx:strikethrough-replace'),
     'compare_marks': ('fx:strikethrough-replace',),
     'fx:count-up': ('stat', 'fx:number-pop-in'),
+    'fx:conic-progress-ring': ('fx:gauge-dial', 'fx:waffle-chart', 'fx:count-up'),
+    'fx:gauge-dial': ('fx:waffle-chart', 'fx:conic-progress-ring', 'fx:count-up'),
+    'fx:waffle-chart': ('fx:gauge-dial', 'fx:conic-progress-ring', 'fx:count-up'),
     'fx:number-pop-in': ('fx:count-up', 'stat'),
     'fx:marker-highlight': ('fx:per-word-rise', 'headline_pill', 'title'),
     'fx:headline-slam': ('fx:kinetic-center-build', 'fx:marker-highlight', 'headline_pill'),
@@ -791,7 +899,8 @@ def director_rule(register: Optional[str] = None, comment: bool = False) -> str:
     return (
         '\nPICK THE VISUAL LIKE A PRO EDITOR: visualize the IDEA (a number counting, a framework building, a contrast striking '
         'through), not the sentence. Cue -> visual:\n'
-        '- money / count / percent said -> fx count-up or number-pop-in (or "stat"); a share -> fx conic-progress-ring; a rating said -> '
+        '- money / count / percent said -> fx count-up or number-pop-in (or "stat"); a share or score said as a number -> fx conic-progress-ring, gauge-dial or waffle-chart (take turns; '
+        'waffle-chart for "1 in 10"; never for "most": only numbers said); a rating said -> '
         'fx star-rating-fill;\n'
         '- two numbers, "from X to Y", a trend -> fx chart-story (up) or decline-chart (down), only with the numbers said;\n'
         '- steps / a process -> "staircase", "funnel" or "journey" (labels light up as said, 6-15 s), or fx state-chip-rail;\n'
@@ -805,6 +914,9 @@ def director_rule(register: Optional[str] = None, comment: bool = False) -> str:
         '(at most 2 of these in the whole video, together);\n'
         '- a key phrase -> fx marker-highlight or vox-annotate (word = the phrase\'s key word, inside text);\n'
         '- personal story or emotion -> NOTHING (the face and captions carry it);\n'
+        '- a numbered step said ("step one") with the stage up -> fx flanking-words (words = the step word and its number, as said);\n'
+        '- who the speaker is or what this is ("I\'m a full-time creator") -> fx magazine-cover (masthead = one or two words said, '
+        '2-3 cover lines said; at most once a video);\n'
         + ('- a call to action (comment X / the link) -> "comment_cta" or fx cta-lockup.\n' if comment else
            '- a call to action (the link, sign up) -> fx cta-lockup (only at the end, words as said).\n') +
         'Plain text cards ("statement", "quote", "sticky_notes", "big_words") are a FALLBACK: at most one per 45 seconds, only when '
@@ -911,3 +1023,99 @@ def place_media(graphics: Sequence[dict], segments: Sequence, media: Any, ranges
         placed.append({**g, 'origin': 'auto'})
         queue = queue[need:]
     return sorted(out + placed, key=lambda g: g['at_ms'])
+
+
+# ---------------------------------------------------------------------------
+# My logos: the member's own logo images, popped in where the speaker names them.
+# ---------------------------------------------------------------------------
+
+# One logo pop at most this often, each logo at most LOGO_MAX_EACH times a video; each pop holds LOGO_MS.
+LOGO_GAP_MS = 6000
+LOGO_MAX_EACH = 2
+LOGO_MS = 1500
+# A pop starts this long before the name is said (it has landed as the word is heard).
+LOGO_LEAD_MS = 150
+MAX_LOGOS = 30
+MAX_LOGO_NAMES = 8
+
+
+def clean_logos(raw: Any) -> list[dict]:
+    """The member's logos ({image, name, aliases}: `image` a run image name, or a library id before an edited reel is
+    made), checked: each with its names to listen for (the name and its aliases, as word lists); [] when none."""
+    out = []
+    for item in (raw if isinstance(raw, list) else [])[:MAX_LOGOS]:
+        if not isinstance(item, dict) or not isinstance(item.get('image'), str) or not ag._PICTURE.match(item['image']):
+            continue
+        names = [item.get('name')] + (list(item.get('aliases')) if isinstance(item.get('aliases'), list) else [])
+        phrases: list[tuple[str, ...]] = []
+        for name in names[:MAX_LOGO_NAMES]:
+            toks = tuple(ag._tokens(name)) if isinstance(name, str) and len(name) <= 40 else ()
+            if toks and len(toks) <= 4 and toks not in phrases:
+                phrases.append(toks)
+        if phrases:
+            out.append({'image': item['image'], 'phrases': phrases})
+    return out
+
+
+def _token_is(tok: str, want: str, last: bool) -> bool:
+    """A spoken token is the name's word: the same word, or (its last word) with a possessive ("Meta's"); never a plural."""
+    return tok == want or (last and tok in (f"{want}'s", f"{want}'"))
+
+
+def logo_mentions(segments: Sequence, logos: Sequence[dict]) -> list[dict]:
+    """Every time a logo's name (or an alias) is said as whole words, in time order: [{'at_ms', 'end_ms', 'logo'}] (`logo`:
+    its index). Matching is by whole words, case-insensitive ("Meta" in "Meta's ads", never in "metadata" or "Metas");
+    at one moment the longest name wins."""
+    words = ag._spoken(segments)
+    toks = [w['tok'] for w in words]
+    out: list[dict] = []
+    i = 0
+    while i < len(toks):
+        best: Optional[tuple[int, int]] = None
+        for k, logo in enumerate(logos):
+            for phrase in logo['phrases']:
+                n = len(phrase)
+                if i + n <= len(toks) and all(_token_is(toks[i + j], phrase[j], j == n - 1) for j in range(n)) and (best is None or n > best[1]):
+                    best = (k, n)
+        if best is None:
+            i += 1
+            continue
+        out.append({'at_ms': words[i]['start'], 'end_ms': words[i + best[1] - 1]['end'], 'logo': best[0]})
+        i += best[1]
+    return out
+
+
+def place_logos(graphics: Sequence[dict], segments: Sequence, logos: Any, ranges: Sequence[Sequence[float]] = (), speed: float = 1.0,
+                register: Optional[str] = None, lo: Optional[float] = None, hi: Optional[float] = None) -> list[dict]:
+    """A logo pops in (white tile, "logo" template) as the speaker names it: at most one per LOGO_GAP_MS, each logo at
+    most LOGO_MAX_EACH times, never during a personal story, never over another graphic, never in the minimal register,
+    inside the kept cut (`ranges`, source ms; `lo`/`hi`: the earliest start and latest end allowed). Source time."""
+    clean = clean_logos(logos)
+    if not clean or register == 'minimal':
+        return list(graphics)
+    stories = story_spans(find_cues(segments))
+    kept_ranges = [(float(a), float(b)) for a, b in ranges if b > a]
+    out = list(graphics)
+    placed: list[dict] = []
+    used = [0] * len(clean)
+    for m in logo_mentions(segments, clean):
+        if used[m['logo']] >= LOGO_MAX_EACH:
+            continue
+        at = max(0, int(m['at_ms']) - LOGO_LEAD_MS)
+        g = {'template': 'logo', 'at_ms': at, 'duration_ms': LOGO_MS, 'placement': 'middle', 'fields': {'image': clean[m['logo']]['image']}}
+        end = at + LOGO_MS
+        if (lo is not None and at < lo) or (hi is not None and end > hi):
+            continue
+        # Inside one kept stretch of the cut (a pop never straddles a cut).
+        if kept_ranges and not any(a <= at and end <= b for a, b in kept_ranges):
+            continue
+        if in_story(g, stories):
+            continue
+        if any(abs(at - p['at_ms']) < LOGO_GAP_MS for p in placed):
+            continue
+        if any(at < k['at_ms'] + k['duration_ms'] + ag.GAP_MS and k['at_ms'] < end + ag.GAP_MS for k in out if k.get('template') != 'chapter'):
+            continue
+        used[m['logo']] += 1
+        placed.append(g)
+        out.append(g)
+    return sorted(out, key=lambda g: g['at_ms'])

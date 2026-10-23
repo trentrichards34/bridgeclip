@@ -6,6 +6,7 @@
  * overlay and the picker run the same template code the bake renders
  * offscreen (src/renderer/graphics/templates.ts).
  */
+import { LogoPickRow } from './MyLogos'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes, Film, AudioLines, Sparkles, Bookmark, Eraser, Wand2 } from 'lucide-react'
 import type { MountedGraphic } from '../graphics/templates'
@@ -762,6 +763,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
           }}>{g.fields.image ? 'Change image' : g.template === 'browser_frame' ? 'Choose screenshot' : 'Choose image'}</Button>
           {g.fields.image && g.template !== 'logo' && <Button size="sm" variant="ghost" onClick={() => field('image', '')}>Remove image</Button>}</div>
         <p className="text-2xs text-ink-subtle">PNG, JPEG or WebP, up to 12 MB. It’s copied into this run.{g.template === 'browser_frame' ? ' A tall screenshot scrolls slowly inside the window.' : g.template === 'icon_pop' ? ' It shows in the first tile.' : g.template === 'orbit' ? ' It shows in the center tile.' : ''}</p>
+        {g.template === 'logo' && <LogoPickRow onPick={(logo) => { setImageError(null); void getApi().editor.logoImage(outputDir, logo.id).then((name) => field('image', name)).catch((e: unknown) => setImageError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : 'Could not use that logo.')) }} />}
         {imageError && <p role="alert" className="text-2xs text-danger">{imageError}</p>}
       </div>}
       {g.template === 'screen_frame' && <ScreenFields fields={g.fields} outputDir={outputDir} onField={field} />}

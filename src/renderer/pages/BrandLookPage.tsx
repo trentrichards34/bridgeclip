@@ -16,6 +16,7 @@ import { REGISTERS, REGISTER_INFO } from '../../shared/register'
 import { BAR_HOOKS, COLOR_PRESETS, HOOK_LABELS, LOOK_HOOKS, captionName, fontName, toggleExtra, type BoardRows, type BoardStyle } from '../lib/style-board'
 import { CaptionSample, captionPreviewPreset, SCENE } from '../components/CaptionPresetPicker'
 import { CtaThumb, useCtaLibrary, CTA_HELP } from '../components/CtaPicker'
+import { MyLogosList, useLogoLibrary } from '../components/MyLogos'
 import { HideHookText } from '../components/HideHookText'
 import { FrameStill, LookFrame, STILL_MS, SAMPLE_WORDS, WORD_MS, LINGER_MS } from '../components/LookFrame'
 import { StylePreview } from '../components/StylePreview'
@@ -280,6 +281,7 @@ function LookEditor({ brand, isDefault, firstLook, onSaved, onCancelNew, onDelet
   }), [brand, draft, look])
   const board = boardOf(look, previewExtras)
   const library = useCtaLibrary(draft.ctaId, (ctaId) => set({ ctaId }))
+  const logoLibrary = useLogoLibrary()
   const ctaName = draft.ctaId ? library.selected?.name ?? null : null
   const hook = draft.hook
   const hookColor = isHexColor(draft.color) ? draft.color : DEFAULT_BRAND_COLOR
@@ -486,6 +488,10 @@ function LookEditor({ brand, isDefault, firstLook, onSaved, onCancelNew, onDelet
         </Section>
 
         <CtaLibrary library={library} value={draft.ctaId} onChange={(ctaId) => set({ ctaId })} />
+
+        <Section label="My logos" aside={logoLibrary.logos ? `${logoLibrary.logos.length} saved · for every look` : undefined} id="my-logos">
+          <MyLogosList library={logoLibrary} />
+        </Section>
 
         <CreateDefaults />
 
