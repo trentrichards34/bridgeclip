@@ -410,7 +410,10 @@
 .editor-center.big-preview .editor-transport .editor-review-speed { font-size:0; gap:0; }
 .editor-center.big-preview .editor-transport .editor-review-speed select { font-size:11px; padding:2px 4px; }
 .editor-center.big-preview .editor-timeline { margin:4px 0 4px; padding:4px 10px 2px; }
-.editor-center.big-preview .editor-timeline-tools, .editor-center.big-preview .editor-lanes-source, .editor-center.big-preview .editor-timeline-footer { display:none; }
+.editor-center.big-preview .editor-lanes-source, .editor-center.big-preview .editor-timeline-footer { display:none; }
+/* The tools row stays (undo, redo, split, add graphic), one slim line. */
+.editor-center.big-preview .editor-timeline-tools { flex-wrap:nowrap; margin-bottom:2px; gap:2px; }
+.editor-center.big-preview .editor-timeline-tools button { height:24px; }
 .editor-center.big-preview .editor-track { height:22px; }
 .editor-center.big-preview .editor-timeline-piece { top:2px; height:18px; }
 .editor-center.big-preview .editor-layouts-track { height:18px; }
