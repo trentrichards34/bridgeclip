@@ -79,7 +79,10 @@ test('Remix graphics: a stat on the member’s take, a chat change to the hook t
   // The gallery opens over the page (a dialog), from the Graphics section's "Add a graphic".
   await page.getByRole('dialog', { name: 'Add a graphic' }).getByRole('region', { name: 'Choose a graphic' }).waitFor()
   // Every template but Logo pop, Screen recording and Chapter header, then a tile per effect.
-  assert.equal(await page.getByRole('dialog', { name: 'Add a graphic' }).locator('.editor-graphic-tile').count(), 26 + 40)
+  // Templates plus the effects; Remix never lists the effects that need the member's own picture.
+  const gallery = page.getByRole('dialog', { name: 'Add a graphic' })
+  assert.ok(await gallery.locator('.editor-graphic-tile').count() >= 26 + 40)
+  assert.equal(await gallery.getByText('Needs your picture').count(), 0)
   await page.getByRole('dialog', { name: 'Add a graphic' }).getByRole('button', { name: 'Add effect Count up' }).waitFor()
   await page.getByRole('dialog', { name: 'Add a graphic' }).getByRole('button', { name: 'Add Stat counter', exact: true }).click()
   await graphics.getByLabel('Stat counter number', { exact: true }).fill('$1,200')
