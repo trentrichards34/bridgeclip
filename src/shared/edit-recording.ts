@@ -21,6 +21,7 @@ import { parseClipOrder, type ClipOrderMode, type EditMode, type ShotType } from
 import { newGraphic } from './motion-graphics'
 import { newEditGraphic } from './reel-graphics'
 import type { ScreenChoice } from './screen-pair'
+import { isSoundRegister, type SoundRegister } from './sound-design'
 
 export const EDIT_MAX_SOURCES = 5
 /** Per recording, and all takes together. */
@@ -48,7 +49,7 @@ export const IDEAS_ESTIMATE_USD = 0.02
 
 export const EDIT_SOUNDS = ['whoosh', 'pop', 'click', 'ding', 'thud'] as const
 export type EditSoundName = (typeof EDIT_SOUNDS)[number]
-export const SOUND_LABELS: Record<EditSoundName, string> = { whoosh: 'Soft whoosh', pop: 'Pop', click: 'Click', ding: 'Ding', thud: 'Soft thud' }
+export const SOUND_LABELS: Record<EditSoundName, string> = { whoosh: 'Soft whoosh', pop: 'Pop', click: 'Click', ding: 'Pop', thud: 'Soft impact' }
 
 export const CUT_REASONS = ['filler', 'cue', 'rejected', 'retake', 'false_start', 'off_topic', 'member', 'no_screen'] as const
 export type CutReason = (typeof CUT_REASONS)[number]
@@ -237,6 +238,15 @@ export interface EditDecisions {
   transitions?: boolean
   /** Camera + screen: how the two are shown (missing: the defaults). */
   screen?: ScreenChoice
+  /** Sound effects on the reel's graphics, scenes and cuts (Skills; missing: on unless every planned sound is off). */
+  soundEffects?: boolean
+  /** How much sound plays (sound-design.ts SOUND_REGISTERS; missing: teaching). */
+  soundStyle?: SoundRegister
+}
+
+/** Whether the reel gets sound effects: the switch when set, else on while any planned sound is (or none were planned). */
+export function soundEffectsOn(decisions: Pick<EditDecisions, 'sounds' | 'soundEffects'>): boolean {
+  return decisions.soundEffects ?? (decisions.sounds.length === 0 || decisions.sounds.some((sound) => sound.on))
 }
 
 export interface EditStartRequest {
@@ -619,7 +629,8 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     return { image: raw.image, word: raw.word as number }
   })
   for (const key of ['cutoutIntro', 'rawIntro'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose how your video opens.')
-  for (const key of ['motionGraphics', 'stageLayouts'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose your skills again.')
+  for (const key of ['motionGraphics', 'stageLayouts', 'soundEffects'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose your skills again.')
+  if (value.soundStyle !== undefined && !isSoundRegister(value.soundStyle)) throw new Error('Choose how much sound plays.')
   let graphics: EditGraphic[]
   try { graphics = parseEditGraphics(value.graphics, n) } catch (error) { throw new Error(`Check your graphics: ${(error as Error).message}`) }
   if (look.lookExtras !== undefined && !Array.isArray(look.lookExtras)) throw new Error('Choose your extras again.')
@@ -636,7 +647,9 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     recipe: isEditRecipeId(value.recipe) ? value.recipe : DEFAULT_EDIT_RECIPE, lookExtras, pins,
     cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true, graphics, ...audio,
     ...(typeof value.motionGraphics === 'boolean' ? { motionGraphics: value.motionGraphics } : {}),
-    ...(typeof value.stageLayouts === 'boolean' ? { stageLayouts: value.stageLayouts } : {}) }
+    ...(typeof value.stageLayouts === 'boolean' ? { stageLayouts: value.stageLayouts } : {}),
+    ...(typeof value.soundEffects === 'boolean' ? { soundEffects: value.soundEffects } : {}),
+    ...(isSoundRegister(value.soundStyle) ? { soundStyle: value.soundStyle } : {}) }
   if (plan.combine) {
     const order = value.clipOrder === undefined ? [...plan.combine.startOrder] : parseClipOrder(value.clipOrder, plan.combine.startOrder.length)
     if (!order) throw new Error('Put your clips in order again.')

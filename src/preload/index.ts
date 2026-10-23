@@ -56,6 +56,7 @@ import type { BrollShot, BrollView } from '../shared/react-templates'
 import type { LayoutExtrasPatch, LayoutExtrasView } from '../shared/remix-layouts'
 import type { TimecodeRead } from '../shared/moment-take'
 import type { MusicLibrary } from '../shared/music'
+import type { SoundAction, SoundLibrary } from '../shared/sound-design'
 import type { BrollAiSettings, BrollIndexProgress, BrollLibraryView } from '../shared/broll-library'
 import type {
   AppDataScope,
@@ -628,6 +629,16 @@ export interface BridgeClipAPI {
     preview: (id: string) => Promise<{ mime: string; data: Uint8Array }>
     saveSettings: (settings: MusicLibrary['settings']) => Promise<MusicLibrary>
   }
+  /** My sounds: the member's own sound effects, each for one action (used before the built-in sounds). */
+  sounds: {
+    list: () => Promise<SoundLibrary>
+    /** Opens a file dialog (MP3, WAV, M4A or Ogg up to 5 MB each); the files go in as sounds for `action`. */
+    add: (action: SoundAction) => Promise<{ library: SoundLibrary; added: string[]; skipped: string[] }>
+    remove: (id: string) => Promise<SoundLibrary>
+    setAction: (id: string, action: SoundAction) => Promise<SoundLibrary>
+    /** The sound's audio, for the play button. */
+    preview: (id: string) => Promise<{ mime: string; data: Uint8Array }>
+  }
   clips: {
     bulkExport: (clips: { path: string; name: string }[]) => Promise<{ success: boolean; count: number; failedCount: number; destDir?: string }>
     /** The clips as one .zip, saved where the member picks (destDir is the .zip's path). */
@@ -1069,6 +1080,13 @@ const api: BridgeClipAPI = {
     remove: (id) => ipcRenderer.invoke('music:remove', id),
     preview: (id) => ipcRenderer.invoke('music:preview', id),
     saveSettings: (settings) => ipcRenderer.invoke('music:saveSettings', settings)
+  },
+  sounds: {
+    list: () => ipcRenderer.invoke('sounds:list'),
+    add: (action) => ipcRenderer.invoke('sounds:add', action),
+    remove: (id) => ipcRenderer.invoke('sounds:remove', id),
+    setAction: (id, action) => ipcRenderer.invoke('sounds:setAction', id, action),
+    preview: (id) => ipcRenderer.invoke('sounds:preview', id)
   },
   clips: {
     bulkExport: (clips) => ipcRenderer.invoke('clips:bulkExport', clips),

@@ -1,6 +1,6 @@
 import { JevSettings } from '../components/JevSettings'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Images, Info, KeyRound, ListChecks, Loader2, Music, RefreshCw, ScrollText, ShieldCheck, Sparkles, Wallet } from 'lucide-react'
+import { BookA, Check, ChevronDown, Cpu, FolderOpen, Github, History, Images, Info, KeyRound, ListChecks, Loader2, Music, RefreshCw, AudioLines, ScrollText, ShieldCheck, Sparkles, Wallet } from 'lucide-react'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useChangelogStore } from '../store/use-changelog-store'
 import { useApiKeyDrafts } from '../hooks/use-api-key-drafts'
@@ -32,10 +32,11 @@ import { takeSettingsSection } from '../lib/settings-focus'
 import { SpendingSettings } from '../components/spending/SpendingSettings'
 import { SetupChecklist } from '../components/SetupChecklist'
 import { MusicSettingsPanel } from '../components/MusicPicker'
+import { SoundPaletteSettings } from '../components/SoundPalette'
 import { BrollAiSettingsPanel } from '../components/BrollSourcePicker'
 import type { Page as AppPage } from '../components/Sidebar'
 
-type SectionId = 'setup' | 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'music' | 'broll' | 'output' | 'system' | 'about'
+type SectionId = 'setup' | 'keys' | 'spending' | 'assistant' | 'jev' | 'vocabulary' | 'music' | 'sounds' | 'broll' | 'output' | 'system' | 'about'
 type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 type SectionGroup = 'Set up' | 'Your clips' | 'This computer'
 
@@ -85,6 +86,7 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
     { id: 'jev', label: 'Quality check', icon: <ShieldCheck />, tone: 'idle', group: 'Your clips' },
     { id: 'vocabulary', label: 'Vocabulary', icon: <BookA />, tone: 'idle', group: 'Your clips' },
     { id: 'music', label: 'My music', icon: <Music />, tone: 'idle', group: 'Your clips' },
+    { id: 'sounds', label: 'My sounds', icon: <AudioLines />, tone: 'idle', group: 'Your clips' },
     { id: 'broll', label: 'AI b-roll', icon: <Images />, tone: 'idle', group: 'Your clips' },
     { id: 'output', label: 'Output', icon: <FolderOpen />, tone: 'idle', group: 'Your clips' },
     { id: 'system', label: 'System check', icon: <Cpu />, tone: !toolsChecked ? 'idle' : toolsMissing ? 'danger' : 'success', group: 'This computer' },
@@ -325,6 +327,15 @@ export function SettingsPage({ showUpdates = 0, onNavigate }: { showUpdates?: nu
               description="Your own tracks for background music, and how loud music sits under your voice. Pick music in Create, Edit my recording and Remix."
             />
             <MusicSettingsPanel />
+          </Section>
+
+          <Section id="sounds">
+            <PanelHeader
+              icon={<IconTile><AudioLines /></IconTile>}
+              title="My sounds"
+              description="Your own sound effects, each for one kind of moment: a whoosh, a pop, a click. Edited videos play yours first, as each graphic or scene comes in."
+            />
+            <SoundPaletteSettings />
           </Section>
 
           <Section id="broll">

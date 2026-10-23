@@ -33,7 +33,7 @@ export const SKILLS: Record<SkillId, SkillInfo> = {
   stage_layouts: { id: 'stage_layouts', label: 'Stage layouts', detail: 'Big cards go on a stage at the top, with you in a card below. Then back to full frame.', beta: true },
   zoom: { id: 'zoom', label: 'Zoom', detail: 'Cuts between a wide and a tight shot of your face every few seconds.' },
   broll: { id: 'broll', label: 'B-roll', detail: 'Footage that matches what’s said over the speaker, after a 3-second hook: from your B-roll library, stock or AI.' },
-  sound_effects: { id: 'sound_effects', label: 'Sound effects', detail: 'The soft whooshes and pops the edit planned, mixed under your voice.' },
+  sound_effects: { id: 'sound_effects', label: 'Sound effects', detail: 'Soft whooshes, pops and clicks as your graphics and scenes come in, under your voice.' },
   music: { id: 'music', label: 'Music', detail: 'A background track, kept quiet under your voice.', beta: true },
   voice_cleanup: { id: 'voice_cleanup', label: 'Voice cleanup', detail: 'Reduces room echo and background noise in your voice.', beta: true }
 }
@@ -151,6 +151,8 @@ export interface EditSkillPlan {
 export interface EditSkillState {
   cut: number[]
   sounds: { id: number; on: boolean }[]
+  /** The Sound effects switch (missing: on unless every planned sound is off). */
+  soundEffects?: boolean
   lookExtras: LookExtraId[]
   /** The plan's motion graphics and Stage layouts (missing: on). */
   motionGraphics?: boolean
@@ -158,7 +160,7 @@ export interface EditSkillState {
   look: { includeCaptions: boolean; music?: boolean; voiceCleanup?: boolean; broll?: BrollSource | null }
 }
 
-export type EditSkillPatch = { decisions?: Partial<Pick<EditSkillState, 'cut' | 'sounds' | 'lookExtras' | 'motionGraphics' | 'stageLayouts'>>; look?: { includeCaptions?: boolean; music?: boolean; voiceCleanup?: boolean; broll?: BrollSource | null } }
+export type EditSkillPatch = { decisions?: Partial<Pick<EditSkillState, 'cut' | 'sounds' | 'soundEffects' | 'lookExtras' | 'motionGraphics' | 'stageLayouts'>>; look?: { includeCaptions?: boolean; music?: boolean; voiceCleanup?: boolean; broll?: BrollSource | null } }
 
 /** Edit my recording's B-roll: where it would come from when switched on (null: none can run), set by the page. */
 export interface EditSkillContext { brollSource?: BrollSource | null }
@@ -168,7 +170,7 @@ export function plannedCuts(plan: EditSkillPlan): number[] {
   return plan.words.flatMap((word, i) => (word.cut && word.cut !== 'member' ? [i] : []))
 }
 
-/** Rows for this plan: Rough cut needs planned cuts and Sound effects planned sounds; Motion graphics isn't planned here. */
+/** Rows for this plan: Rough cut needs planned cuts; Motion graphics and Stage layouts need the plan's direction. */
 export function editSkillRows(plan: EditSkillPlan, state: EditSkillState, context: EditSkillContext = {}): SkillRow[] {
   const rows: SkillRow[] = []
   const planned = plannedCuts(plan)
@@ -186,7 +188,7 @@ export function editSkillRows(plan: EditSkillPlan, state: EditSkillState, contex
   rows.push(row('zoom', hasExtra(state.lookExtras, ZOOM)))
   rows.push(row('broll', Boolean(state.look.broll), !state.look.broll && !context.brollSource ? 'Add clips to your B-roll library, or a free Pexels key in Settings → API keys, first.' : null,
     'Footage that matches what you say over you, after a 3-second hook: from your B-roll library, stock or AI.'))
-  if (plan.sounds.length) rows.push(row('sound_effects', state.sounds.some((sound) => sound.on)))
+  rows.push(row('sound_effects', state.soundEffects ?? (state.sounds.length === 0 || state.sounds.some((sound) => sound.on))))
   rows.push(row('music', state.look.music === true))
   rows.push(row('voice_cleanup', state.look.voiceCleanup === true))
   return rows
@@ -205,7 +207,7 @@ export function editSkillPatch(plan: EditSkillPlan, state: EditSkillState, id: S
     case 'motion_graphics': return { decisions: { motionGraphics: on } }
     case 'stage_layouts': return { decisions: { stageLayouts: on } }
     case 'zoom': return { decisions: { lookExtras: withExtra(state.lookExtras, ZOOM, on) } }
-    case 'sound_effects': return { decisions: { sounds: state.sounds.map((sound) => ({ ...sound, on })) } }
+    case 'sound_effects': return { decisions: { soundEffects: on, sounds: state.sounds.map((sound) => ({ ...sound, on })) } }
     case 'music': return { look: { music: on } }
     case 'voice_cleanup': return { look: { voiceCleanup: on } }
     case 'broll': return { look: { broll: on ? state.look.broll ?? context.brollSource ?? null : null } }

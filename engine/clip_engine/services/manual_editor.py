@@ -428,6 +428,9 @@ def validate_candidate(c, duration, transcript_count=100000):
                 or len(extras['ids']) > 10 or any(not isinstance(x, str) for x in extras['ids']) \
                 or not isinstance(extras.get('color', ''), str) or not isinstance(extras.get('keyword', ''), str) or len(extras.get('keyword', '')) > 24:
             raise ValueError('Invalid look extras')
+    if 'sound' in c:
+        from clip_engine.services.sound_design import validate_candidate_sound
+        validate_candidate_sound(c['sound'], duration)
     cta = c.get('cta_id')
     if cta is not None and (not isinstance(cta, str) or not re.fullmatch(r'[a-f0-9]{16}', cta)):
         raise ValueError('Invalid call to action')
@@ -675,11 +678,15 @@ async def run_editor(config, progress=None):
             from clip_engine.services.stage_scenes import parse_scenes
             with failure_code('invalid_edit'):
                 parse_scenes(scenes)
+        # Sound effects that follow this clip's graphics, scenes and cuts (main worked out the events on its clock).
+        from clip_engine.services.sound_design import parse_request as parse_sound
+        with failure_code('invalid_edit'):
+            sound = parse_sound(config.get('sound'))
         if done:
             index = done['clip_index']
         else:
             index, usage = await export_clip(run, project, c, output, source, transcript, replace_index=target, graphics=graphics,
-                                             scenes=scenes, hook_end=hook_end)
+                                             scenes=scenes, hook_end=hook_end, sound=sound)
         if target is None:
             c.pop('library_clip', None)  # Its Library clip was deleted: this export is a new clip.
         if index not in c['exports']:
@@ -788,7 +795,8 @@ def attach_usage(error, usage):
     return error
 
 
-async def export_clip(run, project, c, output, source, transcript, replace_index=None, graphics=None, scenes=None, hook_end=None):
+async def export_clip(run, project, c, output, source, transcript, replace_index=None, graphics=None, scenes=None, hook_end=None,
+                      sound=None):
     """Render one ready candidate: a new Library clip, or (an Automatic run's clip) its replacement in place.
 
     Returns (clip index, translation usage or None). A failure after a paid translation carries its usage.
@@ -821,7 +829,7 @@ async def export_clip(run, project, c, output, source, transcript, replace_index
     translations, usage = await translated_captions(c, render_transcript, a, b)
     try:
         return await render_export(run, project, c, output, source, render_transcript, replace_index, index, renderer,
-                                   a, b, hook, hook_options, extras, translations, usage, graphics, scenes)
+                                   a, b, hook, hook_options, extras, translations, usage, graphics, scenes, sound)
     except BaseException as error:
         # The translation was paid for even when the render fails or is cancelled.
         attach_usage(error, usage)
@@ -829,7 +837,7 @@ async def export_clip(run, project, c, output, source, transcript, replace_index
 
 
 async def render_export(run, project, c, output, source, render_transcript, replace_index, index, renderer,
-                        a, b, hook, hook_options, extras, translations, usage, graphics=None, scenes=None):
+                        a, b, hook, hook_options, extras, translations, usage, graphics=None, scenes=None, sound=None):
     from clip_engine.config import get_caption_preset
     language = {'caption_translations': translations, 'caption_language': c['caption_language']} if translations else {}
     path = run / f'clip_{index:02d}.mp4'
@@ -855,6 +863,10 @@ async def render_export(run, project, c, output, source, render_transcript, repl
         audio = load_run_audio(run)
         if audio is not None:
             await asyncio.to_thread(finish_in_place, result.output_path, audio, str(Path(work) / 'audio'))
+        if sound is not None:
+            # Last, over the finished sound: each effect a few dB over the music and under the voice, then -14 LUFS.
+            from clip_engine.services.sound_design import design_in_place
+            await asyncio.to_thread(design_in_place, result.output_path, sound, result.duration_ms, str(Path(work) / 'sounds'))
         if replace_index is None:
             os.replace(result.output_path, path)
             output['clips'].append({'clip_index': index, 's3_url': str(path), 'duration_ms': result.duration_ms,

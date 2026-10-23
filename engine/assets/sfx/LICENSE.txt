@@ -1,0 +1,32 @@
+CreatorClips built-in sound effects
+
+Members can use every sound in this folder in any video, including paid and monetized
+posts, without attribution or royalties. Each file's source and license is listed in
+manifest.json ("source", "license"). There are two kinds:
+
+1. Recorded sounds by Kenney (www.kenney.nl), released into the public domain under
+   Creative Commons Zero (CC0 1.0): https://creativecommons.org/publicdomain/zero/1.0/
+   "This content is free to use in personal, educational and commercial projects."
+   Crediting Kenney is not required; we do it here with thanks.
+
+   Packs used (files copied from kapishdima/soundcn, an MIT-licensed repository that keeps
+   Kenney's files unchanged in its assets/kenney_* folders; the packs' own License.txt,
+   where soundcn kept one, states CC0):
+     - Interface Sounds (1.0)   -> pop/, tick/, click/
+     - Casino Audio             -> swipe/, paper/card-place-*, pop/chip-lay-3, tick/chip-tap
+     - Impact Sounds            -> impact/ (a heavy punch layered with a soft heavy impact)
+     - RPG Audio                -> paper/book-*
+   Kenney publishes all of its game assets under CC0 (www.kenney.nl/support, "License").
+
+   Nothing from soundcn's "wow" folder is used: those sounds belong to Blizzard
+   Entertainment and are not free to use.
+
+2. Air sounds made for CreatorClips from shaped random noise by scripts/sfx/build_library.py
+   (whoosh/air-*, riser/air-rise-*). No samples, recordings or tones. Copyright (c) 2026
+   Wealthery, under the engine's MIT license (../../LICENSE), with the same permission to
+   use them in any video as above.
+
+Processing: every file was trimmed of silence, peak-normalized to -3 dBFS and encoded as
+48 kHz mono Ogg Opus; the impacts are two Kenney sounds mixed together.
+
+THE SOUNDS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.

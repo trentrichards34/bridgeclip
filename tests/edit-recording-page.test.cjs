@@ -78,7 +78,10 @@ test('the review: cut words are struck through and can be kept, the hook opens i
   assert.match(html, /data-word="1" aria-pressed="true"/)
   assert.match(html, /Take 2 · take-2\.mp4/)
   assert.match(html, /Pops up when you say “coaches”/)
-  assert.match(html, /Soft whoosh as the hook text appears/)
+  // Sound effects follow the graphics: how much plays (Teaching by default); the hook text's own sound isn't listed.
+  assert.match(html, /How much sound/)
+  assert.match(html, /aria-checked="true"[^>]*>Teaching</)
+  assert.doesNotMatch(html, /as the hook text appears/)
   assert.match(html, /Make my reel/)
 })
 
