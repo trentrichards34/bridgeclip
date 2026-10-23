@@ -153,8 +153,8 @@ export function graphicOwnFont(graphic?: Pick<EditorGraphic, 'fields'>): string 
 }
 
 /** Where an Automatic run's handle sits (top or bottom corner), or null. */
-export function handleEdge(project: Pick<EditorProject, 'automatic'>): 'top' | 'bottom' | null {
-  const mark = project.automatic?.brand_mark
+export function handleEdge(project: Pick<EditorProject, 'automatic' | 'brand_mark'>): 'top' | 'bottom' | null {
+  const mark = project.automatic?.brand_mark ?? project.brand_mark
   return mark ? mark.position.startsWith('top') ? 'top' : 'bottom' : null
 }
 

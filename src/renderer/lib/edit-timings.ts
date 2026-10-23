@@ -72,7 +72,7 @@ export function estimateEdit(status: EditStatus, now: number): EditEstimate {
   if (!progress) return none
   const stored = read()
   const seconds = inputSeconds(status)
-  const plan = editStagePlan(status.mode === 'combine', progress)
+  const plan = editStagePlan(status.mode === 'combine', progress, !status.screen)
   const reviewAt = plan.indexOf('review')
   const rendering = status.phase === 'rendering'
   const part = rendering ? plan.slice(reviewAt + 1) : plan.slice(0, reviewAt)

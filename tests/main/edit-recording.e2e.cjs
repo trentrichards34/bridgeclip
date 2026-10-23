@@ -208,6 +208,10 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   await page.getByRole('switch', { name: 'Pop on “billion”' }).click()
   assert.equal(await page.getByRole('switch', { name: 'Soft whoosh as the hook text appears' }).getAttribute('aria-checked'), 'true')
   await page.getByRole('switch', { name: 'End on your call to action' }).waitFor()
+  // The automatic direction: the plan's graphic is on the strip, and Motion graphics and Stage layouts start on.
+  assert.equal(await page.locator('[data-skill="motion_graphics"] [role="switch"]').getAttribute('aria-checked'), 'true')
+  assert.equal(await page.locator('[data-skill="stage_layouts"] [role="switch"]').getAttribute('aria-checked'), 'true')
+  await page.getByRole('button', { name: /^Statement on “Most”/ }).waitFor()
   // The edit style: Fast explainer switches its card on and its extras; the card's words can be changed.
   assert.equal(await page.getByRole('switch', { name: 'Half-screen graphic 1' }).getAttribute('aria-checked'), 'false')
   await page.getByRole('radiogroup', { name: 'Edit style' }).getByRole('radio', { name: /^Fast explainer/ }).click()
@@ -237,9 +241,9 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   }, [...logo])
   await page.getByRole('list', { name: 'My images' }).getByText('my logo.png').waitFor()
   await page.getByRole('button', { name: 'Pin to a word' }).click()
-  await page.locator(`[data-word="${index('Most', 1)}"]`).click()
-  await page.getByText('on “Most”').waitFor()
-  assert.equal(await page.locator(`[data-word="${index('Most', 1)}"]`).getAttribute('aria-pressed'), 'true', 'pinning doesn’t cut the word')
+  await page.locator(`[data-word="${index('Fifteen')}"]`).click()
+  await page.getByTestId('edit-images-drop').getByText('on “Fifteen”').waitFor()
+  assert.equal(await page.locator(`[data-word="${index('Fifteen')}"]`).getAttribute('aria-pressed'), 'true', 'pinning doesn’t cut the word')
   await page.getByRole('switch', { name: 'Raw-to-edited opening' }).click()
   await page.getByRole('button', { name: /^Look/ }).click()
   // The style board: its preview shows the reel's own hook text, and a caption style changes the look summary.
@@ -258,11 +262,33 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   await page.getByText('Your reel is ready').waitFor({ timeout: 300000 })
   const run = fs.readdirSync(library).find((name) => /^edit-[0-9a-f-]{36}$/.test(name))
   assert.ok(run)
+  // The reel is a clip editor project, already baked by the editor (clip 0 replaced in place).
   const job = JSON.parse(fs.readFileSync(path.join(library, run, 'job_output.json'), 'utf8'))
+  assert.equal(job.editor_project, true)
   assert.equal(job.clips.length, 1)
   assert.equal(job.clips[0].headline, '15 billion messages are waiting')
+  assert.equal(job.clips[0].editor_candidate, 'edit-reel')
   assert.equal(job.source_video_title, 'Edited · 15 billion messages are waiting')
-  assert.ok(job.clips[0].editable)
+  assert.equal(job.clips[0].editable, undefined)
+  const project = JSON.parse(fs.readFileSync(path.join(library, run, 'editor-project.json'), 'utf8'))
+  const candidate = project.candidates[0]
+  assert.equal(candidate.status, 'baked')
+  assert.equal(candidate.hook.text, '15 billion messages are waiting')
+  // The plan's statement and the pinned logo (a Logo pop on "Fifteen"); the Fast explainer's card came while the logo showed,
+  // so it gave way (as pop-ups and cards always have). The test's camera shows no face (like a filmed screen), so no stage
+  // goes over it and the statement is a card.
+  const kinds = candidate.graphics.map((g) => g.template).sort()
+  assert.deepEqual(kinds, ['logo', 'statement'], JSON.stringify(candidate.graphics))
+  await page.getByText(/1 pop-up or pinned image left out/).waitFor()
+  const statement = candidate.graphics.find((g) => g.template === 'statement')
+  assert.deepEqual([statement.origin, statement.size, statement.fields.text], ['auto', 'card', 'Most coaches lose clients.'])
+  assert.ok(statement.fields.word_ms, 'its words come in as they are said')
+  assert.equal(candidate.stage_scenes, undefined)
+  // The hook floats and hides after a few seconds (a directed reel); the Fast explainer's extras are the clip's, for the bake.
+  assert.equal(candidate.hook.look.hideAfterS, 5)
+  assert.notEqual(candidate.hook.look.look, 'white')
+  assert.deepEqual(candidate.look_extras.ids, ['keyword_pill', 'progress_bar'])
+  assert.ok(fs.existsSync(path.join(library, run, 'editor-source.mp4')))
   const reel = path.join(library, run, 'clip_00.mp4')
   const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height', '-show_entries', 'format=duration', '-of', 'json', reel]).toString())
   const video = probe.streams.find((s) => s.codec_type === 'video')
@@ -271,30 +297,33 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   const seconds = Number(probe.format.duration)
   // The raw opening (3.5 s), then the hook (1.3 s), "Most coaches lose many clients." and the call to action (1.3 s), with short pads.
   assert.ok(seconds > 7 && seconds < 10.5, `${seconds}s`)
-  const bundle = JSON.parse(fs.readFileSync(path.join(library, run, '.edit', 'clip_00', 'edit.json'), 'utf8'))
-  assert.equal(bundle.recipe, 'fast')
-  assert.deepEqual(bundle.cards.map((c) => c.card), [{ type: 'stat', title: '15 billion', items: ['messages are waiting'] }])
-  assert.equal(bundle.pins.length, 1)
-  assert.equal(bundle.raw_intro, 'raw-intro.mp4')
+  assert.ok(Math.abs(seconds * 1000 - project.duration_ms) < 200, `${seconds}s vs ${project.duration_ms}ms`)
+  // The progress bar (an extra the bake draws) fills along the very top: brighter there near the end than at the start.
+  const stageAt = (statement.at_ms + 600) / 1000
+  const topRow = (at) => execFileSync(ffmpeg, ['-v', 'error', '-ss', String(at), '-i', reel, '-frames:v', '1', '-vf', 'crop=1080:8:0:0,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'gray', '-'])[0]
+  assert.notEqual(topRow(seconds - 0.4), topRow(0.3), 'the progress bar fills the top row')
   assert.ok(fs.existsSync(path.join(library, run, 'images')))
   if (process.env.BRIDGECLIP_E2E_SHOTS) {
-    for (const [k, at] of [0.4, 3.0, 4.0, 5.2, seconds - 0.6].entries()) execFileSync(ffmpeg, ['-v', 'error', '-y', '-ss', String(at), '-i', reel, '-frames:v', '1', path.join(process.env.BRIDGECLIP_E2E_SHOTS, `edit-reel-${k}.png`)])
+    for (const [k, at] of [0.4, 3.0, 4.0, stageAt, seconds - 0.6].entries()) execFileSync(ffmpeg, ['-v', 'error', '-y', '-ss', String(at), '-i', reel, '-frames:v', '1', path.join(process.env.BRIDGECLIP_E2E_SHOTS, `edit-reel-${k}.png`)])
   }
   // The AI steps went to the spending ledger as "Edit my recording".
   const ledger = fs.readFileSync(path.join(userDataDir, 'spending', 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
   assert.ok(ledger.some((entry) => entry.kind === 'edit' && entry.label === 'Edit my recording: transcript and plan' && Math.abs(entry.usd - (0.0008 + 0.004)) < 1e-6), JSON.stringify(ledger))
   assert.ok(ledger.some((entry) => entry.kind === 'edit' && entry.label === 'Edit my recording: film ideas' && Math.abs(entry.usd - 0.0012) < 1e-6))
 
-  // In the Library: "Edit hook text & captions" re-makes it from its saved parts.
-  await page.getByRole('button', { name: 'Open in Library' }).click()
-  await page.getByRole('button', { name: /^Actions for “15 billion messages are waiting/ }).first().click()
-  await page.getByRole('menuitem', { name: 'Edit hook text & captions', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Edit this video' })
-  await dialog.getByRole('textbox').first().fill('One mistake costs coaches clients')
-  await dialog.getByRole('button', { name: 'Make it again' }).click()
-  await dialog.waitFor({ state: 'detached', timeout: 120000 })
-  const remade = JSON.parse(fs.readFileSync(path.join(library, run, 'job_output.json'), 'utf8'))
-  assert.equal(remade.clips[0].headline, 'One mistake costs coaches clients')
-  assert.ok(remade.clips[0].edited_at)
+  // The done screen opens the reel in the clip editor: its graphics are there to change (and Bake makes it again).
+  await page.getByTestId('edit-open-editor').click()
+  await page.getByRole('region', { name: 'Clip editor' }).waitFor()
+  await page.getByRole('button', { name: /^Statement at / }).first().waitFor()
+  await page.getByRole('button', { name: /^Statement at / }).first().click()
+  const statementWords = page.locator('textarea[aria-label^="Statement "]').first()
+  assert.equal(await statementWords.inputValue(), 'Most coaches lose clients.')
+  await statementWords.fill('Most coaches lose their clients.')
+  await page.getByText('All changes saved', { exact: true }).waitFor()
+  const saved = JSON.parse(fs.readFileSync(path.join(library, run, 'editor-project.json'), 'utf8'))
+  assert.equal(saved.candidates[0].graphics.find((g) => g.template === 'statement').fields.text, 'Most coaches lose their clients.')
+  await shot(app, 'edit-reel-editor.png')
+  await page.getByRole('button', { name: 'Back to Edit my recording' }).click()
+  await page.getByText('Your reel is ready').waitFor()
   assert.deepEqual(errors, [])
 })

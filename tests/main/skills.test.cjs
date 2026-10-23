@@ -104,7 +104,8 @@ test('Edit my recording: rows only for what the plan has; Rough cut changes only
   assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'captions', false)), { look: { includeCaptions: false } })
   assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'zoom', true)), { decisions: { lookExtras: ['punch_zoom'] } })
   assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'music', true)), { look: { music: true } })
-  assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'motion_graphics', true)), {})
+  assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'motion_graphics', true)), { decisions: { motionGraphics: true } })
+  assert.deepEqual(plain(skills.editSkillPatch(PLAN, EDIT, 'stage_layouts', false)), { decisions: { stageLayouts: false } })
   // Round trip through the same state.
   for (const row of rows) {
     const patch = skills.editSkillPatch(PLAN, EDIT, row.id, !row.on, context)

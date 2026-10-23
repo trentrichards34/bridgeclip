@@ -39,7 +39,7 @@ GRAPHICS_DIR = ".graphics"
 # Renders made for Edit my recording and Remix (the clip editor's sweep leaves this folder alone).
 REEL_DIR = "reel"
 RENDER_FILE = re.compile(r"[a-f0-9]{64}\.mov")
-MAX_GRAPHICS = 12
+MAX_GRAPHICS = 60
 MIN_MS = 100
 # How big main drew a graphic: absent is the usual card; "stage" takes the top ~55% of a 9:16 frame.
 SIZES = ("compact", "card", "stage")
@@ -186,9 +186,13 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
         cmd += [*MEDIA_INPUT_OPTIONS, "-i", g["path"]]
     for m in mattes:
         cmd += [*MEDIA_INPUT_OPTIONS, "-i", m["path"]]
+    # The clip's own frames for each window, read again from where the window starts (not split off the clip: on a long
+    # reel FFmpeg would hold every frame up to a late window in memory).
+    for m in mattes:
+        cmd += ["-ss", f"{m['start_ms'] / 1000:.3f}", "-t", f"{m['duration_ms'] / 1000:.3f}", *MEDIA_INPUT_OPTIONS, "-i", video]
     # Screen recordings' videos, each from where it starts, a little longer than its window.
     inset_index: dict[int, int] = {}
-    next_input = len(graphics) + len(mattes) + 1
+    next_input = len(graphics) + 2 * len(mattes) + 1
     for i, g in enumerate(graphics, start=1):
         if g.get("inset"):
             inset = g["inset"]
@@ -197,10 +201,6 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
             next_input += 1
     parts: list[str] = []
     last = "[0:v]"
-    if mattes:
-        # The clip's frames are used again for the cut-out: one copy for the picture, one per window.
-        parts.append(f"[0:v]split={len(mattes) + 1}[base]" + "".join(f"[src{k}]" for k in range(len(mattes))))
-        last = "[base]"
 
     def lay(i: int, g: dict) -> None:
         nonlocal last
@@ -228,7 +228,7 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
     for k, m in enumerate(mattes):
         start, end = m["start_ms"] / 1000, (m["start_ms"] + m["duration_ms"]) / 1000
         # The window's own frames with its matte (made smaller: scaled up smoothly) as their alpha, back at the window's time.
-        parts.append(f"[src{k}]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS,format=yuva444p[pv{k}]")
+        parts.append(f"[{len(graphics) + len(mattes) + 1 + k}:v]trim=duration={end - start:.3f},setpts=PTS-STARTPTS,format=yuva444p[pv{k}]")
         parts.append(f"[{len(graphics) + 1 + k}:v]scale={width}:{height}:flags=bicubic,format=gray,setpts=PTS-STARTPTS[pm{k}]")
         parts.append(f"[pv{k}][pm{k}]alphamerge,setpts=PTS+{start:.3f}/TB[person{k}]")
         parts.append(f"{last}[person{k}]overlay=0:0:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'[p{k}]")

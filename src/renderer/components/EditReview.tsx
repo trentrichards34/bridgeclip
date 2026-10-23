@@ -5,7 +5,7 @@ import {
   formatClock, hookTextProblem, initialDecisions, reelCardWindows, reelOrder, reelSeconds, reelWordStarts, toggleSpan, toggleWord, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditStatus
 } from '../../shared/edit-recording'
 import { EDIT_CHAT_POINT_SUGGESTIONS, EDIT_CHAT_SUGGESTIONS, editPatchValues, mergeEditChatSteps, parseEditChatSteps, type EditChatPatch, type EditChatStep } from '../../shared/edit-chat'
-import { editGraphicFrame, newEditGraphic, patchEditGraphic, type EditGraphic } from '../../shared/reel-graphics'
+import { MAX_EDIT_GRAPHICS, editGraphicFrame, newEditGraphic, patchEditGraphic, type EditGraphic } from '../../shared/reel-graphics'
 import { newGraphic, templateInfo, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { findDuplicateExtras, type DuplicateShown } from '../../shared/edit-duplicates'
 import { ChatPanel, type ChatApplyOutcome } from './ChatPanel'
@@ -132,8 +132,10 @@ export function EditReview({ status, brand, look, onLook, onError }: {
     const card = at === null ? null : cardWindows.find((w) => at < w.end && at + g.duration_ms / 1000 > w.start)
     const { word: _word, ...rest } = g
     void _word
+    const off = g.origin === 'auto' && decisions.motionGraphics === false
     return { ...rest, at, where: `on ${wordWhere(g.word)}`,
-      problem: at === null ? 'Its word is cut, so it won’t show. Keep the word or start it on another one.' : card ? 'It plays during a half-screen graphic, so it will be left out. Move it after that one, or turn it off.' : null }
+      problem: off ? 'Motion graphics is off in Skills, so this planned graphic won’t show.'
+        : at === null ? 'Its word is cut, so it won’t show. Keep the word or start it on another one.' : card ? 'It plays during a half-screen graphic, so it will be left out. Move it after that one, or turn it off.' : null }
   })
   /** A pop-up on this word would play during a graphic (it gives way to it). */
   const underGraphic = (word: number): boolean => {
@@ -385,7 +387,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                 <figcaption className="mt-1 text-[10px] leading-tight text-ink-subtle">{firstWord ? `Opens on “${firstWord.text.replace(/[.,!?;:]+$/, '')}”` : 'Your reel'}</figcaption>
               </figure>
               <div className="min-w-0 space-y-5">
-                <ReelGraphics label="Graphics" heading="h4" intro="Animated graphics over your reel: a stat that counts up, a title, a list and more. They stay clear of your hook text and captions, and can’t play during a half-screen graphic."
+                <ReelGraphics label="Graphics" heading="h4" limit={MAX_EDIT_GRAPHICS}
+                  intro={plan.graphics !== undefined ? 'Animated graphics planned for what you say: stats, lists, diagrams and more. After the reel is made, open it in the editor to move, change or add any of them, and to see them on the video.'
+                    : 'Animated graphics over your reel: a stat that counts up, a title, a list and more. They stay clear of your hook text and captions, and can’t play during a half-screen graphic.'}
                   items={graphicItems} totalSeconds={reelLength} blocked={cardWindows.map((w) => ({ start: w.start, end: w.end, label: 'A half-screen graphic plays here' }))}
                   frame={graphicFrame} look={look.headlineLook} disabled={making} emptyNote={null}
                   onAdd={addGraphic} onPatch={patchGraphic} onRemove={(id) => setGraphics((list) => list.filter((g) => g.id !== id))}

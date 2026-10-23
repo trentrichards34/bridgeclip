@@ -19,7 +19,7 @@ import {
 import { HEADLINE_FONTS, HEADLINE_HIDE_AFTER_S, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, HOOK_LOOK_TOOL_PROPERTIES, applyHookLookArgs, hideAfterLabel } from './headline-look'
 import { LOOK_EXTRAS, parseLookExtras } from './look-extras'
 import { DIAGRAM_MAX_MS, GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, graphicMaxMs, GRAPHIC_PLACEMENTS, MAX_GRAPHIC_FIELD_CHARS, newGraphic, templateInfo, type GraphicPlacement, type GraphicTemplateId } from './motion-graphics'
-import { MAX_REEL_GRAPHICS, REEL_GRAPHIC_TEMPLATES, graphicFields, newEditGraphic, type EditGraphic } from './reel-graphics'
+import { MAX_EDIT_GRAPHICS, REEL_GRAPHIC_TEMPLATES, graphicFields, newEditGraphic, type EditGraphic } from './reel-graphics'
 import { PIN_PROP, aimGraphic, pinArg, type ChatPoint } from './chat-point'
 import { SHOT_LABELS, moveClip, removeClip, restoreClip, sameOrder, type ShotType } from './combine-clips'
 
@@ -192,7 +192,7 @@ export function applyEditChatTool(d: EditDecisions, name: string, args: Record<s
       const graphics = d.graphics ?? []
       const current = name === 'update_graphic' ? graphics.find((g) => g.id === args.id) : undefined
       if (name === 'update_graphic' && !current) return fail(`No graphic ${String(args.id).slice(0, 40)}. The graphics are listed in the context.`)
-      if (name === 'add_graphic' && graphics.length >= MAX_REEL_GRAPHICS) fail(`A reel can have up to ${MAX_REEL_GRAPHICS} graphics.`)
+      if (name === 'add_graphic' && graphics.length >= MAX_EDIT_GRAPHICS) fail(`A reel can have up to ${MAX_EDIT_GRAPHICS} graphics.`)
       if (name === 'add_graphic' && !REEL_GRAPHIC_TEMPLATES.some((t) => t.id === args.template)) return fail(`template must be one of ${REEL_GRAPHIC_TEMPLATES.map((t) => t.id).join(', ')}.`)
       const template = (current?.template ?? args.template) as GraphicTemplateId
       const word = args.word === undefined && current ? current.word : wordIndex(args.word, 'word', plan)

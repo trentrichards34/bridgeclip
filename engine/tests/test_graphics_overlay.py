@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from clip_engine.services.graphics_overlay import checked_graphics, overlay_command, overlay_graphics
+from clip_engine.services.graphics_overlay import MAX_GRAPHICS, checked_graphics, overlay_command, overlay_graphics
 from clip_engine.services.media_process import run_media
 
 needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs FFmpeg")
@@ -43,7 +43,7 @@ def test_checked_graphics_validates_names_times_and_trims_to_the_clip(tmp_path):
     assert checked_graphics(tmp_path, [{"file": NAME, "start_ms": 4950, "duration_ms": 1000}], 5000) == []
     for bad in ([{"file": "../x.mov", "start_ms": 0, "duration_ms": 1000}], [{"file": NAME, "start_ms": -1, "duration_ms": 1000}],
                 [{"file": NAME, "start_ms": 0, "duration_ms": 1.5}], [{"file": "b" * 64 + ".mov", "start_ms": 0, "duration_ms": 1000}],
-                "nope", [{"file": NAME, "start_ms": 0, "duration_ms": 1000}] * 13):
+                "nope", [{"file": NAME, "start_ms": 0, "duration_ms": 1000}] * (MAX_GRAPHICS + 1)):
         with pytest.raises(ValueError):
             checked_graphics(tmp_path, bad, 5000)
 
@@ -151,13 +151,16 @@ def test_overlay_command_puts_the_speaker_over_behind_graphics_only_within_their
     mattes = [{"path": "/m.mkv", "start_ms": 2000, "duration_ms": 1500}]
     cmd = overlay_command("/c.mp4", graphics, "/o.mp4", 1080, 1920, ["-c:v", "libx264"], mattes)
     inputs = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-i"]
-    # The behind graphic is input 1, the front one 2, the matte 3.
-    assert inputs == ["/c.mp4", "/behind.mov", "/front.mov", "/m.mkv"]
+    # The behind graphic is input 1, the front one 2, the matte 3, the clip again from the window's start 4.
+    assert inputs == ["/c.mp4", "/behind.mov", "/front.mov", "/m.mkv", "/c.mp4"]
+    again = [i for i, a in enumerate(cmd) if a == "-i"][-1]
+    assert cmd[cmd.index("-ss", again - 8):again][:4] == ["-ss", "2.000", "-t", "1.500"]
     graph = cmd[cmd.index("-filter_complex") + 1].split(";")
-    order = [next(i for i, p in enumerate(graph) if p.startswith(tag)) for tag in ("[base][g1]", "[v1][person0]", "[p0][g2]")]
+    order = [next(i for i, p in enumerate(graph) if p.startswith(tag)) for tag in ("[0:v][g1]", "[v1][person0]", "[p0][g2]")]
     assert order == sorted(order), graph
     # The cut-out is the clip's own frames in the window, with the matte as alpha, shown only then.
-    assert any(p.startswith("[src0]trim=start=2.000:end=3.500") for p in graph)
+    assert any(p.startswith("[4:v]trim=duration=1.500") for p in graph)
+    assert not any("split=" in p for p in graph)
     assert any(p.startswith("[3:v]scale=1080:1920") for p in graph)
     assert any("alphamerge,setpts=PTS+2.000/TB" in p for p in graph)
     assert any(p.startswith("[v1][person0]overlay") and "between(t,2.000,3.500)" in p for p in graph)

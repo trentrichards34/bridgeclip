@@ -28,7 +28,8 @@ import { brandMarkForRun, isBrandId, readBrandIdentity } from './brands'
 import { referenceForRun, referencePath } from './reference-image'
 import { DEFAULT_PLANNER_MODEL, isReferenceId, parsePurpose } from '../shared/purpose'
 import { applyRunCtaInLock, originalPath, withRunLock } from './ctas'
-import { graphicJob, renderGraphicJobs, REEL_GRAPHICS_DIR, type GraphicJob } from './graphics-render'
+import { graphicJob, importGraphicImage, renderGraphicJobs, REEL_GRAPHICS_DIR, type GraphicJob } from './graphics-render'
+import { cancelEditor, runEditor } from './clip-editor'
 import { brollRunFields } from './broll-library'
 import { logger } from './logger'
 import { readMemberPrefs } from './member-prefs'
@@ -66,7 +67,12 @@ interface EditRun {
   recordedUsd: number
   /** Combine clips: start in filming order or the AI's. */
   order: ClipOrderMode
+  /** The clip editor is baking the reel (the last step of making it). */
+  baking?: boolean
 }
+
+/** The clip editor candidate an edited reel is (engine edit_direction.CANDIDATE_ID). */
+const EDIT_CANDIDATE = 'edit-reel'
 
 let run: EditRun | null = null
 let starting = false
@@ -568,7 +574,9 @@ async function prepare(current: EditRun): Promise<void> {
       mode: 'plan', output_dir: current.status.folder, words: words.slice(0, 8000), sources_count: sources.length, names: sources.map((source) => source.name),
       brand_identity: current.brand?.text ?? '', brand_name: current.brand?.name ?? '', hook_hint: current.hookHint,
       ...(current.purpose ? { purpose: current.purpose } : {}), ...(current.reference ? { reference_image: current.reference } : {}),
-      ...(combine ? { combine: { clips: sources.map((source) => ({ shot: source.shot ?? 'face', seconds: source.seconds })) } } : {})
+      ...(combine ? { combine: { clips: sources.map((source) => ({ shot: source.shot ?? 'face', seconds: source.seconds })) } } : {}),
+      // The automatic direction: the same call plans the motion graphics (camera + screen reels have their own layouts).
+      ...(current.status.screen ? {} : { direction: { stage: true, ...(current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}) } })
     }, 15 * 60_000, (detail, percent, found) => { if (!current.cancelled) publish(current, { detail: detail || 'Planning your edit', percent: 70 + percent * 0.29 }, found) },
     (child) => { current.child = child })
     spend(current, typeof result.cost_usd === 'number' ? result.cost_usd : 0)
@@ -688,7 +696,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
   if (current.status.progress) current.status.progress = { ...current.status.progress, order: reelOrder ? [...reelOrder] : null }
   publish(current, { phase: 'rendering', detail: 'Starting', percent: 1, error: null }, {
     ...(decisions.hookText.trim() ? { hook: decisions.hookText.replace(/\s+/g, ' ').trim().slice(0, 160) } : {}), cuts: cut.size,
-    popups: decisions.popups.filter((item) => item.on).length, graphics: current.status.screen ? 0 : drawableGraphics(decisions.graphics ?? []).filter((g) => !cut.has(g.word)).length,
+    popups: decisions.popups.filter((item) => item.on).length, graphics: current.status.screen ? 0 : (decisions.graphics ?? []).filter((g) => !cut.has(g.word) && (g.origin !== 'auto' || decisions.motionGraphics !== false)).length,
     broll: Boolean(decisions.look.broll) && !current.status.screen })
   let brandMark: Awaited<ReturnType<typeof brandMarkForRun>>
   try {
@@ -764,8 +772,28 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     }
     Object.assign(config, fields.fields)
   }
-  // Motion graphics on words still in the reel: drawn here (offscreen, cached in the run), layered by the engine.
-  const graphics = drawableGraphics(decisions.graphics ?? []).filter((g) => !cut.has(g.word))
+  // Every reel but camera + screen becomes a clip editor project: the engine places the graphics (the plan's, the
+  // member's, pop-ups, cards and pinned images) and stage scenes on the reel's own clock, and the editor bakes it.
+  const directed = !screen
+  if (directed) {
+    const pins: { word: number; image: string }[] = []
+    for (const pin of livePins(decisions)) {
+      const image = images.find((item) => item.id === pin.image)
+      if (!image) continue
+      try { pins.push({ word: pin.word, image: importGraphicImage(current.status.folder, image.path) }) } catch { /* an unreadable picture is left out */ }
+    }
+    const motion = decisions.motionGraphics !== false
+    const color = current.brand?.look?.color
+    Object.assign(config, { editor: {
+      graphics: (decisions.graphics ?? []).map(({ id, template, word, duration_ms, placement, fields, origin, size, depth }) => ({ id, template, word, duration_ms, placement, fields,
+        ...(origin ? { origin } : {}), ...(size ? { size } : {}), ...(depth ? { depth } : {}) })),
+      pins, motion, stage: motion && decisions.stageLayouts !== false,
+      ...(typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color) ? { brand_color: color } : {}),
+      ...(current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {})
+    } })
+  }
+  // Camera + screen (no graphics there today): any graphics are drawn here (offscreen, cached in the run), layered by the engine.
+  const graphics = directed ? [] : drawableGraphics(decisions.graphics ?? []).filter((g) => !cut.has(g.word))
   void (async () => {
     try {
       if (graphics.length) {
@@ -790,11 +818,22 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
       const path = join(current.status.folder, 'clip_00.mp4')
       const seconds = typeof result.duration_seconds === 'number' ? result.duration_seconds : 0
       const warnings = Array.isArray(result.warnings) ? result.warnings.filter((item): item is string => typeof item === 'string').map((item) => item.slice(0, 300)).slice(0, 4) : []
+      const editor = result.editor === true
+      if (editor && !current.cancelled) {
+        // The clip editor's own bake: hook text, captions, motion graphics and scenes, exactly as Bake makes them later.
+        publish(current, { detail: 'Adding your hook text, captions and graphics', percent: 90 })
+        current.baking = true
+        try { await runEditor(current.status.folder, 0, EDIT_CANDIDATE, 'export') } catch (error) {
+          if (current.cancelled) throw error
+          logger.warn('edit.bake.failed', { message: String((error as Error)?.message ?? error).slice(0, 300) })
+          warnings.push('Your reel is in the editor, but its graphics and captions couldn’t be added yet. Open it in the editor and press Bake.')
+        } finally { current.baking = false }
+      }
       await rm(join(current.status.folder, '.work'), { recursive: true, force: true }).catch(() => undefined)
       logger.info('edit.done', { seconds, cost: current.status.costUsd, clips: order?.length ?? 0 })
       // The proxies went with .work; the reel no longer needs them.
       const sources = current.status.sources.map(({ proxy: _proxy, ...rest }) => { void _proxy; return rest })
-      publish(current, { phase: 'done', detail: 'Done', percent: 100, output: { path, durationSeconds: seconds }, warnings, sources })
+      publish(current, { phase: 'done', detail: 'Done', percent: 100, output: { path, durationSeconds: seconds }, warnings: warnings.slice(0, 5), sources, ...(editor ? { editor: true } : {}) })
       await dropImports(current)
     } catch (error) {
       spend(current, errorCost(error))
@@ -874,6 +913,7 @@ export function cancelEdit(): boolean {
   current.cancelled = true
   current.abort?.abort()
   kill(current.child)
+  if (current.baking) { try { cancelEditor(current.status.folder) } catch { /* not baking any more */ } }
   return true
 }
 

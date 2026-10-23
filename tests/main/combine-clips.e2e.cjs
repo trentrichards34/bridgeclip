@@ -222,9 +222,23 @@ test('Combine clips: a .zip of three clips, put in the AI’s order, joined upri
   const reel = path.join(library, run, 'clip_00.mp4')
   const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height,r_frame_rate,duration', '-show_entries', 'format=duration', '-of', 'json', reel]).toString())
   const video = probe.streams.find((s) => s.codec_type === 'video'), audio = probe.streams.find((s) => s.codec_type === 'audio')
-  assert.deepEqual([video.width, video.height, video.r_frame_rate], [1080, 1920, '30/1'])
+  // 30 fps (the editor's bake can report the rate as a near fraction, e.g. 240000/7999).
+  const [num, den] = video.r_frame_rate.split('/').map(Number)
+  assert.deepEqual([video.width, video.height], [1080, 1920])
+  assert.ok(Math.abs(num / den - 30) < 0.05, video.r_frame_rate)
   assert.ok(Math.abs(Number(video.duration) - Number(audio.duration)) < 0.1, `${video.duration} vs ${audio.duration}`)
-  const bundle = JSON.parse(fs.readFileSync(path.join(library, run, '.edit', 'clip_00', 'edit.json'), 'utf8'))
+  // The reel is a clip editor project (the joined, upright clips are its source), baked by the editor.
+  const project = JSON.parse(fs.readFileSync(path.join(library, run, 'editor-project.json'), 'utf8'))
+  const job = JSON.parse(fs.readFileSync(path.join(library, run, 'job_output.json'), 'utf8'))
+  assert.equal(job.editor_project, true)
+  assert.equal(job.clips[0].editor_candidate, 'edit-reel')
+  const candidate = project.candidates[0]
+  assert.equal(candidate.status, 'baked')
+  // The plan's graphic on the screen clip's dashboard line: a card (no stage over a filmed screen); the proof stat was taken off.
+  assert.deepEqual(candidate.graphics.map((g) => [g.template, g.origin, g.size, g.fields.text]), [['statement', 'auto', 'card', 'My dashboard says $8,188 today.']])
+  assert.equal(candidate.stage_scenes, undefined)
+  const words = JSON.parse(fs.readFileSync(path.join(library, run, 'transcript.json'), 'utf8')).segments.flatMap((sg) => sg.words.map((w) => [w.word, w.start_time_ms, w.end_time_ms]))
+  const bundle = { duration: project.duration_ms / 1000, words }
   const seconds = Number(probe.format.duration)
   assert.ok(Math.abs(seconds - bundle.duration) < 0.15, `${seconds} vs ${bundle.duration}`)
   // The order: the hook (C's last line), then B, A, then the rest of C.
@@ -253,6 +267,11 @@ test('Combine clips: a .zip of three clips, put in the AI’s order, joined upri
   }
   assert.ok(beepAt > 0, 'beep found')
   assert.ok(Math.abs(flash / 30 - beepAt) <= 1.5 / 30, `flash ${flash / 30}s, beep ${beepAt}s`)
+  // The done screen opens it in the clip editor, with the graphic in the Graphics row.
+  await page.getByTestId('edit-open-editor').click()
+  await page.getByRole('region', { name: 'Clip editor' }).waitFor()
+  await page.getByRole('button', { name: /^Statement at / }).first().waitFor()
+  await shot(app, 'combine-6-editor.png')
   // The unpacked clips and the proxies are gone once the reel is made.
   assert.equal(fs.existsSync(imports) ? fs.readdirSync(imports).length : 0, 0)
   assert.ok(!fs.existsSync(path.join(library, run, '.work')))

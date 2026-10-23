@@ -37,7 +37,7 @@ BACKDROPS = ("light", "dark", "brand", "grid", "gradient", "solid")
 SOLID_DEFAULT = "#1F4E9C"
 # The speaker card's shape in a stage scene.
 CARDS = ("rounded", "arch")
-MAX_SCENES = 24
+MAX_SCENES = 60
 # Shorter than this (after the cut) a scene is dropped; the editor keeps scenes 1.2 s or longer.
 MIN_RENDER_SCENE_MS = 300
 MIN_SCENE_MS = 1200

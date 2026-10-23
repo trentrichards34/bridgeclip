@@ -34,8 +34,10 @@ export type ReelGraphicPatch = Partial<Pick<EditorGraphic, 'duration_ms' | 'plac
 
 const clock = (seconds: number): string => `${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, '0')}`
 
-export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame, look, disabled, emptyNote, onAdd, onPatch, onRemove, cursorLabel, prefill, heading = 'h3' }: {
+export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame, look, disabled, emptyNote, onAdd, onPatch, onRemove, cursorLabel, prefill, heading = 'h3', limit = MAX_REEL_GRAPHICS }: {
   label: string
+  /** The most graphics this video takes (an edited reel takes more). */
+  limit?: number
   /** The title's heading level ('h4' when it sits inside a bigger section). */
   heading?: 'h3' | 'h4'
   intro: string
@@ -64,7 +66,7 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
   const total = Math.max(0.5, totalSeconds)
   const g = items.find((item) => item.id === selected) ?? null
   useEffect(() => { if (selected && !items.some((item) => item.id === selected)) setSelected(null) }, [items, selected])
-  const full = items.length >= MAX_REEL_GRAPHICS
+  const full = items.length >= limit
   const style = reelGraphicStyle(look)
   const at = Math.max(0, Math.min(total - 0.5, cursor))
   const Heading = heading
@@ -79,11 +81,11 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
   return <section className="space-y-3" aria-label={label}>
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
-        <Heading className="flex items-center gap-1.5 text-sm font-semibold text-ink"><Shapes className="h-4 w-4" aria-hidden />{label} <span className="text-2xs font-normal text-ink-subtle">{items.length} / {MAX_REEL_GRAPHICS}</span></Heading>
+        <Heading className="flex items-center gap-1.5 text-sm font-semibold text-ink"><Shapes className="h-4 w-4" aria-hidden />{label} <span className="text-2xs font-normal text-ink-subtle">{items.length} / {limit}</span></Heading>
         <p className="text-2xs text-ink-subtle">{intro}</p>
       </div>
       <Button size="sm" variant="secondary" icon={<Plus className="h-3.5 w-3.5" />} disabled={disabled || full || !!emptyNote} aria-expanded={picking}
-        tooltip={full ? `Add up to ${MAX_REEL_GRAPHICS} graphics.` : emptyNote ?? undefined} onClick={() => setPicking(!picking)}>Add a graphic</Button>
+        tooltip={full ? `Add up to ${limit} graphics.` : emptyNote ?? undefined} onClick={() => setPicking(!picking)}>Add a graphic</Button>
     </div>
     {emptyNote ? <p className="text-2xs text-ink-subtle">{emptyNote}</p> : <>
       <div ref={strip} className="reel-graphics-strip" role="group" aria-label={`${label} timeline`}
@@ -102,7 +104,7 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
       </div>
       <div className="flex flex-wrap justify-between gap-2 text-2xs text-ink-subtle"><span>0:00</span><span>New graphics start {cursorLabel(at)}.</span><span>{clock(total)}</span></div>
     </>}
-    {picking && <GraphicGallery templates={REEL_GRAPHIC_TEMPLATES} where={cursorLabel(at)} style={style} full={full || disabled} limitNote={`Add up to ${MAX_REEL_GRAPHICS} graphics.`}
+    {picking && <GraphicGallery templates={REEL_GRAPHIC_TEMPLATES} where={cursorLabel(at)} style={style} full={full || disabled} limitNote={`Add up to ${limit} graphics.`}
       prefill={prefill ? (template) => prefill(template, at) : undefined} onPick={add} onClose={() => setPicking(false)} />}
     {items.length > 0 && <div className="flex flex-wrap gap-1.5" role="list" aria-label="Your graphics">
       {items.map((item) => <button key={item.id} type="button" role="listitem" onClick={() => setSelected(item.id)}

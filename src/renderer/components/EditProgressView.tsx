@@ -23,7 +23,7 @@ const HINTS: Record<EditStageId, string> = {
   graphics: 'Drawing the graphics you picked.',
   cut: 'Cutting out retakes and filler words and joining the rest.',
   sound: 'Evening out your voice and adding sound.',
-  layers: 'Putting on your hook text, captions, pop-ups and graphics.',
+  layers: 'Placing your motion graphics and scenes, then the editor puts on your hook text, captions and graphics.',
   save: 'Saving the reel to your Library.'
 }
 
@@ -199,6 +199,7 @@ function NowPanel({ status, stage }: { status: EditStatus; stage: EditStageId | 
           {found.hook ? <Fact tone="found">Found your hook: “{found.hook}”</Fact> : <Fact>Looking for your strongest hook</Fact>}
           {found.cuts !== undefined && <Fact tone="found">{plural(found.cuts, 'word')} to cut</Fact>}
           {found.popups ? <Fact tone="found">{plural(found.popups, 'pop-up')} planned</Fact> : null}
+          {found.graphics ? <Fact tone="found">{plural(found.graphics, 'motion graphic')} planned</Fact> : null}
         </ul>
       )}
       {stage === 'plan' && heard.length > 0 && (
@@ -256,7 +257,7 @@ export function EditProgressView({ status, onCancel }: { status: EditStatus; onC
   const progress = status.progress
   useEffect(() => { recordEditTimings(status) }, [status])
   const combine = status.mode === 'combine'
-  const plan = editStagePlan(combine, progress)
+  const plan = editStagePlan(combine, progress, !status.screen)
   const states = stageStates(plan, progress, status.phase)
   const current = plan.find((id) => states.get(id) === 'current') ?? null
   const making = status.phase === 'rendering'

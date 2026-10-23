@@ -31,7 +31,7 @@ export function EditRunCard({ expanded, onOpen }: { expanded: boolean; onOpen: (
   const progress = status.progress
   const combine = status.mode === 'combine'
   const making = status.phase === 'rendering'
-  const plan = editStagePlan(combine, progress)
+  const plan = editStagePlan(combine, progress, !status.screen)
   const reviewAt = plan.indexOf('review')
   const part = making ? plan.slice(reviewAt + 1) : plan.slice(0, reviewAt)
   const current = progress?.stages[progress.stages.length - 1]

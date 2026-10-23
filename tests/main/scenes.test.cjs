@@ -23,7 +23,7 @@ test('parseScenes accepts well-formed scenes and refuses everything else', () =>
     [{ scene: 'stage', start_ms: -5, end_ms: 2000 }], [{ scene: 'stage', start_ms: 0, end_ms: 2000, backdrop: 'red' }],
     [{ scene: 'stage', start_ms: 0, end_ms: 2000, extra: true }], [{ scene: 'stage', start_ms: 0, end_ms: Infinity }],
     [{ scene: 'stage', start_ms: 0, end_ms: 3000 }, { scene: 'visual', start_ms: 2000, end_ms: 4000 }],
-    Array.from({ length: 25 }, (_, i) => ({ scene: 'stage', start_ms: i * 2000, end_ms: i * 2000 + 1500 }))
+    Array.from({ length: 61 }, (_, i) => ({ scene: 'stage', start_ms: i * 2000, end_ms: i * 2000 + 1500 }))
   ]) assert.throws(() => sc.parseScenes(bad))
   assert.throws(() => sc.parseScenes([{ scene: 'stage', start_ms: 11000, end_ms: 13000 }], 12000), /inside the video/)
 })

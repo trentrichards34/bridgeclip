@@ -394,3 +394,37 @@
 /* Color per graphic group and per layout: last, so they win over each block's default. */
 .group-text { --g:var(--group-text); } .group-lists { --g:var(--group-lists); } .group-diagrams { --g:var(--group-diagrams); } .group-media { --g:var(--group-media); } .group-ending { --g:var(--group-ending); } .group-other { --g:var(--group-other); }
 .layout-fill { --c:var(--layout-fill); } .layout-split { --c:var(--layout-split); } .layout-fit { --c:var(--layout-fit); } .layout-inset { --c:var(--layout-inset); } .layout-bubble { --c:var(--layout-bubble); }
+
+/* Big preview: the Output monitor as tall as it can be, the timeline down to its essential rows (Cuts, Layouts, Graphics,
+   Scenes). The source monitor shrinks to a thumbnail and the Output's buttons float at its top right; the source monitor's
+   heading, the tools row, the source and clips rows and the cut list come back with the toggle. */
+.editor-center.big-preview .editor-monitors { min-height:0; gap:12px; padding:6px 12px 6px; }
+.editor-center.big-preview .editor-source-monitor { flex:0 0 96px; min-width:0; }
+.editor-center.big-preview .editor-source-monitor .editor-pane-heading, .editor-center.big-preview .editor-monitor-hint { display:none; }
+.editor-center.big-preview .editor-output-monitor { flex:1 1 auto; align-items:center; }
+.editor-center.big-preview .editor-output-monitor .editor-pane-heading { position:absolute; top:0; right:0; width:auto; padding:0; z-index:6; font-size:0; }
+.editor-center.big-preview .editor-output-monitor .editor-pane-heading > span { flex-direction:column; align-items:flex-end; gap:6px; font-size:11px; }
+.editor-center.big-preview .editor-output-monitor canvas { max-height:100%; margin-left:0; }
+.editor-center.big-preview .editor-transport { flex-wrap:nowrap; white-space:nowrap; gap:6px; padding:2px 12px; }
+.editor-center.big-preview .editor-transport > span.text-2xs { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.editor-center.big-preview .editor-transport .editor-review-speed { font-size:0; gap:0; }
+.editor-center.big-preview .editor-transport .editor-review-speed select { font-size:11px; padding:2px 4px; }
+.editor-center.big-preview .editor-timeline { margin:4px 0 4px; padding:4px 10px 2px; }
+.editor-center.big-preview .editor-lanes-source, .editor-center.big-preview .editor-timeline-footer { display:none; }
+/* The tools row stays (undo, redo, split, add graphic), one slim line. */
+.editor-center.big-preview .editor-timeline-tools { flex-wrap:nowrap; margin-bottom:2px; gap:2px; }
+.editor-center.big-preview .editor-timeline-tools button { height:24px; }
+.editor-center.big-preview .editor-track { height:22px; }
+.editor-center.big-preview .editor-timeline-piece { top:2px; height:18px; }
+.editor-center.big-preview .editor-layouts-track { height:18px; }
+.editor-center.big-preview .editor-graphics-track { height:20px; }
+.editor-center.big-preview .editor-graphics-track.stacked { height:30px; }
+.editor-center.big-preview .editor-graphic-block { top:2px; bottom:2px; }
+.editor-center.big-preview .editor-graphic-block.lane-1, .editor-center.big-preview .editor-graphic-block.lane-2 { height:13px; }
+.editor-center.big-preview .editor-scenes-track { height:18px; }
+.editor-center.big-preview .editor-scene-block { top:2px; bottom:2px; }
+.editor-center.big-preview .editor-lane + .editor-lane { margin-top:2px; }
+.editor-center.big-preview .editor-fine-scrub { margin:0; height:14px; }
+.editor-center.big-preview .editor-lane-head { height:20px; }
+.clip-editor.big-preview-mode .editor-stagebar { margin-bottom:4px; padding-top:2px; padding-bottom:2px; }
+.clip-editor.big-preview-mode .editor-header { min-height:44px; padding-top:4px; padding-bottom:4px; }

@@ -92,6 +92,51 @@ def _reference(value):
         raise ValueError("Invalid reference image") from None
 
 
+def _direction(raw):
+    """The plan's automatic direction (motion graphics): whether Stage layouts are on, and the brand's comment keyword."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or not set(raw) <= {"stage", "cta_keyword"} or not isinstance(raw.get("stage", False), bool):
+        raise ValueError("Invalid direction")
+    return {"stage": raw.get("stage", False), "cta_keyword": _text(raw.get("cta_keyword"), 24, "keyword")}
+
+
+def _editor(raw, n):
+    """The reel as a clip editor project: the review's graphics (word-anchored), pinned images (in the run's graphics
+    images), whether the automatic graphics and Stage layouts are on, the brand color and comment keyword."""
+    from clip_engine.services.edit_direction import EDITOR_TEMPLATES, MAX_GRAPHICS
+    if not isinstance(raw, dict) or not set(raw) <= {"graphics", "pins", "motion", "stage", "brand_color", "cta_keyword"} \
+            or not isinstance(raw.get("motion", True), bool) or not isinstance(raw.get("stage", False), bool):
+        raise ValueError("Invalid editor")
+    color = raw.get("brand_color")
+    if color is not None and (not isinstance(color, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", color)):
+        raise ValueError("Invalid editor")
+    graphics = raw.get("graphics") or []
+    if not isinstance(graphics, list) or len(graphics) > MAX_GRAPHICS:
+        raise ValueError("Invalid graphics")
+    clean = []
+    for g in graphics:
+        fields = g.get("fields") if isinstance(g, dict) else None
+        if not isinstance(g, dict) or not {"id", "template", "word", "duration_ms", "placement", "fields"} <= set(g) \
+                <= {"id", "template", "word", "duration_ms", "placement", "fields", "origin", "size", "depth"} \
+                or not isinstance(g["id"], str) or not re.fullmatch(r"[a-z0-9-]{4,40}", g["id"]) or g["template"] not in EDITOR_TEMPLATES \
+                or type(g["word"]) is not int or not 0 <= g["word"] < n or type(g["duration_ms"]) is not int \
+                or not 800 <= g["duration_ms"] <= 180000 or g["placement"] not in ("top", "middle", "bottom") \
+                or g.get("origin", "member") not in ("auto", "member", "chat") or g.get("size", "card") not in ("compact", "card", "stage") \
+                or g.get("depth", "front") not in ("front", "behind") or not isinstance(fields, dict) or len(fields) > 24 \
+                or any(not isinstance(k, str) or not re.fullmatch(r"[a-z_]{1,20}", k) or not isinstance(v, str) or len(v) > 800 or "\0" in v
+                       for k, v in fields.items()):
+            raise ValueError("Invalid graphics")
+        clean.append({**g, "fields": dict(fields)})
+    pins = raw.get("pins") or []
+    if not isinstance(pins, list) or len(pins) > 12 or any(
+            not isinstance(p, dict) or set(p) != {"word", "image"} or type(p["word"]) is not int or not 0 <= p["word"] < n
+            or not isinstance(p["image"], str) or not re.fullmatch(r"[a-f0-9]{16}\.(png|jpg|webp)", p["image"]) for p in pins):
+        raise ValueError("Invalid pins")
+    return {"graphics": clean, "pins": [dict(p) for p in pins], "motion": raw.get("motion", True), "stage": raw.get("stage", False),
+            "brand_color": color, "cta_keyword": _text(raw.get("cta_keyword"), 24, "keyword")}
+
+
 def parse_request(raw):
     from clip_engine.services.edit_recording import MAX_SOURCES, MAX_WORDS, SOUNDS, parse_words
     if not isinstance(raw, dict) or raw.get("mode") not in MODES:
@@ -153,7 +198,8 @@ def parse_request(raw):
         return {"mode": mode, "output_dir": raw["output_dir"], "words": words, "names": names, **({"combine": combine} if combine else {}),
                 "brand_identity": _text(raw.get("brand_identity"), 60000, "brand"), "brand_name": _text(raw.get("brand_name"), 120, "brand"),
                 "hook_hint": _text(raw.get("hook_hint"), 600, "hook hint"), "purpose": _text(raw.get("purpose"), 200, "purpose"),
-                "reference_image": _reference(raw.get("reference_image"))}
+                "reference_image": _reference(raw.get("reference_image")),
+                **({"direction": _direction(raw.get("direction"))} if raw.get("direction") is not None else {})}
     sources = raw.get("sources")
     if not isinstance(sources, list) or not all(_abs_path(s) for s in sources):
         raise ValueError("Invalid sources")
@@ -228,7 +274,8 @@ def parse_request(raw):
             "pins": [dict(p) for p in pins], "cutout_intro": raw.get("cutout_intro", False), "raw_intro": raw.get("raw_intro", False),
             "graphics": [dict(g) for g in graphics], "audio": audio, **broll, **({"combine": _render_combine(raw.get("combine"), len(sources))}
                                                                      if raw.get("combine") is not None else {}),
-            **({"screen": _screen(raw.get("screen"), len(sources))} if raw.get("screen") is not None else {})}
+            **({"screen": _screen(raw.get("screen"), len(sources))} if raw.get("screen") is not None else {}),
+            **({"editor": _editor(raw.get("editor"), len(words))} if raw.get("editor") is not None else {})}
 
 
 def _screen(raw, count):

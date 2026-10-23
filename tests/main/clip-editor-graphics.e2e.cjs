@@ -125,6 +125,13 @@ test('a stat graphic added in the editor saves, undoes, previews live and is bak
   assert.equal(await page.locator('.editor-graphic-block.clash').count(), 2)
   await page.getByRole('note').filter({ hasText: 'Another graphic is at the middle at the same time' }).waitFor()
   // Trim the clip's end: a graphic that now runs past it is flagged on the row and in the tab.
+  // The cut list is under the full timeline: Big preview (on with the Graphics tab) is turned off to reach it.
+  const big = page.getByRole('button', { name: 'Big preview', exact: true })
+  assert.equal(await big.getAttribute('aria-pressed'), 'true')
+  const tall = (await page.locator('.editor-output-monitor > canvas').first().boundingBox()).height
+  await big.click()
+  const small = (await page.locator('.editor-output-monitor > canvas').first().boundingBox()).height
+  assert.ok(tall > small * 1.3, `the big preview is bigger: ${tall} vs ${small}`)
   await page.getByLabel('Cut 2 end', { exact: true }).fill('0:09.000')
   await page.getByLabel('Cut 2 end', { exact: true }).press('Enter')
   await page.locator('.editor-graphic-block.partly').first().waitFor()

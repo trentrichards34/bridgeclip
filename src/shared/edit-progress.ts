@@ -65,7 +65,8 @@ export function editStageOf(phase: string, detail: string, combine: boolean): Ed
   if (phase === 'review') return 'review'
   if (phase === 'rendering') {
     if (/^Drawing your graphics/.test(d)) return 'graphics'
-    if (/^(Adding b-roll|Cutting you out|Making the raw-to-edited|Adding your hook text|Adding your graphics)/.test(d)) return 'layers'
+    // An edited reel made as a clip editor project: its graphics are placed, then the editor bakes them with the captions.
+    if (/^(Adding b-roll|Cutting you out|Making the raw-to-edited|Adding your hook text|Adding your graphics|Adding your extras|Placing your graphics|Getting the editor ready|Ready for the editor)/.test(d)) return 'layers'
     if (/^(Cleaning up your voice|Mixing the sound|Adding the music)/.test(d)) return 'sound'
     if (/^(Getting your (clips|recording) ready|Cutting|Making it again)/.test(d)) return 'cut'
     if (/^Done$/.test(d)) return 'save'
@@ -127,13 +128,18 @@ export function parseFound(value: unknown): EditFound {
   if (retakes !== undefined) found.retakes = retakes
   if (cuts !== undefined) found.cuts = cuts
   if (popups !== undefined) found.popups = popups
+  const graphics = int(v.graphics, 1000)
+  if (graphics !== undefined) found.graphics = graphics
   if (typeof v.hook === 'string' && v.hook.trim()) found.hook = v.hook.replace(/\s+/g, ' ').trim().slice(0, 160)
   return found
 }
 
-/** The stages a run of this kind goes through, in order, for the list (graphics only when it draws some). */
-export function editStagePlan(combine: boolean, progress: EditProgress | undefined): EditStageId[] {
+/**
+ * The stages a run of this kind goes through, in order, for the list (graphics only when it draws some before the cut:
+ * an edited reel made as a clip editor project draws its graphics in the last stage, with the captions).
+ */
+export function editStagePlan(combine: boolean, progress: EditProgress | undefined, editor = false): EditStageId[] {
   const entered = new Set(progress?.stages.map((item) => item.id) ?? [])
-  const graphics = entered.has('graphics') || (progress?.found.graphics ?? 0) > 0
+  const graphics = entered.has('graphics') || (!editor && (progress?.found.graphics ?? 0) > 0)
   return [...(combine ? ['ready' as const] : []), 'listen', 'plan', 'review', ...(graphics ? ['graphics' as const] : []), 'cut', 'sound', 'layers', 'save']
 }

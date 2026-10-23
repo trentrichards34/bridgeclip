@@ -40,12 +40,21 @@ const drawnGraphics = []
 const graphicsRender = {
   REEL_GRAPHICS_DIR: 'reel',
   graphicJob: (_run, id, spec, window) => ({ id, spec, key: 'a'.repeat(63) + String(drawnGraphics.length % 10), ...window }),
-  renderGraphicJobs: async (_run, jobs, _cancelled, sub) => jobs.map((job) => { drawnGraphics.push({ ...job, sub }); return { id: job.id, file: `${job.key}.mov`, start_ms: job.start_ms, duration_ms: job.duration_ms } })
+  renderGraphicJobs: async (_run, jobs, _cancelled, sub) => jobs.map((job) => { drawnGraphics.push({ ...job, sub }); return { id: job.id, file: `${job.key}.mov`, start_ms: job.start_ms, duration_ms: job.duration_ms } }),
+  importGraphicImage: (_run, file) => `${'b'.repeat(16)}.${path.extname(file).slice(1)}`
+}
+// The clip editor's bake (main's runEditor) is stood in for: each call is recorded, and can be told to fail.
+const editorCalls = []
+let editorFails = false
+const clipEditor = {
+  runEditor: async (...args) => { editorCalls.push(args); if (editorFails) throw new Error('bake failed'); return {} },
+  cancelEditor: (folder) => { editorCalls.push(['cancel', folder]) }
 }
 const main = load('main/edit-recording.ts', {
   './brands': { brandMarkForRun: async () => null, isBrandId: (v) => typeof v === 'string' && /^[a-f0-9]{16}$/.test(v), readBrandIdentity: async () => BRAND },
   './ctas': { applyRunCtaInLock: async () => ({ failed: [] }), originalPath: (p) => p + '.original.mp4', withRunLock: async (_f, work) => work() },
   './graphics-render': graphicsRender,
+  './clip-editor': clipEditor,
   './logger': { logger: { info() {}, warn() {} } },
   './member-prefs': { readMemberPrefs: () => ({ profile: { goals: ['clips', 'edit-recording'], platforms: ['tiktok'] } }) },
   './openrouter-media': { openRouterBase: () => 'https://openrouter.test/api/v1' },
@@ -333,8 +342,9 @@ function runHarness({ brandMark = async () => null } = {}) {
       state.configs.push(config)
       const answer = config.mode === 'plan'
         ? { ok: true, cost_usd: 0.01, words: [['Most', 0, 400, 0, null], ['coaches', 450, 900, 0, null], ['undercharge.', 950, 1500, 0, null], ['Here', 2000, 2200, 0, null], ['is', 2250, 2400, 0, null], ['why.', 2450, 2900, 0, null]],
-          hooks: [{ id: 0, start: 3, end: 5, text: 'Here is why', why: '' }], hook: 0, cta: null, popups: [], sounds: [], planned: 'ai', notes: [], warnings: [] }
-        : { ok: true, duration_seconds: 3, warnings: [] }
+          hooks: [{ id: 0, start: 3, end: 5, text: 'Here is why', why: '' }], hook: 0, cta: null, popups: [], sounds: [], planned: 'ai', notes: [], warnings: [],
+          ...(config.direction ? { graphics: [{ id: 'g-plan01', template: 'statement', word: 0, duration_ms: 2500, placement: 'top', fields: { text: 'Most coaches undercharge.', accent: 'undercharge' }, origin: 'auto' }] } : {}) }
+        : { ok: true, duration_seconds: 3, warnings: [], ...(config.editor ? { editor: true } : {}) }
       setTimeout(() => { child.stdout.emit('data', JSON.stringify(answer) + '\n'); child.emit('close', 0) }, 10)
     } }
     return child
@@ -349,6 +359,7 @@ function runHarness({ brandMark = async () => null } = {}) {
     './brands': { brandMarkForRun: brandMark, isBrandId: () => false, readBrandIdentity: async () => null },
     './ctas': { applyRunCtaInLock: async () => ({ failed: [] }), originalPath: (p) => p + '.original.mp4', withRunLock: async (_f, work) => work() },
     './graphics-render': graphicsRender,
+  './clip-editor': clipEditor,
     './logger': { logger: { info() {}, warn() {} } },
     './member-prefs': { readMemberPrefs: () => ({ profile: { goals: [], platforms: [] } }) },
     './openrouter-media': { openRouterBase: () => 'https://openrouter.test/api/v1' },
@@ -428,7 +439,7 @@ test('the progress view: each status carries the stages so far, the first words 
   const making = state.statuses.find((status) => status.phase === 'rendering')
   assert.equal(making.progress.stages.at(-1).id, 'cut')
   assert.ok(making.progress.renderStartedAt >= progress.startedAt)
-  assert.deepEqual(plain(making.progress.found), { hook: 'Here is why', cuts: 0, popups: 0, graphics: 0, broll: false })
+  assert.deepEqual(plain(making.progress.found), { hook: 'Here is why', cuts: 0, popups: 0, graphics: 1, broll: false })
   await waitFor(() => edit.editStatus()?.phase === 'done', 'the reel')
   progress = plain(edit.editStatus().progress)
   assert.ok(progress.stages.every((stage) => stage.endedAt !== null))
@@ -560,4 +571,104 @@ test('my images: pictures are checked by their bytes and kept in the run; the re
   assert.equal(config.cutout_intro, true)
   assert.equal(config.raw_intro, true)
   fs.rmSync(edit.editStatus().folder, { recursive: true, force: true })
+})
+
+// ---------------------------------------------------------------------------
+// The automatic direction: the plan's graphics, Skills, and the reel as a clip editor project
+// ---------------------------------------------------------------------------
+
+test('the plan asks for graphics, the review starts with them on, and the reel is baked by the clip editor', async () => {
+  editorCalls.length = 0
+  editorFails = false
+  const { main: edit, state } = runHarness()
+  await edit.startEdit({ sources: [path.join(userData, 'direction-take.mp4')] })
+  await waitFor(() => edit.editStatus()?.phase === 'review', 'the review')
+  const planRequest = state.configs.find((c) => c.mode === 'plan')
+  assert.deepEqual(planRequest.direction, { stage: true })
+  const plan = edit.editStatus().plan
+  assert.deepEqual(plain(plan.graphics.map((g) => [g.template, g.word, g.origin])), [['statement', 0, 'auto']])
+  const decisions = { ...shared.initialDecisions(plan), look: { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false } }
+  assert.equal(decisions.motionGraphics, true)
+  assert.equal(decisions.stageLayouts, true)
+  assert.equal(decisions.graphics.length, 1)
+  await edit.renderEdit(decisions)
+  await waitFor(() => edit.editStatus()?.phase === 'done', 'the reel')
+  const render = state.configs.find((c) => c.mode === 'render')
+  assert.deepEqual(plain(render.editor), { graphics: [{ id: 'g-plan01', template: 'statement', word: 0, duration_ms: 2500, placement: 'top', fields: { text: 'Most coaches undercharge.', accent: 'undercharge' }, origin: 'auto' }],
+    pins: [], motion: true, stage: true })
+  // Nothing is drawn before the engine: the editor's bake draws the graphics.
+  assert.equal(render.graphics, undefined)
+  assert.deepEqual(plain(editorCalls), [[edit.editStatus().folder, 0, 'edit-reel', 'export']])
+  assert.equal(edit.editStatus().editor, true)
+  fs.rmSync(edit.editStatus().folder, { recursive: true, force: true })
+})
+
+test('motion graphics or stage layouts off go to the engine; a failed bake leaves the reel in the editor with a note', async () => {
+  editorCalls.length = 0
+  editorFails = true
+  const { main: edit, state } = runHarness()
+  await edit.startEdit({ sources: [path.join(userData, 'direction-off.mp4')] })
+  await waitFor(() => edit.editStatus()?.phase === 'review', 'the review')
+  const plan = edit.editStatus().plan
+  const decisions = { ...shared.initialDecisions(plan), motionGraphics: false, look: { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false } }
+  await edit.renderEdit(decisions)
+  await waitFor(() => edit.editStatus()?.phase === 'done', 'the reel')
+  const render = state.configs.find((c) => c.mode === 'render')
+  assert.equal(render.editor.motion, false)
+  assert.equal(render.editor.stage, false)
+  assert.equal(editorCalls.length, 1)
+  assert.match(edit.editStatus().warnings.join(' '), /Open it in the editor and press Bake/)
+  editorFails = false
+  fs.rmSync(edit.editStatus().folder, { recursive: true, force: true })
+})
+
+test('the plan\'s graphics are checked; proof stats join them without doubling; the Skills switch them', () => {
+  const skills = load('shared/skills.ts')
+  const base = samplePlan()
+  const raw = { ...base, words: base.words.map((w) => [w.text, w.startMs, w.endMs, w.src, w.cut]),
+    graphics: [
+      { id: 'g-good01', template: 'stat', word: 4, duration_ms: 3000, placement: 'top', fields: { value: '3x', label: 'more' }, origin: 'auto' },
+      { id: 'g-bad001', template: 'nope', word: 2, duration_ms: 3000, placement: 'top', fields: {} },
+      { id: 'g-far001', template: 'title', word: 999, duration_ms: 3000, placement: 'top', fields: { text: 'x' } }
+    ] }
+  const plan = shared.parseEditPlan(raw, 1)
+  assert.deepEqual(plain(plan.graphics.map((g) => g.id)), ['g-good01'])
+  // A plan without the direction (camera + screen) has none, and no Motion graphics row.
+  assert.equal(shared.parseEditPlan({ ...raw, graphics: undefined }, 1).graphics, undefined)
+  const decisions = shared.initialDecisions(plan)
+  const rows = skills.editSkillRows(plan, { ...decisions, look: decisions.look })
+  const row = (id, list = rows) => list.find((r) => r.id === id)
+  assert.equal(row('motion_graphics').on, true)
+  assert.equal(row('stage_layouts').on, true)
+  const off = skills.editSkillPatch(plan, { ...decisions, look: decisions.look }, 'motion_graphics', false)
+  assert.deepEqual(plain(off), { decisions: { motionGraphics: false } })
+  const offRows = skills.editSkillRows(plan, { ...decisions, ...off.decisions, look: decisions.look })
+  assert.equal(row('stage_layouts', offRows).on, false)
+  assert.match(row('stage_layouts', offRows).disabledReason, /Motion graphics first/)
+  assert.equal(skills.editSkillRows({ ...plan, graphics: undefined }, { ...decisions, look: decisions.look }).some((r) => r.id === 'motion_graphics'), false)
+  // The review sends them back checked; more than the reel's limit is refused.
+  const look = { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false }
+  const parsed = shared.parseEditDecisions({ ...decisions, look, motionGraphics: false, stageLayouts: false }, plan)
+  assert.deepEqual([parsed.motionGraphics, parsed.stageLayouts, parsed.graphics.length], [false, false, 1])
+  assert.throws(() => shared.parseEditDecisions({ ...decisions, look, motionGraphics: 'yes' }, plan), /skills/)
+  const many = Array.from({ length: 61 }, (_, i) => ({ ...decisions.graphics[0], id: `g-many${String(i).padStart(3, '0')}` }))
+  assert.throws(() => shared.parseEditDecisions({ ...decisions, look, graphics: many }, plan), /up to 60 graphics/)
+  // Changing a planned graphic's words makes it the member's (kept as typed on the reel).
+  const reel = load('shared/reel-graphics.ts')
+  const patched = reel.patchEditGraphic(decisions.graphics, 'g-good01', { fields: { label: 'more money' } })
+  assert.equal(patched[0].origin, 'member')
+  assert.equal(reel.patchEditGraphic(decisions.graphics, 'g-good01', { duration_ms: 2000 })[0].origin, 'auto')
+})
+
+test('an editor clip carries its look extras (keyword pill, accent words, progress bar, comment box), checked', () => {
+  const editor = load('shared/clip-editor.ts')
+  assert.deepEqual(plain(editor.parseCandidateLookExtras({ ids: ['keyword_pill', 'proof_underline', 'nope', 'comment_box'], color: '#ff5500', keyword: 'GUIDE' })),
+    { ids: ['keyword_pill', 'comment_box'], color: '#FF5500', keyword: 'GUIDE' })
+  for (const bad of [null, [], { ids: 'x' }, { ids: [], color: 'red' }, { ids: [], keyword: '<b>' }]) assert.throws(() => editor.parseCandidateLookExtras(bad))
+  const base = { id: 'edit-reel', title: 'Reel', ranges: [[0, 5000]], scenes: [{ at_ms: 0, layout: 'fill', crops: [[0, 0, 1, 1]] }], captions: true, caption_preset: 'pop',
+    video_speed: 1, status: 'ready', caption_edits: [], caption_suppression_ranges: [] }
+  const withExtras = editor.parseCandidateEdit({ ...base, look_extras: { ids: ['accent_words'] } }, 5000, 1)
+  assert.deepEqual(plain(withExtras.look_extras), { ids: ['accent_words'] })
+  // Switching one changes what the bake makes (a baked clip goes back to refining).
+  assert.notEqual(editor.renderEditKey(withExtras), editor.renderEditKey(editor.parseCandidateEdit(base, 5000, 1)))
 })

@@ -41,7 +41,7 @@ export interface StageScene {
   card?: SceneCard
 }
 
-export const MAX_SCENES = 24
+export const MAX_SCENES = 60
 /** The shortest scene the editor makes (a quicker switch reads as a glitch). */
 export const MIN_SCENE_MS = 1200
 /** A new scene's length. */
@@ -105,7 +105,7 @@ const same = (a: StageScene, b: StageScene): boolean => a.scene === b.scene && (
 
 /**
  * Validates untrusted scenes (a saved edit, the renderer, the chat): a list of
- * up to 24 scenes in time order, each at least 1.2 s, not overlapping, inside
+ * up to MAX_SCENES scenes in time order, each at least 1.2 s, not overlapping, inside
  * [0, duration]. Throws on anything else.
  */
 export function parseScenes(value: unknown, duration = Number.MAX_SAFE_INTEGER): StageScene[] {

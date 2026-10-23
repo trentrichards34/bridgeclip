@@ -15,7 +15,7 @@ import { DEFAULT_CAPTION_PRESET, isCaptionPresetId } from './caption-presets'
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
 import { DEFAULT_EDIT_RECIPE, editRecipe, isEditRecipeId, recipeExtras, type EditRecipeId } from './edit-recipes'
 import { parseLookExtras, type LookExtraId } from './look-extras'
-import { parseEditGraphics, type EditGraphic } from './reel-graphics'
+import { MAX_EDIT_GRAPHICS, parseEditGraphics, type EditGraphic } from './reel-graphics'
 import { parseAudioSkills } from './skills'
 import { parseClipOrder, type ClipOrderMode, type EditMode, type ShotType } from './combine-clips'
 import { newGraphic } from './motion-graphics'
@@ -103,6 +103,8 @@ export interface EditPlan {
   warnings: string[]
   /** Combine clips only: the clips' order and proof graphics (words' `src` is the clip, numbered in filming order). */
   combine?: EditCombine
+  /** The automatic direction: the motion graphics the plan suggests, each on the word where it starts (origin 'auto'). */
+  graphics?: EditGraphic[]
 }
 
 /** A stat graphic the plan suggests on a number said while filming a screen (value as said, label in their words). */
@@ -155,6 +157,8 @@ export interface EditStatus {
   mode?: EditMode
   /** Camera + screen: the screen recording made with the camera recording, and how they line up. */
   screen?: EditScreen
+  /** The finished reel is a clip editor project (open it in the editor to change its graphics, scenes, hook text and captions). */
+  editor?: boolean
   /** The run in stages, for the progress view (edit-progress.ts). Missing on runs from before it. */
   progress?: EditProgress
 }
@@ -211,6 +215,10 @@ export interface EditDecisions {
   rawIntro: boolean
   /** Motion graphics, each starting as its word is said (missing: none). */
   graphics?: EditGraphic[]
+  /** The plan's automatic motion graphics and chapter headers (Skills; missing: on). The member's own graphics stay either way. */
+  motionGraphics?: boolean
+  /** Stage layouts (Skills; missing: on): big cards on a stage at the top with the speaker in a card below, diagrams full frame. */
+  stageLayouts?: boolean
   /** Reduce background noise and room echo on the voice and even its level (missing: off). */
   voiceCleanup?: boolean
   /** Background music under the reel, ducking while they talk; `musicTrack` is the track (see music.ts). */
@@ -275,7 +283,12 @@ export function formatClock(seconds: number): string {
 
 export function initialDecisions(plan: EditPlan, look: EditLook = DEFAULT_EDIT_LOOK, recipe: EditRecipeId = DEFAULT_EDIT_RECIPE): EditDecisions {
   const hook = plan.hooks.find((item) => item.id === plan.hook) ?? null
-  const combine = plan.combine ? { clipOrder: [...plan.combine.startOrder], transitions: false, graphics: proofGraphics(plan) } : {}
+  // The plan's graphics, then (combine clips) its proof stats on numbers said where no planned graphic starts already.
+  const planned = plan.graphics ?? []
+  const proof = plan.combine ? proofGraphics(plan).filter((g) => !planned.some((p) => p.word === g.word)) : []
+  const graphics = [...planned.map((g) => ({ ...g, fields: { ...g.fields } })), ...proof].sort((a, b) => a.word - b.word).slice(0, MAX_EDIT_GRAPHICS)
+  const combine = plan.combine ? { clipOrder: [...plan.combine.startOrder], transitions: false } : {}
+  const direction = plan.graphics !== undefined ? { motionGraphics: true, stageLayouts: true } : {}
   return applyRecipe(plan, {
     cut: plan.words.flatMap((word, i) => (word.cut ? [i] : [])),
     hookId: hook?.id ?? null,
@@ -283,7 +296,7 @@ export function initialDecisions(plan: EditPlan, look: EditLook = DEFAULT_EDIT_L
     endOnCta: plan.cta !== null,
     popups: plan.popups.map((popup) => ({ id: popup.id, on: true, text: popup.text, ...(popup.card ? { card: copyCard(popup.card) } : {}) })),
     sounds: plan.sounds.map((sound) => ({ id: sound.id, on: true })),
-    look, recipe, lookExtras: [], pins: [], cutoutIntro: false, rawIntro: false, graphics: [], ...combine
+    look, recipe, lookExtras: [], pins: [], cutoutIntro: false, rawIntro: false, graphics, ...combine, ...direction
   }, recipe)
 }
 
@@ -489,8 +502,16 @@ export function parseEditPlan(value: unknown, sources: number): EditPlan | null 
   const hook = int(value.hook, 0, 10) && hooks.some((item) => item.id === value.hook) ? value.hook as number : hooks[0]?.id ?? null
   const combine = value.combine === undefined ? undefined : parseCombine(value.combine, words, sources)
   if (combine === null) return null
+  // The planned graphics (each checked like the review's; one that isn't well-formed is left out).
+  let graphics: EditGraphic[] | undefined
+  if (Array.isArray(value.graphics)) {
+    graphics = []
+    for (const raw of value.graphics.slice(0, MAX_EDIT_GRAPHICS)) {
+      try { graphics.push(...parseEditGraphics([raw], n).filter((g) => !graphics!.some((x) => x.id === g.id))) } catch { /* left out */ }
+    }
+  }
   return { words, hooks, hook, cta: span(value.cta), popups, sounds, planned: value.planned === 'basic' ? 'basic' : 'ai', notes: lines(value.notes, 6), warnings: lines(value.warnings, 4),
-    ...(combine ? { combine } : {}) }
+    ...(combine ? { combine } : {}), ...(graphics ? { graphics } : {}) }
 }
 
 /** The plan's combine part (engine: ai_order, order_why, proof; or already parsed), checked; null when it isn't one. */
@@ -586,6 +607,7 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     return { image: raw.image, word: raw.word as number }
   })
   for (const key of ['cutoutIntro', 'rawIntro'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose how your video opens.')
+  for (const key of ['motionGraphics', 'stageLayouts'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose your skills again.')
   let graphics: EditGraphic[]
   try { graphics = parseEditGraphics(value.graphics, n) } catch (error) { throw new Error(`Check your graphics: ${(error as Error).message}`) }
   if (look.lookExtras !== undefined && !Array.isArray(look.lookExtras)) throw new Error('Choose your extras again.')
@@ -600,7 +622,9 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     look: { includeCaptions: look.includeCaptions, captionPreset: look.captionPreset, headlineLook: parseHeadlineLook(look.headlineLook), showHandle: look.showHandle,
       ...(lookExtras.length ? { lookExtras } : {}), ...audio, ...(isBrollSource(look.broll) ? { broll: look.broll } : {}) },
     recipe: isEditRecipeId(value.recipe) ? value.recipe : DEFAULT_EDIT_RECIPE, lookExtras, pins,
-    cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true, graphics, ...audio }
+    cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true, graphics, ...audio,
+    ...(typeof value.motionGraphics === 'boolean' ? { motionGraphics: value.motionGraphics } : {}),
+    ...(typeof value.stageLayouts === 'boolean' ? { stageLayouts: value.stageLayouts } : {}) }
   if (plan.combine) {
     const order = value.clipOrder === undefined ? [...plan.combine.startOrder] : parseClipOrder(value.clipOrder, plan.combine.startOrder.length)
     if (!order) throw new Error('Put your clips in order again.')

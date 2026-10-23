@@ -25,6 +25,15 @@ if os.environ.get("CREATORCLIPS_FAKE_AI") == "1":
             def first(word):
                 return next(i for i, w in words if w == word)
 
+            # The automatic direction: the plan also directs the motion graphics (every field set, as the schema asks).
+            directed = "MOTION GRAPHICS" in payload["messages"][0]["content"]
+            blank = {k: ([] if k in ("items", "icons", "notes") else "") for k in (
+                "value", "label", "text", "title", "items", "before", "after", "author", "name", "role", "accent", "subline", "final",
+                "phrase", "icons", "keyword", "lead", "notes", "wrong", "icon")}
+
+            def graphic(template, word, seconds, **fields):
+                return {**blank, "template": template, "word": word, "seconds": seconds, "placement": "top", **fields}
+
             if "--- Clip 1 (" in text:
                 # Combine clips: open on the screen clip's last line, play B, A, C, and a proof graphic on "$8,188".
                 plan = {
@@ -33,6 +42,9 @@ if os.environ.get("CREATORCLIPS_FAKE_AI") == "1":
                     "order": [2, 1, 3], "order_why": "The story first, then the screen as proof.",
                     "proof": [{"word": first("$8,188"), "value": "$8,188", "label": "dashboard says"}],
                 }
+                if directed:
+                    # On the screen clip's dashboard line (no stage there: the screen is the visual).
+                    plan["graphics"] = [graphic("statement", first("My"), 3, text="My dashboard says $8,188 today.", accent="dashboard")]
                 return {"choices": [{"message": {"content": json.dumps(plan)}}]}, {"cost": 0.003}
 
             if any(w == "dashboard." for _, w in words):
@@ -57,6 +69,9 @@ if os.environ.get("CREATORCLIPS_FAKE_AI") == "1":
                 "sounds": [{"word": first("billion"), "sound": "pop"}],
                 "cards": [{"word": first("messages"), "seconds": 2.5, "type": "stat", "title": "15 billion", "items": ["messages wait"]}],
             }
+            if directed:
+                # The kept take's line, as a statement on the stage.
+                plan["graphics"] = [graphic("statement", last("Most"), 2.5, text="Most coaches lose clients.", accent="clients")]
             return {"choices": [{"message": {"content": json.dumps(plan)}}]}, {"cost": 0.004}
 
         edit_recording.chat_completion = chat_completion

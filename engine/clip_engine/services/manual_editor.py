@@ -422,6 +422,12 @@ def validate_candidate(c, duration, transcript_count=100000):
         raise ValueError('Invalid clip status')
     if 'hook' in c:
         parse_hook(c['hook'])
+    if 'look_extras' in c:
+        extras = c['look_extras']
+        if not isinstance(extras, dict) or set(extras) - {'ids', 'color', 'keyword'} or not isinstance(extras.get('ids'), list) \
+                or len(extras['ids']) > 10 or any(not isinstance(x, str) for x in extras['ids']) \
+                or not isinstance(extras.get('color', ''), str) or not isinstance(extras.get('keyword', ''), str) or len(extras.get('keyword', '')) > 24:
+            raise ValueError('Invalid look extras')
     cta = c.get('cta_id')
     if cta is not None and (not isinstance(cta, str) or not re.fullmatch(r'[a-f0-9]{16}', cta)):
         raise ValueError('Invalid call to action')
@@ -708,6 +714,9 @@ def automatic_extras(run, project):
     """What an Automatic run drew on its clips that the editor draws again: the brand handle/logo and the comment keyword."""
     from clip_engine.services.brand_mark import validate_brand_mark
     extras = project.get('automatic')
+    # An edited reel (Edit my recording) keeps its brand mark on the project itself.
+    if not isinstance(extras, dict):
+        extras = {'brand_mark': project['brand_mark']} if isinstance(project.get('brand_mark'), dict) else None
     if not isinstance(extras, dict):
         return {}
     options = {}
@@ -725,6 +734,19 @@ def automatic_extras(run, project):
     if isinstance(keyword, str) and re.fullmatch(r'[A-Z0-9][A-Z0-9-]{1,19}', keyword):
         options['cta_keyword'] = keyword
     return options
+
+
+def clip_look_extras(c):
+    """The clip's look extras for the render (look_extras.LookExtras), or None when it has none."""
+    raw = c.get('look_extras')
+    if not isinstance(raw, dict) or not raw.get('ids'):
+        return None
+    from clip_engine.services.look_extras import look_extras
+    try:
+        extras = look_extras(raw.get('ids'), raw.get('color'), raw.get('keyword') or '')
+    except ValueError:
+        return None
+    return extras if extras.ids else None
 
 
 async def translated_captions(c, transcript, a, b):
@@ -792,6 +814,10 @@ async def export_clip(run, project, c, output, source, transcript, replace_index
     hook_options = {'title_style': 'headline', 'headline_text': hook['text'], 'headline_look': hook['look'],
                     **({'headline_hide_source_ms': hook_end} if type(hook_end) is int else {})} if hook else {}
     extras = automatic_extras(run, project)
+    # The clip's own look extras (an edited reel's keyword pill, accent words, progress bar, comment box, zoom).
+    own = clip_look_extras(c)
+    if own is not None:
+        extras['look_extras'] = own
     translations, usage = await translated_captions(c, render_transcript, a, b)
     try:
         return await render_export(run, project, c, output, source, render_transcript, replace_index, index, renderer,
