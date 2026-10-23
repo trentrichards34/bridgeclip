@@ -168,6 +168,7 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     ...(draft.workflow === 'automatic' && draft.hookPreview ? { hookPreview: true } : {}),
     ...(draft.workflow === 'automatic' && draft.motionGraphics ? { motionGraphics: true, ...(draft.register ? { register: draft.register } : {}) } : {}),
     ...(draft.workflow === 'automatic' && stageLayoutsOn(draft) ? { stageLayouts: true } : {}),
+    ...(draft.workflow === 'automatic' && draft.motionGraphics && draft.soundEffects ? { soundEffects: true } : {}),
     qualityBar: draft.qualityBar,
     headlineVoice: draft.headlineVoice,
     ...(draft.workflow === 'automatic' && isCaptionLanguage(draft.captionLanguage) ? { captionLanguage: draft.captionLanguage } : {}),

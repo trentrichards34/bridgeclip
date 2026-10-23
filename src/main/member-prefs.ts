@@ -7,6 +7,7 @@ import {
   type MemberPrefs, type StyleKind, type StylePreset
 } from '../shared/member-prefs'
 import { parseProfileUpdate } from '../shared/onboarding'
+import { parseEditStyle, parseMyLook } from '../shared/my-look'
 
 /**
  * The member's remembered styles, saved styles and small app preferences
@@ -120,6 +121,19 @@ export function saveAppPrefs(update: unknown): MemberPrefs {
   if ('beatSheet' in raw) {
     if (!isBeatSheetChoice(raw.beatSheet)) throw new Error('Invalid beat sheet setting')
     next.beatSheet = raw.beatSheet
+  }
+  // Edit my recording: the remembered Style and sound choice, the saved look (null clears it) and whether to start from it.
+  if ('editStyle' in raw) {
+    if (!raw.editStyle || typeof raw.editStyle !== 'object' || Array.isArray(raw.editStyle)) throw new Error('Invalid style setting')
+    next.editStyle = parseEditStyle(raw.editStyle)
+  }
+  if ('myLook' in raw) {
+    if (raw.myLook !== null && (!raw.myLook || typeof raw.myLook !== 'object' || Array.isArray(raw.myLook))) throw new Error('Invalid look')
+    next.myLook = raw.myLook === null ? null : parseMyLook({ ...(raw.myLook as Record<string, unknown>), savedAt: new Date().toISOString() })
+  }
+  if ('useMyLook' in raw) {
+    if (typeof raw.useMyLook !== 'boolean') throw new Error('Invalid look setting')
+    next.useMyLook = raw.useMyLook
   }
   return write(next)
 }

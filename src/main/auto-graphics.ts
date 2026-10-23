@@ -32,6 +32,10 @@ import { placementAvoidingFace } from '../shared/graphic-layout'
 import type { GraphicPlacement } from '../shared/motion-graphics'
 import { withRunLock } from './ctas'
 import { logger } from './logger'
+import { bakeSoundEvents, type CandidateSound, type SoundEvent } from '../shared/sound-design'
+import { DEFAULT_REGISTER, isRegister, type Register } from '../shared/register'
+import { soundPaletteForEngine } from './sound-library'
+import { readMusicSettings } from './music'
 
 export const GRAPHICS_PLAN_FILE = 'auto-graphics.json'
 const MAX_PLAN_BYTES = 32 * 1024 * 1024
@@ -53,8 +57,25 @@ export interface RunGraphicsWorker {
   library: string
 }
 
+/** Sound effects for the run's clips (the Sound effects skill): the run's style register (absent: Teaching) and whether it has music. */
+export interface RunSoundOptions {
+  register?: Register
+  music: boolean
+}
+
+/** The sound request's settings: the style, the music's level under the voice (when the run has music) and the member's own sounds. */
+export function runSoundSettings(sound: RunSoundOptions): { register: Register; music_db?: number; palette: { path: string; action: string }[] } {
+  let palette: { path: string; action: string }[] = []
+  try { palette = soundPaletteForEngine() } catch { palette = [] }
+  let musicDb: number | undefined
+  if (sound.music) { try { musicDb = readMusicSettings().levelDb } catch { musicDb = undefined } }
+  return { register: isRegister(sound.register) ? sound.register : DEFAULT_REGISTER, ...(musicDb !== undefined ? { music_db: musicDb } : {}), palette }
+}
+
 export interface RunGraphicsOptions {
   signal?: AbortSignal
+  /** Sound effects that follow each clip's graphics, scenes and hook (absent: none). */
+  sound?: RunSoundOptions
   /** Cards drawn so far and in all, then clips finished. */
   onProgress?: (step: 'draw' | 'lay', done: number, total: number) => void
 }
@@ -101,11 +122,22 @@ function removePlan(run: string): void {
   try { unlinkSync(join(run, GRAPHICS_PLAN_FILE)) } catch { /* gone */ }
 }
 
-type LayRequest = { clip_index: number; graphics: { file: string; start_ms: number; duration_ms: number; depth?: 'behind' }[] }
+type LaySound = { register: Register; music_db?: number; events: SoundEvent[] }
+type LayRequest = { clip_index: number; graphics: { file: string; start_ms: number; duration_ms: number; depth?: 'behind' }[]; sound?: LaySound }
+
+/**
+ * A Create clip's sound events on the finished clip's clock (the same events an editor bake sends): the hook text
+ * (when the clip draws one), each card that was drawn and each stage scene, shifted by the hook preview before the clip.
+ */
+export function createSoundEvents(project: EditorProject, c: EditorCandidate, drawnIds: ReadonlySet<string>, offsetMs: number): SoundEvent[] {
+  const drawn: EditorCandidate = { ...c, graphics: (c.graphics ?? []).filter((g) => drawnIds.has(g.id)) }
+  const hook = project.aspect_ratio === '9:16' && !!c.hook
+  return bakeSoundEvents(drawn, hook).map((e) => ({ ...e, at_ms: e.at_ms + offsetMs, ...(e.end_ms !== undefined ? { end_ms: e.end_ms + offsetMs } : {}) }))
+}
 type LayResult = { done: number[]; failed: number[]; cancelled: boolean }
 
 /** Run the engine's overlay once for the run. Clips it reports are final; the rest count as failed. */
-function layGraphics(run: string, worker: RunGraphicsWorker, clips: LayRequest[], options: RunGraphicsOptions): Promise<LayResult> {
+function layGraphics(run: string, worker: RunGraphicsWorker, clips: LayRequest[], options: RunGraphicsOptions, palette: { path: string; action: string }[] | null): Promise<LayResult> {
   return new Promise((resolve) => {
     const done = new Set<number>(), failed = new Set<number>()
     let settled = false, buffer = '', finalOk = false, cancelled = false
@@ -150,7 +182,7 @@ function layGraphics(run: string, worker: RunGraphicsWorker, clips: LayRequest[]
       finish()
     })
     child.stdin.on('error', () => {})
-    child.stdin.end(JSON.stringify({ run, library: worker.library, clips }))
+    child.stdin.end(JSON.stringify({ run, library: worker.library, clips, ...(palette ? { sound_palette: palette.slice(0, 60) } : {}) }))
   })
 }
 
@@ -159,7 +191,7 @@ function layGraphics(run: string, worker: RunGraphicsWorker, clips: LayRequest[]
  * been moved off the speaker's face), so the editor shows and re-bakes what the clip has (temp file + rename;
  * the caller holds the run's lock). `drawn`: per clip index, card id to the placement it was drawn with.
  */
-function recordDrawn(run: string, drawn: Map<number, Map<string, GraphicPlacement>>): void {
+function recordDrawn(run: string, drawn: Map<number, Map<string, GraphicPlacement>>, sounds: Map<number, CandidateSound> = new Map()): void {
   const file = join(run, 'job_output.json')
   if (!regularFile(file, MAX_JSON_BYTES)) return
   const raw = JSON.parse(readFileSync(file, 'utf8')) as { metrics?: { clip_layouts?: unknown } }
@@ -178,6 +210,9 @@ function recordDrawn(run: string, drawn: Map<number, Map<string, GraphicPlacemen
     }
     if (kept.length) e.graphics = kept
     else { delete e.graphics; delete e.teaser_ms }
+    // The sound effects mixed into the clip, so the editor keeps them when it bakes the clip again.
+    const sound = sounds.get(e.clip_index as number)
+    if (sound) { e.sound = sound; changed = true }
   }
   if (!changed) return
   const temporary = join(run, `.graphics-${randomUUID()}.tmp`)
@@ -210,6 +245,7 @@ async function applyNow(run: string, worker: RunGraphicsWorker, options: RunGrap
   const requests: LayRequest[] = []
   const ids = new Map<number, Map<string, GraphicPlacement>>()
   let drawnCount = 0, cancelled = false
+  const sound = options.sound ? runSoundSettings(options.sound) : null
   options.onProgress?.('draw', 0, total)
   for (const c of candidates) {
     const index = c.library_clip as number
@@ -233,18 +269,25 @@ async function applyNow(run: string, worker: RunGraphicsWorker, options: RunGrap
     if (cancelled) break
     if (rendered.length < (c.graphics?.length ?? 0)) failed.add(index)
     if (rendered.length) {
-      requests.push({ clip_index: index, graphics: rendered.map((g) => ({ file: g.file, start_ms: g.start_ms + extra.offset_ms, duration_ms: g.duration_ms, ...(g.depth ? { depth: g.depth, min_top: g.min_top } : {}) })) })
+      const events = sound ? createSoundEvents(plan.project, c, new Set(rendered.map((g) => g.id)), extra.offset_ms) : []
+      requests.push({ clip_index: index, graphics: rendered.map((g) => ({ file: g.file, start_ms: g.start_ms + extra.offset_ms, duration_ms: g.duration_ms, ...(g.depth ? { depth: g.depth, min_top: g.min_top } : {}) })),
+        ...(sound && events.length ? { sound: { register: sound.register, ...(sound.music_db !== undefined ? { music_db: sound.music_db } : {}), events } } : {}) })
       const placements = new Map((c.graphics ?? []).map((g) => [g.id, g.placement] as const))
       ids.set(index, new Map(rendered.flatMap((g) => placements.has(g.id) ? [[g.id, placements.get(g.id) as GraphicPlacement] as const] : [])))
     }
   }
   const applied = new Map<number, Map<string, GraphicPlacement>>()
+  const sounds = new Map<number, CandidateSound>()
   if (requests.length && !cancelled) {
-    const result = await layGraphics(run, worker, requests, options)
+    const result = await layGraphics(run, worker, requests, options, sound ? sound.palette : null)
     cancelled = result.cancelled
-    for (const index of result.done) applied.set(index, ids.get(index) ?? new Map())
+    for (const index of result.done) {
+      applied.set(index, ids.get(index) ?? new Map())
+      const sound = requests.find((r) => r.clip_index === index)?.sound
+      if (sound) sounds.set(index, { on: true, register: sound.register, ...(sound.music_db !== undefined ? { music_db: Math.round(sound.music_db) } : {}), cues: [] })
+    }
   }
-  try { recordDrawn(run, applied) } catch (error) { logger.warn('job.graphics.recordFailed', { message: String((error as Error)?.message ?? error).slice(0, 200) }) }
+  try { recordDrawn(run, applied, sounds) } catch (error) { logger.warn('job.graphics.recordFailed', { message: String((error as Error)?.message ?? error).slice(0, 200) }) }
   removePlan(run)
   // A clip without every card it was meant to get (a card not drawn, or the clip not laid over).
   const short = candidates.map((c) => c.library_clip as number).filter((index, i) => (applied.get(index)?.size ?? 0) < (candidates[i].graphics?.length ?? 0))

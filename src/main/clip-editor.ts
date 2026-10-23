@@ -247,6 +247,7 @@ export async function saveEditor(path: unknown, revision: unknown, edits: unknow
       if (edit.stage_scenes === undefined) delete next.stage_scenes
       if (edit.look_extras === undefined) delete next.look_extras
       if (edit.sound === undefined) delete next.sound
+      if (edit.grade === undefined) delete next.grade
       // A changed call to action is the member's choice: a re-bake keeps it over the Library clip's.
       if (ctaChoice(edit.cta_id) !== ctaChoice(c.cta_id)) next.cta_edited = true
       if (edit.status === 'baked') {

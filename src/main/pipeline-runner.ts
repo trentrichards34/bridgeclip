@@ -790,7 +790,7 @@ export function startClipJob(
           const result = await applyRunGraphics(run, {
             python: pythonPath, script: join(dirname(bridgePath), 'graphics_runner.py'), cwd: enginePath, library: settings.outputDirectory,
             env: { ...runtimeEnvironment(), PYTHONPATH: enginePath, PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1', PATH: spawnEnv.PATH }
-          }, { signal: abort.signal, onProgress: (phase, done, total) => {
+          }, { signal: abort.signal, ...(config.soundEffects === true ? { sound: { register: config.register, music: config.music === true } } : {}), onProgress: (phase, done, total) => {
             if (total && done < total) step(phase === 'draw' ? `Drawing motion graphics (${done + 1} of ${total})` : `Adding motion graphics to clip ${done + 1} of ${total}`, done, total)
           } })
           graphicsNote = graphicsNotice(result)
@@ -975,3 +975,4 @@ function terminateProcessTree(child: ChildProcess, force: boolean): void {
     try { process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM') } catch { /* Group already exited. */ }
   }
 }
+

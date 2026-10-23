@@ -29,6 +29,19 @@ from clip_engine.services.manual_editor import (
     scene_for_shot, source_info, utf16_prefix, validate_candidate, validate_candidate_list,
 )
 
+
+def saved_sound(raw, duration_ms):
+    """A Create clip's recorded sound effects ({on, register, music_db?, cues}) as an editor candidate keeps them, or None."""
+    if raw is None:
+        return None
+    from clip_engine.services.sound_design import validate_candidate_sound
+    try:
+        validate_candidate_sound(raw, duration_ms)
+    except ValueError:
+        return None
+    return {k: raw[k] for k in ('on', 'register', 'music_db', 'cues') if k in raw}
+
+
 # The editor's limits (validate_candidate, parseCandidateEdit in src/shared/clip-editor.ts).
 MAX_RANGES = 24
 MAX_SCENES = 60
@@ -379,7 +392,9 @@ def build_candidates(run, output, settings, segments, w, h, duration_ms, padding
              # Motion graphics the run drew on the clip (Motion graphics: Auto), editable in the Graphics row.
              **({'graphics': graphics} if (graphics := checked_saved((entry or {}).get('graphics'), duration_ms)) else {}),
              # Stage layouts the run drew (source time), shown in the Scenes row.
-             **({'stage_scenes': stages} if (stages := checked_saved_scenes((entry or {}).get('stage_scenes'), duration_ms)) else {})}
+             **({'stage_scenes': stages} if (stages := checked_saved_scenes((entry or {}).get('stage_scenes'), duration_ms)) else {}),
+             # Sound effects the run mixed into the clip (they follow its graphics and scenes, so a re-bake keeps them).
+             **({'sound': sound} if (sound := saved_sound((entry or {}).get('sound'), duration_ms)) else {})}
         try:
             validate_candidate(c, duration_ms, len(segments))
         except (ValueError, TypeError, KeyError):

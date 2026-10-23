@@ -76,6 +76,8 @@ export interface CreateSkillFields {
   backgroundVideo: string | null
   music: boolean
   voiceCleanup: boolean
+  /** Sound effects as the motion graphics come in (absent: on). */
+  soundEffects?: boolean
 }
 
 export interface CreateSkillContext {
@@ -87,7 +89,7 @@ export interface CreateSkillContext {
   openrouter?: boolean
 }
 
-export const CREATE_SKILLS: readonly SkillId[] = ['rough_cut', 'captions', 'motion_graphics', 'stage_layouts', 'zoom', 'broll', 'music', 'voice_cleanup']
+export const CREATE_SKILLS: readonly SkillId[] = ['rough_cut', 'captions', 'motion_graphics', 'stage_layouts', 'zoom', 'broll', 'sound_effects', 'music', 'voice_cleanup']
 
 /** Why Stage layouts can't be on for these settings (null: they can). */
 export function stageLayoutsBlocked(fields: Pick<CreateSkillFields, 'motionGraphics' | 'aspectRatio' | 'backgroundVideo'>): string | null {
@@ -114,6 +116,9 @@ export function createSkillRows(fields: CreateSkillFields, context: CreateSkillC
       case 'broll': return row(id, fields.broll !== 'off',
         fields.broll === 'off' && !context.pexels && !context.openrouter && !(context.library ?? 0) ? 'Add clips to your B-roll library, or a free Pexels key in Settings → API keys, first.' : null,
         fields.broll === 'full' ? 'Footage that matches what’s said over the speaker, for the whole clip: from your B-roll library, stock or AI.' : undefined)
+      // Sounds land as the motion graphics, scenes and hook come in: they need Motion graphics.
+      case 'sound_effects': return row(id, fields.motionGraphics === true && fields.soundEffects !== false,
+        fields.motionGraphics ? null : 'Turn on Motion graphics first. Each sound plays as a graphic comes in.')
       case 'music': return row(id, fields.music === true)
       default: return row(id, fields.voiceCleanup === true)
     }
@@ -130,6 +135,7 @@ export function createSkillPatch(fields: CreateSkillFields, id: SkillId, on: boo
     case 'zoom': return { lookExtras: withExtra(fields.lookExtras, ZOOM, on) }
     // On keeps a mode already picked; B-roll and a gameplay background can't both run.
     case 'broll': return on ? { broll: fields.broll === 'off' ? 'after-hook' : fields.broll, backgroundVideo: null } : { broll: 'off' }
+    case 'sound_effects': return { soundEffects: on }
     case 'music': return { music: on }
     case 'voice_cleanup': return { voiceCleanup: on }
     default: return {}

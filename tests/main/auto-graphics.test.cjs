@@ -58,9 +58,13 @@ function fakeSpawn(outcome, calls) {
   }
 }
 
-function load({ fail = () => false, outcome = () => true } = {}) {
+function load({ fail = () => false, outcome = () => true, sound = false } = {}) {
   const calls = [], drawn = []
   const mod = loadMain("export * from './src/main/auto-graphics'", {
+    ...(sound ? {
+      './sound-library': { soundPaletteForEngine: () => [{ path: '/sounds/pop/mine.wav', action: 'pop' }] },
+      './music': { readMusicSettings: () => ({ levelDb: -22, duringTheirClip: false }) }
+    } : {}),
     './graphics-render': {
       renderCandidateGraphics: async (run, project, c, cancelled, extra) => {
         const g = c.graphics[0]
@@ -181,4 +185,32 @@ test('a card moved off the speaker’s face is recorded where it was drawn, so t
   for (const g of layouts[0].graphics) assert.notEqual(g.placement, 'top', 'recorded where it was laid, not where it was planned')
   // A clip without a face keeps its planned placement.
   assert.deepEqual(layouts[1].graphics.map((g) => g.placement), ['top'])
+})
+
+test('Create sound effects: each laid clip gets events for its drawn cards (hook preview offset added), the style, the music level and the member’s sounds; the editor keeps them', async (t) => {
+  const { dir, cleanup } = tempDir('bridgeclip-auto-graphics-')
+  t.after(cleanup)
+  const run = makeRun(dir)
+  // Card g-bbbbbbbbbb can't be drawn: it gets no sound either.
+  const { mod, calls } = load({ sound: true, fail: (g) => g.id === 'g-bbbbbbbbbb' })
+  const result = await mod.applyRunGraphics(run, WORKER, { sound: { register: 'story', music: true } })
+  assert.equal(result.applied, 2)
+  const request = calls[0].request
+  assert.deepEqual(request.sound_palette, [{ path: '/sounds/pop/mine.wav', action: 'pop' }])
+  // Source 1500 ms in a cut from 1000 at 1.25x: 400 ms into the clip; clip 1's card (2000 ms) after a 1.5 s hook preview.
+  assert.deepEqual(request.clips[0].sound, { register: 'story', music_db: -22, events: [{ kind: 'graphic', template: 'stat', at_ms: 400, end_ms: 2800, size: 'card' }] })
+  assert.deepEqual(request.clips[1].sound, { register: 'story', music_db: -22, events: [{ kind: 'graphic', template: 'stat', at_ms: 2300, end_ms: 4700, size: 'card' }] })
+  const layouts = JSON.parse(fs.readFileSync(path.join(run, 'job_output.json'), 'utf8')).metrics.clip_layouts
+  assert.deepEqual(layouts[0].sound, { on: true, register: 'story', music_db: -22, cues: [] })
+  assert.equal(layouts[2].sound, undefined)
+
+  // Off (no sound option): no events and no palette; an unset style plays as Teaching.
+  const quiet = load({ sound: true })
+  await quiet.mod.applyRunGraphics(makeRun(path.join(dir, 'quiet')), WORKER)
+  assert.equal(quiet.calls[0].request.sound_palette, undefined)
+  assert.equal(quiet.calls[0].request.clips[0].sound, undefined)
+  const teaching = load({ sound: true })
+  await teaching.mod.applyRunGraphics(makeRun(path.join(dir, 'teach')), WORKER, { sound: { music: false } })
+  assert.equal(teaching.calls[0].request.clips[0].sound.register, 'teaching')
+  assert.equal(teaching.calls[0].request.clips[0].sound.music_db, undefined)
 })

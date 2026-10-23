@@ -1,7 +1,8 @@
 """Private worker: lay the motion graphics main rendered over a finished Create run's clips.
 
 Main draws each graphic (Motion graphics: Auto) with the editor's templates into the run's .graphics/
-folder, then runs this once per run with {run, library, clips: [{clip_index, graphics}]} on stdin. One
+folder, then runs this once per run with {run, library, clips: [{clip_index, graphics, sound?}], sound_palette?} on stdin
+(sound: the clip's sound effects, mixed after its graphics; sound_palette: the member's own sounds). One
 JSON line per finished clip ({"type": "progress", "clip_index", "ok", "done", "total"}), then {"ok": true, "done": [...],
 "failed": [...]}. A clip that fails keeps its file as made.
 """
@@ -20,8 +21,8 @@ def main():
     try:
         from clip_engine.logging_safety import install_safe_logging
         install_safe_logging()
-        raw = sys.stdin.read(262145)
-        if len(raw) > 262144:
+        raw = sys.stdin.read(1048577)
+        if len(raw) > 1048576:
             raise ValueError('Request too large')
         config = json.loads(raw)
         if not isinstance(config, dict) or not isinstance(config.get('run'), str) or not isinstance(config.get('library'), str):
@@ -41,7 +42,8 @@ def main():
             task = asyncio.current_task()
             if os.name != 'nt':
                 asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
-            return await overlay_run_clips(run, config.get('clips'), lambda index, ok, done, total: emit({'type': 'progress', 'clip_index': index, 'ok': ok, 'done': done, 'total': total}))
+            return await overlay_run_clips(run, config.get('clips'), lambda index, ok, done, total: emit({'type': 'progress', 'clip_index': index, 'ok': ok, 'done': done, 'total': total}),
+                                           config.get('sound_palette'))
         result = asyncio.run(work())
         emit({'ok': True, 'done': result['done'], 'failed': result['failed']})
         return 0

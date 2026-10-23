@@ -92,9 +92,14 @@ let recordSpend: SpendRecorder = () => undefined
 /** Sources checked this session (path → seconds), so the spending check can estimate before a run starts. */
 const known = new Map<string, number>()
 
-/** The member's graphics amount (Create's setting, shared by the edit's direction): {} when unset (the engine reads it from the words). */
+/** The member's graphics amount (their saved look's, their last reel's or Create's, shared by the edit's direction): {} when unset (the engine reads it from the words). */
 function graphicsRegister(): { register?: string } {
-  try { const register = readMemberPrefs().create.register; return isGraphicsRegister(register) ? { register } : {} } catch { return {} }
+  try {
+    // The saved look's style when the member starts from it, else the style of their last reel, else Create's.
+    const prefs = readMemberPrefs()
+    const register = (prefs.useMyLook && prefs.myLook?.register) || prefs.editStyle?.register || prefs.create.register
+    return isGraphicsRegister(register) ? { register } : {}
+  } catch { return {} }
 }
 
 export function onEditStatus(listener: (status: EditStatus) => void): void { notify = listener }
@@ -849,6 +854,8 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
       graphics: (decisions.graphics ?? []).filter((g) => registerKeeps(g, decisions.soundStyle)).map(({ id, template, word, duration_ms, placement, fields, origin, size, depth }) => ({ id, template, word, duration_ms, placement, fields,
         ...(origin ? { origin } : {}), ...(size ? { size } : {}), ...(depth ? { depth } : {}) })),
       pins, motion, stage: motion && decisions.stageLayouts !== false,
+      // The color grade (footage only): the editor's bake puts it under the captions and graphics.
+      ...(decisions.look.grade && decisions.look.grade !== 'none' ? { grade: decisions.look.grade } : {}),
       ...(typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color) ? { brand_color: color } : {}),
       ...(current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {})
     } })

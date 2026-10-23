@@ -73,6 +73,8 @@ export interface ClipDraft {
   stageLayouts: boolean
   /** How dense the motion graphics are (null: read from what is said). */
   register: GraphicsRegister | null
+  /** Sound effects as the motion graphics, scenes and hook come in (with motion graphics). */
+  soundEffects: boolean
   /** Framework grading bar: keep clips graded at or above it. */
   qualityBar: QualityBar
   /** Whose video it is: headlines in the creator's own voice, or a clipper's third person. */
@@ -149,6 +151,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   motionGraphics: false,
   stageLayouts: false,
   register: null,
+  soundEffects: true,
   qualityBar: 'b',
   headlineVoice: 'clipper',
   captionLanguage: 'original',

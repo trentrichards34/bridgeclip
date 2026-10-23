@@ -559,3 +559,22 @@ test('floating text\'s background is remembered and round-trips: styles, saved s
   const older = parseJobOutput({ job_id: 'j', clips: [clip({ look: 'black', color: '#FFFFFF', font: 'clean' })] })
   assert.deepEqual(plain(older.clips[0].remix_settings.headline_look), { look: 'black', color: '#FFFFFF', font: 'clean' })
 })
+
+test('Edit my recording: the saved look and the remembered Style and sound are saved by main and read back; bad input is refused', () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'member-prefs-look-'))
+  const main = load('main/member-prefs.ts', { electron: { app: { getPath: () => userData } } })
+  const look = { register: 'story', includeCaptions: true, captionPreset: 'pop', grade: 'film', soundEffects: true, transitions: true, lookExtras: ['progress_bar'], savedAt: '1999-01-01T00:00:00.000Z' }
+  const saved = main.saveAppPrefs({ myLook: look, editStyle: { register: 'minimal', soundEffects: false } })
+  assert.equal(saved.myLook.grade, 'film')
+  assert.notEqual(saved.myLook.savedAt, look.savedAt, 'main stamps when it was saved')
+  assert.deepEqual(plain(saved.editStyle), { register: 'minimal', soundEffects: false })
+  // Read back from the file by a fresh load.
+  const again = load('main/member-prefs.ts', { electron: { app: { getPath: () => userData } } }).readMemberPrefs()
+  assert.deepEqual(plain(again.myLook), plain(saved.myLook))
+  assert.equal(again.useMyLook, true)
+  assert.equal(main.saveAppPrefs({ useMyLook: false }).useMyLook, false)
+  assert.equal(main.saveAppPrefs({ myLook: null }).myLook, null)
+  assert.throws(() => main.saveAppPrefs({ useMyLook: 'yes' }), /Invalid look setting/)
+  assert.throws(() => main.saveAppPrefs({ myLook: ['x'] }), /Invalid look/)
+  assert.throws(() => main.saveAppPrefs({ editStyle: 'teaching' }), /Invalid style setting/)
+})

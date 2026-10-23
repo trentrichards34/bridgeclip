@@ -447,6 +447,9 @@ class RenderRequest:
     cta_keyword: str = ""
     # Look extras (see look_extras.LookExtras): motion effects on top of the look; None or empty for none.
     look_extras: Optional[Any] = None
+    # Color grade on the footage only (color_grade.py: warm, cinematic, film, cool, mono; None: as filmed). Applied to
+    # the framed video before the headline bar, scenes, captions, extras and graphics go over it.
+    color_grade: Optional[str] = None
     # Scenes (9:16; see stage_scenes): [{scene: face|stage|visual, start_ms, end_ms, backdrop?}] on the
     # finished clip's clock (after the cut and the speed). Empty: the normal framing throughout.
     scenes: list[dict] = field(default_factory=list)
@@ -936,6 +939,9 @@ class RenderingService:
             if broll:
                 graph = self._overlay_broll(graph, broll, target_width, speaker_h, fps)
                 looped_inputs = [path for path, _, _ in broll]
+        if request.color_grade:
+            from clip_engine.services.color_grade import with_grade
+            graph = with_grade(graph, request.color_grade)
         if headline:
             graph = self._pad_for_headline(graph, target_width, target_height, bar_h, parse_headline_look(request.headline_look).pad_color)
         scenes = self._scene_composite(request, graph, plan, time_map, target_width, target_height, speaker_h, bar_h,

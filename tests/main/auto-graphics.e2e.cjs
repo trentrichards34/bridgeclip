@@ -11,7 +11,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { execFileSync } = require('node:child_process')
+const { execFileSync, spawnSync } = require('node:child_process')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
 const { editorTools, linkEngine } = require('./editor-e2e-tools.cjs')
 
@@ -96,6 +96,8 @@ test('Create: the Motion graphics skill starts Off, one click turns it on, Revie
   await page.getByRole('button', { name: 'Clip another video' }).waitFor()
   const submitted = await app.evaluate(() => globalThis.graphicsTest.submitted)
   assert.equal(submitted.motionGraphics, true)
+  // Sound effects ride on Motion graphics (on by default once graphics are on).
+  assert.equal(submitted.soundEffects, true)
   assert.equal(submitted.workflow, 'automatic')
 
   // Remembered with the member's style: on again after a restart of the page.
@@ -176,7 +178,7 @@ test('a Create run with Motion graphics: Auto and Stage layouts draws said-only 
     videoUrl, workflow: 'automatic', clippingMode: 'quality', maxClips: 1, autoClipCount: false, durationRanges: ['xshort'], aspectRatio: '9:16',
     layoutStyle: 'auto', layoutVision: false, pacing: 'tight', videoSpeed: 1, includeCaptions: true, captionPreset: 'pop', includeTitle: true,
     titleStyle: 'headline', headlineLook: { look: 'white', color: '#FFFFFF', font: 'clean' }, qualityBar: 'off', headlineVoice: 'creator',
-    motionGraphics: true, stageLayouts: true, startTimeSeconds: null, endTimeSeconds: null, bannerPlatform: null, bannerChannelUrl: null
+    motionGraphics: true, stageLayouts: true, soundEffects: true, startTimeSeconds: null, endTimeSeconds: null, bannerPlatform: null, bannerChannelUrl: null
   }), video)
   const run = path.join(library, started.jobId)
   // Done: the run finishes (graphics drawn and laid before it shows as done).
@@ -206,6 +208,12 @@ test('a Create run with Motion graphics: Auto and Stage layouts draws said-only 
   assert.ok(stage.start_ms <= layout.graphics[1].at_ms && stage.end_ms >= layout.graphics[1].at_ms + layout.graphics[1].duration_ms, JSON.stringify(stage))
   // Its items come in as they're said.
   assert.equal(layout.graphics[1].fields.item_ms.split('\n').length, 3)
+  // Sound effects were mixed after the cards were laid (the same planner and mix as an edited reel), and the editor
+  // keeps them for a re-bake; the clip is at social loudness.
+  assert.deepEqual(layout.sound, { on: true, register: 'teaching', cues: [] })
+  const loud = spawnSync(tools.ffmpeg, ['-nostdin', '-hide_banner', '-nostats', '-i', path.join(run, 'clip_00.mp4'), '-af', 'ebur128=peak=true', '-f', 'null', '-'], { encoding: 'utf8' }).stderr.split('Summary:').pop()
+  const lufs = Number(/I:\s+(-?[\d.]+) LUFS/.exec(loud)[1])
+  assert.ok(Math.abs(lufs + 14) <= 1.5, `${lufs} LUFS`)
 
   // A frame of the finished clip shows the stat card while it plays, in the band under the hook (a still backdrop,
   // so the same box after the card is gone is the clip alone).

@@ -103,9 +103,9 @@ def _direction(raw):
 
 def _editor(raw, n):
     """The reel as a clip editor project: the review's graphics (word-anchored), pinned images (in the run's graphics
-    images), whether the automatic graphics and Stage layouts are on, the brand color and comment keyword."""
+    images), whether the automatic graphics and Stage layouts are on, the brand color, comment keyword and color grade."""
     from clip_engine.services.edit_direction import EDITOR_TEMPLATES, MAX_GRAPHICS
-    if not isinstance(raw, dict) or not set(raw) <= {"graphics", "pins", "motion", "stage", "brand_color", "cta_keyword"} \
+    if not isinstance(raw, dict) or not set(raw) <= {"graphics", "pins", "motion", "stage", "brand_color", "cta_keyword", "grade"} \
             or not isinstance(raw.get("motion", True), bool) or not isinstance(raw.get("stage", False), bool):
         raise ValueError("Invalid editor")
     color = raw.get("brand_color")
@@ -133,8 +133,10 @@ def _editor(raw, n):
             not isinstance(p, dict) or set(p) != {"word", "image"} or type(p["word"]) is not int or not 0 <= p["word"] < n
             or not isinstance(p["image"], str) or not re.fullmatch(r"[a-f0-9]{16}\.(png|jpg|webp)", p["image"]) for p in pins):
         raise ValueError("Invalid pins")
+    from clip_engine.services.color_grade import parse_grade
+    grade = parse_grade(raw.get("grade"))
     return {"graphics": clean, "pins": [dict(p) for p in pins], "motion": raw.get("motion", True), "stage": raw.get("stage", False),
-            "brand_color": color, "cta_keyword": _text(raw.get("cta_keyword"), 24, "keyword")}
+            "brand_color": color, "cta_keyword": _text(raw.get("cta_keyword"), 24, "keyword"), **({"grade": grade} if grade else {})}
 
 
 def _sound_design(raw, palette):

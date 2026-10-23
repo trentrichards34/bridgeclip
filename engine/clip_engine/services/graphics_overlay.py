@@ -503,12 +503,14 @@ async def overlay_graphics(renderer, video: str, graphics: list[dict]) -> None:
             os.remove(output)
 
 
-async def overlay_run_clips(run: Path, clips: list, progress=None) -> dict:
+async def overlay_run_clips(run: Path, clips: list, progress=None, palette=None) -> dict:
     """Motion graphics: Auto, after a Create run: lay each clip's rendered graphics over its finished file.
 
-    `clips` is [{clip_index, graphics: [{file, start_ms, duration_ms}]}] from main (start times are the
-    finished clip's own). A clip that fails keeps its file as made; the others go on. Returns the clip
-    indices done and failed.
+    `clips` is [{clip_index, graphics: [{file, start_ms, duration_ms}], sound?}] from main (start times are the
+    finished clip's own). `sound` (sound_design.parse_request: register, music_db, events) mixes sound effects
+    that follow what was laid (the same planning and mix as an edited reel's bake), with the member's own sounds
+    (`palette`) first. A clip that fails keeps its file as made; the others go on (sound effects that can't be
+    mixed leave the clip with its graphics and its own sound). Returns the clip indices done and failed.
     """
     from clip_engine.services.manual_editor import source_info
     from clip_engine.services.rendering_service import RenderingService
@@ -527,7 +529,10 @@ async def overlay_run_clips(run: Path, clips: list, progress=None) -> dict:
             if video.is_symlink() or not video.is_file():
                 raise ValueError("The clip is missing")
             clip_ms = round(source_info(video)["duration"])
+            sound = run_clip_sound(item.get("sound"), palette)
             await overlay_graphics(renderer, str(video), checked_graphics(run, item.get("graphics"), clip_ms))
+            if sound is not None:
+                await mix_clip_sounds(run, str(video), sound, clip_ms)
             done.append(index)
             ok = True
         except Exception as error:  # noqa: BLE001 - one clip's graphics never stop the others
@@ -537,3 +542,22 @@ async def overlay_run_clips(run: Path, clips: list, progress=None) -> dict:
         if progress:
             progress(index, ok, n + 1, len(clips))
     return {"done": done, "failed": failed}
+
+
+def run_clip_sound(raw, palette):
+    """A Create clip's sound effects request (None: none); raises ValueError when malformed."""
+    if raw is None:
+        return None
+    from clip_engine.services.sound_design import parse_request
+    if not isinstance(raw, dict) or "palette" in raw:
+        raise ValueError("Invalid sound")
+    return parse_request({**raw, "palette": palette if isinstance(palette, list) else []})
+
+
+async def mix_clip_sounds(run: Path, video: str, sound, clip_ms: int) -> list:
+    """Mix the sound effects into a finished Create clip in place (sound_design.design_in_place: never fails the clip)."""
+    import asyncio
+    import tempfile
+    from clip_engine.services.sound_design import design_in_place
+    with tempfile.TemporaryDirectory(prefix=".sounds-", dir=str(run)) as work:
+        return await asyncio.to_thread(design_in_place, video, sound, clip_ms, work)

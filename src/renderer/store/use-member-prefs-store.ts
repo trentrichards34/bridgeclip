@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { DEFAULT_BEAT_SHEET_CHOICE, pickStyle, type AppPrefsUpdate, type BeatSheetChoice, type CreateStyle, type MemberPrefs, type RemixFormStyle, type StyleKind } from '../../shared/member-prefs'
 import { DEFAULT_PROFILE, type CreatorProfile } from '../../shared/onboarding'
+import type { EditStylePrefs, MyLook } from '../../shared/my-look'
 import { getApi } from '../lib/ipc'
 import { useDraftStore } from './use-draft-store'
 import { remixStartStyle, useRemixForm } from './use-remix-form-store'
@@ -23,6 +24,11 @@ interface MemberPrefsState {
   defaultBrandId: string | null
   /** Before an edited reel is made: ask about the beat sheet, always show it, or skip it. */
   beatSheet: BeatSheetChoice
+  /** Edit my recording: the Style and sound choice from the last reel. */
+  editStyle: EditStylePrefs
+  /** Edit my recording: the saved look ("Save as my look"), and whether the next one starts from it. */
+  myLook: MyLook | null
+  useMyLook: boolean
   /** Load once at startup: applies the remembered styles, then keeps them saved. */
   load: () => Promise<void>
   savePreset: (kind: StyleKind, name: string) => Promise<void>
@@ -72,7 +78,8 @@ function startPersisting(): void {
 let loading: Promise<void> | null = null
 
 export const useMemberPrefsStore = create<MemberPrefsState>((set) => {
-  const take = (prefs: MemberPrefs): void => set({ loaded: true, presets: prefs.presets, supportLink: prefs.supportLink, notifyOnFinish: prefs.notifyOnFinish, setupChecklistDismissed: prefs.setupChecklistDismissed, sampleVideoLink: prefs.sampleVideoLink, profile: prefs.profile ?? { ...DEFAULT_PROFILE, onboarding: 'skipped' }, defaultBrandId: prefs.defaultBrandId ?? null, beatSheet: prefs.beatSheet ?? DEFAULT_BEAT_SHEET_CHOICE })
+  const take = (prefs: MemberPrefs): void => set({ loaded: true, presets: prefs.presets, supportLink: prefs.supportLink, notifyOnFinish: prefs.notifyOnFinish, setupChecklistDismissed: prefs.setupChecklistDismissed, sampleVideoLink: prefs.sampleVideoLink, profile: prefs.profile ?? { ...DEFAULT_PROFILE, onboarding: 'skipped' }, defaultBrandId: prefs.defaultBrandId ?? null, beatSheet: prefs.beatSheet ?? DEFAULT_BEAT_SHEET_CHOICE,
+    editStyle: prefs.editStyle ?? {}, myLook: prefs.myLook ?? null, useMyLook: prefs.useMyLook !== false })
   return {
     loaded: false,
     presets: { create: [], remix: [] },
@@ -83,6 +90,9 @@ export const useMemberPrefsStore = create<MemberPrefsState>((set) => {
     profile: { ...DEFAULT_PROFILE },
     defaultBrandId: null,
     beatSheet: DEFAULT_BEAT_SHEET_CHOICE,
+    editStyle: {},
+    myLook: null,
+    useMyLook: true,
     load: () => {
       // Optional: a renderer hot-reloaded over an older preload has no prefs bridge.
       if (!getApi().prefs) return Promise.resolve()

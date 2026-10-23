@@ -24,6 +24,7 @@ import {
 } from './remix'
 import { isMusicTrackId } from './skills'
 import { isPauseCaptions, isPauseLayout, type PauseCaptions, type PauseLayout } from './pause-react'
+import { parseEditStyle, parseMyLook, type EditStylePrefs, type MyLook } from './my-look'
 
 export type StyleKind = 'create' | 'remix'
 
@@ -61,6 +62,8 @@ export interface CreateStyle {
   stageLayouts: boolean
   /** How dense the motion graphics are (null: read from what is said; look-extras.ts GRAPHICS_REGISTERS). */
   register: GraphicsRegister | null
+  /** Sound effects as the motion graphics come in (Skills). */
+  soundEffects: boolean
   qualityBar: QualityBar
   headlineVoice: HeadlineVoice
   /** The brand whose niche, voice and offer guide the titles, and whose handle can be drawn. */
@@ -142,6 +145,12 @@ export interface MemberPrefs {
   defaultBrandId: string | null
   /** Before each edited reel is made: ask whether to see the beat sheet first, always show it, or skip it. */
   beatSheet: BeatSheetChoice
+  /** Edit my recording: the Style and sound choice from the last reel (the next one starts there). */
+  editStyle: EditStylePrefs
+  /** Edit my recording: the look saved with "Save as my look" (null: none). */
+  myLook: MyLook | null
+  /** Edit my recording: start from the saved look ("Use my look" on the setup screen). */
+  useMyLook: boolean
 }
 
 /** Edit my recording's beat sheet before the reel is made (beat-sheet.ts). */
@@ -153,7 +162,7 @@ export function isBeatSheetChoice(value: unknown): value is BeatSheetChoice {
 }
 
 /** The app preferences Settings and the setup checklist can change. */
-export type AppPrefsUpdate = Partial<Pick<MemberPrefs, 'supportLink' | 'notifyOnFinish' | 'setupChecklistDismissed' | 'sampleVideoLink' | 'defaultBrandId' | 'beatSheet'>>
+export type AppPrefsUpdate = Partial<Pick<MemberPrefs, 'supportLink' | 'notifyOnFinish' | 'setupChecklistDismissed' | 'sampleVideoLink' | 'defaultBrandId' | 'beatSheet' | 'editStyle' | 'myLook' | 'useMyLook'>>
 
 export const MAX_PRESETS = 30
 export const MAX_PRESET_NAME = 40
@@ -162,7 +171,7 @@ export const MAX_SAMPLE_VIDEO_LINK = 2048
 
 export const CREATE_STYLE_KEYS = [
   'clippingMode', 'plannerModel', 'transcriptionModel', 'aspectRatio', 'layoutStyle', 'layoutVision', 'screenFocus', 'pacing', 'videoSpeed', 'durations', 'autoClipCount',
-  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'brollSource', 'hookPreview', 'motionGraphics', 'stageLayouts', 'register', 'qualityBar', 'headlineVoice',
+  'maxClips', 'includeCaptions', 'captionPreset', 'includeTitle', 'titleStyle', 'headlineLook', 'lookExtras', 'ctaId', 'backgroundVideo', 'broll', 'brollSource', 'hookPreview', 'motionGraphics', 'stageLayouts', 'register', 'soundEffects', 'qualityBar', 'headlineVoice',
   'brandIdentityId', 'ctaKeyword', 'ctaOffer', 'showHandle', 'captionLanguage', 'music', 'musicTrack', 'voiceCleanup'
 ] as const satisfies readonly (keyof CreateStyle)[]
 
@@ -172,7 +181,7 @@ export const REMIX_STYLE_KEYS = [
   'momentPip', 'momentCamera', 'music', 'musicTrack', 'voiceCleanup', 'brollSource'
 ] as const satisfies readonly (keyof RemixFormStyle)[]
 
-export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE }, defaultBrandId: null, beatSheet: DEFAULT_BEAT_SHEET_CHOICE }
+export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE }, defaultBrandId: null, beatSheet: DEFAULT_BEAT_SHEET_CHOICE, editStyle: {}, myLook: null, useMyLook: true }
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -221,6 +230,7 @@ const CREATE_CHECKS: { [K in keyof CreateStyle]: (value: unknown) => boolean } =
   motionGraphics: bool,
   stageLayouts: bool,
   register: nullOr(isGraphicsRegister),
+  soundEffects: bool,
   qualityBar: oneOf(QUALITY_BARS),
   headlineVoice: oneOf(HEADLINE_VOICES),
   brandIdentityId: nullOr(isBrandId),
@@ -368,7 +378,7 @@ export function parseSampleVideoLink(value: unknown): string {
 }
 
 export function parseMemberPrefs(value: unknown): MemberPrefs {
-  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: readProfile(null), defaultBrandId: null, beatSheet: DEFAULT_BEAT_SHEET_CHOICE }
+  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: readProfile(null), defaultBrandId: null, beatSheet: DEFAULT_BEAT_SHEET_CHOICE, editStyle: {}, myLook: null, useMyLook: true }
   const presets = record(value.presets) ? value.presets : {}
   const create = parseCreateStyle(value.create)
   return {
@@ -381,7 +391,10 @@ export function parseMemberPrefs(value: unknown): MemberPrefs {
     sampleVideoLink: sampleVideoTarget(value.sampleVideoLink) ?? '',
     profile: readProfile(value.profile),
     defaultBrandId: 'defaultBrandId' in value ? (isBrandId(value.defaultBrandId) ? value.defaultBrandId : null) : create.brandIdentityId ?? null,
-    beatSheet: isBeatSheetChoice(value.beatSheet) ? value.beatSheet : DEFAULT_BEAT_SHEET_CHOICE
+    beatSheet: isBeatSheetChoice(value.beatSheet) ? value.beatSheet : DEFAULT_BEAT_SHEET_CHOICE,
+    editStyle: parseEditStyle(value.editStyle),
+    myLook: parseMyLook(value.myLook),
+    useMyLook: value.useMyLook !== false
   }
 }
 

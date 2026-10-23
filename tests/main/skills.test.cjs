@@ -27,11 +27,11 @@ const on = (rows) => plain(Object.fromEntries(rows.map((row) => [row.id, row.on]
 
 test('Create: every skill reads and writes the existing field, and turning it back restores the same fields', () => {
   const rows = skills.createSkillRows(CREATE, { pexels: true })
-  assert.deepEqual(plain(rows.map((row) => row.id)), ['rough_cut', 'captions', 'motion_graphics', 'stage_layouts', 'zoom', 'broll', 'music', 'voice_cleanup'])
-  assert.deepEqual(on(rows), { rough_cut: true, captions: true, motion_graphics: false, stage_layouts: false, zoom: false, broll: false, music: false, voice_cleanup: false })
+  assert.deepEqual(plain(rows.map((row) => row.id)), ['rough_cut', 'captions', 'motion_graphics', 'stage_layouts', 'zoom', 'broll', 'sound_effects', 'music', 'voice_cleanup'])
+  assert.deepEqual(on(rows), { rough_cut: true, captions: true, motion_graphics: false, stage_layouts: false, zoom: false, broll: false, sound_effects: false, music: false, voice_cleanup: false })
   const fields = { rough_cut: ['pacing'], captions: ['includeCaptions'], motion_graphics: ['motionGraphics'], zoom: ['lookExtras'], broll: ['broll', 'backgroundVideo'], music: ['music'], voice_cleanup: ['voiceCleanup'] }
-  // (Stage layouts ride on motion graphics: their own test below.)
-  for (const row of rows.filter((item) => item.id !== 'stage_layouts')) {
+  // (Stage layouts and sound effects ride on motion graphics: their own tests below.)
+  for (const row of rows.filter((item) => item.id !== 'stage_layouts' && item.id !== 'sound_effects')) {
     const flipped = { ...CREATE, ...skills.createSkillPatch(CREATE, row.id, !row.on) }
     // Only the skill's own fields change (nothing else is stored for the panel)...
     const changed = Object.keys(CREATE).filter((key) => JSON.stringify(flipped[key]) !== JSON.stringify(CREATE[key]))
@@ -212,4 +212,18 @@ test('a suggested look from the picture: its strongest common color, and light o
 test('music with an empty track (a fresh form) gets the first built-in track; music off with an empty track is fine', () => {
   assert.deepEqual(plain(skills.parseAudioSkills({ music: true, musicTrack: '' })), { music: true, musicTrack: 'calm-pad' })
   assert.deepEqual(plain(skills.parseAudioSkills({ music: false, musicTrack: '' })), {})
+})
+
+test('Create: Sound effects follow Motion graphics (on by default once graphics are on) and are remembered with the style', () => {
+  const row = (fields) => skills.createSkillRows(fields, { pexels: true }).find((item) => item.id === 'sound_effects')
+  assert.equal(row(CREATE).on, false)
+  assert.match(row(CREATE).disabledReason, /Motion graphics first/)
+  const graphics = { ...CREATE, motionGraphics: true }
+  assert.equal(row(graphics).on, true)
+  assert.equal(row(graphics).disabledReason, null)
+  assert.deepEqual(plain(skills.createSkillPatch(graphics, 'sound_effects', false)), { soundEffects: false })
+  assert.equal(row({ ...graphics, soundEffects: false }).on, false)
+  assert.equal(row({ ...graphics, soundEffects: true }).on, true)
+  assert.equal(prefs.parseCreateStyle({ soundEffects: false }).soundEffects, false)
+  assert.equal(prefs.parseCreateStyle({ soundEffects: 'yes' }).soundEffects, undefined)
 })
