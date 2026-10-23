@@ -12,7 +12,7 @@
  */
 import { sceneAt, type CandidateEdit, type EditorProject } from './clip-editor'
 import { HEADLINE_FONTS, isHexColor } from './headline-look'
-import { STAGE_LAYOUT, sceneAt as stageSceneAt } from './scenes'
+import { STAGE_LAYOUT, sceneAt as stageSceneAt, stageHookEndMs } from './scenes'
 import { DIAGRAM_ACCENT, graphicWindow, isDiagram, outputTime, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize } from './motion-graphics'
 
 /** The editor's default brand color for graphics (the engine's cards use the same calm blue). */
@@ -77,8 +77,8 @@ export function chapterBox(frame: Pick<GraphicFrame, 'aspect' | 'handle'>): { to
   return { top, bottom: top + (wide ? .16 : frame.aspect === '1:1' ? .15 : CHAPTER_HEIGHT) }
 }
 
-/** On a 9:16 frame a stage-size graphic ends here: the top ~53% is the stage, the speaker sits below. */
-export const STAGE_BOTTOM = .53
+/** On a 9:16 frame a stage-size graphic ends here: the top half is the stage, the speaker sits below (scenes.ts). */
+export const STAGE_BOTTOM = STAGE_LAYOUT.stageBottom
 
 /**
  * The vertical band (fractions of the height) a graphic with this placement
@@ -199,7 +199,11 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
   const top = Math.max(0, Math.min(.4, extra.top ?? 0))
   // While a chapter header is up, the others keep below it.
   const chapter = graphic.template !== 'chapter' && (candidate.graphics ?? []).some((c) => c.template === 'chapter' && c.at_ms < graphic.at_ms + graphic.duration_ms && graphic.at_ms < c.at_ms + c.duration_ms)
-  const frame: GraphicFrame = { aspect: project.aspect_ratio, hook: Math.max(hookShare(candidate, project.aspect_ratio), top, chapter ? CHAPTER_SHARE : 0),
+  const scene = stageSceneAt(candidate.stage_scenes, at)
+  // The hook fades out as the first stage scene starts (stageHookEndMs): a stage graphic after that has the top too.
+  const handOver = graphic.size === 'stage' && scene.scene !== 'face' ? stageHookEndMs(candidate) : null
+  const hook = handOver !== null && window.start_ms >= handOver ? 0 : hookShare(candidate, project.aspect_ratio)
+  const frame: GraphicFrame = { aspect: project.aspect_ratio, hook: Math.max(hook, top, chapter ? CHAPTER_SHARE : 0),
     captions: candidate.captions ? captionAnchorAt(project, candidate, at) : null, handle: handleEdge(project) }
   const fields = { ...graphic.fields }
   delete fields.image
@@ -215,7 +219,6 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
     if (out.every((t) => t !== null)) fields[key] = out.map((t) => String(Math.max(0, Math.round((t as number) - window.start_ms)))).join('\n')
   }
   let box = graphic.template === 'chapter' ? chapterBox(frame) : graphicBox(graphic.placement, frame, graphicBandSize(graphic))
-  const scene = stageSceneAt(candidate.stage_scenes, at)
   // A stage graphic in a Visual scene (the speaker card is away) takes the frame down to just over the captions.
   if (graphic.size === 'stage' && project.aspect_ratio === '9:16' && scene.scene === 'visual') {
     box = { top: box.top, bottom: Math.max(box.bottom, STAGE_LAYOUT.visualCaptionY - .08) }

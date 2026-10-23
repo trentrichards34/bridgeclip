@@ -951,7 +951,7 @@ class RenderingService:
         graph += self._caption_graph(caption_path, request.caption_suppression_ranges_ms, window_start_ms, time_map)
         overlays = self._overlays(request, out_plan, target_width, target_height, is_landscape, headline=headline,
                                   end_s=time_map.output_ms / 1000,
-                                  hand_over_s=chapter_hand_over_s(request.headline_hide_source_ms, time_map.keeps, window_start_ms))
+                                  hand_over_s=self._hook_hand_over_s(request, time_map, window_start_ms, scenes))
         overlays += self._brand_overlays(request, target_width, target_height, is_landscape, bar_h, bool(background),
                                          time_map.output_ms / 1000)
         overlays += extras_module.create_layers(
@@ -991,6 +991,16 @@ class RenderingService:
         if not os.path.isfile(request.output_path):
             raise RenderingError("Render failed: output file not created")
 
+    @staticmethod
+    def _hook_hand_over_s(request: RenderRequest, time_map: TimeMap, window_start_ms: int,
+                          scenes: Optional["stage_scenes.SceneComposite"]) -> Optional[float]:
+        """When the hook text fades out (edited clock, seconds): at the first chapter header or as the first stage
+        scene starts, whichever is first; None to keep its own time."""
+        times = [chapter_hand_over_s(request.headline_hide_source_ms, time_map.keeps, window_start_ms),
+                 stage_scenes.hook_hand_over_s(scenes.segments, request.video_speed) if scenes else None]
+        times = [t for t in times if t is not None]
+        return min(times) if times else None
+
     def _scene_composite(
         self, request: RenderRequest, graph: str, plan: ClipLayoutPlan, time_map: TimeMap, width: int, height: int,
         speaker_h: int, bar_h: int, is_landscape: bool, background: bool, fps: str, first_input: int, window_start_ms: int = 0,
@@ -1005,14 +1015,18 @@ class RenderingService:
         scenes = stage_scenes.parse_scenes(raw, scaled_duration_ms(time_map.output_ms, request.video_speed))
         if not scenes:
             return None
-        if any(s.scene == "stage" for s in scenes) and not plan.face_samples and not any(s.people for s in plan.shots):
-            # An editor export's plan knows no faces: find the speaker in a few frames so the card frames them.
+        if any(s.scene == "stage" for s in scenes):
+            # The card frames the speaker's head and shoulders from their face through each stage scene: where the
+            # plan's own face samples are sparse (an editor export's plan has none), faces are found in the source.
             try:
                 import dataclasses
-                found = stage_scenes.card_faces(request.video_path, plan, window_start_ms)
+                segments = stage_scenes.edited_segments(scenes, time_map.output_ms, request.video_speed)
+                transition = stage_scenes.TRANSITION_MS * request.video_speed / 1000
+                spans = stage_scenes.card_sample_spans(plan, time_map.keeps, stage_scenes.card_runs(segments), transition)
+                found = stage_scenes.card_faces(request.video_path, plan, window_start_ms, spans)
                 if found:
-                    plan = dataclasses.replace(plan, face_samples=found)
-            except Exception as error:  # noqa: BLE001 - the card then uses the usual framing's face height
+                    plan = dataclasses.replace(plan, face_samples=sorted([*plan.face_samples, *found], key=lambda s: s[0]))
+            except Exception as error:  # noqa: BLE001 - the card then frames from the plan's faces or the speaker's area
                 logger.info(f"Card faces not found: {type(error).__name__}")
         try:
             zones = face_zones(plan, time_map, width, speaker_h) if plan.face_samples or any(s.people for s in plan.shots) else []
@@ -1022,7 +1036,8 @@ class RenderingService:
             graph, scenes, width, height, time_map.output_ms, request.video_speed, fps, first_input,
             os.path.dirname(request.output_path), f"{request.start_time_ms}-{request.end_time_ms}", bar_h=bar_h,
             zones=zones, brand=request.scene_brand_color,
-            card_graph=lambda w, h: stage_scenes.card_source_graph(plan, time_map.keeps, width, speaker_h, w, h, fps, request.video_speed))
+            card_graph=lambda w, h, runs, transition: stage_scenes.card_source_graph(
+                plan, time_map.keeps, w, h, fps, runs, transition, min_w=round(width * stage_scenes.MIN_CARD_SHARE)))
 
     @staticmethod
     def _source_scene_pairs(request: RenderRequest, time_map: TimeMap, window_start_ms: int) -> list[tuple[dict, dict]]:

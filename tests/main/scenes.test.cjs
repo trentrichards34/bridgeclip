@@ -129,3 +129,44 @@ test('the chat sets a scene over part of the clip and says where in clip time', 
   assert.throws(() => sc.mergeChatSteps(c, [{ ...steps[0], patch: { stage_scenes: [{ scene: 'stage', start_ms: 2000, end_ms: 2100 }] } }], project))
   assert.ok(sc.CHAT_TOOLS.some((t) => t.name === 'set_scene' && t.parameters.required.includes('scene')))
 })
+
+test('stage layout: a tall speaker card (head and shoulders), the stage down to half the frame, captions between', () => {
+  const L = sc.STAGE_LAYOUT
+  assert.equal(L.cardHeight, 0.42); assert.equal(L.stageBottom, 0.5); assert.equal(L.cardBottom, 32 / 1920)
+  const cardTop = 1 - L.cardBottom - L.cardHeight
+  // The caption band (the engine: stage_scenes.geometry) is at least 120 px tall at 1920.
+  assert.ok((cardTop - L.stageBottom) * 1920 >= 120)
+  assert.ok(Math.abs(sc.sceneCaptionY('stage') - (L.stageBottom + cardTop) / 2) < 1e-12)
+})
+
+test('the hook hands over to the first stage scene (not one in the first 2.5 s); stage graphics after it take the top', () => {
+  const gl = loadMain("export * from './src/shared/graphic-layout'")
+  // Cuts [1000, 5000] and [7000, 10000] at 1.25x.
+  const timing = { ranges: [[1000, 5000], [7000, 10000]], video_speed: 1.25 }
+  assert.equal(sc.stageHookEndMs({ ...timing, stage_scenes: [{ scene: 'stage', start_ms: 7000, end_ms: 9500 }] }), 3200)
+  assert.equal(sc.stageHookEndMs({ ...timing, stage_scenes: [{ scene: 'stage', start_ms: 3000, end_ms: 4500 }] }), null)
+  assert.equal(sc.stageHookEndMs({ ...timing, stage_scenes: [] }), null)
+  const hook = { text: 'No huge audience needed to make money online', look: { look: 'floating', color: '#FFFFFF', font: 'clean' } }
+  const c = clip({ ...timing, captions: true, hook, stage_scenes: [{ scene: 'stage', start_ms: 7000, end_ms: 9500 }] })
+  const project9 = { aspect_ratio: '9:16', width: 1080, height: 1920 }
+  const g = { id: 'g-s', template: 'statement', at_ms: 7400, duration_ms: 1500, placement: 'top', size: 'stage', fields: { text: 'Three things' } }
+  const staged = gl.graphicSpec(project9, c, g)
+  assert.ok(gl.hookShare(c, '9:16') > 0.1 && staged.box.top < 0.1, JSON.stringify(staged.box))
+  assert.ok(Math.abs(staged.box.bottom - sc.STAGE_LAYOUT.stageBottom) < 1e-9)
+  // Without the stage the hook keeps its band and the graphic stays under it.
+  const plain9 = gl.graphicSpec(project9, { ...c, stage_scenes: [] }, g)
+  assert.ok(plain9.box.top > gl.hookShare(c, '9:16'), JSON.stringify(plain9.box))
+})
+
+test('the preview card narrows to a close selfie like the export (not under 60% of the frame) and stays full width for a wide source', () => {
+  // 1080 x 1920 frame, the rounded card 1000 x 806.
+  const selfie = sc.previewCard(1080, 1920, 1000, 806, 1)
+  assert.ok(Math.abs(selfie.width - 0.6 * 1080) < 1e-9 && selfie.span >= 0.5 && selfie.span <= sc.PREVIEW_CARD_SPAN, JSON.stringify(selfie))
+  // A 16:9 source framed to 9:16 (the fill crop is 0.316 of its width): the full card.
+  const wide = sc.previewCard(1080, 1920, 1000, 806, 1 / 0.316)
+  assert.equal(wide.width, 1000)
+  // In between: the video's own width at that framing.
+  const mid = sc.previewCard(1080, 1920, 1000, 806, 1.4)
+  assert.ok(mid.width > 0.6 * 1080 && mid.width < 1000 && mid.span === sc.PREVIEW_CARD_SPAN, JSON.stringify(mid))
+  assert.equal(sc.MIN_CARD_SHARE, 0.6)
+})
