@@ -151,13 +151,16 @@ def test_overlay_command_puts_the_speaker_over_behind_graphics_only_within_their
     mattes = [{"path": "/m.mkv", "start_ms": 2000, "duration_ms": 1500}]
     cmd = overlay_command("/c.mp4", graphics, "/o.mp4", 1080, 1920, ["-c:v", "libx264"], mattes)
     inputs = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-i"]
-    # The behind graphic is input 1, the front one 2, the matte 3.
-    assert inputs == ["/c.mp4", "/behind.mov", "/front.mov", "/m.mkv"]
+    # The behind graphic is input 1, the front one 2, the matte 3, the clip again from the window's start 4.
+    assert inputs == ["/c.mp4", "/behind.mov", "/front.mov", "/m.mkv", "/c.mp4"]
+    again = [i for i, a in enumerate(cmd) if a == "-i"][-1]
+    assert cmd[cmd.index("-ss", again - 8):again][:4] == ["-ss", "2.000", "-t", "1.500"]
     graph = cmd[cmd.index("-filter_complex") + 1].split(";")
-    order = [next(i for i, p in enumerate(graph) if p.startswith(tag)) for tag in ("[base][g1]", "[v1][person0]", "[p0][g2]")]
+    order = [next(i for i, p in enumerate(graph) if p.startswith(tag)) for tag in ("[0:v][g1]", "[v1][person0]", "[p0][g2]")]
     assert order == sorted(order), graph
     # The cut-out is the clip's own frames in the window, with the matte as alpha, shown only then.
-    assert any(p.startswith("[src0]trim=start=2.000:end=3.500") for p in graph)
+    assert any(p.startswith("[4:v]trim=duration=1.500") for p in graph)
+    assert not any("split=" in p for p in graph)
     assert any(p.startswith("[3:v]scale=1080:1920") for p in graph)
     assert any("alphamerge,setpts=PTS+2.000/TB" in p for p in graph)
     assert any(p.startswith("[v1][person0]overlay") and "between(t,2.000,3.500)" in p for p in graph)
