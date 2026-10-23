@@ -23,8 +23,8 @@ import { bigWordsTemplate } from './big-words'
 import { ctaTemplate } from './cta'
 import { chapterTemplate, compareMarksTemplate, funnelTemplate, growthTemplate, ideaHubTemplate, journeyTemplate, staircaseTemplate } from './diagrams'
 import {
-  accentWords, browserHighlights, cardWords, formatStatValue, graphicIcons, graphicItems, graphicItemTimes, graphicWordTimes, highlightPoint, orbitNodes, parseStatValue,
-  screenFrameLayout, templateItems, SCREEN_FADE_MS, type GraphicRenderSpec
+  accentWords, browserHighlights, cardWords, formatStatValue, graphicIcons, graphicItems, graphicItemTimes, graphicVariant, graphicWordTimes, highlightPoint, orbitNodes, parseStatValue,
+  screenFrameLayout, templateItems, SCREEN_FADE_MS, type GraphicIcon, type GraphicRenderSpec
 } from '../../shared/motion-graphics'
 
 export interface MountedGraphic {
@@ -55,6 +55,17 @@ function rgb(hex: string): [number, number, number] {
 function onColor(hex: string): string {
   const [r, g, b] = rgb(hex)
   return 0.2126 * r + 0.7152 * g + 0.0722 * b > 165 ? '#0F172A' : '#ffffff'
+}
+/** The accent mixed toward `to` (0..1 of the way), as rgb(). */
+function mix(hex: string, to: [number, number, number], k: number): string {
+  const [r, g, b] = rgb(hex)
+  return `rgb(${Math.round(r + (to[0] - r) * k)}, ${Math.round(g + (to[1] - g) * k)}, ${Math.round(b + (to[2] - b) * k)})`
+}
+/** The accent as text on a dark card: a dark brand color is lightened so it stays readable. */
+function accentBright(hex: string): string {
+  const [r, g, b] = rgb(hex)
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  return lum >= 120 ? hex : mix(hex, [255, 255, 255], Math.min(.6, (120 - lum) / 160 + .2))
 }
 /** The accent as text on white: a very light brand color is darkened so it stays readable. */
 function accentInk(hex: string): string {
@@ -170,6 +181,8 @@ function phases(duration: number): { tin: number; tout: number; outAt: number; h
 }
 
 interface Build {
+  /** The template's look (graphicVariant; '' for one-look templates). */
+  look: string
   root: HTMLElement; band: HTMLElement; fit: HTMLElement
   tl: Tracks; spec: GraphicRenderSpec; u: number
   /** Extra per-frame work (counters), run after the timeline is seeked. */
@@ -192,6 +205,11 @@ export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): Mounte
   root.style.setProperty('--accent-rgb', rgb(spec.color).join(', '))
   root.style.setProperty('--accent-ink', accentInk(spec.color))
   root.style.setProperty('--on-accent', onColor(spec.color))
+  // The deep end of the accent gradients and the accent as text on dark cards (the looks: graphicVariant).
+  root.style.setProperty('--accent-deep', mix(spec.color, [8, 10, 30], .42))
+  root.style.setProperty('--accent-bright', accentBright(spec.color))
+  const look = graphicVariant(spec.template, spec.fields)
+  if (look) root.classList.add(`look-${look}`)
   root.style.setProperty('--display', display.family)
   root.style.setProperty('--display-weight', String(display.weight))
   root.style.setProperty('--display-case', display.upper ? 'uppercase' : 'none')
@@ -205,7 +223,7 @@ export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): Mounte
   band.style.height = `${(spec.box.bottom - spec.box.top) * H}px`
   const fit = el('div', 'mg-fit', band)
   const tracks = new Tracks()
-  const build: Build = { root, band, fit, tl: tracks, spec, u, onSeek: [], fitters: [], after: [] }
+  const build: Build = { look, root, band, fit, tl: tracks, spec, u, onSeek: [], fitters: [], after: [] }
   const make = TEMPLATES[spec.template] ?? TEMPLATES.title
   make(build)
   // Every seek starts a fresh timeline at 0 and jumps to the time, so a frame
@@ -413,11 +431,17 @@ function icon(parent: HTMLElement, name: keyof typeof ICONS, className: string):
 
 const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
   stat(b) {
-    const { spec, tl, u } = b
+    const { spec, tl, u, look } = b
     const valueText = clean(spec.fields.value), label = clean(spec.fields.label)
     const { card } = shell(b, `mg-card glow mg-stat${label ? '' : ' no-label'}`)
     const stat = parseStatValue(valueText)
-    const number = el('div', 'mg-stat-value mg-display', card)
+    // Badge: an icon badge beside the number and its label; Color: rings drawn round the corner of the card.
+    const badge = look === 'badge' ? el('div', 'mg-stat-badge', card) : null
+    if (badge) icon(badge, statIcon(valueText, label), 'mg-stat-badge-svg')
+    const col = badge ? el('div', 'mg-stat-col', card) : card
+    const rings = look === 'gradient' ? svg('svg', { class: 'mg-stat-rings', viewBox: '0 0 400 400' }, card) : null
+    const ringPaths = rings ? [150, 112, 74].map((r) => svg('circle', { cx: 400, cy: 0, r: r * 1.6, pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1 }, rings)) : []
+    const number = el('div', 'mg-stat-value mg-display', col)
     // A long unit ("/month", " billion") is drawn in the italic serif after the number; a short one ("%", "x") in the accent color.
     const long = stat && stat.suffix.trim().length > 2 ? stat.suffix.trim() : ''
     const short = stat && !long ? stat.suffix : ''
@@ -426,17 +450,17 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     if (short) el('span', 'mg-stat-short', number, short)
     if (long) el('span', 'mg-stat-unit', number, long)
     const final = counted ? formatStatValue(counted, 1) + short : valueText
-    number.style.setProperty('--stat-size', String(Math.round(clamp(1180 / Math.max(3, final.length * .82 + long.length * .3), 120, 250))))
+    number.style.setProperty('--stat-size', String(Math.round(clamp(1180 / Math.max(3, final.length * .82 + long.length * .3), 120, badge ? 200 : 250))))
     b.fitters.push(() => {
       // The finished number must fit the card: shrink it when it would not.
       const shown = digits.textContent
       digits.textContent = counted ? formatStatValue(counted, 1) : valueText
-      const room = card.clientWidth - 140 * u, need = number.scrollWidth
+      const room = (badge ? col.clientWidth : card.clientWidth - 140 * u), need = number.scrollWidth
       if (need > room) number.style.setProperty('--stat-size', String(Math.floor(Number(number.style.getPropertyValue('--stat-size')) * room / need)))
       digits.textContent = shown
     })
-    const rule = el('div', 'mg-stat-rule', card)
-    const labelEl = label ? el('div', 'mg-stat-label', card) : null
+    const rule = el('div', 'mg-stat-rule', col)
+    const labelEl = label ? el('div', 'mg-stat-label', col) : null
     const labelWords = labelEl ? richText(labelEl, label, null).words : []
     const { tin, hold } = phases(spec.duration_ms)
     const countAt = tin * .6, countFor = clamp(hold * .55, 500, 1400)
@@ -445,6 +469,8 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
       tl.add(number, { scale: [1, 1.06], duration: 130, ease: 'outQuad' }, countAt + countFor - 60)
       tl.add(number, { scale: [1.06, 1], duration: 300, ease: 'outCubic' }, countAt + countFor + 70)
     } else popIn(b, number, countAt)
+    if (badge) popIn(b, badge, tin * .35, 1.4, 380)
+    ringPaths.forEach((ring, i) => tl.add(ring, { strokeDashoffset: [1, 0], duration: clamp(countFor, 600, 1200), ease: 'inOutCubic' }, countAt + i * 120))
     tl.add(rule, { scaleX: [0, 1], duration: 420, ease: 'outQuart' }, countAt + 120)
     buildWords(b, labelWords, countAt + 200, wordStep(labelWords.length, 420, 70))
   },
@@ -460,7 +486,9 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     for (let i = words.length - 1; i >= 0; i--) if ((words[i].match(/[\p{L}\p{N}]/gu) ?? []).length >= 3) { accent = words[i]; break }
     const longest = words.reduce((n, w) => Math.max(n, w.length), 1), total = text.length
     box.style.setProperty('--title-size', String(Math.round(clamp(Math.min(1500 / Math.max(5, longest * .9), 3400 / Math.max(10, total * .9)), 74, 150))))
-    const rich = richText(box, words.slice(0, 14).join(' '), accent, { accentClass: 'tint' })
+    // Color pills: the words sit on one inline run whose background breaks into a pill per line.
+    const ink = b.look === 'pill' ? el('span', 'mg-title-ink', box) : box
+    const rich = richText(ink, words.slice(0, 14).join(' '), accent, { accentClass: 'tint', marker: b.look === 'card' })
     const { tin } = phases(spec.duration_ms)
     const said = saidTimes(spec)
     const end = said ? buildWordsAt(b, rich.words, said, 'pop') : buildWords(b, rich.words, tin * .55, wordStep(rich.words.length, 700, 110), 'pop')
@@ -626,12 +654,17 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     notes.forEach((text, i) => {
       const note = el('div', `mg-note c${i % 3}`, push)
       note.style.marginTop = `calc(var(--u) * ${drop[i]})`
-      const tape = el('div', 'mg-tape', note)
-      tape.style.setProperty('--tape-tilt', `${i % 2 ? 4 : -3}deg`)
-      const words = el('div', 'mg-note-text', note, text)
+      // Sticky notes have tape; index cards a pin; photo cards their words on a color "photo".
+      if (b.look === 'index') el('div', 'mg-pin', note)
+      else {
+        const tape = el('div', 'mg-tape', note)
+        tape.style.setProperty('--tape-tilt', `${i % 2 ? 4 : -3}deg`)
+      }
+      const holder = b.look === 'polaroid' ? el('div', 'mg-photo', note) : note
+      const words = el('div', 'mg-note-text', holder, text)
       // A long word must fit its note: shrink that note's words until it does.
       b.fitters.push(() => {
-        const room = note.clientWidth - 92 * u
+        const room = holder.clientWidth - (b.look === 'polaroid' ? 60 : 92) * u
         const size = parseFloat(getComputedStyle(words).getPropertyValue('--note-size')) || 50
         if (words.scrollWidth > room) words.style.setProperty('--note-size', String(Math.floor(size * room / words.scrollWidth)))
       })
@@ -951,9 +984,21 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
   compare_marks(b) { compareMarksTemplate(b) }
 }
 
+/** The badge icon for a number: money, people, a share, else a rising line (decoration: never a claim). */
+function statIcon(value: string, label: string): GraphicIcon {
+  const words = `${value} ${label}`.toLowerCase()
+  if (/[$€£]|dollar|sales|revenue|profit|spent|earn|income|paid/.test(words)) return 'dollar'
+  if (/people|followers|users|customers|clients|members|buyers|audience/.test(words)) return 'users'
+  if (/views|watched|video|posted|posts/.test(words)) return 'play'
+  if (/%|percent/.test(words)) return 'chart'
+  if (/hours|minutes|days|weeks|years|time/.test(words)) return 'clock'
+  return 'trending'
+}
+
 function listLike(b: Build, checks: boolean): void {
   const { spec, tl } = b
   const items = graphicItems(spec.fields.items)
+  const icons = graphicIcons(spec.fields, checks ? 'checklist' : 'list')
   const { card } = shell(b, `mg-card mg-list${checks ? ' checks' : ''}`)
   const title = clean(spec.fields.title)
   if (title) {
@@ -975,7 +1020,10 @@ function listLike(b: Build, checks: boolean): void {
       popIn(b, fill, at[i] + 200, 1.3, 260)
       tl.add(tick, { strokeDashoffset: [1, 0], duration: 240, ease: 'outCubic' }, at[i] + 300)
     } else {
-      const num = el('div', 'mg-list-num', row, String(i + 1))
+      // Icon rows show the item's icon in its chip when it has one, else its number.
+      const name = b.look === 'chips' ? icons[i] : null
+      const num = el('div', `mg-list-num c${i % 5}`, row, name ? undefined : String(i + 1))
+      if (name) icon(num, name, 'mg-list-svg')
       el('div', 'mg-list-text', row, text)
       riseIn(b, row, at[i], 18, 300)
       popIn(b, num, at[i] + 60, 1.35, 320)

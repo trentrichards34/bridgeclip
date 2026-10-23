@@ -64,7 +64,8 @@ def test_the_directed_plan_asks_for_graphics_instead_of_pop_ups_and_cards():
     one = props['graphics']['items']
     assert 'word' in one['properties'] and 'time' not in one['properties']
     assert set(one['required']) >= {'template', 'word', 'seconds', 'placement'}
-    assert 'big_words' in one['properties']['template']['enum'] and 'headline_pill' not in one['properties']['template']['enum']
+    # Big words behind the speaker; headline pills as cards mid-reel (never the hook: the reel has its own hook text).
+    assert 'big_words' in one['properties']['template']['enum'] and 'headline_pill' in one['properties']['template']['enum']
     combine = er.combine_schema(True)['properties']
     assert {'graphics', 'order', 'proof'} <= set(combine) and 'cards' not in combine
     # Without the direction (camera + screen) the old plan stands.
@@ -75,9 +76,14 @@ def test_the_directed_plan_asks_for_graphics_instead_of_pop_ups_and_cards():
 
 def test_the_guidance_asks_for_a_dense_varied_reel_with_the_target_reels_patterns():
     rule = ed.direction_rule(240, {'stage': True, 'cta_keyword': 'GUIDE'})
-    # About one per 6-8 s, as numbers for this length, all through the video, varied.
-    assert 'about 30 to 40' in rule
+    # About one per 9.5-11 s (the owner's ~25 for 4 minutes), as numbers for this length, all through the video, varied.
+    assert 'about 22 to 25 (never more than 26)' in rule
     assert 'never the same template twice in a row' in rule and 'WHOLE video' in rule
+    # An explicit variety budget, a menu that puts the rich templates first, and what went wrong in a real run.
+    assert 'VARIETY BUDGET' in rule and 'at most 2 "statement" per minute and 4 in the whole video' in rule and 'at most 2 "sticky_notes"' in rule
+    menu = rule[rule.index('MENU, best first'):]
+    assert menu.index('"stat"') < menu.index('"orbit"') < menu.index('"staircase"') < menu.index('"statement"') < menu.index('"sticky_notes" (rarely')
+    assert 'BAD (from a real run' in rule and 'one lonely card' in rule and 'FEWER BUT BETTER' in rule
     for pattern in ('strike_list', 'statement', 'sticky_notes', 'stat', 'icon_pop', 'orbit', 'feature_tile', 'big_words', 'staircase',
                     'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks', 'comment_cta'):
         assert f'"{pattern}"' in rule, pattern
@@ -86,7 +92,7 @@ def test_the_guidance_asks_for_a_dense_varied_reel_with_the_target_reels_pattern
     assert "face alone" in rule and 'never add a number' in rule and 'Chapter headers' in rule and 'Stage layouts are on' in rule
     assert 'Stage layouts are on' not in ed.direction_rule(60)
     # A short video still gets a few.
-    assert 'about 2 to 3.' in ed.direction_rule(10) and ed.graphics_limit(10) == 3
+    assert 'about 2 (never more than 3)' in ed.direction_rule(10) and ed.graphics_limit(10) == 3
 
 
 def test_planned_graphics_keep_only_what_was_said_and_anchor_on_kept_words():
@@ -114,16 +120,25 @@ def test_planned_graphics_keep_only_what_was_said_and_anchor_on_kept_words():
     assert ed.plan_graphics([flipped], words, marks) == []
     kept_line = item('statement', at(words, 'organic') - 1, 3, text='Not organic content, not going viral', accent='viral')
     assert [g['template'] for g in ed.plan_graphics([kept_line], words, marks)] == ['statement']
+    # About one per 9-10 s of a 40-s talk: the strongest (the diagram, the number, the contrast) win; nothing made up.
     kinds = [g['template'] for g in out]
-    assert kinds == ['statement', 'staircase', 'stat', 'strike_list', 'big_words'], kinds
+    assert kinds == ['staircase', 'stat', 'strike_list'], kinds
     for g in out:
         assert marks[g['word']] is None and g['origin'] == 'auto' and ed.GRAPHIC_ID.match(g['id'])
         assert 'item_ms' not in g['fields'] and 'word_ms' not in g['fields']
     # Each starts where its first word is said (a diagram a little before its first item).
-    assert words[out[0]['word']].text == 'We'
-    assert words[out[2]['word']].text.startswith('4,365') or words[out[2]['word']].text == 'spent'
-    assert out[4]['depth'] == 'behind'
-    assert out[1]['duration_ms'] >= 6000
+    assert words[out[1]['word']].text.startswith('4,365') or words[out[1]['word']].text == 'spent'
+    assert out[0]['duration_ms'] >= 4000
+    # Never two at once, with a little free time between them.
+    starts = [words[g['word']].start_ms for g in out]
+    assert all(starts[i] + out[i]['duration_ms'] <= starts[i + 1] for i in range(len(out) - 1))
+    # Alone, the others are kept as planned: the statement on its first word, big words behind the speaker.
+    alone = ed.plan_graphics([raw[0]], words, marks, {'stage': True}, [hook, cta])
+    assert [g['template'] for g in alone] == ['statement'] and words[alone[0]['word']].text == 'We'
+    big = ed.plan_graphics([raw[7]], words, marks, {'stage': True}, [hook, cta])
+    assert [g['template'] for g in big] == ['big_words'] and big[0]['depth'] == 'behind'
+    # Every kept card has a look, and a statement's is one of its own.
+    assert alone[0]['fields']['variant'] in ag.VARIANTS['statement'] and out[1]['fields']['variant'] in ag.VARIANTS['stat']
 
 
 def test_a_graphic_on_the_first_kept_word_is_kept_the_reel_opens_on_its_hook():
@@ -144,7 +159,7 @@ def test_takes_and_clips_never_collide_on_the_plans_clock():
     assert words[out[0]['word']].src == 1
 
 
-def test_about_one_graphic_per_six_seconds_never_two_at_once():
+def test_about_one_graphic_per_ten_seconds_never_two_at_once():
     lines = ['Monday cost 1000 dollars.', 'Tuesday brought 1100 sales.', 'Wednesday took 1200 clicks.', 'Thursday made 1300 leads.',
              'Friday reached 1400 people.', 'Saturday gave 1500 views.', 'Sunday saw 1600 replies.', 'Then came 1700 signups.',
              'After that 1800 orders.', 'Finally 1900 buyers.']
@@ -176,7 +191,7 @@ def test_a_plan_call_with_the_direction_returns_the_graphics_to_review(monkeypat
     system = seen['payload']['messages'][0]['content']
     assert 'MOTION GRAPHICS' in system and 'popups' not in json.dumps(seen['payload']['response_format'])
     assert [g['template'] for g in review['graphics']] == ['stat']
-    assert review['graphics'][0]['fields'] == {'value': '$4,365', 'label': 'spent on ads'}
+    assert review['graphics'][0]['fields'] == {'value': '$4,365', 'label': 'spent on ads', 'variant': ag.ROTATION['stat'][0]}
 
 
 # ---------------------------------------------------------------------------
@@ -322,12 +337,19 @@ def test_a_render_with_the_direction_makes_an_editor_project_with_its_graphics_a
               'popups': [], 'sounds': [], 'look': look, 'title': 'My reel', 'cost_usd': 0, 'sound_cache': str(tmp_path / 'sounds'),
               'editor': {'graphics': planned, 'pins': [], 'motion': True, 'stage': True, 'brand_color': None, 'cta_keyword': ''}}
     result = asyncio.run(er.render_edit(config, lambda *_: None))
-    # The test picture has no face (like a filmed screen): no stage over it, the big cards drawn as cards.
-    assert result['editor'] is True and result['graphics'] >= 3 and result['scenes'] == 0
+    # The test picture has no face (like a filmed screen): no stage over it, the big cards drawn as cards in their darker
+    # look; one stretch of the screen is framed in a window on a dark Visual scene.
+    assert result['editor'] is True and result['graphics'] >= 3 and result['scenes'] == 1
     project = json.load(open(os.path.join(root, 'editor-project.json')))
     c = project['candidates'][0]
-    assert {g['template'] for g in c['graphics']} >= {'statement', 'stat', 'strike_list'}
-    assert 'stage_scenes' not in c and all(g.get('size') != 'stage' for g in c['graphics'])
+    kinds = {g['template'] for g in c['graphics']}
+    assert kinds >= {'stat', 'strike_list', 'screen_frame'}, kinds
+    frame = next(g for g in c['graphics'] if g['template'] == 'screen_frame')
+    assert frame['fields']['video'] == 'source' and abs(float(frame['fields']['from']) * 1000 - frame['at_ms']) < 2 and frame['size'] == 'stage'
+    assert [(s['scene'], s['start_ms'], s['end_ms'], s.get('backdrop')) for s in c['stage_scenes']] == [('visual', frame['at_ms'], frame['at_ms'] + frame['duration_ms'], 'dark')]
+    assert all(g.get('size') != 'stage' for g in c['graphics'] if g['template'] != 'screen_frame')
+    stat = next(g for g in c['graphics'] if g['template'] == 'stat')
+    assert stat['fields']['variant'] in ag.SCREEN_VARIANTS['stat']
     assert os.path.isfile(os.path.join(root, 'editor-source.mp4')) and os.path.isfile(os.path.join(root, f"editor-preview-{project['preview_id']}.mp4"))
     job = json.load(open(os.path.join(root, 'job_output.json')))
     assert job['editor_project'] is True and job['clips'][0]['clip_index'] == 0 and 'editor_candidate' not in job['clips'][0]

@@ -39,7 +39,7 @@ DIAGRAMS = ('staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_mar
 AUTO_TEMPLATES = ('stat', 'title', 'list', 'checklist', 'before_after', 'quote', 'lower_third',
                   'statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta', 'orbit', 'feature_tile') + DIAGRAMS
 TEMPLATE_FIELDS = {
-    'stat': ('value', 'label'), 'title': ('text',), 'list': ('title', 'items'), 'checklist': ('title', 'items'),
+    'stat': ('value', 'label'), 'title': ('text',), 'list': ('title', 'items', 'icons'), 'checklist': ('title', 'items', 'icons'),
     'before_after': ('before', 'after'), 'quote': ('text', 'author'), 'lower_third': ('name', 'role'),
     'statement': ('text', 'accent', 'subline'), 'sticky_notes': ('items',), 'strike_list': ('items', 'final', 'accent'),
     'headline_pill': ('text', 'phrase'), 'icon_pop': ('items', 'icons'), 'comment_cta': ('keyword', 'lead'),
@@ -78,6 +78,29 @@ GRAPHIC_ICONS = (
     'cart', 'card', 'lock', 'settings', 'bot', 'brain', 'book', 'target', 'idea', 'play', 'image', 'dashboard', 'megaphone', 'gift', 'trophy',
 )
 PLACEMENTS = ('top', 'middle', 'bottom')
+# Fields that hold choices, icons or times rather than words said (never checked against the transcript).
+NON_WORD_FIELDS = ('icons', 'item_ms', 'word_ms', 'keyword', 'icon', 'wrong', 'style', 'variant', 'panel', 'labels', 'dot')
+# Each template's looks (mirror of GRAPHIC_VARIANTS in src/shared/motion-graphics.ts). The first is the classic look, drawn
+# when a graphic has no `variant` field (graphics saved before looks existed); ROTATION is the order automatic graphics
+# take them in, so repeats of a template never look the same twice in a row.
+VARIANTS = {
+    'statement': ('card', 'glass', 'bold'),
+    'title': ('card', 'pill', 'shadow'),
+    'quote': ('card', 'dark', 'accent'),
+    'sticky_notes': ('notes', 'polaroid', 'index'),
+    'list': ('card', 'chips', 'pills'),
+    'checklist': ('card', 'dark', 'rows'),
+    'stat': ('card', 'gradient', 'badge'),
+}
+ROTATION = {
+    'statement': ('glass', 'bold', 'card'), 'title': ('pill', 'shadow', 'card'), 'quote': ('dark', 'accent', 'card'),
+    'sticky_notes': ('polaroid', 'index', 'notes'), 'list': ('chips', 'pills', 'card'), 'checklist': ('rows', 'dark', 'card'),
+    'stat': ('gradient', 'badge', 'card'),
+}
+# Looks that read on a busy screen (no big white slab over the page), for a card over a filmed screen; taken in turn
+# so repeats still differ.
+SCREEN_VARIANTS = {'statement': ('glass', 'bold'), 'title': ('pill', 'shadow'), 'quote': ('dark', 'accent'), 'list': ('pills', 'chips'),
+                   'checklist': ('dark', 'rows'), 'stat': ('gradient', 'badge'), 'sticky_notes': ('polaroid', 'index')}
 DEFAULT_MS = {'stat': 3500, 'title': 2500, 'list': 5000, 'lower_third': 4000, 'before_after': 4000, 'checklist': 5000, 'quote': 5000,
               'statement': 3500, 'sticky_notes': 4000, 'strike_list': 5000, 'headline_pill': 3500, 'icon_pop': 3500, 'comment_cta': 3500,
               'browser_frame': 5000, 'orbit': 4500, 'feature_tile': 3500, 'big_words': 2500,
@@ -95,6 +118,8 @@ DIAGRAM_MAX_MS, CHAPTER_MAX_MS = 16000, 180000
 # A diagram stays on while it is talked through: from just before its first item to a little after its last (6-15 s).
 DIAGRAM_MIN_MS, DIAGRAM_AUTO_MAX_MS = 6000, 15000
 DIAGRAM_LEAD_MS, DIAGRAM_HOLD_MS = 700, 2600
+# A diagram's items are said at most this far apart (one after the next).
+DIAGRAM_ITEM_GAP_MS = 8000
 # Without chapter headers, two diagrams are at least this far apart (one per section).
 DIAGRAM_GAP_MS = 12000
 
@@ -129,6 +154,8 @@ COMMENT_WORDS = ('comment', 'type', 'drop', 'write', 'reply', 'dm', 'message')
 # Between two cards; a card cut short by a stronger one keeps at least this much.
 GAP_MS = 150
 MIN_TRIMMED_MS = 1200
+# With free time kept between graphics, a card cut short to make room keeps at least this much (long enough to read).
+PAD_TRIMMED_MS = 2200
 # A card is moved later by at most this much to clear the first second, or dropped.
 MAX_SHIFT_MS = 2500
 
@@ -166,7 +193,8 @@ GRAPHIC_SCHEMA: dict[str, Any] = {
         'final': {'type': 'string', 'description': 'strike_list: the better choice, as said (e.g. "just a typed client").'},
         'phrase': {'type': 'string', 'description': 'headline_pill: the key words of the hook, drawn on a color box.'},
         'icons': {'type': 'array', 'items': {'type': 'string', 'enum': list(GRAPHIC_ICONS)},
-                  'description': 'icon_pop, orbit, feature_tile, staircase: one generic icon per item, in order (never a brand logo).'},
+                  'description': 'icon_pop, orbit, feature_tile, staircase (and optionally list, checklist): one generic icon per item, in '
+                                 'order (never a brand logo).'},
         'keyword': {'type': 'string', 'description': 'comment_cta: the comment keyword, exactly as given.'},
         'notes': {'type': 'array', 'items': {'type': 'string'}, 'description': 'compare_marks: a short line under each card, as said, or [].'},
         'wrong': {'type': 'string', 'enum': ['first', 'second', ''], 'description': 'compare_marks: which card is the wrong way (gets the red cross).'},
@@ -296,6 +324,8 @@ def clean_fields(template: str, raw: dict, fields_of: Optional[dict] = None) -> 
             text = _text(raw.get(key))
             if text:
                 fields[key] = text
+    if raw.get('variant') in VARIANTS.get(template, ()):
+        fields['variant'] = raw['variant']
     return fields
 
 
@@ -333,7 +363,13 @@ def _options(options: Optional[dict]) -> dict:
     limit = options.get('max_cards')
     return {'headline_off': bool(options.get('headline_off')), 'cta_keyword': clean_keyword(options.get('cta_keyword')),
             'stage': bool(options.get('stage')), 'chapters': bool(options.get('chapters')), 'templates': AUTO_TEMPLATES + extra,
-            'max_cards': int(limit) if type(limit) is int and 0 < limit <= MAX_GRAPHICS else None}
+            'max_cards': int(limit) if type(limit) is int and 0 < limit <= MAX_GRAPHICS else None,
+            # Variety rules (caps, spacing, conversions, looks): on unless a caller turns them off.
+            'variety': options.get('variety') is not False,
+            # Headline pills as cards anywhere in the video (Edit my recording), not only as the clip's hook.
+            'pill_cards': bool(options.get('pill_cards')),
+            # Free time kept between two graphics (ms), so they don't run back to back.
+            'gap_ms': int(options['gap_ms']) if type(options.get('gap_ms')) is int and 0 <= options['gap_ms'] <= 10000 else 0}
 
 
 def parse_planned(raw: Any, start_ms: int, end_ms: int, options: Optional[dict] = None) -> list[dict]:
@@ -349,7 +385,7 @@ def parse_planned(raw: Any, start_ms: int, end_ms: int, options: Optional[dict] 
         if not isinstance(item, dict) or item.get('template') not in opts['templates']:
             continue
         template = item['template']
-        if template == 'headline_pill' and not opts['headline_off']:
+        if template == 'headline_pill' and not (opts['headline_off'] or opts['pill_cards']):
             continue
         if template == 'comment_cta':
             if not opts['cta_keyword'] or clean_keyword(item.get('keyword')).lower() != opts['cta_keyword'].lower():
@@ -437,7 +473,7 @@ def _said(token: str, heard: set[str]) -> bool:
 def _digits_said(graphic: dict, heard: set[str]) -> bool:
     """A token with a digit that isn't read as a number ("3rd", "v2", "Web3") is said exactly as on the card."""
     for key, text in graphic['fields'].items():
-        if key in ('icons', 'item_ms', 'word_ms', 'keyword'):
+        if key in NON_WORD_FIELDS:
             continue
         for token in _tokens(text):
             if _HAS_DIGIT.search(token) and not _numbers(token) and token not in heard:
@@ -597,7 +633,7 @@ def _strict_said(graphic: dict, segments: Sequence) -> bool:
     if t == 'icon_pop' and any(n and n not in GRAPHIC_ICONS for n in f.get('icons', '').split('\n')):
         return False
     heard = {w for w, _ in _timed_words(segments, at - STRICT_WINDOW_MS, at + length + STRICT_WINDOW_MS)}
-    checked = {k: v for k, v in f.items() if k not in ('icons', 'keyword', 'accent', 'item_ms', 'icon', 'wrong', 'style')}
+    checked = {k: v for k, v in f.items() if k not in NON_WORD_FIELDS and k != 'accent'}
     if t == 'comment_cta':
         near = {w for w, _ in _timed_words(segments, at - NUMBER_WINDOW_MS, at + NUMBER_WINDOW_MS)}
         if not any(w in near for w in COMMENT_WORDS):
@@ -617,7 +653,7 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
     at, length = graphic['at_ms'], graphic['duration_ms']
     near_numbers = _numbers(_words_between(segments, at - NUMBER_WINDOW_MS, at + NUMBER_WINDOW_MS))
     for key, text in graphic['fields'].items():
-        if key in ('icons', 'item_ms', 'keyword', 'icon', 'wrong', 'style'):
+        if key in NON_WORD_FIELDS:
             continue
         for line in text.split('\n'):
             for value in _numbers(line):
@@ -629,7 +665,7 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
     heard = set(_tokens(_words_between(segments, at - WORD_WINDOW_MS, at + length + WORD_WINDOW_MS)))
     if not _digits_said(graphic, heard):
         return False
-    tokens = [t for key, text in graphic['fields'].items() if key != 'item_ms' for t in _tokens(text) if not _HAS_DIGIT.search(t)]
+    tokens = [t for key, text in graphic['fields'].items() if key not in NON_WORD_FIELDS for t in _tokens(text) if not _HAS_DIGIT.search(t)]
     if not tokens:
         return True
     if any((t in MEANING_WORDS or t.replace('’', "'").endswith("n't")) and not _said(t, heard) for t in tokens):
@@ -910,6 +946,9 @@ def diagram_span(graphic: dict, segments: Sequence) -> Optional[tuple[int, int]]
     times = item_times(graphic, segments)
     if not times:
         return None
+    # Items said far apart leave the diagram sitting half built (a Wrong / right with one lonely card for 15 s): left out.
+    if any(b - a > DIAGRAM_ITEM_GAP_MS for a, b in zip(times, times[1:])):
+        return None
     at = max(0, times[0] - DIAGRAM_LEAD_MS)
     end = max(times[-1] + DIAGRAM_HOLD_MS, at + DIAGRAM_MIN_MS)
     return int(at), int(min(end - at, DIAGRAM_AUTO_MAX_MS))
@@ -987,6 +1026,340 @@ def new_id(taken: set[str]) -> str:
             return gid
 
 
+# ---------------------------------------------------------------------------
+# Variety: the planner tends to latch onto one or two templates (ten serif statement cards, five sticky notes in one
+# reel). The code, not the model, keeps a video varied: each template has a cap scaled by the video's length, a template
+# never comes back within a while of itself (nor twice in a row), and a card that breaks a cap becomes a richer template
+# its own words fit (a statement a headline pill, big words or a title; sticky notes feature tiles, icons, an orbit or a
+# checklist), checked against what was said like any other card, or it is left out. Each kept card then gets a look
+# (VARIANTS), taken in turn per template so repeats never look alike.
+# ---------------------------------------------------------------------------
+
+# (most per minute, most in one video) per template; anything not listed: VARIETY_DEFAULT.
+VARIETY_CAPS = {
+    'statement': (2, 4), 'sticky_notes': (1, 2), 'quote': (1, 2), 'title': (1, 3), 'big_words': (1.5, 4), 'headline_pill': (1, 3),
+    'stat': (3, 6), 'list': (1, 3), 'checklist': (1, 3), 'before_after': (1, 2), 'strike_list': (1, 2), 'icon_pop': (1.5, 4),
+    'orbit': (1, 3), 'feature_tile': (1.5, 4), 'lower_third': (1, 2), 'comment_cta': (1, 2), 'browser_frame': (1, 3),
+    **{d: (1, 2) for d in DIAGRAMS},
+}
+VARIETY_DEFAULT = (1.5, 4)
+# A template never comes back sooner than this after itself (a short clip: a quarter of its length, at least 8 s) and
+# never as the very next graphic unless SAME_ADJACENT times that far on.
+SAME_GAP_MS = 25000
+SAME_GAP_MIN_MS = 8000
+SAME_ADJACENT = 1.6
+# A video this long uses at least this many different templates when its words allow (MIN_DISTINCT_LONG over 2 minutes).
+DISTINCT_FROM_S = 120
+MIN_DISTINCT_LONG = 7
+MIN_DISTINCT_MID = 5
+# What a card that breaks a cap may become, best first (each only when its words fit and are said).
+CONVERSIONS = {
+    'statement': ('headline_pill', 'big_words', 'title', 'feature_tile'),
+    'quote': ('headline_pill', 'statement', 'big_words', 'title'),
+    'title': ('big_words', 'headline_pill', 'statement'),
+    'big_words': ('title', 'headline_pill', 'statement'),
+    'headline_pill': ('statement', 'big_words', 'title'),
+    'sticky_notes': ('feature_tile', 'icon_pop', 'orbit', 'checklist', 'list', 'idea_hub'),
+    'list': ('checklist', 'feature_tile', 'icon_pop', 'orbit', 'sticky_notes'),
+    'checklist': ('list', 'feature_tile', 'icon_pop', 'sticky_notes'),
+    'feature_tile': ('icon_pop', 'list', 'sticky_notes'),
+    'icon_pop': ('feature_tile', 'orbit', 'list'),
+    'orbit': ('icon_pop', 'feature_tile', 'idea_hub'),
+}
+# A generic icon for an item from its words (decoration only: never words on the card). First match wins.
+ICON_WORDS = (
+    ('dollar', ('money', 'dollar', 'dollars', 'cash', 'sales', 'sale', 'sell', 'profit', 'profitable', 'revenue', 'income', 'paid', 'price', 'pay', 'earn', 'earning', 'earnings')),
+    ('megaphone', ('ads', 'ad', 'advertising', 'marketing', 'promote', 'promoting', 'campaign', 'traffic')),
+    ('users', ('people', 'audience', 'followers', 'users', 'customers', 'clients', 'community', 'team', 'buyers', 'members', 'eyeballs')),
+    ('video', ('video', 'videos', 'youtube', 'reel', 'reels', 'clip', 'clips', 'shorts', 'tiktok', 'film')),
+    ('camera', ('instagram', 'photo', 'photos', 'camera')),
+    ('mail', ('email', 'emails', 'mail', 'newsletter', 'inbox')),
+    ('message', ('chat', 'message', 'messages', 'dm', 'dms', 'comment', 'comments', 'questions', 'question', 'ask')),
+    ('globe', ('website', 'site', 'page', 'pages', 'landing', 'web', 'online', 'internet', 'funnel')),
+    ('gift', ('product', 'products', 'offer', 'offers', 'course', 'bonus', 'digital')),
+    ('bot', ('ai', 'bot', 'claude', 'gpt', 'chatgpt', 'automation', 'automatically', 'automate', 'automated')),
+    ('clock', ('time', 'hours', 'hour', 'minutes', 'minute', 'daily', 'week', 'weekly', 'day', 'days', 'fast')),
+    ('trending', ('grow', 'growth', 'scale', 'scaling', 'increase', 'results', 'consistent', 'consistently')),
+    ('chart', ('data', 'analytics', 'numbers', 'stats', 'reports', 'report', 'metrics', 'roas')),
+    ('image', ('content', 'post', 'posts', 'posting', 'design', 'designs', 'creative', 'animations', 'animation')),
+    ('target', ('goal', 'goals', 'target', 'niche', 'avatar', 'focus')),
+    ('zap', ('viral', 'quick', 'instant', 'easy', 'simple')),
+    ('rocket', ('launch', 'start', 'starting', 'build', 'building', 'business')),
+    ('book', ('learn', 'lesson', 'lessons', 'module', 'modules', 'teach', 'teaches', 'blueprint', 'guide', 'written')),
+    ('idea', ('idea', 'ideas', 'think', 'mindset')),
+    ('search', ('research', 'search', 'find', 'figure', 'figuring')),
+    ('check', ('done', 'ready', 'finished', 'works', 'proven')),
+    ('heart', ('love', 'trust', 'connection', 'care')),
+    ('lock', ('secret', 'private', 'safe')),
+    ('settings', ('system', 'systems', 'process', 'setup', 'tools', 'tool')),
+)
+_ICON_OF = {w: icon for icon, words in ICON_WORDS for w in words}
+
+
+def icon_for(text: str) -> str:
+    """A generic icon for an item from its words ('' when none fits)."""
+    for token in _tokens(text):
+        if token in _ICON_OF:
+            return _ICON_OF[token]
+    return ''
+
+
+def template_cap(template: str, seconds: float) -> int:
+    """The most graphics of one template a video this long keeps."""
+    per_minute, total = VARIETY_CAPS.get(template, VARIETY_DEFAULT)
+    return max(1, min(total, math.ceil(per_minute * max(0.0, seconds) / 60 - 1e-9)))
+
+
+def same_gap_ms(seconds: float) -> int:
+    """How long before a template may come back (25 s; a quarter of a short clip, at least 8 s)."""
+    return int(min(SAME_GAP_MS, max(SAME_GAP_MIN_MS, seconds * 1000 / 4)))
+
+
+def min_distinct(seconds: float) -> int:
+    return MIN_DISTINCT_LONG if seconds > DISTINCT_FROM_S else MIN_DISTINCT_MID if seconds > 60 else 0
+
+
+def _plain_words(text: str) -> list[str]:
+    return ' '.join(str(text or '').split()).split(' ') if str(text or '').strip() else []
+
+
+def _letters(text: str) -> int:
+    return len(re.findall(r'[A-Za-z0-9]', text or ''))
+
+
+def _items_of(g: dict) -> list[str]:
+    f = g['fields']
+    t = g['template']
+    if t in ('statement', 'quote', 'title', 'big_words', 'headline_pill'):
+        return []
+    return [line for line in f.get('items', '').split('\n') if line.strip()]
+
+
+def _line_of(g: dict) -> str:
+    """A text card's line, as said (a headline pill's two parts together)."""
+    f = g['fields']
+    if g['template'] == 'headline_pill':
+        return ' '.join(x for x in (f.get('text', ''), f.get('phrase', '')) if x)
+    return f.get('text', '')
+
+
+def _icons(items: Sequence[str], need_all: bool) -> Optional[str]:
+    icons = [icon_for(i) for i in items]
+    if need_all and not all(icons):
+        return None
+    if not any(icons):
+        return None if need_all else ''
+    return '\n'.join(icons)
+
+
+def converted(g: dict, to: str) -> Optional[dict]:
+    """`g` as template `to` with its own words (in the order said), or None when they don't fit `to`. Words are checked
+    again by the caller (words_said)."""
+    t, f = g['template'], g['fields']
+    fields: dict[str, str] = {}
+    line = _line_of(g)
+    words = _plain_words(line)
+    items = _items_of(g)
+    if to == 'headline_pill':
+        if not 2 <= len(words) <= 10 or t not in ('statement', 'quote', 'title', 'big_words'):
+            return None
+        # The key words (the statement's accent) start the color box; else its last third does.
+        accent = [_tokens(w) for w in _plain_words(f.get('accent', ''))] if t == 'statement' else []
+        keys = [_tokens(w) for w in words]
+        starts = [i for i in range(1, len(words) - len(accent) + 1) if accent and keys[i:i + len(accent)] == accent]
+        cut = starts[-1] if starts else len(words) - max(1, round(len(words) / 3))
+        fields = {'text': ' '.join(words[:cut]), 'phrase': ' '.join(words[cut:])}
+    elif to == 'big_words':
+        accent = _plain_words(f.get('accent', '')) if t == 'statement' else []
+        pick = accent if 1 <= len(accent) <= 3 else words if 1 <= len(words) <= 3 else []
+        if not pick or _letters(' '.join(pick)) < 4:
+            return None
+        fields = {'text': ' '.join(pick)}
+    elif to == 'title':
+        if not 1 <= len(words) <= 7:
+            return None
+        fields = {'text': line}
+    elif to == 'statement':
+        if not 2 <= len(words) <= 12:
+            return None
+        fields = {'text': line}
+        accent = f.get('phrase') if t == 'headline_pill' else ''
+        if accent:
+            fields['accent'] = accent
+    elif to in ('feature_tile', 'icon_pop', 'orbit', 'idea_hub', 'list', 'checklist', 'sticky_notes'):
+        lines = items or ([line] if line and to == 'feature_tile' else [])
+        if not lines:
+            return None
+        most = ITEM_LIMITS.get(to, MAX_ITEMS)
+        if not MIN_ITEMS.get(to, 1) <= len(lines) <= most:
+            return None
+        longest = max(len(_plain_words(x)) for x in lines)
+        if to in ('feature_tile', 'icon_pop', 'orbit') and longest > 3:
+            return None
+        if to in ('sticky_notes', 'idea_hub') and longest > 4:
+            return None
+        fields = {'items': '\n'.join(lines)}
+        if to in ('feature_tile', 'icon_pop', 'orbit', 'list', 'checklist'):
+            icons = _icons(lines, need_all=to in ('icon_pop', 'orbit'))
+            if icons is None:
+                return None
+            if icons:
+                fields['icons'] = icons
+        if to in ('list', 'checklist') and f.get('title'):
+            fields['title'] = f['title']
+        if to == 'idea_hub' and t == 'orbit' and f.get('text'):
+            fields['text'] = f['text']
+    else:
+        return None
+    if to in DIAGRAMS:
+        length = g['duration_ms']
+    elif to in WORD_TIMED:
+        # Word-timed cards are fitted to their words afterwards (word_timed): start from the template's usual length.
+        length = min(max(g['duration_ms'], MIN_MS), DEFAULT_MS[to] + 1000)
+    else:
+        length = min(max(g['duration_ms'], MIN_MS), DEFAULT_MS[to] + 1500)
+    return {**g, 'template': to, 'fields': fields, 'duration_ms': int(length), 'converted_from': t}
+
+
+def _same_too_close(g: dict, kept: Sequence[dict], seconds: float, adjacent: bool = True) -> bool:
+    gap = same_gap_ms(seconds)
+    same = [k for k in kept if k['template'] == g['template']]
+    if any(abs(k['at_ms'] - g['at_ms']) < gap for k in same):
+        return True
+    if not adjacent:
+        return False
+    # The very next graphic of the same template (nothing else between them), unless far apart.
+    for k in same:
+        lo, hi = sorted((k['at_ms'], g['at_ms']))
+        if hi - lo < gap * SAME_ADJACENT and not any(lo < o['at_ms'] < hi for o in kept if o['template'] not in ('chapter', g['template'])):
+            return True
+    return False
+
+
+def variety_allows(g: dict, kept: Sequence[dict], seconds: float, adjacent: bool = True) -> bool:
+    """`g` keeps the video varied: under its template's cap and not too soon after (or before) itself (`adjacent`: nor
+    as the very next graphic, unless far apart; checked once every card is placed: no_repeats_in_a_row)."""
+    if g['template'] == 'chapter':
+        return True
+    if sum(1 for k in kept if k['template'] == g['template']) >= template_cap(g['template'], seconds):
+        return False
+    return not _same_too_close(g, kept, seconds, adjacent)
+
+
+def _fits_words(g: dict, segments: Sequence) -> Optional[dict]:
+    """A converted card checked like a planned one: its words said, items in order; a diagram on its span. None when not."""
+    if not has_content(g['template'], g['fields']) or not words_said(g, segments):
+        return None
+    if g['template'] in DIAGRAMS:
+        span = diagram_span(g, segments)
+        if span is None:
+            return None
+        g = {**g, 'at_ms': span[0], 'duration_ms': span[1]}
+    elif g['template'] in ITEM_TEMPLATES and g['template'] not in ('list', 'checklist') and item_times(g, segments) is None:
+        return None
+    return g
+
+
+def varied(g: dict, kept: Sequence[dict], segments: Sequence, seconds: float, allowed: Sequence[str], adjacent: bool = True) -> Optional[dict]:
+    """`g` as it can join `kept`: unchanged when the variety rules allow it, else the first richer template its words fit
+    (and that the rules allow), else None. (Cards are placed strongest first: a weaker one placed later between two of a
+    kind is fine; no_repeats_in_a_row checks the final order once more.)"""
+    if variety_allows(g, kept, seconds, adjacent):
+        return g
+    for to in CONVERSIONS.get(g['template'], ()):
+        if to not in allowed:
+            continue
+        c = converted(g, to)
+        if c is None or not variety_allows(c, kept, seconds, adjacent):
+            continue
+        c = _fits_words(c, segments)
+        if c is not None and variety_allows(c, kept, seconds, adjacent):
+            return c
+    return None
+
+
+def no_repeats_in_a_row(kept: list[dict], segments: Sequence, seconds: float, allowed: Sequence[str], clash: Any) -> list[dict]:
+    """Two graphics of the same template one after the other (closer than SAME_ADJACENT times the template's gap): the
+    weaker becomes another template its words fit, or is left out."""
+    out = sorted(kept, key=lambda g: g['at_ms'])
+    changed = True
+    while changed:
+        changed = False
+        shown = [g for g in out if g['template'] != 'chapter']
+        for a, b in zip(shown, shown[1:]):
+            if a['template'] != b['template'] or b['at_ms'] - a['at_ms'] >= same_gap_ms(seconds) * SAME_ADJACENT:
+                continue
+            weak = a if _priority(a) < _priority(b) else b
+            rest = [g for g in out if g is not weak]
+            c = varied(weak, rest, segments, seconds, allowed, adjacent=True)
+            if c is not None and c['template'] != weak['template'] and not clash(c, rest):
+                out[out.index(weak)] = c
+            else:
+                out.remove(weak)
+            changed = True
+            break
+    return out
+
+
+def widen(kept: list[dict], segments: Sequence, seconds: float, allowed: Sequence[str], clash: Any) -> list[dict]:
+    """A video that still uses too few templates: some cards of the most used ones become templates not used yet (when
+    their words fit and the rules allow). `clash(g, others)`: True when g would overlap another card."""
+    want = min_distinct(seconds)
+    used = {k['template'] for k in kept if k['template'] != 'chapter'}
+    if not want or len(used) >= want:
+        return kept
+    out = list(kept)
+    for _ in range(len(out)):
+        used = {k['template'] for k in out if k['template'] != 'chapter'}
+        if len(used) >= want:
+            break
+        counts = {t: sum(1 for k in out if k['template'] == t) for t in used}
+        changed = False
+        for k in sorted((k for k in out if counts.get(k['template'], 0) > 1), key=lambda k: (-counts[k['template']], k['at_ms'])):
+            rest = [x for x in out if x is not k]
+            for to in CONVERSIONS.get(k['template'], ()):
+                if to in used or to not in allowed:
+                    continue
+                c = converted(k, to)
+                c = _fits_words(c, segments) if c is not None else None
+                if c is None or not variety_allows(c, rest, seconds, adjacent=True) or clash(c, rest):
+                    continue
+                out[out.index(k)] = c
+                changed = True
+                break
+            if changed:
+                break
+        if not changed:
+            break
+    return out
+
+
+def with_variants(graphics: Sequence[dict]) -> list[dict]:
+    """Each automatic card without a look gets the next one of its template (ROTATION), so repeats differ; cards that
+    already have one keep it."""
+    turn: dict[str, int] = {}
+    out = []
+    for g in sorted(graphics, key=lambda g: g['at_ms']):
+        t = g['template']
+        if t in ROTATION:
+            fields = g['fields']
+            if fields.get('variant') not in VARIANTS[t]:
+                looks = ROTATION[t]
+                fields = {**fields, 'variant': looks[turn.get(t, 0) % len(looks)]}
+            turn[t] = (ROTATION[t].index(fields['variant']) + 1) if fields['variant'] in ROTATION[t] else turn.get(t, 0) + 1
+            g = {**g, 'fields': fields}
+        out.append(g)
+    return out
+
+
+def with_list_icons(g: dict) -> dict:
+    """A list or checklist (drawn as icon rows in some looks) gets a generic icon per item when its words suggest one."""
+    if g['template'] not in ('list', 'checklist') or g['fields'].get('icons'):
+        return g
+    icons = _icons(_items_of(g), need_all=False)
+    return {**g, 'fields': {**g['fields'], 'icons': icons}} if icons else g
+
+
 def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Sequence[float]], speed: float,
                 options: Optional[dict] = None) -> list[dict]:
     """The planned cards that survive the finished cut, as editor graphics (source time, origin 'auto').
@@ -1010,7 +1383,7 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
         template = g.get('template')
         if template not in opts['templates'] or not isinstance(g.get('fields'), dict):
             continue
-        if template == 'headline_pill' and not opts['headline_off']:
+        if template == 'headline_pill' and not (opts['headline_off'] or opts['pill_cards']):
             continue
         if template == 'comment_cta' and (not opts['cta_keyword'] or g['fields'].get('keyword', '').lower() != opts['cta_keyword'].lower()):
             continue
@@ -1039,7 +1412,7 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
             length -= later[0] - at
             at = later[0]
             out = output_ms(ranges, speed, at)
-        if template == 'headline_pill':
+        if template == 'headline_pill' and not opts['pill_cards']:
             # The hook headline opens the clip: it starts as the clip does, its words said in the first seconds.
             if out is None or out > HOOK_START_MS or (source_ms(ranges, speed, HOOK_WORDS_MS) or clip_end) < at:
                 continue
@@ -1065,7 +1438,7 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
             span = window(ranges, speed, at, length)
             if span is None:
                 continue
-        if length < EDITOR_MIN_MS or span[1] < EDITOR_MIN_MS or (span[0] < FIRST_MS and template != 'headline_pill'):
+        if length < EDITOR_MIN_MS or span[1] < EDITOR_MIN_MS or (span[0] < FIRST_MS and (template != 'headline_pill' or opts['pill_cards'])):
             continue
         candidates.append({**g, 'at_ms': int(math.ceil(at)), 'duration_ms': int(max(EDITOR_MIN_MS, min(editor_max_ms(template), math.floor(length))))})
     tail_src = source_ms(ranges, speed, tail) or clip_end
@@ -1074,27 +1447,51 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
     section = lambda t: sum(1 for c in chapters if c['at_ms'] <= t)  # noqa: E731
     kept: list[dict] = []
     limit = opts['max_cards'] or max_cards(total_out)
+    seconds = total_out / 1000
+    # The templates a card may become to keep the video varied (a headline pill only where it is a card, not the hook).
+    allowed = [t for t in opts['templates'] if t not in ('headline_pill', 'comment_cta') or (t == 'headline_pill' and opts['pill_cards'])]
+    pad = opts['gap_ms']
+
+    def diagram_near(g: dict, others: Sequence[dict]) -> bool:
+        return g['template'] in DIAGRAMS and any(k['template'] in DIAGRAMS and (
+            section(k['at_ms']) == section(g['at_ms']) if chapters else abs(k['at_ms'] - g['at_ms']) < DIAGRAM_GAP_MS) for k in others)
+
+    def overlapping(g: dict, others: Sequence[dict]) -> bool:
+        return any(g['at_ms'] < k['at_ms'] + k['duration_ms'] + pad and k['at_ms'] < g['at_ms'] + g['duration_ms'] + pad for k in others)
+
     for g in sorted(candidates, key=lambda g: (-_priority(g), g['at_ms'])):
         if len(kept) >= limit:
             break
-        if g['template'] in DIAGRAMS and any(k['template'] in DIAGRAMS and (
-                section(k['at_ms']) == section(g['at_ms']) if chapters else abs(k['at_ms'] - g['at_ms']) < DIAGRAM_GAP_MS) for k in kept):
+        if opts['variety']:
+            g = varied(g, kept, segments, seconds, allowed)
+            if g is None:
+                continue
+        if diagram_near(g, kept):
             continue
-        clash = [k for k in kept if g['at_ms'] < k['at_ms'] + k['duration_ms'] and k['at_ms'] < g['at_ms'] + g['duration_ms']]
+        # (With free time kept between graphics, `pad` counts as part of each one.)
+        clash = [k for k in kept if g['at_ms'] < k['at_ms'] + k['duration_ms'] + pad and k['at_ms'] < g['at_ms'] + g['duration_ms'] + pad]
         if clash:
             # A card that starts first and runs into a stronger one ends just before it (when enough is left);
             # one as strong that started earlier makes room the same way.
             earlier = [k for k in clash if k['at_ms'] <= g['at_ms']]
-            if len(earlier) == 1 and _priority(earlier[0]) <= _priority(g) and len(clash) == 1 \
-                    and g['at_ms'] - GAP_MS - earlier[0]['at_ms'] >= MIN_TRIMMED_MS:
+            # Only the free time between them crowded: the earlier one ends a little sooner when it keeps PAD_TRIMMED_MS.
+            in_pad = pad and not any(g['at_ms'] < k['at_ms'] + k['duration_ms'] and k['at_ms'] < g['at_ms'] + g['duration_ms'] for k in clash)
+            if len(earlier) == 1 and len(clash) == 1 and (_priority(earlier[0]) <= _priority(g) or in_pad) \
+                    and g['at_ms'] - GAP_MS - pad - earlier[0]['at_ms'] >= (PAD_TRIMMED_MS if pad else MIN_TRIMMED_MS):
                 k = earlier[0]
-                kept[kept.index(k)] = {**k, 'duration_ms': g['at_ms'] - GAP_MS - k['at_ms']}
+                kept[kept.index(k)] = {**k, 'duration_ms': g['at_ms'] - GAP_MS - pad - k['at_ms']}
             else:
-                end = min(k['at_ms'] for k in clash) - GAP_MS
-                if earlier or end - g['at_ms'] < MIN_TRIMMED_MS:
+                end = min(k['at_ms'] for k in clash) - GAP_MS - pad
+                if earlier or end - g['at_ms'] < (PAD_TRIMMED_MS if pad else MIN_TRIMMED_MS):
                     continue
                 g = {**g, 'duration_ms': end - g['at_ms']}
         kept.append(g)
+    if opts['variety']:
+        crowded = lambda g, others: overlapping(g, others) or diagram_near(g, others)  # noqa: E731
+        kept = no_repeats_in_a_row(kept, segments, seconds, allowed, crowded)
+        kept = widen(kept, segments, seconds, allowed, crowded)
+        kept = [with_list_icons({k: v for k, v in g.items() if k != 'converted_from'}) for g in kept]
+        kept = with_variants(kept)
     taken: set[str] = set()
     out_list = []
     # Word-timed cards may start a little earlier (on their first word), never over the card before, into the clip's
@@ -1111,7 +1508,7 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
                 fields['item_ms'] = '\n'.join(str(max(0, t - g['at_ms'])) for t in times)
         if g['template'] in WORD_TIMED:
             floor = max(ranges[0][0], previous_end + GAP_MS if previous_end is not None else ranges[0][0],
-                        first_src if g['template'] != 'headline_pill' else ranges[0][0])
+                        first_src if g['template'] != 'headline_pill' or opts['pill_cards'] else ranges[0][0])
             g = word_timed(g, segments, min(clip_end, tail_src), next_start(kept, g), floor)
             if g.get('fields', {}).get('word_ms'):
                 fields['word_ms'] = g['fields']['word_ms']

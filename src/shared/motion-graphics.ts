@@ -9,11 +9,11 @@
 export const GRAPHIC_TEMPLATES = [
   { id: 'stat', label: 'Stat counter', detail: 'A number that counts up, with a short label.', fields: ['value', 'label'] },
   { id: 'title', label: 'Title slam', detail: 'A few big words that slam in.', fields: ['text'] },
-  { id: 'list', label: 'Numbered list', detail: 'Up to 5 short points, one after another.', fields: ['title', 'items'] },
+  { id: 'list', label: 'Numbered list', detail: 'Up to 5 short points, one after another.', fields: ['title', 'items', 'icons'] },
   { id: 'lower_third', label: 'Name tag', detail: 'A name and a role along the bottom.', fields: ['name', 'role'] },
   { id: 'logo', label: 'Logo pop', detail: 'An image you add pops in.', fields: ['image', 'caption'] },
   { id: 'before_after', label: 'Before / after', detail: 'Two short lines side by side.', fields: ['before', 'after'] },
-  { id: 'checklist', label: 'Checklist', detail: 'Up to 5 items that tick off.', fields: ['title', 'items'] },
+  { id: 'checklist', label: 'Checklist', detail: 'Up to 5 items that tick off.', fields: ['title', 'items', 'icons'] },
   { id: 'quote', label: 'Quote card', detail: 'A short quote and who said it.', fields: ['text', 'author'] },
   { id: 'highlight', label: 'Arrow or circle', detail: 'Points at something on screen.', fields: ['shape', 'x', 'y'] },
   { id: 'statement', label: 'Statement', detail: 'One or two lines in big serif type, with the key words in italics.', fields: ['text', 'accent', 'subline'] },
@@ -155,7 +155,60 @@ export function parseGraphics(value: unknown): EditorGraphic[] {
 // ---------------------------------------------------------------------------
 
 /** Bump when a template's look changes, so cached renders are made again. */
-export const GRAPHICS_VERSION = 3
+export const GRAPHICS_VERSION = 4
+
+/**
+ * Looks: the most used templates come in two or three designs (`fields.variant`), so a video that shows a template
+ * more than once never shows the same card twice. Optional: a graphic without one (or with an unknown one) draws the
+ * first, the classic look. The engine gives automatic graphics a look in turn (auto_graphics.VARIANTS / ROTATION).
+ */
+export const GRAPHIC_VARIANTS: Partial<Record<GraphicTemplateId, readonly { id: string; label: string; detail: string }[]>> = {
+  statement: [
+    { id: 'card', label: 'White card', detail: 'Serif type on a white card.' },
+    { id: 'glass', label: 'Dark glass', detail: 'White type on dark glass, the key words underlined in your color.' },
+    { id: 'bold', label: 'Bold color', detail: 'Big bold type on your color.' }
+  ],
+  title: [
+    { id: 'card', label: 'White card', detail: 'Bold words on a white card.' },
+    { id: 'pill', label: 'Color pills', detail: 'Each line on a pill in your color.' },
+    { id: 'shadow', label: 'Big type', detail: 'Huge white words with a soft shadow, no card.' }
+  ],
+  quote: [
+    { id: 'card', label: 'White card', detail: 'Serif quote on a white card.' },
+    { id: 'dark', label: 'Dark', detail: 'White serif on a dark card with a big quote mark in your color.' },
+    { id: 'accent', label: 'Color', detail: 'White serif on your color.' }
+  ],
+  sticky_notes: [
+    { id: 'notes', label: 'Sticky notes', detail: 'Pastel notes with tape.' },
+    { id: 'polaroid', label: 'Photo cards', detail: 'Tilted photo cards in your color.' },
+    { id: 'index', label: 'Index cards', detail: 'Lined cards pinned in place.' }
+  ],
+  list: [
+    { id: 'card', label: 'Card', detail: 'Numbered rows on a white card.' },
+    { id: 'chips', label: 'Icon rows', detail: 'Each point on its own glass row with an icon or number chip.' },
+    { id: 'pills', label: 'Dark pills', detail: 'Each point on a dark pill with a number in your color.' }
+  ],
+  checklist: [
+    { id: 'card', label: 'Card', detail: 'Ticks on a white card.' },
+    { id: 'dark', label: 'Dark', detail: 'Ticks in your color on a dark card.' },
+    { id: 'rows', label: 'Rows', detail: 'Each item on its own white row.' }
+  ],
+  stat: [
+    { id: 'card', label: 'White card', detail: 'The number on a white card.' },
+    { id: 'gradient', label: 'Color', detail: 'A big white number on your color, with a ring.' },
+    { id: 'badge', label: 'Badge', detail: 'The number beside an icon badge.' }
+  ]
+}
+/** The looks a template has (empty: one look only). */
+export function graphicVariants(template: string): readonly { id: string; label: string; detail: string }[] {
+  return GRAPHIC_VARIANTS[template as GraphicTemplateId] ?? []
+}
+/** A graphic's look: its `variant` when the template has it, else the template's first (classic) look; '' for one-look templates. */
+export function graphicVariant(template: string, fields: Record<string, string>): string {
+  const looks = graphicVariants(template)
+  if (!looks.length) return ''
+  return looks.some((v) => v.id === fields.variant) ? fields.variant : looks[0].id
+}
 /** Rendered graphics are layered over the clip at this frame rate. */
 export const GRAPHIC_FPS = 30
 /** A graphic left with less than this much on screen after the cut is dropped. */
@@ -298,10 +351,10 @@ export function graphicItemTimes(fields: Record<string, string>, count: number, 
  * The icon for each item (null: none or unknown). Icon row: the first tile shows the member's picture when there is
  * one. Orbit and Feature tile: one per item, or (with no labels) one node per icon given.
  */
-export function graphicIcons(fields: Record<string, string>, template: 'icon_pop' | 'orbit' | 'feature_tile' | 'staircase' = 'icon_pop'): (GraphicIcon | null)[] {
+export function graphicIcons(fields: Record<string, string>, template: 'icon_pop' | 'orbit' | 'feature_tile' | 'staircase' | 'list' | 'checklist' = 'icon_pop'): (GraphicIcon | null)[] {
   const names = (fields.icons ?? '').split(/\r?\n/).map((line) => line.trim().toLowerCase())
   const items = templateItems(template, fields.items)
-  const count = template === 'icon_pop' || template === 'staircase' ? items.length : Math.max(items.length, Math.min(GRAPHIC_ITEM_LIMITS[template] ?? MAX_GRAPHIC_ITEMS, names.filter(isGraphicIcon).length))
+  const count = template === 'icon_pop' || template === 'staircase' || template === 'list' || template === 'checklist' ? items.length : Math.max(items.length, Math.min(GRAPHIC_ITEM_LIMITS[template] ?? MAX_GRAPHIC_ITEMS, names.filter(isGraphicIcon).length))
   return Array.from({ length: count }, (_, i) => isGraphicIcon(names[i]) ? names[i] as GraphicIcon : null)
 }
 

@@ -286,6 +286,8 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   const statement = candidate.graphics.find((g) => g.template === 'statement')
   assert.deepEqual([statement.origin, statement.size, statement.fields.text], ['auto', 'card', 'Most coaches lose clients.'])
   assert.ok(statement.fields.word_ms, 'its words come in as they are said')
+  // Over a filmed screen (no face) a card takes one of its darker looks, never a white slab over the page.
+  assert.ok(['glass', 'bold'].includes(statement.fields.variant), statement.fields.variant)
   assert.equal(candidate.stage_scenes, undefined)
   // The hook floats and hides after a few seconds (a directed reel); the Fast explainer's extras are the clip's, for the bake.
   assert.equal(candidate.hook.look.hideAfterS, 5)

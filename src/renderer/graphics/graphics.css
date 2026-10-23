@@ -373,3 +373,177 @@
 .dg-compare-note { font-weight: 600; line-height: 1.25; opacity: .85; text-wrap: balance; }
 .dg-compare-card.right { box-shadow: 0 0 calc(var(--fu) * 46) color-mix(in srgb, var(--accent) calc(var(--passed, 0) * 60%), transparent); }
 .dg-hub-caption { position: absolute; transform: translateX(-50%); text-align: center; font-weight: 700; letter-spacing: .02em; opacity: .9; }
+
+/*
+ * Looks (graphicVariant: `look-<id>` on the root). The most used templates come in two or three designs so repeats
+ * never look alike: dark glass, full color on the accent gradient, type with no card, photo and index cards, icon rows,
+ * dark pills, badges. Every look keeps a soft shadow (or a strong text shadow) so it reads on busy footage.
+ */
+.mg-root {
+  --glass: linear-gradient(160deg, rgba(30, 34, 48, .94), rgba(11, 13, 21, .92));
+  --glass-edge: inset 0 0 0 calc(var(--u) * 2) rgba(255, 255, 255, .10), inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, .08);
+  --deep-shadow: 0 calc(var(--u) * 4) calc(var(--u) * 8) rgba(0, 0, 0, .18), 0 calc(var(--u) * 24) calc(var(--u) * 60) rgba(0, 0, 0, .34);
+  --brand-fill: linear-gradient(140deg, var(--accent) 0%, var(--accent-deep) 100%);
+  --type-shadow: 0 calc(var(--u) * 3) calc(var(--u) * 6) rgba(0, 0, 0, .45), 0 calc(var(--u) * 8) calc(var(--u) * 34) rgba(0, 0, 0, .40);
+}
+
+/* Statement: dark glass, the key words underlined in the accent */
+.look-glass .mg-statement { padding-top: calc(var(--u) * 78); background: var(--glass); box-shadow: var(--glass-edge), var(--deep-shadow), 0 0 calc(var(--u) * 60) rgba(var(--accent-rgb), .22); }
+.look-glass .mg-statement::before {
+  content: ''; position: absolute; left: 50%; top: calc(var(--u) * 30); width: calc(var(--u) * 72); height: calc(var(--u) * 7); margin-left: calc(var(--u) * -36);
+  border-radius: 999px; background: var(--accent);
+}
+.look-glass .mg-statement-text { color: #fff; }
+.look-glass .mg-statement .mg-accent { color: var(--accent-bright); }
+.look-glass .mg-statement .mg-mark { top: auto; bottom: -.02em; height: .085em; background: var(--accent); border-radius: 999px; }
+.look-glass .mg-sub { color: rgba(255, 255, 255, .72); }
+
+/* Statement: big bold type on the accent gradient */
+.look-bold .mg-statement {
+  background: radial-gradient(120% 90% at 10% 0%, rgba(255, 255, 255, .22), transparent 55%), var(--brand-fill);
+  box-shadow: inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, .25), var(--deep-shadow), 0 calc(var(--u) * 26) calc(var(--u) * 70) rgba(var(--accent-rgb), .35);
+  padding: calc(var(--u) * 62) calc(var(--u) * 64) calc(var(--u) * 70);
+}
+.look-bold .mg-statement-text {
+  font-family: var(--sans); font-weight: 800; letter-spacing: -.035em; line-height: 1.02; color: var(--on-accent);
+  font-size: calc(var(--u) * var(--statement-size, 130) * .82);
+}
+.look-bold .mg-statement .mg-accent { font-family: var(--serif); font-weight: 400; font-size: 1.14em; color: var(--on-accent); }
+.look-bold .mg-statement .mg-mark { background: rgba(255, 255, 255, .24); top: .55em; }
+.look-bold .mg-sub { color: var(--on-accent); opacity: .82; }
+
+/* Title: each line on a pill in the accent (the key word on white) */
+.look-pill .mg-title-card { background: none; box-shadow: none; padding: calc(var(--u) * 10) calc(var(--u) * 20); }
+.look-pill .mg-title { line-height: 1.42; font-size: calc(var(--u) * var(--title-size, 120) * .8); }
+.look-pill .mg-title-ink {
+  background: var(--brand-fill); color: var(--on-accent); padding: .04em .28em .1em; border-radius: .2em;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  box-shadow: 0 calc(var(--u) * 14) calc(var(--u) * 34) rgba(var(--accent-rgb), .35), 0 calc(var(--u) * 4) calc(var(--u) * 10) rgba(0, 0, 0, .18);
+}
+.look-pill .mg-title .mg-accent.tint { color: var(--accent-ink); background: #fff; border-radius: .16em; padding: 0 .14em; margin: 0 .02em; }
+
+/* Title: huge white type with a soft shadow, no card */
+.look-shadow .mg-title-card {
+  background: radial-gradient(closest-side, rgba(8, 10, 18, .62), rgba(8, 10, 18, .38) 60%, transparent); box-shadow: none;
+  padding: calc(var(--u) * 46) calc(var(--u) * 60); border-radius: calc(var(--u) * 80);
+}
+.look-shadow .mg-title { color: #fff; text-shadow: var(--type-shadow); font-size: calc(var(--u) * var(--title-size, 120) * 1.08); line-height: .98; }
+.look-shadow .mg-title .mg-accent.tint { color: var(--accent-bright); }
+
+/* Quote: dark, a big quote mark in the accent */
+.look-dark .mg-quote { background: var(--glass); box-shadow: var(--glass-edge), var(--deep-shadow); }
+.look-dark .mg-quote-text { color: #fff; }
+.look-dark .mg-quote-mark { color: var(--accent-bright); text-shadow: 0 0 calc(var(--u) * 30) rgba(var(--accent-rgb), .5); }
+.look-dark .mg-quote-author { color: rgba(255, 255, 255, .7); }
+
+/* Quote: white serif on the accent */
+.look-accent .mg-quote { background: radial-gradient(120% 80% at 90% 0%, rgba(255, 255, 255, .2), transparent 60%), var(--brand-fill); box-shadow: var(--deep-shadow); }
+.look-accent .mg-quote-text { color: var(--on-accent); }
+.look-accent .mg-quote-mark { color: #fff; opacity: .9; }
+.look-accent .mg-quote-author { color: var(--on-accent); opacity: .85; }
+.look-accent .mg-quote-author::before { background: var(--on-accent); }
+
+/* Sticky notes: photo cards (a white frame, the words on a color "photo") */
+.look-polaroid .mg-note {
+  background: #fff; aspect-ratio: auto; padding: calc(var(--u) * 20) calc(var(--u) * 20) calc(var(--u) * 74); border-radius: calc(var(--u) * 10);
+  box-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(15, 23, 42, .1), 0 calc(var(--u) * 22) calc(var(--u) * 44) rgba(15, 23, 42, .26);
+}
+.look-polaroid .mg-photo {
+  width: 100%; aspect-ratio: 1 / 1; border-radius: calc(var(--u) * 4); display: flex; align-items: center; justify-content: center; padding: calc(var(--u) * 26);
+  background: radial-gradient(90% 70% at 25% 15%, rgba(255, 255, 255, .28), transparent 60%), var(--brand-fill);
+  box-shadow: inset 0 0 0 calc(var(--u) * 2) rgba(0, 0, 0, .06);
+}
+.look-polaroid .mg-note.c1 .mg-photo { background: radial-gradient(90% 70% at 75% 20%, rgba(255, 255, 255, .22), transparent 60%), linear-gradient(200deg, var(--accent-deep), #12141c); }
+.look-polaroid .mg-note.c2 .mg-photo { background: radial-gradient(90% 70% at 30% 80%, rgba(255, 255, 255, .25), transparent 60%), linear-gradient(160deg, var(--accent-bright), var(--accent)); }
+.look-polaroid .mg-note-text { color: #fff; text-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 10) rgba(0, 0, 0, .3); }
+.look-polaroid .mg-tape { top: calc(var(--u) * -18); background: rgba(255, 255, 255, .7); }
+
+/* Sticky notes: lined index cards with a pin */
+.look-index .mg-note {
+  background: repeating-linear-gradient(180deg, #fffdf7 0, #fffdf7 calc(var(--u) * 50), rgba(59, 130, 246, .28) calc(var(--u) * 50), rgba(59, 130, 246, .28) calc(var(--u) * 52.5));
+  border-radius: calc(var(--u) * 8); aspect-ratio: 1 / .78; padding: calc(var(--u) * 74) calc(var(--u) * 34) calc(var(--u) * 40);
+  box-shadow: inset 0 calc(var(--u) * 58) 0 #fffdf7, inset 0 calc(var(--u) * 61) 0 rgba(229, 72, 77, .7), 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(15, 23, 42, .1), 0 calc(var(--u) * 20) calc(var(--u) * 40) rgba(15, 23, 42, .25);
+}
+.look-index .mg-note-text { font-family: 'MG Caveat Brush', cursive; font-weight: 400; color: #1e293b; letter-spacing: 0; line-height: 1.02; font-size: calc(var(--u) * var(--note-size, 50) * 1.4); }
+.look-index .mg-pin {
+  position: absolute; left: 50%; top: calc(var(--u) * 14); width: calc(var(--u) * 40); height: calc(var(--u) * 40); margin-left: calc(var(--u) * -20); border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff 0 12%, var(--accent) 34%, var(--accent-deep) 100%);
+  box-shadow: 0 calc(var(--u) * 6) calc(var(--u) * 10) rgba(0, 0, 0, .3);
+}
+
+/* List: icon rows (each point its own glass row, a color chip with an icon or the number) */
+.look-chips .mg-list { background: none; box-shadow: none; padding: 0; }
+.look-chips .mg-list-title {
+  display: inline-block; border: none; margin: 0 0 calc(var(--u) * 22) calc(var(--u) * 8); padding: calc(var(--u) * 12) calc(var(--u) * 30) calc(var(--u) * 16);
+  background: var(--glass); color: #fff; border-radius: 999px; font-size: calc(var(--u) * 50); box-shadow: var(--deep-shadow);
+}
+.look-chips .mg-list-items { gap: calc(var(--u) * 18); }
+.look-chips .mg-list-item {
+  background: linear-gradient(180deg, rgba(255, 255, 255, .97), rgba(255, 255, 255, .9)); border-radius: calc(var(--u) * 40);
+  padding: calc(var(--u) * 18) calc(var(--u) * 40) calc(var(--u) * 18) calc(var(--u) * 18);
+  box-shadow: inset 0 0 0 calc(var(--u) * 2) rgba(255, 255, 255, .9), 0 calc(var(--u) * 14) calc(var(--u) * 34) rgba(15, 23, 42, .2);
+}
+.look-chips .mg-list-num { width: calc(var(--u) * 92); height: calc(var(--u) * 92); border-radius: calc(var(--u) * 28); font-size: calc(var(--u) * 44); background: var(--brand-fill); }
+.look-chips .mg-list-num.c1 { background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 45%, #f59e0b), color-mix(in srgb, var(--accent-deep) 40%, #c2410c)); color: #fff; }
+.look-chips .mg-list-num.c2 { background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 45%, #10b981), color-mix(in srgb, var(--accent-deep) 40%, #047857)); color: #fff; }
+.look-chips .mg-list-num.c3 { background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 45%, #ec4899), color-mix(in srgb, var(--accent-deep) 40%, #be185d)); color: #fff; }
+.look-chips .mg-list-num.c4 { background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 45%, #8b5cf6), color-mix(in srgb, var(--accent-deep) 40%, #6d28d9)); color: #fff; }
+.mg-list-svg { width: 56%; height: 56%; stroke: currentColor; stroke-width: 2.1; fill: none; }
+
+/* List: dark pills, a number in the accent */
+.look-pills .mg-list { background: none; box-shadow: none; padding: 0; width: auto; max-width: var(--card-w); }
+.look-pills .mg-list-title {
+  display: inline-block; border: none; margin: 0 0 calc(var(--u) * 20); padding: calc(var(--u) * 12) calc(var(--u) * 34) calc(var(--u) * 16);
+  background: var(--brand-fill); color: var(--on-accent); border-radius: calc(var(--u) * 24); font-size: calc(var(--u) * 58); box-shadow: var(--deep-shadow);
+}
+.look-pills .mg-list-items { gap: calc(var(--u) * 16); align-items: flex-start; }
+.look-pills .mg-list-item {
+  background: var(--glass); border-radius: 999px; padding: calc(var(--u) * 14) calc(var(--u) * 44) calc(var(--u) * 14) calc(var(--u) * 14);
+  box-shadow: var(--glass-edge), var(--deep-shadow);
+}
+.look-pills .mg-list-item:nth-child(even) { margin-left: calc(var(--u) * 46); }
+.look-pills .mg-list-num { border-radius: 50%; width: calc(var(--u) * 76); height: calc(var(--u) * 76); box-shadow: 0 0 calc(var(--u) * 24) rgba(var(--accent-rgb), .55); }
+.look-pills .mg-list-text { color: #fff; }
+
+/* Checklist: dark card, ticks in the accent */
+.look-dark .mg-list.checks { background: var(--glass); box-shadow: var(--glass-edge), var(--deep-shadow), 0 0 calc(var(--u) * 60) rgba(var(--accent-rgb), .18); }
+.look-dark .mg-list.checks .mg-list-title { color: #fff; border-bottom-color: rgba(255, 255, 255, .12); }
+.look-dark .mg-list.checks .mg-list-text { color: #fff; }
+.look-dark .mg-list.checks .mg-check { border-color: rgba(255, 255, 255, .28); }
+.look-dark .mg-list.checks .mg-check-fill { box-shadow: 0 0 calc(var(--u) * 26) rgba(var(--accent-rgb), .6); }
+
+/* Checklist: each item its own white row */
+.look-rows .mg-list.checks { background: none; box-shadow: none; padding: 0; }
+.look-rows .mg-list.checks .mg-list-title {
+  display: inline-block; border: none; margin: 0 0 calc(var(--u) * 20); padding: calc(var(--u) * 12) calc(var(--u) * 34) calc(var(--u) * 16);
+  background: var(--glass); color: #fff; border-radius: 999px; font-size: calc(var(--u) * 52); box-shadow: var(--deep-shadow);
+}
+.look-rows .mg-list.checks .mg-list-items { gap: calc(var(--u) * 16); }
+.look-rows .mg-list.checks .mg-list-item {
+  background: #fff; border-radius: calc(var(--u) * 34); padding: calc(var(--u) * 22) calc(var(--u) * 40) calc(var(--u) * 22) calc(var(--u) * 24);
+  box-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 4) rgba(15, 23, 42, .08), 0 calc(var(--u) * 16) calc(var(--u) * 36) rgba(15, 23, 42, .22);
+}
+
+/* Stat: a big white number on the accent gradient, rings drawn round the corner */
+.look-gradient .mg-stat {
+  overflow: hidden; background: radial-gradient(110% 80% at 0% 0%, rgba(255, 255, 255, .22), transparent 55%), var(--brand-fill);
+  box-shadow: inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, .25), var(--deep-shadow), 0 calc(var(--u) * 28) calc(var(--u) * 70) rgba(var(--accent-rgb), .38);
+}
+.look-gradient .mg-stat-value, .look-gradient .mg-stat-label { color: var(--on-accent); position: relative; }
+.look-gradient .mg-stat-short, .look-gradient .mg-stat-unit { color: var(--on-accent); opacity: .85; }
+.look-gradient .mg-stat-rule { background: var(--on-accent); opacity: .55; position: relative; }
+.mg-stat-rings { position: absolute; right: 0; top: 0; width: 46%; height: auto; overflow: visible; pointer-events: none; }
+.mg-stat-rings circle { fill: none; stroke: rgba(255, 255, 255, .22); stroke-width: 7; }
+
+/* Stat: the number beside an icon badge */
+.look-badge .mg-stat { display: flex; align-items: center; gap: calc(var(--u) * 40); text-align: left; padding: calc(var(--u) * 48) calc(var(--u) * 56) calc(var(--u) * 52); }
+.mg-stat-badge {
+  flex: none; width: calc(var(--u) * 170); height: calc(var(--u) * 170); border-radius: calc(var(--u) * 52); display: grid; place-items: center;
+  background: radial-gradient(90% 80% at 30% 20%, rgba(255, 255, 255, .3), transparent 60%), var(--brand-fill);
+  box-shadow: inset 0 calc(var(--u) * 2) 0 rgba(255, 255, 255, .3), 0 calc(var(--u) * 16) calc(var(--u) * 36) rgba(var(--accent-rgb), .4);
+}
+.mg-stat-badge-svg { width: 52%; height: 52%; stroke: var(--on-accent); stroke-width: 2; fill: none; }
+.mg-stat-col { flex: 1; min-width: 0; }
+.look-badge .mg-stat-value { transform-origin: 0 60%; }
+.look-badge .mg-stat-rule { margin: calc(var(--u) * 20) 0 calc(var(--u) * 18); width: calc(var(--u) * 90); transform-origin: 0 50%; }
+.look-badge .mg-stat-label { font-size: calc(var(--u) * 44); }
