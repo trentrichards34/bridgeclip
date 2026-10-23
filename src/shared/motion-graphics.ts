@@ -88,7 +88,7 @@ export interface EditorGraphic {
   depth?: GraphicDepth
 }
 
-export const MAX_GRAPHICS_PER_CLIP = 12
+export const MAX_GRAPHICS_PER_CLIP = 60
 export const GRAPHIC_MIN_MS = 800
 /** The longest most graphics last (a diagram or a chapter header may last longer: graphicMaxMs). */
 export const GRAPHIC_MAX_MS = 8000

@@ -12,6 +12,8 @@ logger = logging.getLogger('editor_runner')
 ACTIONS = ('review', 'export', 'replace-source', 'scan-cameras', 'suggest-hooks', 'prepare')
 # Main reads one result line of at most 16 KiB.
 MAX_RESULT_CHARS = 15000
+# One request (graphics and scenes for a long reel: up to 60 of each).
+MAX_REQUEST = 65536
 # Keep in sync with EDITOR_ERROR_CODES in manual_editor.py and editorErrorCodes
 # in src/shared/clip-editor.ts. Only these codes cross the bridge.
 ERROR_CODES = frozenset({'duration', 'geometry', 'audio', 'invalid', 'project_changed', 'invalid_edit', 'not_ready',
@@ -87,8 +89,8 @@ def main():
     try:
         from clip_engine.logging_safety import install_safe_logging
         install_safe_logging()
-        raw = sys.stdin.read(16385)
-        if len(raw) > 16384:
+        raw = sys.stdin.read(MAX_REQUEST + 1)
+        if len(raw) > MAX_REQUEST:
             raise ValueError('Request too large')
         config = json.loads(raw)
         action = config.get('action')

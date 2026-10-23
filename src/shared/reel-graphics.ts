@@ -25,6 +25,8 @@ import { DIAGRAM_ACCENT, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, isDiagram, 
 /** The templates offered on review screens (every one but Logo pop and Screen recording, which need the clip editor's files, and the chapter header, which belongs to a clip's sections). */
 export const REEL_GRAPHIC_TEMPLATES = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo' && t.id !== 'screen_frame' && t.id !== 'chapter')
 export const MAX_REEL_GRAPHICS = 8
+/** An edited reel (Edit my recording): the automatic direction plans about one graphic per 6 s of a long reel. */
+export const MAX_EDIT_GRAPHICS = MAX_GRAPHICS_PER_CLIP
 
 /** The hook text's share of the frame's height at the top (0: none, too short to draw, or not at the top). */
 export function hookShareFor(text: string, look: Pick<HeadlineLook, 'look'> | null | undefined): number {
@@ -56,9 +58,9 @@ export function reelGraphicSpec(graphic: Pick<EditorGraphic, 'template' | 'field
 }
 
 /** Checks graphics from the page (or the chat) the clip editor's way, then keeps reel rules: no Logo pop, up to 8. */
-function parseReelGraphicList(value: unknown, at: (raw: Record<string, unknown>) => number): EditorGraphic[] {
+function parseReelGraphicList(value: unknown, at: (raw: Record<string, unknown>) => number, limit = MAX_REEL_GRAPHICS): EditorGraphic[] {
   if (value === undefined || value === null) return []
-  if (!Array.isArray(value) || value.length > MAX_REEL_GRAPHICS) throw new Error(`Add up to ${MAX_REEL_GRAPHICS} graphics.`)
+  if (!Array.isArray(value) || value.length > limit) throw new Error(`Add up to ${limit} graphics.`)
   const graphics = parseGraphics(value.map((raw) => raw && typeof raw === 'object' ? { ...(raw as Record<string, unknown>), at_ms: at(raw as Record<string, unknown>) } : raw))
   if (graphics.some((g) => g.template === 'logo')) throw new Error('Logo pop graphics are only in the clip editor.')
   return graphics
@@ -73,7 +75,7 @@ export type EditGraphic = Omit<EditorGraphic, 'at_ms'> & { word: number }
 
 /** The reel's graphics from the page, checked against the plan's words (throws a plain message). */
 export function parseEditGraphics(value: unknown, words: number): EditGraphic[] {
-  const parsed = parseReelGraphicList(value, (raw) => typeof raw.word === 'number' && Number.isInteger(raw.word) && raw.word >= 0 && raw.word < words ? raw.word : -1)
+  const parsed = parseReelGraphicList(value, (raw) => typeof raw.word === 'number' && Number.isInteger(raw.word) && raw.word >= 0 && raw.word < words ? raw.word : -1, MAX_EDIT_GRAPHICS)
   return parsed.map(({ at_ms, ...rest }) => ({ ...rest, word: at_ms })).sort((a, b) => a.word - b.word)
 }
 
@@ -99,8 +101,10 @@ export function patchEditGraphic(graphics: EditGraphic[], id: string, patch: Par
       if (!/^[a-z_]{1,20}$/.test(key) || typeof value !== 'string') continue
       fields[key] = value.slice(0, key === 'items' ? 800 : 160)
     }
+    // A planned graphic whose words the member changed is theirs from here on (the reel keeps it as typed).
+    const typed = patch.fields !== undefined && Object.keys(patch.fields).length > 0 && g.origin === 'auto'
     return { ...g, ...(patch.word !== undefined ? { word: patch.word } : {}), ...(patch.placement ? { placement: patch.placement } : {}), ...(patch.depth ? { depth: patch.depth } : {}),
-      ...(patch.duration_ms !== undefined ? { duration_ms: clampGraphicMs(patch.duration_ms, g.template) } : {}), fields }
+      ...(patch.duration_ms !== undefined ? { duration_ms: clampGraphicMs(patch.duration_ms, g.template) } : {}), fields, ...(typed ? { origin: 'member' as const } : {}) }
   }).sort((a, b) => a.word - b.word)
 }
 

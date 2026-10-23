@@ -708,6 +708,9 @@ def automatic_extras(run, project):
     """What an Automatic run drew on its clips that the editor draws again: the brand handle/logo and the comment keyword."""
     from clip_engine.services.brand_mark import validate_brand_mark
     extras = project.get('automatic')
+    # An edited reel (Edit my recording) keeps its brand mark on the project itself.
+    if not isinstance(extras, dict):
+        extras = {'brand_mark': project['brand_mark']} if isinstance(project.get('brand_mark'), dict) else None
     if not isinstance(extras, dict):
         return {}
     options = {}

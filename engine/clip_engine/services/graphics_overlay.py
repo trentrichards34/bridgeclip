@@ -39,7 +39,7 @@ GRAPHICS_DIR = ".graphics"
 # Renders made for Edit my recording and Remix (the clip editor's sweep leaves this folder alone).
 REEL_DIR = "reel"
 RENDER_FILE = re.compile(r"[a-f0-9]{64}\.mov")
-MAX_GRAPHICS = 12
+MAX_GRAPHICS = 60
 MIN_MS = 100
 # How big main drew a graphic: absent is the usual card; "stage" takes the top ~55% of a 9:16 frame.
 SIZES = ("compact", "card", "stage")

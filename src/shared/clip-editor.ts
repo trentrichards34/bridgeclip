@@ -115,7 +115,10 @@ export interface EditorProject {
   automatic?: AutomaticOrigin
   /** Camera + screen (screen-pair.ts): where the camera and the screen are in the source. */
   pair?: ScreenPair
+  /** An edited reel (Edit my recording): the brand's handle or logo the bake draws in a corner. */
+  brand_mark?: BrandMarkOrigin
 }
+export type BrandMarkOrigin = NonNullable<AutomaticOrigin['brand_mark']>
 export interface EditorProgress { phase: 'scan' | 'preview' | 'download' | 'copy'; percent: number }
 export type EditorOperation = 'save' | 'review' | 'export' | 'export-all' | 'replace-source' | 'scan-cameras' | 'suggest-hooks' | 'prepare'
 export interface EditorBatch { completed: number; total: number; failed?: number }
@@ -359,6 +362,7 @@ export function parseEditorProject(value: unknown): EditorProject {
     transcript, ...(v.headline_voice === 'creator' || v.headline_voice === 'clipper' ? { headline_voice: v.headline_voice } : {}),
     ...(v.automatic !== undefined ? { automatic: parseAutomaticOrigin(v.automatic) } : {}),
     ...(v.pair !== undefined ? { pair: parseScreenPair(v.pair) ?? fail() } : {}),
+    ...(v.brand_mark !== undefined ? { brand_mark: parseBrandMark(v.brand_mark) } : {}),
     ...(v.preview_id ? { preview_id: v.preview_id as string } : {}), ...(v.frame_preview === true ? { frame_preview: true } : {}), ...(v.media_freed === true ? { media_freed: true } : {}), ...(v.source_id ? { source_id: v.source_id as string } : {}) }
 }
 /** A saved baseline, or undefined when it is malformed (the clip then just shows fewer "What changed" lines). */
@@ -383,15 +387,16 @@ function parseAutoBaseline(value: unknown, duration: number): AutoEditBaseline |
     }
   } catch { return undefined }
 }
+function parseBrandMark(value: unknown): BrandMarkOrigin {
+  const m = record(value)
+  if (!['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(m.position as string) || typeof m.logo !== 'boolean') fail()
+  return { handle: str(m.handle, 80), logo: m.logo as boolean, position: m.position as BrandMarkOrigin['position'] }
+}
 function parseAutomaticOrigin(value: unknown): AutomaticOrigin {
   const v = record(value)
   const omitted = arr(v.omitted, AUTOMATIC_OMISSIONS.length).map((x) => AUTOMATIC_OMISSIONS.includes(x as AutomaticOmission) ? x as AutomaticOmission : fail())
   const origin: AutomaticOrigin = { omitted: [...new Set(omitted)], estimated_cuts: v.estimated_cuts === undefined ? 0 : Math.round(num(v.estimated_cuts, 0, 1000)) }
-  if (v.brand_mark !== undefined) {
-    const m = record(v.brand_mark)
-    if (!['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(m.position as string) || typeof m.logo !== 'boolean') fail()
-    origin.brand_mark = { handle: str(m.handle, 80), logo: m.logo as boolean, position: m.position as NonNullable<AutomaticOrigin['brand_mark']>['position'] }
-  }
+  if (v.brand_mark !== undefined) origin.brand_mark = parseBrandMark(v.brand_mark)
   if (v.cta_keyword !== undefined) origin.cta_keyword = /^[A-Z0-9][A-Z0-9-]{1,19}$/.test(str(v.cta_keyword, 20)) ? v.cta_keyword as string : fail()
   if (v.cta_offer !== undefined) origin.cta_offer = str(v.cta_offer, 200)
   return origin

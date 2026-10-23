@@ -13,6 +13,7 @@ import type { BrandIdentity } from '../../shared/remix'
 import type { Page as PageName } from '../components/Sidebar'
 import { BrandPicker } from '../components/BrandIdentityDialog'
 import { EditRecorder } from '../components/EditRecorder'
+import { ClipEditor } from '../components/ClipEditor'
 import { EditReview } from '../components/EditReview'
 import { FilmIdeas } from '../components/FilmIdeas'
 import { FriendlyError } from '../components/FriendlyError'
@@ -77,6 +78,8 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const [importing, setImporting] = useState<ImportProgress[] | null>(null)
   // Camera + screen: a screen recording made with the (one) camera recording, and how they line up.
   const [screen, setScreen] = useState<ScreenPick | null>(null)
+  // The finished reel open in the clip editor (its run folder), or null.
+  const [editing, setEditing] = useState<string | null>(null)
   // The brand and look are kept in a store, so leaving the page and coming back keeps them.
   const brandId = useEditRecordingStore((s) => s.brandId)
   const look = useEditRecordingStore((s) => s.look)
@@ -355,6 +358,9 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
     </>
   )
 
+  if (editing) return <ClipEditor outputDir={editing} onExports={async () => { const folder = editing; setEditing(null); onViewLibrary?.(folder) }}
+    leading={<Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Back to Edit my recording</Button>} />
+
   return (
     <Page width="default">
       {setup ? (
@@ -393,7 +399,9 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
           <div className="mt-4 flex flex-wrap items-start gap-5">
             <video src={localFileUrl(status.output.path)} controls playsInline className="aspect-[9/16] w-[220px] rounded-xl bg-black object-contain shadow-[0_20px_50px_rgb(0_0_0/0.5)]" aria-label="Your reel" />
             <div className="flex flex-col gap-2">
-              {onViewLibrary && <Button variant="primary" icon={<Library className="h-4 w-4" />} onClick={() => onViewLibrary(status.folder)}>Open in Library</Button>}
+              {status.editor && <Button variant="primary" icon={<Scissors className="h-4 w-4" />} data-testid="edit-open-editor" onClick={() => setEditing(status.folder)}>Open in the editor</Button>}
+              {status.editor && <p className="max-w-sm text-2xs text-ink-muted">Move, change or add graphics, switch between full frame and the stage, and change the hook text, captions and cuts. Bake makes the video again.</p>}
+              {onViewLibrary && <Button variant={status.editor ? 'secondary' : 'primary'} icon={<Library className="h-4 w-4" />} onClick={() => onViewLibrary(status.folder)}>Open in Library</Button>}
               <Button variant="secondary" icon={<Video className="h-4 w-4" />} onClick={startOver}>Edit another recording</Button>
               {status.screen && <p className="max-w-sm text-2xs text-ink-muted" data-testid="screen-done">Your screen and camera play together. To show just you, just your screen or a different split in any part, open it in the Library and edit the clip.</p>}
               {status.warnings.map((warning) => <p key={warning} className="max-w-sm text-2xs text-ink-muted">{warning}</p>)}

@@ -54,7 +54,7 @@ SAVED_FIELDS = {**TEMPLATE_FIELDS, 'browser_frame': ('domain', 'title', 'accent'
 ALL_FIELDS = ('value', 'label', 'text', 'title', 'items', 'before', 'after', 'author', 'name', 'role',
               'accent', 'subline', 'final', 'phrase', 'icons', 'keyword', 'lead', 'notes', 'wrong', 'icon')
 # The newer templates are held to every word (the older ones to most words, as before).
-STRICT_TEMPLATES = ('statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta', 'orbit', 'feature_tile') + DIAGRAMS
+STRICT_TEMPLATES = ('statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta', 'orbit', 'feature_tile', 'big_words') + DIAGRAMS
 # Drawn on the stage (top ~56% of a 9:16 frame) when Stage layouts are on; the rest stay cards.
 STAGE_TEMPLATES = ('statement', 'strike_list', 'sticky_notes', 'browser_frame', 'list', 'checklist', 'orbit', 'feature_tile')
 # Most items each template shows (motion-graphics.ts GRAPHIC_ITEM_LIMITS).
@@ -319,10 +319,19 @@ def has_content(template: str, fields: dict[str, str]) -> bool:
     return False
 
 
+# Templates a caller may allow on top of AUTO_TEMPLATES (Edit my recording: big words behind the speaker).
+EXTRA_TEMPLATES = ('big_words',)
+# Most graphics any one video keeps (the clip editor's MAX_GRAPHICS_PER_CLIP).
+MAX_GRAPHICS = 60
+
+
 def _options(options: Optional[dict]) -> dict:
     options = options if isinstance(options, dict) else {}
+    extra = tuple(t for t in options.get('templates') or () if t in EXTRA_TEMPLATES) if isinstance(options.get('templates'), (list, tuple)) else ()
+    limit = options.get('max_cards')
     return {'headline_off': bool(options.get('headline_off')), 'cta_keyword': clean_keyword(options.get('cta_keyword')),
-            'stage': bool(options.get('stage')), 'chapters': bool(options.get('chapters'))}
+            'stage': bool(options.get('stage')), 'chapters': bool(options.get('chapters')), 'templates': AUTO_TEMPLATES + extra,
+            'max_cards': int(limit) if type(limit) is int and 0 < limit <= MAX_GRAPHICS else None}
 
 
 def parse_planned(raw: Any, start_ms: int, end_ms: int, options: Optional[dict] = None) -> list[dict]:
@@ -333,8 +342,9 @@ def parse_planned(raw: Any, start_ms: int, end_ms: int, options: Optional[dict] 
         return []
     opts = _options(options)
     out = []
-    for item in raw[:MAX_SUGGESTED * 2]:
-        if not isinstance(item, dict) or item.get('template') not in AUTO_TEMPLATES:
+    most = max(MAX_SUGGESTED, opts['max_cards'] or 0)
+    for item in raw[:most * 2]:
+        if not isinstance(item, dict) or item.get('template') not in opts['templates']:
             continue
         template = item['template']
         if template == 'headline_pill' and not opts['headline_off']:
@@ -350,14 +360,14 @@ def parse_planned(raw: Any, start_ms: int, end_ms: int, options: Optional[dict] 
         if not start_ms <= at_ms < end_ms:
             continue
         duration = round(seconds * 1000) if seconds is not None else DEFAULT_MS[template]
-        fields = clean_fields(template, item)
+        fields = clean_fields(template, item, SAVED_FIELDS)
         if not has_content(template, fields):
             continue
         placement = item.get('placement') if item.get('placement') in PLACEMENTS else (
             'bottom' if template == 'lower_third' else 'middle' if template in ('title', 'comment_cta') else 'top')
         out.append({'template': template, 'at_ms': at_ms, 'duration_ms': max(MIN_MS, min(DIAGRAM_AUTO_MAX_MS if template in DIAGRAMS else MAX_MS, duration)),
                     'placement': placement, 'fields': fields})
-        if len(out) >= MAX_SUGGESTED:
+        if len(out) >= most:
             break
     return out
 
@@ -945,7 +955,7 @@ def window(ranges: Sequence[Sequence[float]], speed: float, at: float, length: f
 
 _PRIORITY = {'stat': 6, 'strike_list': 6, 'list': 5, 'checklist': 5, 'statement': 5, 'headline_pill': 5, 'sticky_notes': 4,
              'icon_pop': 4, 'before_after': 4, 'lower_third': 4, 'comment_cta': 3, 'quote': 2, 'title': 1, 'browser_frame': 4,
-             'orbit': 5, 'feature_tile': 4, **{t: 7 for t in DIAGRAMS}}
+             'orbit': 5, 'feature_tile': 4, 'big_words': 3, **{t: 7 for t in DIAGRAMS}}
 
 
 def _priority(g: dict) -> int:
@@ -996,7 +1006,7 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
     candidates = []
     for g in planned:
         template = g.get('template')
-        if template not in AUTO_TEMPLATES or not isinstance(g.get('fields'), dict):
+        if template not in opts['templates'] or not isinstance(g.get('fields'), dict):
             continue
         if template == 'headline_pill' and not opts['headline_off']:
             continue
@@ -1061,7 +1071,7 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
     # One diagram per section: the sections are the chapters when there are some.
     section = lambda t: sum(1 for c in chapters if c['at_ms'] <= t)  # noqa: E731
     kept: list[dict] = []
-    limit = max_cards(total_out)
+    limit = opts['max_cards'] or max_cards(total_out)
     for g in sorted(candidates, key=lambda g: (-_priority(g), g['at_ms'])):
         if len(kept) >= limit:
             break
@@ -1154,11 +1164,11 @@ def on_stage(graphic: dict, scenes: Sequence[dict]) -> bool:
 
 
 def checked_saved(raw: Any, duration_ms: int) -> list[dict]:
-    """Graphics read back from a run (job_output metrics) for the editor: well-formed ones only, at most 12."""
+    """Graphics read back from a run (job_output metrics) for the editor: well-formed ones only, at most MAX_GRAPHICS."""
     if not isinstance(raw, list):
         return []
     out, ids = [], set()
-    for g in raw[:12]:
+    for g in raw[:MAX_GRAPHICS]:
         if not isinstance(g, dict) or g.get('template') not in SAVED_TEMPLATES:
             continue
         gid, at, length = g.get('id'), g.get('at_ms'), g.get('duration_ms')
@@ -1185,7 +1195,7 @@ def checked_saved(raw: Any, duration_ms: int) -> list[dict]:
 
 def checked_saved_scenes(raw: Any, duration_ms: int) -> list[dict]:
     """Stage scenes read back from a run (source time) for the editor: checked like the editor's (none on any doubt)."""
-    if not isinstance(raw, list) or not raw or len(raw) > 24:
+    if not isinstance(raw, list) or not raw or len(raw) > 60:
         return []
     out = []
     for s in raw:
