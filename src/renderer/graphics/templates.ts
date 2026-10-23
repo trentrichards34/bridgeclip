@@ -20,6 +20,7 @@ import { createTimeline } from 'animejs'
 import './graphics.css'
 import { ICONS } from './icons'
 import { bigWordsTemplate } from './big-words'
+import { mountEffect } from './fx/mount'
 import { ctaTemplate } from './cta'
 import { chapterTemplate, compareMarksTemplate, funnelTemplate, growthTemplate, ideaHubTemplate, journeyTemplate, staircaseTemplate } from './diagrams'
 import {
@@ -194,6 +195,8 @@ interface Build {
 }
 
 export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): MountedGraphic {
+  // Effects (HyperFrames units) run their own GSAP timeline in a shadow root (fx/mount.ts).
+  if (spec.template === 'fx') return mountEffect(host, spec)
   const { width: W, height: H } = spec
   const size = spec.size === 'compact' || spec.size === 'stage' ? spec.size : 'card'
   const u = Math.min(W, H) / 1080 * SIZE_SCALE[size]
@@ -981,7 +984,9 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
   journey(b) { journeyTemplate(b) },
   growth(b) { growthTemplate(b) },
   idea_hub(b) { ideaHubTemplate(b) },
-  compare_marks(b) { compareMarksTemplate(b) }
+  compare_marks(b) { compareMarksTemplate(b) },
+  // Effects never get here: mountGraphic hands them to fx/mount.ts.
+  fx() { /* see mountEffect */ }
 }
 
 /** The badge icon for a number: money, people, a share, else a rising line (decoration: never a claim). */

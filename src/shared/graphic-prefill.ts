@@ -6,6 +6,7 @@
  * said in words ("fourteen hundred") is written in digits ("1,400").
  */
 import { spokenCta } from './spoken-cta'
+import { fxEffect } from './fx-catalog'
 import { GRAPHIC_ITEM_LIMITS, MAX_BIG_WORDS, MAX_GRAPHIC_FIELD_CHARS, type GraphicTemplateId, type TimedWord } from './motion-graphics'
 
 export interface GraphicPrefill {
@@ -251,4 +252,69 @@ export function spokenSteps(words: readonly TimedWord[], ranges: readonly [numbe
     out.push({ at_ms: w.start_ms, label, title: titleCase(join(title)), end_ms: title[title.length - 1].end_ms })
   }
   return out
+}
+
+/** Fields picked from the main line rather than filled with a phrase of their own (a word to mark in it). */
+const FROM_LINE = ['word', 'underline', 'emphasis']
+
+/**
+ * Starting words for an effect (fx-catalog.ts) at `at`: a number said there for its number field, the phrases said
+ * from there for its text fields (one phrase each, cut to fit), the next phrases as its list's items, and a word to
+ * mark taken from its line. Only words said, in the order said; empty when nothing fits.
+ */
+export function prefillEffect(effectId: string, words: readonly TimedWord[], at: number, options: { line?: string; until?: number } = {}): GraphicPrefill {
+  const effect = fxEffect(effectId)
+  const none: GraphicPrefill = { fields: {}, last_ms: null, first_ms: null }
+  if (!effect) return none
+  const timed = words.length > 0
+  const said = timed ? words.filter((w) => w.start_ms <= (options.until ?? Infinity)) : lineWords(options.line, at)
+  const from = said.findIndex((w) => w.end_ms > at - 40)
+  if (from < 0) return none
+  const back = Math.max(0, said.findIndex((w) => w.start_ms >= said[from].start_ms - 6000))
+  const all = phrases(said, back, said[from].start_ms - said[back].start_ms + (timed ? ITEMS_AHEAD_MS : 1e9))
+  let k = all.findIndex((p) => p.includes(said[from]))
+  if (k < 0) k = Math.max(0, all.findIndex((p) => p[0].start_ms >= said[from].start_ms))
+  const list = all.slice(k).filter((p) => p.length)
+  const fields: Record<string, string> = {}
+  const used: TimedWord[] = []
+  // A number said from here on: its digits, and what is said around it (%, $) for the effect's own affixes.
+  const numberField = effect.fields.find((f) => f.kind === 'number' && f.said && f.required) ?? effect.fields.find((f) => f.key === 'value' && f.kind === 'text')
+  if (numberField) {
+    for (let i = from; i < Math.min(said.length, from + 40); i++) {
+      const n = spokenNumber(said, i)
+      if (!n) continue
+      const m = /^([^\d]*)([\d,]+(?:\.\d+)?)(.*)$/.exec(n.text)
+      if (!m) continue
+      fields[numberField.key] = numberField.kind === 'number' ? m[2].replaceAll(',', '') : m[2]
+      const affix = (key: string, value: string): void => { if (value.trim() && effect.fields.some((f) => f.key === key)) fields[key] = value.trim() }
+      affix('prefix', m[1]); affix('suffix', m[3]); affix('unit', m[3])
+      if (effect.fields.some((f) => f.key === 'label' && f.kind === 'text') && effect.id === 'conic-progress-ring') fields.label = n.text
+      used.push(...said.slice(i, i + n.count))
+      break
+    }
+    if (!used.length) return none
+  }
+  let next = 0
+  // With a number, the effect is about it: its other words (a label, a unit) are left to the member.
+  // Names are never filled from what is said near it (only the member types one).
+  const texts = numberField ? [] : effect.fields.filter((f) => f.kind === 'text' && f.said && !f.manual && !FROM_LINE.includes(f.key))
+  for (const f of texts.filter((t) => t.required).concat(texts.filter((t) => !t.required)).slice(0, 2)) {
+    const phrase = list[next++]
+    if (!phrase) break
+    const most = Math.max(1, Math.min(7, Math.round((f.max ?? 40) / 6)))
+    const picked = most <= 2 ? strongPair(phrase).slice(0, most) : keyWords(phrase, most)
+    if (!picked.length) continue
+    fields[f.key] = fit(capital(join(picked)).slice(0, f.max ?? MAX_GRAPHIC_FIELD_CHARS))
+    used.push(...picked)
+    // A word to mark in this line: its strongest word.
+    const mark = effect.fields.find((x) => FROM_LINE.includes(x.key))
+    if (mark && !fields[mark.key] && picked.length > 1) { const w = strongPair(picked)[0]; if (w) fields[mark.key] = tidy(w.word) }
+  }
+  const listField = effect.fields.find((f) => f.kind === 'list' && f.said && f.required)
+  if (listField && !numberField) {
+    const items = list.slice(next).map((p) => keyWords(p, 2)).filter(goodItem).slice(0, 4)
+    if (items.length) { fields[listField.key] = items.map((p) => capital(join(p))).join('\n'); used.push(...items.flat()) }
+  }
+  if (!Object.keys(fields).length) return none
+  return { fields, last_ms: used.length ? Math.max(...used.map((w) => w.end_ms)) : null, first_ms: used.length ? Math.min(...used.map((w) => w.start_ms)) : null }
 }

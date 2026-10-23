@@ -1,9 +1,10 @@
 import { execFileSync } from 'child_process'
-import { readFileSync, readdirSync, statSync } from 'fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
 import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import type { Plugin } from 'vite'
+import { effectModule } from './src/shared/fx-html'
 
 const { version } = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8')) as { version: string }
 
@@ -36,10 +37,31 @@ function bundledLicenseNotices(): Plugin {
       for (const directory of [...directories].sort()) {
         const pkg = JSON.parse(readFileSync(resolve(directory, 'package.json'), 'utf8'))
         const files = readdirSync(directory).filter((name) => /^(licen[sc]e|copying|notice)([.-]|$)/i.test(name) && statSync(resolve(directory, name)).isFile()).sort()
-        if (!files.length) this.error(`Missing bundled license text: ${pkg.name}@${pkg.version}`)
-        notices.push(`${pkg.name}@${pkg.version}\nDeclared license: ${pkg.license ?? 'See notice'}\n\n${files.map((name) => readFileSync(resolve(directory, name), 'utf8')).join('\n\n')}`)
+        const texts = files.map((name) => readFileSync(resolve(directory, name), 'utf8'))
+        // A package that ships no license file has its notice kept in scripts/licenses/ (GSAP: its source headers).
+        const kept = resolve(__dirname, 'scripts/licenses', `${pkg.name}-NOTICE.txt`)
+        if (!texts.length && /^[a-z0-9-]+$/.test(pkg.name) && existsSync(kept)) texts.push(readFileSync(kept, 'utf8'))
+        if (!texts.length) this.error(`Missing bundled license text: ${pkg.name}@${pkg.version}`)
+        notices.push(`${pkg.name}@${pkg.version}\nDeclared license: ${pkg.license ?? 'See notice'}\n\n${texts.join('\n\n')}`)
       }
       this.emitFile({ type: 'asset', fileName: 'THIRD_PARTY_LICENSES.txt', source: notices.join('\n\n----------------------------------------\n\n') })
+    }
+  }
+}
+
+/**
+ * Effects: a vendored HyperFrames unit imported as `<file>.html?fx` becomes a module (its styles, markup and one
+ * script function), so the render page runs it under its CSP with no inline scripts (src/shared/fx-html.ts).
+ */
+function hyperframesEffects(): Plugin {
+  return {
+    name: 'hyperframes-effects',
+    enforce: 'pre',
+    load(id) {
+      const match = /^(.*\.html)\?fx(?:&.*)?$/.exec(id)
+      if (!match) return null
+      this.addWatchFile(match[1])
+      return effectModule(readFileSync(match[1], 'utf8'))
     }
   }
 }
@@ -78,6 +100,7 @@ export default defineConfig({
     },
     plugins: [
       react(),
+      hyperframesEffects(),
       bundledLicenseNotices(),
       {
         name: 'development-content-security-policy',

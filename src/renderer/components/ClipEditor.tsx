@@ -31,7 +31,7 @@ import { ScenesOverlay, ScenesTrack } from './ClipScenes'
 import { GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, duplicateGraphic, fitGraphicInCut, graphicLocalMs, hookEndMs, nearestOutputTime, outputTime, placeInFreeBand, removeGraphic, withGraphic, type EditorGraphic, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { stageHookEndMs } from '../../shared/scenes'
 import { graphicStyle } from '../../shared/graphic-layout'
-import { prefillGraphic } from '../../shared/graphic-prefill'
+import { prefillEffect, prefillGraphic } from '../../shared/graphic-prefill'
 import { EditLog } from './EditLog'
 import { ScreenLayoutRow } from './ScreenLayouts'
 import { SCREEN_KIND_LABELS, bubbleRect, screenKindOf, screenScene, screenShareOf, type ScreenKind } from '../../shared/screen-pair'
@@ -615,8 +615,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   /** A graphic from the gallery at the gallery's spot: filled with the words said there, selected and shown on the preview. */
   const insertGraphic = (template: GraphicTemplateId, look?: string): void => {
     if (gallery === null || editingDisabled) return
-    const draft = draftGraphic(project, candidate, template, gallery, clipWords)
-    const g = look ? { ...draft, fields: { ...draft.fields, variant: look } } : draft
+    // For an effect, `look` is which effect.
+    const draft = draftGraphic(project, candidate, template, gallery, clipWords, template === 'fx' ? look : undefined)
+    const g = look && template !== 'fx' ? { ...draft, fields: { ...draft.fields, variant: look } } : draft
     setGraphics(withGraphic(candidate, g)); setGraphicId(g.id); setGallery(null); setTab('graphics')
     showGraphic(g)
   }
@@ -1170,6 +1171,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       limitNote={`A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics. Remove one to add another.`}
       where={(() => { const words = clipWords.filter((w) => w.end_ms > gallery - 150).slice(0, 5).map((w) => w.word).join(' '); return `at ${clipClock(gallery)}${words ? `, on “${words}…”` : ''}` })()}
       prefill={(template) => prefillGraphic(template, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
+      prefillEffect={(effect) => prefillEffect(effect, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
       looks onPick={insertGraphic} onClose={() => setGallery(null)} />}
   </section>
 }
