@@ -20,7 +20,7 @@ import { copyFile, open as openFile } from 'fs/promises'
 import { extname, join } from 'path'
 import { BrowserWindow, session, type BrowserWindowConstructorOptions, type Session } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import { GRAPHIC_FPS, GRAPHICS_VERSION, SCREEN_FADE_MS, SCREEN_VIDEO_FILE, graphicDepth, graphicHasContent, graphicUsesImage, graphicWindow, screenFrameLayout, screenFrom, screenZoom, type EditorGraphic, type GraphicRenderSpec, type GraphicSize } from '../shared/motion-graphics'
+import { GRAPHIC_FPS, GRAPHICS_VERSION, SCREEN_FADE_MS, SCREEN_VIDEO_FILE, graphicDepth, graphicHasContent, graphicUsesImage, graphicWindow, screenFrameLayout, screenFrom, screenZoom, type EditorGraphic, type GraphicDepth, type GraphicRenderSpec, type GraphicSize } from '../shared/motion-graphics'
 import { graphicSpec } from '../shared/graphic-layout'
 import type { EditorCandidate, EditorProject } from '../shared/clip-editor'
 import { resolveBinary } from './tools'
@@ -40,9 +40,9 @@ const IMAGE_FILE = /^[a-f0-9]{16}\.(png|jpg|webp)$/
 /**
  * One rendered graphic for the engine: a file in the run's .graphics/ folder and its OUTPUT-time window.
  * `size`: 'compact' or 'stage' when the graphic isn't the usual card (a stage scene can make room for a stage-size one).
- * `depth`: 'behind' when the engine lays the speaker back over it (absent: in front).
+ * `depth`: 'behind' when the engine lays the speaker back over it, 'between' for a Type takeover (absent: in front).
  */
-export interface RenderedGraphic { id: string; file: string; start_ms: number; duration_ms: number; size?: GraphicSize; depth?: 'behind'; inset?: GraphicInset; min_top?: number }
+export interface RenderedGraphic { id: string; file: string; start_ms: number; duration_ms: number; size?: GraphicSize; depth?: 'behind' | 'between'; inset?: GraphicInset; min_top?: number }
 
 /**
  * A Screen recording's video, which the engine plays under the drawn window: a file in the run's
@@ -301,7 +301,7 @@ let makeRenderer: RendererFactory = openGraphicRenderer
 export function setGraphicRendererFactory(factory: RendererFactory | null): void { makeRenderer = factory ?? openGraphicRenderer }
 
 /** One graphic to draw: what it shows, its cache name, where it plays (output ms) and whether it sits behind the speaker. */
-export interface GraphicJob { id: string; spec: GraphicRenderSpec; key: string; start_ms: number; duration_ms: number; depth?: 'behind'; inset?: GraphicInset }
+export interface GraphicJob { id: string; spec: GraphicRenderSpec; key: string; start_ms: number; duration_ms: number; depth?: 'behind' | 'between'; inset?: GraphicInset }
 
 /** Renders made outside the clip editor (Edit my recording, Remix) are kept in .graphics/reel/: the editor's sweep never removes them. */
 export const REEL_GRAPHICS_DIR = 'reel'
@@ -310,7 +310,7 @@ export const REEL_GRAPHICS_DIR = 'reel'
  * A job for a graphic drawn from `spec`. Its picture (Logo pop, Browser window, Icon row) is loaded from the run;
  * null when Logo pop's is missing, or when another template's picture is missing and it has nothing else to show.
  */
-export function graphicJob(run: string, id: string, spec: GraphicRenderSpec, window: { start_ms: number; duration_ms: number }, image?: string, depth?: 'front' | 'behind'): GraphicJob | null {
+export function graphicJob(run: string, id: string, spec: GraphicRenderSpec, window: { start_ms: number; duration_ms: number }, image?: string, depth?: GraphicDepth): GraphicJob | null {
   let imageHash: string | undefined
   if (graphicUsesImage(spec.template) && (image || spec.template === 'logo')) {
     const data = graphicImageData(run, image)
@@ -320,7 +320,7 @@ export function graphicJob(run: string, id: string, spec: GraphicRenderSpec, win
     } else if (spec.template === 'logo' || !graphicHasContent({ template: spec.template, fields: spec.fields })) return null
   }
   // Depth doesn't change the render's pixels (the engine does the layering), so it isn't part of the cache name.
-  return { id, spec, key: graphicCacheKey(spec, imageHash), start_ms: window.start_ms, duration_ms: window.duration_ms, ...(depth === 'behind' ? { depth } : {}) }
+  return { id, spec, key: graphicCacheKey(spec, imageHash), start_ms: window.start_ms, duration_ms: window.duration_ms, ...(depth === 'behind' || depth === 'between' ? { depth } : {}) }
 }
 
 /**
@@ -353,7 +353,8 @@ export async function renderGraphicJobs(run: string, jobs: GraphicJob[], cancell
       }
       done.push({ id: job.id, file, start_ms: job.start_ms, duration_ms: job.duration_ms, ...(job.spec.size ? { size: job.spec.size } : {}),
         // Behind the speaker: the highest the engine may move the words to clear the head (the band's top).
-        ...(job.depth === 'behind' ? { depth: job.depth, min_top: Math.round(job.spec.box.top * 10000) / 10000 } : {}), ...(job.inset ? { inset: job.inset } : {}) })
+        ...(job.depth === 'behind' ? { depth: job.depth, min_top: Math.round(job.spec.box.top * 10000) / 10000 } : job.depth === 'between' ? { depth: job.depth } : {}),
+        ...(job.inset ? { inset: job.inset } : {}) })
     }
   } finally { renderer?.close() }
   return done

@@ -101,7 +101,7 @@ function removePlan(run: string): void {
   try { unlinkSync(join(run, GRAPHICS_PLAN_FILE)) } catch { /* gone */ }
 }
 
-type LayRequest = { clip_index: number; graphics: { file: string; start_ms: number; duration_ms: number; depth?: 'behind' }[] }
+type LayRequest = { clip_index: number; graphics: { file: string; start_ms: number; duration_ms: number; depth?: 'behind' | 'between' }[] }
 type LayResult = { done: number[]; failed: number[]; cancelled: boolean }
 
 /** Run the engine's overlay once for the run. Clips it reports are final; the rest count as failed. */

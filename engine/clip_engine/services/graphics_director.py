@@ -36,6 +36,8 @@ AUTO_FX = ag.AUTO_FX
 NUMBER_FX = ('count-up', 'number-pop-in', 'conic-progress-ring', 'star-rating-fill', 'chart-story', 'decline-chart')
 # "The single most important line": at most SLAM_MAX of these in a whole video (emphasis is spent, not spread).
 SLAM_FX = ('headline-slam', 'per-word-rise', 'kinetic-center-build')
+# The same family: the type takeover (the line in huge type over the whole frame, the head between its lines).
+SLAM_KINDS = frozenset((*(f'fx:{e}' for e in SLAM_FX), 'takeover'))
 SLAM_MAX = 2
 # Plain text cards: a fallback, at most one per PLAIN_SECONDS of video (at least one).
 PLAIN = ('statement', 'quote', 'sticky_notes', 'big_words')
@@ -80,8 +82,17 @@ CUE_VISUALS = {
     'brand': ('icon_pop',),
     'screen': ('browser_frame', 'screen_frame'),
     'cta': ('comment_cta', 'link_cta', 'fx:cta-lockup'),
+    # The line the video turns on ("here's the thing: ...", "the truth is ..."): the single most important line.
+    'punchline': ('takeover', 'fx:headline-slam', 'fx:per-word-rise'),
     'story': (),
 }
+# What marks the line a video turns on (the punchline): a turn into the point, said out loud.
+_PUNCHLINE = (('here\'s', 'the', 'thing'), ('the', 'truth', 'is'), ('the', 'secret', 'is'), ('the', 'real', 'reason'),
+              ('nobody', 'tells', 'you'), ('the', 'biggest', 'mistake'), ('if', 'you', 'remember', 'one', 'thing'),
+              ('that\'s', 'the', 'whole', 'game'), ('the', 'one', 'thing'), ('this', 'changed', 'everything'),
+              ('most', 'people', 'never'), ('stop', 'trying', 'to'))
+# A punchline line short enough for the takeover's huge type (words).
+PUNCHLINE_WORDS = (3, 9)
 _MONEY = re.compile(r'^\$|^(dollars?|bucks|grand|revenue|sales|profit|income|earned|made|spent|paid)$')
 _PERCENT_WORDS = ('percent', 'percentage', '%')
 _RATING_WORDS = ('stars', 'star', 'rated', 'rating', 'reviews')
@@ -249,6 +260,8 @@ def find_cues(segments: Sequence) -> list[dict]:
             add('screen', start)
         if any(_has(toks, p) is not None for p in _CTA):
             add('cta', start)
+        if PUNCHLINE_WORDS[0] <= len(sentence) <= PUNCHLINE_WORDS[1] and any(_has(toks, p) is not None for p in _PUNCHLINE):
+            add('punchline', start)
         index += len(sentence)
     for a, b in stories:
         if b - a >= STORY_MIN_MS:
@@ -322,8 +335,8 @@ def plain_cap(seconds: float) -> int:
 def group_allows(kind: str, kept: Sequence[dict], seconds: float) -> bool:
     if kind in PLAIN:
         return sum(1 for k in kept if kind_of(k) in PLAIN) < plain_cap(seconds)
-    if effect_of(kind) in SLAM_FX:
-        return sum(1 for k in kept if effect_of(kind_of(k)) in SLAM_FX) < SLAM_MAX
+    if kind in SLAM_KINDS:
+        return sum(1 for k in kept if kind_of(k) in SLAM_KINDS) < SLAM_MAX
     return True
 
 
@@ -687,6 +700,7 @@ CONVERSIONS = {
     'quote': ('fx:marker-highlight', 'fx:per-word-rise', 'headline_pill', 'title', 'statement'),
     'title': ('fx:headline-slam', 'fx:kinetic-center-build', 'big_words', 'headline_pill', 'statement'),
     'big_words': ('fx:headline-slam', 'fx:kinetic-center-build', 'title', 'headline_pill'),
+    'takeover': ('fx:headline-slam', 'fx:per-word-rise', 'title', 'headline_pill'),
     'headline_pill': ('fx:marker-highlight', 'fx:per-word-rise', 'statement', 'big_words', 'title'),
     'sticky_notes': ('fx:state-chip-rail', 'feature_tile', 'icon_pop', 'orbit', 'checklist', 'list', 'idea_hub'),
     'list': ('checklist', 'fx:state-chip-rail', 'feature_tile', 'icon_pop', 'orbit', 'sticky_notes'),
@@ -747,7 +761,9 @@ def director_rule(register: Optional[str] = None, comment: bool = False) -> str:
         '- one idea with many parts -> fx constellation-hub, locked-nucleus-orbit, radial-surround, overwhelm-surround, or "orbit"/"idea_hub";\n'
         '- a named app or brand -> "icon_pop"; typing / a prompt / a message -> fx typed-prompt or typing-indicator;\n'
         '- a result quoted from a customer -> fx testimonial-proof-card (no name unless said);\n'
-        '- THE single most important line -> fx headline-slam, per-word-rise or kinetic-center-build (at most 2 in the whole video);\n'
+        '- THE single most important line -> "takeover" (the whole line in huge type over the frame, the speaker\'s head between its '
+        'lines; 3-9 words exactly as said, "accent" = its key word; 1.5-3 s) or fx headline-slam, per-word-rise or kinetic-center-build '
+        '(at most 2 of these in the whole video, together);\n'
         '- a key phrase -> fx marker-highlight or vox-annotate (word = the phrase\'s key word, inside text);\n'
         '- personal story or emotion -> NOTHING (the face and captions carry it);\n'
         + ('- a call to action (comment X / the link) -> "comment_cta" or fx cta-lockup.\n' if comment else

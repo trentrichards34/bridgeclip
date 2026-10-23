@@ -209,9 +209,37 @@ def punch_windows(words: Sequence[tuple[float, float, str]], total_s: float, eli
     return [(round(a, 3), round(b, 3)) for a, b in tight if b - a >= PUNCH_MIN_PIECE_S]
 
 
-def punch_rect(width: int, height: int, center: Optional[tuple[float, float]]) -> tuple[int, int, int, int]:
+# Rhythm cuts keep this far from a punch-in on a cue (seconds), so the two never read as one jittery move.
+CUE_CLEARANCE_S = 1.2
+
+
+@dataclass(frozen=True)
+class PunchPlan:
+    """Where the Zoom extra punches in: `cues` (depth_fx.CuePunch: a decelerating push-in landing on a stressed word,
+    held, cut back) and `rhythm` (the wide/tight phrase rhythm's hard cuts in the stretches with no cue near)."""
+
+    cues: tuple = ()
+    rhythm: tuple[Span, ...] = ()
+
+
+def punch_plan(words: Sequence[tuple[float, float, str]], total_s: float, eligible: Optional[list[Span]] = None,
+               blocked: Sequence[Span] = (), fps: float = 30.0) -> PunchPlan:
+    """The punch-ins for a video: first on cues (depth_fx.punch_cues: turns, reveals, numbers), only where the speaker
+    fills the frame (`eligible`) and nothing else is on screen (`blocked`); then the phrase rhythm (punch_windows) in
+    what is left, kept CUE_CLEARANCE_S away from each cue punch."""
+    from clip_engine.services import depth_fx
+    allowed = [(0.0, float(total_s))] if eligible is None else _merge(eligible)
+    allowed = _subtract(allowed, list(blocked))
+    cues = [p for p in depth_fx.punch_cues(words, total_s, fps)
+            if any(a <= p.start and p.end <= b for a, b in allowed)]
+    near = [(p.start - CUE_CLEARANCE_S, p.end + CUE_CLEARANCE_S) for p in cues]
+    rhythm = punch_windows(words, total_s, eligible, [*blocked, *near])
+    return PunchPlan(tuple(cues), tuple(rhythm))
+
+
+def punch_rect(width: int, height: int, center: Optional[tuple[float, float]], zoom: float = PUNCH_ZOOM) -> tuple[int, int, int, int]:
     """The tight shot's crop (x, y, w, h) around the face center (output px); no face: the upper middle."""
-    cw, ch = _even(width / PUNCH_ZOOM), _even(height / PUNCH_ZOOM)
+    cw, ch = _even(width / zoom), _even(height / zoom)
     cx, cy = center if center else (width / 2, height * 0.40)
     x = min(max(0, round(cx - cw / 2)), width - cw)
     y = min(max(0, round(cy - ch * PUNCH_FACE_Y)), height - ch)
@@ -219,14 +247,39 @@ def punch_rect(width: int, height: int, center: Optional[tuple[float, float]]) -
 
 
 def punch_graph(src: str, dst: str, width: int, height: int, windows: list[tuple[float, float, tuple[int, int, int, int]]],
-                tag: str = "pz") -> str:
+                tag: str = "pz", ramps: Sequence[tuple[float, int, tuple[int, int, int, int]]] = (), fps: str = "30") -> str:
     """Filter-graph text from [src] to [dst]: during each window, a crop of the frame scaled back up (a hard cut in
-    and out, the crop fixed for the window, so no wobble). With no windows, a plain copy."""
-    if not windows:
+    and out, the crop fixed for the window, so no wobble). With no windows, a plain copy.
+
+    `ramps` ((start s, frames, crop)): a cue punch's push-in frames before its held window, zoomed smoothly from the
+    full frame to the crop (depth_fx.ramp_chain), laid over their own few frames."""
+    if not windows and not ramps:
         return f"[{src}]null[{dst}]"
     parts = []
     current = src
-    groups = [windows[i:i + PUNCH_GROUP] for i in range(0, len(windows), PUNCH_GROUP)]
+    if ramps:
+        from clip_engine.services import depth_fx
+        num, _, den = fps.partition("/")
+        rate = int(num) / int(den or 1)
+        n = len(ramps)
+        parts.append(f"[{src}]split={n + 1}[{tag}r_m]" + "".join(f"[{tag}r_c{k}]" for k in range(n)))
+        current = f"{tag}r_m"
+        for k, (start, frames, rect) in enumerate(ramps):
+            zoom = width / rect[2]
+            parts.append(depth_fx.ramp_chain(f"{tag}r_c{k}", f"{tag}r_z{k}", start, frames, fps, width, height, rect, zoom))
+            nxt = dst if (k == n - 1 and not windows) else f"{tag}r_o{k}"
+            parts.append(f"[{current}][{tag}r_z{k}]overlay=0:0:eof_action=pass:enable='between(t,{start:.4f},{start + (frames - 0.5) / rate:.4f})'[{nxt}]")
+            current = nxt
+        if not windows:
+            return ";".join(parts)
+    # Windows with the same crop size go together (an expression picks each one's place).
+    windows = sorted(windows, key=lambda w: (w[2][2], w[2][3], w[0]))
+    groups = []
+    for w in windows:
+        if groups and groups[-1][0][2][2:] == w[2][2:] and len(groups[-1]) < PUNCH_GROUP:
+            groups[-1].append(w)
+        else:
+            groups.append([w])
     for g, group in enumerate(groups):
         out = dst if g == len(groups) - 1 else f"{tag}{g}o"
         cw, ch = group[0][2][2], group[0][2][3]
@@ -706,18 +759,22 @@ def parse_highlight(raw: Any) -> Optional[tuple[float, float, float, float]]:
 # ---------------------------------------------------------------------------
 
 def create_punch(graph: str, extras: LookExtras, plan: Any, out_plan: Any, time_map: Any, words: Sequence[tuple[float, float, str]],
-                 width: int, height: int, blocked: Sequence[Span]) -> str:
+                 width: int, height: int, blocked: Sequence[Span], fps: str = "30", found: Optional[list] = None) -> str:
     """Create: the zoom punch on the speaker panel ([base] of the layout graph, width x height), only over
-    talking-head shots (never a split, a screen share or the letterbox) and never during b-roll."""
+    talking-head shots (never a split, a screen share or the letterbox) and never during b-roll: punch-ins on cues
+    first, the phrase rhythm in between (punch_plan). The cue punches placed are added to `found`."""
     if not extras.has("punch_zoom") or plan is None or out_plan is None or graph.count("[base]") != 1:
         return graph
     from clip_engine.services.layout_analyzer import LayoutType
     eligible = [(s.start_ms / 1000, s.end_ms / 1000) for s in out_plan.shots
                 if s.layout == LayoutType.TALKING_HEAD and len(getattr(s, "manual_crops", None) or []) < 2
                 and getattr(s, "content_box", None) is None]
-    windows = punch_windows(words, time_map.output_ms / 1000, eligible, blocked)
-    if not windows:
+    from fractions import Fraction
+    plan_ = punch_plan(words, time_map.output_ms / 1000, eligible, blocked, float(Fraction(fps)))
+    if not plan_.cues and not plan_.rhythm:
         return graph
+    if found is not None:
+        found.extend(plan_.cues)
     zones = []
     if height > width:
         try:
@@ -725,8 +782,26 @@ def create_punch(graph: str, extras: LookExtras, plan: Any, out_plan: Any, time_
             zones = face_zones(plan, time_map, width, height)
         except Exception as error:  # noqa: BLE001 - without faces the punch-in centers on the upper middle
             logger.warning(f"Face zones for the zoom punch failed: {type(error).__name__}")
-    placed = [(a, b, punch_rect(width, height, zone_center(zones, a * 1000, b * 1000))) for a, b in windows]
-    return graph.replace("[base]", "[pz_in]") + ";" + punch_graph("pz_in", "base", width, height, placed)
+    centers = [zone_center(zones, p.start * 1000, p.end * 1000) for p in plan_.cues]
+    placed, ramps = cue_windows(plan_.cues, centers, width, height, fps)
+    placed += [(a, b, punch_rect(width, height, zone_center(zones, a * 1000, b * 1000))) for a, b in plan_.rhythm]
+    return graph.replace("[base]", "[pz_in]") + ";" + punch_graph("pz_in", "base", width, height, placed, ramps=ramps, fps=fps)
+
+
+def cue_windows(cues: Sequence[Any], centers: Sequence[Optional[tuple[float, float]]], width: int, height: int,
+                fps: str = "30") -> tuple[list[tuple[float, float, tuple[int, int, int, int]]], list[tuple[float, int, tuple[int, int, int, int]]]]:
+    """The cue punches as punch_graph input: each one's held window (from its word to its cut) and its push-in ramp
+    (the frames before its word), both on the punch's crop at depth_fx.CUE_ZOOM around the face."""
+    from fractions import Fraction
+    from clip_engine.services import depth_fx
+    rate = float(Fraction(fps))
+    held, ramps = [], []
+    for p, center in zip(cues, centers):
+        rect = punch_rect(width, height, center, depth_fx.CUE_ZOOM)
+        frames = max(2, round((p.land - p.start) * rate))
+        ramps.append((p.start, frames, rect))
+        held.append((round(p.start + frames / rate, 4), p.end, rect))
+    return held, ramps
 
 
 def create_layers(extras: LookExtras, request: Any, out_plan: Any, work: str, width: int, height: int, bar_h: int,
@@ -786,17 +861,21 @@ def create_layers(extras: LookExtras, request: Any, out_plan: Any, work: str, wi
 
 def reel_punch(extras: LookExtras, video: str, words: Sequence[tuple[float, float, str]], total_s: float, width: int, height: int,
                src: str, dst: str, *, eligible: Optional[list[Span]] = None, blocked: Sequence[Span] = (),
-               shown_size: Optional[tuple[int, int]] = None, offset: tuple[float, float] = (0, 0)) -> str:
+               shown_size: Optional[tuple[int, int]] = None, offset: tuple[float, float] = (0, 0), found: Optional[list] = None) -> str:
     """The zoom punch on a panel-sized stream ([src] -> [dst], width x height) made from `video`, the face found in
     the video itself (`shown_size`/`offset`: how the video is scaled and placed on the panel; default: as is)."""
     if not extras.has("punch_zoom"):
         return f"[{src}]null[{dst}]"
-    windows = punch_windows(words, total_s, eligible, blocked)
-    if not windows:
+    plan_ = punch_plan(words, total_s, eligible, blocked)
+    if not plan_.cues and not plan_.rhythm:
         return f"[{src}]null[{dst}]"
-    boxes = face_boxes(video, windows, shown_size or (width, height), (round(offset[0]), round(offset[1])))
-    placed = [(a, b, punch_rect(width, height, center_of(box))) for (a, b), box in zip(windows, boxes)]
-    return punch_graph(src, dst, width, height, placed)
+    if found is not None:
+        found.extend(plan_.cues)
+    spans = [(p.start, p.end) for p in plan_.cues] + list(plan_.rhythm)
+    boxes = face_boxes(video, spans, shown_size or (width, height), (round(offset[0]), round(offset[1])))
+    placed, ramps = cue_windows(plan_.cues, [center_of(b) for b in boxes[:len(plan_.cues)]], width, height)
+    placed += [(a, b, punch_rect(width, height, center_of(box))) for (a, b), box in zip(plan_.rhythm, boxes[len(plan_.cues):])]
+    return punch_graph(src, dst, width, height, placed, ramps=ramps)
 
 
 def reel_layers(extras: LookExtras, work: str, *, width: int, height: int, total_s: float, top: int, caption_top: float,

@@ -132,7 +132,8 @@ export function graphicBox(placement: GraphicPlacement, frame: GraphicFrame, siz
  * overlaps their lower part.
  */
 export function graphicBandSize(graphic: Pick<EditorGraphic, 'template' | 'size'>): GraphicSize | undefined {
-  return graphic.template === 'big_words' ? 'stage' : graphic.size
+  // A Type takeover starts there too and runs on down past the stage (takeover.ts TAKEOVER_BOTTOM).
+  return graphic.template === 'big_words' || graphic.template === 'takeover' ? 'stage' : graphic.size
 }
 
 /** A graphic's brand color and font: its own color field, else the hook's brand color, else a calm blue; the hook's font. */

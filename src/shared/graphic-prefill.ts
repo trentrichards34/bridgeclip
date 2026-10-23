@@ -158,6 +158,8 @@ export function prefillGraphic(template: GraphicTemplateId, words: readonly Time
     case 'title': return done({ text: capital(join(line(5))) }, line(5))
     case 'big_words': { const pair = strongPair(phrase); return done({ text: capital(join(pair)) }, pair) }
     case 'statement': return done({ text: capital(join(line(7))) }, line(7))
+    // The whole short line as said (up to 9 words), its strongest word as the accent.
+    case 'takeover': { const said9 = phrase.slice(0, 9); return done({ text: capital(join(said9)), accent: join(strongPair(said9).slice(-1)) }, said9) }
     case 'browser_frame': return done({ title: capital(join(line(6))) }, line(6))
     case 'headline_pill': {
       const words8 = line(8), half = Math.max(1, Math.ceil(words8.length / 2))

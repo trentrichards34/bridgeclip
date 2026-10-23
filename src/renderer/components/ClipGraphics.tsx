@@ -12,7 +12,7 @@ import type { MountedGraphic } from '../graphics/templates'
 import {
   CHAPTER_STYLES, DIAGRAM_ACCENT, GRAPHIC_DEFAULT_MS, GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
   ITEM_TIMED_TEMPLATES, matchFxCues, graphicVariant, graphicVariants, bigWordsOptions, chapterStyle, clampGraphicMs, duplicateGraphic, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, switchGraphicTemplate, templateInfo, templateItems, updateGraphic, withGraphic,
-  MAX_BIG_WORDS, SCREEN_VIDEO_FILE, ctaKind, type CtaKind, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
+  MAX_BIG_WORDS, MAX_TAKEOVER_WORDS, SCREEN_VIDEO_FILE, ctaKind, type CtaKind, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
 } from '../../shared/motion-graphics'
 import { GRAPHIC_DEFAULT_COLOR, graphicOwnFont, graphicSpec, graphicStyle } from '../../shared/graphic-layout'
 import { prefillEffect, prefillGraphic, spokenSteps } from '../../shared/graphic-prefill'
@@ -116,9 +116,11 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, s
   if (!bounds.width || !shown.length) return null
   // The preview can't cut the speaker out: a graphic set behind them shows in front, with a note.
   const behind = shown.some(({ g }) => graphicDepth(g) === 'behind')
+  const between = shown.some(({ g }) => graphicDepth(g) === 'between')
   return <div className="editor-graphics-overlay" style={{ width: bounds.width, height: bounds.height, left: bounds.left, top: bounds.top }}>
     <div aria-hidden>{shown.map(({ g, spec, local }) => <GraphicView key={g.id} spec={spec} time={local} width={bounds.width} />)}</div>
     {behind && <span className="editor-graphic-depth-badge" title="This preview shows the words in front. The exported clip puts them behind you.">Behind you in the export</span>}
+    {between && !behind && <span className="editor-graphic-depth-badge" title="This preview shows the words only. The exported clip darkens the room and puts your head between the lines.">Head between the lines in the export</span>}
   </div>
 }
 
@@ -126,7 +128,7 @@ export const SHORT: Record<GraphicTemplateId, string> = {
   stat: 'Stat', title: 'Title', list: 'List', lower_third: 'Name', logo: 'Logo', before_after: 'Before/after', checklist: 'Checklist', quote: 'Quote', highlight: 'Arrow/circle',
   statement: 'Statement', sticky_notes: 'Notes', strike_list: 'Crossed out', browser_frame: 'Browser', icon_pop: 'Icons', headline_pill: 'Headline', comment_cta: 'Comment', link_cta: 'Call to action',
   big_words: 'Big words', orbit: 'Orbit', feature_tile: 'Tiles', screen_frame: 'Screen',
-  chapter: 'Chapter', staircase: 'Stairs', funnel: 'Funnel', journey: 'Journey', growth: 'Growth', idea_hub: 'Idea hub', compare_marks: 'Wrong/right', fx: 'Effect'
+  chapter: 'Chapter', staircase: 'Stairs', funnel: 'Funnel', journey: 'Journey', growth: 'Growth', idea_hub: 'Idea hub', compare_marks: 'Wrong/right', fx: 'Effect', takeover: 'Takeover'
 }
 export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): string {
   const f = g.fields
@@ -145,7 +147,7 @@ export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): s
 /** The picker's groups (and each graphic's color on the timeline). A template missing here shows under "More". */
 export type GraphicGroup = 'text' | 'lists' | 'diagrams' | 'media' | 'ending'
 export const GRAPHIC_GROUPS: { id: GraphicGroup; label: string; templates: readonly GraphicTemplateId[] }[] = [
-  { id: 'text', label: 'Text', templates: ['title', 'statement', 'big_words', 'headline_pill', 'stat', 'quote', 'lower_third', 'chapter'] },
+  { id: 'text', label: 'Text', templates: ['title', 'statement', 'big_words', 'takeover', 'headline_pill', 'stat', 'quote', 'lower_third', 'chapter'] },
   { id: 'lists', label: 'Lists & steps', templates: ['list', 'checklist', 'sticky_notes', 'strike_list', 'before_after', 'icon_pop', 'feature_tile'] },
   { id: 'diagrams', label: 'Diagrams', templates: ['staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks', 'orbit'] },
   { id: 'media', label: 'Media', templates: ['logo', 'browser_frame', 'screen_frame', 'highlight'] },
@@ -271,7 +273,8 @@ export const SAMPLES: Record<GraphicTemplateId, Record<string, string>> = {
   funnel: { items: 'Stage one\nStage two\nStage three' }, journey: { items: 'Start\nMiddle\nGoal' },
   growth: { items: 'Small\nBigger\nBiggest' }, idea_hub: { items: 'First\nSecond\nThird\nFourth' },
   compare_marks: { items: 'The old way\nThe better way', wrong: 'first' },
-  fx: { effect: 'per-word-rise', text: 'Words as you say them' }
+  fx: { effect: 'per-word-rise', text: 'Words as you say them' },
+  takeover: { text: 'This is the line that matters', accent: 'matters' }
 }
 
 /** An effect's sample fields for the gallery's preview only (never put in a clip). */
@@ -294,7 +297,7 @@ export const FIELD_LABELS: Record<string, string> = { value: 'Number', label: 'L
 const TEMPLATE_FIELD_LABELS: Partial<Record<GraphicTemplateId, Record<string, string>>> = {
   sticky_notes: { items: 'Notes (one per line, up to 3)' }, strike_list: { items: 'Crossed-out items (one per line, up to 4)' },
   icon_pop: { items: 'Labels (one per line, up to 4)' }, headline_pill: { text: 'First line' }, browser_frame: { title: 'Headline (when there’s no picture)' },
-  big_words: { text: `Words (up to ${MAX_BIG_WORDS})` }, orbit: { text: 'Center label', items: 'Labels (one per line, 3 to 6)' }, feature_tile: { items: 'Tiles (one per line, up to 3)' }, screen_frame: { label: 'Window title (optional)' },
+  big_words: { text: `Words (up to ${MAX_BIG_WORDS})` }, takeover: { text: `Your key line, as you say it (up to ${MAX_TAKEOVER_WORDS} words)`, accent: 'Key words (in your color)' }, orbit: { text: 'Center label', items: 'Labels (one per line, 3 to 6)' }, feature_tile: { items: 'Tiles (one per line, up to 3)' }, screen_frame: { label: 'Window title (optional)' },
   chapter: { label: 'Label (optional)', title: 'Section title' }, link_cta: { text: 'Button words', where: 'Where the link is (optional)', lead: 'Small line above (optional)' },
   staircase: { title: 'Title (optional)', items: 'Steps, bottom to top (one per line, 3 to 6)' }, funnel: { title: 'Title (optional)', items: 'Stages, wide end first (one per line, 3 to 5)' },
   journey: { title: 'Title (optional)', items: 'Milestones in order (one per line, 3 to 5)' }, growth: { title: 'Title (optional)', items: 'Labels, smallest first (one per line, 3 to 6)' },
@@ -732,6 +735,10 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
         <div className="flex items-center justify-between gap-2 text-xs"><span>Behind me</span>
           <Switch label="Behind me" checked={graphicDepth(g) === 'behind'} onChange={(on) => onChange(updateGraphic(candidate, g.id, { depth: on ? 'behind' : 'front' }))} /></div>
         <p className="text-2xs text-ink-subtle">{graphicDepth(g) === 'behind' ? 'In the export you stand in front of it: you’re cut out of the video and laid back over it. The preview here shows it in front.' : 'It sits over the video, in front of you.'}</p></div>}
+      {g.template === 'takeover' && <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2 text-xs"><span>Head between the lines</span>
+          <Switch label="Head between the lines" checked={graphicDepth(g) === 'between'} onChange={(on) => onChange(updateGraphic(candidate, g.id, { depth: on ? 'between' : 'front' }))} /></div>
+        <p className="text-2xs text-ink-subtle">{graphicDepth(g) === 'between' ? 'In the export the room behind you goes dark, the top lines go behind your head and the lower lines in front of you. The preview here shows the words only.' : 'The words sit over the video, in front of you.'}</p></div>}
       {g.template === 'stat' && <p className="text-2xs text-ink-subtle">The number counts up. Use one from the clip, like “$1,200/month”, “15 billion” or “25%”.</p>}
       {g.template === 'highlight' ? <div className="space-y-2">
         <Segmented label="Shape" size="sm" value={highlightPoint(g.fields).shape} onChange={(shape) => field('shape', shape)} options={[{ value: 'circle', label: 'Circle' }, { value: 'arrow', label: 'Arrow' }]} />
