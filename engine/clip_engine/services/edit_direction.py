@@ -306,11 +306,12 @@ def plan_register(words: Sequence[Any], marks: Sequence[Optional[str]], options:
 
 
 def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]], options: Optional[dict] = None,
-                  avoid: Sequence[tuple[int, int]] = ()) -> list[dict]:
+                  avoid: Sequence[tuple[int, int]] = (), logos_in: Sequence[tuple[int, int]] = ()) -> list[dict]:
     """The planner's graphics, checked against the kept words, as word-anchored review graphics (origin 'auto').
 
     `words`: edit_recording.Word (text, start_ms, end_ms, src); `marks`: each word's cut reason (None: kept);
-    `avoid`: word spans (start, end) no graphic may start in (the hook, the call to action)."""
+    `avoid`: word spans (start, end) no graphic may start in (the hook, the call to action); `logos_in`: spans of those
+    where the member's logo still pops in as it is named (the call to action, where creators name their own product)."""
     options = dict(options or {})
     if not isinstance(raw, list) or not words:
         return []
@@ -329,6 +330,7 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
         options['register'] = detect_register(find_cues(segments), kept_seconds * 1000)
     limit = graphics_limit(kept_seconds, options['register'])
     blocked = {i for a, b in avoid for i in range(max(0, a), min(len(words), b + 1))}
+    logo_ok = {i for a, b in logos_in for i in range(max(0, a), min(len(words), b + 1))}
     planned = []
     for item in raw[:MAX_GRAPHICS * 2]:
         if not isinstance(item, dict) or type(item.get('word')) is not int or not 0 <= item['word'] < len(words):
@@ -352,7 +354,7 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
         if g['template'] == 'chapter':
             continue
         word = anchor_word(g['at_ms'], clock)
-        if word is None or word in blocked:
+        if word is None or (word in blocked and not (g['template'] == 'logo' and word in logo_ok)):
             continue
         fields = {k: v for k, v in g['fields'].items() if k not in ('item_ms', 'word_ms', 'cue_ms')}
         out.append({'id': ag.new_id(taken), 'template': g['template'], 'word': word, 'duration_ms': int(g['duration_ms']),

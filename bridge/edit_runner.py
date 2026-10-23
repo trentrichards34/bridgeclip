@@ -92,13 +92,71 @@ def _reference(value):
         raise ValueError("Invalid reference image") from None
 
 
+DIRECTION_REGISTERS = ("teaching", "story", "minimal")
+MAX_DIRECTION_LOGOS = 30
+MAX_LOGO_NAMES = 8
+MAX_DIRECTION_MEDIA = 6
+
+
+def _direction_logos(raw):
+    """My logos for the plan: [{image: a library id, name, aliases}] (the director pops one in where its name is said)."""
+    if not isinstance(raw, list) or len(raw) > MAX_DIRECTION_LOGOS:
+        raise ValueError("Invalid direction")
+    out = []
+    for logo in raw:
+        if not isinstance(logo, dict) or not {"image", "name"} <= set(logo) <= {"image", "name", "aliases"} \
+                or not isinstance(logo["image"], str) or not re.fullmatch(r"[a-f0-9]{16}", logo["image"]):
+            raise ValueError("Invalid direction")
+        aliases = logo.get("aliases", [])
+        if not isinstance(aliases, list) or len(aliases) > MAX_LOGO_NAMES:
+            raise ValueError("Invalid direction")
+        out.append({"image": logo["image"], "name": _text(logo["name"], 40, "logo", allow_empty=False),
+                    "aliases": [_text(a, 40, "logo", allow_empty=False) for a in aliases]})
+    return out
+
+
+def _direction_media(raw):
+    """The member's screenshots for the plan: [{id: a run image id, box?: [x, y, w, h] shares, tall?: true}]."""
+    if not isinstance(raw, list) or len(raw) > MAX_DIRECTION_MEDIA:
+        raise ValueError("Invalid direction")
+    out = []
+    for shot in raw:
+        if not isinstance(shot, dict) or "id" not in shot or not set(shot) <= {"id", "box", "tall"} \
+                or not isinstance(shot["id"], str) or not re.fullmatch(r"[a-f0-9]{12}", shot["id"]):
+            raise ValueError("Invalid direction")
+        item = {"id": shot["id"]}
+        if "box" in shot:
+            box = shot["box"]
+            if not isinstance(box, list) or len(box) != 4 or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                                                                 or not 0 <= v <= 1 for v in box):
+                raise ValueError("Invalid direction")
+            item["box"] = [float(v) for v in box]
+        if "tall" in shot:
+            if shot["tall"] is not True:
+                raise ValueError("Invalid direction")
+            item["tall"] = True
+        out.append(item)
+    return out
+
+
 def _direction(raw):
-    """The plan's automatic direction (motion graphics): whether Stage layouts are on, and the brand's comment keyword."""
+    """The plan's automatic direction (motion graphics): whether Stage layouts are on, the brand's comment keyword, the
+    member's style register (how many graphics), My logos and the screenshots added for the video."""
     if raw is None:
         return None
-    if not isinstance(raw, dict) or not set(raw) <= {"stage", "cta_keyword"} or not isinstance(raw.get("stage", False), bool):
+    if not isinstance(raw, dict) or not set(raw) <= {"stage", "cta_keyword", "register", "logos", "media"} \
+            or not isinstance(raw.get("stage", False), bool):
         raise ValueError("Invalid direction")
-    return {"stage": raw.get("stage", False), "cta_keyword": _text(raw.get("cta_keyword"), 24, "keyword")}
+    out = {"stage": raw.get("stage", False), "cta_keyword": _text(raw.get("cta_keyword"), 24, "keyword")}
+    if "register" in raw:
+        if raw["register"] not in DIRECTION_REGISTERS:
+            raise ValueError("Invalid direction")
+        out["register"] = raw["register"]
+    if "logos" in raw:
+        out["logos"] = _direction_logos(raw["logos"])
+    if "media" in raw:
+        out["media"] = _direction_media(raw["media"])
+    return out
 
 
 def _editor(raw, n):

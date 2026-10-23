@@ -948,9 +948,11 @@ def combine_of(raw: Any, words: list[Word], plan: dict, clips: list[dict]) -> di
 def _planned_graphics(raw: Any, words: list[Word], plan: dict, options: dict) -> list[dict]:
     """The plan's motion graphics, checked against the kept words (none on any failure: the edit goes ahead)."""
     from clip_engine.services.edit_direction import plan_graphics
-    avoid = [(h["start"], h["end"]) for h in plan["hooks"][:1]] + ([(plan["cta"]["start"], plan["cta"]["end"])] if plan.get("cta") else [])
+    cta = [(plan["cta"]["start"], plan["cta"]["end"])] if plan.get("cta") else []
+    avoid = [(h["start"], h["end"]) for h in plan["hooks"][:1]] + cta
     try:
-        return plan_graphics(raw, words, plan["marks"], options, avoid)
+        # (The member's logo still pops in where the call to action names it: their own product, said in the ask.)
+        return plan_graphics(raw, words, plan["marks"], options, avoid, logos_in=cta)
     except Exception as error:  # noqa: BLE001 - graphics are extras: the plan stands without them
         logger.warning(f"Planned graphics left out: {type(error).__name__}: {error}")
         return []
