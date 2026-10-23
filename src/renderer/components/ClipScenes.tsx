@@ -124,6 +124,10 @@ const BACKDROP_CSS: Record<SceneBackdrop, (brand: string) => string> = {
 }
 
 /** A preview of the scenes over the Output monitor: the backdrop and the speaker card (cut from the preview's own frame). */
+/** The share of the framed preview the card shows (from PREVIEW_CARD_TOP down): head and shoulders on a close selfie. */
+const PREVIEW_CARD_SPAN = 0.62
+const PREVIEW_CARD_TOP = 0.07
+
 export function ScenesOverlay({ canvas, candidate, time }: { canvas: RefObject<HTMLCanvasElement | null>; candidate: CandidateEdit; time: number }): React.JSX.Element | null {
   const [bounds, setBounds] = useState({ width: 0, height: 0, left: 0, top: 0 })
   const card = useRef<HTMLCanvasElement>(null)
@@ -148,10 +152,20 @@ export function ScenesOverlay({ canvas, candidate, time }: { canvas: RefObject<H
     let frame = 0
     const draw = (): void => {
       const source = canvas.current, target = card.current
-      if (source && target) {
-        // The card shows the speaker's face from the preview frame (the export frames it a little wider).
-        const sw = source.width, sh = Math.round(sw * target.height / target.width), sy = Math.max(0, Math.min(source.height - sh, source.height * 0.36 - sh * 0.42))
-        target.getContext('2d')?.drawImage(source, 0, sy, sw, sh, 0, 0, target.width, target.height)
+      const ctx = target?.getContext('2d')
+      if (source && target && ctx && source.width && source.height) {
+        // Head and shoulders from the preview frame: its upper part (the framing puts the face about 40% down), zoomed
+        // out over a blurred copy where that is narrower than the card. The export frames from the detected face.
+        const tw = target.width, th = target.height
+        const sh = source.height * PREVIEW_CARD_SPAN, sy = source.height * PREVIEW_CARD_TOP, sw = Math.min(source.width, sh * tw / th)
+        const dw = sw * th / sh
+        if (dw < tw - 1) {
+          const ch = Math.min(sh, source.width * th / tw)
+          ctx.filter = 'blur(10px) brightness(0.82)'
+          ctx.drawImage(source, 0, sy + (sh - ch) / 2, source.width, ch, -12, -12, tw + 24, th + 24)
+          ctx.filter = 'none'
+        }
+        ctx.drawImage(source, (source.width - sw) / 2, sy, sw, sh, (tw - dw) / 2, 0, dw, th)
       }
       frame = requestAnimationFrame(draw)
     }

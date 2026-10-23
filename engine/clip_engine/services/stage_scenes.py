@@ -9,7 +9,8 @@ export speed, like the graphics main lays over a render):
   frame; the speaker sits in a big card along the bottom (``rounded``: a rounded
   card with a margin; ``arch``: full width, large rounded top corners, flush with
   the bottom edge)
-  (face-centered crop of the framed speaker), the top ~53% is free for graphics
+  (a head-and-shoulders crop around the speaker's detected face, zoomed out over a
+  blurred copy when the source is too tight), the top half is free for graphics
   and the captions sit in the band between the two.
 - ``visual``: the card is off-screen; the whole frame is backdrop (for a big graphic or inset).
 
@@ -45,12 +46,13 @@ TRANSITION_MS = 350
 
 # Geometry at 1080x1920, as shares of the frame (scaled with the output).
 CARD_SIDE = 40 / 1080
-CARD_BOTTOM = 40 / 1920
-CARD_HEIGHT = 0.37
+CARD_BOTTOM = 32 / 1920
+# Tall enough for head and shoulders (the card was 0.37 and cut the head on close selfie footage).
+CARD_HEIGHT = 0.42
 CARD_RADIUS = 48 / 1080
 # The arch card: full width, its top where the rounded card's is, these large top corners.
 ARCH_RADIUS = 120 / 1080
-STAGE_BOTTOM = 0.53
+STAGE_BOTTOM = 0.50
 VISUAL_CAPTION_Y = 0.82
 # Where the face sits in the card (share of the crop height from its top), and the
 # face height assumed in the framed speaker when the plan has no face boxes.
@@ -489,6 +491,20 @@ def card_visibility_expr(runs: Sequence[tuple[float, float]], total: float, tran
     return "+".join(terms) if terms else "0"
 
 
+# The hook text (top of the frame) hands over to the stage when the first stage or visual scene starts, so the
+# stage's graphics never sit under it, unless that is in the clip's first seconds (then the hook keeps its time and
+# the graphics keep below it). The editor's preview and graphic layout mirror this (scenes.ts stageHookEndMs).
+HOOK_STAGE_MIN_MS = 2500
+
+
+def hook_hand_over_s(segments: Sequence[Segment], video_speed: float) -> Optional[float]:
+    """When (edited clock, seconds) the hook fades out for the first stage or visual scene, or None."""
+    first = next((s for s in segments if s.scene != "face"), None)
+    if first is None or first.start / video_speed * 1000 < HOOK_STAGE_MIN_MS - 0.5:
+        return None
+    return first.start
+
+
 def card_enable_expr(runs: Sequence[tuple[float, float]], transition: float) -> str:
     return "+".join(f"between(t,{max(0.0, a):.4f},{b + transition:.4f})" for a, b in runs) or "0"
 
@@ -505,31 +521,250 @@ def crop_y_expr(runs: Sequence[tuple[float, float]], values: Sequence[int]) -> s
     return expr
 
 
-# How much of the main framing's height the card shows (a little closer than the full frame).
-CARD_ZOOM = 0.78
+# ---------------------------------------------------------------------------
+# The speaker card's framing: head and shoulders around the detected face
+# ---------------------------------------------------------------------------
+
+# The head around a detected face box (YuNet boxes run from the forehead to the chin), as shares of the face box:
+# hair above it (generous: real hair usually ends ~0.3 above), the chin and neck below, a little either side.
+HEAD_ABOVE = 0.6
+HEAD_BELOW = 0.15
+HEAD_SIDE = 0.15
+# The head's top (with that hair allowance) sits at least this share of the card's height below the card's top edge:
+# the hair itself then ends ~12-15% below it (real hair usually ends ~0.3 face heights above the box).
+HEAD_MARGIN = 0.01
+# The eye line inside a face box (share of its height from its top), and where the card puts it (share of the card).
+EYE_IN_FACE = 0.35
+CARD_EYE_Y = 0.36
+# The card's crop height in face heights: never tighter than CARD_FACE_MIN (the whole head with room above and the
+# shoulders starting below); a speaker far from the camera is brought in no closer than CARD_FACE_MAX.
+CARD_FACE_MIN = 2.3
+CARD_FACE_MAX = 4.0
+# The face size a stretch is framed for: a high percentile over it, so leaning in stays inside the card.
+CARD_FACE_PERCENTILE = 0.8
+# Faces for the card are looked at every half second of a stage scene (when the plan has fewer); the path is
+# smoothed (median of 5, then a mean of 3) and keyframed where it bends more than CARD_KEY_TOLERANCE of the crop.
+CARD_SAMPLE_MS = 500
+CARD_MEDIAN = 5
+CARD_KEY_TOLERANCE = 0.012
+# The plan's own face samples are enough when they come at least this often.
+CARD_PLAN_SAMPLE_MS = 1500
+MAX_CARD_SAMPLES = 480
+# Long side of the frames the card's faces are found in.
+CARD_DETECT_PX = 480
+
+Rect4 = tuple[float, float, float, float]
 
 
-def _shot_face(plan, shot) -> Optional[tuple[float, float]]:
-    """The speaker's face center in the shot (normalized source), from the analyzed frames or the shot's boxes."""
-    centers = [max(faces, key=lambda b: b.area) for t, faces in plan.face_samples
-               if shot.start_ms <= t < shot.end_ms and faces]
-    if not centers and shot.cam_face is not None and shot.layout == "screen_cam":
-        return shot.cam_face.cx, shot.cam_face.cy
-    if not centers and shot.people:
-        centers = [max(shot.people, key=lambda b: b.area)]
-    if not centers:
-        return None
-    xs, ys = sorted(b.cx for b in centers), sorted(b.cy for b in centers)
-    return xs[len(xs) // 2], ys[len(ys) // 2]
+@dataclass(frozen=True)
+class CardCrop:
+    """The card's crop in source pixels: a fixed size for a stretch, its top-left over window time (ms) as keyframes.
+
+    It may reach past `bounds` (the speaker's part of the source) when the speaker is filmed too close for a
+    head-and-shoulders card: the card then zooms out and the rest is a blurred copy of the source.
+    """
+
+    w: float
+    h: float
+    keys: tuple[tuple[int, float, float], ...]
+    bounds: Rect4
+
+    @property
+    def zoomed_out(self) -> bool:
+        bx, by, bw, bh = self.bounds
+        return any(x < bx - 0.5 or y < by - 0.5 or x + self.w > bx + bw + 0.5 or y + self.h > by + bh + 0.5
+                   for _, x, y in self.keys)
+
+    def at(self, t_ms: float) -> tuple[float, float]:
+        """The crop's top-left at window time t (linear between keys, held past either end)."""
+        keys = self.keys
+        if t_ms <= keys[0][0]:
+            return keys[0][1], keys[0][2]
+        for (t0, x0, y0), (t1, x1, y1) in zip(keys, keys[1:]):
+            if t_ms < t1:
+                p = (t_ms - t0) / max(1, t1 - t0)
+                return x0 + (x1 - x0) * p, y0 + (y1 - y0) * p
+        return keys[-1][1], keys[-1][2]
 
 
-# Frames looked at to find the speaker's face for the card when the plan has none (an editor export's plan).
-MAX_CARD_FACE_SAMPLES = 8
+def head_box(face: Rect4) -> Rect4:
+    """The whole head (hair to chin) around a face box (x, y, w, h)."""
+    x, y, w, h = face
+    return x - w * HEAD_SIDE, y - h * HEAD_ABOVE, w * (1 + 2 * HEAD_SIDE), h * (1 + HEAD_ABOVE + HEAD_BELOW)
 
 
-def card_faces(video: str, plan, window_start_ms: int) -> list:
-    """Face samples [(window ms, [Box])] for the card's framing, found in a few frames of the source (the middle of
-    each shot, a little more of long ones), for plans that carry none. Best effort: [] without the detector."""
+def _percentile(values: Sequence[float], q: float) -> float:
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))]
+
+
+def _median_filter(values: Sequence[float], n: int) -> list[float]:
+    half = n // 2
+    return [sorted(values[max(0, i - half):i + half + 1])[len(values[max(0, i - half):i + half + 1]) // 2] for i in range(len(values))]
+
+
+def _mean3(values: Sequence[float]) -> list[float]:
+    return [sum(values[max(0, i - 1):i + 2]) / len(values[max(0, i - 1):i + 2]) for i in range(len(values))]
+
+
+def _simplify(points: list[tuple[int, float, float]], tolerance: float) -> list[tuple[int, float, float]]:
+    """Douglas-Peucker on (t, x, y): keyframes where the path bends more than `tolerance` pixels."""
+    if len(points) <= 2:
+        return points
+    (t0, x0, y0), (t1, x1, y1) = points[0], points[-1]
+    worst, at = -1.0, 0
+    for i in range(1, len(points) - 1):
+        t, x, y = points[i]
+        p = (t - t0) / max(1, t1 - t0)
+        d = max(abs(x - (x0 + (x1 - x0) * p)), abs(y - (y0 + (y1 - y0) * p)))
+        if d > worst:
+            worst, at = d, i
+    if worst <= tolerance:
+        return [points[0], points[-1]]
+    return _simplify(points[:at + 1], tolerance)[:-1] + _simplify(points[at:], tolerance)
+
+
+def card_crop(faces: Sequence[tuple[int, Rect4]], bounds: Rect4, aspect: float, start_ms: int = 0) -> CardCrop:
+    """The card's crop for one stretch: head and shoulders around the speaker's face, smoothed over time.
+
+    `faces`: (window ms, face box) in source pixels, the speaker's face in each sample; `bounds`: the speaker's
+    part of the source (x, y, w, h); `aspect`: the card's width / height. The crop is sized for the face (never
+    tighter than CARD_FACE_MIN face heights, no looser than CARD_FACE_MAX or the largest crop inside `bounds`,
+    whichever is tighter), keeps the head's top HEAD_MARGIN of the card below its edge and the eyes near
+    CARD_EYE_Y; when the source is too tight for that it reaches past `bounds` (zoomed out) instead of
+    cutting the head.
+    """
+    bx, by, bw, bh = bounds
+    fit_h = min(bh, bw / aspect)
+    if not faces:
+        # No face seen (a screen, or a face the detector missed): the upper part of the speaker's area (heads are
+        # high in a frame), at least half its height (zoomed out a little when it is narrow).
+        ch = min(bh, max(fit_h, bh * 0.5))
+        cw = ch * aspect
+        return CardCrop(cw, ch, ((start_ms, bx + (bw - cw) / 2, by + (bh - ch) * 0.1),), bounds)
+    face_h = _percentile([f[3] for _, f in faces], CARD_FACE_PERCENTILE)
+    ch = max(min(fit_h, CARD_FACE_MAX * face_h), CARD_FACE_MIN * face_h)
+    cw = ch * aspect
+    x_lo, x_hi = (bx, bx + bw - cw) if cw <= bw else (bx + bw - cw, bx)
+    y_lo, y_hi = (by, by + bh - ch) if ch <= bh else (by + bh - ch, by)
+    times, xs, ys, tops = [], [], [], []
+    for t, face in sorted(faces):
+        fx, fy, fw, fh = face
+        _, hy, _, hh = head_box(face)
+        top = hy - HEAD_MARGIN * ch  # the crop's top may not be lower than this (the head's room)
+        y = min(fy + EYE_IN_FACE * fh - CARD_EYE_Y * ch, top)
+        # The chin inside too, unless the head is taller than the card can hold (then the top wins).
+        y = min(max(y, hy + hh - ch), top)
+        times.append(int(t))
+        xs.append(fx + fw / 2 - cw / 2)
+        ys.append(y)
+        tops.append(top)
+    xs = _mean3(_median_filter(xs, CARD_MEDIAN))
+    ys = _mean3(_median_filter(ys, CARD_MEDIAN))
+    points = []
+    for i, t in enumerate(times):
+        # Smoothing never lowers the card onto a head: no lower than any neighboring sample needs.
+        need = min(tops[max(0, i - 1):i + 2])
+        y = min(ys[i], need)
+        # Above the speaker's area only as far as the head's room needs (a blurred band there).
+        lo = min(y_lo, max(need, by - HEAD_MARGIN * ch))
+        points.append((t, max(x_lo, min(x_hi, xs[i])), max(lo, min(y_hi, y))))
+    return CardCrop(cw, ch, tuple(_simplify(points, CARD_KEY_TOLERANCE * ch)), bounds)
+
+
+def edited_to_window(spans: Sequence[tuple[float, float]], keeps: Sequence[Sequence[int]]) -> list[tuple[int, int]]:
+    """Edited-clock spans (seconds) as window-time pieces (ms) through the kept parts."""
+    out: list[tuple[int, int]] = []
+    for a, b in spans:
+        offset = 0
+        for ka, kb in keeps:
+            lo, hi = max(a * 1000, offset), min(b * 1000, offset + kb - ka)
+            if hi > lo:
+                out.append((round(ka + lo - offset), round(ka + hi - offset)))
+            offset += kb - ka
+    return out
+
+
+def speaker_bounds(shot, src_w: int, src_h: int, faces: Sequence[Box] = ()) -> Rect4:
+    """The part of the source the speaker is in (pixels): the webcam on a screen recording (or the editor's bubble
+    crop, or its inset's part), the padded inset's picture, the panel with the face on a two-panel editor layout,
+    else the whole frame."""
+    from clip_engine.services.layout_analyzer import LayoutType
+    def px(box) -> Rect4:
+        x, y, w, h = box
+        return x * src_w, y * src_h, w * src_w, h * src_h
+    if shot.manual_crops and len(shot.manual_crops) > 1:
+        def holds(crop) -> bool:
+            x, y, w, h = crop
+            return any(x <= f.cx <= x + w and y <= f.cy <= y + h for f in faces)
+        crop = next((c for c in reversed(shot.manual_crops) if holds(c)), shot.manual_crops[-1])
+        return px(crop)
+    if shot.manual_bubble is not None:
+        return px(shot.manual_bubble)
+    if shot.content_box is not None:
+        b = shot.content_box.clamp()
+        return px((b.x, b.y, b.w, b.h))
+    if shot.layout == LayoutType.SCREEN_CAM and shot.cam_box is not None:
+        b = shot.cam_box.clamp()
+        return px((b.x, b.y, b.w, b.h))
+    if shot.crop_bounds is not None:
+        b = shot.crop_bounds.clamp()
+        return px((b.x, b.y, b.w, b.h))
+    return 0.0, 0.0, float(src_w), float(src_h)
+
+
+def _shot_face(shot) -> Optional[Box]:
+    """A face the shot's analysis knows (for shots no sample saw a face in)."""
+    from clip_engine.services.layout_analyzer import LayoutType
+    if shot.layout == LayoutType.SCREEN_CAM and shot.cam_face is not None:
+        return shot.cam_face
+    return max(shot.people, key=lambda b: b.area) if shot.people else None
+
+
+def card_crops(plan, keeps, runs: Sequence[tuple[float, float]], transition: float, aspect: float,
+               faces: Sequence[tuple[int, Sequence[Box]]] = ()) -> dict[tuple[int, int], CardCrop]:
+    """The crop for each (card run, shot) the card shows: from the face samples (window ms, normalized boxes) in
+    the run's stretch of that shot (the largest face inside the speaker's area)."""
+    src_w, src_h = plan.source_width, plan.source_height
+    samples = sorted(list(plan.face_samples) + list(faces), key=lambda s: s[0])
+    out: dict[tuple[int, int], CardCrop] = {}
+    for r, (a, b) in enumerate(runs):
+        spans = edited_to_window([(a, b + transition)], keeps)
+        for i, shot in enumerate(plan.shots):
+            parts = [(max(lo, shot.start_ms), min(hi, shot.end_ms)) for lo, hi in spans if min(hi, shot.end_ms) > max(lo, shot.start_ms)]
+            if not parts:
+                continue
+            seen = [(t, boxes) for t, boxes in samples if boxes and any(lo <= t < hi for lo, hi in parts)]
+            bounds = speaker_bounds(shot, src_w, src_h, [f for _, boxes in seen for f in boxes])
+            bx, by, bw, bh = bounds
+            picked: list[tuple[int, Rect4]] = []
+            for t, boxes in seen:
+                inside = [f for f in boxes if bx <= f.cx * src_w <= bx + bw and by <= f.cy * src_h <= by + bh]
+                if inside:
+                    f = max(inside, key=lambda f: f.area)
+                    picked.append((t, (f.x * src_w, f.y * src_h, f.w * src_w, f.h * src_h)))
+            if not picked and _shot_face(shot) is not None:
+                f = _shot_face(shot)
+                picked = [(parts[0][0], (f.x * src_w, f.y * src_h, f.w * src_w, f.h * src_h))]
+            out[(r, i)] = card_crop(picked, bounds, aspect, parts[0][0])
+    return out
+
+
+def card_sample_spans(plan, keeps, runs: Sequence[tuple[float, float]], transition: float) -> list[tuple[int, int]]:
+    """Window-time stretches (ms) the card shows where the plan's own face samples are too sparse for it."""
+    spans = edited_to_window([(a, b + transition) for a, b in runs], keeps)
+    times = sorted(t for t, boxes in plan.face_samples)
+    need = []
+    for lo, hi in spans:
+        count = sum(1 for t in times if lo <= t < hi)
+        if count < max(1, (hi - lo) / CARD_PLAN_SAMPLE_MS):
+            need.append((lo, hi))
+    return need
+
+
+def card_faces(video: str, plan, window_start_ms: int, spans: Sequence[tuple[int, int]]) -> list:
+    """Face samples [(window ms, [Box])] every CARD_SAMPLE_MS through the given window stretches, found in the
+    source (one decode per stretch). Best effort: [] without the detector."""
     try:
         import cv2
         import numpy as np
@@ -538,75 +773,108 @@ def card_faces(video: str, plan, window_start_ms: int) -> list:
         from clip_engine.services.remix_service import FACE_MODEL
     except Exception:  # noqa: BLE001
         return []
-    if not os.path.isfile(FACE_MODEL):
+    if not os.path.isfile(FACE_MODEL) or not spans:
         return []
-    times: list[int] = []
-    for shot in plan.shots:
-        length = shot.end_ms - shot.start_ms
-        parts = 1 if length < 6000 else 2
-        times += [round(shot.start_ms + length * (k + 0.5) / parts) for k in range(parts)]
-    out, detector = [], None
-    for t in times[:MAX_CARD_FACE_SAMPLES]:
+    src_w, src_h = plan.source_width, plan.source_height
+    k = CARD_DETECT_PX / max(src_w, src_h)
+    w, h = max(2, int(round(src_w * k / 2)) * 2), max(2, int(round(src_h * k / 2)) * 2)
+    detector = cv2.FaceDetectorYN.create(FACE_MODEL, "", (w, h), 0.7, 0.3, 50)
+    out: list = []
+    budget = MAX_CARD_SAMPLES
+    for lo, hi in spans:
+        count = min(budget, max(1, int((hi - lo) // CARD_SAMPLE_MS)))
+        if count <= 0:
+            break
+        budget -= count
         try:
-            png = run_media(["ffmpeg", "-nostdin", "-v", "error", *MEDIA_INPUT_OPTIONS, "-ss", f"{(window_start_ms + t) / 1000:.3f}", "-i", video,
-                             "-frames:v", "1", "-vf", "scale='if(gt(iw,ih),640,-2)':'if(gt(iw,ih),-2,640)'", "-f", "image2pipe", "-c:v", "png", "-"],
-                            timeout=60, check=True, max_output=8 * 1024 * 1024).stdout
-            frame = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
-        except Exception:  # noqa: BLE001 - a frame that can't be read is skipped
+            raw = run_media(["ffmpeg", "-nostdin", "-v", "error", *MEDIA_INPUT_OPTIONS, "-ss", f"{(window_start_ms + lo) / 1000:.3f}",
+                             "-i", video, "-t", f"{count * CARD_SAMPLE_MS / 1000:.3f}", "-vf",
+                             f"fps={1000 / CARD_SAMPLE_MS:g}:start_time=0,scale={w}:{h}", "-frames:v", str(count),
+                             "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
+                            timeout=300, check=True, max_output=(count + 1) * w * h * 3).stdout
+        except Exception:  # noqa: BLE001 - a stretch that can't be read keeps the plan's faces
             continue
-        if frame is None:
-            continue
-        h, w = frame.shape[:2]
-        if detector is None:
-            detector = cv2.FaceDetectorYN.create(FACE_MODEL, "", (w, h), 0.7, 0.3, 50)
-        detector.setInputSize((w, h))
-        _, faces = detector.detect(frame)
-        if faces is not None and len(faces):
-            out.append((t, [Box(float(f[0]) / w, float(f[1]) / h, float(f[2]) / w, float(f[3]) / h) for f in faces]))
+        size = w * h * 3
+        for j in range(min(count, len(raw) // size)):
+            frame = np.frombuffer(raw, np.uint8, size, j * size).reshape(h, w, 3)
+            _, found = detector.detect(frame)
+            if found is not None and len(found):
+                out.append((lo + j * CARD_SAMPLE_MS, [Box(float(f[0]) / w, float(f[1]) / h, float(f[2]) / w, float(f[3]) / h) for f in found]))
     return out
 
 
-def card_plan(plan, out_w: int, panel_h: int, card_w: int, card_h: int):
-    """A plan that frames each shot for the speaker card: one static crop at the card's shape around the
-    speaker (the panel the speaker is in, a little closer, wider than the 9:16 framing), from the same
-    shot analysis or editor crops the main framing uses."""
-    from clip_engine.services.layout_analyzer import ClipLayoutPlan, LayoutType, ShotLayout
-    from clip_engine.services.layout_renderer import shot_views
-    src_w, src_h = plan.source_width, plan.source_height
-    aspect = card_w / card_h
-    shots = []
-    for shot in plan.shots:
-        views = shot_views(shot, (shot.start_ms + shot.end_ms) // 2, src_w, src_h, out_w, panel_h)
-        if shot.layout == LayoutType.SCREEN_CAM and shot.cam_box is not None and len(views) > 1:
-            (x, y, w, h), _ = views[1]
-        else:
-            (x, y, w, h), _ = max(views, key=lambda v: v[1][2] * v[1][3])
-        face = _shot_face(plan, shot)
-        if face and x <= face[0] * src_w <= x + w and y <= face[1] * src_h <= y + h:
-            fx, fy = face[0] * src_w, face[1] * src_h
-        else:
-            fx, fy = x + w / 2, y + h * DEFAULT_FACE_Y
-        ch = h * CARD_ZOOM
-        cw = ch * aspect
-        if cw > src_w:
-            cw, ch = src_w, src_w / aspect
-        if ch > src_h:
-            ch, cw = src_h, src_h * aspect
-        cx = max(0.0, min(src_w - cw, fx - cw / 2))
-        cy = max(0.0, min(src_h - ch, fy - ch * CARD_FACE_Y))
-        shots.append(ShotLayout(shot.start_ms, shot.end_ms, LayoutType.TALKING_HEAD, source="manual",
-                                manual_crops=[(cx / src_w, cy / src_h, cw / src_w, ch / src_h)]))
-    return ClipLayoutPlan(shots, src_w, src_h)
+def _keys_expr(crop: CardCrop, lo_ms: int, hi_ms: int, axis: int, transform: Callable[[float], float]) -> str:
+    """A piecewise-linear expression of window time t (seconds) for one axis of the crop's keys over [lo, hi]."""
+    from clip_engine.services.layout_renderer import piecewise_expr
+    keys = crop.keys
+    first = max([i for i, k in enumerate(keys) if k[0] <= lo_ms] or [0])
+    last = min([i for i, k in enumerate(keys) if k[0] >= hi_ms] or [len(keys) - 1])
+    chosen = keys[first:last + 1]
+    if len(chosen) == 1 or len({round(transform(k[axis]), 1) for k in chosen}) == 1:
+        return f"{transform(chosen[0][axis]):.1f}"
+    return piecewise_expr([(k[0] / 1000, transform(k[axis])) for k in chosen])
 
 
-def card_source_graph(plan, keeps, out_w: int, panel_h: int, card_w: int, card_h: int, fps: str, video_speed: float) -> str:
-    """The card's own framing chain, from [sc_card_src] (the source) to [sc_card_frames] (card_w x card_h)."""
-    import re
-    from clip_engine.services.layout_renderer import build_layout_graph
-    graph = build_layout_graph(card_plan(plan, out_w, panel_h, card_w, card_h), card_w, card_h, keeps, False,
-                               fps=fps, video_speed=video_speed)
-    graph = re.sub(r"\[([A-Za-z_][A-Za-z0-9_]*)\]", r"[cd_\1]", graph).replace("[0:v]", "[sc_card_src]")
-    return graph.replace("[cd_base]", "[sc_card_frames]")
+def card_chain(label: str, out: str, crop: CardCrop, lo_ms: int, hi_ms: int, card_w: int, card_h: int) -> str:
+    """Filters from [label] (a trimmed piece of the clocked source) to [out] (card_w x card_h): the crop moving
+    along its keys; zoomed out, the source scaled over a blurred copy of itself."""
+    bx, by, bw, bh = crop.bounds
+    if not crop.zoomed_out:
+        w, h = min(int(bw), max(2, int(round(crop.w)))), min(int(bh), max(2, int(round(crop.h))))
+        x = _keys_expr(crop, lo_ms, hi_ms, 1, lambda v: max(bx, min(bx + bw - w, v)))
+        y = _keys_expr(crop, lo_ms, hi_ms, 2, lambda v: max(by, min(by + bh - h, v)))
+        return f"[{label}]crop=w={w}:h={h}:x='{x}':y='{y}',scale={card_w}:{card_h}:flags=lanczos,setsar=1[{out}]"
+    # The speaker's area (whole pixels, even), scaled so the crop fills the card, placed over its blurred copy.
+    ix, iy = int(bx) // 2 * 2, int(by) // 2 * 2
+    iw, ih = max(2, int(bx + bw - ix) // 2 * 2), max(2, int(by + bh - iy) // 2 * 2)
+    zoom = card_h / crop.h
+    fw, fh = max(2, int(round(iw * zoom))), max(2, int(round(ih * zoom)))
+    x = _keys_expr(crop, lo_ms, hi_ms, 1, lambda v: (ix - v) * zoom)
+    y = _keys_expr(crop, lo_ms, hi_ms, 2, lambda v: (iy - v) * zoom)
+    qw, qh = even(card_w / 4), even(card_h / 4)
+    return (f"[{label}]crop={iw}:{ih}:{ix}:{iy},split=2[{out}_b][{out}_f];"
+            f"[{out}_b]scale={qw}:{qh}:force_original_aspect_ratio=increase,crop={qw}:{qh},gblur=sigma=8,"
+            f"lutyuv=y=val*0.82,scale={card_w}:{card_h}[{out}_bg];"
+            f"[{out}_f]scale={fw}:{fh}:flags=lanczos[{out}_fg];"
+            f"[{out}_bg][{out}_fg]overlay=x='{x}':y='{y}':eval=frame,setsar=1[{out}]")
+
+
+def card_source_graph(plan, keeps, card_w: int, card_h: int, fps: str, runs: Sequence[tuple[float, float]],
+                      transition: float, faces: Sequence = ()) -> str:
+    """The card's own framing chain, from [sc_card_src] (the source) to [sc_card_frames] (card_w x card_h), cut
+    like the main framing (the same frames): each run's head-and-shoulders crop (card_crops), switching between
+    runs while the card is down."""
+    from fractions import Fraction
+    from clip_engine.services.layout_renderer import video_frame_pieces
+    rate = Fraction(fps)
+    crops = card_crops(plan, keeps, runs, transition, card_w / card_h, faces)
+    switches = [round((runs[k][1] + runs[k + 1][0]) / 2 * rate) for k in range(len(runs) - 1)]
+    window_end = plan.shots[-1].end_ms
+    parts = [f"[sc_card_src]fps={fps}:start_time=0:round=near,tpad=stop_mode=clone:stop_duration={window_end / 1000:.3f}[cd_clocked]"]
+    pieces: list[tuple[int, int, int, int]] = []  # (shot, source start frame, count, run)
+    edited = 0
+    for i, start, count in video_frame_pieces(plan, keeps, fps):
+        cursor = 0
+        while cursor < count:
+            run = sum(1 for s in switches if s <= edited + cursor)
+            nxt = next((s for s in switches if s > edited + cursor), None)
+            length = count - cursor if nxt is None else min(count - cursor, nxt - edited - cursor)
+            pieces.append((i, start + cursor, length, run))
+            cursor += length
+        edited += count
+    n = len(pieces)
+    parts.append("[cd_clocked]null[cd_s0]" if n == 1 else "[cd_clocked]split=" + str(n) + "".join(f"[cd_s{k}]" for k in range(n)))
+    for k, (i, start, count, run) in enumerate(pieces):
+        crop = crops.get((run, i)) or next((c for (r, j), c in crops.items() if j == i), None) or next(iter(crops.values()), None)
+        parts.append(f"[cd_s{k}]trim=start_frame={start}:end_frame={start + count}[cd_t{k}]")
+        lo, hi = int(start / rate * 1000), int((start + count) / rate * 1000) + 1
+        if crop is None:
+            parts.append(f"[cd_t{k}]scale={card_w}:{card_h}:force_original_aspect_ratio=increase,crop={card_w}:{card_h},setsar=1[cd_c{k}]")
+        else:
+            parts.append(card_chain(f"cd_t{k}", f"cd_c{k}", crop, lo, hi, card_w, card_h))
+        parts.append(f"[cd_c{k}]setpts=PTS-STARTPTS[cd_v{k}]")
+    parts.append("".join(f"[cd_v{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=0,settb=expr=1/({fps}),setpts=N,fps={fps}[sc_card_frames]")
+    return ";".join(parts)
 
 
 @dataclass
@@ -630,12 +898,13 @@ def face_center_y(zones, start_ms: float, end_ms: float, panel_h: int) -> int:
 def build_scene_graph(
     graph: str, scenes: Sequence[Scene], width: int, height: int, edited_ms: int, video_speed: float, fps: str,
     first_input: int, work_dir: str, stem: str, bar_h: int = 0, zones: Sequence = (), brand: Optional[str] = None,
-    card_graph: Optional[Callable[[int, int], str]] = None,
+    card_graph: Optional[Callable[[int, int, list, float], str]] = None,
 ) -> Optional[SceneComposite]:
     """Lay the scenes over a graph ending in a single full-frame [base] (W x H); output stays [base].
 
     `first_input` is the index the first still input gets. None when every scene is face.
-    `card_graph(card_w, card_h)` gives the card's own framing chain from the source (card_source_graph);
+    `card_graph(card_w, card_h, runs, transition)` gives the card's own framing chain from the source
+    (card_source_graph; runs and transition on the edited clock, seconds);
     without it the card is cut from the framed video.
     """
     assert graph.count("[base]") == 1, "layout graph must end its video in a single [base]"
@@ -689,7 +958,7 @@ def build_scene_graph(
             cy = face_center_y(zones, a * 1000, b * 1000, panel_h)
             tops.append(bar_h + max(0, min(panel_h - crop_h, round(cy - crop_h * CARD_FACE_Y))))
         if own_card:
-            parts.append(card_graph(frame_w, frame_h))
+            parts.append(card_graph(frame_w, frame_h, runs, transition))
             parts.append("[sc_card_frames]format=yuva420p[sc_card_rgb]")
         else:
             parts.append(f"[sc_src]crop={width}:{crop_h}:0:'{crop_y_expr(runs, tops)}',"

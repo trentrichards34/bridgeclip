@@ -105,7 +105,7 @@ def test_render_draws_the_arch_card_on_the_grid(tmp_path, monkeypatch):
     red = lambda rgb: rgb[0] > 150 and rgb[1] < 90  # noqa: E731
     # The card reaches the frame's bottom-left corner (no margin), its top corners are rounded off onto the grid.
     assert red(_mean(result.output_path, 2.0, (0, 312, 6, 6)))
-    corner = _mean(result.output_path, 2.0, (0, 200, 3, 3))
+    corner = _mean(result.output_path, 2.0, (0, 182, 3, 3))  # just under the card's top (320 * (1 - 32/1920 - 0.42) = 180)
     assert not red(corner) and corner[2] > corner[1] + 20
     # Above it, the lavender top of the grid.
     assert _mean(result.output_path, 2.0, (20, 10, 140, 40)).min() > 190

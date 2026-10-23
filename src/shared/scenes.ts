@@ -5,8 +5,8 @@
  * - face: the normal full-frame framing (the default: any time without a scene is face).
  * - stage: a backdrop fills the frame, the speaker sits in a card along the
  *   bottom (rounded with a margin, or an "arch": full width with big rounded top
- *   corners, flush with the bottom edge), the top ~53% is free for graphics and
- *   the captions sit between.
+ *   corners, flush with the bottom edge) framed head and shoulders around the
+ *   speaker's face, the top half is free for graphics and the captions sit between.
  * - visual: the card is off-screen; the whole frame is backdrop (for a big graphic).
  *
  * The clip editor keeps a clip's scenes in SOURCE time (`CandidateEdit.stage_scenes`,
@@ -53,11 +53,12 @@ export const MIN_RENDER_SCENE_MS = 300
 
 /** Stage geometry as shares of the 9:16 frame (1080 x 1920), the same as the engine's. */
 export const STAGE_LAYOUT = {
-  cardSide: 40 / 1080, cardBottom: 40 / 1920, cardHeight: 0.37, cardRadius: 48 / 1080,
+  /** The card is tall enough for head and shoulders (0.37 cut the head on close selfie footage). */
+  cardSide: 40 / 1080, cardBottom: 32 / 1920, cardHeight: 0.42, cardRadius: 48 / 1080,
   /** The arch card's top corners (it is full width, its top where the rounded card's is). */
   archRadius: 120 / 1080,
   /** Graphics own the frame above this line in a stage scene. */
-  stageBottom: 0.53,
+  stageBottom: 0.5,
   /** Caption center in a visual scene. */
   visualCaptionY: 0.82
 } as const
@@ -240,6 +241,15 @@ export function outputScenes(c: Timing & { stage_scenes?: StageScene[] }): Stage
     if (to - from >= MIN_RENDER_SCENE_MS) out.push(clean({ ...s, start_ms: from, end_ms: to }))
   }
   return normalizeScenes(out, { keepFace: false }).slice(0, MAX_SCENES)
+}
+
+/** The hook text never shows over the stage: it fades out as the first stage or visual scene starts, unless that is in the clip's first 2.5 s (engine: stage_scenes.hook_hand_over_s). */
+export const STAGE_HOOK_MIN_MS = 2500
+
+/** When (finished clip's clock, ms) the hook hands over to the first stage or visual scene, or null (it keeps its own time). */
+export function stageHookEndMs(c: Timing & { stage_scenes?: StageScene[] }): number | null {
+  const first = outputScenes(c)[0]
+  return first && first.start_ms >= STAGE_HOOK_MIN_MS ? first.start_ms : null
 }
 
 const ease = (p: number): number => { const x = Math.max(0, Math.min(1, p)); return x * x * (3 - 2 * x) }

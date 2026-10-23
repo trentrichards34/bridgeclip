@@ -29,6 +29,7 @@ import { GraphicGallery } from './GraphicGallery'
 import { GraphicPreviewEditor } from './GraphicPreviewEditor'
 import { ScenesOverlay, ScenesTrack } from './ClipScenes'
 import { GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, duplicateGraphic, fitGraphicInCut, graphicLocalMs, hookEndMs, nearestOutputTime, outputTime, placeInFreeBand, removeGraphic, withGraphic, type EditorGraphic, type GraphicTemplateId } from '../../shared/motion-graphics'
+import { stageHookEndMs } from '../../shared/scenes'
 import { graphicStyle } from '../../shared/graphic-layout'
 import { prefillGraphic } from '../../shared/graphic-prefill'
 import { EditLog } from './EditLog'
@@ -465,7 +466,8 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
         }
         // "Hide hook text": past its time in the exported clip, the text is gone (a bar stays as a plain band).
         // The hook hands over to the first chapter header: gone once it starts.
-        const handOver = hookEndMs(c)
+        // And it fades out as the first stage scene starts (the stage's graphics take the top).
+        const handOver = [hookEndMs(c), stageHookEndMs(c)].reduce<number | null>((min, v) => v === null ? min : min === null ? v : Math.min(min, v), null)
         if (hook && hookLayout && headlineShownAt(hook.look, outputTimeAt(c, t) / 1000) && (handOver === null || outputTimeAt(c, t) < handOver)) {
           const { bar, size, lines: shown, top, lineH } = hookLayout
           ctx.textAlign = 'center'; ctx.textBaseline = 'top'
