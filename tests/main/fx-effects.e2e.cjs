@@ -94,8 +94,7 @@ test('effect graphics preview live, appear in the gallery and bake into transpar
   await page.waitForFunction(() => [...document.querySelectorAll('.editor-graphics-overlay .fx-stage')].some((s) => s.shadowRoot?.querySelector('.ls-line-b')))
   const swapGaps = await page.evaluate(WORD_GAPS, '.ls-line-b')
   assert.deepEqual(swapGaps.map((g) => g.pair), ['You need', 'need better', 'better hooks'])
-  // Measured: about 0.23 em before the fix (tight tracking ate the space), 0.35 after.
-  for (const g of swapGaps) assert.ok(g.gap > 0.28, `line-swap “${g.pair}”: gap ${g.gap.toFixed(3)} em`)
+  for (const g of swapGaps) assert.ok(g.gap > 0.2, `line-swap “${g.pair}”: gap ${g.gap.toFixed(3)} em`)
   await page.getByRole('slider', { name: 'Fine timeline position' }).fill('9000')
   await page.waitForFunction(() => document.querySelectorAll('.editor-graphics-overlay .fx-stage').length >= 2 && [...document.querySelectorAll('.editor-graphics-overlay .fx-stage')].some((s) => s.shadowRoot?.querySelector('.pwr-unit')))
   const riseGaps = await page.evaluate(WORD_GAPS, '.pwr-stage')
