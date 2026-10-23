@@ -274,15 +274,20 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   const candidate = project.candidates[0]
   assert.equal(candidate.status, 'baked')
   assert.equal(candidate.hook.text, '15 billion messages are waiting')
-  // The plan's statement (on the stage) and the pinned logo (a Logo pop on "Fifteen"); the Fast explainer's card came while the
-  // logo showed, so it gave way (as pop-ups and cards always have); a stage scene around the statement.
+  // The plan's statement and the pinned logo (a Logo pop on "Fifteen"); the Fast explainer's card came while the logo showed,
+  // so it gave way (as pop-ups and cards always have). The test's camera shows no face (like a filmed screen), so no stage
+  // goes over it and the statement is a card.
   const kinds = candidate.graphics.map((g) => g.template).sort()
   assert.deepEqual(kinds, ['logo', 'statement'], JSON.stringify(candidate.graphics))
   await page.getByText(/1 pop-up or pinned image left out/).waitFor()
   const statement = candidate.graphics.find((g) => g.template === 'statement')
-  assert.deepEqual([statement.origin, statement.size, statement.fields.text], ['auto', 'stage', 'Most coaches lose clients.'])
+  assert.deepEqual([statement.origin, statement.size, statement.fields.text], ['auto', 'card', 'Most coaches lose clients.'])
   assert.ok(statement.fields.word_ms, 'its words come in as they are said')
-  assert.ok(candidate.stage_scenes?.some((sc) => sc.scene === 'stage' && sc.start_ms <= statement.at_ms && sc.end_ms >= statement.at_ms + statement.duration_ms))
+  assert.equal(candidate.stage_scenes, undefined)
+  // The hook floats and hides after a few seconds (a directed reel); the Fast explainer's extras are the clip's, for the bake.
+  assert.equal(candidate.hook.look.hideAfterS, 5)
+  assert.notEqual(candidate.hook.look.look, 'white')
+  assert.deepEqual(candidate.look_extras.ids, ['keyword_pill', 'progress_bar'])
   assert.ok(fs.existsSync(path.join(library, run, 'editor-source.mp4')))
   const reel = path.join(library, run, 'clip_00.mp4')
   const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height', '-show_entries', 'format=duration', '-of', 'json', reel]).toString())
@@ -293,10 +298,10 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   // The raw opening (3.5 s), then the hook (1.3 s), "Most coaches lose many clients." and the call to action (1.3 s), with short pads.
   assert.ok(seconds > 7 && seconds < 10.5, `${seconds}s`)
   assert.ok(Math.abs(seconds * 1000 - project.duration_ms) < 200, `${seconds}s vs ${project.duration_ms}ms`)
-  // On the stage while the statement plays: the light backdrop fills the top of the frame.
+  // The progress bar (an extra the bake draws) fills along the very top: brighter there near the end than at the start.
   const stageAt = (statement.at_ms + 600) / 1000
-  const top = execFileSync(ffmpeg, ['-v', 'error', '-ss', String(stageAt), '-i', reel, '-frames:v', '1', '-vf', 'crop=16:400:2:1300,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'gray', '-'])
-  assert.ok(top[0] > 150, `the stage backdrop shows: ${top[0]}`)
+  const topRow = (at) => execFileSync(ffmpeg, ['-v', 'error', '-ss', String(at), '-i', reel, '-frames:v', '1', '-vf', 'crop=1080:8:0:0,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'gray', '-'])[0]
+  assert.notEqual(topRow(seconds - 0.4), topRow(0.3), 'the progress bar fills the top row')
   assert.ok(fs.existsSync(path.join(library, run, 'images')))
   if (process.env.BRIDGECLIP_E2E_SHOTS) {
     for (const [k, at] of [0.4, 3.0, 4.0, stageAt, seconds - 0.6].entries()) execFileSync(ffmpeg, ['-v', 'error', '-y', '-ss', String(at), '-i', reel, '-frames:v', '1', path.join(process.env.BRIDGECLIP_E2E_SHOTS, `edit-reel-${k}.png`)])
