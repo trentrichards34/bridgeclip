@@ -38,6 +38,7 @@ import { rememberHeadline, rememberRunHeadline, savedHeadline, sourcesKey } from
 import { readMemberPrefs } from './member-prefs'
 import { isGraphicsRegister } from '../shared/look-extras'
 import { registerKeeps } from '../shared/register'
+import { logoFile, logosForEdit } from './logo-library'
 import { fxEffect, fxPictureFields } from '../shared/fx-catalog'
 import { openRouterBase } from './openrouter-media'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
@@ -281,6 +282,40 @@ function parseStartScreenshots(value: unknown, outputDirectory: string): { path:
     if (!out.some((shot) => shot.path === raw.path)) out.push({ path: raw.path, box: parseScreenshotBox(raw.box) })
   }
   return out
+}
+
+/**
+ * My logos the plan pinned (by library id): each copied once into the run's images (it shows in My images and can be
+ * unpinned like any picture), the pins then naming those images. A logo removed meanwhile is left out.
+ */
+export async function keepLogoPins(folder: string, pins: readonly { image: string; word: number }[], images: EditImage[]): Promise<{ pins: { image: string; word: number }[]; images: EditImage[] }> {
+  const byLogo = new Map<string, string | null>()
+  const added: EditImage[] = []
+  for (const pin of pins) {
+    if (byLogo.has(pin.image)) continue
+    const logo = logoFile(pin.image)
+    let id: string | null = null
+    if (logo) {
+      try {
+        const bytes = new Uint8Array(await readFile(logo.path))
+        const kind = imageKind(bytes)
+        if (kind) {
+          id = randomBytes(6).toString('hex')
+          await mkdir(join(folder, 'images'), { recursive: true })
+          const path = join(folder, 'images', `${id}.${kind}`)
+          await writeFile(path, bytes, { mode: 0o600, flag: 'wx' })
+          added.push({ id, name: logo.name, path })
+        }
+      } catch { id = null }
+    }
+    byLogo.set(pin.image, id)
+  }
+  return { pins: pins.flatMap((pin) => { const image = byLogo.get(pin.image); return image ? [{ image, word: pin.word }] : [] }), images: [...images, ...added] }
+}
+
+/** The member's logos for the plan's direction (none when the library can't be read). */
+function editLogos(): { logos?: ReturnType<typeof logosForEdit> } {
+  try { const logos = logosForEdit(); return logos.length ? { logos } : {} } catch { return {} }
 }
 
 /** The start's screenshots, copied into the run's images (checked by their bytes); one that can't be read is left out with a note. */
@@ -741,7 +776,7 @@ async function prepare(current: EditRun): Promise<void> {
       ...(current.purpose ? { purpose: current.purpose } : {}), ...(current.reference ? { reference_image: current.reference } : {}),
       ...(combine ? { combine: { clips: sources.map((source) => ({ shot: source.shot ?? 'face', seconds: source.seconds })) } } : {}),
       // The automatic direction: the same call plans the motion graphics (camera + screen reels have their own layouts).
-      ...(current.status.screen ? {} : { direction: { stage: true, ...(current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}), ...graphicsRegister(),
+      ...(current.status.screen ? {} : { direction: { stage: true, ...(current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}), ...graphicsRegister(), ...editLogos(),
         // The member's screenshots: the director may show them (a browser or phone frame, a before and after, a proof) where they fit.
         ...(screenshotMedia(current.status.images).length ? { media: screenshotMedia(current.status.images) } : {}) } })
     }, 15 * 60_000, (detail, percent, found) => { if (!current.cancelled) publish(current, { detail: detail || 'Planning your edit', percent: 70 + percent * 0.29 }, found) },
@@ -753,6 +788,12 @@ async function prepare(current: EditRun): Promise<void> {
     if (plan.combine) plan.combine.startOrder = current.order === 'ai' && plan.combine.aiOrder ? [...plan.combine.aiOrder] : sources.map((_, i) => i)
     if (combine && current.order === 'ai' && !plan.combine?.aiOrder) current.status = { ...current.status, warnings: [...current.status.warnings, 'The AI didn’t suggest an order this time, so your clips start in the order they were filmed.'] }
     if (current.cancelled) throw new Error('Canceled.')
+    // My logos the director popped in where they're named: copied into the run's images, pinned to their words.
+    if (plan.logoPins?.length) {
+      const kept = await keepLogoPins(current.status.folder, plan.logoPins, current.status.images ?? [])
+      plan.logoPins = kept.pins
+      current.status = { ...current.status, images: kept.images }
+    }
     // Camera + screen: what's said before or after the screen recording starts out cut (it can be kept: it shows just the camera).
     const screen = current.status.screen
     if (screen) {

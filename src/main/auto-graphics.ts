@@ -36,6 +36,7 @@ import { bakeSoundEvents, type CandidateSound, type SoundEvent } from '../shared
 import { DEFAULT_REGISTER, isRegister, type Register } from '../shared/register'
 import { soundPaletteForEngine } from './sound-library'
 import { readMusicSettings } from './music'
+import { copyLogosIntoRun } from './logo-library'
 
 export const GRAPHICS_PLAN_FILE = 'auto-graphics.json'
 const MAX_PLAN_BYTES = 32 * 1024 * 1024
@@ -246,6 +247,8 @@ async function applyNow(run: string, worker: RunGraphicsWorker, options: RunGrap
   const ids = new Map<number, Map<string, GraphicPlacement>>()
   let drawnCount = 0, cancelled = false
   const sound = options.sound ? runSoundSettings(options.sound) : null
+  // My logos the director popped in: their pictures go into the run's images first (named by content, as planned).
+  if (candidates.some((c) => c.graphics?.some((g) => g.template === 'logo'))) { try { copyLogosIntoRun(run) } catch { /* each logo graphic without its picture is left out */ } }
   options.onProgress?.('draw', 0, total)
   for (const c of candidates) {
     const index = c.library_clip as number

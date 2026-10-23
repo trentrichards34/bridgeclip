@@ -7,6 +7,7 @@ import type { ChatPoint } from '../shared/chat-point'
 import type { JobOutput } from '../shared/job-output'
 import type { HeadlineLook } from '../shared/headline-look'
 import type { CtaSummary } from '../shared/ctas'
+import type { LogoSummary } from '../shared/logos'
 import type { ReferenceImage, ReferenceSupport } from '../shared/purpose'
 import type { EditAudit } from '../shared/editorial'
 import { contextBridge, ipcRenderer } from 'electron'
@@ -229,6 +230,8 @@ export interface BridgeClipAPI {
     /** Choose a picture for a Logo pop graphic; it is copied into the run. Returns its name (the graphic's `image`), or null. */
     graphicImage: (path: string) => Promise<string | null>
     graphicVideo: (path: string) => Promise<string | null>
+    /** One of My logos for a Logo pop graphic, copied into the run. Returns its name (the graphic's `image`). */
+    logoImage: (path: string, logoId: string) => Promise<string>
     words: (path: string, from: number, to: number) => Promise<{ word: string; start_ms: number; end_ms: number }[]>
     /** What opening an Automatic run (or a project made from one) in the editor involves. */
     automaticInfo: (path: string) => Promise<AutomaticEditInfo>
@@ -658,6 +661,14 @@ export interface BridgeClipAPI {
     update: (id: string, patch: { name?: string; seconds?: number }) => Promise<CtaSummary[]>
     remove: (id: string) => Promise<CtaSummary[]>
   }
+  /** My logos: the member's logo images, popped in where their names are said. */
+  logos: {
+    list: () => Promise<LogoSummary[]>
+    /** Opens a file dialog; null when cancelled. */
+    add: () => Promise<LogoSummary[] | null>
+    update: (id: string, patch: { name?: string; aliases?: string[] }) => Promise<LogoSummary[]>
+    remove: (id: string) => Promise<LogoSummary[]>
+  }
   system: {
     isPackaged: () => Promise<boolean>
     checkTools: () => Promise<ToolStatus>
@@ -809,6 +820,7 @@ const api: BridgeClipAPI = {
     onSaveBeforeClose: (callback) => subscribe<void>('editor:saveBeforeClose', () => callback()),
     closeReady: (saved) => ipcRenderer.invoke('editor:closeReady', saved),
     graphicImage: (path) => ipcRenderer.invoke('editor:graphicImage', path),
+    logoImage: (path, logoId) => ipcRenderer.invoke('editor:logoImage', path, logoId),
     graphicVideo: (path) => ipcRenderer.invoke('editor:graphicVideo', path),
     words: (path, from, to) => ipcRenderer.invoke('editor:words', path, from, to),
     automaticInfo: (path) => ipcRenderer.invoke('editor:automaticInfo', path),
@@ -1104,6 +1116,12 @@ const api: BridgeClipAPI = {
     add: (name) => ipcRenderer.invoke('ctas:add', name),
     update: (id, patch) => ipcRenderer.invoke('ctas:update', id, patch),
     remove: (id) => ipcRenderer.invoke('ctas:remove', id)
+  },
+  logos: {
+    list: () => ipcRenderer.invoke('logos:list'),
+    add: () => ipcRenderer.invoke('logos:add'),
+    update: (id, patch) => ipcRenderer.invoke('logos:update', id, patch),
+    remove: (id) => ipcRenderer.invoke('logos:remove', id)
   },
   system: {
     isPackaged: () => ipcRenderer.invoke('system:isPackaged'),
