@@ -32,6 +32,7 @@ import { graphicJob, importGraphicImage, renderGraphicJobs, REEL_GRAPHICS_DIR, t
 import { cancelEditor, runEditor } from './clip-editor'
 import { brollRunFields } from './broll-library'
 import { logger } from './logger'
+import { rememberHeadline, rememberRunHeadline, savedHeadline, sourcesKey } from './hook-memory'
 import { readMemberPrefs } from './member-prefs'
 import { openRouterBase } from './openrouter-media'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
@@ -69,6 +70,10 @@ interface EditRun {
   order: ClipOrderMode
   /** The clip editor is baking the reel (the last step of making it). */
   baking?: boolean
+  /** These recordings' fingerprint (hook-memory.ts), to keep their headline from run to run; null when unreadable. */
+  headlineKey: string | null
+  /** The headline these recordings were made with last time, sent to the plan to keep ('' for none, or a new one asked for). */
+  keptHeadline: string
 }
 
 /** The clip editor candidate an edited reel is (engine edit_direction.CANDIDATE_ID). */
@@ -194,6 +199,8 @@ export async function describeSource(path: string, mode: EditMode = 'takes'): Pr
 
 export interface ParsedEditStart {
   sources: string[]; brandIdentityId: string | null; hookHint: string; purpose: string; referenceImage: string | null; mode: EditMode; order: ClipOrderMode
+  /** Write a new headline even when these recordings were made before. */
+  newHeadline: boolean
   /** Camera + screen: the screen recording and how it lines up with the camera. */
   screen: { path: string; offsetMs: number } | null
 }
@@ -217,11 +224,13 @@ export function parseEditStart(value: unknown, outputDirectory: string): ParsedE
   }
   if (raw.brandIdentityId !== null && raw.brandIdentityId !== undefined && !isBrandId(raw.brandIdentityId)) throw new Error('Choose one of your brands.')
   if (raw.hookHint !== undefined && (typeof raw.hookHint !== 'string' || raw.hookHint.length > MAX_HOOK_HINT_CHARS)) throw new Error('That hook is too long.')
+  if (raw.newHeadline !== undefined && typeof raw.newHeadline !== 'boolean') throw new Error('Choose to keep your last headline or get a new one.')
   const purpose = parsePurpose(raw.purpose)
   if (raw.referenceImage !== undefined && raw.referenceImage !== null && !isReferenceId(raw.referenceImage)) throw new Error('Choose your reference image again.')
   const screen = raw.screen === undefined || raw.screen === null ? null : parseStartScreen(raw.screen, sources, mode, outputDirectory)
   return { screen, sources, brandIdentityId: (raw.brandIdentityId as string | null | undefined) ?? null, hookHint: typeof raw.hookHint === 'string' ? raw.hookHint.replace(/\s+/g, ' ').trim() : '',
-    purpose, referenceImage: isReferenceId(raw.referenceImage) ? raw.referenceImage : null, mode, order: mode === 'combine' && raw.order === 'ai' ? 'ai' : 'filmed' }
+    purpose, referenceImage: isReferenceId(raw.referenceImage) ? raw.referenceImage : null, mode, order: mode === 'combine' && raw.order === 'ai' ? 'ai' : 'filmed',
+    newHeadline: raw.newHeadline === true }
 }
 
 /** The start request's screen recording: one camera recording (not combined clips), a video the member chose. */
@@ -324,6 +333,24 @@ export async function importClips(paths: string[], onProgress: (files: ImportPro
     onProgress(progress.map((item) => ({ ...item })))
   }
   return { sources, skipped }
+}
+
+/**
+ * The setup page: the headline these recordings were made with last time (Edit my recording or Combine clips), so it
+ * can say it will be kept. Null when they haven't been made into a video here before.
+ */
+export async function editSavedHeadline(value: unknown): Promise<{ headline: string | null }> {
+  const raw = (value ?? {}) as { sources?: unknown; mode?: unknown }
+  if (!value || typeof value !== 'object' || !Array.isArray(raw.sources) || raw.sources.length === 0 || raw.sources.length > COMBINE_MAX_CLIPS) return { headline: null }
+  const mode: EditMode = raw.mode === 'combine' ? 'combine' : 'takes'
+  const outputDirectory = loadSettings().outputDirectory
+  const sources: { path: string; seconds: number }[] = []
+  for (const source of raw.sources) {
+    if (typeof source !== 'string' || !EDIT_VIDEO_EXTENSIONS.includes(extname(source).slice(1).toLowerCase())) return { headline: null }
+    try { assertMediaPath(source, outputDirectory) } catch { return { headline: null } }
+    sources.push({ path: source, seconds: known.get(source) ?? await mediaSeconds(source) })
+  }
+  return { headline: savedHeadline(await sourcesKey(mode, sources)) }
 }
 
 /** The spending check's estimate for starting (null when the recordings weren't checked here first). */
@@ -524,12 +551,15 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
         if (kept.note) warnings.push(kept.note)
       } catch (error) { warnings.push(`${(error as Error)?.message || 'Your reference image could not be used.'} The edit goes ahead without it.`) }
     }
+    // The same recordings made before keep their headline (unless a new one is asked for).
+    const headlineKey = await sourcesKey(request.mode, sources.map((source) => ({ path: source.path, seconds: known.get(source.path) ?? source.seconds })))
+    const keptHeadline = request.newHeadline ? '' : savedHeadline(headlineKey) ?? ''
     // A plan waiting for review (or a failed one) is replaced by this run.
     await dropUnfinished()
     await cleanupAbandonedEdits(settings.outputDirectory, folder)
     await cleanupImports(settings.outputDirectory, sources.map((source) => source.path)).catch(() => undefined)
     const current: EditRun = {
-      cancelled: false, brand, hookHint: request.hookHint, purpose: request.purpose, reference, recordedUsd: 0, order: request.order,
+      cancelled: false, brand, hookHint: request.hookHint, purpose: request.purpose, reference, recordedUsd: 0, order: request.order, headlineKey, keptHeadline,
       status: {
         id: randomBytes(6).toString('hex'), phase: 'transcribing', detail: 'Starting', percent: 1, sources, folder, plan: null, transcriber: null,
         output: null, costUsd: 0, estimateUsd: editEstimate(total).total, error: null, warnings, images: [], ...(combine ? { mode: 'combine' as const } : {}),
@@ -573,6 +603,7 @@ async function prepare(current: EditRun): Promise<void> {
     const result = await runEngine({
       mode: 'plan', output_dir: current.status.folder, words: words.slice(0, 8000), sources_count: sources.length, names: sources.map((source) => source.name),
       brand_identity: current.brand?.text ?? '', brand_name: current.brand?.name ?? '', hook_hint: current.hookHint,
+      ...(current.keptHeadline ? { fixed_hook: current.keptHeadline } : {}),
       ...(current.purpose ? { purpose: current.purpose } : {}), ...(current.reference ? { reference_image: current.reference } : {}),
       ...(combine ? { combine: { clips: sources.map((source) => ({ shot: source.shot ?? 'face', seconds: source.seconds })) } } : {}),
       // The automatic direction: the same call plans the motion graphics (camera + screen reels have their own layouts).
@@ -833,6 +864,8 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
       logger.info('edit.done', { seconds, cost: current.status.costUsd, clips: order?.length ?? 0 })
       // The proxies went with .work; the reel no longer needs them.
       const sources = current.status.sources.map(({ proxy: _proxy, ...rest }) => { void _proxy; return rest })
+      // The headline it was made with is the one these recordings keep next time.
+      rememberHeadline(current.headlineKey, decisions.hookText, basename(current.status.folder))
       publish(current, { phase: 'done', detail: 'Done', percent: 100, output: { path, durationSeconds: seconds }, warnings: warnings.slice(0, 5), sources, ...(editor ? { editor: true } : {}) })
       await dropImports(current)
     } catch (error) {
@@ -1093,6 +1126,11 @@ export async function filmIdeas(value: unknown, fetcher: typeof fetch = fetch): 
 // Library: "Edit hook text & captions" on a finished reel (re-made from its saved parts, no AI cost)
 // ---------------------------------------------------------------------------
 
+/** The clip editor saved a new hook text on an edited recording's reel: its recordings keep it next time. */
+export function editorHeadlineSaved(run: string, candidateId: string, text: string): void {
+  if (candidateId === EDIT_CANDIDATE && isEditRunFolder(run)) rememberRunHeadline(basename(run), text)
+}
+
 export function isEditRunFolder(outputDir: unknown): boolean {
   return typeof outputDir === 'string' && EDIT_RUN.test(basename(outputDir))
 }
@@ -1156,6 +1194,8 @@ export async function recomposeEditRun(outputDir: unknown, clipIndex: unknown, v
       const temp = join(folder, `.job_output-${randomBytes(4).toString('hex')}.json`)
       await writeFile(temp, JSON.stringify(latest, null, 2), { mode: 0o600 })
       await rename(temp, join(folder, 'job_output.json'))
+      // The member's new headline is the one its recordings keep next time.
+      rememberRunHeadline(basename(folder), edit.headline)
       // What the engine left out (graphics that couldn't be added) is said with the note.
       const warnings = Array.isArray(result.warnings) ? result.warnings.filter((item): item is string => typeof item === 'string').map((item) => item.slice(0, 300)).slice(0, 2) : []
       return [note, ...warnings].filter(Boolean).join(' ') || null

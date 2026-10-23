@@ -296,6 +296,18 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                 onChange={(e) => setDecisions((current) => ({ ...current, hookText: e.target.value }))} />
             </label>
             {problem && <p className="text-2xs text-danger">{problem}</p>}
+            {plan.keptHook && (plan.keptHook.kept ? (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5" data-testid="edit-kept-headline">
+                <p className="min-w-0 flex-1 text-2xs text-ink-muted">{decisions.hookText.trim() === plan.keptHook.text
+                  ? 'Same headline as last time you made this video.'
+                  : `Your last headline was “${plan.keptHook.text}”.`}</p>
+                {plan.keptHook.fresh && plan.keptHook.fresh !== plan.keptHook.text && (decisions.hookText.trim() === plan.keptHook.text
+                  ? <Button size="sm" variant="secondary" icon={<Sparkles className="h-3.5 w-3.5" />} onClick={() => setDecisions((current) => ({ ...current, hookText: plan.keptHook!.fresh }))}>New headline</Button>
+                  : <Button size="sm" variant="ghost" onClick={() => setDecisions((current) => ({ ...current, hookText: plan.keptHook!.text }))}>Use my last headline</Button>)}
+              </div>
+            ) : (
+              <p className="text-2xs text-ink-muted" data-testid="edit-kept-headline">Your last headline used words that aren’t in this recording, so the AI wrote a new one.</p>
+            ))}
           </section>
 
           {plan.combine && decisions.clipOrder && (

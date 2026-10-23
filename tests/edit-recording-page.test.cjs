@@ -203,3 +203,23 @@ test('the progress view: the job’s steps with times, the clip strip with the c
   assert.match(html, /Timing it as it goes: 13 clips, 1:05 of video\./)
   assert.match(html, />Cancel</)
 })
+
+test('the review: a kept headline says so and offers the AI’s new one; one that no longer fits says a new one was written', () => {
+  const look = { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'white', color: '#FFFFFF', font: 'clean' }, showHandle: false }
+  const render = (keptHook, id) => {
+    const plan = parseEditPlan({
+      words: [['Most', 300, 500, 0, null], ['coaches', 520, 800, 0, null], ['undercharge.', 920, 1400, 0, null]],
+      hooks: [{ id: 0, start: 0, end: 2, text: keptHook.kept ? keptHook.text : keptHook.fresh, why: '' }], hook: 0, cta: null, popups: [], sounds: [], planned: 'ai', notes: [], warnings: [], kept_hook: keptHook
+    }, 1)
+    const status = { id, phase: 'review', detail: '', percent: 100, folder: '/out/edit-1', plan, transcriber: 'scribe', output: null, costUsd: 0, estimateUsd: 0, error: null, warnings: [],
+      sources: [{ path: '/a/take-1.mp4', name: 'take-1.mp4', seconds: 2 }] }
+    return staticRender(React.createElement(EditReview, { status, brand: null, look, onLook: () => {}, onError: () => {} }))
+  }
+  const kept = render({ kept: true, text: 'Most coaches undercharge', fresh: 'Coaches charge too little' }, 'kept-1')
+  assert.match(kept, /value="Most coaches undercharge"/)
+  assert.match(kept, /Same headline as last time you made this video\./)
+  assert.match(kept, />New headline<\/button>/)
+  const fresh = render({ kept: false, text: '', fresh: 'Coaches charge too little' }, 'kept-2')
+  assert.match(fresh, /value="Coaches charge too little"/)
+  assert.match(fresh, /Your last headline used words that aren’t in this recording, so the AI wrote a new one\./)
+})

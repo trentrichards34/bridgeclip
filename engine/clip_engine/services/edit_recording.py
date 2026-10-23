@@ -666,6 +666,46 @@ def hook_text_from(words: list[Word], span: Span, marks: list[Optional[str]]) ->
     return text.rstrip(",;:") + ("…" if len(kept) > MAX_HOOK_TEXT_WORDS - 2 else "")
 
 
+def headline_said(text: str, words: list[Word]) -> bool:
+    """A headline uses only words the speaker said (anywhere in the recording, a plural either way), and only numbers
+    they said. Used on a headline kept from an earlier run of the same recording before it is shown again."""
+    heard: set[str] = set()
+    for w in words:
+        heard.add(norm(w.text))
+        heard.update(norm(piece) for piece in re.split(r"[\s\-–—/]+", w.text) if piece)
+    content = 0
+    for token in (t for t in re.split(r"[\s\-–—/]+", text) if t):
+        key = norm(token)
+        if not key:
+            continue
+        if _digits(token.strip(".,!?;:\"'()…“”")) is not None or numbers_in(token):
+            continue  # numbers are checked below, against what was said
+        if not {key, key.rstrip("s"), key + "s", key + "es", key[:-2] if key.endswith("es") else key} & heard:
+            return False
+        content += 1
+    return content > 0 and not unsupported_numbers(text, " ".join(w.text for w in words))
+
+
+def kept_headline(value: Any, words: list[Word]) -> str:
+    """The headline kept from an earlier run, cleaned and checked against this recording's words ('' when it fails)."""
+    text = _clean_text(value, MAX_HOOK_TEXT_WORDS, MAX_HOOK_TEXT_CHARS)
+    return text if text and headline_said(text, words) else ""
+
+
+def keep_headline(plan: dict, words: list[Word], value: Any) -> None:
+    """Re-running the same recording: its last headline goes on the plan's first hook when it still passes the
+    words-said check; otherwise the plan's own (new) headline stays. Either way the plan says which, and keeps the
+    new one so the member can switch to it ("fresh")."""
+    hooks = plan.get("hooks") or []
+    if not hooks or not isinstance(value, str) or not value.strip():
+        return
+    fresh = hooks[0].get("text") or ""
+    text = kept_headline(value, words)
+    if text:
+        hooks[0] = {**hooks[0], "text": text}
+    plan["kept_hook"] = {"kept": bool(text), "text": text, "fresh": fresh}
+
+
 def _span_seconds(words: list[Word], span: Span) -> float:
     return (words[span.end].end_ms - words[span.start].start_ms) / 1000
 
@@ -929,6 +969,7 @@ def review_of(words: list[Word], plan: dict, planned: str, cost_usd: float, warn
         "warnings": warnings[:4], "cost_usd": round(cost_usd, 6),
         **({"combine": plan["combine"]} if plan.get("combine") else {}),
         **({"graphics": plan["graphics"]} if plan.get("graphics") else {}),
+        **({"kept_hook": plan["kept_hook"]} if plan.get("kept_hook") else {}),
     }
 
 
@@ -947,6 +988,8 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
     user = (
         "BRAND (data" + (f": {config.get('brand_name')}" if config.get("brand_name") else "") + ")\n" + (brand or "(none)")
         + ("\n\nWHAT THEY MEANT TO OPEN WITH (data)\n" + config["hook_hint"] if config.get("hook_hint") else "")
+        + ("\n\nTHE HEADLINE THEY USED LAST TIME ON THIS RECORDING (data: open on the line it comes from)\n" + kept
+           if (kept := kept_headline(config.get("fixed_hook"), words)) else "")
         + "\n\nTRANSCRIPT (data)\n" + format_transcript(words, base, names, clips or None)
     )
     # "Say what it's for": the purpose line and (when the app found the model accepts images) the reference picture.
@@ -1005,6 +1048,8 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
         plan = basic_plan(words, base)
         if clips:
             plan["combine"] = combine_of(None, words, plan, clips)
+    # The same recording again: its last headline stays (checked against these words), unless the member asked for a new one.
+    keep_headline(plan, words, config.get("fixed_hook"))
     review = review_of(words, plan, "ai" if not warnings else "basic", cost, warnings)
     progress("Plan ready", 100, _plan_found(review))
     return review

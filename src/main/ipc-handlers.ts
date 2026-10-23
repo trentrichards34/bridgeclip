@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
 import { BROLL_IMAGE_EXTENSIONS, BROLL_PLAN_ESTIMATE_USD, BROLL_VIDEO_EXTENSIONS } from '../shared/react-templates'
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
-import { addEditorCandidate, addEditorGraphicImage, addEditorGraphicVideo, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorRunLock, onEditorSpend, readEditorClips, readEditorProgress, suggestEditorHooks } from './clip-editor'
+import { addEditorCandidate, addEditorGraphicImage, addEditorGraphicVideo, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorHookSaved, onEditorRunLock, onEditorSpend, readEditorClips, readEditorProgress, suggestEditorHooks } from './clip-editor'
 import { buildLibrarySummary } from '../shared/library-summary'
 import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
 import { chatEstimateUsd, chatInfo, chatModel, editorChat, readChatTranscript, resetChat } from './clip-chat'
@@ -52,7 +52,7 @@ import { cancelListicleRender, LISTICLE_SCRIPT_ESTIMATE_USD, listicleRunBusy, li
 import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
   isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate, addEditImage, addEditImageFiles, removeEditImage, importClips,
-  describeScreen, previewScreen, syncScreen
+  describeScreen, previewScreen, syncScreen, editSavedHeadline, editorHeadlineSaved
 } from './edit-recording'
 import { EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGES, EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
 import { COMBINE_MAX_CLIPS } from '../shared/combine-clips'
@@ -108,6 +108,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   onEditorRunLock(withRunLock)
   // Editor AI calls (caption translation on a bake, hook ideas) join the spending ledger.
   onEditorSpend((usd, label) => recordSpend({ kind: 'create', provider: 'openrouter', usd, label }))
+  // A headline changed in the clip editor is the one an edited recording keeps next time.
+  onEditorHookSaved((run, candidateId, text) => editorHeadlineSaved(run, candidateId, text))
   // Runs inside the export's run lock (onEditorRunLock), so it uses the in-lock version.
   onEditorExportCta(async (run, ctaId, index) => {
     const { failed } = await applyRunCtaInLock(run, ctaId, [index])
@@ -759,6 +761,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
   handle('edit:syncScreen', (_event, camera: unknown, screen: unknown) => syncScreen(camera, screen))
   handle('edit:previewScreen', (_event, camera: unknown, screen: unknown, offsetMs: unknown, atMs: unknown) => previewScreen(camera, screen, offsetMs, atMs))
+  handle('edit:savedHeadline', (_event, request: unknown) => editSavedHeadline(request))
   paid('edit:start', 'openrouter', (request) => startEstimate(request), (request) => startEdit(request))
   handle('edit:render', async (_event, decisions: unknown) => {
     // AI b-roll is the paid part of making the reel: the spending check first, at most its shots.
