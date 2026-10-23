@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ALargeSmall, AppWindow, Bookmark, CircleCheckBig, Columns2, Contact, Crosshair, Filter, Footprints, Hash, Highlighter, Image, LayoutGrid, Lightbulb, ListChecks, ListOrdered,
-  MessageCircle, MonitorPlay, Orbit, Pilcrow, Quote, Search, Shapes, Sprout, StickyNote, Strikethrough, TrendingUp, Type, X, type LucideIcon
+  MessageCircle, MonitorPlay, MousePointerClick, Orbit, Pilcrow, Quote, Search, Shapes, Sprout, StickyNote, Strikethrough, TrendingUp, Type, X, type LucideIcon
 } from 'lucide-react'
 import { DIAGRAM_ACCENT, graphicHasContent, isDiagram, type GraphicRenderSpec, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { outputSize } from '../../shared/graphic-layout'
@@ -20,7 +20,7 @@ import './graphic-gallery.css'
 /** Each template's icon (the gallery, the timeline blocks and the preview toolbar). */
 export const TEMPLATE_ICONS: Record<GraphicTemplateId, LucideIcon> = {
   stat: Hash, title: Type, list: ListOrdered, lower_third: Contact, logo: Image, before_after: Columns2, checklist: ListChecks, quote: Quote, highlight: Crosshair,
-  statement: Pilcrow, sticky_notes: StickyNote, strike_list: Strikethrough, browser_frame: AppWindow, icon_pop: Shapes, headline_pill: Highlighter, comment_cta: MessageCircle,
+  statement: Pilcrow, sticky_notes: StickyNote, strike_list: Strikethrough, browser_frame: AppWindow, icon_pop: Shapes, headline_pill: Highlighter, comment_cta: MessageCircle, link_cta: MousePointerClick,
   big_words: ALargeSmall, orbit: Orbit, feature_tile: LayoutGrid, screen_frame: MonitorPlay, chapter: Bookmark, staircase: TrendingUp, funnel: Filter, journey: Footprints,
   growth: Sprout, idea_hub: Lightbulb, compare_marks: CircleCheckBig
 }

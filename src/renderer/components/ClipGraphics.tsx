@@ -12,7 +12,7 @@ import type { MountedGraphic } from '../graphics/templates'
 import {
   CHAPTER_STYLES, DIAGRAM_ACCENT, GRAPHIC_DEFAULT_MS, GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
   ITEM_TIMED_TEMPLATES, bigWordsOptions, chapterStyle, clampGraphicMs, duplicateGraphic, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, switchGraphicTemplate, templateInfo, templateItems, updateGraphic, withGraphic,
-  MAX_BIG_WORDS, SCREEN_VIDEO_FILE, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
+  MAX_BIG_WORDS, SCREEN_VIDEO_FILE, ctaKind, type CtaKind, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
 } from '../../shared/motion-graphics'
 import { GRAPHIC_DEFAULT_COLOR, graphicOwnFont, graphicSpec, graphicStyle } from '../../shared/graphic-layout'
 import { prefillGraphic, spokenSteps } from '../../shared/graphic-prefill'
@@ -123,7 +123,7 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, s
 
 export const SHORT: Record<GraphicTemplateId, string> = {
   stat: 'Stat', title: 'Title', list: 'List', lower_third: 'Name', logo: 'Logo', before_after: 'Before/after', checklist: 'Checklist', quote: 'Quote', highlight: 'Arrow/circle',
-  statement: 'Statement', sticky_notes: 'Notes', strike_list: 'Crossed out', browser_frame: 'Browser', icon_pop: 'Icons', headline_pill: 'Headline', comment_cta: 'Comment',
+  statement: 'Statement', sticky_notes: 'Notes', strike_list: 'Crossed out', browser_frame: 'Browser', icon_pop: 'Icons', headline_pill: 'Headline', comment_cta: 'Comment', link_cta: 'Call to action',
   big_words: 'Big words', orbit: 'Orbit', feature_tile: 'Tiles', screen_frame: 'Screen',
   chapter: 'Chapter', staircase: 'Stairs', funnel: 'Funnel', journey: 'Journey', growth: 'Growth', idea_hub: 'Idea hub', compare_marks: 'Wrong/right'
 }
@@ -133,7 +133,7 @@ export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): s
   const words = g.template === 'stat' ? [f.value, f.label] : g.template === 'lower_third' ? [f.name, f.role] : g.template === 'before_after' ? [f.before, f.after]
     : g.template === 'list' || g.template === 'checklist' ? [f.title, first] : g.template === 'logo' ? [f.caption] : g.template === 'highlight' ? [f.shape === 'arrow' ? 'Arrow' : 'Circle']
       : g.template === 'sticky_notes' || g.template === 'icon_pop' ? [first] : g.template === 'strike_list' ? [first, f.final] : g.template === 'browser_frame' ? [f.domain, f.title]
-        : g.template === 'headline_pill' ? [f.text, f.phrase] : g.template === 'comment_cta' ? [f.keyword] : g.template === 'orbit' ? [f.text, first]
+        : g.template === 'headline_pill' ? [f.text, f.phrase] : g.template === 'comment_cta' ? [f.keyword] : g.template === 'link_cta' ? [f.text, f.where] : g.template === 'orbit' ? [f.text, first]
           : g.template === 'feature_tile' ? [first] : g.template === 'screen_frame' ? [f.label || (f.video === 'source' ? 'This clip' : f.video ? 'Your video' : '')]
             : g.template === 'chapter' ? [[f.label, f.title].map((w) => w?.trim()).filter(Boolean).join(' ')] : g.template === 'idea_hub' ? [f.text, first]
               : isDiagram(g.template) ? [f.title, first] : [f.text]
@@ -147,7 +147,7 @@ export const GRAPHIC_GROUPS: { id: GraphicGroup; label: string; templates: reado
   { id: 'lists', label: 'Lists & steps', templates: ['list', 'checklist', 'sticky_notes', 'strike_list', 'before_after', 'icon_pop', 'feature_tile'] },
   { id: 'diagrams', label: 'Diagrams', templates: ['staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks', 'orbit'] },
   { id: 'media', label: 'Media', templates: ['logo', 'browser_frame', 'screen_frame', 'highlight'] },
-  { id: 'ending', label: 'Ending', templates: ['comment_cta'] }
+  { id: 'ending', label: 'Ending', templates: ['link_cta', 'comment_cta'] }
 ]
 export function graphicGroup(template: GraphicTemplateId): GraphicGroup | 'other' {
   return GRAPHIC_GROUPS.find((g) => g.templates.includes(template))?.id ?? 'other'
@@ -260,7 +260,7 @@ export const SAMPLES: Record<GraphicTemplateId, Record<string, string>> = {
   highlight: { shape: 'circle', x: '0.5', y: '0.45' }, statement: { text: 'Your big idea', accent: 'idea', subline: 'A short line under it' },
   sticky_notes: { items: 'First note\nSecond note' }, strike_list: { items: 'Old way\nOther old way', final: 'The better way', accent: 'better way' },
   browser_frame: { domain: 'yoursite.com', title: 'Your page headline', accent: 'headline' }, icon_pop: { items: 'Email\nVideo\nChat', icons: 'mail\nvideo\nmessage' },
-  headline_pill: { text: 'Your first line', phrase: 'Key words' }, comment_cta: { keyword: 'WORD' },
+  headline_pill: { text: 'Your first line', phrase: 'Key words' }, comment_cta: { keyword: 'WORD' }, link_cta: { text: 'Click the link', where: 'below', kind: 'link' },
   big_words: { text: 'Big words', style: 'mixed' },
   orbit: { text: 'Hub', items: 'Email\nVideo\nChat\nCalendar\nChart', icons: 'mail\nvideo\nmessage\ncalendar\nchart', labels: 'off' },
   feature_tile: { items: 'Your feature', icons: 'search', dot: 'on' }, screen_frame: { label: 'Your screen', shape: 'square' },
@@ -277,14 +277,14 @@ export function wordsAtPlayhead(template: GraphicTemplateId, line: string | unde
 }
 
 export const FIELD_LABELS: Record<string, string> = { value: 'Number', label: 'Label', text: 'Words', title: 'Title', items: 'Items (one per line)', name: 'Name', role: 'Role', caption: 'Caption', before: 'Before', after: 'After', author: 'Who said it',
-  accent: 'Words in italics', subline: 'Small line under it', final: 'Last line', domain: 'Website address', highlights: 'Boxes on the picture', phrase: 'Key words (on the color box)', keyword: 'Keyword to comment', lead: 'Word above it',
+  accent: 'Words in italics', subline: 'Small line under it', final: 'Last line', domain: 'Website address', highlights: 'Boxes on the picture', phrase: 'Key words (on the color box)', keyword: 'Keyword to comment', lead: 'Word above it', where: 'Where the link is',
   from: 'Starts at (seconds into the video)', zoom: 'Zoom into (optional)', notes: 'Short line under each (one per line)' }
 /** Per-template field labels where the general one doesn't fit. */
 const TEMPLATE_FIELD_LABELS: Partial<Record<GraphicTemplateId, Record<string, string>>> = {
   sticky_notes: { items: 'Notes (one per line, up to 3)' }, strike_list: { items: 'Crossed-out items (one per line, up to 4)' },
   icon_pop: { items: 'Labels (one per line, up to 4)' }, headline_pill: { text: 'First line' }, browser_frame: { title: 'Headline (when there’s no picture)' },
   big_words: { text: `Words (up to ${MAX_BIG_WORDS})` }, orbit: { text: 'Center label', items: 'Labels (one per line, 3 to 6)' }, feature_tile: { items: 'Tiles (one per line, up to 3)' }, screen_frame: { label: 'Window title (optional)' },
-  chapter: { label: 'Label (optional)', title: 'Section title' },
+  chapter: { label: 'Label (optional)', title: 'Section title' }, link_cta: { text: 'Button words', where: 'Where the link is (optional)', lead: 'Small line above (optional)' },
   staircase: { title: 'Title (optional)', items: 'Steps, bottom to top (one per line, 3 to 6)' }, funnel: { title: 'Title (optional)', items: 'Stages, wide end first (one per line, 3 to 5)' },
   journey: { title: 'Title (optional)', items: 'Milestones in order (one per line, 3 to 5)' }, growth: { title: 'Title (optional)', items: 'Labels, smallest first (one per line, 3 to 6)' },
   idea_hub: { text: 'Words under the icon (optional)', items: 'Labels around it (one per line, 3 to 6)' }, compare_marks: { items: 'The two cards (one per line)' }
@@ -295,6 +295,7 @@ const FIELD_HINTS: Partial<Record<GraphicTemplateId, Record<string, string>>> = 
   strike_list: { accent: 'Words from the last line, circled. Empty: the last word.' },
   browser_frame: { accent: 'Words from the headline, with a marker.', highlights: 'One box per line: across, down, width, height (0 to 1 of the picture), then the second it shows. For example: 0.1, 0.3, 0.6, 0.08, 1.5' },
   comment_cta: { lead: 'Empty: “Comment”.' },
+  link_cta: { text: 'Your call to action as you say it, like “Click the link”.', where: 'As you say it, like “below” or “in my bio”. Arrows point down to it.', lead: 'A few words you say with it, like “Get the free guide”.' },
   big_words: { text: 'Use words you say here. Each line fills the width; press Enter to choose where a new line starts.' },
   orbit: { text: 'Short, like the one thing they all connect to. Empty: an icon (or your image).', items: 'One per node. Each node gets an icon below.' },
   chapter: { label: 'Like “Step #1.” Use the number you say.', title: 'Words you say at the start of this section. It stays at the top until the next chapter.' },
@@ -336,6 +337,8 @@ export function IconFields({ fields, onField, imageNote = true, template = 'icon
     <p className="text-2xs text-ink-subtle">Simple icons only.{imageNote ? ' To show a brand’s logo, choose its image above.' : ' “Letter” shows the label’s first letter.'}</p></div>
 }
 
+const CTA_KIND_OPTIONS: { value: CtaKind; label: string }[] = [{ value: 'link', label: 'Link' }, { value: 'comment', label: 'Comment' }, { value: 'dm', label: 'Message' },
+  { value: 'follow', label: 'Follow' }, { value: 'save', label: 'Save' }, { value: 'share', label: 'Share' }]
 const CHAPTER_STYLE_OPTIONS: { value: ChapterStyle; label: string }[] = [{ value: 'serif_caps', label: 'Serif' }, { value: 'sans', label: 'Bold' }, { value: 'pill', label: 'Pill' }]
 
 /** The extra choices of a chapter header and the diagrams: look, which card is wrong, the center icon, the step icons. */
@@ -346,6 +349,8 @@ export function DiagramFields({ template, fields, onField }: { template: Graphic
       <Segmented<ChapterStyle> label="Chapter header look" size="sm" value={style} onChange={(value) => onField('style', value)} options={CHAPTER_STYLE_OPTIONS.filter((o) => CHAPTER_STYLES.includes(o.value))} />
       <p className="text-2xs text-ink-subtle">{style === 'serif_caps' ? 'White small capitals in a serif, with a soft shadow.' : style === 'sans' ? 'Bold white type, the label in your color.' : 'White type on a dark pill.'} It sits at the very top; your hook text hides when the first chapter starts.</p></div>
   }
+  if (template === 'link_cta') return <div className="flex items-center justify-between gap-2 text-2xs"><span>Icon on the button</span>
+    <Select size="sm" aria-label="Icon on the button" value={ctaKind(fields)} options={CTA_KIND_OPTIONS} onChange={(kind) => onField('kind', kind === 'link' ? '' : kind)} /></div>
   if (template === 'staircase') return <IconFields fields={fields} onField={onField} template="staircase" imageNote={false} />
   if (template === 'growth') return <div className="space-y-1"><p className="editor-label">Drawn as</p>
     <Segmented<'plants' | 'bars'> label="Growth drawn as" size="sm" value={growthStyle(fields)} onChange={(value) => onField('style', value === 'plants' ? '' : value)} options={[{ value: 'plants', label: 'Plants' }, { value: 'bars', label: 'Bars' }]} /></div>
@@ -618,7 +623,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
         {imageError && <p role="alert" className="text-2xs text-danger">{imageError}</p>}
       </div>}
       {g.template === 'screen_frame' && <ScreenFields fields={g.fields} outputDir={outputDir} onField={field} />}
-      {templateInfo(g.template).fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'style', 'vertical', 'motion', 'video', 'labels', 'dot', 'icon', 'wrong'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
+      {templateInfo(g.template).fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'style', 'vertical', 'motion', 'video', 'labels', 'dot', 'icon', 'wrong', 'kind'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
         {key === 'items' || key === 'text' || key === 'highlights' || key === 'notes' ? <textarea rows={key === 'items' ? GRAPHIC_ITEM_LIMITS[g.template] ?? MAX_GRAPHIC_ITEMS : key === 'highlights' || key === 'notes' ? 2 : 3} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`} />
           : <input className="editor-graphic-input" maxLength={MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`}
             placeholder={key === 'value' ? 'e.g. the number said in the clip' : key === 'domain' ? 'e.g. yoursite.com' : key === 'from' ? 'e.g. 12.5' : undefined} />}

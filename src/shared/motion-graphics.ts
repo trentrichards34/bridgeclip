@@ -23,6 +23,7 @@ export const GRAPHIC_TEMPLATES = [
   { id: 'icon_pop', label: 'Icon row', detail: 'Up to 4 icons that pop in one by one, with labels.', fields: ['items', 'icons', 'image'] },
   { id: 'headline_pill', label: 'Headline', detail: 'Two lines: a bold line, then the key words on a color box.', fields: ['text', 'phrase'] },
   { id: 'comment_cta', label: 'Comment prompt', detail: '“Comment” over the keyword people should comment.', fields: ['keyword', 'lead'] },
+  { id: 'link_cta', label: 'Call to action', detail: 'Your call to action on a button (“Click the link”) that a pointer taps, with an arrow to where the link is.', fields: ['text', 'where', 'kind', 'lead'] },
   { id: 'big_words', label: 'Big words (behind you)', detail: '1 to 3 huge words placed in the scene, behind your head.', fields: ['text', 'style', 'vertical', 'motion'] },
   { id: 'orbit', label: 'Orbit', detail: 'A center tile with 3 to 6 icons that draw in around it on a ring.', fields: ['text', 'items', 'icons', 'image', 'labels'] },
   { id: 'feature_tile', label: 'Feature tile', detail: 'Up to 3 frosted tiles, each an icon and a short label, with an optional red dot.', fields: ['items', 'icons', 'dot'] },
@@ -165,7 +166,7 @@ export type GraphicHighlightShape = 'circle' | 'arrow'
 /** How long a new graphic of each kind lasts (ms). */
 export const GRAPHIC_DEFAULT_MS: Record<GraphicTemplateId, number> = {
   stat: 3500, title: 2500, list: 5000, lower_third: 4000, logo: 3000, before_after: 4000, checklist: 5000, quote: 5000, highlight: 2500,
-  statement: 3500, sticky_notes: 4000, strike_list: 5000, browser_frame: 5000, icon_pop: 3500, headline_pill: 3500, comment_cta: 3500,
+  statement: 3500, sticky_notes: 4000, strike_list: 5000, browser_frame: 5000, icon_pop: 3500, headline_pill: 3500, comment_cta: 3500, link_cta: 3500,
   big_words: 2500, orbit: 4500, feature_tile: 3500, screen_frame: 5000,
   chapter: 15000, staircase: 9000, funnel: 8000, journey: 9000, growth: 9000, idea_hub: 8000, compare_marks: 7000
 }
@@ -558,6 +559,20 @@ export function formatStatValue(stat: NonNullable<ReturnType<typeof parseStatVal
   return `${stat.prefix}${digits}${stat.suffix}`
 }
 
+/**
+ * Call to action (`link_cta`): what it asks for. The icon on its button follows it; the words on the button are always
+ * the speaker's (`text`), and `where` is where the link is, as said ("below", "in my bio").
+ */
+export const CTA_KINDS = ['link', 'comment', 'dm', 'follow', 'save', 'share'] as const
+export type CtaKind = (typeof CTA_KINDS)[number]
+export function ctaKind(fields: Record<string, string>): CtaKind {
+  return (CTA_KINDS as readonly string[]).includes(fields.kind) ? fields.kind as CtaKind : 'link'
+}
+/** The chevrons point down to the link: where it is (or the button's own words) says below, bio, description… */
+export function ctaPointsDown(fields: Record<string, string>): boolean {
+  return /\b(below|bio|profile|description|caption|comments?|down)\b/i.test(`${fields.where ?? ''} ${fields.text ?? ''}`)
+}
+
 /** True when a graphic has the words (or image) it needs to draw something. */
 export function graphicHasContent(g: Pick<EditorGraphic, 'template' | 'fields'>): boolean {
   const f = g.fields
@@ -576,6 +591,7 @@ export function graphicHasContent(g: Pick<EditorGraphic, 'template' | 'fields'>)
     case 'icon_pop': return graphicItems(f.items).length > 0 || !!f.image
     case 'headline_pill': return !!(f.text?.trim() || f.phrase?.trim())
     case 'comment_cta': return !!f.keyword?.trim()
+    case 'link_cta': return !!f.text?.trim()
     case 'big_words': return bigWords(f.text).length > 0
     case 'orbit': return orbitNodes(f).length >= 1 || !!f.text?.trim() || !!f.image
     case 'feature_tile': return graphicItems(f.items).length > 0

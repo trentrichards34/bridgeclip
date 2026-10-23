@@ -5,6 +5,7 @@
  * are said, so "Match my words" can time them; nothing is made up. A number
  * said in words ("fourteen hundred") is written in digits ("1,400").
  */
+import { spokenCta } from './spoken-cta'
 import { GRAPHIC_ITEM_LIMITS, MAX_BIG_WORDS, MAX_GRAPHIC_FIELD_CHARS, type GraphicTemplateId, type TimedWord } from './motion-graphics'
 
 export interface GraphicPrefill {
@@ -187,6 +188,13 @@ export function prefillGraphic(template: GraphicTemplateId, words: readonly Time
     case 'comment_cta': {
       const i = said.findIndex((w, k) => k >= from && key(w.word) === 'comment' && !!said[k + 1])
       return i < 0 ? none : done({ keyword: tidy(said[i + 1].word).toUpperCase() }, [said[i], said[i + 1]])
+    }
+    case 'link_cta': {
+      // The call to action said from here on (the speaker's own words on the button), else nothing.
+      const cta = spokenCta(said, { from_ms: phrase[0].start_ms, until_ms: said[from].start_ms + ITEMS_AHEAD_MS, pick: 'first' })
+      if (!cta) return none
+      const used = said.filter((w) => w.start_ms >= cta.start_ms && w.start_ms <= cta.end_ms)
+      return done({ text: cta.text, where: cta.where, lead: cta.lead, kind: cta.kind === 'link' ? '' : cta.kind }, used)
     }
     case 'before_after': {
       const items = list.map((p) => keyWords(p, 3)).filter(goodItem).slice(0, 2)
