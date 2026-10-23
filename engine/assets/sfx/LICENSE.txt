@@ -18,6 +18,26 @@ manifest.json ("source", "license"). There are two kinds:
      - RPG Audio                -> paper/book-*
    Kenney publishes all of its game assets under CC0 (www.kenney.nl/support, "License").
 
+   License check (2026-10-23). soundcn kept the pack's own License.txt only for Interface
+   Sounds (and Digital Audio, Voiceover Pack Fighter, not used here); its text reads
+   "License: (Creative Commons Zero, CC0) http://creativecommons.org/publicdomain/zero/1.0/
+   This content is free to use in personal, educational and commercial projects." For the
+   three packs without one, what was found:
+     - soundcn's own registry (public/r/*.json) lists every one of its 813 Kenney sounds,
+       Casino, Impact and RPG included, as "author": "Kenney <https://kenney.nl>",
+       "license": "CC0".
+     - Kenney's own uploads on OpenGameArt list CC0: "54 Casino sound effects (cards, dice,
+       chips)" (kenney_casino-audio.zip), https://opengameart.org/content/54-casino-sound-effects-cards-dice-chips,
+       and "50 RPG sound effects" (RPGsounds_Kenney.zip),
+       https://opengameart.org/content/50-rpg-sound-effects.
+     - The Godot Asset Library lists all three as CC0, as mirrored on GitHub by Loppansson:
+       kenney-casino-audio-for-godot (asset 7721), kenney-impact-sounds-for-godot (7723),
+       kenney-rpg-audio-for-godot (7725). Those repositories could not be opened from here, so
+       the packs' License.txt text itself was not read for Casino, Impact and RPG.
+   Every source found says CC0; no sound was changed. To close it out, download the three
+   packs from www.kenney.nl (casino-audio, impact-sounds, rpg-audio) and keep their
+   License.txt files next to this one.
+
    Nothing from soundcn's "wow" folder is used: those sounds belong to Blizzard
    Entertainment and are not free to use.
 
