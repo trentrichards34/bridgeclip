@@ -8,7 +8,7 @@ clip from its start for its length. The graphic's band already keeps it clear
 of the hook and the captions, so there is nothing to position.
 
 A type takeover (depth "between") goes half behind, half in front: its lines above the speaker's chin behind them, the
-ones below in front of their chest, over the room blurred and darkened (depth_fx; place_between finds the split).
+ones below in front of their chest, over the room softened (depth_fx.takeover_layout; place_between lays it out).
 
 A graphic with depth "behind" sits in the scene, behind the speaker: the clip,
 then the graphic, then the speaker cut out of the same frames (the selfie
@@ -47,7 +47,7 @@ MIN_MS = 100
 # How big main drew a graphic: absent is the usual card; "stage" takes the top ~55% of a 9:16 frame.
 SIZES = ("compact", "card", "stage")
 # In front of the video (the default), behind the speaker, or between: a type takeover whose upper lines go behind the
-# speaker's head and lower lines in front of their chest (depth_fx.takeover_split), over the room darkened and blurred.
+# speaker's head and lower lines in front of their chest (depth_fx.takeover_layout), over the room softened.
 DEPTHS = ("front", "behind", "between")
 # The depths that need the speaker's matte.
 MATTED = ("behind", "between")
@@ -213,13 +213,51 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
         # The room behind a takeover: blurred and darkened while it plays (the speaker is laid back on crisp).
         from clip_engine.services import depth_fx
         windows = [(g["start_ms"] / 1000, (g["start_ms"] + g["duration_ms"]) / 1000) for _, g in between]
-        parts.append(f"[0:v]{depth_fx.takeover_backdrop_chain(windows)}[room]")
+        source = "[0:v]"
+        for j, (_, g) in enumerate(between):
+            person = g.get("person")
+            if not person or not g.get("layout"):
+                continue
+            # The speaker is shown smaller: so is their room (the shot zoomed out), over a softer copy filling the frame.
+            scale, x, y = person
+            a, b = g["start_ms"] / 1000, (g["start_ms"] + g["duration_ms"]) / 1000
+            sw, sh = even(width * scale), even(height * scale)
+            on = f"between(t,{a:.3f},{b:.3f})"
+            parts.append(f"{source}split[rw{j}][rs{j}]")
+            parts.append(f"[rs{j}]trim=start={a:.3f}:end={b + 0.05:.3f},setpts=PTS-STARTPTS,scale={sw}:{sh}:flags=bicubic,format=yuva420p,"
+                         f"geq=lum='p(X,Y)':a='p(X,Y)*clip(min(min(X,W-1-X),min(Y,H-1-Y))/(W*0.06),0,1)',setpts=PTS+{a:.3f}/TB[rz{j}]")
+            parts.append(f"[rw{j}]gblur=sigma=36:enable='{on}',lutyuv=y=val*0.7:enable='{on}'[rb{j}]")
+            parts.append(f"[rb{j}][rz{j}]overlay={x}:{y}:eof_action=pass:enable='{on}'[rr{j}]")
+            source = f"[rr{j}]"
+        parts.append(f"{source}{depth_fx.takeover_backdrop_chain(windows)}[room]")
         last = "[room]"
-    lower: dict[int, str] = {}
+    lower: dict[int, list[tuple[str, str]]] = {}
 
     def lay(i: int, g: dict) -> None:
         nonlocal last
         start, end = g["start_ms"] / 1000, (g["start_ms"] + g["duration_ms"]) / 1000
+        if g.get("depth") == "between" and mattes and g.get("layout"):
+            # Each line where the layout put it: those behind the speaker now, the others after them (lower[i]).
+            rows = sorted(g["layout"], key=lambda line: line[0])
+            parts.append(f"[{i}:v]format=argb,scale={width}:{height},setpts=PTS-STARTPTS+{start:.3f}/TB,split={len(rows)}"
+                         + "".join(f"[g{i}_{j}]" for j in range(len(rows))))
+            later = []
+            for j, (a, b, dst, behind) in enumerate(rows):
+                # The band around the line's ink (to halfway to its neighbors), so its arrival from oversize isn't cut.
+                lo = 0 if j == 0 else (rows[j - 1][1] + a) // 2
+                hi = height if j == len(rows) - 1 else (b + rows[j + 1][0]) // 2
+                # A little room around the ink for its arrival from oversize, never into the next line.
+                lo, hi = max(0, lo, a - (b - a) // 6), min(height, hi, b + (b - a) // 6)
+                lo, hi = lo // 2 * 2, max(lo + 2, hi // 2 * 2)
+                parts.append(f"[g{i}_{j}]crop={width}:{hi - lo}:0:{lo}[g{i}c{j}]")
+                place = f"overlay=0:{int(dst) - (a - lo)}:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'"
+                if behind:
+                    parts.append(f"{last}[g{i}c{j}]{place}[v{i}_{j}]")
+                    last = f"[v{i}_{j}]"
+                else:
+                    later.append((f"[g{i}c{j}]", place))
+            lower[i] = later
+            return
         if g.get("depth") == "between" and mattes:
             # Split at the row between the lines: the upper part now (behind the speaker), the lower part after them;
             # both moved by the graphic's shift (its lines placed around the chin).
@@ -227,7 +265,7 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
             shift = int(g.get("shift", 0))
             parts.append(f"[{i}:v]format=argb,scale={width}:{height},setpts=PTS-STARTPTS+{start:.3f}/TB[g{i}]")
             if split <= 0:
-                lower[i] = f"[g{i}]"
+                lower[i] = [(f"[g{i}]", f"overlay=0:{shift}:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'")]
                 return
             if split >= height:
                 parts.append(f"{last}[g{i}]overlay=0:{shift}:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'[v{i}]")
@@ -236,7 +274,7 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
             parts.append(f"[g{i}]split[g{i}u][g{i}l];[g{i}u]crop={width}:{split}:0:0[g{i}a];[g{i}l]crop={width}:{height - split}:0:{split}[g{i}b]")
             parts.append(f"{last}[g{i}a]overlay=0:{shift}:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'[v{i}]")
             last = f"[v{i}]"
-            lower[i] = f"[g{i}b]"
+            lower[i] = [(f"[g{i}b]", f"overlay=0:{split + shift}:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'")]
             return
         if i in inset_index:
             # The video goes under the window's see-through hole first.
@@ -281,13 +319,9 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
             last = f"[p{k}_{j}]"
     for i, g in between:
         # A takeover's lower lines, in front of the speaker's chest.
-        if i in lower:
-            start, end = g["start_ms"] / 1000, (g["start_ms"] + g["duration_ms"]) / 1000
-            split = max(0, min(height, int(g.get("split", height)))) // 2 * 2
-            if split >= height:
-                split = 0
-            parts.append(f"{last}{lower[i]}overlay=0:{split + int(g.get('shift', 0))}:eof_action=pass:enable='between(t,{start:.3f},{end:.3f})'[f{i}]")
-            last = f"[f{i}]"
+        for j, (stream, place) in enumerate(lower.get(i, [])):
+            parts.append(f"{last}{stream}{place}[f{i}_{j}]")
+            last = f"[f{i}_{j}]"
     for i, g in enumerate(graphics[behind:], start=behind + 1):
         lay(i, g)
     parts.append(f"{last}format=yuv420p[vout]")
@@ -437,10 +471,11 @@ def place_behind(graphics: list[dict], mattes: list[dict], width: int, height: i
     return out
 
 
-def place_between(graphics: list[dict], video: str, width: int, height: int) -> list[dict]:
-    """The takeovers (depth "between") with a "split" row: the speaker's chin in the finished clip (the face found in a
-    few of its frames during the takeover) against the takeover's own lines (depth_fx.takeover_split). Best effort: a
-    takeover that can't be measured goes all behind the speaker."""
+def place_between(graphics: list[dict], mattes: list[dict], video: str, width: int, height: int) -> list[dict]:
+    """The takeovers (depth "between") with a layout (depth_fx.takeover_layout): each of their lines moved so the ones
+    behind the speaker sit above the head and stay readable (checked against the speaker's matte during the takeover)
+    and the rest sit in front of the chest; the speaker shown smaller where that makes room. Best effort: a takeover
+    that can't be measured, or can't be laid out readably, has every line in front."""
     from clip_engine.services import depth_fx
     from clip_engine.services.look_extras import face_boxes
     out = []
@@ -453,14 +488,24 @@ def place_between(graphics: list[dict], video: str, width: int, height: int) -> 
             face = face_boxes(video, [(a + (b - a) * 0.2, b - (b - a) * 0.2)], (width, height))[0]
             words = _frame_alpha(g["path"], min(g["duration_ms"] * 0.6, g["duration_ms"] - 200) / 1000, width, height, alpha=True)
             lines = text_lines(words, gap=max(4, height // 300), min_h=max(6, height // 160)) if words is not None else []
-            # Filmed close, the speaker is shown smaller (standing on the bottom edge) so the lines show around the head.
-            person = depth_fx.takeover_person(face, lines, width, height)
-            chin = depth_fx.chin_row(face)
-            shift, split = depth_fx.takeover_place(lines, depth_fx.moved_row(chin, person) if chin is not None else None, height)
-            out.append({**g, "split": split, **({"shift": shift} if shift else {}), **({"person": person} if person != (1.0, 0, 0) else {})})
-        except Exception as error:  # noqa: BLE001 - the takeover then sits behind the speaker
-            logger.warning(f"Takeover split not found: {type(error).__name__}: {error}")
-            out.append(g)
+            window = next((m for m in mattes if m["start_ms"] <= g["start_ms"] < m["start_ms"] + m["duration_ms"]), None)
+            frames = []
+            if window is not None:
+                for share in (0.25, 0.55, 0.85):
+                    at = (g["start_ms"] + g["duration_ms"] * share - window["start_ms"]) / 1000
+                    frame = _frame_alpha(window["path"], at, width, height, alpha=False)
+                    if frame is not None:
+                        frames.append(frame)
+            layout = depth_fx.takeover_layout(lines, words, frames, face, width, height) if words is not None else None
+            if layout is None:
+                out.append({**g, "split": 0})
+                continue
+            out.append({**g, "layout": [list(line) for line in layout.lines],
+                        **({"person": layout.person} if layout.person != (1.0, 0, 0) else {}),
+                        "occlusion": [list(o) for o in layout.occlusion]})
+        except Exception as error:  # noqa: BLE001 - the takeover then lies in front of the speaker
+            logger.warning(f"Takeover layout not found: {type(error).__name__}: {error}")
+            out.append({**g, "split": 0})
     return out
 
 
@@ -551,7 +596,7 @@ def overlay_graphics_file(video: str, graphics: list[dict], width: int, height: 
     output = f"{video}.graphics.mp4"
     mattes = behind_mattes(video, graphics)
     if mattes:
-        graphics = place_between(place_behind(graphics, mattes, width, height), video, width, height)
+        graphics = place_between(place_behind(graphics, mattes, width, height), mattes, video, width, height)
     try:
         run_cmd(overlay_command(video, graphics, output, width, height, codec, mattes))
         os.replace(output, video)
@@ -576,7 +621,7 @@ async def overlay_graphics(renderer, video: str, graphics: list[dict]) -> None:
     mattes = await asyncio.to_thread(behind_mattes, video, graphics)
     if mattes:
         graphics = await asyncio.to_thread(place_behind, graphics, mattes, width, height)
-        graphics = await asyncio.to_thread(place_between, graphics, video, width, height)
+        graphics = await asyncio.to_thread(place_between, graphics, mattes, video, width, height)
     output = f"{video}.graphics.mp4"
     try:
         await renderer._run_cmd(overlay_command(video, graphics, output, width, height, renderer._video_codec_args(width, height, fps), mattes))

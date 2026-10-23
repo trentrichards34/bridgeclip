@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 from clip_engine.services import depth_fx as dx
 from clip_engine.services import rendering_service as module
 from clip_engine.services import segmentation
-from clip_engine.services.graphics_overlay import overlay_graphics_file, place_between
+from clip_engine.services.graphics_overlay import _frame_alpha, behind_mattes, overlay_graphics_file, place_between, text_lines
 from clip_engine.services.look_extras import look_extras
 from clip_engine.services.manual_editor import manual_plan
 from clip_engine.services.rendering_service import RenderingService, RenderRequest
@@ -91,6 +91,24 @@ def takeover_mov(path: str, seconds: float = 2.0) -> None:
     assert proc.wait(timeout=300) == 0
 
 
+def assert_behind_lines_readable(laid: dict, mattes: list[dict]) -> None:
+    """Measured on its own from the speaker's matte and the takeover's ink, through the takeover: every line behind
+    the speaker keeps at least 80% of its ink and no word is mostly hidden."""
+    person = tuple(laid.get("person", (1.0, 0, 0)))
+    window = mattes[0]
+    for share in (0.15, 0.4, 0.65, 0.9):
+        at_ms = laid["start_ms"] + laid["duration_ms"] * share
+        matte = _frame_alpha(window["path"], (at_ms - window["start_ms"]) / 1000, W, H, alpha=False)
+        ink = _frame_alpha(laid["path"], max(0.0, laid["duration_ms"] * max(share, 0.6) / 1000 - 0.05), W, H, alpha=True)
+        placed = dx.place_matte(matte, person, W, H)
+        for a, b, dst, behind in laid["layout"]:
+            if not behind:
+                continue
+            line, worst_word = dx.line_occlusion(ink[a:b] > 96, placed, dst)
+            assert line <= dx.OCCLUDE_MAX, f"a line behind the head loses {line:.0%} of its ink at {share:.0%}"
+            assert worst_word <= dx.WORD_OCCLUDE_MAX, f"a word behind the head is {worst_word:.0%} hidden at {share:.0%}"
+
+
 def frame(path: str, at: float) -> np.ndarray:
     raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{at:.3f}", "-i", path, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                          capture_output=True, check=True, timeout=120).stdout
@@ -120,8 +138,11 @@ def test_depth_and_camera_on_a_real_person(tmp_path, monkeypatch):
     graphic = str(tmp_path / "takeover.mov")
     takeover_mov(graphic)
     graphics = [{"path": graphic, "start_ms": 6200, "duration_ms": 2000, "depth": "between"}]
-    split = place_between(graphics, result.output_path, W, H)[0]["split"]
-    assert 0 < split < H  # some lines behind the head, some in front of the chest
+    mattes = behind_mattes(result.output_path, graphics, tmp_path / "mattes")
+    laid = place_between(graphics, mattes, result.output_path, W, H)[0]
+    behind = [line for line in laid["layout"] if line[3]]
+    assert 1 <= len(behind) < len(TAKEOVER)  # one or two lines above the head, the rest in front of the chest
+    assert_behind_lines_readable(laid, mattes)
     codec = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"]
     overlay_graphics_file(result.output_path, graphics, W, H, codec, lambda cmd: subprocess.run(cmd, check=True, timeout=600))
 
@@ -148,9 +169,8 @@ def test_depth_and_camera_on_a_real_person(tmp_path, monkeypatch):
     # Takeover: the room is darkened; the last (yellow) line is drawn over the chest.
     yellow = (takeover[..., 0] > 200) & (takeover[..., 1] > 170) & (takeover[..., 2] < 90)
     assert yellow.sum() > 2000
-    # ...and the lines behind the head still show either side of it (white type in the upper half, off the head).
-    white = (takeover[: H // 2].min(axis=2) > 225)
-    assert white[:, : W // 4].sum() > 1500 and white[:, 3 * W // 4:].sum() > 1500
+    # The room stays a room (softened and a little darker, not black): the frame's bottom corners keep some light.
+    assert takeover[int(0.92 * H):, :120].mean() > 25
 
     assert os.path.getsize(out) > 10000
     assert dx.CUE_ZOOM > 1

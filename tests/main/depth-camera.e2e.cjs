@@ -107,9 +107,9 @@ test('a stage scene’s head breaks out and a type takeover puts the head betwee
   assert.ok(Math.abs(head[0] - side[0]) + Math.abs(head[1] - side[1]) + Math.abs(head[2] - side[2]) > 90, `the head over the card's edge: ${head.map(Math.round)} vs ${side.map(Math.round)}`)
   // The escape matte is kept for the next bake.
   assert.ok(fs.readdirSync(path.join(run, '.graphics', 'mattes')).some((n) => n.startsWith('escape-')))
-  // Takeover: the room is dark at the bottom corners; white type shows either side of the head in the upper half.
+  // Takeover: the room is softened, not blacked out; white type shows either side of the head in the upper half.
   const takeover = frame(tools.ffmpeg, video, 7.6)
-  assert.ok(Math.max(...mean(takeover, 20, 1800, 120, 100)) < 70, 'the room darkened')
+  assert.ok(Math.max(...mean(takeover, 20, 1800, 120, 100)) > 20, 'the room still shows')
   let left = 0, right = 0
   for (let y = 100; y < 960; y += 4) for (let x = 0; x < 1080; x += 4) {
     const p = takeover.at(x, y)

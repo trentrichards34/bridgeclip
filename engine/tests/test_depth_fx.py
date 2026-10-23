@@ -162,13 +162,7 @@ def test_scenes_parse_the_escape_and_transition_options():
 # Type takeover
 # ---------------------------------------------------------------------------
 
-def test_takeover_split_puts_lines_above_the_chin_behind_and_the_rest_in_front():
-    lines = [(200, 330), (360, 490), (520, 650), (680, 810), (840, 970)]
-    # Chin at 600: the line centered at 585 is above it (behind), 745 below (front); the split is in their gap.
-    assert dx.takeover_split(lines, 600, 1920) == 665
-    assert dx.takeover_split(lines, 2000, 1920) == 1920  # every line above the chin: all behind
-    assert dx.takeover_split(lines, 100, 1920) == 0  # chin above every line: all in front
-    assert dx.takeover_split(lines, None, 1920) == 1920  # no face: behind
+def test_chin_row():
     assert dx.chin_row((100, 400, 300, 700)) == round(700 + 300 * dx.CHIN_BELOW)
     assert dx.chin_row(None) is None
 
@@ -315,39 +309,6 @@ def test_the_scene_graph_moves_the_camera_and_reports_where(tmp_path):
     assert not plain.transitions and "sc_moved" not in plain.graph
 
 
-def test_takeover_place_moves_the_lines_so_a_gap_meets_the_chin():
-    lines = [(200, 400), (430, 630), (660, 860), (890, 1090)]
-    # The chin a little under the second gap: the lines move down to it; two lines behind, two in front.
-    shift, split = dx.takeover_place(lines, 690, 1920)
-    assert shift == 45 and split == 645
-    # Far below every line: they move at most TAKEOVER_MAX_SHIFT of the frame (the last line still behind).
-    shift, split = dx.takeover_place(lines, 1700, 1920)
-    assert shift == round(dx.TAKEOVER_MAX_SHIFT * 1920)
-    # Never above the top margin.
-    shift, _ = dx.takeover_place(lines, 100, 1920)
-    assert lines[0][0] + shift >= dx.TAKEOVER_MIN_TOP * 1920 - 1
-    assert dx.takeover_place(lines, None, 1920) == (0, 1920)
-
-
-def test_takeover_person_shows_a_close_speaker_smaller_with_the_chin_at_the_last_gap():
-    lines = [(200, 400), (430, 630), (660, 860), (890, 1090)]
-    close = (250.0, 380.0, 880.0, 1000.0)  # a selfie: the face 58% of the width
-    scale, x, y = dx.takeover_person(close, lines, 1080, 1920)
-    assert scale == dx.TAKEOVER_MIN_SCALE
-    assert abs(x + (250 + 880) / 2 * scale - 540) <= 1  # the face centered
-    # It rises at most TAKEOVER_RISE of the frame (a very low chin is left to the lines' own move, takeover_place).
-    assert dx.takeover_person((250.0, 380.0, 880.0, 1300.0), lines, 1080, 1920)[2] == 1920 - 1056 - round(dx.TAKEOVER_RISE * 1920)
-    assert abs(dx.moved_row(dx.chin_row(close), (scale, x, y)) - 875) <= 1  # the chin meets the gap above the last line
-    # Floating above the bottom edge: its foot fades (and its sides, being smaller).
-    fade = dx.person_fade((scale, x, y), 1920)
-    assert "min(X,W-1-X)" in fade and "(H-1-Y)" in fade
-    # A speaker filmed further away whose chin already sits at that gap: shown as filmed.
-    far = (450.0, 600.0, 630.0, 820.0)
-    assert dx.takeover_person(far, [(200, 400), (430, 818), (848, 1090)], 1080, 1920) == (1.0, 0, 0)
-    assert dx.takeover_person(far, [(200, 400), (430, 840), (870, 1090)], 1080, 1920) == (1.0, 0, 22)  # sinks a little to meet it
-    assert dx.takeover_person(None, lines, 1080, 1920) == (1.0, 0, 0)
-
-
 def test_output_to_source_maps_a_takeover_through_the_cut_and_speed():
     ranges = [(1000, 3000), (5000, 9000)]
     assert dx.output_to_source(ranges, 1.0, 500, 1000) == [(1500, 2000)]
@@ -363,3 +324,76 @@ def test_overlay_command_draws_a_smaller_speaker_during_a_takeover_only():
     assert "enable='between(t,1.000,3.000)*not(between(t,1.000,3.000))'" in graph  # the full-size cut-out sits this one out
     assert "scale=594:1056:flags=bicubic,geq=lum='p(X,Y)'" in graph and "overlay=230:288" in graph
     assert "overlay=0:40:" in graph and "[g1b]overlay=0:740:" in graph  # both parts moved by the shift
+
+
+def _head_matte(cx=540, crown=700, chin=1250, half_w=230, h=1920, w=1080):
+    """A speaker's matte: an oval head from the crown to the chin, shoulders below it to the bottom."""
+    yy, xx = np.mgrid[0:h, 0:w]
+    cy, ry = (crown + chin) / 2, (chin - crown) / 2
+    head = ((xx - cx) / half_w) ** 2 + ((yy - cy) / ry) ** 2 <= 1
+    body = (yy >= chin) & (np.abs(xx - cx) <= half_w * 2.2)
+    return ((head | body) * 255).astype(np.uint8)
+
+
+def _takeover_alpha(rows=((150, 380), (410, 640), (670, 900), (930, 1160)), h=1920, w=1080):
+    alpha = np.zeros((h, w), np.uint8)
+    for a, b in rows:
+        for k in range(4):  # a few "words" across the width
+            x0 = 80 + k * 240
+            alpha[a:b, x0:x0 + 190] = 255
+    return list(rows), alpha
+
+
+def test_takeover_layout_keeps_the_behind_lines_readable_above_the_head():
+    lines, alpha = _takeover_alpha()
+    matte = _head_matte()
+    face = (380.0, 820.0, 700.0, 1200.0)
+    layout = dx.takeover_layout(lines, alpha, [matte], face, 1080, 1920)
+    assert not layout.front_only
+    behind = [line for line in layout.lines if line[3]]
+    front = [line for line in layout.lines if not line[3]]
+    assert 1 <= len(behind) <= 2 and front
+    placed = dx.place_matte(matte, layout.person, 1080, 1920)
+    for a, b, dst, _ in behind:
+        line, word = dx.line_occlusion(alpha[a:b] > 96, placed, dst)
+        assert line <= dx.OCCLUDE_MAX and word <= dx.WORD_OCCLUDE_MAX
+        assert dst + (b - a) <= dx.head_top_of(placed) + (b - a) * max(dx.TUCKS) + 1  # above the crown (tucked at most)
+    # The front lines go below the chin, in order, inside the frame.
+    scale, _, y = layout.person
+    assert all(dst >= y + scale * dx.chin_row(face) for _, _, dst, _ in front)
+    assert max(dst + b - a for a, b, dst, _ in layout.lines) <= dx.LAYOUT_BOTTOM * 1920 + 1
+
+
+def test_takeover_layout_falls_back_to_all_lines_in_front():
+    lines, alpha = _takeover_alpha()
+    # No face found: nothing goes behind; the lines stay where they were drawn.
+    plain = dx.takeover_layout(lines, alpha, [_head_matte()], None, 1080, 1920)
+    assert plain.front_only and all(not behind and dst == a for a, _, dst, behind in plain.lines)
+    # Type too tall to fit above and below even the smallest speaker: all in front.
+    tall, tall_alpha = _takeover_alpha(((100, 500), (520, 920), (940, 1340), (1360, 1760)))
+    assert dx.takeover_layout(tall, tall_alpha, [_head_matte(crown=200, chin=1500)], (300.0, 400.0, 780.0, 1450.0), 1080, 1920).front_only
+
+
+def test_line_occlusion_counts_ink_and_the_worst_word():
+    ink = np.zeros((100, 1080), bool)
+    ink[:, 100:300] = True
+    ink[:, 600:800] = True
+    matte = np.zeros((1920, 1080), np.uint8)
+    matte[1000:1100, 600:700] = 255  # half of the second word
+    line, word = dx.line_occlusion(ink, matte, 1000)
+    assert line == pytest.approx(0.25) and word == pytest.approx(0.5)
+    assert dx.word_spans(ink, 10) == [(100, 300), (600, 800)]
+
+
+def test_overlay_command_lays_each_takeover_line_where_the_layout_put_it():
+    g = {"path": "t.mov", "start_ms": 1000, "duration_ms": 2000, "depth": "between", "person": (0.6, 216, 300),
+         "layout": [[150, 380, 120, True], [410, 640, 380, True], [670, 900, 1250, False], [930, 1160, 1500, False]]}
+    cmd = overlay_command("clip.mp4", [g], "out.mp4", 1080, 1920, [], [{"path": "m.mkv", "start_ms": 1000, "duration_ms": 2000}])
+    graph = cmd[cmd.index("-filter_complex") + 1]
+    person = graph.index("[ps0_0]overlay")
+    # The room zooms out with the speaker (a softer copy filling the frame).
+    assert "gblur=sigma=36" in graph and "[rb0][rz0]overlay=216:300" in graph
+    behind = [graph.index(f"[g1c{j}]overlay") for j in (0, 1)]
+    front = [graph.index(f"[g1c{j}]overlay") for j in (2, 3)]
+    assert max(behind) < person < min(front)
+    assert "split=4[g1_0][g1_1][g1_2][g1_3]" in graph

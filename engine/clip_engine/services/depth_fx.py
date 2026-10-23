@@ -7,7 +7,7 @@
   is mostly soft or misses the speaker turns the escape off for that scene (the card is framed as before).
 - Type takeover (graphics depth "between"): one key line in huge type over the whole frame, the room behind darkened
   and blurred; the lines above the speaker's chin go behind them (their head sits between the lines), the lines below
-  go in front of their chest. The split comes from the face found in the finished clip.
+  go in front of their chest, laid out so every line stays readable (takeover_layout).
 - Punch-ins on cues (the Zoom extra): a camera punch (1.0 -> 1.18, decelerating over about 6 frames, held, then a
   hard cut back) landing on the stressed word of a turn ("but", "here's the thing"), a reveal or a number; at most
   one every few seconds. The punch's frame is when the sound design's punch hits.
@@ -283,8 +283,9 @@ def escape_matte(video: str, cache_dir: str, work_dir: str, start_ms: int, durat
 # The chin is a little under a YuNet face box's bottom (share of the face height).
 CHIN_BELOW = 0.06
 # The room behind a takeover: blurred and darkened.
-TAKEOVER_BLUR = 26
-TAKEOVER_DIM = 0.38
+# Subtle: the room stays a room (softened and a little darker), the speaker never reads as a cut-out on black.
+TAKEOVER_BLUR = 10
+TAKEOVER_DIM = 0.68
 
 
 def chin_row(face: Optional[tuple[float, float, float, float]]) -> Optional[int]:
@@ -295,62 +296,12 @@ def chin_row(face: Optional[tuple[float, float, float, float]]) -> Optional[int]
     return round(y1 + (y1 - y0) * CHIN_BELOW) if y1 > y0 else None
 
 
-def takeover_split(lines: Sequence[tuple[int, int]], chin: Optional[int], height: int) -> int:
-    """The row that splits a takeover's lines: those above it are drawn behind the speaker (the head sits between
-    them), those below in front of the chest. A line goes behind when its middle is above the chin. Between two lines
-    the split is in their gap; no face: every line behind (the frame height); no line above the chin: 0."""
-    if not lines or chin is None:
-        return height
-    behind = [ln for ln in lines if (ln[0] + ln[1]) / 2 < chin]
-    front = [ln for ln in lines if (ln[0] + ln[1]) / 2 >= chin]
-    if not front:
-        return height
-    if not behind:
-        return 0
-    return max(0, min(height, round((behind[-1][1] + front[0][0]) / 2)))
-
-
-# In a takeover the speaker (cut out) is shown smaller when filmed close, so the lines behind them still show around the
-# head: their face at most this share of the frame's width (never smaller than TAKEOVER_MIN_SCALE), the face centered,
-# and moved up or down (within TAKEOVER_RISE above / TAKEOVER_SINK below standing on the frame's bottom edge) so their
-# chin meets the gap above the last line. The cut-out fades out at its sides (TAKEOVER_EDGE of its width) and, when it
-# no longer reaches the bottom edge, at its bottom (TAKEOVER_FOOT), the last line in front of it.
+# The speaker's cut-out in a takeover: their face at most this share of the frame's width when shown smaller; the
+# cut-out fades out at its sides (TAKEOVER_EDGE of its width) and, when it no longer reaches the bottom edge, at its
+# foot (TAKEOVER_FOOT).
 TAKEOVER_FACE_W = 0.30
-TAKEOVER_MIN_SCALE = 0.55
-TAKEOVER_RISE = 0.30
-TAKEOVER_SINK = 0.12
 TAKEOVER_EDGE = 0.04
 TAKEOVER_FOOT = 0.18
-
-
-def takeover_person(face: Optional[tuple[float, float, float, float]], lines: Sequence[tuple[int, int]], width: int,
-                    height: int) -> tuple[float, int, int]:
-    """(scale, x, y) of the speaker's cut-out in a takeover ((1, 0, 0): as filmed)."""
-    if face is None:
-        return 1.0, 0, 0
-    x0, y0, x1, y1 = face
-    if x1 <= x0 or y1 <= y0:
-        return 1.0, 0, 0
-    scale = round(max(TAKEOVER_MIN_SCALE, min(1.0, TAKEOVER_FACE_W * width / (x1 - x0))), 4)
-    sw, sh = max(2, round(width * scale / 2) * 2), max(2, round(height * scale / 2) * 2)
-    x = max(0, min(width - sw, round(width / 2 - (x0 + x1) / 2 * scale)))
-    standing = height - sh
-    y = standing
-    chin = chin_row(face)
-    if len(lines) >= 2 and chin is not None:
-        gap = (lines[-2][1] + lines[-1][0]) / 2
-        hair = y0 - HAIR_ABOVE * (y1 - y0)
-        lo = max(standing - TAKEOVER_RISE * height, TAKEOVER_MIN_TOP * 0.5 * height - hair * scale)
-        y = round(max(lo, min(standing + TAKEOVER_SINK * height, gap - chin * scale)))
-    if scale >= 0.995 and abs(y) <= 2:
-        return 1.0, 0, 0
-    return scale, x, int(y)
-
-
-def moved_row(row: int, person: tuple[float, int, int]) -> int:
-    """A row of the frame where it lands in the takeover's moved cut-out."""
-    scale, _, y = person
-    return round(y + row * scale)
 
 
 def person_fade(person: tuple[float, int, int], height: int) -> str:
@@ -361,26 +312,6 @@ def person_fade(person: tuple[float, int, int], height: int) -> str:
     sh = max(2, round(height * scale / 2) * 2)
     foot = f"*clip((H-1-Y)/(H*{TAKEOVER_FOOT}),0,1)" if y + sh < height - 1 else ""
     return f"p(X,Y){sides}{foot}"
-
-
-# How far the engine may move a takeover up or down (share of the frame) so a gap between its lines meets the chin.
-TAKEOVER_MAX_SHIFT = 0.22
-TAKEOVER_MIN_TOP = 0.08
-
-
-def takeover_place(lines: Sequence[tuple[int, int]], chin: Optional[int], height: int) -> tuple[int, int]:
-    """(shift, split) for a takeover: the graphic moves `shift` rows (at most TAKEOVER_MAX_SHIFT of the frame, never
-    above TAKEOVER_MIN_TOP) so the gap between two of its lines nearest the chin meets it (the head between the lines,
-    whatever the framing), and `split` is the row (in the graphic's own rows) between the lines drawn behind the
-    speaker and the ones in front. No face, or a single line: no move, and takeover_split's rule."""
-    if chin is None or len(lines) < 2:
-        return 0, takeover_split(lines, chin, height)
-    gaps = [(a[1] + b[0]) / 2 for a, b in zip(lines, lines[1:])]
-    nearest = min(gaps, key=lambda g: abs(chin - g))
-    room = TAKEOVER_MAX_SHIFT * height
-    shift = round(max(TAKEOVER_MIN_TOP * height - lines[0][0], -room, min(room, chin - nearest)))
-    split = takeover_split([(a + shift, b + shift) for a, b in lines], chin, height)
-    return shift, max(0, min(height, split - shift)) if 0 < split < height else split
 
 
 def output_to_source(ranges: Sequence[Sequence[int]], speed: float, start_ms: float, end_ms: float) -> list[tuple[int, int]]:
@@ -402,7 +333,7 @@ def takeover_backdrop_chain(windows: Sequence[Span]) -> str:
         return "null"
     on = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in windows)
     return (f"gblur=sigma={TAKEOVER_BLUR}:enable='{on}',"
-            f"lutyuv=y=val*{TAKEOVER_DIM}:u=128+(val-128)*0.7:v=128+(val-128)*0.7:enable='{on}'")
+            f"lutyuv=y=val*{TAKEOVER_DIM}:u=128+(val-128)*0.85:v=128+(val-128)*0.85:enable='{on}'")
 
 
 # ---------------------------------------------------------------------------
@@ -630,3 +561,156 @@ def transitions_graph(src: str, dst: str, transitions: Sequence[Transition], fps
         parts.append(f"[{current}][{tag}_t{k}]overlay=0:0:eof_action=pass:enable='between(t,{tr.start:.4f},{tr.end - 1e-3:.4f})'[{nxt}]")
         current = nxt
     return ";".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Type takeover layout: every line stays readable
+# ---------------------------------------------------------------------------
+
+# A line behind the speaker may lose at most this share of its ink to them, and no word more than WORD_OCCLUDE_MAX.
+OCCLUDE_MAX = 0.20
+WORD_OCCLUDE_MAX = 0.45
+# The type sits between these shares of the frame (platform buttons at the very top and bottom).
+LAYOUT_TOP = 0.07
+LAYOUT_BOTTOM = 0.90
+# The smallest the speaker is shown to make room (share of the frame).
+LAYOUT_MIN_SCALE = 0.36
+# How much of the last line above the head the crown may overlap (share of that line's height), most first: tucked.
+TUCKS = (0.35, 0.2, 0.0)
+
+
+@dataclass(frozen=True)
+class TakeoverLayout:
+    """Where a takeover's lines and speaker go. `lines`: (source top, source bottom, destination top, behind) per line
+    of the drawn graphic; `person`: (scale, x, y) of the cut-out; `occlusion`: the worst share of each behind line's
+    ink the speaker covers (and of its worst word); `front_only`: no arrangement kept the behind lines readable."""
+
+    person: tuple[float, int, int]
+    lines: tuple[tuple[int, int, int, bool], ...]
+    occlusion: tuple[tuple[float, float], ...] = ()
+    front_only: bool = False
+
+
+def place_matte(matte, person: tuple[float, int, int], width: int, height: int):
+    """The speaker's matte (frame size) as the takeover shows it: scaled by `person` and moved (frame size, uint8)."""
+    import cv2
+    import numpy as np
+    scale, x, y = person
+    if scale >= 0.995 and x == 0 and y == 0:
+        return matte
+    sw, sh = max(2, round(width * scale / 2) * 2), max(2, round(height * scale / 2) * 2)
+    small = cv2.resize(matte, (sw, sh), interpolation=cv2.INTER_AREA)
+    out = np.zeros((height, width), np.uint8)
+    x0, y0 = max(0, x), max(0, y)
+    x1, y1 = min(width, x + sw), min(height, y + sh)
+    if x1 > x0 and y1 > y0:
+        out[y0:y1, x0:x1] = small[y0 - y:y1 - y, x0 - x:x1 - x]
+    return out
+
+
+def head_top_of(matte) -> int:
+    """The highest row with the speaker in a matte (the crown), or the matte's height."""
+    from clip_engine.services.graphics_overlay import head_top
+    top = head_top(matte)
+    return matte.shape[0] if top is None else top
+
+
+def word_spans(ink, min_gap: int) -> list[tuple[int, int]]:
+    """The columns of each word in a line's ink (runs of inked columns split by gaps of at least `min_gap`)."""
+    cols = ink.any(axis=0).nonzero()[0]
+    if not cols.size:
+        return []
+    out = [[int(cols[0]), int(cols[0])]]
+    for c in cols[1:]:
+        if c - out[-1][1] > min_gap:
+            out.append([int(c), int(c)])
+        else:
+            out[-1][1] = int(c)
+    return [(a, b + 1) for a, b in out]
+
+
+def line_occlusion(ink, placed_matte, top: int) -> tuple[float, float]:
+    """(share of the line's ink the speaker covers, the worst word's share) for a line's ink (rows x frame width,
+    bool) drawn with its top at `top` behind a placed matte."""
+    import numpy as np
+    h, w = ink.shape
+    rows = np.zeros_like(ink)
+    a, b = max(0, top), min(placed_matte.shape[0], top + h)
+    if b > a:
+        rows[a - top:b - top] = placed_matte[a:b, :w] > 128
+    hidden = ink & rows
+    total = int(ink.sum())
+    if not total:
+        return 0.0, 0.0
+    worst = 0.0
+    for c0, c1 in word_spans(ink, max(3, h // 7)):
+        n = int(ink[:, c0:c1].sum())
+        if n:
+            worst = max(worst, float(hidden[:, c0:c1].sum()) / n)
+    return float(hidden.sum()) / total, worst
+
+
+def takeover_layout(lines: Sequence[tuple[int, int]], alpha, mattes: Sequence, face: Optional[tuple[float, float, float, float]],
+                    width: int, height: int) -> TakeoverLayout:
+    """Lay a takeover out so every line reads: one or two lines above the speaker's head (behind it, the crown tucked
+    a little into the last one), the rest in front of their chest, the speaker shown smaller (and moved) to make room.
+    Each placing is checked against the speaker's real matte (`mattes`: frames during the takeover): a behind line may
+    lose at most OCCLUDE_MAX of its ink and no word more than WORD_OCCLUDE_MAX. The biggest speaker that passes wins
+    (two lines above before one); when none does, every line goes in front, where it was drawn."""
+    from clip_engine.services.graphics_overlay import head_top
+    plain = TakeoverLayout((1.0, 0, 0), tuple((a, b, a, False) for a, b in lines), (), True)
+    n = len(lines)
+    chin = chin_row(face)
+    crowns = [head_top(m) for m in mattes]
+    if n < 2 or chin is None or not mattes or any(c is None for c in crowns):
+        return plain
+    crown = min(crowns)
+    x0, _, x1, _ = face
+    s0 = max(LAYOUT_MIN_SCALE, min(1.0, TAKEOVER_FACE_W * width / max(1.0, x1 - x0)))
+    head = max(1, chin - crown)
+    gap = max(4, round(height * 0.012))
+    top_min, bottom_max = LAYOUT_TOP * height, LAYOUT_BOTTOM * height
+    inks = [alpha[a:b] > 96 for a, b in lines]
+    best: Optional[TakeoverLayout] = None
+    for k in (2, 1):
+        if k >= n:
+            continue
+        behind, front = lines[:k], lines[k:]
+        bh = sum(b - a for a, b in behind) + gap * (k - 1)
+        fh = sum(b - a for a, b in front) + gap * (len(front) - 1)
+        last = behind[-1][1] - behind[-1][0]
+        for tuck in TUCKS:
+            scale = min(s0, (bottom_max - top_min - bh - fh - 2 * gap + tuck * last) / head)
+            if scale < LAYOUT_MIN_SCALE:
+                continue
+            scale = round(scale, 4)
+            # The whole stack centered in the room it has.
+            total = bh - tuck * last + scale * head + gap + fh
+            start = top_min + max(0.0, (bottom_max - top_min - total) / 2)
+            crown_at = start + bh - tuck * last
+            y = round(crown_at - scale * crown)
+            sw = max(2, round(width * scale / 2) * 2)
+            x = 0 if scale >= 0.995 else max(0, min(width - sw, round(width / 2 - (x0 + x1) / 2 * scale)))
+            person = (1.0 if scale >= 0.995 else scale, x, y)
+            placed = []
+            cursor = start
+            for a, b in behind:
+                placed.append((a, b, round(cursor), True))
+                cursor += b - a + gap
+            cursor = y + scale * chin + gap
+            for a, b in front:
+                placed.append((a, b, round(cursor), False))
+                cursor += b - a + gap
+            occl = []
+            for (a, b, dst, _), ink in zip(placed[:k], inks[:k]):
+                worst = (0.0, 0.0)
+                for m in mattes:
+                    o = line_occlusion(ink, place_matte(m, person, width, height), dst)
+                    worst = (max(worst[0], o[0]), max(worst[1], o[1]))
+                occl.append(worst)
+            if all(o <= OCCLUDE_MAX and w <= WORD_OCCLUDE_MAX for o, w in occl):
+                layout = TakeoverLayout(person, tuple(placed), tuple(occl))
+                if best is None or person[0] > best.person[0] + 1e-6:
+                    best = layout
+                break
+    return best or plain

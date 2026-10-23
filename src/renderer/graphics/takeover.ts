@@ -6,7 +6,7 @@
  * in front of their chest. The key words (`accent`) are drawn in the accent color.
  *
  * Moves: each line arrives from slight oversize (112%, its blur clearing), decelerating, as its first word is said
- * (`word_ms`) or on an even beat; the whole block holds with a slow drift and leaves fast. Every frame comes from the
+ * (`word_ms`) or on an even beat; the block holds still (the engine moves each line on its own) and leaves fast. Every frame comes from the
  * time alone (onSeek), so the render and the editor's scrubbing give the same pixels. Only the graphic's own words are drawn.
  */
 import { graphicWordTimes, takeoverLines, type GraphicRenderSpec } from '../../shared/motion-graphics'
@@ -79,9 +79,7 @@ export function takeoverTemplate(b: TakeoverBuild): void {
   const blur = 16 * u
   b.onSeek.push((t) => {
     const out = clamp((t - outAt) / tout, 0, 1)
-    const settled = (starts[starts.length - 1] ?? 0) + lineIn
-    const hold = clamp((t - settled) / Math.max(1, outAt - settled), 0, 1)
-    drift.style.transform = `scale(${(1 + .02 * hold + .05 * out).toFixed(4)})`
+    // The block itself never moves or grows: the engine lays each line out on its own (around the speaker's head).
     drift.style.opacity = (1 - inCubic(out)).toFixed(3)
     lineEls.forEach((line, i) => {
       const p = (t - starts[i]) / lineIn

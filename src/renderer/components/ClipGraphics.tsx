@@ -120,7 +120,7 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, s
   return <div className="editor-graphics-overlay" style={{ width: bounds.width, height: bounds.height, left: bounds.left, top: bounds.top }}>
     <div aria-hidden>{shown.map(({ g, spec, local }) => <GraphicView key={g.id} spec={spec} time={local} width={bounds.width} />)}</div>
     {behind && <span className="editor-graphic-depth-badge" title="This preview shows the words in front. The exported clip puts them behind you.">Behind you in the export</span>}
-    {between && !behind && <span className="editor-graphic-depth-badge" title="This preview shows the words only. The exported clip darkens the room and puts your head between the lines.">Head between the lines in the export</span>}
+    {between && !behind && <span className="editor-graphic-depth-badge" title="This preview shows the words only. The exported clip softens the room and puts your head between the lines.">Head between the lines in the export</span>}
   </div>
 }
 
@@ -738,7 +738,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
       {g.template === 'takeover' && <div className="space-y-1">
         <div className="flex items-center justify-between gap-2 text-xs"><span>Head between the lines</span>
           <Switch label="Head between the lines" checked={graphicDepth(g) === 'between'} onChange={(on) => onChange(updateGraphic(candidate, g.id, { depth: on ? 'between' : 'front' }))} /></div>
-        <p className="text-2xs text-ink-subtle">{graphicDepth(g) === 'between' ? 'In the export the room behind you goes dark, the top lines go behind your head and the lower lines in front of you. The preview here shows the words only.' : 'The words sit over the video, in front of you.'}</p></div>}
+        <p className="text-2xs text-ink-subtle">{graphicDepth(g) === 'between' ? 'In the export the room behind you softens, one or two lines sit just above your head (tucked behind it) and the rest go in front of you. Every line stays readable; if it can’t, all lines go in front. The preview here shows the words only.' : 'The words sit over the video, in front of you.'}</p></div>}
       {g.template === 'stat' && <p className="text-2xs text-ink-subtle">The number counts up. Use one from the clip, like “$1,200/month”, “15 billion” or “25%”.</p>}
       {g.template === 'highlight' ? <div className="space-y-2">
         <Segmented label="Shape" size="sm" value={highlightPoint(g.fields).shape} onChange={(shape) => field('shape', shape)} options={[{ value: 'circle', label: 'Circle' }, { value: 'arrow', label: 'Arrow' }]} />
