@@ -235,8 +235,11 @@ test('Combine clips: a .zip of three clips, put in the AI’s order, joined upri
   const candidate = project.candidates[0]
   assert.equal(candidate.status, 'baked')
   // The plan's graphic on the screen clip's dashboard line: a card (no stage over a filmed screen); the proof stat was taken off.
-  assert.deepEqual(candidate.graphics.map((g) => [g.template, g.origin, g.size, g.fields.text]), [['statement', 'auto', 'card', 'My dashboard says $8,188 today.']])
-  assert.equal(candidate.stage_scenes, undefined)
+  assert.deepEqual(candidate.graphics.filter((g) => g.template !== 'screen_frame').map((g) => [g.template, g.origin, g.size, g.fields.text]), [['statement', 'auto', 'card', 'My dashboard says $8,188 today.']])
+  // Long filmed-screen stretches get one framed moment each (a Screen recording window on a Visual scene), never a Stage over the screen.
+  const framed = candidate.graphics.filter((g) => g.template === 'screen_frame')
+  assert.ok(framed.length <= 3 && framed.every((g) => g.origin === 'auto'), JSON.stringify(framed))
+  assert.ok((candidate.stage_scenes ?? []).every((sc) => sc.scene === 'visual'), JSON.stringify(candidate.stage_scenes))
   const words = JSON.parse(fs.readFileSync(path.join(library, run, 'transcript.json'), 'utf8')).segments.flatMap((sg) => sg.words.map((w) => [w.word, w.start_time_ms, w.end_time_ms]))
   const bundle = { duration: project.duration_ms / 1000, words }
   const seconds = Number(probe.format.duration)

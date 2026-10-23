@@ -78,7 +78,7 @@ test('Remix graphics: a stat on the member’s take, a chat change to the hook t
   await graphics.getByRole('button', { name: 'Add a graphic' }).click()
   // The gallery opens over the page (a dialog), from the Graphics section's "Add a graphic".
   await page.getByRole('dialog', { name: 'Add a graphic' }).getByRole('region', { name: 'Choose a graphic' }).waitFor()
-  assert.equal(await page.getByRole('dialog', { name: 'Add a graphic' }).locator('.editor-graphic-tile').count(), 24, 'every template but Logo pop, Screen recording and Chapter header')
+  assert.equal(await page.getByRole('dialog', { name: 'Add a graphic' }).locator('.editor-graphic-tile').count(), 25, 'every template but Logo pop, Screen recording and Chapter header')
   await page.getByRole('dialog', { name: 'Add a graphic' }).getByRole('button', { name: 'Add Stat counter', exact: true }).click()
   await graphics.getByLabel('Stat counter number', { exact: true }).fill('$1,200')
   await graphics.getByLabel('Stat counter label', { exact: true }).fill('a month')
