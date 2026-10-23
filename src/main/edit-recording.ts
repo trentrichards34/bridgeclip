@@ -7,7 +7,7 @@ import { promisify } from 'util'
 import {
   EDIT_MAX_SOURCE_SECONDS, EDIT_MAX_SOURCES, EDIT_MAX_TOTAL_SECONDS, EDIT_MIN_SOURCE_SECONDS, EDIT_RECORDER_MAX_SECONDS,
   EDIT_VIDEO_EXTENSIONS, MAX_HOOK_HINT_CHARS, MAX_IDEA_MATERIAL_CHARS, MAX_IDEA_TOPIC_CHARS, SCRIBE_MODEL, SCRIBE_PRICE_PER_SECOND,
-  EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGE_BYTES, EDIT_MAX_IMAGES, CARD_MAX_SECONDS, CARD_MIN_SECONDS,
+  EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGE_BYTES, EDIT_MAX_IMAGES, EDIT_MAX_SCREENSHOTS, parseScreenshotBox, CARD_MAX_SECONDS, CARD_MIN_SECONDS,
   editEstimate, livePins, parseEditDecisions, soundEffectsOn, parseEditPlan, parseFilmIdeas, FILM_IDEA_COUNT,
   type EditImage, type EditPlan, type EditScreen, type EditSource, type EditStatus, type FilmIdea
 } from '../shared/edit-recording'
@@ -38,6 +38,7 @@ import { rememberHeadline, rememberRunHeadline, savedHeadline, sourcesKey } from
 import { readMemberPrefs } from './member-prefs'
 import { isGraphicsRegister } from '../shared/look-extras'
 import { registerKeeps } from '../shared/register'
+import { fxEffect, fxPictureFields } from '../shared/fx-catalog'
 import { openRouterBase } from './openrouter-media'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
 import { parseRemixRecompose } from './remix'
@@ -234,6 +235,8 @@ export interface ParsedEditStart {
   newHeadline: boolean
   /** Camera + screen: the screen recording and how it lines up with the camera. */
   screen: { path: string; offsetMs: number } | null
+  /** Screenshots for the video, each with its box (the part that matters) or none. */
+  screenshots: { path: string; box: [number, number, number, number] | null }[]
 }
 
 /** The start request from the page, checked: recordings the member chose here (or ones in the Library). */
@@ -259,9 +262,48 @@ export function parseEditStart(value: unknown, outputDirectory: string): ParsedE
   const purpose = parsePurpose(raw.purpose)
   if (raw.referenceImage !== undefined && raw.referenceImage !== null && !isReferenceId(raw.referenceImage)) throw new Error('Choose your reference image again.')
   const screen = raw.screen === undefined || raw.screen === null ? null : parseStartScreen(raw.screen, sources, mode, outputDirectory)
-  return { screen, sources, brandIdentityId: (raw.brandIdentityId as string | null | undefined) ?? null, hookHint: typeof raw.hookHint === 'string' ? raw.hookHint.replace(/\s+/g, ' ').trim() : '',
+  const screenshots = parseStartScreenshots(raw.screenshots, outputDirectory)
+  return { screen, screenshots, sources, brandIdentityId: (raw.brandIdentityId as string | null | undefined) ?? null, hookHint: typeof raw.hookHint === 'string' ? raw.hookHint.replace(/\s+/g, ' ').trim() : '',
     purpose, referenceImage: isReferenceId(raw.referenceImage) ? raw.referenceImage : null, mode, order: mode === 'combine' && raw.order === 'ai' ? 'ai' : 'filmed',
     newHeadline: raw.newHeadline === true }
+}
+
+/** The start request's screenshots: pictures the member chose here (PNG, JPEG or WebP), each with an optional box. */
+function parseStartScreenshots(value: unknown, outputDirectory: string): { path: string; box: [number, number, number, number] | null }[] {
+  if (value === undefined || value === null) return []
+  if (!Array.isArray(value) || value.length > EDIT_MAX_SCREENSHOTS) throw new Error(`Add up to ${EDIT_MAX_SCREENSHOTS} screenshots.`)
+  const out: { path: string; box: [number, number, number, number] | null }[] = []
+  for (const item of value) {
+    const raw = item as Record<string, unknown> | null
+    if (!raw || typeof raw !== 'object' || typeof raw.path !== 'string' || !EDIT_IMAGE_EXTENSIONS.includes(extname(raw.path).slice(1).toLowerCase())) throw new Error('Use PNG, JPEG or WebP screenshots.')
+    try { assertMediaPath(raw.path, outputDirectory) } catch { throw new Error('Choose your screenshots again with Add screenshots.') }
+    if (raw.box !== undefined && raw.box !== null && !parseScreenshotBox(raw.box)) throw new Error('Box the part of each screenshot that matters again.')
+    if (!out.some((shot) => shot.path === raw.path)) out.push({ path: raw.path, box: parseScreenshotBox(raw.box) })
+  }
+  return out
+}
+
+/** The start's screenshots, copied into the run's images (checked by their bytes); one that can't be read is left out with a note. */
+async function keepScreenshots(folder: string, shots: ParsedEditStart['screenshots'], warnings: string[]): Promise<EditImage[]> {
+  const kept: EditImage[] = []
+  for (const shot of shots) {
+    try {
+      if (statSync(shot.path).size > EDIT_MAX_IMAGE_BYTES) throw new Error('too big')
+      const bytes = new Uint8Array(await readFile(shot.path))
+      const kind = imageKind(bytes)
+      if (!kind) throw new Error('not a picture')
+      const id = randomBytes(6).toString('hex')
+      await mkdir(join(folder, 'images'), { recursive: true })
+      const path = join(folder, 'images', `${id}.${kind}`)
+      await writeFile(path, bytes, { mode: 0o600, flag: 'wx' })
+      // eslint-disable-next-line no-control-regex
+      const name = basename(shot.path).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 80) || `screenshot.${kind}`
+      // A phone screenshot (much taller than wide) goes in a phone, a page in a browser window.
+      const size = pictureSize(bytes)
+      kept.push({ id, name, path, screenshot: true, ...(shot.box ? { box: shot.box } : {}), ...(size && size.height > size.width * 1.4 ? { tall: true } : {}) })
+    } catch { warnings.push(`The screenshot “${basename(shot.path).slice(0, 60)}” couldn’t be read, so it was left out. Use a PNG, JPEG or WebP under ${EDIT_MAX_IMAGE_BYTES / 1024 / 1024} MB.`) }
+  }
+  return kept
 }
 
 /** The start request's screen recording: one camera recording (not combined clips), a video the member chose. */
@@ -585,6 +627,8 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
     // The same recordings made before keep their headline (unless a new one is asked for).
     const headlineKey = await sourcesKey(request.mode, sources.map((source) => ({ path: source.path, seconds: known.get(source.path) ?? source.seconds })))
     const keptHeadline = request.newHeadline ? '' : savedHeadline(headlineKey) ?? ''
+    // Screenshots for the video: kept in the run folder, offered to the planner (camera + screen reels have no graphics).
+    const images = request.screen ? [] : await keepScreenshots(folder, request.screenshots, warnings)
     // A plan waiting for review (or a failed one) is replaced by this run.
     await dropUnfinished()
     await cleanupAbandonedEdits(settings.outputDirectory, folder)
@@ -593,7 +637,7 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
       cancelled: false, brand, hookHint: request.hookHint, purpose: request.purpose, reference, recordedUsd: 0, order: request.order, headlineKey, keptHeadline,
       status: {
         id: randomBytes(6).toString('hex'), phase: 'transcribing', detail: 'Starting', percent: 1, sources, folder, plan: null, transcriber: null,
-        output: null, costUsd: 0, estimateUsd: editEstimate(total).total, error: null, warnings, images: [], ...(combine ? { mode: 'combine' as const } : {}),
+        output: null, costUsd: 0, estimateUsd: editEstimate(total).total, error: null, warnings, images, ...(combine ? { mode: 'combine' as const } : {}),
         ...(screen ? { screen } : {})
       }
     }
@@ -603,6 +647,65 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
     void prepare(current).catch((error: unknown) => logger.warn('edit.prepare.crashed', { message: String(error).slice(0, 200) }))
     return current.status
   } finally { starting = false }
+}
+
+/** A picture's size from its first bytes (PNG, JPEG or WebP), or null. */
+export function pictureSize(bytes: Uint8Array): { width: number; height: number } | null {
+  const u16 = (i: number): number => (bytes[i] << 8) | bytes[i + 1]
+  const le16 = (i: number): number => bytes[i] | (bytes[i + 1] << 8)
+  const kind = imageKind(bytes)
+  if (kind === 'png' && bytes.byteLength >= 24) return { width: (u16(16) << 16) | u16(18), height: (u16(20) << 16) | u16(22) }
+  if (kind === 'jpg') {
+    for (let i = 2; i + 9 < bytes.byteLength;) {
+      if (bytes[i] !== 0xff) { i++; continue }
+      const marker = bytes[i + 1]
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return { width: u16(i + 7), height: u16(i + 5) }
+      i += 2 + u16(i + 2)
+    }
+    return null
+  }
+  if (kind === 'webp' && bytes.byteLength >= 30) {
+    const chunk = String.fromCharCode(...bytes.slice(12, 16))
+    if (chunk === 'VP8 ') return { width: le16(26) & 0x3fff, height: le16(28) & 0x3fff }
+    if (chunk === 'VP8L') { const b = bytes.slice(21, 25); return { width: 1 + (((b[1] & 0x3f) << 8) | b[0]), height: 1 + (((b[3] & 0xf) << 10) | (b[2] << 2) | ((b[1] & 0xc0) >> 6)) } }
+    if (chunk === 'VP8X') return { width: 1 + (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16)), height: 1 + (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16)) }
+  }
+  return null
+}
+
+/** The screenshots the planner may show, by id, with the part that matters and whether it is phone-shaped (none: it places no picture effects). */
+export function screenshotMedia(images: readonly EditImage[] | undefined): { id: string; box?: [number, number, number, number]; tall?: true }[] {
+  return (images ?? []).filter((image) => image.screenshot).slice(0, EDIT_MAX_SCREENSHOTS).map((image) => ({ id: image.id, ...(image.box ? { box: image.box } : {}), ...(image.tall ? { tall: true as const } : {}) }))
+}
+
+/**
+ * The reel's graphics for the editor: an effect's pictures (an image id of this run) become the editor's picture names
+ * (copied into .graphics/images); one whose picture is gone is left out (it would show an empty frame).
+ */
+export function graphicsWithPictures<T extends { template: string; fields: Record<string, string> }>(graphics: readonly T[], images: readonly EditImage[], folder: string): T[] {
+  const names = new Map<string, string | null>()
+  const named = (id: string): string | null => {
+    if (!names.has(id)) {
+      const image = images.find((item) => item.id === id)
+      let name: string | null = null
+      if (image) try { name = importGraphicImage(folder, image.path) } catch { name = null }
+      names.set(id, name)
+    }
+    return names.get(id) ?? null
+  }
+  return graphics.flatMap((g) => {
+    if (g.template !== 'fx') return [g]
+    const fields = { ...g.fields }
+    for (const f of fxPictureFields(fxEffect(fields.effect))) {
+      const id = fields[f.key]
+      if (!id) { if (f.required) return []; continue }
+      const name = named(id)
+      if (name) fields[f.key] = name
+      else if (f.required) return []
+      else delete fields[f.key]
+    }
+    return [{ ...g, fields }]
+  })
 }
 
 async function prepare(current: EditRun): Promise<void> {
@@ -638,7 +741,9 @@ async function prepare(current: EditRun): Promise<void> {
       ...(current.purpose ? { purpose: current.purpose } : {}), ...(current.reference ? { reference_image: current.reference } : {}),
       ...(combine ? { combine: { clips: sources.map((source) => ({ shot: source.shot ?? 'face', seconds: source.seconds })) } } : {}),
       // The automatic direction: the same call plans the motion graphics (camera + screen reels have their own layouts).
-      ...(current.status.screen ? {} : { direction: { stage: true, ...(current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}), ...graphicsRegister() } })
+      ...(current.status.screen ? {} : { direction: { stage: true, ...(current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}), ...graphicsRegister(),
+        // The member's screenshots: the director may show them (a browser or phone frame, a before and after, a proof) where they fit.
+        ...(screenshotMedia(current.status.images).length ? { media: screenshotMedia(current.status.images) } : {}) } })
     }, 15 * 60_000, (detail, percent, found) => { if (!current.cancelled) publish(current, { detail: detail || 'Planning your edit', percent: 70 + percent * 0.29 }, found) },
     (child) => { current.child = child })
     spend(current, typeof result.cost_usd === 'number' ? result.cost_usd : 0)
@@ -851,7 +956,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     const color = current.brand?.look?.color
     Object.assign(config, { editor: {
       // The style: Minimal keeps only the automatic graphics on numbers, the hook and the call to action.
-      graphics: (decisions.graphics ?? []).filter((g) => registerKeeps(g, decisions.soundStyle)).map(({ id, template, word, duration_ms, placement, fields, origin, size, depth }) => ({ id, template, word, duration_ms, placement, fields,
+      graphics: graphicsWithPictures((decisions.graphics ?? []).filter((g) => registerKeeps(g, decisions.soundStyle)), images, current.status.folder).map(({ id, template, word, duration_ms, placement, fields, origin, size, depth }) => ({ id, template, word, duration_ms, placement, fields,
         ...(origin ? { origin } : {}), ...(size ? { size } : {}), ...(depth ? { depth } : {}) })),
       pins, motion, stage: motion && decisions.stageLayouts !== false,
       // The color grade (footage only): the editor's bake puts it under the captions and graphics.

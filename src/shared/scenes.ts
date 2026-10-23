@@ -39,7 +39,31 @@ export interface StageScene {
   backdrop?: SceneBackdrop
   /** stage only: the speaker card's shape (absent: rounded). */
   card?: SceneCard
+  /**
+   * stage only: false keeps the head inside the card. Absent: the head breaks out above the card's top edge where it
+   * can (the engine checks the cut-out and the framing first; depth_fx frame escape).
+   */
+  escape?: false
+  /** The camera move into this scene (and back out to face). Absent: a subtle zoom. */
+  transition?: SceneTransition
 }
+
+/**
+ * How the clip moves into a scene: `slide` (the card slides and the backdrop fades, nothing more), `zoom` (a quick,
+ * subtle push through the cut) or `whip` (a fast sideways whip with motion blur). The cut is in the middle of the
+ * move; the scene's sound effect lands there (engine depth_fx.scene_transitions).
+ */
+export type SceneTransition = 'slide' | 'zoom' | 'whip'
+export const SCENE_TRANSITIONS: readonly SceneTransition[] = ['slide', 'zoom', 'whip']
+export const DEFAULT_SCENE_TRANSITION: SceneTransition = 'zoom'
+export const TRANSITION_LABELS: Record<SceneTransition, string> = { slide: 'Slide', zoom: 'Zoom', whip: 'Whip' }
+export const TRANSITION_DETAILS: Record<SceneTransition, string> = {
+  slide: 'The card slides in. No camera move.',
+  zoom: 'A quick, subtle push through the cut.',
+  whip: 'A fast sideways whip with motion blur.'
+}
+/** Output frames of each camera move (engine depth_fx.TRANSITION_FRAMES). */
+export const TRANSITION_FRAMES: Record<SceneTransition, number> = { slide: 0, zoom: 8, whip: 10 }
 
 export const MAX_SCENES = 60
 /** The shortest scene the editor makes (a quicker switch reads as a glitch). */
@@ -98,11 +122,18 @@ export function sceneCaptionY(scene: SceneKind): number | null {
 const isKind = (x: unknown): x is SceneKind => (SCENE_KINDS as readonly unknown[]).includes(x)
 const isBackdrop = (x: unknown): x is SceneBackdrop => (SCENE_BACKDROPS as readonly unknown[]).includes(x)
 const isCard = (x: unknown): x is SceneCard => (SCENE_CARDS as readonly unknown[]).includes(x)
+const isTransition = (x: unknown): x is SceneTransition => (SCENE_TRANSITIONS as readonly unknown[]).includes(x)
 const clean = (s: StageScene): StageScene => s.scene === 'face'
   ? { scene: 'face', start_ms: s.start_ms, end_ms: s.end_ms }
   : { scene: s.scene, start_ms: s.start_ms, end_ms: s.end_ms, ...(s.backdrop && s.backdrop !== 'light' ? { backdrop: s.backdrop } : {}),
-      ...(s.scene === 'stage' && s.card === 'arch' ? { card: s.card } : {}) }
+      ...(s.scene === 'stage' && s.card === 'arch' ? { card: s.card } : {}), ...(s.scene === 'stage' && s.escape === false ? { escape: false as const } : {}),
+      ...(s.transition && s.transition !== DEFAULT_SCENE_TRANSITION ? { transition: s.transition } : {}) }
 const same = (a: StageScene, b: StageScene): boolean => a.scene === b.scene && (a.backdrop ?? 'light') === (b.backdrop ?? 'light') && (a.card ?? 'rounded') === (b.card ?? 'rounded')
+  && (a.escape ?? true) === (b.escape ?? true) && (a.transition ?? DEFAULT_SCENE_TRANSITION) === (b.transition ?? DEFAULT_SCENE_TRANSITION)
+/** Whether a stage scene's head may break out of its card (on unless turned off). */
+export function sceneEscapes(s: Pick<StageScene, 'scene' | 'escape'>): boolean { return s.scene === 'stage' && s.escape !== false }
+/** A scene's camera move. */
+export function sceneTransition(s: Pick<StageScene, 'transition'>): SceneTransition { return s.transition ?? DEFAULT_SCENE_TRANSITION }
 
 /**
  * Validates untrusted scenes (a saved edit, the renderer, the chat): a list of
@@ -115,14 +146,17 @@ export function parseScenes(value: unknown, duration = Number.MAX_SAFE_INTEGER):
   const scenes = value.map((raw): StageScene => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('A scene is malformed.')
     const s = raw as Record<string, unknown>
-    if (Object.keys(s).some((key) => !['scene', 'start_ms', 'end_ms', 'backdrop', 'card'].includes(key))) throw new Error('A scene is malformed.')
+    if (Object.keys(s).some((key) => !['scene', 'start_ms', 'end_ms', 'backdrop', 'card', 'escape', 'transition'].includes(key))) throw new Error('A scene is malformed.')
+    if (s.escape !== undefined && s.escape !== false && s.escape !== true) throw new Error('A scene is malformed.')
+    if (s.transition !== undefined && !isTransition(s.transition)) throw new Error('A scene’s transition is slide, zoom or whip.')
     if (!isKind(s.scene)) throw new Error('A scene is face, stage or visual.')
     if (s.backdrop !== undefined && !isBackdrop(s.backdrop)) throw new Error('A scene’s backdrop is light, dark, brand, grid, gradient or solid.')
     if (s.card !== undefined && !isCard(s.card)) throw new Error('A scene’s card is rounded or arch.')
     const start = s.start_ms, end = s.end_ms
     if (typeof start !== 'number' || typeof end !== 'number' || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > duration) throw new Error('A scene must be inside the video.')
     if (end - start < MIN_SCENE_MS - 0.5) throw new Error(`A scene lasts at least ${MIN_SCENE_MS / 1000} seconds.`)
-    return clean({ scene: s.scene, start_ms: Math.round(start), end_ms: Math.round(end), ...(s.backdrop ? { backdrop: s.backdrop as SceneBackdrop } : {}), ...(s.card ? { card: s.card as SceneCard } : {}) })
+    return clean({ scene: s.scene, start_ms: Math.round(start), end_ms: Math.round(end), ...(s.backdrop ? { backdrop: s.backdrop as SceneBackdrop } : {}), ...(s.card ? { card: s.card as SceneCard } : {}),
+      ...(s.escape === false ? { escape: false as const } : {}), ...(s.transition ? { transition: s.transition as SceneTransition } : {}) })
   })
   scenes.forEach((s, i) => { if (i > 0 && s.start_ms < scenes[i - 1].end_ms) throw new Error('Scenes can’t overlap.') })
   return scenes
@@ -196,7 +230,8 @@ export function updateScene(scenes: readonly StageScene[], index: number, patch:
   }
   if (end - start < MIN_SCENE_MS) return [...scenes]
   const kind = patch.scene ?? s.scene
-  const next = clean({ scene: kind, start_ms: start, end_ms: end, backdrop: 'backdrop' in patch ? patch.backdrop : s.backdrop, card: 'card' in patch ? patch.card : s.card })
+  const next = clean({ scene: kind, start_ms: start, end_ms: end, backdrop: 'backdrop' in patch ? patch.backdrop : s.backdrop, card: 'card' in patch ? patch.card : s.card,
+    escape: 'escape' in patch ? patch.escape : s.escape, transition: 'transition' in patch ? patch.transition : s.transition })
   return scenes.map((x, i) => i === index ? next : x)
 }
 
@@ -297,4 +332,23 @@ export function sceneMix(scenes: readonly StageScene[], t: number): { backdrop: 
   const bNow = now ? now.backdrop ?? 'light' : null, bBefore = before ? before.backdrop ?? 'light' : null
   if (bNow) return { backdrop: bNow, under: bBefore && bBefore !== bNow ? bBefore : null, alpha: bBefore === bNow ? 1 : p, card, shape }
   return { backdrop: bBefore, under: null, alpha: bBefore ? 1 - p : 0, card, shape }
+}
+
+/**
+ * The camera move at a scene change around output time `t` (ms): its kind and how far through it is (0..1, the cut at
+ * 0.5), or null. Moves sit at each change of scene kind (face, stage, visual), in the style of the scene being entered
+ * (or, back to face, of the one being left); none for 'slide' (engine depth_fx.scene_transitions, for the preview).
+ */
+export function sceneMove(scenes: readonly StageScene[], t: number, fps = 30): { kind: 'zoom' | 'whip'; p: number } | null {
+  const kindAt = (ms: number): SceneKind => scenes.find((s) => ms >= s.start_ms && ms < s.end_ms)?.scene ?? 'face'
+  for (const s of scenes) {
+    for (const [at, owner] of [[s.start_ms, s], [s.end_ms, scenes.find((n) => n.start_ms === s.end_ms) ?? s]] as const) {
+      if (kindAt(at - 1) === kindAt(at)) continue
+      const kind = sceneTransition(owner)
+      if (kind === 'slide') continue
+      const half = TRANSITION_FRAMES[kind] / 2 / fps * 1000
+      if (Math.abs(t - at) < half) return { kind, p: (t - at + half) / (2 * half) }
+    }
+  }
+  return null
 }

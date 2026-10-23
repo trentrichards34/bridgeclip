@@ -43,4 +43,4 @@ def with_grade(graph: str, grade: Optional[str], label: str = "base") -> str:
     tag = f"[{label}]"
     if graph.count(tag) != 1:
         raise ValueError("The graph must end its video in one label")
-    return graph.replace(tag, "[ungraded]") + f";[ungraded]{chain}{tag}"
+    return graph.replace(tag, f"[{label}_ungraded]") + f";[{label}_ungraded]{chain}{tag}"

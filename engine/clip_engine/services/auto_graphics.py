@@ -41,14 +41,25 @@ DIAGRAMS = ('staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_mar
 # 'fx': an Effect (a HyperFrames unit; data/fx_catalog.json, from src/shared/fx-catalog.ts) with its own fields: the planner
 # may place the AUTO_FX ones (graphics_director.py picks and checks them).
 AUTO_TEMPLATES = ('stat', 'title', 'list', 'checklist', 'before_after', 'quote', 'lower_third',
-                  'statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta', 'orbit', 'feature_tile') + DIAGRAMS + ('fx',)
+                  'statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta', 'orbit', 'feature_tile') + DIAGRAMS + ('fx',
+                  # The type takeover: the single most important line in huge type, the speaker's head between its lines.
+                  'takeover')
 AUTO_FX = (
     'count-up', 'number-pop-in', 'conic-progress-ring', 'star-rating-fill', 'chart-story', 'decline-chart', 'trust-strip',
     'headline-slam', 'per-word-rise', 'kinetic-center-build', 'kinetic-type-swap', 'line-swap', 'caret-swap', 'marker-highlight',
     'vox-annotate', 'scramble-reveal', 'ticker-takeover', 'typed-prompt', 'typing-indicator', 'strikethrough-replace',
     'marker-checklist-card', 'constellation-hub', 'locked-nucleus-orbit', 'radial-surround', 'overwhelm-surround', 'state-chip-rail',
     'notification-stack', 'testimonial-proof-card', 'cta-lockup',
+    # Charts and flows with every number and label said (CreatorClips' own units, remade from HyperFrames blocks).
+    'data-chart', 'animated-bar-chart', 'mk-line-graph', 'flowchart', 'onboarding-stepper-flow',
 )
+# Effects on the member's own screenshots and photos: never asked of the model (it can't see the pictures); the
+# director places them in code where a screen, a proof or a before and after is said, only when the member added
+# screenshots for the video (graphics_director.place_media).
+MEDIA_FX = ('browser-device-stage', 'device-frame-stage', 'before-after-wipe', 'comparison-split', 'split-tilt-cards',
+            'paper-collage-reveal', 'torn-paper-rip', 'light-sweep-pass')
+# A picture field: a run image name (or, before an edited reel is made, one of its image ids).
+_PICTURE = re.compile(r'^[A-Za-z0-9._-]{1,80}$')
 TEMPLATE_FIELDS = {
     'stat': ('value', 'label'), 'title': ('text',), 'list': ('title', 'items', 'icons'), 'checklist': ('title', 'items', 'icons'),
     'before_after': ('before', 'after'), 'quote': ('text', 'author'), 'lower_third': ('name', 'role'),
@@ -57,7 +68,7 @@ TEMPLATE_FIELDS = {
     'orbit': ('text', 'items', 'icons'), 'feature_tile': ('items', 'icons'),
     'staircase': ('title', 'items', 'icons'), 'funnel': ('title', 'items'), 'journey': ('title', 'items'),
     'idea_hub': ('text', 'items', 'icon'), 'compare_marks': ('items', 'notes', 'wrong'), 'growth': ('title', 'items', 'style'),
-    'fx': ('effect',),
+    'fx': ('effect',), 'takeover': ('text', 'accent'),
 }
 # Templates a saved run may carry (the editor's other templates are never automatic).
 SAVED_TEMPLATES = AUTO_TEMPLATES + ('browser_frame', 'big_words', 'chapter', 'link_cta')
@@ -68,7 +79,8 @@ SAVED_FIELDS = {**TEMPLATE_FIELDS, 'browser_frame': ('domain', 'title', 'accent'
 ALL_FIELDS = ('value', 'label', 'text', 'title', 'items', 'before', 'after', 'author', 'name', 'role',
               'accent', 'subline', 'final', 'phrase', 'icons', 'keyword', 'lead', 'notes', 'wrong', 'icon')
 # The newer templates are held to every word (the older ones to most words, as before).
-STRICT_TEMPLATES = ('statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta', 'orbit', 'feature_tile', 'big_words') + DIAGRAMS
+STRICT_TEMPLATES = ('statement', 'sticky_notes', 'strike_list', 'headline_pill', 'icon_pop', 'comment_cta', 'orbit', 'feature_tile', 'big_words',
+                    'takeover') + DIAGRAMS
 # Drawn on the stage (top ~56% of a 9:16 frame) when Stage layouts are on; the rest stay cards.
 STAGE_TEMPLATES = ('statement', 'strike_list', 'sticky_notes', 'browser_frame', 'list', 'checklist', 'orbit', 'feature_tile')
 # Most items each template shows (motion-graphics.ts GRAPHIC_ITEM_LIMITS).
@@ -79,10 +91,13 @@ MIN_ITEMS = {'sticky_notes': 2, 'strike_list': 1, 'icon_pop': 2, 'list': 2, 'che
 # Templates whose items are revealed as they are said (item_ms).
 ITEM_TEMPLATES = ('list', 'checklist', 'sticky_notes', 'strike_list', 'icon_pop', 'orbit', 'feature_tile') + DIAGRAMS
 # Text cards whose words build one by one: each word comes in as it is said (word_ms; motion-graphics.ts WORD_TIMED_TEMPLATES).
-WORD_TIMED = ('big_words', 'title', 'statement', 'headline_pill')
+WORD_TIMED = ('big_words', 'title', 'statement', 'headline_pill', 'takeover')
 # A word-timed card starts at most this early and holds this long after its last word ends (WORD_LEAD_MS, WORD_HOLD_MS).
 WORD_LEAD_MS = 100
 WORD_HOLD_MS = 700
+# A type takeover is one short line said (words), on screen 1.5-3 s plus its hold.
+TAKEOVER_WORDS = (3, 9)
+TAKEOVER_MAX_MS = 3600
 # Generic icons the Icon row can draw (mirror of GRAPHIC_ICONS in src/shared/motion-graphics.ts; never brand logos).
 GRAPHIC_ICONS = (
     'globe', 'mail', 'message', 'video', 'camera', 'mic', 'phone', 'laptop', 'code', 'terminal', 'database', 'file', 'search', 'link',
@@ -117,7 +132,7 @@ SCREEN_VARIANTS = {'statement': ('glass', 'bold'), 'title': ('pill', 'shadow'), 
 DEFAULT_MS = {'stat': 3500, 'title': 2500, 'list': 5000, 'lower_third': 4000, 'before_after': 4000, 'checklist': 5000, 'quote': 5000,
               'statement': 3500, 'sticky_notes': 4000, 'strike_list': 5000, 'headline_pill': 3500, 'icon_pop': 3500, 'comment_cta': 3500,
               'browser_frame': 5000, 'orbit': 4500, 'feature_tile': 3500, 'big_words': 2500,
-              'staircase': 9000, 'funnel': 8000, 'journey': 9000, 'growth': 9000, 'idea_hub': 8000, 'compare_marks': 7000, 'chapter': 15000, 'fx': 3500}
+              'staircase': 9000, 'funnel': 8000, 'journey': 9000, 'growth': 9000, 'idea_hub': 8000, 'compare_marks': 7000, 'chapter': 15000, 'fx': 3500, 'takeover': 2500}
 # Cards per clip: about one per 6.5 s of the finished clip, at most five a minute (and never more than 12).
 SECONDS_PER_CARD = 6.5
 CARDS_PER_MINUTE = 5
@@ -326,6 +341,15 @@ def fx_clean_fields(raw: dict) -> dict[str, str]:
     fields = {'effect': effect['id']}
     for f in effect['fields']:
         value = raw.get(f['key'])
+        if f['kind'] == 'image':
+            if isinstance(value, str) and _PICTURE.match(value):
+                fields[f['key']] = value
+            continue
+        if f['kind'] == 'region':
+            box = fx_region(value)
+            if box:
+                fields[f['key']] = ', '.join(f'{round(n, 3):g}' for n in box)
+            continue
         if f['kind'] == 'list':
             lines = _lines(value, 8)
             if lines:
@@ -347,6 +371,22 @@ def fx_clean_fields(raw: dict) -> dict[str, str]:
     if raw.get('theme') in ('light', 'dark'):
         fields['theme'] = raw['theme']
     return fields
+
+
+def fx_region(value: Any) -> Optional[tuple[float, float, float, float]]:
+    """A region on a picture (x, y, w, h as shares of it, as text or a list), or None when it isn't one inside it
+    (fx-catalog.ts fxRegion)."""
+    parts = value if isinstance(value, (list, tuple)) else re.split(r'[\s,]+', str(value or '').strip())
+    try:
+        nums = [float(p) for p in parts if p != '']
+    except (TypeError, ValueError):
+        return None
+    if len(nums) != 4 or any(not math.isfinite(n) for n in nums):
+        return None
+    x, y, w, h = nums
+    if x < 0 or y < 0 or w < 0.01 or h < 0.01 or x + w > 1.001 or y + h > 1.001:
+        return None
+    return x, y, w, h
 
 
 def _cut(text: str, limit: int) -> str:
@@ -373,7 +413,8 @@ def fx_too_long(raw: dict) -> bool:
 def fx_has_content(fields: dict[str, str]) -> bool:
     """A known effect with its required fields filled (fx-catalog.ts fxHasContent)."""
     effect = fx_catalog().get(fields.get('effect'))
-    return bool(effect) and all(not f['required'] or bool(fields.get(f['key'])) for f in effect['fields'])
+    return bool(effect) and all(not f['required'] or bool(fields.get(f['key'])) for f in effect['fields']) \
+        and (not effect.get('either') or any(fields.get(k) for k in effect['either']))
 
 
 def clean_fields(template: str, raw: dict, fields_of: Optional[dict] = None) -> dict[str, str]:
@@ -434,6 +475,8 @@ def has_content(template: str, fields: dict[str, str]) -> bool:
         return bool(_HAS_DIGIT.search(fields.get('value', '')))
     if template in ('title', 'quote', 'statement', 'big_words'):
         return bool(fields.get('text'))
+    if template == 'takeover':
+        return TAKEOVER_WORDS[0] <= len(str(fields.get('text') or '').split()) <= TAKEOVER_WORDS[1]
     if template in MIN_ITEMS and template != 'strike_list':
         return len(items) >= MIN_ITEMS[template]
     if template == 'strike_list':
@@ -516,7 +559,8 @@ def parse_planned(raw: Any, start_ms: int, end_ms: int, options: Optional[dict] 
             continue
         placement = item.get('placement') if item.get('placement') in PLACEMENTS else (
             'bottom' if template == 'lower_third' else 'middle' if template in ('title', 'comment_cta') else 'top')
-        out.append({'template': template, 'at_ms': at_ms, 'duration_ms': max(MIN_MS, min(DIAGRAM_AUTO_MAX_MS if template in DIAGRAMS else MAX_MS, duration)),
+        top = DIAGRAM_AUTO_MAX_MS if template in DIAGRAMS else 3000 if template == 'takeover' else MAX_MS
+        out.append({'template': template, 'at_ms': at_ms, 'duration_ms': max(MIN_MS, min(top, duration)),
                     'placement': placement, 'fields': fields})
         if len(out) >= most:
             break
@@ -674,6 +718,8 @@ def card_words(template: str, fields: dict) -> list[str]:
         return split(fields.get('text')) + split(fields.get('phrase'))
     if template == 'statement':
         return split(fields.get('text')) + split(fields.get('subline'))
+    if template == 'takeover':
+        return split(fields.get('text'))[:TAKEOVER_WORDS[1]]
     return split(fields.get('text'))
 
 
@@ -726,7 +772,8 @@ def word_timed(g: dict, segments: Sequence, clip_end: float, following: Optional
         at = max(0, spans[0][0] - WORD_LEAD_MS) if spans[0][0] >= at else max(spans[0][0], earliest if earliest is not None else 0, 0)
         at = min(at, g['at_ms']) if spans[0][0] < g['at_ms'] else at
     end = max(at + g['duration_ms'], spans[-1][1] + WORD_HOLD_MS)
-    limit = min(clip_end, following - GAP_MS if following is not None else clip_end, at + EDITOR_MAX_MS)
+    limit = min(clip_end, following - GAP_MS if following is not None else clip_end,
+                at + (TAKEOVER_MAX_MS if g['template'] == 'takeover' else EDITOR_MAX_MS))
     length = int(max(EDITOR_MIN_MS, min(end, limit) - at))
     offsets = [max(0, min(length - 300, t - at)) for t, _ in spans]
     return {**g, 'at_ms': int(at), 'duration_ms': length, 'fields': {**g['fields'], 'word_ms': '\n'.join(str(int(o)) for o in offsets)}}
@@ -764,6 +811,7 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
     """Every number on the card is said within 3 s of it; most of its words are said near it (every word, close
     by and in order, for the newer templates)."""
     at, length = graphic['at_ms'], graphic['duration_ms']
+    effect_id = graphic['fields'].get('effect') if graphic['template'] == 'fx' else None
     if graphic['template'] == 'fx':
         # An effect: only the fields it shows as words or numbers (fx_catalog 'said'), every word said near it.
         effect = fx_catalog().get(graphic['fields'].get('effect'))
@@ -781,12 +829,15 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
             fields['value'] = f"{fields['value']}{unit if unit[:1] in ('%', ' ') or len(unit) <= 2 else ' ' + unit}"
         graphic = {**graphic, 'fields': fields}
     near_numbers = _numbers(_words_between(segments, at - NUMBER_WINDOW_MS, at + NUMBER_WINDOW_MS))
+    # An effect's list of numbers (a chart's bars, a line's points) is said while it builds: each one while it shows.
+    lists = {f['key'] for f in (fx_catalog().get(effect_id) or {}).get('fields', []) if f['kind'] == 'list'} if effect_id else set()
+    along = _numbers(_words_between(segments, at - NUMBER_WINDOW_MS, at + length + NUMBER_WINDOW_MS)) if lists else []
     for key, text in graphic['fields'].items():
-        if key in NON_WORD_FIELDS:
+        if key in NON_WORD_FIELDS and key not in lists:
             continue
         for line in text.split('\n'):
             for value in _numbers(line):
-                if not any(abs(value - heard) <= 1e-6 * max(1.0, abs(value)) for heard in near_numbers):
+                if not any(abs(value - heard) <= 1e-6 * max(1.0, abs(value)) for heard in (along if key in lists else near_numbers)):
                     return False
     if graphic['template'] in STRICT_TEMPLATES or graphic['template'] == 'fx':
         strict_heard = {w for w, _ in _timed_words(segments, at - STRICT_WINDOW_MS, at + length + STRICT_WINDOW_MS)}
@@ -1125,11 +1176,14 @@ def window(ranges: Sequence[Sequence[float]], speed: float, at: float, length: f
 
 _PRIORITY = {'stat': 6, 'strike_list': 6, 'list': 5, 'checklist': 5, 'statement': 3, 'headline_pill': 5, 'sticky_notes': 3,
              'icon_pop': 4, 'before_after': 4, 'lower_third': 4, 'comment_cta': 3, 'quote': 2, 'title': 1, 'browser_frame': 4,
-             'orbit': 5, 'feature_tile': 4, 'big_words': 3, **{t: 7 for t in DIAGRAMS}, 'fx': 5}
+             'orbit': 5, 'feature_tile': 4, 'big_words': 3, **{t: 7 for t in DIAGRAMS}, 'fx': 5, 'takeover': 4}
 # Effects by kind: the proof and the frameworks first, the emphasis effects like a headline pill.
 _FX_PRIORITY = {'chart-story': 7, 'decline-chart': 7, 'marker-checklist-card': 7, 'constellation-hub': 6, 'radial-surround': 6,
                 'state-chip-rail': 6, 'strikethrough-replace': 6, 'count-up': 6, 'number-pop-in': 6, 'conic-progress-ring': 6,
-                'star-rating-fill': 6, 'testimonial-proof-card': 6, 'cta-lockup': 3}
+                'star-rating-fill': 6, 'testimonial-proof-card': 6, 'cta-lockup': 3,
+                'data-chart': 7, 'mk-line-graph': 7, 'animated-bar-chart': 6, 'flowchart': 7, 'onboarding-stepper-flow': 6,
+                # The member's own screenshots: what they chose to show wins its moment.
+                **{e: 9 for e in MEDIA_FX}}
 
 
 def _priority(g: dict) -> int:
@@ -1151,10 +1205,11 @@ def max_cards(output_length_ms: float, register: Optional[str] = None) -> int:
     return max(1, min(MAX_PER_CLIP, by_pace, by_minute))
 
 
-def graphic_size(template: str, stage: bool) -> str:
+def graphic_size(template: str, stage: bool, effect: Optional[str] = None) -> str:
     """'stage' for the big pattern cards when Stage layouts are on; 'card' otherwise. Diagrams are always stage size: in a
-    Visual scene with Stage layouts on, else over the video on their blue panel."""
-    return 'stage' if template in DIAGRAMS or (stage and template in STAGE_TEMPLATES) else 'card'
+    Visual scene with Stage layouts on, else over the video on their blue panel; so are the member's screenshots (a
+    picture needs the room to be read)."""
+    return 'stage' if template in DIAGRAMS or (stage and template in STAGE_TEMPLATES) or (template == 'fx' and effect in MEDIA_FX) else 'card'
 
 
 def new_id(taken: set[str]) -> str:
@@ -1178,11 +1233,12 @@ def new_id(taken: set[str]) -> str:
 VARIETY_CAPS = {
     'statement': (2, 4), 'sticky_notes': (1, 2), 'quote': (1, 2), 'title': (1, 3), 'big_words': (1.5, 4), 'headline_pill': (1, 3),
     'stat': (3, 6), 'list': (1, 3), 'checklist': (1, 3), 'before_after': (1, 2), 'strike_list': (1, 2), 'icon_pop': (1.5, 4),
-    'orbit': (1, 3), 'feature_tile': (1.5, 4), 'lower_third': (1, 2), 'comment_cta': (1, 2), 'browser_frame': (1, 3),
+    'orbit': (1, 3), 'feature_tile': (1.5, 4), 'lower_third': (1, 2), 'comment_cta': (1, 2), 'browser_frame': (1, 3), 'takeover': (1, 2),
     **{d: (1, 2) for d in DIAGRAMS},
     # Effects count as their own kinds ("fx:count-up"); numbers come back more often than the rest.
     'fx:count-up': (3, 6), 'fx:number-pop-in': (2, 4), 'fx:conic-progress-ring': (1, 2), 'fx:star-rating-fill': (1, 2),
     'fx:chart-story': (1, 2), 'fx:decline-chart': (1, 2), 'fx:marker-highlight': (1.5, 4), 'fx:cta-lockup': (1, 1),
+    'fx:data-chart': (1, 2), 'fx:mk-line-graph': (1, 2), 'fx:animated-bar-chart': (1, 2), 'fx:flowchart': (1, 2), 'fx:onboarding-stepper-flow': (1, 2),
 }
 VARIETY_DEFAULT = (1.5, 4)
 # A template never comes back sooner than this after itself (a short clip: a quarter of its length, at least 8 s) and
@@ -1278,7 +1334,7 @@ def _letters(text: str) -> int:
 def _items_of(g: dict) -> list[str]:
     f = g['fields']
     t = g['template']
-    if t in ('statement', 'quote', 'title', 'big_words', 'headline_pill'):
+    if t in ('statement', 'quote', 'title', 'big_words', 'headline_pill', 'takeover'):
         return []
     if t == 'fx':
         from clip_engine.services.graphics_director import fx_cue_units
@@ -1314,7 +1370,7 @@ def converted(g: dict, to: str) -> Optional[dict]:
     words = _plain_words(line)
     items = _items_of(g)
     if to == 'headline_pill':
-        if not 2 <= len(words) <= 10 or t not in ('statement', 'quote', 'title', 'big_words'):
+        if not 2 <= len(words) <= 10 or t not in ('statement', 'quote', 'title', 'big_words', 'takeover'):
             return None
         # The key words (the statement's accent) start the color box; else its last third does.
         accent = [_tokens(w) for w in _plain_words(f.get('accent', ''))] if t == 'statement' else []
@@ -1710,7 +1766,7 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
         previous_end = g['at_ms'] + g['duration_ms']
         out_list.append({'id': new_id(taken), 'template': g['template'], 'at_ms': g['at_ms'], 'duration_ms': g['duration_ms'],
                          'placement': g['placement'] if g.get('placement') in PLACEMENTS else 'top', 'fields': fields, 'origin': 'auto',
-                         'size': graphic_size(g['template'], opts['stage'])})
+                         'size': graphic_size(g['template'], opts['stage'], g['fields'].get('effect'))})
     # Chapter headers sit in their own band at the very top (the hook hands over to the first one).
     for c in chapters:
         out_list.append({'id': new_id(taken), **c, 'origin': 'auto', 'size': 'card'})

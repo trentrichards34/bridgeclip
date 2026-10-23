@@ -117,6 +117,7 @@ export function graphicPhrase(g: Pick<EditorGraphic, 'template' | 'fields'>): st
       return f.title?.trim() ? `“${short(f.title, 24)}” ${name}` : n && g.template !== 'compare_marks' ? `${n}-step ${name}` : name
     }
     case 'fx': { const name = fxEffect(f.effect)?.label.toLowerCase() ?? 'effect'; const line = fxLine(f); return line ? `“${short(line, 24)}” ${name}` : `${name} effect` }
+    case 'takeover': return f.text?.trim() ? `“${short(f.text, 24)}” type takeover` : 'type takeover'
   }
 }
 

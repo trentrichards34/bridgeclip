@@ -10,8 +10,9 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Clapperboard, Plus, Trash2 } from 'lucide-react'
 import type { CandidateEdit } from '../../shared/clip-editor'
 import {
-  BACKDROP_LABELS, CARD_LABELS, MAX_SCENES, SOLID_BACKDROP_COLOR, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_DETAILS, SCENE_LABELS, STAGE_LAYOUT, PREVIEW_CARD_SPAN, PREVIEW_CARD_TOP, previewCard, newSceneAt, outputScenes, sceneMix, updateScene, withScene,
-  type SceneBackdrop, type SceneCard, type SceneKind, type StageScene
+  BACKDROP_LABELS, CARD_LABELS, MAX_SCENES, SOLID_BACKDROP_COLOR, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_DETAILS, SCENE_LABELS, SCENE_TRANSITIONS, STAGE_LAYOUT, PREVIEW_CARD_SPAN, PREVIEW_CARD_TOP,
+  TRANSITION_DETAILS, TRANSITION_LABELS, previewCard, newSceneAt, outputScenes, sceneEscapes, sceneMix, sceneMove, sceneTransition, updateScene, withScene,
+  type SceneBackdrop, type SceneCard, type SceneKind, type SceneTransition, type StageScene
 } from '../../shared/scenes'
 import { nearestOutputTime } from '../../shared/motion-graphics'
 import { isHexColor } from '../../shared/headline-look'
@@ -19,6 +20,7 @@ import { cn } from '../lib/utils'
 import { Button } from './ui/Button'
 import { Segmented } from './ui/Segmented'
 import { Select } from './ui/Select'
+import { Switch } from './ui/Switch'
 import './clip-scenes.css'
 
 export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onChange, onDrag, clock }: {
@@ -89,6 +91,13 @@ export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onC
         {current.scene === 'stage' && <Segmented<SceneCard> label="Card" size="sm" value={current.card ?? 'rounded'}
           onChange={(card) => onChange(updateScene(scenes, selected!, { card }, bounds), true)}
           options={(['rounded', 'arch'] as const).map((value) => ({ value, label: CARD_LABELS[value], ...(disabled ? { disabled: 'Editing is off right now.' } : {}) }))} />}
+        {current.scene === 'stage' && <span className="editor-scenes-switch" title="Your head and hair rise over the card's top edge. The export checks the cut-out first and keeps you inside the card when it isn't clean.">
+          <span>Head out</span>
+          <Switch label="Head breaks out of the card" checked={sceneEscapes(current)} disabled={disabled}
+            onChange={(on) => onChange(updateScene(scenes, selected!, { escape: on ? undefined : false }, bounds), true)} /></span>}
+        <Segmented<SceneTransition> label="Transition" size="sm" value={sceneTransition(current)}
+          onChange={(transition) => onChange(updateScene(scenes, selected!, { transition }, bounds), true)}
+          options={SCENE_TRANSITIONS.map((value) => ({ value, label: <span title={TRANSITION_DETAILS[value]}>{TRANSITION_LABELS[value]}</span>, ...(disabled ? { disabled: 'Editing is off right now.' } : {}) }))} />
         <Button size="sm" variant="ghost" iconOnly icon={<Trash2 size={12} />} aria-label="Remove scene" tooltip="Remove this scene. That part goes back to the normal full-frame video." disabled={disabled} onClick={() => remove(selected!)} />
       </div>}
     <div className="editor-scenes-track" aria-label="Scenes">
@@ -110,6 +119,15 @@ export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onC
       {!scenes.length && <span className="editor-scenes-empty">Face throughout. Add a Stage scene to give a graphic room.</span>}
     </div>
   </div>
+}
+
+const bump = (p: number): number => p < .5 ? (p / .5) ** 2 : (1 - (p - .5) / .5) ** 2
+/** The preview's version of a scene change's camera move: a CSS transform (and blur for the whip). */
+export function cameraMoveStyle(move: { kind: 'zoom' | 'whip'; p: number } | null): { transform?: string; filter?: string } {
+  if (!move) return {}
+  if (move.kind === 'zoom') return { transform: `scale(${(1 + .07 * bump(move.p)).toFixed(4)})` }
+  const shift = move.p < .5 ? -.35 * (move.p / .5) ** 2 : .35 * (1 - (move.p - .5) / .5) ** 2
+  return { transform: `translateX(${(shift * 100).toFixed(2)}%)`, filter: `blur(${(8 * bump(move.p)).toFixed(1)}px)` }
 }
 
 const BACKDROP_CSS: Record<SceneBackdrop, (brand: string) => string> = {
@@ -141,7 +159,19 @@ export function ScenesOverlay({ canvas, candidate, time }: { canvas: RefObject<H
     return () => observer.disconnect()
   }, [canvas])
   const scenes = outputScenes(candidate)
-  const mix = sceneMix(scenes, nearestOutputTime(candidate, time))
+  const now = nearestOutputTime(candidate, time)
+  const mix = sceneMix(scenes, now)
+  // The camera move at a scene change, approximated on the preview (the export draws it exactly).
+  const move = sceneMove(scenes, now)
+  const moveStyle = cameraMoveStyle(move)
+  useEffect(() => {
+    const element = canvas.current
+    if (!element) return
+    element.style.transform = moveStyle.transform ?? ''
+    element.style.filter = moveStyle.filter ?? ''
+  }, [canvas, moveStyle.transform, moveStyle.filter])
+  useEffect(() => () => { const element = canvas.current; if (element) { element.style.transform = ''; element.style.filter = '' } }, [canvas])
+  const escaping = mix.card > 0.5 && scenes.some((s) => s.start_ms <= now && now < s.end_ms && sceneEscapes(s))
   const visible = !!scenes.length && (mix.alpha > 0 || mix.card > 0)
   // How much wider than the framed preview the source is (a fill crop of part of it), for the card's width.
   const framing = [...candidate.scenes].reverse().find((s) => s.at_ms <= time) ?? candidate.scenes[0]
@@ -185,7 +215,8 @@ export function ScenesOverlay({ canvas, candidate, time }: { canvas: RefObject<H
   look.current.span = span
   const rest = h * (1 - STAGE_LAYOUT.cardBottom) - h * STAGE_LAYOUT.cardHeight, off = h + 8
   const radius = arch ? `${w * STAGE_LAYOUT.archRadius}px ${w * STAGE_LAYOUT.archRadius}px 0 0` : w * STAGE_LAYOUT.cardRadius
-  return <div className="editor-scenes-overlay" style={bounds} aria-hidden data-scene={mix.card > 0.5 ? 'stage' : mix.alpha > 0.5 ? 'visual' : 'face'}>
+  return <div className="editor-scenes-overlay" style={{ ...bounds, ...moveStyle }} aria-hidden data-scene={mix.card > 0.5 ? 'stage' : mix.alpha > 0.5 ? 'visual' : 'face'}>
+    {escaping && <span className="editor-graphic-depth-badge editor-scenes-badge">Head breaks out of the card in the export</span>}
     {mix.under && <div className="editor-scenes-backdrop" style={{ background: BACKDROP_CSS[mix.under](brandFor(mix.under)) }} />}
     {mix.backdrop && <div className="editor-scenes-backdrop" style={{ background: BACKDROP_CSS[mix.backdrop](brandFor(mix.backdrop)), opacity: mix.alpha }} />}
     <canvas ref={card} className="editor-scenes-card" data-card={mix.shape} width={Math.round(360 * cardW / fullW)} height={Math.round(360 * cardH / fullW)}

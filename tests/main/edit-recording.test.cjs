@@ -70,7 +70,7 @@ test('the start request takes recordings chosen here (or in the Library), a bran
   const file = path.join(userData, 'take-1.mp4')
   selected.add(file)
   const parsed = main.parseEditStart({ sources: [file, file], brandIdentityId: BRAND.id, hookHint: '  Most   coaches undercharge ' }, userData)
-  assert.deepEqual(plain(parsed), { sources: [file], brandIdentityId: BRAND.id, hookHint: 'Most coaches undercharge', purpose: '', referenceImage: null, mode: 'takes', order: 'filmed', screen: null, newHeadline: false })
+  assert.deepEqual(plain(parsed), { sources: [file], brandIdentityId: BRAND.id, hookHint: 'Most coaches undercharge', purpose: '', referenceImage: null, mode: 'takes', order: 'filmed', screen: null, screenshots: [], newHeadline: false })
   // "Say what it's for": one plain line of up to 200 characters, and a reference picture's id.
   const REF = 'a'.repeat(24)
   const withPurpose = main.parseEditStart({ sources: [file], brandIdentityId: null, purpose: '  Instagram reel   selling my call ', referenceImage: REF }, userData)
@@ -88,6 +88,44 @@ test('the start request takes recordings chosen here (or in the Library), a bran
   assert.throws(() => main.parseEditStart('nope', userData), /Choose your recording/)
   // The spending check estimates only from recordings checked here (their length is known).
   assert.equal(main.startEstimate({ sources: [file] }), null)
+})
+
+test('screenshots for the video: chosen here, boxed where it matters, sized, and handed to the planner by id', () => {
+  const file = path.join(userData, 'take-1.mp4'), shot = path.join(userData, 'home.png'), phone = path.join(userData, 'app.jpg')
+  for (const p of [file, shot, phone]) selected.add(p)
+  const parsed = main.parseEditStart({ sources: [file], screenshots: [{ path: shot, box: [0.1, 0.2, 0.3, 0.4] }, { path: phone }, { path: shot }] }, userData)
+  assert.deepEqual(plain(parsed.screenshots), [{ path: shot, box: [0.1, 0.2, 0.3, 0.4] }, { path: phone, box: null }])
+  assert.throws(() => main.parseEditStart({ sources: [file], screenshots: [{ path: '/elsewhere/x.png' }] }, userData), /screenshots again/)
+  assert.throws(() => main.parseEditStart({ sources: [file], screenshots: [{ path: path.join(userData, 'clip.mp4') }] }, userData), /PNG, JPEG or WebP/)
+  assert.throws(() => main.parseEditStart({ sources: [file], screenshots: [{ path: shot, box: [0.9, 0, 0.5, 0.5] }] }, userData), /Box the part/)
+  assert.throws(() => main.parseEditStart({ sources: [file], screenshots: Array.from({ length: 7 }, () => ({ path: shot })) }, userData), /up to 6 screenshots/)
+  assert.deepEqual(plain(shared.parseScreenshotBox([0.1234, 0.2, 0.3, 0.4])), [0.123, 0.2, 0.3, 0.4])
+  assert.equal(shared.parseScreenshotBox([0, 0, 0, 0.2]), null)
+  // A phone screenshot (tall) is told apart from a page by its size.
+  const png = Buffer.alloc(32); Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png); png.writeUInt32BE(1170, 16); png.writeUInt32BE(2532, 20)
+  assert.deepEqual(plain(main.pictureSize(png)), { width: 1170, height: 2532 })
+  const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0, 0, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x02, 0x58, 0x03, 0x20, 0x03])
+  assert.deepEqual(plain(main.pictureSize(jpg)), { width: 800, height: 600 })
+  // Only screenshots go to the planner (not "My images" added on the review screen).
+  const images = [{ id: 'aaaaaaaaaaaa', name: 'home.png', path: '/r/images/aaaaaaaaaaaa.png', screenshot: true, box: [0.1, 0.2, 0.3, 0.4] },
+    { id: 'bbbbbbbbbbbb', name: 'logo.png', path: '/r/images/bbbbbbbbbbbb.png' }, { id: 'cccccccccccc', name: 'app.png', path: '/r/images/cccccccccccc.png', screenshot: true, tall: true }]
+  assert.deepEqual(plain(main.screenshotMedia(images)), [{ id: 'aaaaaaaaaaaa', box: [0.1, 0.2, 0.3, 0.4] }, { id: 'cccccccccccc', tall: true }])
+  assert.deepEqual(plain(main.screenshotMedia([])), [])
+})
+
+test('a reel’s picture effects take the editor’s copies of its screenshots; one whose picture is gone is left out', () => {
+  const images = [{ id: 'aaaaaaaaaaaa', name: 'home.png', path: '/r/images/aaaaaaaaaaaa.png', screenshot: true }]
+  const graphics = [
+    { id: 'g-1', template: 'fx', word: 3, fields: { effect: 'browser-device-stage', image: 'aaaaaaaaaaaa', mark: 'circle', mark_box: '0.1, 0.1, 0.2, 0.2' } },
+    { id: 'g-2', template: 'fx', word: 9, fields: { effect: 'before-after-wipe', image: 'aaaaaaaaaaaa', image_b: 'dddddddddddd' } },
+    { id: 'g-3', template: 'fx', word: 12, fields: { effect: 'torn-paper-rip', first: 'Old way', second: 'New way', image: 'dddddddddddd' } },
+    { id: 'g-4', template: 'stat', word: 14, fields: { value: '40%' } }
+  ]
+  const out = plain(main.graphicsWithPictures(graphics, images, '/r'))
+  assert.deepEqual(out.map((g) => g.id), ['g-1', 'g-3', 'g-4'])
+  assert.equal(out[0].fields.image, `${'b'.repeat(16)}.png`)
+  assert.equal(out[0].fields.mark_box, '0.1, 0.1, 0.2, 0.2')
+  assert.equal(out[1].fields.image, undefined, 'an optional picture that is gone is dropped, the words stay')
 })
 
 function fakeFetch(answer, status = 200) {

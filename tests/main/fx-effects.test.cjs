@@ -10,6 +10,9 @@ const fixture = require('../fixtures/editor/project.json')
 
 const ROOT = path.join(__dirname, '../..')
 const VENDOR = path.join(ROOT, 'src/renderer/graphics/fx/vendor')
+const OWN = path.join(ROOT, 'src/renderer/graphics/fx/own')
+/** A unit's folder: vendored from HyperFrames, or CreatorClips' own remake (fx/own). */
+const dirOf = (e) => e.own ? OWN : VENDOR
 const m = loadMain("export * from './src/shared/fx-html'; export * from './src/shared/fx-catalog'; export * from './src/shared/motion-graphics'; export { graphicSpec } from './src/shared/graphic-layout'; export { prefillEffect } from './src/shared/graphic-prefill'")
 const plain = (v) => JSON.parse(JSON.stringify(v))
 const clip = (over = {}) => ({ ...structuredClone(fixture.candidates[0]), ...over })
@@ -41,17 +44,20 @@ test('the compiler drops CDN and module scripts, keeps inline scripts in order, 
   assert.match(mod, /export function run\(gsap, CustomEase, window, document\) \{/)
 })
 
-test('every catalog effect is vendored with its license notice, compiles, loads nothing from the network and runs as a function', () => {
+test('every catalog effect is vendored (or remade) with its license notice, compiles, loads nothing from the network and runs as a function', () => {
   const ids = m.FX_EFFECTS.map((e) => e.id)
-  assert.ok(ids.length >= 38 && ids.length <= 45, `${ids.length} effects`)
+  assert.ok(ids.length >= 50 && ids.length <= 60, `${ids.length} effects`)
   assert.equal(new Set(ids).size, ids.length)
   assert.match(fs.readFileSync(path.join(VENDOR, 'LICENSE'), 'utf8'), /Apache License\s+Version 2\.0/)
   assert.match(fs.readFileSync(path.join(VENDOR, 'NOTICE'), 'utf8'), /HeyGen[\s\S]*Apache License/)
-  const vendored = fs.readdirSync(VENDOR).filter((f) => f.endsWith('.html')).map((f) => f.slice(0, -5)).sort()
-  assert.deepEqual(vendored, [...ids].sort())
-  for (const id of ids) {
-    const html = fs.readFileSync(path.join(VENDOR, `${id}.html`), 'utf8')
-    assert.match(html.slice(0, 600), /Vendored from HyperFrames[\s\S]*Apache License, Version 2\.0[\s\S]*Changed by CreatorClips/, id)
+  const listed = (dir) => fs.readdirSync(dir).filter((f) => f.endsWith('.html')).map((f) => f.slice(0, -5)).sort()
+  assert.deepEqual(listed(VENDOR), m.FX_EFFECTS.filter((e) => !e.own).map((e) => e.id).sort())
+  assert.deepEqual(listed(OWN), m.FX_EFFECTS.filter((e) => e.own).map((e) => e.id).sort())
+  for (const e of m.FX_EFFECTS) {
+    const id = e.id
+    const html = fs.readFileSync(path.join(dirOf(e), `${id}.html`), 'utf8')
+    if (e.own) assert.match(html.slice(0, 700), /CreatorClips unit[\s\S]*remade from HyperFrames[\s\S]*Apache License 2\.0/, id)
+    else assert.match(html.slice(0, 600), /Vendored from HyperFrames[\s\S]*Apache License, Version 2\.0[\s\S]*Changed by CreatorClips/, id)
     const c = m.compileEffectHtml(html)
     for (const text of [c.styles, c.markup]) assert.doesNotMatch(text.replace(/http:\/\/www\.w3\.org[^"' )]*/g, ''), /https?:\/\/|@font-face/, id)
     assert.doesNotMatch(c.script, /cdn\.jsdelivr|fonts\.googleapis/, id)
@@ -63,11 +69,13 @@ test('every catalog effect is vendored with its license notice, compiles, loads 
 
 test('catalog fields map onto the units’ own variables, with field keys the graphics contract accepts', () => {
   for (const e of m.FX_EFFECTS) {
-    const item = JSON.parse(fs.readFileSync(path.join(VENDOR, `${e.id}.registry-item.json`), 'utf8'))
+    const item = JSON.parse(fs.readFileSync(path.join(dirOf(e), `${e.id}.registry-item.json`), 'utf8'))
     const vars = new Map((item.variables ?? []).map((v) => [v.id, v]))
-    // Variables CreatorClips' snippet timelines add (scripts/vendor-hyperframes.mjs ADAPT).
-    const added = e.id === 'strikethrough-replace' ? ['before', 'after'] : []
+    // Variables CreatorClips' snippet timelines and patches add (scripts/vendor-hyperframes.mjs ADAPT, PATCH).
+    const added = e.id === 'strikethrough-replace' ? ['before', 'after'] : e.id === 'torn-paper-rip' ? ['first_text', 'second_text'] : []
     for (const f of e.fields) {
+      // Pictures and the mark on them are the adapter's own fields (mount.ts), never a unit variable.
+      if (f.kind === 'image' || f.kind === 'region' || f.key === 'mark') { assert.equal(f.variable, '', `${e.id}.${f.key}`); assert.equal(f.said, false); continue }
       assert.match(f.key, /^[a-z_]{1,20}$/, `${e.id}.${f.key}`)
       assert.ok(vars.has(f.variable) || added.includes(f.variable), `${e.id}: ${f.variable} is a unit variable`)
       if (f.kind === 'choice') for (const o of f.options) assert.ok(vars.get(f.variable).options.some((x) => x.value === o.value), `${e.id}.${f.key}=${o.value}`)

@@ -25,3 +25,5 @@
 .editor-scenes-backdrop { position:absolute; inset:0; }
 .editor-scenes-card { position:absolute; box-shadow:0 6px 18px #0003; }
 .editor-scene-block.backdrop-solid { box-shadow:inset 0 -3px 0 #1f4e9c; }
+.editor-scenes-badge { top:8px; bottom:auto; z-index:1; }
+.editor-scenes-switch { display:inline-flex; align-items:center; gap:6px; font-size:11px; color:rgb(var(--ink-muted)); }

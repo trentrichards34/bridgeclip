@@ -11,12 +11,13 @@ import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes, Film, AudioLines, Spark
 import type { MountedGraphic } from '../graphics/templates'
 import {
   CHAPTER_STYLES, DIAGRAM_ACCENT, GRAPHIC_DEFAULT_MS, GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
-  ITEM_TIMED_TEMPLATES, matchFxCues, graphicVariant, graphicVariants, bigWordsOptions, chapterStyle, clampGraphicMs, duplicateGraphic, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, switchGraphicTemplate, templateInfo, templateItems, updateGraphic, withGraphic,
-  MAX_BIG_WORDS, SCREEN_VIDEO_FILE, ctaKind, type CtaKind, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
+  ITEM_TIMED_TEMPLATES, matchFxCues, graphicVariant, graphicVariants, bigWordsOptions, chapterStyle, clampGraphicMs, duplicateGraphic, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicPictureFields, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, switchGraphicTemplate, templateInfo, templateItems, updateGraphic, withGraphic,
+  MAX_BIG_WORDS, MAX_TAKEOVER_WORDS, SCREEN_VIDEO_FILE, ctaKind, type CtaKind, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
 } from '../../shared/motion-graphics'
 import { GRAPHIC_DEFAULT_COLOR, graphicOwnFont, graphicSpec, graphicStyle } from '../../shared/graphic-layout'
 import { prefillEffect, prefillGraphic, spokenSteps } from '../../shared/graphic-prefill'
-import { FX_EFFECTS, FX_GROUPS, fxEffect, fxLine } from '../../shared/fx-catalog'
+import { FX_EFFECTS, FX_GROUPS, fxEffect, fxLine, fxNeedsPicture, fxRegion, fxRegionText } from '../../shared/fx-catalog'
+import { HighlightPicker } from './ClipLayoutSections'
 import type { CandidateEdit, EditorProject } from '../../shared/clip-editor'
 import { isHexColor } from '../../shared/headline-look'
 import { cn, localFileUrl } from '../lib/utils'
@@ -27,6 +28,7 @@ import { Select } from './ui/Select'
 import { Switch } from './ui/Switch'
 import { ConfirmDialog } from './ui/ConfirmDialog'
 import { TEMPLATE_ICONS } from './GraphicGallery'
+import { FX_SAMPLE_MARKS } from '../graphics/fx/samples'
 
 /** Where a graphic's picture lives in the run (copied there by main). */
 export function graphicImageUrl(outputDir: string, name: string | undefined): string | undefined {
@@ -105,7 +107,7 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, s
     if (local === null || !graphicHasContent(g)) return []
     const spec = graphicSpec(project, candidate, g)
     if (!spec) return []
-    if (graphicUsesImage(g.template)) spec.image = graphicImageUrl(outputDir, g.fields.image)
+    for (const key of graphicPictureFields(g)) spec[key] = graphicImageUrl(outputDir, g.fields[key])
     if (g.template === 'screen_frame') {
       // The preview plays the video in the window (the export lays it in with the engine).
       const url = g.fields.video === 'source' ? sourceUrl : graphicVideoUrl(outputDir, g.fields.video)
@@ -116,9 +118,11 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, s
   if (!bounds.width || !shown.length) return null
   // The preview can't cut the speaker out: a graphic set behind them shows in front, with a note.
   const behind = shown.some(({ g }) => graphicDepth(g) === 'behind')
+  const between = shown.some(({ g }) => graphicDepth(g) === 'between')
   return <div className="editor-graphics-overlay" style={{ width: bounds.width, height: bounds.height, left: bounds.left, top: bounds.top }}>
     <div aria-hidden>{shown.map(({ g, spec, local }) => <GraphicView key={g.id} spec={spec} time={local} width={bounds.width} />)}</div>
     {behind && <span className="editor-graphic-depth-badge" title="This preview shows the words in front. The exported clip puts them behind you.">Behind you in the export</span>}
+    {between && !behind && <span className="editor-graphic-depth-badge" title="This preview shows the words only. The exported clip softens the room and puts your head between the lines.">Head between the lines in the export</span>}
   </div>
 }
 
@@ -126,7 +130,7 @@ export const SHORT: Record<GraphicTemplateId, string> = {
   stat: 'Stat', title: 'Title', list: 'List', lower_third: 'Name', logo: 'Logo', before_after: 'Before/after', checklist: 'Checklist', quote: 'Quote', highlight: 'Arrow/circle',
   statement: 'Statement', sticky_notes: 'Notes', strike_list: 'Crossed out', browser_frame: 'Browser', icon_pop: 'Icons', headline_pill: 'Headline', comment_cta: 'Comment', link_cta: 'Call to action',
   big_words: 'Big words', orbit: 'Orbit', feature_tile: 'Tiles', screen_frame: 'Screen',
-  chapter: 'Chapter', staircase: 'Stairs', funnel: 'Funnel', journey: 'Journey', growth: 'Growth', idea_hub: 'Idea hub', compare_marks: 'Wrong/right', fx: 'Effect'
+  chapter: 'Chapter', staircase: 'Stairs', funnel: 'Funnel', journey: 'Journey', growth: 'Growth', idea_hub: 'Idea hub', compare_marks: 'Wrong/right', fx: 'Effect', takeover: 'Takeover'
 }
 export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): string {
   const f = g.fields
@@ -145,7 +149,7 @@ export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): s
 /** The picker's groups (and each graphic's color on the timeline). A template missing here shows under "More". */
 export type GraphicGroup = 'text' | 'lists' | 'diagrams' | 'media' | 'ending'
 export const GRAPHIC_GROUPS: { id: GraphicGroup; label: string; templates: readonly GraphicTemplateId[] }[] = [
-  { id: 'text', label: 'Text', templates: ['title', 'statement', 'big_words', 'headline_pill', 'stat', 'quote', 'lower_third', 'chapter'] },
+  { id: 'text', label: 'Text', templates: ['title', 'statement', 'big_words', 'takeover', 'headline_pill', 'stat', 'quote', 'lower_third', 'chapter'] },
   { id: 'lists', label: 'Lists & steps', templates: ['list', 'checklist', 'sticky_notes', 'strike_list', 'before_after', 'icon_pop', 'feature_tile'] },
   { id: 'diagrams', label: 'Diagrams', templates: ['staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks', 'orbit'] },
   { id: 'media', label: 'Media', templates: ['logo', 'browser_frame', 'screen_frame', 'highlight'] },
@@ -271,14 +275,18 @@ export const SAMPLES: Record<GraphicTemplateId, Record<string, string>> = {
   funnel: { items: 'Stage one\nStage two\nStage three' }, journey: { items: 'Start\nMiddle\nGoal' },
   growth: { items: 'Small\nBigger\nBiggest' }, idea_hub: { items: 'First\nSecond\nThird\nFourth' },
   compare_marks: { items: 'The old way\nThe better way', wrong: 'first' },
-  fx: { effect: 'per-word-rise', text: 'Words as you say them' }
+  fx: { effect: 'per-word-rise', text: 'Words as you say them' },
+  takeover: { text: 'This is the line that matters', accent: 'matters' }
 }
 
-/** An effect's sample fields for the gallery's preview only (never put in a clip). */
+/** An effect's sample fields for the gallery's preview only (never put in a clip); a picture effect gets a sample mark. */
 export function effectSample(id: string): Record<string, string> {
   const effect = fxEffect(id)
   const fields: Record<string, string> = { effect: id }
   for (const f of effect?.fields ?? []) if (f.sample) fields[f.key] = f.sample
+  const region = effect?.fields.find((f) => f.kind === 'region')
+  const sample = effect?.fields.find((f) => f.key === region?.on)?.sample
+  if (region && sample && FX_SAMPLE_MARKS[sample]) { fields.mark = sample === 'photo' ? 'circle' : sample === 'page' ? 'box' : 'underline'; fields[region.key] = FX_SAMPLE_MARKS[sample] }
   return fields
 }
 
@@ -294,7 +302,7 @@ export const FIELD_LABELS: Record<string, string> = { value: 'Number', label: 'L
 const TEMPLATE_FIELD_LABELS: Partial<Record<GraphicTemplateId, Record<string, string>>> = {
   sticky_notes: { items: 'Notes (one per line, up to 3)' }, strike_list: { items: 'Crossed-out items (one per line, up to 4)' },
   icon_pop: { items: 'Labels (one per line, up to 4)' }, headline_pill: { text: 'First line' }, browser_frame: { title: 'Headline (when there’s no picture)' },
-  big_words: { text: `Words (up to ${MAX_BIG_WORDS})` }, orbit: { text: 'Center label', items: 'Labels (one per line, 3 to 6)' }, feature_tile: { items: 'Tiles (one per line, up to 3)' }, screen_frame: { label: 'Window title (optional)' },
+  big_words: { text: `Words (up to ${MAX_BIG_WORDS})` }, takeover: { text: `Your key line, as you say it (up to ${MAX_TAKEOVER_WORDS} words)`, accent: 'Key words (in your color)' }, orbit: { text: 'Center label', items: 'Labels (one per line, 3 to 6)' }, feature_tile: { items: 'Tiles (one per line, up to 3)' }, screen_frame: { label: 'Window title (optional)' },
   chapter: { label: 'Label (optional)', title: 'Section title' }, link_cta: { text: 'Button words', where: 'Where the link is (optional)', lead: 'Small line above (optional)' },
   staircase: { title: 'Title (optional)', items: 'Steps, bottom to top (one per line, 3 to 6)' }, funnel: { title: 'Title (optional)', items: 'Stages, wide end first (one per line, 3 to 5)' },
   journey: { title: 'Title (optional)', items: 'Milestones in order (one per line, 3 to 5)' }, growth: { title: 'Title (optional)', items: 'Labels, smallest first (one per line, 3 to 6)' },
@@ -616,20 +624,70 @@ function GraphicsActions({ candidate, words, disabled, onChange, onSuggest, onNo
 const TYPE_OPTIONS = GRAPHIC_GROUPS.flatMap((group) => GRAPHIC_TEMPLATES.filter((t) => group.templates.includes(t.id)).map((t) => ({ value: t.id, label: t.label, detail: group.label })))
 const EFFECT_OPTIONS = FX_GROUPS.flatMap((group) => FX_EFFECTS.filter((e) => e.group === group.id).map((e) => ({ value: e.id, label: e.label, detail: group.label.replace(/^Effects: /, '') })))
 
-/** An effect's own fields (fx-catalog.ts): words, numbers, lists (one per line) and choices. */
-export function EffectFields({ fields, onField }: { fields: Record<string, string>; onField: (key: string, value: string) => void }): React.JSX.Element | null {
+/**
+ * Where an effect's pictures come from: the clip editor chooses a file (copied into the run); an edited reel picks one
+ * of its screenshots. `url` shows a field's picture.
+ */
+export interface EffectPictures {
+  url: (value: string | undefined) => string | undefined
+  /** Choose a new picture: its field value, or null when nothing was chosen. */
+  choose?: () => Promise<string | null>
+  /** Pictures to pick from instead (an edited reel's screenshots). */
+  options?: { value: string; label: string }[]
+}
+
+/** One picture field: what it shows, and how to change it. */
+function PictureField({ label, value, required, pictures, onChange }: { label: string; value: string | undefined; required: boolean; pictures: EffectPictures; onChange: (value: string) => void }): React.JSX.Element {
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const url = pictures.url(value)
+  const choose = (): void => {
+    if (!pictures.choose) return
+    setError(null); setBusy(true)
+    void pictures.choose().then((name) => { if (name) onChange(name) })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : 'Could not add that picture.'))
+      .finally(() => setBusy(false))
+  }
+  return <div className="space-y-1"><p className="editor-label">{label}</p>
+    <div className="flex flex-wrap items-center gap-2">{url && <img className="editor-graphic-thumb" src={url} alt="" />}
+      {pictures.options ? <Select size="sm" aria-label={label} value={value ?? ''} options={[...(required ? [] : [{ value: '', label: 'None' }]), ...pictures.options]} onChange={onChange} />
+        : <Button size="sm" icon={<ImagePlus size={13} />} loading={busy} onClick={choose}>{value ? 'Change picture' : 'Choose picture'}</Button>}
+      {value && !required && !pictures.options && <Button size="sm" variant="ghost" onClick={() => onChange('')}>Remove</Button>}</div>
+    {!value && required && <p className="text-2xs text-warning">Choose a picture to show it.</p>}
+    {error && <p role="alert" className="text-2xs text-danger">{error}</p>}
+  </div>
+}
+
+/** An effect's own fields (fx-catalog.ts): words, numbers, lists (one per line), choices, pictures and the mark on one. */
+export function EffectFields({ fields, onField, pictures }: { fields: Record<string, string>; onField: (key: string, value: string) => void
+  /** Where its pictures come from (none: they can't be changed here). */
+  pictures?: EffectPictures }): React.JSX.Element | null {
   const effect = fxEffect(fields.effect)
   if (!effect) return null
   return <div className="space-y-2">
     <p className="text-2xs text-ink-subtle">{effect.detail}</p>
-    {effect.fields.map((f) => f.kind === 'choice' ? <div key={f.key} className="space-y-1"><p className="editor-label">{f.label}</p>
-      <Select size="sm" aria-label={`${effect.label} ${f.label.toLowerCase()}`} value={f.options?.some((o) => o.value === fields[f.key]) ? fields[f.key] : f.options?.[0]?.value ?? ''}
-        options={(f.options ?? []).map((o) => ({ value: o.value, label: o.label }))} onChange={(value) => onField(f.key, value)} /></div>
-      : <label key={f.key} className="editor-label">{f.label}
-        {f.kind === 'list' ? <textarea rows={4} maxLength={MAX_GRAPHIC_FIELD_CHARS * 5} value={fields[f.key] ?? ''} onChange={(e) => onField(f.key, e.target.value)} aria-label={`${effect.label} ${f.label.toLowerCase()}`} />
-          : <input className="editor-graphic-input" inputMode={f.kind === 'number' ? 'decimal' : undefined} maxLength={f.max ?? MAX_GRAPHIC_FIELD_CHARS} value={fields[f.key] ?? ''} onChange={(e) => onField(f.key, e.target.value)}
-            aria-label={`${effect.label} ${f.label.toLowerCase()}`} placeholder={f.kind === 'number' ? 'A number said in the clip' : undefined} />}
-      </label>)}
+    {effect.fields.map((f) => {
+      if (f.kind === 'image') return pictures ? <PictureField key={f.key} label={f.label} value={fields[f.key] || undefined} required={!!f.required} pictures={pictures} onChange={(v) => onField(f.key, v)} />
+        : <p key={f.key} className="text-2xs text-ink-subtle">{f.label}: {fields[f.key] ? 'added' : 'none yet'}.</p>
+      if (f.kind === 'region') {
+        // The mark sits where the member drags on their picture.
+        const src = pictures?.url(fields[f.on ?? 'image'])
+        if (!fields.mark || !src) return null
+        const box = fxRegion(fields[f.key])
+        return <div key={f.key} className="space-y-1"><p className="editor-label">{f.label}</p>
+          <HighlightPicker src={src} name="Your picture" className="w-48" label="drag on the picture to box what the mark points at" disabled={false}
+            value={box ? { x: box[0], y: box[1], w: box[2], h: box[3] } : null} onChange={(r) => onField(f.key, r ? fxRegionText([r.x, r.y, r.w, r.h]) : '')} />
+          <p className={cn('text-2xs', box ? 'text-ink-subtle' : 'text-warning')}>{box ? 'Drag again to move it.' : 'Drag on the picture to box what the mark points at. It shows once you do.'}</p></div>
+      }
+      return f.kind === 'choice' ? <div key={f.key} className="space-y-1"><p className="editor-label">{f.label}</p>
+        <Select size="sm" aria-label={`${effect.label} ${f.label.toLowerCase()}`} value={f.options?.some((o) => o.value === fields[f.key]) ? fields[f.key] : f.options?.[0]?.value ?? ''}
+          options={(f.options ?? []).map((o) => ({ value: o.value, label: o.label }))} onChange={(value) => onField(f.key, value)} /></div>
+        : <label key={f.key} className="editor-label">{f.label}
+          {f.kind === 'list' ? <textarea rows={4} maxLength={MAX_GRAPHIC_FIELD_CHARS * 5} value={fields[f.key] ?? ''} onChange={(e) => onField(f.key, e.target.value)} aria-label={`${effect.label} ${f.label.toLowerCase()}`} />
+            : <input className="editor-graphic-input" inputMode={f.kind === 'number' ? 'decimal' : undefined} maxLength={f.max ?? MAX_GRAPHIC_FIELD_CHARS} value={fields[f.key] ?? ''} onChange={(e) => onField(f.key, e.target.value)}
+              aria-label={`${effect.label} ${f.label.toLowerCase()}`} placeholder={f.kind === 'number' ? 'A number said in the clip' : undefined} />}
+        </label>
+    })}
     {effect.backing === 'glass' && <div className="flex items-center justify-between gap-2 text-xs"><span>Dark glass behind it</span>
       <Switch label="Dark glass behind it" checked={fields.backing !== 'none'} onChange={(on) => onField('backing', on ? '' : 'none')} /></div>}
   </div>
@@ -695,7 +753,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
           onChange={(to) => { if (to !== g.template) onChange(graphicsWithTemplate(candidate, g, to as GraphicTemplateId, words)) }} /></div>}
       <VariantField template={g.template} fields={g.fields} onField={field} />
       {(() => { const warning = graphicWarning(graphicCutFit(candidate, g), graphicClashes(graphics).has(g.id), g.placement); return warning && <p role="note" className="text-2xs text-warning">{warning}</p> })()}
-      {!graphicHasContent(g) && <p className="text-2xs text-warning">{g.template === 'logo' ? 'Choose an image to show it.' : g.template === 'browser_frame' ? 'Choose a screenshot or add a headline to show it.' : 'Add its words to show it.'}</p>}
+      {!graphicHasContent(g) && !(g.template === 'fx' && fxNeedsPicture(g.fields.effect) && !g.fields.image) && <p className="text-2xs text-warning">{g.template === 'logo' ? 'Choose an image to show it.' : g.template === 'browser_frame' ? 'Choose a screenshot or add a headline to show it.' : 'Add its words to show it.'}</p>}
       {graphicUsesImage(g.template) && <div className="space-y-2">
         <div className="flex items-center gap-2">{graphicImageUrl(outputDir, g.fields.image) && <img className="editor-graphic-thumb" src={graphicImageUrl(outputDir, g.fields.image)} alt="" />}
           <Button size="sm" icon={<ImagePlus size={13} />} onClick={() => {
@@ -707,7 +765,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
         {imageError && <p role="alert" className="text-2xs text-danger">{imageError}</p>}
       </div>}
       {g.template === 'screen_frame' && <ScreenFields fields={g.fields} outputDir={outputDir} onField={field} />}
-      {g.template === 'fx' && <EffectFields fields={g.fields} onField={field} />}
+      {g.template === 'fx' && <EffectFields fields={g.fields} onField={field} pictures={{ url: (name) => graphicImageUrl(outputDir, name), choose: () => getApi().editor.graphicImage(outputDir) }} />}
       {templateInfo(g.template).fields.filter((k) => !['effect', 'image', 'shape', 'x', 'y', 'icons', 'style', 'vertical', 'motion', 'video', 'labels', 'dot', 'icon', 'wrong', 'kind'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
         {key === 'items' || key === 'text' || key === 'highlights' || key === 'notes' ? <textarea rows={key === 'items' ? GRAPHIC_ITEM_LIMITS[g.template] ?? MAX_GRAPHIC_ITEMS : key === 'highlights' || key === 'notes' ? 2 : 3} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`} />
           : <input className="editor-graphic-input" maxLength={MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`}
@@ -732,6 +790,10 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
         <div className="flex items-center justify-between gap-2 text-xs"><span>Behind me</span>
           <Switch label="Behind me" checked={graphicDepth(g) === 'behind'} onChange={(on) => onChange(updateGraphic(candidate, g.id, { depth: on ? 'behind' : 'front' }))} /></div>
         <p className="text-2xs text-ink-subtle">{graphicDepth(g) === 'behind' ? 'In the export you stand in front of it: you’re cut out of the video and laid back over it. The preview here shows it in front.' : 'It sits over the video, in front of you.'}</p></div>}
+      {g.template === 'takeover' && <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2 text-xs"><span>Head between the lines</span>
+          <Switch label="Head between the lines" checked={graphicDepth(g) === 'between'} onChange={(on) => onChange(updateGraphic(candidate, g.id, { depth: on ? 'between' : 'front' }))} /></div>
+        <p className="text-2xs text-ink-subtle">{graphicDepth(g) === 'between' ? 'In the export the room behind you softens, one or two lines sit just above your head (tucked behind it) and the rest go in front of you. Every line stays readable; if it can’t, all lines go in front. The preview here shows the words only.' : 'The words sit over the video, in front of you.'}</p></div>}
       {g.template === 'stat' && <p className="text-2xs text-ink-subtle">The number counts up. Use one from the clip, like “$1,200/month”, “15 billion” or “25%”.</p>}
       {g.template === 'highlight' ? <div className="space-y-2">
         <Segmented label="Shape" size="sm" value={highlightPoint(g.fields).shape} onChange={(shape) => field('shape', shape)} options={[{ value: 'circle', label: 'Circle' }, { value: 'arrow', label: 'Arrow' }]} />

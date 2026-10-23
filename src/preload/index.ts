@@ -582,6 +582,8 @@ export interface BridgeClipAPI {
     render: (decisions: EditDecisions) => Promise<EditStatus>
     /** My images: a file dialog (null when cancelled), a dropped picture's bytes, or remove one. Each returns the run's images. */
     chooseImages: () => Promise<EditImage[] | null>
+    /** Screenshots for a new video (setup): the files chosen, ready to send with the start request. */
+    chooseScreenshots: () => Promise<{ path: string; name: string }[]>
     addImage: (name: string, data: Uint8Array) => Promise<EditImage[]>
     removeImage: (id: string) => Promise<EditImage[]>
     cancel: () => Promise<boolean>
@@ -1046,6 +1048,7 @@ const api: BridgeClipAPI = {
     start: (request) => paid('edit:start', request),
     render: (decisions) => paid('edit:render', decisions),
     chooseImages: () => ipcRenderer.invoke('edit:chooseImages'),
+    chooseScreenshots: () => ipcRenderer.invoke('edit:chooseScreenshots'),
     addImage: (name, data) => ipcRenderer.invoke('edit:addImage', name, data),
     removeImage: (id) => ipcRenderer.invoke('edit:removeImage', id),
     cancel: () => ipcRenderer.invoke('edit:cancel'),

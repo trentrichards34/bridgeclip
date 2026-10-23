@@ -123,7 +123,7 @@ def _editor(raw, n):
                 or type(g["word"]) is not int or not 0 <= g["word"] < n or type(g["duration_ms"]) is not int \
                 or not 800 <= g["duration_ms"] <= 180000 or g["placement"] not in ("top", "middle", "bottom") \
                 or g.get("origin", "member") not in ("auto", "member", "chat") or g.get("size", "card") not in ("compact", "card", "stage") \
-                or g.get("depth", "front") not in ("front", "behind") or not isinstance(fields, dict) or len(fields) > 24 \
+                or g.get("depth", "front") not in ("front", "behind", "between") or not isinstance(fields, dict) or len(fields) > 24 \
                 or any(not isinstance(k, str) or not re.fullmatch(r"[a-z_]{1,20}", k) or not isinstance(v, str) or len(v) > 800 or "\0" in v
                        for k, v in fields.items()):
             raise ValueError("Invalid graphics")
@@ -274,7 +274,7 @@ def parse_request(raw):
     graphics = raw.get("graphics") or []
     if not isinstance(graphics, list) or len(graphics) > 8 or any(
             not isinstance(g, dict) or not {"file", "word", "duration_ms"} <= set(g) <= {"file", "word", "duration_ms", "depth", "min_top"}
-            or g.get("depth", "behind") != "behind" or not _min_top_ok(g) or not isinstance(g.get("file"), str)
+            or g.get("depth", "behind") not in ("behind", "between") or not _min_top_ok(g) or not isinstance(g.get("file"), str)
             or not re.fullmatch(r"[a-f0-9]{64}\.mov", g["file"]) or type(g.get("word")) is not int or not 0 <= g["word"] < len(words)
             or type(g.get("duration_ms")) is not int or not 400 <= g["duration_ms"] <= 8000 for g in graphics):
         raise ValueError("Invalid graphics")

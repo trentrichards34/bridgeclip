@@ -1,0 +1,97 @@
+<!--
+  CreatorClips unit "mk-line-graph": a minimal line graph, remade from HyperFrames' mk-line-graph block
+  (https://github.com/heygen-com/hyperframes, registry/blocks/mk-line-graph, Copyright 2026 HeyGen, Inc.,
+  Apache License 2.0; see ../vendor/LICENSE and ../vendor/NOTICE). The original is a fixed 1920x1080 composition with two baked series;
+  this one keeps its moves (a dim baseline, the line drawing on, dots popping, each value riding its point, x labels)
+  for one series given as variables, sized to its box, timed by CreatorClips' shared motion (window.__ccMotion).
+
+  Variables: data (numbers, "|"-separated, as said), labels (x labels, "|"-separated), unit, cues (comma seconds: when
+  each number is said; the line reaches its point then).
+-->
+<template>
+  <div id="root" data-composition-id="mk-line-graph" data-duration="5">
+    <style>
+      #root { position: absolute; inset: 0; container-type: size; font-family: var(--font-body, sans-serif); color: var(--fg, #f8fafc); }
+      .lg-card { position: absolute; inset: 4cqh 3cqw; border-radius: var(--radius, 28px); background: var(--surface, rgba(15, 18, 26, 0.9)); border: 0.25cqmin solid var(--border, rgba(255, 255, 255, 0.16)); }
+      .lg-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+      .lg-axis { stroke: var(--border, rgba(255, 255, 255, 0.22)); }
+      .lg-line { fill: none; stroke: var(--brand, #22c55e); stroke-linecap: round; stroke-linejoin: round; }
+      .lg-dot { fill: var(--surface, #0f121a); stroke: var(--brand, #22c55e); }
+      .lg-val, .lg-x { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+      .lg-val { font: 800 5.4cqmin/1 var(--font-display, sans-serif); font-variant-numeric: tabular-nums; }
+      .lg-x { font: 600 4cqmin/1 var(--font-body, sans-serif); color: var(--muted, rgba(226, 232, 240, 0.74)); }
+    </style>
+    <div class="lg-card"></div>
+    <script>
+      (function () {
+        var vars = window.__hyperframes && window.__hyperframes.getVariables ? window.__hyperframes.getVariables() : {};
+        var M = window.__ccMotion || { move_s: 0.333, enter: 'expo.out', exit: 'power2.in', from_scale: 1.08, stagger_s: 0.2 };
+        var root = document.getElementById('root');
+        var card = root.querySelector('.lg-card');
+        var words = function (v) { return String(v == null ? '' : v).replace(/​/g, '').trim(); };
+        var items = function (v) { return String(v == null ? '' : v).split('|').map(words); };
+        var data = items(vars.data).filter(Boolean).slice(0, 10);
+        var labels = items(vars.labels);
+        var unit = words(vars.unit);
+        var cues = String(vars.cues || '').split(',').map(parseFloat);
+        var value = function (t) { var m = /-?\d[\d,]*(?:\.\d+)?/.exec(t); return m ? parseFloat(m[0].replace(/,/g, '')) : 0; };
+        var nums = data.map(value);
+        var hi = Math.max.apply(null, nums.concat([0])), lo = Math.min.apply(null, nums.concat([0]));
+        var W = card.clientWidth, H = card.clientHeight, u = Math.min(W, H) / 100;
+        var hasX = labels.some(Boolean);
+        // The plot: room for the values above the points and the labels under the baseline.
+        var A = { x: W * 0.1, y: u * 16, w: W * 0.8, h: H - u * 16 - (hasX ? u * 17 : u * 8) };
+        var n = Math.max(1, data.length);
+        var px = function (i) { return A.x + (n === 1 ? A.w / 2 : (i / (n - 1)) * A.w); };
+        var py = function (v) { return A.y + A.h - ((v - lo) / Math.max(1e-9, (hi - lo) * 1.1)) * A.h; };
+        var NS = 'http://www.w3.org/2000/svg';
+        var svg = document.createElementNS(NS, 'svg'); svg.setAttribute('class', 'lg-svg'); svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+        var axis = document.createElementNS(NS, 'line'); axis.setAttribute('class', 'lg-axis');
+        axis.setAttribute('x1', A.x - u * 3); axis.setAttribute('x2', A.x + A.w + u * 3); axis.setAttribute('y1', A.y + A.h); axis.setAttribute('y2', A.y + A.h); axis.setAttribute('stroke-width', String(u * 0.5));
+        svg.appendChild(axis);
+        var pts = nums.map(function (v, i) { return [px(i), py(v)]; });
+        var line = document.createElementNS(NS, 'path'); line.setAttribute('class', 'lg-line'); line.setAttribute('stroke-width', String(u * 1.3));
+        line.setAttribute('d', pts.map(function (p, i) { return (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1); }).join(' '));
+        svg.appendChild(line);
+        var dots = pts.map(function (p) {
+          var c = document.createElementNS(NS, 'circle'); c.setAttribute('class', 'lg-dot'); c.setAttribute('cx', p[0]); c.setAttribute('cy', p[1]); c.setAttribute('r', String(u * 2)); c.setAttribute('stroke-width', String(u * 1));
+          svg.appendChild(c); return c;
+        });
+        card.appendChild(svg);
+        var vals = data.map(function (t, i) {
+          var el = document.createElement('div'); el.className = 'lg-val'; el.textContent = t + (unit && t.indexOf(unit) < 0 ? unit : '');
+          el.style.left = pts[i][0] + 'px'; el.style.top = (pts[i][1] - u * 10.5) + 'px'; card.appendChild(el); return el;
+        });
+        var xs = hasX ? data.map(function (_, i) {
+          var el = document.createElement('div'); el.className = 'lg-x'; el.textContent = labels[i] || '';
+          el.style.left = pts[i][0] + 'px'; el.style.top = (A.y + A.h + u * 5) + 'px'; card.appendChild(el); return el;
+        }) : [];
+        // When the line reaches each point: on its number as said, else an even walk.
+        var at = [], last = 0.45;
+        pts.forEach(function (_, i) {
+          var t = isFinite(cues[i]) ? Math.max(0.45, cues[i] - 0.1) : (i ? last + 0.45 : 0.45);
+          t = Math.max(t, last + (i ? 0.12 : 0)); at.push(t); last = t;
+        });
+        var tl = gsap.timeline({ paused: true });
+        tl.fromTo(card, { opacity: 0, scale: M.from_scale }, { opacity: 1, scale: 1, duration: M.move_s * 1.4, ease: M.enter }, 0);
+        tl.fromTo(axis, { opacity: 0 }, { opacity: 1, duration: 0.4, ease: 'power2.out' }, 0.15);
+        if (xs.length) tl.fromTo(xs, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: M.move_s, ease: M.enter, stagger: 0.05 }, 0.2);
+        // The line is drawn segment by segment: it reaches point i at at[i].
+        var seg = pts.map(function (p, i) { return i ? Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : 0; });
+        var total = seg.reduce(function (a, b) { return a + b; }, 0) + 1;
+        tl.set(line, { strokeDasharray: total, strokeDashoffset: total }, 0);
+        var done = 0;
+        for (var i = 1; i < pts.length; i++) {
+          var from = total - done; done += seg[i];
+          tl.fromTo(line, { strokeDashoffset: from }, { strokeDashoffset: total - done, duration: Math.max(0.12, at[i] - at[i - 1]), ease: 'power1.inOut', immediateRender: false }, at[i - 1]);
+        }
+        dots.forEach(function (d, i) {
+          tl.fromTo(d, { scale: 0, transformOrigin: '50% 50%' }, { scale: 1, duration: 0.3, ease: M.enter }, at[i]);
+          tl.fromTo(vals[i], { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: M.move_s, ease: M.enter }, at[i] + 0.05);
+        });
+        window.__timelines = window.__timelines || {};
+        window.__timelines['mk-line-graph'] = tl;
+      })();
+    </script>
+  </div>
+</template>

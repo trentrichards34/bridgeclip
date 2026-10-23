@@ -123,7 +123,7 @@ function removePlan(run: string): void {
 }
 
 type LaySound = { register: Register; music_db?: number; events: SoundEvent[] }
-type LayRequest = { clip_index: number; graphics: { file: string; start_ms: number; duration_ms: number; depth?: 'behind' }[]; sound?: LaySound }
+type LayRequest = { clip_index: number; graphics: { file: string; start_ms: number; duration_ms: number; depth?: 'behind' | 'between' }[]; sound?: LaySound }
 
 /**
  * A Create clip's sound events on the finished clip's clock (the same events an editor bake sends): the hook text

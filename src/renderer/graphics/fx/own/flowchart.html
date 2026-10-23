@@ -1,0 +1,87 @@
+<!--
+  CreatorClips unit "flowchart": boxes joined by arrows, remade from HyperFrames' flowchart block
+  (https://github.com/heygen-com/hyperframes, registry/blocks/flowchart, Copyright 2026 HeyGen, Inc., Apache License 2.0;
+  see ../vendor/LICENSE and ../vendor/NOTICE). The original is a fixed 1920x1080 decision tree with its questions baked
+  in; this one keeps its moves (nodes settling in one by one, connectors drawing between them, the newest node lit)
+  for a straight process given as variables: a row in a wide box, a column in a tall one, sized to its box and timed
+  by CreatorClips' shared motion (window.__ccMotion).
+
+  Variables: steps ("|"-separated, in order, as said), title, cues (comma seconds: when each step is said).
+-->
+<template>
+  <div id="root" data-composition-id="flowchart" data-duration="5.5">
+    <style>
+      #root { position: absolute; inset: 0; container-type: size; display: grid; place-items: center; font-family: var(--font-body, sans-serif); color: var(--fg, #f8fafc); }
+      .fc-wrap { box-sizing: border-box; width: 96cqw; height: 94cqh; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 3cqmin; }
+      .fc-title { text-align: center; font: 800 6.4cqmin/1.1 var(--font-display, sans-serif); letter-spacing: -0.02em; }
+      .fc-title:empty { display: none; }
+      .fc-flow { position: relative; display: flex; align-items: center; justify-content: center; gap: 7cqmin; min-height: 0; }
+      .fc-flow.fc-col { flex-direction: column; gap: 4.4cqmin; }
+      .fc-node { position: relative; z-index: 1; box-sizing: border-box; flex: 0 1 auto; max-width: 30cqw; padding: 3cqmin 4cqmin; border-radius: calc(var(--radius, 28px) * 0.7);
+        background: var(--surface, rgba(15, 18, 26, 0.9)); border: 0.5cqmin solid var(--border, rgba(255, 255, 255, 0.18)); text-align: center;
+        font: 800 5.6cqmin/1.12 var(--font-display, sans-serif); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+      .fc-col .fc-node { max-width: 90cqw; min-width: 58cqw; padding: 2.2cqmin 5cqmin; font-size: 6.8cqmin; }
+      .fc-col .fc-node .fc-num { display: inline; margin: 0 2cqmin 0 0; font-size: 4.6cqmin; }
+      .fc-node .fc-num { display: block; margin-bottom: 1cqmin; font: 800 3.4cqmin/1 var(--font-body, sans-serif); color: var(--brand, #22c55e); letter-spacing: 0.08em; }
+      .fc-node.fc-on { border-color: var(--brand, #22c55e); box-shadow: 0 0 0 0.5cqmin color-mix(in srgb, var(--brand, #22c55e) 35%, transparent); }
+      .fc-links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+      .fc-links path { fill: none; stroke: color-mix(in srgb, var(--fg, #f8fafc) 70%, transparent); stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+    <div class="fc-wrap"><div class="fc-title"></div><div class="fc-flow"></div></div>
+    <script>
+      (function () {
+        var vars = window.__hyperframes && window.__hyperframes.getVariables ? window.__hyperframes.getVariables() : {};
+        var M = window.__ccMotion || { move_s: 0.333, enter: 'expo.out', exit: 'power2.in', from_scale: 1.08, stagger_s: 0.2 };
+        var root = document.getElementById('root');
+        var words = function (v) { return String(v == null ? '' : v).replace(/​/g, '').trim(); };
+        var steps = String(vars.steps == null ? '' : vars.steps).split('|').map(words).filter(Boolean).slice(0, 6);
+        var cues = String(vars.cues || '').split(',').map(parseFloat);
+        root.querySelector('.fc-title').textContent = words(vars.title);
+        var flow = root.querySelector('.fc-flow');
+        // A row when the box is wide enough for the steps side by side, else a column.
+        var wide = root.clientWidth / Math.max(1, root.clientHeight) >= 0.55 * steps.length;
+        if (!wide) flow.classList.add('fc-col');
+        var nodes = steps.map(function (s, i) {
+          var el = document.createElement('div'); el.className = 'fc-node';
+          var num = document.createElement('span'); num.className = 'fc-num'; num.textContent = String(i + 1);
+          el.appendChild(num); el.appendChild(document.createTextNode(s)); flow.appendChild(el); return el;
+        });
+        // Connectors from each node's edge to the next one's, with an arrowhead (flow pixels, measured once laid out).
+        var NS = 'http://www.w3.org/2000/svg';
+        var svg = document.createElementNS(NS, 'svg'); svg.setAttribute('class', 'fc-links');
+        var W = flow.clientWidth, H = flow.clientHeight, u = Math.min(root.clientWidth, root.clientHeight) / 100;
+        svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+        var links = [];
+        for (var i = 1; i < nodes.length; i++) {
+          var a = nodes[i - 1], b = nodes[i];
+          var x1, y1, x2, y2;
+          if (wide) { x1 = a.offsetLeft + a.offsetWidth + u; y1 = a.offsetTop + a.offsetHeight / 2; x2 = b.offsetLeft - u * 1.2; y2 = b.offsetTop + b.offsetHeight / 2; }
+          else { x1 = a.offsetLeft + a.offsetWidth / 2; y1 = a.offsetTop + a.offsetHeight + u; x2 = b.offsetLeft + b.offsetWidth / 2; y2 = b.offsetTop - u * 1.2; }
+          var head = u * 2.2, ang = Math.atan2(y2 - y1, x2 - x1);
+          var p = document.createElementNS(NS, 'path');
+          p.setAttribute('d', 'M' + x1 + ' ' + y1 + ' L' + x2 + ' ' + y2 + ' M' + (x2 - head * Math.cos(ang - 0.6)) + ' ' + (y2 - head * Math.sin(ang - 0.6)) + ' L' + x2 + ' ' + y2 + ' L' + (x2 - head * Math.cos(ang + 0.6)) + ' ' + (y2 - head * Math.sin(ang + 0.6)));
+          p.setAttribute('stroke-width', String(u * 0.8));
+          svg.appendChild(p); links.push({ el: p, len: Math.hypot(x2 - x1, y2 - y1) + head * 2 + 2 });
+        }
+        flow.appendChild(svg);
+        var tl = gsap.timeline({ paused: true });
+        tl.fromTo('.fc-title', { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: M.move_s, ease: M.enter }, 0.05);
+        var last = 0.2;
+        nodes.forEach(function (node, k) {
+          // Each step lands as it is said (else an even rhythm); its connector draws in just before it.
+          var at = isFinite(cues[k]) ? Math.max(0.2, cues[k] - 0.1) : (k ? last + 0.55 : 0.2);
+          at = Math.max(at, last + (k ? 0.3 : 0)); last = at;
+          if (k) {
+            var link = links[k - 1];
+            tl.fromTo(link.el, { strokeDasharray: link.len, strokeDashoffset: link.len }, { strokeDashoffset: 0, duration: 0.28, ease: 'power2.out' }, at - 0.24);
+            tl.set(nodes[k - 1], { className: 'fc-node' }, at);
+          }
+          tl.fromTo(node, { opacity: 0, scale: M.from_scale, y: 10 }, { opacity: 1, scale: 1, y: 0, duration: M.move_s, ease: M.enter }, at);
+          tl.set(node, { className: 'fc-node fc-on' }, at);
+        });
+        window.__timelines = window.__timelines || {};
+        window.__timelines['flowchart'] = tl;
+      })();
+    </script>
+  </div>
+</template>

@@ -81,8 +81,24 @@ export const CARD_MAX_SECONDS = 5
 export interface EditPopup { id: number; word: number; text: string; kind: 'number' | 'keyword' | 'card'; card?: EditCard; seconds?: number }
 
 /** The member's own pictures (logos, product shots), copied into the run folder, popped up on words they pin them to. */
-export interface EditImage { id: string; name: string; path: string }
+/**
+ * A picture in the run folder. `screenshot`: one the member added for the video when starting (a page, an app, a
+ * proof post); the automatic graphics may show it in a browser or phone frame, a before and after or a light sweep.
+ * `box`: the part of it that matters (x, y, w, h as shares of it), which those graphics circle or underline.
+ */
+export interface EditImage { id: string; name: string; path: string; screenshot?: boolean; box?: [number, number, number, number]
+  /** A phone-shaped screenshot (it goes in a phone, not a browser window). */
+  tall?: boolean }
 export const EDIT_MAX_IMAGES = 8
+/** Screenshots added for the video when starting (they count toward the run's images). */
+export const EDIT_MAX_SCREENSHOTS = 6
+/** A screenshot's box ("the part that matters"), checked: four shares inside the picture, or null. */
+export function parseScreenshotBox(value: unknown): [number, number, number, number] | null {
+  if (!Array.isArray(value) || value.length !== 4 || !value.every((n) => typeof n === 'number' && Number.isFinite(n))) return null
+  const [x, y, w, h] = value as number[]
+  if (x < 0 || y < 0 || w < 0.01 || h < 0.01 || x + w > 1.001 || y + h > 1.001) return null
+  return [x, y, w, h].map((n) => Math.round(n * 1000) / 1000) as [number, number, number, number]
+}
 export const EDIT_MAX_PINS = 12
 export const EDIT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp']
 export const EDIT_MAX_IMAGE_BYTES = 12 * 1024 * 1024
@@ -274,6 +290,8 @@ export interface EditStartRequest {
   screen?: { path: string; offsetMs: number }
   /** Write a new headline even when these recordings were made before (missing: keep the last one). */
   newHeadline?: boolean
+  /** Screenshots for the video (pages, apps, proof posts), each with the part that matters boxed (optional). */
+  screenshots?: { path: string; box?: [number, number, number, number] }[]
 }
 
 export function isRunningEdit(status: EditStatus | null | undefined): boolean {

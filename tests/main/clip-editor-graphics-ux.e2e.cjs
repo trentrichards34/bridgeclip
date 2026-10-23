@@ -14,6 +14,8 @@ const { execFileSync } = require('node:child_process')
 const { buildApp, launchApp } = require('../zernio/support/electron-app.cjs')
 const { editorTools, linkEngine } = require('./editor-e2e-tools.cjs')
 const fixture = require('../fixtures/editor/project.json')
+const { loadMain } = require('../zernio/support/load-main.cjs')
+const { GRAPHIC_TEMPLATES } = loadMain("export { GRAPHIC_TEMPLATES } from './src/shared/motion-graphics'")
 
 const SCRIPT = 'so we only need three things a product an offer and a way to attract eyeballs that is the whole plan'
 const key = (w) => w.toLowerCase().replace(/[^a-z0-9']+/g, '')
@@ -93,8 +95,10 @@ test('graphics: gallery at the playhead with the words said there, edited and mo
   const gallery = page.getByRole('dialog', { name: 'Add a graphic' })
   await gallery.waitFor()
   await gallery.getByRole('region', { name: 'Choose a graphic' }).waitFor()
-  assert.equal(await gallery.locator('.editor-graphic-tile').count(), 28)
-  await page.waitForFunction(() => document.querySelectorAll('.graphic-gallery .mg-root').length === 28)
+  // Every template but the Effect one (the effects follow in their own groups), counted from the shared list.
+  const templateCount = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'fx').length
+  assert.equal(await gallery.locator('.editor-graphic-tile:not([aria-label^="Add effect"])').count(), templateCount)
+  await page.waitForFunction((n) => document.querySelectorAll('.graphic-gallery .mg-root').length === n, templateCount)
   assert.ok(await gallery.getByText('Your words').count() > 3, 'tiles show the words said at the playhead')
   await shot('01-gallery')
   await gallery.getByRole('searchbox', { name: 'Search graphics' }).fill('stair')

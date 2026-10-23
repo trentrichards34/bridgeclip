@@ -643,7 +643,7 @@ function memberPartMs(run: ActiveRemix, draft: RemixDraft): number | null {
  * The member's graphics for the takes being made, checked and drawn (offscreen, cached in the run's
  * .graphics/reel/): what the engine lays over each finished video, by draft id.
  */
-async function drawRemixGraphics(run: ActiveRemix, edits: RemixEdit[], value: unknown): Promise<Record<string, { file: string; at_ms: number; duration_ms: number; depth?: 'behind' }[]>> {
+async function drawRemixGraphics(run: ActiveRemix, edits: RemixEdit[], value: unknown): Promise<Record<string, { file: string; at_ms: number; duration_ms: number; depth?: 'behind' | 'between' }[]>> {
   const context = remixGraphicContext(run.context.request)
   if (value === undefined || value === null) return {}
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Your graphics could not be read. Try again.')
@@ -651,7 +651,7 @@ async function drawRemixGraphics(run: ActiveRemix, edits: RemixEdit[], value: un
   if (!entries.length) return {}
   if (!context) throw new Error('Graphics can be added to on-camera remixes only.')
   const { graphicJob, renderGraphicJobs, REEL_GRAPHICS_DIR } = await import('./graphics-render')
-  const out: Record<string, { file: string; at_ms: number; duration_ms: number; depth?: 'behind' }[]> = {}
+  const out: Record<string, { file: string; at_ms: number; duration_ms: number; depth?: 'behind' | 'between' }[]> = {}
   const banner = Boolean(run.context.extras?.banner && run.context.request.ctaKeyword)
   for (const [key, list] of entries) {
     const edit = edits.find((item) => String(item.id) === key)

@@ -32,7 +32,7 @@ def test_each_grade_is_one_known_filter_chain_and_none_is_no_filter():
 def test_the_grade_goes_on_the_framed_footage_and_the_headline_bar_captions_and_graphics_come_after_it():
     graph = "[0:v]scale=1080:1920,setsar=1[base]"
     graded = cg.with_grade(graph, "cinematic")
-    assert graded == "[0:v]scale=1080:1920,setsar=1[ungraded];[ungraded]" + cg.GRADE_FILTERS["cinematic"] + "[base]"
+    assert graded == "[0:v]scale=1080:1920,setsar=1[base_ungraded];[base_ungraded]" + cg.GRADE_FILTERS["cinematic"] + "[base]"
     assert cg.with_grade(graph, None) == graph
     with pytest.raises(ValueError):
         cg.with_grade("[a][base];[base]null[base]", "warm")
@@ -54,6 +54,21 @@ def test_every_grade_runs_in_ffmpeg_inside_a_filter_graph():
         result = subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x284:d=0.2",
                                  "-filter_complex", graph, "-map", "[out]", "-f", "null", "-"], capture_output=True)
         assert result.returncode == 0, (grade, result.stderr[-300:])
+
+
+def test_a_stage_scenes_speaker_card_and_its_escaped_head_are_graded_but_its_backdrop_is_not():
+    from clip_engine.services import rendering_service as rs
+    card = ("[sc_card_src]null[cd_v0];[cd_v0]concat=n=1:v=1:a=0[sc_card_frames]", [540])
+    assert rs.graded_card(None, card) == card
+    graph, widths = rs.graded_card("mono", card)
+    assert widths == [540]
+    assert graph.endswith("[sc_card_frames_ungraded];[sc_card_frames_ungraded]hue=s=0,eq=contrast=1.06[sc_card_frames]")
+    # The card chain feeds the escape (its head is the card's own pixels); the grade sits before both.
+    source = inspect.getsource(rs.RenderingService._scene_composite)
+    assert "graded_card(request.color_grade, stage_scenes.card_source_graph(" in source
+    # Main and card grades can sit in one graph (distinct labels).
+    both = cg.with_grade("[0:v]null[base]", "warm") + ";" + graph
+    assert both.count("[base_ungraded]") == 2 and both.count("[sc_card_frames_ungraded]") == 2
 
 
 def test_the_editor_bake_checks_and_applies_a_candidates_grade():
