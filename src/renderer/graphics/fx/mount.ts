@@ -17,7 +17,7 @@ import gsap from 'gsap'
 import { CustomEase } from 'gsap/CustomEase'
 import './fx.css'
 import { FX_MOTION, easeIn } from './motion'
-import { fxEffect, fxMark, fxTiming, fxVariables, type FxEffect, type FxSlot } from '../../../shared/fx-catalog'
+import { fxEffect, fxHasContent, fxMark, fxTiming, fxVariables, type FxEffect, type FxSlot } from '../../../shared/fx-catalog'
 import { drawMark, markPath, type Picture } from './media'
 import type { GraphicRenderSpec } from '../../../shared/motion-graphics'
 
@@ -227,7 +227,8 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
   host.appendChild(frame)
   const empty: MountedEffect = { seek: () => {}, destroy: () => frame.remove(), ready: Promise.resolve() }
   const load = effect && loadEffect(effect.id)
-  if (!effect || !load) return empty
+  // Without its needed words a unit would fall back to its own sample words: nothing is drawn instead.
+  if (!effect || !load || !fxHasContent(spec.fields)) return empty
   const timing = fxTiming(effect, spec.fields, spec.duration_ms)
   const ownExit = effect.own_exit === true || (effect.fixed?.exit !== undefined && effect.fixed.exit !== 'none')
   const box = fxBox(spec, effect)
