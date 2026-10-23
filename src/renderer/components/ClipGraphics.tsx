@@ -7,14 +7,15 @@
  * offscreen (src/renderer/graphics/templates.ts).
  */
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes, Film, AudioLines } from 'lucide-react'
+import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes, Film, AudioLines, Sparkles, Bookmark, Eraser, Wand2 } from 'lucide-react'
 import type { MountedGraphic } from '../graphics/templates'
 import {
   CHAPTER_STYLES, DIAGRAM_ACCENT, GRAPHIC_DEFAULT_MS, GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
-  bigWordsOptions, chapterStyle, clampGraphicMs, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, templateInfo, templateItems, updateGraphic, withGraphic,
+  ITEM_TIMED_TEMPLATES, bigWordsOptions, chapterStyle, clampGraphicMs, duplicateGraphic, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, switchGraphicTemplate, templateInfo, templateItems, updateGraphic, withGraphic,
   MAX_BIG_WORDS, SCREEN_VIDEO_FILE, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
 } from '../../shared/motion-graphics'
-import { GRAPHIC_DEFAULT_COLOR, graphicSpec, graphicStyle, outputSize } from '../../shared/graphic-layout'
+import { GRAPHIC_DEFAULT_COLOR, graphicOwnFont, graphicSpec, graphicStyle } from '../../shared/graphic-layout'
+import { prefillGraphic, spokenSteps } from '../../shared/graphic-prefill'
 import type { CandidateEdit, EditorProject } from '../../shared/clip-editor'
 import { isHexColor } from '../../shared/headline-look'
 import { cn, localFileUrl } from '../lib/utils'
@@ -23,6 +24,8 @@ import { Button } from './ui/Button'
 import { Segmented } from './ui/Segmented'
 import { Select } from './ui/Select'
 import { Switch } from './ui/Switch'
+import { ConfirmDialog } from './ui/ConfirmDialog'
+import { TEMPLATE_ICONS } from './GraphicGallery'
 
 /** Where a graphic's picture lives in the run (copied there by main). */
 export function graphicImageUrl(outputDir: string, name: string | undefined): string | undefined {
@@ -39,7 +42,9 @@ let templates: Promise<typeof import('../graphics/templates')> | null = null
 const loadTemplates = (): Promise<typeof import('../graphics/templates')> => (templates ??= import('../graphics/templates'))
 
 /** One template drawn at `width` CSS pixels: seeked to `time` (output ms into the graphic), or looping on its own. */
-export function GraphicView({ spec, time, width, loop, className }: { spec: GraphicRenderSpec; time?: number | null; width: number; loop?: boolean; className?: string }): React.JSX.Element {
+export function GraphicView({ spec, time, width, loop, offset = 0, className }: { spec: GraphicRenderSpec; time?: number | null; width: number; loop?: boolean; className?: string
+  /** Looping: start this far (ms) into the animation, so tiles side by side don't all come in at once. */
+  offset?: number }): React.JSX.Element {
   const host = useRef<HTMLDivElement>(null)
   const mounted = useRef<MountedGraphic | null>(null)
   const timeRef = useRef(time); timeRef.current = time
@@ -54,7 +59,7 @@ export function GraphicView({ spec, time, width, loop, className }: { spec: Grap
       const show = (): void => { mountedGraphic.seek(timeRef.current ?? -1) }
       void mountedGraphic.ready.then(() => { if (mounted.current === mountedGraphic && !loop) show() })
       if (loop) {
-        const started = performance.now(), cycle = (JSON.parse(key) as GraphicRenderSpec).duration_ms + 700
+        const started = performance.now() - offset, cycle = (JSON.parse(key) as GraphicRenderSpec).duration_ms + 700
         const tick = (now: number): void => { mountedGraphic.seek((now - started) % cycle); frame = requestAnimationFrame(tick) }
         frame = requestAnimationFrame(tick)
       } else show()
@@ -68,13 +73,9 @@ export function GraphicView({ spec, time, width, loop, className }: { spec: Grap
   </div>
 }
 
-/** The real animations over the Output monitor, at the playhead. */
-export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, sourceUrl }: {
-  canvas: RefObject<HTMLCanvasElement | null>; project: EditorProject; candidate: CandidateEdit; time: number; outputDir: string
-  /** The clip's own video (the editor's preview of the source), for a Screen recording that shows part of it. */
-  sourceUrl?: string
-}): React.JSX.Element | null {
-  const [bounds, setBounds] = useState({ width: 0, height: 0, left: 0, top: 0 })
+/** Where the Output monitor's picture sits in its pane (the canvas, letterboxed to its aspect), in CSS pixels. */
+export function useOutputBounds(canvas: RefObject<HTMLCanvasElement | null>, aspectKey: string): { width: number; height: number; left: number; top: number; outer: number } {
+  const [bounds, setBounds] = useState({ width: 0, height: 0, left: 0, top: 0, outer: 0 })
   useEffect(() => {
     const element = canvas.current, parent = element?.parentElement
     if (!element || !parent) return
@@ -82,12 +83,22 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, s
       const box = element.getBoundingClientRect(), outer = parent.getBoundingClientRect()
       const aspect = element.width / element.height
       const width = Math.min(box.width, box.height * aspect), height = width / aspect
-      setBounds({ width, height, left: box.left - outer.left + (box.width - width) / 2, top: box.top - outer.top + (box.height - height) / 2 })
+      setBounds({ width, height, left: box.left - outer.left + (box.width - width) / 2, top: box.top - outer.top + (box.height - height) / 2, outer: outer.width })
     }
     const observer = new ResizeObserver(measure)
     observer.observe(element); observer.observe(parent); measure()
     return () => observer.disconnect()
-  }, [canvas, project.aspect_ratio])
+  }, [canvas, aspectKey])
+  return bounds
+}
+
+/** The real animations over the Output monitor, at the playhead. */
+export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, sourceUrl }: {
+  canvas: RefObject<HTMLCanvasElement | null>; project: EditorProject; candidate: CandidateEdit; time: number; outputDir: string
+  /** The clip's own video (the editor's preview of the source), for a Screen recording that shows part of it. */
+  sourceUrl?: string
+}): React.JSX.Element | null {
+  const bounds = useOutputBounds(canvas, project.aspect_ratio)
   const shown = (candidate.graphics ?? []).flatMap((g) => {
     const local = graphicLocalMs(candidate, g, time)
     if (local === null || !graphicHasContent(g)) return []
@@ -104,7 +115,7 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, s
   if (!bounds.width || !shown.length) return null
   // The preview can't cut the speaker out: a graphic set behind them shows in front, with a note.
   const behind = shown.some(({ g }) => graphicDepth(g) === 'behind')
-  return <div className="editor-graphics-overlay" style={bounds}>
+  return <div className="editor-graphics-overlay" style={{ width: bounds.width, height: bounds.height, left: bounds.left, top: bounds.top }}>
     <div aria-hidden>{shown.map(({ g, spec, local }) => <GraphicView key={g.id} spec={spec} time={local} width={bounds.width} />)}</div>
     {behind && <span className="editor-graphic-depth-badge" title="This preview shows the words in front. The exported clip puts them behind you.">Behind you in the export</span>}
   </div>
@@ -143,11 +154,13 @@ export function graphicGroup(template: GraphicTemplateId): GraphicGroup | 'other
 }
 
 /** The Graphics row on the timeline: one block per graphic at its source time. */
-export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disabled, onSelect, onChange, onDrag, onAdd, clock }: {
+export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disabled, onSelect, onChange, onDrag, onAdd, onAddAt, clock }: {
   candidate: CandidateEdit; viewStart: number; viewEnd: number; selected: string | null; disabled: boolean
   onSelect: (id: string) => void; onChange: (graphics: EditorGraphic[], remember: boolean) => void
   /** A drag starts or ends (the editor holds the timeline's zoom and autosave meanwhile). */
   onDrag: (active: boolean) => void; onAdd: () => void; clock: (ms: number) => string
+  /** Right-click or double-click on the row: add a graphic at that time (source ms). */
+  onAddAt?: (ms: number) => void
 }): React.JSX.Element {
   const graphics = candidate.graphics ?? []
   const span = viewEnd - viewStart
@@ -157,22 +170,27 @@ export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disable
   for (const g of graphics) { const lane = g.at_ms >= ends[0] ? 0 : 1; lanes.push(lane); ends[lane] = Math.max(ends[lane], g.at_ms + g.duration_ms) }
   const stacked = lanes.includes(1)
   const clashes = graphicClashes(graphics)
+  const full = graphics.length >= MAX_GRAPHICS_PER_CLIP
   const startDrag = (e: React.PointerEvent<HTMLElement>, g: EditorGraphic, mode: 'move' | 'start' | 'end'): void => {
     if (disabled || e.button !== 0) return
     e.preventDefault(); e.stopPropagation()
     const target = e.currentTarget, track = target.closest('.editor-graphics-track')!.getBoundingClientRect(), x = e.clientX
     const clipStart = candidate.ranges[0][0], clipEnd = candidate.ranges[candidate.ranges.length - 1][1]
-    let moved = false
+    // Alt-drag (Option on a Mac): drag a copy, leaving the graphic where it was.
+    const copy = mode === 'move' && e.altKey && !full ? duplicateGraphic(g, graphics.map((x) => x.id), g.at_ms) : null
+    let base: CandidateEdit = candidate, moved = false
+    if (copy) { base = { ...candidate, graphics: withGraphic(candidate, copy) }; onChange(base.graphics!, true) }
+    const dragged = copy ?? g
     target.setPointerCapture(e.pointerId)
-    onSelect(g.id); onDrag(true)
+    onSelect(dragged.id); onDrag(true)
     const move = (event: PointerEvent): void => {
       if (!moved && Math.abs(event.clientX - x) < 3) return
       const dt = Math.round((event.clientX - x) / track.width * span)
-      const end = g.at_ms + g.duration_ms
-      const patch = mode === 'move' ? { at_ms: Math.max(clipStart, Math.min(clipEnd - Math.min(g.duration_ms, clipEnd - clipStart), g.at_ms + dt)) }
-        : mode === 'start' ? (() => { const at = Math.max(clipStart, end - graphicMaxMs(g.template), Math.min(end - GRAPHIC_MIN_MS, g.at_ms + dt)); return { at_ms: at, duration_ms: end - at } })()
-        : { duration_ms: clampGraphicMs(Math.min(clipEnd - g.at_ms, g.duration_ms + dt), g.template) }
-      onChange(updateGraphic(candidate, g.id, patch), !moved)
+      const end = dragged.at_ms + dragged.duration_ms
+      const patch = mode === 'move' ? { at_ms: Math.max(clipStart, Math.min(clipEnd - Math.min(dragged.duration_ms, clipEnd - clipStart), dragged.at_ms + dt)) }
+        : mode === 'start' ? (() => { const at = Math.max(clipStart, end - graphicMaxMs(dragged.template), Math.min(end - GRAPHIC_MIN_MS, dragged.at_ms + dt)); return { at_ms: at, duration_ms: end - at } })()
+        : { duration_ms: clampGraphicMs(Math.min(clipEnd - dragged.at_ms, dragged.duration_ms + dt), dragged.template) }
+      onChange(updateGraphic(base, dragged.id, patch), !moved && !copy)
       moved = true
     }
     const done = (): void => { target.removeEventListener('pointermove', move); target.removeEventListener('lostpointercapture', done); onDrag(false) }
@@ -186,30 +204,41 @@ export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disable
     const step = (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 1000 : 100)
     onChange(updateGraphic(candidate, g.id, { at_ms: g.at_ms + step }), true)
   }
+  /** The source time under the pointer on the row. */
+  const timeAt = (e: React.MouseEvent<HTMLElement>): number => {
+    const box = e.currentTarget.getBoundingClientRect()
+    return Math.round(viewStart + Math.max(0, Math.min(1, (e.clientX - box.left) / box.width)) * span)
+  }
   return <div className="editor-graphics-row">
     <div className="editor-graphics-label editor-lane-head"><Shapes size={11} aria-hidden /><span className="editor-lane-name">Graphics</span>
-      <Button size="sm" variant="ghost" iconOnly aria-label="Add graphic at playhead" icon={<Plus size={13} />} disabled={disabled || graphics.length >= MAX_GRAPHICS_PER_CLIP} onClick={onAdd}
-        tooltip={graphics.length >= MAX_GRAPHICS_PER_CLIP ? `A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics.` : 'Add graphic at playhead: an animated graphic (a stat, title, list and more) that starts at the playhead.'} /></div>
-    <div className={cn('editor-graphics-track', stacked && 'stacked')} aria-label="Graphics">
+      <Button size="sm" variant="ghost" iconOnly aria-label="Add graphic at playhead" icon={<Plus size={13} />} disabled={disabled || full} onClick={onAdd}
+        tooltip={full ? `A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics.` : 'Add graphic at playhead (G): opens the gallery of animated graphics. Right-click the row to add one at that spot.'} /></div>
+    <div className={cn('editor-graphics-track', stacked && 'stacked')} aria-label="Graphics"
+      title={disabled || full ? undefined : 'Right-click or double-click to add a graphic here'}
+      onContextMenu={(e) => { if (!onAddAt || disabled || full || e.target !== e.currentTarget) return; e.preventDefault(); onAddAt(timeAt(e)) }}
+      onDoubleClick={(e) => { if (!onAddAt || disabled || full || e.target !== e.currentTarget) return; onAddAt(timeAt(e)) }}>
       {graphics.map((g, i) => {
         const a = Math.max(g.at_ms, viewStart), b = Math.min(g.at_ms + g.duration_ms, viewEnd)
         if (b <= a) return null
         const fit = graphicCutFit(candidate, g), offscreen = fit === 'outside', clash = clashes.has(g.id)
         const warning = graphicWarning(fit, clash, g.placement)
         const label = `${templateInfo(g.template).label} at ${clock(g.at_ms)}, ${(g.duration_ms / 1000).toFixed(1)} seconds${warning ? `. ${warning}` : ''}`
+        const Icon = TEMPLATE_ICONS[g.template]
+        const words = graphicSummary(g)
         return <div key={g.id} className={cn('editor-graphic-block', `group-${graphicGroup(g.template)}`, selected === g.id && 'selected', offscreen && 'cut-out', fit === 'partly' && 'partly', clash && 'clash', !graphicHasContent(g) && 'empty', stacked && (lanes[i] ? 'lane-2' : 'lane-1'))}
           style={{ left: `${(a - viewStart) / span * 100}%`, width: `${(b - a) / span * 100}%` }}>
           <button className="editor-graphic-edge" aria-label={`Change when ${label} starts`} disabled={disabled} onPointerDown={(e) => startDrag(e, g, 'start')} tabIndex={-1} />
           <button className="editor-graphic-body" aria-label={label} aria-pressed={selected === g.id}
-            title={`${label} · Drag to move · Drag an edge to change its length · Delete removes it`}
+            title={`${label} · Drag to move · Alt-drag to copy · Drag an edge to change its length · Delete removes it`}
             onPointerDown={(e) => startDrag(e, g, 'move')} onClick={() => onSelect(g.id)} onKeyDown={(e) => nudge(e, g)}>
             {(fit === 'partly' || clash) && <AlertTriangle size={10} className="editor-graphic-warning" aria-hidden />}
-            <span className="editor-graphic-kind">{SHORT[g.template]}</span><span className="editor-graphic-words">{graphicSummary(g)}</span>
+            <Icon size={11} className="editor-graphic-icon" aria-hidden />
+            <span className="editor-graphic-words">{words || <span className="editor-graphic-kind">{SHORT[g.template]}</span>}</span>
           </button>
           <button className="editor-graphic-edge" aria-label={`Change when ${label} ends`} disabled={disabled} onPointerDown={(e) => startDrag(e, g, 'end')} tabIndex={-1} />
         </div>
       })}
-      {!graphics.length && <span className="editor-graphics-empty">No graphics yet</span>}
+      {!graphics.length && <span className="editor-graphics-empty">No graphics yet · right-click here or press G to add one</span>}
     </div>
   </div>
 }
@@ -242,16 +271,9 @@ export const SAMPLES: Record<GraphicTemplateId, Record<string, string>> = {
   compare_marks: { items: 'The old way\nThe better way', wrong: 'first' }
 }
 
-const NUMBER_WORDS = /[$€£]?\d[\d,]*(?:\.\d+)?\s?(?:%|percent\b|[kKmMxX]\b|thousand\b|million\b|billion\b|hours?\b|days?\b|minutes?\b|years?\b)?/
-/** Starting words for a new graphic, from what is said at the playhead (nothing is made up). */
+/** Starting words for a new graphic, from the transcript line said at the playhead (nothing is made up). */
 export function wordsAtPlayhead(template: GraphicTemplateId, line: string | undefined): Record<string, string> {
-  const text = (line ?? '').replace(/\s+/g, ' ').trim()
-  if (!text) return {}
-  if (template === 'title') return { text: text.split(' ').slice(0, 6).join(' ').replace(/[,.;:!?]+$/, '') }
-  if (template === 'big_words') return { text: text.split(' ').slice(0, 2).join(' ').replace(/[,.;:!?]+$/, '') }
-  if (template === 'quote') return { text: text.slice(0, MAX_GRAPHIC_FIELD_CHARS) }
-  if (template === 'stat') { const n = NUMBER_WORDS.exec(text); return n ? { value: n[0].trim() } : {} }
-  return {}
+  return prefillGraphic(template, [], 0, { line }).fields
 }
 
 export const FIELD_LABELS: Record<string, string> = { value: 'Number', label: 'Label', text: 'Words', title: 'Title', items: 'Items (one per line)', name: 'Name', role: 'Role', caption: 'Caption', before: 'Before', after: 'After', author: 'Who said it',
@@ -364,7 +386,7 @@ export function ScreenFields({ fields, outputDir, onField }: { fields: Record<st
 }
 
 /** The transcript's timed words around the clip (for timing text cards to the voice), or [] while loading or without them. */
-function useClipWords(outputDir: string, from: number, to: number): TimedWord[] {
+export function useClipWords(outputDir: string, from: number, to: number): TimedWord[] {
   const [words, setWords] = useState<TimedWord[]>([])
   useEffect(() => {
     let live = true
@@ -376,90 +398,196 @@ function useClipWords(outputDir: string, from: number, to: number): TimedWord[] 
   return words
 }
 
-/** The Graphics inspector tab: pick a template, then edit the selected graphic's words, place and length. */
-export function GraphicsInspector({ project, candidate, outputDir, time, selected, picking, disabled, onPick, onSelect, onChange, seek, clock }: {
-  project: EditorProject; candidate: CandidateEdit; outputDir: string; time: number; selected: string | null; picking: boolean; disabled: boolean
-  onPick: (picking: boolean) => void; onSelect: (id: string | null) => void; onChange: (graphics: EditorGraphic[], remember?: boolean) => void
+const clipSpan = (c: CandidateEdit): [number, number] => [c.ranges[0][0], c.ranges[c.ranges.length - 1][1]]
+/** A word-timed card snapped to where its words are said near it (start, length and each word's time), kept in the cut. */
+function timedCard(c: CandidateEdit, g: EditorGraphic, words: readonly TimedWord[], windowMs: number): EditorGraphic | null {
+  if (!WORD_TIMED_TEMPLATES.includes(g.template) || !words.length) return null
+  const matched = matchCardWords(g, words, g.at_ms, windowMs)
+  return matched ? fitGraphicInCut(matched, c) : null
+}
+
+/**
+ * A new graphic of `template` at `time` (source ms): inside the cut (near the end it starts earlier), filled with the
+ * words said there (only words said; empty when none fit), on its words (a text card starts on its first word, a
+ * list's items show as they're said) and in a band no other graphic uses then.
+ */
+export function draftGraphic(project: Pick<EditorProject, 'transcript'>, c: CandidateEdit, template: GraphicTemplateId, time: number, words: readonly TimedWord[]): EditorGraphic {
+  const graphics = c.graphics ?? []
+  const [clipStart, clipEnd] = clipSpan(c)
+  let at = Math.max(clipStart, Math.min(clipEnd - GRAPHIC_MIN_MS, Math.round(time)))
+  const line = project.transcript.find((r) => at >= r.start_ms && at < r.end_ms)?.text
+  const prefill = prefillGraphic(template, words, at, { line, until: clipEnd })
+  // A list whose first item was said just before the playhead starts on it.
+  if (words.length && ITEM_TIMED_TEMPLATES.includes(template) && prefill.first_ms !== null && prefill.first_ms < at && at - prefill.first_ms < 4000) at = Math.max(clipStart, prefill.first_ms - 150)
+  // A diagram or chapter header (long ones) is cut to the time left rather than moved earlier.
+  const left = clipEnd - at
+  const long = template === 'chapter' || isDiagram(template)
+  let duration = long && left >= GRAPHIC_MIN_MS ? Math.min(GRAPHIC_DEFAULT_MS[template], left) : undefined
+  // A list stays up until its last item is said.
+  if (prefill.last_ms !== null && words.length && ITEM_TIMED_TEMPLATES.includes(template)) duration = clampGraphicMs(Math.min(left, Math.max(duration ?? GRAPHIC_DEFAULT_MS[template], prefill.last_ms + 1200 - at)), template)
+  const drafted = newGraphic(template, at, { fields: { ...(template === 'screen_frame' ? { video: 'source', from: String(Math.round(at / 100) / 10) } : {}), ...prefill.fields }, taken: graphics.map((x) => x.id),
+    ...(duration !== undefined ? { duration_ms: duration } : {}) })
+  let g = fitGraphicInCut(drafted, c) ?? drafted
+  if (words.length && WORD_TIMED_TEMPLATES.includes(template)) g = timedCard(c, g, words, 3000) ?? g
+  else if (words.length && ITEM_TIMED_TEMPLATES.includes(template)) g = matchItemTimes(g, words) ?? g
+  return placeInFreeBand(graphics, g)
+}
+
+/** The clip's graphics with one field of `g` changed: a word-timed card moves onto its words, a diagram's items light up as said. */
+export function graphicsWithField(c: CandidateEdit, g: EditorGraphic, key: string, value: string, words: readonly TimedWord[]): EditorGraphic[] {
+  const next = updateGraphic(c, g.id, { fields: { [key]: value } })
+  const changed = next.find((x) => x.id === g.id)
+  const items = changed && key === 'items' && isDiagram(changed.template) && words.length ? matchItemTimes(changed, words) : null
+  if (items) return withGraphic({ ...c, graphics: next }, items)
+  const snapped = changed && ['text', 'phrase', 'subline'].includes(key) ? timedCard(c, changed, words, 3000) : null
+  return snapped ? withGraphic({ ...c, graphics: next }, snapped) : next
+}
+
+/** "Match my words": the graphic timed to where its words (or items) are said, or a note why it can't be. */
+export function matchGraphicWords(c: CandidateEdit, g: EditorGraphic, words: readonly TimedWord[]): { graphics: EditorGraphic[] | null; note: string } {
+  const [clipStart, clipEnd] = clipSpan(c)
+  if (!WORD_TIMED_TEMPLATES.includes(g.template)) {
+    const matched = words.length ? matchItemTimes(g, words) : null
+    if (!matched) return { graphics: null, note: words.length ? 'Those items aren’t all said, in order, while this graphic is on screen. Use words from the clip, or move or lengthen the graphic.' : 'This run has no word timings, so the items can’t be matched.' }
+    return { graphics: updateGraphic(c, g.id, { fields: { item_ms: matched.fields.item_ms } }), note: 'Matched: each item now shows as you say it.' }
+  }
+  const snapped = timedCard(c, { ...g, at_ms: Math.max(clipStart, Math.min(clipEnd, Math.round(g.at_ms))) }, words, 6000)
+  if (!snapped) return { graphics: null, note: words.length ? 'Those words aren’t said near this graphic. Use words from the clip, said within a few seconds of it.' : 'This run has no word timings, so the words can’t be matched.' }
+  return { graphics: withGraphic(c, snapped), note: 'Matched: each word now shows as you say it.' }
+}
+
+/** The clip's graphics with `g` switched to another template, keeping its words (and timed to them when they're said). */
+export function graphicsWithTemplate(c: CandidateEdit, g: EditorGraphic, to: GraphicTemplateId, words: readonly TimedWord[]): EditorGraphic[] {
+  let next = switchGraphicTemplate(g, to)
+  if (to === 'screen_frame' && !next.fields.from) next = { ...next, fields: { ...next.fields, from: String(Math.round(next.at_ms / 100) / 10) } }
+  next = fitGraphicInCut(next, c) ?? next
+  if (words.length) next = timedCard(c, next, words, 3000) ?? (ITEM_TIMED_TEMPLATES.includes(to) ? matchItemTimes(next, words) : null) ?? next
+  return withGraphic(c, next)
+}
+
+/** A chapter header at each step the speaker names in the clip ("step one…", "first…"), with their own words. */
+export function chaptersAtSteps(c: CandidateEdit, words: readonly TimedWord[]): { graphics: EditorGraphic[]; added: number } {
+  const graphics = c.graphics ?? []
+  const [, clipEnd] = clipSpan(c)
+  const chapters = graphics.filter((g) => g.template === 'chapter')
+  const steps = spokenSteps(words, c.ranges).filter((s) => !chapters.some((g) => Math.abs(g.at_ms - s.at_ms) < 1500))
+  let list = graphics, added = 0
+  steps.forEach((step, i) => {
+    if (list.length >= MAX_GRAPHICS_PER_CLIP) return
+    const nextAt = Math.min(steps[i + 1]?.at_ms ?? clipEnd, ...chapters.filter((g) => g.at_ms > step.at_ms).map((g) => g.at_ms))
+    const at = Math.max(c.ranges[0][0], step.at_ms - 100)
+    const g = newGraphic('chapter', at, { fields: { ...(step.label ? { label: step.label } : {}), title: step.title }, duration_ms: Math.max(GRAPHIC_MIN_MS, nextAt - at - (nextAt < clipEnd ? 100 : 0)), taken: list.map((x) => x.id) })
+    const fit = fitGraphicInCut(g, c)
+    if (!fit) return
+    list = withGraphic({ ...c, graphics: list }, fit); added++
+  })
+  return { graphics: list, added }
+}
+
+export type QuickStyle = 'signature' | 'bold' | 'minimal'
+/** Looks that restyle every graphic on the clip at once: the accent color, the type and the chapter and big words looks. */
+export const QUICK_STYLES: { id: QuickStyle; label: string; detail: string }[] = [
+  { id: 'signature', label: 'Signature', detail: 'Your hook’s font and brand color, serif chapter titles, mixed big words.' },
+  { id: 'bold', label: 'Bold', detail: 'Bold condensed capitals in your brand color.' },
+  { id: 'minimal', label: 'Minimal', detail: 'Clean sans type with a quiet slate accent and pill chapter titles.' }
+]
+const MINIMAL_ACCENT = '#334155'
+const quickFields = (style: QuickStyle, g: EditorGraphic): Record<string, string> => {
+  const look = style === 'signature' ? { font: '', color: '', chapter: 'serif_caps', big: 'mixed' } : style === 'bold' ? { font: 'condensed', color: '', chapter: 'sans', big: 'sans' }
+    : { font: 'clean', color: isDiagram(g.template) ? '' : MINIMAL_ACCENT, chapter: 'pill', big: 'serif' }
+  return { font: look.font, color: look.color, ...(g.template === 'chapter' ? { style: look.chapter } : g.template === 'big_words' ? { style: look.big } : {}) }
+}
+export function applyQuickStyle(c: CandidateEdit, style: QuickStyle): EditorGraphic[] {
+  return (c.graphics ?? []).reduce<EditorGraphic[]>((list, g) => updateGraphic({ ...c, graphics: list }, g.id, { fields: quickFields(style, g) }), c.graphics ?? [])
+}
+/** The quick style every graphic on the clip has, or null (mixed, or none yet). */
+export function quickStyleOf(c: CandidateEdit): QuickStyle | null {
+  const graphics = c.graphics ?? []
+  if (!graphics.length) return null
+  return QUICK_STYLES.find((q) => graphics.every((g) => Object.entries(quickFields(q.id, g)).every(([k, v]) => (k === 'font' ? graphicOwnFont(g) ?? '' : g.fields[k] ?? '') === v)))?.id ?? null
+}
+
+/** The Graphics tab's one-click actions and quick styles. */
+function GraphicsActions({ candidate, words, disabled, onChange, onSuggest, onNote }: {
+  candidate: CandidateEdit; words: readonly TimedWord[]; disabled: boolean
+  onChange: (graphics: EditorGraphic[], remember?: boolean) => void; onSuggest: (send: boolean) => void; onNote: (note: string | null) => void
+}): React.JSX.Element {
+  const graphics = candidate.graphics ?? []
+  const auto = graphics.filter((g) => g.origin === 'auto').length
+  const [asking, setAsking] = useState<{ note: string; ready: boolean } | null>(null)
+  const style = quickStyleOf(candidate)
+  const suggest = (): void => {
+    onNote(null)
+    const api = getApi().editor
+    if (typeof api.chatInfo !== 'function') { onSuggest(false); return }
+    void api.chatInfo().then((info) => setAsking({ ready: info.ready, note: info.ready ? `${info.costNote} Model: ${info.model}.` : info.reason ?? 'The chat is not available.' }),
+      () => setAsking({ ready: false, note: 'The chat is not available right now.' }))
+  }
+  return <div className="editor-graphics-actions">
+    <div className="editor-graphics-quick" role="group" aria-label="Quick actions">
+      <button type="button" disabled={disabled} onClick={suggest}><Sparkles size={13} aria-hidden /><span>Suggest graphics for this clip</span></button>
+      <button type="button" disabled={disabled || graphics.length >= MAX_GRAPHICS_PER_CLIP} onClick={() => {
+        if (!words.length) { onNote('This run has no word timings, so steps can’t be found. Add a chapter with “Add graphic”.'); return }
+        const { graphics: next, added } = chaptersAtSteps(candidate, words)
+        if (!added) { onNote('No steps are named in this clip (like “step one” or “first”). Add a chapter with “Add graphic”.'); return }
+        onChange(next); onNote(`Added ${added} chapter header${added === 1 ? '' : 's'}, one at each step you name.`)
+      }}><Bookmark size={13} aria-hidden /><span>Add a chapter at each step</span></button>
+      <button type="button" disabled={disabled || !auto} onClick={() => { onChange(graphics.filter((g) => g.origin !== 'auto')); onNote(`Removed ${auto} automatic graphic${auto === 1 ? '' : 's'}. Undo brings ${auto === 1 ? 'it' : 'them'} back.`) }}
+        title={auto ? undefined : 'This clip has no graphics added automatically.'}><Eraser size={13} aria-hidden /><span>Clear auto graphics{auto ? ` (${auto})` : ''}</span></button>
+    </div>
+    {graphics.length > 0 && <div className="editor-graphics-styles" role="group" aria-label="Quick styles">
+      <span className="editor-label">Quick style</span>
+      <div>{QUICK_STYLES.map((q) => <button key={q.id} type="button" aria-pressed={style === q.id} disabled={disabled} title={q.detail} className={cn(`quick-${q.id}`, style === q.id && 'selected')}
+        onClick={() => { onChange(applyQuickStyle(candidate, q.id)); onNote(`${q.label} look on every graphic.`) }}><Wand2 size={11} aria-hidden />{q.label}</button>)}</div>
+    </div>}
+    {asking && <ConfirmDialog onClose={() => setAsking(null)} request={asking.ready ? {
+      title: 'Suggest graphics for this clip?', confirmLabel: 'Suggest graphics', tone: 'primary',
+      body: <>The chat reads what you say in this clip and adds 3 to 5 graphics where they help, using only your words. You can undo or change each one.<br /><br />{asking.note}</>,
+      onConfirm: () => { setAsking(null); onSuggest(true) }
+    } : { title: 'Suggest graphics needs the chat', confirmLabel: 'Open the chat', tone: 'primary', body: <>{asking.note}</>, onConfirm: () => { setAsking(null); onSuggest(false) } }} />}
+  </div>
+}
+
+const TYPE_OPTIONS = GRAPHIC_GROUPS.flatMap((group) => GRAPHIC_TEMPLATES.filter((t) => group.templates.includes(t.id)).map((t) => ({ value: t.id, label: t.label, detail: group.label })))
+
+/** The Graphics inspector tab: add graphics (the gallery), one-click actions, then the selected graphic's words, place and length. */
+export function GraphicsInspector({ project, candidate, outputDir, time, selected, words, disabled, onGallery, onSuggest, onSelect, onChange, seek, clock }: {
+  project: EditorProject; candidate: CandidateEdit; outputDir: string; time: number; selected: string | null; disabled: boolean
+  /** The transcript's timed words around the clip ([] without them). */
+  words: readonly TimedWord[]
+  onGallery: () => void; onSuggest: (send: boolean) => void
+  onSelect: (id: string | null) => void; onChange: (graphics: EditorGraphic[], remember?: boolean) => void
   seek: (ms: number) => void; clock: (ms: number) => string
 }): React.JSX.Element {
+  void project
   const graphics = candidate.graphics ?? []
   const g = graphics.find((x) => x.id === selected) ?? null
   const style = graphicStyle(candidate)
   const [imageError, setImageError] = useState<string | null>(null)
   useEffect(() => setImageError(null), [selected])
   const full = graphics.length >= MAX_GRAPHICS_PER_CLIP
-  const clipStart = candidate.ranges[0][0], clipEnd = candidate.ranges[candidate.ranges.length - 1][1]
-  const words = useClipWords(outputDir, clipStart, clipEnd)
+  const [clipStart, clipEnd] = clipSpan(candidate)
   const [matchNote, setMatchNote] = useState<string | null>(null)
   useEffect(() => setMatchNote(null), [selected])
-  /** A word-timed card snapped to where its words are said (start, length and each word's time), when they are said near it. */
-  const timed = (x: EditorGraphic, windowMs: number): EditorGraphic | null => {
-    if (!WORD_TIMED_TEMPLATES.includes(x.template) || !words.length) return null
-    const matched = matchCardWords(x, words, x.at_ms, windowMs)
-    return matched ? fitGraphicInCut(matched, candidate) : null
-  }
-  const add = (template: GraphicTemplateId): void => {
-    const at = Math.max(clipStart, Math.min(clipEnd - GRAPHIC_MIN_MS, Math.round(time)))
-    const line = project.transcript.find((r) => at >= r.start_ms && at < r.end_ms)?.text
-    // A diagram or chapter header (long ones) is cut to the time left rather than moved earlier.
-    const left = clipEnd - at
-    const long = template === 'chapter' || isDiagram(template)
-    const drafted = newGraphic(template, at, { fields: { ...(template === 'screen_frame' ? { video: 'source', from: String(Math.round(at / 100) / 10) } : {}), ...wordsAtPlayhead(template, line) }, taken: graphics.map((x) => x.id),
-      ...(long && left >= GRAPHIC_MIN_MS ? { duration_ms: Math.min(GRAPHIC_DEFAULT_MS[template], left) } : {}) })
-    // All of it plays inside the cut (near the end it starts earlier), in a band no other graphic uses then; text cards on their words.
-    const inCut = fitGraphicInCut(drafted, candidate) ?? drafted
-    const graphic = placeInFreeBand(graphics, timed(inCut, 3000) ?? inCut)
-    onChange(withGraphic(candidate, graphic))
-    onSelect(graphic.id); onPick(false)
-  }
-  const field = (key: string, value: string, remember = true): void => {
-    if (!g) return
-    const next = updateGraphic(candidate, g.id, { fields: { [key]: value } })
-    // Text on a word-timed card: when the words are said near it, it moves onto them.
-    const changed = next.find((x) => x.id === g.id)
-    // A diagram's items light up as they're said, when they are all said while it shows.
-    const items = changed && key === 'items' && isDiagram(changed.template) && words.length ? matchItemTimes(changed, words) : null
-    if (items) { onChange(withGraphic({ ...candidate, graphics: next }, items), remember); return }
-    const snapped = changed && ['text', 'phrase', 'subline'].includes(key) ? timed(changed, 3000) : null
-    onChange(snapped ? withGraphic({ ...candidate, graphics: next }, snapped) : next, remember)
-  }
+  const [actionNote, setActionNote] = useState<string | null>(null)
+  const field = (key: string, value: string, remember = true): void => { if (g) onChange(graphicsWithField(candidate, g, key, value, words), remember) }
   const matchWords = (): void => {
     if (!g) return
-    setMatchNote(null)
-    if (!WORD_TIMED_TEMPLATES.includes(g.template)) {
-      // Items: each lights up (or comes in) as it is said.
-      const matched = words.length ? matchItemTimes(g, words) : null
-      if (!matched) { setMatchNote(words.length ? 'Those items aren’t all said, in order, while this graphic is on screen. Use words from the clip, or move or lengthen the graphic.' : 'This run has no word timings, so the items can’t be matched.'); return }
-      onChange(updateGraphic(candidate, g.id, { fields: { item_ms: matched.fields.item_ms } }))
-      setMatchNote('Matched: each item now shows as you say it.')
-      return
-    }
-    const snapped = timed({ ...g, at_ms: Math.max(clipStart, Math.min(clipEnd, Math.round(g.at_ms))) }, 6000)
-    if (!snapped) { setMatchNote(words.length ? 'Those words aren’t said near this graphic. Use words from the clip, said within a few seconds of it.' : 'This run has no word timings, so the words can’t be matched.'); return }
-    onChange(withGraphic(candidate, snapped))
-    setMatchNote('Matched: each word now shows as you say it.')
+    const { graphics: next, note } = matchGraphicWords(candidate, g, words)
+    if (next) onChange(next)
+    setMatchNote(note)
   }
-  if (picking || (!g && !graphics.length)) {
-    const preview = (id: GraphicTemplateId): GraphicRenderSpec => {
-      // A square crop of the template at full size reads better in a small tile than a whole 9:16 frame.
-      const { width, height } = outputSize('1:1')
-      return { template: id, fields: id === 'highlight' ? { ...SAMPLES[id], y: '0.5' } : isDiagram(id) ? { ...SAMPLES[id], panel: 'on' } : SAMPLES[id], width, height, duration_ms: isDiagram(id) ? 4200 : 2600, box: { top: .06, bottom: .94 }, placement: 'middle', ...style, ...(isDiagram(id) ? { color: DIAGRAM_ACCENT } : {}) }
-    }
-    return <section className="editor-graphics-panel" aria-label="Choose a graphic">
-      <div className="flex items-center justify-between gap-2"><p className="text-xs">Choose a graphic</p>{(picking && graphics.length > 0) && <Button size="sm" variant="ghost" onClick={() => onPick(false)}>Cancel</Button>}</div>
-      <p className="text-2xs text-ink-subtle">It starts at the playhead ({clock(Math.max(clipStart, Math.min(clipEnd, time)))}). You add the words next; the previews use sample words.</p>
-      {[...GRAPHIC_GROUPS, { id: 'other' as const, label: 'More', templates: GRAPHIC_TEMPLATES.map((t) => t.id).filter((id) => graphicGroup(id) === 'other') }].map((group) => {
-        const items = GRAPHIC_TEMPLATES.filter((t) => group.templates.includes(t.id))
-        if (!items.length) return null
-        return <div key={group.id} className={cn('editor-graphic-group', `group-${group.id}`)} role="group" aria-label={group.label}>
-          <p className="editor-graphic-group-label"><span aria-hidden className="editor-graphic-group-dot" />{group.label}<span className="editor-graphic-group-count">{items.length}</span></p>
-          <div className="editor-graphic-picker">{items.map((t) => <button key={t.id} className="editor-graphic-tile" disabled={disabled || full} onClick={() => add(t.id)} title={t.detail} aria-label={`Add ${t.label}`}>
-            <GraphicView spec={preview(t.id)} width={88} loop />
-            <span>{t.label}</span>
-          </button>)}</div>
-        </div>
-      })}
-      {full && <p className="text-2xs text-warning">A clip can have up to {MAX_GRAPHICS_PER_CLIP} graphics.</p>}
+  const actions = <GraphicsActions candidate={candidate} words={words} disabled={disabled} onChange={onChange} onSuggest={onSuggest} onNote={setActionNote} />
+  const note = actionNote && <p role="status" className="text-2xs text-ink-subtle">{actionNote}</p>
+  if (!graphics.length) {
+    return <section className="editor-graphics-panel" aria-label="Graphics">
+      <div className="editor-graphics-empty-card">
+        <p className="text-sm font-medium text-ink">No graphics on this clip yet</p>
+        <p className="text-2xs text-ink-subtle">Animated stats, titles, lists, steps and diagrams. Each one starts at the playhead ({clock(Math.max(clipStart, Math.min(clipEnd, time)))}) with the words you say there.</p>
+        <Button variant="primary" icon={<Plus size={14} />} disabled={disabled} onClick={onGallery}>Add a graphic</Button>
+        <p className="text-2xs text-ink-subtle">Or press G, or right-click the Graphics row on the timeline.</p>
+      </div>
+      {actions}{note}
     </section>
   }
   const clashes = graphicClashes(graphics)
@@ -468,11 +596,15 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
     <span>{templateInfo(x.template).label}</span>{graphicWarning(graphicCutFit(candidate, x), clashes.has(x.id), x.placement) && <AlertTriangle size={11} className="text-warning" aria-label="Needs a look" />}<span className="text-ink-subtle">{clock(x.at_ms)}</span></button>)}</div>
   return <section className="editor-graphics-panel" aria-label="Graphics">
     <div className="flex items-center justify-between gap-2"><p className="text-xs">Graphics <span className="text-ink-subtle">{graphics.length} / {MAX_GRAPHICS_PER_CLIP}</span></p>
-      <Button size="sm" icon={<Plus size={13} />} disabled={disabled || full} onClick={() => onPick(true)}>Add at playhead</Button></div>
+      <Button size="sm" variant="primary" icon={<Plus size={13} />} disabled={disabled || full} onClick={onGallery} tooltip={full ? `A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics.` : 'Open the gallery and add a graphic at the playhead (G).'}>Add at playhead</Button></div>
+    {actions}{note}
     {list}
     {!g ? <p className="text-2xs text-ink-subtle">Select a graphic on the timeline or in the list to edit it.</p> : <fieldset disabled={disabled} className="space-y-3 border-t border-white/10 pt-3">
       <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">{templateInfo(g.template).label}</p>
         <Button size="sm" variant="ghost" icon={<Trash2 size={12} />} onClick={() => { onChange(removeGraphic(candidate, g.id)); onSelect(null) }}>Remove</Button></div>
+      <div className="flex items-center justify-between gap-2 text-2xs"><span className="text-ink-muted">Type</span>
+        <Select size="sm" aria-label="Graphic type" value={g.template} options={TYPE_OPTIONS} searchable
+          onChange={(to) => { if (to !== g.template) onChange(graphicsWithTemplate(candidate, g, to as GraphicTemplateId, words)) }} /></div>
       {(() => { const warning = graphicWarning(graphicCutFit(candidate, g), graphicClashes(graphics).has(g.id), g.placement); return warning && <p role="note" className="text-2xs text-warning">{warning}</p> })()}
       {!graphicHasContent(g) && <p className="text-2xs text-warning">{g.template === 'logo' ? 'Choose an image to show it.' : g.template === 'browser_frame' ? 'Choose a screenshot or add a headline to show it.' : 'Add its words to show it.'}</p>}
       {graphicUsesImage(g.template) && <div className="space-y-2">

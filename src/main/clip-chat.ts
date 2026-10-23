@@ -143,7 +143,12 @@ Rules:
 - The member may point at the video (pins). "Put an arrow here" or "circle this": add_graphic with template highlight and the pin. "Move the graphic here": update_graphic with the pin. "Zoom in on this": set_layout_at with the pin. "Put the hook/caption here" can't move to a point: say where it can go.
 - Blurring or hiding part of the video isn't supported here: say so plainly and don't call a tool for it.
 - Camera + screen clips: "show only my screen here" is set_screen_layout screen over that part; "just me" is face; "back to the split" is screen_top.
-- Scenes (vertical clips): "put me in a card", "give the graphic room" or "show it big" is set_scene (stage or visual) over the graphic's time; "back to my face" is set_scene face.`
+- Scenes (vertical clips): "put me in a card", "give the graphic room" or "show it big" is set_scene (stage or visual) over the graphic's time; "back to my face" is set_scene face.
+- The member's message may end with an [Editor: …] note: where the playhead is (source ms) and which graphic is selected. Without a pin, "here" or "now" means the playhead and "this" or "it" means the selected graphic.
+- "Add a graphic here": add_graphic at the playhead, with the template that fits what is said there (a number: stat; steps or a list: list, staircase or another diagram; a key phrase: title or big_words), and only words said there.
+- "Make this a staircase" (or another template): update_graphic on the selected graphic with template; give items from what is said while it shows when its words don't fit the new template.
+- "Put the words behind me": update_graphic with depth behind on the selected graphic (or the text graphic at the playhead); if its template can't go behind, switch it to big_words with up to 3 of its words.
+- "Suggest graphics for this clip": add 3 to 5 graphics where they help most, each timed to its words, only words and numbers said in the clip, never covering each other.`
 
 function rangeLabel(segment: { start_ms: number; end_ms: number }, c: CandidateEdit): string {
   const start = c.ranges[0][0], end = c.ranges[c.ranges.length - 1][1]

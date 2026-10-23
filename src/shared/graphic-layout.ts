@@ -142,8 +142,14 @@ export function graphicStyle(candidate: Pick<CandidateEdit, 'hook'>, graphic?: P
   // Diagrams light up in green unless the graphic has its own color (the member can pick the brand color).
   const color = isHexColor(own) ? own.toUpperCase() : graphic?.template && isDiagram(graphic.template) ? DIAGRAM_ACCENT
     : look?.look === 'brand' && isHexColor(look.color) ? look.color.toUpperCase() : GRAPHIC_DEFAULT_COLOR
-  const font = look && HEADLINE_FONTS.some((f) => f.id === look.font) ? look.font : 'clean'
+  const font = graphicOwnFont(graphic) ?? (look && HEADLINE_FONTS.some((f) => f.id === look.font) ? look.font : 'clean')
   return { color, font }
+}
+
+/** A graphic's own font (its `font` field, one of the hook fonts), or null: it follows the hook. */
+export function graphicOwnFont(graphic?: Pick<EditorGraphic, 'fields'>): string | null {
+  const own = graphic?.fields.font
+  return own && HEADLINE_FONTS.some((f) => f.id === own) ? own : null
 }
 
 /** Where an Automatic run's handle sits (top or bottom corner), or null. */
@@ -198,6 +204,7 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
   const fields = { ...graphic.fields }
   delete fields.image
   delete fields.color
+  delete fields.font
   delete fields.item_ms
   delete fields.word_ms
   // Item and word reveal times (source ms from the graphic's start) on the finished clip's clock.

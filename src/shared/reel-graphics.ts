@@ -18,7 +18,7 @@
  */
 import { chatFail as fail, chatPlainText } from './chat-core'
 import { checkHighlightFields } from './chat-point'
-import { graphicBandSize, graphicBox, GRAPHIC_DEFAULT_COLOR, outputSize, type GraphicFrame } from './graphic-layout'
+import { graphicBandSize, graphicBox, graphicOwnFont, GRAPHIC_DEFAULT_COLOR, outputSize, type GraphicFrame } from './graphic-layout'
 import { HEADLINE_FONTS, isHexColor, type HeadlineLook } from './headline-look'
 import { DIAGRAM_ACCENT, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, isDiagram, graphicDepth, MAX_GRAPHICS_PER_CLIP, clampGraphicMs, templateInfo, graphicHasContent, parseGraphics, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from './motion-graphics'
 
@@ -39,7 +39,7 @@ export function reelGraphicStyle(look: HeadlineLook | null | undefined, graphic?
   const own = graphic?.fields.color
   // Diagrams light up in green unless they have their own color.
   const color = isHexColor(own) ? own.toUpperCase() : graphic?.template && isDiagram(graphic.template) ? DIAGRAM_ACCENT : look?.look === 'brand' && isHexColor(look.color) ? look.color.toUpperCase() : GRAPHIC_DEFAULT_COLOR
-  const font = look && HEADLINE_FONTS.some((f) => f.id === look.font) ? look.font : 'clean'
+  const font = graphicOwnFont(graphic) ?? (look && HEADLINE_FONTS.some((f) => f.id === look.font) ? look.font : 'clean')
   return { color, font }
 }
 
@@ -49,6 +49,7 @@ export function reelGraphicSpec(graphic: Pick<EditorGraphic, 'template' | 'field
   const fields = { ...graphic.fields }
   delete fields.image
   delete fields.color
+  delete fields.font
   // On a reel a diagram sits over the video: on its blue panel.
   if (isDiagram(graphic.template)) fields.panel = 'on'
   return { template: graphic.template, fields, width, height, duration_ms: Math.round(durationMs), box: graphicBox(graphic.placement, frame, graphicBandSize(graphic)), placement: graphic.placement,
