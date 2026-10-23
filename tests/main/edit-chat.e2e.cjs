@@ -187,10 +187,12 @@ test('Edit my recording: a chat request cuts a word and adds a stat graphic, Und
   await page.getByText('Your reel is ready').waitFor({ timeout: 300000 })
   const run = fs.readdirSync(library).find((name) => /^edit-[0-9a-f-]{36}$/.test(name))
   const reel = path.join(library, run, 'clip_00.mp4')
-  const bundle = JSON.parse(fs.readFileSync(path.join(library, run, '.edit', 'clip_00', 'edit.json'), 'utf8'))
-  assert.equal(bundle.graphics.length, 1)
-  assert.ok(bundle.graphics[0].start_ms < 300, `the graphic starts with the hook's first word (${bundle.graphics[0].start_ms} ms)`)
-  assert.equal(fs.readdirSync(path.join(library, run, '.graphics', 'reel')).filter((n) => n.endsWith('.mov')).length, 1)
+  // The reel is a clip editor project: the chat's stat is one of its graphics (with the plan's own), baked by the editor.
+  const project = JSON.parse(fs.readFileSync(path.join(library, run, 'editor-project.json'), 'utf8'))
+  const stats = project.candidates[0].graphics.filter((g) => g.template === 'stat')
+  assert.equal(stats.length, 1)
+  assert.ok(stats[0].at_ms < 300, `the graphic starts with the hook's first word (${stats[0].at_ms} ms)`)
+  assert.equal(project.candidates[0].status, 'baked')
   if (process.env.BRIDGECLIP_E2E_SHOTS) {
     for (const [name, seconds] of [['edit-reel-graphic.png', 1.0], ['edit-reel-after-graphic.png', 3.0]]) execFileSync(ffmpeg, ['-v', 'error', '-y', '-ss', String(seconds), '-i', reel, '-frames:v', '1', path.join(process.env.BRIDGECLIP_E2E_SHOTS, name)])
   }
