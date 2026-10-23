@@ -44,6 +44,7 @@ import { parseRemixRecompose } from './remix'
 import { assertMediaPath, authorizeMedia } from './security'
 import { getSettingsForBridge, loadSettings, vocabularyTerms } from './settings-store'
 import { resolveBinary } from './tools'
+import { beatFrame } from './beat-stills'
 
 // ---------------------------------------------------------------------------
 // Edit my recording: transcribe (Scribe v2 through OpenRouter, the usual
@@ -99,6 +100,22 @@ function graphicsRegister(): { register?: string } {
 export function onEditStatus(listener: (status: EditStatus) => void): void { notify = listener }
 export function onEditSpend(recorder: SpendRecorder): void { recordSpend = recorder }
 export function editStatus(): EditStatus | null { return run?.status ?? null }
+
+/**
+ * The beat sheet: a still of a clip (by its index in the run's sources) at `ms` into it, for a beat's card. Only
+ * while the run is in review (or being made); the frame is cached in the run's .work/beats/ (removed with .work).
+ */
+export async function editBeatFrame(src: unknown, ms: unknown): Promise<string> {
+  const current = run
+  if (!current?.status.plan || (current.status.phase !== 'review' && current.status.phase !== 'rendering')) throw new Error('Open your edit’s review first.')
+  const sources = current.status.sources
+  if (typeof src !== 'number' || !Number.isInteger(src) || src < 0 || src >= sources.length) throw new Error('Invalid frame')
+  const source = sources[src]
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0 || ms > (source.seconds + 1) * 1000) throw new Error('Invalid frame')
+  // A frame just before the end, never past it (a seek past the end gives no picture).
+  const at = Math.max(0, Math.min(Math.round(ms), Math.round(source.seconds * 1000) - 120))
+  return authorizeMedia(await beatFrame(join(current.status.folder, '.work', 'beats'), source.proxy ?? source.path, at))
+}
 /** The run folder being made right now (the Library leaves it alone). */
 export function editFolderInUse(): string | null {
   return run && (run.status.phase === 'transcribing' || run.status.phase === 'planning' || run.status.phase === 'rendering' || run.status.phase === 'review') ? run.status.folder : null

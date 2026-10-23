@@ -45,7 +45,7 @@ export function galleryPreview(id: GraphicTemplateId, style: { color: string; fo
   return { template: id, fields, width, height, duration_ms: isDiagram(id) ? 4200 : 2600, box: { top: .06, bottom: .94 }, placement: 'middle', ...style, ...(isDiagram(id) ? { color: DIAGRAM_ACCENT } : {}) }
 }
 
-export function GraphicGallery({ templates, where, style, prefill, prefillEffect, full, limitNote, looks = false, onPick, onClose }: {
+export function GraphicGallery({ templates, where, style, prefill, prefillEffect, full, limitNote, looks = false, title = 'Add a graphic', onPick, onClose }: {
   templates: readonly GalleryTemplate[]
   /** Where it goes, in words ("at 0:03.2, on “three things”"). */
   where: string
@@ -59,6 +59,8 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
   limitNote: string
   /** Offer each template's looks (GRAPHIC_VARIANTS) as small buttons under its tile. */
   looks?: boolean
+  /** The dialog's title (the beat sheet swaps a visual: "Swap the visual"). */
+  title?: string
   /** `look`: the look picked (GRAPHIC_VARIANTS), or for an effect (template 'fx') the effect's id. */
   onPick: (template: GraphicTemplateId, look?: string) => void
   onClose: () => void
@@ -87,11 +89,11 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
   const first = groups[0]?.items[0]
   const firstEffect = effectGroups[0]?.items[0]
   const filled = Object.values(words).some((f) => Object.keys(f).length > 0) || Object.values(effectWords).some((f) => Object.keys(f).length > 0)
-  return <Dialog aria-label="Add a graphic" panelClassName="graphic-gallery max-w-[980px] h-[min(780px,100%)]" onBackdropMouseDown={onClose}
+  return <Dialog aria-label={title} panelClassName="graphic-gallery max-w-[980px] h-[min(780px,100%)]" onBackdropMouseDown={onClose}
     onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose() } }}>
     <header className="graphic-gallery-head">
       <div className="min-w-0">
-        <h2 className="graphic-gallery-title">Add a graphic</h2>
+        <h2 className="graphic-gallery-title">{title}</h2>
         <p className="text-2xs text-ink-subtle">Starts {where}. {filled ? 'Each one starts with the words you say there; you can change them after.' : 'You add the words next; the previews use sample words.'}</p>
       </div>
       <label className="graphic-gallery-search"><Search size={14} aria-hidden />

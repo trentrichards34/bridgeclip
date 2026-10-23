@@ -227,6 +227,15 @@ test('main keeps the prefs in userData: last style, presets (save, replace, rena
   assert.equal(prefs.notifyOnFinish, false)
   assert.throws(() => main.saveAppPrefs({ supportLink: 'http://insecure.example.com' }), /https/)
   assert.throws(() => main.saveAppPrefs({ notifyOnFinish: 'no' }), /notification/)
+  // The beat sheet before an edited reel is made: ask (the default), always show it, or skip it; anything else is refused.
+  assert.equal(prefs.beatSheet, 'ask')
+  prefs = main.saveAppPrefs({ beatSheet: 'always' })
+  assert.equal(prefs.beatSheet, 'always')
+  assert.equal(prefs.supportLink, 'help@example.com', 'other preferences stay')
+  assert.throws(() => main.saveAppPrefs({ beatSheet: 'sometimes' }), /beat sheet/)
+  assert.equal(main.readMemberPrefs().beatSheet, 'always')
+  assert.equal(main.saveAppPrefs({ beatSheet: 'skip' }).beatSheet, 'skip')
+  assert.equal(shared.parseMemberPrefs({ beatSheet: 'later' }).beatSheet, 'ask', 'an unknown value reads as the default')
 
   // A fresh start reads the same file; a broken file loads as defaults.
   const again = load('main/member-prefs.ts', { electron: { app: { getPath: () => userData } } })

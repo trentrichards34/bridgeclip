@@ -140,10 +140,20 @@ export interface MemberPrefs {
    * the brand of the last Create style.
    */
   defaultBrandId: string | null
+  /** Before each edited reel is made: ask whether to see the beat sheet first, always show it, or skip it. */
+  beatSheet: BeatSheetChoice
+}
+
+/** Edit my recording's beat sheet before the reel is made (beat-sheet.ts). */
+export const BEAT_SHEET_CHOICES = ['ask', 'always', 'skip'] as const
+export type BeatSheetChoice = (typeof BEAT_SHEET_CHOICES)[number]
+export const DEFAULT_BEAT_SHEET_CHOICE: BeatSheetChoice = 'ask'
+export function isBeatSheetChoice(value: unknown): value is BeatSheetChoice {
+  return typeof value === 'string' && (BEAT_SHEET_CHOICES as readonly string[]).includes(value)
 }
 
 /** The app preferences Settings and the setup checklist can change. */
-export type AppPrefsUpdate = Partial<Pick<MemberPrefs, 'supportLink' | 'notifyOnFinish' | 'setupChecklistDismissed' | 'sampleVideoLink' | 'defaultBrandId'>>
+export type AppPrefsUpdate = Partial<Pick<MemberPrefs, 'supportLink' | 'notifyOnFinish' | 'setupChecklistDismissed' | 'sampleVideoLink' | 'defaultBrandId' | 'beatSheet'>>
 
 export const MAX_PRESETS = 30
 export const MAX_PRESET_NAME = 40
@@ -162,7 +172,7 @@ export const REMIX_STYLE_KEYS = [
   'momentPip', 'momentCamera', 'music', 'musicTrack', 'voiceCleanup', 'brollSource'
 ] as const satisfies readonly (keyof RemixFormStyle)[]
 
-export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE }, defaultBrandId: null }
+export const DEFAULT_MEMBER_PREFS: MemberPrefs = { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: { ...DEFAULT_PROFILE }, defaultBrandId: null, beatSheet: DEFAULT_BEAT_SHEET_CHOICE }
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -358,7 +368,7 @@ export function parseSampleVideoLink(value: unknown): string {
 }
 
 export function parseMemberPrefs(value: unknown): MemberPrefs {
-  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: readProfile(null), defaultBrandId: null }
+  if (!record(value)) return { create: {}, remix: {}, presets: { create: [], remix: [] }, supportLink: '', notifyOnFinish: true, setupChecklistDismissed: false, sampleVideoLink: '', profile: readProfile(null), defaultBrandId: null, beatSheet: DEFAULT_BEAT_SHEET_CHOICE }
   const presets = record(value.presets) ? value.presets : {}
   const create = parseCreateStyle(value.create)
   return {
@@ -370,7 +380,8 @@ export function parseMemberPrefs(value: unknown): MemberPrefs {
     setupChecklistDismissed: value.setupChecklistDismissed === true,
     sampleVideoLink: sampleVideoTarget(value.sampleVideoLink) ?? '',
     profile: readProfile(value.profile),
-    defaultBrandId: 'defaultBrandId' in value ? (isBrandId(value.defaultBrandId) ? value.defaultBrandId : null) : create.brandIdentityId ?? null
+    defaultBrandId: 'defaultBrandId' in value ? (isBrandId(value.defaultBrandId) ? value.defaultBrandId : null) : create.brandIdentityId ?? null,
+    beatSheet: isBeatSheetChoice(value.beatSheet) ? value.beatSheet : DEFAULT_BEAT_SHEET_CHOICE
   }
 }
 

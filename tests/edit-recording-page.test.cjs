@@ -15,7 +15,9 @@ const bundled = buildSync({
       export { useEditRecordingStore } from './src/renderer/store/use-edit-recording-store';
       export { isCreateOutput } from './src/renderer/components/ClipList';
       export { GraphicForm as ReelGraphicForm } from './src/renderer/components/ReelGraphics';
-      export { EditProgressView } from './src/renderer/components/EditProgressView';`,
+      export { EditProgressView } from './src/renderer/components/EditProgressView';
+      export { BeatSheet } from './src/renderer/components/BeatSheet';
+      export { initialDecisions } from './src/shared/edit-recording';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
   },
@@ -29,7 +31,7 @@ const pending = () => new Promise(() => {})
 globalThis.window = { bridgeclip: { edit: { status: pending, onStatus: () => () => {} }, brandIdentities: { list: pending }, settings: { load: pending } } }
 const mod = { exports: {} }
 new Function('module', 'exports', 'require', bundled)(mod, mod.exports, require)
-const { EditRecordingPage, EditReview, lookFromBrand, transcriptLines, parseEditPlan, useSettingsStore, useEditRecordingStore, isCreateOutput, ReelGraphicForm, EditProgressView } = mod.exports
+const { EditRecordingPage, EditReview, lookFromBrand, transcriptLines, parseEditPlan, useSettingsStore, useEditRecordingStore, isCreateOutput, ReelGraphicForm, EditProgressView, BeatSheet, initialDecisions } = mod.exports
 
 function staticRender(element) {
   const original = React.useSyncExternalStore
@@ -83,6 +85,31 @@ test('the review: cut words are struck through and can be kept, the hook opens i
   assert.match(html, /aria-checked="true"[^>]*>Teaching</)
   assert.doesNotMatch(html, /as the hook text appears/)
   assert.match(html, /Make my reel/)
+  // The beat sheet is one click away: a view toggle at the top and a button by the on-screen extras.
+  assert.match(html, /aria-label="Review view"/)
+  assert.match(html, /aria-checked="true"[^>]*>Your edit</)
+  assert.match(html, />Beat sheet</)
+  assert.match(html, /See the beat sheet/)
+})
+
+test('the beat sheet: numbered beats with what shows, the words said, the sound and the actions', () => {
+  const look = { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'white', color: '#FFFFFF', font: 'clean' }, showHandle: false }
+  const decisions = { ...initialDecisions(PLAN), popups: [{ id: 0, on: true, text: 'coaches' }], graphics: [{ id: 'gaaaaaaa', template: 'fx', word: 4, duration_ms: 3000, placement: 'top', fields: { effect: 'count-up', value: '40' }, origin: 'member' }] }
+  const sources = [{ path: '/a/take-1.mp4', name: 'take-1.mp4', seconds: 2 }, { path: '/a/take-2.mp4', name: 'take-2.mp4', seconds: 4 }]
+  const html = staticRender(React.createElement(BeatSheet, { runId: 'r1', plan: PLAN, decisions, look, brand: null, sources, images: [], disabled: false, chatState: decisions, chatReady: false,
+    choice: 'ask', onChoice: () => {}, onChange: () => {} }))
+  assert.match(html, /Beat sheet/)
+  assert.match(html, /3 beats · stills 0 of 3 ready/)
+  assert.match(html, /aria-label="Beat 1"[^>]*data-beat="hook"/)
+  assert.match(html, /Hook text: “Here is why”/)
+  assert.match(html, /aria-label="Beat 3"[^>]*data-beat="g:gaaaaaaa"/)
+  assert.match(html, /Count up: 40/)
+  assert.match(html, /“undercharge\.”/)
+  assert.match(html, /Sound: Swipe/)
+  for (const action of ['Keep beat 2', 'Remove beat 2', 'Swap the visual of beat 3', 'Edit the text of beat 3', 'Move beat 3 a word earlier', 'Preview motion of beat 3', 'Add a note to beat 3']) assert.match(html, new RegExp(`aria-label="${action}"`))
+  assert.match(html, /aria-checked="true"[^>]*>Ask me</)
+  assert.match(html, />Always show it</)
+  assert.match(html, />Skip it</)
 })
 
 test('transcript lines split at sentence ends and take changes; a brand’s look starts the review', () => {
