@@ -20,6 +20,7 @@ import { createTimeline } from 'animejs'
 import './graphics.css'
 import { ICONS } from './icons'
 import { bigWordsTemplate } from './big-words'
+import { ctaTemplate } from './cta'
 import { chapterTemplate, compareMarksTemplate, funnelTemplate, growthTemplate, ideaHubTemplate, journeyTemplate, staircaseTemplate } from './diagrams'
 import {
   accentWords, browserHighlights, cardWords, formatStatValue, graphicIcons, graphicItems, graphicItemTimes, graphicWordTimes, highlightPoint, orbitNodes, parseStatValue,
@@ -804,6 +805,9 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
       tl.add(pill, { scale: [1.05, 1], duration: 520, ease: 'inOutSine' }, tin + 1320)
     }
   },
+
+  // The speaker's call to action on a button a pointer taps (cta.ts: worked out per frame, like Big words).
+  link_cta(b) { ctaTemplate(b) },
 
   // Huge words in the scene (big-words.ts): sized and animated on their own, outside the band's card layout.
   big_words(b) { bigWordsTemplate(b) },

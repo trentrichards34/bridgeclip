@@ -48,9 +48,11 @@ TEMPLATE_FIELDS = {
     'idea_hub': ('text', 'items', 'icon'), 'compare_marks': ('items', 'notes', 'wrong'), 'growth': ('title', 'items', 'style'),
 }
 # Templates a saved run may carry (the editor's other templates are never automatic).
-SAVED_TEMPLATES = AUTO_TEMPLATES + ('browser_frame', 'big_words', 'chapter')
+SAVED_TEMPLATES = AUTO_TEMPLATES + ('browser_frame', 'big_words', 'chapter', 'link_cta')
 SAVED_FIELDS = {**TEMPLATE_FIELDS, 'browser_frame': ('domain', 'title', 'accent', 'subline'), 'big_words': ('text', 'style', 'vertical', 'motion'),
-                'chapter': ('label', 'title', 'style'), 'growth': ('title', 'items', 'style')}
+                'chapter': ('label', 'title', 'style'), 'growth': ('title', 'items', 'style'),
+                # The spoken call to action (spoken_cta.py): added after the planner's cards, never planned.
+                'link_cta': ('text', 'where', 'kind', 'lead')}
 ALL_FIELDS = ('value', 'label', 'text', 'title', 'items', 'before', 'after', 'author', 'name', 'role',
               'accent', 'subline', 'final', 'phrase', 'icons', 'keyword', 'lead', 'notes', 'wrong', 'icon')
 # The newer templates are held to every word (the older ones to most words, as before).

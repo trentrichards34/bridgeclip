@@ -1920,6 +1920,15 @@ async def render_edit(config: dict, progress: Progress) -> dict:
             "loudness": measured, "cost_usd": round(broll_cost, 6)}
 
 
+def _face_of(video: str) -> Optional[tuple]:
+    """The speaker's face in the reel (x, y, w, h fractions), or None: where the call to action graphic covers it least."""
+    try:
+        from clip_engine.services.remix_service import find_face
+        return find_face(video)
+    except Exception:  # noqa: BLE001 - placement is a nicety
+        return None
+
+
 async def finish_as_project(config: dict, root: str, work: str, folder: str, base: str, pieces: list[Piece], timed: list, total: float,
                             look: Look, measured: dict, broll_cost: float, warnings: list[str], progress: Progress,
                             screens: Optional[set[int]] = None) -> dict:
@@ -1968,9 +1977,22 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
     graphics, notes = ed.editor_graphics(editor.get("graphics") or [], timed, total_ms - offset_ms, options, offset_ms, popups,
                                          editor.get("pins") or [])
     warnings.extend(notes)
+    # The call to action the speaker says (the plan's span, else found in the words) gets its graphic, on the face.
+    said_cta = None
+    if options["motion"]:
+        from clip_engine.services.spoken_cta import edit_cta, with_cta
+        extras = getattr(look, "look_extras", ()) or ()
+        keyword = editor.get("cta_keyword") or getattr(look, "look_extras_keyword", "") or ""
+        cta = config.get("cta")
+        said_cta = edit_cta(timed, (cta.start, cta.end) if isinstance(cta, Span) else None, total_ms - offset_ms, offset_ms, keyword,
+                            "comment_box" in extras and bool(keyword), {g["id"] for g in graphics},
+                            await asyncio.to_thread(_face_of, target))
+        graphics = with_cta(graphics, said_cta)
     scenes: list[dict] = []
     if options["stage"]:
         avoid = ed.screen_windows(timed, config["words"], screens or set(), offset_ms)
+        if said_cta:
+            avoid.append((said_cta["at_ms"], said_cta["at_ms"] + said_cta["duration_ms"]))
         # And wherever no face shows for a while (a screen or a page filmed mid-take, b-roll).
         avoid += await asyncio.to_thread(ed.faceless_windows, target, offset_ms, total_ms)
         scenes = ed.editor_scenes(graphics, total_ms, editor.get("brand_color"), avoid)

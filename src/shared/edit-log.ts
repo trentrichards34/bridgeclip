@@ -104,6 +104,7 @@ export function graphicPhrase(g: Pick<EditorGraphic, 'template' | 'fields'>): st
     case 'icon_pop': return 'icon row'
     case 'headline_pill': return 'headline'
     case 'comment_cta': return f.keyword?.trim() ? `“${short(f.keyword, 24)}” comment prompt` : 'comment prompt'
+    case 'link_cta': return f.text?.trim() ? `“${short(f.text, 24)}” call to action` : 'call to action'
     case 'big_words': return f.text?.trim() ? `“${short(f.text, 24)}” big words` : 'big words'
     case 'orbit': return f.text?.trim() ? `“${short(f.text, 24)}” orbit` : 'orbit'
     case 'feature_tile': { const first = graphicItems(f.items)[0]; return first ? `“${short(first, 24)}” feature tile` : 'feature tile' }

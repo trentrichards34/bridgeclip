@@ -30,6 +30,7 @@ from clip_engine.services.broll_library import load_catalog, parse_ai_settings, 
 from clip_engine.services.broll_service import PexelsKeyRejected, prepare_broll
 from clip_engine.services.hook_preview import pick_teaser
 from clip_engine.services.auto_graphics import fit_to_clip, on_stage, stage_scenes_for, write_graphics_plan
+from clip_engine.services.spoken_cta import clear_scenes, create_cta, with_cta
 from clip_engine.services.stage_scenes import auto_look
 from clip_engine.error_policy import NoClipCandidatesError, NoNewMomentsError, NoRequestedMomentsError, safe_failure_code, safe_processing_error
 from clip_engine.services.caption_translation import CaptionTranslator, language_name
@@ -958,6 +959,10 @@ class AIClippingPipeline:
                                 # The brand grid and the arch card with a brand color; the light backdrop otherwise.
                                 backdrop, card = auto_look(stage_brand(request))
                                 source_scenes = stage_scenes_for(planned_cards, segment.start_time_ms, segment.end_time_ms, backdrop, card)
+                                # The speaker's face stays on screen for the call to action they say (its graphic sits below).
+                                said_cta = create_cta(transcription_result.segments, [(segment.start_time_ms, segment.end_time_ms)])
+                                if said_cta:
+                                    source_scenes = clear_scenes(source_scenes, (said_cta['at_ms'], said_cta['at_ms'] + said_cta['duration_ms']))
                         except Exception as exc:
                             logger.warning(f"Stage layouts skipped for clip {i + 1}: {exc}")
                     render_request = RenderRequest(
@@ -1031,6 +1036,9 @@ class AIClippingPipeline:
                             graphics = fit_to_clip(segment.graphics or [], transcription_result.segments,
                                                    getattr(render_result, "kept_source_ms", []) or [], request.video_speed,
                                                    graphics_options(request))
+                            # The call to action the speaker says gets its graphic (even when the planner left it out).
+                            graphics = with_cta(graphics, create_cta(transcription_result.segments, getattr(render_result, "kept_source_ms", []) or [],
+                                                                     request.cta_keyword or '', bool(request.cta_keyword), {g['id'] for g in graphics}))
                         except Exception as exc:
                             logger.warning(f"Motion graphics skipped for clip {i + 1}: {exc}")
                     drawn_scenes = list(getattr(render_result, "stage_scenes", None) or []) if graphics else []
