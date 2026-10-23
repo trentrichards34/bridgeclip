@@ -19,6 +19,7 @@ import { MAX_EDIT_GRAPHICS, parseEditGraphics, type EditGraphic } from './reel-g
 import { parseAudioSkills } from './skills'
 import { parseClipOrder, type ClipOrderMode, type EditMode, type ShotType } from './combine-clips'
 import { newGraphic } from './motion-graphics'
+import { isRegister, type Register } from './register'
 import { newEditGraphic } from './reel-graphics'
 import type { ScreenChoice } from './screen-pair'
 import { isSoundRegister, type SoundRegister } from './sound-design'
@@ -106,6 +107,8 @@ export interface EditPlan {
   combine?: EditCombine
   /** The automatic direction: the motion graphics the plan suggests, each on the word where it starts (origin 'auto'). */
   graphics?: EditGraphic[]
+  /** The style the graphics were planned in (register.ts: the member's, else read from the words); the review's Style starts there. */
+  register?: Register
   /**
    * The same recording made before: whether its last headline was kept on the first hook (it must use only words
    * said in this recording), and the AI's new headline for that hook (offered as "New headline").
@@ -240,7 +243,7 @@ export interface EditDecisions {
   screen?: ScreenChoice
   /** Sound effects on the reel's graphics, scenes and cuts (Skills; missing: on unless every planned sound is off). */
   soundEffects?: boolean
-  /** How much sound plays (sound-design.ts SOUND_REGISTERS; missing: teaching). */
+  /** The style (register.ts): how much sound plays, and with Minimal only numbers, the hook and the call to action keep their automatic graphics (missing: teaching). */
   soundStyle?: SoundRegister
 }
 
@@ -307,7 +310,8 @@ export function initialDecisions(plan: EditPlan, look: EditLook = DEFAULT_EDIT_L
   const proof = plan.combine ? proofGraphics(plan).filter((g) => !planned.some((p) => p.word === g.word)) : []
   const graphics = [...planned.map((g) => ({ ...g, fields: { ...g.fields } })), ...proof].sort((a, b) => a.word - b.word).slice(0, MAX_EDIT_GRAPHICS)
   const combine = plan.combine ? { clipOrder: [...plan.combine.startOrder], transitions: false } : {}
-  const direction = plan.graphics !== undefined ? { motionGraphics: true, stageLayouts: true } : {}
+  // The plan's style (one choice for graphics and sound) is where the review's Style starts.
+  const direction = plan.graphics !== undefined ? { motionGraphics: true, stageLayouts: true, ...(plan.register ? { soundStyle: plan.register } : {}) } : {}
   return applyRecipe(plan, {
     cut: plan.words.flatMap((word, i) => (word.cut ? [i] : [])),
     hookId: hook?.id ?? null,
@@ -533,7 +537,8 @@ export function parseEditPlan(value: unknown, sources: number): EditPlan | null 
   const keptHook = record(keptRaw) && typeof keptRaw.kept === 'boolean' && hooks.length
     ? { kept: keptRaw.kept, text: (text(keptRaw.text, MAX_HOOK_TEXT_CHARS) ?? '').trim(), fresh: (text(keptRaw.fresh, MAX_HOOK_TEXT_CHARS) ?? '').trim() } : null
   return { words, hooks, hook, cta: span(value.cta), popups, sounds, planned: value.planned === 'basic' ? 'basic' : 'ai', notes: lines(value.notes, 6), warnings: lines(value.warnings, 4),
-    ...(combine ? { combine } : {}), ...(graphics ? { graphics } : {}), ...(keptHook && (!keptHook.kept || keptHook.text) ? { keptHook } : {}) }
+    ...(combine ? { combine } : {}), ...(graphics ? { graphics } : {}), ...(keptHook && (!keptHook.kept || keptHook.text) ? { keptHook } : {}),
+    ...(isRegister(value.register) ? { register: value.register } : {}) }
 }
 
 /** The plan's combine part (engine: ai_order, order_why, proof; or already parsed), checked; null when it isn't one. */

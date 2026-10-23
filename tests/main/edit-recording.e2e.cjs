@@ -207,7 +207,7 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   assert.equal(await page.getByLabel('Pop-up 1 text').inputValue(), '15 billion')
   await page.getByRole('switch', { name: 'Pop on “billion”' }).click()
   // Sound effects follow the graphics: how much plays starts at Teaching.
-  assert.equal(await page.getByRole('radiogroup', { name: 'How much sound' }).getByRole('radio', { name: 'Teaching' }).getAttribute('aria-checked'), 'true')
+  assert.equal(await page.getByRole('radiogroup', { name: 'Style' }).getByRole('radio', { name: 'Teaching' }).getAttribute('aria-checked'), 'true')
   await page.getByRole('switch', { name: 'End on your call to action' }).waitFor()
   // The automatic direction: the plan's graphic is on the strip, and Motion graphics and Stage layouts start on.
   assert.equal(await page.locator('[data-skill="motion_graphics"] [role="switch"]').getAttribute('aria-checked'), 'true')

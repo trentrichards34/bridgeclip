@@ -37,6 +37,7 @@ import { logger } from './logger'
 import { rememberHeadline, rememberRunHeadline, savedHeadline, sourcesKey } from './hook-memory'
 import { readMemberPrefs } from './member-prefs'
 import { isGraphicsRegister } from '../shared/look-extras'
+import { registerKeeps } from '../shared/register'
 import { openRouterBase } from './openrouter-media'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
 import { parseRemixRecompose } from './remix'
@@ -735,7 +736,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
   if (current.status.progress) current.status.progress = { ...current.status.progress, order: reelOrder ? [...reelOrder] : null }
   publish(current, { phase: 'rendering', detail: 'Starting', percent: 1, error: null }, {
     ...(decisions.hookText.trim() ? { hook: decisions.hookText.replace(/\s+/g, ' ').trim().slice(0, 160) } : {}), cuts: cut.size,
-    popups: decisions.popups.filter((item) => item.on).length, graphics: current.status.screen ? 0 : (decisions.graphics ?? []).filter((g) => !cut.has(g.word) && (g.origin !== 'auto' || decisions.motionGraphics !== false)).length,
+    popups: decisions.popups.filter((item) => item.on).length, graphics: current.status.screen ? 0 : (decisions.graphics ?? []).filter((g) => !cut.has(g.word) && (g.origin !== 'auto' || decisions.motionGraphics !== false) && registerKeeps(g, decisions.soundStyle)).length,
     broll: Boolean(decisions.look.broll) && !current.status.screen })
   let brandMark: Awaited<ReturnType<typeof brandMarkForRun>>
   try {
@@ -827,7 +828,8 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     const motion = decisions.motionGraphics !== false
     const color = current.brand?.look?.color
     Object.assign(config, { editor: {
-      graphics: (decisions.graphics ?? []).map(({ id, template, word, duration_ms, placement, fields, origin, size, depth }) => ({ id, template, word, duration_ms, placement, fields,
+      // The style: Minimal keeps only the automatic graphics on numbers, the hook and the call to action.
+      graphics: (decisions.graphics ?? []).filter((g) => registerKeeps(g, decisions.soundStyle)).map(({ id, template, word, duration_ms, placement, fields, origin, size, depth }) => ({ id, template, word, duration_ms, placement, fields,
         ...(origin ? { origin } : {}), ...(size ? { size } : {}), ...(depth ? { depth } : {}) })),
       pins, motion, stage: motion && decisions.stageLayouts !== false,
       ...(typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color) ? { brand_color: color } : {}),

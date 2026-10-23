@@ -278,3 +278,15 @@ def test_the_prompts_carry_the_cue_map_and_a_compact_catalog():
     assert 'REGISTER: story' in edit and 'w12 money' in edit and 'about one graphic per 20 seconds' in edit
     # The catalog stays compact.
     assert len(gd.compact_catalog()) < 7000
+
+
+def test_the_plan_reports_its_register_for_the_one_style_setting():
+    from clip_engine.services import edit_recording as er
+    def say(text, start):
+        return [er.Word(t, round((start + i * 0.35) * 1000), round((start + i * 0.35 + 0.3) * 1000), 0) for i, t in enumerate(text.split())]
+    teach = say('We made $500 and spent $200 on ads. Step one, pick a niche. Step two, write the offer.', 0.5)
+    assert ed.plan_register(teach, [None] * len(teach)) == 'teaching'
+    story = say('I remember my mom crying in the kitchen that night. I felt so alone and scared back then. My dad never came home, I was heartbroken.', 0.5)
+    assert ed.plan_register(story, [None] * len(story)) == 'story'
+    # The member's choice wins.
+    assert ed.plan_register(story, [None] * len(story), {'register': 'minimal'}) == 'minimal'

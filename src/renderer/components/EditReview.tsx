@@ -23,7 +23,8 @@ import { SkillsPanel } from './SkillsPanel'
 import { ScreenChoicePanel } from './ScreenRecording'
 import { DEFAULT_SCREEN_CHOICE } from '../../shared/screen-pair'
 import { editSkillPatch, editSkillRows } from '../../shared/skills'
-import { DEFAULT_SOUND_REGISTER, SOUND_REGISTER_INFO, SOUND_REGISTERS } from '../../shared/sound-design'
+import { DEFAULT_SOUND_REGISTER, SOUND_REGISTERS } from '../../shared/sound-design'
+import { REGISTER_INFO, registerKeeps } from '../../shared/register'
 import { BrollSourcePicker, useBrollLibraryLoaded, useEffectiveBrollSource } from './BrollSourcePicker'
 import { useSettingsStore } from '../store/use-settings-store'
 import { hasBrandMark } from '../../shared/brand-kit'
@@ -138,6 +139,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
     const off = g.origin === 'auto' && decisions.motionGraphics === false
     return { ...rest, at, where: `on ${wordWhere(g.word)}`,
       problem: off ? 'Motion graphics is off in Skills, so this planned graphic won’t show.'
+        : !registerKeeps(g, decisions.soundStyle) ? 'The Minimal style keeps only numbers, the hook and the call to action, so this planned graphic won’t show.'
         : at === null ? 'Its word is cut, so it won’t show. Keep the word or start it on another one.' : card ? 'It plays during a half-screen graphic, so it will be left out. Move it after that one, or turn it off.' : null }
   })
   /** A pop-up on this word would play during a graphic (it gives way to it). */
@@ -469,13 +471,14 @@ export function EditReview({ status, brand, look, onLook, onError }: {
 
           {!screen && (
             <section className="mt-5 space-y-2" aria-labelledby="edit-sounds-title" data-testid="edit-sounds">
-              <h3 id="edit-sounds-title" className="text-sm font-semibold text-ink">Sound effects</h3>
+              <h3 id="edit-sounds-title" className="text-sm font-semibold text-ink">Style and sound effects</h3>
+              {/* One style for the graphics and the sound (register.ts). */}
+              <SettingRow title="Style" description={`${REGISTER_INFO[decisions.soundStyle ?? DEFAULT_SOUND_REGISTER].detail}${plan.register && plan.graphics ? ` The graphics were planned as ${REGISTER_INFO[plan.register].label}.` : ''}`}
+                  control={<Segmented size="sm" label="Style" value={decisions.soundStyle ?? DEFAULT_SOUND_REGISTER}
+                    options={SOUND_REGISTERS.map((id) => ({ value: id, label: REGISTER_INFO[id].label }))}
+                    onChange={(soundStyle) => setDecisions((current) => ({ ...current, soundStyle }))} />} />
               {soundEffectsOn(decisions) ? <>
                 <p className="text-2xs text-ink-subtle">Each sound lands as its graphic or scene comes in. Your own sounds (Settings → My sounds) play first.</p>
-                <SettingRow title="How much sound" description={SOUND_REGISTER_INFO[decisions.soundStyle ?? DEFAULT_SOUND_REGISTER].detail}
-                  control={<Segmented size="sm" label="How much sound" value={decisions.soundStyle ?? DEFAULT_SOUND_REGISTER}
-                    options={SOUND_REGISTERS.map((id) => ({ value: id, label: SOUND_REGISTER_INFO[id].label }))}
-                    onChange={(soundStyle) => setDecisions((current) => ({ ...current, soundStyle }))} />} />
                 {plan.sounds.flatMap((sound) => sound.at === 'title' ? [] : [{ ...sound, at: sound.at }]).map((sound) => {
                   // The plan's extras (its hook-text sound is the hook's own now).
                   const choice = decisions.sounds.find((item) => item.id === sound.id)

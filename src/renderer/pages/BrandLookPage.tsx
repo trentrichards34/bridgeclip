@@ -11,7 +11,8 @@ import {
   type HeadlineFont, type HeadlineLook, type HeadlineLookStyle, type HeadlineTextBg
 } from '../../shared/headline-look'
 import { IMAGE_CTA_SECONDS, type CtaSummary } from '../../shared/ctas'
-import { GRAPHICS_REGISTERS, LOOK_EXTRAS, type LookExtraId } from '../../shared/look-extras'
+import { LOOK_EXTRAS, type LookExtraId } from '../../shared/look-extras'
+import { REGISTERS, REGISTER_INFO } from '../../shared/register'
 import { BAR_HOOKS, COLOR_PRESETS, HOOK_LABELS, LOOK_HOOKS, captionName, fontName, toggleExtra, type BoardRows, type BoardStyle } from '../lib/style-board'
 import { CaptionSample, captionPreviewPreset, SCENE } from '../components/CaptionPresetPicker'
 import { CtaThumb, useCtaLibrary, CTA_HELP } from '../components/CtaPicker'
@@ -622,10 +623,10 @@ function CreateDefaults(): React.JSX.Element {
         </label>
       </div>
       <div className="space-y-1">
-        <p className="text-xs font-medium text-ink">How many graphics</p>
-        <Segmented label="How many graphics" size="sm" value={register ?? 'auto'} onChange={(value) => update({ register: value === 'auto' ? null : value })}
-          options={[{ value: 'auto', label: 'Auto' }, ...GRAPHICS_REGISTERS.map((r) => ({ value: r.id, label: r.label }))]} />
-        <p className="text-2xs text-ink-subtle">{register ? GRAPHICS_REGISTERS.find((r) => r.id === register)?.detail : 'Picked from what you say: a lesson gets more graphics, a personal story fewer.'} Used on Create and Edit my recording.</p>
+        <p className="text-xs font-medium text-ink">Style</p>
+        <Segmented label="Style" size="sm" value={register ?? 'auto'} onChange={(value) => update({ register: value === 'auto' ? null : value })}
+          options={[{ value: 'auto', label: 'Auto' }, ...REGISTERS.map((id) => ({ value: id, label: REGISTER_INFO[id].label }))]} />
+        <p className="text-2xs text-ink-subtle">{register ? REGISTER_INFO[register].detail : 'Picked from what you say: a lesson gets more graphics and sound, a personal story fewer.'} Sets how many graphics and how much sound, on Create and Edit my recording.</p>
       </div>
       <p className="text-2xs text-ink-subtle">Extras use your accent color when the look has one. Zoom is in Create’s Skills.</p>
     </Section>

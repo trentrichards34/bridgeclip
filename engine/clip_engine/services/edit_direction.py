@@ -288,6 +288,19 @@ def drops_meaning(graphic: dict, segments: Sequence[TranscriptSegment]) -> bool:
     return False
 
 
+def plan_register(words: Sequence[Any], marks: Sequence[Optional[str]], options: Optional[dict] = None) -> str:
+    """The reel's style register: the member's (options['register']), else read from the kept words (teaching or story)."""
+    options = options or {}
+    if options.get('register') in ('teaching', 'story', 'minimal'):
+        return options['register']
+    from clip_engine.services.graphics_director import detect_register, find_cues
+    keep = [m is None for m in marks]
+    offsets = virtual_offsets(words)
+    segments = kept_segments(words, keep, offsets)
+    kept_ms = sum(w.end_ms - w.start_ms for i, w in enumerate(words) if keep[i])
+    return detect_register(find_cues(segments), kept_ms) if segments else 'teaching'
+
+
 def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]], options: Optional[dict] = None,
                   avoid: Sequence[tuple[int, int]] = ()) -> list[dict]:
     """The planner's graphics, checked against the kept words, as word-anchored review graphics (origin 'auto').

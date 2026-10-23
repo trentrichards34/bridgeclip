@@ -349,7 +349,8 @@ def test_word_timed_cards_show_each_word_as_it_is_said_and_hold_after_the_last()
     g = {"template": "statement", "at_ms": 14000, "duration_ms": 2000, "placement": "top", "fields": {"text": "Skip the scraping completely."}}
     spans = word_spans(g, SAID)
     assert [a for a, _ in spans] == [14000, 14300, 14600, 14900]
-    [kept] = fit_to_clip([g], SAID, [(0, 26000)], 1.0, {})
+    # (Timed as placed: with the variety rules on, a lone plain statement would come out as a richer effect.)
+    [kept] = fit_to_clip([g], SAID, [(0, 26000)], 1.0, {"variety": False})
     assert kept["fields"]["word_ms"].split("\n") == ["0", "300", "600", "900"]
     # On screen until 700 ms after "completely." ends (15140).
     assert kept["at_ms"] + kept["duration_ms"] >= 15140 + 700
