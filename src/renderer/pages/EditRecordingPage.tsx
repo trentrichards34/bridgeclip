@@ -18,6 +18,7 @@ import { EditReview } from '../components/EditReview'
 import { FilmIdeas } from '../components/FilmIdeas'
 import { FriendlyError } from '../components/FriendlyError'
 import { ScreenRecordingPicker, type ScreenPick } from '../components/ScreenRecording'
+import { EditScreenshots, type ScreenshotPick } from '../components/EditScreenshots'
 import { screenOverlap } from '../../shared/screen-pair'
 import { PurposeFields } from '../components/PurposeFields'
 import type { ReferenceImage } from '../../shared/purpose'
@@ -79,6 +80,8 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const [importing, setImporting] = useState<ImportProgress[] | null>(null)
   // Camera + screen: a screen recording made with the (one) camera recording, and how they line up.
   const [screen, setScreen] = useState<ScreenPick | null>(null)
+  // Screenshots for the video: the automatic graphics show them where they're talked about.
+  const [screenshots, setScreenshots] = useState<ScreenshotPick[]>([])
   // The finished reel open in the clip editor (its run folder), or null.
   const [editing, setEditing] = useState<string | null>(null)
   // The brand and look are kept in a store, so leaving the page and coming back keeps them.
@@ -184,6 +187,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
       setStatus(await getApi().edit.start({ sources: listed.map((source) => source.path), brandIdentityId: brandId, ...(hookHint ? { hookHint } : {}),
         ...(combine ? { mode: 'combine' as const, order: orderMode } : {}), ...(lastHeadline && !keepHeadline ? { newHeadline: true } : {}),
         ...(withScreen && screen ? { screen: { path: screen.source.path, offsetMs: screen.offsetMs } } : {}),
+        ...(!withScreen && screenshots.length ? { screenshots: screenshots.map(({ path, box }) => ({ path, ...(box ? { box } : {}) })) } : {}),
         ...(purpose.trim() ? { purpose: purpose.replace(/\s+/g, ' ').trim() } : {}), ...(reference ? { referenceImage: reference.id } : {}) }))
     } catch (err) { setError(errorMessage(err)) } finally { setStarting(false) }
   }
@@ -295,6 +299,8 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
         <ScreenRecordingPicker camera={sources.length === 1 ? { path: sources[0].path, seconds: sources[0].seconds } : null} value={screen} onChange={setScreen}
           onError={setError} disabledReason={screenBlocked} />
       )}
+      {sources.length > 0 && <EditScreenshots value={screenshots} onChange={setScreenshots} onError={setError}
+        disabledReason={withScreen ? 'With a screen recording, your screen is the picture: screenshots aren’t added.' : null} />}
       {combine && sources.length > 1 && (
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <Segmented label="Clip order" value={orderMode} onChange={setOrderMode}

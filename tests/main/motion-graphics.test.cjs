@@ -340,6 +340,30 @@ test('a browser window or icon row draws without its picture when it has words; 
   assert.match(icons.spec.image, /^data:image\/png/)
 })
 
+test('an effect on the member’s pictures loads each one it needs into its render, or is not drawn', async (t) => {
+  const { dir, cleanup } = tempDir('bridgeclip-fx-picture-jobs-')
+  t.after(cleanup)
+  const { mod } = renderModule(t, dir)
+  const run = path.join(dir, 'run'); fs.mkdirSync(run)
+  const spec = (fields) => ({ template: 'fx', fields, width: 1080, height: 1920, duration_ms: 3000, box: { top: .1, bottom: .5 }, placement: 'middle', color: '#3B82F6', font: 'clean', size: 'stage' })
+  const win = { start_ms: 0, duration_ms: 3000 }
+  const pic = (bytes) => { const file = path.join(dir, `p${bytes}.png`); fs.writeFileSync(file, Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(bytes)])); return mod.importGraphicImage(run, file) }
+  const a = pic(64), b = pic(80)
+  // Without its picture (or with one that is gone) a browser screenshot isn't drawn.
+  assert.equal(mod.graphicJob(run, 'g-1', spec({ effect: 'browser-device-stage' }), win), null)
+  assert.equal(mod.graphicJob(run, 'g-2', spec({ effect: 'browser-device-stage', image: '0123456789abcdef.png' }), win), null)
+  const one = mod.graphicJob(run, 'g-3', spec({ effect: 'browser-device-stage', image: a }), win)
+  assert.match(one.spec.image, /^data:image\/png;base64,/)
+  // Both of a before and after's pictures, each changing the render's name.
+  const both = mod.graphicJob(run, 'g-4', spec({ effect: 'before-after-wipe', image: a, image_b: b }), win)
+  assert.match(both.spec.image_b, /^data:image\/png;base64,/)
+  assert.notEqual(both.key, mod.graphicJob(run, 'g-5', spec({ effect: 'before-after-wipe', image: b, image_b: a }), win).key)
+  assert.equal(mod.graphicJob(run, 'g-6', spec({ effect: 'before-after-wipe', image: a }), win), null)
+  // A paper tear draws its words without its (optional) picture.
+  const tear = mod.graphicJob(run, 'g-7', spec({ effect: 'torn-paper-rip', first: 'Old', second: 'New', image: '0123456789abcdef.png' }), win)
+  assert.ok(tear && !tear.spec.image && tear.spec.fields.image === '')
+})
+
 test('automatic item times: checked against the item count, moved onto the finished clip, and a visual scene gives a stage card more room', () => {
   assert.deepEqual(plainCopy(mg.graphicItemTimes({ item_ms: '0\n800\n1600' }, 3, 4000)), [0, 800, 1600])
   // One more for a crossed-out list's final line; otherwise the even beats (null).

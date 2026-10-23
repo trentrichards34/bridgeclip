@@ -10,11 +10,15 @@
  * words_said) checks exactly those; the member can type anything in the editor.
  */
 
-export type FxFieldKind = 'text' | 'number' | 'list' | 'choice'
+/**
+ * `image`: a picture the member adds (a run image name; the render loads it, see FxSlot); `region`: where on a picture
+ * (x, y, w, h as shares of it), for the hand-drawn mark. Neither is ever words on screen.
+ */
+export type FxFieldKind = 'text' | 'number' | 'list' | 'choice' | 'image' | 'region'
 export interface FxField {
   /** The graphic's field (snake_case). */
   key: string
-  /** The unit's variable it sets. */
+  /** The unit's variable it sets ('' for the adapter's own fields: pictures, the mark). */
   variable: string
   label: string
   kind: FxFieldKind
@@ -32,8 +36,16 @@ export interface FxField {
   sample?: string
   /** Never filled from what is said near it when the effect is added (a name: only the member types it). */
   manual?: boolean
+  /** Region fields: the picture field it is drawn on. */
+  on?: string
 }
-export type FxGroup = 'numbers' | 'words' | 'compare' | 'ideas' | 'screens' | 'ending'
+/**
+ * Where a picture goes in the unit: the children of the element matching `selector` (the unit's own slot), or the
+ * unit's host-level `<template data-slot="…">` (`template`), which the adapter hands it instead of the page's. The
+ * picture covers its slot (top-aligned for screenshots); `lit`: it catches the unit's light (light-sweep-pass).
+ */
+export interface FxSlot { field: string; selector?: string; template?: string; align?: 'top' | 'center'; lit?: boolean }
+export type FxGroup = 'media' | 'numbers' | 'words' | 'compare' | 'ideas' | 'screens' | 'ending'
 export type FxSound = 'whoosh' | 'pop' | 'tick' | 'riser' | 'none'
 export interface FxEffect {
   /** The unit's registry name (its vendored file). */
@@ -77,6 +89,16 @@ export interface FxEffect {
   cue?: { field: string; unit: 'word' | 'item'; variable?: string }
   /** When the unit's main beat lands (seconds; its syncPoint). */
   sync_s?: number
+  /** The member's pictures and where each goes (the effect needs them: never placed without them). */
+  media?: readonly FxSlot[]
+  /** Its box takes the shape of its picture (a photo effect: nothing around the picture). */
+  fit_media?: boolean
+  /** The unit leaves on its own at its end (the adapter doesn't shrink it away too). */
+  own_exit?: boolean
+  /** CreatorClips' own unit (src/renderer/graphics/fx/own/), remade from the HyperFrames one so it takes variables. */
+  own?: boolean
+  /** Fields of which at least one is needed besides the required ones (Paper tear: a picture or words under the sheet). */
+  either?: readonly string[]
 }
 
 const ACCENT = { accent: 'green' } as const
@@ -90,8 +112,71 @@ const num = (key: string, variable: string, label: string, sample: string, extra
   ({ key, variable, label, kind: 'number', said: true, sample, ...extra })
 const list = (key: string, variable: string, label: string, sample: string, separator = ',', extra: Partial<FxField> = {}): FxField =>
   ({ key, variable, label, kind: 'list', said: true, separator, max: 40, sample, ...extra })
+/** A picture the member adds; `sample` names the gallery's stand-in picture (src/renderer/graphics/fx/samples.ts). */
+const picture = (key: string, label: string, sample: string, extra: Partial<FxField> = {}): FxField =>
+  ({ key, variable: '', label, kind: 'image', said: false, required: true, sample, ...extra })
+/** The hand-drawn mark the member points with: a shape, and where on the picture (they drag it on the picture). */
+export const FX_MARK_SHAPES = ['circle', 'underline', 'arrow', 'box'] as const
+export type FxMarkShape = (typeof FX_MARK_SHAPES)[number]
+const mark = (on = 'image'): FxField[] => [
+  { key: 'mark', variable: '', label: 'Mark on the picture', kind: 'choice', said: false, options: [{ value: '', label: 'None' }, { value: 'circle', label: 'Circle' }, { value: 'underline', label: 'Underline' }, { value: 'arrow', label: 'Arrow' }, { value: 'box', label: 'Box' }] },
+  { key: 'mark_box', variable: '', label: 'Where the mark goes', kind: 'region', said: false, on }
+]
+/** Labels shown on a picture (a chip, a header): only what the speaker says, and never filled in for them. */
+const tag = (key: string, variable: string, label: string, sample: string): FxField => text(key, variable, label, sample, { max: 20, manual: true })
 
 export const FX_EFFECTS: readonly FxEffect[] = [
+  // Your screenshots and photos: never placed without the member's own pictures.
+  { id: 'browser-device-stage', label: 'Browser screenshot', detail: 'Your screenshot in a clean browser window. Circle or underline the part that matters.', group: 'media',
+    fields: [picture('image', 'Screenshot', 'page'), text('title', 'title', 'Address bar (as you say it)', '', { max: 40, manual: true }),
+      choice('chrome', 'chrome', 'Window', [['browser', 'Browser'], ['window', 'App window']]), ...mark()],
+    fixed: { accent: 'green' }, media: [{ field: 'image', template: 'browser-device-stage-screen', align: 'top' }], hide_empty: [{ field: 'title', selector: '.bds-pill, .bds-bartitle' }],
+    jobs: ['demonstrate', 'prove'], use_when: 'The speaker talks about a website, a page or a tool, and added a screenshot of it.', avoid_when: 'No screenshot was added: never an empty window.',
+    hold_s: 4, sound: 'whoosh', default_ms: 5000, size: 'stage', aspect: 1.55, sync_s: .9 },
+  { id: 'device-frame-stage', label: 'Phone screenshot', detail: 'Your phone screenshot in a plain phone that rises in and settles.', group: 'media',
+    fields: [picture('image', 'Phone screenshot', 'phone'), choice('body', 'body', 'Phone color', [['graphite', 'Graphite'], ['silver', 'Silver']]), ...mark()],
+    fixed: { device: 'phone', cutout: 'none' }, media: [{ field: 'image', selector: '[data-screen-slot]', align: 'top' }], own_exit: true,
+    jobs: ['demonstrate', 'prove'], use_when: 'The speaker talks about an app, a post or a message on their phone, and added a phone screenshot.', avoid_when: 'No phone screenshot was added.',
+    hold_s: 4, sound: 'whoosh', default_ms: 5000, size: 'stage', aspect: .62, sync_s: 1.08 },
+  { id: 'before-after-wipe', label: 'Before & after', detail: 'Your after picture wipes across your before picture, a divider between them.', group: 'media',
+    fields: [picture('image', 'Before picture', 'before'), picture('image_b', 'After picture', 'after'), tag('label_a', 'label_a', 'Before label (as you say it)', 'Before'), tag('label_b', 'label_b', 'After label (as you say it)', 'After')],
+    fixed: { accent: 'green', rest_split: 50 }, media: [{ field: 'image', selector: '.baw-slot[data-slot="before"]' }, { field: 'image_b', selector: '.baw-slot[data-slot="after"]' }],
+    hide_empty: [{ field: 'label_a', selector: '.baw-chip-a' }, { field: 'label_b', selector: '.baw-chip-b' }],
+    jobs: ['compare', 'prove'], use_when: 'A before and after is said and both pictures were added.', avoid_when: 'Only one picture, or no change is described.',
+    hold_s: 4, sound: 'whoosh', default_ms: 5000, size: 'stage', aspect: 1.1, cue: { field: 'label_b', unit: 'word' }, sync_s: 1.3 },
+  { id: 'comparison-split', label: 'Split windows', detail: 'Two of your screenshots in windows, one wiping across the other.', group: 'media',
+    fields: [picture('image', 'First screenshot', 'before'), picture('image_b', 'Second screenshot', 'after'), tag('label_a', 'labelA', 'First label (as you say it)', 'Before'), tag('label_b', 'labelB', 'Second label (as you say it)', 'After')],
+    media: [{ field: 'image', selector: '.cs-before .cs-content', align: 'top' }, { field: 'image_b', selector: '.cs-after .cs-content', align: 'top' }],
+    hide_empty: [{ field: 'label_a', selector: '.cs-before .cs-label' }, { field: 'label_b', selector: '.cs-after .cs-label' }], own_exit: true,
+    jobs: ['compare'], use_when: 'Two versions of a page or a design are compared and both screenshots were added.', avoid_when: 'The pictures are photos, not screens (use Before & after).',
+    hold_s: 4, sound: 'whoosh', default_ms: 5000, size: 'stage', aspect: 1.2, cue: { field: 'label_b', unit: 'word' }, sync_s: 1.3 },
+  { id: 'split-tilt-cards', label: 'Two tilted cards', detail: 'Two of your pictures arrive as tilted cards, side by side.', group: 'media',
+    fields: [picture('image', 'Left picture', 'before'), picture('image_b', 'Right picture', 'after'), tag('label_a', 'label_a', 'Left label (as you say it)', 'Before'), tag('label_b', 'label_b', 'Right label (as you say it)', 'After'),
+      tag('badge_a', 'badge_a', 'Left badge (as you say it)', ''), tag('badge_b', 'badge_b', 'Right badge (as you say it)', '')],
+    fixed: { accent: 'green' }, media: [{ field: 'image', selector: '[data-slot="card-a"]', align: 'top' }, { field: 'image_b', selector: '[data-slot="card-b"]', align: 'top' }],
+    hide_empty: [{ field: 'label_a', selector: '.stc-label-a' }, { field: 'label_b', selector: '.stc-label-b' }, { field: 'badge_a', selector: '.stc-badge-pos-a' }, { field: 'badge_b', selector: '.stc-badge-pos-b' }],
+    jobs: ['compare'], use_when: 'Two options, versions or results are shown side by side and both pictures were added.', avoid_when: 'One picture replaces the other (use Before & after).',
+    hold_s: 4.5, sound: 'pop', default_ms: 5000, size: 'stage', aspect: 1.5, sync_s: 1.85 },
+  { id: 'paper-collage-reveal', label: 'Paper reveal', detail: 'Torn paper scraps lift away one by one and show your photo.', group: 'media',
+    fields: [picture('image', 'Photo or screenshot', 'photo'), choice('tone', 'tone', 'Paper', [['mixed', 'Mixed'], ['cream', 'Cream'], ['kraft', 'Kraft']]), ...mark()],
+    media: [{ field: 'image', template: 'paper-collage-reveal-content' }], fit_media: true,
+    // Its scraps are paper whatever the video's look (the unit mixes them from these tokens).
+    css: { '--surface': '#FBF8F1', '--accent-2': '#B98A4E' },
+    jobs: ['reveal', 'prove'], use_when: 'A photo or a result is revealed ("here it is", "look at this").', avoid_when: 'No picture was added.',
+    hold_s: 3.5, sound: 'whoosh', default_ms: 4000, aspect: 1.6, sync_s: 1.35 },
+  { id: 'torn-paper-rip', label: 'Paper tear', detail: 'A paper sheet with your words tears away to show what is under it.', group: 'media',
+    fields: [text('first', 'first_text', 'Words on the paper', 'The old way', { required: true, max: 40 }), picture('image', 'Picture under it (optional)', 'photo', { required: false }),
+      text('second', 'second_text', 'Words under it (when there is no picture)', 'The new way', { max: 40 }),
+      choice('tone', 'tone', 'Torn edge', [['cream', 'Cream'], ['kraft', 'Kraft'], ['white', 'White']])],
+    media: [{ field: 'image', template: 'torn-paper-rip-to' }], either: ['image', 'second'],
+    css_rules: '.tpr-default-mark { font-size: 9cqmin !important; font-weight: 800 !important; letter-spacing: -0.01em !important; text-transform: none !important; opacity: 1 !important; padding: 0 6cqmin; text-align: center; line-height: 1.1; }',
+    jobs: ['reveal', 'compare'], use_when: 'An old way is torn away for a new one ("forget X, this is Y").', avoid_when: 'The words are long.',
+    hold_s: 3, sound: 'whoosh', default_ms: 3500, aspect: 2.2, cue: { field: 'second', unit: 'word' }, sync_s: 1 },
+  { id: 'light-sweep-pass', label: 'Light sweep', detail: 'A soft light passes over your screenshot or photo. Underline the part that matters.', group: 'media',
+    fields: [picture('image', 'Screenshot or photo', 'post'), choice('strength', 'strength', 'Light', [['standard', 'Standard'], ['subtle', 'Subtle']]), ...mark()],
+    fixed: { accent: 'green', sweep_at: .5 }, media: [{ field: 'image', selector: '[data-slot="scene"]', lit: true }], fit_media: true,
+    jobs: ['prove', 'emphasize'], use_when: 'A proof screenshot (a post, a comment, a payment, a result) is talked about and was added.', avoid_when: 'No picture was added.',
+    hold_s: 4, sound: 'riser', default_ms: 4500, size: 'stage', aspect: 1.4, sync_s: 2.65 },
   // Numbers and proof.
   { id: 'count-up', label: 'Count up', detail: 'A big number counts up and lands with a small pulse.', group: 'numbers',
     fields: [num('value', 'end', 'Number', '75', { required: true }), text('prefix', 'prefix', 'Before the number', '', { max: 6 }), text('suffix', 'suffix', 'After the number', '%', { max: 12 })],
@@ -121,6 +206,22 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     fields: [text('label', 'label', 'What fell', 'Your metric', { max: 30 }), num('start', 'start_value', 'From', '82', { required: true }), num('end', 'end_value', 'To', '34', { required: true })],
     jobs: ['agitate'], use_when: 'A loss is said with both numbers ("from 82 down to 34").', avoid_when: 'The numbers go up (use Chart).',
     hold_s: 3.5, sound: 'whoosh', default_ms: 4000, aspect: 1.8 },
+  // Charts and flows (CreatorClips' own units, remade from HyperFrames blocks with variables): every number and label said.
+  { id: 'data-chart', label: 'Bar chart', detail: 'Labeled bars grow as you say each number; the biggest one is in your color.', group: 'numbers', own: true,
+    fields: [list('data', 'data', 'Numbers (one per line)', '12\n28\n45\n64', '|', { required: true, max: 12 }), list('labels', 'labels', 'Labels (one per line)', 'Jan\nFeb\nMar\nApr', '|', { max: 14 }),
+      text('title', 'title', 'Title', '', { max: 40 }), text('unit', 'unit', 'Unit', '', { max: 6 })],
+    jobs: ['prove'], use_when: 'Three to six numbers are said one after another, each with what it is ("January 12, February 28…").', avoid_when: 'Only one or two numbers are said.',
+    hold_s: 4.5, sound: 'riser', default_ms: 5000, size: 'stage', aspect: 1.3, cue: { field: 'data', unit: 'item', variable: 'cues' } },
+  { id: 'animated-bar-chart', label: 'Bar card', detail: 'A small card with a big number and bars that grow under it.', group: 'numbers', own: true,
+    fields: [text('value', 'value', 'Big number', '+42%', { required: true, max: 10 }), list('data', 'data', 'Numbers for the bars (one per line)', '42\n56\n72\n95', '|', { required: true, max: 12 }),
+      text('title', 'title', 'Title', 'Sales this month', { max: 30 })],
+    jobs: ['prove'], use_when: 'A result is said with the numbers that led to it ("from 42 to 95, up 42 percent").', avoid_when: 'The bar numbers are not said.',
+    hold_s: 3.5, sound: 'tick', default_ms: 4000, aspect: 1.6, cue: { field: 'value', unit: 'word' }, sync_s: 1.2 },
+  { id: 'mk-line-graph', label: 'Line graph', detail: 'A line draws through your numbers as you say them, each value riding its point.', group: 'numbers', own: true,
+    fields: [list('data', 'data', 'Numbers (one per line)', '12\n26\n22\n38\n58', '|', { required: true, max: 12 }), list('labels', 'labels', 'Labels (one per line)', 'Jan\nFeb\nMar\nApr\nMay', '|', { max: 10 }),
+      text('unit', 'unit', 'Unit', '', { max: 6 })],
+    jobs: ['prove'], use_when: 'A trend is said as several numbers over time ("12 in January, 26 in February…").', avoid_when: 'Fewer than three numbers are said (use Count up or Drop chart).',
+    hold_s: 4.5, sound: 'riser', default_ms: 5000, size: 'stage', aspect: 1.5, cue: { field: 'data', unit: 'item', variable: 'cues' } },
   { id: 'trust-strip', label: 'Name row', detail: 'A calm row of names (clients, places, tools) fades in left to right.', group: 'numbers',
     fields: [list('marks', 'marks', 'Names (one per line, up to 6)', 'First name\nSecond name\nThird name', ',', { required: true, max: 20 })],
     fixed: { ...ACCENT, ...FADE, tone: 'ink' }, jobs: ['prove'], use_when: 'The speaker names who they worked with or where they were featured.',
@@ -232,6 +333,14 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     fields: [list('states', 'states', 'Steps (one per line, up to 5)', 'Plan\nBuild\nLaunch', ',', { required: true, max: 14 })],
     fixed: { ...ACCENT, ...FADE, badge_state: 1, badges: '' }, jobs: ['demonstrate'], use_when: 'A short process is said step by step.', avoid_when: 'More than five steps.',
     hold_s: 4, sound: 'tick', scale: 2.2, default_ms: 4500, aspect: 3.2, cue: { field: 'states', unit: 'item', variable: 'times' } },
+  { id: 'flowchart', label: 'Flowchart', detail: 'Boxes joined by arrows, each one drawn as you say it.', group: 'ideas', own: true,
+    fields: [list('steps', 'steps', 'Steps in order (one per line, 2 to 6)', 'Idea\nScript\nFilm\nPost', '|', { required: true, max: 24 }), text('title', 'title', 'Title', '', { max: 40 })],
+    jobs: ['demonstrate'], use_when: 'A process is said step by step and each step leads to the next ("you write, then you film, then you post").', avoid_when: 'The items are not in order (use Hub).',
+    hold_s: 5, sound: 'tick', default_ms: 5500, size: 'stage', aspect: 1.2, cue: { field: 'steps', unit: 'item', variable: 'cues' } },
+  { id: 'onboarding-stepper-flow', label: 'Stepper', detail: 'Numbered steps light up in turn, the current one named on a card.', group: 'ideas', own: true,
+    fields: [list('steps', 'steps', 'Steps in order (one per line, 2 to 5)', 'Pick a topic\nWrite the hook\nFilm it', '|', { required: true, max: 28 })],
+    jobs: ['demonstrate'], use_when: 'Two to five steps are said in order, one at a time ("step one…, step two…").', avoid_when: 'More than five steps, or they are not in order.',
+    hold_s: 5, sound: 'tick', default_ms: 5500, aspect: 1.5, cue: { field: 'steps', unit: 'item', variable: 'cues' } },
   { id: 'whiteboard-ink', label: 'Sketch', detail: 'A light bulb, flow or rocket sketches itself with a caption.', group: 'ideas',
     fields: [text('caption', 'caption', 'Caption', 'Draw the idea', { max: 30 }), choice('sketch', 'sketch', 'Sketch', [['bulb', 'Light bulb'], ['flow', 'Flow'], ['rocket', 'Rocket']])],
     fixed: { ...ACCENT, ...FADE, pen: 'show' }, jobs: ['reveal'], use_when: 'An idea, a plan or a launch is explained.', avoid_when: 'None of the three sketches fits.',
@@ -279,7 +388,7 @@ export const FX_EFFECTS: readonly FxEffect[] = [
 
 export const FX_EFFECT_IDS: readonly string[] = FX_EFFECTS.map((e) => e.id)
 export const FX_GROUPS: { id: FxGroup; label: string }[] = [
-  { id: 'numbers', label: 'Effects: numbers & proof' }, { id: 'words', label: 'Effects: words' }, { id: 'compare', label: 'Effects: compare' },
+  { id: 'media', label: 'Effects: your screenshots & photos' }, { id: 'numbers', label: 'Effects: numbers & proof' }, { id: 'words', label: 'Effects: words' }, { id: 'compare', label: 'Effects: compare' },
   { id: 'ideas', label: 'Effects: ideas & steps' }, { id: 'screens', label: 'Effects: screens & messages' }, { id: 'ending', label: 'Effects: badges & asks' }
 ]
 /** Fields every effect graphic may carry besides its own: the effect, its backing, spoken cue times, the video's one look (`theme`: 'light' | 'dark'). */
@@ -301,11 +410,42 @@ export function fxNumber(value: string | undefined): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+/** The effect's picture fields ([] for one that draws only words and numbers). */
+export function fxPictureFields(effect: FxEffect | null | undefined): FxField[] {
+  return (effect?.fields ?? []).filter((f) => f.kind === 'image')
+}
+/** True when the effect can't draw without the member's own picture (it is never placed without one). */
+export function fxNeedsPicture(effect: FxEffect | string | null | undefined): boolean {
+  const e = typeof effect === 'string' ? fxEffect(effect) : effect
+  return fxPictureFields(e).some((f) => f.required)
+}
+/** A region as written in a field ("x, y, w, h", shares of the picture), or null when it isn't one inside the picture. */
+export function fxRegion(value: string | undefined): [number, number, number, number] | null {
+  const parts = (value ?? '').split(/[\s,]+/).filter(Boolean).map(Number)
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return null
+  const [x, y, w, h] = parts
+  if (x < 0 || y < 0 || w < 0.01 || h < 0.01 || x + w > 1.001 || y + h > 1.001) return null
+  return [x, y, w, h]
+}
+/** A region as a field's text (four shares, rounded). */
+export function fxRegionText(box: readonly [number, number, number, number]): string {
+  return box.map((n) => String(Math.round(Math.max(0, Math.min(1, n)) * 1000) / 1000)).join(', ')
+}
+/** The hand-drawn mark an effect shows over its picture: its shape, the picture field and where; null for none. */
+export function fxMark(fields: Record<string, string>): { shape: FxMarkShape; on: string; box: [number, number, number, number] } | null {
+  const region = fxEffect(fields.effect)?.fields.find((f) => f.kind === 'region')
+  const shape = fields.mark as FxMarkShape
+  const box = fxRegion(fields[region?.key ?? ''])
+  if (!region || !(FX_MARK_SHAPES as readonly string[]).includes(shape) || !box) return null
+  return { shape, on: region.on ?? 'image', box }
+}
+
 /** True when the effect is known and its required fields are filled. */
 export function fxHasContent(fields: Record<string, string>): boolean {
   const effect = fxEffect(fields.effect)
   if (!effect) return false
   return effect.fields.every((f) => !f.required || (f.kind === 'number' ? fxNumber(fields[f.key]) !== null : f.kind === 'list' ? fxItems(fields[f.key]).length > 0 : !!clean(fields[f.key])))
+    && (!effect.either || effect.either.some((key) => !!clean(fields[key])))
 }
 
 /** The fields that show words or numbers the speaker must say (the words-said rule). */
@@ -355,6 +495,8 @@ export function fxTiming(effect: FxEffect, fields: Record<string, string>, durat
 export function fxVariables(effect: FxEffect, fields: Record<string, string>, timing?: FxTiming): Record<string, string | number | boolean> {
   const vars: Record<string, string | number | boolean> = { ...(effect.fixed ?? {}) }
   for (const f of effect.fields) {
+    // Pictures and the mark are the adapter's (mount.ts), never the unit's variables.
+    if (!f.variable || f.kind === 'image' || f.kind === 'region') continue
     const raw = fields[f.key]
     // Words left empty stay empty: a unit's own sample words (its defaults) never show. Units read a blank value as
     // "use my default", so an empty text is a zero-width space and an empty list a lone separator (empty items).
@@ -379,7 +521,11 @@ export function fxCatalogJson(): { version: 1; effects: Record<string, unknown>[
       id: e.id, label: e.label, detail: e.detail, group: e.group, jobs: e.jobs, use_when: e.use_when, avoid_when: e.avoid_when,
       hold_s: e.hold_s, sound: e.sound, default_ms: e.default_ms, size: e.size ?? 'card', frame: e.frame ?? 'band', ...(e.sync_s !== undefined ? { sync_s: e.sync_s } : {}),
       ...(e.cue ? { cue: { field: e.cue.field, unit: e.cue.unit, ...(e.cue.variable ? { cues: true } : {}) } } : {}),
-      fields: e.fields.map((f) => ({ key: f.key, kind: f.kind, said: f.said, required: !!f.required, ...(f.max ? { max: f.max } : {}), ...(f.options ? { options: f.options.map((o) => o.value) } : {}) }))
+      // The member's pictures it needs (the planner places it only when they added some).
+      ...(fxPictureFields(e).length ? { pictures: fxPictureFields(e).map((f) => f.key), needs_picture: fxNeedsPicture(e) } : {}),
+      ...(e.fields.some((f) => f.kind === 'region') ? { mark: true } : {}), ...(e.either ? { either: e.either } : {}),
+      fields: e.fields.map((f) => ({ key: f.key, kind: f.kind, said: f.said, required: !!f.required, ...(f.max ? { max: f.max } : {}), ...(f.options ? { options: f.options.map((o) => o.value) } : {}),
+        ...(f.separator && f.separator !== ',' ? { separator: f.separator } : {}) }))
     }))
   }
 }

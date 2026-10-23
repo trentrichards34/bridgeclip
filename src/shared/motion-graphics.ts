@@ -6,7 +6,7 @@
  * the words in a graphic come from the member or from what was said in the clip. Effects (`fx`) are HyperFrames units
  * (Apache-2.0) drawn the same way; src/shared/fx-catalog.ts lists them and their fields.
  */
-import { fxCueUnits, fxEffect, fxHasContent, fxLine } from './fx-catalog'
+import { fxCueUnits, fxEffect, fxHasContent, fxLine, fxPictureFields } from './fx-catalog'
 
 export const GRAPHIC_TEMPLATES = [
   { id: 'stat', label: 'Stat counter', detail: 'A number that counts up, with a short label.', fields: ['value', 'label'] },
@@ -156,7 +156,7 @@ export function parseGraphics(value: unknown): EditorGraphic[] {
         fields[key] = text.slice(0, key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS)
       }
     }
-    if (fields.image !== undefined && !/^[A-Za-z0-9._-]{1,80}$/.test(fields.image)) throw new Error('A graphic’s image must be one of the clip’s images.')
+    for (const key of GRAPHIC_PICTURE_FIELDS) if (fields[key] !== undefined && fields[key] !== '' && !/^[A-Za-z0-9._-]{1,80}$/.test(fields[key])) throw new Error('A graphic’s image must be one of the clip’s images.')
     if (fields.video !== undefined && fields.video !== '' && !isScreenVideo(fields.video)) throw new Error('A graphic’s video must be one of the clip’s videos.')
     if (g.template === 'fx' && !fxEffect(fields.effect)) throw new Error('Choose one of the effects.')
     const origin: EditorGraphic['origin'] = g.origin === 'auto' || g.origin === 'chat' || g.origin === 'member' ? g.origin : undefined
@@ -243,6 +243,14 @@ export const GRAPHIC_DEFAULT_MS: Record<GraphicTemplateId, number> = {
 /** Templates that can show a picture the member chose (Logo pop needs one; the others draw without it). */
 export const GRAPHIC_IMAGE_TEMPLATES: readonly GraphicTemplateId[] = ['logo', 'browser_frame', 'icon_pop', 'orbit']
 export function graphicUsesImage(template: GraphicTemplateId): boolean { return GRAPHIC_IMAGE_TEMPLATES.includes(template) }
+/** The fields that can hold a picture (a run image name): `image`, and an effect's second picture. */
+export const GRAPHIC_PICTURE_FIELDS = ['image', 'image_b'] as const
+export type GraphicPictureField = (typeof GRAPHIC_PICTURE_FIELDS)[number]
+/** The picture fields a graphic draws: the image templates' `image`, an effect's own pictures (fx-catalog). */
+export function graphicPictureFields(g: Pick<EditorGraphic, 'template' | 'fields'>): GraphicPictureField[] {
+  if (g.template === 'fx') return fxPictureFields(fxEffect(g.fields.effect)).map((f) => f.key).filter((k): k is GraphicPictureField => (GRAPHIC_PICTURE_FIELDS as readonly string[]).includes(k))
+  return graphicUsesImage(g.template) ? ['image'] : []
+}
 
 /** Most items a template shows (the rest of `items` is left out). */
 export const GRAPHIC_ITEM_LIMITS: Partial<Record<GraphicTemplateId, number>> = { sticky_notes: 3, strike_list: 4, icon_pop: 4, orbit: 6, feature_tile: 3,
@@ -284,6 +292,8 @@ export interface GraphicRenderSpec {
   font: string
   /** Logo image as a URL the page may load (a local-file URL in the editor, a data URL offscreen). */
   image?: string
+  /** An effect's second picture (Before & after's after), the same way. */
+  image_b?: string
   /** Editor preview only (never in a render): the Screen recording's video as a URL the page may load, and where it starts (s). */
   preview_video?: { url: string; from: number }
   /** How big it is drawn (unset: 'card'). */

@@ -27,6 +27,7 @@ import { ClipChat, clipChatThread, type ChatApplied, type ChatApplyResult } from
 import { PointButton, PointLayer } from './ChatPoints'
 import { GraphicsInspector, GraphicsOverlay, GraphicsTrack, draftGraphic, useClipWords } from './ClipGraphics'
 import { GraphicGallery } from './GraphicGallery'
+import { fxEffect, fxPictureFields } from '../../shared/fx-catalog'
 import { GraphicPreviewEditor } from './GraphicPreviewEditor'
 import { ScenesOverlay, ScenesTrack } from './ClipScenes'
 import { GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, duplicateGraphic, fitGraphicInCut, graphicLocalMs, hookEndMs, nearestOutputTime, outputTime, placeInFreeBand, removeGraphic, withGraphic, type EditorGraphic, type GraphicTemplateId } from '../../shared/motion-graphics'
@@ -616,11 +617,27 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   /** A graphic from the gallery at the gallery's spot: filled with the words said there, selected and shown on the preview. */
   const insertGraphic = (template: GraphicTemplateId, look?: string): void => {
     if (gallery === null || editingDisabled) return
-    // For an effect, `look` is which effect.
-    const draft = draftGraphic(project, candidate, template, gallery, clipWords, template === 'fx' ? look : undefined)
-    const g = look && template !== 'fx' ? { ...draft, fields: { ...draft.fields, variant: look } } : draft
-    setGraphics(withGraphic(candidate, g)); setGraphicId(g.id); setGallery(null); setTab('graphics')
-    showGraphic(g)
+    const at = gallery
+    const place = (pictures: Record<string, string>): void => {
+      // For an effect, `look` is which effect.
+      const draft = draftGraphic(project, candidate, template, at, clipWords, template === 'fx' ? look : undefined)
+      const g = look && template !== 'fx' ? { ...draft, fields: { ...draft.fields, variant: look } } : { ...draft, fields: { ...draft.fields, ...pictures } }
+      setGraphics(withGraphic(candidate, g)); setGraphicId(g.id); setGallery(null); setTab('graphics')
+      showGraphic(g)
+    }
+    // An effect on the member's own screenshots or photos asks for them first (nothing is added without them).
+    const needed = template === 'fx' ? fxPictureFields(fxEffect(look)).filter((f) => f.required) : []
+    if (!needed.length) { place({}); return }
+    void (async () => {
+      const pictures: Record<string, string> = {}
+      for (const f of needed) {
+        let name: string | null = null
+        try { name = await getApi().editor.graphicImage(outputDir) } catch (e) { setError(errorMessage(e)); return }
+        if (!name) return
+        pictures[f.key] = name
+      }
+      place(pictures)
+    })()
   }
   const selectGraphic = (id: string | null): void => {
     setGraphicId(id)
@@ -1173,7 +1190,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       where={(() => { const words = clipWords.filter((w) => w.end_ms > gallery - 150).slice(0, 5).map((w) => w.word).join(' '); return `at ${clipClock(gallery)}${words ? `, on “${words}…”` : ''}` })()}
       prefill={(template) => prefillGraphic(template, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
       prefillEffect={(effect) => prefillEffect(effect, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
-      looks onPick={insertGraphic} onClose={() => setGallery(null)} />}
+      looks pictures onPick={insertGraphic} onClose={() => setGallery(null)} />}
   </section>
 }
 /** Where the preview draws a clip's hook text (vertical clips with at least two words, like the export). */

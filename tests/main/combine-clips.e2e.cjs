@@ -217,6 +217,8 @@ test('Combine clips: a .zip of three clips, put in the AI’s order, joined upri
   await log.getByRole('button', { name: /^Restore: Added a \$8,188 stat/ }).click()
 
   await page.getByRole('button', { name: 'Make my reel' }).click()
+  // The beat sheet is offered first (beat-sheet.e2e covers it): make the reel now.
+  await page.getByRole('dialog', { name: 'See your beats first?' }).getByRole('button', { name: 'Render now' }).click()
   await page.getByText('Your reel is ready').waitFor({ timeout: 600000 })
   const run = fs.readdirSync(library).find((name) => /^edit-[0-9a-f-]{36}$/.test(name))
   const reel = path.join(library, run, 'clip_00.mp4')
@@ -235,7 +237,12 @@ test('Combine clips: a .zip of three clips, put in the AI’s order, joined upri
   const candidate = project.candidates[0]
   assert.equal(candidate.status, 'baked')
   // The plan's graphic on the screen clip's dashboard line: a card (no stage over a filmed screen); the proof stat was taken off.
-  assert.deepEqual(candidate.graphics.filter((g) => g.template !== 'screen_frame').map((g) => [g.template, g.origin, g.size, g.fields.text]), [['statement', 'auto', 'card', 'My dashboard says $8,188 today.']])
+  // The graphics director may draw the plan's plain statement as an effect (e.g. a marker highlight) on the same words.
+  const planned = candidate.graphics.filter((g) => g.template !== 'screen_frame')
+  assert.equal(planned.length, 1, JSON.stringify(planned))
+  assert.ok(['statement', 'fx'].includes(planned[0].template), JSON.stringify(planned[0]))
+  assert.equal(planned[0].origin, 'auto')
+  assert.ok(/dashboard/i.test(JSON.stringify(planned[0].fields)), JSON.stringify(planned[0].fields))
   // Long filmed-screen stretches get one framed moment each (a Screen recording window on a Visual scene), never a Stage over the screen.
   const framed = candidate.graphics.filter((g) => g.template === 'screen_frame')
   assert.ok(framed.length <= 3 && framed.every((g) => g.origin === 'auto'), JSON.stringify(framed))
@@ -273,7 +280,7 @@ test('Combine clips: a .zip of three clips, put in the AI’s order, joined upri
   // The done screen opens it in the clip editor, with the graphic in the Graphics row.
   await page.getByTestId('edit-open-editor').click()
   await page.getByRole('region', { name: 'Clip editor' }).waitFor()
-  await page.getByRole('button', { name: /^Statement at / }).first().waitFor()
+  await page.getByRole('button', { name: /^(Statement|Effect) at / }).first().waitFor()
   await shot(app, 'combine-6-editor.png')
   // The unpacked clips and the proxies are gone once the reel is made.
   assert.equal(fs.existsSync(imports) ? fs.readdirSync(imports).length : 0, 0)

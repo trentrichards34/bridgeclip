@@ -1,0 +1,72 @@
+<!--
+  CreatorClips unit "onboarding-stepper-flow": numbered steps that light up in turn, remade from HyperFrames'
+  onboarding-stepper-flow snippet (https://github.com/heygen-com/hyperframes, registry/components/onboarding-stepper-flow,
+  Copyright 2026 HeyGen, Inc., Apache License 2.0; see ../vendor/LICENSE and ../vendor/NOTICE). The original bakes
+  "Step 2 of 3 / Choose your visual style" into its markup; this one keeps its look (a row of numbered dots, done ones
+  filled, a card naming the current step) and takes the steps as variables, the card moving on as each one is said.
+  Sized to its box, timed by CreatorClips' shared motion (window.__ccMotion).
+
+  Variables: steps ("|"-separated, in order, as said), cues (comma seconds: when each step is said).
+-->
+<template>
+  <div id="root" data-composition-id="onboarding-stepper-flow" data-duration="5.5">
+    <style>
+      #root { position: absolute; inset: 0; container-type: size; display: grid; place-items: center; font-family: var(--font-body, sans-serif); color: var(--fg, #f8fafc); }
+      .os-flow { box-sizing: border-box; width: 92cqw; display: grid; gap: 5cqmin; }
+      .os-dots { position: relative; display: flex; justify-content: space-between; align-items: center; padding: 0 4cqmin; }
+      .os-rail { position: absolute; left: 8cqmin; right: 8cqmin; top: 50%; height: 0.8cqmin; margin-top: -0.4cqmin; border-radius: 1cqmin; background: var(--border, rgba(255, 255, 255, 0.18)); overflow: hidden; }
+      .os-fill { position: absolute; inset: 0; background: var(--brand, #22c55e); transform-origin: 0 50%; transform: scaleX(0); }
+      .os-dot { position: relative; z-index: 1; display: grid; place-items: center; width: 11cqmin; height: 11cqmin; border-radius: 50%; box-sizing: border-box;
+        border: 0.6cqmin solid var(--border, rgba(255, 255, 255, 0.22)); background: var(--surface, #0f121a); color: var(--muted, rgba(226, 232, 240, 0.74)); font: 900 5cqmin/1 var(--font-display, sans-serif); }
+      .os-dot.os-done { background: color-mix(in srgb, var(--brand, #22c55e) 30%, var(--surface, #0f121a)); border-color: var(--brand, #22c55e); color: var(--fg, #f8fafc); }
+      .os-dot.os-active { background: var(--brand, #22c55e); border-color: var(--brand, #22c55e); color: #ffffff; }
+      .os-card { position: relative; box-sizing: border-box; min-height: 30cqmin; padding: 5cqmin 6cqmin; border-radius: var(--radius, 28px); background: var(--surface, rgba(15, 18, 26, 0.9));
+        border: 0.25cqmin solid var(--border, rgba(255, 255, 255, 0.16)); overflow: hidden; }
+      .os-page { position: absolute; left: 6cqmin; right: 6cqmin; top: 50%; transform: translateY(-50%); }
+      .os-small { display: block; margin-bottom: 2cqmin; font: 800 3.8cqmin/1 var(--font-body, sans-serif); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted, rgba(226, 232, 240, 0.74)); }
+      .os-name { display: block; font: 800 8cqmin/1.05 var(--font-display, sans-serif); letter-spacing: -0.02em; overflow-wrap: anywhere; }
+    </style>
+    <div class="os-flow"><div class="os-dots"><div class="os-rail"><div class="os-fill"></div></div></div><div class="os-card"></div></div>
+    <script>
+      (function () {
+        var vars = window.__hyperframes && window.__hyperframes.getVariables ? window.__hyperframes.getVariables() : {};
+        var M = window.__ccMotion || { move_s: 0.333, enter: 'expo.out', exit: 'power2.in', from_scale: 1.08, stagger_s: 0.2 };
+        var root = document.getElementById('root');
+        var words = function (v) { return String(v == null ? '' : v).replace(/​/g, '').trim(); };
+        var steps = String(vars.steps == null ? '' : vars.steps).split('|').map(words).filter(Boolean).slice(0, 5);
+        var cues = String(vars.cues || '').split(',').map(parseFloat);
+        var row = root.querySelector('.os-dots'), card = root.querySelector('.os-card'), fill = root.querySelector('.os-fill');
+        var n = steps.length;
+        var dots = steps.map(function (_, i) { var d = document.createElement('div'); d.className = 'os-dot'; d.textContent = String(i + 1); row.appendChild(d); return d; });
+        var pages = steps.map(function (s, i) {
+          var p = document.createElement('div'); p.className = 'os-page';
+          var small = document.createElement('span'); small.className = 'os-small'; small.textContent = 'Step ' + (i + 1) + ' of ' + n;
+          var name = document.createElement('span'); name.className = 'os-name'; name.textContent = s;
+          p.appendChild(small); p.appendChild(name); card.appendChild(p); return p;
+        });
+        // The card is as tall as its longest step.
+        card.style.height = Math.max.apply(null, pages.map(function (p) { return p.offsetHeight; }).concat([0])) + root.clientHeight * 0.1 + 'px';
+        var tl = gsap.timeline({ paused: true });
+        tl.fromTo(dots, { opacity: 0, scale: M.from_scale }, { opacity: 1, scale: 1, duration: M.move_s, ease: M.enter, stagger: 0.06 }, 0.1);
+        tl.fromTo(card, { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: M.move_s * 1.3, ease: M.enter }, 0.3);
+        gsap.set(pages, { opacity: 0, yPercent: -30 });
+        var last = 0.35;
+        steps.forEach(function (_, i) {
+          // Each step becomes the current one as it is said (else an even rhythm): its dot fills, its name slides in.
+          var at = isFinite(cues[i]) ? Math.max(0.35, cues[i] - 0.1) : (i ? last + 0.9 : 0.35);
+          at = Math.max(at, last + (i ? 0.3 : 0)); last = at;
+          if (i) {
+            tl.to(pages[i - 1], { opacity: 0, yPercent: -90, duration: M.move_s * 0.8, ease: M.exit }, at - 0.05);
+            tl.set(dots[i - 1], { className: 'os-dot os-done' }, at);
+          }
+          tl.fromTo(pages[i], { opacity: 0, yPercent: -10 }, { opacity: 1, yPercent: -50, duration: M.move_s * 1.2, ease: M.enter, immediateRender: false }, at + (i ? 0.1 : 0));
+          tl.set(dots[i], { className: 'os-dot os-active' }, at);
+          tl.fromTo(dots[i], { scale: M.from_scale + 0.1 }, { scale: 1, duration: M.move_s, ease: M.enter, immediateRender: false }, at);
+          tl.to(fill, { scaleX: n > 1 ? i / (n - 1) : 1, duration: 0.4, ease: M.enter }, at);
+        });
+        window.__timelines = window.__timelines || {};
+        window.__timelines['onboarding-stepper-flow'] = tl;
+      })();
+    </script>
+  </div>
+</template>

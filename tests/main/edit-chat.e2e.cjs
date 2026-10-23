@@ -184,6 +184,8 @@ test('Edit my recording: a chat request cuts a word and adds a stat graphic, Und
 
   // The reel: the hook ("Fifteen billion messages wait.") plays first, with the stat graphic over it.
   await page.getByRole('button', { name: 'Make my reel' }).click()
+  // The beat sheet is offered first (beat-sheet.e2e covers it): make the reel now.
+  await page.getByRole('dialog', { name: 'See your beats first?' }).getByRole('button', { name: 'Render now' }).click()
   await page.getByText('Your reel is ready').waitFor({ timeout: 300000 })
   const run = fs.readdirSync(library).find((name) => /^edit-[0-9a-f-]{36}$/.test(name))
   const reel = path.join(library, run, 'clip_00.mp4')

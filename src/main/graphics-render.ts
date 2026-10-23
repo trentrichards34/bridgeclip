@@ -20,7 +20,7 @@ import { copyFile, open as openFile } from 'fs/promises'
 import { extname, join } from 'path'
 import { BrowserWindow, session, type BrowserWindowConstructorOptions, type Session } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import { GRAPHIC_FPS, GRAPHICS_VERSION, SCREEN_FADE_MS, SCREEN_VIDEO_FILE, graphicDepth, graphicHasContent, graphicUsesImage, graphicWindow, screenFrameLayout, screenFrom, screenZoom, type EditorGraphic, type GraphicDepth, type GraphicRenderSpec, type GraphicSize } from '../shared/motion-graphics'
+import { GRAPHIC_FPS, GRAPHICS_VERSION, SCREEN_FADE_MS, SCREEN_VIDEO_FILE, graphicDepth, graphicHasContent, graphicPictureFields, graphicUsesImage, graphicWindow, screenFrameLayout, screenFrom, screenZoom, type EditorGraphic, type GraphicDepth, type GraphicRenderSpec, type GraphicSize } from '../shared/motion-graphics'
 import { graphicSpec } from '../shared/graphic-layout'
 import type { EditorCandidate, EditorProject } from '../shared/clip-editor'
 import { resolveBinary } from './tools'
@@ -164,8 +164,8 @@ export function graphicImageData(run: string, name: string | undefined): { url: 
 
 /** The cache name of a render: everything that changes its pixels. */
 export function graphicCacheKey(spec: GraphicRenderSpec, imageHash?: string): string {
-  const { image: _image, ...rest } = spec
-  void _image
+  const { image: _image, image_b: _second, ...rest } = spec
+  void _image; void _second
   const fields = Object.fromEntries(Object.entries(rest.fields).sort(([a], [b]) => a.localeCompare(b)))
   return createHash('sha256').update(JSON.stringify({ v: GRAPHICS_VERSION, fps: GRAPHIC_FPS, ...rest, fields, image: imageHash ?? null })).digest('hex')
 }
@@ -289,7 +289,9 @@ export function candidateGraphicJobs(run: string, project: EditorProject, candid
       if (!graphicVideoReady(run, g.fields.video)) continue
       inset = screenInset(spec, g)
     }
-    const job = graphicJob(run, g.id, spec, window, g.fields.image, graphicDepth(g))
+    // An effect's pictures (the layout leaves picture names out of the drawn fields): its job loads them from the run.
+    const drawn = g.template === 'fx' ? { ...spec, fields: { ...spec.fields, ...Object.fromEntries(graphicPictureFields(g).map((key) => [key, g.fields[key] ?? ''])) } } : spec
+    const job = graphicJob(run, g.id, drawn, window, g.fields.image, graphicDepth(g))
     if (job) jobs.push(inset ? { ...job, inset } : job)
   }
   return jobs
@@ -312,7 +314,17 @@ export const REEL_GRAPHICS_DIR = 'reel'
  */
 export function graphicJob(run: string, id: string, spec: GraphicRenderSpec, window: { start_ms: number; duration_ms: number }, image?: string, depth?: GraphicDepth): GraphicJob | null {
   let imageHash: string | undefined
-  if (graphicUsesImage(spec.template) && (image || spec.template === 'logo')) {
+  if (spec.template === 'fx') {
+    // An effect's pictures (the member's screenshots and photos): each one it needs must be there, or it isn't drawn.
+    const hashes: string[] = []
+    const fields = graphicPictureFields(spec)
+    for (const key of fields) {
+      const data = graphicImageData(run, spec.fields[key])
+      if (data) { spec = { ...spec, [key]: data.url }; hashes.push(`${key}:${data.hash}`) } else if (spec.fields[key]) spec = { ...spec, fields: { ...spec.fields, [key]: '' } }
+    }
+    if (fields.length && !graphicHasContent({ template: spec.template, fields: spec.fields })) return null
+    imageHash = hashes.length ? hashes.join(',') : undefined
+  } else if (graphicUsesImage(spec.template) && (image || spec.template === 'logo')) {
     const data = graphicImageData(run, image)
     if (data) {
       spec = { ...spec, image: data.url }

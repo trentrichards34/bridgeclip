@@ -1007,7 +1007,7 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
         from clip_engine.services.edit_direction import direction_rule, word_hints
         kept_ms = sum(w.end_ms - w.start_ms for i, w in enumerate(words) if base[i] is None)
         # What each moment is (a number, a list, a story…), as hints on word indices for the planner.
-        rule = direction_rule(kept_ms / 1000 * 1.25, {**direction_options, 'hints': word_hints(words, base)})
+        rule = direction_rule(kept_ms / 1000 * 1.25, {**direction_options, 'hints': word_hints(words, base, media=bool(direction_options.get('media')))})
     payload: dict[str, Any] = {
         "model": settings.planner_model,
         "messages": [{"role": "system", "content": plan_system_prompt(direction) + (combine_prompt() if clips else "") + rule

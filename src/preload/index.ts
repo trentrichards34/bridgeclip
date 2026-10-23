@@ -574,12 +574,16 @@ export interface BridgeClipAPI {
     previewScreen: (camera: string, screen: string, offsetMs: number, atMs: number) => Promise<string>
     /** The headline these recordings were made with last time (null: not made here before). */
     savedHeadline: (request: { sources: string[]; mode?: EditMode }) => Promise<{ headline: string | null }>
+    /** The beat sheet: a still of clip `src` at `ms` into it (local, free, cached in the run): the image's path. */
+    beatFrame: (src: number, ms: number) => Promise<string>
     /** Transcribe and plan (paid); the status moves to 'review'. */
     start: (request: EditStartRequest) => Promise<EditStatus>
     /** Make the reel from the reviewed edit (local, no AI cost). */
     render: (decisions: EditDecisions) => Promise<EditStatus>
     /** My images: a file dialog (null when cancelled), a dropped picture's bytes, or remove one. Each returns the run's images. */
     chooseImages: () => Promise<EditImage[] | null>
+    /** Screenshots for a new video (setup): the files chosen, ready to send with the start request. */
+    chooseScreenshots: () => Promise<{ path: string; name: string }[]>
     addImage: (name: string, data: Uint8Array) => Promise<EditImage[]>
     removeImage: (id: string) => Promise<EditImage[]>
     cancel: () => Promise<boolean>
@@ -1040,9 +1044,11 @@ const api: BridgeClipAPI = {
     syncScreen: (camera, screen) => ipcRenderer.invoke('edit:syncScreen', camera, screen),
     previewScreen: (camera, screen, offsetMs, atMs) => ipcRenderer.invoke('edit:previewScreen', camera, screen, offsetMs, atMs),
     savedHeadline: (request) => ipcRenderer.invoke('edit:savedHeadline', request),
+    beatFrame: (src, ms) => ipcRenderer.invoke('edit:beatFrame', src, ms),
     start: (request) => paid('edit:start', request),
     render: (decisions) => paid('edit:render', decisions),
     chooseImages: () => ipcRenderer.invoke('edit:chooseImages'),
+    chooseScreenshots: () => ipcRenderer.invoke('edit:chooseScreenshots'),
     addImage: (name, data) => ipcRenderer.invoke('edit:addImage', name, data),
     removeImage: (id) => ipcRenderer.invoke('edit:removeImage', id),
     cancel: () => ipcRenderer.invoke('edit:cancel'),

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Clapperboard, Layers, MessageSquare, RotateCcw, Sparkles, Wand2 } from 'lucide-react'
+import { ChevronDown, Clapperboard, LayoutGrid, Layers, MessageSquare, RotateCcw, Sparkles, Wand2 } from 'lucide-react'
 import {
   CUT_LABELS, CUTOUT_INTRO_SECONDS, SOUND_LABELS, soundEffectsOn, MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, RAW_INTRO_SECONDS, applyRecipe, cardProblem, chooseHook,
   formatClock, hookTextProblem, initialDecisions, reelCardWindows, reelOrder, reelSeconds, reelWordStarts, toggleSpan, toggleWord, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditStatus
@@ -20,6 +20,10 @@ import { ClipOrder } from './CombineClips'
 import { SHOT_LABELS } from '../../shared/combine-clips'
 import { applyRestore, editRecordingLog, restoreStillApplied, undoRestore, type RestoreUndo } from '../../shared/edit-log'
 import { SkillsPanel } from './SkillsPanel'
+import { BeatSheet } from './BeatSheet'
+import { beforeRender } from '../../shared/beat-sheet'
+import { useMemberPrefsStore } from '../store/use-member-prefs-store'
+import { Dialog, DialogFooter } from './ui/Dialog'
 import { ScreenChoicePanel } from './ScreenRecording'
 import { DEFAULT_SCREEN_CHOICE } from '../../shared/screen-pair'
 import { editSkillPatch, editSkillRows } from '../../shared/skills'
@@ -31,7 +35,7 @@ import { hasBrandMark } from '../../shared/brand-kit'
 import type { BrandIdentity } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
 import { useEditRecordingStore } from '../store/use-edit-recording-store'
-import { cn, errorMessage } from '../lib/utils'
+import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { boardFromLook, extrasName, LOOK_HOOKS, lookPatch } from '../lib/style-board'
 import { previewFrame, StyleBoard } from './StyleBoard'
 import { Button } from './ui/Button'
@@ -97,6 +101,11 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const [hooksOpen, setHooksOpen] = useState(false)
   const [lookOpen, setLookOpen] = useState(false)
   const [making, setMaking] = useState(false)
+  // The beat sheet: every on-screen moment as a numbered still (offered before the reel is made, as the member chose).
+  const [view, setView] = useState<'edit' | 'beats'>('edit')
+  const [offer, setOffer] = useState(false)
+  const beatChoice = useMemberPrefsStore((s) => s.beatSheet)
+  const chatReady = useSettingsStore((s) => s.openrouterConfigured)
   const anchor = useRef<number | null>(null)
   const lines = useMemo(() => transcriptLines(plan), [plan])
   const cut = new Set(decisions.cut)
@@ -236,6 +245,15 @@ export function EditReview({ status, brand, look, onLook, onError }: {
 
 
   const scrollTo = (id: string): void => document.getElementById(id)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  const openBeats = (): void => { setView('beats'); setOffer(false); requestAnimationFrame(() => scrollTo('edit-review-view')) }
+  const saveBeatChoice = (choice: typeof beatChoice): void => { void useMemberPrefsStore.getState().saveApp({ beatSheet: choice }).catch((err: unknown) => onError(errorMessage(err))) }
+  // "Make my reel": ask first, open the beat sheet, or make it (camera + screen reels have no beats to show).
+  const makeOrAsk = (): void => {
+    const next = screen ? 'render' : beforeRender(beatChoice, view === 'beats')
+    if (next === 'ask') setOffer(true)
+    else if (next === 'sheet') openBeats()
+    else void make()
+  }
 
   return (
     <Panel>
@@ -251,6 +269,12 @@ export function EditReview({ status, brand, look, onLook, onError }: {
       <EditLog className="mt-3" lines={logLines} disabled={making} defaultOpen={false}
         onRestore={(line) => { if (!line.restore) return; const { state, undo } = applyRestore(decisions, line.restore); setLastRestore(undo); setDecisions(state) }}
         onUndo={lastRestore ? () => { const back = undoRestore(decisions, lastRestore); if (back) setDecisions(back); setLastRestore(null) } : undefined} />
+
+      {!screen && <div id="edit-review-view" className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <Segmented label="Review view" value={view} onChange={setView}
+          options={[{ value: 'edit', label: 'Your edit' }, { value: 'beats', label: <span className="inline-flex items-center gap-1.5"><LayoutGrid className="h-3.5 w-3.5" aria-hidden />Beat sheet</span> }]} />
+        <span className="min-w-0 flex-1 text-2xs text-ink-subtle">{view === 'beats' ? 'Every on-screen moment as a numbered still. Give notes by number before your reel is made.' : 'See every planned on-screen moment as a numbered still in the beat sheet.'}</span>
+      </div>}
 
       <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(300px,340px)] xl:items-start xl:gap-5">
         {/* Chat: right under the header on narrow windows, a panel pinned to the side on wide ones. */}
@@ -272,6 +296,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
         </section>
 
         <div className="min-w-0 xl:col-start-1 xl:row-start-1">
+          {view === 'beats' && !screen && <BeatSheet runId={status.id} plan={plan} decisions={decisions} look={look} brand={brand} sources={sources} images={images}
+            disabled={making} chatState={chatState} chatReady={chatReady} choice={beatChoice} onChoice={saveBeatChoice} onChange={setDecisions} />}
+          <div className={cn(view === 'beats' && !screen && 'hidden')}>
           <section className="mt-4 space-y-2" aria-labelledby="edit-hook-title">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
@@ -394,7 +421,10 @@ export function EditReview({ status, brand, look, onLook, onError }: {
 
           {!screen && <section className="mt-5 space-y-3" aria-labelledby="edit-extras-title" data-testid="edit-extras">
             <div>
-              <h3 id="edit-extras-title" className="flex items-center gap-1.5 text-sm font-semibold text-ink"><Layers className="h-4 w-4" aria-hidden />On-screen extras</h3>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 id="edit-extras-title" className="flex items-center gap-1.5 text-sm font-semibold text-ink"><Layers className="h-4 w-4" aria-hidden />On-screen extras</h3>
+                <Button size="sm" variant="secondary" icon={<LayoutGrid className="h-3.5 w-3.5" />} onClick={openBeats}>See the beat sheet</Button>
+              </div>
               <p className="text-2xs text-ink-subtle">Everything that shows over your video: graphics, half-screen graphics, pop-ups and your own images. Each one starts as a word is said.</p>
             </div>
             {duplicates.map((dup) => (
@@ -416,7 +446,8 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                   frame={graphicFrame} look={look.headlineLook} disabled={making} emptyNote={null}
                   onAdd={addGraphic} onPatch={patchGraphic} onRemove={(id) => setGraphics((list) => list.filter((g) => g.id !== id))}
                   cursorLabel={(at) => { const word = wordAt(at); return word === null ? 'at the start' : `on ${wordWhere(word)} (${formatClock(starts.get(word) ?? 0)})` }}
-                  prefill={(template, at) => { const word = wordAt(at); return word === null ? {} : wordsAtPlayhead(template, lines.find((l) => l.words.includes(word))?.words.filter((i) => i >= word).map((i) => plan.words[i].text).join(' ')) }} />
+                  prefill={(template, at) => { const word = wordAt(at); return word === null ? {} : wordsAtPlayhead(template, lines.find((l) => l.words.includes(word))?.words.filter((i) => i >= word).map((i) => plan.words[i].text).join(' ')) }}
+                  pictures={images.length ? { url: (id) => { const image = images.find((item) => item.id === id); return image ? localFileUrl(image.path) : undefined }, options: images.map((image) => ({ value: image.id, label: image.name })) } : undefined} />
 
                 {cardPopups.length > 0 && (
                   <section className="space-y-2" aria-labelledby="edit-cards-title">
@@ -527,14 +558,35 @@ export function EditReview({ status, brand, look, onLook, onError }: {
               </div>
             )}
           </section>
+          </div>
         </div>
       </div>
 
       <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
         <Button variant="ghost" disabled={making} onClick={() => void getApi().edit.discard().catch((err: unknown) => onError(errorMessage(err)))}>Start over</Button>
-        <Button variant="primary" size="lg" icon={<Clapperboard className="h-4 w-4" />} loading={making} disabled={making || problem !== null || seconds < 1.5 || cardTrouble}
-          onClick={() => void make()}>Make my reel</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {view === 'beats' && !screen && <Button variant="ghost" disabled={making} onClick={() => setView('edit')}>Back to your edit</Button>}
+          <Button variant="primary" size="lg" icon={<Clapperboard className="h-4 w-4" />} loading={making} disabled={making || problem !== null || seconds < 1.5 || cardTrouble}
+            onClick={makeOrAsk}>{view === 'beats' && !screen ? 'Looks good, render' : 'Make my reel'}</Button>
+        </div>
       </div>
+      {offer && <Dialog aria-label="See your beats first?" panelClassName="max-w-[460px]" onBackdropMouseDown={() => setOffer(false)}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setOffer(false) } }}>
+        <div className="space-y-3 p-4">
+          <div>
+            <h2 className="text-sm font-semibold text-ink">See your beats first?</h2>
+            <p className="mt-1 text-2xs text-ink-muted">The beat sheet shows every planned on-screen moment as a numbered still, with what you say there. Change any beat, then make your reel. It takes a few seconds.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-2xs text-ink-muted">Next time
+            <Segmented size="sm" label="Next time" value={beatChoice} onChange={saveBeatChoice}
+              options={[{ value: 'ask', label: 'Ask me' }, { value: 'always', label: 'Always show it' }, { value: 'skip', label: 'Skip it' }]} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => { setOffer(false); void make() }}>Render now</Button>
+          <Button variant="primary" icon={<LayoutGrid className="h-4 w-4" />} autoFocus onClick={openBeats}>Show me the beat sheet</Button>
+        </DialogFooter>
+      </Dialog>}
     </Panel>
   )
 }
