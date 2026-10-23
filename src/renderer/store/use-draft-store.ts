@@ -1,7 +1,7 @@
 import type { BrollSource } from '../../shared/broll-library'
 import { create } from 'zustand'
 import { DEFAULT_HEADLINE_LOOK, type HeadlineLook } from '../../shared/headline-look'
-import type { LookExtraId } from '../../shared/look-extras'
+import type { GraphicsRegister, LookExtraId } from '../../shared/look-extras'
 import type { HeadlineVoice, QualityBar, ScreenFocus, TitleStyle } from '../../shared/jobs'
 import type { CaptionLanguageChoice } from '../../shared/caption-language'
 import type { ReferenceImage } from '../../shared/purpose'
@@ -71,6 +71,8 @@ export interface ClipDraft {
   motionGraphics: boolean
   /** Stage layouts with motion graphics (Automatic, 9:16): big cards on a stage over the speaker in a card. */
   stageLayouts: boolean
+  /** How dense the motion graphics are (null: read from what is said). */
+  register: GraphicsRegister | null
   /** Framework grading bar: keep clips graded at or above it. */
   qualityBar: QualityBar
   /** Whose video it is: headlines in the creator's own voice, or a clipper's third person. */
@@ -146,6 +148,7 @@ export const useDraftStore = create<DraftState>((set) => ({
   hookPreview: false,
   motionGraphics: false,
   stageLayouts: false,
+  register: null,
   qualityBar: 'b',
   headlineVoice: 'clipper',
   captionLanguage: 'original',

@@ -15,7 +15,8 @@ import { isHexColor } from '../../shared/headline-look'
 import { DIAGRAM_ACCENT, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHIC_ITEMS, graphicCanGoBehind, graphicMaxMs, isDiagram, graphicDepth, graphicHasContent, highlightPoint, templateInfo, type EditorGraphic, type GraphicPlacement, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { MAX_REEL_GRAPHICS, REEL_GRAPHIC_TEMPLATES, reelGraphicSpec, reelGraphicStyle } from '../../shared/reel-graphics'
 import { cn } from '../lib/utils'
-import { BigWordsFields, DiagramFields, GraphicView, IconFields, SHORT, fieldLabel, graphicSummary } from './ClipGraphics'
+import { BigWordsFields, DiagramFields, EffectFields, GraphicView, IconFields, SHORT, fieldLabel, graphicSummary } from './ClipGraphics'
+import { fxEffect } from '../../shared/fx-catalog'
 import { GraphicGallery, TEMPLATE_ICONS } from './GraphicGallery'
 import { Button } from './ui/Button'
 import { Segmented } from './ui/Segmented'
@@ -31,6 +32,9 @@ export interface ReelGraphicItem extends Omit<EditorGraphic, 'at_ms'> {
 }
 
 export type ReelGraphicPatch = Partial<Pick<EditorGraphic, 'duration_ms' | 'placement' | 'depth'>> & { at?: number; fields?: Record<string, string> }
+
+/** A graphic's name on the strip: its effect's name for an Effect, else its template's. */
+const nameOf = (g: Pick<EditorGraphic, 'template' | 'fields'>): string => g.template === 'fx' ? fxEffect(g.fields.effect)?.label ?? templateInfo(g.template).label : templateInfo(g.template).label
 
 const clock = (seconds: number): string => `${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, '0')}`
 
@@ -51,7 +55,8 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
   disabled: boolean
   /** Shown when a graphic can't be added yet (nothing recorded), or null. */
   emptyNote: string | null
-  onAdd: (template: GraphicTemplateId, at: number) => string | null
+  /** `effect`: for an Effect (template 'fx'), the effect picked. */
+  onAdd: (template: GraphicTemplateId, at: number, effect?: string) => string | null
   onPatch: (id: string, patch: ReelGraphicPatch) => void
   onRemove: (id: string) => void
   /** Where a new graphic would start, in words. */
@@ -71,8 +76,8 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
   const at = Math.max(0, Math.min(total - 0.5, cursor))
   const Heading = heading
 
-  const add = (template: GraphicTemplateId): void => {
-    const id = onAdd(template, at)
+  const add = (template: GraphicTemplateId, look?: string): void => {
+    const id = onAdd(template, at, template === 'fx' ? look : undefined)
     if (id) setSelected(id)
     setPicking(false)
   }
@@ -95,8 +100,8 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
         {items.filter((item) => item.at !== null).map((item) => <button key={item.id} type="button"
           className={cn('block', item.id === selected && 'selected', item.problem && 'conflict')}
           style={{ left: `${(item.at as number) / total * 100}%`, width: `${Math.max(2.5, item.duration_ms / 1000 / total * 100)}%` }}
-          aria-label={`${templateInfo(item.template).label} ${item.where}, ${(item.duration_ms / 1000).toFixed(1)} seconds`} aria-pressed={item.id === selected}
-          title={item.problem ?? `${templateInfo(item.template).label} ${item.where}`}
+          aria-label={`${nameOf(item)} ${item.where}, ${(item.duration_ms / 1000).toFixed(1)} seconds`} aria-pressed={item.id === selected}
+          title={item.problem ?? `${nameOf(item)} ${item.where}`}
           onClick={(e) => { e.stopPropagation(); setSelected(item.id); setPicking(false) }}>
           {(() => { const Icon = TEMPLATE_ICONS[item.template]; return <Icon className="h-3 w-3 shrink-0" aria-hidden /> })()}<span className="truncate">{graphicSummary(item) || <span className="font-medium">{SHORT[item.template]}</span>}</span>
         </button>)}
@@ -109,7 +114,7 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
     {items.length > 0 && <div className="flex flex-wrap gap-1.5" role="list" aria-label="Your graphics">
       {items.map((item) => <button key={item.id} type="button" role="listitem" onClick={() => setSelected(item.id)}
         className={cn('rounded-full border px-2.5 py-1 text-2xs', item.id === selected ? 'border-tool/70 bg-tool/15 text-ink' : 'border-white/10 text-ink-muted hover:text-ink')}>
-        {item.problem && <AlertTriangle className="mr-1 inline h-3 w-3 text-warning" aria-hidden />}{templateInfo(item.template).label} {item.where}
+        {item.problem && <AlertTriangle className="mr-1 inline h-3 w-3 text-warning" aria-hidden />}{nameOf(item)} {item.where}
       </button>)}
     </div>}
     {g && <GraphicForm key={g.id} g={g} frame={frame} look={look} disabled={disabled} cursorLabel={cursorLabel(at)}
@@ -131,12 +136,13 @@ export function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, on
   return <div className="grid gap-4 rounded-xl border border-white/10 p-3 sm:grid-cols-[minmax(0,1fr)_132px]">
     <fieldset disabled={disabled} className="min-w-0 space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium text-ink">{info.label} <span className="font-normal text-ink-subtle">{g.where}</span></p>
+        <p className="text-xs font-medium text-ink">{g.template === 'fx' ? fxEffect(g.fields.effect)?.label ?? info.label : info.label} <span className="font-normal text-ink-subtle">{g.where}</span></p>
         <Button size="sm" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={onRemove}>Remove</Button>
       </div>
       {g.problem && <p className="text-2xs text-warning" role="note">{g.problem}</p>}
       {!graphicHasContent(g) && <p className="text-2xs text-warning">Add its words to show it.</p>}
-      {info.fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'highlights', 'style', 'vertical', 'motion', 'labels', 'dot', 'icon', 'wrong'].includes(k)).map((key) => <label key={key} className="block space-y-1 text-2xs text-ink-muted">{fieldLabel(g.template, key)}
+      {g.template === 'fx' && <EffectFields fields={g.fields} onField={onField} />}
+      {info.fields.filter((k) => !['image', 'shape', 'x', 'y', 'icons', 'highlights', 'style', 'vertical', 'motion', 'labels', 'dot', 'icon', 'wrong', 'effect'].includes(k)).map((key) => <label key={key} className="block space-y-1 text-2xs text-ink-muted">{fieldLabel(g.template, key)}
         {key === 'items' || key === 'text' || key === 'notes'
           ? <textarea className={cn(input, 'resize-y')} rows={key === 'items' ? GRAPHIC_ITEM_LIMITS[g.template] ?? MAX_GRAPHIC_ITEMS : 2} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''}
             onChange={(e) => onField(key, e.target.value)} aria-label={`${info.label} ${fieldLabel(g.template, key).toLowerCase()}`} />

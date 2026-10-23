@@ -30,6 +30,9 @@ export function parseLookExtras(value: unknown): LookExtraId[] {
   return LOOK_EXTRA_IDS.filter((id) => picked.has(id))
 }
 
+/** `register` (the member's style: graphics density and sound) lives in register.ts; these names are kept for Create. */
+export { isRegister as isGraphicsRegister, type Register as GraphicsRegister } from './register'
+
 /** Hook text fonts, including the pairings seen in current reels (a headline font plus an accent font). */
 export const HOOK_FONT_PAIRS = [
   { id: 'marker', label: 'Marker', detail: 'Hand-drawn capitals, like a marker on the screen.' },

@@ -23,8 +23,10 @@ import { HEADLINE_FONTS, isHexColor, type HeadlineLook } from './headline-look'
 import { DIAGRAM_ACCENT, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, isDiagram, graphicDepth, MAX_GRAPHICS_PER_CLIP, clampGraphicMs, templateInfo, graphicHasContent, parseGraphics, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from './motion-graphics'
 
 /** The templates offered on review screens (every one but Logo pop and Screen recording, which need the clip editor's files, and the chapter header, which belongs to a clip's sections). */
-// Effects (fx) are added in the clip editor for now (the reel planners don't place them yet).
-export const REEL_GRAPHIC_TEMPLATES = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo' && t.id !== 'screen_frame' && t.id !== 'chapter' && t.id !== 'fx')
+// Effects (fx) are offered too: the gallery lists each effect as its own tile (the planners place them as well).
+export const REEL_GRAPHIC_TEMPLATES = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo' && t.id !== 'screen_frame' && t.id !== 'chapter')
+/** The templates the review chats can add (not effects: their fields are the effect's own, set on the page). */
+export const REEL_CHAT_TEMPLATES = REEL_GRAPHIC_TEMPLATES.filter((t) => t.id !== 'fx')
 export const MAX_REEL_GRAPHICS = 8
 /** An edited reel (Edit my recording): the automatic direction plans about one graphic per 6 s of a long reel. */
 export const MAX_EDIT_GRAPHICS = MAX_GRAPHICS_PER_CLIP

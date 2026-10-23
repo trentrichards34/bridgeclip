@@ -53,15 +53,23 @@ GRAPHIC_ID = re.compile(r'^[a-z0-9-]{4,40}$')
 EDITOR_TEMPLATES = ag.SAVED_TEMPLATES + ('logo', 'highlight', 'screen_frame')
 
 
-def graphics_limit(seconds: float) -> int:
-    """How many graphics a reel this long keeps at most: one per SECONDS_PER_GRAPHIC, at least 3."""
-    return max(3, min(MAX_GRAPHICS, int(max(0.0, seconds) // SECONDS_PER_GRAPHIC)))
+def _pace(register: Optional[str]) -> float:
+    """How much sparser than a teaching reel (a story: half as many graphics; minimal: about a quarter)."""
+    return {'story': 2.0, 'minimal': 4.0}.get(register or '', 1.0)
 
 
-def graphics_target(seconds: float) -> tuple[int, int]:
-    """The number of graphics the guidance asks for (low, high): one per 9.5-11 s."""
-    high = max(2, min(graphics_limit(seconds), round(max(0.0, seconds) / TARGET_SECONDS_HIGH)))
-    return max(2, min(high, round(max(0.0, seconds) / TARGET_SECONDS_LOW))), high
+def graphics_limit(seconds: float, register: Optional[str] = None) -> int:
+    """How many graphics a reel this long keeps at most: one per SECONDS_PER_GRAPHIC (a story or minimal reel: fewer),
+    at least 3 (2 for a story or minimal one)."""
+    pace = SECONDS_PER_GRAPHIC * _pace(register)
+    return max(3 if not register or register == 'teaching' else 2, min(MAX_GRAPHICS, int(max(0.0, seconds) // pace)))
+
+
+def graphics_target(seconds: float, register: Optional[str] = None) -> tuple[int, int]:
+    """The number of graphics the guidance asks for (low, high): one per 9.5-11 s for teaching (fewer in a story)."""
+    pace = _pace(register)
+    high = max(2, min(graphics_limit(seconds, register), round(max(0.0, seconds) / (TARGET_SECONDS_HIGH * pace))))
+    return max(2 if pace == 1.0 else 1, min(high, round(max(0.0, seconds) / (TARGET_SECONDS_LOW * pace)))), high
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +85,7 @@ def graphic_item_schema() -> dict[str, Any]:
     props['template'] = {'type': 'string', 'enum': list(EDIT_TEMPLATES)}
     props['text']['description'] += ' big_words: 1-3 punchy words exactly as said.'
     props['seconds']['description'] = 'How long it stays on screen: 2-6 for a card, 6-15 for a diagram, long enough for its words to be said.'
-    item['required'] = ['template', 'word', 'seconds', 'placement', *ag.ALL_FIELDS]
+    item['required'] = ['template', 'word', 'seconds', 'placement', *ag.ALL_FIELDS, 'effect', 'fx_fields']
     return item
 
 
@@ -86,74 +94,73 @@ def graphics_schema() -> dict[str, Any]:
 
 
 def direction_rule(seconds: float, options: Optional[dict] = None) -> str:
-    """The planner's guidance for an edited reel's graphics (`seconds`: about how long the recording is)."""
+    """The planner's guidance for an edited reel's graphics (`seconds`: about how long the recording is). `options`:
+    stage, cta_keyword, register (teaching | story | minimal), hints (graphics_director.cue_hints, by word index)."""
+    from clip_engine.services.graphics_director import director_rule, hints_block, plain_cap
     options = options or {}
-    low, high = graphics_target(seconds)
+    register = options.get('register') if options.get('register') in ('teaching', 'story', 'minimal') else None
+    low, high = graphics_target(seconds, register)
     minutes = max(1.0, seconds / 60)
     statements = ag.template_cap('statement', seconds)
+    keyword = ag.clean_keyword(options.get('cta_keyword'))
     rule = (
         '\n\nMOTION GRAPHICS ("graphics"). This video must look PRODUCED, like the best short-form creators\' edits, not like a '
         'raw talking head with captions, and not like a slideshow of the same white card. FEWER BUT BETTER: while the speaker '
         'explains something, a rich graphic lands on the point (a number counting up, icons popping in, a diagram lighting up '
         'item by item); between graphics the face shows. Personal moments, jokes, the punch line and the call to action stay on '
         'the face alone.\n'
-        f'AMOUNT: about one graphic per 10 seconds: for this recording about {f"{low} to {high}" if low < high else high} (never more than '
-        f'{graphics_limit(seconds)}). '
+        f'AMOUNT: about one graphic per {10 * _pace(register):.0f} seconds: for this recording about {f"{low} to {high}" if low < high else high} '
+        f'(never more than {graphics_limit(seconds, register)}). '
         'Spread them over the WHOLE video (not all at the start), never two at once.\n'
         f'VARIETY BUDGET (about {minutes:.0f} minute{"s" if minutes >= 1.5 else ""}): never the same template twice in a row and never '
-        f'the same template within 25 seconds of itself; at most 2 "statement" per minute and {statements} in the whole video; at most 2 '
-        '"sticky_notes" in the whole video; at most 2 "quote"; use at least 7 different templates in a video over two minutes. '
-        'Extra cards past these limits are changed or dropped by the app, so pick the right template the first time.\n'
+        f'the same template (or the same effect) within 25 seconds of itself; at most 2 "statement" per minute and {statements} in the '
+        f'whole video; at most 2 "sticky_notes" in the whole video; at most 2 "quote"; plain text cards together at most '
+        f'{plain_cap(seconds)}; use at least 7 different kinds (each effect counts as its own) in a video over two minutes. '
+        'Extra cards past these limits are changed or dropped by the app, so pick the right visual the first time.\n'
         'BAD (from a real run, do not repeat): ten white serif "statement" cards in one reel ("I\'m using AI to do exactly that", '
         '"we only need three things", "This animation", "I\'ve built a", "this is gonna be controversial"); five "sticky_notes" '
         'stacks; a "compare_marks" sitting 15 seconds with one lonely card; a statement made of half a sentence. '
         'A line that is just talk (no number, no list, no contrast, no named things) gets NO graphic.\n'
-        'MENU, best first: pick the richest template the words support.\n'
-        '1. a number, price or result said -> "stat": value exactly as said in digits ("$2,586", "3 million", "12"), label = 1-5 of '
-        'their words saying what it is (it counts up);\n'
+        'MENU, best first: pick the richest visual the words support.\n'
+        '1. a number, price or result said -> "stat" (value exactly as said in digits, label 1-5 of their words) or an fx number effect;\n'
         '2. apps, sites, tools or channels named -> "icon_pop": items = the names as said, icons = one generic icon each (video for '
         'YouTube, camera for Instagram, message for a chat app, mail for email, chart for analytics); never a brand logo;\n'
-        '3. 3-6 tools, features or channels said as parts of one thing ("ads, landing pages, emails, all in the same account") -> '
-        '"orbit" (text = that one thing if said);\n'
-        '4. one to three features or capabilities named ("competitor research", "auto reports") -> "feature_tile" with icons;\n'
-        '5. when the speaker lists 3-6 parallel items in one section, a DIAGRAM that stays 6-15 s while they talk it through (at most '
-        'one per section): steps that build on each other -> "staircase" (items bottom to top, icons); a process that narrows or '
-        'filters -> "funnel"; milestones from zero to a goal -> "journey"; things that scale up or grow -> "growth"; qualities of one '
-        'thing -> "idea_hub" (text = that thing if said); "not X, but Y" -> "compare_marks" (items X then Y, wrong "first"; only when '
-        'X and Y are said within about 6 seconds of each other). Its "word" is where its FIRST item is said; each item 1-4 words '
-        'exactly as said. A video that walks through numbered steps or "three things" should get a diagram for them;\n'
-        '6. one to three punchy words that land a point ("go viral", "profitable", "no audience") -> "big_words": huge type placed '
-        'behind the speaker\'s head; 1-4 times per video, never for a full sentence;\n'
-        '7. a key phrase worth stopping on -> "headline_pill": text = the first words as said, phrase = the key words right after '
-        '(drawn on a color box), e.g. text "Use any website\'s", phrase "hidden API";\n'
-        '8. a contrast like "not X, not Y, just Z" -> "strike_list": items X, Y (the rejected things), final Z, accent = the key word of '
-        'Z (e.g. items "scraping", "brittle selectors", "guessing endpoints", final "just a typed client", accent "typed client"); a '
-        'before and after -> "before_after";\n'
-        '9. steps or things to do said quickly -> "checklist" (or "list"), items in order, icons optional;\n'
-        '10. a person, tool or company introduced -> "lower_third";\n'
-        '11. only for a real one-line thesis (a full thought, under 12 words) -> "statement": text as said, accent = its key word(s) '
-        'inside text (e.g. text "Skip the scraping.", accent "scraping"); a line quoted from someone -> "quote"; 2-3 short parallel '
-        'phrases -> "sticky_notes" (rarely: an "icon_pop", "feature_tile" or "checklist" usually says it better).\n'
-        'The app gives repeated templates different looks and brand colors; you only pick the template and the words.\n'
+        '3. 3-6 tools, features or channels said as parts of one thing -> "orbit" (text = that one thing if said); one to three '
+        'features named -> "feature_tile" with icons;\n'
+        '4. when the speaker lists 3-6 parallel items in one section, a DIAGRAM that stays 6-15 s while they talk it through (at most '
+        'one per section): steps that build -> "staircase" (items bottom to top, icons); a process that narrows -> "funnel"; '
+        'milestones -> "journey"; things that grow -> "growth"; qualities of one thing -> "idea_hub"; "not X, but Y" -> '
+        '"compare_marks" (items X then Y, wrong "first"; only when said within about 6 seconds). Its "word" is where its FIRST item is '
+        'said; each item 1-4 words exactly as said. A video that walks through numbered steps or "three things" gets a diagram;\n'
+        '5. one to three punchy words -> "big_words" (huge type behind the speaker, 1-4 per video); a key phrase -> "headline_pill" '
+        '(text = the first words, phrase = the key words right after, e.g. text "Use any website\'s", phrase "hidden API");\n'
+        '6. "not X, not Y, just Z" -> "strike_list" (items "scraping", "brittle selectors", final "just a typed client", accent '
+        '"typed client"); a before and after -> "before_after"; steps said quickly -> "checklist"; a person or company introduced -> '
+        '"lower_third";\n'
+        '7. only for a real one-line thesis (a full thought, under 12 words) -> "statement" (e.g. text "Skip the scraping.", accent '
+        '"scraping"); a line quoted from someone -> "quote"; 2-3 short parallel phrases -> "sticky_notes" (rarely).\n'
+        'The app gives the whole video one look in the brand colors; you only pick the visual and the words.\n'
         'Chapter headers ("Step #1. Come up with your idea") are added automatically when the speaker numbers the sections out loud: '
         'do not make graphics for the step names themselves; put the section\'s diagram or list on its points instead.\n'
         'When the speaker shows a screen they filmed (a page, a dashboard, an app), the screen is the visual: put at most a "stat" '
         'or a short "headline_pill" there, never a stack of cards over it.\n'
-    )
+    ) + director_rule(register, bool(keyword))
     if options.get('stage'):
         rule += ('Stage layouts are on: statement, strike_list, sticky_notes, list, checklist, orbit and feature_tile go on a stage at the '
                  'top of the frame with the speaker in a card below, and diagrams fill the frame. Then back to the full face for '
                  'personal lines.\n')
-    keyword = ag.clean_keyword(options.get('cta_keyword'))
     if keyword:
         rule += (f'- the speaker asks viewers to comment: "comment_cta" with keyword exactly "{keyword}" and lead "Comment", where they '
                  'ask.\n')
+    hints = options.get('hints') if isinstance(options.get('hints'), str) else ''
+    rule += hints_block(hints[:6000])
     rule += (
         'Rules: use ONLY words said at that moment, in the order said, from words you keep (never from cut words). Copy every '
         'number exactly as said (write "three million" as "3 million"); never add a number, name, claim or word that was not said. '
         'Keep it short: a stat label under 6 words, items under 5 words each, a statement or quote under 12 words. Never put a graphic '
         'on the hook span (the hook text shows there) or on the call to action. "seconds" is how long it stays: long enough for all '
-        'its words to be said. Set every field the template does not use to "" (items, icons and notes to []).'
+        'its words to be said. Set every field the template does not use to "" (items, icons and notes to [], effect to "", '
+        'fx_fields to []).'
     )
     return rule
 
@@ -228,15 +235,35 @@ def anchor_word(at_ms: float, clock: Sequence[tuple[int, int]]) -> Optional[int]
     return None
 
 
+def word_hints(words: Sequence[Any], marks: Sequence[Optional[str]], limit: int = 40) -> str:
+    """The transcript's cues (graphics_director.find_cues) as planner hints anchored on word indices ("w123 money …"),
+    from the words likely kept."""
+    from clip_engine.services.graphics_director import cue_hints
+    if not words:
+        return ''
+    keep = [m is None for m in marks]
+    offsets = virtual_offsets(words)
+    clock = _clock(words, keep, offsets)
+
+    def label(ms: float) -> str:
+        word = anchor_word(ms, clock)
+        return f'w{word}' if word is not None else f'w{clock[-1][1]}' if clock else 'w0'
+    try:
+        return cue_hints(kept_segments(words, keep, offsets), limit, label)
+    except Exception as error:  # noqa: BLE001 - hints are a nicety: the plan goes ahead without them
+        logger.warning(f"Cue hints skipped: {type(error).__name__}")
+        return ''
+
+
 TEXT_TEMPLATES = ('statement', 'title', 'big_words', 'quote')
 
 
 def drops_meaning(graphic: dict, segments: Sequence[TranscriptSegment]) -> bool:
     """A text card that leaves out a word turning its line around ("not", "never", "no", "can't"…) said between its own
     words: "organic content, going viral" from "not organic content, not going viral" says the opposite of what was said."""
-    if graphic['template'] not in TEXT_TEMPLATES:
-        return False
     fields = graphic['fields']
+    if graphic['template'] not in TEXT_TEMPLATES and not (graphic['template'] == 'fx' and fields.get('text')):
+        return False
     text = ' '.join(fields.get(k, '') for k in ('text', 'subline'))
     want = ag._tokens(text)
     if len(want) < 2:
@@ -261,6 +288,19 @@ def drops_meaning(graphic: dict, segments: Sequence[TranscriptSegment]) -> bool:
     return False
 
 
+def plan_register(words: Sequence[Any], marks: Sequence[Optional[str]], options: Optional[dict] = None) -> str:
+    """The reel's style register: the member's (options['register']), else read from the kept words (teaching or story)."""
+    options = options or {}
+    if options.get('register') in ('teaching', 'story', 'minimal'):
+        return options['register']
+    from clip_engine.services.graphics_director import detect_register, find_cues
+    keep = [m is None for m in marks]
+    offsets = virtual_offsets(words)
+    segments = kept_segments(words, keep, offsets)
+    kept_ms = sum(w.end_ms - w.start_ms for i, w in enumerate(words) if keep[i])
+    return detect_register(find_cues(segments), kept_ms) if segments else 'teaching'
+
+
 def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]], options: Optional[dict] = None,
                   avoid: Sequence[tuple[int, int]] = ()) -> list[dict]:
     """The planner's graphics, checked against the kept words, as word-anchored review graphics (origin 'auto').
@@ -279,7 +319,11 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
     # (The reel's first second is checked on the reel itself: here the first kept stretch starts a little earlier.)
     ranges[0] = (ranges[0][0] - ag.FIRST_MS - 500, ranges[0][1])
     kept_seconds = sum(b - a for a, b in ranges) / 1000
-    limit = graphics_limit(kept_seconds)
+    # The register: the member's, else what the words say (a story gets about half as many).
+    if options.get('register') not in ('teaching', 'story', 'minimal'):
+        from clip_engine.services.graphics_director import detect_register, find_cues
+        options['register'] = detect_register(find_cues(segments), kept_seconds * 1000)
+    limit = graphics_limit(kept_seconds, options['register'])
     blocked = {i for a, b in avoid for i in range(max(0, a), min(len(words), b + 1))}
     planned = []
     for item in raw[:MAX_GRAPHICS * 2]:
@@ -302,7 +346,7 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
         word = anchor_word(g['at_ms'], clock)
         if word is None or word in blocked:
             continue
-        fields = {k: v for k, v in g['fields'].items() if k not in ('item_ms', 'word_ms')}
+        fields = {k: v for k, v in g['fields'].items() if k not in ('item_ms', 'word_ms', 'cue_ms')}
         out.append({'id': ag.new_id(taken), 'template': g['template'], 'word': word, 'duration_ms': int(g['duration_ms']),
                     'placement': g['placement'], 'fields': fields, 'origin': 'auto',
                     **({'depth': 'behind'} if g['template'] == 'big_words' else {})})

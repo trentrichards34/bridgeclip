@@ -8,6 +8,7 @@
 import { useMemo, useState } from 'react'
 import { MessageSquare, Scissors } from 'lucide-react'
 import { newGraphic, type EditorGraphic, type GraphicTemplateId } from '../../shared/motion-graphics'
+import { FX_EFFECTS, fxEffect } from '../../shared/fx-catalog'
 import { MIN_TAKE_PART_MS } from '../../shared/remix-chat'
 import { TAKE_GRAPHIC_FROM_MS, fitRemixGraphic, remixGraphicFrame, isRemixGraphicFormat } from '../../shared/reel-graphics'
 import { REMIX_CHAT_POINT_SUGGESTIONS, mergeRemixChatSteps, remixChatIntro, remixChatSuggestions, remixPartName, parseRemixChatSteps, type RemixChatAction, type RemixChatPatch, type RemixChatStep } from '../../shared/remix-chat'
@@ -54,9 +55,14 @@ export function RemixGraphicsSection({ status, draft, text, onGraphics, partMs, 
   }
   const outside = (g: EditorGraphic): string | null => trim && (g.at_ms < trim.startMs || g.at_ms >= trim.endMs - 400) ? 'It’s in a part of your take that isn’t used, so it won’t show. Move it.' : null
   const items: ReelGraphicItem[] = text.graphics.map(({ at_ms, ...rest }) => ({ ...rest, at: at_ms / 1000, where: `at ${clock(at_ms)}`, problem: outside({ ...rest, at_ms }) }))
-  const add = (template: GraphicTemplateId, at: number): string | null => {
+  const add = (template: GraphicTemplateId, at: number, effectId?: string): string | null => {
     if (!partMs) return null
-    const g = fitRemixGraphic(newGraphic(template, Math.round(at * 1000), { taken: text.graphics.map((x) => x.id) }), format, partMs)
+    // An effect starts empty (its words are typed on the page), at its own length and size.
+    const effect = template === 'fx' ? fxEffect(effectId) ?? FX_EFFECTS[0] : null
+    const drafted = effect
+      ? newGraphic('fx', Math.round(at * 1000), { fields: { effect: effect.id }, taken: text.graphics.map((x) => x.id), duration_ms: effect.default_ms, ...(effect.size ? { size: effect.size } : {}) })
+      : newGraphic(template, Math.round(at * 1000), { taken: text.graphics.map((x) => x.id) })
+    const g = fitRemixGraphic(drafted, format, partMs)
     onGraphics((list) => [...list, g].sort((a, b) => a.at_ms - b.at_ms))
     return g.id
   }

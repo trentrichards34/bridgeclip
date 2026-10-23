@@ -492,6 +492,11 @@ test('Library → Remix: with the run\'s source video kept, the clip\'s moment i
 
 test('look extras: remembered on Create and Remix and in saved styles; unknown ids dropped; Create requests checked', () => {
   assert.ok(shared.CREATE_STYLE_KEYS.includes('lookExtras'))
+  // The graphics amount (register) is remembered with Create's style: one of its values or null (read from the words).
+  assert.ok(shared.CREATE_STYLE_KEYS.includes('register'))
+  assert.deepEqual(plain(shared.parseCreateStyle({ register: 'story' })), { register: 'story' })
+  assert.deepEqual(plain(shared.parseCreateStyle({ register: null })), { register: null })
+  assert.deepEqual(plain(shared.parseCreateStyle({ register: 'loud' })), {})
   assert.ok(shared.REMIX_STYLE_KEYS.includes('lookExtras'))
   assert.deepEqual(plain(shared.parseCreateStyle({ lookExtras: ['progress_bar', 'keyword_pill', 'confetti', 'keyword_pill'] })), { lookExtras: ['keyword_pill', 'progress_bar'] })
   assert.deepEqual(plain(shared.parseRemixStyle({ lookExtras: [] })), { lookExtras: [] })

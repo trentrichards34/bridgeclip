@@ -36,6 +36,8 @@ import { brollRunFields } from './broll-library'
 import { logger } from './logger'
 import { rememberHeadline, rememberRunHeadline, savedHeadline, sourcesKey } from './hook-memory'
 import { readMemberPrefs } from './member-prefs'
+import { isGraphicsRegister } from '../shared/look-extras'
+import { registerKeeps } from '../shared/register'
 import { openRouterBase } from './openrouter-media'
 import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironment, validatePython } from './pipeline-runner'
 import { parseRemixRecompose } from './remix'
@@ -88,6 +90,11 @@ type SpendRecorder = (usd: number, label: string, runId: string, estimated: bool
 let recordSpend: SpendRecorder = () => undefined
 /** Sources checked this session (path → seconds), so the spending check can estimate before a run starts. */
 const known = new Map<string, number>()
+
+/** The member's graphics amount (Create's setting, shared by the edit's direction): {} when unset (the engine reads it from the words). */
+function graphicsRegister(): { register?: string } {
+  try { const register = readMemberPrefs().create.register; return isGraphicsRegister(register) ? { register } : {} } catch { return {} }
+}
 
 export function onEditStatus(listener: (status: EditStatus) => void): void { notify = listener }
 export function onEditSpend(recorder: SpendRecorder): void { recordSpend = recorder }
@@ -609,7 +616,7 @@ async function prepare(current: EditRun): Promise<void> {
       ...(current.purpose ? { purpose: current.purpose } : {}), ...(current.reference ? { reference_image: current.reference } : {}),
       ...(combine ? { combine: { clips: sources.map((source) => ({ shot: source.shot ?? 'face', seconds: source.seconds })) } } : {}),
       // The automatic direction: the same call plans the motion graphics (camera + screen reels have their own layouts).
-      ...(current.status.screen ? {} : { direction: { stage: true, ...(current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}) } })
+      ...(current.status.screen ? {} : { direction: { stage: true, ...(current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}), ...graphicsRegister() } })
     }, 15 * 60_000, (detail, percent, found) => { if (!current.cancelled) publish(current, { detail: detail || 'Planning your edit', percent: 70 + percent * 0.29 }, found) },
     (child) => { current.child = child })
     spend(current, typeof result.cost_usd === 'number' ? result.cost_usd : 0)
@@ -729,7 +736,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
   if (current.status.progress) current.status.progress = { ...current.status.progress, order: reelOrder ? [...reelOrder] : null }
   publish(current, { phase: 'rendering', detail: 'Starting', percent: 1, error: null }, {
     ...(decisions.hookText.trim() ? { hook: decisions.hookText.replace(/\s+/g, ' ').trim().slice(0, 160) } : {}), cuts: cut.size,
-    popups: decisions.popups.filter((item) => item.on).length, graphics: current.status.screen ? 0 : (decisions.graphics ?? []).filter((g) => !cut.has(g.word) && (g.origin !== 'auto' || decisions.motionGraphics !== false)).length,
+    popups: decisions.popups.filter((item) => item.on).length, graphics: current.status.screen ? 0 : (decisions.graphics ?? []).filter((g) => !cut.has(g.word) && (g.origin !== 'auto' || decisions.motionGraphics !== false) && registerKeeps(g, decisions.soundStyle)).length,
     broll: Boolean(decisions.look.broll) && !current.status.screen })
   let brandMark: Awaited<ReturnType<typeof brandMarkForRun>>
   try {
@@ -821,7 +828,8 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     const motion = decisions.motionGraphics !== false
     const color = current.brand?.look?.color
     Object.assign(config, { editor: {
-      graphics: (decisions.graphics ?? []).map(({ id, template, word, duration_ms, placement, fields, origin, size, depth }) => ({ id, template, word, duration_ms, placement, fields,
+      // The style: Minimal keeps only the automatic graphics on numbers, the hook and the call to action.
+      graphics: (decisions.graphics ?? []).filter((g) => registerKeeps(g, decisions.soundStyle)).map(({ id, template, word, duration_ms, placement, fields, origin, size, depth }) => ({ id, template, word, duration_ms, placement, fields,
         ...(origin ? { origin } : {}), ...(size ? { size } : {}), ...(depth ? { depth } : {}) })),
       pins, motion, stage: motion && decisions.stageLayouts !== false,
       ...(typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color) ? { brand_color: color } : {}),

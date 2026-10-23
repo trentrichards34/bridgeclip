@@ -282,8 +282,8 @@ export const FX_GROUPS: { id: FxGroup; label: string }[] = [
   { id: 'numbers', label: 'Effects: numbers & proof' }, { id: 'words', label: 'Effects: words' }, { id: 'compare', label: 'Effects: compare' },
   { id: 'ideas', label: 'Effects: ideas & steps' }, { id: 'screens', label: 'Effects: screens & messages' }, { id: 'ending', label: 'Effects: badges & asks' }
 ]
-/** Fields every effect graphic may carry besides its own: the effect, its backing, spoken cue times. */
-export const FX_COMMON_FIELDS = ['effect', 'backing', 'cue_ms'] as const
+/** Fields every effect graphic may carry besides its own: the effect, its backing, spoken cue times, the video's one look (`theme`: 'light' | 'dark'). */
+export const FX_COMMON_FIELDS = ['effect', 'backing', 'cue_ms', 'theme'] as const
 
 export function fxEffect(id: string | undefined): FxEffect | null {
   return FX_EFFECTS.find((e) => e.id === id) ?? null
@@ -378,7 +378,7 @@ export function fxCatalogJson(): { version: 1; effects: Record<string, unknown>[
     effects: FX_EFFECTS.map((e) => ({
       id: e.id, label: e.label, detail: e.detail, group: e.group, jobs: e.jobs, use_when: e.use_when, avoid_when: e.avoid_when,
       hold_s: e.hold_s, sound: e.sound, default_ms: e.default_ms, size: e.size ?? 'card', frame: e.frame ?? 'band', ...(e.sync_s !== undefined ? { sync_s: e.sync_s } : {}),
-      ...(e.cue ? { cue: { field: e.cue.field, unit: e.cue.unit } } : {}),
+      ...(e.cue ? { cue: { field: e.cue.field, unit: e.cue.unit, ...(e.cue.variable ? { cues: true } : {}) } } : {}),
       fields: e.fields.map((f) => ({ key: f.key, kind: f.kind, said: f.said, required: !!f.required, ...(f.max ? { max: f.max } : {}), ...(f.options ? { options: f.options.map((o) => o.value) } : {}) }))
     }))
   }

@@ -973,6 +973,7 @@ def review_of(words: list[Word], plan: dict, planned: str, cost_usd: float, warn
         "warnings": warnings[:4], "cost_usd": round(cost_usd, 6),
         **({"combine": plan["combine"]} if plan.get("combine") else {}),
         **({"graphics": plan["graphics"]} if plan.get("graphics") else {}),
+        **({"register": plan["register"]} if plan.get("register") else {}),
         **({"kept_hook": plan["kept_hook"]} if plan.get("kept_hook") else {}),
     }
 
@@ -1003,9 +1004,10 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
     direction_options = dict(config.get("direction") or {})
     rule = ""
     if direction:
-        from clip_engine.services.edit_direction import direction_rule
+        from clip_engine.services.edit_direction import direction_rule, word_hints
         kept_ms = sum(w.end_ms - w.start_ms for i, w in enumerate(words) if base[i] is None)
-        rule = direction_rule(kept_ms / 1000 * 1.25, direction_options)
+        # What each moment is (a number, a list, a story…), as hints on word indices for the planner.
+        rule = direction_rule(kept_ms / 1000 * 1.25, {**direction_options, 'hints': word_hints(words, base)})
     payload: dict[str, Any] = {
         "model": settings.planner_model,
         "messages": [{"role": "system", "content": plan_system_prompt(direction) + (combine_prompt() if clips else "") + rule
@@ -1037,6 +1039,10 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
                     plan["combine"] = combine_of(raw, words, plan, clips)
                 if direction:
                     plan["graphics"] = _planned_graphics(raw.get("graphics"), words, plan, direction_options)
+                    # The style the graphics were planned in (the member's, else read from the words): the review starts
+                    # its Style (graphics and sound) there.
+                    from clip_engine.services.edit_direction import plan_register
+                    plan["register"] = plan_register(words, plan["marks"], direction_options)
                 break
             except (OpenRouterError, ValueError) as error:
                 if isinstance(error, OpenRouterError) and not error.retryable:

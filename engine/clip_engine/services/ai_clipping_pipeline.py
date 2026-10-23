@@ -132,7 +132,12 @@ def stage_brand(request) -> Optional[str]:
 
 def graphics_options(request) -> dict:
     # Chapter headers come with motion graphics: a talk with an explicit structure gets a title per section.
-    return {'headline_off': headline_off(request), 'cta_keyword': request.cta_keyword or '', 'stage': stages_on(request), 'chapters': True}
+    # The member's register (teaching | story | minimal; else detected from the words) and the one look's tone.
+    register = getattr(request, 'graphics_register', None)
+    return {'headline_off': headline_off(request), 'cta_keyword': request.cta_keyword or '', 'stage': stages_on(request), 'chapters': True,
+            **({'register': register} if register in ('teaching', 'story', 'minimal') else {}),
+            # One look per video: a white hook box means dark ink on light cards; anything else light ink on dark.
+            'tone': 'light' if (request.headline_look if isinstance(getattr(request, 'headline_look', None), dict) else {}).get('look') == 'white' else 'dark'}
 
 
 @dataclass
@@ -243,6 +248,8 @@ class ClippingJobRequest:
     # Look extras (see look_extras): motion effects picked on Create, and the brand color they use.
     look_extras: Optional[list] = None
     look_extras_color: Optional[str] = None
+    # How dense the automatic graphics are: 'teaching' | 'story' | 'minimal' (None: detected from the words).
+    graphics_register: Optional[str] = None
 
     def _post_init_brand(self):
         from clip_engine.services.look_extras import parse_color, parse_look_extras

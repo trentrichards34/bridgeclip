@@ -6,6 +6,7 @@
  */
 import { graphicHasContent, graphicWindow, outputTime, type EditorGraphic } from './motion-graphics'
 import { outputScenes, type StageScene } from './scenes'
+import { DEFAULT_REGISTER, REGISTERS, type Register } from './register'
 
 export const SOUND_ACTIONS = ['whoosh', 'swipe', 'pop', 'tick', 'click', 'impact', 'riser', 'paper'] as const
 export type SoundAction = (typeof SOUND_ACTIONS)[number]
@@ -26,9 +27,10 @@ export function isSoundAction(value: unknown): value is SoundAction {
   return typeof value === 'string' && (SOUND_ACTIONS as readonly string[]).includes(value)
 }
 
-export const SOUND_REGISTERS = ['teaching', 'story', 'minimal'] as const
-export type SoundRegister = (typeof SOUND_REGISTERS)[number]
-export const DEFAULT_SOUND_REGISTER: SoundRegister = 'teaching'
+// One style register for graphics and sound (register.ts): the sound's registers are the same three.
+export const SOUND_REGISTERS = REGISTERS
+export type SoundRegister = Register
+export const DEFAULT_SOUND_REGISTER: SoundRegister = DEFAULT_REGISTER
 export const SOUND_REGISTER_INFO: Record<SoundRegister, { label: string; detail: string }> = {
   teaching: { label: 'Teaching', detail: 'A sound on each graphic and scene change. Best for tips and how-tos.' },
   story: { label: 'Story', detail: 'A few soft sounds, only on graphics. Plain talking stays quiet. Best for personal stories.' },

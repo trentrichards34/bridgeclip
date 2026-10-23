@@ -77,24 +77,27 @@ def test_an_over_repetitive_plan_comes_out_varied_and_capped():
     marks = [None] * len(words)
     raw = over_repetitive(words, starts)
     out = ed.plan_graphics(raw, words, marks, {'stage': True})
-    counts = Counter(g['template'] for g in out)
+    counts = Counter(ag.kind_of(g) for g in out)
+    seconds = (words[-1].end_ms - words[0].start_ms) / 1000
+    # Plain text cards are a fallback (about one per 45 s), sticky notes at most twice.
+    assert sum(counts[k] for k in ('statement', 'quote', 'sticky_notes', 'big_words')) <= max(1, round(seconds / 45)) + 1, counts
     assert counts['statement'] <= 4 and counts['sticky_notes'] <= 2, counts
-    # The rest became richer templates their words fit (nothing dropped that could be kept).
+    # The rest became richer visuals their words fit (effects count as their own kinds).
     assert len(counts) >= 6, counts
-    assert {'headline_pill', 'big_words'} & set(counts), counts
-    assert {'feature_tile', 'icon_pop', 'orbit', 'checklist', 'list', 'idea_hub'} & set(counts), counts
-    # Never the same template twice in a row, never within 25 s of itself.
+    assert {'headline_pill', 'big_words', 'fx:marker-highlight', 'fx:headline-slam', 'fx:per-word-rise'} & set(counts), counts
+    assert {'feature_tile', 'icon_pop', 'orbit', 'checklist', 'list', 'idea_hub', 'fx:state-chip-rail'} & set(counts), counts
+    # Never the same kind twice in a row, never within 25 s of itself.
     seq = sorted(out, key=lambda g: g['word'])
     for a, b in zip(seq, seq[1:]):
-        assert a['template'] != b['template'] or words[b['word']].start_ms - words[a['word']].start_ms >= 40000, (a, b)
+        assert ag.kind_of(a) != ag.kind_of(b) or words[b['word']].start_ms - words[a['word']].start_ms >= 40000, (a, b)
     by = {}
     for g in seq:
-        by.setdefault(g['template'], []).append(words[g['word']].start_ms)
+        by.setdefault(ag.kind_of(g), []).append(words[g['word']].start_ms)
     assert all(b - a >= 25000 for t in by.values() for a, b in zip(t, t[1:]))
     # Every word on every card was said there, in order (the usual checks ran on the converted cards too).
     said = ' '.join(w.text.lower() for w in words)
     for g in out:
-        for key in ('text', 'phrase', 'items'):
+        for key in ('text', 'phrase', 'items', 'states', 'word'):
             for line in g['fields'].get(key, '').split('\n'):
                 for token in ag._tokens(line):
                     assert token in ag._tokens(said), (g, token)
@@ -188,6 +191,7 @@ def test_create_clips_are_varied_too():
         {'template': 'sticky_notes', 'at_ms': 22000, 'duration_ms': 4000, 'placement': 'top', 'fields': {'items': 'Finding new people\ngetting new buyers'}},
     ]
     out = ag.fit_to_clip(planned, segs, [(0, 45000)], 1.0, {})
-    kinds = [g['template'] for g in out]
-    assert kinds.count('sticky_notes') == 1 and len(set(kinds)) >= 2, kinds
+    kinds = [ag.kind_of(g) for g in out]
+    # Sticky notes are a fallback: at most one, the others richer visuals their words fit.
+    assert kinds.count('sticky_notes') <= 1 and len(set(kinds)) >= 2, kinds
     assert all(g['fields'].get('variant') in ag.VARIANTS[g['template']] for g in out if g['template'] in ag.VARIANTS)

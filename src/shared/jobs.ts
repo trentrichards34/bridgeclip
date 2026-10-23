@@ -17,7 +17,7 @@ import type { HeadlineLook } from './headline-look'
 import type { PipelineStage } from './job-progress'
 import type { JobOutput } from './job-output'
 import type { CaptionLanguage } from './caption-language'
-import type { LookExtraId } from './look-extras'
+import type { GraphicsRegister, LookExtraId } from './look-extras'
 
 /** Options for one clipping run, as the Create wizard submits them. */
 export interface ClipJobRequest {
@@ -66,6 +66,8 @@ export interface ClipJobRequest {
    * card (a number, a list, a name said in the clip), drawn over the finished clips and editable in the editor.
    */
   motionGraphics?: boolean
+  /** How dense the motion graphics are: teaching, story or minimal (missing: read from what is said). */
+  register?: GraphicsRegister
   /**
    * Stage layouts (with motion graphics, 9:16, no gameplay background): the big cards (statements, crossed-out
    * lists, sticky notes, lists) are drawn on a stage at the top while the speaker sits in a card below; the

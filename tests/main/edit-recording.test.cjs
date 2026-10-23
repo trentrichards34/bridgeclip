@@ -713,3 +713,26 @@ test('a plan that kept (or could not keep) the last headline says so on the revi
   assert.equal(shared.parseEditPlan({ ...base, kept_hook: { kept: 'yes' } }, 1).keptHook, undefined)
   assert.equal(shared.parseEditPlan(base, 1).keptHook, undefined)
 })
+
+test('one style for graphics and sound: the plan’s register starts the review’s Style, and Minimal keeps only numbers, the hook and the CTA', () => {
+  const register = load('shared/register.ts')
+  const raw = {
+    words: [['Most', 300, 500, 0, null], ['coaches', 520, 800, 0, null], ['make', 820, 900, 0, null], ['3', 920, 1400, 0, null], ['sales.', 1420, 1700, 0, null]],
+    hooks: [{ id: 0, start: 0, end: 1, text: 'Most coaches', why: '' }], hook: 0, cta: null, popups: [], sounds: [], planned: 'ai', notes: [], warnings: [],
+    graphics: [{ id: 'g-aaaa1', template: 'stat', word: 3, duration_ms: 3000, placement: 'top', fields: { value: '3' }, origin: 'auto' }]
+  }
+  const plan = shared.parseEditPlan({ ...raw, register: 'story' }, 1)
+  assert.equal(plan.register, 'story')
+  assert.equal(shared.initialDecisions(plan).soundStyle, 'story')
+  assert.equal(shared.parseEditPlan({ ...raw, register: 'loud' }, 1).register, undefined)
+  // The sound's registers are the same three.
+  assert.deepEqual([...load('shared/sound-design.ts').SOUND_REGISTERS], [...register.REGISTERS])
+  const auto = (template, fields = {}) => ({ template, fields, origin: 'auto' })
+  assert.ok(register.registerKeeps(auto('stat'), 'minimal'))
+  assert.ok(register.registerKeeps(auto('fx', { effect: 'count-up' }), 'minimal'))
+  assert.ok(!register.registerKeeps(auto('fx', { effect: 'marker-highlight' }), 'minimal'))
+  assert.ok(!register.registerKeeps(auto('staircase'), 'minimal'))
+  assert.ok(register.registerKeeps(auto('staircase'), 'story'))
+  // The member's own graphics always stay.
+  assert.ok(register.registerKeeps({ template: 'statement', fields: {}, origin: 'member' }, 'minimal'))
+})
