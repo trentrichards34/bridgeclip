@@ -284,3 +284,83 @@ def test_a_clip_with_graphics_gets_its_sounds_at_the_right_times_and_social_loud
         lo, hi = (p["peak_ms"] - 300) // 10, (p["peak_ms"] + 300) // 10
         loudest = (lo + int(np.argmax(energy[lo:hi]))) * 10
         assert abs(loudest - p["peak_ms"]) <= 40, (loudest, p)
+
+
+@pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs FFmpeg")
+def test_an_editor_bake_mixes_the_clips_sounds_where_its_graphics_land(monkeypatch, tmp_path):
+    """The clip editor's export (run_editor) with main's `sound` request: the clip is rendered, its effects mixed at the
+    graphics' times on the finished clip's clock, and its loudness set for social; the clip keeps its sound setting."""
+    import asyncio
+    from dataclasses import asdict
+    from clip_engine.services import rendering_service
+    from clip_engine.services.manual_editor import run_editor
+    from clip_engine.services.rendering_service import RenderingService
+    from tests.test_manual_editor import transcript
+
+    renderer = RenderingService()
+    monkeypatch.setattr(renderer.settings, "local_mode", True)
+    renderer._verify_ffmpeg()
+    monkeypatch.setattr(rendering_service, "get_output_dimensions", lambda _: (180, 320))
+    source = tmp_path / "editor-source.mp4"
+    voice = "0.3*sin(2*PI*220*t)*(0.55+0.45*sin(2*PI*0.7*t))"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=180x320:r=30:d=12", "-f", "lavfi", "-i",
+                    f"aevalsrc='{voice}':s=48000:d=12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-ar", "48000", "-shortest", str(source)], check=True)
+    sound = {"on": True, "register": "teaching", "music_db": -20, "cues": []}
+    c = {"id": "candidate-1", "title": "Reel", "ranges": [[0, 2000], [4000, 12000]], "scenes": [{"at_ms": 0, "layout": "fill", "crops": [[0, 0, 1, 1]]}],
+         "captions": False, "caption_preset": "pop", "video_speed": 1, "status": "ready", "score": 0.8, "reason": "", "review": None, "exports": [],
+         "sound": sound}
+    project = {"version": 1, "revision": 0, "width": 180, "height": 320, "duration_ms": 12000, "aspect_ratio": "9:16",
+               "candidates": [c], "transcript": [asdict(s) for s in transcript()]}
+    (tmp_path / "editor-project.json").write_text(json.dumps(project))
+    (tmp_path / "transcript.json").write_text(json.dumps({"segments": [asdict(s) for s in transcript()]}))
+    (tmp_path / "job_output.json").write_text(json.dumps({"clips": [], "total_clips": 0, "editor_project": True}))
+    # As main sends it (sound-design.ts bakeSoundEvents): graphics and a scene on the finished clip's clock (10 s long).
+    events = [{"kind": "graphic", "template": "list", "at_ms": 1500, "end_ms": 3500, "size": "card"},
+              {"kind": "graphic", "template": "stat", "at_ms": 4500, "end_ms": 6000, "size": "card"},
+              {"kind": "scene", "at_ms": 7000, "end_ms": 9600}]
+    asyncio.run(run_editor({"run": str(tmp_path), "revision": 0, "candidate_id": c["id"], "action": "export",
+                            "sound": {"register": "teaching", "music_db": -20, "events": events, "palette": []}}))
+    output = json.loads((tmp_path / "job_output.json").read_text())["clips"][0]
+    clip = output["s3_url"]
+    assert output["duration_ms"] == 10000
+    planned = sd.plan_sounds(sd.cues_from_events(events, 10000), 10000, "teaching", -20.0)
+    # Three in 10 s (one per 4 s at most): the scene's way back out is the one left out.
+    assert [(p.action, p.peak_at_ms) for p in planned] == [("whoosh", 1533), ("pop", 4533), ("whoosh", 7033)]
+    starts, energy = _onsets(clip)
+    assert len(starts) == len(planned), (starts, [p.start_ms for p in planned])
+    for p, start in zip(planned, starts):
+        assert p.start_ms - 60 <= start <= p.peak_at_ms + 30, (start, p)
+        lo, hi = (p.peak_at_ms - 300) // 10, (p.peak_at_ms + 300) // 10
+        assert abs((lo + int(np.argmax(energy[lo:hi]))) * 10 - p.peak_at_ms) <= 40
+    integrated, peak = _ebur128(clip)
+    print(f"editor bake: {integrated} LUFS, true peak {peak} dBTP")
+    assert abs(integrated - sd.TARGET_LUFS) <= 1.0 and peak <= -1.0
+    saved = json.loads((tmp_path / "editor-project.json").read_text())["candidates"][0]
+    assert saved["status"] == "baked" and saved["sound"] == sound
+    # A malformed request is refused before anything renders.
+    from clip_engine.services.manual_editor import EditorError
+    saved_project = json.loads((tmp_path / "editor-project.json").read_text())
+    saved_project["candidates"][0]["status"] = "ready"
+    (tmp_path / "editor-project.json").write_text(json.dumps(saved_project))
+    with pytest.raises((EditorError, ValueError)):
+        asyncio.run(run_editor({"run": str(tmp_path), "revision": saved_project["revision"], "candidate_id": c["id"], "action": "export",
+                                "sound": {"register": "loud"}}))
+
+
+def test_edit_runner_checks_the_sound_design_options():
+    import edit_runner
+    from tests.test_edit_recording import script
+    words = script(("Most coaches lose clients.", 0.5))
+    base = {"mode": "render", "output_dir": "/tmp/x", "sources": ["/tmp/a.mp4"], "words": [[w.text, w.start_ms, w.end_ms, 0] for w in words],
+            "keep": [True] * len(words), "look": {"headline": "Hook", "include_captions": True, "caption_preset": "pop"}}
+    assert "sound_design" not in edit_runner.parse_request(base)
+    parsed = edit_runner.parse_request({**base, "sound_design": {"on": True, "register": "story"},
+                                        "sound_palette": [{"path": "/sounds/pop/a.wav", "action": "pop"}]})
+    assert parsed["sound_design"] == {"on": True, "register": "story"} and parsed["sound_palette"] == [{"path": "/sounds/pop/a.wav", "action": "pop"}]
+    for bad in ({"sound_design": {"on": "yes"}}, {"sound_design": {"on": True, "register": "loud"}}, {"sound_design": {"on": True, "x": 1}},
+                {"sound_design": {"on": True}, "sound_palette": [{"path": "rel.wav", "action": "pop"}]},
+                {"sound_design": {"on": True}, "sound_palette": [{"path": "/a.wav", "action": "laser"}]},
+                {"sound_palette": []}):
+        with pytest.raises(ValueError):
+            edit_runner.parse_request({**base, **bad})

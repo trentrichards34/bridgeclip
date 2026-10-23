@@ -99,7 +99,7 @@
       "take": 0,
       "peak_ms": 2,
       "duration_ms": 100,
-      "level_db": -23.9,
+      "level_db": -23.92,
       "source": "Kenney, Interface Sounds (kenney_interface-sounds/pluck_001.ogg)",
       "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
     },
@@ -139,7 +139,7 @@
       "take": 0,
       "peak_ms": 2,
       "duration_ms": 13,
-      "level_db": -20.56,
+      "level_db": -29.49,
       "source": "Kenney, Interface Sounds (kenney_interface-sounds/tick_001.ogg)",
       "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
     },
@@ -149,7 +149,7 @@
       "take": 1,
       "peak_ms": 2,
       "duration_ms": 20,
-      "level_db": -21.42,
+      "level_db": -28.34,
       "source": "Kenney, Interface Sounds (kenney_interface-sounds/tick_002.ogg)",
       "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
     },
@@ -159,7 +159,7 @@
       "take": 2,
       "peak_ms": 48,
       "duration_ms": 55,
-      "level_db": -18.15,
+      "level_db": -20.74,
       "source": "Kenney, Interface Sounds (kenney_interface-sounds/tick_004.ogg)",
       "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
     },
@@ -179,7 +179,7 @@
       "take": 0,
       "peak_ms": 3,
       "duration_ms": 97,
-      "level_db": -27.94,
+      "level_db": -28.06,
       "source": "Kenney, Interface Sounds (kenney_interface-sounds/click_001.ogg)",
       "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
     },
@@ -189,7 +189,7 @@
       "take": 1,
       "peak_ms": 3,
       "duration_ms": 7,
-      "level_db": -13.99,
+      "level_db": -25.46,
       "source": "Kenney, Interface Sounds (kenney_interface-sounds/click_005.ogg)",
       "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
     },
@@ -209,7 +209,7 @@
       "take": 3,
       "peak_ms": 3,
       "duration_ms": 60,
-      "level_db": -17.95,
+      "level_db": -20.17,
       "source": "Kenney, Interface Sounds (kenney_interface-sounds/toggle_004.ogg)",
       "license": "CC0-1.0 (public domain dedication), Kenney (www.kenney.nl)"
     },

@@ -342,6 +342,8 @@ def test_a_render_with_the_direction_makes_an_editor_project_with_its_graphics_a
     assert result['editor'] is True and result['graphics'] >= 3 and result['scenes'] == 1
     project = json.load(open(os.path.join(root, 'editor-project.json')))
     c = project['candidates'][0]
+    # Its sound effects are mixed by the bake, from the clip's own graphics (on, teaching, no music, no extra cues here).
+    assert c['sound'] == {'on': True, 'register': 'teaching', 'cues': []}
     kinds = {g['template'] for g in c['graphics']}
     assert kinds >= {'stat', 'strike_list', 'screen_frame'}, kinds
     frame = next(g for g in c['graphics'] if g['template'] == 'screen_frame')

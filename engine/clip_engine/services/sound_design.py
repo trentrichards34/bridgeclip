@@ -12,7 +12,8 @@ pressing a button, an impact for a big word slamming in, and one riser into the 
    Each sound's peak lands one frame (33 ms) after its picture; takes rotate so no two neighbors repeat; the member's
    own sounds for an action ("My sounds") are used before the built-in ones.
 3. The mix: each hit sits a few dB over the music bed and under the voice (levels from the member's music setting),
-   then the whole sound is set to -14 LUFS with true peaks under -1 dBTP (two-pass loudnorm).
+   then the whole sound is set to -14 LUFS with true peaks under -1 dBTP (measured first, then one exact gain and a
+   limiter at 4x the rate).
 
 The built-in sounds are in engine/assets/sfx (manifest.json: each file's action, take, peak and level; LICENSE.txt:
 where each came from, all CC0 or our own).
@@ -97,15 +98,17 @@ def decode(path: str, max_seconds: float) -> np.ndarray:
 
 
 def measure(samples: np.ndarray) -> tuple[int, int, float]:
-    """(peak ms, duration ms, level dB): the loudest 5 ms from the start, the length, the loudest 100 ms (RMS dBFS).
+    """(peak ms, duration ms, level dB): the loudest 5 ms from the start, the length, the loudest 100 ms (RMS dBFS; a
+    shorter sound counts as 100 ms with silence after it, as it sounds in the mix).
     The same measures as the built-in library's (scripts/sfx/build_library.py)."""
     if samples.size == 0 or not np.any(samples):
         raise SoundDesignError("The sound is silent")
     window = int(0.005 * RATE)
     energy = np.convolve(samples ** 2, np.ones(window) / window, mode="same")
     peak = int(round(int(np.argmax(energy)) / RATE * 1000))
-    window = min(samples.size, int(0.1 * RATE))
-    level = 10 * math.log10(max(float(np.convolve(samples ** 2, np.ones(window) / window, mode="valid").max()), 1e-12))
+    window = int(0.1 * RATE)
+    padded = np.pad(samples, (0, max(0, window - samples.size)))
+    level = 10 * math.log10(max(float(np.convolve(padded ** 2, np.ones(window) / window, mode="valid").max()), 1e-12))
     return peak, int(round(samples.size / RATE * 1000)), round(level, 2)
 
 
@@ -314,7 +317,7 @@ class Placement:
 
 
 # Each hit's level against the others: the big hits a little louder, typing well down.
-ACTION_TRIM = {"impact": 1.0, "whoosh": 0.0, "riser": 0.0, "pop": -1.0, "swipe": -2.0, "paper": -3.0, "click": -4.0, "tick": -7.0}
+ACTION_TRIM = {"impact": 1.0, "whoosh": 0.0, "riser": 0.0, "pop": -1.0, "swipe": -2.0, "paper": -2.0, "click": -3.0, "tick": -5.0}
 KIND_TRIM = {"punch": -3.0, "graphic_out": -3.0, "scene_out": -2.0, "extra": -2.0, "broll": -1.0}
 # The voice's loudest 100 ms sit about this far over its integrated loudness.
 VOICE_PEAK_OVER_LUFS = 3.0
@@ -457,11 +460,12 @@ TRUE_PEAK_GUARD = "aresample=192000,alimiter=limit=0.75:attack=1:release=50:leve
 
 
 def loudnorm_filter(measured: dict) -> str:
+    """Pass two: one exact gain to the target (loudnorm's own second pass turns dynamic on short or peaky clips and
+    misses it), then the true-peak guard for the few peaks the gain pushes up."""
     if not measured:
         return TRUE_PEAK_GUARD
-    return (f"loudnorm=I={TARGET_LUFS}:TP={TARGET_TP}:LRA={TARGET_LRA}:measured_I={measured['input_i']}:"
-            f"measured_TP={measured['input_tp']}:measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}:"
-            f"offset={measured['target_offset']}:linear=true,{TRUE_PEAK_GUARD}")
+    gain = max(-24.0, min(24.0, TARGET_LUFS - measured["input_i"]))
+    return f"volume={gain:.2f}dB,{TRUE_PEAK_GUARD}"
 
 
 def mix_into(video: str, placements: list[Placement], out: str) -> dict:

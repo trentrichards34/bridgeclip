@@ -135,8 +135,10 @@ def peak_ms(samples: np.ndarray) -> int:
 
 
 def level_db(samples: np.ndarray) -> float:
-    """The loudest 100 ms (RMS, dBFS): what the mixer sets each sound's gain from (members' sounds are measured alike)."""
-    window = min(len(samples), int(0.1 * RATE))
+    """The loudest 100 ms (RMS, dBFS; a shorter sound counts as 100 ms with silence after it): what the mixer sets each
+    sound's gain from (members' sounds are measured alike)."""
+    window = int(0.1 * RATE)
+    samples = np.pad(samples, (0, max(0, window - len(samples))))
     energy = np.convolve(samples ** 2, np.ones(window) / window, mode="valid")
     return round(10 * math.log10(max(float(energy.max()), 1e-12)), 2)
 
