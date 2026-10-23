@@ -17,7 +17,8 @@ import gsap from 'gsap'
 import { CustomEase } from 'gsap/CustomEase'
 import './fx.css'
 import { FX_MOTION, easeIn } from './motion'
-import { fxEffect, fxTiming, fxVariables, type FxEffect } from '../../../shared/fx-catalog'
+import { fxEffect, fxMark, fxTiming, fxVariables, type FxEffect, type FxSlot } from '../../../shared/fx-catalog'
+import { drawMark, markPath, type Picture } from './media'
 import type { GraphicRenderSpec } from '../../../shared/motion-graphics'
 
 gsap.registerPlugin(CustomEase)
@@ -31,11 +32,38 @@ export interface FxModule {
 interface Timeline { totalTime: (t: number, suppressEvents?: boolean) => unknown; pause: () => unknown; kill: () => unknown }
 export interface MountedEffect { seek: (ms: number) => void; destroy: () => void; ready: Promise<void> }
 
-const modules = import.meta.glob('./vendor/*.html', { query: '?fx' }) as Record<string, () => Promise<FxModule>>
+// Vendored HyperFrames units, and CreatorClips' own ones remade from HyperFrames blocks so they take variables (./own).
+const modules = import.meta.glob(['./vendor/*.html', './own/*.html'], { query: '?fx' }) as Record<string, () => Promise<FxModule>>
 /** The compiled unit for an effect, or null when it isn't vendored. */
 export function loadEffect(id: string): Promise<FxModule> | null {
-  const load = modules[`./vendor/${id}.html`]
+  const load = modules[`./vendor/${id}.html`] ?? modules[`./own/${id}.html`]
   return load ? load() : null
+}
+
+/** The member's pictures of a render spec, by field. */
+function pictureUrls(spec: GraphicRenderSpec): Record<string, string | undefined> {
+  return { image: spec.image, image_b: spec.image_b }
+}
+async function loadPicture(url: string | undefined): Promise<Picture | null> {
+  if (!url) return null
+  const img = new Image()
+  img.decoding = 'async'
+  img.src = url
+  try { await img.decode() } catch { return null }
+  return img.naturalWidth > 0 && img.naturalHeight > 0 ? { url, width: img.naturalWidth, height: img.naturalHeight } : null
+}
+/** A picture in a unit's slot: it covers the slot (top-aligned for screenshots); `lit` ones catch the unit's light. */
+function pictureNode(picture: Picture, slot: FxSlot): HTMLElement {
+  const wrap = document.createElement('div')
+  wrap.className = 'cc-media'
+  wrap.dataset.field = slot.field
+  wrap.dataset.align = slot.align ?? 'center'
+  if (slot.lit) { wrap.setAttribute('data-lit', ''); wrap.style.setProperty('--lsp-x', '50') }
+  const img = document.createElement('img')
+  img.src = picture.url; img.alt = ''; img.draggable = false
+  img.style.objectPosition = slot.align === 'top' ? '50% 0%' : '50% 50%'
+  wrap.appendChild(img)
+  return wrap
 }
 
 /** The display face per hook font (templates.ts DISPLAY); every other face is bundled too. */
@@ -107,7 +135,7 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
   const load = effect && loadEffect(effect.id)
   if (!effect || !load) return empty
   const timing = fxTiming(effect, spec.fields, spec.duration_ms)
-  const ownExit = effect.fixed?.exit !== undefined && effect.fixed.exit !== 'none'
+  const ownExit = effect.own_exit === true || (effect.fixed?.exit !== undefined && effect.fixed.exit !== 'none')
   const box = fxBox(spec, effect)
   const stage = document.createElement('div')
   const tone = spec.fields.theme === 'light' ? 'light' : 'dark'
@@ -123,6 +151,8 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
   let context: gsap.Context | null = null
   let pending = -1
   let alive = true
+  // The hand-drawn mark over a picture: its strokes and when it draws (seconds into the unit).
+  let mark: { paths: SVGPathElement[]; lengths: number[]; at: number } | null = null
 
   const apply = (ms: number): void => {
     const shown = ms >= 0 && ms < spec.duration_ms
@@ -133,6 +163,7 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
     timeline.pause()
     timeline.totalTime(local / 1000, false)
     for (const animation of shadow.getAnimations()) { animation.pause(); animation.currentTime = local }
+    if (mark) drawMark(mark, local / 1000)
     // Leave accelerates: the last few frames shrink a little and go (units that leave on their own keep theirs).
     const out = ownExit ? 0 : easeIn(1 - (spec.duration_ms - ms) / FX_MOTION.out_ms)
     stage.style.opacity = String(1 - out)
@@ -142,7 +173,18 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
   const ready = (async (): Promise<void> => {
     try { await Promise.all(FONT_LOADS.map((f) => document.fonts.load(f).catch(() => []))) } catch { /* system fonts */ }
     const unit = await load
+    // The member's pictures (decoded first, so the unit measures them laid out).
+    const urls = pictureUrls(spec)
+    const pictures: Record<string, Picture | null> = {}
+    for (const slot of effect.media ?? []) pictures[slot.field] = await loadPicture(urls[slot.field])
     if (!alive) return
+    // A photo effect takes its picture's shape inside its band (nothing drawn around the picture).
+    const first = effect.fit_media ? pictures[effect.media?.[0]?.field ?? ''] : null
+    if (first) {
+      const ratio = first.width / first.height
+      const w = Math.round(Math.min(box.w, box.h * ratio)), h = Math.round(Math.min(box.h, box.w / ratio))
+      Object.assign(stage.style, { left: `${box.x + Math.round((box.w - w) / 2)}px`, top: `${box.y + Math.round((box.h - h) / 2)}px`, width: `${w}px`, height: `${h}px` })
+    }
     const vars = fxVariables(effect, spec.fields, timing)
     const tokenCss = Object.entries(tokens).map(([k, v]) => `${k}: ${v} !important;`).join(' ')
     // Tokens on the host and re-declared on the unit's roots, as the theme contract's QA harness does.
@@ -150,17 +192,43 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
       :where(#root, #root *) { word-spacing: ${WORD_SPACING}; }
       ${effect.css_rules ?? ''}
       .cc-fx-snippet { position: absolute; inset: 0; display: grid; place-items: center; container-type: size; overflow: visible; font-family: var(--font-body); color: var(--fg); }
-      ${unit.styles}</style>${unit.markup}`
+      ${unit.styles}
+      .cc-media { position: absolute; inset: 0; overflow: hidden; }
+      .cc-media > img { display: block; width: 100%; height: 100%; object-fit: cover; }
+      .cc-mark { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; z-index: 5; }
+      .cc-mark path { fill: none; stroke: var(--brand); stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0.15em 0.3em rgba(0, 0, 0, 0.35)); }</style>${unit.markup}`
+    // Pictures in the unit's own slots replace its placeholder; host-level template slots are handed over below.
+    const templates = new Map<string, HTMLTemplateElement>()
+    for (const slot of effect.media ?? []) {
+      const picture = pictures[slot.field]
+      if (!picture) continue
+      if (slot.template) {
+        const tpl = document.createElement('template')
+        tpl.content.appendChild(pictureNode(picture, slot))
+        templates.set(slot.template, tpl)
+        continue
+      }
+      for (const el of shadow.querySelectorAll<HTMLElement>(slot.selector ?? '')) {
+        el.replaceChildren(pictureNode(picture, slot))
+        if (getComputedStyle(el).position === 'static') el.style.position = 'relative'
+        el.style.overflow = 'hidden'
+      }
+    }
+    const slotDoc = {
+      querySelector: (selector: string): HTMLTemplateElement | null => templates.get(/data-slot="([^"]+)"/.exec(selector)?.[1] ?? '') ?? null,
+      importNode: <T extends Node>(node: T, deep?: boolean): T => document.importNode(node, deep),
+      createElement: (tag: string): HTMLElement => document.createElement(tag)
+    }
     const seconds = String(Math.max(0.1, timing.unit_ms / 1000))
     const root = shadow.getElementById('root')
     if (root) {
       root.dataset.duration = seconds
-      for (const [key, value] of Object.entries(effect.css ?? {})) root.style.setProperty(key, value)
+      for (const [key, value] of Object.entries(effect.css ?? {})) root.style.setProperty(key, value, 'important')
     }
     for (const clip of shadow.querySelectorAll<HTMLElement>('[data-duration]')) clip.dataset.duration = seconds
     const registry: Record<string, Timeline> = {}
     const locals: Record<string | symbol, unknown> = {
-      __timelines: registry, __hyperframes: { getVariables: () => ({ ...vars }) }, __hfVariables: { ...vars }, __ccMotion: FX_MOTION, gsap, CustomEase
+      __timelines: registry, __hyperframes: { getVariables: () => ({ ...vars }) }, __hfVariables: { ...vars }, __ccMotion: FX_MOTION, __ccSlotDoc: slotDoc, gsap, CustomEase
     }
     const realFonts = document.fonts
     let ctx: gsap.Context | null = null
@@ -200,6 +268,30 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
     // A unit may build after its fonts are ready (a promise turn or two).
     for (let i = 0; i < 6 && !Object.keys(registry).length; i++) await new Promise((r) => setTimeout(r, 16))
     timeline = registry[effect.id] ?? Object.values(registry)[0] ?? null
+    // The member's mark (a circle, an underline, an arrow or a box) on the part of their picture they pointed at.
+    const wanted = fxMark(spec.fields)
+    const target = wanted && shadow.querySelector<HTMLElement>(`.cc-media[data-field="${wanted.on}"]`)
+    const picture = wanted && pictures[wanted.on]
+    if (wanted && target && picture) {
+      const drawn = markPath(wanted.shape, wanted.box, picture, { w: target.clientWidth, h: target.clientHeight }, target.dataset.align === 'top' ? 'top' : 'center')
+      if (drawn) {
+        const NS = 'http://www.w3.org/2000/svg'
+        const svg = document.createElementNS(NS, 'svg')
+        svg.setAttribute('class', 'cc-mark')
+        svg.setAttribute('width', String(target.clientWidth)); svg.setAttribute('height', String(target.clientHeight))
+        svg.setAttribute('viewBox', `0 0 ${target.clientWidth} ${target.clientHeight}`)
+        const paths = drawn.strokes.map((d) => {
+          const path = document.createElementNS(NS, 'path')
+          path.setAttribute('d', d); path.setAttribute('stroke-width', String(drawn.width))
+          svg.appendChild(path)
+          return path
+        })
+        target.appendChild(svg)
+        // It draws once the unit has settled (just after its beat), and by mid-way through a short one at the latest.
+        mark = { paths, lengths: paths.map((p) => p.getTotalLength() + 2), at: Math.min((effect.sync_s ?? 1) + 0.25, Math.max(0.8, timing.unit_ms / 1000 * 0.45)) }
+        drawMark(mark, -1)
+      }
+    }
     if (!alive) { ctx?.revert(); return }
     apply(pending)
   })()

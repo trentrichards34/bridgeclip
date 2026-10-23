@@ -48,7 +48,16 @@ AUTO_FX = (
     'vox-annotate', 'scramble-reveal', 'ticker-takeover', 'typed-prompt', 'typing-indicator', 'strikethrough-replace',
     'marker-checklist-card', 'constellation-hub', 'locked-nucleus-orbit', 'radial-surround', 'overwhelm-surround', 'state-chip-rail',
     'notification-stack', 'testimonial-proof-card', 'cta-lockup',
+    # Charts and flows with every number and label said (CreatorClips' own units, remade from HyperFrames blocks).
+    'data-chart', 'animated-bar-chart', 'mk-line-graph', 'flowchart', 'onboarding-stepper-flow',
 )
+# Effects on the member's own screenshots and photos: never asked of the model (it can't see the pictures); the
+# director places them in code where a screen, a proof or a before and after is said, only when the member added
+# screenshots for the video (graphics_director.place_media).
+MEDIA_FX = ('browser-device-stage', 'device-frame-stage', 'before-after-wipe', 'comparison-split', 'split-tilt-cards',
+            'paper-collage-reveal', 'torn-paper-rip', 'light-sweep-pass')
+# A picture field: a run image name (or, before an edited reel is made, one of its image ids).
+_PICTURE = re.compile(r'^[A-Za-z0-9._-]{1,80}$')
 TEMPLATE_FIELDS = {
     'stat': ('value', 'label'), 'title': ('text',), 'list': ('title', 'items', 'icons'), 'checklist': ('title', 'items', 'icons'),
     'before_after': ('before', 'after'), 'quote': ('text', 'author'), 'lower_third': ('name', 'role'),
@@ -326,6 +335,15 @@ def fx_clean_fields(raw: dict) -> dict[str, str]:
     fields = {'effect': effect['id']}
     for f in effect['fields']:
         value = raw.get(f['key'])
+        if f['kind'] == 'image':
+            if isinstance(value, str) and _PICTURE.match(value):
+                fields[f['key']] = value
+            continue
+        if f['kind'] == 'region':
+            box = fx_region(value)
+            if box:
+                fields[f['key']] = ', '.join(f'{round(n, 3):g}' for n in box)
+            continue
         if f['kind'] == 'list':
             lines = _lines(value, 8)
             if lines:
@@ -347,6 +365,22 @@ def fx_clean_fields(raw: dict) -> dict[str, str]:
     if raw.get('theme') in ('light', 'dark'):
         fields['theme'] = raw['theme']
     return fields
+
+
+def fx_region(value: Any) -> Optional[tuple[float, float, float, float]]:
+    """A region on a picture (x, y, w, h as shares of it, as text or a list), or None when it isn't one inside it
+    (fx-catalog.ts fxRegion)."""
+    parts = value if isinstance(value, (list, tuple)) else re.split(r'[\s,]+', str(value or '').strip())
+    try:
+        nums = [float(p) for p in parts if p != '']
+    except (TypeError, ValueError):
+        return None
+    if len(nums) != 4 or any(not math.isfinite(n) for n in nums):
+        return None
+    x, y, w, h = nums
+    if x < 0 or y < 0 or w < 0.01 or h < 0.01 or x + w > 1.001 or y + h > 1.001:
+        return None
+    return x, y, w, h
 
 
 def _cut(text: str, limit: int) -> str:
@@ -373,7 +407,8 @@ def fx_too_long(raw: dict) -> bool:
 def fx_has_content(fields: dict[str, str]) -> bool:
     """A known effect with its required fields filled (fx-catalog.ts fxHasContent)."""
     effect = fx_catalog().get(fields.get('effect'))
-    return bool(effect) and all(not f['required'] or bool(fields.get(f['key'])) for f in effect['fields'])
+    return bool(effect) and all(not f['required'] or bool(fields.get(f['key'])) for f in effect['fields']) \
+        and (not effect.get('either') or any(fields.get(k) for k in effect['either']))
 
 
 def clean_fields(template: str, raw: dict, fields_of: Optional[dict] = None) -> dict[str, str]:
@@ -764,6 +799,7 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
     """Every number on the card is said within 3 s of it; most of its words are said near it (every word, close
     by and in order, for the newer templates)."""
     at, length = graphic['at_ms'], graphic['duration_ms']
+    effect_id = graphic['fields'].get('effect') if graphic['template'] == 'fx' else None
     if graphic['template'] == 'fx':
         # An effect: only the fields it shows as words or numbers (fx_catalog 'said'), every word said near it.
         effect = fx_catalog().get(graphic['fields'].get('effect'))
@@ -781,12 +817,15 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
             fields['value'] = f"{fields['value']}{unit if unit[:1] in ('%', ' ') or len(unit) <= 2 else ' ' + unit}"
         graphic = {**graphic, 'fields': fields}
     near_numbers = _numbers(_words_between(segments, at - NUMBER_WINDOW_MS, at + NUMBER_WINDOW_MS))
+    # An effect's list of numbers (a chart's bars, a line's points) is said while it builds: each one while it shows.
+    lists = {f['key'] for f in (fx_catalog().get(effect_id) or {}).get('fields', []) if f['kind'] == 'list'} if effect_id else set()
+    along = _numbers(_words_between(segments, at - NUMBER_WINDOW_MS, at + length + NUMBER_WINDOW_MS)) if lists else []
     for key, text in graphic['fields'].items():
-        if key in NON_WORD_FIELDS:
+        if key in NON_WORD_FIELDS and key not in lists:
             continue
         for line in text.split('\n'):
             for value in _numbers(line):
-                if not any(abs(value - heard) <= 1e-6 * max(1.0, abs(value)) for heard in near_numbers):
+                if not any(abs(value - heard) <= 1e-6 * max(1.0, abs(value)) for heard in (along if key in lists else near_numbers)):
                     return False
     if graphic['template'] in STRICT_TEMPLATES or graphic['template'] == 'fx':
         strict_heard = {w for w, _ in _timed_words(segments, at - STRICT_WINDOW_MS, at + length + STRICT_WINDOW_MS)}
@@ -1129,7 +1168,10 @@ _PRIORITY = {'stat': 6, 'strike_list': 6, 'list': 5, 'checklist': 5, 'statement'
 # Effects by kind: the proof and the frameworks first, the emphasis effects like a headline pill.
 _FX_PRIORITY = {'chart-story': 7, 'decline-chart': 7, 'marker-checklist-card': 7, 'constellation-hub': 6, 'radial-surround': 6,
                 'state-chip-rail': 6, 'strikethrough-replace': 6, 'count-up': 6, 'number-pop-in': 6, 'conic-progress-ring': 6,
-                'star-rating-fill': 6, 'testimonial-proof-card': 6, 'cta-lockup': 3}
+                'star-rating-fill': 6, 'testimonial-proof-card': 6, 'cta-lockup': 3,
+                'data-chart': 7, 'mk-line-graph': 7, 'animated-bar-chart': 6, 'flowchart': 7, 'onboarding-stepper-flow': 6,
+                # The member's own screenshots: what they chose to show wins its moment.
+                **{e: 9 for e in MEDIA_FX}}
 
 
 def _priority(g: dict) -> int:
@@ -1151,10 +1193,11 @@ def max_cards(output_length_ms: float, register: Optional[str] = None) -> int:
     return max(1, min(MAX_PER_CLIP, by_pace, by_minute))
 
 
-def graphic_size(template: str, stage: bool) -> str:
+def graphic_size(template: str, stage: bool, effect: Optional[str] = None) -> str:
     """'stage' for the big pattern cards when Stage layouts are on; 'card' otherwise. Diagrams are always stage size: in a
-    Visual scene with Stage layouts on, else over the video on their blue panel."""
-    return 'stage' if template in DIAGRAMS or (stage and template in STAGE_TEMPLATES) else 'card'
+    Visual scene with Stage layouts on, else over the video on their blue panel; so are the member's screenshots (a
+    picture needs the room to be read)."""
+    return 'stage' if template in DIAGRAMS or (stage and template in STAGE_TEMPLATES) or (template == 'fx' and effect in MEDIA_FX) else 'card'
 
 
 def new_id(taken: set[str]) -> str:
@@ -1183,6 +1226,7 @@ VARIETY_CAPS = {
     # Effects count as their own kinds ("fx:count-up"); numbers come back more often than the rest.
     'fx:count-up': (3, 6), 'fx:number-pop-in': (2, 4), 'fx:conic-progress-ring': (1, 2), 'fx:star-rating-fill': (1, 2),
     'fx:chart-story': (1, 2), 'fx:decline-chart': (1, 2), 'fx:marker-highlight': (1.5, 4), 'fx:cta-lockup': (1, 1),
+    'fx:data-chart': (1, 2), 'fx:mk-line-graph': (1, 2), 'fx:animated-bar-chart': (1, 2), 'fx:flowchart': (1, 2), 'fx:onboarding-stepper-flow': (1, 2),
 }
 VARIETY_DEFAULT = (1.5, 4)
 # A template never comes back sooner than this after itself (a short clip: a quarter of its length, at least 8 s) and
@@ -1710,7 +1754,7 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
         previous_end = g['at_ms'] + g['duration_ms']
         out_list.append({'id': new_id(taken), 'template': g['template'], 'at_ms': g['at_ms'], 'duration_ms': g['duration_ms'],
                          'placement': g['placement'] if g.get('placement') in PLACEMENTS else 'top', 'fields': fields, 'origin': 'auto',
-                         'size': graphic_size(g['template'], opts['stage'])})
+                         'size': graphic_size(g['template'], opts['stage'], g['fields'].get('effect'))})
     # Chapter headers sit in their own band at the very top (the hook hands over to the first one).
     for c in chapters:
         out_list.append({'id': new_id(taken), **c, 'origin': 'auto', 'size': 'card'})

@@ -9,7 +9,10 @@ const { renderToStaticMarkup } = require('react-dom/server')
 
 const bundled = buildSync({
   stdin: {
-    contents: `export { GraphicGallery, galleryPreview } from './src/renderer/components/GraphicGallery';
+    contents: `export { GraphicGallery, galleryPreview, galleryEffects } from './src/renderer/components/GraphicGallery';
+      export { FX_SAMPLE_PICTURES } from './src/renderer/graphics/fx/samples';
+      export { fxNeedsPicture, fxHasContent, fxVariables, fxEffect, fxMark, fxRegion } from './src/shared/fx-catalog';
+      export { EditScreenshots } from './src/renderer/components/EditScreenshots';
       export { EffectFields, draftGraphic, graphicsWithEffect, graphicSummary, effectSample } from './src/renderer/components/ClipGraphics';
       export { FX_EFFECTS, FX_GROUPS } from './src/shared/fx-catalog';
       export { GRAPHIC_TEMPLATES } from './src/shared/motion-graphics';
@@ -36,7 +39,7 @@ const STYLE = { color: '#7C3AED', font: 'clean' }
 
 test('the gallery lists every effect as its own tile, in Effects groups after the templates', () => {
   const picked = []
-  const html = renderToStaticMarkup(React.createElement(m.GraphicGallery, { templates: m.GRAPHIC_TEMPLATES, where: 'at 0:03', style: STYLE, full: false, limitNote: '', onPick: (...a) => picked.push(a), onClose: () => {} }))
+  const html = renderToStaticMarkup(React.createElement(m.GraphicGallery, { templates: m.GRAPHIC_TEMPLATES, where: 'at 0:03', style: STYLE, full: false, limitNote: '', pictures: true, onPick: (...a) => picked.push(a), onClose: () => {} }))
   for (const group of m.FX_GROUPS) if (m.FX_EFFECTS.some((e) => e.group === group.id)) assert.match(html, new RegExp(`aria-label="${group.label.replace(/&/g, '&amp;')}"`))
   const tiles = [...html.matchAll(/aria-label="Add effect ([^"]+)"/g)].map((x) => x[1])
   assert.equal(tiles.length, m.FX_EFFECTS.length)
@@ -45,10 +48,65 @@ test('the gallery lists every effect as its own tile, in Effects groups after th
   assert.doesNotMatch(html, /aria-label="Add Effect"/)
   // Text templates still come first.
   assert.ok(html.indexOf('Add Title slam') < html.indexOf('Add effect Count up'))
-  // Edit my recording and Remix galleries list every effect too (the chats add templates only).
+  // Edit my recording and Remix galleries list every effect too (the chats add templates only), except the ones on
+  // the member's own pictures where no picture can be added.
   const reel = renderToStaticMarkup(React.createElement(m.GraphicGallery, { templates: m.REEL_GRAPHIC_TEMPLATES, where: 'here', style: STYLE, full: false, limitNote: '', onPick: () => {}, onClose: () => {} }))
-  assert.equal([...reel.matchAll(/aria-label="Add effect ([^"]+)"/g)].length, m.FX_EFFECTS.length)
+  assert.equal([...reel.matchAll(/aria-label="Add effect ([^"]+)"/g)].length, m.FX_EFFECTS.filter((e) => !m.fxNeedsPicture(e)).length)
   assert.ok(!m.REEL_CHAT_TEMPLATES.some((t) => t.id === 'fx') && m.REEL_GRAPHIC_TEMPLATES.some((t) => t.id === 'fx'))
+})
+
+test('picture effects: the gallery asks for a picture, previews them with plain stand-ins, and they never draw without one', () => {
+  const needing = m.FX_EFFECTS.filter((e) => m.fxNeedsPicture(e)).map((e) => e.id)
+  assert.deepEqual(needing.sort(), ['before-after-wipe', 'browser-device-stage', 'comparison-split', 'device-frame-stage', 'light-sweep-pass', 'paper-collage-reveal', 'split-tilt-cards'])
+  // Offered only where pictures can be added.
+  assert.ok(m.galleryEffects(false).every((e) => !m.fxNeedsPicture(e)))
+  assert.equal(m.galleryEffects(true).length, m.FX_EFFECTS.length)
+  const html = renderToStaticMarkup(React.createElement(m.GraphicGallery, { templates: m.GRAPHIC_TEMPLATES, where: 'here', style: STYLE, full: false, limitNote: '', pictures: true, onPick: () => {}, onClose: () => {} }))
+  assert.match(html, /aria-label="Add effect Browser screenshot \(choose your picture\)"/)
+  assert.match(html, /Needs your picture/)
+  // The tile's preview: stand-in pictures (plain shapes, no words) and a sample mark; never the words said there.
+  const spec = m.galleryPreview('fx', STYLE, { title: 'said words' }, 'before-after-wipe')
+  assert.equal(spec.image, m.FX_SAMPLE_PICTURES.before)
+  assert.equal(spec.image_b, m.FX_SAMPLE_PICTURES.after)
+  assert.equal(spec.fields.title, undefined)
+  for (const url of Object.values(m.FX_SAMPLE_PICTURES)) assert.doesNotMatch(decodeURIComponent(url), /<text/)
+  const browser = m.galleryPreview('fx', STYLE, {}, 'browser-device-stage')
+  assert.ok(browser.image.startsWith('data:image/svg+xml'))
+  assert.deepEqual(m.fxMark(browser.fields), { shape: 'box', on: 'image', box: [0.06, 0.36, 0.58, 0.56] })
+  // Without its picture it has no content (it is never drawn or placed empty); the picture is never a unit variable.
+  assert.equal(m.fxHasContent({ effect: 'browser-device-stage' }), false)
+  assert.equal(m.fxHasContent({ effect: 'browser-device-stage', image: '0123456789abcdef.png' }), true)
+  assert.equal(m.fxHasContent({ effect: 'before-after-wipe', image: '0123456789abcdef.png' }), false)
+  assert.equal(m.fxHasContent({ effect: 'torn-paper-rip', first: 'The old way' }), false, 'a picture or words under the sheet')
+  assert.equal(m.fxHasContent({ effect: 'torn-paper-rip', first: 'The old way', second: 'The new way' }), true)
+  const vars = m.fxVariables(m.fxEffect('browser-device-stage'), { effect: 'browser-device-stage', image: '0123456789abcdef.png', mark: 'circle', mark_box: '0.1, 0.1, 0.2, 0.2', title: '' })
+  assert.deepEqual(Object.keys(vars).sort(), ['accent', 'title'])
+  assert.equal(vars.title, '\u200B', 'no address shows unless one is typed or said')
+  // A mark only with a shape and a box inside the picture.
+  assert.equal(m.fxMark({ effect: 'light-sweep-pass', mark: 'underline', mark_box: '0.5, 0.5, 0.6, 0.1' }), null)
+  assert.equal(m.fxMark({ effect: 'light-sweep-pass', mark: '', mark_box: '0.1, 0.1, 0.2, 0.2' }), null)
+  assert.deepEqual(m.fxRegion('0.1,0.2 0.3 0.4'), [0.1, 0.2, 0.3, 0.4])
+})
+
+test('the effect form shows a picture effect’s pictures and, with a mark, the picture to drag its box on', () => {
+  const pictures = { url: (v) => v ? `local-file:///run/${v}` : undefined, choose: async () => null }
+  const none = renderToStaticMarkup(React.createElement(m.EffectFields, { fields: { effect: 'browser-device-stage' }, onField: () => {}, pictures }))
+  assert.match(none, /Choose picture/)
+  assert.match(none, /Choose a picture to show it\./)
+  const marked = renderToStaticMarkup(React.createElement(m.EffectFields, { fields: { effect: 'browser-device-stage', image: 'abc.png', mark: 'circle' }, onField: () => {}, pictures }))
+  assert.match(marked, /Change picture/)
+  assert.match(marked, /drag on the picture to box what the mark points at/)
+  assert.match(marked, /src="local-file:\/\/\/run\/abc.png"/)
+  // An edited reel picks one of its screenshots instead.
+  const reel = renderToStaticMarkup(React.createElement(m.EffectFields, { fields: { effect: 'before-after-wipe', image: 'id1', image_b: 'id2' }, onField: () => {},
+    pictures: { url: () => undefined, options: [{ value: 'id1', label: 'home.png' }, { value: 'id2', label: 'new.png' }] } }))
+  assert.match(reel, /aria-label="Before picture"/)
+  assert.match(reel, /aria-label="After picture"/)
+  // Edit my recording's setup lists the screenshots with their boxes.
+  const setup = renderToStaticMarkup(React.createElement(m.EditScreenshots, { value: [{ path: '/v/home.png', name: 'home.png', box: [0.1, 0.1, 0.3, 0.2] }], onChange: () => {}, onError: () => {}, disabledReason: null }))
+  assert.match(setup, /\+ Add screenshots/)
+  assert.match(setup, /home\.png: drag to box the part that matters/)
+  assert.match(setup, /Clear box/)
 })
 
 test('a tile previews the words said there when they fill the effect, else its sample words', () => {

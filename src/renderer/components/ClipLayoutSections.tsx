@@ -152,8 +152,12 @@ export function ProofScreenshots(props: SectionProps & { step: number; takeSecon
 }
 
 /** A screenshot thumbnail you drag on to draw the highlight box (0..1 of the picture). */
-function HighlightPicker({ src, name, value, disabled, onChange }: {
+export function HighlightPicker({ src, name, value, disabled, onChange, className = 'w-24', label = 'drag to box the part that matters' }: {
   src: string; name: string; value: HighlightRect | null; disabled: boolean; onChange: (rect: HighlightRect | null) => void
+  /** Its size (default: a small thumbnail). */
+  className?: string
+  /** What dragging does, for its name and tooltip. */
+  label?: string
 }): React.JSX.Element {
   const [draft, setDraft] = useState<HighlightRect | null>(null)
   const start = useRef<{ x: number; y: number } | null>(null)
@@ -164,8 +168,8 @@ function HighlightPicker({ src, name, value, disabled, onChange }: {
   const rect = (a: { x: number; y: number }, b: { x: number; y: number }): HighlightRect => ({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) })
   const shown = draft ?? value
   return (
-    <div role="img" aria-label={`${name}: drag to box the part that matters`} title="Drag to box the part that matters"
-      className={cn('relative w-24 shrink-0 touch-none select-none overflow-hidden rounded-md bg-black', disabled ? 'opacity-60' : 'cursor-crosshair')}
+    <div role="img" aria-label={`${name}: ${label}`} title={label.charAt(0).toUpperCase() + label.slice(1)}
+      className={cn('relative shrink-0 touch-none select-none', className, 'overflow-hidden rounded-md bg-black', disabled ? 'opacity-60' : 'cursor-crosshair')}
       onPointerDown={(e) => { if (disabled) return; e.currentTarget.setPointerCapture(e.pointerId); start.current = point(e); setDraft(null) }}
       onPointerMove={(e) => { if (start.current) setDraft(rect(start.current, point(e))) }}
       onPointerUp={(e) => {

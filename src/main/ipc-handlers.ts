@@ -55,7 +55,7 @@ import {
   isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate, addEditImage, addEditImageFiles, removeEditImage, importClips,
   describeScreen, previewScreen, syncScreen, editSavedHeadline, editorHeadlineSaved, editBeatFrame
 } from './edit-recording'
-import { EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGES, EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
+import { EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGES, EDIT_MAX_SCREENSHOTS, EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
 import { COMBINE_MAX_CLIPS } from '../shared/combine-clips'
 import { avatarInUse, avatarRenderStatus, avatarRunBusy, cancelAvatarRender, onAvatarRenderStatus, renderSpendCheck, SCRIPT_ESTIMATE_USD, startAvatarRecreate, startAvatarRender, writeAvatarScript } from './avatar-studio'
 import { createHeygenAvatar, draftTwinVideo, heygenAccount, heygenConsentUrl, heygenKey, readyHeygenLink, refreshHeygenAvatar, renderHeygenTake, saveTwinRecording, setHeygenVoice, stockHeygenAvatars, TWIN_VIDEO_EXTENSIONS } from './heygen-avatar'
@@ -815,6 +815,14 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const result = await dialog.showOpenDialog(window, { properties: ['openFile', 'multiSelections'], title: 'Choose your images (logos, product shots)', filters: [{ name: 'Images', extensions: EDIT_IMAGE_EXTENSIONS }] })
     if (result.canceled) return null
     return addEditImageFiles(result.filePaths.slice(0, EDIT_MAX_IMAGES))
+  })
+  // Screenshots for a video (Edit my recording's setup): chosen here, checked and copied into the run when it starts.
+  handle('edit:chooseScreenshots', async () => {
+    const window = getMainWindow()
+    if (!window) return []
+    const result = await dialog.showOpenDialog(window, { properties: ['openFile', 'multiSelections'], title: 'Choose screenshots for this video (pages, apps, posts, results)', filters: [{ name: 'Images', extensions: EDIT_IMAGE_EXTENSIONS }] })
+    if (result.canceled) return []
+    return result.filePaths.slice(0, EDIT_MAX_SCREENSHOTS).map((path) => ({ path: authorizeMedia(path), name: path.split(/[\\/]/).pop() ?? path }))
   })
   handle('edit:addImage', (_event, name: unknown, data: unknown) => addEditImage(name, data))
   handle('edit:removeImage', (_event, id: unknown) => removeEditImage(id))

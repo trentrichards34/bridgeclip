@@ -93,7 +93,8 @@ test('graphics: gallery at the playhead with the words said there, edited and mo
   const gallery = page.getByRole('dialog', { name: 'Add a graphic' })
   await gallery.waitFor()
   await gallery.getByRole('region', { name: 'Choose a graphic' }).waitFor()
-  assert.equal(await gallery.locator('.editor-graphic-tile').count(), 28)
+  // The 28 templates (the effects follow in their own groups).
+  assert.equal(await gallery.locator('.editor-graphic-tile:not([aria-label^="Add effect"])').count(), 28)
   await page.waitForFunction(() => document.querySelectorAll('.graphic-gallery .mg-root').length === 28)
   assert.ok(await gallery.getByText('Your words').count() > 3, 'tiles show the words said at the playhead')
   await shot('01-gallery')

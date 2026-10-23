@@ -35,7 +35,7 @@ import { hasBrandMark } from '../../shared/brand-kit'
 import type { BrandIdentity } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
 import { useEditRecordingStore } from '../store/use-edit-recording-store'
-import { cn, errorMessage } from '../lib/utils'
+import { cn, errorMessage, localFileUrl } from '../lib/utils'
 import { boardFromLook, extrasName, LOOK_HOOKS, lookPatch } from '../lib/style-board'
 import { previewFrame, StyleBoard } from './StyleBoard'
 import { Button } from './ui/Button'
@@ -446,7 +446,8 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                   frame={graphicFrame} look={look.headlineLook} disabled={making} emptyNote={null}
                   onAdd={addGraphic} onPatch={patchGraphic} onRemove={(id) => setGraphics((list) => list.filter((g) => g.id !== id))}
                   cursorLabel={(at) => { const word = wordAt(at); return word === null ? 'at the start' : `on ${wordWhere(word)} (${formatClock(starts.get(word) ?? 0)})` }}
-                  prefill={(template, at) => { const word = wordAt(at); return word === null ? {} : wordsAtPlayhead(template, lines.find((l) => l.words.includes(word))?.words.filter((i) => i >= word).map((i) => plan.words[i].text).join(' ')) }} />
+                  prefill={(template, at) => { const word = wordAt(at); return word === null ? {} : wordsAtPlayhead(template, lines.find((l) => l.words.includes(word))?.words.filter((i) => i >= word).map((i) => plan.words[i].text).join(' ')) }}
+                  pictures={images.length ? { url: (id) => { const image = images.find((item) => item.id === id); return image ? localFileUrl(image.path) : undefined }, options: images.map((image) => ({ value: image.id, label: image.name })) } : undefined} />
 
                 {cardPopups.length > 0 && (
                   <section className="space-y-2" aria-labelledby="edit-cards-title">
