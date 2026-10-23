@@ -2,7 +2,7 @@ import { SavedStageTimings } from './StageBreakdown'
 import { registerNavigationCommit } from '../lib/navigation'
 import { nextCaptionRange } from '../lib/caption-ranges'
 import { cloneElement, isValidElement, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Archive, Check, ChevronLeft, ChevronRight, ChevronDown, Copy, Download, Film, Loader2, Paintbrush, Pause, Pencil, Play, Plus, Redo2, RotateCcw, Scissors, SkipBack, Sparkles, Undo2, X } from 'lucide-react'
+import { Archive, Check, ChevronLeft, ChevronRight, ChevronDown, Copy, Download, Film, Loader2, Maximize2, Minimize2, Paintbrush, Pause, Pencil, Play, Plus, Redo2, RotateCcw, Scissors, SkipBack, Sparkles, Undo2, X } from 'lucide-react'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, formatTimecode, localFileUrl, parseTimecode } from '../lib/utils'
 import { HeadlineLookPicker } from './HeadlineLookPicker'
@@ -97,6 +97,10 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   const closeReplacement = useCallback(() => setReplacement(null), [])
   const [selected, setSelected] = useState(0)
   const [tab, setTab] = useState<EditorTab>('review')
+  // Big preview: a tall Output monitor over a compact timeline (Cuts, Layouts, Graphics, Scenes). On by itself while the
+  // Graphics tab is open; the monitor header's button turns it on or off for any tab (null: follow the tab).
+  const [bigChoice, setBigChoice] = useState<boolean | null>(null)
+  const bigPreview = bigChoice ?? tab === 'graphics'
   // "Choose" picked but no call to action chosen yet (the clip still uses the run's until one is).
   const [ctaPicking, setCtaPicking] = useState(false)
   useEffect(() => setCtaPicking(false), [selected])
@@ -821,7 +825,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
     else change(applied.before)
     return null
   }
-  return <section ref={editorRoot} className="clip-editor" aria-label="Clip editor">
+  return <section ref={editorRoot} className={cn('clip-editor', bigPreview && 'big-preview-mode')} aria-label="Clip editor">
     <header className="editor-header"><div className="min-w-0 flex-1"><div className="flex items-center gap-3">{safeLeading}<span className="editor-title truncate">{project.title}</span></div><span className="text-2xs text-ink-subtle">{saving ? 'Saving…' : key !== savedKey.current ? 'Unsaved changes' : 'All changes saved'}</span></div>
       <Button variant="ghost" size="sm" onClick={() => setShowAudit(true)}>Transcript & edits</Button>
       {finished && <Button variant="ghost" size="sm" disabled={!!busy} tooltip="Every clip is baked or discarded. Delete this project's source copy and preview; exports stay in the Library." onClick={() => setConfirmFree(true)}>Free editor media{session.mediaBytes ? ` (${formatBytes(session.mediaBytes)})` : ''}</Button>}
@@ -884,7 +888,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
             : <div key={group} className="editor-candidate-group"><div className={cn('editor-group-heading', group)}>{statusLabels[group]} <span>{items.length}</span></div>{cards}</div>
         })}
       </aside>
-      <div className="editor-center">
+      <div className={cn('editor-center', bigPreview && 'big-preview')}>
         <div className={cn('editor-monitors', tab === 'graphics' && 'graphics-focus')}>
           <div className="editor-source-monitor"><div className="editor-pane-heading">Source <span>{project.width} × {project.height}</span><Button size="sm" variant="ghost" disabled={!!busy || saving} onClick={() => { void chooseReplacement() }}>Replace source video</Button></div>
             <div className="editor-source-frame" style={{ aspectRatio: project.width / project.height, '--ratio': project.width / project.height } as React.CSSProperties}>
@@ -928,6 +932,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
             <div className="editor-pane-heading">Output <span className="flex items-center gap-2">{candidate.captions && suppressedCaptions.some(([a, b]) => a <= time && time < b) ? 'Captions suppressed' : project.aspect_ratio}
               <Button size="sm" variant="secondary" className="editor-add-graphic-here" icon={<Plus size={13} />} disabled={editingDisabled || (candidate.graphics?.length ?? 0) >= MAX_GRAPHICS_PER_CLIP}
                 aria-label="Add a graphic at this moment" tooltip="Add a graphic at this moment, filled with the words you say here (G)." onClick={() => openGallery(time)}>Graphic</Button>
+              <Button size="sm" variant={bigPreview ? 'secondary' : 'ghost'} iconOnly icon={bigPreview ? <Minimize2 size={13} /> : <Maximize2 size={13} />} aria-label="Big preview" aria-pressed={bigPreview}
+                tooltip={bigPreview ? 'Back to the full timeline (source monitor, cut list and tools).' : 'A bigger output preview, with the timeline down to its cuts, layouts, graphics and scenes.'}
+                onClick={() => setBigChoice(!bigPreview)} />
               <PointButton thread={clipChatThread(outputDir, candidate.id)} disabled={!!busy || status === 'discarded'} onStart={() => { video.current?.pause(); setTab('chat') }} /></span></div>
             <canvas ref={canvas} width={aspect < 1 ? 360 : 640} height={aspect < 1 ? 640 : 360} style={{ aspectRatio: aspect }} />
             {project.aspect_ratio === '9:16' && <ScenesOverlay canvas={canvas} candidate={candidate} time={time} />}
