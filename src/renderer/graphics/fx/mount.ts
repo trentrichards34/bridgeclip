@@ -124,6 +124,100 @@ export function fxBox(spec: Pick<GraphicRenderSpec, 'width' | 'height' | 'box' |
   return { x: Math.round((W - w) / 2), y: Math.round(top), w, h: Math.round(h) }
 }
 
+type Rect = { x: number; y: number; w: number; h: number }
+const NONE = 'rgba(0, 0, 0, 0)'
+const SHAPES = new Set(['path', 'circle', 'ellipse', 'rect', 'line', 'polyline', 'polygon', 'text', 'image', 'use'])
+/**
+ * Where the unit draws ink (stage pixels, unscaled): the union of its words, pictures, shapes and filled or bordered
+ * boxes that are on screen (not faded out, not cut off by a parent that clips). Null when nothing is drawn.
+ */
+export function inkBox(root: ShadowRoot, stage: HTMLElement): Rect | null {
+  const origin = stage.getBoundingClientRect()
+  const k = origin.width / Math.max(1, stage.offsetWidth) || 1
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+  type Clip = { l: number; t: number; r: number; b: number }
+  const add = (r: DOMRect, clip: Clip): void => {
+    if (r.width < .5 || r.height < .5) return
+    const l = Math.max(r.left, clip.l), t = Math.max(r.top, clip.t), rr = Math.min(r.right, clip.r), b = Math.min(r.bottom, clip.b)
+    if (rr - l < .5 || b - t < .5) return
+    x0 = Math.min(x0, l); y0 = Math.min(y0, t); x1 = Math.max(x1, rr); y1 = Math.max(y1, b)
+  }
+  const visit = (el: Element, clip: Clip, opacity: number): void => {
+    if (el.tagName === 'STYLE' || el.tagName === 'SCRIPT' || el.tagName === 'TEMPLATE' || el.tagName === 'defs' || el.tagName === 'clipPath' || el.tagName === 'mask') return
+    const cs = getComputedStyle(el)
+    if (cs.display === 'none') return
+    const alpha = opacity * (parseFloat(cs.opacity) || 0)
+    if (alpha < .05) return
+    const rect = el.getBoundingClientRect()
+    const shown = cs.visibility !== 'hidden'
+    const svg = el instanceof SVGElement
+    if (shown) {
+      const tag = el.tagName.toLowerCase()
+      if (svg ? SHAPES.has(tag) : tag === 'img' || tag === 'canvas' || tag === 'video'
+        || cs.backgroundColor !== NONE || cs.backgroundImage !== 'none' || (parseFloat(cs.borderTopWidth) > 0 && cs.borderTopColor !== NONE && cs.borderTopStyle !== 'none')) add(rect, clip)
+      for (const node of el.childNodes) {
+        if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim() || (svg && tag !== 'text')) continue
+        const range = document.createRange(); range.selectNodeContents(node)
+        add(range.getBoundingClientRect(), clip)
+      }
+    }
+    const clips = !svg && (cs.overflowX !== 'visible' || cs.overflowY !== 'visible')
+    const inner = clips ? { l: Math.max(clip.l, rect.left), t: Math.max(clip.t, rect.top), r: Math.min(clip.r, rect.right), b: Math.min(clip.b, rect.bottom) } : clip
+    for (const child of el.children) visit(child, inner, alpha)
+  }
+  const all = { l: -Infinity, t: -Infinity, r: Infinity, b: Infinity }
+  for (const child of root.children) visit(child, all, 1)
+  if (!(x1 > x0 && y1 > y0)) return null
+  return { x: (x0 - origin.left) / k, y: (y0 - origin.top) / k, w: (x1 - x0) / k, h: (y1 - y0) / k }
+}
+
+/**
+ * How much of its box an effect's drawing fills (width, height shares) at each size: on the stage it fills the band
+ * (the pro references: a browser window or a diagram across most of the stage's width), a card nearly as much, a
+ * compact badge stays a badge.
+ */
+export const FX_FIT: Record<'stage' | 'card' | 'compact', { w: number; h: number; max: number }> = {
+  stage: { w: .94, h: .9, max: 3 }, card: { w: .92, h: .86, max: 3 }, compact: { w: .62, h: .8, max: 2.6 }
+}
+/**
+ * The unit's scale and shift so its drawing (`ink`, measured settled) fills its box: centered, grown to the fit's
+ * share (never past FX_FIT.max), and shrunk only when it would spill out of the box.
+ */
+export function fxFit(ink: Rect | null, box: { w: number; h: number }, size: 'stage' | 'card' | 'compact', fallback = 1, pad = { x: 0, y: 0 }): { scale: number; dx: number; dy: number } {
+  if (!ink || ink.w < 4 || ink.h < 4) return { scale: fallback, dx: 0, dy: 0 }
+  const fit = FX_FIT[size]
+  // `pad`: room kept around it (the glass behind it), in box pixels.
+  const s = Math.min((box.w * fit.w - 2 * pad.x) / ink.w, (box.h * fit.h - 2 * pad.y) / ink.h)
+  const spills = ink.w > box.w * 1.01 || ink.h > box.h * 1.01
+  const scale = Math.max(.4, Math.min(fit.max, spills ? s : Math.max(1, s)))
+  return { scale: Math.round(scale * 1000) / 1000, dx: Math.round(box.w / 2 - (ink.x + ink.w / 2)), dy: Math.round(box.h / 2 - (ink.y + ink.h / 2)) }
+}
+
+/** The smallest type an effect shows, as drawn on a 1080-wide frame (font px; about 0.72 of it is the cap height). */
+export const FX_MIN_TYPE: Record<'stage' | 'card' | 'compact', number> = { stage: 46, card: 36, compact: 30 }
+/**
+ * Raises every word set smaller than `min` frame pixels (once the unit is drawn at `scale`) to `min`, at most 2.4×
+ * its own size. Words in pictures and SVG drawings keep theirs. True when any changed.
+ */
+export function raiseType(root: ShadowRoot, stage: HTMLElement, min: number, scale: number): boolean {
+  const k = stage.getBoundingClientRect().width / Math.max(1, stage.offsetWidth) || 1
+  const raise: [HTMLElement, number][] = []
+  const seen = new Set<Element>()
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const el = n.parentElement
+    if (!el || seen.has(el) || !n.textContent?.trim() || !(el instanceof HTMLElement) || el.closest('style, svg')) continue
+    seen.add(el)
+    if (!el.offsetWidth) continue
+    const size = parseFloat(getComputedStyle(el).fontSize)
+    // Drawn size: its font, any transform of the unit's own around it, and the fit.
+    const drawn = size * (el.getBoundingClientRect().width / el.offsetWidth / k) * scale
+    if (size > 0 && drawn > 0 && drawn < min * .97) raise.push([el, size * Math.min(2.4, min / drawn)])
+  }
+  for (const [el, px] of raise) el.style.setProperty('font-size', `${px.toFixed(1)}px`, 'important')
+  return raise.length > 0
+}
+
 /** Mounts one effect graphic in `host` (the frame, spec.width × spec.height). */
 export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): MountedEffect {
   const effect = fxEffect(spec.fields.effect)
@@ -142,9 +236,11 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
   stage.className = `fx-stage${effect.backing === 'glass' && spec.fields.backing !== 'none' ? ' fx-glass' : ''}${tone === 'light' ? ' fx-light' : ''}`
   // The unit's scale is applied only once it is built (apply), so anything it measures while building is unscaled.
   Object.assign(stage.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px`, visibility: 'hidden' })
-  // The glass keeps its size on a scaled unit (it backs the words, not the box).
+  // The glass keeps its size on a scaled unit (it backs the words, not the box); once built it hugs the drawing (fit).
   if (effect.scale && effect.scale > 1) stage.style.setProperty('--fx-glass-inset', `${((1 - .92 / effect.scale) / 2 * 100).toFixed(2)}% ${((1 - .96 / effect.scale) / 2 * 100).toFixed(2)}%`)
   frame.appendChild(stage)
+  // How the unit is drawn into its box (fxFit): its scale and shift, worked out once it is built.
+  let fitted = { scale: effect.scale ?? 1, dx: 0, dy: 0 }
   const shadow = stage.attachShadow({ mode: 'open' })
   const tokens = fxTokens(spec.color, spec.font, Math.min(spec.width, spec.height), tone)
   let timeline: Timeline | null = null
@@ -167,7 +263,13 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
     // Leave accelerates: the last few frames shrink a little and go (units that leave on their own keep theirs).
     const out = ownExit ? 0 : easeIn(1 - (spec.duration_ms - ms) / FX_MOTION.out_ms)
     stage.style.opacity = String(1 - out)
-    stage.style.transform = `scale(${(effect.scale ?? 1) * (1 - (1 - FX_MOTION.out_scale) * out)})`
+    stage.style.transform = `scale(${fitted.scale * (1 - (1 - FX_MOTION.out_scale) * out)}) translate(${fitted.dx}px, ${fitted.dy}px)`
+  }
+  /** The unit's clock set to `local` ms (no scale, no fade: for measuring it). */
+  const setClock = (local: number): void => {
+    timeline?.pause()
+    timeline?.totalTime(local / 1000, false)
+    for (const animation of shadow.getAnimations()) { animation.pause(); animation.currentTime = local }
   }
 
   const ready = (async (): Promise<void> => {
@@ -268,6 +370,33 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
     // A unit may build after its fonts are ready (a promise turn or two).
     for (let i = 0; i < 6 && !Object.keys(registry).length; i++) await new Promise((r) => setTimeout(r, 16))
     timeline = registry[effect.id] ?? Object.values(registry)[0] ?? null
+    // Sized to its box: measured once it has settled (most of the way through, before it leaves), the same in the
+    // editor and the bake. Photo effects already take their picture's shape; full-frame ones cover the frame.
+    if (effect.frame !== 'full' && !effect.fit_media) {
+      const settled = Math.max(0, Math.min(timing.unit_ms * .7, timing.unit_ms - 450))
+      Object.assign(stage.style, { visibility: 'visible', opacity: '0', transform: 'none' })
+      setClock(settled)
+      const size = spec.size === 'stage' || spec.size === 'compact' ? spec.size : 'card'
+      let ink = inkBox(shadow, stage)
+      const m = Math.min(spec.width, spec.height), glass = stage.classList.contains('fx-glass')
+      const pad = { x: glass ? m * .045 : 0, y: glass ? m * .035 : 0 }
+      const area = { w: stage.offsetWidth, h: stage.offsetHeight }
+      fitted = fxFit(ink, area, size, effect.scale ?? 1, pad)
+      // Small labels (a chart's axis, a chip, a byline) are set bigger until they read on a phone, then it fits again.
+      if (ink && !effect.own_type && raiseType(shadow, stage, FX_MIN_TYPE[size] * m / 1080, fitted.scale)) {
+        ink = inkBox(shadow, stage)
+        fitted = fxFit(ink, area, size, effect.scale ?? 1, pad)
+      }
+      setClock(0)
+      Object.assign(stage.style, { visibility: 'hidden', opacity: '' })
+      // The glass backs the drawing, with a margin (in frame pixels) around it.
+      if (ink && ink.w >= 4) {
+        const padX = m * .045 / fitted.scale, padY = m * .035 / fitted.scale
+        const l = ink.x + fitted.dx - padX, t = ink.y + fitted.dy - padY
+        const r = stage.offsetWidth - (ink.x + ink.w + fitted.dx) - padX, b = stage.offsetHeight - (ink.y + ink.h + fitted.dy) - padY
+        stage.style.setProperty('--fx-glass-inset', [t, r, b, l].map((v) => `${Math.round(v)}px`).join(' '))
+      }
+    }
     // The member's mark (a circle, an underline, an arrow or a box) on the part of their picture they pointed at.
     const wanted = fxMark(spec.fields)
     const target = wanted && shadow.querySelector<HTMLElement>(`.cc-media[data-field="${wanted.on}"]`)

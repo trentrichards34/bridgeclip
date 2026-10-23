@@ -97,6 +97,11 @@ export interface FxEffect {
   own_exit?: boolean
   /** CreatorClips' own unit (src/renderer/graphics/fx/own/), remade from the HyperFrames one so it takes variables. */
   own?: boolean
+  /**
+   * Its type keeps the unit's own sizes (mount.ts raises small labels until they read on a phone; units whose words sit
+   * in tight, hand-placed spots would collide).
+   */
+  own_type?: boolean
   /** Fields of which at least one is needed besides the required ones (Paper tear: a picture or words under the sheet). */
   either?: readonly string[]
 }
@@ -154,6 +159,10 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     fields: [picture('image', 'Left picture', 'before'), picture('image_b', 'Right picture', 'after'), tag('label_a', 'label_a', 'Left label (as you say it)', 'Before'), tag('label_b', 'label_b', 'Right label (as you say it)', 'After'),
       tag('badge_a', 'badge_a', 'Left badge (as you say it)', ''), tag('badge_b', 'badge_b', 'Right badge (as you say it)', '')],
     fixed: { accent: 'green' }, media: [{ field: 'image', selector: '[data-slot="card-a"]', align: 'top' }, { field: 'image_b', selector: '[data-slot="card-b"]', align: 'top' }],
+    // Each badge at the foot of its own card (on the inner edges, at a readable size, the two would meet), and labels that read on a phone.
+    css_rules: '.stc-badge-pos { top: auto !important; bottom: 5%; } .stc-badge-pos-a, .stc-badge-pos-b { left: 50% !important; right: auto !important; transform: translate3d(-50%, 0, 120px) !important; } .stc-label { font-size: min(4.4cqw, 6.6cqh) !important; } .stc-badge { font-size: min(3.4cqw, 5.4cqh) !important; }',
+    // Its labels are set bigger above (the unit measures its badges as it builds: raising them later would cut them off).
+    own_type: true,
     hide_empty: [{ field: 'label_a', selector: '.stc-label-a' }, { field: 'label_b', selector: '.stc-label-b' }, { field: 'badge_a', selector: '.stc-badge-pos-a' }, { field: 'badge_b', selector: '.stc-badge-pos-b' }],
     jobs: ['compare'], use_when: 'Two options, versions or results are shown side by side and both pictures were added.', avoid_when: 'One picture replaces the other (use Before & after).',
     hold_s: 4.5, sound: 'pop', default_ms: 5000, size: 'stage', aspect: 1.5, sync_s: 1.85 },
@@ -201,7 +210,7 @@ export const FX_EFFECTS: readonly FxEffect[] = [
       num('emphasize', 'emphasize', 'Which one stands out (1 = first)', '4', { said: false }), text('unit', 'unit', 'Unit', '%', { max: 6 }),
       choice('type', 'type', 'Chart', [['bars', 'Bars'], ['line', 'Line'], ['donut', 'Donut'], ['progress', 'Progress bars']])],
     fixed: { ...ACCENT, ...FADE }, jobs: ['prove'], use_when: 'Several numbers are said as a trend or comparison and one carries the story.',
-    avoid_when: 'Only one number is said (use Count up).', hold_s: 4.5, sound: 'riser', default_ms: 5000, size: 'stage', aspect: 1.5, sync_s: 3.05 },
+    avoid_when: 'Only one number is said (use Count up).', hold_s: 4.5, sound: 'riser', default_ms: 5000, size: 'stage', aspect: 1.9, sync_s: 3.05 },
   { id: 'decline-chart', label: 'Drop chart', detail: 'A line falls from one number to another, the drop marked.', group: 'numbers',
     fields: [text('label', 'label', 'What fell', 'Your metric', { max: 30 }), num('start', 'start_value', 'From', '82', { required: true }), num('end', 'end_value', 'To', '34', { required: true })],
     jobs: ['agitate'], use_when: 'A loss is said with both numbers ("from 82 down to 34").', avoid_when: 'The numbers go up (use Chart).',
@@ -211,20 +220,22 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     fields: [list('data', 'data', 'Numbers (one per line)', '12\n28\n45\n64', '|', { required: true, max: 12 }), list('labels', 'labels', 'Labels (one per line)', 'Jan\nFeb\nMar\nApr', '|', { max: 14 }),
       text('title', 'title', 'Title', '', { max: 40 }), text('unit', 'unit', 'Unit', '', { max: 6 })],
     jobs: ['prove'], use_when: 'Three to six numbers are said one after another, each with what it is ("January 12, February 28…").', avoid_when: 'Only one or two numbers are said.',
-    hold_s: 4.5, sound: 'riser', default_ms: 5000, size: 'stage', aspect: 1.3, cue: { field: 'data', unit: 'item', variable: 'cues' } },
+    hold_s: 4.5, sound: 'riser', default_ms: 5000, size: 'stage', aspect: 1.8, cue: { field: 'data', unit: 'item', variable: 'cues' } },
   { id: 'animated-bar-chart', label: 'Bar card', detail: 'A small card with a big number and bars that grow under it.', group: 'numbers', own: true,
     fields: [text('value', 'value', 'Big number', '+42%', { required: true, max: 10 }), list('data', 'data', 'Numbers for the bars (one per line)', '42\n56\n72\n95', '|', { required: true, max: 12 }),
       text('title', 'title', 'Title', 'Sales this month', { max: 30 })],
     jobs: ['prove'], use_when: 'A result is said with the numbers that led to it ("from 42 to 95, up 42 percent").', avoid_when: 'The bar numbers are not said.',
-    hold_s: 3.5, sound: 'tick', default_ms: 4000, aspect: 1.6, cue: { field: 'value', unit: 'word' }, sync_s: 1.2 },
+    hold_s: 3.5, sound: 'tick', default_ms: 4000, aspect: 1.9, cue: { field: 'value', unit: 'word' }, sync_s: 1.2 },
   { id: 'mk-line-graph', label: 'Line graph', detail: 'A line draws through your numbers as you say them, each value riding its point.', group: 'numbers', own: true,
     fields: [list('data', 'data', 'Numbers (one per line)', '12\n26\n22\n38\n58', '|', { required: true, max: 12 }), list('labels', 'labels', 'Labels (one per line)', 'Jan\nFeb\nMar\nApr\nMay', '|', { max: 10 }),
       text('unit', 'unit', 'Unit', '', { max: 6 })],
     jobs: ['prove'], use_when: 'A trend is said as several numbers over time ("12 in January, 26 in February…").', avoid_when: 'Fewer than three numbers are said (use Count up or Drop chart).',
-    hold_s: 4.5, sound: 'riser', default_ms: 5000, size: 'stage', aspect: 1.5, cue: { field: 'data', unit: 'item', variable: 'cues' } },
+    hold_s: 4.5, sound: 'riser', default_ms: 5000, size: 'stage', aspect: 1.9, cue: { field: 'data', unit: 'item', variable: 'cues' } },
   { id: 'trust-strip', label: 'Name row', detail: 'A calm row of names (clients, places, tools) fades in left to right.', group: 'numbers',
     fields: [list('marks', 'marks', 'Names (one per line, up to 6)', 'First name\nSecond name\nThird name', ',', { required: true, max: 20 })],
     fixed: { ...ACCENT, ...FADE, tone: 'ink' }, jobs: ['prove'], use_when: 'The speaker names who they worked with or where they were featured.',
+    // Names big enough to read on a phone (the unit sets them as a small strip under a 16:9 headline).
+    css_rules: '.ts-mark { font-size: min(5.6cqw, 13cqh) !important; letter-spacing: 0.12em !important; font-weight: 600 !important; }',
     avoid_when: 'The names are not said; never list logos or names that were not.', hold_s: 3, sound: 'none', default_ms: 3500, aspect: 3, scale: 2,
     cue: { field: 'marks', unit: 'item', variable: 'cues' }, sync_s: 1.3 },
   // Words.
@@ -261,6 +272,8 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     hold_s: 2.5, sound: 'tick', default_ms: 3000, backing: 'glass', aspect: 2.6, cue: { field: 'text', unit: 'word' }, sync_s: 1.5 },
   { id: 'text-shimmer', label: 'Shimmer', detail: 'A word catches one clean light sweep.', group: 'words',
     fields: [text('text', 'text', 'Word', 'Effortless', { required: true, max: 24 })], fixed: ACCENT,
+    // No panel of its own: the glass backs the word.
+    css: { '--surface': 'transparent' },
     jobs: ['emphasize'], use_when: 'One quality word should feel premium ("effortless", "simple").', avoid_when: 'More than a few words.',
     hold_s: 2.5, sound: 'whoosh', default_ms: 3000, backing: 'glass', aspect: 2.6 },
   { id: 'titlecard-lockup', label: 'Title card', detail: 'A calm centered title with a small line above and below.', group: 'words',
@@ -311,7 +324,7 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     fields: [text('top', 'top', 'Title, first line', 'THE POWER', { required: true, max: 18 }), text('mid', 'mid', 'Title, small word', 'OF', { max: 6 }), text('circled', 'circled', 'Circled word', 'ONE', { required: true, max: 10 }),
       text('rest', 'rest', 'Title, last word', 'IDEA', { max: 12 }), text('line_one', 'l1', 'Line 1', 'WRITE', { required: true, max: 12 }), text('answer_one', 'v1', 'Line 1 answer', 'IT DOWN', { required: true, max: 14 }),
       text('line_two', 'l2', 'Line 2', 'SAY', { max: 12 }), text('answer_two', 'v2', 'Line 2 answer', 'IT OUT LOUD', { max: 14 }), text('line_three', 'l3', 'Line 3', 'DO', { max: 12 }), text('answer_three', 'v3', 'Line 3 answer', 'IT TODAY', { max: 14 })],
-    jobs: ['exhibit'], use_when: 'A short framework is said: a title and three short steps.', avoid_when: 'The steps are long sentences.',
+    own_type: true, jobs: ['exhibit'], use_when: 'A short framework is said: a title and three short steps.', avoid_when: 'The steps are long sentences.',
     hold_s: 5, sound: 'tick', default_ms: 6000, size: 'stage', aspect: 1.1 },
   { id: 'constellation-hub', label: 'Hub', detail: 'A center word with ideas that light up around it as you say them.', group: 'ideas',
     fields: [text('hub', 'hub_label', 'Center', 'Your idea', { required: true, max: 18 }), list('nodes', 'nodes', 'Around it (one per line, up to 6)', 'Plan\nMake\nShare\nLearn', ',', { required: true, max: 16 })],
@@ -319,7 +332,7 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     hold_s: 5, sound: 'pop', default_ms: 5500, size: 'stage', aspect: 1.4, cue: { field: 'nodes', unit: 'item', variable: 'cues' } },
   { id: 'locked-nucleus-orbit', label: 'Core orbit', detail: 'Small dots orbit one locked center word.', group: 'ideas',
     fields: [text('label', 'label', 'Center word', 'core', { required: true, max: 14 })], fixed: { ...ACCENT, satellites: 4 },
-    jobs: ['reveal'], use_when: 'One central idea everything else turns around.', avoid_when: 'The things around it need names (use Hub).',
+    own_type: true, jobs: ['reveal'], use_when: 'One central idea everything else turns around.', avoid_when: 'The things around it need names (use Hub).',
     hold_s: 3.5, sound: 'riser', scale: 1.7, default_ms: 4000, aspect: 1.6 },
   { id: 'radial-surround', label: 'Surrounded', detail: 'Labels ring a center word, then close in on it.', group: 'ideas',
     fields: [text('center', 'center_label', 'Center', 'You', { required: true, max: 16 }), list('chips', 'chips', 'Around it (one per line, up to 8)', 'Email\nCalls\nMeetings\nChats\nTasks\nAlerts', ',', { required: true, max: 14 })],
@@ -327,7 +340,7 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     avoid_when: 'The list is a set of good options.', hold_s: 5, sound: 'riser', scale: 1.35, default_ms: 5500, size: 'stage', aspect: 1.4, cue: { field: 'chips', unit: 'item', variable: 'cues' } },
   { id: 'overwhelm-surround', label: 'Overwhelm', detail: 'Pings and tabs swarm in around one calm center word.', group: 'ideas',
     fields: [text('center', 'centerLabel', 'Center word', 'You', { required: true, max: 14 })], fixed: { count: 16, intensity: 1 },
-    jobs: ['agitate'], use_when: 'The speaker describes being overwhelmed or pulled in every direction.', avoid_when: 'The things around need names (use Surrounded).',
+    own_type: true, jobs: ['agitate'], use_when: 'The speaker describes being overwhelmed or pulled in every direction.', avoid_when: 'The things around need names (use Surrounded).',
     hold_s: 4, sound: 'riser', default_ms: 4500, size: 'stage', aspect: 1.4 },
   { id: 'state-chip-rail', label: 'Status rail', detail: 'A row of steps that light up one after another.', group: 'ideas',
     fields: [list('states', 'states', 'Steps (one per line, up to 5)', 'Plan\nBuild\nLaunch', ',', { required: true, max: 14 })],
@@ -335,8 +348,8 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     hold_s: 4, sound: 'tick', scale: 2.2, default_ms: 4500, aspect: 3.2, cue: { field: 'states', unit: 'item', variable: 'times' } },
   { id: 'flowchart', label: 'Flowchart', detail: 'Boxes joined by arrows, each one drawn as you say it.', group: 'ideas', own: true,
     fields: [list('steps', 'steps', 'Steps in order (one per line, 2 to 6)', 'Idea\nScript\nFilm\nPost', '|', { required: true, max: 24 }), text('title', 'title', 'Title', '', { max: 40 })],
-    jobs: ['demonstrate'], use_when: 'A process is said step by step and each step leads to the next ("you write, then you film, then you post").', avoid_when: 'The items are not in order (use Hub).',
-    hold_s: 5, sound: 'tick', default_ms: 5500, size: 'stage', aspect: 1.2, cue: { field: 'steps', unit: 'item', variable: 'cues' } },
+    own_type: true, jobs: ['demonstrate'], use_when: 'A process is said step by step and each step leads to the next ("you write, then you film, then you post").', avoid_when: 'The items are not in order (use Hub).',
+    hold_s: 5, sound: 'tick', default_ms: 5500, size: 'stage', aspect: 2.2, cue: { field: 'steps', unit: 'item', variable: 'cues' } },
   { id: 'onboarding-stepper-flow', label: 'Stepper', detail: 'Numbered steps light up in turn, the current one named on a card.', group: 'ideas', own: true,
     fields: [list('steps', 'steps', 'Steps in order (one per line, 2 to 5)', 'Pick a topic\nWrite the hook\nFilm it', '|', { required: true, max: 28 })],
     jobs: ['demonstrate'], use_when: 'Two to five steps are said in order, one at a time ("step one…, step two…").', avoid_when: 'More than five steps, or they are not in order.',
@@ -369,6 +382,9 @@ export const FX_EFFECTS: readonly FxEffect[] = [
   // Ending.
   { id: 'cta-close', label: 'Closing ask', detail: 'One line and a button, the last thing on screen.', group: 'ending',
     fields: [text('line', 'action_line', 'Line', 'Make it happen', { required: true, max: 40 }), text('button', 'button_label', 'Button', 'Start now', { required: true, max: 24 })],
+    // The button's words in the unit take the page's background color, which is clear here: dark ink on the light brand
+    // over video, white on the deeper brand of the light look.
+    css_rules: '.cc-button { color: var(--surface) !important; }',
     fixed: { ...ACCENT, ...FADE }, jobs: ['ask'], use_when: 'The video ends on an ask ("start today", "join now").', avoid_when: 'It is not the end.',
     hold_s: 3, sound: 'pop', default_ms: 3500, backing: 'glass', aspect: 2.2, cue: { field: 'button', unit: 'word' }, sync_s: 1.32 },
   { id: 'cta-lockup', label: 'Ask lockup', detail: 'A line, a button and a small line under it.', group: 'ending',

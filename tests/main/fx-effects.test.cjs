@@ -149,7 +149,7 @@ test('graphics contract: fx graphics validate, need their words, keep cue times 
   assert.equal(recolored.fields.cue_ms, '500')
   // Switching to another template keeps the words.
   assert.equal(m.switchGraphicTemplate({ ...g, fields: { effect: 'headline-slam', text: 'Ship it today' } }, 'title').fields.text, 'Ship it today')
-  assert.equal(m.GRAPHICS_VERSION, 5)
+  assert.equal(m.GRAPHICS_VERSION, 6)
 })
 
 test('words: an effect’s beats match the words said; its starting words are only words said', () => {
