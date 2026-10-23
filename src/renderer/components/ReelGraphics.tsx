@@ -12,11 +12,11 @@ import type { GraphicFrame } from '../../shared/graphic-layout'
 import { graphicBox } from '../../shared/graphic-layout'
 import type { HeadlineLook } from '../../shared/headline-look'
 import { isHexColor } from '../../shared/headline-look'
-import { DIAGRAM_ACCENT, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHIC_ITEMS, graphicCanGoBehind, graphicMaxMs, isDiagram, graphicDepth, graphicHasContent, highlightPoint, templateInfo, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from '../../shared/motion-graphics'
+import { DIAGRAM_ACCENT, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHIC_ITEMS, graphicCanGoBehind, graphicMaxMs, isDiagram, graphicDepth, graphicHasContent, highlightPoint, templateInfo, type EditorGraphic, type GraphicPlacement, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { MAX_REEL_GRAPHICS, REEL_GRAPHIC_TEMPLATES, reelGraphicSpec, reelGraphicStyle } from '../../shared/reel-graphics'
-import { outputSize } from '../../shared/graphic-layout'
 import { cn } from '../lib/utils'
-import { BigWordsFields, DiagramFields, GraphicView, IconFields, SAMPLES, SHORT, fieldLabel, graphicSummary } from './ClipGraphics'
+import { BigWordsFields, DiagramFields, GraphicView, IconFields, SHORT, fieldLabel, graphicSummary } from './ClipGraphics'
+import { GraphicGallery, TEMPLATE_ICONS } from './GraphicGallery'
 import { Button } from './ui/Button'
 import { Segmented } from './ui/Segmented'
 import { Switch } from './ui/Switch'
@@ -34,7 +34,7 @@ export type ReelGraphicPatch = Partial<Pick<EditorGraphic, 'duration_ms' | 'plac
 
 const clock = (seconds: number): string => `${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, '0')}`
 
-export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame, look, disabled, emptyNote, onAdd, onPatch, onRemove, cursorLabel, heading = 'h3', limit = MAX_REEL_GRAPHICS }: {
+export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame, look, disabled, emptyNote, onAdd, onPatch, onRemove, cursorLabel, prefill, heading = 'h3', limit = MAX_REEL_GRAPHICS }: {
   label: string
   /** The most graphics this video takes (an edited reel takes more). */
   limit?: number
@@ -56,6 +56,8 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
   onRemove: (id: string) => void
   /** Where a new graphic would start, in words. */
   cursorLabel: (at: number) => string
+  /** The words a new graphic of this template starts with at `at` (the gallery's previews show them). */
+  prefill?: (template: GraphicTemplateId, at: number) => Record<string, string>
 }): React.JSX.Element {
   const [selected, setSelected] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
@@ -75,10 +77,6 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
     setPicking(false)
   }
   const field = (key: string, value: string): void => { if (g) onPatch(g.id, { fields: { [key]: value } }) }
-  const preview = (id: GraphicTemplateId): GraphicRenderSpec => {
-    const { width, height } = outputSize('1:1')
-    return { template: id, fields: id === 'highlight' ? { ...SAMPLES[id], y: '0.5' } : isDiagram(id) ? { ...SAMPLES[id], panel: 'on' } : SAMPLES[id], width, height, duration_ms: isDiagram(id) ? 4200 : 2600, box: { top: .06, bottom: .94 }, placement: 'middle', ...style, ...(isDiagram(id) ? { color: DIAGRAM_ACCENT } : {}) }
-  }
 
   return <section className="space-y-3" aria-label={label}>
     <div className="flex flex-wrap items-start justify-between gap-2">
@@ -100,29 +98,21 @@ export function ReelGraphics({ label, intro, items, totalSeconds, blocked, frame
           aria-label={`${templateInfo(item.template).label} ${item.where}, ${(item.duration_ms / 1000).toFixed(1)} seconds`} aria-pressed={item.id === selected}
           title={item.problem ?? `${templateInfo(item.template).label} ${item.where}`}
           onClick={(e) => { e.stopPropagation(); setSelected(item.id); setPicking(false) }}>
-          <span className="font-medium">{SHORT[item.template]}</span><span className="truncate text-ink-muted">{graphicSummary(item)}</span>
+          {(() => { const Icon = TEMPLATE_ICONS[item.template]; return <Icon className="h-3 w-3 shrink-0" aria-hidden /> })()}<span className="truncate">{graphicSummary(item) || <span className="font-medium">{SHORT[item.template]}</span>}</span>
         </button>)}
         <span className="playhead" style={{ left: `${at / total * 100}%` }} aria-hidden />
       </div>
       <div className="flex flex-wrap justify-between gap-2 text-2xs text-ink-subtle"><span>0:00</span><span>New graphics start {cursorLabel(at)}.</span><span>{clock(total)}</span></div>
     </>}
-    {picking && <div className="space-y-2" role="region" aria-label="Choose a graphic">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-2xs text-ink-subtle">It starts {cursorLabel(at)}. You add the words next; the previews use sample words.</p>
-        <Button size="sm" variant="ghost" onClick={() => setPicking(false)}>Cancel</Button>
-      </div>
-      <div className="reel-graphic-picker">{REEL_GRAPHIC_TEMPLATES.map((t) => <button key={t.id} type="button" disabled={disabled || full} onClick={() => add(t.id)} title={t.detail} aria-label={`Add ${t.label}`}>
-        <GraphicView spec={preview(t.id)} width={64} loop />
-        <span>{t.label}</span>
-      </button>)}</div>
-    </div>}
-    {items.length > 0 && !picking && <div className="flex flex-wrap gap-1.5" role="list" aria-label="Your graphics">
+    {picking && <GraphicGallery templates={REEL_GRAPHIC_TEMPLATES} where={cursorLabel(at)} style={style} full={full || disabled} limitNote={`Add up to ${limit} graphics.`}
+      prefill={prefill ? (template) => prefill(template, at) : undefined} onPick={add} onClose={() => setPicking(false)} />}
+    {items.length > 0 && <div className="flex flex-wrap gap-1.5" role="list" aria-label="Your graphics">
       {items.map((item) => <button key={item.id} type="button" role="listitem" onClick={() => setSelected(item.id)}
         className={cn('rounded-full border px-2.5 py-1 text-2xs', item.id === selected ? 'border-tool/70 bg-tool/15 text-ink' : 'border-white/10 text-ink-muted hover:text-ink')}>
         {item.problem && <AlertTriangle className="mr-1 inline h-3 w-3 text-warning" aria-hidden />}{templateInfo(item.template).label} {item.where}
       </button>)}
     </div>}
-    {g && !picking && <GraphicForm key={g.id} g={g} frame={frame} look={look} disabled={disabled} cursorLabel={cursorLabel(at)}
+    {g && <GraphicForm key={g.id} g={g} frame={frame} look={look} disabled={disabled} cursorLabel={cursorLabel(at)}
       onField={field} onPatch={(patch) => onPatch(g.id, patch)} onMoveHere={() => onPatch(g.id, { at })}
       onRemove={() => { onRemove(g.id); setSelected(null) }} />}
   </section>
@@ -190,7 +180,7 @@ export function GraphicForm({ g, frame, look, disabled, cursorLabel, onField, on
         {frame.hook > 0 && <div className="absolute inset-x-0 top-0 bg-white/80" style={{ height: `${frame.hook * 100}%` }} />}
         {(frame.blocked ?? []).map(([a, b], i) => <div key={i} className="absolute inset-x-0 border-y border-white/30 bg-white/10" style={{ top: `${a * 100}%`, height: `${(b - a) * 100}%` }} />)}
         {frame.captions && <div className="absolute inset-x-6 h-[3px] rounded bg-white/50" style={{ top: `${frame.captions.y * 100}%` }} />}
-        <div className="absolute inset-0" style={{ outline: 'none' }}><GraphicView spec={spec} time={Math.round(spec.duration_ms * 0.8)} width={132} /></div>
+        <div className="absolute inset-0" style={{ outline: 'none' }}><GraphicView spec={spec} width={132} loop /></div>
         <div className="pointer-events-none absolute inset-x-0 border border-dashed border-tool/60" style={{ top: `${box.top * 100}%`, height: `${(box.bottom - box.top) * 100}%` }} />
       </div>
       <p className="text-[10px] leading-tight text-ink-subtle">{(frame.blocked ?? []).length ? 'Graphics stay clear of the hook text, the captions and their clip.' : 'Graphics stay clear of the hook text and the captions.'}</p>

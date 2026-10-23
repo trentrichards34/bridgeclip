@@ -423,6 +423,29 @@ test('making the reel can only start once: a second click, Start over or Cancel 
   fs.rmSync(edit.editStatus().folder, { recursive: true, force: true })
 })
 
+test('the progress view: each status carries the stages so far, the first words heard and what the reel is made of', async () => {
+  const { main: edit, state } = runHarness()
+  await edit.startEdit({ sources: [path.join(userData, 'progress-take.mp4')] })
+  await waitFor(() => edit.editStatus()?.phase === 'review', 'the review')
+  const listening = state.statuses.find((status) => status.phase === 'transcribing' && /^Listening/.test(status.detail))
+  assert.deepEqual(listening.progress.stages.map((stage) => [stage.id, stage.endedAt === null]), [['listen', true]])
+  let progress = plain(edit.editStatus().progress)
+  assert.deepEqual(progress.stages.map((stage) => stage.id), ['listen', 'plan', 'review'])
+  assert.ok(progress.stages.slice(0, 2).every((stage) => stage.endedAt >= stage.startedAt))
+  assert.deepEqual(plain(progress.heard), [{ src: 0, text: 'Most coaches' }])
+  assert.equal(progress.wordsHeard, 2)
+  const decisions = { ...shared.initialDecisions(edit.editStatus().plan), look: { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false } }
+  await edit.renderEdit(decisions)
+  const making = state.statuses.find((status) => status.phase === 'rendering')
+  assert.equal(making.progress.stages.at(-1).id, 'cut')
+  assert.ok(making.progress.renderStartedAt >= progress.startedAt)
+  assert.deepEqual(plain(making.progress.found), { hook: 'Here is why', cuts: 0, popups: 0, graphics: 1, broll: false })
+  await waitFor(() => edit.editStatus()?.phase === 'done', 'the reel')
+  progress = plain(edit.editStatus().progress)
+  assert.ok(progress.stages.every((stage) => stage.endedAt !== null))
+  fs.rmSync(edit.editStatus().folder, { recursive: true, force: true })
+})
+
 test('voice cleanup and music: on the decisions (or the look), checked, and sent to the engine as one "audio" option', async () => {
   const plan = samplePlan()
   const good = { ...shared.initialDecisions(plan), look: { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'black', color: '#FFFFFF', font: 'serif' }, showHandle: false } }

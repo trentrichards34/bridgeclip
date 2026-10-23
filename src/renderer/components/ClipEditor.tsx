@@ -23,9 +23,13 @@ import { Select } from './ui/Select'
 import { EditInspector } from './EditInspector'
 import { ClipChat, clipChatThread, type ChatApplied, type ChatApplyResult } from './ClipChat'
 import { PointButton, PointLayer } from './ChatPoints'
-import { GraphicsInspector, GraphicsOverlay, GraphicsTrack } from './ClipGraphics'
+import { GraphicsInspector, GraphicsOverlay, GraphicsTrack, draftGraphic, useClipWords } from './ClipGraphics'
+import { GraphicGallery } from './GraphicGallery'
+import { GraphicPreviewEditor } from './GraphicPreviewEditor'
 import { ScenesOverlay, ScenesTrack } from './ClipScenes'
-import { hookEndMs, nearestOutputTime, outputTime, type EditorGraphic } from '../../shared/motion-graphics'
+import { GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, duplicateGraphic, fitGraphicInCut, graphicLocalMs, hookEndMs, nearestOutputTime, outputTime, placeInFreeBand, removeGraphic, withGraphic, type EditorGraphic, type GraphicTemplateId } from '../../shared/motion-graphics'
+import { graphicStyle } from '../../shared/graphic-layout'
+import { prefillGraphic } from '../../shared/graphic-prefill'
 import { EditLog } from './EditLog'
 import { ScreenLayoutRow } from './ScreenLayouts'
 import { SCREEN_KIND_LABELS, bubbleRect, screenKindOf, screenScene, screenShareOf, type ScreenKind } from '../../shared/screen-pair'
@@ -95,10 +99,12 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   // "Choose" picked but no call to action chosen yet (the clip still uses the run's until one is).
   const [ctaPicking, setCtaPicking] = useState(false)
   useEffect(() => setCtaPicking(false), [selected])
-  // Motion graphics: the one selected in the Graphics row or tab, and whether the template picker is open.
+  // Motion graphics: the one selected (on the preview, the Graphics row or tab), and the gallery's spot (source ms) while it is open.
   const [graphicId, setGraphicId] = useState<string | null>(null)
-  const [graphicPicking, setGraphicPicking] = useState(false)
-  useEffect(() => { setGraphicId(null); setGraphicPicking(false) }, [selected])
+  const [gallery, setGallery] = useState<number | null>(null)
+  useEffect(() => { setGraphicId(null); setGallery(null) }, [selected])
+  // "Suggest graphics for this clip": a fixed message the Chat tab sends once it is open.
+  const [chatAuto, setChatAuto] = useState<{ id: number; text: string } | null>(null)
   const [time, setTime] = useState(0)
   const timeRef = useRef(time); timeRef.current = time
   const [playing, setPlaying] = useState(false)
@@ -145,6 +151,8 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   const activeTranscript = session?.project.transcript.find((r) => time >= r.start_ms && time < r.end_ms)
   const candidate = edits[selected]
   const candidateRef = useRef(candidate); candidateRef.current = candidate
+  // The transcript's timed words around the clip: new graphics start with the words said where they go.
+  const clipWords = useClipWords(outputDir, candidate?.ranges[0][0] ?? 0, candidate?.ranges[candidate.ranges.length - 1][1] ?? 0)
   const frames = candidate?.camera_scan?.frames ?? []
   const currentScene = candidate ? sceneAt(candidate, time) : null
   const key = JSON.stringify(edits.map(candidateEdit))
@@ -244,6 +252,33 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
     else { setRedo(from.slice(0, -1)); setUndo((u) => [...u, edits]) }
     setEdits(next)
   }
+  /** Open the graphics gallery: a new graphic goes at `at` (source ms, the playhead unless the row was clicked elsewhere). */
+  const openGallery = (at: number): void => {
+    if (!candidate || (candidate.graphics?.length ?? 0) >= MAX_GRAPHICS_PER_CLIP) { if (candidate) { setTab('graphics') } return }
+    video.current?.pause(); setGallery(at)
+  }
+  // A graphic just selected is shown on the preview once it is in the clip (the next render, after its edit).
+  const showPending = useRef<string | null>(null)
+  useEffect(() => {
+    const id = showPending.current, g = id ? candidate?.graphics?.find((x) => x.id === id) : null
+    if (!g) return
+    showPending.current = null
+    showGraphic(g)
+  })
+  /** Shows a graphic on the preview: the playhead moves into it when it is outside (a little in, once it has come in). */
+  const showGraphic = (g: EditorGraphic): void => {
+    if (!candidate) return
+    const local = graphicLocalMs(candidate, g, timeRef.current)
+    if (local === null || local < 250) seek(g.at_ms + Math.min(900, g.duration_ms * .4))
+  }
+  const duplicateSelectedGraphic = (): void => {
+    const g = candidate?.graphics?.find((x) => x.id === graphicId)
+    if (!candidate || !g || candidate.graphics!.length >= MAX_GRAPHICS_PER_CLIP || candidate.status === 'discarded') return
+    const ids = candidate.graphics!.map((x) => x.id)
+    const after = fitGraphicInCut(duplicateGraphic(g, ids), candidate)
+    const copy = after && after.at_ms >= g.at_ms + g.duration_ms - 50 ? after : placeInFreeBand(candidate.graphics!, duplicateGraphic(g, ids, g.at_ms))
+    change({ graphics: withGraphic(candidate, copy) }); setGraphicId(copy.id); showGraphic(copy)
+  }
   const seek = (t: number): void => {
     if (!video.current || !session) return
     const value = Math.max(0, Math.min(session.project.duration_ms - 1, t))
@@ -309,7 +344,11 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       if ((e.target as HTMLElement).closest('[role="dialog"],[role="combobox"],[role="listbox"],[role="menu"],[aria-haspopup="menu"],input,textarea,select,[contenteditable]') || showAudit || replacement || dragging.current) return
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); history(e.shiftKey ? 'redo' : 'undo'); return }
       if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); void save(); return }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd' && graphicId && !busy) { e.preventDefault(); duplicateSelectedGraphic(); return }
       if (e.metaKey || e.ctrlKey || e.altKey || busy) return
+      // Graphics: G opens the gallery at the playhead; Delete removes the selected graphic.
+      if (e.key.toLowerCase() === 'g' && candidate && candidate.status !== 'discarded') { e.preventDefault(); openGallery(time); return }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && graphicId && candidate?.graphics?.some((g) => g.id === graphicId) && candidate.status !== 'discarded') { e.preventDefault(); change({ graphics: removeGraphic(candidate, graphicId) }); setGraphicId(null); return }
       if (e.key.toLowerCase() === 'i') trim('in', time)
       if (e.key.toLowerCase() === 'o') trim('out', time)
       if (e.key.toLowerCase() === 's') split()
@@ -566,6 +605,24 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   const suppressedCaptions = candidate.caption_suppression_ranges ?? []
   const captionPosition = candidate.caption_y ?? captionAnchor(project, candidate, time).y
   const setGraphics = (graphics: EditorGraphic[], remember = true): void => change({ graphics }, remember)
+  /** A graphic from the gallery at the gallery's spot: filled with the words said there, selected and shown on the preview. */
+  const insertGraphic = (template: GraphicTemplateId): void => {
+    if (gallery === null || editingDisabled) return
+    const g = draftGraphic(project, candidate, template, gallery, clipWords)
+    setGraphics(withGraphic(candidate, g)); setGraphicId(g.id); setGallery(null); setTab('graphics')
+    showGraphic(g)
+  }
+  const selectGraphic = (id: string | null): void => {
+    setGraphicId(id)
+    if (!id) return
+    if (tab !== 'chat') setTab('graphics')
+    // Shown once the edit that made it (a copy, a new one) is in.
+    if (!dragging.current) showPending.current = id
+  }
+  const suggestGraphics = (send: boolean): void => {
+    video.current?.pause(); setTab('chat')
+    if (send) setChatAuto({ id: Date.now(), text: 'Suggest graphics for this clip: add 3 to 5 that help most (a chapter header at each step, a diagram or list where I list things, a stat where I say a number, big words for the key phrase), each timed to the words I say, using only my words.' })
+  }
   const moveCaption = (y: number, remember = true): void => { video.current?.pause(); change({ caption_y: Math.round(y * 1000) / 1000 }, remember) }
   const status = candidate.status ?? 'refining'
   const readyCount = edits.filter((c) => c.status === 'ready').length
@@ -827,7 +884,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
         })}
       </aside>
       <div className="editor-center">
-        <div className="editor-monitors">
+        <div className={cn('editor-monitors', tab === 'graphics' && 'graphics-focus')}>
           <div className="editor-source-monitor"><div className="editor-pane-heading">Source <span>{project.width} × {project.height}</span><Button size="sm" variant="ghost" disabled={!!busy || saving} onClick={() => { void chooseReplacement() }}>Replace source video</Button></div>
             <div className="editor-source-frame" style={{ aspectRatio: project.width / project.height, '--ratio': project.width / project.height } as React.CSSProperties}>
               <video ref={video} src={localFileUrl(session.previewPath)} preload="auto" playsInline
@@ -868,10 +925,14 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           </div>
           <div className="editor-output-monitor">
             <div className="editor-pane-heading">Output <span className="flex items-center gap-2">{candidate.captions && suppressedCaptions.some(([a, b]) => a <= time && time < b) ? 'Captions suppressed' : project.aspect_ratio}
+              <Button size="sm" variant="secondary" className="editor-add-graphic-here" icon={<Plus size={13} />} disabled={editingDisabled || (candidate.graphics?.length ?? 0) >= MAX_GRAPHICS_PER_CLIP}
+                aria-label="Add a graphic at this moment" tooltip="Add a graphic at this moment, filled with the words you say here (G)." onClick={() => openGallery(time)}>Graphic</Button>
               <PointButton thread={clipChatThread(outputDir, candidate.id)} disabled={!!busy || status === 'discarded'} onStart={() => { video.current?.pause(); setTab('chat') }} /></span></div>
             <canvas ref={canvas} width={aspect < 1 ? 360 : 640} height={aspect < 1 ? 640 : 360} style={{ aspectRatio: aspect }} />
             {project.aspect_ratio === '9:16' && <ScenesOverlay canvas={canvas} candidate={candidate} time={time} />}
             <GraphicsOverlay canvas={canvas} project={project} candidate={candidate} time={time} outputDir={outputDir} sourceUrl={session.previewPath ? localFileUrl(session.previewPath) : undefined} />
+            <GraphicPreviewEditor canvas={canvas} project={project} candidate={candidate} time={time} selected={graphicId} words={clipWords} disabled={editingDisabled} playing={playing}
+              onSelect={selectGraphic} onChange={setGraphics} onDrag={(active) => { dragging.current = active; if (active) video.current?.pause(); setCropDragging(active) }} />
             <PointLayer thread={clipChatThread(outputDir, candidate.id)} canvas={canvas} outMs={() => Math.round(nearestOutputTime(candidate, timeRef.current))} />
             {showSubtitlePreview && (tab === 'transcript' || tab === 'captions') && <EditorCaptionPreview canvas={canvas} project={project} candidate={candidate} time={time} disabled={editingDisabled} onMove={moveCaption} onDrag={active => { dragging.current = active; if (active) video.current?.pause() }} />}
           </div>
@@ -887,7 +948,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           <div className="editor-timeline-tools">
             <CameraScanButton key={candidate.id} candidate={candidate} threshold={cameraThreshold} setThreshold={setCameraThreshold}
               restore={() => change({ dismissed_camera_markers: [] })} disabled={editingDisabled} onOpen={() => video.current?.pause()} scan={() => { void run('scan-cameras') }} />
-            <Button variant="ghost" size="sm" tooltip="Undo the last editor change (⌘/Ctrl+Z)." aria-label="Undo" iconOnly icon={<Undo2 size={14} />} disabled={!undo.length || !!busy} onClick={() => history('undo')} /><Button variant="ghost" size="sm" tooltip="Redo the change you just undid (⌘/Ctrl+Shift+Z)." aria-label="Redo" iconOnly icon={<Redo2 size={14} />} disabled={!redo.length || !!busy} onClick={() => history('redo')} /><Button variant="ghost" size="sm" icon={<Scissors size={14} />} tooltip="Split the cut at the playhead into two editable sections. No footage is removed. Shortcut: S." onClick={split} disabled={editingDisabled || candidate.ranges.length >= 24}>Split</Button><Button variant="ghost" size="sm" disabled={editingDisabled || (time >= start && time <= end)} tooltip="Extend the clip’s beginning or ending to the playhead. Turn off Play cuts only to move beyond the current cut." onClick={() => { const t = (video.current?.currentTime ?? time / 1000) * 1000; if (t < start) trim('in', t); else if (t > end) trim('out', t) }}>Extend to playhead</Button><span className="ml-auto text-2xs text-ink-subtle">{clock(viewStart)} — {clock(viewEnd)}</span></div>
+            <Button variant="ghost" size="sm" tooltip="Undo the last editor change (⌘/Ctrl+Z)." aria-label="Undo" iconOnly icon={<Undo2 size={14} />} disabled={!undo.length || !!busy} onClick={() => history('undo')} /><Button variant="ghost" size="sm" tooltip="Redo the change you just undid (⌘/Ctrl+Shift+Z)." aria-label="Redo" iconOnly icon={<Redo2 size={14} />} disabled={!redo.length || !!busy} onClick={() => history('redo')} /><Button variant="ghost" size="sm" icon={<Scissors size={14} />} tooltip="Split the cut at the playhead into two editable sections. No footage is removed. Shortcut: S." onClick={split} disabled={editingDisabled || candidate.ranges.length >= 24}>Split</Button><Button variant="ghost" size="sm" disabled={editingDisabled || (time >= start && time <= end)} tooltip="Extend the clip’s beginning or ending to the playhead. Turn off Play cuts only to move beyond the current cut." onClick={() => { const t = (video.current?.currentTime ?? time / 1000) * 1000; if (t < start) trim('in', t); else if (t > end) trim('out', t) }}>Extend to playhead</Button><Button size="sm" variant="primary" className="editor-add-graphic" icon={<Plus size={14} />} disabled={editingDisabled || (candidate.graphics?.length ?? 0) >= MAX_GRAPHICS_PER_CLIP}
+            tooltip={(candidate.graphics?.length ?? 0) >= MAX_GRAPHICS_PER_CLIP ? `A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics.` : 'Add an animated graphic at the playhead: a stat, title, list, steps, a diagram and more. Shortcut: G.'}
+            onClick={() => openGallery(time)}>Add graphic</Button><span className="ml-auto text-2xs text-ink-subtle">{clock(viewStart)} — {clock(viewEnd)}</span></div>
           <div className="editor-lanes editor-lanes-source">
           <div className="editor-lane"><span className="editor-lane-label" aria-hidden>Source</span>
           <input aria-label="Source timeline" className="editor-source-scrub" type="range" min={0} max={project.duration_ms} step="any" value={time} onChange={(e) => seek(snapFrame(frames, Number(e.target.value)))} /></div>
@@ -935,9 +998,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
                 onClick={() => { video.current?.pause(); seek(Math.max(s.at_ms, start)); setTab('framing') }}>{s.transition_ms ? <span className="editor-layout-ease" aria-hidden /> : null}<span>{name}</span></button>
             })}</div></div>
           <GraphicsTrack candidate={candidate} viewStart={viewStart} viewEnd={viewEnd} selected={graphicId} disabled={editingDisabled} clock={clipClock}
-            onSelect={(id) => { setGraphicId(id); setGraphicPicking(false); setTab('graphics') }} onChange={setGraphics}
+            onSelect={selectGraphic} onChange={setGraphics}
             onDrag={(active) => { dragging.current = active; if (active) { video.current?.pause(); setDragWindow([viewStart, viewEnd]) } else setDragWindow(null) }}
-            onAdd={() => { video.current?.pause(); setGraphicPicking(true); setTab('graphics') }} />
+            onAdd={() => openGallery(time)} onAddAt={(ms) => { const at = Math.max(start, Math.min(end, ms)); seek(at); openGallery(at) }} />
           {project.aspect_ratio === '9:16' && <ScenesTrack candidate={candidate} viewStart={viewStart} viewEnd={viewEnd} time={time} disabled={editingDisabled} clock={clipClock}
             onChange={(stage_scenes, remember) => change({ stage_scenes }, remember)}
             onDrag={(active) => { dragging.current = active; if (active) { video.current?.pause(); setDragWindow([viewStart, viewEnd]) } else setDragWindow(null) }} />}
@@ -1083,14 +1146,20 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
             </div>
           })}{!project.transcript.length && <p>No spoken transcript is available for this source.</p>}</div>}
           {tab === 'chat' && <ClipChat outputDir={outputDir} candidate={candidate} apply={applyChat} undo={undoChat} play={(at, seconds) => playMoment(at, seconds, true)}
+            playheadMs={time} selectedGraphic={candidate.graphics?.find((g) => g.id === graphicId) ?? null} autoSend={chatAuto}
             disabledReason={busy ? 'Wait for the current task to finish to chat about this clip.' : status === 'discarded' ? 'Restore this clip to chat about it.' : null} />}
-          {tab === 'graphics' && <GraphicsInspector project={project} candidate={candidate} outputDir={outputDir} time={time} selected={graphicId} picking={graphicPicking}
-            disabled={editingDisabled} onPick={setGraphicPicking} onSelect={setGraphicId} onChange={setGraphics} seek={seek} clock={clipClock} />}
+          {tab === 'graphics' && <GraphicsInspector project={project} candidate={candidate} outputDir={outputDir} time={time} selected={graphicId} words={clipWords}
+            disabled={editingDisabled} onGallery={() => openGallery(time)} onSuggest={suggestGraphics} onSelect={selectGraphic} onChange={setGraphics} seek={seek} clock={clipClock} />}
 
         </div>
       </aside>
     </div>
     {showAudit && <EditInspector outputDir={outputDir} onClose={() => setShowAudit(false)} />}
+    {gallery !== null && <GraphicGallery templates={GRAPHIC_TEMPLATES} style={graphicStyle(candidate)} full={(candidate.graphics?.length ?? 0) >= MAX_GRAPHICS_PER_CLIP}
+      limitNote={`A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics. Remove one to add another.`}
+      where={(() => { const words = clipWords.filter((w) => w.end_ms > gallery - 150).slice(0, 5).map((w) => w.word).join(' '); return `at ${clipClock(gallery)}${words ? `, on “${words}…”` : ''}` })()}
+      prefill={(template) => prefillGraphic(template, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
+      onPick={insertGraphic} onClose={() => setGallery(null)} />}
   </section>
 }
 /** Where the preview draws a clip's hook text (vertical clips with at least two words, like the export). */

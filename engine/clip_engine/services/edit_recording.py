@@ -34,7 +34,8 @@ from clip_engine.services.transcription_service import TranscriptSegment, Transc
 
 logger = logging.getLogger(__name__)
 
-Progress = Callable[[str, float], None]
+# progress(detail, percent) or progress(detail, percent, found): found is what the step found so far (for the progress view).
+Progress = Callable[..., None]
 
 OUT_W, OUT_H, FPS = 1080, 1920, 30
 # Takes of one recording (up to 5), or clips to combine (up to 30).
@@ -940,7 +941,8 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
     clips: list[dict] = (config.get("combine") or {}).get("clips") or []
     base = analyze_takes(words)
     settings = get_settings()
-    progress("Planning your edit", 20)
+    marked = [m for m in base if m]
+    progress("Planning your edit and its motion graphics" if isinstance(config.get("direction"), dict) else "Planning your edit", 20, {"fillers": sum(1 for m in marked if m == "filler"), "retakes": sum(1 for m in marked if m != "filler")})
     brand = (config.get("brand_identity") or "").strip()[:MAX_BRAND_CHARS]
     user = (
         "BRAND (data" + (f": {config.get('brand_name')}" if config.get("brand_name") else "") + ")\n" + (brand or "(none)")
@@ -1003,8 +1005,20 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
         plan = basic_plan(words, base)
         if clips:
             plan["combine"] = combine_of(None, words, plan, clips)
-    progress("Plan ready", 100)
-    return review_of(words, plan, "ai" if not warnings else "basic", cost, warnings)
+    review = review_of(words, plan, "ai" if not warnings else "basic", cost, warnings)
+    progress("Plan ready", 100, _plan_found(review))
+    return review
+
+
+def _plan_found(review: dict) -> dict:
+    """What the plan found, for the progress view: its hook, how many words it cuts and its pop-ups."""
+    try:
+        hooks = review.get("hooks") or []
+        hook = next((h for h in hooks if h.get("id") == review.get("hook")), hooks[0] if hooks and review.get("hook") is not None else None)
+        return {"cuts": sum(1 for w in review.get("words") or [] if isinstance(w, (list, tuple)) and len(w) > 4 and w[4]),
+                "popups": len(review.get("popups") or []), "graphics": len(review.get("graphics") or []), **({"hook": str(hook.get("text") or "")[:160]} if hook and hook.get("text") else {})}
+    except (TypeError, AttributeError):
+        return {}
 
 
 async def transcribe_source(config: dict, progress: Progress) -> dict:
