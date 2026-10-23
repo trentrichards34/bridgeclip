@@ -109,8 +109,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   onEditorRunLock(withRunLock)
   // Editor AI calls (caption translation on a bake, hook ideas) join the spending ledger.
   onEditorSpend((usd, label) => recordSpend({ kind: 'create', provider: 'openrouter', usd, label }))
-  // A headline changed in the clip editor is the one an edited recording keeps next time.
-  onEditorHookSaved((run, candidateId, text) => editorHeadlineSaved(run, candidateId, text))
+  // A headline changed in the clip editor is the one an edited recording (or that moment of a Create video) keeps next time.
+  onEditorHookSaved((run, candidateId, text, range) => editorHeadlineSaved(run, candidateId, text, range))
   // Runs inside the export's run lock (onEditorRunLock), so it uses the in-lock version.
   onEditorExportCta(async (run, ctaId, index) => {
     const { failed } = await applyRunCtaInLock(run, ctaId, [index])

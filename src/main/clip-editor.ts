@@ -34,8 +34,8 @@ export function onEditorSpend(recorder: EditorSpendRecorder): void { recordEdito
 type RunLock = <T>(run: string, work: () => Promise<T>) => Promise<T>
 let runExclusive: RunLock = (_run, work) => work()
 export function onEditorRunLock(lock: RunLock): void { runExclusive = lock }
-/** A clip's hook text changed on save (run folder, clip id, the new text; '' for none). */
-type EditorHookListener = (run: string, candidateId: string, text: string) => void
+/** A clip's hook text changed on save (run folder, clip id, the new text ('' for none), and the clip's range of the source). */
+type EditorHookListener = (run: string, candidateId: string, text: string, range: [number, number]) => void
 let hookSaved: EditorHookListener = () => undefined
 export function onEditorHookSaved(listener: EditorHookListener): void { hookSaved = listener }
 
@@ -236,12 +236,12 @@ export async function saveEditor(path: unknown, revision: unknown, edits: unknow
     if (!Array.isArray(edits) || edits.length !== project.candidates.length) throw new Error('Invalid candidate edits')
     const clean = edits.map((c) => parseCandidateEdit(c, project.duration_ms, project.transcript.length))
     if (new Set(clean.map((c) => c.id)).size !== clean.length) throw new Error('Duplicate candidates')
-    const hooks: [string, string][] = []
+    const hooks: [string, string, [number, number]][] = []
     project.candidates = project.candidates.map((c) => {
       const edit = clean.find((e) => e.id === c.id)
       if (!edit) throw new Error('Candidate is missing')
       const next = { ...c, ...edit }
-      if (edit.hook !== undefined && (edit.hook?.text ?? '') !== (c.hook?.text ?? '')) hooks.push([c.id, edit.hook?.text ?? ''])
+      if (edit.hook !== undefined && (edit.hook?.text ?? '') !== (c.hook?.text ?? '')) hooks.push([c.id, edit.hook?.text ?? '', [next.ranges[0][0], next.ranges[next.ranges.length - 1][1]]])
       // Graphics absent from the edit means none (undo back to before the first one): don't keep the stored ones.
       if (edit.graphics === undefined) delete next.graphics
       if (edit.stage_scenes === undefined) delete next.stage_scenes
@@ -259,7 +259,7 @@ export async function saveEditor(path: unknown, revision: unknown, edits: unknow
     })
     project.revision++
     writeProject(run, project)
-    for (const [id, text] of hooks) { try { hookSaved(run, id, text) } catch { /* only not remembered */ } }
+    for (const [id, text, range] of hooks) { try { hookSaved(run, id, text, range) } catch { /* only not remembered */ } }
   } finally { operations.delete(run) }
   return openEditor(run)
 }

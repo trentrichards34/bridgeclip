@@ -10,11 +10,13 @@ const ts = require('typescript')
 const { PassThrough } = require('node:stream')
 const { EventEmitter } = require('node:events')
 
+// Create's headline memory (hook-memory.ts): nothing saved.
+const HOOK_MEMORY_STUB = { createSourceKey: () => null, savedCreateHeadlines: () => [], rememberCreateRun() {}, rememberCreateHeadline: () => false }
 function loadSource(file, mocks = {}, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../src/main', file), 'utf8')
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const module = { exports: {} }
-  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? require(id), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, queueMicrotask, AbortController, __dirname: path.join(__dirname, '../../src/main'), ...globals })
+  vm.runInNewContext(js, { module, exports: module.exports, require: (id) => mocks[id] ?? (id === './hook-memory' ? HOOK_MEMORY_STUB : require(id)), URL, Set, Map, process, Buffer, console, setTimeout, clearTimeout, queueMicrotask, AbortController, __dirname: path.join(__dirname, '../../src/main'), ...globals })
   return module.exports
 }
 function loadShared(file) {

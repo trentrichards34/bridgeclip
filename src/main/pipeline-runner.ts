@@ -24,6 +24,7 @@ import { audioForEngine } from './music'
 import { applyRunCta, readCta } from './ctas'
 import { applyRunGraphics, graphicsNotice } from './auto-graphics'
 import { refreshReusePlan, type ReusePlan } from './more-clips'
+import { createSourceKey, rememberCreateRun, savedCreateHeadlines } from './hook-memory'
 import { brandForJob } from './brands'
 import { readFile } from 'fs/promises'
 
@@ -527,6 +528,9 @@ export function startClipJob(
     reuse = refreshed.plan
   }
 
+  // The video's fingerprint (a local file's bytes, a link's video) keys its Create headlines (hook-memory.ts).
+  const headlineKey = (config.workflow ?? 'automatic') === 'automatic' ? createSourceKey(config.videoUrl) ?? (reuse?.sourcePath ? createSourceKey(reuse.sourcePath) : null) : null
+  const keptHeadlines = savedCreateHeadlines(headlineKey)
   const jobConfig = JSON.stringify({
     contract_version: BRIDGE_CONTRACT_VERSION,
     job_id: jobId,
@@ -567,6 +571,8 @@ export function startClipJob(
     quality_bar: config.qualityBar ?? 'b',
     headline_voice: config.headlineVoice ?? 'clipper',
     ...(config.captionLanguage ? { caption_language: config.captionLanguage } : {}),
+    // Create (Automatic) again on the same video: its clips keep the headlines they had (when they still fit).
+    ...(keptHeadlines.length ? { kept_headlines: keptHeadlines } : {}),
     ...(reuse ? {
       reuse_transcript_path: reuse.transcriptPath,
       ...(reuse.sourcePath ? { reuse_source_path: reuse.sourcePath, reuse_source_meta: reuse.sourceMeta } : {}),
@@ -851,6 +857,7 @@ export function startClipJob(
     if (code === 0 && pendingOutput) {
       completed = true
       finishHistory('completed')
+      rememberCreateRun(headlineKey, jobId, pendingOutput.clips)
       const note = [graphicsNote, ctaNotice].filter(Boolean).join(' ').replace(/(?<=\.) Done[.,] /g, ' ')
       send('job:complete', { type: 'result', status: 'completed', jobId, job_id: jobId, output: pendingOutput, ...(note ? { step: note } : {}) })
       return
