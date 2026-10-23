@@ -340,7 +340,7 @@ def test_a_render_with_the_direction_makes_an_editor_project_with_its_graphics_a
     planned = ed.plan_graphics(raw, words, marks, {'stage': True})
     look = er.Look('You do not need a huge audience', {'look': 'floating', 'color': '#FFFFFF', 'font': 'serif'}, True, 'pop', None)
     config = {'output_dir': root, 'sources': [source], 'words': words, 'keep': [m is None for m in marks], 'hook': None, 'cta': None,
-              'popups': [], 'sounds': [], 'look': look, 'title': 'My reel', 'cost_usd': 0, 'sound_cache': str(tmp_path / 'sounds'),
+              'popups': [], 'sounds': [], 'look': look, 'title': 'My reel', 'cost_usd': 0, 'sound_design': {'on': True, 'register': 'teaching'},
               'editor': {'graphics': planned, 'pins': [], 'motion': True, 'stage': True, 'brand_color': None, 'cta_keyword': ''}}
     result = asyncio.run(er.render_edit(config, lambda *_: None))
     # The test picture has no face (like a filmed screen): no stage over it, the big cards drawn as cards in their darker
@@ -348,6 +348,8 @@ def test_a_render_with_the_direction_makes_an_editor_project_with_its_graphics_a
     assert result['editor'] is True and result['graphics'] >= 3 and result['scenes'] == 1
     project = json.load(open(os.path.join(root, 'editor-project.json')))
     c = project['candidates'][0]
+    # Its sound effects are mixed by the bake, from the clip's own graphics (on, teaching, no music, no extra cues here).
+    assert c['sound'] == {'on': True, 'register': 'teaching', 'cues': []}
     kinds = {g['template'] for g in c['graphics']}
     assert kinds >= {'stat', 'strike_list', 'screen_frame'}, kinds
     frame = next(g for g in c['graphics'] if g['template'] == 'screen_frame')

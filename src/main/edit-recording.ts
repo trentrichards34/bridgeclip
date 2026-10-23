@@ -8,7 +8,7 @@ import {
   EDIT_MAX_SOURCE_SECONDS, EDIT_MAX_SOURCES, EDIT_MAX_TOTAL_SECONDS, EDIT_MIN_SOURCE_SECONDS, EDIT_RECORDER_MAX_SECONDS,
   EDIT_VIDEO_EXTENSIONS, MAX_HOOK_HINT_CHARS, MAX_IDEA_MATERIAL_CHARS, MAX_IDEA_TOPIC_CHARS, SCRIBE_MODEL, SCRIBE_PRICE_PER_SECOND,
   EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGE_BYTES, EDIT_MAX_IMAGES, CARD_MAX_SECONDS, CARD_MIN_SECONDS,
-  editEstimate, livePins, parseEditDecisions, parseEditPlan, parseFilmIdeas, FILM_IDEA_COUNT,
+  editEstimate, livePins, parseEditDecisions, soundEffectsOn, parseEditPlan, parseFilmIdeas, FILM_IDEA_COUNT,
   type EditImage, type EditPlan, type EditScreen, type EditSource, type EditStatus, type FilmIdea
 } from '../shared/edit-recording'
 import { DEFAULT_SCREEN_CHOICE, parseScreenChoice, parseScreenOffset, parseScreenSync, screenOverlap, type ScreenSource, type ScreenSync } from '../shared/screen-pair'
@@ -22,6 +22,8 @@ import { closeStages, enterStage, editStageOf, firstWords, newEditProgress, pars
 import { headlineLookForEngine } from '../shared/headline-look'
 import { lookExtrasForEngine } from '../shared/look-extras-engine'
 import { audioForEngine } from './music'
+import { soundPaletteForEngine } from './sound-library'
+import { DEFAULT_SOUND_REGISTER } from '../shared/sound-design'
 import { drawableGraphics, editGraphicFrame, graphicDepth, reelGraphicSpec } from '../shared/reel-graphics'
 import type { BrandIdentity } from '../shared/remix'
 import { brandMarkForRun, isBrandId, readBrandIdentity } from './brands'
@@ -781,6 +783,9 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     pins: livePins(decisions).flatMap((pin) => { const image = images.find((item) => item.id === pin.image); return image ? [{ image: image.path, word: pin.word }] : [] }),
     cutout_intro: decisions.cutoutIntro, raw_intro: decisions.rawIntro,
     sounds: decisions.sounds.filter((item) => item.on).flatMap((item) => { const sound = plan.sounds.find((s) => s.id === item.id); return sound ? [{ at: sound.at, sound: sound.sound }] : [] }),
+    // Sound effects that follow the graphics and scenes (the switch, the register) and the member's own sounds.
+    sound_design: { on: !screen && soundEffectsOn(decisions), register: decisions.soundStyle ?? DEFAULT_SOUND_REGISTER },
+    sound_palette: soundPaletteForEngine(),
     headline: decisions.hookText, ...(look ? { headline_look: look } : {}), include_captions: decisions.look.includeCaptions, caption_preset: decisions.look.captionPreset,
     ...(brandMark ? { brand_mark: brandMark } : {}),
     // The extras' color (the brand's), and the keyword the comment box types (none: the box is left out).

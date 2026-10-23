@@ -137,6 +137,20 @@ def _editor(raw, n):
             "brand_color": color, "cta_keyword": _text(raw.get("cta_keyword"), 24, "keyword")}
 
 
+def _sound_design(raw, palette):
+    """Sound effects that follow the graphics (sound_design): on or off and the register; the member's own sounds."""
+    from clip_engine.services.sound_design import REGISTERS, parse_request as parse_sound
+    if raw is None:
+        if palette is not None:
+            raise ValueError("Invalid sound")
+        return {}
+    if not isinstance(raw, dict) or not set(raw) <= {"on", "register"} or not isinstance(raw.get("on"), bool) \
+            or raw.get("register", "teaching") not in REGISTERS:
+        raise ValueError("Invalid sound")
+    checked = parse_sound({"palette": palette or []})
+    return {"sound_design": {"on": raw["on"], "register": raw.get("register", "teaching")}, "sound_palette": checked.palette}
+
+
 def parse_request(raw):
     from clip_engine.services.edit_recording import MAX_SOURCES, MAX_WORDS, SOUNDS, parse_words
     if not isinstance(raw, dict) or raw.get("mode") not in MODES:
@@ -269,12 +283,13 @@ def parse_request(raw):
     from clip_engine.services.broll_library import validate_broll_config
     broll = {k: raw[k] for k in ("broll_source", "broll_catalog_path", "broll_ai", "broll_ai_dir") if raw.get(k) is not None}
     validate_broll_config(broll, require_enabled=False)
+    design = _sound_design(raw.get("sound_design"), raw.get("sound_palette"))
     return {"mode": mode, "output_dir": raw["output_dir"], "sources": list(sources), "words": words, "keep": keep,
             "hook": _span(raw.get("hook"), len(words)), "cta": _span(raw.get("cta"), len(words)), "popups": clean_popups,
             "sounds": [dict(s) for s in sounds], "look": _look(raw), "title": " ".join(_text(raw.get("title"), 200, "title").split()),
             "cost_usd": float(cost), "pacing": _pacing(raw.get("pacing")), "recipe": raw.get("recipe", "clean"), "images": images,
             "pins": [dict(p) for p in pins], "cutout_intro": raw.get("cutout_intro", False), "raw_intro": raw.get("raw_intro", False),
-            "graphics": [dict(g) for g in graphics], "audio": audio, **broll, **({"combine": _render_combine(raw.get("combine"), len(sources))}
+            "graphics": [dict(g) for g in graphics], "audio": audio, **broll, **design, **({"combine": _render_combine(raw.get("combine"), len(sources))}
                                                                      if raw.get("combine") is not None else {}),
             **({"screen": _screen(raw.get("screen"), len(sources))} if raw.get("screen") is not None else {}),
             **({"editor": _editor(raw.get("editor"), len(words))} if raw.get("editor") is not None else {})}

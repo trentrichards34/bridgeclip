@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Clapperboard, Layers, MessageSquare, RotateCcw, Sparkles, Wand2 } from 'lucide-react'
 import {
-  CUT_LABELS, CUTOUT_INTRO_SECONDS, SOUND_LABELS, MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, RAW_INTRO_SECONDS, applyRecipe, cardProblem, chooseHook,
+  CUT_LABELS, CUTOUT_INTRO_SECONDS, SOUND_LABELS, soundEffectsOn, MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, RAW_INTRO_SECONDS, applyRecipe, cardProblem, chooseHook,
   formatClock, hookTextProblem, initialDecisions, reelCardWindows, reelOrder, reelSeconds, reelWordStarts, toggleSpan, toggleWord, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditStatus
 } from '../../shared/edit-recording'
 import { EDIT_CHAT_POINT_SUGGESTIONS, EDIT_CHAT_SUGGESTIONS, editPatchValues, mergeEditChatSteps, parseEditChatSteps, type EditChatPatch, type EditChatStep } from '../../shared/edit-chat'
@@ -23,6 +23,7 @@ import { SkillsPanel } from './SkillsPanel'
 import { ScreenChoicePanel } from './ScreenRecording'
 import { DEFAULT_SCREEN_CHOICE } from '../../shared/screen-pair'
 import { editSkillPatch, editSkillRows } from '../../shared/skills'
+import { DEFAULT_SOUND_REGISTER, SOUND_REGISTER_INFO, SOUND_REGISTERS } from '../../shared/sound-design'
 import { BrollSourcePicker, useBrollLibraryLoaded, useEffectiveBrollSource } from './BrollSourcePicker'
 import { useSettingsStore } from '../store/use-settings-store'
 import { hasBrandMark } from '../../shared/brand-kit'
@@ -36,7 +37,7 @@ import { Button } from './ui/Button'
 import { Callout } from './ui/Callout'
 import { TextInput } from './ui/Field'
 import { Panel, PanelHeader } from './ui/Panel'
-import { onRadioKeyDown } from './ui/Segmented'
+import { onRadioKeyDown, Segmented } from './ui/Segmented'
 import { SettingRow } from './ui/SettingRow'
 import { Switch } from './ui/Switch'
 
@@ -466,18 +467,26 @@ export function EditReview({ status, brand, look, onLook, onError }: {
             </div>
           </section>}
 
-          {plan.sounds.length > 0 && (
-            <section className="mt-5 space-y-2" aria-labelledby="edit-sounds-title">
+          {!screen && (
+            <section className="mt-5 space-y-2" aria-labelledby="edit-sounds-title" data-testid="edit-sounds">
               <h3 id="edit-sounds-title" className="text-sm font-semibold text-ink">Sound effects</h3>
-              {plan.sounds.map((sound) => {
-                const choice = decisions.sounds.find((item) => item.id === sound.id)
-                const where = sound.at === 'title' ? 'as the hook text appears' : `on ${wordWhere(sound.at)}`
-                return (
-                  <SettingRow key={`s${sound.id}`} title={`${SOUND_LABELS[sound.sound]} ${where}`} description={sound.at !== 'title' && cut.has(sound.at) ? 'Its word is cut, so it won’t play.' : 'Mixed softly under your voice.'}
-                    control={<Switch label={`${SOUND_LABELS[sound.sound]} ${where}`} checked={Boolean(choice?.on)}
-                      onChange={(on) => setDecisions((current) => ({ ...current, sounds: current.sounds.map((item) => item.id === sound.id ? { ...item, on } : item) }))} />} />
-                )
-              })}
+              {soundEffectsOn(decisions) ? <>
+                <p className="text-2xs text-ink-subtle">Each sound lands as its graphic or scene comes in. Your own sounds (Settings → My sounds) play first.</p>
+                <SettingRow title="How much sound" description={SOUND_REGISTER_INFO[decisions.soundStyle ?? DEFAULT_SOUND_REGISTER].detail}
+                  control={<Segmented size="sm" label="How much sound" value={decisions.soundStyle ?? DEFAULT_SOUND_REGISTER}
+                    options={SOUND_REGISTERS.map((id) => ({ value: id, label: SOUND_REGISTER_INFO[id].label }))}
+                    onChange={(soundStyle) => setDecisions((current) => ({ ...current, soundStyle }))} />} />
+                {plan.sounds.flatMap((sound) => sound.at === 'title' ? [] : [{ ...sound, at: sound.at }]).map((sound) => {
+                  // The plan's extras (its hook-text sound is the hook's own now).
+                  const choice = decisions.sounds.find((item) => item.id === sound.id)
+                  const where = `on ${wordWhere(sound.at)}`
+                  return (
+                    <SettingRow key={`s${sound.id}`} title={`${SOUND_LABELS[sound.sound]} ${where}`} description={cut.has(sound.at) ? 'Its word is cut, so it won’t play.' : 'An extra the plan suggested. It plays only while a graphic is on screen.'}
+                      control={<Switch label={`${SOUND_LABELS[sound.sound]} ${where}`} checked={Boolean(choice?.on)}
+                        onChange={(on) => setDecisions((current) => ({ ...current, sounds: current.sounds.map((item) => item.id === sound.id ? { ...item, on } : item) }))} />} />
+                  )
+                })}
+              </> : <p className="text-2xs text-ink-subtle">Sound effects are off. Turn them on in Skills above.</p>}
             </section>
           )}
 
