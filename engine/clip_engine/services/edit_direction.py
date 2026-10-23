@@ -7,8 +7,10 @@ screen all move the reel's clock:
 
 - plan time (plan_graphics): every suggestion is checked against the words actually kept, on a "virtual" clock (each
   take or clip after the last, so their times never collide): words said (every word for the newer templates,
-  MEANING_WORDS always), numbers exactly as said, items in order, about one graphic per 6 s, never two at once.
-  What survives goes to the review screen as word-anchored graphics (origin 'auto').
+  MEANING_WORDS always), numbers exactly as said, items in order, about one graphic per 9-10 s, never two at once, and
+  varied in code (auto_graphics' variety rules: per-template caps, no template twice in a row or within 25 s of itself,
+  over-used cards turned into richer templates their words fit, a look per card). What survives goes to the review
+  screen as word-anchored graphics (origin 'auto').
 - render time (editor_graphics): the reel's own word timing (after the cut) places each one again: on its first
   spoken word, items lighting up as they're said, word-by-word cards, diagrams on screen while they're talked
   through; chapter headers when the talk says its structure out loud ("step one… step two…"); and with Stage
@@ -31,12 +33,15 @@ from clip_engine.services.transcription_service import TranscriptSegment, Transc
 
 logger = logging.getLogger(__name__)
 
-# The planner's templates on an edited reel: Create's automatic ones (never the hook headline: the reel has its own
-# hook text) and big words behind the speaker.
-EDIT_TEMPLATES = tuple(t for t in ag.AUTO_TEMPLATES if t != 'headline_pill') + ('big_words',)
-# About one graphic per this many seconds of explanation (the target reels change something every few seconds; the
-# stage scenes, chapter headers and screen clips fill the rest).
-SECONDS_PER_GRAPHIC = 6.0
+# The planner's templates on an edited reel: Create's automatic ones and big words behind the speaker. The headline pill is
+# a card here (a bold line, then the key words on a color box), never the hook: the reel has its own hook text.
+EDIT_TEMPLATES = ag.AUTO_TEMPLATES + ('big_words',)
+# About one graphic per this many seconds (the owner's first real runs: ~25 in a 4-minute reel is right, and fewer but
+# richer beats more); the hard cap is one per SECONDS_PER_GRAPHIC, the guidance asks for one per 9.5-11 s.
+SECONDS_PER_GRAPHIC = 9.0
+TARGET_SECONDS_LOW, TARGET_SECONDS_HIGH = 11.0, 9.5
+# Free time kept between two graphics on an edited reel (the face shows between them).
+GAP_BETWEEN_MS = 1200
 MAX_GRAPHICS = ag.MAX_GRAPHICS
 # Each take or clip on the plan's virtual clock starts this long after the one before ends.
 SOURCE_GAP_MS = 10_000
@@ -49,8 +54,14 @@ EDITOR_TEMPLATES = ag.SAVED_TEMPLATES + ('logo', 'highlight', 'screen_frame')
 
 
 def graphics_limit(seconds: float) -> int:
-    """How many graphics a reel this long keeps at most: about one per SECONDS_PER_GRAPHIC, at least 3."""
+    """How many graphics a reel this long keeps at most: one per SECONDS_PER_GRAPHIC, at least 3."""
     return max(3, min(MAX_GRAPHICS, int(max(0.0, seconds) // SECONDS_PER_GRAPHIC)))
+
+
+def graphics_target(seconds: float) -> tuple[int, int]:
+    """The number of graphics the guidance asks for (low, high): one per 9.5-11 s."""
+    high = max(2, min(graphics_limit(seconds), round(max(0.0, seconds) / TARGET_SECONDS_HIGH)))
+    return max(2, min(high, round(max(0.0, seconds) / TARGET_SECONDS_LOW))), high
 
 
 # ---------------------------------------------------------------------------
@@ -77,47 +88,62 @@ def graphics_schema() -> dict[str, Any]:
 def direction_rule(seconds: float, options: Optional[dict] = None) -> str:
     """The planner's guidance for an edited reel's graphics (`seconds`: about how long the recording is)."""
     options = options or {}
-    want = graphics_limit(seconds)
-    low = max(2, min(want - 1, round(want * 0.75)))
+    low, high = graphics_target(seconds)
+    minutes = max(1.0, seconds / 60)
+    statements = ag.template_cap('statement', seconds)
     rule = (
         '\n\nMOTION GRAPHICS ("graphics"). This video must look PRODUCED, like the best short-form creators\' edits, not like a '
-        'raw talking head with captions. While the speaker explains something, something visual changes every few seconds: a '
-        'graphic appears, a list builds item by item as each is said, a diagram lights up, or the screen they filmed shows. Only '
-        'personal moments, jokes, the punch line and the call to action stay on the speaker\'s face alone.\n'
-        f'Plan about one graphic per 6-8 seconds of explanation: for this recording that is about {low} to {want}. '
-        'Fewer is wrong unless most of it is personal story. Spread them over the WHOLE video (not all at the start), never two at '
-        'once, and vary the templates: never the same template twice in a row, and use at least 6 different templates in a video over '
-        'two minutes.\n'
-        'Pick the pattern that fits what is said (these are taken from the reels we model):\n'
-        '- a contrast like "not X, not Y, just Z" -> "strike_list": items X, Y (the rejected things), final Z, accent = the key word of Z '
-        '(e.g. items "scraping", "brittle selectors", "guessing endpoints", final "just a typed client", accent "typed client");\n'
-        '- a core claim or punchy one-liner -> "statement": text as said, accent = its key word(s) inside text, subline only if said '
-        '(e.g. text "Skip the scraping.", accent "scraping");\n'
-        '- 2-3 short parallel phrases said one after another -> "sticky_notes": items 1-4 words each (e.g. "Turn websites", "into APIs");\n'
-        '- a number, price or result said -> "stat": value exactly as said in digits ("$2,586", "3 million", "12"), label = 1-5 of their '
-        'words saying what it is;\n'
-        '- steps or a list said quickly -> "list" (or "checklist" for things to do), items in order;\n'
-        '- apps, sites, tools or channels named -> "icon_pop": items = the names as said, icons = one generic icon each (video for '
+        'raw talking head with captions, and not like a slideshow of the same white card. FEWER BUT BETTER: while the speaker '
+        'explains something, a rich graphic lands on the point (a number counting up, icons popping in, a diagram lighting up '
+        'item by item); between graphics the face shows. Personal moments, jokes, the punch line and the call to action stay on '
+        'the face alone.\n'
+        f'AMOUNT: about one graphic per 10 seconds: for this recording about {f"{low} to {high}" if low < high else high} (never more than '
+        f'{graphics_limit(seconds)}). '
+        'Spread them over the WHOLE video (not all at the start), never two at once.\n'
+        f'VARIETY BUDGET (about {minutes:.0f} minute{"s" if minutes >= 1.5 else ""}): never the same template twice in a row and never '
+        f'the same template within 25 seconds of itself; at most 2 "statement" per minute and {statements} in the whole video; at most 2 '
+        '"sticky_notes" in the whole video; at most 2 "quote"; use at least 7 different templates in a video over two minutes. '
+        'Extra cards past these limits are changed or dropped by the app, so pick the right template the first time.\n'
+        'BAD (from a real run, do not repeat): ten white serif "statement" cards in one reel ("I\'m using AI to do exactly that", '
+        '"we only need three things", "This animation", "I\'ve built a", "this is gonna be controversial"); five "sticky_notes" '
+        'stacks; a "compare_marks" sitting 15 seconds with one lonely card; a statement made of half a sentence. '
+        'A line that is just talk (no number, no list, no contrast, no named things) gets NO graphic.\n'
+        'MENU, best first: pick the richest template the words support.\n'
+        '1. a number, price or result said -> "stat": value exactly as said in digits ("$2,586", "3 million", "12"), label = 1-5 of '
+        'their words saying what it is (it counts up);\n'
+        '2. apps, sites, tools or channels named -> "icon_pop": items = the names as said, icons = one generic icon each (video for '
         'YouTube, camera for Instagram, message for a chat app, mail for email, chart for analytics); never a brand logo;\n'
-        '- 3-6 tools, features or channels said as parts of one thing ("ads, landing pages, emails, all in the same account") -> '
+        '3. 3-6 tools, features or channels said as parts of one thing ("ads, landing pages, emails, all in the same account") -> '
         '"orbit" (text = that one thing if said);\n'
-        '- one to three features or capabilities named ("competitor research", "auto reports") -> "feature_tile";\n'
-        '- a person, tool or company introduced -> "lower_third"; a before and after -> "before_after"; a line worth reading -> "quote";\n'
-        '- one to three punchy words that land a point ("go viral", "profitable", "no audience") -> "big_words": huge type placed '
-        'behind the speaker\'s head; use it 1-4 times per video, never for a full sentence;\n'
-        '- when the speaker lists 3-6 parallel items in one section, a DIAGRAM that stays 6-15 s while they talk it through (at most '
+        '4. one to three features or capabilities named ("competitor research", "auto reports") -> "feature_tile" with icons;\n'
+        '5. when the speaker lists 3-6 parallel items in one section, a DIAGRAM that stays 6-15 s while they talk it through (at most '
         'one per section): steps that build on each other -> "staircase" (items bottom to top, icons); a process that narrows or '
         'filters -> "funnel"; milestones from zero to a goal -> "journey"; things that scale up or grow -> "growth"; qualities of one '
-        'thing -> "idea_hub" (text = that thing if said); "not X, but Y" -> "compare_marks" (items X then Y, wrong "first"). Its '
-        '"word" is where its FIRST item is said; each item 1-4 words exactly as said. A video that walks through numbered steps or '
-        '"three things" should get a diagram for them.\n'
+        'thing -> "idea_hub" (text = that thing if said); "not X, but Y" -> "compare_marks" (items X then Y, wrong "first"; only when '
+        'X and Y are said within about 6 seconds of each other). Its "word" is where its FIRST item is said; each item 1-4 words '
+        'exactly as said. A video that walks through numbered steps or "three things" should get a diagram for them;\n'
+        '6. one to three punchy words that land a point ("go viral", "profitable", "no audience") -> "big_words": huge type placed '
+        'behind the speaker\'s head; 1-4 times per video, never for a full sentence;\n'
+        '7. a key phrase worth stopping on -> "headline_pill": text = the first words as said, phrase = the key words right after '
+        '(drawn on a color box), e.g. text "Use any website\'s", phrase "hidden API";\n'
+        '8. a contrast like "not X, not Y, just Z" -> "strike_list": items X, Y (the rejected things), final Z, accent = the key word of '
+        'Z (e.g. items "scraping", "brittle selectors", "guessing endpoints", final "just a typed client", accent "typed client"); a '
+        'before and after -> "before_after";\n'
+        '9. steps or things to do said quickly -> "checklist" (or "list"), items in order, icons optional;\n'
+        '10. a person, tool or company introduced -> "lower_third";\n'
+        '11. only for a real one-line thesis (a full thought, under 12 words) -> "statement": text as said, accent = its key word(s) '
+        'inside text (e.g. text "Skip the scraping.", accent "scraping"); a line quoted from someone -> "quote"; 2-3 short parallel '
+        'phrases -> "sticky_notes" (rarely: an "icon_pop", "feature_tile" or "checklist" usually says it better).\n'
+        'The app gives repeated templates different looks and brand colors; you only pick the template and the words.\n'
         'Chapter headers ("Step #1. Come up with your idea") are added automatically when the speaker numbers the sections out loud: '
         'do not make graphics for the step names themselves; put the section\'s diagram or list on its points instead.\n'
+        'When the speaker shows a screen they filmed (a page, a dashboard, an app), the screen is the visual: put at most a "stat" '
+        'or a short "headline_pill" there, never a stack of cards over it.\n'
     )
     if options.get('stage'):
         rule += ('Stage layouts are on: statement, strike_list, sticky_notes, list, checklist, orbit and feature_tile go on a stage at the '
-                 'top of the frame with the speaker in a card below, and diagrams fill the frame. So those are the best picks while '
-                 'the speaker explains; then back to the full face for personal lines.\n')
+                 'top of the frame with the speaker in a card below, and diagrams fill the frame. Then back to the full face for '
+                 'personal lines.\n')
     keyword = ag.clean_keyword(options.get('cta_keyword'))
     if keyword:
         rule += (f'- the speaker asks viewers to comment: "comment_cta" with keyword exactly "{keyword}" and lead "Comment", where they '
@@ -263,7 +289,8 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
         if item['word'] in blocked:
             continue
         planned.append({**item, 'time': (offsets[w.src] + int(w.start_ms)) / 1000})
-    opts = {**options, 'templates': ['big_words'], 'max_cards': limit, 'headline_off': False, 'chapters': False}
+    opts = {**options, 'templates': ['big_words'], 'max_cards': limit, 'headline_off': False, 'chapters': False, 'pill_cards': True,
+            'gap_ms': GAP_BETWEEN_MS}
     checked = ag.parse_planned(planned, 0, ranges[-1][1] + 1, opts)
     checked = [g for g in checked if not drops_meaning(g, segments)]
     fitted = ag.fit_to_clip(checked, segments, ranges, 1.0, opts)
@@ -433,8 +460,9 @@ def editor_graphics(specs: Sequence[dict], timed: Sequence[Sequence[Any]], total
                        'fields': {'image': pin['image']}, 'origin': 'member'})
     # The automatic ones: on their first spoken word, items as said, diagrams while talked through (each on its own: they
     # were picked and spaced at plan time; the cut can bring two closer, which is settled below); chapter headers.
+    # Each was picked, varied and given its look at plan time: here it is only timed again (no variety pass on one card).
     opts = {'stage': bool(options.get('stage')), 'chapters': False, 'cta_keyword': options.get('cta_keyword') or '',
-            'templates': ['big_words'], 'max_cards': MAX_GRAPHICS}
+            'templates': ['big_words'], 'max_cards': MAX_GRAPHICS, 'pill_cards': True, 'variety': False}
     ranges = [(offset_ms, end_ms)]
     fitted: list[dict] = []
     for g in auto:
@@ -483,9 +511,56 @@ def editor_graphics(specs: Sequence[dict], timed: Sequence[Sequence[Any]], total
     return placed, warnings
 
 
-def editor_scenes(graphics: Sequence[dict], total_ms: int, brand: Optional[str], avoid: Sequence[tuple[int, int]] = ()) -> list[dict]:
+# A filmed screen (a stretch without a face) this long gets one framed moment: the same footage in a Screen recording
+# window on a dark Visual scene (like the target reels' browser frame), at most FRAME_MAX_MS, at most MAX_FRAMES a reel.
+FRAME_MIN_WINDOW_MS = 4500
+FRAME_MIN_MS, FRAME_MAX_MS = 3500, 6000
+MAX_FRAMES = 3
+# Cards that read as a white slab over a busy page; over a filmed screen they take a darker look (SCREEN_VARIANTS).
+SCREEN_SHARE = 0.5
+
+
+def screen_aware(graphics: list[dict], windows: Sequence[tuple[int, int]], stage: bool) -> tuple[list[dict], list[dict]]:
+    """Graphics made for a reel's filmed screens (`windows`, reel ms): an automatic card mostly over a screen takes its
+    darker look, so no white slab sits on a busy page; and with Stage layouts on, the first free stretch of each long
+    screen window is framed: that very footage in a Screen recording window on a dark Visual scene. Returns
+    (graphics, the Visual scenes for the frames)."""
+    out = []
+    for g in graphics:
+        a, b = g['at_ms'], g['at_ms'] + g['duration_ms']
+        inside = sum(max(0, min(b, hi) - max(a, lo)) for lo, hi in windows)
+        if g.get('origin') == 'auto' and g['template'] in ag.SCREEN_VARIANTS and inside >= SCREEN_SHARE * (b - a):
+            g = {**g, 'fields': {**g['fields'], 'variant': ag.SCREEN_VARIANTS[g['template']]}}
+        out.append(g)
+    if not stage:
+        return out, []
+    frames, scenes = [], []
+    taken = {g['id'] for g in out}
+    for lo, hi in sorted(windows):
+        if len(frames) >= MAX_FRAMES or hi - lo < FRAME_MIN_WINDOW_MS:
+            continue
+        busy = sorted((g['at_ms'], g['at_ms'] + g['duration_ms']) for g in out if g['template'] != 'chapter' and g['at_ms'] < hi and g['at_ms'] + g['duration_ms'] > lo)
+        start = lo + 200
+        spot = None
+        for a, b in [*busy, (hi, hi)]:
+            if min(a, hi - 200) - start >= FRAME_MIN_MS:
+                spot = (start, min(a - ag.GAP_MS, hi - 200, start + FRAME_MAX_MS))
+                break
+            start = max(start, b + ag.GAP_MS)
+        if spot is None or spot[1] - spot[0] < FRAME_MIN_MS:
+            continue
+        a, b = int(spot[0]), int(spot[1])
+        frames.append({'id': ag.new_id(taken), 'template': 'screen_frame', 'at_ms': a, 'duration_ms': b - a, 'placement': 'top',
+                       'fields': {'video': 'source', 'from': f'{a / 1000:.3f}', 'shape': 'tall'}, 'origin': 'auto', 'size': 'stage'})
+        scenes.append({'scene': 'visual', 'start_ms': a, 'end_ms': b, 'backdrop': 'dark'})
+    return sorted(out + frames, key=lambda g: g['at_ms']), scenes
+
+
+def editor_scenes(graphics: Sequence[dict], total_ms: int, brand: Optional[str], avoid: Sequence[tuple[int, int]] = (),
+                  framed: Sequence[dict] = ()) -> list[dict]:
     """Stage scenes around the stage-size graphics and Visual scenes around the diagrams (auto_graphics.stage_scenes_for),
-    cut around `avoid` (reel ms: stretches that show a screen the speaker filmed, which are the visual already)."""
+    cut around `avoid` (reel ms: stretches that show a screen the speaker filmed, which are the visual already); `framed`:
+    the Visual scenes of the screens framed in a window (screen_aware), which sit inside those stretches."""
     from clip_engine.services.stage_scenes import MAX_SCENES, MIN_SCENE_MS, auto_look
     backdrop, card = auto_look(brand)
     scenes = ag.stage_scenes_for(graphics, 0, int(total_ms), backdrop, card)
@@ -497,6 +572,9 @@ def editor_scenes(graphics: Sequence[dict], total_ms: int, brand: Optional[str],
                 pieces = [p for lo, hi in pieces for p in ((lo, min(hi, a)), (max(lo, b), hi)) if p[1] - p[0] >= MIN_SCENE_MS]
             cut.extend({**s, 'start_ms': lo, 'end_ms': hi} for lo, hi in pieces)
         scenes = cut
+    for f in framed:
+        if not any(f['start_ms'] < s['end_ms'] and s['start_ms'] < f['end_ms'] for s in scenes) and f['end_ms'] - f['start_ms'] >= MIN_SCENE_MS:
+            scenes.append(dict(f))
     return ag.checked_saved_scenes(sorted(scenes, key=lambda s: s['start_ms'])[:MAX_SCENES], int(total_ms))
 
 

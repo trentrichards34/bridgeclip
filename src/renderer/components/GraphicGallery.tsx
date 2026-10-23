@@ -9,7 +9,7 @@ import {
   ALargeSmall, AppWindow, Bookmark, CircleCheckBig, Columns2, Contact, Crosshair, Filter, Footprints, Hash, Highlighter, Image, LayoutGrid, Lightbulb, ListChecks, ListOrdered,
   MessageCircle, MonitorPlay, Orbit, Pilcrow, Quote, Search, Shapes, Sprout, StickyNote, Strikethrough, TrendingUp, Type, X, type LucideIcon
 } from 'lucide-react'
-import { DIAGRAM_ACCENT, graphicHasContent, isDiagram, type GraphicRenderSpec, type GraphicTemplateId } from '../../shared/motion-graphics'
+import { DIAGRAM_ACCENT, graphicHasContent, graphicVariants, isDiagram, type GraphicRenderSpec, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { outputSize } from '../../shared/graphic-layout'
 import { cn } from '../lib/utils'
 import { GRAPHIC_GROUPS, GraphicView, SAMPLES, graphicGroup } from './ClipGraphics'
@@ -28,16 +28,16 @@ export const TEMPLATE_ICONS: Record<GraphicTemplateId, LucideIcon> = {
 export interface GalleryTemplate { id: GraphicTemplateId; label: string; detail: string }
 
 /** A tile's animation: the words said at the spot when there are some, else sample words, on a square crop. */
-export function galleryPreview(id: GraphicTemplateId, style: { color: string; font: string }, words?: Record<string, string>): GraphicRenderSpec {
+export function galleryPreview(id: GraphicTemplateId, style: { color: string; font: string }, words?: Record<string, string>, look?: string): GraphicRenderSpec {
   const { width, height } = outputSize('1:1')
   const own = words && graphicHasContent({ template: id, fields: words }) ? words : null
   const sample = id === 'highlight' ? { ...SAMPLES[id], y: '0.5' } : SAMPLES[id]
-  const fields = { ...(own ? { ...sample, ...own } : sample), ...(isDiagram(id) ? { panel: 'on' } : {}) }
+  const fields = { ...(own ? { ...sample, ...own } : sample), ...(isDiagram(id) ? { panel: 'on' } : {}), ...(look ? { variant: look } : {}) }
   // Keep a picture-only sample's own fields (a Logo pop never has words to show).
   return { template: id, fields, width, height, duration_ms: isDiagram(id) ? 4200 : 2600, box: { top: .06, bottom: .94 }, placement: 'middle', ...style, ...(isDiagram(id) ? { color: DIAGRAM_ACCENT } : {}) }
 }
 
-export function GraphicGallery({ templates, where, style, prefill, full, limitNote, onPick, onClose }: {
+export function GraphicGallery({ templates, where, style, prefill, full, limitNote, looks = false, onPick, onClose }: {
   templates: readonly GalleryTemplate[]
   /** Where it goes, in words ("at 0:03.2, on “three things”"). */
   where: string
@@ -47,10 +47,14 @@ export function GraphicGallery({ templates, where, style, prefill, full, limitNo
   /** No more graphics fit. */
   full: boolean
   limitNote: string
-  onPick: (template: GraphicTemplateId) => void
+  /** Offer each template's looks (GRAPHIC_VARIANTS) as small buttons under its tile. */
+  looks?: boolean
+  onPick: (template: GraphicTemplateId, look?: string) => void
   onClose: () => void
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
+  // The look a tile previews while the pointer (or focus) is on one of its look buttons.
+  const [peek, setPeek] = useState<{ id: GraphicTemplateId; look: string } | null>(null)
   const search = useRef<HTMLInputElement>(null)
   const opener = useRef<Element | null>(typeof document === 'undefined' ? null : document.activeElement)
   useEffect(() => {
@@ -84,12 +88,18 @@ export function GraphicGallery({ templates, where, style, prefill, full, limitNo
         <div className="graphic-gallery-grid">{group.items.map((t, i) => {
           const Icon = TEMPLATE_ICONS[t.id]
           const own = graphicHasContent({ template: t.id, fields: words[t.id] }) && Object.keys(words[t.id]).length > 0
-          return <button key={t.id} type="button" className="editor-graphic-tile graphic-gallery-tile" disabled={full} onClick={() => onPick(t.id)} title={t.detail} aria-label={`Add ${t.label}`}>
-            <span className="graphic-gallery-thumb"><GraphicView spec={galleryPreview(t.id, style, words[t.id])} width={150} loop offset={900 + i * 370} />
+          const variants = looks ? graphicVariants(t.id) : []
+          const tile = <button key={t.id} type="button" className="editor-graphic-tile graphic-gallery-tile" disabled={full} onClick={() => onPick(t.id)} title={t.detail} aria-label={`Add ${t.label}`}>
+            <span className="graphic-gallery-thumb"><GraphicView spec={galleryPreview(t.id, style, words[t.id], peek?.id === t.id ? peek.look : undefined)} width={150} loop offset={900 + i * 370} />
               {own && <span className="graphic-gallery-yours">Your words</span>}</span>
             <span className="graphic-gallery-name"><Icon size={13} aria-hidden />{t.label}</span>
             <span className="graphic-gallery-detail">{t.detail}</span>
           </button>
+          if (!variants.length) return tile
+          return <div key={t.id} className="graphic-gallery-cell">{tile}
+            <div className="graphic-gallery-looks" role="group" aria-label={`${t.label} looks`}>{variants.map((v) => <button key={v.id} type="button" disabled={full} title={v.detail}
+              aria-label={`Add ${t.label}: ${v.label}`} onClick={() => onPick(t.id, v.id)} onMouseEnter={() => setPeek({ id: t.id, look: v.id })} onFocus={() => setPeek({ id: t.id, look: v.id })}
+              onMouseLeave={() => setPeek(null)} onBlur={() => setPeek(null)}>{v.label}</button>)}</div></div>
         })}</div>
       </div>)}
       {!groups.length && <p className="graphic-gallery-note">No graphic matches “{query.trim()}”. Try a word like stat, list, steps, quote or words.</p>}

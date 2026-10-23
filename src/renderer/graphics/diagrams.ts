@@ -549,9 +549,11 @@ export function ideaHubTemplate(b: DiagramBuild): void {
       draw(arrows[i].shaft, outCubic(prog(t, beats[i] - 260, 260)))
       draw(arrows[i].head, outCubic(prog(t, beats[i] - 40, 140)))
       const next = i + 1 < items.length ? outCubic(prog(t, beats[i + 1], 300)) : 0
-      // The label being said is lit; earlier ones settle back to an outline.
-      setTag(tags[i], outCubic(appear) * (1 - next), outCubic(appear), 1, appear)
-      tags[i].style.transform = `translate(-50%, 0) scale(${.6 + .4 * outBack(appear)})`
+      // The whole hub shows early (every label faint), so it never sits with one lonely label; each lights up as it
+      // is said, and earlier ones settle back to an outline.
+      const early = outCubic(prog(t, 650 + i * 90, 360))
+      setTag(tags[i], outCubic(appear) * (1 - next), Math.max(.5 * early, outCubic(appear)), appear > 0 ? 1 : .7, appear)
+      tags[i].style.transform = `translate(-50%, 0) scale(${(.86 + .14 * early) * (1 + Math.sin(Math.PI * clamp(appear, 0, 1)) * .08)})`
     })
   })
 }
@@ -597,11 +599,16 @@ export function compareMarksTemplate(b: DiagramBuild): void {
   const cardAt = said ? said.cards.map((t) => clamp(t - 60, 200, spec.duration_ms - 1200)) : [300, 900]
   const crossAt = said ? clamp(said.cross, cardAt[1] + 200, spec.duration_ms - 800) : Math.min(spec.duration_ms - 1500, 1900)
   const checkAt = said ? clamp(said.check, crossAt + 250, spec.duration_ms - 500) : Math.min(spec.duration_ms - 900, crossAt + 700)
+  // Both cards come in at the start (faint until said), so the frame is never one lonely card for seconds; each
+  // brightens with a small bump as it is said.
+  const enterAt = [260, 440]
   b.onSeek.push((t) => {
     cards.forEach((card, i) => {
-      const p = outBack(prog(t, cardAt[i] ?? 300, 460))
-      card.style.opacity = String(clamp(p, 0, 1) * (i === wrong ? 1 - .45 * outCubic(prog(t, crossAt + 200, 400)) : 1))
-      card.style.transform = `translateY(${(1 - clamp(p, 0, 1)) * 40 * fu}px) scale(${.92 + .08 * p})`
+      const p = outBack(prog(t, Math.min(enterAt[i], cardAt[i] ?? 300), 460))
+      const said = outCubic(prog(t, cardAt[i] ?? 300, 320))
+      const bump = Math.sin(Math.PI * prog(t, cardAt[i] ?? 300, 440)) * .05
+      card.style.opacity = String(clamp(p, 0, 1) * (.42 + .58 * said) * (i === wrong ? 1 - .45 * outCubic(prog(t, crossAt + 200, 400)) : 1))
+      card.style.transform = `translateY(${(1 - clamp(p, 0, 1)) * 40 * fu}px) scale(${.92 + .08 * p + bump})`
       if (i !== wrong) card.style.setProperty('--passed', String(outCubic(prog(t, checkAt, 300))))
     })
     if (marks.length) {

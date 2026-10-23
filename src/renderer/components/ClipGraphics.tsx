@@ -11,7 +11,7 @@ import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes, Film, AudioLines, Spark
 import type { MountedGraphic } from '../graphics/templates'
 import {
   CHAPTER_STYLES, DIAGRAM_ACCENT, GRAPHIC_DEFAULT_MS, GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
-  ITEM_TIMED_TEMPLATES, bigWordsOptions, chapterStyle, clampGraphicMs, duplicateGraphic, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, switchGraphicTemplate, templateInfo, templateItems, updateGraphic, withGraphic,
+  ITEM_TIMED_TEMPLATES, graphicVariant, graphicVariants, bigWordsOptions, chapterStyle, clampGraphicMs, duplicateGraphic, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, switchGraphicTemplate, templateInfo, templateItems, updateGraphic, withGraphic,
   MAX_BIG_WORDS, SCREEN_VIDEO_FILE, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
 } from '../../shared/motion-graphics'
 import { GRAPHIC_DEFAULT_COLOR, graphicOwnFont, graphicSpec, graphicStyle } from '../../shared/graphic-layout'
@@ -325,7 +325,7 @@ export function BigWordsFields({ fields, onField }: { fields: Record<string, str
 }
 
 /** The Icon row's icon for each label (generic icons only; a brand's logo is an image the member adds). */
-export function IconFields({ fields, onField, imageNote = true, template = 'icon_pop' }: { fields: Record<string, string>; onField: (key: string, value: string) => void; imageNote?: boolean; template?: 'icon_pop' | 'orbit' | 'feature_tile' | 'staircase' }): React.JSX.Element | null {
+export function IconFields({ fields, onField, imageNote = true, template = 'icon_pop' }: { fields: Record<string, string>; onField: (key: string, value: string) => void; imageNote?: boolean; template?: 'icon_pop' | 'orbit' | 'feature_tile' | 'staircase' | 'list' | 'checklist' }): React.JSX.Element | null {
   const labels = templateItems(template, fields.items)
   if (!labels.length) return null
   const icons = graphicIcons(fields, template)
@@ -334,6 +334,16 @@ export function IconFields({ fields, onField, imageNote = true, template = 'icon
       <Select size="sm" aria-label={`Icon for ${label}`} value={icons[i] ?? ''} options={ICON_OPTIONS} searchable
         onChange={(name) => onField('icons', labels.map((_, k) => k === i ? name : icons[k] ?? '').join('\n'))} /></div>)}
     <p className="text-2xs text-ink-subtle">Simple icons only.{imageNote ? ' To show a brand’s logo, choose its image above.' : ' “Letter” shows the label’s first letter.'}</p></div>
+}
+
+/** A template's looks (motion-graphics GRAPHIC_VARIANTS): a picker with a plain line about the one chosen. None for one-look templates. */
+export function VariantField({ template, fields, onField }: { template: GraphicTemplateId; fields: Record<string, string>; onField: (key: string, value: string) => void }): React.JSX.Element | null {
+  const looks = graphicVariants(template)
+  if (!looks.length) return null
+  const value = graphicVariant(template, fields)
+  return <div className="space-y-1"><p className="editor-label">Look</p>
+    <Segmented<string> label="Graphic look" size="sm" value={value} onChange={(look) => onField('variant', look)} options={looks.map((v) => ({ value: v.id, label: v.label }))} />
+    <p className="text-2xs text-ink-subtle">{looks.find((v) => v.id === value)?.detail} Your color is the accent.</p></div>
 }
 
 const CHAPTER_STYLE_OPTIONS: { value: ChapterStyle; label: string }[] = [{ value: 'serif_caps', label: 'Serif' }, { value: 'sans', label: 'Bold' }, { value: 'pill', label: 'Pill' }]
@@ -605,6 +615,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
       <div className="flex items-center justify-between gap-2 text-2xs"><span className="text-ink-muted">Type</span>
         <Select size="sm" aria-label="Graphic type" value={g.template} options={TYPE_OPTIONS} searchable
           onChange={(to) => { if (to !== g.template) onChange(graphicsWithTemplate(candidate, g, to as GraphicTemplateId, words)) }} /></div>
+      <VariantField template={g.template} fields={g.fields} onField={field} />
       {(() => { const warning = graphicWarning(graphicCutFit(candidate, g), graphicClashes(graphics).has(g.id), g.placement); return warning && <p role="note" className="text-2xs text-warning">{warning}</p> })()}
       {!graphicHasContent(g) && <p className="text-2xs text-warning">{g.template === 'logo' ? 'Choose an image to show it.' : g.template === 'browser_frame' ? 'Choose a screenshot or add a headline to show it.' : 'Add its words to show it.'}</p>}
       {graphicUsesImage(g.template) && <div className="space-y-2">
@@ -625,6 +636,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
         {FIELD_HINTS[g.template]?.[key] && <span className="block text-2xs text-ink-subtle">{FIELD_HINTS[g.template]?.[key]}</span>}
       </label>)}
       {g.template === 'icon_pop' && <IconFields fields={g.fields} onField={field} />}
+      {g.template === 'list' && graphicVariant('list', g.fields) === 'chips' && <IconFields fields={g.fields} onField={field} template="list" imageNote={false} />}
       {g.template === 'big_words' && <BigWordsFields fields={g.fields} onField={field} />}
       <DiagramFields template={g.template} fields={g.fields} onField={field} />
       {(g.template === 'orbit' || g.template === 'feature_tile') && <IconFields fields={g.fields} onField={field} template={g.template} imageNote={g.template === 'orbit'} />}

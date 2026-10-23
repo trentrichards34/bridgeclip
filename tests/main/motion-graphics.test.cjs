@@ -438,3 +438,28 @@ test('a graphic fitted into the cut keeps its item and word times on the words (
   const inside = { at_ms: 2000, duration_ms: 1500, fields: { word_ms: '0\n200' } }
   assert.equal(mg.fitGraphicInCut(inside, c), inside)
 })
+
+test('looks: optional and backward compatible, mirrored by the engine, kept through parsing and editing', () => {
+  // Every template with looks lists the engine's (auto_graphics.VARIANTS), the classic one first.
+  const engine = JSON.parse(execFileSync(path.join(__dirname, '../../engine/.venv/bin/python'), ['-c', 'import json; from clip_engine.services import auto_graphics as ag; print(json.dumps({"v": ag.VARIANTS, "r": ag.ROTATION, "s": ag.SCREEN_VARIANTS}))'],
+    { cwd: path.join(__dirname, '../../engine'), env: { ...process.env, PYTHONPATH: path.join(__dirname, '../../engine') } }).toString())
+  assert.deepEqual(Object.fromEntries(Object.entries(mg.GRAPHIC_VARIANTS).map(([t, looks]) => [t, looks.map((v) => v.id)])), engine.v)
+  for (const [t, order] of Object.entries(engine.r)) assert.deepEqual([...order].sort(), [...engine.v[t]].sort(), t)
+  for (const [t, look] of Object.entries(engine.s)) assert.ok(engine.v[t].includes(look), t)
+  // No look (an older graphic) or an unknown one draws the classic; one-look templates have none.
+  assert.equal(mg.graphicVariant('statement', {}), 'card')
+  assert.equal(mg.graphicVariant('statement', { variant: 'neon' }), 'card')
+  assert.equal(mg.graphicVariant('statement', { variant: 'glass' }), 'glass')
+  assert.equal(mg.graphicVariant('sticky_notes', {}), 'notes')
+  assert.equal(mg.graphicVariant('orbit', { variant: 'glass' }), '')
+  assert.deepEqual(plainCopy(mg.graphicVariants('orbit')), [])
+  // A saved graphic keeps its look; changing it is a field change; switching template drops it.
+  const [g] = mg.parseGraphics([{ id: 'g-look1', template: 'stat', at_ms: 1000, duration_ms: 3000, placement: 'top', fields: { value: '$5', variant: 'badge' } }])
+  assert.equal(g.fields.variant, 'badge')
+  const c = clip({ graphics: [g] })
+  assert.equal(mg.updateGraphic(c, 'g-look1', { fields: { variant: 'gradient' } })[0].fields.variant, 'gradient')
+  assert.equal(mg.switchGraphicTemplate(g, 'title').fields.variant, undefined)
+  // A list's icon rows: one icon per item.
+  assert.deepEqual(plainCopy(mg.graphicIcons({ items: 'a\nb\nc', icons: 'gift\n\nusers' }, 'list')), ['gift', null, 'users'])
+  assert.ok(mg.templateInfo('list').fields.includes('icons') && mg.templateInfo('checklist').fields.includes('icons'))
+})

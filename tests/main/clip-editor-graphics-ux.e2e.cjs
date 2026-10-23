@@ -168,9 +168,16 @@ test('graphics: gallery at the playhead with the words said there, edited and mo
   const chapterAt = real ? at('break', 26000) - 300 : at('that')
   await seek(chapterAt)
   await editor.getByRole('button', { name: 'Add a graphic at this moment', exact: true }).click()
-  await gallery.getByRole('button', { name: real ? 'Add Chapter header' : 'Add Title slam', exact: true }).click()
+  // (A title is added in one of its looks, from the small look buttons under its tile.)
+  await gallery.getByRole('button', { name: real ? 'Add Chapter header' : 'Add Title slam: Color pills', exact: true }).click()
   await savedWhen((list) => list.length === 3, 'the third graphic')
   const third = graphics().find((g) => g.template === (real ? 'chapter' : 'title'))
+  if (!real) {
+    assert.equal(third.fields.variant, 'pill')
+    // Its look can be changed in the inspector.
+    await page.getByRole('radiogroup', { name: 'Graphic look' }).getByRole('radio', { name: 'Big type' }).click()
+    await savedWhen((list) => list.find((g) => g.template === 'title')?.fields.variant === 'shadow', 'the title look')
+  }
   assert.ok(onlySaid(`${third.fields.title ?? ''} ${third.fields.text ?? ''}`), `its words are said: ${JSON.stringify(third.fields)}`)
   if (real) {
     // Big words at the start (behind me) from the G key, and a chapter at each step said ("number three").

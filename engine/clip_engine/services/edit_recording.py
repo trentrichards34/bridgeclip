@@ -1969,12 +1969,15 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
                                          editor.get("pins") or [])
     warnings.extend(notes)
     scenes: list[dict] = []
-    if options["stage"]:
+    if options["stage"] or (options["motion"] and graphics):
         avoid = ed.screen_windows(timed, config["words"], screens or set(), offset_ms)
         # And wherever no face shows for a while (a screen or a page filmed mid-take, b-roll).
         avoid += await asyncio.to_thread(ed.faceless_windows, target, offset_ms, total_ms)
-        scenes = ed.editor_scenes(graphics, total_ms, editor.get("brand_color"), avoid)
-        graphics = ed.size_for_scenes(graphics, scenes)
+        # Cards over a filmed screen take a darker look; with Stage layouts a long screen gets a framed moment (edit_direction).
+        graphics, framed = ed.screen_aware(graphics, avoid, options["stage"])
+        if options["stage"]:
+            scenes = ed.editor_scenes(graphics, total_ms, editor.get("brand_color"), avoid, framed)
+            graphics = ed.size_for_scenes(graphics, scenes)
     segments = ed.reel_segments(timed, offset_ms)
     preview_id = os.urandom(16).hex()
     progress("Getting the editor ready", 80)

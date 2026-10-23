@@ -611,9 +611,10 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   const captionPosition = candidate.caption_y ?? captionAnchor(project, candidate, time).y
   const setGraphics = (graphics: EditorGraphic[], remember = true): void => change({ graphics }, remember)
   /** A graphic from the gallery at the gallery's spot: filled with the words said there, selected and shown on the preview. */
-  const insertGraphic = (template: GraphicTemplateId): void => {
+  const insertGraphic = (template: GraphicTemplateId, look?: string): void => {
     if (gallery === null || editingDisabled) return
-    const g = draftGraphic(project, candidate, template, gallery, clipWords)
+    const draft = draftGraphic(project, candidate, template, gallery, clipWords)
+    const g = look ? { ...draft, fields: { ...draft.fields, variant: look } } : draft
     setGraphics(withGraphic(candidate, g)); setGraphicId(g.id); setGallery(null); setTab('graphics')
     showGraphic(g)
   }
@@ -1167,7 +1168,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       limitNote={`A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics. Remove one to add another.`}
       where={(() => { const words = clipWords.filter((w) => w.end_ms > gallery - 150).slice(0, 5).map((w) => w.word).join(' '); return `at ${clipClock(gallery)}${words ? `, on “${words}…”` : ''}` })()}
       prefill={(template) => prefillGraphic(template, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
-      onPick={insertGraphic} onClose={() => setGallery(null)} />}
+      looks onPick={insertGraphic} onClose={() => setGallery(null)} />}
   </section>
 }
 /** Where the preview draws a clip's hook text (vertical clips with at least two words, like the export). */
