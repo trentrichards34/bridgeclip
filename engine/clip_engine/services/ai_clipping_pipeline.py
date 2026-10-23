@@ -224,6 +224,9 @@ class ClippingJobRequest:
     # The earlier run looked at only part of the video (for transcripts that don't record their range).
     reuse_transcript_partial: bool = False
     exclude_ranges_ms: Optional[list] = None
+    # Headlines this video's clips got on earlier runs ([{start_ms, end_ms, headline}], see headline_memory): a clip
+    # that covers the same moment keeps its headline when it still fits what is said in it.
+    kept_headlines: Optional[list] = None
 
     def __post_init__(self):
         validate_video_speed(self.video_speed)
@@ -232,6 +235,8 @@ class ClippingJobRequest:
         if language_name(self.caption_language) is None:
             self.caption_language = None
         self.exclude_ranges_ms = [list(span) for span in clean_exclusions(self.exclude_ranges_ms)] or None
+        from clip_engine.services.headline_memory import clean_kept_headlines
+        self.kept_headlines = clean_kept_headlines(self.kept_headlines) or None
         self._post_init_brand()
 
     # The member's brand identity (niche, voice, offer, proof): advisory context for titles,
@@ -909,6 +914,13 @@ class AIClippingPipeline:
                         segment.start_time_ms,
                         segment.end_time_ms,
                     )
+                    # The same moment as on an earlier run of this video keeps its headline (when it still fits).
+                    if request.kept_headlines and segment.headline:
+                        from clip_engine.services.headline_memory import kept_headline
+                        said = " ".join(seg.text for seg in clip_transcript)
+                        again = kept_headline(segment.start_time_ms, segment.end_time_ms, request.kept_headlines, said)
+                        if again:
+                            segment.headline = again
 
                     caption_translations: dict[str, str] = {}
                     if translator is not None and clip_transcript:

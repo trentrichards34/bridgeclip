@@ -330,6 +330,7 @@ async def run(config: dict) -> bool:
         reuse_expected_duration_seconds=config.get("reuse_expected_duration_seconds"),
         reuse_transcript_partial=config.get("reuse_transcript_partial", False),
         exclude_ranges_ms=config.get("exclude_ranges_ms"),
+        kept_headlines=config.get("kept_headlines"),
         brand_identity=config.get("brand_identity") or "",
         brand_name=config.get("brand_name") or "",
         headline_voice=config.get("headline_voice") or "clipper",
@@ -516,6 +517,15 @@ def validate_config(config: object) -> dict:
             for item in excluded)
     ):
         raise ValueError("Invalid excluded moments")
+    kept = config.get("kept_headlines")
+    if kept is not None and (
+        not isinstance(kept, list) or len(kept) > 60 or any(
+            not isinstance(item, dict) or set(item) - {"start_ms", "end_ms", "headline"} or type(item.get("start_ms")) is not int
+            or type(item.get("end_ms")) is not int or not 0 <= item["start_ms"] < item["end_ms"]
+            or not isinstance(item.get("headline"), str) or not 0 < len(item["headline"]) <= 120 or "\0" in item["headline"]
+            for item in kept)
+    ):
+        raise ValueError("Invalid kept headlines")
     # The member's brand (advisory text for the planner), comment keyword and on-video handle/logo.
     for field, limit in (("brand_identity", 60000), ("brand_name", 120), ("cta_offer", 200)):
         value = config.get(field)

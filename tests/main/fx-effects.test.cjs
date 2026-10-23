@@ -149,7 +149,7 @@ test('graphics contract: fx graphics validate, need their words, keep cue times 
   assert.equal(recolored.fields.cue_ms, '500')
   // Switching to another template keeps the words.
   assert.equal(m.switchGraphicTemplate({ ...g, fields: { effect: 'headline-slam', text: 'Ship it today' } }, 'title').fields.text, 'Ship it today')
-  assert.equal(m.GRAPHICS_VERSION, 5)
+  assert.equal(m.GRAPHICS_VERSION, 6)
 })
 
 test('words: an effect’s beats match the words said; its starting words are only words said', () => {
@@ -185,4 +185,15 @@ test('testimonials: no invented name; a name only when typed or said, and nothin
   const words = ['Sarah', 'said', 'this', 'changed', 'how', 'I', 'work'].map((word, i) => ({ word, start_ms: i * 300, end_ms: i * 300 + 250 }))
   const pre = m.prefillEffect('testimonial-card', words, 0)
   assert.deepEqual(Object.keys(pre.fields), ['quote'])
+})
+
+test('words built into a unit that no field sets are never shown (they would be words nobody said)', () => {
+  // Unit markup or script with fixed copy, and the rule that keeps it off screen.
+  const builtIn = { 'ticker-takeover': ['<div class="tt-label">signal</div>', '.tt-label { display: none'],
+    'locked-nucleus-orbit': ['"signal", "motion", "frames"', '.lno-copy { display: none'], 'overwhelm-surround': ['"Inbox"', '.os-chip { color: transparent'] }
+  for (const [id, [copy, rule]] of Object.entries(builtIn)) {
+    const effect = m.fxEffect(id)
+    assert.ok(fs.readFileSync(path.join(dirOf(effect), `${id}.html`), 'utf8').includes(copy), `${id} still has its built-in copy`)
+    assert.ok((effect.css_rules ?? '').includes(rule), `${id} hides its built-in copy`)
+  }
 })

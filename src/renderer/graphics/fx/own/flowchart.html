@@ -19,10 +19,10 @@
       .fc-flow.fc-col { flex-direction: column; gap: 4.4cqmin; }
       .fc-node { position: relative; z-index: 1; box-sizing: border-box; flex: 0 1 auto; max-width: 30cqw; padding: 3cqmin 4cqmin; border-radius: calc(var(--radius, 28px) * 0.7);
         background: var(--surface, rgba(15, 18, 26, 0.9)); border: 0.5cqmin solid var(--border, rgba(255, 255, 255, 0.18)); text-align: center;
-        font: 800 5.6cqmin/1.12 var(--font-display, sans-serif); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+        font: 800 7.2cqmin/1.12 var(--font-display, sans-serif); letter-spacing: -0.01em; overflow-wrap: break-word; hyphens: none; }
       .fc-col .fc-node { max-width: 90cqw; min-width: 58cqw; padding: 2.2cqmin 5cqmin; font-size: 6.8cqmin; }
-      .fc-col .fc-node .fc-num { display: inline; margin: 0 2cqmin 0 0; font-size: 4.6cqmin; }
-      .fc-node .fc-num { display: block; margin-bottom: 1cqmin; font: 800 3.4cqmin/1 var(--font-body, sans-serif); color: var(--brand, #22c55e); letter-spacing: 0.08em; }
+      .fc-col .fc-node .fc-num { display: inline; margin: 0 2cqmin 0 0; font-size: 5.6cqmin; }
+      .fc-node .fc-num { display: block; margin-bottom: 1cqmin; font: 800 4.6cqmin/1 var(--font-body, sans-serif); color: var(--brand, #22c55e); letter-spacing: 0.08em; }
       .fc-node.fc-on { border-color: var(--brand, #22c55e); box-shadow: 0 0 0 0.5cqmin color-mix(in srgb, var(--brand, #22c55e) 35%, transparent); }
       .fc-links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
       .fc-links path { fill: none; stroke: color-mix(in srgb, var(--fg, #f8fafc) 70%, transparent); stroke-linecap: round; stroke-linejoin: round; }
@@ -39,7 +39,7 @@
         root.querySelector('.fc-title').textContent = words(vars.title);
         var flow = root.querySelector('.fc-flow');
         // A row when the box is wide enough for the steps side by side, else a column.
-        var wide = root.clientWidth / Math.max(1, root.clientHeight) >= 0.55 * steps.length;
+        var wide = root.clientWidth / Math.max(1, root.clientHeight) >= 0.45 * steps.length;
         if (!wide) flow.classList.add('fc-col');
         var nodes = steps.map(function (s, i) {
           var el = document.createElement('div'); el.className = 'fc-node';

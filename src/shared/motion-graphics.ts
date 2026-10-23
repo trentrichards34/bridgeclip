@@ -171,7 +171,7 @@ export function parseGraphics(value: unknown): EditorGraphic[] {
 // ---------------------------------------------------------------------------
 
 /** Bump when a template's look changes, so cached renders are made again. */
-export const GRAPHICS_VERSION = 5
+export const GRAPHICS_VERSION = 6
 
 /**
  * Looks: the most used templates come in two or three designs (`fields.variant`), so a video that shows a template

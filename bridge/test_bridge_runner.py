@@ -166,6 +166,15 @@ class BridgeTests(unittest.TestCase):
         failure = bridge.describe_failure("No new moments were left to clip")
         self.assertEqual(failure["message"], "Every strong moment in this video has already been clipped.")
 
+    def test_kept_headlines_are_checked(self):
+        kept = [{"start_ms": 0, "end_ms": 20000, "headline": "She built it in a weekend"}]
+        self.assertEqual(bridge.validate_config(self.config(kept_headlines=kept))["kept_headlines"], kept)
+        for bad in ("x", [{"start_ms": 5, "end_ms": 1, "headline": "Two words"}], [{"start_ms": 0, "end_ms": 1.5, "headline": "Two words"}],
+                    [{"start_ms": 0, "end_ms": 1, "headline": ""}], [{"start_ms": 0, "end_ms": 1, "headline": "x" * 121}],
+                    [{"start_ms": 0, "end_ms": 1, "headline": "Two words", "path": "/x"}], kept * 61):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bridge.validate_config(self.config(kept_headlines=bad))
+
     def test_video_speed_validation(self):
         for speed in (1, 1.1, 1.25, 1.5, 1.75, 2):
             self.assertEqual(bridge.validate_config(self.config(video_speed=speed))["video_speed"], speed)

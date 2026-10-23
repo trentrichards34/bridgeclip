@@ -34,7 +34,7 @@ import { graphicJob, importGraphicImage, renderGraphicJobs, REEL_GRAPHICS_DIR, t
 import { cancelEditor, runEditor } from './clip-editor'
 import { brollRunFields } from './broll-library'
 import { logger } from './logger'
-import { rememberHeadline, rememberRunHeadline, savedHeadline, sourcesKey } from './hook-memory'
+import { rememberCreateHeadline, rememberHeadline, rememberRunHeadline, savedHeadline, sourcesKey } from './hook-memory'
 import { readMemberPrefs } from './member-prefs'
 import { isGraphicsRegister } from '../shared/look-extras'
 import { registerKeeps } from '../shared/register'
@@ -1268,9 +1268,13 @@ export async function filmIdeas(value: unknown, fetcher: typeof fetch = fetch): 
 // Library: "Edit hook text & captions" on a finished reel (re-made from its saved parts, no AI cost)
 // ---------------------------------------------------------------------------
 
-/** The clip editor saved a new hook text on an edited recording's reel: its recordings keep it next time. */
-export function editorHeadlineSaved(run: string, candidateId: string, text: string): void {
+/**
+ * The clip editor saved a new hook text: on an edited recording's reel its recordings keep it next time; on a Create
+ * clip, the same moment of its video keeps it the next time Create runs on that video.
+ */
+export function editorHeadlineSaved(run: string, candidateId: string, text: string, range?: [number, number]): void {
   if (candidateId === EDIT_CANDIDATE && isEditRunFolder(run)) rememberRunHeadline(basename(run), text)
+  else if (range && !isEditRunFolder(run)) rememberCreateHeadline(basename(run), range, text)
 }
 
 export function isEditRunFolder(outputDir: unknown): boolean {
