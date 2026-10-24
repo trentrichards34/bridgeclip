@@ -233,7 +233,8 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
             on = f"between(t,{a:.3f},{b:.3f})"
             parts.append(f"[{room_index[j]}:v]setpts=PTS-STARTPTS,scale={sw}:{sh}:flags=bicubic,format=yuva420p,"
                          f"geq=lum='p(X,Y)':a='p(X,Y)*clip(min(min(X,W-1-X),min(Y,H-1-Y))/(W*0.06),0,1)',setpts=PTS+{a:.3f}/TB[rz{j}]")
-            parts.append(f"{source}gblur=sigma=36:enable='{on}',lutyuv=y=val*0.7:enable='{on}'[rb{j}]")
+            # (Softer still behind the smaller shot; the room's one dim comes after, with the rest of the takeover's.)
+            parts.append(f"{source}gblur=sigma=24:enable='{on}'[rb{j}]")
             parts.append(f"[rb{j}][rz{j}]overlay={x}:{y}:eof_action=pass:enable='{on}'[rr{j}]")
             source = f"[rr{j}]"
         parts.append(f"{source}{depth_fx.takeover_backdrop_chain(windows)}[room]")

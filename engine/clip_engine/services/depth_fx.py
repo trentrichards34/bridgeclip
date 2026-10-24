@@ -296,6 +296,8 @@ CHIN_BELOW = 0.06
 # Subtle: the room stays a room (softened and a little darker), the speaker never reads as a cut-out on black.
 TAKEOVER_BLUR = 10
 TAKEOVER_DIM = 0.68
+# Grain (luma noise strength) over the softened room: dither against banding.
+TAKEOVER_GRAIN = 3
 
 
 def chin_row(face: Optional[tuple[float, float, float, float]]) -> Optional[int]:
@@ -342,8 +344,10 @@ def takeover_backdrop_chain(windows: Sequence[Span]) -> str:
     if not windows:
         return "null"
     on = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in windows)
+    # A light temporal grain after the dim breaks up the 8-bit steps a smooth blurred wall would band into.
     return (f"gblur=sigma={TAKEOVER_BLUR}:enable='{on}',"
-            f"lutyuv=y=val*{TAKEOVER_DIM}:u=128+(val-128)*0.85:v=128+(val-128)*0.85:enable='{on}'")
+            f"lutyuv=y=val*{TAKEOVER_DIM}:u=128+(val-128)*0.85:v=128+(val-128)*0.85:enable='{on}',"
+            f"noise=c0s={TAKEOVER_GRAIN}:c0f=t+u:enable='{on}'")
 
 
 # ---------------------------------------------------------------------------

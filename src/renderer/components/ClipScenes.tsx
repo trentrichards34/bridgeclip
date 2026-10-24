@@ -206,7 +206,7 @@ export function ScenesOverlay({ canvas, candidate, time }: { canvas: RefObject<H
   if (!bounds.width || !visible) return null
   const own = candidate.hook?.look.look === 'brand' && isHexColor(candidate.hook.look.color) ? candidate.hook.look.color : null
   // Grid and gradient without a brand color are purple, like the engine's.
-  const brandFor = (b: SceneBackdrop): string => own ?? (b === 'grid' || b === 'gradient' ? '#7C3AED' : b === 'solid' ? SOLID_BACKDROP_COLOR : '#3B6BFF')
+  const brandFor = (b: SceneBackdrop): string => own ?? (b === 'grid' || b === 'gradient' ? '#2F5BFF' : b === 'solid' ? SOLID_BACKDROP_COLOR : '#3B6BFF')
   const w = bounds.width, h = bounds.height
   const arch = mix.shape === 'arch'
   const fullW = arch ? w : w * (1 - 2 * STAGE_LAYOUT.cardSide), cardH = h * STAGE_LAYOUT.cardHeight + (arch ? h * STAGE_LAYOUT.cardBottom : 0)

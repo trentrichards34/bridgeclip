@@ -76,7 +76,7 @@ DEFAULT_BRAND = "#3B6BFF"
 DARK_TEXT = "#111111"
 DARK_ACCENT = "#1F5BFF"
 # The Highlight box captions' box on a grid or gradient backdrop without a brand color.
-DEFAULT_BOX = "#7C3AED"
+DEFAULT_BOX = "#2F5BFF"
 # How captions in a scene's band are drawn: dark text (light backdrops), white on a color box (grid and
 # gradient backdrops), or the member's own captions (dark backdrop).
 CAPTION_MODES = {"light": "light", "brand": "light", "grid": "box", "gradient": "box", "dark": "", "solid": ""}
@@ -207,7 +207,8 @@ def output_scenes(source_scenes: Iterable[dict], ranges: Sequence[Sequence[float
 # ---------------------------------------------------------------------------
 
 STAGE_PAD_BEFORE_MS = 400
-STAGE_PAD_AFTER_MS = 300
+# The stage closes with its graphic (an empty stage after it left read as a dead frame).
+STAGE_PAD_AFTER_MS = 0
 
 
 def suggest_scenes(graphics: Iterable[dict], duration_ms: int, backdrop: str = "light", card: str = "rounded") -> list[dict]:
@@ -308,8 +309,9 @@ def geometry(width: int, height: int) -> StageGeometry:
 
 def auto_look(brand: Optional[str]) -> tuple[str, str]:
     """The backdrop and card the automatic Stage layouts use: the brand grid with the arch card when the member
-    has a brand color, else the light backdrop with the rounded card."""
-    return ("grid", "arch") if isinstance(brand, str) and len(brand) == 7 and brand.startswith("#") else ("light", "rounded")
+    has a brand color, else the grid in the graphics' own blue (DEFAULT_BOX) with the rounded card: never a flat
+    near-white stage."""
+    return ("grid", "arch") if isinstance(brand, str) and len(brand) == 7 and brand.startswith("#") else ("grid", "rounded")
 
 
 def _hex(color: str) -> tuple[int, int, int]:
@@ -578,9 +580,10 @@ CARD_KEY_TOLERANCE = 0.012
 # The plan's own face samples are enough when they come at least this often.
 CARD_PLAN_SAMPLE_MS = 1500
 MAX_CARD_SAMPLES = 480
-# The narrowest the card gets (share of the frame's width) when the source is narrower than a full-width card at
-# head-and-shoulders framing (scenes.ts MIN_CARD_SHARE).
-MIN_CARD_SHARE = 0.6
+# The narrowest the card gets (share of its full width). The card stays full width, as in the pro references (a card
+# across the frame, the stage visual over it): a close selfie is brought in closer (down to CARD_FACE_FLOOR face heights,
+# the head still whole) and, only when even that is wider than the video, its sides are a blurred copy of it.
+MIN_CARD_SHARE = 1.0
 # Long side of the frames the card's faces are found in.
 CARD_DETECT_PX = 480
 
@@ -1034,7 +1037,7 @@ def card_source_graph(plan, keeps, card_w: int, card_h: int, fps: str, runs: Seq
     from fractions import Fraction
     from clip_engine.services.layout_renderer import video_frame_pieces
     rate = Fraction(fps)
-    least = round(card_w * MIN_CARD_SHARE) if min_w is None else min_w
+    least = min(card_w, round(card_w * MIN_CARD_SHARE) if min_w is None else min_w)
     escapes: dict[tuple[int, int], CardCrop] = {}
     crops = card_crops(plan, keeps, runs, transition, card_w / card_h, faces, least / card_w,
                        escape.wanted if escape else (), escapes)

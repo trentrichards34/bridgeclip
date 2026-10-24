@@ -13,13 +13,13 @@
  * face is one of the app's bundled fonts. The background stays transparent. Spoken word times (`cue_ms`) become the
  * unit's `cues`, or shift it so its main beat lands on the word (fxTiming).
  */
-import { FX_FIT, fxAnchorShift, fxFit, type Rect } from './fit'
+import { FX_FIT, FX_MIN_TYPE, fxAnchorShift, fxFit, fxGlassLeft, fxMinType, type Rect } from './fit'
 import gsap from 'gsap'
 import { CustomEase } from 'gsap/CustomEase'
 import './fx.css'
 import { FX_MOTION, easeIn } from './motion'
 import { fxEffect, fxHasContent, fxMark, fxTiming, fxVariables, type FxEffect, type FxSlot } from '../../../shared/fx-catalog'
-import { drawMark, markPath, type Picture } from './media'
+import { drawMark, markPath, pushOrigin, pushScale, type Picture } from './media'
 import type { GraphicRenderSpec } from '../../../shared/motion-graphics'
 
 gsap.registerPlugin(CustomEase)
@@ -125,7 +125,9 @@ export function fxBox(spec: Pick<GraphicRenderSpec, 'width' | 'height' | 'box' |
   return { x: Math.round((W - w) / 2), y: Math.round(top), w, h: Math.round(h) }
 }
 
-export { FX_FIT, fxAnchorShift, fxFit }
+export { FX_FIT, FX_MIN_TYPE, fxAnchorShift, fxFit, fxMinType }
+/** Effects whose picture pushes in slowly (a page in a browser window). */
+const PUSH_IN = new Set(['browser-device-stage'])
 const NONE = 'rgba(0, 0, 0, 0)'
 const SHAPES = new Set(['path', 'circle', 'ellipse', 'rect', 'line', 'polyline', 'polygon', 'text', 'image', 'use'])
 /**
@@ -172,8 +174,6 @@ export function inkBox(root: ShadowRoot, stage: HTMLElement): Rect | null {
   return { x: (x0 - origin.left) / k, y: (y0 - origin.top) / k, w: (x1 - x0) / k, h: (y1 - y0) / k }
 }
 
-/** The smallest type an effect shows, as drawn on a 1080-wide frame (font px; about 0.72 of it is the cap height). */
-export const FX_MIN_TYPE: Record<'stage' | 'card' | 'compact', number> = { stage: 46, card: 36, compact: 30 }
 /**
  * Raises every word set smaller than `min` frame pixels (once the unit is drawn at `scale`) to `min`, at most 2.4×
  * its own size. Words in pictures and SVG drawings keep theirs. True when any changed.
@@ -222,6 +222,7 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
   // The glass keeps its size on a scaled unit (it backs the words, not the box); once built it hugs the drawing (fit).
   if (effect.scale && effect.scale > 1) stage.style.setProperty('--fx-glass-inset', `${((1 - .92 / effect.scale) / 2 * 100).toFixed(2)}% ${((1 - .96 / effect.scale) / 2 * 100).toFixed(2)}%`)
   frame.appendChild(stage)
+  const glassy = stage.classList.contains('fx-glass')
   // How the unit is drawn into its box (fxFit): its scale and shift, worked out once it is built.
   let fitted = { scale: effect.scale ?? 1, dx: 0, dy: 0 }
   const shadow = stage.attachShadow({ mode: 'open' })
@@ -232,6 +233,8 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
   let alive = true
   // The hand-drawn mark over a picture: its strokes and when it draws (seconds into the unit).
   let mark: { paths: SVGPathElement[]; lengths: number[]; at: number } | null = null
+  // A screenshot's slow push-in toward the part that matters: the picture's slot.
+  let push: HTMLElement | null = null
 
   const apply = (ms: number): void => {
     // Nothing before the unit's own clock starts (its beat lands on the word `lead` ms in): no empty glass waiting for it.
@@ -244,11 +247,17 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
     timeline.totalTime(local / 1000, false)
     for (const animation of shadow.getAnimations()) { animation.pause(); animation.currentTime = local }
     if (mark) drawMark(mark, local / 1000)
+    if (push) {
+      const k = pushScale(local / 1000, timing.unit_ms / 1000).toFixed(4)
+      for (const child of push.children) (child as HTMLElement).style.transform = `scale(${k})`
+    }
     // Leave accelerates: the last few frames shrink a little and go (units that leave on their own keep theirs).
     const out = ownExit ? 0 : easeIn(1 - (spec.duration_ms - ms) / FX_MOTION.out_ms)
     // The glass comes in with the unit (one move), not ahead of it.
     const arrive = timing.lead_ms > 0 ? Math.min(1, (ms - timing.lead_ms) / (FX_MOTION.move_s * 1000)) : 1
     stage.style.opacity = String(arrive * (1 - out))
+    // The glass goes with the words when they lift off on their own (it never stays behind, empty).
+    if (glassy) stage.style.setProperty('--fx-glass-o', String(fxGlassLeft(spec.duration_ms - ms, FX_MOTION.glass_out_ms)))
     stage.style.transform = `scale(${fitted.scale * (1 - (1 - FX_MOTION.out_scale) * out)}) translate(${fitted.dx}px, ${fitted.dy}px)`
   }
   /** The unit's clock set to `local` ms (no scale, no fade: for measuring it). */
@@ -371,7 +380,9 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
       const anchor = size === 'stage' ? 'center' : spec.placement === 'top' ? 'top' : spec.placement === 'bottom' ? 'bottom' : 'center'
       fitted = fxFit(ink, area, size, effect.scale ?? 1, pad)
       // Small labels (a chart's axis, a chip, a byline) are set bigger until they read on a phone, then it fits again.
-      if (ink && !effect.own_type && raiseType(shadow, stage, FX_MIN_TYPE[size] * m / 1080, fitted.scale)) {
+      // Words effects read on a phone: a short line at a cap height of about 54 px (fxMinType).
+      const said = (spec.fields.text ?? '').trim().split(/\s+/).filter(Boolean).length
+      if (ink && !effect.own_type && raiseType(shadow, stage, fxMinType(size, effect.group, said) * m / 1080, fitted.scale)) {
         ink = inkBox(shadow, stage)
         fitted = fxFit(ink, area, size, effect.scale ?? 1, pad)
       }
@@ -410,6 +421,18 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
         // It draws once the unit has settled (just after its beat), and by mid-way through a short one at the latest.
         mark = { paths, lengths: paths.map((p) => p.getTotalLength() + 2), at: Math.min((effect.sync_s ?? 1) + 0.25, Math.max(0.8, timing.unit_ms / 1000 * 0.45)) }
         drawMark(mark, -1)
+      }
+    }
+    // The browser window pushes in toward the member's box, or the page's headline, so the page reads on a phone.
+    if (PUSH_IN.has(effect.id)) {
+      const field = effect.media?.[0]?.field ?? 'image'
+      const slotEl = shadow.querySelector<HTMLElement>(`.cc-media[data-field="${field}"]`)
+      const pic = pictures[field]
+      if (slotEl && pic) {
+        const region = wanted?.on === field ? wanted.box : null
+        const o = pushOrigin(pic, { w: slotEl.clientWidth, h: slotEl.clientHeight }, slotEl.dataset.align === 'top' ? 'top' : 'center', region)
+        for (const child of slotEl.children) Object.assign((child as HTMLElement).style, { transformOrigin: `${o.x.toFixed(1)}px ${o.y.toFixed(1)}px`, willChange: 'transform' })
+        push = slotEl
       }
     }
     if (!alive) { ctx?.revert(); return }

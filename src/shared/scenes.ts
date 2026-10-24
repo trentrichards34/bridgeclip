@@ -96,9 +96,9 @@ export const SCENE_DETAILS: Record<SceneKind, string> = {
 export const BACKDROP_LABELS: Record<SceneBackdrop, string> = { light: 'Light', dark: 'Dark', brand: 'Brand', grid: 'Grid', gradient: 'Gradient', solid: 'Solid' }
 export const CARD_LABELS: Record<SceneCard, string> = { rounded: 'Rounded', arch: 'Arch' }
 
-/** The look automatic Stage layouts use: the brand grid with the arch card when there is a brand color, else light and rounded (engine: stage_scenes.auto_look). */
+/** The look automatic Stage layouts use: the brand grid with the arch card when there is a brand color, else the grid in the graphics' blue with the rounded card (engine: stage_scenes.auto_look). */
 export function autoSceneLook(brand: string | null | undefined): { backdrop: SceneBackdrop; card: SceneCard } {
-  return typeof brand === 'string' && /^#[0-9a-f]{6}$/i.test(brand) ? { backdrop: 'grid', card: 'arch' } : { backdrop: 'light', card: 'rounded' }
+  return typeof brand === 'string' && /^#[0-9a-f]{6}$/i.test(brand) ? { backdrop: 'grid', card: 'arch' } : { backdrop: 'grid', card: 'rounded' }
 }
 
 /**
@@ -279,11 +279,10 @@ export function outputScenes(c: Timing & { stage_scenes?: StageScene[] }): Stage
 }
 
 /**
- * A stage card narrows to the speaker's video when the source is narrower than a full-width card at head-and-shoulders
- * framing (a close selfie): centered, the same height, corners and shadow, the backdrop either side. Never under this
- * share of the frame's width (engine: stage_scenes.MIN_CARD_SHARE).
+ * The narrowest a stage card gets, as a share of the frame's width (engine: stage_scenes.MIN_CARD_SHARE): it stays full
+ * width, as in the pro references; a close selfie is framed closer and, only when still too narrow, its sides blurred.
  */
-export const MIN_CARD_SHARE = 0.6
+export const MIN_CARD_SHARE = 1
 /** The editor preview's card (it has no face boxes): this share of the framed preview's height, from PREVIEW_CARD_TOP down. */
 export const PREVIEW_CARD_SPAN = 0.72
 export const PREVIEW_CARD_TOP = 0.05

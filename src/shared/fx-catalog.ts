@@ -253,7 +253,7 @@ export const FX_EFFECTS: readonly FxEffect[] = [
   { id: 'headline-slam', label: 'Headline slam', detail: 'A short line slams in, one word in your color.', group: 'words',
     fields: [text('text', 'text', 'Words', 'Your big line', { required: true, max: 40 }), num('accent_word', 'accent_word_index', 'Word in color (1 = first)', '2', { said: false })],
     fixed: { ...ACCENT, shadow: true }, jobs: ['emphasize'], use_when: 'A short claim (2 to 5 words) is the line to remember.', avoid_when: 'The line is long or needs to build word by word.',
-    hold_s: 2, sound: 'whoosh', scale: 1.5, default_ms: 2500, aspect: 2.6, cue: { field: 'text', unit: 'word' }, sync_s: .58 },
+    hold_s: 2, sound: 'whoosh', scale: 1.5, default_ms: 2500, backing: 'glass', aspect: 2.6, cue: { field: 'text', unit: 'word' }, sync_s: .58 },
   { id: 'per-word-rise', label: 'Word rise', detail: 'Each word rises into place as you say it.', group: 'words',
     fields: [text('text', 'text', 'Words', 'Words as you say them', { required: true, max: 60 }), choice('split', 'split', 'Rises by', [['word', 'Word'], ['char', 'Letter']])],
     fixed: { ...ACCENT, ...FADE }, css_rules: '#root .pwr-stage:not(.pwr-char) { column-gap: 0.24em; }', jobs: ['reveal'], use_when: 'A key line should land word by word, in time with the voice.', avoid_when: 'The line swaps one word for another (use Word swap).',

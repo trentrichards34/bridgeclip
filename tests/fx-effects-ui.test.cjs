@@ -18,7 +18,8 @@ const bundled = buildSync({
       export { GRAPHIC_TEMPLATES } from './src/shared/motion-graphics';
       export { REEL_GRAPHIC_TEMPLATES, REEL_CHAT_TEMPLATES } from './src/shared/reel-graphics';
       export { GraphicForm } from './src/renderer/components/ReelGraphics';
-      export { fxFit, fxAnchorShift } from './src/renderer/graphics/fx/fit';`,
+      export { fxFit, fxAnchorShift, fxMinType, fxGlassLeft } from './src/renderer/graphics/fx/fit';
+      export { pushOrigin, pushScale, PUSH_ZOOM } from './src/renderer/graphics/fx/media';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
   },
@@ -168,4 +169,28 @@ test('an effect card at the top or bottom keeps to that edge of its band, not ou
   assert.equal(m.fxAnchorShift(330, 1.5, 518, 30, 'top'), 0)
   const fit = m.fxFit({ x: 100, y: 200, w: 600, h: 80 }, { w: 972, h: 518 }, 'card', 1, { x: 40, y: 30 })
   assert.equal(fit.dy, 518 / 2 - 240)
+})
+
+test('a screenshot pushes in slowly and keeps the part that matters whole; words effects and stage frameworks read on a phone', () => {
+  const pic = { width: 1440, height: 900 }, slot = { w: 900, h: 560 }
+  assert.equal(m.pushScale(0, 5), 1)
+  assert.ok(Math.abs(m.pushScale(5, 5) - (1 + m.PUSH_ZOOM)) < 1e-9 && m.pushScale(2, 5) > 1 && m.pushScale(2, 5) < 1 + m.PUSH_ZOOM)
+  const k = 1 + m.PUSH_ZOOM
+  for (const box of [null, [0.6, 0.6, 0.3, 0.2], [0.02, 0.05, 0.3, 0.1]]) {
+    const o = m.pushOrigin(pic, slot, 'top', box)
+    const r = { x: 0, w: slot.w, y: 0, h: 900 * slot.w / 1440 }
+    const [bx, by, bw, bh] = box ?? [0.03, 0.15, 0.5, 0.3]
+    const map = (q, p) => p + k * (q - p)
+    // The focus part, zoomed about the origin, stays inside the slot.
+    assert.ok(map(r.x + bx * r.w, o.x) >= -1 && map(r.x + (bx + bw) * r.w, o.x) <= slot.w + 1, JSON.stringify({ box, o }))
+    assert.ok(map(r.y + by * r.h, o.y) >= -1 && map(r.y + (by + bh) * r.h, o.y) <= slot.h + 1, JSON.stringify({ box, o }))
+  }
+  assert.equal(m.fxMinType('card', 'words', 4), 75)
+  assert.equal(m.fxMinType('card', 'words', 9), 60)
+  assert.equal(m.fxMinType('stage', 'ideas', 0), 64)
+  assert.equal(m.fxMinType('card', 'numbers', 1), 36)
+  // A glass backing stays whole until its unit's last 460 ms, then leaves with the words (never left behind empty).
+  assert.equal(m.fxGlassLeft(2000, 460), 1)
+  assert.equal(m.fxGlassLeft(230, 460), 0.5)
+  assert.equal(m.fxGlassLeft(0, 460), 0)
 })

@@ -42,8 +42,8 @@ test('scenes: grid and gradient backdrops and the arch card parse, save and stay
 
 test('scenes: the automatic look follows the brand color, and each backdrop has its caption look', () => {
   assert.deepEqual(plain(m.autoSceneLook('#7C3AED')), { backdrop: 'grid', card: 'arch' })
-  assert.deepEqual(plain(m.autoSceneLook(null)), { backdrop: 'light', card: 'rounded' })
-  assert.deepEqual(plain(m.autoSceneLook('purple')), { backdrop: 'light', card: 'rounded' })
+  assert.deepEqual(plain(m.autoSceneLook(null)), { backdrop: 'grid', card: 'rounded' })
+  assert.deepEqual(plain(m.autoSceneLook('purple')), { backdrop: 'grid', card: 'rounded' })
   assert.deepEqual(['light', 'brand', 'grid', 'gradient', 'dark', undefined].map(m.sceneCaptionLook), ['dark_text', 'dark_text', 'box', 'box', 'own', 'dark_text'])
 })
 

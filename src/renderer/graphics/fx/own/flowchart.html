@@ -16,12 +16,13 @@
       .fc-title { text-align: center; font: 800 6.4cqmin/1.1 var(--font-display, sans-serif); letter-spacing: -0.02em; }
       .fc-title:empty { display: none; }
       .fc-flow { position: relative; display: flex; align-items: center; justify-content: center; gap: 7cqmin; min-height: 0; }
-      .fc-flow.fc-col { flex-direction: column; gap: 4.4cqmin; }
+      .fc-flow.fc-col { flex-direction: column; gap: 5.2cqmin; }
       .fc-node { position: relative; z-index: 1; box-sizing: border-box; flex: 0 1 auto; max-width: 30cqw; padding: 3cqmin 4cqmin; border-radius: calc(var(--radius, 28px) * 0.7);
         background: var(--surface, rgba(15, 18, 26, 0.9)); border: 0.5cqmin solid var(--border, rgba(255, 255, 255, 0.18)); text-align: center;
         font: 800 7.2cqmin/1.12 var(--font-display, sans-serif); letter-spacing: -0.01em; overflow-wrap: break-word; hyphens: none; }
-      .fc-col .fc-node { max-width: 90cqw; min-width: 58cqw; padding: 2.2cqmin 5cqmin; font-size: 6.8cqmin; }
-      .fc-col .fc-node .fc-num { display: inline; margin: 0 2cqmin 0 0; font-size: 5.6cqmin; }
+      /* A column fills the band: equal-width steps (~88% of it) with phone-readable labels (cap ≥ 46 px at 1080w). */
+      .fc-col .fc-node { width: 88cqw; max-width: 88cqw; padding: 2.6cqmin 5cqmin; font-size: 8.6cqmin; }
+      .fc-col .fc-node .fc-num { display: inline; margin: 0 2.4cqmin 0 0; font-size: 7.4cqmin; }
       .fc-node .fc-num { display: block; margin-bottom: 1cqmin; font: 800 4.6cqmin/1 var(--font-body, sans-serif); color: var(--brand, #22c55e); letter-spacing: 0.08em; }
       .fc-node.fc-on { border-color: var(--brand, #22c55e); box-shadow: 0 0 0 0.5cqmin color-mix(in srgb, var(--brand, #22c55e) 35%, transparent); }
       .fc-links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
@@ -46,6 +47,15 @@
           var num = document.createElement('span'); num.className = 'fc-num'; num.textContent = String(i + 1);
           el.appendChild(num); el.appendChild(document.createTextNode(s)); flow.appendChild(el); return el;
         });
+        // Many or long steps: shrink the column type until it fits the box (never below the old size).
+        if (!wide) {
+          var fs = 8.6;
+          var over = function () { return flow.scrollHeight > flow.clientHeight + 1; };
+          while (fs > 5.6 && over()) {
+            fs -= 0.4;
+            nodes.forEach(function (n) { n.style.fontSize = fs + 'cqmin'; n.firstChild.style.fontSize = (fs * 0.86) + 'cqmin'; });
+          }
+        }
         // Connectors from each node's edge to the next one's, with an arrowhead (flow pixels, measured once laid out).
         var NS = 'http://www.w3.org/2000/svg';
         var svg = document.createElementNS(NS, 'svg'); svg.setAttribute('class', 'fc-links');

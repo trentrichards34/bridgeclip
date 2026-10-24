@@ -165,10 +165,14 @@ def test_an_effect_that_leads_its_beat_waits_so_the_framework_before_shows_its_l
     flow_out, mark_out = ed.settle([flow, marker])
     assert mark_out['at_ms'] > 14_000 and mark_out['at_ms'] + int(mark_out['fields']['cue_ms']) == 16_400
     assert mark_out['at_ms'] + mark_out['duration_ms'] == 18_000
-    assert flow_out['at_ms'] + flow_out['duration_ms'] >= 10_000 + 3800 + 500
-    # A count runs up to its number for its whole run-up: it never starts later than that allows.
-    count = {**marker, 'fields': {'effect': 'count-up', 'value': '4,365', 'cue_ms': '1720'}}
-    assert ed.settle([flow, count])[1]['at_ms'] == 14_000
+    assert flow_out['at_ms'] + flow_out['duration_ms'] >= 10_000 + 3800 + 400
+    # A count runs up to its number: it may land at most FX_LATE_OK_MS late to let the framework finish...
+    count = {**marker, 'at_ms': 14_100, 'fields': {'effect': 'count-up', 'value': '4,365', 'cue_ms': '1720'}}
+    flow_out, count_out = ed.settle([flow, count])
+    assert count_out['at_ms'] == 14_450 and flow_out['at_ms'] + flow_out['duration_ms'] >= 10_000 + 3800 + 400
+    # ...and when even that is not enough, it gives way: the framework keeps its last item on screen.
+    (only,) = ed.settle([flow, {**count, 'at_ms': 13_500}])
+    assert only['id'] == 'g-flow' and only['duration_ms'] == 5000
 
 
 def test_the_type_takeover_lands_with_an_impact():

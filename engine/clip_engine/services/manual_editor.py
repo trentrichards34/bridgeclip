@@ -851,7 +851,8 @@ async def render_export(run, project, c, output, source, render_transcript, repl
         result = await renderer.render_clip(RenderRequest(video_path=source, output_path=str(Path(work) / 'clip.mp4'),
             start_time_ms=a, end_time_ms=b, source_width=project['width'], source_height=project['height'],
             transcript_segments=render_transcript, include_captions=c['captions'], caption_style=get_caption_preset(c['caption_preset']),
-            caption_suppression_ranges_ms=[tuple(interval) for interval in c.get('caption_suppression_ranges', [])] + takeover_quiet(c, graphics),
+            caption_suppression_ranges_ms=[tuple(interval) for interval in c.get('caption_suppression_ranges', [])] + takeover_quiet(c, graphics)
+            + scene_change_quiet(c, scenes),
             caption_y=c.get('caption_y'),
             apply_padding=False, aspect_ratio=project['aspect_ratio'], pacing='natural', video_speed=c['video_speed'],
             manual_ranges_ms=[tuple(interval) for interval in c['ranges']], manual_plan=manual_plan(project, c, cover=bool(hook)),
@@ -887,6 +888,25 @@ async def render_export(run, project, c, output, source, render_transcript, repl
     output['total_clips'] = len(output['clips'])
     atomic_json(run / 'job_output.json', output)
     return index, usage
+
+
+# Around a stage scene's camera move the captions step aside (they would jump between the face's line and the stage's
+# band mid-move): the move's half length (depth_fx.TRANSITION_FRAMES at 30 fps) and a frame either side.
+SCENE_CHANGE_QUIET_MS = 200
+
+
+def scene_change_quiet(c, scenes):
+    """Source spans around each stage or visual scene's start and end (the camera moves between scenes) where the
+    captions give way, so they never jump from the face's line to the stage's band mid-move."""
+    from clip_engine.services.depth_fx import output_to_source
+    spans = []
+    for s in scenes or []:
+        if not isinstance(s, dict) or s.get('scene') not in ('stage', 'visual'):
+            continue
+        for edge in (s.get('start_ms'), s.get('end_ms')):
+            if type(edge) is int and edge > SCENE_CHANGE_QUIET_MS:
+                spans += output_to_source(c['ranges'], c['video_speed'], edge - SCENE_CHANGE_QUIET_MS, edge + SCENE_CHANGE_QUIET_MS)
+    return spans
 
 
 def takeover_quiet(c, graphics):

@@ -43,7 +43,7 @@ def test_scenes_parse_cards_and_new_backdrops_backward_compatibly():
     assert pairs[0][1] == {"scene": "stage", "start_ms": 1000, "end_ms": 3000, "backdrop": "grid", "card": "arch"}
     suggested = ss.suggest_scenes([{"at_ms": 2000, "duration_ms": 2000, "size": "stage"}], 8000, "grid", "arch")
     assert [s.get("card") for s in suggested if s["scene"] == "stage"] == ["arch"]
-    assert ss.auto_look("#7C3AED") == ("grid", "arch") and ss.auto_look(None) == ("light", "rounded")
+    assert ss.auto_look("#7C3AED") == ("grid", "arch") and ss.auto_look(None) == ("grid", "rounded")
 
 
 def test_grid_and_gradient_backdrops_are_brand_tinted_and_the_grid_shows_at_the_top(tmp_path):
@@ -59,8 +59,8 @@ def test_grid_and_gradient_backdrops_are_brand_tinted_and_the_grid_shows_at_the_
     assert line > mid + 2
     assert abs(grid[1850:1900, x0].mean() - grid[1850:1900, x0 + cell // 2].mean()) < 2
     assert abs(soft[200:260, x0].mean() - soft[200:260, x0 + cell // 2].mean()) < 1.5
-    # Without a brand color the grid is purple.
-    assert ss.backdrop_colors("grid")[1] == ss.backdrop_colors("grid", "#7C3AED")[1]
+    # Without a brand color the grid is the graphics' own blue (one look).
+    assert ss.backdrop_colors("grid")[1] == ss.backdrop_colors("grid", "#2F5BFF")[1]
 
 
 def test_the_arch_card_is_full_width_and_flush_with_the_bottom(tmp_path):

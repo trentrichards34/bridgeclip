@@ -4,6 +4,9 @@
  */
 export type Rect = { x: number; y: number; w: number; h: number }
 
+/** The smallest type an effect shows, as drawn on a 1080-wide frame (font px; about 0.72 of it is the cap height). */
+export const FX_MIN_TYPE: Record<'stage' | 'card' | 'compact', number> = { stage: 46, card: 36, compact: 30 }
+
 /**
  * How much of its box an effect's drawing fills (width, height shares) at each size: on the stage it fills the band
  * (the pro references: a browser window or a diagram across most of the stage's width), a card nearly as much, a
@@ -36,4 +39,21 @@ export function fxAnchorShift(inkH: number, scale: number, boxH: number, padY: n
   const spare = (boxH - inkH * scale) / 2 - padY
   if (!(spare > 0)) return 0
   return Math.round(anchor === 'top' ? -spare : spare)
+}
+
+/**
+ * The smallest type an effect shows on a phone (font px on a 1080-wide frame, the cap height about 0.72 of it): a words
+ * effect's short line (1-6 words) at a cap height of about 54 px, a longer one about 43 px; a framework on the stage
+ * about 46 px; other effects keep FX_MIN_TYPE for their size.
+ */
+export function fxMinType(size: 'stage' | 'card' | 'compact', group: string | undefined, words: number): number {
+  // A framework on the stage (a flow, a hub, a checklist): labels at a cap height of about 46 px.
+  if (group === 'ideas' && size === 'stage') return 64
+  if (group !== 'words' || size === 'compact') return FX_MIN_TYPE[size]
+  return Math.max(FX_MIN_TYPE[size], words > 0 && words <= 6 ? 75 : 60)
+}
+
+/** How much of a glass backing is left `left_ms` before its unit ends (1 until its last glass_out_ms, then down to 0). */
+export function fxGlassLeft(leftMs: number, outMs = 460): number {
+  return Math.max(0, Math.min(1, leftMs / outMs))
 }

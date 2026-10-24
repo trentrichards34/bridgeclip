@@ -280,10 +280,10 @@ def test_suggest_scenes_stages_stage_size_graphics_with_padding_and_merging():
     ]
     assert ss.suggest_scenes(graphics, 24000) == [
         {"scene": "face", "start_ms": 0, "end_ms": 2600},
-        {"scene": "stage", "start_ms": 2600, "end_ms": 7600, "backdrop": "light"},
-        {"scene": "face", "start_ms": 7600, "end_ms": 19600},
-        {"scene": "stage", "start_ms": 19600, "end_ms": 20800, "backdrop": "light"},
-        {"scene": "face", "start_ms": 20800, "end_ms": 24000},
+        {"scene": "stage", "start_ms": 2600, "end_ms": 7300, "backdrop": "light"},
+        {"scene": "face", "start_ms": 7300, "end_ms": 19450},
+        {"scene": "stage", "start_ms": 19450, "end_ms": 20650, "backdrop": "light"},
+        {"scene": "face", "start_ms": 20650, "end_ms": 24000},
     ]
     # Near the ends the stage runs to the clip's edge rather than leave a sliver of face.
     assert ss.suggest_scenes([{"at_ms": 500, "duration_ms": 8000, "size": "stage"}], 9000, "dark") == [

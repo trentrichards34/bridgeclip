@@ -96,3 +96,37 @@ export function drawMark(mark: { paths: SVGPathElement[]; lengths: number[]; at:
     start += span
   })
 }
+
+/**
+ * A screenshot's slow push-in (the browser window): toward the member's boxed part, or, without one, toward where a
+ * page's headline sits (upper left), so its words read on a phone. `PUSH_ZOOM` more at the end, easing in and out
+ * from `PUSH_START_S` to most of the way through.
+ */
+export const PUSH_ZOOM = 0.55
+export const PUSH_START_S = 0.7
+/** Where a page's headline usually is (shares of the picture) when the member didn't box a part. */
+export const PUSH_DEFAULT_FOCUS: Box = [0.03, 0.15, 0.5, 0.3]
+
+/**
+ * The push-in's origin in slot pixels: the fixed point of the zoom chosen so the focus part (the member's box, else
+ * where a headline usually is) stays whole in the slot at the end of the push, as near its middle as that allows.
+ */
+export function pushOrigin(picture: Pick<Picture, 'width' | 'height'>, slot: { w: number; h: number }, align: 'top' | 'center', box: Box | null): { x: number; y: number } {
+  const r = coverRect(picture, slot, align)
+  const [bx, by, bw, bh] = box ?? PUSH_DEFAULT_FOCUS
+  const k = 1 + PUSH_ZOOM
+  const axis = (lo: number, hi: number, size: number): number => {
+    const a = Math.max(0, Math.min(size, lo)), b = Math.max(0, Math.min(size, hi))
+    // A point p stays put; q goes to p + k(q - p): [a, b] stays inside [0, size] for p in [(kb - size)/(k-1), ka/(k-1)].
+    const from = Math.max(0, (k * b - size) / (k - 1)), to = Math.min(size, k * a / (k - 1))
+    return from <= to ? (from + to) / 2 : (a + b) / 2
+  }
+  return { x: axis(r.x + bx * r.w, r.x + (bx + bw) * r.w, slot.w), y: axis(r.y + by * r.h, r.y + (by + bh) * r.h, slot.h) }
+}
+
+/** The push-in's scale at `t` seconds into a unit `unitS` long: 1 until PUSH_START_S, then easing up to 1 + PUSH_ZOOM. */
+export function pushScale(t: number, unitS: number): number {
+  const span = Math.max(0.8, unitS * 0.8 - PUSH_START_S)
+  const p = Math.max(0, Math.min(1, (t - PUSH_START_S) / span))
+  return 1 + PUSH_ZOOM * (p < 0.5 ? 4 * p ** 3 : 1 - (-2 * p + 2) ** 3 / 2)
+}

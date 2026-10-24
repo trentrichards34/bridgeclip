@@ -158,15 +158,13 @@ test('the hook hands over to the first stage scene (not one in the first 2.5 s);
   assert.ok(plain9.box.top > gl.hookShare(c, '9:16'), JSON.stringify(plain9.box))
 })
 
-test('the preview card narrows to a close selfie like the export (not under 60% of the frame) and stays full width for a wide source', () => {
+test('the preview card stays full width like the export: a close selfie is framed closer, a wide source fills it', () => {
   // 1080 x 1920 frame, the rounded card 1000 x 806.
   const selfie = sc.previewCard(1080, 1920, 1000, 806, 1)
-  assert.ok(Math.abs(selfie.width - 0.6 * 1080) < 1e-9 && selfie.span >= 0.5 && selfie.span <= sc.PREVIEW_CARD_SPAN, JSON.stringify(selfie))
+  assert.ok(selfie.width === 1000 && selfie.span >= 0.5 && selfie.span <= sc.PREVIEW_CARD_SPAN, JSON.stringify(selfie))
   // A 16:9 source framed to 9:16 (the fill crop is 0.316 of its width): the full card.
   const wide = sc.previewCard(1080, 1920, 1000, 806, 1 / 0.316)
   assert.equal(wide.width, 1000)
-  // In between: the video's own width at that framing.
-  const mid = sc.previewCard(1080, 1920, 1000, 806, 1.4)
-  assert.ok(mid.width > 0.6 * 1080 && mid.width < 1000 && mid.span === sc.PREVIEW_CARD_SPAN, JSON.stringify(mid))
-  assert.equal(sc.MIN_CARD_SHARE, 0.6)
+  assert.equal(sc.previewCard(1080, 1920, 1000, 806, 1.4).width, 1000)
+  assert.equal(sc.MIN_CARD_SHARE, 1)
 })

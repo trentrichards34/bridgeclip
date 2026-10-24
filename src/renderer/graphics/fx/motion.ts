@@ -18,7 +18,9 @@ export const FX_MOTION = {
   stagger_s: 6 / 30,
   /** The graphic's own leave at its end (ms): it shrinks a little as it goes. */
   out_ms: 240,
-  out_scale: .96
+  out_scale: .96,
+  /** A glass backing leaves over this long (ms): as long as the units' own exits (a slam's lift), never empty. */
+  glass_out_ms: 460
 } as const
 
 /** Ease-in for the adapter's own exit (power2.in). */

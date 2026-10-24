@@ -392,7 +392,7 @@ def test_overlay_command_lays_each_takeover_line_where_the_layout_put_it():
     graph = cmd[cmd.index("-filter_complex") + 1]
     person = graph.index("[ps0_0]overlay")
     # The room zooms out with the speaker (a softer copy filling the frame).
-    assert "gblur=sigma=36" in graph and "[rb0][rz0]overlay=216:300" in graph
+    assert "gblur=sigma=24" in graph and "[rb0][rz0]overlay=216:300" in graph and graph.count("lutyuv=") == 1
     behind = [graph.index(f"[g1c{j}]overlay") for j in (0, 1)]
     front = [graph.index(f"[g1c{j}]overlay") for j in (2, 3)]
     assert max(behind) < person < min(front)

@@ -418,7 +418,9 @@ def shortened(g: dict, length: int) -> dict:
 
 
 # A graphic's last beat (its last item or word coming in) stays up at least this long before the next one takes over.
-LAST_BEAT_HOLD_MS = 700
+LAST_BEAT_HOLD_MS = 500
+# An effect that leads its beat may land at most this much late to let the framework before finish.
+FX_LATE_OK_MS = 600
 
 
 def _beats(g: dict) -> list[int]:
@@ -447,11 +449,18 @@ def settle(graphics: list[dict]) -> list[dict]:
         if out and g['template'] == 'fx' and _beats(out[-1]) and g['fields'].get('cue_ms'):
             prev = out[-1]
             needed = prev['at_ms'] + max(_beats(prev)) + LAST_BEAT_HOLD_MS + ag.GAP_MS
-            # Never past the unit's own run-up to its beat (a count needs its time to reach the number as it is said).
-            sync = float(ag.fx_catalog().get(g['fields'].get('effect') or '', {}).get('sync_s') or 0)
-            shift = min(needed - g['at_ms'], min(_beats(g)) - round(sync * 1000))
-            if shift > 0 and g['duration_ms'] - shift >= ag.EDITOR_MIN_MS:
-                g = later_start(g, shift)
+            if g['at_ms'] < needed:
+                # Never past the unit's own run-up to its beat (a count needs its time to reach the number as it is
+                # said), give or take FX_LATE_OK_MS (the beat then lands while the words are still being said).
+                sync = float(ag.fx_catalog().get(g['fields'].get('effect') or '', {}).get('sync_s') or 0)
+                shift = min(needed - g['at_ms'], min(_beats(g)) - round(sync * 1000) + FX_LATE_OK_MS)
+                if shift >= needed - g['at_ms'] and g['duration_ms'] - shift >= ag.EDITOR_MIN_MS:
+                    g = later_start(g, shift)
+                elif len(_beats(prev)) >= 3:
+                    # A framework's last item said with nothing of it on screen: the later one gives way instead.
+                    continue
+                elif shift > 0 and g['duration_ms'] - shift >= ag.EDITOR_MIN_MS:
+                    g = later_start(g, shift)
         while out and g['at_ms'] < out[-1]['at_ms'] + out[-1]['duration_ms']:
             prev = out[-1]
             room = g['at_ms'] - ag.GAP_MS - prev['at_ms']
