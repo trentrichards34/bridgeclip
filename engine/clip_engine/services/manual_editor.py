@@ -434,6 +434,9 @@ def validate_candidate(c, duration, transcript_count=100000):
     if 'grade' in c:
         from clip_engine.services.color_grade import parse_grade
         parse_grade(c['grade'])
+    if 'zooms' in c:
+        from clip_engine.services.screen_zoom import validate_zooms
+        validate_zooms(c['zooms'], duration)
     cta = c.get('cta_id')
     if cta is not None and (not isinstance(cta, str) or not re.fullmatch(r'[a-f0-9]{16}', cta)):
         raise ValueError('Invalid call to action')
@@ -848,7 +851,9 @@ async def render_export(run, project, c, output, source, render_transcript, repl
         raise ValueError('Export file already exists')
     # Commit complete renders only; failed/cancelled exports do not change the library.
     with tempfile.TemporaryDirectory(prefix='.editor-export-', dir=run) as work, failure_code('render_failed'):
-        result = await renderer.render_clip(RenderRequest(video_path=source, output_path=str(Path(work) / 'clip.mp4'),
+        # Screen zooms (screen_zoom): made into the footage first, so captions, hook text and graphics sit over them.
+        footage = await zoomed_source(run, project, c, source, renderer, work, a, b)
+        result = await renderer.render_clip(RenderRequest(video_path=footage, output_path=str(Path(work) / 'clip.mp4'),
             start_time_ms=a, end_time_ms=b, source_width=project['width'], source_height=project['height'],
             transcript_segments=render_transcript, include_captions=c['captions'], caption_style=get_caption_preset(c['caption_preset']),
             caption_suppression_ranges_ms=[tuple(interval) for interval in c.get('caption_suppression_ranges', [])] + takeover_quiet(c, graphics)
@@ -888,6 +893,25 @@ async def render_export(run, project, c, output, source, render_transcript, repl
     output['total_clips'] = len(output['clips'])
     atomic_json(run / 'job_output.json', output)
     return index, usage
+
+
+async def zoomed_source(run, project, c, source, renderer, work, a, b):
+    """The clip's footage with its screen zooms made into it (a copy in `work`), or `source` when it has none on."""
+    from fractions import Fraction
+    from clip_engine.services import screen_zoom as sz
+    zooms, zoom = c.get('zooms'), project.get('zoom')
+    if not zooms or not zoom or not sz.active_moves(zooms, a, b):
+        return source
+    sz.validate_zoom_area(zoom)
+    sz.validate_zooms(zooms, project['duration_ms'])
+    width, height = await renderer._get_video_dimensions(source)
+    fps = await renderer._probe_fps(source)
+    rate = float(Fraction(fps)) if fps else 30.0
+    clips = run / '.zoom'
+    out = str(Path(work) / 'zoomed-source.mp4')
+    await asyncio.to_thread(sz.apply_zooms, source, out, zooms, zoom, width, height, rate, work, sz.intermediate_codec(),
+                            str(clips) if clips.is_dir() and not clips.is_symlink() else None, None, a, b)
+    return out
 
 
 # Around a stage scene's camera move the captions step aside (they would jump between the face's line and the stage's

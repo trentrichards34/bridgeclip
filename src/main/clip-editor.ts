@@ -15,7 +15,7 @@ import { resolveBinary } from './tools'
 import { logger } from './logger'
 import { importGraphicImage, importGraphicVideo, renderCandidateGraphics, sweepGraphicRenders, type RenderedGraphic } from './graphics-render'
 import { outputScenes } from '../shared/scenes'
-import { firstChapterSourceMs } from '../shared/motion-graphics'
+import { firstChapterSourceMs, graphicsCap } from '../shared/motion-graphics'
 import { bakeSoundEvents } from '../shared/sound-design'
 import { soundPaletteForEngine } from './sound-library'
 
@@ -144,8 +144,10 @@ function sweepEditorFiles(run: string, project?: EditorProject): void {
   let removed = 0
   for (const entry of entries) {
     const temporary = entry.name.startsWith('.editor-')
-    if (!temporary && !(keep && EDITOR_MEDIA.test(entry.name) && !keep.has(entry.name) && (entry.isFile() || entry.isSymbolicLink()))) continue
-    try { rmSync(join(run, entry.name), { recursive: temporary && entry.isDirectory(), force: true }); removed++ } catch { /* A playing preview can stay open on Windows; retry next time. */ }
+    // The screen zooms' sharper pictures go with the editor media (the project is read-only then).
+    const zoomPictures = entry.name === '.zoom' && keep !== null && keep.size === 0 && entry.isDirectory() && !entry.isSymbolicLink()
+    if (!temporary && !zoomPictures && !(keep && EDITOR_MEDIA.test(entry.name) && !keep.has(entry.name) && (entry.isFile() || entry.isSymbolicLink()))) continue
+    try { rmSync(join(run, entry.name), { recursive: (temporary || zoomPictures) && entry.isDirectory(), force: true }); removed++ } catch { /* A playing preview can stay open on Windows; retry next time. */ }
   }
   if (removed) logger.info('editor.sweep', { removed })
 }
@@ -235,7 +237,7 @@ export async function saveEditor(path: unknown, revision: unknown, edits: unknow
     if (!Number.isSafeInteger(revision) || project.revision !== revision) throw new Error(EDITOR_REVISION_CONFLICT)
     if (project.media_freed) throw new Error('Editor media was freed. This project is read-only.')
     if (!Array.isArray(edits) || edits.length !== project.candidates.length) throw new Error('Invalid candidate edits')
-    const clean = edits.map((c) => parseCandidateEdit(c, project.duration_ms, project.transcript.length))
+    const clean = edits.map((c) => parseCandidateEdit(c, project.duration_ms, project.transcript.length, graphicsCap(project)))
     if (new Set(clean.map((c) => c.id)).size !== clean.length) throw new Error('Duplicate candidates')
     const hooks: [string, string, [number, number]][] = []
     project.candidates = project.candidates.map((c) => {
@@ -535,7 +537,7 @@ export async function addEditorCandidate(path: unknown, revision: unknown, candi
       source = typeof sourceId === 'string' ? project.candidates.find((c) => c.id === sourceId) : undefined
       if (!source) throw new Error('The clip to copy is missing. Reopen the editor and try again.')
     }
-    const edit = parseCandidateEdit(candidate, project.duration_ms, project.transcript.length)
+    const edit = parseCandidateEdit(candidate, project.duration_ms, project.transcript.length, graphicsCap(project))
     if (!source) {
       // From transcript lines: one stretch of the source, 3 seconds to 3 minutes.
       const length = edit.ranges.length === 1 ? edit.ranges[0][1] - edit.ranges[0][0] : -1

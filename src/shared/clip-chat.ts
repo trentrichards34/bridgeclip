@@ -10,7 +10,7 @@
  */
 import { CAPTION_PRESET_IDS, isCaptionPresetId } from './caption-presets'
 import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_HIDE_AFTER_S, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, HOOK_LOOK_TOOL_PROPERTIES, applyHookLookArgs, headlineBarColor, headlineTextBg, hideAfterLabel } from './headline-look'
-import { CHAPTER_MAX_MS, CHAPTER_STYLES, CTA_KINDS, DIAGRAM_MAX_MS, GRAPHIC_DEPTHS, graphicMaxMs, isDiagram, matchItemTimes, GRAPHIC_DEPTH_TEMPLATES, GRAPHIC_ICONS, GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, GRAPHIC_SIZES, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, MAX_GRAPHICS_PER_CLIP, SCREEN_SHAPES, WORD_TIMED_TEMPLATES, fitGraphicInCut, graphicCanGoBehind, isGraphicDepth, isGraphicSize, isGraphicTemplate, isScreenVideo, matchCardWords, nearestOutputTime, outputTime, parseGraphics, placeInFreeBand, sourceTimeAt, switchGraphicTemplate, type EditorGraphic, type GraphicPlacement, type GraphicTemplateId, type TimedWord } from './motion-graphics'
+import { CHAPTER_MAX_MS, CHAPTER_STYLES, CTA_KINDS, DIAGRAM_MAX_MS, GRAPHIC_DEPTHS, graphicMaxMs, isDiagram, matchItemTimes, GRAPHIC_DEPTH_TEMPLATES, GRAPHIC_ICONS, GRAPHIC_MAX_MS, GRAPHIC_MIN_MS, GRAPHIC_PLACEMENTS, GRAPHIC_SIZES, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, graphicsCap, SCREEN_SHAPES, WORD_TIMED_TEMPLATES, fitGraphicInCut, graphicCanGoBehind, isGraphicDepth, isGraphicSize, isGraphicTemplate, isScreenVideo, matchCardWords, nearestOutputTime, outputTime, parseGraphics, placeInFreeBand, sourceTimeAt, switchGraphicTemplate, type EditorGraphic, type GraphicPlacement, type GraphicTemplateId, type TimedWord } from './motion-graphics'
 import { MAX_HOOK_CHARS, SPLIT_RANGE, TRANSCRIPT_CLIP_MS, defaultCrop, editDuration, framingAt, normalizeSceneTransitions, panelRows, parseCandidateEdit, parseHook, type CandidateEdit, type Crop, type EditorRange, type EditorScene } from './clip-editor'
 import { hookShare, outputSize } from './graphic-layout'
 import { BACKDROP_LABELS, CARD_LABELS, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_CARDS, SCENE_KINDS, SCENE_LABELS, parseScenes, setScene, type SceneBackdrop, type SceneCard, type SceneKind } from './scenes'
@@ -197,8 +197,8 @@ const clipEnd = (c: CandidateEdit): number => c.ranges[c.ranges.length - 1][1]
 
 /** Checks the whole clip the way a save does; graphics with the shared contract. */
 export function checkChatCandidate(c: CandidateEdit, project: ChatProject): void {
-  try { parseCandidateEdit(c, project.duration_ms, project.transcriptCount) } catch { fail('That would make an edit the editor can’t save. Check the times and try again.') }
-  try { parseGraphics(c.graphics) } catch (error) { fail((error as Error).message) }
+  try { parseCandidateEdit(c, project.duration_ms, project.transcriptCount, graphicsCap(project)) } catch { fail('That would make an edit the editor can’t save. Check the times and try again.') }
+  try { parseGraphics(c.graphics, graphicsCap(project)) } catch (error) { fail((error as Error).message) }
 }
 
 /** The values a patch sets, read from a candidate (for undoing it). */
@@ -352,7 +352,7 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
     }
     case 'add_graphic': {
       const graphics = c.graphics ?? []
-      if (graphics.length >= MAX_GRAPHICS_PER_CLIP) fail(`A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics.`)
+      if (graphics.length >= graphicsCap(project)) fail(`A clip can have up to ${graphicsCap(project)} graphics.`)
       if (!isGraphicTemplate(args.template) || args.template === 'fx') return fail(`template must be one of ${CHAT_TEMPLATES.map((t) => t.id).join(', ')}.`)
       const template = GRAPHIC_TEMPLATES.find((t) => t.id === args.template)!
       const pin = pinArg(args, points)
@@ -515,7 +515,7 @@ export function mergeChatSteps(c: CandidateEdit, steps: unknown, project: ChatPr
   const next = { ...c, ...patch } as CandidateEdit
   if (patch.scenes) next.scenes = normalizeSceneTransitions(next.scenes)
   try { checkChatCandidate(next, project) } catch { throw new Error('The chat’s edit doesn’t fit this clip anymore. Ask again.') }
-  if (patch.graphics) patch.graphics = parseGraphics(patch.graphics)
+  if (patch.graphics) patch.graphics = parseGraphics(patch.graphics, graphicsCap(project))
   if (patch.stage_scenes) patch.stage_scenes = parseScenes(patch.stage_scenes, project.duration_ms)
   if (patch.scenes) patch.scenes = next.scenes
   return patch as ChatPatch

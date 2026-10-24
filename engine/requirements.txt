@@ -14,6 +14,9 @@ boto3>=1.34.0
 opencv-python-headless>=4.10,<5
 numpy>=1.26
 Pillow>=10.0
+# Reading words on a screen recording (zoom and box what the speaker says): the
+# PaddleOCR PP-OCRv3 models (Apache-2.0, assets/models/ocr) on ONNX Runtime (MIT).
+onnxruntime>=1.31; sys_platform != "darwin" or (platform_machine == "arm64" and platform_release >= "23")
 
 # yt-dlp for video download. YouTube breaks old releases (2026.03.17 gets
 # HTTP 403 on video data), so keep this floor current. [default] pulls in

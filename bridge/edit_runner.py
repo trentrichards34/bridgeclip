@@ -162,7 +162,8 @@ def _direction(raw):
 def _editor(raw, n):
     """The reel as a clip editor project: the review's graphics (word-anchored), pinned images (in the run's graphics
     images), whether the automatic graphics and Stage layouts are on, the brand color, comment keyword and color grade."""
-    from clip_engine.services.edit_direction import EDITOR_TEMPLATES, MAX_GRAPHICS
+    from clip_engine.services.auto_graphics import MAX_GRAPHICS_LONG as MAX_GRAPHICS
+    from clip_engine.services.edit_direction import EDITOR_TEMPLATES
     if not isinstance(raw, dict) or not set(raw) <= {"graphics", "pins", "motion", "stage", "brand_color", "cta_keyword", "grade"} \
             or not isinstance(raw.get("motion", True), bool) or not isinstance(raw.get("stage", False), bool):
         raise ValueError("Invalid editor")

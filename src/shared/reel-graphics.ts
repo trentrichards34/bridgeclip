@@ -20,7 +20,7 @@ import { chatFail as fail, chatPlainText } from './chat-core'
 import { checkHighlightFields } from './chat-point'
 import { graphicBandSize, graphicBox, graphicOwnFont, GRAPHIC_DEFAULT_COLOR, outputSize, type GraphicFrame } from './graphic-layout'
 import { HEADLINE_FONTS, isHexColor, type HeadlineLook } from './headline-look'
-import { DIAGRAM_ACCENT, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, isDiagram, graphicDepth, MAX_GRAPHICS_PER_CLIP, clampGraphicMs, templateInfo, graphicHasContent, parseGraphics, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from './motion-graphics'
+import { DIAGRAM_ACCENT, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, isDiagram, graphicDepth, MAX_GRAPHICS_LONG, MAX_GRAPHICS_PER_CLIP, clampGraphicMs, templateInfo, graphicHasContent, parseGraphics, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from './motion-graphics'
 
 /** The templates offered on review screens (every one but Logo pop and Screen recording, which need the clip editor's files, and the chapter header, which belongs to a clip's sections). */
 // Effects (fx) are offered too: the gallery lists each effect as its own tile (the planners place them as well).
@@ -30,6 +30,12 @@ export const REEL_CHAT_TEMPLATES = REEL_GRAPHIC_TEMPLATES.filter((t) => t.id !==
 export const MAX_REEL_GRAPHICS = 8
 /** An edited reel (Edit my recording): the automatic direction plans about one graphic per 6 s of a long reel. */
 export const MAX_EDIT_GRAPHICS = MAX_GRAPHICS_PER_CLIP
+/** A YouTube video's review keeps up to this many (its editor project keeps graphicsCap for its length). */
+export const MAX_YOUTUBE_EDIT_GRAPHICS = MAX_GRAPHICS_LONG
+/** The review's graphics limit for a run's format. */
+export function editGraphicsLimit(format: string | undefined | null): number {
+  return format === 'youtube' ? MAX_YOUTUBE_EDIT_GRAPHICS : MAX_EDIT_GRAPHICS
+}
 
 /** The hook text's share of the frame's height at the top (0: none, too short to draw, or not at the top). */
 export function hookShareFor(text: string, look: Pick<HeadlineLook, 'look'> | null | undefined): number {
@@ -65,7 +71,7 @@ export function reelGraphicSpec(graphic: Pick<EditorGraphic, 'template' | 'field
 function parseReelGraphicList(value: unknown, at: (raw: Record<string, unknown>) => number, limit = MAX_REEL_GRAPHICS): EditorGraphic[] {
   if (value === undefined || value === null) return []
   if (!Array.isArray(value) || value.length > limit) throw new Error(`Add up to ${limit} graphics.`)
-  const graphics = parseGraphics(value.map((raw) => raw && typeof raw === 'object' ? { ...(raw as Record<string, unknown>), at_ms: at(raw as Record<string, unknown>) } : raw))
+  const graphics = parseGraphics(value.map((raw) => raw && typeof raw === 'object' ? { ...(raw as Record<string, unknown>), at_ms: at(raw as Record<string, unknown>) } : raw), Math.max(limit, MAX_GRAPHICS_PER_CLIP))
   if (graphics.some((g) => g.template === 'logo')) throw new Error('Logo pop graphics are only in the clip editor.')
   return graphics
 }
@@ -78,8 +84,8 @@ function parseReelGraphicList(value: unknown, at: (raw: Record<string, unknown>)
 export type EditGraphic = Omit<EditorGraphic, 'at_ms'> & { word: number }
 
 /** The reel's graphics from the page, checked against the plan's words (throws a plain message). */
-export function parseEditGraphics(value: unknown, words: number): EditGraphic[] {
-  const parsed = parseReelGraphicList(value, (raw) => typeof raw.word === 'number' && Number.isInteger(raw.word) && raw.word >= 0 && raw.word < words ? raw.word : -1, MAX_EDIT_GRAPHICS)
+export function parseEditGraphics(value: unknown, words: number, limit: number = MAX_EDIT_GRAPHICS): EditGraphic[] {
+  const parsed = parseReelGraphicList(value, (raw) => typeof raw.word === 'number' && Number.isInteger(raw.word) && raw.word >= 0 && raw.word < words ? raw.word : -1, limit)
   return parsed.map(({ at_ms, ...rest }) => ({ ...rest, word: at_ms })).sort((a, b) => a.word - b.word)
 }
 

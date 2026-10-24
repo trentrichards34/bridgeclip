@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { AudioLines, Copy, Pencil, Trash2, User, X } from 'lucide-react'
 import {
-  GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_FIELD_CHARS, WORD_TIMED_TEMPLATES, duplicateGraphic, fitGraphicInCut, graphicCanGoBehind, graphicDepth, graphicHasContent, graphicLocalMs,
+  GRAPHIC_TEMPLATES, graphicsCap, MAX_GRAPHIC_FIELD_CHARS, WORD_TIMED_TEMPLATES, duplicateGraphic, fitGraphicInCut, graphicCanGoBehind, graphicDepth, graphicHasContent, graphicLocalMs,
   highlightPoint, isDiagram, placeInFreeBand, removeGraphic, templateInfo, updateGraphic, withGraphic, ITEM_TIMED_TEMPLATES,
   type EditorGraphic, type GraphicPlacement, type GraphicSize, type GraphicTemplateId, type TimedWord
 } from '../../shared/motion-graphics'
@@ -139,13 +139,14 @@ export function GraphicPreviewEditor({ canvas, project, candidate, time, selecte
   const above = frame ? frame.top + frame.height / 2 > H / 2 : false
   const style = g ? graphicStyle(candidate, g) : null
   const ownColor = g && isHexColor(g.fields.color)
-  const full = graphics.length >= MAX_GRAPHICS_PER_CLIP
+  const cap = graphicsCap(project)
+  const full = graphics.length >= cap
   const duplicate = (): void => {
     if (!g || full) return
     const ids = graphics.map((x) => x.id)
     const after = fitGraphicInCut(duplicateGraphic(g, ids), candidate)
     const copy = after && after.at_ms >= g.at_ms + g.duration_ms - 50 ? after : placeInFreeBand(graphics, { ...duplicateGraphic(g, ids, g.at_ms) })
-    onChange(withGraphic(candidate, copy)); onSelect(copy.id)
+    onChange(withGraphic(candidate, copy, cap)); onSelect(copy.id)
   }
   const match = (): void => {
     if (!g) return
@@ -210,7 +211,7 @@ export function GraphicPreviewEditor({ canvas, project, candidate, time, selecte
         {(WORD_TIMED_TEMPLATES.includes(g.template) || ITEM_TIMED_TEMPLATES.includes(g.template)) && <button type="button" disabled={disabled} aria-label="Match to my voice"
           title="Match my words: show each word (or item) as you say it" onClick={match}><AudioLines size={13} aria-hidden /></button>}
         {fields.length > 0 && <button type="button" disabled={disabled} aria-label="Edit words on the video" title="Change the words here (or click the graphic)" onClick={() => setEditing(true)}><Pencil size={13} aria-hidden /></button>}
-        <button type="button" disabled={disabled || full} aria-label="Duplicate graphic" title={full ? `A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics.` : 'Make a copy right after it (Ctrl/Cmd+D)'} onClick={duplicate}><Copy size={13} aria-hidden /></button>
+        <button type="button" disabled={disabled || full} aria-label="Duplicate graphic" title={full ? `A clip can have up to ${cap} graphics.` : 'Make a copy right after it (Ctrl/Cmd+D)'} onClick={duplicate}><Copy size={13} aria-hidden /></button>
         <button type="button" disabled={disabled} aria-label="Delete graphic" title="Delete (Delete key)" className="danger" onClick={() => { onChange(removeGraphic(candidate, g.id)); onSelect(null) }}><Trash2 size={13} aria-hidden /></button>
       </div>}
       {note && !editing && !playing && <p role="status" className="editor-graphic-stage-note" style={above ? { top: 8 } : { bottom: 8 }}>{note}<button type="button" aria-label="Dismiss" onClick={() => setNote(null)}><X size={11} /></button></p>}

@@ -332,11 +332,11 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
     limit = graphics_limit(kept_seconds, options['register'])
     if type(options.get('limit')) is int:
         # A YouTube video's long-form pacing sets its own count (longform.graphics_budget).
-        limit = max(1, min(MAX_GRAPHICS, options['limit']))
+        limit = max(1, min(ag.MAX_GRAPHICS_LONG, options['limit']))
     blocked = {i for a, b in avoid for i in range(max(0, a), min(len(words), b + 1))}
     logo_ok = {i for a, b in logos_in for i in range(max(0, a), min(len(words), b + 1))}
     planned = []
-    for item in raw[:MAX_GRAPHICS * 2]:
+    for item in raw[:max(MAX_GRAPHICS, limit) * 2]:
         if not isinstance(item, dict) or type(item.get('word')) is not int or not 0 <= item['word'] < len(words):
             continue
         w = words[item['word']]
@@ -366,7 +366,7 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
         out.append({'id': ag.new_id(taken), 'template': g['template'], 'word': word, 'duration_ms': int(g['duration_ms']),
                     'placement': g['placement'], 'fields': fields, 'origin': 'auto', **({'size': g['size']} if g.get('size') == 'stage' and g['template'] == 'fx' else {}),
                     **({'depth': 'behind'} if g['template'] == 'big_words' else {})})
-    return sorted(out, key=lambda g: g['word'])[:MAX_GRAPHICS]
+    return sorted(out, key=lambda g: g['word'])[:max(MAX_GRAPHICS, limit)]
 
 
 # ---------------------------------------------------------------------------
@@ -504,8 +504,10 @@ def editor_graphics(specs: Sequence[dict], timed: Sequence[Sequence[Any]], total
     automatic ones (origin 'auto') are timed again on the reel's words (and left out when their words were cut); the
     member's are placed as they set them. `popups`: number and keyword pop-ups and half-screen cards ({word, text,
     kind, card?, seconds?}), as graphics; `pins`: pinned images ({word, image: a .graphics/images name}) as Logo pops.
-    `options`: motion (automatic graphics on), stage, chapters, cta_keyword. Returns (graphics, warnings)."""
+    `options`: motion (automatic graphics on), stage, chapters, cta_keyword, cap (most graphics kept: a YouTube video's
+    is higher, auto_graphics.graphics_cap). Returns (graphics, warnings)."""
     options = dict(options or {})
+    cap = options['cap'] if type(options.get('cap')) is int and 0 < options['cap'] <= ag.MAX_GRAPHICS_LONG else MAX_GRAPHICS
     starts = {int(i): int(s) for _, s, _, i, *_ in timed}
     order = [int(i) for *_, i in timed]
     segments = reel_segments(timed, offset_ms)
@@ -561,7 +563,7 @@ def editor_graphics(specs: Sequence[dict], timed: Sequence[Sequence[Any]], total
     # were picked and spaced at plan time; the cut can bring two closer, which is settled below); chapter headers.
     # Each was picked, varied and given its look at plan time: here it is only timed again (no variety pass on one card).
     opts = {'stage': bool(options.get('stage')), 'chapters': False, 'cta_keyword': options.get('cta_keyword') or '',
-            'templates': ['big_words'], 'max_cards': MAX_GRAPHICS, 'pill_cards': True, 'variety': False}
+            'templates': ['big_words'], 'max_cards': cap, 'pill_cards': True, 'variety': False}
     ranges = [(offset_ms, end_ms)]
     fitted: list[dict] = []
     for g in auto:
@@ -603,8 +605,8 @@ def editor_graphics(specs: Sequence[dict], timed: Sequence[Sequence[Any]], total
             continue
         placed.append({**g, 'at_ms': int(g['at_ms']), 'duration_ms': length})
     placed.sort(key=lambda g: g['at_ms'])
-    if len(placed) > MAX_GRAPHICS:
-        placed = placed[:MAX_GRAPHICS]
+    if len(placed) > cap:
+        placed = placed[:cap]
     if lost:
         warnings.append(f"{lost} graphic{'s were' if lost != 1 else ' was'} left out: {'their words were' if lost != 1 else 'its words were'} cut.")
     return placed, warnings

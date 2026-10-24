@@ -105,6 +105,18 @@ export interface EditorGraphic {
 }
 
 export const MAX_GRAPHICS_PER_CLIP = 60
+/**
+ * A YouTube video (16:9, often 10-30 minutes) may carry more: about GRAPHICS_PER_10_MIN per ten minutes, never fewer
+ * than a reel, at most MAX_GRAPHICS_LONG (so a 26-minute video gets about one visual per 10-20 s). Mirrors
+ * auto_graphics.graphics_cap.
+ */
+export const GRAPHICS_PER_10_MIN = 60
+export const MAX_GRAPHICS_LONG = 180
+export function graphicsCap(project: { aspect_ratio?: string; duration_ms?: number } | null | undefined): number {
+  if (!project || project.aspect_ratio !== '16:9') return MAX_GRAPHICS_PER_CLIP
+  const minutes = Math.max(0, Number(project.duration_ms) || 0) / 60000
+  return Math.max(MAX_GRAPHICS_PER_CLIP, Math.min(MAX_GRAPHICS_LONG, Math.ceil(minutes / 10 * GRAPHICS_PER_10_MIN)))
+}
 export const GRAPHIC_MIN_MS = 800
 /** The longest most graphics last (a diagram or a chapter header may last longer: graphicMaxMs). */
 export const GRAPHIC_MAX_MS = 8000
@@ -136,9 +148,9 @@ export function isGraphicTemplate(value: unknown): value is GraphicTemplateId {
 }
 
 /** Validates untrusted graphics (throws on anything malformed). */
-export function parseGraphics(value: unknown): EditorGraphic[] {
+export function parseGraphics(value: unknown, limit: number = MAX_GRAPHICS_PER_CLIP): EditorGraphic[] {
   if (value === undefined) return []
-  if (!Array.isArray(value) || value.length > MAX_GRAPHICS_PER_CLIP) throw new Error(`Add up to ${MAX_GRAPHICS_PER_CLIP} graphics to a clip.`)
+  if (!Array.isArray(value) || value.length > limit) throw new Error(`Add up to ${limit} graphics to a clip.`)
   const seen = new Set<string>()
   return value.map((raw): EditorGraphic => {
     if (!raw || typeof raw !== 'object') throw new Error('A graphic is malformed.')
@@ -796,10 +808,10 @@ export function fitGraphicToClip(g: EditorGraphic, c: Timing): EditorGraphic {
 }
 
 /** The clip's graphics with `g` added (or replacing the one with its id), kept in its clip and in time order. Throws past the limit. */
-export function withGraphic(c: Timing & { graphics?: EditorGraphic[] }, g: EditorGraphic): EditorGraphic[] {
+export function withGraphic(c: Timing & { graphics?: EditorGraphic[] }, g: EditorGraphic, limit: number = MAX_GRAPHICS_PER_CLIP): EditorGraphic[] {
   const list = c.graphics ?? []
   const exists = list.some((x) => x.id === g.id)
-  if (!exists && list.length >= MAX_GRAPHICS_PER_CLIP) throw new Error(`Add up to ${MAX_GRAPHICS_PER_CLIP} graphics to a clip.`)
+  if (!exists && list.length >= limit) throw new Error(`Add up to ${limit} graphics to a clip.`)
   const next = exists ? list.map((x) => x.id === g.id ? fitGraphicToClip(g, c) : x) : [...list, fitGraphicToClip(g, c)]
   return next.sort((a, b) => a.at_ms - b.at_ms)
 }

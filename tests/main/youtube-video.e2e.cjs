@@ -11,8 +11,8 @@ const { editorTools, linkEngine } = require('./editor-e2e-tools.cjs')
 // A YouTube video from Edit my recording: a landscape camera take and a screen recording made with it, the format
 // switched from the suggested Reel to YouTube, planned (stand-in AI) with a branded cold open, made as screen + webcam
 // picture-in-picture at 1920x1080 30 fps, baked by the clip editor with landscape graphics (full-screen brand cards, a
-// stat overlay in the lower third) and captions on key lines in the lower third; chapters to copy on the done screen
-// and a YouTube tag in the Library. With BRIDGECLIP_E2E_SHOTS set, frames of the video are saved there.
+// stat overlay in the lower third), gentle screen zooms on the screen's busy part and captions on key lines in the
+// lower third; chapters to copy on the done screen and a YouTube tag in the Library. With BRIDGECLIP_E2E_SHOTS set, frames of the video are saved there.
 
 function say(text, start, step) {
   return text.split(' ').map((word, i) => ({ word, start: +(start + i * step).toFixed(3), end: +(start + (i + 1) * step - 0.05).toFixed(3), type: 'word' }))
@@ -55,8 +55,10 @@ test('A YouTube video: switched from Reel, screen + webcam picture-in-picture at
   execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `testsrc2=s=640x360:r=30:d=${SECONDS}`, '-f', 'lavfi', '-i', `aevalsrc='${tones(0)}':s=48000:d=${SECONDS}`,
     ...tools.encoder, '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', camera])
   // A "dashboard": a light page with dark bars and a number, moving a little.
+  // (The gray card slides along the bottom: the busy part the screen zooms follow.)
   execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `color=c=0xF5F6F8:s=1280x720:r=30:d=${SECONDS}`, '-f', 'lavfi', '-i', `aevalsrc='${tones(OFFSET_S)}':s=48000:d=${SECONDS}`,
-    '-filter_complex', "[0:v]drawbox=x=60:y=60:w=1160:h=90:c=0x1B1F2A:t=fill,drawbox=x=60:y=200:w=360:h=200:c=0x2F5BFF@0.85:t=fill,drawbox=x=460:y=200:w=360:h=200:c=0x1FA463@0.85:t=fill,drawbox=x=860:y=200:w=360:h=200:c=0xFF8A3D@0.85:t=fill,drawbox=x=60+mod(t*40\\,900):y=460:w=300:h=180:c=0x9AA3B5:t=fill[v];[1:a]lowpass=f=2500,volume=0.4[a]",
+    '-f', 'lavfi', '-i', `color=c=0x9AA3B5:s=300x180:r=30:d=${SECONDS}`,
+    '-filter_complex', "[0:v]drawbox=x=60:y=60:w=1160:h=90:c=0x1B1F2A:t=fill,drawbox=x=60:y=200:w=360:h=200:c=0x2F5BFF@0.85:t=fill,drawbox=x=460:y=200:w=360:h=200:c=0x1FA463@0.85:t=fill,drawbox=x=860:y=200:w=360:h=200:c=0xFF8A3D@0.85:t=fill[bg];[bg][2:v]overlay=x='60+mod(t*40\\,900)':y=460:shortest=1[v];[1:a]lowpass=f=2500,volume=0.4[a]",
     '-map', '[v]', '-map', '[a]', ...tools.encoder, '-pix_fmt', 'yuv420p', '-c:a', 'aac', screen])
   const python = path.join(root, 'python-fake-ai')
   fs.writeFileSync(python, `#!/bin/sh\nPYTHONPATH="${path.join(__dirname, 'fake-ai-edit')}\${PYTHONPATH:+:$PYTHONPATH}" CREATORCLIPS_FAKE_AI=1 exec "${tools.python}" "$@"\n`, { mode: 0o755 })
@@ -184,6 +186,20 @@ test('A YouTube video: switched from Reel, screen + webcam picture-in-picture at
   const bright = (buffer) => { let n = 0; for (let y = 900; y < 1000; y += 2) for (let x = 120; x < 1200; x += 3) if (buffer[y * 1920 + x] > 225) n++; return n }
   const on = bright(gray), off = bright(frame(silent / 1000, reel))
   assert.ok(on > off + 40, `caption pixels in the lower third: ${on} on a key line vs ${off} on a quiet one`)
+  // Screen zooms: the screen's window is the zoom area and the drifting box gets gentle zooms (a 720p screen
+  // recording is no sharper than its window, so none goes past 1.25x); the bake made them into the picture.
+  assert.ok(project.zoom && project.zoom.area[0] < 0.1 && project.zoom.area[2] > 0.5 && !project.zoom.keep, JSON.stringify(project.zoom))
+  assert.ok((c.zooms ?? []).length >= 1, JSON.stringify(c.zooms))
+  assert.ok(c.zooms.every((z) => z.max <= 1.25 && !z.clip && z.keys.every((k) => k[3] <= 1.25)), JSON.stringify(c.zooms))
+  const inZoom = (ms) => c.zooms.some((z) => ms > z.at_ms - 100 && ms < z.end_ms + 100)
+  const held = c.zooms.map((z) => z.at_ms + 900).find((ms) => free(ms) && c.zooms.some((z) => ms < z.end_ms - 700))
+  const plainAt = Array.from({ length: 140 }, (_, i) => i * 500 + 250).find((ms) => free(ms) && !inZoom(ms))
+  if (held !== undefined && plainAt !== undefined) {
+    const source = path.join(folder, 'editor-source.mp4')
+    const diff = (ms) => { const a = frame(ms / 1000, reel), b = frame(ms / 1000, source); let sum = 0, n = 0; for (let y = 250; y < 600; y += 3) for (let x = 100; x < 1000; x += 3) { sum += Math.abs(a[y * 1920 + x] - b[y * 1920 + x]); n++ } return sum / n }
+    const zoomed = diff(held), plainDiff = diff(plainAt)
+    assert.ok(zoomed > plainDiff + 4, `the screen is zoomed in the bake at ${held} ms: ${zoomed.toFixed(1)} vs ${plainDiff.toFixed(1)} at ${plainAt} ms`)
+  }
   // Chapters on the done screen, ready to copy; the Library tags the run as a YouTube video.
   const chapters = page.getByTestId('edit-chapters')
   await chapters.getByRole('button', { name: 'Copy chapters' }).waitFor()

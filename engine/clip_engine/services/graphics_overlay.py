@@ -43,6 +43,8 @@ GRAPHICS_DIR = ".graphics"
 REEL_DIR = "reel"
 RENDER_FILE = re.compile(r"[a-f0-9]{64}\.mov")
 MAX_GRAPHICS = 60
+# A YouTube video may carry more (auto_graphics.graphics_cap; main checks each video's own cap).
+MAX_GRAPHICS_LONG = 180
 MIN_MS = 100
 # How big main drew a graphic: absent is the usual card; "stage" takes the top ~55% of a 9:16 frame.
 SIZES = ("compact", "card", "stage")
@@ -122,7 +124,7 @@ def checked_graphics(run: Path, raw: object, clip_ms: int, sub: str = "", source
     """
     if raw is None:
         return []
-    if not isinstance(raw, list) or len(raw) > MAX_GRAPHICS:
+    if not isinstance(raw, list) or len(raw) > MAX_GRAPHICS_LONG:
         raise ValueError("Invalid graphics")
     if sub not in ("", REEL_DIR):
         raise ValueError("Invalid graphics folder")

@@ -5,7 +5,7 @@ import {
   formatClock, hookTextProblem, initialDecisions, reelCardWindows, reelOrder, reelSeconds, reelWordStarts, toggleSpan, toggleWord, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditStatus
 } from '../../shared/edit-recording'
 import { EDIT_CHAT_POINT_SUGGESTIONS, EDIT_CHAT_SUGGESTIONS, editPatchValues, mergeEditChatSteps, parseEditChatSteps, type EditChatPatch, type EditChatStep } from '../../shared/edit-chat'
-import { MAX_EDIT_GRAPHICS, editGraphicFrame, newEditGraphic, patchEditGraphic, type EditGraphic } from '../../shared/reel-graphics'
+import { editGraphicsLimit, editGraphicFrame, newEditGraphic, patchEditGraphic, type EditGraphic } from '../../shared/reel-graphics'
 import { newGraphic, templateInfo, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { FX_EFFECTS, fxEffect } from '../../shared/fx-catalog'
 import { prefillEffect } from '../../shared/graphic-prefill'
@@ -505,7 +505,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                 <figcaption className="mt-1 text-[10px] leading-tight text-ink-subtle">{firstWord ? `Opens on “${firstWord.text.replace(/[.,!?;:]+$/, '')}”` : 'Your reel'}</figcaption>
               </figure>
               <div className="min-w-0 space-y-5">
-                <ReelGraphics label="Graphics" heading="h4" limit={MAX_EDIT_GRAPHICS}
+                <ReelGraphics label="Graphics" heading="h4" limit={editGraphicsLimit(status.format)}
                   intro={plan.graphics !== undefined ? 'Animated graphics planned for what you say: stats, lists, diagrams and more. After the reel is made, open it in the editor to move, change or add any of them, and to see them on the video.'
                     : 'Animated graphics over your reel: a stat that counts up, a title, a list and more. They stay clear of your hook text and captions, and can’t play during a half-screen graphic.'}
                   items={graphicItems} totalSeconds={reelLength} blocked={cardWindows.map((w) => ({ start: w.start, end: w.end, label: 'A half-screen graphic plays here' }))}

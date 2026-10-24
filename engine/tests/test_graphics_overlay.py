@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from clip_engine.services.graphics_overlay import MAX_GRAPHICS, checked_graphics, overlay_command, overlay_graphics
+from clip_engine.services.graphics_overlay import MAX_GRAPHICS_LONG, checked_graphics, overlay_command, overlay_graphics
 from clip_engine.services.media_process import run_media
 
 needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs FFmpeg")
@@ -43,7 +43,7 @@ def test_checked_graphics_validates_names_times_and_trims_to_the_clip(tmp_path):
     assert checked_graphics(tmp_path, [{"file": NAME, "start_ms": 4950, "duration_ms": 1000}], 5000) == []
     for bad in ([{"file": "../x.mov", "start_ms": 0, "duration_ms": 1000}], [{"file": NAME, "start_ms": -1, "duration_ms": 1000}],
                 [{"file": NAME, "start_ms": 0, "duration_ms": 1.5}], [{"file": "b" * 64 + ".mov", "start_ms": 0, "duration_ms": 1000}],
-                "nope", [{"file": NAME, "start_ms": 0, "duration_ms": 1000}] * (MAX_GRAPHICS + 1)):
+                "nope", [{"file": NAME, "start_ms": 0, "duration_ms": 1000}] * (MAX_GRAPHICS_LONG + 1)):
         with pytest.raises(ValueError):
             checked_graphics(tmp_path, bad, 5000)
 
