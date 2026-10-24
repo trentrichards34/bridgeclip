@@ -45,6 +45,7 @@ import type { BrandLook } from '../shared/brand-kit'
 import type { BrandIdentity, RecordingPart, RemixDraft, RemixEdit, RemixRecordings, RemixRequest, RemixStatus } from '../shared/remix'
 import type { RemixLookPatch } from '../shared/remix-review-look'
 import type { ListicleScript, ListicleScriptRequest, ListicleStatus } from '../shared/listicle'
+import type { CoverExtension, CoverSuggestions, SavedCover } from '../shared/covers'
 import type { BrollVideoEstimate, BrollVideoShot, BrollVideoStatus } from '../shared/broll-video'
 import type { EditDecisions, EditImage, EditSource, EditStartRequest, EditStatus, FilmIdea, FilmIdeasRequest } from '../shared/edit-recording'
 import type { ScreenSource, ScreenSync } from '../shared/screen-pair'
@@ -411,6 +412,14 @@ export interface BridgeClipAPI {
     cancelRender: () => Promise<boolean>
     renderStatus: () => Promise<AvatarRenderStatus | null>
     onStatus: (callback: (status: AvatarRenderStatus) => void) => () => void
+  }
+  /** Make my cover: the speaker's best frames of a Library video, words from it, and its saved cover (used when posting). */
+  covers: {
+    suggest: (videoPath: string) => Promise<CoverSuggestions>
+    cancel: (videoPath: string) => Promise<void>
+    /** Saves the cover next to the video (replacing the one there). */
+    save: (videoPath: string, bytes: Uint8Array, ext: CoverExtension) => Promise<SavedCover>
+    saved: (videoPath: string) => Promise<SavedCover | null>
   }
   /** Top list videos (Avatar Studio → Top list). */
   listicle: {
@@ -967,6 +976,12 @@ const api: BridgeClipAPI = {
     onStatus: (callback) => subscribe('brollVideo:status', callback),
     shots: (outputDir) => ipcRenderer.invoke('brollVideo:shots', outputDir),
     swapShot: (outputDir, slot, shotId) => ipcRenderer.invoke('brollVideo:swapShot', outputDir, slot, shotId)
+  },
+  covers: {
+    suggest: (videoPath) => ipcRenderer.invoke('covers:suggest', videoPath),
+    cancel: (videoPath) => ipcRenderer.invoke('covers:cancel', videoPath),
+    save: (videoPath, bytes, ext) => ipcRenderer.invoke('covers:save', videoPath, bytes, ext),
+    saved: (videoPath) => ipcRenderer.invoke('covers:saved', videoPath)
   },
   listicle: {
     writeScript: (request) => paid('listicle:writeScript', request),

@@ -21,6 +21,7 @@ import { youtubeSourceUrl } from '../../shared/video-source'
 import { RunStats } from './RunStats'
 import { AddToAutomationDialog } from './AddToAutomationDialog'
 import { PostDialog, type PostableClip } from './PostDialog'
+import { CoverMaker } from './CoverMaker'
 import { Page } from './ui/Page'
 import { PageHeader } from './ui/PageHeader'
 import { Button } from './ui/Button'
@@ -169,6 +170,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const closeConfirm = useCallback(() => setConfirm(null), [])
   const [posting, setPosting] = useState<PostableClip[] | null>(null)
+  const [covering, setCovering] = useState<string | null>(null)
   const [bankClips, setBankClips] = useState<number[] | null>(null)
   const [ctaClip, setCtaClip] = useState<ClipArtifact | null>(null)
   const [editClip, setEditClip] = useState<ClipArtifact | null>(null)
@@ -357,6 +359,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
               onToggleSelect={() => toggle(clip.clip_index)}
               onAspect={aspect == null ? setAspect : undefined}
               onPost={() => setPosting([asPostable(clip)])}
+              onMakeCover={outputDir ? () => setCovering(clipFilePath(clip.s3_url)) : undefined}
               onAddToAutomation={outputDir ? () => setBankClips([clip.clip_index]) : undefined}
               onDelete={outputDir ? () => confirmDelete([clip.clip_index]) : undefined}
               onChangeCta={outputDir ? () => setCtaClip(clip) : undefined}
@@ -560,6 +563,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
 
       {confirm && <ConfirmDialog request={confirm} onClose={closeConfirm} />}
       {posting && <PostDialog clips={posting} onClose={() => setPosting(null)} onNavigate={onNavigate} />}
+      {covering && <CoverMaker videoPath={covering} onClose={() => setCovering(null)} />}
       {inspectEdits && <EditInspector outputDir={outputDir} onClose={() => setInspectEdits(false)} />}
       {ctaClip && outputDir && <ClipCtaDialog
         title={ctaClip.summary || `Clip ${ctaClip.clip_index + 1}`}

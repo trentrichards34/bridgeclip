@@ -42,6 +42,7 @@ import { addMusic, listMusic, musicPreview, removeMusic, saveMusicSettings } fro
 import { addSoundsFromPicker, listSounds, removeSound, setSoundAction, soundPreview } from './sound-library'
 import { addLogoFromPicker, listLogos, removeLogo, updateLogo } from './logo-library'
 import { addCta, applyRunCta, applyRunCtaInLock, listCtas, removeCta, updateCta, withRunLock } from './ctas'
+import { cancelCovers, saveCover, savedCover, suggestCovers } from './covers'
 import { CTA_IMAGE_EXTENSIONS, CTA_VIDEO_EXTENSIONS, parseCtaChoice } from '../shared/ctas'
 import { addPhotoToAvatar, cloneVoice, cloningInProgress, createAvatar, removePicture, usePicture, draftFromPhoto, draftsFromDescription, restyleDrafts, setPortrait, listAvatars, PHOTO_EXTENSIONS, readReactions, removeAvatar, updateAvatar, VOICE_SAMPLE_EXTENSIONS } from './avatars'
 import { SAMPLE_ESTIMATE_USD, voiceSample } from './voice-samples'
@@ -242,6 +243,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // Posting clips through Zernio. Uploads and post links stay in the main process.
   handle('zernio:posts:probe', (_event, clipPath: unknown, durationMs: unknown) => probeClipForPosting(clipPath, durationMs))
   handle('zernio:posts:subtitles', (_event, clipPath: unknown) => clipSubtitlesForPosting(clipPath))
+  // Make my cover: the speaker's best frames and words from the video; the cover saved next to it (used when posting).
+  handle('covers:suggest', (_event, videoPath: unknown) => suggestCovers(videoPath))
+  handle('covers:cancel', (_event, videoPath: unknown) => cancelCovers(videoPath))
+  handle('covers:save', (_event, videoPath: unknown, bytes: unknown, ext: unknown) => saveCover(videoPath, bytes, ext))
+  handle('covers:saved', (_event, videoPath: unknown) => savedCover(videoPath))
   handle('zernio:posts:pickCoverImage', async () => {
     const window = getMainWindow()
     if (!window) return null

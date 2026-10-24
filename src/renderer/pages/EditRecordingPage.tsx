@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Combine, Library, Loader2, Plus, Scissors, Video, X } from 'lucide-react'
+import { Check, Combine, ImageIcon, Library, Loader2, Plus, Scissors, Video, X } from 'lucide-react'
+import { CoverMaker } from '../components/CoverMaker'
 import {
   DEFAULT_EDIT_LOOK, EDIT_MAX_SOURCES, EDIT_MAX_SOURCE_SECONDS, EDIT_MAX_TOTAL_SECONDS, aboutUsd, editEstimate, formatClock, formatUsd, isRunningEdit,
   type EditLook, type EditPlan, type EditSource, type EditStatus, type FilmIdea
@@ -90,6 +91,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const [screenshots, setScreenshots] = useState<ScreenshotPick[]>([])
   // The finished reel open in the clip editor (its run folder), or null.
   const [editing, setEditing] = useState<string | null>(null)
+  const [covering, setCovering] = useState<string | null>(null)
   // The brand and look are kept in a store, so leaving the page and coming back keeps them.
   const brandId = useEditRecordingStore((s) => s.brandId)
   const look = useEditRecordingStore((s) => s.look)
@@ -459,6 +461,8 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
               {status.editor && <Button variant="primary" icon={<Scissors className="h-4 w-4" />} data-testid="edit-open-editor" onClick={() => setEditing(status.folder)}>Open in the editor</Button>}
               {status.editor && <p className="max-w-sm text-2xs text-ink-muted">Move, change or add graphics, switch between full frame and the stage, and change the hook text, captions and cuts. Bake makes the video again.</p>}
               {onViewLibrary && <Button variant={status.editor ? 'secondary' : 'primary'} icon={<Library className="h-4 w-4" />} onClick={() => onViewLibrary(status.folder)}>Open in Library</Button>}
+              <Button variant="secondary" icon={<ImageIcon className="h-4 w-4" />} data-testid="edit-make-cover" onClick={() => setCovering(status.output!.path)}>Make my cover</Button>
+              <p className="max-w-sm text-2xs text-ink-muted">{status.format === 'youtube' ? 'A thumbnail from your best frames, with big words you said.' : 'A cover from your best frames, with your hook. Posting uses it as the cover.'}</p>
               <Button variant="secondary" icon={<Video className="h-4 w-4" />} onClick={startOver}>Edit another recording</Button>
               {status.chapters && status.chapters.length > 0 && <ChapterList chapters={status.chapters} />}
               {status.screen && status.format !== 'youtube' && <p className="max-w-sm text-2xs text-ink-muted" data-testid="screen-done">Your screen and camera play together. To show just you, just your screen or a different split in any part, open it in the Library and edit the clip.</p>}
@@ -467,6 +471,8 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
           </div>
         </Panel>
       )}
+
+      {covering && <CoverMaker videoPath={covering} onClose={() => setCovering(null)} />}
 
       {recorder !== false && (
         <EditRecorder prompt={recorder} onRecorded={(source) => addSources([source])}

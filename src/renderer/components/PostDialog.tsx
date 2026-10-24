@@ -184,6 +184,15 @@ export function PostDialog({ clips, onClose, onNavigate }: PostDialogProps): Rea
   const [coverAtMs, setCoverAtMs] = useState(() => suggestedCoverFrames(clip.durationMs || null)[0].atMs)
   const [coverImage, setCoverImage] = useState<{ path: string; sizeBytes: number } | null>(null)
   const [coverError, setCoverError] = useState<string | null>(null)
+  // The cover made with Make my cover (saved next to the video) is the cover, unless the member picks another.
+  useEffect(() => {
+    let live = true
+    getApi().covers.saved(clip.path).then((saved) => {
+      if (!live || !saved) return
+      setCoverImage(saved); setCoverMode('image')
+    }).catch(() => undefined)
+    return () => { live = false }
+  }, [clip.path])
   const [subtitles, setSubtitles] = useState<ClipSubtitles | null>(null)
   const [youtubeCaptions, setYoutubeCaptions] = useState(false)
   /** '' until known: the clip's recorded language, or the member's choice. */

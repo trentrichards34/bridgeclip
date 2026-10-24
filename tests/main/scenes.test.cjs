@@ -84,14 +84,14 @@ test('the engine field is on the finished clip\'s clock: through a cut and at 1.
     { scene: 'visual', start_ms: 3500, end_ms: 5000, backdrop: 'dark' }
   ])
   assert.deepEqual(plain(sc.outputScenes(clip())), [])
-  // The preview's mix: the card slides up over 350 ms from a stage start, the backdrop fades.
+  // The preview's mix: the card comes up over 350 ms from a stage start; the backdrop cuts in (never a dissolve).
   const out = sc.outputScenes(c)
   assert.deepEqual(plain(sc.sceneMix(out, 500)), { backdrop: null, under: null, alpha: 0, card: 0, shape: 'rounded' })
   const rising = sc.sceneMix(out, 800 + 175)
-  assert.equal(rising.backdrop, 'light'); assert.ok(Math.abs(rising.card - 0.5) < 1e-9 && Math.abs(rising.alpha - 0.5) < 1e-9)
+  assert.equal(rising.backdrop, 'light'); assert.ok(Math.abs(rising.card - 0.5) < 1e-9 && rising.alpha === 1)
   assert.deepEqual(plain(sc.sceneMix(out, 2000)), { backdrop: 'light', under: null, alpha: 1, card: 1, shape: 'rounded' })
   const leaving = sc.sceneMix(out, 4000 + 350)
-  assert.deepEqual(plain(leaving), { backdrop: 'dark', under: null, alpha: 0, card: 0, shape: 'rounded' })
+  assert.deepEqual(plain(leaving), { backdrop: null, under: null, alpha: 0, card: 0, shape: 'rounded' })
 })
 
 test('saved edits keep scenes beside the graphics, and a change needs a new render', () => {
