@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, Combine, Library, Loader2, Plus, Scissors, Video, X } from 'lucide-react'
 import {
-  DEFAULT_EDIT_LOOK, EDIT_MAX_SOURCES, EDIT_MAX_TOTAL_SECONDS, aboutUsd, editEstimate, formatClock, formatUsd, isRunningEdit,
+  DEFAULT_EDIT_LOOK, EDIT_MAX_SOURCES, EDIT_MAX_SOURCE_SECONDS, EDIT_MAX_TOTAL_SECONDS, aboutUsd, editEstimate, formatClock, formatUsd, isRunningEdit,
   type EditLook, type EditPlan, type EditSource, type EditStatus, type FilmIdea
 } from '../../shared/edit-recording'
 import { DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
@@ -45,6 +45,8 @@ import { useSettingsStore } from '../store/use-settings-store'
 import { useDailyPlan } from '../store/use-daily-plan-store'
 import { useMemberPrefsStore } from '../store/use-member-prefs-store'
 import { lookWithMyLook, myLookSummary } from '../../shared/my-look'
+import { YOUTUBE_MAX_TOTAL_SECONDS, suggestFormat, type EditFormat } from '../../shared/longform'
+import { ChapterList, FormatChoice } from '../components/YoutubeFormat'
 
 /** The brand's look as the starting look (captions, hook text, its handle when it has one). */
 export function lookFromBrand(brand: BrandIdentity | null): EditLook {
@@ -79,6 +81,8 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   // Retakes of one video, or parts of one video to combine (and how to order them to start with).
   const [mode, setMode] = useState<EditMode>('takes')
   const [orderMode, setOrderMode] = useState<ClipOrderMode>('filmed')
+  // A reel or a YouTube video: suggested from the recordings until the member picks one.
+  const [formatPick, setFormatPick] = useState<EditFormat | null>(null)
   const [importing, setImporting] = useState<ImportProgress[] | null>(null)
   // Camera + screen: a screen recording made with the (one) camera recording, and how they line up.
   const [screen, setScreen] = useState<ScreenPick | null>(null)
@@ -125,9 +129,13 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   const busy = isRunningEdit(status)
   const reviewing = status?.phase === 'review' && status.plan !== null
   const combine = mode === 'combine'
-  const maxSources = combine ? COMBINE_MAX_CLIPS : EDIT_MAX_SOURCES
-  const maxTotal = combine ? COMBINE_MAX_TOTAL_SECONDS : EDIT_MAX_TOTAL_SECONDS
   const total = sources.reduce((sum, source) => sum + source.seconds, 0)
+  const format: EditFormat = formatPick ?? (sources.length ? suggestFormat(sources) : 'reel')
+  const youtube = format === 'youtube'
+  const maxSources = combine ? COMBINE_MAX_CLIPS : EDIT_MAX_SOURCES
+  const maxTotal = combine ? COMBINE_MAX_TOTAL_SECONDS : youtube ? YOUTUBE_MAX_TOTAL_SECONDS : EDIT_MAX_TOTAL_SECONDS
+  // A reel's recordings keep their limit (a YouTube video's may run longer).
+  const tooLongForReel = !combine && !youtube ? sources.find((source) => source.seconds > EDIT_MAX_SOURCE_SECONDS + 1) ?? null : null
   const estimate = editEstimate(total)
   const tooLong = total > maxTotal
   // Clips are listed (and combined) in the order they were filmed.
@@ -192,7 +200,8 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
         ...(combine ? { mode: 'combine' as const, order: orderMode } : {}), ...(lastHeadline && !keepHeadline ? { newHeadline: true } : {}),
         ...(withScreen && screen ? { screen: { path: screen.source.path, offsetMs: screen.offsetMs } } : {}),
         ...(!withScreen && screenshots.length ? { screenshots: screenshots.map(({ path, box }) => ({ path, ...(box ? { box } : {}) })) } : {}),
-        ...(purpose.trim() ? { purpose: purpose.replace(/\s+/g, ' ').trim() } : {}), ...(reference ? { referenceImage: reference.id } : {}) }))
+        ...(purpose.trim() ? { purpose: purpose.replace(/\s+/g, ' ').trim() } : {}), ...(reference ? { referenceImage: reference.id } : {}),
+        ...(youtube ? { format: 'youtube' as const } : {}) }))
     } catch (err) { setError(errorMessage(err)) } finally { setStarting(false) }
   }
 
@@ -218,7 +227,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   }, [])
 
   const startOver = (): void => {
-    setSources([]); setImporting(null); setScreen(null); setHookHint(''); setPurpose(''); setReference(null); setStatus(null)
+    setSources([]); setImporting(null); setScreen(null); setFormatPick(null); setHookHint(''); setPurpose(''); setReference(null); setStatus(null)
     void getApi().edit.discard().catch(() => undefined)
   }
 
@@ -250,6 +259,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
       : !sources.length ? (combine ? 'Add your clips first.' : 'Add a take first.')
         : combine && sources.length < 2 ? 'Add at least one more clip to combine.'
           : tooLong ? (combine ? 'Your clips are too long in all.' : 'Your takes are too long in all.')
+            : tooLongForReel ? `“${tooLongForReel.name}” is over ${EDIT_MAX_SOURCE_SECONDS / 60} minutes: make it a YouTube video, or trim it for a reel.`
             : withScreen && sources.length !== 1 ? 'A screen recording goes with one camera recording.'
               : !screenReady ? 'Your screen recording is still being lined up.' : null
   const canStart = !blocker && !starting
@@ -336,16 +346,24 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
   )
 
   const aside = (
-    <MakerAside label={`Your reel · 9:16`}>
-      <PhoneFrame>
+    <MakerAside label={youtube ? 'Your YouTube video · 16:9' : `Your reel · 9:16`}>
+      {youtube ? (
+        <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black shadow-[0_20px_50px_rgb(0_0_0/0.5)]" data-testid="edit-landscape-frame">
+          {firstSource
+            ? <video key={firstSource.path} src={`${localFileUrl(firstSource.path)}#t=0.1`} preload="metadata" muted playsInline aria-hidden tabIndex={-1} className="h-full w-full object-contain" />
+            : <span className="absolute inset-x-4 top-1/2 -translate-y-1/2 text-center text-2xs text-ink-subtle">Your first {label} shows here</span>}
+        </div>
+      ) : <PhoneFrame>
         {firstSource
           ? <video key={firstSource.path} src={`${localFileUrl(firstSource.path)}#t=0.1`} preload="metadata" muted playsInline aria-hidden tabIndex={-1} className="h-full w-full object-cover" />
           : <span className="absolute inset-x-4 top-1/2 -translate-y-1/2 text-center text-2xs text-ink-subtle">Your first {label} shows here</span>}
         {(hookHint || (keepHeadline && lastHeadline)) && sources.length > 0 && (
           <span className="absolute inset-x-[8%] top-[9%] text-center font-display text-sm font-bold leading-tight text-white [text-shadow:0_2px_6px_rgb(0_0_0/0.7)]">{hookHint || lastHeadline}</span>
         )}
-      </PhoneFrame>
-      <Checklist items={combine
+      </PhoneFrame>}
+      <Checklist items={youtube
+        ? ['Retakes and filler words cut', 'A branded cold open, then light and screen-led', withScreen ? 'Your screen with your webcam as a large card' : 'Captions on key lines, chapters for YouTube']
+        : combine
         ? ['Your clips joined into one reel, in order', 'Brightness and loudness evened out', 'Captions, pop-ups and sound in your look']
         : ['Retakes and filler words cut', 'Strongest hook moved first', withScreen ? 'Your screen and you share the frame' : 'Captions, pop-ups and sound in your look']} />
       <Button variant="primary" size="lg" className="mt-4 h-12 w-full rounded-[13px] font-display text-[15px] font-semibold"
@@ -369,6 +387,7 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
 
       <MakerSection number={1} title="What did you record?">
         <ModeChoice value={mode} onChange={chooseMode} disabled={Boolean(importing)} />
+        <FormatChoice value={format} sources={listed} onChange={setFormatPick} disabled={Boolean(importing)} />
       </MakerSection>
 
       {takes}
@@ -430,16 +449,19 @@ export function EditRecordingPage({ onNavigate, onViewLibrary }: { onNavigate: (
 
       {status?.phase === 'done' && status.output && (
         <Panel className="mt-5">
-          <PanelHeader title="Your reel is ready" icon={<IconTile tone="success"><Check /></IconTile>}
+          <PanelHeader title={status.format === 'youtube' ? 'Your YouTube video is ready' : 'Your reel is ready'} icon={<IconTile tone="success"><Check /></IconTile>}
             description={`${formatClock(status.output.durationSeconds)} long, saved to your Library.${status.costUsd > 0 ? ` The AI steps cost ${formatUsd(status.costUsd)}.` : ''}`} />
           <div className="mt-4 flex flex-wrap items-start gap-5">
-            <video src={localFileUrl(status.output.path)} controls playsInline className="aspect-[9/16] w-[220px] rounded-xl bg-black object-contain shadow-[0_20px_50px_rgb(0_0_0/0.5)]" aria-label="Your reel" />
+            {status.format === 'youtube'
+              ? <video src={localFileUrl(status.output.path)} controls playsInline className="aspect-video w-[420px] max-w-full rounded-xl bg-black object-contain shadow-[0_20px_50px_rgb(0_0_0/0.5)]" aria-label="Your YouTube video" />
+              : <video src={localFileUrl(status.output.path)} controls playsInline className="aspect-[9/16] w-[220px] rounded-xl bg-black object-contain shadow-[0_20px_50px_rgb(0_0_0/0.5)]" aria-label="Your reel" />}
             <div className="flex flex-col gap-2">
               {status.editor && <Button variant="primary" icon={<Scissors className="h-4 w-4" />} data-testid="edit-open-editor" onClick={() => setEditing(status.folder)}>Open in the editor</Button>}
               {status.editor && <p className="max-w-sm text-2xs text-ink-muted">Move, change or add graphics, switch between full frame and the stage, and change the hook text, captions and cuts. Bake makes the video again.</p>}
               {onViewLibrary && <Button variant={status.editor ? 'secondary' : 'primary'} icon={<Library className="h-4 w-4" />} onClick={() => onViewLibrary(status.folder)}>Open in Library</Button>}
               <Button variant="secondary" icon={<Video className="h-4 w-4" />} onClick={startOver}>Edit another recording</Button>
-              {status.screen && <p className="max-w-sm text-2xs text-ink-muted" data-testid="screen-done">Your screen and camera play together. To show just you, just your screen or a different split in any part, open it in the Library and edit the clip.</p>}
+              {status.chapters && status.chapters.length > 0 && <ChapterList chapters={status.chapters} />}
+              {status.screen && status.format !== 'youtube' && <p className="max-w-sm text-2xs text-ink-muted" data-testid="screen-done">Your screen and camera play together. To show just you, just your screen or a different split in any part, open it in the Library and edit the clip.</p>}
               {status.warnings.map((warning) => <p key={warning} className="max-w-sm text-2xs text-ink-muted">{warning}</p>)}
             </div>
           </div>

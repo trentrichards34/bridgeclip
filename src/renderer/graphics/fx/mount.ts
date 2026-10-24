@@ -120,6 +120,12 @@ export function fxBox(spec: Pick<GraphicRenderSpec, 'width' | 'height' | 'box' |
   if (effect.frame === 'full') return { x: 0, y: 0, w: W, h: H }
   const top = spec.box.top * H, h = Math.max(40, (spec.box.bottom - spec.box.top) * H)
   const side = Math.min(W, H) * (spec.size === 'compact' ? .1 : spec.size === 'stage' ? .035 : .05)
+  // A band across part of the frame (a YouTube side panel or lower third): the effect stays inside it.
+  if (spec.box.left !== undefined || spec.box.right !== undefined) {
+    const x0 = (spec.box.left ?? 0) * W, x1 = (spec.box.right ?? 1) * W
+    const w = Math.round(Math.min(x1 - x0, h * (effect.aspect ?? 2.4)))
+    return { x: Math.round(x0 + (x1 - x0 - w) / 2), y: Math.round(top), w, h: Math.round(h) }
+  }
   // Never wider than the unit's widest shape (a wide band of a 16:9 frame would stretch a card).
   const w = Math.round(Math.min(W - 2 * side, h * (effect.aspect ?? 2.4)))
   return { x: Math.round((W - w) / 2), y: Math.round(top), w, h: Math.round(h) }

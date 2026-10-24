@@ -127,6 +127,8 @@ export interface HistoryEntry {
   sourceUrl?: string
   /** Remix runs: AI presenter, on camera, or over an article or post. */
   remixKinds?: ('ai' | 'camera' | 'image')[]
+  /** Edit my recording: a reel or a YouTube video (the Library's tag). */
+  format?: 'reel' | 'youtube'
   editorProject?: boolean
   candidateCount?: number
   favorite?: boolean

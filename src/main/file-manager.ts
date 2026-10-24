@@ -18,6 +18,8 @@ export interface JobHistoryEntry {
   madeWith?: RunMaker
   /** For Remix runs: AI presenter, on camera, or over an article or post. */
   remixKinds?: RemixKind[]
+  /** Edit my recording: a reel or a YouTube video (the Library's tag). */
+  format?: 'reel' | 'youtube'
   /** Create runs: the video's link or file (the daily plan offers more clips from it). */
   sourceUrl?: string
   editorProject?: boolean
@@ -114,6 +116,7 @@ export async function getJobHistory(baseDir: string, activeJobIds: ReadonlySet<s
         entries.push({
           madeWith,
           ...(remixKinds ? { remixKinds } : {}),
+          ...(madeWith === 'edit' ? { format: metrics.format === 'youtube' ? 'youtube' as const : 'reel' as const } : {}),
           ...(madeWith === 'create' && data.source_video_url ? { sourceUrl: data.source_video_url } : {}),
           favorite: isRunFavorite(join(baseDir, dir.name)),
           jobId: dir.name,

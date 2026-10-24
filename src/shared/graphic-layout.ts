@@ -13,6 +13,7 @@
 import { sceneAt, type CandidateEdit, type EditorProject } from './clip-editor'
 import { HEADLINE_FONTS, headlineShownAt, isHexColor } from './headline-look'
 import { STAGE_LAYOUT, sceneAt as stageSceneAt, stageHookEndMs } from './scenes'
+import { landscapeBand, landscapeKind } from './longform'
 import { DIAGRAM_ACCENT, graphicWindow, isDiagram, outputTime, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize } from './motion-graphics'
 
 /** The editor's default brand color for graphics (the engine's cards use the same calm blue). */
@@ -196,7 +197,7 @@ export function placementAvoidingFace(project: Pick<EditorProject, 'aspect_ratio
   return (['top', 'bottom', 'middle'] as const).reduce((best, p) => cover(p) < cover(best) - .005 ? p : best, graphic.placement)
 }
 
-export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width' | 'height' | 'automatic'>, candidate: CandidateEdit, graphic: EditorGraphic, extra: { top?: number } = {}): GraphicRenderSpec | null {
+export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width' | 'height' | 'automatic'> & Partial<Pick<EditorProject, 'youtube' | 'brand_mark'>>, candidate: CandidateEdit, graphic: EditorGraphic, extra: { top?: number } = {}): GraphicRenderSpec | null {
   const window = graphicWindow(candidate, graphic)
   if (!window) return null
   const { width, height } = outputSize(project.aspect_ratio)
@@ -237,6 +238,15 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
   // A chapter header over a white hook bar is drawn in dark ink.
   if (graphic.template === 'chapter' && candidate.hook?.look.look === 'white' && hookShare(candidate, project.aspect_ratio) > 0) fields.ink = 'dark'
   else delete fields.ink
+  const style = graphicStyle(candidate, graphic)
+  if (project.aspect_ratio === '16:9' && project.youtube && graphic.template !== 'chapter') {
+    // A YouTube video: a full-screen brand card, a lower third or a side panel (longform.ts), clear of the webcam card.
+    const kind = landscapeKind(graphic)
+    const band = landscapeBand(kind, project.youtube.pip)
+    const mark = project.brand_mark?.handle?.trim()
+    return { template: graphic.template, fields, width, height, duration_ms: window.duration_ms, box: band, placement: graphic.placement, ...style,
+      ...(kind === 'full' ? { size: 'stage' as const, backdrop: { color: style.color, ...(mark ? { mark: mark.slice(0, 40) } : {}) } } : kind === 'lower' ? { size: 'compact' as const } : {}) }
+  }
   return { template: graphic.template, fields, width, height, duration_ms: window.duration_ms, box, placement: graphic.placement,
-    ...graphicStyle(candidate, graphic), ...(graphic.size && graphic.size !== 'card' ? { size: graphic.size } : {}) }
+    ...style, ...(graphic.size && graphic.size !== 'card' ? { size: graphic.size } : {}) }
 }

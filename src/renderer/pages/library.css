@@ -38,6 +38,10 @@
   color:rgb(var(--st)); background:rgb(var(--st) / .13); }
 .library-pill.status-neutral { color:rgb(var(--ink-muted)); background:rgb(255 255 255 / .06); }
 .library-card-title { font-weight:600; font-size:13.5px; line-height:1.35; color:rgb(var(--ink)); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }
+/* Edit my recording's format: a Reel or a YouTube video. */
+.library-format { display:inline-block; padding:0 6px; border-radius:5px; font-size:9.5px; line-height:15px; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
+  color:rgb(var(--ink-muted)); background:rgb(255 255 255 / .07); vertical-align:1px; }
+.library-format.youtube { color:#FF6B6B; background:rgb(255 70 70 / .13); }
 .library-card-source { font-size:11.5px; color:rgb(var(--ink-subtle)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .library-card-meta { margin-top:auto; padding-top:4px; font-size:10.5px; color:rgb(var(--ink-muted)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .library-card-menu { position:absolute; right:8px; top:8px; display:flex; align-items:center; gap:4px; }

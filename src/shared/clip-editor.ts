@@ -5,6 +5,7 @@ import { parseScenes, type StageScene } from './scenes'
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
 import { isCaptionLanguage, type CaptionLanguage } from './caption-language'
 import { parseScreenPair, type ScreenPair } from './screen-pair'
+import { parseYoutubeLayout, type YoutubeLayout } from './longform'
 import { parseLookExtras, type LookExtraId } from './look-extras'
 import { parseCandidateSound, type CandidateSound } from './sound-design'
 export type Crop = [number, number, number, number]
@@ -143,6 +144,8 @@ export interface EditorProject {
   automatic?: AutomaticOrigin
   /** Camera + screen (screen-pair.ts): where the camera and the screen are in the source. */
   pair?: ScreenPair
+  /** A YouTube video (longform.ts): the webcam card's box and the captions mode; graphics take landscape bands. */
+  youtube?: YoutubeLayout
   /** An edited reel (Edit my recording): the brand's handle or logo the bake draws in a corner. */
   brand_mark?: BrandMarkOrigin
 }
@@ -393,6 +396,7 @@ export function parseEditorProject(value: unknown): EditorProject {
     transcript, ...(v.headline_voice === 'creator' || v.headline_voice === 'clipper' ? { headline_voice: v.headline_voice } : {}),
     ...(v.automatic !== undefined ? { automatic: parseAutomaticOrigin(v.automatic) } : {}),
     ...(v.pair !== undefined ? { pair: parseScreenPair(v.pair) ?? fail() } : {}),
+    ...(v.youtube !== undefined && v.aspect_ratio === '16:9' ? { youtube: parseYoutubeLayout(v.youtube) ?? fail() } : {}),
     ...(v.brand_mark !== undefined ? { brand_mark: parseBrandMark(v.brand_mark) } : {}),
     ...(v.preview_id ? { preview_id: v.preview_id as string } : {}), ...(v.frame_preview === true ? { frame_preview: true } : {}), ...(v.media_freed === true ? { media_freed: true } : {}), ...(v.source_id ? { source_id: v.source_id as string } : {}) }
 }

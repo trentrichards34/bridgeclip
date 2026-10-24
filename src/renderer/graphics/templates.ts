@@ -22,6 +22,7 @@ import { ICONS } from './icons'
 import { bigWordsTemplate } from './big-words'
 import { takeoverTemplate } from './takeover'
 import { mountEffect } from './fx/mount'
+import { mountBackdrop } from './backdrop'
 import { ctaTemplate } from './cta'
 import { chapterTemplate, compareMarksTemplate, funnelTemplate, growthTemplate, ideaHubTemplate, journeyTemplate, staircaseTemplate } from './diagrams'
 import { TEXT_FILL, TEXT_MAX_FILL, largestFitting, textMinType, textTheme, wordCount } from './text-fit'
@@ -226,6 +227,16 @@ interface Build {
 }
 
 export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): MountedGraphic {
+  // A full-screen brand card (YouTube): the brand backdrop under the graphic, cut in and out with it.
+  if (spec.backdrop) {
+    const back = mountBackdrop(host, spec)
+    const inner = mountContent(host, spec)
+    return { ready: inner.ready, seek: (ms) => { back.seek(ms); inner.seek(ms) }, destroy: () => { inner.destroy(); back.destroy() } }
+  }
+  return mountContent(host, spec)
+}
+
+function mountContent(host: HTMLElement, spec: GraphicRenderSpec): MountedGraphic {
   // Effects (HyperFrames units) run their own GSAP timeline in a shadow root (fx/mount.ts).
   if (spec.template === 'fx') return mountEffect(host, spec)
   const { width: W, height: H } = spec
@@ -250,11 +261,14 @@ export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): Mounte
   root.style.setProperty('--display-tracking', display.tracking)
   const frameU = Math.min(W, H) / 1080
   const widest = size === 'stage' ? 984 : size === 'compact' ? 800 : 940
-  root.style.setProperty('--card-w', `${Math.round(Math.min(W - (size === 'stage' ? 96 : 140) * frameU, widest * frameU))}px`)
+  // A band across part of the frame (a YouTube side panel or lower third) is as wide as its part.
+  const left = spec.box.left ?? 0, bandW = W * ((spec.box.right ?? 1) - left)
+  root.style.setProperty('--card-w', `${Math.round(Math.min(bandW - (size === 'stage' ? 96 : 140) * frameU * (bandW < W ? .3 : 1), widest * frameU * (bandW < W && size === 'stage' ? 1.5 : 1)))}px`)
   root.style.setProperty('--logo', `${Math.round(Math.min(380 * u, (spec.box.bottom - spec.box.top) * H * .62))}px`)
   const band = el('div', `mg-band ${size === 'stage' ? 'stage' : spec.placement}`, root)
   band.style.top = `${spec.box.top * H}px`
   band.style.height = `${(spec.box.bottom - spec.box.top) * H}px`
+  if (bandW < W) { band.style.left = `${left * W}px`; band.style.right = 'auto'; band.style.width = `${bandW}px` }
   const fit = el('div', 'mg-fit', band)
   // The video's one look: light ink on dark glass ('dark') or dark ink on white ('light'), for the templates whose
   // classic look is a white card (a look picked for the graphic keeps its own colors); words with no card take dark ink

@@ -330,6 +330,9 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
         from clip_engine.services.graphics_director import detect_register, find_cues
         options['register'] = detect_register(find_cues(segments), kept_seconds * 1000)
     limit = graphics_limit(kept_seconds, options['register'])
+    if type(options.get('limit')) is int:
+        # A YouTube video's long-form pacing sets its own count (longform.graphics_budget).
+        limit = max(1, min(MAX_GRAPHICS, options['limit']))
     blocked = {i for a, b in avoid for i in range(max(0, a), min(len(words), b + 1))}
     logo_ok = {i for a, b in logos_in for i in range(max(0, a), min(len(words), b + 1))}
     planned = []

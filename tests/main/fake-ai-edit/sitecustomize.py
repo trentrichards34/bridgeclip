@@ -34,6 +34,23 @@ if os.environ.get("CREATORCLIPS_FAKE_AI") == "1":
             def graphic(template, word, seconds, **fields):
                 return {**blank, "template": template, "word": word, "seconds": seconds, "placement": "top", **fields}
 
+            if "LONG LANDSCAPE YOUTUBE VIDEO" in payload["messages"][0]["content"]:
+                # A YouTube video: open on the launch line, end on the call to action; a dense cold open (a title, a
+                # stat overlay, numbered chips, a line rising word by word), then a number in the body; a chapter title.
+                def fx(word, seconds, effect, **fields):
+                    return {**graphic("fx", word, seconds), "effect": effect, "fx_fields": [{"key": k, "value": v} for k, v in fields.items()]}
+                plan = {
+                    "hooks": [{"start": first("I"), "end": first("AI."), "text": "I launched a brand new tool", "why": "A launch, first."}],
+                    "cuts": [], "cta": {"present": True, "start": first("Follow"), "end": first("more.")}, "sounds": [],
+                    "graphics": [fx(first("brand"), 3, "titlecard-lockup", title="brand new tool", kicker="I launched a"),
+                                 graphic("stat", first("1,227"), 3, value="$1,227", label="monthly recurring revenue"),
+                                 fx(first("input,"), 4, "state-chip-rail", states="input\nprocess\noutput"),
+                                 fx(first("500"), 3, "per-word-rise", text="500 dollars a week"),
+                                 graphic("stat", first("3"), 3, value="3%", label="churn")],
+                    "chapter": "brand new tool" if "PART 1 of" not in payload["messages"][0]["content"] or "Give the hooks" in payload["messages"][0]["content"] else "",
+                }
+                return {"choices": [{"message": {"content": json.dumps(plan)}}]}, {"cost": 0.004}
+
             if "--- Clip 1 (" in text:
                 # Combine clips: open on the screen clip's last line, play B, A, C, and a proof graphic on "$8,188".
                 plan = {

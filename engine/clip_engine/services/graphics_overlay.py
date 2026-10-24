@@ -36,7 +36,7 @@ import re
 from pathlib import Path
 from typing import Iterable, Optional
 
-from clip_engine.services.media_process import MEDIA_INPUT_OPTIONS
+from clip_engine.services.media_process import MEDIA_INPUT_OPTIONS, run_media
 
 GRAPHICS_DIR = ".graphics"
 # Renders made for Edit my recording and Remix (the clip editor's sweep leaves this folder alone).
@@ -624,19 +624,95 @@ def overlay_graphics_file(video: str, graphics: list[dict], width: int, height: 
             os.remove(output)
 
 
+def _duration_s(video: str) -> float:
+    result = run_media(["ffprobe", "-v", "error", *MEDIA_INPUT_OPTIONS, "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", video], timeout=60)
+    try:
+        value = float((result.stdout or b"").decode().strip())
+    except ValueError:
+        return 0.0
+    return value if value > 0 else 0.0
+
+
 def overlapping(start_ms: int, length_ms: int, windows: Iterable[tuple[float, float]]) -> bool:
     """Whether [start, start + length) (ms) overlaps any of `windows` (seconds)."""
     a, b = start_ms / 1000, (start_ms + length_ms) / 1000
     return any(a < hi and b > lo for lo, hi in windows)
 
 
+def chunk_commands(video: str, graphics: list[dict], output: str, width: int, height: int, codec: list[str], total_ms: int,
+                   fps: float) -> tuple[list[tuple[str, list[str]]], list[str], str]:
+    """A long video's graphics laid in chunks (longform.chunk_ranges: cut where no graphic plays), so FFmpeg only ever
+    opens one chunk's graphics: [(part file, its command)], the command that joins the parts (stream copy) with the
+    video's own sound, and the parts' list file to write. Each chunk starts and ends on a frame."""
+    from clip_engine.services.longform import chunk_ranges
+    rate = fps if fps > 0 else 30.0
+    spans = [(int(g["start_ms"]), int(g["start_ms"]) + int(g["duration_ms"])) for g in graphics]
+    frames = [round(a * rate / 1000) for a, _ in chunk_ranges(total_ms, spans)] + [None]
+    parts: list[tuple[str, list[str]]] = []
+    for k in range(len(frames) - 1):
+        a_f, b_f = frames[k], frames[k + 1]
+        a_ms = a_f * 1000 / rate
+        b_ms = b_f * 1000 / rate if b_f is not None else float("inf")
+        inside = [{**g, "start_ms": int(round(g["start_ms"] - a_ms))} for g in graphics if a_ms <= g["start_ms"] < b_ms]
+        part = f"{output}.part{k:03d}.mp4"
+        cmd = overlay_command(video, inside, part, width, height, codec)
+        at = cmd.index("-i")
+        cmd[at - len(MEDIA_INPUT_OPTIONS):at - len(MEDIA_INPUT_OPTIONS)] = ["-ss", f"{a_f / rate:.6f}"]
+        audio = cmd.index("0:a?")
+        cmd[audio - 1:audio + 3] = ["-an"]
+        if b_f is not None:
+            cmd[-1:-1] = ["-frames:v", str(b_f - a_f)]
+        parts.append((part, cmd))
+    listing = f"{output}.parts.txt"
+    join = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-protocol_whitelist", "file,pipe,fd",
+            "-i", listing, *MEDIA_INPUT_OPTIONS, "-i", video, "-map", "0:v", "-map", "1:a?", "-c", "copy", "-movflags", "+faststart", output]
+    return parts, join, listing
+
+
+async def overlay_in_chunks(renderer, video: str, graphics: list[dict], output: str, width: int, height: int, codec: list[str],
+                            total_ms: int, fps: float) -> None:
+    """overlay_graphics for a long video: chunk by chunk, then joined (see chunk_commands)."""
+    parts, join, listing = chunk_commands(video, graphics, output, width, height, codec, total_ms, fps)
+    try:
+        for part, cmd in parts:
+            await renderer._run_cmd(cmd)
+        with open(listing, "w", encoding="utf-8") as handle:
+            handle.writelines(f"file '{os.path.basename(part)}'\n" for part, _ in parts)
+        await renderer._run_cmd(join)
+    finally:
+        for path in [listing, *(part for part, _ in parts)]:
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def _rate(fps: str) -> float:
+    try:
+        a, _, b = str(fps).partition("/")
+        return float(a) / float(b or 1)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 30.0
+
+
 async def overlay_graphics(renderer, video: str, graphics: list[dict]) -> None:
-    """Replace `video` with a copy that has the graphics laid over it."""
+    """Replace `video` with a copy that has the graphics laid over it. A long video (a YouTube video) with nothing behind
+    the speaker is done in chunks, so memory stays bounded however long it is."""
     if not graphics:
         return
     import asyncio
     width, height = await renderer._get_video_dimensions(video)
     fps = await renderer._probe_fps(video)
+    from clip_engine.services.longform import CHUNK_AFTER_MS
+    total_ms = int(round(await asyncio.to_thread(_duration_s, video) * 1000))
+    if total_ms > CHUNK_AFTER_MS and not any(g.get("depth") for g in graphics):
+        output = f"{video}.graphics.mp4"
+        try:
+            await overlay_in_chunks(renderer, video, graphics, output, width, height, renderer._video_codec_args(width, height, fps),
+                                    total_ms, _rate(fps))
+            os.replace(output, video)
+        finally:
+            if os.path.exists(output):
+                os.remove(output)
+        return
     mattes = await asyncio.to_thread(behind_mattes, video, graphics)
     if mattes:
         graphics = await asyncio.to_thread(place_behind, graphics, mattes, width, height)

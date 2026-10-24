@@ -310,8 +310,10 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
     setExporting(true)
     setExportError(null)
     try {
-      const list = picked.map((c) => ({ path: clipFilePath(c.s3_url), name: c.summary || `Clip ${c.clip_index + 1}` }))
-      const result = asZip ? await getApi().clips.exportZip(list, output.source_video_title || 'CreatorClips clips') : await getApi().clips.bulkExport(list)
+      // A YouTube video (Edit my recording) says so in its file name.
+      const format = output.metrics?.format === 'youtube' ? ' (YouTube)' : ''
+      const list = picked.map((c) => ({ path: clipFilePath(c.s3_url), name: `${c.summary || `Clip ${c.clip_index + 1}`}${format}` }))
+      const result = asZip ? await getApi().clips.exportZip(list, `${output.source_video_title || 'CreatorClips clips'}${format}`) : await getApi().clips.bulkExport(list)
       if (result.success) {
         setAddedToBank(false)
         setNotice(`Exported ${result.count} clip${result.count === 1 ? '' : 's'}${result.destDir ? ` to ${basename(result.destDir)}` : ''}${result.failedCount ? `; ${result.failedCount} could not be copied` : ''}`)

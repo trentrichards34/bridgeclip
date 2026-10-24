@@ -30,6 +30,8 @@ import { ColorGradePicker } from './ColorGradePicker'
 import { Dialog, DialogFooter } from './ui/Dialog'
 import { ScreenChoicePanel } from './ScreenRecording'
 import { DEFAULT_SCREEN_CHOICE } from '../../shared/screen-pair'
+import { DEFAULT_YOUTUBE_CHOICE } from '../../shared/longform'
+import { YoutubeChoicePanel } from './YoutubeFormat'
 import { editSkillPatch, editSkillRows } from '../../shared/skills'
 import { DEFAULT_SOUND_REGISTER, SOUND_REGISTERS } from '../../shared/sound-design'
 import { REGISTER_INFO, registerKeeps } from '../../shared/register'
@@ -94,7 +96,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
     // Saved choices win; anything they don't have (a newer field) starts from the plan.
     const start = saved ? { ...fresh, ...saved } : first
     // Camera + screen: how the two share the frame.
-    return status.screen && !start.screen ? { ...start, screen: { ...DEFAULT_SCREEN_CHOICE } } : start
+    const withScreen = status.screen && !start.screen ? { ...start, screen: { ...DEFAULT_SCREEN_CHOICE } } : start
+    // A YouTube video: its layout and captions (defaults: a large webcam card on the right, captions on key lines).
+    return status.format === 'youtube' && !withScreen.youtube ? { ...withScreen, youtube: { ...DEFAULT_YOUTUBE_CHOICE, ...(status.screen ? {} : { layout: 'full' as const }) } } : withScreen
   })
   // Images can be added or removed (here, or by main); kept in step with the status.
   const [images, setImages] = useState<EditImage[]>(status.images ?? [])
@@ -153,7 +157,9 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const cardTrouble = decisions.popups.some((item) => item.on && item.card && !cut.has(plan.popups.find((p) => p.id === item.id)?.word ?? -1) && cardProblem(item.card) !== null)
   const sources = status.sources
   // Camera + screen reels: no pop-ups, cards, images, graphics, b-roll, openings or extras (the screen is the visual).
-  const screen = status.screen ?? null
+  // A YouTube video with a screen recording is directed like any other (screen + webcam picture-in-picture).
+  const youtube = status.format === 'youtube'
+  const screen = youtube ? null : status.screen ?? null
   // The preview shows the reel's own opening words.
   const previewWords = useMemo(() => plan.words.filter((_, i) => !cut.has(i)).slice(0, 8).map((word) => word.text), [plan.words, decisions.cut])
 
@@ -281,7 +287,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const saveBeatChoice = (choice: typeof beatChoice): void => { void useMemberPrefsStore.getState().saveApp({ beatSheet: choice }).catch((err: unknown) => onError(errorMessage(err))) }
   // "Make my reel": ask first, open the beat sheet, or make it (camera + screen reels have no beats to show).
   const makeOrAsk = (): void => {
-    const next = screen ? 'render' : beforeRender(beatChoice, view === 'beats')
+    const next = screen || youtube ? 'render' : beforeRender(beatChoice, view === 'beats')
     if (next === 'ask') setOffer(true)
     else if (next === 'sheet') openBeats()
     else void make()
@@ -450,6 +456,10 @@ export function EditReview({ status, brand, look, onLook, onError }: {
             <p className="mt-1 text-2xs text-ink-subtle"><span className="text-tool">Highlighted</span>: plays first, as your hook.{plan.cta ? ' Underlined: your call to action, at the end.' : ''}</p>
           </section>
 
+          {youtube && decisions.youtube && (
+            <YoutubeChoicePanel value={decisions.youtube} pair={Boolean(status.screen)} disabled={making} onChange={(next) => setDecisions((current) => ({ ...current, youtube: next }))} />
+          )}
+
           {screen && decisions.screen && (
             <ScreenChoicePanel value={decisions.screen} disabled={making} onChange={(next) => setDecisions((current) => ({ ...current, screen: next }))} />
           )}
@@ -471,7 +481,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
               : id === 'sound_effects' ? () => scrollTo('edit-sounds-title')
                 : id === 'rough_cut' ? () => scrollTo('edit-transcript-title') : undefined} />
 
-          {!screen && <EditStylePicker recipe={decisions.recipe} extras={decisions.lookExtras}
+          {!screen && !youtube && <EditStylePicker recipe={decisions.recipe} extras={decisions.lookExtras}
             onRecipe={(id) => { useEditRecordingStore.getState().setRecipe(id); setDecisions((current) => applyRecipe(plan, current, id)) }}
             onExtras={(lookExtras) => setDecisions((current) => ({ ...current, lookExtras }))} />}
 
@@ -623,7 +633,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
         <div className="flex flex-wrap items-center gap-2">
           {view === 'beats' && !screen && <Button variant="ghost" disabled={making} onClick={() => setView('edit')}>Back to your edit</Button>}
           <Button variant="primary" size="lg" icon={<Clapperboard className="h-4 w-4" />} loading={making} disabled={making || problem !== null || seconds < 1.5 || cardTrouble}
-            onClick={makeOrAsk}>{view === 'beats' && !screen ? 'Looks good, render' : 'Make my reel'}</Button>
+            onClick={makeOrAsk}>{view === 'beats' && !screen ? 'Looks good, render' : youtube ? 'Make my YouTube video' : 'Make my reel'}</Button>
         </div>
       </div>
       {offer && <Dialog aria-label="See your beats first?" panelClassName="max-w-[460px]" onBackdropMouseDown={() => setOffer(false)}

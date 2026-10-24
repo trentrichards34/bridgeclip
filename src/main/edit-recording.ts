@@ -49,6 +49,7 @@ import { assertMediaPath, authorizeMedia } from './security'
 import { getSettingsForBridge, loadSettings, vocabularyTerms } from './settings-store'
 import { resolveBinary } from './tools'
 import { beatFrame } from './beat-stills'
+import { DEFAULT_YOUTUBE_CHOICE, YOUTUBE_MAX_SOURCE_SECONDS, YOUTUBE_MAX_TOTAL_SECONDS, isEditFormat, parseChapters, youtubeForEngine, type EditFormat } from '../shared/longform'
 
 // ---------------------------------------------------------------------------
 // Edit my recording: transcribe (Scribe v2 through OpenRouter, the usual
@@ -224,12 +225,27 @@ export async function mediaCreated(path: string): Promise<string | null> {
 export async function describeSource(path: string, mode: EditMode = 'takes'): Promise<EditSource> {
   if (!EDIT_VIDEO_EXTENSIONS.includes(extname(path).slice(1).toLowerCase())) throw new Error('Choose a video: MP4, MOV, WebM, M4V or MKV.')
   const seconds = await mediaSeconds(path)
-  const [min, max] = mode === 'combine' ? [COMBINE_MIN_CLIP_SECONDS, COMBINE_MAX_CLIP_SECONDS] : [EDIT_MIN_SOURCE_SECONDS, EDIT_MAX_SOURCE_SECONDS]
+  // A recording for a YouTube video may run longer than a reel's (the format is picked after the recordings).
+  const [min, max] = mode === 'combine' ? [COMBINE_MIN_CLIP_SECONDS, COMBINE_MAX_CLIP_SECONDS] : [EDIT_MIN_SOURCE_SECONDS, YOUTUBE_MAX_SOURCE_SECONDS]
   if (seconds < min) throw new Error(`“${basename(path)}” could not be read, or it’s under ${min} second${min === 1 ? '' : 's'}.`)
   if (seconds > max + 1) throw new Error(mode === 'combine' ? `“${basename(path)}” is over ${max / 60} minutes. Use clips of up to ${max / 60} minutes each.` : `“${basename(path)}” is over ${max / 60} minutes. Trim it, or record it in shorter takes.`)
   known.set(path, seconds)
   const createdAt = mode === 'combine' ? await mediaCreated(path) : null
-  return { path, name: basename(path), seconds: Math.round(seconds * 100) / 100, ...(createdAt ? { createdAt } : {}) }
+  const shape = await mediaShape(path)
+  return { path, name: basename(path), seconds: Math.round(seconds * 100) / 100, ...(createdAt ? { createdAt } : {}), ...(shape ?? {}) }
+}
+
+/** The picture's size as shown (after rotation), or null when it can't be read: the format suggestion uses it. */
+export async function mediaShape(path: string): Promise<{ width: number; height: number } | null> {
+  try {
+    const { stdout } = await execFileAsync(resolveBinary('ffprobe'), ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height:stream_tags=rotate:stream_side_data=rotation',
+      '-of', 'json', path], { timeout: 30_000 })
+    const stream = (JSON.parse(String(stdout)) as { streams?: { width?: number; height?: number; tags?: { rotate?: string }; side_data_list?: { rotation?: number }[] }[] }).streams?.[0]
+    const w = Number(stream?.width), h = Number(stream?.height)
+    if (!Number.isInteger(w) || !Number.isInteger(h) || w <= 0 || h <= 0) return null
+    const rotation = Number(stream?.side_data_list?.find((side) => side.rotation !== undefined)?.rotation ?? stream?.tags?.rotate ?? 0)
+    return Math.abs(rotation) % 180 === 90 ? { width: h, height: w } : { width: w, height: h }
+  } catch { return null }
 }
 
 export interface ParsedEditStart {
@@ -240,6 +256,8 @@ export interface ParsedEditStart {
   screen: { path: string; offsetMs: number } | null
   /** Screenshots for the video, each with its box (the part that matters) or none. */
   screenshots: { path: string; box: [number, number, number, number] | null }[]
+  /** A YouTube video (landscape, long); missing: a reel. */
+  format?: EditFormat
 }
 
 /** The start request from the page, checked: recordings the member chose here (or ones in the Library). */
@@ -262,13 +280,14 @@ export function parseEditStart(value: unknown, outputDirectory: string): ParsedE
   if (raw.brandIdentityId !== null && raw.brandIdentityId !== undefined && !isBrandId(raw.brandIdentityId)) throw new Error('Choose one of your brands.')
   if (raw.hookHint !== undefined && (typeof raw.hookHint !== 'string' || raw.hookHint.length > MAX_HOOK_HINT_CHARS)) throw new Error('That hook is too long.')
   if (raw.newHeadline !== undefined && typeof raw.newHeadline !== 'boolean') throw new Error('Choose to keep your last headline or get a new one.')
+  if (raw.format !== undefined && !isEditFormat(raw.format)) throw new Error('Choose a reel or a YouTube video.')
   const purpose = parsePurpose(raw.purpose)
   if (raw.referenceImage !== undefined && raw.referenceImage !== null && !isReferenceId(raw.referenceImage)) throw new Error('Choose your reference image again.')
   const screen = raw.screen === undefined || raw.screen === null ? null : parseStartScreen(raw.screen, sources, mode, outputDirectory)
   const screenshots = parseStartScreenshots(raw.screenshots, outputDirectory)
   return { screen, screenshots, sources, brandIdentityId: (raw.brandIdentityId as string | null | undefined) ?? null, hookHint: typeof raw.hookHint === 'string' ? raw.hookHint.replace(/\s+/g, ' ').trim() : '',
     purpose, referenceImage: isReferenceId(raw.referenceImage) ? raw.referenceImage : null, mode, order: mode === 'combine' && raw.order === 'ai' ? 'ai' : 'filmed',
-    newHeadline: raw.newHeadline === true }
+    newHeadline: raw.newHeadline === true, ...(raw.format === 'youtube' ? { format: 'youtube' as const } : {}) }
 }
 
 /** The start request's screenshots: pictures the member chose here (PNG, JPEG or WebP), each with an optional box. */
@@ -637,8 +656,13 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
     // Clips play in filming order to start with (the plan's clip numbers): sorted here once.
     if (combine) sources = filmingOrder(sources).map((i) => sources[i])
     const total = sources.reduce((sum, source) => sum + source.seconds, 0)
+    const youtube = request.format === 'youtube'
     if (combine && total > COMBINE_MAX_TOTAL_SECONDS + 1) throw new Error(`Your clips add up to over ${COMBINE_MAX_TOTAL_SECONDS / 60} minutes. Use fewer or shorter clips.`)
-    if (!combine && total > EDIT_MAX_TOTAL_SECONDS + 1) throw new Error(`Your takes add up to over ${EDIT_MAX_TOTAL_SECONDS / 60} minutes. Use fewer or shorter takes.`)
+    // A reel's recordings keep their limits; a YouTube video's may run longer.
+    const long = !combine && !youtube ? sources.find((source) => source.seconds > EDIT_MAX_SOURCE_SECONDS + 1) : undefined
+    if (long) throw new Error(`“${long.name}” is over ${EDIT_MAX_SOURCE_SECONDS / 60} minutes. Make it a YouTube video, or trim it for a reel.`)
+    const maxTotal = youtube ? YOUTUBE_MAX_TOTAL_SECONDS : EDIT_MAX_TOTAL_SECONDS
+    if (!combine && total > maxTotal + 1) throw new Error(`Your takes add up to over ${maxTotal / 60} minutes. Use fewer or shorter takes.`)
     // Camera + screen: the screen recording's length, and where it runs at this offset (it has to overlap the camera).
     let screen: EditScreen | undefined
     if (request.screen) {
@@ -675,7 +699,7 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
       status: {
         id: randomBytes(6).toString('hex'), phase: 'transcribing', detail: 'Starting', percent: 1, sources, folder, plan: null, transcriber: null,
         output: null, costUsd: 0, estimateUsd: editEstimate(total).total, error: null, warnings, images, ...(combine ? { mode: 'combine' as const } : {}),
-        ...(screen ? { screen } : {})
+        ...(screen ? { screen } : {}), ...(youtube ? { format: 'youtube' as const } : {})
       }
     }
     current.status.progress = tracked(current.status, Date.now())
@@ -810,15 +834,17 @@ async function prepare(current: EditRun): Promise<void> {
     publish(current, { phase: 'planning', detail: 'Planning your edit', percent: 70 })
     const result = await runEngine({
       mode: 'plan', output_dir: current.status.folder, words: words.slice(0, 8000), sources_count: sources.length, names: sources.map((source) => source.name),
+      ...(current.status.format === 'youtube' ? { format: 'youtube' } : {}),
       brand_identity: current.brand?.text ?? '', brand_name: current.brand?.name ?? '', hook_hint: current.hookHint,
       ...(current.keptHeadline ? { fixed_hook: current.keptHeadline } : {}),
       ...(current.purpose ? { purpose: current.purpose } : {}), ...(current.reference ? { reference_image: current.reference } : {}),
       ...(combine ? { combine: { clips: sources.map((source) => ({ shot: source.shot ?? 'face', seconds: source.seconds })) } } : {}),
-      // The automatic direction: the same call plans the motion graphics (camera + screen reels have their own layouts).
-      ...(current.status.screen ? {} : { direction: { stage: true, ...(current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}), ...graphicsRegister(), ...editLogos(),
+      // The automatic direction: the same call plans the motion graphics (camera + screen reels have their own layouts; a
+      // YouTube video with a screen recording is directed: the screen and webcam share the frame, graphics go around them).
+      ...(current.status.screen && current.status.format !== 'youtube' ? {} : { direction: { stage: true, ...(current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}), ...graphicsRegister(), ...editLogos(),
         // The member's screenshots: the director may show them (a browser or phone frame, a before and after, a proof) where they fit.
         ...(screenshotMedia(current.status.images).length ? { media: screenshotMedia(current.status.images) } : {}) } })
-    }, 15 * 60_000, (detail, percent, found) => { if (!current.cancelled) publish(current, { detail: detail || 'Planning your edit', percent: 70 + percent * 0.29 }, found) },
+    }, (current.status.format === 'youtube' ? 30 : 15) * 60_000, (detail, percent, found) => { if (!current.cancelled) publish(current, { detail: detail || 'Planning your edit', percent: 70 + percent * 0.29 }, found) },
     (child) => { current.child = child })
     spend(current, typeof result.cost_usd === 'number' ? result.cost_usd : 0)
     const plan = parseEditPlan(result, sources.length)
@@ -940,11 +966,14 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
   current.cancelled = false
   // What the reel is made of, for the progress view (the member's choices, as made).
   const reelOrder = plan.combine ? decisions.clipOrder ?? plan.combine.startOrder : null
+  // A YouTube video: directed even with a screen recording (screen + webcam picture-in-picture, graphics around them).
+  const youtube = current.status.format === 'youtube'
+  const plainScreen = Boolean(current.status.screen) && !youtube
   if (current.status.progress) current.status.progress = { ...current.status.progress, order: reelOrder ? [...reelOrder] : null }
   publish(current, { phase: 'rendering', detail: 'Starting', percent: 1, error: null }, {
     ...(decisions.hookText.trim() ? { hook: decisions.hookText.replace(/\s+/g, ' ').trim().slice(0, 160) } : {}), cuts: cut.size,
-    popups: decisions.popups.filter((item) => item.on).length, graphics: current.status.screen ? 0 : (decisions.graphics ?? []).filter((g) => !cut.has(g.word) && (g.origin !== 'auto' || decisions.motionGraphics !== false) && registerKeeps(g, decisions.soundStyle)).length,
-    broll: Boolean(decisions.look.broll) && !current.status.screen })
+    popups: decisions.popups.filter((item) => item.on).length, graphics: plainScreen ? 0 : (decisions.graphics ?? []).filter((g) => !cut.has(g.word) && (g.origin !== 'auto' || decisions.motionGraphics !== false) && registerKeeps(g, decisions.soundStyle)).length,
+    broll: Boolean(decisions.look.broll) && !current.status.screen && !youtube })
   let brandMark: Awaited<ReturnType<typeof brandMarkForRun>>
   try {
     brandMark = await brandMarkForRun(current.brand, decisions.look.showHandle, current.status.folder)
@@ -961,8 +990,15 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
   // Camera + screen: how they're shown. Pop-ups, cards, images, graphics, b-roll, openings and extras aren't made for these reels.
   const screen = current.status.screen
   const screenChoice = screen ? parseScreenChoice((value as { screen?: unknown } | null)?.screen ?? DEFAULT_SCREEN_CHOICE) : null
-  if (screen) {
+  if (screen && !youtube) {
     Object.assign(decisions, { popups: decisions.popups.map((item) => ({ ...item, on: false })), pins: [], graphics: [], cutoutIntro: false, rawIntro: false, lookExtras: [] })
+    decisions.look = { ...decisions.look, broll: null, lookExtras: undefined }
+  }
+  // A YouTube video: no reel openings, reel extras (keyword pill, progress bar…) or b-roll (not made for 16:9 yet).
+  const youtubeNotes: string[] = []
+  if (youtube) {
+    if (decisions.look.broll) youtubeNotes.push('B-roll isn’t added to YouTube videos yet, so this video has none.')
+    Object.assign(decisions, { cutoutIntro: false, rawIntro: false, lookExtras: [] })
     decisions.look = { ...decisions.look, broll: null, lookExtras: undefined }
   }
   const look = headlineLookForEngine(decisions.look.headlineLook)
@@ -992,7 +1028,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     cutout_intro: decisions.cutoutIntro, raw_intro: decisions.rawIntro,
     sounds: decisions.sounds.filter((item) => item.on).flatMap((item) => { const sound = plan.sounds.find((s) => s.id === item.id); return sound ? [{ at: sound.at, sound: sound.sound }] : [] }),
     // Sound effects that follow the graphics and scenes (the switch, the register) and the member's own sounds.
-    sound_design: { on: !screen && soundEffectsOn(decisions), register: decisions.soundStyle ?? DEFAULT_SOUND_REGISTER },
+    sound_design: { on: (!screen || youtube) && soundEffectsOn(decisions), register: decisions.soundStyle ?? DEFAULT_SOUND_REGISTER },
     sound_palette: soundPaletteForEngine(),
     headline: decisions.hookText, ...(look ? { headline_look: look } : {}), include_captions: decisions.look.includeCaptions, caption_preset: decisions.look.captionPreset,
     ...(brandMark ? { brand_mark: brandMark } : {}),
@@ -1001,7 +1037,10 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     ...(decisions.lookExtras.includes('comment_box') && current.brand?.look?.ctaKeyword ? { cta_keyword: current.brand.look.ctaKeyword } : {}),
     title: decisions.hookText || current.status.sources[0]?.name.replace(/\.[^.]+$/, '') || '', cost_usd: current.status.costUsd,
     ...(screen && screenChoice ? { screen: { path: screen.path, offset_ms: screen.offsetMs, style: screenChoice.style, split: screenChoice.split, fit: screenChoice.fit,
-      zoom: screenChoice.zoom, auto: screenChoice.auto } } : {})
+      zoom: screenChoice.zoom, auto: screenChoice.auto } } : {}),
+    // A YouTube video: its layout (screen + webcam picture-in-picture when there is a screen recording) and the plan's chapter titles.
+    ...(youtube ? { format: 'youtube', youtube: youtubeForEngine({ ...(decisions.youtube ?? DEFAULT_YOUTUBE_CHOICE), ...(screen ? {} : { layout: 'full' as const }) }),
+      chapters: (plan.chapters ?? []).map((c) => ({ word: c.word, title: c.title })) } : {})
   }
   // Voice cleanup and music (a member's own track must still be in their music folder).
   let audio: Record<string, unknown> | undefined
@@ -1024,7 +1063,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
   }
   // Every reel but camera + screen becomes a clip editor project: the engine places the graphics (the plan's, the
   // member's, pop-ups, cards and pinned images) and stage scenes on the reel's own clock, and the editor bakes it.
-  const directed = !screen
+  const directed = !screen || youtube
   if (directed) {
     const pins: { word: number; image: string }[] = []
     for (const pin of livePins(decisions)) {
@@ -1072,6 +1111,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
       const seconds = typeof result.duration_seconds === 'number' ? result.duration_seconds : 0
       const warnings = Array.isArray(result.warnings) ? result.warnings.filter((item): item is string => typeof item === 'string').map((item) => item.slice(0, 300)).slice(0, 4) : []
       const editor = result.editor === true
+      warnings.push(...youtubeNotes)
       if (editor && !current.cancelled) {
         // The clip editor's own bake: hook text, captions, motion graphics and scenes, exactly as Bake makes them later.
         publish(current, { detail: 'Adding your hook text, captions and graphics', percent: 90 })
@@ -1090,7 +1130,9 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
       const sources = current.status.sources.map(({ proxy: _proxy, ...rest }) => { void _proxy; return rest })
       // The headline it was made with is the one these recordings keep next time.
       rememberHeadline(current.headlineKey, decisions.hookText, basename(current.status.folder))
-      publish(current, { phase: 'done', detail: 'Done', percent: 100, output: { path, durationSeconds: seconds }, warnings: warnings.slice(0, 5), sources, ...(editor ? { editor: true } : {}) })
+      const chapters = youtube ? parseChapters(result.chapters) : []
+      publish(current, { phase: 'done', detail: 'Done', percent: 100, output: { path, durationSeconds: seconds }, warnings: warnings.slice(0, 5), sources, ...(editor ? { editor: true } : {}),
+        ...(chapters.length ? { chapters } : {}) })
       await dropImports(current)
     } catch (error) {
       spend(current, errorCost(error))

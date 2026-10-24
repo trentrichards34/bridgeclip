@@ -176,6 +176,8 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
   if (typeof value.avatar_studio === 'string' && value.avatar_studio.length <= 32) result.avatar_studio = value.avatar_studio
   // Edit my recording's reel (it has no saved transcript for the clip editor).
   if (value.edit_recording === true) result.edit_recording = true
+  // Edit my recording: a YouTube video (landscape, long); missing: a reel.
+  if (value.format === 'youtube') result.format = 'youtube'
   // A Top list video (Avatar Studio → Top list).
   if (value.listicle === true) result.listicle = true
   // A B-roll video (its one clip opens in the clip editor).

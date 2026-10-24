@@ -55,6 +55,8 @@ AUTO_FX = (
     # Shares, steps and identity moments (CreatorClips' own units in HyperFrames' style).
     'gauge-dial', 'waffle-chart', 'flanking-words', 'magazine-cover',
 )
+# Placed automatically only on a YouTube video's branded cold open (longform.py): a calm title lockup of words said.
+LONGFORM_FX = ('titlecard-lockup',)
 # Effects on the member's own screenshots and photos: never asked of the model (it can't see the pictures); the
 # director places them in code where a screen, a proof or a before and after is said, only when the member added
 # screenshots for the video (graphics_director.place_media).
@@ -514,6 +516,8 @@ def _options(options: Optional[dict]) -> dict:
             'variety': options.get('variety') is not False,
             # Headline pills as cards anywhere in the video (Edit my recording), not only as the clip's hook.
             'pill_cards': bool(options.get('pill_cards')),
+            # A YouTube video's extra automatic effects (LONGFORM_FX).
+            'extra_fx': tuple(e for e in options.get('extra_fx') or () if e in LONGFORM_FX) if isinstance(options.get('extra_fx'), (list, tuple)) else (),
             # Long quiet stretches get a visual from their cues (graphics_director.fill_quiet; Edit my recording).
             'fill_quiet': bool(options.get('fill_quiet')),
             # Free time kept between two graphics (ms), so they don't run back to back.
@@ -546,7 +550,7 @@ def parse_planned(raw: Any, start_ms: int, end_ms: int, options: Optional[dict] 
             item = {**item, 'keyword': opts['cta_keyword']}
         if template == 'fx':
             from clip_engine.services.graphics_director import fx_raw_fields
-            if item.get('effect') not in AUTO_FX:
+            if item.get('effect') not in AUTO_FX and item.get('effect') not in opts['extra_fx']:
                 continue
             item = {**item, **fx_raw_fields(item)}
             if fx_too_long(item):

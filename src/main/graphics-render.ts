@@ -162,6 +162,15 @@ export function graphicImageData(run: string, name: string | undefined): { url: 
   return { url: `data:image/${kind === 'jpg' ? 'jpeg' : kind};base64,${bytes.toString('base64')}`, hash: createHash('sha256').update(bytes).digest('hex') }
 }
 
+/** The run's brand logo (.brand-logo.png, copied in when the video was made) as a data URL, or null. */
+export function brandLogoData(run: string): { url: string } | null {
+  const path = join(run, '.brand-logo.png')
+  if (!regularFile(path) || statSync(path).size > MAX_GRAPHIC_IMAGE_BYTES) return null
+  const bytes = readFileSync(path)
+  const kind = graphicImageKind(bytes)
+  return kind ? { url: `data:image/${kind === 'jpg' ? 'jpeg' : kind};base64,${bytes.toString('base64')}` } : null
+}
+
 /** The cache name of a render: everything that changes its pixels. */
 export function graphicCacheKey(spec: GraphicRenderSpec, imageHash?: string): string {
   const { image: _image, image_b: _second, ...rest } = spec
@@ -291,7 +300,9 @@ export function candidateGraphicJobs(run: string, project: EditorProject, candid
     }
     // An effect's pictures (the layout leaves picture names out of the drawn fields): its job loads them from the run.
     const drawn = g.template === 'fx' ? { ...spec, fields: { ...spec.fields, ...Object.fromEntries(graphicPictureFields(g).map((key) => [key, g.fields[key] ?? ''])) } } : spec
-    const job = graphicJob(run, g.id, drawn, window, g.fields.image, graphicDepth(g))
+    // A full-screen brand card (YouTube) shows the brand's logo faintly when the run has one.
+    const logo = drawn.backdrop && project.brand_mark?.logo ? brandLogoData(run) : null
+    const job = graphicJob(run, g.id, logo && drawn.backdrop ? { ...drawn, backdrop: { ...drawn.backdrop, logo: logo.url } } : drawn, window, g.fields.image, graphicDepth(g))
     if (job) jobs.push(inset ? { ...job, inset } : job)
   }
   return jobs

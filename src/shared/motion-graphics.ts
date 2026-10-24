@@ -283,8 +283,13 @@ export interface GraphicRenderSpec {
   height: number
   /** On-screen length in OUTPUT time (after the cut and the export speed). */
   duration_ms: number
-  /** The band the graphic sits in, as fractions of the output height (it never covers the hook or the captions). */
-  box: { top: number; bottom: number }
+  /**
+   * The band the graphic sits in, as fractions of the output height (it never covers the hook or the captions); on a
+   * YouTube video also across (left and right, fractions of the width: a side panel or a lower third).
+   */
+  box: { top: number; bottom: number; left?: number; right?: number }
+  /** A full-screen brand card (YouTube): the graphic drawn on the brand's gradient with a faint logo (a URL, filled by the caller) or handle. */
+  backdrop?: { color: string; logo?: string; mark?: string }
   placement: GraphicPlacement
   /** Brand color #RRGGBB. */
   color: string

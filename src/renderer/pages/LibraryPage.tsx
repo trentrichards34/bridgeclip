@@ -30,6 +30,7 @@ import { PreviousFolders } from '../components/PreviousFolders'
 import { ReadyToPost } from '../components/ReadyToPost'
 import { Segmented } from '../components/ui/Segmented'
 import { formatBytes } from '../../shared/library-storage'
+import { FORMAT_LABELS } from '../../shared/longform'
 import './library.css'
 import { useShellStore } from '../store/use-shell-store'
 import type { Page as AppPage } from '../components/Sidebar'
@@ -515,7 +516,7 @@ function RunCard({ entry, size, previewRevision, counts, busy, onFavorite, onDel
         <span className="library-card-title" title={entry.videoTitle}>
           {failed ? `${entry.status === 'incomplete' ? 'Unfinished' : 'Unreadable'} run · Open folder` : entry.videoTitle}
         </span>
-        {!failed && <span className="library-card-source">{made && <>{made}<span className="text-ink-faint"> · </span></>}<span>{clipsLabel}</span></span>}
+        {!failed && <span className="library-card-source">{entry.format && <><span className={cn('library-format', entry.format)} data-testid="run-format">{FORMAT_LABELS[entry.format]}</span>{' '}</>}{made && <>{made}<span className="text-ink-faint"> · </span></>}<span>{clipsLabel}</span></span>}
         <span className="library-card-source" title="Only fully published clips count as posted. Scheduled, partial and inbox deliveries remain Not Posted.">
           {entry.editorProject && entry.clipCount === 0 ? remaining === 0 ? 'No clips to finish' : 'No clips baked yet' : counts ? counts.posted > 0 ? <><span className="text-success">{counts.posted} Posted</span><span className="mx-1.5 text-ink-faint">·</span><span>{counts.notPosted} Not Posted</span></> : <span>{counts.notPosted} Not Posted</span>
             : counts === null ? 'Posting status unavailable' : 'Checking posting status…'}

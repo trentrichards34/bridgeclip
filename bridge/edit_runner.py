@@ -269,7 +269,7 @@ def parse_request(raw):
         if not isinstance(names, list) or len(names) > MAX_SOURCES or any(not isinstance(n, str) or len(n) > 200 for n in names):
             raise ValueError("Invalid names")
         combine = _plan_combine(raw.get("combine"), count)
-        return {"mode": mode, "output_dir": raw["output_dir"], "words": words, "names": names, **({"combine": combine} if combine else {}),
+        return {**_format(raw), "mode": mode, "output_dir": raw["output_dir"], "words": words, "names": names, **({"combine": combine} if combine else {}),
                 "brand_identity": _text(raw.get("brand_identity"), 60000, "brand"), "brand_name": _text(raw.get("brand_name"), 120, "brand"),
                 "hook_hint": _text(raw.get("hook_hint"), 600, "hook hint"),
                 # The same recording again: the headline it had last time (the engine checks it against the words).
@@ -344,7 +344,8 @@ def parse_request(raw):
     broll = {k: raw[k] for k in ("broll_source", "broll_catalog_path", "broll_ai", "broll_ai_dir") if raw.get(k) is not None}
     validate_broll_config(broll, require_enabled=False)
     design = _sound_design(raw.get("sound_design"), raw.get("sound_palette"))
-    return {"mode": mode, "output_dir": raw["output_dir"], "sources": list(sources), "words": words, "keep": keep,
+    youtube = _youtube(raw, len(words))
+    return {**youtube, "mode": mode, "output_dir": raw["output_dir"], "sources": list(sources), "words": words, "keep": keep,
             "hook": _span(raw.get("hook"), len(words)), "cta": _span(raw.get("cta"), len(words)), "popups": clean_popups,
             "sounds": [dict(s) for s in sounds], "look": _look(raw), "title": " ".join(_text(raw.get("title"), 200, "title").split()),
             "cost_usd": float(cost), "pacing": _pacing(raw.get("pacing")), "recipe": raw.get("recipe", "clean"), "images": images,
@@ -353,6 +354,32 @@ def parse_request(raw):
                                                                      if raw.get("combine") is not None else {}),
             **({"screen": _screen(raw.get("screen"), len(sources))} if raw.get("screen") is not None else {}),
             **({"editor": _editor(raw.get("editor"), len(words))} if raw.get("editor") is not None else {})}
+
+
+def _format(raw):
+    """The run's format: a reel (missing) or a YouTube video (landscape, long)."""
+    value = raw.get("format", "reel")
+    if value not in ("reel", "youtube"):
+        raise ValueError("Invalid format")
+    return {"format": "youtube"} if value == "youtube" else {}
+
+
+def _youtube(raw, n):
+    """A YouTube video's render choices: its layout (longform.parse_youtube) and the plan's chapter titles."""
+    out = _format(raw)
+    if not out:
+        if raw.get("youtube") is not None or raw.get("chapters") is not None:
+            raise ValueError("Invalid format")
+        return out
+    from clip_engine.services.longform import MAX_CHAPTERS, parse_youtube
+    out["youtube"] = parse_youtube(raw.get("youtube"))
+    chapters = raw.get("chapters") or []
+    if not isinstance(chapters, list) or len(chapters) > MAX_CHAPTERS or any(
+            not isinstance(c, dict) or set(c) != {"word", "title"} or type(c["word"]) is not int or not 0 <= c["word"] < n
+            or not isinstance(c["title"], str) or not 0 < len(c["title"]) <= 80 or re.search(r"[\x00-\x1f\x7f]", c["title"]) for c in chapters):
+        raise ValueError("Invalid chapters")
+    out["chapters"] = [dict(c) for c in chapters]
+    return out
 
 
 def _screen(raw, count):

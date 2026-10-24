@@ -1006,6 +1006,10 @@ def review_of(words: list[Word], plan: dict, planned: str, cost_usd: float, warn
 
 async def plan_edit(config: dict, progress: Progress) -> dict:
     """Mode "plan": the transcript (from the app) to a reviewed-ready plan."""
+    if config.get("format") == "youtube":
+        # A YouTube video (landscape, long): the long-form guidance, planned in sections (longform.py).
+        from clip_engine.services.longform import plan_youtube
+        return await plan_youtube(config, progress)
     from clip_engine.config import get_settings
     import httpx
     words: list[Word] = config["words"]
@@ -1886,6 +1890,10 @@ async def mix_reel_audio(assembled: str, base: str, config: dict, placements: li
 
 async def render_edit(config: dict, progress: Progress) -> dict:
     """Mode "render": the reel from the member's reviewed edit."""
+    if config.get("format") == "youtube":
+        # A YouTube video (landscape, long): longform.py.
+        from clip_engine.services.longform import render_youtube
+        return await render_youtube(config, progress)
     if config.get("screen"):
         # Camera + screen: both recordings stacked, one layout per stretch, made editable in the clip editor.
         from clip_engine.services.screen_pair import render_screen_reel
@@ -2059,7 +2067,7 @@ def editor_sound(config: dict, timed: list, look: Look, offset_ms: int, total_ms
 
 async def finish_as_project(config: dict, root: str, work: str, folder: str, base: str, pieces: list[Piece], timed: list, total: float,
                             look: Look, measured: dict, broll_cost: float, warnings: list[str], progress: Progress,
-                            screens: Optional[set[int]] = None, broll_windows: Optional[list] = None) -> dict:
+                            screens: Optional[set[int]] = None, broll_windows: Optional[list] = None, youtube: Optional[dict] = None) -> dict:
     """The edited reel as a clip editor project (edit_direction): the kept, ordered footage (with its sound, music, sound
     effects, b-roll and the punch-in rhythm, and the extras and openings that are made into the picture) is the editor's
     source; the hook text, captions, motion graphics (the plan's, the member's, pop-ups, cards and pinned images) and
@@ -2098,7 +2106,8 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
     os.chmod(target, 0o600)
     total_ms = int(min(round(total * 1000) + offset_ms, math.floor((probe_seconds(target) or total) * 1000)))
     progress("Placing your graphics", 76)
-    options = {"motion": editor.get("motion") is not False, "stage": editor.get("stage") is True, "chapters": editor.get("motion") is not False,
+    # A YouTube video (longform.render_youtube): no stage scenes (16:9 has its own full-screen brand cards).
+    options = {"motion": editor.get("motion") is not False, "stage": editor.get("stage") is True and youtube is None, "chapters": editor.get("motion") is not False,
                "cta_keyword": editor.get("cta_keyword") or ""}
     popups = [p for p in config.get("popups") or []]
     graphics, notes = ed.editor_graphics(editor.get("graphics") or [], timed, total_ms - offset_ms, options, offset_ms, popups,
@@ -2129,13 +2138,25 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
         if options["stage"]:
             scenes = ed.editor_scenes(graphics, total_ms, editor.get("brand_color"), avoid, framed)
             graphics = ed.size_for_scenes(graphics, scenes)
+        if youtube is not None:
+            # Long-form pacing: a dense branded cold open, then light; nothing over long screen demos.
+            from clip_engine.services.longform import pace_graphics
+            graphics = pace_graphics(graphics, total_ms, (config.get("sound_design") or {}).get("register"), avoid)
     segments = ed.reel_segments(timed, offset_ms)
     preview_id = os.urandom(16).hex()
     progress("Getting the editor ready", 80)
     await RenderingService().capture_framing_source(target, os.path.join(root, f"editor-preview-{preview_id}.mp4"), duration_ms=total_ms)
     title = config.get("title") or look.headline or "My recording"
     project = ed.edit_project(title, total_ms, segments, look, graphics, scenes, ed.saved_brand_mark(look.brand_mark, root), preview_id,
-                              directed=options["motion"], accent=editor.get("brand_color"))
+                              directed=options["motion"], accent=editor.get("brand_color"),
+                              **({"width": 1920, "height": 1080} if youtube is not None else {}))
+    chapters: list[dict] = []
+    if youtube is not None:
+        from clip_engine.services import longform as lf
+        project = lf.youtube_project(project, youtube, timed, total_ms, (config.get("sound_design") or {}).get("register"))
+        from clip_engine.services.manual_editor import validate_candidate
+        validate_candidate(project["candidates"][0], int(total_ms), len(segments))
+        chapters = lf.youtube_chapters(timed, total_ms, youtube.get("chapters") or [], config["words"])
     project["candidates"][0]["sound"] = editor_sound(config, timed, look, offset_ms, total_ms, broll_windows or [])
     # The member's color grade (footage only): the editor's bake applies it under the graphics and captions.
     from clip_engine.services.color_grade import parse_grade
@@ -2150,28 +2171,33 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
     except OSError:
         shutil.copyfile(target, final)
     write_project_output(root, final, total_ms, title, float(config.get("cost_usd") or 0) + broll_cost, post_caption_of(timed),
-                         look.headline or title)
+                         look.headline or title, youtube={"chapters": chapters} if youtube is not None else None)
     _atomic_json(os.path.join(root, "editor-project.json"), project)
     shutil.rmtree(os.path.join(root, ".edit"), ignore_errors=True)
     progress("Ready for the editor", 100)
     return {"path": final, "duration_seconds": round(total_ms / 1000, 3), "warnings": warnings[:4], "loudness": measured,
             "cost_usd": round(broll_cost, 6), "editor": True, "graphics": len(graphics), "scenes": len(scenes),
+            **({"format": "youtube", "chapters": chapters} if youtube is not None else {}),
             **({"face": [round(float(v), 4) for v in face]} if face and len(face) == 4 else {})}
 
 
-def write_project_output(root: str, clip_path: str, clip_ms: int, title: str, cost_usd: float, post_caption: str, headline: str) -> None:
-    """The run in the Library: an editor project whose one clip (the reel) the editor's bake replaces."""
+def write_project_output(root: str, clip_path: str, clip_ms: int, title: str, cost_usd: float, post_caption: str, headline: str,
+                         youtube: Optional[dict] = None) -> None:
+    """The run in the Library: an editor project whose one clip (the reel) the editor's bake replaces. `youtube`: a
+    YouTube video's extras ({chapters}); the run is marked format "youtube" (the Library's tag, file names)."""
     clip = {
         "clip_index": 0, "s3_url": "file://" + os.path.abspath(clip_path), "duration_ms": clip_ms, "start_time_ms": 0, "end_time_ms": clip_ms,
         "virality_score": 0.0, "layout_type": "", "summary": headline, "headline": headline, "tags": [], "description": None,
         "render_fallback": None, "ai_generated": False, "post_caption": post_caption or None,
     }
     output = {
-        "job_id": os.path.basename(root), "source_video_url": "", "source_video_title": f"Edited · {title}"[:300], "source_video_channel": None,
+        "job_id": os.path.basename(root), "source_video_url": "", "source_video_title": f"{'YouTube' if youtube is not None else 'Edited'} · {title}"[:300], "source_video_channel": None,
         "source_video_duration_seconds": round(clip_ms / 1000, 3), "total_clips": 1, "clips": [clip], "transcript_url": None, "plan_url": None,
         "processing_time_seconds": 0, "editor_project": True, "next_clip_index": 1,
-        "metrics": {"api_costs": {"total_estimated_cost_usd": round(cost_usd, 4)}, "edit_recording": True, "edit_direction": True},
+        "metrics": {"api_costs": {"total_estimated_cost_usd": round(cost_usd, 4)}, "edit_recording": True, "edit_direction": True,
+                    **({"format": "youtube"} if youtube is not None else {})},
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        **({"format": "youtube", "chapters": youtube.get("chapters") or []} if youtube is not None else {}),
     }
     from clip_engine.services.screen_pair import _atomic_json
     _atomic_json(os.path.join(root, "job_output.json"), output)

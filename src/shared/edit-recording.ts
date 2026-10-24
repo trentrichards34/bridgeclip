@@ -24,6 +24,7 @@ import { isRegister, type Register } from './register'
 import { newEditGraphic } from './reel-graphics'
 import type { ScreenChoice } from './screen-pair'
 import { isSoundRegister, type SoundRegister } from './sound-design'
+import { parseYoutubeChoice, type Chapter, type EditFormat, type YoutubeChoice } from './longform'
 
 export const EDIT_MAX_SOURCES = 5
 /** Per recording, and all takes together. */
@@ -138,6 +139,8 @@ export interface EditPlan {
    * said in this recording), and the AI's new headline for that hook (offered as "New headline").
    */
   keptHook?: EditKeptHook
+  /** A YouTube video: the director's sections' chapter titles (words said there), each on the word its section starts. */
+  chapters?: { word: number; title: string }[]
 }
 
 export interface EditKeptHook { kept: boolean; text: string; fresh: string }
@@ -165,6 +168,9 @@ export interface EditSource {
   shot?: ShotType
   /** A screen shot that was steadied. */
   steadied?: boolean
+  /** The picture's size as shown (after rotation), when it could be read: the format suggestion uses it. */
+  width?: number
+  height?: number
 }
 
 export type EditPhase = 'transcribing' | 'planning' | 'review' | 'rendering' | 'done' | 'failed' | 'cancelled'
@@ -196,6 +202,10 @@ export interface EditStatus {
   editor?: boolean
   /** The run in stages, for the progress view (edit-progress.ts). Missing on runs from before it. */
   progress?: EditProgress
+  /** A YouTube video (landscape, long); missing: a reel. */
+  format?: EditFormat
+  /** A YouTube video's chapters for its description (done screen). */
+  chapters?: Chapter[]
 }
 
 /** A run's screen recording (camera + screen). */
@@ -271,6 +281,8 @@ export interface EditDecisions {
   soundEffects?: boolean
   /** The style (register.ts): how much sound plays, and with Minimal only numbers, the hook and the call to action keep their automatic graphics (missing: teaching). */
   soundStyle?: SoundRegister
+  /** A YouTube video's layout and captions (missing: the defaults). */
+  youtube?: YoutubeChoice
 }
 
 /** Whether the reel gets sound effects: the switch when set, else on while any planned sound is (or none were planned). */
@@ -297,6 +309,8 @@ export interface EditStartRequest {
   newHeadline?: boolean
   /** Screenshots for the video (pages, apps, proof posts), each with the part that matters boxed (optional). */
   screenshots?: { path: string; box?: [number, number, number, number] }[]
+  /** A reel (missing) or a YouTube video (landscape, long). */
+  format?: EditFormat
 }
 
 export function isRunningEdit(status: EditStatus | null | undefined): boolean {
@@ -572,13 +586,18 @@ export function parseEditPlan(value: unknown, sources: number): EditPlan | null 
     const image = record(raw) ? (raw.image ?? raw.logo) : null
     if (record(raw) && typeof image === 'string' && /^[A-Za-z0-9._-]{1,80}$/.test(image) && int(raw.word, 0, n - 1)) logoPins.push({ image, word: raw.word as number })
   }
+  const chapters: { word: number; title: string }[] = []
+  for (const raw of Array.isArray(value.chapters) ? value.chapters.slice(0, 12) : []) {
+    const title = record(raw) ? cleanLine(raw.title, 80) : null
+    if (record(raw) && int(raw.word, 0, n - 1) && title) chapters.push({ word: raw.word as number, title })
+  }
   const keptRaw = value.keptHook ?? value.kept_hook
   const keptHook = record(keptRaw) && typeof keptRaw.kept === 'boolean' && hooks.length
     ? { kept: keptRaw.kept, text: (text(keptRaw.text, MAX_HOOK_TEXT_CHARS) ?? '').trim(), fresh: (text(keptRaw.fresh, MAX_HOOK_TEXT_CHARS) ?? '').trim() } : null
   return { words, hooks, hook, cta: span(value.cta), popups, sounds, planned: value.planned === 'basic' ? 'basic' : 'ai', notes: lines(value.notes, 6), warnings: lines(value.warnings, 4),
     ...(combine ? { combine } : {}), ...(graphics ? { graphics } : {}), ...(keptHook && (!keptHook.kept || keptHook.text) ? { keptHook } : {}),
     ...(isRegister(value.register) ? { register: value.register } : {}), ...(spare.length ? { spareGraphics: spare } : {}),
-    ...(logoPins.length ? { logoPins } : {}) }
+    ...(logoPins.length ? { logoPins } : {}), ...(chapters.length ? { chapters } : {}) }
 }
 
 /** The plan's combine part (engine: ai_order, order_why, proof; or already parsed), checked; null when it isn't one. */
@@ -697,6 +716,9 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     ...(typeof value.stageLayouts === 'boolean' ? { stageLayouts: value.stageLayouts } : {}),
     ...(typeof value.soundEffects === 'boolean' ? { soundEffects: value.soundEffects } : {}),
     ...(isSoundRegister(value.soundStyle) ? { soundStyle: value.soundStyle } : {}) }
+  if (value.youtube !== undefined) {
+    try { decisions.youtube = parseYoutubeChoice(value.youtube) } catch { throw new Error('Choose your YouTube layout again.') }
+  }
   if (plan.combine) {
     const order = value.clipOrder === undefined ? [...plan.combine.startOrder] : parseClipOrder(value.clipOrder, plan.combine.startOrder.length)
     if (!order) throw new Error('Put your clips in order again.')
