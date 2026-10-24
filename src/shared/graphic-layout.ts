@@ -43,6 +43,8 @@ export function outputSize(aspect: EditorProject['aspect_ratio'] | '1:1'): { wid
 export function hookShare(candidate: Pick<CandidateEdit, 'hook'>, aspect: EditorProject['aspect_ratio']): number {
   const hook = candidate.hook
   if (aspect !== '9:16' || !hook || hook.look.look === 'none' || hook.text.trim().split(/\s+/).length < 2) return 0
+  // Key words in color is big: its lines (about 16 characters each) stand about twice as tall.
+  if (hook.look.look === 'floating' && hook.look.textBg === 'highlight') return Math.min(.34, .12 + Math.min(3, Math.ceil(hook.text.length / 16)) * .068)
   const lines = Math.min(3, Math.ceil(hook.text.length / 24))
   return Math.min(.3, Math.max(.17, .105 + lines * .038))
 }

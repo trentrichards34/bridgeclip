@@ -2,8 +2,8 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSPr
 import type { BrandIdentity } from '../../shared/remix'
 import { DEFAULT_HANDLE_POSITION, hasBrandMark } from '../../shared/brand-kit'
 import {
-  HEADLINE_ACCENT_SCALE, HEADLINE_FONTS, accentWordIndex, headlineBarColor, headlineTextBox, headlineTextColor, isHexColor, textBoxOutline, textBoxPath,
-  textBoxRects, TEXT_BOX, wrapHeadline, type HeadlineLook
+  HEADLINE_ACCENT_SCALE, HEADLINE_FONTS, HIGHLIGHT, HIGHLIGHT_PHRASE_FAMILY, accentWordIndex, headlineBarColor, headlineTextBox, headlineTextColor, highlightColors,
+  highlightPlacement, isHexColor, textBoxOutline, textBoxPath, textBoxRects, TEXT_BOX, wrapHeadline, type HeadlineLook
 } from '../../shared/headline-look'
 import type { LookExtraId } from '../../shared/look-extras'
 import {
@@ -383,6 +383,33 @@ function BoxedHook({ text, look, u, scale, frameW, frameH }: { text: string; loo
   )
 }
 
+/** 'Key words in color' hook text: the lead words on a white box, the key words in italic on a box in the color (the engine's _highlight_headline). */
+function HighlightHook({ text, look, u, scale, frameW, frameH }: { text: string; look: HeadlineLook; u: number; scale: number; frameW: number; frameH: number }): React.JSX.Element {
+  const ready = useFontsReady()
+  const font = HEADLINE_FONTS.find((item) => item.id === look.font) ?? HEADLINE_FONTS[0]
+  const css = (size: number, phrase: boolean): string => phrase ? `italic 400 ${size * HIGHLIGHT.phraseScale}px ${HIGHLIGHT_PHRASE_FAMILY}` : `${font.weight ?? 400} ${size * (font.scale ?? 1)}px ${font.family}`
+  const shown = font.upper ? text.toUpperCase() : text
+  const layout = useMemo(() => highlightPlacement(shown, (line, size, phrase) => measureLine(line, css(size, phrase), size), frameW, frameH, scale),
+    [shown, look.font, frameW, frameH, scale, ready])
+  const colors = highlightColors(look)
+  return (
+    <div data-testid="hook-text-box" data-text-bg="highlight" className="absolute inset-x-0 top-0" style={{ height: layout.height * u }}>
+      <svg aria-hidden className="absolute inset-0 h-full w-full" viewBox={`0 0 ${frameW} ${layout.height}`} preserveAspectRatio="none">
+        <path d={layout.leadPath} fill={colors.leadBg} />
+        <path d={layout.phrasePath} fill={colors.phraseBg} />
+      </svg>
+      {layout.lines.map((line, i) => (
+        <div key={i} data-hook-line className="absolute inset-x-0 flex items-center justify-center whitespace-nowrap"
+          style={{ top: (line.center - line.height / 2) * u, height: line.height * u, color: line.phrase ? colors.phraseInk : colors.leadInk,
+            fontFamily: line.phrase ? HIGHLIGHT_PHRASE_FAMILY : font.family, fontStyle: line.phrase ? 'italic' : 'normal', fontWeight: line.phrase ? 400 : font.weight ?? 400,
+            fontSize: layout.size * (line.phrase ? HIGHLIGHT.phraseScale : font.scale ?? 1) * u, lineHeight: 1 }}>
+          {line.text}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** Small mock-ups of the extras that aren't part of the caption line. */
 function ProgressBar({ u, progress, color }: { u: number; progress: number; color: string }): React.JSX.Element {
   return (
@@ -556,7 +583,8 @@ export function LookFrame({ value, rows, background, aspect = '9:16', hookText, 
           </div>
         )}
       </div>
-      {boxed && <BoxedHook text={text} look={boxLook} u={u} scale={textScale} frameW={FW} frameH={FH} />}
+      {boxed && boxLook.textBg === 'highlight' && <HighlightHook text={text} look={boxLook} u={u} scale={textScale} frameW={FW} frameH={FH} />}
+      {boxed && boxLook.textBg !== 'highlight' && <BoxedHook text={text} look={boxLook} u={u} scale={textScale} frameW={FW} frameH={FH} />}
       {floating && !boxed && (
         <div className="absolute inset-x-0 top-0 flex flex-col" style={hookBox}>
           <div className="flex flex-1 items-center justify-center text-center" style={{ paddingTop: FH * HEADLINE.padY * u, paddingBottom: FH * HEADLINE.padY * u }}>

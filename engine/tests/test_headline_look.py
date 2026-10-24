@@ -294,3 +294,25 @@ def test_render_floating_with_a_dark_box(tmp_path, monkeypatch):
     ffmpeg, out = _render(tmp_path, monkeypatch, {"look": "floating", "textBg": "dark"})
     corner = _mean(ffmpeg, out, 1.0, "crop=20:10:0:0")
     assert corner.max() < 235, corner  # still no bar
+
+
+def test_key_words_in_color_draws_a_big_designed_hook(tmp_path):
+    """'highlight' (the references' hook): the lead words big and bold on a white box, the key words (the last third) in the
+    italic serif on a box in the color; big type, over the video (no bar)."""
+    assert module.highlight_split("You do not have to be an influencer") == ("You do not have to", "be an influencer")
+    assert module.highlight_split("Two words") == ("Two", "words")
+    assert validate_headline_look({"look": "floating", "textBg": "highlight", "color": "#E11D48"})["textBg"] == "highlight"
+    path, bar_h = _bar(tmp_path, {"look": "floating", "color": "#E11D48", "font": "clean", "textBg": "highlight"})
+    assert bar_h == 0
+    img = Image.open(path).convert("RGBA")
+    px = img.load()
+    w, h = img.size
+    white = [(x, y) for y in range(0, h, 4) for x in range(0, w, 4) if px[x, y][3] > 250 and px[x, y][:3] == (255, 255, 255)]
+    brand = [(x, y) for y in range(0, h, 4) for x in range(0, w, 4) if px[x, y][3] > 250 and abs(px[x, y][0] - 0xE1) < 6 and abs(px[x, y][1] - 0x1D) < 6]
+    assert white and brand
+    # The lead's box is above the key words' box, and both span much of the frame (big type, not a small label).
+    assert min(y for _, y in white) < min(y for _, y in brand)
+    span = lambda pts: (max(x for x, _ in pts) - min(x for x, _ in pts)) / w  # noqa: E731
+    assert span(white) > .5 and span(brand) > .5
+    # A white look color keeps the default blue for the key words' box (never white on white).
+    assert module.highlight_colors("#FFFFFF")[2] == (0x25, 0x63, 0xEB)

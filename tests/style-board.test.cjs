@@ -461,10 +461,10 @@ test('Text background row: shown with floating text, a tile per option on the me
   const html = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook: 'floating', textBg: 'dark' }, onChange() {}, rows, brand: null, frame }))
   const row = group(html, 'Text background')
   assert.ok(row, 'the row is there')
-  assert.equal((row.match(/role="radio"/g) ?? []).length, 4)
+  assert.equal((row.match(/role="radio"/g) ?? []).length, m.HEADLINE_TEXT_BGS.length)
   for (const bg of m.HEADLINE_TEXT_BGS) assert.match(row, new RegExp(`aria-label="${bg.label}"`), bg.id)
   assert.match(row, /aria-checked="true" aria-label="Dark box"/)
-  assert.equal((row.match(/data-look-tile/g) ?? []).length, 4)
+  assert.equal((row.match(/data-look-tile/g) ?? []).length, m.HEADLINE_TEXT_BGS.length)
   assert.match(row, /hqdefault\.jpg/, 'on the member\'s frame')
   // The live preview: one outline behind the lines, in the box color.
   assert.match(html, /data-testid="hook-text-box" data-text-bg="dark"[^]*?<path d="M[^"]+Z" fill="#000000" fill-opacity="0.9"/)
@@ -472,6 +472,10 @@ test('Text background row: shown with floating text, a tile per option on the me
   const brand = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook: 'floating', textBg: 'brand', color: '#7C5CFF' }, onChange() {}, rows, brand: null }))
   assert.ok(group(brand, 'Box color'))
   assert.match(brand, /fill="#7C5CFF" fill-opacity="1"/)
+  // Key words in color: the lead words on a white box, the key words on a box in the color (the engine's big hook).
+  const keyWords = staticRender(React.createElement(m.StyleBoard, { value: { ...BASE, hook: 'floating', textBg: 'highlight', color: '#7C5CFF' }, onChange() {}, rows, brand: null }))
+  assert.match(keyWords, /data-testid="hook-text-box" data-text-bg="highlight"[^]*?<path d="M[^"]+Z" fill="#FFFFFF"[^]*?<path d="M[^"]+Z" fill="#7C5CFF"/)
+  assert.ok(group(keyWords, 'Box color'))
 })
 
 test('clip editor hook look picker: a Text background row with floating text (compact)', () => {

@@ -290,3 +290,105 @@ def test_the_plan_reports_its_register_for_the_one_style_setting():
     assert ed.plan_register(story, [None] * len(story)) == 'story'
     # The member's choice wins.
     assert ed.plan_register(story, [None] * len(story), {'register': 'minimal'}) == 'minimal'
+
+
+# --- a real run (Edit my recording, Oct 24): plain cards, cues missed, quiet stretches ------------------------------
+
+def travis():
+    """Lines from the owner's 4-minute recording (Travis), as the transcript punctuates them."""
+    lines = [
+        ("Now that we know we're not going to go viral, we only need three things to build a legitimate business online.", 1),
+        ("That's a big difference, because a warm audience will buy anything.", 9),
+        ("A cold audience, which people like you and me are starting with, we need a better sales page.", 13),
+        ("This is going to be controversial, because there's only two ways to get eyeballs.", 20),
+        ("My organic content reaches a few people, but not nearly enough to sustain a real income.", 26),
+        ("As you can see, yesterday was October 20th, and I so spent $4,365 on ads.", 32),
+        ("As you can see, October 20th, all day right here, we ended up generating $8,188.", 40),
+        ("I am a virtual nobody when it comes to the internet.", 47),
+        ("But that doesn't mean that I can't generate sales, because I've ignored the idea of becoming a celebrity.", 52),
+    ]
+    return [seg(text, start) for text, start in lines]
+
+
+def test_cues_a_real_run_missed_frameworks_opposites_contrasts_and_dates():
+    cues = gd.find_cues(travis())
+    by = lambda kind: [c for c in cues if c['kind'] == kind]  # noqa: E731
+    # "three things", "two ways": a framework announced (steps), never a count to count up.
+    steps = by('steps')
+    assert len(steps) >= 2 and not [c for c in by('count') if c['text'].split()[0] in ('three', 'two', 'only')]
+    # A warm audience then a cold one: a contrast on the second; "but not nearly", "doesn't mean": contrasts too.
+    contrasts = [c['sentence'] for c in by('contrast')]
+    assert any(s.startswith('A cold audience') for s in contrasts)
+    assert any('not nearly enough' in s for s in contrasts) and any("doesn't mean" in s for s in contrasts)
+    # A date is not a figure; the money is, with its value as said.
+    assert not [c for c in cues if c['kind'] in ('count', 'money') and '20th' in (c.get('value') or '')]
+    assert [c['value'] for c in by('money')] == ['$4,365', '$8,188']
+
+
+def test_headline_pills_titles_and_before_afters_are_plain_cards_that_become_effects_first():
+    segments = [seg("You can see the page is already pre-written and ready to sell.", 1), seg('build an entire digital product for me', 8),
+                seg('Neither did I so we need a sales page now.', 15)]
+    planned = ag.parse_planned([raw('headline_pill', 1.0, 3, text='the page is already', phrase='pre-written'),
+                                raw('title', 8.0, 2, text='build an entire digital product'),
+                                raw('headline_pill', 16.0, 3, text='we need a', phrase='sales page')], 0, 30_000, {'pill_cards': True})
+    out = ag.fit_to_clip(planned, segments, [(0, 30_000)], 1.0, {'pill_cards': True})
+    # All three come out as effects on their own words (each a different one: the variety rules), none as a plain card.
+    assert len(out) == 3 and all(g['template'] == 'fx' for g in out) and len({ag.kind_of(g) for g in out}) == 3, [ag.kind_of(g) for g in out]
+    # The marker lands on a real word of the line (never a contraction or filler).
+    assert ag.kind_of(out[0]) == 'fx:marker-highlight' and out[0]['fields']['word'] == 'pre-written'
+    assert gd.key_word("Now that we know we're not going to go viral") == 'viral'
+    # The group cap counts them all: at most one plain text card per 45 seconds.
+    assert {'headline_pill', 'title', 'before_after'} <= set(gd.PLAIN) and 'strike_list' in gd.CONVERT_FIRST
+    kept = [{'template': 'headline_pill', 'at_ms': 0, 'duration_ms': 3000, 'fields': {}}]
+    assert not gd.group_allows('title', kept, 40) and gd.group_allows('title', kept, 90)
+    # A Create clip's hook headline is never turned into an effect.
+    opening = [seg('the page is already pre-written and ready to sell.', 0)]
+    hook = ag.fit_to_clip(ag.parse_planned([raw('headline_pill', 0.0, 3, text='the page is already', phrase='pre-written')], 0, 30_000,
+                                           {'headline_off': True}), opening, [(0, 30_000)], 1.0, {'headline_off': True})
+    assert [g['template'] for g in hook] == ['headline_pill']
+
+
+def test_quiet_stretches_get_visuals_from_their_cues_never_a_story_and_never_a_number_twice():
+    segments = travis()
+    ranges = [(0, 60_000)]
+    seconds = 60.0
+    clash = lambda g, others: any(g['at_ms'] < k['at_ms'] + k['duration_ms'] + 1200 and k['at_ms'] < g['at_ms'] + g['duration_ms'] + 1200 for k in others)  # noqa: E731
+    shown = [{'template': 'stat', 'at_ms': 33_000, 'duration_ms': 3000, 'placement': 'top', 'fields': {'value': '$4,365'}, 'origin': 'auto'}]
+    out = gd.fill_quiet(shown, segments, ranges, 1.0, seconds, ag.AUTO_TEMPLATES, clash, 'teaching', 1000, 59_000, 9)
+    added = [g for g in out if g.get('filled')]
+    assert added, 'the quiet stretches get something'
+    # Never two at once, every word said, and $4,365 (already shown) is not shown again; $8,188 counts up.
+    for a, b in zip(out, out[1:]):
+        assert a['at_ms'] + a['duration_ms'] <= b['at_ms']
+    assert all(ag.words_said(g, segments) for g in added)
+    numbers = [g['fields'].get('value') for g in added if g['fields'].get('effect') == 'count-up']
+    assert '8,188' in numbers and '4,365' not in numbers
+    # Markers show a whole clause as said (nothing dropped), on a real word.
+    for g in added:
+        if g['fields'].get('effect') == 'marker-highlight':
+            assert g['fields']['word'].lower() not in gd._STOP and "'" not in g['fields']['word']
+    # Personal story and the minimal register stay quiet.
+    story = [seg('I remember when I was a kid my dad told me I felt so scared that night.', 1), seg('My family and I cried for days after that.', 7)]
+    assert gd.fill_quiet([], story, [(0, 20_000)], 1.0, 20.0, ag.AUTO_TEMPLATES, clash, 'teaching', 1000, 19_000, 9) == []
+    assert gd.fill_quiet([], segments, ranges, 1.0, seconds, ag.AUTO_TEMPLATES, clash, 'minimal', 1000, 59_000, 9) == []
+    # A clause list that isn't parallel items is no checklist.
+    assert gd.cue_graphic({'kind': 'list', 'at_ms': 1000, 'text': 'A cold audience, which people like you, me are starting with'}) == []
+
+
+def test_a_light_stage_takes_the_dark_looks_and_words_with_no_card_take_dark_ink():
+    card = lambda t, **f: {'template': t, 'at_ms': 1000, 'duration_ms': 3000, 'fields': f, 'origin': 'auto'}  # noqa: E731
+    assert gd.on_light_stage(card('statement', text='x', variant='card'))['fields']['variant'] == 'glass'
+    assert gd.on_light_stage(card('title', text='x', variant='shadow'))['fields']['variant'] == 'pill'
+    assert gd.on_light_stage(card('strike_list', items='a'))['fields']['theme'] == 'dark'
+    assert gd.on_light_stage(card('big_words', text='2 ways'))['fields']['theme'] == 'light'
+    # A look the member picked stays.
+    assert gd.on_light_stage(card('statement', text='x', variant='bold'))['fields']['variant'] == 'bold'
+    # In the editor's reel: only on a light stage scene.
+    scenes = [{'scene': 'stage', 'start_ms': 500, 'end_ms': 5000}]
+    (on,) = ed.size_for_scenes([{**card('strike_list', items='a'), 'size': 'stage'}], scenes)
+    assert on['fields']['theme'] == 'dark'
+    (off,) = ed.size_for_scenes([{**card('strike_list', items='a'), 'size': 'stage'}], [{**scenes[0], 'backdrop': 'dark'}])
+    assert 'theme' not in off['fields']
+    # The theme travels with the saved graphic (one look per video).
+    assert ag.clean_fields('strike_list', {'items': 'a', 'theme': 'dark'}, ag.SAVED_FIELDS)['theme'] == 'dark'
+    assert gd.with_look([card('before_after', before='a', after='b')], {'tone': 'dark'})[0]['fields']['theme'] == 'dark'

@@ -24,6 +24,7 @@ import { takeoverTemplate } from './takeover'
 import { mountEffect } from './fx/mount'
 import { ctaTemplate } from './cta'
 import { chapterTemplate, compareMarksTemplate, funnelTemplate, growthTemplate, ideaHubTemplate, journeyTemplate, staircaseTemplate } from './diagrams'
+import { TEXT_FILL, TEXT_MAX_FILL, largestFitting, textMinType, textTheme, wordCount } from './text-fit'
 import {
   accentWords, browserHighlights, cardWords, formatStatValue, graphicIcons, graphicItems, graphicItemTimes, graphicVariant, graphicWordTimes, highlightPoint, orbitNodes, parseStatValue,
   screenFrameLayout, templateItems, SCREEN_FADE_MS, type GraphicIcon, type GraphicRenderSpec
@@ -49,6 +50,15 @@ const FONT_LOADS = ['900 40px "MG Montserrat"', '800 40px "MG Montserrat"', '800
   '40px "MG Caveat Brush"', 'italic 40px "MG Instrument Serif"', '40px "MG Instrument Serif"']
 /** Size scale per graphic size: a compact card, the usual card, the stage. */
 const SIZE_SCALE = { compact: .82, card: 1, stage: 1.1 } as const
+/** Templates drawn on a white card in their classic look: on dark glass with light ink in the 'dark' theme. */
+const TONED: readonly string[] = ['title', 'statement', 'quote', 'list', 'checklist', 'stat', 'lower_third', 'before_after', 'strike_list', 'headline_pill',
+  'comment_cta', 'browser_frame']
+/** Words with no card (white with a shadow): dark ink in the 'light' theme (a light stage). */
+const INKED: readonly string[] = ['big_words']
+/** A card starts coming in this long before its first words do (0: with them; both fade in over about the same time). */
+const CARD_LEAD_MS = 0
+/** Templates that size their own type to the on-phone rules (fitType), so fitToBand leaves them alone. */
+const SELF_FITTED: readonly string[] = ['title', 'statement', 'quote', 'headline_pill', 'strike_list', 'before_after', 'lower_third', 'comment_cta', 'sticky_notes']
 
 function rgb(hex: string): [number, number, number] {
   const clean = /^#[0-9a-f]{6}$/i.test(hex) ? hex : '#2F5BFF'
@@ -102,9 +112,9 @@ type Segment = { at: number; duration: number; from: Lazy; to: Lazy; ease: strin
 const value = (v: Lazy): Value => typeof v === 'function' ? v() : v
 /**
  * Templates describe moves as `add(target, { prop: [from, to], duration, ease }, at)`.
- * Each element's moves on one property become ONE anime.js animation with
- * keyframes (separated by holds), so no two animations ever write the same
- * property: seeking to any time, in any order, gives the same frame.
+ * Each move is its own animation, one after another on its property (a move cut
+ * short by the next one), and every seek builds the timeline afresh: seeking to
+ * any time, in any order, gives the same frame.
  */
 class Tracks {
   private items = new Map<Element, Map<string, Segment[]>>()
@@ -120,6 +130,26 @@ class Tracks {
     }
     return this
   }
+  /**
+   * When the first thing inside `container` starts to show (its earliest move from opacity 0), not counting the
+   * container itself; null when nothing inside fades in.
+   */
+  firstShownIn(container: Element): number | null {
+    let first: number | null = null
+    for (const [target, props] of this.items) {
+      // Words (letters or digits), not decoration: a quote mark or a rule coming in first still leaves the card empty.
+      if (target === container || !container.contains(target) || !/[\p{L}\p{N}]/u.test(target.textContent ?? '')) continue
+      for (const seg of props.get('opacity') ?? []) {
+        if (value(seg.from) !== 0) continue
+        if (first === null || seg.at < first) first = seg.at
+      }
+    }
+    return first
+  }
+  /** Move `target`'s moves that start at `from` (its entrance) to start at `to` instead. */
+  moveStart(target: Element, from: number, to: number): void {
+    for (const list of this.items.get(target)?.values() ?? []) for (const seg of list) if (seg.at === from) seg.at = to
+  }
   /** Remove what the moves wrote, leaving each element's own layout. */
   clear(): void {
     for (const target of this.items.keys()) {
@@ -130,26 +160,21 @@ class Tracks {
   timeline(total: number): ReturnType<typeof createTimeline> {
     const tl = createTimeline({ autoplay: false, defaults: { composition: 'none' } })
     for (const [target, props] of this.items) {
-      const params: Record<string, unknown> = {}
       // Before its first move an element shows that move's starting value.
       const initial: Record<string, Value> = {}
       for (const [key, raw] of props) initial[key] = value([...raw].sort((a, b) => a.at - b.at)[0].from)
       setInitial(target, initial)
       for (const [key, raw] of props) {
         const list = [...raw].sort((a, b) => a.at - b.at)
-        const frames: Record<string, unknown>[] = []
-        let end = 0
         list.forEach((seg, i) => {
           // A move that starts before the previous one ends cuts it short.
           const next = list[i + 1]
           const duration = next ? Math.max(1, Math.min(seg.duration, next.at - seg.at)) : seg.duration
-          // The value holds until the move begins (a keyframe delay).
-          frames.push({ from: value(seg.from), to: value(seg.to), duration, ease: seg.ease, delay: Math.max(0, seg.at - end) })
-          end = Math.max(end, seg.at) + duration
+          // Each move is its own animation at its own time (the value holds in between): a keyframe list whose first
+          // move starts late jumps to its end when a fresh timeline is seeked into it (anime.js 4), so none is used.
+          tl.add(target as HTMLElement, { [key]: { from: value(seg.from), to: value(seg.to), duration, ease: seg.ease } } as never, seg.at)
         })
-        params[key] = frames
       }
-      tl.add(target as HTMLElement, params as never, 0)
     }
     // Hold everything to the end, so seeking anywhere in the graphic is stable.
     tl.add({ duration: 1 }, Math.max(1, total))
@@ -193,6 +218,11 @@ interface Build {
   fitters: (() => void)[]
   /** Measurements once the layout is fitted to its band (boxes drawn around words). */
   after: (() => void)[]
+  /** The graphic's size ('card', 'stage' or 'compact') and its size scale (a size in px of a 1080-wide frame is that / k in --u). */
+  size: 'card' | 'stage' | 'compact'
+  k: number
+  /** Containers (cards) that come in with their first content, never before it (no empty card on screen). */
+  cards: HTMLElement[]
 }
 
 export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): MountedGraphic {
@@ -226,10 +256,21 @@ export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): Mounte
   band.style.top = `${spec.box.top * H}px`
   band.style.height = `${(spec.box.bottom - spec.box.top) * H}px`
   const fit = el('div', 'mg-fit', band)
+  // The video's one look: light ink on dark glass ('dark') or dark ink on white ('light'), for the templates whose
+  // classic look is a white card (a look picked for the graphic keeps its own colors); words with no card take dark ink
+  // on a light stage.
+  const theme = textTheme(spec.fields)
+  if (theme === 'dark' && TONED.includes(spec.template) && (look === '' || look === 'card')) root.classList.add('tone-dark')
+  if (theme === 'light' && INKED.includes(spec.template)) root.classList.add('ink-dark')
   const tracks = new Tracks()
-  const build: Build = { look, root, band, fit, tl: tracks, spec, u, onSeek: [], fitters: [], after: [] }
+  const build: Build = { look, root, band, fit, tl: tracks, spec, u, onSeek: [], fitters: [], after: [], size, k: SIZE_SCALE[size], cards: [] }
   const make = TEMPLATES[spec.template] ?? TEMPLATES.title
   make(build)
+  // No empty card on screen: a card comes in with its first words (a frame or two before them), not before.
+  for (const card of build.cards) {
+    const first = tracks.firstShownIn(card)
+    if (first !== null && first > 0) tracks.moveStart(card, 0, Math.min(first - CARD_LEAD_MS, phases(spec.duration_ms).outAt - 400))
+  }
   // Every seek starts a fresh timeline at 0 and jumps to the time, so a frame
   // never depends on which frames came before it (the render and the editor's
   // scrubbing get the same pixels).
@@ -268,6 +309,7 @@ export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): Mounte
  */
 function fitToBand({ band, fit, root, spec, u }: Build): void {
   if (['highlight', 'big_words', 'takeover', 'orbit', 'screen_frame', 'chapter', 'staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks'].includes(spec.template)) return
+  if (SELF_FITTED.includes(spec.template)) return
   fit.style.removeProperty('--u')
   fit.style.removeProperty('--card-w')
   const cardW = parseFloat(root.style.getPropertyValue('--card-w'))
@@ -280,6 +322,57 @@ function fitToBand({ band, fit, root, spec, u }: Build): void {
     fit.style.setProperty('--u', `${u * scale}px`)
     fit.style.setProperty('--card-w', `${Math.round(cardW * scale)}px`)
   }
+}
+
+// ---------------------------------------------------------------------------
+// On-phone type (text-fit.ts): as big as the room allows, never under the minimum
+// ---------------------------------------------------------------------------
+
+/** How many lines `el`'s text runs to (its content height over its line height). */
+function linesOf(el: HTMLElement): number {
+  const cs = getComputedStyle(el)
+  const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.15
+  const h = el.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0)
+  return Math.max(1, Math.round(h / Math.max(1, lh)))
+}
+interface TypeFit {
+  /** The smallest and largest font size (px of a 1080-wide frame) the variable stands for. */
+  min: number; max: number
+  /** Text blocks and the most lines each may run to. */
+  lines?: [HTMLElement, number][]
+  /** Elements whose own width must stay under the frame's TEXT_MAX_FILL (auto-width cards and pills). */
+  wide?: HTMLElement[]
+  /** Elements whose words must not spill out of them (fixed-width cards): their scroll width within their width. */
+  inside?: HTMLElement[]
+  /** Auto-width cards widened to the frame's TEXT_FILL when the type alone leaves them narrower. */
+  fill?: HTMLElement[]
+}
+/**
+ * Sets `--name` on `host` (a size in --u units, as the CSS multiplies it) to the largest size that keeps every block
+ * within its lines, the card within the frame's width and the whole graphic within its band; never under `min` (it may
+ * then reach a little past its band: a phone reads big type before a tidy band). Run as a fitter (fonts loaded, no
+ * moves applied).
+ */
+function fitType(b: Build, host: HTMLElement, name: string, o: TypeFit): void {
+  const { spec, band, fit, k } = b
+  const maxW = spec.width * TEXT_MAX_FILL[b.size]
+  // `px`: on a 1080-wide frame (the CSS draws var(--u) * the value, --u being the frame's unit times k).
+  const set = (px: number): void => host.style.setProperty(name, String(Math.round(px / k * 10) / 10))
+  const fits = (px: number, fewer = 0): boolean => {
+    set(px)
+    if ((o.lines ?? []).some(([el, most]) => linesOf(el) > Math.max(1, most - fewer))) return false
+    if ((o.wide ?? []).some((el) => el.offsetWidth > maxW)) return false
+    if ((o.inside ?? []).some((el) => el.scrollWidth > el.clientWidth + 1)) return false
+    return fit.scrollHeight <= band.clientHeight + 1
+  }
+  const floor = b.size === 'compact' ? .8 : 1
+  // Fewer lines read faster: one line less wins while its type stays at least 3/4 as big (and over the minimum).
+  const loose = largestFitting(o.min * floor, o.max, (px) => fits(px), 2)
+  const tight = o.lines?.length ? largestFitting(o.min * floor, o.max, (px) => fits(px, 1), 2) : 0
+  const tightOk = tight >= o.min * floor && tight >= loose * .75 && fits(tight, 1)
+  set(tightOk ? tight : loose)
+  const least = spec.width * TEXT_FILL[b.size]
+  for (const el of o.fill ?? []) if (el.offsetWidth < least) el.style.minWidth = `${Math.round(least)}px`
 }
 
 // ---------------------------------------------------------------------------
@@ -314,12 +407,14 @@ function riseIn(b: Build, target: Element, at: number, distance = 22, duration =
   b.tl.add(target, { translateY: [distance * b.u, 0], duration, ease: 'outCubic' }, at)
 }
 /** The common shell: a push-in wrapper around the main element, which enters and exits like a card. */
-function shell(b: Build, className: string, parent: HTMLElement = b.fit): { push: HTMLElement; card: HTMLElement } {
+function shell(b: Build, className: string, parent: HTMLElement = b.fit, withWords = true): { push: HTMLElement; card: HTMLElement } {
   const push = el('div', 'mg-push', parent)
   const card = el('div', className, push)
   cardIn(b, card)
   cardOut(b, card)
   pushIn(b, push)
+  // (`withWords`: the card comes in with its first words; a stat's number counts from the start, so it never waits.)
+  if (withWords) b.cards.push(card)
   return { push, card }
 }
 /**
@@ -437,7 +532,7 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
   stat(b) {
     const { spec, tl, u, look } = b
     const valueText = clean(spec.fields.value), label = clean(spec.fields.label)
-    const { card } = shell(b, `mg-card glow mg-stat${label ? '' : ' no-label'}`)
+    const { card } = shell(b, `mg-card glow mg-stat${label ? '' : ' no-label'}`, b.fit, false)
     const stat = parseStatValue(valueText)
     // Badge: an icon badge beside the number and its label; Color: rings drawn round the corner of the card.
     const badge = look === 'badge' ? el('div', 'mg-stat-badge', card) : null
@@ -493,10 +588,21 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     // Color pills: the words sit on one inline run whose background breaks into a pill per line.
     const ink = b.look === 'pill' ? el('span', 'mg-title-ink', box) : box
     const rich = richText(ink, words.slice(0, 14).join(' '), accent, { accentClass: 'tint', marker: b.look === 'card' })
+    // On a phone: as big as fits in 2-3 lines across most of the frame (the pill look draws its type at .8).
+    const scale = b.look === 'pill' ? .8 : b.look === 'shadow' ? 1.08 : 1
+    b.fitters.push(() => fitType(b, box, '--title-size', { min: textMinType(words.length) / scale, max: 176, lines: [[box, words.length <= 3 ? 2 : 3]],
+      wide: [card], fill: b.look === 'card' ? [card] : [] }))
     const { tin } = phases(spec.duration_ms)
     const said = saidTimes(spec)
     const end = said ? buildWordsAt(b, rich.words, said, 'pop') : buildWords(b, rich.words, tin * .55, wordStep(rich.words.length, 700, 110), 'pop')
     sweep(b, rich.mark, end - 60)
+    // Color pills: the pill (and the key word's white box) show with their first words, never empty.
+    if (b.look === 'pill') {
+      const step = wordStep(rich.words.length, 700, 110)
+      const wordAt = (i: number): number => said ? Math.max(0, said[i] - SAID_LEAD) : tin * .55 + i * step
+      b.tl.add(ink, { opacity: [0, 1], duration: 140, ease: 'outQuad' }, wordAt(0))
+      if (rich.accent) b.tl.add(rich.accent, { opacity: [0, 1], duration: 140, ease: 'outQuad' }, wordAt(rich.words.findIndex((w) => rich.accent?.contains(w))))
+    }
   },
 
   list(b) { listLike(b, false) },
@@ -511,6 +617,9 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     const col = el('div', 'mg-tag-text', card)
     const nameEl = el('div', 'mg-tag-name mg-display', col, name || role)
     const roleEl = name && role ? el('div', 'mg-tag-role', col, role) : null
+    // The name as big as fits on a line or two; the role in the serif at its own minimum; the tag spans most of the frame.
+    if (roleEl) roleEl.style.setProperty('--role-size', String(Math.round(textMinType(wordCount(role), 'serif') / b.k)))
+    b.fitters.push(() => fitType(b, card, '--tag-size', { min: textMinType(wordCount(name || role)), max: 112, lines: [[nameEl, 2]], wide: [card], fill: [card] }))
     const { tin } = phases(spec.duration_ms)
     tl.add(bar, { scaleY: [0, 1], duration: 380, ease: 'outQuart' }, tin * .4)
     riseIn(b, nameEl, tin * .5, 18)
@@ -539,7 +648,10 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
 
   before_after(b) {
     const { spec, tl } = b
-    const { card: grid } = shell(b, 'mg-ba')
+    // Two short sides sit side by side; longer ones stack (before above, after below) so each reads big on a phone.
+    const beforeWords = wordCount(spec.fields.before), afterWords = wordCount(spec.fields.after)
+    const stack = Math.max(beforeWords, afterWords) > 3 || clean(spec.fields.before).length + clean(spec.fields.after).length > 30
+    const { card: grid } = shell(b, `mg-ba${stack ? ' stack' : ''}`)
     const before = el('div', 'mg-card mg-ba-card before', grid)
     el('div', 'mg-kicker muted', before, 'Before')
     const beforeText = el('div', 'mg-ba-text', before, clean(spec.fields.before))
@@ -548,7 +660,10 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     const afterText = el('div', 'mg-ba-text mg-display', after, clean(spec.fields.after))
     const arrow = el('div', 'mg-ba-arrow', grid)
     const glyph = svg('svg', { viewBox: '0 0 100 100' }, arrow)
-    svg('path', { d: 'M24 50 H74 M54 30 L74 50 L54 70' }, glyph)
+    svg('path', { d: stack ? 'M50 24 V74 M30 54 L50 74 L70 54' : 'M24 50 H74 M54 30 L74 50 L54 70' }, glyph)
+    // The after side as big as fits (the before side at .8 of it), neither under the minimum.
+    b.fitters.push(() => fitType(b, grid, '--ba-size', { min: Math.max(textMinType(afterWords), textMinType(beforeWords) / .8), max: stack ? 120 : 96,
+      lines: [[beforeText, stack ? 3 : 4], [afterText, 4]], inside: [beforeText, afterText] }))
     const { tin, hold } = phases(spec.duration_ms)
     const swap = tin + clamp(hold * .25, 300, 700)
     riseIn(b, beforeText, tin * .6, 16)
@@ -567,6 +682,8 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     const text = clean(spec.fields.text).replace(/^["“”']+|["“”']+$/g, '')
     textBox.style.setProperty('--quote-size', String(Math.round(clamp(6000 / Math.max(36, text.length), 58, 104))))
     const rich = richText(textBox, text, null)
+    const count = wordCount(text)
+    b.fitters.push(() => fitType(b, textBox, '--quote-size', { min: textMinType(count, 'serif'), max: 140, lines: [[textBox, count > 12 ? 5 : 4]], inside: [textBox] }))
     const author = clean(spec.fields.author)
     const by = author ? el('div', 'mg-quote-author', card, author) : null
     const { tin, hold } = phases(spec.duration_ms)
@@ -635,6 +752,10 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     const length = clean(text).length
     box.style.setProperty('--statement-size', String(Math.round(clamp(2400 / Math.max(10, length) + 40, 84, 156))))
     const rich = richText(box, text, spec.fields.accent)
+    // The serif (the bold look: the sans at .82) as big as fits in 3 lines (4 for a long line), never under the minimum.
+    const count = wordCount(text), bold = b.look === 'bold'
+    b.fitters.push(() => fitType(b, box, '--statement-size', { min: bold ? textMinType(count) / .82 : textMinType(count, 'serif'), max: 190,
+      lines: [[box, count > 8 ? 4 : 3]], inside: [box] }))
     const sub = subline ? el('div', 'mg-sub', card) : null
     const subWords = sub ? richText(sub, subline, null).words : []
     const { tin, hold } = phases(spec.duration_ms)
@@ -648,11 +769,16 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
   sticky_notes(b) {
     const { spec, fit, tl, u } = b
     const notes = templateItems('sticky_notes', spec.fields.items)
-    const wall = el('div', `mg-notes n${notes.length}`, fit)
-    const push = el('div', 'mg-push mg-notes-row', wall)
     const longest = notes.reduce((n, t) => Math.max(n, t.length), 1)
-    const base = notes.length === 1 ? 78 : notes.length === 2 ? 66 : 56
-    push.style.setProperty('--note-size', String(Math.round(clamp(base - Math.max(0, longest - 12) * .8, 34, base))))
+    const longWord = notes.reduce((n, t) => Math.max(n, ...t.split(/\s+/).map((w) => w.length)), 1)
+    // Three notes with long words: two above, one below (each note wider), so the words stay big.
+    const wrap = notes.length === 3 && (longest > 12 || longWord > 7)
+    const wall = el('div', `mg-notes n${notes.length}${wrap ? ' wrap' : ''}`, fit)
+    const push = el('div', 'mg-push mg-notes-row', wall)
+    // Each note's words at the on-phone minimum at least (a long word that can't fit its note is set smaller, below).
+    const base = notes.length === 1 ? 108 : notes.length === 2 || wrap ? 92 : 80
+    const least = Math.max(...notes.map((t) => textMinType(wordCount(t))))
+    push.style.setProperty('--note-size', String(Math.round(Math.max(least, clamp(base - Math.max(0, longest - 12) * .8, least, base)) / b.k)))
     const tilt = [-4, 3, -2], drop = [0, 34, 10]
     const at = beats(spec, notes.length, .4, 0)
     notes.forEach((text, i) => {
@@ -685,19 +811,29 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     const items = templateItems('strike_list', spec.fields.items)
     const final = spec.fields.final ?? ''
     const { card } = shell(b, 'mg-card mg-strike')
+    // Each word carries its own piece of the line, so a crossed-out line that wraps is crossed out on every line.
     const rows = items.map((text) => {
       const row = el('div', 'mg-strike-row', card)
-      const words = el('span', 'mg-strike-text', row, text)
-      const line = el('span', 'mg-strike-line', words)
-      return { row, words, line }
+      const words = el('span', 'mg-strike-text', row)
+      const lines = text.split(/\s+/).filter(Boolean).map((w, i) => {
+        if (i) words.appendChild(document.createTextNode(' '))
+        const word = el('span', `mg-strike-word${i ? ' joined' : ''}`, words, w)
+        return el('span', 'mg-strike-line', word)
+      })
+      return { row, words, lines }
     })
     const finalEl = clean(final) ? el('div', 'mg-strike-final mg-display', card) : null
     const rich = finalEl ? richText(finalEl, final, spec.fields.accent, { marker: false, accentClass: 'tint' }) : null
+    // The crossed-out lines and the answer as big as fit (each in two lines at most), never under the minimum.
+    const most = Math.max(1, ...items.map(wordCount), wordCount(final))
+    b.fitters.push(() => fitType(b, card, '--strike-size', { min: textMinType(most), max: 104,
+      lines: [...rows.map((r): [HTMLElement, number] => [r.words, 2]), ...(finalEl ? [[finalEl, 2] as [HTMLElement, number]] : [])], inside: rows.map((r) => r.row) }))
     const { tin, hold } = phases(spec.duration_ms)
     rows.forEach((r, i) => riseIn(b, r.row, tin * .5 + i * 70, 16, 300))
     const at = beats(spec, rows.length, .45, tin + 280, true)
     rows.forEach((r, i) => {
-      tl.add(r.line, { scaleX: [0, 1], duration: 300, ease: 'inOutQuad' }, at[i])
+      const each = 300 / Math.max(1, r.lines.length)
+      r.lines.forEach((line, k) => tl.add(line, { scaleX: [0, 1], duration: Math.max(60, each), ease: k ? 'linear' : 'inQuad' }, at[i] + k * each))
       tl.add(r.words, { opacity: [1, .5], duration: 260, ease: 'outQuad' }, at[i] + 220)
     })
     if (finalEl && rich) {
@@ -797,11 +933,18 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     // Line 1 should fit on one line when it can (the phrase is drawn 1.2× in a narrower italic).
     const longest = Math.max(text.length, phrase.length * .95, 8)
     push.style.setProperty('--headline-size', String(Math.round(clamp(1420 / longest, 58, 112))))
+    // Big and designed (the references' hook): each line as big as fits in two lines across most of the frame.
+    const count = wordCount(`${text} ${phrase}`)
+    const blocks: [HTMLElement, number][] = []
+    b.fitters.push(() => fitType(b, push, '--headline-size', { min: Math.max(textMinType(count), textMinType(count, 'serif') / 1.2), max: 168, lines: blocks, wide: [push] }))
     let first = 0
     if (text) {
       const line = el('div', 'mg-hl-line one mg-display', push)
       const words = richText(line, text, null).words
       first = words.length
+      // The lead-in stays one line when it is short (a lone last word under it reads as a mistake).
+      blocks.push([line, wordCount(text) <= 4 ? 1 : 2])
+      b.cards.push(line)
       cardIn(b, line, 0)
       t = said ? buildWordsAt(b, words, said.slice(0, words.length)) : buildWords(b, words, 120, wordStep(words.length, Math.min(520, hold * .25), 110))
     }
@@ -810,12 +953,14 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
       const fill = el('div', 'mg-hl-fill', line)
       const inner = el('div', 'mg-hl-text', line)
       const words = richText(inner, phrase, null).words
+      blocks.push([inner, 2])
       // Spoken: the box sweeps in just before the phrase's first word.
-      const at = said ? Math.max(0, said[first] - SAID_LEAD - 160) : text ? t - 120 : 0
+      // (Its words pop in as the box sweeps, never after an empty box.)
+      const at = said ? Math.max(0, said[first] - SAID_LEAD - 60) : text ? t - 120 : 0
       tl.add(line, { opacity: [0, 1], duration: 120, ease: 'linear' }, at)
       tl.add(fill, { scaleX: [0, 1], duration: 380, ease: 'outQuart' }, at)
       if (said) buildWordsAt(b, words, said.slice(first), 'pop')
-      else buildWords(b, words, at + 160, wordStep(words.length, 420, 120), 'pop')
+      else buildWords(b, words, at + 40, wordStep(words.length, 420, 120), 'pop')
     }
     pushIn(b, push, .03)
     cardOut(b, box)
@@ -830,6 +975,7 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
     const pill = el('div', 'mg-cta-pill', card)
     const word = el('span', 'mg-cta-word mg-display', pill, keyword)
     pill.style.setProperty('--cta-size', String(Math.round(clamp(900 / Math.max(3, keyword.length), 64, 128))))
+    b.fitters.push(() => fitType(b, pill, '--cta-size', { min: textMinType(1), max: 128, wide: [card], fill: [card] }))
     const { tin, hold } = phases(spec.duration_ms)
     riseIn(b, leadEl, tin * .5, 18)
     popIn(b, pill, tin * .5 + 160, 1.25, 380)

@@ -10,6 +10,7 @@ import pytest
 
 from clip_engine.services import auto_graphics as ag
 from clip_engine.services import edit_direction as ed
+from clip_engine.services import graphics_director as gd
 from clip_engine.services import edit_recording as er
 from clip_engine.services.manual_editor import validate_candidate, validate_candidate_list
 
@@ -114,16 +115,17 @@ def test_planned_graphics_keep_only_what_was_said_and_anchor_on_kept_words():
     ]
     hook = (0, at(words, 'online.'))
     cta = (at(words, 'Hit'), len(words) - 1)
-    out = ed.plan_graphics(raw, words, marks, {'stage': True}, [hook, cta])
+    # (The planned graphics alone: the quiet stretches' own visuals are tested below.)
+    out = ed.plan_graphics(raw, words, marks, {'stage': True, 'fill_quiet': False}, [hook, cta])
     # Alone (nothing else at its time), the card that drops "not" is still left out: it says the opposite.
     flipped = item('statement', at(words, 'organic'), 3, text='organic content going viral', accent='viral')
-    assert ed.plan_graphics([flipped], words, marks) == []
+    assert ed.plan_graphics([flipped], words, marks, {'fill_quiet': False}) == []
     kept_line = item('statement', at(words, 'organic') - 1, 3, text='Not organic content, not going viral', accent='viral')
-    (line,) = ed.plan_graphics([kept_line], words, marks)
+    (line,) = ed.plan_graphics([kept_line], words, marks, {'fill_quiet': False})
     assert line['fields']['text'] == 'Not organic content, not going viral'
     # An effect that drops "not" is left out the same way.
     fx_flipped = {**item('fx', at(words, 'organic'), 3), 'effect': 'headline-slam', 'fx_fields': [{'key': 'text', 'value': 'organic content going viral'}]}
-    assert ed.plan_graphics([fx_flipped], words, marks) == []
+    assert ed.plan_graphics([fx_flipped], words, marks, {'fill_quiet': False}) == []
     # About one per 9-10 s of a 40-s talk: the strongest (the diagram, the number, the contrast) win; nothing made up.
     kinds = [g['template'] for g in out]
     assert kinds == ['staircase', 'stat', 'strike_list'], kinds
@@ -137,10 +139,10 @@ def test_planned_graphics_keep_only_what_was_said_and_anchor_on_kept_words():
     starts = [words[g['word']].start_ms for g in out]
     assert all(starts[i] + out[i]['duration_ms'] <= starts[i + 1] for i in range(len(out) - 1))
     # Alone, the others are kept as planned: the statement on its first word, big words behind the speaker.
-    alone = ed.plan_graphics([raw[0]], words, marks, {'stage': True}, [hook, cta])
+    alone = ed.plan_graphics([raw[0]], words, marks, {'stage': True, 'fill_quiet': False}, [hook, cta])
     # (A plain statement is a fallback: its line comes out as a marker highlight on its key word.)
     assert [ag.kind_of(g) for g in alone] == ['fx:marker-highlight'] and words[alone[0]['word']].text == 'We'
-    big = ed.plan_graphics([raw[7]], words, marks, {'stage': True}, [hook, cta])
+    big = ed.plan_graphics([raw[7]], words, marks, {'stage': True, 'fill_quiet': False}, [hook, cta])
     # (Big words are a plain fallback too: a short punch comes out as a headline slam.)
     assert [ag.kind_of(g) for g in big] == ['fx:headline-slam'] and 'depth' not in big[0]
     # Every kept card has a look, and a statement's is one of its own.
@@ -150,7 +152,7 @@ def test_planned_graphics_keep_only_what_was_said_and_anchor_on_kept_words():
 def test_a_graphic_on_the_first_kept_word_is_kept_the_reel_opens_on_its_hook():
     words = say('Most coaches lose so many clients.', 0.3) + say('Fifteen billion messages wait.', 3.0)
     marks = er.analyze_takes(words)
-    out = ed.plan_graphics([item('statement', 0, 2.5, text='Most coaches lose clients.', accent='clients')], words, marks, {}, [(6, 9)])
+    out = ed.plan_graphics([item('statement', 0, 2.5, text='Most coaches lose clients.', accent='clients')], words, marks, {'fill_quiet': False}, [(6, 9)])
     assert [(ag.kind_of(g), g['word']) for g in out] == [('fx:marker-highlight', 0)]
 
 
@@ -160,7 +162,7 @@ def test_takes_and_clips_never_collide_on_the_plans_clock():
     marks = er.analyze_takes(words)
     good = item('stat', at(words, '4,365'), value='$4,365', label='spent on ads')
     wrong = item('statement', at(words, 'Yesterday'), text='We need a product', accent='product')
-    out = ed.plan_graphics([good, wrong], words, marks)
+    out = ed.plan_graphics([good, wrong], words, marks, {'fill_quiet': False})
     assert [g['template'] for g in out] == ['stat']
     assert words[out[0]['word']].src == 1
 
@@ -175,7 +177,8 @@ def test_about_one_graphic_per_ten_seconds_never_two_at_once():
     marks = er.analyze_takes(words)
     raw = [item('stat', i, 3, value=w.text.strip('.'), label=words[i + 1].text.strip('.')) for i, w in enumerate(words) if w.text[0].isdigit()]
     out = ed.plan_graphics(raw, words, marks)
-    assert 2 <= len(out) <= ed.graphics_limit(30)
+    # (The planner's count, and the quiet stretches' own visuals up to one per FILL_SECONDS.)
+    assert 2 <= len(out) <= max(ed.graphics_limit(30), int(30 // gd.FILL_SECONDS))
     starts = sorted(words[g['word']].start_ms for g in out)
     ends = {words[g['word']].start_ms: words[g['word']].start_ms + g['duration_ms'] for g in out}
     assert all(ends[a] <= b for a, b in zip(starts, starts[1:]))
@@ -196,8 +199,10 @@ def test_a_plan_call_with_the_direction_returns_the_graphics_to_review(monkeypat
     review = asyncio.run(er.plan_edit({'words': words, 'names': ['take.mp4'], 'direction': {'stage': True}}, lambda *_: None))
     system = seen['payload']['messages'][0]['content']
     assert 'MOTION GRAPHICS' in system and 'popups' not in json.dumps(seen['payload']['response_format'])
-    assert [g['template'] for g in review['graphics']] == ['stat']
-    assert review['graphics'][0]['fields'] == {'value': '$4,365', 'label': 'spent on ads', 'variant': ag.ROTATION['stat'][0]}
+    # The planned stat, and effects the app placed itself in the quiet stretches around it (from the words' own cues).
+    stats = [g for g in review['graphics'] if g['template'] == 'stat']
+    assert len(stats) == 1 and all(g['template'] == 'fx' for g in review['graphics'] if g is not stats[0])
+    assert stats[0]['fields'] == {'value': '$4,365', 'label': 'spent on ads', 'variant': ag.ROTATION['stat'][0]}
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +402,10 @@ def test_a_directed_reel_floats_its_hook_and_hides_it_and_keeps_the_look_extras_
                    ('keyword_pill', 'accent_words', 'progress_bar', 'comment_box', 'proof_underline'), '#ff5500', 'GUIDE')
     project = ed.edit_project('My reel', total, segments, look, [], [], None, 'a' * 32, directed=True)
     c = project['candidates'][0]
-    assert c['hook']['look'] == {'look': 'floating', 'color': '#FFFFFF', 'font': 'serif', 'textBg': 'light', 'hideAfterS': 5}
+    # The bar becomes the big "Key words in color" hook (the references' hook: bold words, the key words on a color box).
+    assert c['hook']['look'] == {'look': 'floating', 'color': '#FFFFFF', 'font': 'serif', 'textBg': 'highlight', 'hideAfterS': 5}
+    branded = ed.edit_project('My reel', total, segments, look, [], [], None, 'a' * 32, directed=True, accent='#e11d48')
+    assert branded['candidates'][0]['hook']['look'] == {'look': 'floating', 'color': '#E11D48', 'font': 'serif', 'textBg': 'highlight', 'hideAfterS': 5}
     assert c['look_extras'] == {'ids': ['keyword_pill', 'accent_words', 'progress_bar', 'comment_box'], 'color': '#FF5500', 'keyword': 'GUIDE'}
     validate_candidate(c, total, len(segments))
     from clip_engine.services.manual_editor import clip_look_extras

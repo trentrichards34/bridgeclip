@@ -9,7 +9,7 @@ import { cn, errorMessage, formatTimecode, localFileUrl, parseTimecode } from '.
 import { HeadlineLookPicker } from './HeadlineLookPicker'
 import { CtaPicker } from './CtaPicker'
 import { Segmented } from './ui/Segmented'
-import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, TEXT_BOX, headlineBarColor, headlineShownAt, headlineTextBox, headlineTextColor, textBoxOutline, textBoxPath, textBoxRects } from '../../shared/headline-look'
+import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HIGHLIGHT, HIGHLIGHT_PHRASE_FAMILY, TEXT_BOX, headlineBarColor, headlineShownAt, headlineTextBg, headlineTextBox, headlineTextColor, highlightColors, highlightPlacement, textBoxOutline, textBoxPath, textBoxRects } from '../../shared/headline-look'
 import { captionLanguageLabel } from '../../shared/caption-language'
 import { type AutomaticOmission, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, applyStyleToAll, runHookLook, transcriptClip, transcriptRange, variantOf, type HookIdea, MAX_HOOK_CHARS, SPLIT_RANGE, panelRows, resizeSplit, splitOf, EDITOR_REVISION_CONFLICT, cameraMarkers, snapFrame, stepFrame, candidateEdit, canAnimateScene, defaultCrop, editDuration, editSignature, editorProgress, framingAt, outputTimeAt, normalizeSceneTransitions, refineEdit, renderEditKey, resizeCrop, retimeScene, sceneAt, trimRange, type CandidateEdit, type Crop, type CropCorner, type EditorCandidate, type EditorQuestion, type EditorRange, type EditorScene, type EditorSession } from '../../shared/clip-editor'
 import { CameraChanges, CameraScanButton } from './CameraChanges'
@@ -477,6 +477,22 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           const { bar, size, lines: shown, top, lineH } = hookLayout
           ctx.textAlign = 'center'; ctx.textBaseline = 'top'
           const box = bar ? null : headlineTextBox(hook.look)
+          if (headlineTextBg(hook.look) === 'highlight') {
+            // Key words in color: the lead words on a white box, the key words in italic on a box in the color (as the export).
+            const font = HEADLINE_FONTS.find((f) => f.id === hook.look.font) ?? HEADLINE_FONTS[0]
+            const css = (px: number, phrase: boolean): string => phrase ? `italic 400 ${px * HIGHLIGHT.phraseScale}px ${HIGHLIGHT_PHRASE_FAMILY}` : `${font.weight ?? 400} ${px * (font.scale ?? 1)}px ${font.family}`
+            const measure = (line: string, px: number, phrase: boolean): number => { ctx.font = css(px, phrase); return ctx.measureText(line).width }
+            const text = font.upper ? hook.text.toUpperCase() : hook.text
+            const placed = highlightPlacement(text, measure, out.width, out.height, out.height / 1920)
+            const colors = highlightColors(hook.look)
+            ctx.fillStyle = colors.leadBg; if (placed.leadPath) ctx.fill(new Path2D(placed.leadPath))
+            ctx.fillStyle = colors.phraseBg; if (placed.phrasePath) ctx.fill(new Path2D(placed.phrasePath))
+            ctx.textBaseline = 'middle'
+            for (const line of placed.lines) {
+              ctx.font = css(placed.size, line.phrase); ctx.fillStyle = line.phrase ? colors.phraseInk : colors.leadInk
+              ctx.fillText(line.text, out.width / 2, line.center)
+            }
+          } else {
           if (box) {
             // Floating text on a box: a snug rounded box behind each line, as the export draws it.
             const centers = shown.map((_, i) => top + i * lineH + lineH / 2)
@@ -490,6 +506,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
             if (!bar && !box) { ctx.lineWidth = Math.max(2, size / 7); ctx.strokeStyle = '#000'; ctx.strokeText(line, out.width / 2, y) }
             ctx.fillStyle = headlineTextColor(hook.look); ctx.fillText(line, out.width / 2, y)
           })
+          }
           ctx.textAlign = 'start'
         }
       }

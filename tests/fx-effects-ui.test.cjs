@@ -19,7 +19,9 @@ const bundled = buildSync({
       export { REEL_GRAPHIC_TEMPLATES, REEL_CHAT_TEMPLATES } from './src/shared/reel-graphics';
       export { GraphicForm } from './src/renderer/components/ReelGraphics';
       export { fxFit, fxAnchorShift, fxMinType, fxGlassLeft } from './src/renderer/graphics/fx/fit';
-      export { pushOrigin, pushScale, PUSH_ZOOM } from './src/renderer/graphics/fx/media';`,
+      export { pushOrigin, pushScale, PUSH_ZOOM } from './src/renderer/graphics/fx/media';
+      export { textMinType, largestFitting, textTheme, TEXT_FILL, TEXT_MAX_FILL, CAP_RATIO } from './src/renderer/graphics/text-fit';
+      export { highlightSplit, highlightLayout, highlightColors, highlightPlacement } from './src/shared/headline-look';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
   },
@@ -193,4 +195,37 @@ test('a screenshot pushes in slowly and keeps the part that matters whole; words
   assert.equal(m.fxGlassLeft(2000, 460), 1)
   assert.equal(m.fxGlassLeft(230, 460), 0.5)
   assert.equal(m.fxGlassLeft(0, 460), 0)
+})
+
+test('text templates keep the on-phone minimums: a short line at a cap height of about 54 px, cards across most of the frame', () => {
+  // 1-6 words: about 54 px caps (the bold sans at 0.72 of its size, the italic serif at 0.62); longer lines about 43 px.
+  assert.equal(m.textMinType(4), 75)
+  assert.equal(m.textMinType(4, 'serif'), 88)
+  assert.equal(m.textMinType(9), 60)
+  assert.ok(m.textMinType(3) * m.CAP_RATIO.sans >= 54 && m.textMinType(6, 'serif') * m.CAP_RATIO.serif >= 54)
+  // Fill: a card at least 70% of the width, the stage 88%.
+  assert.equal(m.TEXT_FILL.card, .7)
+  assert.equal(m.TEXT_FILL.stage, .88)
+  assert.ok(m.TEXT_MAX_FILL.card > m.TEXT_FILL.card && m.TEXT_MAX_FILL.stage > m.TEXT_FILL.stage)
+  // The biggest size that fits, never under the minimum (it may then spill a little: big type first).
+  assert.equal(m.largestFitting(75, 160, (s) => s <= 120), 120)
+  assert.equal(m.largestFitting(75, 160, () => false), 75)
+  // The one look travels as `theme`.
+  assert.equal(m.textTheme({ theme: 'dark' }), 'dark')
+  assert.equal(m.textTheme({ theme: 'neon' }), '')
+})
+
+test('Key words in color: the lead words big on white, the last third in the serif on the color, at the biggest size that fits', () => {
+  assert.deepEqual(m.highlightSplit('You do not have to be an influencer'), { lead: 'You do not have to', phrase: 'be an influencer' })
+  assert.deepEqual(m.highlightSplit('Two words'), { lead: 'Two', phrase: 'words' })
+  const measure = (line, size, phrase) => line.length * size * (phrase ? .5 : .58)
+  const layout = m.highlightLayout('You do not have to be an influencer', measure, 950)
+  assert.ok(layout.lead.length <= 2 && layout.phrase.length <= 2 && layout.lead.length + layout.phrase.length <= 3)
+  assert.ok(layout.size >= 78, `a big hook (${layout.size})`)
+  const placed = m.highlightPlacement('You do not have to be an influencer', measure, 1080, 1920)
+  assert.ok(placed.leadPath.startsWith('M') && placed.phrasePath.startsWith('M'))
+  assert.ok(placed.lines.filter((l) => l.phrase).every((l) => l.center > placed.lines.find((x) => !x.phrase).center))
+  // Never white on white: a white color keeps the default blue for the key words' box.
+  assert.equal(m.highlightColors({ color: '#FFFFFF' }).phraseBg, '#2563EB')
+  assert.equal(m.highlightColors({ color: '#E11D48' }).phraseBg, '#E11D48')
 })

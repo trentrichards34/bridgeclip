@@ -337,10 +337,10 @@ export function StyleBoard({
   // Floating text's background, each on the board's font (the brand box in the brand's color while the color is still white).
   const boxColor = value.color.toUpperCase() === '#FFFFFF' ? brandColor ?? COLOR_PRESETS[0].color : value.color
   const textBgOptions = useMemo<SwatchOption<HeadlineTextBg>[]>(() => HEADLINE_TEXT_BGS.map((bg) => ({ id: bg.id, name: bg.label, description: bg.hint, content: (
-    <TileOption name={bg.label} scene={scene} look={{ value: { ...plain, hook: 'floating', textBg: bg.id, color: bg.id === 'brand' ? boxColor : value.color }, rows: { hooks: ['floating'] }, textScale: 1.6 }} />
+    <TileOption name={bg.label} scene={scene} look={{ value: { ...plain, hook: 'floating', textBg: bg.id, color: bg.id === 'brand' || bg.id === 'highlight' ? boxColor : value.color }, rows: { hooks: ['floating'] }, textScale: 1.6 }} />
   ) })), [scene, plain, boxColor])
   const textBgApplies = value.hook === 'floating' && hooks.includes('floating')
-  const boxColorRow = textBgApplies && value.textBg === 'brand'
+  const boxColorRow = textBgApplies && (value.textBg === 'brand' || value.textBg === 'highlight')
 
   // Fonts on the hook look in use (a white bar when there's none to show).
   const fontHook: HookChoice = value.hook === 'none' || value.hook === 'card' ? 'white' : value.hook

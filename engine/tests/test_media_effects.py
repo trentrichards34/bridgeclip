@@ -124,7 +124,8 @@ def test_edit_my_recordings_plan_puts_the_screenshots_on_their_moments_anchored_
     assert words[first['word']].text in ('Go', 'to', 'this', 'website') or first['word'] <= 9
     assert first['size'] == 'stage' and first['fields']['theme'] == 'dark'
     # Without screenshots the same plan places none.
-    assert ed.plan_graphics([], words, marks, {}) == []
+    # (The quiet stretches' own visuals aside: graphics_director.fill_quiet.)
+    assert ed.plan_graphics([], words, marks, {'fill_quiet': False}) == []
     # The guidance tells the planner the moments are taken.
     assert 'added screenshots' in ed.direction_rule(30, {'media': SHOTS})
     assert 'added screenshots' not in ed.direction_rule(30, {})

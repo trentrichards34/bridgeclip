@@ -2135,7 +2135,7 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
     await RenderingService().capture_framing_source(target, os.path.join(root, f"editor-preview-{preview_id}.mp4"), duration_ms=total_ms)
     title = config.get("title") or look.headline or "My recording"
     project = ed.edit_project(title, total_ms, segments, look, graphics, scenes, ed.saved_brand_mark(look.brand_mark, root), preview_id,
-                              directed=options["motion"])
+                              directed=options["motion"], accent=editor.get("brand_color"))
     project["candidates"][0]["sound"] = editor_sound(config, timed, look, offset_ms, total_ms, broll_windows or [])
     # The member's color grade (footage only): the editor's bake applies it under the graphics and captions.
     from clip_engine.services.color_grade import parse_grade

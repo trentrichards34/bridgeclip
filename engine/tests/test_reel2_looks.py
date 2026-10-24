@@ -355,5 +355,6 @@ def test_word_timed_cards_show_each_word_as_it_is_said_and_hold_after_the_last()
     # On screen until 700 ms after "completely." ends (15140).
     assert kept["at_ms"] + kept["duration_ms"] >= 15140 + 700
     title = {"template": "title", "at_ms": 20400, "duration_ms": 1500, "placement": "middle", "fields": {"text": "my own ads manager"}}
-    [t] = fit_to_clip([title], SAID, [(0, 26000)], 1.0, {})
+    # (A title is a plain text card too: timed as placed with the variety rules off.)
+    [t] = fit_to_clip([title], SAID, [(0, 26000)], 1.0, {"variety": False})
     assert t["at_ms"] == 20900 and t["fields"]["word_ms"].split("\n") == ["0", "300", "600", "900"]

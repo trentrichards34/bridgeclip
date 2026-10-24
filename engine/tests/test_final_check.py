@@ -61,11 +61,11 @@ def test_the_members_logo_pops_where_the_call_to_action_names_it_and_planned_gra
               'keyword', 'lead', 'wrong', 'icon'):
         on_cta[k] = ''
     on_cta.update(items=[], icons=[], notes=[])
-    out = ed.plan_graphics([on_cta], words, marks, {'stage': True, 'register': 'teaching', 'logos': logos}, [hook, cta], logos_in=[cta])
+    out = ed.plan_graphics([on_cta], words, marks, {'stage': True, 'register': 'teaching', 'logos': logos, 'fill_quiet': False}, [hook, cta], logos_in=[cta])
     assert [g['template'] for g in out] == ['logo']
     assert out[0]['fields']['image'] == 'aaaaaaaaaaaaaaaa' and cta[0] <= out[0]['word'] <= cta[1]
     # Without the opening (as before): no logo on the call to action either.
-    assert ed.plan_graphics([on_cta], words, marks, {'stage': True, 'register': 'teaching', 'logos': logos}, [hook, cta]) == []
+    assert ed.plan_graphics([on_cta], words, marks, {'stage': True, 'register': 'teaching', 'logos': logos, 'fill_quiet': False}, [hook, cta]) == []
 
 
 def test_a_logo_pop_gives_way_to_the_asks_graphic():

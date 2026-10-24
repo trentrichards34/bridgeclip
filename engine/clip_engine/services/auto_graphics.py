@@ -46,7 +46,7 @@ AUTO_TEMPLATES = ('stat', 'title', 'list', 'checklist', 'before_after', 'quote',
                   'takeover')
 AUTO_FX = (
     'count-up', 'number-pop-in', 'conic-progress-ring', 'star-rating-fill', 'chart-story', 'decline-chart', 'trust-strip',
-    'headline-slam', 'per-word-rise', 'kinetic-center-build', 'kinetic-type-swap', 'line-swap', 'caret-swap', 'marker-highlight',
+    'headline-slam', 'per-word-rise', 'kinetic-center-build', 'kinetic-type-swap', 'line-swap', 'caret-swap', 'marker-highlight', 'text-stagger',
     'vox-annotate', 'scramble-reveal', 'ticker-takeover', 'typed-prompt', 'typing-indicator', 'strikethrough-replace',
     'marker-checklist-card', 'constellation-hub', 'locked-nucleus-orbit', 'radial-surround', 'overwhelm-surround', 'state-chip-rail',
     'notification-stack', 'testimonial-proof-card', 'cta-lockup',
@@ -465,6 +465,9 @@ def clean_fields(template: str, raw: dict, fields_of: Optional[dict] = None) -> 
                 fields[key] = text
     if raw.get('variant') in VARIANTS.get(template, ()):
         fields['variant'] = raw['variant']
+    # The video's one look on the white-card templates and words with no card (graphics_director.with_look, on_light_stage).
+    if raw.get('theme') in ('light', 'dark') and template in ('lower_third', 'before_after', 'strike_list', 'headline_pill', 'comment_cta', 'big_words'):
+        fields['theme'] = raw['theme']
     return fields
 
 
@@ -511,6 +514,8 @@ def _options(options: Optional[dict]) -> dict:
             'variety': options.get('variety') is not False,
             # Headline pills as cards anywhere in the video (Edit my recording), not only as the clip's hook.
             'pill_cards': bool(options.get('pill_cards')),
+            # Long quiet stretches get a visual from their cues (graphics_director.fill_quiet; Edit my recording).
+            'fill_quiet': bool(options.get('fill_quiet')),
             # Free time kept between two graphics (ms), so they don't run back to back.
             'gap_ms': int(options['gap_ms']) if type(options.get('gap_ms')) is int and 0 <= options['gap_ms'] <= 10000 else 0,
             # How dense (teaching | story | minimal; None: detected from the words) and the video's one look.
@@ -934,9 +939,11 @@ def _spoken(segments: Sequence) -> list[dict]:
         words = getattr(seg, 'words', None) or []
         for k, w in enumerate(words):
             raw = str(w.word or '')
-            for tok in _tokens(raw) or []:
+            toks = _tokens(raw) or []
+            for j, tok in enumerate(toks):
+                # (A word read as several tokens, "$8,188.", ends its sentence on its last token only.)
                 out.append({'tok': tok, 'raw': raw, 'start': int(w.start_time_ms), 'end': int(w.end_time_ms),
-                            'first': k == 0, 'ends': bool(re.search(r'[.!?:;]["”’]?$', raw.strip()))})
+                            'first': k == 0 and j == 0, 'ends': j == len(toks) - 1 and bool(re.search(r'[.!?:;]["”’]?$', raw.strip()))})
     for i, w in enumerate(out):
         if i and (out[i - 1]['ends'] or w['start'] - out[i - 1]['end'] >= SENTENCE_GAP_MS):
             w['first'] = True
@@ -1180,7 +1187,9 @@ def window(ranges: Sequence[Sequence[float]], speed: float, at: float, length: f
 
 _PRIORITY = {'stat': 6, 'strike_list': 6, 'list': 5, 'checklist': 5, 'statement': 3, 'headline_pill': 5, 'sticky_notes': 3,
              'icon_pop': 4, 'before_after': 4, 'lower_third': 4, 'comment_cta': 3, 'quote': 2, 'title': 1, 'browser_frame': 4,
-             'orbit': 5, 'feature_tile': 4, 'big_words': 3, **{t: 7 for t in DIAGRAMS}, 'fx': 5, 'takeover': 4}
+             'orbit': 5, 'feature_tile': 4, 'big_words': 3, **{t: 7 for t in DIAGRAMS}, 'fx': 5,
+             # The type takeover is the planner's one most important line: it keeps its moment over the text cards.
+             'takeover': 6}
 # Effects by kind: the proof and the frameworks first, the emphasis effects like a headline pill.
 _FX_PRIORITY = {'chart-story': 7, 'decline-chart': 7, 'marker-checklist-card': 7, 'constellation-hub': 6, 'radial-surround': 6,
                 'state-chip-rail': 6, 'strikethrough-replace': 6, 'count-up': 6, 'number-pop-in': 6, 'conic-progress-ring': 6,
@@ -1440,13 +1449,18 @@ def converted(g: dict, to: str) -> Optional[dict]:
     return {**g, 'template': to, 'fields': fields, 'duration_ms': int(length), 'converted_from': t}
 
 
+# Numbers come back sooner than the rest (a result, then the next result): their own kind waits this long.
+NUMBER_KINDS = ('stat', 'fx:count-up', 'fx:number-pop-in')
+NUMBER_GAP_MS = 12000
+
+
 def _same_too_close(g: dict, kept: Sequence[dict], seconds: float, adjacent: bool = True) -> bool:
-    gap = same_gap_ms(seconds)
     kind = kind_of(g)
+    gap = min(same_gap_ms(seconds), NUMBER_GAP_MS) if kind in NUMBER_KINDS else same_gap_ms(seconds)
     same = [k for k in kept if kind_of(k) == kind]
     if any(abs(k['at_ms'] - g['at_ms']) < gap for k in same):
         return True
-    if not adjacent:
+    if not adjacent or kind in NUMBER_KINDS:
         return False
     # The very next graphic of the same template (nothing else between them), unless far apart.
     for k in same:
@@ -1489,10 +1503,11 @@ def varied(g: dict, kept: Sequence[dict], segments: Sequence, seconds: float, al
     """`g` as it can join `kept`: unchanged when the variety rules allow it, else the first richer template its words fit
     (and that the rules allow), else None. (Cards are placed strongest first: a weaker one placed later between two of a
     kind is fine; no_repeats_in_a_row checks the final order once more.)"""
-    from clip_engine.services.graphics_director import CONVERSIONS as TO, PLAIN, convert
+    from clip_engine.services.graphics_director import CONVERSIONS as TO, CONVERT_FIRST, convert
     kind = kind_of(g)
-    # A plain text card is a fallback: a richer visual its words fit comes first.
-    plain = kind in PLAIN
+    # A plain text card (a headline pill, a title, a before / after too) is a fallback: a richer visual its words fit
+    # (an effect first) comes first.
+    plain = kind in CONVERT_FIRST
     if not plain and variety_allows(g, kept, seconds, adjacent):
         return g
     for to in TO.get(kind, ()):
@@ -1712,9 +1727,21 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
     for g in sorted(candidates, key=lambda g: (-_priority(g), g['at_ms'])):
         if len(kept) >= limit:
             break
-        if opts['variety']:
+        # (A Create clip's hook headline opens the clip as it is: it is never turned into an effect.)
+        if opts['variety'] and not (g['template'] == 'headline_pill' and not opts['pill_cards']):
             g = varied(g, kept, segments, seconds, allowed)
             if g is None:
+                continue
+            # A card turned into an effect is timed again on its words (an effect leads its beat): never back into the
+            # clip's first second or past its end.
+            first_src = source_ms(ranges, speed, FIRST_MS) or ranges[0][0]
+            if g['at_ms'] < first_src:
+                left = g['duration_ms'] - (first_src - g['at_ms'])
+                if left < EDITOR_MIN_MS:
+                    continue
+                g = {**g, 'at_ms': int(math.ceil(first_src)), 'duration_ms': int(left)}
+            g = {**g, 'duration_ms': int(min(g['duration_ms'], clip_end - g['at_ms']))}
+            if g['duration_ms'] < EDITOR_MIN_MS:
                 continue
         if diagram_near(g, kept):
             continue
@@ -1747,6 +1774,12 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
         crowded = lambda g, others: overlapping(g, others) or diagram_near(g, others)  # noqa: E731
         kept = no_repeats_in_a_row(kept, segments, seconds, allowed, crowded)
         kept = widen(kept, segments, seconds, allowed, crowded)
+        # Long quiet stretches while the speaker explains get a visual from their own cues (numbers, lists, contrasts); up
+        # to one graphic per FILL_SECONDS: the filled ones may go past the planner's count. (Edit my recording: a long talk.)
+        fill_limit = max(limit, int(seconds // director.FILL_SECONDS))
+        if opts['fill_quiet']:
+            kept = director.fill_quiet(kept, segments, ranges, speed, seconds, allowed, crowded, register,
+                                       max(ranges[0][0], source_ms(ranges, speed, FIRST_MS) or ranges[0][0]), source_ms(ranges, speed, tail) or clip_end, fill_limit)
         kept = [with_list_icons({k: v for k, v in g.items() if k != 'converted_from'}) for g in kept]
         # One look for the whole video (the member's tone, else light ink on dark), effects themed the same way.
         kept = director.with_look(kept, director.video_look(opts))
@@ -1780,9 +1813,13 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
             if g.get('fields', {}).get('word_ms'):
                 fields['word_ms'] = g['fields']['word_ms']
         previous_end = g['at_ms'] + g['duration_ms']
+        size = graphic_size(g['template'], opts['stage'], g['fields'].get('effect'))
+        if size == 'stage' and opts['variety'] and g['template'] not in DIAGRAMS:
+            # On the (light) stage: the dark looks, so no white card sits on near-white.
+            fields = director.on_light_stage({**g, 'fields': fields})['fields']
         out_list.append({'id': new_id(taken), 'template': g['template'], 'at_ms': g['at_ms'], 'duration_ms': g['duration_ms'],
                          'placement': g['placement'] if g.get('placement') in PLACEMENTS else 'top', 'fields': fields, 'origin': 'auto',
-                         'size': graphic_size(g['template'], opts['stage'], g['fields'].get('effect'))})
+                         'size': size})
     # Chapter headers sit in their own band at the very top (the hook hands over to the first one).
     for c in chapters:
         out_list.append({'id': new_id(taken), **c, 'origin': 'auto', 'size': 'card'})

@@ -46,9 +46,14 @@ SLAM_FX = ('headline-slam', 'per-word-rise', 'kinetic-center-build')
 # The same family: the type takeover (the line in huge type over the whole frame, the head between its lines).
 SLAM_KINDS = frozenset((*(f'fx:{e}' for e in SLAM_FX), 'takeover'))
 SLAM_MAX = 2
-# Plain text cards: a fallback, at most one per PLAIN_SECONDS of video (at least one).
-PLAIN = ('statement', 'quote', 'sticky_notes', 'big_words')
+# Plain text cards: a fallback, at most one per PLAIN_SECONDS of video (at least one). A headline pill, a title and a
+# before / after are plain text too (a real planner reaches for them often): like the rest, each first tries an effect its
+# words fit (a marker on its key word, a word rise, a line swap) and stays plain only under the cap.
+PLAIN = ('statement', 'quote', 'sticky_notes', 'big_words', 'headline_pill', 'title', 'before_after')
 PLAIN_SECONDS = 45
+# Text cards that try an effect first even when their own caps allow them (the crossed-out list is not plain: it stays
+# when no effect fits its words).
+CONVERT_FIRST = PLAIN + ('strike_list',)
 # Effects that need the speaker to be typing or asking a tool near them.
 TYPING_FX = ('typed-prompt', 'typing-indicator')
 TYPING_WORDS = frozenset(('type', 'typed', 'typing', 'prompt', 'prompted', 'asked', 'ask', 'message', 'messaged', 'text', 'texted',
@@ -119,6 +124,14 @@ _PERCENT_WORDS = ('percent', 'percentage', '%')
 _RATING_WORDS = ('stars', 'star', 'rated', 'rating', 'reviews')
 _COUNT_NOUNS_AFTER = ('million', 'thousand', 'billion', 'k', 'people', 'users', 'customers', 'clients', 'followers', 'views', 'sales',
                       'students', 'members', 'subscribers', 'times', 'hours', 'days', 'weeks', 'months', 'years', 'videos', 'posts')
+_MONTHS = frozenset(('january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+                     'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct', 'nov', 'dec'))
+# "Three things", "two ways": a small count of these announces a framework (steps), not a figure to count up.
+_FRAMEWORK_NOUNS = ('things', 'ways', 'steps', 'reasons', 'tips', 'rules', 'pillars', 'mistakes', 'secrets', 'parts', 'stages', 'phases',
+                    'questions', 'options', 'types', 'levels', 'lessons', 'keys')
+# Opposites said a sentence apart ("a warm audience will buy anything. A cold audience...") make a contrast.
+_OPPOSITES = (('warm', 'cold'), ('old', 'new'), ('free', 'paid'), ('organic', 'paid'), ('slow', 'fast'), ('hard', 'easy'), ('before', 'after'),
+              ('wrong', 'right'), ('manual', 'automatic'), ('cheap', 'expensive'), ('broke', 'profitable'), ('beginner', 'expert'))
 _STEP_WORDS = ('step', 'steps', 'phase', 'stage', 'process', 'framework')
 # A numbered step: one of these words then a number ("step one", "rule #2", "part three").
 _NUMBERED = ('step', 'rule', 'part', 'phase', 'tip', 'lesson', 'day', 'level', 'stage', 'pillar', 'secret', 'mistake')
@@ -128,7 +141,8 @@ _ORDINALS = frozenset(('one', 'two', 'three', 'four', 'five', 'six', 'seven', 'e
 _IDENTITY = (("i'm", 'a'), ("i'm", 'an'), ('i', 'am', 'a'), ('i', 'am', 'an'), ('my', 'name', 'is'), ('welcome', 'to'), ('i', 'became', 'a'),
              ('i', 'became', 'the'), ('they', 'call', 'me'), ('this', 'is', 'the', 'story'), ('meet', 'the'))
 _CONTRAST = (('instead', 'of'), ('rather', 'than'), ('not', 'but'), ('wrong', 'way'), ('right', 'way'), ('stop',), ('versus',), ('vs',),
-             ('it', "isn't"), ('it', 'is', 'not'), ("it's", 'not'))
+             ('it', "isn't"), ('it', 'is', 'not'), ("it's", 'not'), ('and', 'instead'), ('but', 'instead'), ('but', 'not'),
+             ("doesn't", 'mean'), ('does', 'not', 'mean'), ('not', 'nearly'))
 _CTA = (('comment',), ('link', 'in', 'bio'), ('the', 'link'), ('click',), ('subscribe',), ('follow', 'me'), ('follow', 'for'), ('dm', 'me'),
         ('send', 'me', 'a'), ('sign', 'up'), ('join',))
 _SCREEN = (('website',), ('this', 'page'), ('dashboard',), ('as', 'you', 'can', 'see'), ('on', 'screen'), ('right', 'here'), ('this', 'app'),
@@ -191,12 +205,34 @@ def _number_spans(sentence: list[dict]) -> list[tuple[int, str]]:
         elif raw.startswith('$') or any(_MONEY.match(t) for t in near):
             kind = 'money'
         else:
-            # A bare "one", "two" (a step number, "number three") isn't a figure worth a graphic.
+            # A bare "one", "two" (a step number, "number three") isn't a figure worth a graphic; nor is "three things" (a
+            # framework announced: find_cues makes it a steps cue).
             if not ag._HAS_DIGIT.search(raw) and w['tok'] in ag.NUMBER_WORDS and (i and toks[i - 1] in ('step', 'number', 'tip', 'part')):
+                continue
+            if _framework_count(toks, i):
+                continue
+            # A date ("October 20th", "the 3rd") is not a figure.
+            if re.fullmatch(r'\d{1,2}(st|nd|rd|th)[.,!?]?', raw) or (i and toks[i - 1] in _MONTHS):
                 continue
             kind = 'count'
         out.append((i, kind))
     return out
+
+
+def _framework_count(toks: Sequence[str], i: int) -> bool:
+    """Token `i` is a small count announcing a framework ("three things", "2 ways", "two different ways")."""
+    tok = toks[i].strip('.,!?')
+    small = tok in ag.NUMBER_WORDS or (tok.isdigit() and 1 < int(tok) <= 10)
+    return small and any(t in _FRAMEWORK_NOUNS for t in toks[i + 1:i + 3])
+
+
+def number_value(sentence: list[dict], pos: int) -> str:
+    """The number said at word `pos` as shown ("$8,188", "1,400", "3 million"), its scale word joined when said after it."""
+    raw = sentence[pos]['raw'].strip().strip('.,!?;:"“”')
+    nxt = sentence[pos + 1]['tok'] if pos + 1 < len(sentence) else ''
+    if nxt in ('million', 'thousand', 'billion') and sentence[pos + 1]['raw'] != sentence[pos]['raw']:
+        raw = f"{raw} {nxt}"
+    return raw
 
 
 def _list_items(sentence: list[dict]) -> list[str]:
@@ -284,13 +320,15 @@ def find_cues(segments: Sequence) -> list[dict]:
     steps_seen = 0
     marker_at = {m['at'] for m in ag._family(ag._markers(ag._spoken(segments)))}
     index = 0
+    previous: list[str] = []
     for sentence in _sentences(segments):
         toks = [w['tok'] for w in sentence]
         start, end = sentence[0]['start'], sentence[-1]['end']
         text = _said_text(sentence)
 
-        def add(kind: str, at: int, what: str = '') -> None:
-            cues.append({'kind': kind, 'at_ms': int(at), 'end_ms': int(end), 'text': (what or text)[:90], 'prefer': CUE_VISUALS[kind]})
+        def add(kind: str, at: int, what: str = '', **extra: Any) -> None:
+            cues.append({'kind': kind, 'at_ms': int(at), 'end_ms': int(end), 'text': (what or text)[:90], 'prefer': CUE_VISUALS[kind],
+                         'sentence': text, **extra})
 
         if is_story(sentence):
             if stories and start - stories[-1][1] <= STORY_GAP_MS:
@@ -300,13 +338,16 @@ def find_cues(segments: Sequence) -> list[dict]:
             index += len(sentence)
             continue
         numbers = _number_spans(sentence)
+        # (One cue per number said: "$8,188" reads as two tokens of one word.)
+        numbers = [(pos, kind) for k, (pos, kind) in enumerate(numbers) if not k or sentence[pos]['start'] != sentence[numbers[k - 1][0]]['start']]
         for pos, kind in numbers:
-            add(kind, sentence[pos]['start'], _said_text(sentence, max(0, pos - 1), 4))
+            add(kind, sentence[pos]['start'], _said_text(sentence, max(0, pos - 1), 4), value=number_value(sentence, pos))
         if len(numbers) >= 2 or (_has(toks, ('from',)) is not None and _has(toks, ('to',)) is not None and numbers):
             add('trend', sentence[numbers[0][0]]['start'] if numbers else start)
-        if any(index + k in marker_at for k in range(len(sentence))) or any(t in _STEP_WORDS for t in toks):
+        framework = next((k for k in range(len(toks)) if _framework_count(toks, k)), None)
+        if any(index + k in marker_at for k in range(len(sentence))) or any(t in _STEP_WORDS for t in toks) or framework is not None:
             steps_seen += 1
-            add('steps', start)
+            add('steps', sentence[framework]['start'] if framework is not None else start)
         step = numbered_step(sentence)
         if step:
             add('numbered_step', step[0], step[1])
@@ -315,11 +356,21 @@ def find_cues(segments: Sequence) -> list[dict]:
         items = _list_items(sentence)
         if items:
             add('list', start, ', '.join(items))
+        contrast = False
         for phrase in _CONTRAST:
             at = _has(toks, phrase)
             if at is not None and (phrase != ('not', 'but') or 'but' in toks[at:]):
                 add('contrast', sentence[at]['start'])
+                contrast = True
                 break
+        if not contrast:
+            # Opposites a sentence apart ("a warm audience..." then "a cold audience..."): the second one turns it.
+            here = set(toks)
+            hit = next(((a, b) for a, b in _OPPOSITES if (a in here and b in previous) or (b in here and a in previous)), None)
+            if hit:
+                word = hit[0] if hit[0] in here else hit[1]
+                add('contrast', next(w['start'] for w in sentence if w['tok'] == word))
+        previous = toks
         if any(t in TYPING_WORDS for t in toks) and any(t in ('typed', 'prompt', 'asked', 'type', 'typing', 'message', 'messaged') for t in toks):
             add('typing', start)
         named = [w for w in sentence if w['tok'] in BRANDS]
@@ -458,8 +509,32 @@ def with_look(graphics: Sequence[dict], look: dict) -> list[dict]:
             fields = {**fields, 'variant': TONE_VARIANTS[tone][t]}
         elif t == 'fx' and fields.get('theme') not in TONES:
             fields = {**fields, 'theme': tone}
+        elif t in THEMED and fields.get('theme') not in TONES:
+            fields = {**fields, 'theme': tone}
         out.append({**g, 'fields': fields})
     return out
+
+
+# Text templates whose classic look is a white card: the video's tone travels with them as `theme` (the renderer draws
+# 'dark' on dark glass with light ink; text-fit.ts).
+THEMED = ('lower_third', 'before_after', 'strike_list', 'headline_pill', 'comment_cta')
+# On a light stage (the stage backdrops are light at the top) a white card would sit white on near-white: the stage takes
+# the dark looks, and words with no card take dark ink.
+STAGE_LOOKS = {'statement': 'glass', 'quote': 'dark', 'title': 'pill', 'list': 'pills', 'checklist': 'dark', 'stat': 'gradient'}
+LIGHT_BACKDROPS = ('light', 'brand', 'grid', 'gradient')
+
+
+def on_light_stage(g: dict) -> dict:
+    """`g` as it reads on a light stage: a dark look (or the dark theme) for a white card, dark ink for words with no card.
+    A look the member picked stays."""
+    t, fields = g['template'], g['fields']
+    if t in STAGE_LOOKS and fields.get('variant') in (None, '', 'card', 'shadow', 'notes', 'rows', 'chips'):
+        return {**g, 'fields': {**fields, 'variant': STAGE_LOOKS[t]}}
+    if t in THEMED:
+        return {**g, 'fields': {**fields, 'theme': 'dark'}}
+    if t == 'big_words':
+        return {**g, 'fields': {**fields, 'theme': 'light'}}
+    return g
 
 
 # ---------------------------------------------------------------------------
@@ -709,7 +784,13 @@ def fx_cue_ms(g: dict, segments: Sequence) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 _STOP = frozenset(('the', 'a', 'an', 'and', 'or', 'to', 'of', 'in', 'on', 'for', 'is', 'it', 'its', "it's", 'that', 'this', 'with',
-                   'you', 'your', 'we', 'i', 'my', 'our', 'are', 'was', 'be', 'just', 'so', 'but', 'at', 'as', 'by', 'from', 'all'))
+                   'you', 'your', 'we', 'i', 'my', 'our', 'are', 'was', 'be', 'just', 'so', 'but', 'at', 'as', 'by', 'from', 'all',
+                   # Filler a marker should never land on.
+                   'going', 'gonna', 'about', 'actually', 'really', 'there', 'their', "there's", 'these', 'those', 'what', 'when', 'where',
+                   'which', 'would', 'could', 'should', 'have', 'been', 'being', 'into', 'only', 'nearly', 'enough', 'because', 'even',
+                   'every', 'something', 'anything', 'everything', 'thing', 'things', 'know', 'want', 'need', 'make', 'made', 'like',
+                   'some', 'more', 'most', 'very', 'much', 'many', 'than', 'then', 'they', 'them', 'were', 'will', 'does', "doesn't",
+                   "don't", "can't", 'cannot', 'when', 'comes', 'come', 'here', 'right', 'now', 'that\'s', 'today', 'tonight'))
 
 
 def key_word(line: str, accent: str = '') -> str:
@@ -717,7 +798,8 @@ def key_word(line: str, accent: str = '') -> str:
     if accent and ag.accent_inside(line, accent) and 1 <= len(accent.split()) <= 3:
         return accent
     words = [w.strip('.,!?;:"“”') for w in line.split()]
-    words = [w for w in words if len(re.sub(r'[^A-Za-z]', '', w)) >= 4 and w.lower() not in _STOP]
+    # A real word (no contraction: "we're" carries nothing), four letters or more, not filler.
+    words = [w for w in words if len(re.sub(r'[^A-Za-z]', '', w)) >= 4 and w.lower() not in _STOP and "'" not in w and '’' not in w]
     return max(words, key=len) if words else ''
 
 
@@ -777,6 +859,10 @@ def to_fx(g: dict, effect: str) -> Optional[dict]:
         if not 2 <= len(words) <= 9:
             return None
         fields['text'] = line
+    elif effect == 'text-stagger':
+        if not 2 <= len(words) <= 8:
+            return None
+        fields['text'] = line
     elif effect == 'state-chip-rail':
         if not 2 <= len(items) <= 5 or max(len(ag._plain_words(i)) for i in items) > 3:
             return None
@@ -825,6 +911,10 @@ def to_fx(g: dict, effect: str) -> Optional[dict]:
         fields.update(hub=f['text'], nodes='\n'.join(items))
     else:
         return None
+    # Never cut: words longer than the effect holds don't fit it.
+    for f in (ag.fx_catalog().get(effect) or {}).get('fields', []):
+        if f.get('max') and f['kind'] == 'text' and len(fields.get(f['key'], '')) > f['max']:
+            return None
     hold = fx_hold_ms(effect)
     length = max(hold, min(g['duration_ms'], hold + 2000))
     return {**g, 'template': 'fx', 'fields': fields, 'duration_ms': int(min(ag.EDITOR_MAX_MS, length)), 'converted_from': kind_of(g)}
@@ -866,12 +956,14 @@ def convert(g: dict, to: str) -> Optional[dict]:
 
 # What a card may become, best first: plain text cards try these before staying plain (when their cap allows).
 CONVERSIONS = {
-    'statement': ('fx:marker-highlight', 'fx:headline-slam', 'fx:per-word-rise', 'headline_pill', 'title', 'feature_tile', 'big_words'),
-    'quote': ('fx:marker-highlight', 'fx:per-word-rise', 'headline_pill', 'title', 'statement'),
-    'title': ('fx:headline-slam', 'fx:kinetic-center-build', 'big_words', 'headline_pill', 'statement'),
-    'big_words': ('fx:headline-slam', 'fx:kinetic-center-build', 'title', 'headline_pill'),
+    # (Text cards try the effects outside the "most important line" group first: that group's two places in a video are
+    # kept for the lines the planner marked as the turn of the video.)
+    'statement': ('fx:marker-highlight', 'fx:text-stagger', 'fx:headline-slam', 'fx:per-word-rise', 'headline_pill', 'title', 'feature_tile', 'big_words'),
+    'quote': ('fx:marker-highlight', 'fx:text-stagger', 'fx:per-word-rise', 'headline_pill', 'title', 'statement'),
+    'title': ('fx:marker-highlight', 'fx:text-stagger', 'fx:headline-slam', 'fx:kinetic-center-build', 'fx:per-word-rise', 'big_words', 'headline_pill', 'statement'),
+    'big_words': ('fx:headline-slam', 'fx:kinetic-center-build', 'fx:text-stagger', 'title', 'headline_pill'),
     'takeover': ('fx:headline-slam', 'fx:per-word-rise', 'title', 'headline_pill'),
-    'headline_pill': ('fx:marker-highlight', 'fx:per-word-rise', 'statement', 'big_words', 'title'),
+    'headline_pill': ('fx:marker-highlight', 'fx:text-stagger', 'fx:per-word-rise', 'fx:headline-slam', 'fx:kinetic-center-build', 'statement', 'big_words', 'title'),
     'sticky_notes': ('fx:state-chip-rail', 'feature_tile', 'icon_pop', 'orbit', 'checklist', 'list', 'idea_hub'),
     'list': ('checklist', 'fx:state-chip-rail', 'feature_tile', 'icon_pop', 'orbit', 'sticky_notes'),
     'checklist': ('list', 'fx:state-chip-rail', 'feature_tile', 'icon_pop', 'sticky_notes'),
@@ -880,6 +972,7 @@ CONVERSIONS = {
     'orbit': ('fx:constellation-hub', 'icon_pop', 'feature_tile', 'idea_hub'),
     'stat': ('fx:count-up', 'fx:number-pop-in'),
     'strike_list': ('fx:strikethrough-replace',),
+    'fx:text-stagger': ('fx:per-word-rise', 'fx:marker-highlight', 'headline_pill'),
     'before_after': ('fx:line-swap', 'fx:strikethrough-replace'),
     'compare_marks': ('fx:strikethrough-replace',),
     'fx:count-up': ('stat', 'fx:number-pop-in'),
@@ -895,6 +988,125 @@ CONVERSIONS = {
     'fx:strikethrough-replace': ('strike_list',),
     'fx:constellation-hub': ('orbit', 'idea_hub'),
 }
+
+
+# ---------------------------------------------------------------------------
+# Quiet stretches: a long run of face and captions while the speaker explains gets a visual from its cues.
+# ---------------------------------------------------------------------------
+
+# A stretch with no graphic this long (teaching; a story: QUIET_STORY_MS) gets one where its words have a cue. Personal
+# stories stay on the face (they are never filled), and so does the minimal register.
+QUIET_MS = 6500
+QUIET_STORY_MS = 20000
+# Filled graphics keep this much free time to the graphics around them, and the video at most one per FILL_SECONDS.
+QUIET_PAD_MS = 1200
+FILL_SECONDS = 7.0
+# The cues a quiet stretch is filled from, strongest first.
+FILL_ORDER = ('money', 'percent', 'count', 'list', 'contrast', 'steps', 'punchline', 'identity', 'before_after')
+
+
+def said_clause(sentence: str, most: int = 12) -> str:
+    """The part of a sentence a marker shows: the whole of it when short, else its longest clause between commas that
+    is 4-`most` words (as said, punctuation at the ends dropped); '' when none."""
+    text = ' '.join(sentence.split()).strip(' .,!?;:"')
+    if 4 <= len(text.split()) <= most:
+        return text
+    parts = [p.strip(' .,!?;:"') for p in re.split(r'[,;:]\s+', text)]
+    parts = [p for p in parts if 4 <= len(p.split()) <= most]
+    return max(parts, key=lambda p: len(p.split())) if parts else ''
+
+
+def cue_graphic(cue: dict) -> list[dict]:
+    """The graphics a cue could become, best first (each still checked against the words said by the caller): a number
+    counts up (or pops in), a list becomes chips or a checklist, a contrast, a framework announced or the line the
+    video turns on gets a marker on its key word (or rises word by word)."""
+    at = max(0, int(cue['at_ms']) - 300)
+    base = {'at_ms': at, 'duration_ms': 3500, 'placement': 'middle', 'origin': 'auto'}
+    kind = cue['kind']
+    out: list[Optional[dict]] = []
+    if kind in ('money', 'count', 'percent') and cue.get('value') and ag._HAS_DIGIT.search(cue['value']):
+        stat = {**base, 'template': 'stat', 'fields': {'value': cue['value']}}
+        out += [to_fx(stat, 'count-up'), to_fx(stat, 'number-pop-in'), {**stat, 'duration_ms': 3000}]
+        if kind == 'percent':
+            out = [to_fx(stat, e) for e in SHARE_FX] + out
+    elif kind == 'list':
+        items = [i.strip() for i in cue['text'].split(', ') if i.strip()]
+        # Only parallel items (short, none a clause of the sentence: "which people like you" is not an item).
+        if any(len(i.split()) > 3 or i.split()[0].lower() in ('which', 'who', 'that', 'where', 'when') or i.split()[-1].lower() in _STOP
+               for i in items):
+            return []
+        listed = {**base, 'duration_ms': 5000, 'template': 'checklist', 'fields': {'items': '\n'.join(items)}}
+        out += [to_fx(listed, 'state-chip-rail'), listed]
+    elif kind in ('contrast', 'steps', 'punchline', 'identity', 'before_after'):
+        line = said_clause(cue.get('sentence') or cue['text'])
+        if line:
+            card = {**base, 'template': 'statement', 'fields': {'text': line}}
+            out += [to_fx(card, 'marker-highlight'), to_fx(card, 'per-word-rise')]
+    return [g for g in out if g is not None]
+
+
+def quiet_gaps(kept: Sequence[dict], lo: float, hi: float, quiet: float) -> list[tuple[float, float]]:
+    """The stretches between `lo` and `hi` (source ms) with no graphic for at least `quiet` ms."""
+    spans = sorted((g['at_ms'], g['at_ms'] + g['duration_ms']) for g in kept if g.get('template') != 'chapter')
+    out, at = [], lo
+    for a, b in spans:
+        if a - at >= quiet:
+            out.append((at, a))
+        at = max(at, b)
+    if hi - at >= quiet:
+        out.append((at, hi))
+    return out
+
+
+def fill_quiet(kept: list[dict], segments: Sequence, ranges: Sequence[Sequence[float]], speed: float, seconds: float,
+               allowed: Sequence[str], clash: Any, register: Optional[str], lo: float, hi: float, limit: int) -> list[dict]:
+    """Long quiet stretches (QUIET_MS of face and captions while the speaker explains) get a visual where their words have
+    a cue (a number, a list, a contrast, a framework announced, the line that matters): the strongest cue of each stretch,
+    checked like any planned graphic (every word said, the variety rules, never over another one), until the video has
+    `limit` graphics. Personal stories and the minimal register stay as they are. Source time; `lo`/`hi`: the earliest
+    start and the latest end allowed (out of the first second and the call to action's last seconds)."""
+    if register == 'minimal' or 'fx' not in allowed or not ranges:
+        return kept
+    quiet = QUIET_STORY_MS if register == 'story' else QUIET_MS
+    cues = [c for c in find_cues(segments) if c['kind'] in FILL_ORDER and lo <= c['at_ms'] <= hi]
+    stories = story_spans(find_cues(segments))
+    out = list(kept)
+    tried: set[int] = set()
+    # A number already on screen once (said again later) is not shown twice.
+    shown = {n for g in kept for v in g['fields'].values() for n in ag._numbers(str(v))}
+    cues = [c for c in cues if not (c.get('value') and any(abs(n - m) < 1e-6 * max(1.0, abs(n)) for n in ag._numbers(c['value']) for m in shown))]
+    while len([g for g in out if g.get('template') != 'chapter']) < limit:
+        placed = False
+        for a, b in quiet_gaps(out, lo, hi, quiet):
+            inside = [c for c in cues if a + QUIET_PAD_MS <= c['at_ms'] <= b - QUIET_PAD_MS and id(c) not in tried]
+            for c in sorted(inside, key=lambda c: (FILL_ORDER.index(c['kind']), c['at_ms'])):
+                tried.add(id(c))
+                for g in cue_graphic(c):
+                    g = ag._fits_words(g, segments)
+                    if g is None or not register_allows(kind_of(g), register or 'teaching') or in_story(g, stories):
+                        continue
+                    end = g['at_ms'] + g['duration_ms']
+                    if g['at_ms'] < a + QUIET_PAD_MS or g['at_ms'] < lo:
+                        continue
+                    if end > b - QUIET_PAD_MS:
+                        # Shortened to end before the next graphic (an effect keeps most of its time), else not placed.
+                        room = int(b - QUIET_PAD_MS - g['at_ms'])
+                        if room < max(ag.EDITOR_MIN_MS, int(g['duration_ms'] * .7)):
+                            continue
+                        g = {**g, 'duration_ms': room}
+                    span = ag.window(ranges, speed, g['at_ms'], g['duration_ms'])
+                    if span is None or span[1] < ag.EDITOR_MIN_MS or not ag.variety_allows(g, out, seconds) or clash(g, out):
+                        continue
+                    out.append({**g, 'origin': 'auto', 'filled': True})
+                    placed = True
+                    break
+                if placed:
+                    break
+            if placed:
+                break
+        if not placed:
+            break
+    return sorted(out, key=lambda g: g['at_ms'])
 
 
 # ---------------------------------------------------------------------------
@@ -945,8 +1157,9 @@ def director_rule(register: Optional[str] = None, comment: bool = False) -> str:
         '2-3 cover lines said; at most once a video);\n'
         + ('- a call to action (comment X / the link) -> "comment_cta" or fx cta-lockup.\n' if comment else
            '- a call to action (the link, sign up) -> fx cta-lockup (only at the end, words as said).\n') +
-        'Plain text cards ("statement", "quote", "sticky_notes", "big_words") are a FALLBACK: at most one per 45 seconds, only when '
-        'nothing above fits.\n'
+        'Plain text cards ("statement", "quote", "sticky_notes", "big_words", "title", "before_after", and headline pills) are a FALLBACK: '
+        'at most one per 45 seconds together, only when nothing above fits; a key line is an effect (marker-highlight, per-word-rise, '
+        'text-stagger), not a card. The app turns extra plain cards into effects or drops them.\n'
         + reg +
         'EFFECTS: template "fx", "effect" = its id, "fx_fields" = [{key, value}] with its fields (lists one item per line, numbers as '
         'said in digits); its words exactly as said, like any card. "seconds": short punches 1-3 s, frameworks while their items are '

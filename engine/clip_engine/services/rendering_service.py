@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from typing import Any, Callable, Optional, Union
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from clip_engine.config import CaptionStyle, LayoutStyle, get_landscape_dimensions, get_output_dimensions, get_settings
 from clip_engine.services.caption_generator import CaptionGeneratorService
@@ -94,8 +94,18 @@ class TitleStyle:
 # How the headline (hook text) looks: a bar in white, black or a brand color,
 # or floating text over the top of the video; and its font.
 HEADLINE_LOOKS = ("white", "black", "brand", "floating", "none")
-# Floating text's background: none (outlined text) or a snug rounded box behind each line.
-HEADLINE_TEXT_BGS = ("none", "dark", "light", "brand")
+# Floating text's background: none (outlined text) or a snug rounded box behind each line; 'highlight' (Key words in
+# color): big bold words on a white box, the last words in the italic serif on a box in the color (_highlight_headline).
+HEADLINE_TEXT_BGS = ("none", "dark", "light", "brand", "highlight")
+# 'highlight' (mirror of HIGHLIGHT in src/shared/headline-look.ts): sizes on a 1920-tall frame, largest first; the key
+# words this much bigger; the lines' heights against their size; the gap between the groups; the side margins.
+HIGHLIGHT_SIZES = (104, 96, 90, 84, 78, 72, 66, 60)
+HIGHLIGHT_PHRASE_SCALE = 1.2
+HIGHLIGHT_LEAD_LINE = 1.2
+HIGHLIGHT_PHRASE_LINE = 1.06
+HIGHLIGHT_GAP = 0.1
+HIGHLIGHT_PAD_X = 0.06
+HIGHLIGHT_DEFAULT_COLOR = "#2563EB"
 # "Hide hook text": seconds into the video (output clock) the hook text fades out; missing keeps it the whole video.
 HEADLINE_HIDE_AFTER_S = (3, 5, 8, 10, 15)
 HEADLINE_HIDE_FADE_S = 0.3
@@ -156,7 +166,7 @@ class HeadlineLook:
             return None
         if self.text_bg == "dark":
             return (0, 0, 0, round(255 * TEXT_BOX_DARK_OPACITY))
-        if self.text_bg == "light":
+        if self.text_bg in ("light", "highlight"):
             return (255, 255, 255, 255)
         return (*_rgb(self.color), 255)
 
@@ -181,6 +191,24 @@ class HeadlineLook:
         if self.hide_after_s is not None:
             out["hideAfterS"] = self.hide_after_s
         return out
+
+
+def highlight_split(text: str) -> tuple[str, str]:
+    """The hook text's lead words and key words (the last third, one to four words): headline-look.ts highlightSplit."""
+    words = text.split()
+    if len(words) < 2:
+        return "", " ".join(words)
+    k = min(4, max(1, round(len(words) / 3 + 1e-9)))
+    return " ".join(words[:-k]), " ".join(words[-k:])
+
+
+def highlight_colors(color: str) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
+    """(lead box, lead ink, key words' box, key words' ink): headline-look.ts highlightColors."""
+    raw = color if isinstance(color, str) and _HEX.match(color) else HIGHLIGHT_DEFAULT_COLOR
+    r, g, b = _rgb(raw)
+    box = _rgb(HIGHLIGHT_DEFAULT_COLOR) if 0.2126 * r + 0.7152 * g + 0.0722 * b > 225 else (r, g, b)
+    ink = (0, 0, 0) if 0.2126 * box[0] + 0.7152 * box[1] + 0.0722 * box[2] > 150 else (255, 255, 255)
+    return (255, 255, 255), (15, 23, 42), box, ink
 
 
 def _hide_after(value: Any) -> Optional[int]:
@@ -1384,6 +1412,8 @@ class RenderingService:
         if style.look == "none":
             # No hook text: nothing drawn, and the video keeps the whole frame.
             return None
+        if style.look == "floating" and style.text_bg == "highlight":
+            return self._highlight_headline(request, text, style, target_width, target_height)
         if style.font in HEADLINE_UPPER_FONTS:
             text = text.upper()
         unit = target_height / 1920
@@ -1466,6 +1496,91 @@ class RenderingService:
         )
         img.save(path, "PNG")
         return path, (bar_h if bg else 0)
+
+    def _highlight_headline(self, request: RenderRequest, text: str, style: HeadlineLook, width: int, height: int) -> Optional[tuple[str, int]]:
+        """'Key words in color' (headline-look.ts highlightPlacement): the lead words big and bold on a white box, the key
+        words in the italic serif on a box in the color, each group's boxes merged snug behind its lines, over the video."""
+        unit = height / 1920
+        lead, phrase = highlight_split(text)
+        if style.font in HEADLINE_UPPER_FONTS:
+            lead = lead.upper()
+        draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        scale = HEADLINE_FONT_SCALE.get(style.font, 1)
+
+        def faces(size: float) -> tuple[Any, Any]:
+            try:
+                a = ImageFont.truetype(self._headline_font_path(style.font), max(8, round(size * scale * unit)))
+            except Exception:
+                a = ImageFont.load_default()
+            try:
+                b = ImageFont.truetype(self._headline_font_path(style.font, HEADLINE_ACCENT_FONT), max(8, round(size * HIGHLIGHT_PHRASE_SCALE * unit)))
+            except Exception:
+                b = a
+            return a, b
+
+        def balanced(words: str, face: Any, max_w: int) -> list[str]:
+            lines = self._headline_lines(draw, words, face, max_w)
+            w = max_w
+            while len(lines) > 1 and w > max_w // 2:
+                narrower = self._headline_lines(draw, words, face, w - round(20 * unit))
+                if len(narrower) != len(lines):
+                    break
+                lines, w = narrower, w - round(20 * unit)
+            return lines
+
+        max_w = width - 2 * round(width * HIGHLIGHT_PAD_X)
+        for size in HIGHLIGHT_SIZES:
+            lead_face, phrase_face = faces(size)
+            a = balanced(lead, lead_face, max_w) if lead else []
+            b = balanced(phrase, phrase_face, max_w) if phrase else []
+            if len(a) <= 2 and len(b) <= 2 and len(a) + len(b) <= 3:
+                break
+        lead_h = round(size * HIGHLIGHT_LEAD_LINE * unit)
+        phrase_h = round(size * HIGHLIGHT_PHRASE_SCALE * HIGHLIGHT_PHRASE_LINE * unit)
+        y = round(height * HEADLINE_TOP_SAFE)
+        rows = []
+        for line in a:
+            rows.append((line, False, y + lead_h / 2, draw.textlength(line, font=lead_face), lead_h))
+            y += lead_h
+        if a and b:
+            y += round(size * HIGHLIGHT_GAP * unit)
+        for line in b:
+            rows.append((line, True, y + phrase_h / 2, draw.textlength(line, font=phrase_face), phrase_h))
+            y += phrase_h
+        img_h = even(y + round(size * 0.3 * unit))
+        lead_bg, lead_ink, phrase_bg, phrase_ink = highlight_colors(style.color)
+        img = Image.new("RGBA", (width, img_h), (0, 0, 0, 0))
+        masks = []
+        for phrase_group, em in ((False, size * scale * unit), (True, size * HIGHLIGHT_PHRASE_SCALE * unit)):
+            group = [r for r in rows if r[1] == phrase_group]
+            if not group:
+                continue
+            pad = em * TEXT_BOX_PAD_X
+            boxes = [((width - w) / 2 - pad, c - h / 2, (width + w) / 2 + pad, c + h / 2) for _, _, c, w, h in group]
+            k = 4  # drawn big and scaled down: smooth edges
+            mask = Image.new("L", (width * k, img_h * k), 0)
+            polygon = text_box_polygon(text_box_outline(boxes, em * TEXT_BOX_RADIUS, snap=em * TEXT_BOX_RADIUS))
+            ImageDraw.Draw(mask).polygon([(px * k, py * k) for px, py in polygon], fill=255)
+            masks.append((mask.resize((width, img_h), Image.LANCZOS), phrase_bg if phrase_group else lead_bg))
+        # A soft shadow under both boxes, so they lift off any footage.
+        shadow = Image.new("L", (width, img_h), 0)
+        for mask, _ in masks:
+            shadow = ImageChops.lighter(shadow, mask)
+        shadow = shadow.filter(ImageFilter.GaussianBlur(round(14 * unit))).point(lambda v: round(v * 0.35))
+        shade = Image.new("RGBA", (width, img_h), (0, 0, 0, 0))
+        shade.putalpha(ImageChops.offset(shadow, 0, round(8 * unit)))
+        img = Image.alpha_composite(img, shade)
+        for mask, color in masks:
+            layer = Image.new("RGBA", (width, img_h), (*color, 0))
+            layer.putalpha(mask)
+            img = Image.alpha_composite(img, layer)
+        out = ImageDraw.Draw(img)
+        for line, phrase_line, center, _w, _h in rows:
+            out.text((width / 2, center), line, font=phrase_face if phrase_line else lead_face, anchor="mm",
+                     fill=(*(phrase_ink if phrase_line else lead_ink), 255))
+        path = os.path.join(os.path.dirname(request.output_path), f"headline-{request.start_time_ms}-{request.end_time_ms}.png")
+        img.save(path, "PNG")
+        return path, 0
 
     @staticmethod
     def _text_boxes(size: tuple[int, int], widths: list[float], y: float, line_h: int, font: Any,

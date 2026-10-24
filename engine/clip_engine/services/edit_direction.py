@@ -132,8 +132,9 @@ def direction_rule(seconds: float, options: Optional[dict] = None) -> str:
         'milestones -> "journey"; things that grow -> "growth"; qualities of one thing -> "idea_hub"; "not X, but Y" -> '
         '"compare_marks" (items X then Y, wrong "first"; only when said within about 6 seconds). Its "word" is where its FIRST item is '
         'said; each item 1-4 words exactly as said. A video that walks through numbered steps or "three things" gets a diagram;\n'
-        '5. one to three punchy words -> "big_words" (huge type behind the speaker, 1-4 per video); a key phrase -> "headline_pill" '
-        '(text = the first words, phrase = the key words right after, e.g. text "Use any website\'s", phrase "hidden API");\n'
+        '5. one to three punchy words -> "big_words" (huge type behind the speaker, 1-4 per video); a key phrase -> fx marker-highlight '
+        '(the line as said, word = its key word) or fx per-word-rise; a "headline_pill" (text = the first words, phrase = the key '
+        'words right after) only rarely: it counts as a plain text card;\n'
         '6. "not X, not Y, just Z" -> "strike_list" (items "scraping", "brittle selectors", final "just a typed client", accent '
         '"typed client"); a before and after -> "before_after"; steps said quickly -> "checklist"; a person or company introduced -> '
         '"lower_third";\n'
@@ -340,7 +341,9 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
             continue
         planned.append({**item, 'time': (offsets[w.src] + int(w.start_ms)) / 1000})
     opts = {**options, 'templates': ['big_words'], 'max_cards': limit, 'headline_off': False, 'chapters': False, 'pill_cards': True,
-            'gap_ms': GAP_BETWEEN_MS}
+            'gap_ms': GAP_BETWEEN_MS,
+            # Quiet stretches get visuals from their cues (graphics_director.fill_quiet) unless a caller turns it off.
+            'fill_quiet': options.get('fill_quiet') is not False}
     checked = ag.parse_planned(planned, 0, ranges[-1][1] + 1, opts)
     checked = [g for g in checked if not drops_meaning(g, segments)]
     fitted = ag.fit_to_clip(checked, segments, ranges, 1.0, opts)
@@ -679,10 +682,15 @@ def editor_scenes(graphics: Sequence[dict], total_ms: int, brand: Optional[str],
 
 def size_for_scenes(graphics: list[dict], scenes: Sequence[dict]) -> list[dict]:
     """A stage card outside any stage or visual scene (cut around a screen) is drawn as a card again."""
+    from clip_engine.services.graphics_director import LIGHT_BACKDROPS, on_light_stage
+    light = [s for s in scenes if s.get('scene') == 'stage' and s.get('backdrop', 'light') in LIGHT_BACKDROPS]
     out = []
     for g in graphics:
         if g.get('size') == 'stage' and g.get('origin') == 'auto' and g['template'] not in ag.DIAGRAMS and not ag.on_stage(g, scenes):
             g = {**g, 'size': 'card'}
+        if g.get('origin') == 'auto' and g['template'] not in ag.DIAGRAMS and light and ag.on_stage(g, light):
+            # On a light stage: no white card on near-white, no white words on it.
+            g = on_light_stage(g)
         out.append(g)
     return out
 
@@ -696,18 +704,23 @@ CANDIDATE_ID = 'edit-reel'
 
 # Directed reels: the hook text fades out after this many seconds (or hands over to the first chapter header).
 DIRECTED_HOOK_HIDE_S = 5
-# A hook bar pads the whole reel down; on a directed reel it floats on a matching box instead, so the stage gets the top.
-FLOATING_BOX = {'white': 'light', 'black': 'dark', 'brand': 'brand'}
+# A hook bar pads the whole reel down; on a directed reel it floats instead, so the stage gets the top: big and designed
+# like the references' hooks ("Key words in color": bold words on a white box, the last words in italic on a box in the
+# brand color), not a small label.
+FLOATING_BOX = {'white': 'highlight', 'black': 'highlight', 'brand': 'highlight'}
 
 
-def directed_hook_look(raw: Optional[dict]) -> dict:
-    """The hook look on a directed reel (Motion graphics on): a bar becomes floating text on the same colors, and it
-    hides after DIRECTED_HOOK_HIDE_S unless the member chose when it hides. Both can be changed in the editor's Hook tab."""
+def directed_hook_look(raw: Optional[dict], accent: Optional[str] = None) -> dict:
+    """The hook look on a directed reel (Motion graphics on): a bar becomes the big 'Key words in color' hook in the brand
+    color (`accent`, else the bar's own color), and it hides after DIRECTED_HOOK_HIDE_S unless the member chose when it
+    hides. Floating text the member chose stays as it is. All of it can be changed in the editor's Hook tab."""
     from clip_engine.services.rendering_service import parse_headline_look
     look = parse_headline_look(raw)
     if look.look == 'none':
         return look.as_dict()
     if look.look in FLOATING_BOX:
+        if isinstance(accent, str) and re.fullmatch(r'#[0-9A-Fa-f]{6}', accent):
+            look.color = accent.upper()
         look.text_bg = FLOATING_BOX[look.look]
         look.look = 'floating'
     if look.hide_after_s is None:
@@ -728,7 +741,7 @@ def candidate_look_extras(look: Any) -> Optional[dict]:
 
 def edit_project(title: str, total_ms: int, segments: Sequence[TranscriptSegment], look: Any, graphics: list[dict],
                  scenes: list[dict], brand_mark: Optional[dict], preview_id: str, width: int = 1080, height: int = 1920,
-                 directed: bool = False) -> dict:
+                 directed: bool = False, accent: Optional[str] = None) -> dict:
     """The editor project for an edited reel: one ready clip covering the whole reel (the editor's source), with its
     hook text, captions, look extras, graphics and scenes. Baking it (main) replaces the reel in the Library (clip 0).
     `directed`: Motion graphics on (the hook floats and hides after a few seconds: directed_hook_look)."""
@@ -737,7 +750,7 @@ def edit_project(title: str, total_ms: int, segments: Sequence[TranscriptSegment
     hook_text = ' '.join((look.headline or '').split())
     hook_look = dict(look.headline_look or {'look': 'white', 'color': '#FFFFFF', 'font': 'clean'})
     if directed:
-        hook_look = directed_hook_look(hook_look)
+        hook_look = directed_hook_look(hook_look, accent)
     hook = {'text': utf16_prefix(hook_text, 200), 'look': hook_look} if hook_text else None
     extras = candidate_look_extras(look)
     candidate = {

@@ -145,7 +145,7 @@ export function hookPatch(value: BoardStyle, hook: HookChoice, brandColor?: stri
 
 /** Picking floating text's background; the brand-color box starts from the brand's color when the color is still white. */
 export function textBgPatch(value: BoardStyle, textBg: HeadlineTextBg, brandColor?: string): Partial<BoardStyle> {
-  if (textBg === 'brand' && (!isHexColor(value.color) || value.color.toUpperCase() === '#FFFFFF')) {
+  if ((textBg === 'brand' || textBg === 'highlight') && (!isHexColor(value.color) || value.color.toUpperCase() === '#FFFFFF')) {
     return { textBg, color: brandColor && isHexColor(brandColor) ? brandColor.toUpperCase() : DEFAULT_BRAND_COLOR }
   }
   return { textBg }

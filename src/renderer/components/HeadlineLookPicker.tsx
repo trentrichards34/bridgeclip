@@ -1,6 +1,7 @@
 import { cn } from '../lib/utils'
 import {
-  DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, TEXT_BOX, headlineBarColor, headlineTextBg, headlineTextBox, headlineTextColor, isHexColor, setHideAfter, setTextBg,
+  DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, HIGHLIGHT_PHRASE_FAMILY, TEXT_BOX, headlineBarColor, headlineTextBg, headlineTextBox, headlineTextColor,
+  highlightColors, highlightSplit, isHexColor, setHideAfter, setTextBg,
   type HeadlineLook
 } from '../../shared/headline-look'
 import { HideHookText } from './HideHookText'
@@ -15,6 +16,20 @@ function LookPreview({ look }: { look: HeadlineLook }): React.JSX.Element {
   const text = font.upper ? SAMPLE.toUpperCase() : SAMPLE
   const color = headlineTextColor(look)
   const box = headlineTextBox(look)
+  if (look.look === 'floating' && look.textBg === 'highlight') {
+    // Key words in color: bold words on a white box, the last words in italic on a box in the color.
+    const colors = highlightColors(look)
+    const { lead, phrase } = highlightSplit(text)
+    return (
+      <div className="relative mx-auto aspect-[9/16] w-full max-w-[84px] overflow-hidden rounded-md bg-gradient-to-b from-slate-500 via-slate-700 to-slate-900" aria-hidden data-text-bg="highlight">
+        <div className="absolute inset-x-0 bottom-0 top-[30%] bg-[radial-gradient(circle_at_50%_40%,rgb(255_255_255/0.28),transparent_55%)]" />
+        <div className="relative flex flex-col items-center px-1 pt-2.5 text-center" style={{ lineHeight: 1.1 }}>
+          <span style={{ background: colors.leadBg, color: colors.leadInk, fontFamily: font.family, fontWeight: 800, fontSize: 9, padding: '0 3px', borderRadius: 3 }}>{lead}</span>
+          <span style={{ background: colors.phraseBg, color: colors.phraseInk, fontFamily: HIGHLIGHT_PHRASE_FAMILY, fontStyle: 'italic', fontSize: 10.5, padding: '0 3px', borderRadius: 3, marginTop: 1 }}>{phrase}</span>
+        </div>
+      </div>
+    )
+  }
   if (box) {
     // Floating text on a box: a snug rounded box behind each line (the engine draws the same shape).
     return (
@@ -50,7 +65,7 @@ function LookPreview({ look }: { look: HeadlineLook }): React.JSX.Element {
 /** The look with floating text's background (none is left out); the brand box starts from the default brand color while the color is white. */
 function withBg(value: HeadlineLook, bg: (typeof HEADLINE_TEXT_BGS)[number]['id']): HeadlineLook {
   const look = setTextBg(value, bg)
-  return bg === 'brand' && value.color.toUpperCase() === '#FFFFFF' ? { ...look, color: DEFAULT_BRAND_COLOR } : look
+  return (bg === 'brand' || bg === 'highlight') && value.color.toUpperCase() === '#FFFFFF' ? { ...look, color: DEFAULT_BRAND_COLOR } : look
 }
 
 /** Choose how the hook text at the top looks: bar color or floating, and font. */

@@ -6,8 +6,12 @@
 export type HeadlineLookStyle = 'white' | 'black' | 'brand' | 'floating' | 'none'
 export type HeadlineFont = 'clean' | 'serif' | 'condensed' | 'marker' | 'sans_serif_accent'
 
-/** Floating text's background: none (outlined text) or a snug rounded box behind each line, Instagram style. */
-export type HeadlineTextBg = 'none' | 'dark' | 'light' | 'brand'
+/**
+ * Floating text's background: none (outlined text) or a snug rounded box behind each line, Instagram style; or
+ * 'highlight': big bold words on a white box with the key words (the last ones) in an italic serif on a box in the color
+ * (the look of the references' hooks; highlightLayout).
+ */
+export type HeadlineTextBg = 'none' | 'dark' | 'light' | 'brand' | 'highlight'
 
 export interface HeadlineLook {
   look: HeadlineLookStyle
@@ -45,7 +49,8 @@ export const HEADLINE_TEXT_BGS: readonly { id: HeadlineTextBg; label: string; hi
   { id: 'none', label: 'None', hint: 'Outlined white text right on the video.' },
   { id: 'dark', label: 'Dark box', hint: 'White text on a black box behind each line, so it stands out on busy video.' },
   { id: 'light', label: 'Light box', hint: 'Black text on a white box behind each line.' },
-  { id: 'brand', label: 'Brand color', hint: 'A box in your color behind each line; the text turns black or white to stay readable.' }
+  { id: 'brand', label: 'Brand color', hint: 'A box in your color behind each line; the text turns black or white to stay readable.' },
+  { id: 'highlight', label: 'Key words in color', hint: 'Big bold words on a white box, the last few words in italic on a box in your color.' }
 ]
 
 /** The text box against the font size (the engine's TEXT_BOX_*): padding left and right, corner radius, the dark box's opacity. */
@@ -94,7 +99,7 @@ export function headlineTextBox(look: HeadlineLook): { color: string; opacity: n
   const bg = headlineTextBg(look)
   if (bg === 'none') return null
   if (bg === 'dark') return { color: '#000000', opacity: TEXT_BOX.darkOpacity }
-  if (bg === 'light') return { color: '#FFFFFF', opacity: 1 }
+  if (bg === 'light' || bg === 'highlight') return { color: '#FFFFFF', opacity: 1 }
   return { color: isHexColor(look.color) ? look.color.toUpperCase() : DEFAULT_BRAND_COLOR, opacity: 1 }
 }
 
@@ -299,4 +304,85 @@ export function textBoxPath(outline: readonly [number, number, number][]): strin
 export function textBoxRects(widths: readonly number[], centers: readonly number[], lineHeight: number, frameWidth: number, fontSize: number): TextBoxRect[] {
   const pad = fontSize * TEXT_BOX.padX
   return widths.map((width, i) => [(frameWidth - width) / 2 - pad, centers[i] - lineHeight / 2, (frameWidth + width) / 2 + pad, centers[i] + lineHeight / 2])
+}
+
+
+// ---------------------------------------------------------------------------
+// 'Key words in color' (textBg 'highlight'): the lead words big and bold on a white box, the key words (the last third)
+// in the italic serif on a box in the color. The engine draws the same (rendering_service._highlight_headline).
+// ---------------------------------------------------------------------------
+
+/** Sizes (px on a 1920-tall frame) tried largest first; the key words are drawn `phraseScale` times bigger in the serif. */
+export const HIGHLIGHT = { sizes: [104, 96, 90, 84, 78, 72, 66, 60], phraseScale: 1.2, leadLine: 1.2, phraseLine: 1.06, gap: .1, padX: .06 } as const
+/* (leadLine: the lead lines' height against the size; phraseLine: the key words' against their own, bigger, size.) */
+/** The key words' italic serif. */
+export const HIGHLIGHT_PHRASE_FAMILY = '"Instrument Serif", Georgia, serif'
+
+/** The hook text split into its lead words and its key words (the last third, one to four words). */
+export function highlightSplit(text: string): { lead: string; phrase: string } {
+  const words = text.split(/\s+/).filter(Boolean)
+  if (words.length < 2) return { lead: '', phrase: words.join(' ') }
+  const k = Math.min(4, Math.max(1, Math.round(words.length / 3)))
+  return { lead: words.slice(0, words.length - k).join(' '), phrase: words.slice(words.length - k).join(' ') }
+}
+
+/** The narrowest wrap with the same number of lines (no lone last word), as wrapHeadline balances. */
+function balanced(text: string, measure: (line: string) => number, maxWidth: number): string[] {
+  let lines = headlineLines(text, measure, maxWidth)
+  let width = maxWidth
+  while (lines.length > 1 && width > Math.floor(maxWidth / 2)) {
+    const narrower = headlineLines(text, measure, width - 20)
+    if (narrower.length !== lines.length) break
+    lines = narrower
+    width -= 20
+  }
+  return lines
+}
+
+/**
+ * Where the 'Key words in color' hook goes: the biggest size (HIGHLIGHT.sizes, times `scale`) at which the lead words take
+ * at most two lines, the key words at most two, three in all; each wrapped narrowest. `measure(line, size, phrase)` is
+ * the line's width at that size in its face (the key words at size × phraseScale in the serif).
+ */
+export function highlightLayout(text: string, measure: (line: string, size: number, phrase: boolean) => number, maxWidth: number, scale = 1):
+  { size: number; lead: string[]; phrase: string[] } {
+  const { lead, phrase } = highlightSplit(text)
+  let out = { size: HIGHLIGHT.sizes[HIGHLIGHT.sizes.length - 1] * scale, lead: [] as string[], phrase: [] as string[] }
+  for (const base of HIGHLIGHT.sizes) {
+    const size = base * scale
+    const a = lead ? balanced(lead, (line) => measure(line, size, false), maxWidth) : []
+    const b = phrase ? balanced(phrase, (line) => measure(line, size, true), maxWidth) : []
+    out = { size, lead: a, phrase: b }
+    if (a.length <= 2 && b.length <= 2 && a.length + b.length <= 3) break
+  }
+  return out
+}
+
+/** The 'Key words in color' boxes: white with near-black words; the key words' box in the color (white when the color is white or near it: the default blue), its words black or white to stay readable. */
+export function highlightColors(look: Pick<HeadlineLook, 'color'>): { leadBg: string; leadInk: string; phraseBg: string; phraseInk: string } {
+  const raw = isHexColor(look.color) ? look.color.toUpperCase() : DEFAULT_BRAND_COLOR
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(raw.slice(i, i + 2), 16))
+  const phraseBg = 0.2126 * r + 0.7152 * g + 0.0722 * b > 225 ? DEFAULT_BRAND_COLOR : raw
+  return { leadBg: '#FFFFFF', leadInk: '#0F172A', phraseBg, phraseInk: contrastText(phraseBg) }
+}
+
+/**
+ * The 'Key words in color' hook placed on a frame (px): the size, each line's text, middle and width, which lines are
+ * key words, and the two groups' box outlines (as SVG/Path2D paths). Line widths come from `measure`.
+ */
+export function highlightPlacement(text: string, measure: (line: string, size: number, phrase: boolean) => number, frameW: number, frameH: number, scale = 1): {
+  size: number; lines: { text: string; phrase: boolean; center: number; width: number; height: number }[]; leadPath: string; phrasePath: string; height: number
+} {
+  const maxW = frameW - 2 * Math.round(frameW * HIGHLIGHT.padX)
+  const { size, lead, phrase } = highlightLayout(text, measure, maxW, scale)
+  const leadH = Math.round(size * HIGHLIGHT.leadLine), phraseSize = size * HIGHLIGHT.phraseScale, phraseH = Math.round(phraseSize * HIGHLIGHT.phraseLine)
+  let y = Math.round(frameH * 0.055)
+  const lines: { text: string; phrase: boolean; center: number; width: number; height: number }[] = []
+  for (const line of lead) { lines.push({ text: line, phrase: false, center: y + leadH / 2, width: measure(line, size, false), height: leadH }); y += leadH }
+  if (lead.length && phrase.length) y += Math.round(size * HIGHLIGHT.gap)
+  for (const line of phrase) { lines.push({ text: line, phrase: true, center: y + phraseH / 2, width: measure(line, size, true), height: phraseH }); y += phraseH }
+  const path = (group: typeof lines, fontSize: number): string => group.length
+    ? textBoxPath(textBoxOutline(textBoxRects(group.map((l) => l.width), group.map((l) => l.center), group[0].height, frameW, fontSize), fontSize * TEXT_BOX.radius, fontSize * TEXT_BOX.radius))
+    : ''
+  return { size, lines, leadPath: path(lines.filter((l) => !l.phrase), size), phrasePath: path(lines.filter((l) => l.phrase), phraseSize), height: y + Math.round(size * .3) }
 }
