@@ -59,7 +59,7 @@ export const DEFAULT_SCENE_TRANSITION: SceneTransition = 'zoom'
 export const TRANSITION_LABELS: Record<SceneTransition, string> = { slide: 'Slide', zoom: 'Zoom', whip: 'Whip' }
 export const TRANSITION_DETAILS: Record<SceneTransition, string> = {
   slide: 'The card slides in. No camera move.',
-  zoom: 'A quick, subtle push through the cut.',
+  zoom: 'The video shrinks into the card, then grows back.',
   whip: 'A fast sideways whip with motion blur.'
 }
 /** Output frames of each camera move (engine depth_fx.TRANSITION_FRAMES). */
@@ -70,8 +70,10 @@ export const MAX_SCENES = 60
 export const MIN_SCENE_MS = 1200
 /** A new scene's length. */
 export const DEFAULT_SCENE_MS = 3000
-/** The card's slide and the backdrop's crossfade, in finished-clip time. */
+/** The card's slide, in finished-clip time. Backdrops cut in and out (never a crossfade over the speaker). */
 export const SCENE_TRANSITION_MS = 350
+/** Output frames of the default style's move: the video scaling into the card and back (engine stage_scenes.MORPH_FRAMES). */
+export const MORPH_FRAMES = 11
 /** Shorter than this after the cut, the engine leaves a scene out. */
 export const MIN_RENDER_SCENE_MS = 300
 
@@ -328,9 +330,9 @@ export function sceneMix(scenes: readonly StageScene[], t: number): { backdrop: 
   const cardNow = now?.scene === 'stage' ? 1 : 0, cardBefore = before?.scene === 'stage' ? 1 : 0
   const card = cardBefore + (cardNow - cardBefore) * p
   const shape: SceneCard = (now?.scene === 'stage' ? now.card : before?.scene === 'stage' ? before.card : undefined) ?? 'rounded'
-  const bNow = now ? now.backdrop ?? 'light' : null, bBefore = before ? before.backdrop ?? 'light' : null
-  if (bNow) return { backdrop: bNow, under: bBefore && bBefore !== bNow ? bBefore : null, alpha: bBefore === bNow ? 1 : p, card, shape }
-  return { backdrop: bBefore, under: null, alpha: bBefore ? 1 - p : 0, card, shape }
+  // Backdrops cut (no dissolve over the speaker).
+  const bNow = now ? now.backdrop ?? 'light' : null
+  return { backdrop: bNow, under: null, alpha: bNow ? 1 : 0, card, shape }
 }
 
 /**
@@ -345,6 +347,8 @@ export function sceneMove(scenes: readonly StageScene[], t: number, fps = 30): {
       if (kindAt(at - 1) === kindAt(at)) continue
       const kind = sceneTransition(owner)
       if (kind === 'slide') continue
+      // The default style's change with the face is the video scaling into the card (no push on top of it).
+      if (kind === 'zoom' && (kindAt(at - 1) === 'face' || kindAt(at) === 'face')) continue
       const half = TRANSITION_FRAMES[kind] / 2 / fps * 1000
       if (Math.abs(t - at) < half) return { kind, p: (t - at + half) / (2 * half) }
     }

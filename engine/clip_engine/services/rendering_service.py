@@ -1098,8 +1098,9 @@ class RenderingService:
         return stage_scenes.build_scene_graph(
             graph, scenes, width, height, time_map.output_ms, request.video_speed, fps, first_input,
             work, stem, bar_h=bar_h, zones=zones, brand=request.scene_brand_color,
-            card_graph=lambda w, h, runs, transition, escape=None: graded_card(request.color_grade, stage_scenes.card_source_graph(
-                plan, time_map.keeps, w, h, fps, runs, transition, min_w=round(width * stage_scenes.MIN_CARD_SHARE), escape=escape)),
+            card_graph=lambda w, h, runs, transition, escape=None, landing=None: graded_card(request.color_grade, stage_scenes.card_source_graph(
+                plan, time_map.keeps, w, h, fps, runs, transition, min_w=round(width * stage_scenes.MIN_CARD_SHARE), escape=escape,
+                landing=landing)),
             escape_matte=escape_matte, matte_size=depth_fx.matte_size(plan.source_width, plan.source_height))
 
     @staticmethod

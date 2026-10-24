@@ -57,3 +57,16 @@ export function fxMinType(size: 'stage' | 'card' | 'compact', group: string | un
 export function fxGlassLeft(leftMs: number, outMs = 460): number {
   return Math.max(0, Math.min(1, leftMs / outMs))
 }
+
+/**
+ * Step labels (a flowchart's boxes, a stepper's steps) read as one line each: the largest size from `max` down to
+ * `min` (in steps of `step`) at which no label wraps (`lines(size)`: each label's line count at that size). When even
+ * `min` wraps one, the labels keep `max` and wrap balanced (two even lines, every step as tall as the tallest).
+ */
+export function fitStepLabels(max: number, min: number, lines: (size: number) => number[], step = .2): { size: number; balance: boolean } {
+  const lo = Math.min(min, max)
+  for (let s = max; s >= lo - 1e-9; s = Math.round((s - step) * 1000) / 1000) {
+    if (lines(s).every((n) => n <= 1)) return { size: s, balance: false }
+  }
+  return { size: max, balance: true }
+}

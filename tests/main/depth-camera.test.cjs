@@ -37,12 +37,16 @@ test('a stage scene keeps its escape and camera move only when they differ from 
 
 test('the preview places each camera move around its cut, in the entered scene’s style', () => {
   const scenes = m.parseScenes([{ scene: 'stage', start_ms: 1000, end_ms: 3000 }, { scene: 'visual', start_ms: 3000, end_ms: 5000, transition: 'whip' },
-    { scene: 'stage', start_ms: 8000, end_ms: 10000, transition: 'slide' }])
+    { scene: 'stage', start_ms: 8000, end_ms: 10000, transition: 'slide' }, { scene: 'stage', start_ms: 11000, end_ms: 13000, transition: 'slide' },
+    { scene: 'visual', start_ms: 13000, end_ms: 15000 }])
   assert.equal(m.sceneMove(scenes, 500), null)
-  // Zoom: 8 frames at 30 fps, the cut in the middle.
-  assert.deepEqual(plain(m.sceneMove(scenes, 1000)), { kind: 'zoom', p: 0.5 })
-  assert.equal(m.sceneMove(scenes, 1000 - 120).kind, 'zoom')
-  assert.equal(m.sceneMove(scenes, 1000 + 140), null)
+  // Zoom with the face: the video scales into the card (MORPH_FRAMES), no camera push on top of it.
+  assert.equal(m.sceneMove(scenes, 1000), null)
+  assert.equal(m.MORPH_FRAMES, 11)
+  // Zoom between stage and visual: 8 frames at 30 fps, the cut in the middle.
+  assert.deepEqual(plain(m.sceneMove(scenes, 13000)), { kind: 'zoom', p: 0.5 })
+  assert.equal(m.sceneMove(scenes, 13000 - 120).kind, 'zoom')
+  assert.equal(m.sceneMove(scenes, 13000 + 140), null)
   // Stage to visual: the visual's whip; visual back to face: still the whip (the scene being left).
   assert.equal(m.sceneMove(scenes, 3000).kind, 'whip')
   assert.equal(m.sceneMove(scenes, 5000).kind, 'whip')

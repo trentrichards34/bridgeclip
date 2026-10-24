@@ -18,7 +18,7 @@ const bundled = buildSync({
       export { GRAPHIC_TEMPLATES } from './src/shared/motion-graphics';
       export { REEL_GRAPHIC_TEMPLATES, REEL_CHAT_TEMPLATES } from './src/shared/reel-graphics';
       export { GraphicForm } from './src/renderer/components/ReelGraphics';
-      export { fxFit, fxAnchorShift, fxMinType, fxGlassLeft } from './src/renderer/graphics/fx/fit';
+      export { fxFit, fxAnchorShift, fxMinType, fxGlassLeft, fitStepLabels } from './src/renderer/graphics/fx/fit';
       export { pushOrigin, pushScale, PUSH_ZOOM } from './src/renderer/graphics/fx/media';
       export { textMinType, largestFitting, textTheme, TEXT_FILL, TEXT_MAX_FILL, CAP_RATIO } from './src/renderer/graphics/text-fit';
       export { highlightSplit, highlightLayout, highlightColors, highlightPlacement } from './src/shared/headline-look';`,
@@ -228,4 +228,21 @@ test('Key words in color: the lead words big on white, the last third in the ser
   // Never white on white: a white color keeps the default blue for the key words' box.
   assert.equal(m.highlightColors({ color: '#FFFFFF' }).phraseBg, '#2563EB')
   assert.equal(m.highlightColors({ color: '#E11D48' }).phraseBg, '#E11D48')
+})
+
+test('step labels fit one line each by shrinking within the readable floor, else wrap balanced at full size', () => {
+  // "increase your ad spend" wraps at 8.6 and fits on one line from 7.0 down.
+  const widths = { 'reinvest that profit': 6.0, 'increase your ad spend': 7.0, 'amount of buyers': 5.0 }
+  const lines = (labels) => (size) => labels.map((l) => (size * 12 * widths[l] / 7.0 > 84 ? 2 : 1))
+  const all = Object.keys(widths)
+  assert.deepEqual(m.fitStepLabels(8.6, 6.4, lines(all)), { size: 7, balance: false })
+  // Nothing wraps: the full size.
+  assert.deepEqual(m.fitStepLabels(8.6, 6.4, () => [1, 1, 1]), { size: 8.6, balance: false })
+  // Even the floor wraps one: keep the full size and balance the lines (the unit evens the step heights).
+  assert.deepEqual(m.fitStepLabels(8.6, 6.4, (size) => [1, size > 3 ? 2 : 1]), { size: 8.6, balance: true })
+  // The flowchart asks for it and evens its steps.
+  const unit = require('node:fs').readFileSync(path.join(__dirname, '../src/renderer/graphics/fx/own/flowchart.html'), 'utf8')
+  assert.match(unit, /__ccFit\.stepLabels/)
+  assert.match(unit, /textWrap = 'balance'/)
+  assert.match(unit, /Every step as tall as the tallest/)
 })

@@ -13,7 +13,7 @@
  * face is one of the app's bundled fonts. The background stays transparent. Spoken word times (`cue_ms`) become the
  * unit's `cues`, or shift it so its main beat lands on the word (fxTiming).
  */
-import { FX_FIT, FX_MIN_TYPE, fxAnchorShift, fxFit, fxGlassLeft, fxMinType, type Rect } from './fit'
+import { FX_FIT, FX_MIN_TYPE, fitStepLabels, fxAnchorShift, fxFit, fxGlassLeft, fxMinType, type Rect } from './fit'
 import gsap from 'gsap'
 import { CustomEase } from 'gsap/CustomEase'
 import './fx.css'
@@ -331,7 +331,7 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
     for (const clip of shadow.querySelectorAll<HTMLElement>('[data-duration]')) clip.dataset.duration = seconds
     const registry: Record<string, Timeline> = {}
     const locals: Record<string | symbol, unknown> = {
-      __timelines: registry, __hyperframes: { getVariables: () => ({ ...vars }) }, __hfVariables: { ...vars }, __ccMotion: FX_MOTION, __ccSlotDoc: slotDoc, gsap, CustomEase
+      __timelines: registry, __hyperframes: { getVariables: () => ({ ...vars }) }, __hfVariables: { ...vars }, __ccMotion: FX_MOTION, __ccFit: { stepLabels: fitStepLabels }, __ccSlotDoc: slotDoc, gsap, CustomEase
     }
     const realFonts = document.fonts
     let ctx: gsap.Context | null = null

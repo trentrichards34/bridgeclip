@@ -47,9 +47,17 @@ def test_segments_run_on_the_edited_clock_at_the_export_speed():
     assert [(s.scene, round(s.start, 3), round(s.end, 3)) for s in segments] == [
         ("face", 0, 2.5), ("stage", 2.5, 5.0), ("visual", 5.0, 7.5), ("face", 7.5, 10.0)]
     assert ss.card_runs(segments) == [(2.5, 5.0)]
+    # Backdrops cut in and out (never a dissolve); with the morph back to face the last one holds until it has landed.
     windows = ss.backdrop_windows(segments, 0.4375)
-    assert [(w["backdrop"], w["start"], round(w["end"], 4), w["fade_in"], w["fade_out"]) for w in windows] == [
-        ("light", 2.5, 5.4375, True, False), ("dark", 5.0, 7.9375, True, True)]
+    assert [(w["backdrop"], w["start"], round(w["end"], 4)) for w in windows] == [("light", 2.5, 5.0), ("dark", 5.0, 7.5)]
+    morphs = ss.scene_morphs(segments, 30.0, 1.25, 10.0)
+    # Face -> stage in, visual -> face out (stage <-> visual is the card's slide), 14 edited frames (11 output frames).
+    assert [(m.at, m.into, m.target) for m in morphs] == [(2.5, True, "card"), (7.5, False, "off")]
+    assert ss.morph_frames_for(30.0, 1.25) == 14 and abs(morphs[0].length - 14 / 30) < 1e-9
+    windows = ss.backdrop_windows(segments, 0.4375, morphs)
+    # (each morph overlapped by a frame: the backdrop comes in a frame after the morph starts, holds a frame after it ends)
+    assert [(w["backdrop"], round(w["start"], 4), round(w["end"], 4)) for w in windows] == [
+        ("light", round(2.5 + 1 / 30, 4), 5.0), ("dark", 5.0, round(7.5 + 15 / 30, 4))]
 
 
 @pytest.mark.parametrize("kind", ["stage", "visual"])
@@ -57,16 +65,24 @@ def test_scene_graph_builds_for_each_scene(tmp_path, kind):
     scenes = [ss.Scene(kind, 1000, 3000, "light")]
     comp = ss.build_scene_graph(GRAPH, scenes, 1080, 1920, 5000, 1.0, "30", 2, str(tmp_path), "t")
     assert comp.graph.count("[base]") == 1 and comp.graph.endswith("[base]")
-    # The backdrop fades in at the scene start and out (the next scene is face) over 350 ms.
-    assert "fade=t=in:st=1.0000:d=0.3500:alpha=1" in comp.graph and "fade=t=out:st=3.0000:d=0.3500:alpha=1" in comp.graph
-    assert "[2:v]" in comp.graph
+    # No dissolve: the backdrop cuts in at the scene start and holds until the face frame is full again (11 frames).
+    assert "fade=" not in comp.graph
+    assert "[2:v]" in comp.graph and "trim=end=3.4000" in comp.graph
+    # The face frame morphs into the scene and back: a per-frame scale on a canvas, cut by its mask frames.
+    assert comp.graph.count("scale=w='if(lt(t,0.01667),") == 2 and "eval=frame" in comp.graph
+    # Its mask is drawn in the graph (no still input: one read only at the morph made FFmpeg hold the video until then).
+    assert comp.graph.count("geq=lum=") == 2 * ss.MORPH_FRAMES and "morph" not in "".join(comp.inputs)
     if kind == "stage":
         assert len(comp.inputs) == 3  # backdrop, card mask, card shadow
-        assert "alphamerge" in comp.graph and "[3:v]format=gray" in comp.graph
-        assert "clip((t-1.0000)/0.3500,0,1)" in comp.graph and "clip((t-3.0000)/0.3500,0,1)" in comp.graph
-        assert "enable='between(t,1.0000,3.3500)'" in comp.graph
+        assert "[3:v]format=gray" in comp.graph
+        # The card is in place once the morph lands and leaves as the morph out starts (no slide).
+        # (a frame of overlap with the morph either side, under it)
+        assert "gte(t,1.3333)" in comp.graph and "gte(t,3.0333)" in comp.graph and "clip((t-" not in comp.graph
+        assert "enable='between(t,1.3333,3.0333)'" in comp.graph
     else:
-        assert len(comp.inputs) == 1 and "alphamerge" not in comp.graph
+        assert len(comp.inputs) == 1
+    # On the frame grid: from half a frame before its first frame to half a frame after its held last one.
+    assert "enable='between(t,0.98333,1.38333)'" in comp.graph and "enable='between(t,2.98333,3.38333)'" in comp.graph
     for path in comp.inputs:
         assert os.path.isfile(path)
     # All face: nothing to draw.
@@ -77,11 +93,11 @@ def test_scene_graph_at_speed_and_a_backdrop_change(tmp_path):
     scenes = [ss.Scene("stage", 0, 2000, "light"), ss.Scene("visual", 2000, 4000, "dark")]
     comp = ss.build_scene_graph(GRAPH, scenes, 1080, 1920, 6000, 1.25, "30", 1, str(tmp_path), "t")
     # A scene at the clip start is up from the first frame (no fade, no slide).
-    assert "fade=t=in:st=0.0000" not in comp.graph and "(1-" in comp.graph
-    # Light → dark at output 2.0 s = edited 2.5 s; the transition is 350 ms of output (0.4375 s edited).
-    assert "fade=t=in:st=2.5000:d=0.4375:alpha=1" in comp.graph
-    assert "between(t,0.0000,2.9375)" in comp.graph  # light held until the dark one is fully in
-    assert "clip((t-2.5000)/0.4375,0,1)" in comp.graph  # the card slides down as visual starts
+    assert "fade=" not in comp.graph and "(1-" in comp.graph
+    # Light → dark at output 2.0 s = edited 2.5 s: the backdrops cut; the card slides away (350 ms of output, 0.4375 s
+    # edited, accelerating).
+    assert "between(t,0.0000,2.5000)" in comp.graph
+    assert "pow(clip((t-2.5000)/0.4375,0,1),3)" in comp.graph
 
 
 def test_card_frames_come_from_their_own_framing_when_the_graph_reads_the_source(tmp_path):
@@ -278,12 +294,13 @@ def test_suggest_scenes_stages_stage_size_graphics_with_padding_and_merging():
         {"at_ms": 15000, "duration_ms": 1500},  # size missing: not stage
         {"at_ms": 20000, "duration_ms": 500, "size": "stage"},  # short: grown to the minimum
     ]
+    # A stage opens STAGE_LAND_MS before its graphic shows (it lands with the face frame's morph into the card).
     assert ss.suggest_scenes(graphics, 24000) == [
-        {"scene": "face", "start_ms": 0, "end_ms": 2600},
-        {"scene": "stage", "start_ms": 2600, "end_ms": 7300, "backdrop": "light"},
-        {"scene": "face", "start_ms": 7300, "end_ms": 19450},
-        {"scene": "stage", "start_ms": 19450, "end_ms": 20650, "backdrop": "light"},
-        {"scene": "face", "start_ms": 20650, "end_ms": 24000},
+        {"scene": "face", "start_ms": 0, "end_ms": 2670},
+        {"scene": "stage", "start_ms": 2670, "end_ms": 7300, "backdrop": "light"},
+        {"scene": "face", "start_ms": 7300, "end_ms": 19485},
+        {"scene": "stage", "start_ms": 19485, "end_ms": 20685, "backdrop": "light"},
+        {"scene": "face", "start_ms": 20685, "end_ms": 24000},
     ]
     # Near the ends the stage runs to the clip's edge rather than leave a sliver of face.
     assert ss.suggest_scenes([{"at_ms": 500, "duration_ms": 8000, "size": "stage"}], 9000, "dark") == [
@@ -291,6 +308,29 @@ def test_suggest_scenes_stages_stage_size_graphics_with_padding_and_merging():
     assert ss.suggest_scenes([], 5000) == [{"scene": "face", "start_ms": 0, "end_ms": 5000}]
     # What it returns is a valid request.
     assert ss.parse_scenes(ss.suggest_scenes(graphics, 24000))
+
+
+def test_a_stage_opens_with_its_graphics_first_element_never_empty():
+    # A flowchart whose first step is cued 250 ms in: the stage opens so that step lands with the card.
+    flow = {"at_ms": 24364, "duration_ms": 4240, "size": "stage", "template": "fx",
+            "fields": {"effect": "flowchart", "steps": "a\nb", "cue_ms": "250\n1420\n3740"}}
+    assert ss.first_element_ms(flow) == 150
+    assert ss.stage_open_ms(flow) == 24364 + 150 - ss.STAGE_LAND_MS
+    scenes = ss.suggest_scenes([flow], 40000)
+    stage = next(s for s in scenes if s["scene"] == "stage")
+    # The morph into the card takes MORPH_FRAMES output frames: the first step starts entering by the time it lands.
+    land = stage["start_ms"] + ss.MORPH_FRAMES * 1000 / 30
+    assert stage["start_ms"] < 24364 + 150 <= land
+    # A title shows first; items and words time their own first element; nothing timed shows at once.
+    assert ss.first_element_ms({**flow, "fields": {**flow["fields"], "title": "The loop"}}) == 0
+    assert ss.first_element_ms({"at_ms": 0, "duration_ms": 3000, "fields": {"item_ms": "400\n900"}}) == 400
+    assert ss.first_element_ms({"at_ms": 0, "duration_ms": 3000, "fields": {}}) == 0
+    # A diagram's Visual scene opens the same way (auto_graphics.stage_scenes_for).
+    from clip_engine.services import auto_graphics as ag
+    diagram = {"at_ms": 10000, "duration_ms": 4000, "size": "stage", "template": "staircase", "fields": {"item_ms": "600\n1400"}}
+    assert set(ss.DRAWN_AT_ONCE) == set(ag.DIAGRAMS)  # a diagram draws its frame at once
+    visual = ag.stage_scenes_for([diagram], 0, 30000)
+    assert visual == [{"scene": "visual", "start_ms": 10000 - ss.STAGE_LAND_MS, "end_ms": 14000, "backdrop": "solid"}]
 
 
 def test_a_bad_scenes_request_is_refused_before_rendering(tmp_path):
@@ -333,7 +373,65 @@ def test_render_switches_scenes_on_the_output_clock_with_a_cut_and_speed(tmp_pat
     assert _mean(result.output_path, 3.4, top).max() < 90 and _mean(result.output_path, 3.4, card).max() < 70
     # Face again after the crossfade.
     assert red(_mean(result.output_path, 4.8, top)) and red(_mean(result.output_path, 4.8, card))
-    # Mid-slide (just after the stage starts), the card is still below its resting place.
-    assert not red(_mean(result.output_path, 1.15, (60, 200, 60, 10))) and red(_mean(result.output_path, 1.9, (60, 200, 60, 10)))
+    # Mid-morph (just after the stage starts) the face frame has shrunk most of the way into the card: backdrop above.
+    assert _mean(result.output_path, 1.15, top).min() > 200 and red(_mean(result.output_path, 1.15, card))
+    # No frame across the changes in or out is a blend of the speaker and the stage (a dissolve's washed-out double
+    # image): every pixel is either the speaker (red) or the backdrop / the dark visual, bar the card's soft edge.
+    for at in (0.95, 3.95):
+        frames = _frames(result.output_path, at, 0.5)
+        assert len(frames) >= 12
+        for rgb in frames:
+            r, g, b = rgb[..., 0].astype(int), rgb[..., 1].astype(int), rgb[..., 2].astype(int)
+            speaker = (r > 160) & (g < 80)
+            light = (r > 200) & (g > 200) & (b > 200)
+            dark = (r < 70) & (g < 70) & (b < 80)
+            mixed = ~(speaker | light | dark)
+            assert mixed.mean() < 0.06, mixed.mean()
+            if at < 2:
+                # Into the stage: the speaker never leaves the card's place for a frame (no empty stage between the
+                # morph and the card).
+                assert speaker[250:290, 60:120].mean() > 0.9
     # The still inputs were cleaned up.
     assert not [name for name in os.listdir(tmp_path) if name.startswith("scene-")]
+
+
+def _frames(path, at, seconds):
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{at:.3f}", "-t", f"{seconds:.3f}", "-i", path, "-pix_fmt", "rgb24",
+                          "-f", "rawvideo", "-"], capture_output=True, check=True, timeout=120).stdout
+    return list(np.frombuffer(raw, np.uint8).reshape(-1, 320, 180, 3))
+
+
+@pytest.mark.parametrize("into,face_share", [(True, 3), (False, 3), (True, 9)])
+def test_each_morph_frame_is_the_face_frame_cut_to_that_frames_card_rectangle(into, face_share):
+    """Frame by frame, the morph shows the face frame exactly inside its step's rectangle (no gap, no stale frame, no
+    half-transparent first frame) and the backdrop outside it, decelerating toward the card (or the full frame)."""
+    W, H = 180, 320
+    geo = ss.geometry(W, H)
+    rect = (geo.card_x, geo.card_y, geo.card_w, geo.card_h)
+    # face_share 9: the card shows the face small (a close selfie zoomed out): the frame lands narrower than the card,
+    # a blurred copy of it (never black) at its sides.
+    steps = ss.morph_steps(into, W, H, (70, 80, 40, 50), geo.card_h / face_share, rect, geo.radius, ss.MORPH_FRAMES)
+    if face_share == 9:
+        assert steps[-1].scale_w < geo.card_w
+    m = ss.Morph(1.0, ss.MORPH_FRAMES / 30, into, "card")
+    graph = ("color=c=0xd02020:s=180x320:r=30:d=3[src];color=c=white:s=180x320:r=30:d=3[bg];[src]split[f][x];"
+             "[bg][x]overlay=enable=0[u];" + ss.morph_chain("f", "u", "o", 0, m, steps, "30", W, H))
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-filter_complex", graph, "-map", "[o]", "-ss", "1.0", "-frames:v", str(ss.MORPH_FRAMES),
+                          "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], capture_output=True, check=True, timeout=120).stdout
+    frames = np.frombuffer(raw, np.uint8).reshape(-1, H, W, 3)
+    assert len(frames) == ss.MORPH_FRAMES
+    areas = []
+    for rgb, st in zip(frames, steps):
+        x, y, w, h = st.rect
+        r, g = rgb[..., 0].astype(int), rgb[..., 1].astype(int)
+        red = (r > 160) & (g < 90)
+        e = 2 * ss.MORPH_MASK_DIV  # the mask is drawn at a quarter size and scaled up: a soft edge this wide
+        inner = red[y + e:y + h - e, x + e:x + w - e]
+        assert inner.mean() > 0.98, (st.rect, inner.mean())
+        outside = np.ones_like(red); outside[max(0, y - e):y + h + e, max(0, x - e):x + w + e] = False
+        if outside.any():
+            assert (rgb[outside] > 235).all(axis=-1).mean() > 0.99
+        areas.append(w * h)
+    # Decelerating: the rectangle changes most at the start of the move and least at its end.
+    deltas = [abs(b - a) for a, b in zip(areas, areas[1:])]
+    assert deltas[0] > deltas[-1] * 3

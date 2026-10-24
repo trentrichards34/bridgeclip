@@ -1834,7 +1834,7 @@ def stage_scenes_for(graphics: Sequence[dict], start_ms: int, end_ms: int, backd
     """Scenes (source time, face left out) around a clip's stage-size graphics (stage_scenes.suggest_scenes): a
     Visual scene on the solid backdrop (the brand color, else royal blue) around each diagram, so its white line art
     fills the frame under the chapter header; a Stage scene around the other stage cards."""
-    from clip_engine.services.stage_scenes import MIN_SCENE_MS, STAGE_PAD_AFTER_MS, STAGE_PAD_BEFORE_MS, suggest_scenes
+    from clip_engine.services.stage_scenes import MIN_SCENE_MS, STAGE_PAD_AFTER_MS, stage_open_ms, suggest_scenes
     if end_ms <= start_ms:
         return []
     staged = [g for g in graphics if isinstance(g, dict) and g.get('size') == 'stage']
@@ -1842,7 +1842,7 @@ def stage_scenes_for(graphics: Sequence[dict], start_ms: int, end_ms: int, backd
     scenes = [s for s in suggest_scenes(shifted, end_ms - start_ms, backdrop, card) if s['scene'] != 'face'] if shifted else []
     visual = []
     for g in sorted((g for g in staged if g.get('template') in DIAGRAMS), key=lambda g: g['at_ms']):
-        a = max(0, g['at_ms'] - start_ms - STAGE_PAD_BEFORE_MS)
+        a = max(0, stage_open_ms(g) - start_ms)
         b = min(end_ms - start_ms, g['at_ms'] + g['duration_ms'] - start_ms + STAGE_PAD_AFTER_MS)
         if visual and a - visual[-1]['end_ms'] < MIN_SCENE_MS:
             visual[-1]['end_ms'] = max(visual[-1]['end_ms'], b)

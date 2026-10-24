@@ -114,7 +114,7 @@ def test_scene_graph_lays_the_escape_strip_over_the_card_only_where_the_matte_is
     ext = ss.even(round(1920 - ss.geometry(1080, 1920).card_y - round(1920 * ss.CARD_BOTTOM)) * dx.ESCAPE_EXT)
     strip = re.search(r"\[sc_esc_0\]crop=(\d+):(\d+):0:(\d+)\[sc_strip\]", comp.graph)
     assert strip and int(strip.group(2)) == ext + ss.geometry(1080, 1920).radius
-    assert re.search(rf"overlay=x=-?\d+:y='.*-{ext}':enable='between\(t,1\.0000,4\.3500\)'\[sc_escaped\]", comp.graph)
+    assert re.search(rf"overlay=x=-?\d+:y='.*-{ext}':enable='between\(t,1\.3333,4\.0333\)'\[sc_escaped\]", comp.graph)
     # The captions move onto the card (over the chest) while the head is out.
     windows = ss.caption_windows(comp.segments, comp.geometry, comp.escaped_spans)
     geo = comp.geometry
@@ -300,13 +300,16 @@ def test_transitions_center_on_the_cut_at_each_change_of_scene_kind():
 def test_the_scene_graph_moves_the_camera_and_reports_where(tmp_path):
     graph = "[0:v]fps=30[clocked];[clocked]null[base]"
     comp = ss.build_scene_graph(graph, [ss.Scene("stage", 2000, 4000)], 1080, 1920, 6000, 1.0, "30", 1, str(tmp_path), "t")
-    assert [(m.kind, m.at) for m in comp.transitions] == [("zoom", 2.0), ("zoom", 4.0)]
-    assert "[sc_moved]format=yuv420p[base]" in comp.graph
+    # The default style: the face frame morphs into the card and back (no camera push on top of it).
+    assert [(m.kind, m.at) for m in comp.transitions] == [("morph", 2.0), ("morph", 4.0)]
+    assert "sc_moved" not in comp.graph and "[sc_mx1]format=yuv420p[base]" in comp.graph
+    whip = ss.build_scene_graph(graph, [ss.Scene("stage", 2000, 4000, transition="whip")], 1080, 1920, 6000, 1.0, "30", 1, str(tmp_path), "w")
+    assert [(m.kind, m.at) for m in whip.transitions] == [("whip", 2.0), ("whip", 4.0)] and "[sc_moved]format=yuv420p[base]" in whip.graph
     # The scene's sound lands on the cut: the scene event's time is the move's middle.
     events = sd.cues_from_events([{"kind": "scene", "at_ms": 2000, "end_ms": 4000}], 6000)
     assert events[0].at_ms == round(comp.transitions[0].at * 1000)
     plain = ss.build_scene_graph(graph, [ss.Scene("stage", 2000, 4000, transition="slide")], 1080, 1920, 6000, 1.0, "30", 1, str(tmp_path), "u")
-    assert not plain.transitions and "sc_moved" not in plain.graph
+    assert not plain.transitions and "sc_moved" not in plain.graph and "sc_mf0" not in plain.graph
 
 
 def test_output_to_source_maps_a_takeover_through_the_cut_and_speed():

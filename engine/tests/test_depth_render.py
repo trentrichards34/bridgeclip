@@ -129,7 +129,7 @@ def test_depth_and_camera_on_a_real_person(tmp_path, monkeypatch):
     # The punch lands on "thing", the head breaks out in the stage scene, the camera moves at both of its cuts.
     assert [p["at_ms"] for p in result.punches] == [2380] and result.punches[0]["kind"] == "turn"
     assert result.escaped_runs == 1
-    assert [(m["at_ms"], m["kind"]) for m in result.scene_moves] == [(3600, "zoom"), (5800, "zoom")]
+    assert [(m["at_ms"], m["kind"]) for m in result.scene_moves] == [(3600, "morph"), (5800, "morph")]
     # The matte was kept for the next render of this clip.
     assert any(n.startswith("escape-") and n.endswith(".mkv") for n in os.listdir(tmp_path / ".scene-mattes"))
     assert not [n for n in os.listdir(tmp_path) if n.startswith("scene-")]

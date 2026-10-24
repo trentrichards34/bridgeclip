@@ -206,7 +206,36 @@ def output_scenes(source_scenes: Iterable[dict], ranges: Sequence[Sequence[float
 # Auto-picker (Motion graphics: Auto with Stage layouts on)
 # ---------------------------------------------------------------------------
 
-STAGE_PAD_BEFORE_MS = 400
+# A stage opens so its graphic's first element appears as the face frame lands in the card (the morph is ~367 ms):
+# never an empty stage waiting for its first step.
+STAGE_LAND_MS = 330
+# A graphic's own fields that time its elements (ms from its start, one per line): its first one is when it shows.
+ELEMENT_TIMES = ("cue_ms", "item_ms", "word_ms")
+DRAWN_AT_ONCE = ("staircase", "funnel", "journey", "growth", "idea_hub", "compare_marks")
+# An effect's step starts its entrance this much before its cue.
+CUE_LEAD_MS = 100
+
+
+def first_element_ms(g: dict) -> int:
+    """When a graphic's first element appears (ms from its start): 0 with a title (it shows first) or without element
+    times, else its first element's time."""
+    fields = g.get("fields") if isinstance(g.get("fields"), dict) else {}
+    # A diagram draws its frame and line art from its first frame (auto_graphics.DIAGRAMS).
+    if g.get("template") in DRAWN_AT_ONCE or str(fields.get("title") or "").strip():
+        return 0
+    length = g.get("duration_ms") if _number(g.get("duration_ms")) else 0
+    for key in ELEMENT_TIMES:
+        raw = str(fields.get(key) or "").replace(",", "\n").split("\n")
+        times = [float(v) for v in (r.strip() for r in raw) if re.fullmatch(r"\d+(\.\d+)?", v)]
+        if times:
+            first = times[0] - (CUE_LEAD_MS if key == "cue_ms" else 0)
+            return int(max(0, min(first, max(0, length - MIN_RENDER_SCENE_MS))))
+    return 0
+
+
+def stage_open_ms(g: dict) -> int:
+    """When (the graphic's clock) a stage around graphic `g` opens: its first element lands with the card."""
+    return round(g["at_ms"]) + first_element_ms(g) - STAGE_LAND_MS
 # The stage closes with its graphic (an empty stage after it left read as a dead frame).
 STAGE_PAD_AFTER_MS = 0
 
@@ -227,7 +256,7 @@ def suggest_scenes(graphics: Iterable[dict], duration_ms: int, backdrop: str = "
         at, length = g.get("at_ms"), g.get("duration_ms")
         if not _number(at) or not _number(length) or length <= 0:
             continue
-        a, b = max(0, round(at) - STAGE_PAD_BEFORE_MS), min(duration_ms, round(at + length) + STAGE_PAD_AFTER_MS)
+        a, b = max(0, stage_open_ms(g)), min(duration_ms, round(at + length) + STAGE_PAD_AFTER_MS)
         if b > a:
             windows.append([a, b])
     windows.sort()
@@ -486,34 +515,133 @@ def card_runs(segments: Sequence[Segment], card: Optional[str] = None) -> list[t
     return [(segments[i].start, segments[j].end) for i, j in _runs(segments, lambda s: s.scene == "stage" and s.card == card)]
 
 
-def backdrop_windows(segments: Sequence[Segment], transition: float) -> list[dict]:
-    """Each run of one backdrop: when it shows, and whether it fades in and out.
+# Scene changes never dissolve (a crossfade between the speaker and the stage reads as a washed-out double image
+# for its frames). With the face on one side, in the default style ("zoom"), the face frame itself scales and slides
+# into the speaker card (or out through the bottom of the frame into a Visual scene) with a decelerating ease over
+# MORPH_FRAMES output frames, and the card grows back to the full frame on the way out; the backdrop is under it from
+# the first frame. "slide": the backdrop cuts in and the card slides up (decelerating) and away. "whip": everything
+# cuts under the whip. Between stage and visual the card slides.
+MORPH_FRAMES = 11
 
-    A transition starts at the scene boundary and lasts `transition` seconds. A backdrop
-    followed by another stays fully up through the next one's fade-in (that one is drawn over it).
-    """
+
+@dataclass(frozen=True)
+class Morph:
+    """The face frame scaling into (``into``) or out of a scene at `at` (edited seconds) for `length` seconds:
+    ``target`` "card" (a stage scene's speaker card, `shape`) or "off" (below the frame: a visual scene)."""
+
+    at: float
+    length: float
+    into: bool
+    target: str
+    shape: str = "rounded"
+    # One frame (edited seconds). The pieces around a morph overlap it by a frame either side (the backdrop comes in a
+    # frame after it starts, the card a frame before it lands and leaves a frame after it starts, and its last frame is
+    # held a frame), so a frame's rounding never shows a stage with nothing on it.
+    frame: float = 0.0
+
+    @property
+    def end(self) -> float:
+        return self.at + self.length
+
+
+def _owner(prev: Segment, seg: Segment) -> Segment:
+    return seg if seg.scene != "face" else prev
+
+
+def change_kind(prev: Segment, seg: Segment) -> str:
+    """How the change from `prev` to `seg` moves: "morph" (face <-> stage/visual in the default style), "whip",
+    "slide" (the card slides; always between stage and visual) or "cut" (the same scene, another backdrop)."""
+    if prev.scene == seg.scene:
+        return "cut"
+    if prev.scene != "face" and seg.scene != "face":
+        return "slide"
+    kind = _owner(prev, seg).transition or DEFAULT_TRANSITION
+    return "morph" if kind == "zoom" else "whip" if kind == "whip" else "slide"
+
+
+def morph_frames_for(fps: float, video_speed: float) -> int:
+    """The morph's frames on the edited clock (it is sped up with the clip: MORPH_FRAMES output frames)."""
+    return max(2, round(MORPH_FRAMES * max(0.1, video_speed)))
+
+
+def scene_morphs(segments: Sequence[Segment], fps: float, video_speed: float, total: float) -> list[Morph]:
+    """The morphs at the clip's changes between face and a stage or visual scene (change_kind "morph"); none at the
+    clip's very start or end, where one would overlap the one before, or into a scene shorter than the move (those cut)."""
+    length = morph_frames_for(fps, video_speed) / max(1.0, fps)
+    out: list[Morph] = []
+    for prev, seg in zip(segments, segments[1:]):
+        if change_kind(prev, seg) != "morph":
+            continue
+        owner = _owner(prev, seg)
+        at = seg.start
+        if at < 1e-3 or at + length > total - 1e-3 or owner.end - owner.start < length + 1e-6:
+            continue
+        if out and out[-1].end > at - 1e-6:
+            continue
+        out.append(Morph(round(at, 4), length, seg.scene != "face", "card" if owner.scene == "stage" else "off",
+                         owner.card if owner.scene == "stage" else "rounded", 1 / max(1.0, fps)))
+    return out
+
+
+def _segment_at(segments: Sequence[Segment], t: float, before: bool) -> Optional[Segment]:
+    """The segment ending at t (`before`) or starting at t."""
+    for seg in segments:
+        if abs((seg.end if before else seg.start) - t) < 1e-6:
+            return seg
+    return None
+
+
+def _morph_at(morphs: Sequence[Morph], t: float, into: bool) -> Optional[Morph]:
+    return next((m for m in morphs if m.into == into and abs(m.at - t) < 1e-3), None)
+
+
+def backdrop_windows(segments: Sequence[Segment], transition: float, morphs: Sequence[Morph] = ()) -> list[dict]:
+    """Each run of one backdrop: when it shows. It cuts in at its scene's start (under the morph, or the card's slide)
+    and out at its end, or once the card has grown back to the full frame (a morph out)."""
     total = segments[-1].end if segments else 0.0
     windows = []
     for i, j in _runs(segments, lambda s: s.backdrop if s.scene != "face" else None):
         a, b = segments[i].start, segments[j].end
-        nxt = segments[j + 1] if j + 1 < len(segments) else None
-        windows.append({
-            "backdrop": segments[i].backdrop, "start": a, "end": min(total, b + transition) if nxt else b,
-            "fade_in": a > 1e-6, "fade_out": bool(nxt and nxt.scene == "face"), "boundary": b,
-        })
+        out, came = _morph_at(morphs, b, False), _morph_at(morphs, a, True)
+        windows.append({"backdrop": segments[i].backdrop, "start": a + came.frame if came else a,
+                        "end": min(total, out.end + out.frame) if out else b, "boundary": b})
     return windows
 
 
-def _smooth(x: str) -> str:
-    return f"(({x})*({x})*(3-2*({x})))"
+def card_edges(segments: Sequence[Segment], a: float, b: float, transition: float, morphs: Sequence[Morph] = ()) -> tuple[str, float, str, float]:
+    """How a card run [a, b] (edited seconds) comes in and goes: (rise, when, fall, when). rise: "up" (from the clip's
+    start), "step" (in place at that time: after a morph lands, or under a whip) or "slide" (slides up from it); fall:
+    "none" (to the clip's end), "step" or "slide" (slides away from it)."""
+    total = segments[-1].end if segments else 0.0
+    if a <= 1e-6:
+        rise, at = "up", 0.0
+    else:
+        before, first = _segment_at(segments, a, True), _segment_at(segments, a, False)
+        landed = _morph_at(morphs, a, True)
+        kind = change_kind(before, first) if before and first else "slide"
+        rise, at = ("step", landed.end - landed.frame) if landed else ("step", a) if kind == "whip" else ("slide", a)
+    if b >= total - 1e-6:
+        fall, until = "none", total
+    else:
+        last, after = _segment_at(segments, b, True), _segment_at(segments, b, False)
+        kind = change_kind(last, after) if last and after else "slide"
+        leaving = _morph_at(morphs, b, False)
+        fall, until = ("step", b + leaving.frame) if leaving else ("step", b) if kind == "whip" else ("slide", b)
+    return rise, at, fall, until
 
 
-def card_visibility_expr(runs: Sequence[tuple[float, float]], total: float, transition: float) -> str:
-    """0..1 of t: how far the card is up (smoothstep in at a run's start, out at its end)."""
+def card_visibility_expr(runs: Sequence[tuple[float, float]], total: float, transition: float,
+                         segments: Sequence[Segment] = (), morphs: Sequence[Morph] = ()) -> str:
+    """0..1 of t: how far the card is up (a slide in decelerates, a slide away accelerates; a step is in place)."""
     terms = []
     for a, b in runs:
-        rise = "1" if a <= 1e-6 else _smooth(f"clip((t-{a:.4f})/{transition:.4f},0,1)")
-        fall = "0" if b >= total - 1e-6 else _smooth(f"clip((t-{b:.4f})/{transition:.4f},0,1)")
+        if segments:
+            rise_kind, at, fall_kind, until = card_edges(segments, a, b, transition, morphs)
+        else:
+            rise_kind, at = ("up", 0.0) if a <= 1e-6 else ("slide", a)
+            fall_kind, until = ("none", total) if b >= total - 1e-6 else ("slide", b)
+        rise = {"up": "1", "step": f"gte(t,{at:.4f})"}.get(rise_kind, f"(1-pow(1-clip((t-{at:.4f})/{transition:.4f},0,1),3))")
+        fall = {"none": "0", "step": f"gte(t,{until:.4f})"}.get(fall_kind, f"pow(clip((t-{until:.4f})/{transition:.4f},0,1),3)")
         terms.append(f"({rise}-{fall})")
     return "+".join(terms) if terms else "0"
 
@@ -532,8 +660,17 @@ def hook_hand_over_s(segments: Sequence[Segment], video_speed: float) -> Optiona
     return first.start
 
 
-def card_enable_expr(runs: Sequence[tuple[float, float]], transition: float) -> str:
-    return "+".join(f"between(t,{max(0.0, a):.4f},{b + transition:.4f})" for a, b in runs) or "0"
+def card_enable_expr(runs: Sequence[tuple[float, float]], transition: float, segments: Sequence[Segment] = (),
+                     morphs: Sequence[Morph] = ()) -> str:
+    """When the card is drawn: from it coming in to it having gone (card_edges)."""
+    spans = []
+    for a, b in runs:
+        if segments:
+            rise, at, fall, until = card_edges(segments, a, b, transition, morphs)
+            spans.append((at, until + (transition if fall == "slide" else 0.0)))
+        else:
+            spans.append((max(0.0, a), b + transition))
+    return "+".join(f"between(t,{a:.4f},{b:.4f})" for a, b in spans) or "0"
 
 
 def crop_y_expr(runs: Sequence[tuple[float, float]], values: Sequence[int]) -> str:
@@ -604,6 +741,8 @@ class CardCrop:
     bounds: Rect4
     # Frame escape: source pixels above the crop drawn as a strip over the card's top edge (0: none).
     ext: float = 0.0
+    # The face height the stretch is framed for (source pixels; 0: no face seen).
+    face_h: float = 0.0
 
     @property
     def zoomed_out(self) -> bool:
@@ -710,7 +849,7 @@ def card_crop(faces: Sequence[tuple[int, Rect4]], bounds: Rect4, aspect: float, 
         # Above the speaker's area only as far as the head's room needs (a blurred band there).
         lo = min(y_lo, max(need, by - HEAD_MARGIN * ch))
         points.append((t, max(x_lo, min(x_hi, xs[i])), max(lo, min(y_hi, y))))
-    return CardCrop(cw, ch, tuple(_simplify(points, CARD_KEY_TOLERANCE * ch)), bounds)
+    return CardCrop(cw, ch, tuple(_simplify(points, CARD_KEY_TOLERANCE * ch)), bounds, face_h=face_h)
 
 
 def escape_crop(faces: Sequence[tuple[int, Rect4]], base: CardCrop, start_ms: int = 0) -> Optional[CardCrop]:
@@ -755,7 +894,7 @@ def escape_crop(faces: Sequence[tuple[int, Rect4]], base: CardCrop, start_ms: in
         points.append((t, max(x_lo, min(x_hi, x)), y))
     if misses > len(points) * (1 - depth_fx.ESCAPE_MIN_SHARE):
         return None
-    return CardCrop(cw, ch, tuple(_simplify(points, CARD_KEY_TOLERANCE * ch)), base.bounds, ext)
+    return CardCrop(cw, ch, tuple(_simplify(points, CARD_KEY_TOLERANCE * ch)), base.bounds, ext, base.face_h)
 
 
 def _escape_fast(crop: CardCrop) -> bool:
@@ -1025,7 +1164,7 @@ def card_width(crop: CardCrop, card_w: int, card_h: int, min_w: int) -> int:
 
 def card_source_graph(plan, keeps, card_w: int, card_h: int, fps: str, runs: Sequence[tuple[float, float]],
                       transition: float, faces: Sequence = (), min_w: Optional[int] = None,
-                      escape: Optional[EscapeSource] = None) -> tuple[str, list[int]]:
+                      escape: Optional[EscapeSource] = None, landing: Optional[dict] = None) -> tuple[str, list[int]]:
     """The card's own framing chain, from [sc_card_src] (the source) to [sc_card_frames] (card_w x card_h), cut
     like the main framing (the same frames): each run's head-and-shoulders crop (card_crops), switching between
     runs while the card is down. Also each run's card width (card_width; the widest its shots need), the video
@@ -1067,6 +1206,13 @@ def card_source_graph(plan, keeps, card_w: int, card_h: int, fps: str, runs: Seq
                     crops[(r, i)] = crop
             escape.escaped = [r in good for r in range(len(runs))]
     widths = [max([card_width(c, card_w, card_h, least) for (r, _), c in crops.items() if r == k] or [card_w]) for k in range(len(runs))]
+    if landing is not None:
+        # `landing`: per run, the face's height in the card (card pixels) as the run starts and ends (its first and
+        # last shot's crop), for the morph into and out of the card to land on.
+        for k in range(len(runs)):
+            mine = sorted((i, c) for (r, i), c in crops.items() if r == k and c.face_h > 0)
+            if mine:
+                landing[k] = {"start": mine[0][1].face_h * card_h / mine[0][1].h, "end": mine[-1][1].face_h * card_h / mine[-1][1].h}
     switches = [round((runs[k][1] + runs[k + 1][0]) / 2 * rate) for k in range(len(runs) - 1)]
     window_end = plan.shots[-1].end_ms
     parts = [f"[sc_card_src]fps={fps}:start_time=0:round=near,tpad=stop_mode=clone:stop_duration={window_end / 1000:.3f}[cd_clocked]"]
@@ -1133,6 +1279,154 @@ def face_center_y(zones, start_ms: float, end_ms: float, panel_h: int) -> int:
     return round(centers[len(centers) // 2])
 
 
+def _takes(fn: Callable, name: str) -> bool:
+    """Whether `fn` accepts the keyword `name` (the card framing hook may be an older two-argument lambda)."""
+    import inspect
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind == p.VAR_KEYWORD for p in params.values())
+
+
+def face_at(zones, t_ms: float, bar_h: int, width: int, panel_h: int) -> Rect4:
+    """The speaker's face on the full frame around edited time t (x, y, w, h in frame pixels): the biggest face in the
+    zones within 300 ms, else the usual framing's (centered, DEFAULT_FACE_Y down)."""
+    near = [r for z in zones if z.start_ms - 300 <= t_ms <= z.end_ms + 300 for r in z.rects]
+    if not near:
+        h = panel_h * 0.16
+        return (width / 2 - h * 0.4, bar_h + panel_h * DEFAULT_FACE_Y - h / 2, h * 0.8, h)
+    x0, y0, x1, y1 = max(near, key=lambda r: (r[2] - r[0]) * (r[3] - r[1]))
+    return (float(x0), float(y0 + bar_h), float(x1 - x0), float(y1 - y0))
+
+
+@dataclass(frozen=True)
+class MorphStep:
+    """One frame of a morph: the card's rectangle and corner radius on the frame, and the face frame's scale and
+    top-left (it covers the rectangle; the mask cuts it to the rectangle)."""
+
+    rect: tuple[int, int, int, int]
+    radius: float
+    scale_w: int
+    scale_h: int
+    x: int
+    y: int
+    e: float
+
+
+def morph_ease(p: float) -> float:
+    """Decelerating (ease-out cubic)."""
+    p = min(1.0, max(0.0, p))
+    return 1 - (1 - p) ** 3
+
+
+def morph_steps(into: bool, width: int, height: int, face: Rect4, face_card: float, rect: tuple[float, float, float, float],
+                radius: float, frames: int) -> list[MorphStep]:
+    """The frames of a morph between the full frame and `rect` (the card, or a place below the frame): the face frame
+    shrinks (or grows back) and moves so the face lands where the card shows it, as big (`face_card`, card pixels; never
+    so small the frame stops covering the card), decelerating. `into`: full frame -> rect; else rect -> full frame.
+    Frame n is at (n + 0.5) / frames of the move: no frame repeats the face frame or the card."""
+    W, H = width, height
+    rx, ry, rw, rh = rect
+    fx, fy, fw, fh = face
+    cover = max(rw / W, rh / H)
+    # The face lands as big as the card shows it. The card may frame wider than the video (a close selfie zoomed out
+    # over a blurred copy): the frame then lands narrower than the card, centered (the backdrop shows at its sides for
+    # the last frames), never so small it leaves the card's height uncovered.
+    s1 = max(rh / H, min(2.5, face_card / fh)) if fh > 0 else cover
+    # The face's center where the card puts it (the eyes at CARD_EYE_Y), the frame covering the card where it can.
+    tx, ty = rx + rw / 2, ry + CARD_EYE_Y * rh + (0.5 - EYE_IN_FACE) * face_card
+    if s1 * W >= rw:
+        ox1 = min(rx, max(rx + rw - s1 * W, tx - s1 * (fx + fw / 2)))
+    else:
+        ox1 = rx + (rw - s1 * W) / 2
+    oy1 = min(ry, max(ry + rh - s1 * H, ty - s1 * (fy + fh / 2)))
+    steps = []
+    for n in range(frames):
+        q = morph_ease((n + 0.5) / frames)
+        e = q if into else 1 - q
+        r = (e * rx, e * ry, W + e * (rw - W), H + e * (rh - H))
+        s = 1 + (s1 - 1) * e
+        x, y = math.floor(e * ox1), math.floor(e * oy1)
+        sw = int(math.ceil((W * s + 1) / 2)) * 2
+        sh = int(math.ceil((H * s + 1) / 2)) * 2
+        steps.append(MorphStep((round(r[0]), round(r[1]), round(r[2]), round(r[3])), radius * e, sw, sh, x, y, e))
+    return steps
+
+
+# The morph's mask is drawn in the graph at a quarter of the frame's size (a rounded rectangle per frame, antialiased)
+# and scaled up: no still input (an image input the graph reads only at the morph made FFmpeg hold every frame of the
+# video until then: gigabytes at 1080x1920).
+MORPH_MASK_DIV = 4
+
+
+def morph_mask_chain(out: str, steps: Sequence[MorphStep], fps: str, width: int, height: int, arch: bool = False) -> str:
+    """[out]: the morph's mask frames (gray, width x height): the card's rounded rectangle at each step (the arch's
+    bottom corners below the frame), one small generated frame per step, scaled up."""
+    q = MORPH_MASK_DIV
+    sw, sh = even(width / q), even(height / q)
+    parts, labels = [], []
+    for n, st in enumerate(steps):
+        x, y, w, h = st.rect
+        r = max(0.0, min(st.radius, w / 2, h / 2)) / q
+        hw, hh = w / 2 / q, h / 2 / q
+        cx, cy = (x + w / 2) / q, (y + h / 2) / q
+        if arch:
+            hh, cy = hh + r, cy + r
+        # The rounded rectangle's signed distance (negative inside), antialiased over a pixel.
+        qx, qy = f"(abs(X+0.5-{cx:.3f})-{hw - r:.3f})", f"(abs(Y+0.5-{cy:.3f})-{hh - r:.3f})"
+        expr = f"255*clip(0.5-(hypot(max({qx},0),max({qy},0))+min(max({qx},{qy}),0)-{r:.3f}),0,1)"
+        label = f"{out}_{n}"
+        parts.append(f"color=c=black:s={sw}x{sh}:r={fps},trim=end_frame=1,format=gray,geq=lum='{expr}'[{label}]")
+        labels.append(f"[{label}]")
+    parts.append("".join(labels) + f"concat=n={len(steps)}:v=1:a=0,scale={width}:{height}:flags=bicubic,format=gray,settb=expr=1/({fps}),setpts=N[{out}]")
+    return ";".join(parts)
+
+
+def _by_frame(values: Sequence[int], rate: float) -> str:
+    """An expression of the frame's time t (from 0, `rate` frames a second) that is values[n] for frame n (the last
+    value from there on). By time, not by the frame counter: filters count their frames differently."""
+    expr = str(values[-1])
+    for n in range(len(values) - 2, -1, -1):
+        expr = f"if(lt(t,{(n + 0.5) / rate:.5f}),{values[n]},{expr})"
+    return expr
+
+
+def morph_chain(face: str, under: str, out: str, k: int, m: Morph, steps: Sequence[MorphStep], fps: str, width: int,
+                height: int, arch: bool = False) -> str:
+    """[face] (a copy of the full face frame) -> its morph frames laid over [under] -> [out]: each frame the face frame
+    scaled and placed (a per-frame scale over a blurred copy of it), cut to the card's rectangle by its mask frame."""
+    num, _, den = fps.partition("/")
+    rate = int(num) / int(den or 1)
+    frames = len(steps)
+    dur = (frames + 0.5) / rate
+    # The morph on the clip's frame grid: its first frame is the first one at or after `at` (as trim picks it), shown
+    # there, its frames (and the held last one) shown exactly where they are.
+    first = math.ceil(m.at * rate - 1e-6)
+    lo, hi = (first - 0.5) / rate, (first + frames + 0.5) / rate
+    sw = _by_frame([st.scale_w for st in steps], rate)
+    sh = _by_frame([st.scale_h for st in steps], rate)
+    x = _by_frame([st.x for st in steps], rate)
+    y = _by_frame([st.y for st in steps], rate)
+    # Every branch on one exact frame clock (frame n at pts n, time base 1/fps): the overlay and the mask pair frame n
+    # with frame n (with rounded timestamps the overlay took the previous frame's picture at the next one's place).
+    clock = f"settb=expr=1/({fps}),setpts=N"
+    return ";".join([
+        f"[{face}]trim=start={lo:.5f}:duration={dur:.4f},{clock},split=2[sc_mfs{k}][sc_mfb{k}]",
+        f"[sc_mfs{k}]format=yuva420p,scale=w='{sw}':h='{sh}':eval=frame:flags=bicubic[sc_ms{k}]",
+        # Behind it, where it lands narrower than the card (a close selfie the card shows zoomed out), a blurred, dimmed
+        # copy, as the card fills its own sides.
+        f"[sc_mfb{k}]scale={even(width / 4)}:{even(height / 4)},gblur=sigma=8,lutyuv=y=val*0.82,scale={width}:{height},"
+        f"format=yuva420p[sc_mcv{k}]",
+        f"[sc_mcv{k}][sc_ms{k}]overlay=x='{x}':y='{y}':eval=frame:format=auto,trim=end_frame={frames},{clock}[sc_mo{k}]",
+        morph_mask_chain(f"sc_mm{k}", steps, fps, width, height, arch),
+        # Back on the clip's frames (padding made up front, as depth_fx.on_timeline: no buffering), its last frame held one more.
+        f"[sc_mo{k}][sc_mm{k}]alphamerge,tpad=start={max(0, first)}:color=black@0:stop_mode=clone:stop=1,"
+        f"setpts=N*{int(den or 1)}/{int(num)}/TB[sc_mt{k}]",
+        f"[{under}][sc_mt{k}]overlay=0:0:eof_action=pass:enable='between(t,{lo:.5f},{hi:.5f})'[{out}]",
+    ])
+
+
 def build_scene_graph(
     graph: str, scenes: Sequence[Scene], width: int, height: int, edited_ms: int, video_speed: float, fps: str,
     first_input: int, work_dir: str, stem: str, bar_h: int = 0, zones: Sequence = (), brand: Optional[str] = None,
@@ -1157,10 +1451,13 @@ def build_scene_graph(
     transition = TRANSITION_MS * video_speed / 1000
     total = edited_ms / 1000
     rate = f"({fps})"
+    from fractions import Fraction
+    fps_f = float(Fraction(fps))
     parts = [graph.replace("[base]", "[sc_in]")]
     inputs: list[str] = []
     runs = card_runs(segments)
-    windows = backdrop_windows(segments, transition)
+    morphs = scene_morphs(segments, fps_f, video_speed, total)
+    windows = backdrop_windows(segments, transition, morphs)
     own_card = bool(runs and card_graph and graph.count("[0:v]") == 1)
     if own_card:
         parts[0] = "[0:v]split=2[sc_v0][sc_card_src];" + parts[0].replace("[0:v]", "[sc_v0]")
@@ -1170,7 +1467,11 @@ def build_scene_graph(
         current = "sc_face"
     else:
         current = "sc_in"
-    # Backdrops: one still per window, repeated in memory, faded on its alpha.
+    if morphs:
+        # The face frame for each morph, scaled into the card (or out of the frame) over the backdrop.
+        parts.append(f"[{current}]split={len(morphs) + 1}[sc_face_m]" + "".join(f"[sc_mf{k}]" for k in range(len(morphs))))
+        current = "sc_face_m"
+    # Backdrops: one still per window, repeated in memory; they cut in and out (never a dissolve over the speaker).
     for k, w in enumerate(windows):
         path = os.path.join(work_dir, f"scene-{stem}-backdrop-{k}.png")
         draw_backdrop(path, width, height, w["backdrop"], brand)
@@ -1179,16 +1480,15 @@ def build_scene_graph(
         a, e = w["start"], w["end"]
         chain = (f"[{index}:v]format=yuva420p,loop=loop=-1:size=1:start=0,"
                  f"setpts=(N/{rate}+{a:.4f})/TB,trim=end={e:.4f}")
-        if w["fade_in"]:
-            chain += f",fade=t=in:st={a:.4f}:d={transition:.4f}:alpha=1"
-        if w["fade_out"]:
-            chain += f",fade=t=out:st={w['boundary']:.4f}:d={transition:.4f}:alpha=1"
         parts.append(chain + f"[sc_bd{k}]")
         nxt = f"sc_b{k}"
         parts.append(f"[{current}][sc_bd{k}]overlay=0:0:eof_action=pass:enable='between(t,{a:.4f},{e:.4f})'[{nxt}]")
         current = nxt
     escape: Optional[EscapeSource] = None
     reported: list[bool] = []
+    # Per card run: the face's height in the card (card pixels) where it starts and ends, for the morph to land on.
+    landing: dict[int, dict[str, float]] = {}
+    card_rects: dict[int, tuple[int, int, int, int, str]] = {}
     if runs:
         panel_h = height - bar_h
         shapes = [c for c in CARDS if card_runs(segments, c)]
@@ -1204,11 +1504,12 @@ def build_scene_graph(
         widths: list[int] = [frame_w] * len(runs)
         if own_card:
             wanted = [any(s.escape for s in segments if s.scene == "stage" and a - 1e-6 <= s.start < b) for a, b in runs]
+            extra = {"landing": landing} if _takes(card_graph, "landing") else {}
             if escape_matte is not None and matte_size is not None and any(wanted):
                 escape = EscapeSource(wanted, escape_matte, first_input + len(inputs), matte_size, even(frame_h * depth_fx.ESCAPE_EXT))
-                graph_text, widths = card_graph(frame_w, frame_h, runs, transition, escape=escape)
+                graph_text, widths = card_graph(frame_w, frame_h, runs, transition, escape=escape, **extra)
             else:
-                graph_text, widths = card_graph(frame_w, frame_h, runs, transition)
+                graph_text, widths = card_graph(frame_w, frame_h, runs, transition, **extra)
             parts.append(graph_text)
             if escape is not None and escape.path:
                 inputs.append(escape.path)
@@ -1272,9 +1573,12 @@ def build_scene_graph(
                 frames = f"{frames}_c"
             mask_index, shadow_index = first_input + len(inputs), first_input + len(inputs) + 1
             inputs += [mask, shadow]
-            visible = card_visibility_expr(shape_runs, total, transition)
+            for a, b in shape_runs:
+                r = next((i for i, (ra, rb) in enumerate(runs) if ra <= a + 1e-6 and b <= rb + 1e-6), 0)
+                card_rects[r] = (cx, geo.card_y, w, ch, shape)
+            visible = card_visibility_expr(shape_runs, total, transition, segments, morphs)
             y = f"{off}-({off - geo.card_y})*({visible})"
-            enable = card_enable_expr(shape_runs, transition)
+            enable = card_enable_expr(shape_runs, transition, segments, morphs)
             k = ("" if shape == "rounded" else "_arch") + (f"_{w}" if narrow else "")
             parts.append(f"[{mask_index}:v]format=gray[sc_mask{k}]")
             parts.append(f"[{frames}][sc_mask{k}]alphamerge[sc_card{k}]")
@@ -1291,15 +1595,32 @@ def build_scene_graph(
                 corner = geo.arch_radius if shape == "arch" else geo.radius
                 parts.append(f"[sc_esc_{e}]crop={frame_w}:{ext + corner}:0:{(frame_h - ch) // 2}[sc_strip{k}]")
                 parts.append(f"[{current}][sc_strip{k}]overlay=x={cx - (frame_w - w) // 2}:y='{y}-{ext}':"
-                             f"enable='{card_enable_expr(escaping[g_index], transition)}'[sc_escaped{k}]")
+                             f"enable='{card_enable_expr(escaping[g_index], transition, segments, morphs)}'[sc_escaped{k}]")
                 current = f"sc_escaped{k}"
-    from fractions import Fraction
-    moves = depth_fx.scene_transitions(segments, float(Fraction(fps)), video_speed, total)
+    for k, m in enumerate(morphs):
+        r = next((i for i, (ra, rb) in enumerate(runs) if abs((ra if m.into else rb) - m.at) < 1e-3), -1) if m.target == "card" else -1
+        if r >= 0 and r in card_rects:
+            rx, ry, rw, rh, shape = card_rects[r]
+            radius = geo.arch_radius if shape == "arch" else geo.radius
+            face_card = (landing.get(r) or {}).get("start" if m.into else "end") or rh / 3.0
+        else:
+            # Into a visual scene: the frame shrinks toward the card's place as it leaves through the bottom.
+            rx, ry, rw, rh, shape = geo.card_x, height + 2 * geo.shadow_pad, geo.card_w, geo.card_h, "rounded"
+            radius, face_card = geo.radius, geo.card_h / 3.0
+        face = face_at(zones, m.at * 1000, bar_h, width, height - bar_h)
+        steps = morph_steps(m.into, width, height, face, face_card, (rx, ry, rw, rh), radius, morph_frames_for(fps_f, video_speed))
+        parts.append(morph_chain(f"sc_mf{k}", current, f"sc_mx{k}", k, m, steps, fps, width, height, arch=shape == "arch"))
+        current = f"sc_mx{k}"
+    # The default style's camera push is the morph itself at those changes (the push stays between stage and visual).
+    moves = [mv for mv in depth_fx.scene_transitions(segments, fps_f, video_speed, total)
+             if not any(abs(mv.at - m.at) < 1e-3 for m in morphs)]
     if moves:
         parts.append(depth_fx.transitions_graph(current, "sc_moved", moves, fps, width, height))
         current = "sc_moved"
     parts.append(f"[{current}]format=yuv420p[base]")
     escaped = list(escape.escaped) if escape else reported
+    # Reported with the camera moves (where each change's sound lands): a morph's "cut" is its start.
+    moves = sorted([*moves, *(depth_fx.Transition("morph", m.at, m.length / 2) for m in morphs)], key=lambda mv: mv.at)
     return SceneComposite(";".join(parts), inputs, segments, geo, moves, escaped, [r for r, e in zip(runs, escaped) if e])
 
 
