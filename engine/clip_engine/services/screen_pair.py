@@ -542,6 +542,10 @@ def scenes_for(sections: Sequence[tuple[int, str]], total_ms: int, geom: Geometr
         scene = scene_for(kind, at, geom, share, fit, face)
         scenes.append(scene)
         box = (focus or {}).get(at)
+        land = None
+        if isinstance(box, dict):
+            # A focus region (screen_zoom): its box, and when the activity settles there (the push starts then).
+            box, land = box.get("box"), box.get("start_ms")
         if zoom and box and kind in ("screen_top", "face_top") and end - at >= ZOOM_MIN_SECTION_MS and len(scenes) < MAX_SCENES - 1:
             top = scene.get("split", 0.5)
             aspect = panel_aspects(top)[0 if kind == "screen_top" else 1]
@@ -550,9 +554,12 @@ def scenes_for(sections: Sequence[tuple[int, str]], total_ms: int, geom: Geometr
             tight = zoom_crop(geom, aspect, box, (x * geom.width, y * geom.height, w * geom.width, h * geom.height))
             if tight:
                 pushed = json.loads(json.dumps(scene))
-                pushed["at_ms"] = at + 400
+                start = at + 400
+                if land is not None and at + 400 < land < end - 2000:
+                    start = int(land)
+                pushed["at_ms"] = start
                 pushed["crops"][index] = geom.normalized(tight)
-                pushed["transition_ms"] = int(max(100, min(5000, end - at - 900)) // 100 * 100)
+                pushed["transition_ms"] = int(max(100, min(5000, end - start - 900)) // 100 * 100)
                 scenes.append(pushed)
     return scenes
 
@@ -603,6 +610,30 @@ def busy_box(cells, a_ms: int, b_ms: int, geom: Geometry, step_ms: int = 200) ->
     r0, r1 = span(heat.sum(axis=1))
     x, y, w, h = geom.content
     return (x + c0 / cols * w, y + r0 / rows * h, x + min(cols, c1) / cols * w, y + min(rows, r1) / rows * h)
+
+
+def focus_regions_for(source: str, geom: Geometry, work: str) -> list:
+    """Where the screen's activity settles (screen_zoom focus regions: whole-screen changes and always-busy spots left
+    out), read from the canvas's screen; [] when it can't be read."""
+    from clip_engine.services import screen_zoom as sz
+    try:
+        return sz.focus_regions(sz.read_activity(source, geom.content, cache_dir=work))
+    except Exception as error:  # noqa: BLE001 - the section's busy box is used instead
+        logger.warning(f"Screen focus left out: {type(error).__name__}: {error}")
+        return []
+
+
+def region_focus(regions: Sequence[Any], a_ms: int, b_ms: int, geom: Geometry) -> Optional[dict]:
+    """The section's main focus region (the one with the most activity inside it) as {box (x0, y0, x1, y1 canvas px),
+    start_ms}, or None."""
+    from clip_engine.services.screen_zoom import MAX_SPREAD
+    inside = [r for r in regions if r.start_ms < b_ms and r.end_ms > a_ms and max(r.box[2], r.box[3]) <= MAX_SPREAD]
+    if not inside:
+        return None
+    best = max(inside, key=lambda r: r.samples * (min(b_ms, r.end_ms) - max(a_ms, r.start_ms)) / max(1, r.end_ms - r.start_ms))
+    x, y, w, h = geom.content
+    bx, by, bw, bh = best.box
+    return {"box": (x + bx * w, y + by * h, x + (bx + bw) * w, y + (by + bh) * h), "start_ms": max(a_ms, best.start_ms)}
 
 
 # ---------------------------------------------------------------------------
@@ -815,9 +846,10 @@ async def render_screen_reel(config: dict, progress) -> dict:
     face = await asyncio.to_thread(face_of, camera, pieces)
     focus = {}
     if screen["zoom"]:
+        regions = await asyncio.to_thread(focus_regions_for, source, geom, work)
         for n, (at, kind) in enumerate(sections):
             end = sections[n + 1][0] if n + 1 < len(sections) else duration_ms
-            focus[at] = busy_box(cells, at, end, geom)
+            focus[at] = region_focus(regions, at, end, geom) or busy_box(cells, at, end, geom)
     scenes = scenes_for(sections, duration_ms, geom, screen["split"], screen["fit"], face, focus, screen["zoom"])
     segments, rows = transcript_rows(timed)
     title = config.get("title") or look.headline or "Camera + screen"

@@ -11,7 +11,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes, Film, AudioLines, Sparkles, Bookmark, Eraser, Wand2 } from 'lucide-react'
 import type { MountedGraphic } from '../graphics/templates'
 import {
-  CHAPTER_STYLES, DIAGRAM_ACCENT, GRAPHIC_DEFAULT_MS, GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, MAX_GRAPHIC_FIELD_CHARS,
+  CHAPTER_STYLES, DIAGRAM_ACCENT, GRAPHIC_DEFAULT_MS, GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, graphicsCap, MAX_GRAPHIC_FIELD_CHARS,
   ITEM_TIMED_TEMPLATES, matchFxCues, graphicVariant, graphicVariants, bigWordsOptions, chapterStyle, clampGraphicMs, duplicateGraphic, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicPictureFields, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, switchGraphicTemplate, templateInfo, templateItems, updateGraphic, withGraphic,
   MAX_BIG_WORDS, MAX_TAKEOVER_WORDS, SCREEN_VIDEO_FILE, ctaKind, type CtaKind, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
 } from '../../shared/motion-graphics'
@@ -161,8 +161,10 @@ export function graphicGroup(template: GraphicTemplateId): GraphicGroup | 'other
 }
 
 /** The Graphics row on the timeline: one block per graphic at its source time. */
-export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disabled, onSelect, onChange, onDrag, onAdd, onAddAt, clock }: {
+export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disabled, onSelect, onChange, onDrag, onAdd, onAddAt, clock, cap = MAX_GRAPHICS_PER_CLIP }: {
   candidate: CandidateEdit; viewStart: number; viewEnd: number; selected: string | null; disabled: boolean
+  /** Most graphics this clip may have (graphicsCap: a YouTube video's is higher). */
+  cap?: number
   onSelect: (id: string) => void; onChange: (graphics: EditorGraphic[], remember: boolean) => void
   /** A drag starts or ends (the editor holds the timeline's zoom and autosave meanwhile). */
   onDrag: (active: boolean) => void; onAdd: () => void; clock: (ms: number) => string
@@ -177,7 +179,7 @@ export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disable
   for (const g of graphics) { const lane = g.at_ms >= ends[0] ? 0 : 1; lanes.push(lane); ends[lane] = Math.max(ends[lane], g.at_ms + g.duration_ms) }
   const stacked = lanes.includes(1)
   const clashes = graphicClashes(graphics)
-  const full = graphics.length >= MAX_GRAPHICS_PER_CLIP
+  const full = graphics.length >= cap
   const startDrag = (e: React.PointerEvent<HTMLElement>, g: EditorGraphic, mode: 'move' | 'start' | 'end'): void => {
     if (disabled || e.button !== 0) return
     e.preventDefault(); e.stopPropagation()
@@ -186,7 +188,7 @@ export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disable
     // Alt-drag (Option on a Mac): drag a copy, leaving the graphic where it was.
     const copy = mode === 'move' && e.altKey && !full ? duplicateGraphic(g, graphics.map((x) => x.id), g.at_ms) : null
     let base: CandidateEdit = candidate, moved = false
-    if (copy) { base = { ...candidate, graphics: withGraphic(candidate, copy) }; onChange(base.graphics!, true) }
+    if (copy) { base = { ...candidate, graphics: withGraphic(candidate, copy, cap) }; onChange(base.graphics!, true) }
     const dragged = copy ?? g
     target.setPointerCapture(e.pointerId)
     onSelect(dragged.id); onDrag(true)
@@ -219,7 +221,7 @@ export function GraphicsTrack({ candidate, viewStart, viewEnd, selected, disable
   return <div className="editor-graphics-row">
     <div className="editor-graphics-label editor-lane-head"><Shapes size={11} aria-hidden /><span className="editor-lane-name">Graphics</span>
       <Button size="sm" variant="ghost" iconOnly aria-label="Add graphic at playhead" icon={<Plus size={13} />} disabled={disabled || full} onClick={onAdd}
-        tooltip={full ? `A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics.` : 'Add graphic at playhead (G): opens the gallery of animated graphics. Right-click the row to add one at that spot.'} /></div>
+        tooltip={full ? `A clip can have up to ${cap} graphics.` : 'Add graphic at playhead (G): opens the gallery of animated graphics. Right-click the row to add one at that spot.'} /></div>
     <div className={cn('editor-graphics-track', stacked && 'stacked')} aria-label="Graphics"
       title={disabled || full ? undefined : 'Right-click or double-click to add a graphic here'}
       onContextMenu={(e) => { if (!onAddAt || disabled || full || e.target !== e.currentTarget) return; e.preventDefault(); onAddAt(timeAt(e)) }}
@@ -540,20 +542,20 @@ export function graphicsWithEffect(c: CandidateEdit, g: EditorGraphic, to: strin
 }
 
 /** A chapter header at each step the speaker names in the clip ("step one…", "first…"), with their own words. */
-export function chaptersAtSteps(c: CandidateEdit, words: readonly TimedWord[]): { graphics: EditorGraphic[]; added: number } {
+export function chaptersAtSteps(c: CandidateEdit, words: readonly TimedWord[], cap: number = MAX_GRAPHICS_PER_CLIP): { graphics: EditorGraphic[]; added: number } {
   const graphics = c.graphics ?? []
   const [, clipEnd] = clipSpan(c)
   const chapters = graphics.filter((g) => g.template === 'chapter')
   const steps = spokenSteps(words, c.ranges).filter((s) => !chapters.some((g) => Math.abs(g.at_ms - s.at_ms) < 1500))
   let list = graphics, added = 0
   steps.forEach((step, i) => {
-    if (list.length >= MAX_GRAPHICS_PER_CLIP) return
+    if (list.length >= cap) return
     const nextAt = Math.min(steps[i + 1]?.at_ms ?? clipEnd, ...chapters.filter((g) => g.at_ms > step.at_ms).map((g) => g.at_ms))
     const at = Math.max(c.ranges[0][0], step.at_ms - 100)
     const g = newGraphic('chapter', at, { fields: { ...(step.label ? { label: step.label } : {}), title: step.title }, duration_ms: Math.max(GRAPHIC_MIN_MS, nextAt - at - (nextAt < clipEnd ? 100 : 0)), taken: list.map((x) => x.id) })
     const fit = fitGraphicInCut(g, c)
     if (!fit) return
-    list = withGraphic({ ...c, graphics: list }, fit); added++
+    list = withGraphic({ ...c, graphics: list }, fit, cap); added++
   })
   return { graphics: list, added }
 }
@@ -582,8 +584,8 @@ export function quickStyleOf(c: CandidateEdit): QuickStyle | null {
 }
 
 /** The Graphics tab's one-click actions and quick styles. */
-function GraphicsActions({ candidate, words, disabled, onChange, onSuggest, onNote }: {
-  candidate: CandidateEdit; words: readonly TimedWord[]; disabled: boolean
+function GraphicsActions({ candidate, words, disabled, onChange, onSuggest, onNote, cap }: {
+  candidate: CandidateEdit; words: readonly TimedWord[]; disabled: boolean; cap: number
   onChange: (graphics: EditorGraphic[], remember?: boolean) => void; onSuggest: (send: boolean) => void; onNote: (note: string | null) => void
 }): React.JSX.Element {
   const graphics = candidate.graphics ?? []
@@ -600,9 +602,9 @@ function GraphicsActions({ candidate, words, disabled, onChange, onSuggest, onNo
   return <div className="editor-graphics-actions">
     <div className="editor-graphics-quick" role="group" aria-label="Quick actions">
       <button type="button" disabled={disabled} onClick={suggest}><Sparkles size={13} aria-hidden /><span>Suggest graphics for this clip</span></button>
-      <button type="button" disabled={disabled || graphics.length >= MAX_GRAPHICS_PER_CLIP} onClick={() => {
+      <button type="button" disabled={disabled || graphics.length >= cap} onClick={() => {
         if (!words.length) { onNote('This run has no word timings, so steps can’t be found. Add a chapter with “Add graphic”.'); return }
-        const { graphics: next, added } = chaptersAtSteps(candidate, words)
+        const { graphics: next, added } = chaptersAtSteps(candidate, words, cap)
         if (!added) { onNote('No steps are named in this clip (like “step one” or “first”). Add a chapter with “Add graphic”.'); return }
         onChange(next); onNote(`Added ${added} chapter header${added === 1 ? '' : 's'}, one at each step you name.`)
       }}><Bookmark size={13} aria-hidden /><span>Add a chapter at each step</span></button>
@@ -703,13 +705,13 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
   onSelect: (id: string | null) => void; onChange: (graphics: EditorGraphic[], remember?: boolean) => void
   seek: (ms: number) => void; clock: (ms: number) => string
 }): React.JSX.Element {
-  void project
+  const cap = graphicsCap(project)
   const graphics = candidate.graphics ?? []
   const g = graphics.find((x) => x.id === selected) ?? null
   const style = graphicStyle(candidate)
   const [imageError, setImageError] = useState<string | null>(null)
   useEffect(() => setImageError(null), [selected])
-  const full = graphics.length >= MAX_GRAPHICS_PER_CLIP
+  const full = graphics.length >= cap
   const [clipStart, clipEnd] = clipSpan(candidate)
   const [matchNote, setMatchNote] = useState<string | null>(null)
   useEffect(() => setMatchNote(null), [selected])
@@ -721,7 +723,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
     if (next) onChange(next)
     setMatchNote(note)
   }
-  const actions = <GraphicsActions candidate={candidate} words={words} disabled={disabled} onChange={onChange} onSuggest={onSuggest} onNote={setActionNote} />
+  const actions = <GraphicsActions candidate={candidate} words={words} disabled={disabled} onChange={onChange} onSuggest={onSuggest} onNote={setActionNote} cap={cap} />
   const note = actionNote && <p role="status" className="text-2xs text-ink-subtle">{actionNote}</p>
   if (!graphics.length) {
     return <section className="editor-graphics-panel" aria-label="Graphics">
@@ -739,8 +741,8 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
     onClick={() => { onSelect(x.id); if (time < x.at_ms || time >= x.at_ms + x.duration_ms) seek(x.at_ms + Math.min(1200, x.duration_ms * .45)) }}>
     <span>{templateInfo(x.template).label}</span>{graphicWarning(graphicCutFit(candidate, x), clashes.has(x.id), x.placement) && <AlertTriangle size={11} className="text-warning" aria-label="Needs a look" />}<span className="text-ink-subtle">{clock(x.at_ms)}</span></button>)}</div>
   return <section className="editor-graphics-panel" aria-label="Graphics">
-    <div className="flex items-center justify-between gap-2"><p className="text-xs">Graphics <span className="text-ink-subtle">{graphics.length} / {MAX_GRAPHICS_PER_CLIP}</span></p>
-      <Button size="sm" variant="primary" icon={<Plus size={13} />} disabled={disabled || full} onClick={onGallery} tooltip={full ? `A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics.` : 'Open the gallery and add a graphic at the playhead (G).'}>Add at playhead</Button></div>
+    <div className="flex items-center justify-between gap-2"><p className="text-xs">Graphics <span className="text-ink-subtle">{graphics.length} / {cap}</span></p>
+      <Button size="sm" variant="primary" icon={<Plus size={13} />} disabled={disabled || full} onClick={onGallery} tooltip={full ? `A clip can have up to ${cap} graphics.` : 'Open the gallery and add a graphic at the playhead (G).'}>Add at playhead</Button></div>
     {actions}{note}
     {list}
     {!g ? <p className="text-2xs text-ink-subtle">Select a graphic on the timeline or in the list to edit it.</p> : <fieldset disabled={disabled} className="space-y-3 border-t border-white/10 pt-3">

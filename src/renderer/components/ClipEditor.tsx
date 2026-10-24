@@ -33,7 +33,9 @@ import { GraphicGallery } from './GraphicGallery'
 import { fxEffect, fxPictureFields } from '../../shared/fx-catalog'
 import { GraphicPreviewEditor } from './GraphicPreviewEditor'
 import { ScenesOverlay, ScenesTrack } from './ClipScenes'
-import { GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, duplicateGraphic, fitGraphicInCut, graphicLocalMs, hookEndMs, nearestOutputTime, outputTime, placeInFreeBand, removeGraphic, withGraphic, type EditorGraphic, type GraphicTemplateId } from '../../shared/motion-graphics'
+import { ZoomsTrack } from './ClipZooms'
+import { drawZoom } from './zoom-preview'
+import { GRAPHIC_TEMPLATES, graphicsCap, duplicateGraphic, fitGraphicInCut, graphicLocalMs, hookEndMs, nearestOutputTime, outputTime, placeInFreeBand, removeGraphic, withGraphic, type EditorGraphic, type GraphicTemplateId } from '../../shared/motion-graphics'
 import { stageHookEndMs } from '../../shared/scenes'
 import { graphicStyle } from '../../shared/graphic-layout'
 import { prefillEffect, prefillGraphic } from '../../shared/graphic-prefill'
@@ -85,6 +87,8 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   const [edits, setEdits] = useState<EditorCandidate[]>([])
   const editsRef = useRef(edits); editsRef.current = edits
   const sessionRef = useRef(session); sessionRef.current = session
+  /** Most graphics a clip of this project may have (a YouTube video's grows with its length). */
+  const graphicCap = graphicsCap(session?.project)
   const savedKey = useRef('')
   const savePromise = useRef<Promise<void> | null>(null)
   const [saving, setSaving] = useState(false)
@@ -265,7 +269,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   }
   /** Open the graphics gallery: a new graphic goes at `at` (source ms, the playhead unless the row was clicked elsewhere). */
   const openGallery = (at: number): void => {
-    if (!candidate || (candidate.graphics?.length ?? 0) >= MAX_GRAPHICS_PER_CLIP) { if (candidate) { setTab('graphics') } return }
+    if (!candidate || (candidate.graphics?.length ?? 0) >= graphicCap) { if (candidate) { setTab('graphics') } return }
     video.current?.pause(); setGallery(at)
   }
   // A graphic just selected is shown on the preview once it is in the clip (the next render, after its edit).
@@ -284,11 +288,11 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   }
   const duplicateSelectedGraphic = (): void => {
     const g = candidate?.graphics?.find((x) => x.id === graphicId)
-    if (!candidate || !g || candidate.graphics!.length >= MAX_GRAPHICS_PER_CLIP || candidate.status === 'discarded') return
+    if (!candidate || !g || candidate.graphics!.length >= graphicCap || candidate.status === 'discarded') return
     const ids = candidate.graphics!.map((x) => x.id)
     const after = fitGraphicInCut(duplicateGraphic(g, ids), candidate)
     const copy = after && after.at_ms >= g.at_ms + g.duration_ms - 50 ? after : placeInFreeBand(candidate.graphics!, duplicateGraphic(g, ids, g.at_ms))
-    change({ graphics: withGraphic(candidate, copy) }); setGraphicId(copy.id); showGraphic(copy)
+    change({ graphics: withGraphic(candidate, copy, graphicCap) }); setGraphicId(copy.id); showGraphic(copy)
   }
   const seek = (t: number): void => {
     if (!video.current || !session) return
@@ -460,6 +464,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
             if (barH && sw / sh < target) { const trimmed = sw / target; sy += (sh - trimmed) / 2; sh = trimmed }
             else if (barH && sw / sh > target) { const trimmed = sh * target; sx += (sw - trimmed) / 2; sw = trimmed }
             ctx.drawImage(v, sx, sy, sw, sh, 0, barH + rows[i][0] * area, out.width, dh)
+            // Screen zooms, as the bake makes them (approximate: the preview video is smaller).
+            const zoomArea = sessionRef.current?.project.zoom
+            if (zoomArea && c.zooms?.length) drawZoom(ctx, v, c.zooms, zoomArea, t, { sx, sy, sw, sh, dx: 0, dy: barH + rows[i][0] * area, dw: out.width, dh })
           })
         }
         // Hook text preview (vertical clips): the bar or floating text at the top.
@@ -642,7 +649,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       // For an effect, `look` is which effect.
       const draft = draftGraphic(project, candidate, template, at, clipWords, template === 'fx' ? look : undefined)
       const g = look && template !== 'fx' ? { ...draft, fields: { ...draft.fields, variant: look } } : { ...draft, fields: { ...draft.fields, ...pictures } }
-      setGraphics(withGraphic(candidate, g)); setGraphicId(g.id); setGallery(null); setTab('graphics')
+      setGraphics(withGraphic(candidate, g, graphicCap)); setGraphicId(g.id); setGallery(null); setTab('graphics')
       showGraphic(g)
     }
     // An effect on the member's own screenshots or photos asks for them first (nothing is added without them).
@@ -666,7 +673,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
     void getApi().editor.logoImage(outputDir, logo.id).then((name) => {
       const draft = draftGraphic(project, candidate, 'logo', at, clipWords)
       const g = { ...draft, fields: { ...draft.fields, image: name } }
-      setGraphics(withGraphic(candidate, g)); setGraphicId(g.id); setGallery(null); setTab('graphics')
+      setGraphics(withGraphic(candidate, g, graphicCap)); setGraphicId(g.id); setGallery(null); setTab('graphics')
       showGraphic(g)
     }).catch((e: unknown) => setError(errorMessage(e)))
   }
@@ -983,7 +990,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           </div>
           <div className="editor-output-monitor">
             <div className="editor-pane-heading">Output <span className="flex items-center gap-2">{candidate.captions && suppressedCaptions.some(([a, b]) => a <= time && time < b) ? 'Captions suppressed' : project.aspect_ratio}
-              <Button size="sm" variant="secondary" className="editor-add-graphic-here" icon={<Plus size={13} />} disabled={editingDisabled || (candidate.graphics?.length ?? 0) >= MAX_GRAPHICS_PER_CLIP}
+              <Button size="sm" variant="secondary" className="editor-add-graphic-here" icon={<Plus size={13} />} disabled={editingDisabled || (candidate.graphics?.length ?? 0) >= graphicCap}
                 aria-label="Add a graphic at this moment" tooltip="Add a graphic at this moment, filled with the words you say here (G)." onClick={() => openGallery(time)}>Graphic</Button>
               <Button size="sm" variant={bigPreview ? 'secondary' : 'ghost'} iconOnly icon={bigPreview ? <Minimize2 size={13} /> : <Maximize2 size={13} />} aria-label="Big preview" aria-pressed={bigPreview}
                 tooltip={bigPreview ? 'Back to the full timeline (source monitor, cut list and tools).' : 'A bigger output preview, with the timeline down to its cuts, layouts, graphics and scenes.'}
@@ -1009,8 +1016,8 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           <div className="editor-timeline-tools">
             <CameraScanButton key={candidate.id} candidate={candidate} threshold={cameraThreshold} setThreshold={setCameraThreshold}
               restore={() => change({ dismissed_camera_markers: [] })} disabled={editingDisabled} onOpen={() => video.current?.pause()} scan={() => { void run('scan-cameras') }} />
-            <Button variant="ghost" size="sm" tooltip="Undo the last editor change (⌘/Ctrl+Z)." aria-label="Undo" iconOnly icon={<Undo2 size={14} />} disabled={!undo.length || !!busy} onClick={() => history('undo')} /><Button variant="ghost" size="sm" tooltip="Redo the change you just undid (⌘/Ctrl+Shift+Z)." aria-label="Redo" iconOnly icon={<Redo2 size={14} />} disabled={!redo.length || !!busy} onClick={() => history('redo')} /><Button variant="ghost" size="sm" icon={<Scissors size={14} />} tooltip="Split the cut at the playhead into two editable sections. No footage is removed. Shortcut: S." onClick={split} disabled={editingDisabled || candidate.ranges.length >= 24}>Split</Button><Button variant="ghost" size="sm" disabled={editingDisabled || (time >= start && time <= end)} tooltip="Extend the clip’s beginning or ending to the playhead. Turn off Play cuts only to move beyond the current cut." onClick={() => { const t = (video.current?.currentTime ?? time / 1000) * 1000; if (t < start) trim('in', t); else if (t > end) trim('out', t) }}>Extend to playhead</Button><Button size="sm" variant="primary" className="editor-add-graphic" icon={<Plus size={14} />} disabled={editingDisabled || (candidate.graphics?.length ?? 0) >= MAX_GRAPHICS_PER_CLIP}
-            tooltip={(candidate.graphics?.length ?? 0) >= MAX_GRAPHICS_PER_CLIP ? `A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics.` : 'Add an animated graphic at the playhead: a stat, title, list, steps, a diagram and more. Shortcut: G.'}
+            <Button variant="ghost" size="sm" tooltip="Undo the last editor change (⌘/Ctrl+Z)." aria-label="Undo" iconOnly icon={<Undo2 size={14} />} disabled={!undo.length || !!busy} onClick={() => history('undo')} /><Button variant="ghost" size="sm" tooltip="Redo the change you just undid (⌘/Ctrl+Shift+Z)." aria-label="Redo" iconOnly icon={<Redo2 size={14} />} disabled={!redo.length || !!busy} onClick={() => history('redo')} /><Button variant="ghost" size="sm" icon={<Scissors size={14} />} tooltip="Split the cut at the playhead into two editable sections. No footage is removed. Shortcut: S." onClick={split} disabled={editingDisabled || candidate.ranges.length >= 24}>Split</Button><Button variant="ghost" size="sm" disabled={editingDisabled || (time >= start && time <= end)} tooltip="Extend the clip’s beginning or ending to the playhead. Turn off Play cuts only to move beyond the current cut." onClick={() => { const t = (video.current?.currentTime ?? time / 1000) * 1000; if (t < start) trim('in', t); else if (t > end) trim('out', t) }}>Extend to playhead</Button><Button size="sm" variant="primary" className="editor-add-graphic" icon={<Plus size={14} />} disabled={editingDisabled || (candidate.graphics?.length ?? 0) >= graphicCap}
+            tooltip={(candidate.graphics?.length ?? 0) >= graphicCap ? `A clip can have up to ${graphicCap} graphics.` : 'Add an animated graphic at the playhead: a stat, title, list, steps, a diagram and more. Shortcut: G.'}
             onClick={() => openGallery(time)}>Add graphic</Button><span className="ml-auto text-2xs text-ink-subtle">{clock(viewStart)} — {clock(viewEnd)}</span></div>
           <div className="editor-lanes editor-lanes-source">
           <div className="editor-lane"><span className="editor-lane-label" aria-hidden>Source</span>
@@ -1058,10 +1065,12 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
                 aria-label={`${name} layout from ${clock(Math.max(s.at_ms, start))}`} title={`${name} from ${clock(Math.max(s.at_ms, start))} · Click to edit it in Framing`}
                 onClick={() => { video.current?.pause(); seek(Math.max(s.at_ms, start)); setTab('framing') }}>{s.transition_ms ? <span className="editor-layout-ease" aria-hidden /> : null}<span>{name}</span></button>
             })}</div></div>
-          <GraphicsTrack candidate={candidate} viewStart={viewStart} viewEnd={viewEnd} selected={graphicId} disabled={editingDisabled} clock={clipClock}
+          <GraphicsTrack cap={graphicCap} candidate={candidate} viewStart={viewStart} viewEnd={viewEnd} selected={graphicId} disabled={editingDisabled} clock={clipClock}
             onSelect={selectGraphic} onChange={setGraphics}
             onDrag={(active) => { dragging.current = active; if (active) { video.current?.pause(); setDragWindow([viewStart, viewEnd]) } else setDragWindow(null) }}
             onAdd={() => openGallery(time)} onAddAt={(ms) => { const at = Math.max(start, Math.min(end, ms)); seek(at); openGallery(at) }} />
+          {project.zoom && candidate.zooms?.length ? <ZoomsTrack zooms={candidate.zooms} viewStart={viewStart} viewEnd={viewEnd} time={time} disabled={editingDisabled} clock={clipClock}
+            onChange={(zooms) => change({ zooms })} seek={(ms) => { video.current?.pause(); seek(ms) }} /> : null}
           {project.aspect_ratio === '9:16' && <ScenesTrack candidate={candidate} viewStart={viewStart} viewEnd={viewEnd} time={time} disabled={editingDisabled} clock={clipClock}
             onChange={(stage_scenes, remember) => change({ stage_scenes }, remember)}
             onDrag={(active) => { dragging.current = active; if (active) { video.current?.pause(); setDragWindow([viewStart, viewEnd]) } else setDragWindow(null) }} />}
@@ -1216,8 +1225,8 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       </aside>
     </div>
     {showAudit && <EditInspector outputDir={outputDir} onClose={() => setShowAudit(false)} />}
-    {gallery !== null && <GraphicGallery templates={GRAPHIC_TEMPLATES} style={graphicStyle(candidate)} full={(candidate.graphics?.length ?? 0) >= MAX_GRAPHICS_PER_CLIP}
-      limitNote={`A clip can have up to ${MAX_GRAPHICS_PER_CLIP} graphics. Remove one to add another.`}
+    {gallery !== null && <GraphicGallery templates={GRAPHIC_TEMPLATES} style={graphicStyle(candidate)} full={(candidate.graphics?.length ?? 0) >= graphicCap}
+      limitNote={`A clip can have up to ${graphicCap} graphics. Remove one to add another.`}
       where={(() => { const words = clipWords.filter((w) => w.end_ms > gallery - 150).slice(0, 5).map((w) => w.word).join(' '); return `at ${clipClock(gallery)}${words ? `, on “${words}…”` : ''}` })()}
       prefill={(template) => prefillGraphic(template, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
       prefillEffect={(effect) => prefillEffect(effect, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}

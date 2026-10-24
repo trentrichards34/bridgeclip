@@ -1,5 +1,5 @@
 import { isColorGrade, type ColorGrade } from './color-grade'
-import { parseGraphics, type EditorGraphic } from './motion-graphics'
+import { MAX_GRAPHICS_PER_CLIP, graphicsCap, parseGraphics, type EditorGraphic } from './motion-graphics'
 import { parseScenes, type StageScene } from './scenes'
 /** Persisted source-time edits. Media paths and review results are main-process owned. */
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
@@ -8,6 +8,7 @@ import { parseScreenPair, type ScreenPair } from './screen-pair'
 import { parseYoutubeLayout, type YoutubeLayout } from './longform'
 import { parseLookExtras, type LookExtraId } from './look-extras'
 import { parseCandidateSound, type CandidateSound } from './sound-design'
+import { parseZoomArea, parseZooms, type ZoomArea, type ZoomMove } from './screen-zoom'
 export type Crop = [number, number, number, number]
 export type CropCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 export type EditorRange = [number, number]
@@ -64,6 +65,8 @@ export interface CandidateEdit {
   sound?: CandidateSound
   /** Color grade on the footage only (color-grade.ts), applied by the bake under the captions and graphics. Absent = none. */
   grade?: ColorGrade
+  /** Screen zooms (screen-zoom.ts) in SOURCE time, made into the footage by the bake. Absent = none. */
+  zooms?: ZoomMove[]
 }
 /** The extras a clip can carry in the editor (the rest belong to their own tools). */
 export const EDITOR_LOOK_EXTRAS: readonly LookExtraId[] = ['keyword_pill', 'accent_words', 'progress_bar', 'comment_box', 'punch_zoom', 'broll_tags']
@@ -148,6 +151,8 @@ export interface EditorProject {
   youtube?: YoutubeLayout
   /** An edited reel (Edit my recording): the brand's handle or logo the bake draws in a corner. */
   brand_mark?: BrandMarkOrigin
+  /** Where the screen is in the source, for its zooms (screen-zoom.ts). */
+  zoom?: ZoomArea
 }
 export type BrandMarkOrigin = NonNullable<AutomaticOrigin['brand_mark']>
 export interface EditorProgress { phase: 'scan' | 'preview' | 'download' | 'copy'; percent: number }
@@ -280,7 +285,7 @@ export function clampText(x: unknown, max: number): string {
   return x.slice(0, end)
 }
 const arr = (x: unknown, max: number): unknown[] => Array.isArray(x) && x.length <= max ? x : fail()
-export function parseCandidateEdit(value: unknown, duration: number, transcriptCount = 100000): CandidateEdit {
+export function parseCandidateEdit(value: unknown, duration: number, transcriptCount = 100000, graphicsLimit: number = MAX_GRAPHICS_PER_CLIP): CandidateEdit {
   const v = record(value)
   const ranges = arr(v.ranges, 24).map((r) => {
     const a = arr(r, 2); if (a.length !== 2) fail()
@@ -327,11 +332,12 @@ export function parseCandidateEdit(value: unknown, duration: number, transcriptC
     caption_y: v.caption_y == null ? null : num(v.caption_y, .1, .9),
     ...(v.hook === undefined ? {} : { hook: parseHook(v.hook) }),
     ...(v.cta_id === undefined ? {} : { cta_id: v.cta_id === null ? null : /^[a-f0-9]{16}$/.test(str(v.cta_id, 16)) ? v.cta_id as string : fail() }),
-    ...(v.graphics === undefined ? {} : { graphics: parseGraphics(v.graphics) }),
+    ...(v.graphics === undefined ? {} : { graphics: parseGraphics(v.graphics, graphicsLimit) }),
     ...(v.stage_scenes === undefined ? {} : { stage_scenes: parseScenes(v.stage_scenes, duration) }),
     ...(v.look_extras === undefined ? {} : { look_extras: parseCandidateLookExtras(v.look_extras) }),
     ...(v.sound === undefined ? {} : { sound: parseCandidateSound(v.sound, duration) }),
     ...(v.grade === undefined || v.grade === 'none' ? {} : { grade: isColorGrade(v.grade) ? v.grade : fail() }),
+    ...(v.zooms === undefined ? {} : { zooms: parseZooms(v.zooms, duration) }),
     ...(v.dismissed_camera_markers === undefined ? {} : { dismissed_camera_markers: [...new Set(arr(v.dismissed_camera_markers, 5000).map((t) => num(t, 0, duration)))].sort((a, b) => a - b) }) }
 }
 /** A hook from the project or the renderer: null (none) or text and a look. */
@@ -359,7 +365,7 @@ export function parseEditorProject(value: unknown): EditorProject {
   const transcript = arr(v.transcript, 100000).map((row) => { const t = record(row); return { start_ms: num(t.start_ms, 0, duration), end_ms: num(t.end_ms, 0, duration), text: clampText(t.text, 20000) } })
   const ids = new Set<string>()
   const candidates = arr(v.candidates, 100).map((item): EditorCandidate => {
-    const c = record(item), edit = parseCandidateEdit(c, duration, transcript.length)
+    const c = record(item), edit = parseCandidateEdit(c, duration, transcript.length, graphicsCap({ aspect_ratio: v.aspect_ratio as string, duration_ms: duration }))
     if (ids.has(edit.id)) fail(); ids.add(edit.id)
     let review: EditorReview | null = null
     if (c.review) {
@@ -398,6 +404,7 @@ export function parseEditorProject(value: unknown): EditorProject {
     ...(v.pair !== undefined ? { pair: parseScreenPair(v.pair) ?? fail() } : {}),
     ...(v.youtube !== undefined && v.aspect_ratio === '16:9' ? { youtube: parseYoutubeLayout(v.youtube) ?? fail() } : {}),
     ...(v.brand_mark !== undefined ? { brand_mark: parseBrandMark(v.brand_mark) } : {}),
+    ...(v.zoom !== undefined ? { zoom: parseZoomArea(v.zoom) } : {}),
     ...(v.preview_id ? { preview_id: v.preview_id as string } : {}), ...(v.frame_preview === true ? { frame_preview: true } : {}), ...(v.media_freed === true ? { media_freed: true } : {}), ...(v.source_id ? { source_id: v.source_id as string } : {}) }
 }
 /** A saved baseline, or undefined when it is malformed (the clip then just shows fewer "What changed" lines). */
@@ -445,7 +452,8 @@ export function candidateEdit(c: CandidateEdit): CandidateEdit {
     ...(c.stage_scenes !== undefined ? { stage_scenes: c.stage_scenes } : {}),
     ...(c.look_extras !== undefined ? { look_extras: c.look_extras } : {}),
     ...(c.sound !== undefined ? { sound: c.sound } : {}),
-    ...(c.grade !== undefined ? { grade: c.grade } : {}) }
+    ...(c.grade !== undefined ? { grade: c.grade } : {}),
+    ...(c.zooms !== undefined ? { zooms: c.zooms } : {}) }
 }
 export function renderEditKey(c: CandidateEdit): string {
   // The call to action is added after rendering, so changing it doesn't need a new render.

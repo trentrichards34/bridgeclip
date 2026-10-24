@@ -15,7 +15,7 @@ import { applyChatTool, chatToolsFor, chatClock, chatPlainText, clipLengthNote, 
 import { SCREEN_KIND_LABELS, screenKindOf, screenShareOf } from '../shared/screen-pair'
 import { messageWithPoints, parseChatPoints, type ChatPoint } from '../shared/chat-point'
 import { editDuration, parseCandidateEdit, type CandidateEdit, type EditorProject } from '../shared/clip-editor'
-import { parseGraphics } from '../shared/motion-graphics'
+import { graphicsCap, parseGraphics } from '../shared/motion-graphics'
 import type { OpenRouterModel } from '../shared/openrouter-models'
 import type { OpenRouterMessage } from './assistant/openrouter-agent'
 import { CHAT_TIMEOUT_MS, ChatMemory, DEFAULT_CHAT_MODEL, chatEstimateUsd, chatInfoFor, chatMessage, chatModel, runToolChat } from './chat-engine'
@@ -277,8 +277,8 @@ export async function editorChat(candidate: unknown, message: unknown, deps: Edi
   const points = parseChatPoints(pins)
   let clip: CandidateEdit
   try {
-    clip = parseCandidateEdit(candidate, project.duration_ms, project.transcript.length)
-    const graphics = parseGraphics((candidate as { graphics?: unknown }).graphics)
+    clip = parseCandidateEdit(candidate, project.duration_ms, project.transcript.length, graphicsCap(project))
+    const graphics = parseGraphics((candidate as { graphics?: unknown }).graphics, graphicsCap(project))
     clip = { ...clip, ...(graphics.length || (candidate as { graphics?: unknown }).graphics !== undefined ? { graphics } : {}) }
   } catch { throw new Error('This clip has an edit the chat can’t read. Undo the last change and try again.') }
   if (!project.candidates.some((c) => c.id === clip.id)) throw new Error('This clip is no longer in the project. Reopen the editor.')

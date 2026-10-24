@@ -253,7 +253,7 @@ def pace_graphics(graphics: Sequence[dict], total_ms: int, register: Optional[st
     after it, at least body_gap apart, no plain words cards (those come as captions on key lines) and nothing inside a
     long screen demo (`demos`). The member's own graphics, chapters, the call to action and logos always stay. Nothing
     is drawn behind the speaker on a landscape video (no depth)."""
-    from clip_engine.services.auto_graphics import MAX_GRAPHICS
+    from clip_engine.services.auto_graphics import graphics_cap
     profile = pacing_profile(total_ms, register)
     cold = profile["cold_open_ms"]
     out: list[dict] = []
@@ -286,7 +286,7 @@ def pace_graphics(graphics: Sequence[dict], total_ms: int, register: Optional[st
             g = {**g, "size": "card"}
         out.append(g)
         last_start = at
-    return sorted(out, key=lambda g: g["at_ms"])[:MAX_GRAPHICS]
+    return sorted(out, key=lambda g: g["at_ms"])[:graphics_cap(total_ms, True)]
 
 
 def cold_open_word_limit(words: Sequence[Any], marks: Sequence[Optional[str]], seconds: float) -> int:
@@ -322,7 +322,8 @@ def longform_rule(seconds: float, cold_s: float, cold_end_word: Optional[int], s
     rule += (
         "AFTER THE COLD OPEN the video is screen-led and light: about one visual every 12-20 seconds, only where a number, "
         "a list or a key line is said (a stat, a number effect, one diagram per section); no plain text cards there, and "
-        "nothing while they walk through a screen for a long stretch. "
+        "nothing while they walk through a screen for a long stretch (those stretches get automatic zooms onto what changes on "
+        "the screen and onto numbers said as they show, so leave them to the zooms). "
         "Hooks: the hook is the first line of the video, in the cold open. "
     )
     if sections > 1:
@@ -647,11 +648,11 @@ def effective_seconds(kept_s: float) -> float:
 
 def graphics_budget(kept_s: float, register: Optional[str] = None) -> int:
     """How many graphics a YouTube video keeps at most: one per 5 s of its cold open, one per 12 s after it (the
-    register stretches the body), within the editor's cap."""
-    from clip_engine.services.auto_graphics import MAX_GRAPHICS
+    register stretches the body), within the editor's cap for a video this long (auto_graphics.graphics_cap)."""
+    from clip_engine.services.auto_graphics import graphics_cap
     profile = pacing_profile(int(kept_s * 1000), register)
     cold = profile["cold_open_ms"] / 1000
-    return max(2, min(MAX_GRAPHICS, math.ceil(cold / (profile["cold_gap_ms"] / 1000)) + int(max(0.0, kept_s - cold) // (profile["body_gap_ms"] / 1000))))
+    return max(2, min(graphics_cap(kept_s * 1000, True), math.ceil(cold / (profile["cold_gap_ms"] / 1000)) + int(max(0.0, kept_s - cold) // (profile["body_gap_ms"] / 1000))))
 
 
 def chapter_titles(raw_chapters: Any, words: Sequence[Any], sections: Sequence[tuple[int, int]]) -> list[dict]:
@@ -927,7 +928,8 @@ async def render_youtube(config: dict, progress) -> dict:
         mask = card_mask(os.path.join(work, "card-mask.png"), rect[2], rect[3])
         frame = stage_layers(work, rect, box)
         face_x = await asyncio.to_thread(_face_x, prepared[0], pieces)
-        pip = {"rect": rect, "box": box, "mask": mask, "frame": frame, "face_x": face_x, "screen": screen_file, "seconds": info["seconds"]}
+        pip = {"rect": rect, "box": box, "mask": mask, "frame": frame, "face_x": face_x, "screen": screen_file, "seconds": info["seconds"],
+               "zoom": pip_zoom_context(screen["path"], info, rect, box, choice["pip_corner"], pieces, screen["offset_ms"] / 1000)}
     files: list[str] = []
     dips = bool(combine and combine.get("transitions"))
     for n, piece in enumerate(pieces):
@@ -961,8 +963,17 @@ async def render_youtube(config: dict, progress) -> dict:
         os.remove(assembled)
     except OSError:
         pass
+    zoom = pip["zoom"] if pip else None
+    if not pip and not combine:
+        try:
+            zoom = await asyncio.to_thread(full_zoom_context, config["sources"], used, pieces)
+        except Exception as error:  # noqa: BLE001 - no zooms then
+            er.logger.warning(f"Zooms left out: {type(error).__name__}: {error}")
+    elif combine:
+        # Combined clips: the filmed screens zoom from the video itself (cut_screens: the screen clips' stretches).
+        zoom = {"area": [0.0, 0.0, 1.0, 1.0], "keep": None, "radius": 0, "max_scale": 1.25, "cut": None, "kind": "combine"}
     youtube = {"pip": pip_share_box(choice["pip_size"], choice["pip_corner"]) if pip else None, "captions": choice["captions"],
-               "chapters": config.get("chapters") or []}
+               "chapters": config.get("chapters") or [], "zoom": zoom}
     return await er.finish_as_project({**config, "cutout_intro": False, "raw_intro": False}, root, work, folder, base, pieces, timed, total,
                                       look, measured, 0.0, warnings, progress, screens, [], youtube=youtube)
 
@@ -972,6 +983,9 @@ def youtube_project(project: dict, youtube: dict, timed: Sequence[Sequence[Any]]
     on key lines (the rest quiet), and no hook bar (a YouTube video opens on its cold open)."""
     project.update({"width": YT_W, "height": YT_H, "aspect_ratio": "16:9",
                     "youtube": {"pip": youtube.get("pip"), "captions": youtube.get("captions", "key")}})
+    if youtube.get("zoom_record") and youtube.get("zooms"):
+        project["zoom"] = youtube["zoom_record"]
+        project["candidates"][0]["zooms"] = youtube["zooms"]
     c = project["candidates"][0]
     c["scenes"] = [{"at_ms": 0, "layout": "fill", "crops": [[0.0, 0.0, 1.0, 1.0]]}]
     # A key line a words card or a full-screen card already shows isn't captioned again.
@@ -998,3 +1012,96 @@ def youtube_chapters(timed: Sequence[Sequence[Any]], total_ms: int, titles: Sequ
         if at is not None:
             anchored[at] = title
     return chapters_for(timed, total_ms, anchored)
+
+
+# ---------------------------------------------------------------------------
+# Screen-aware zooms (screen_zoom): where the screen is, and its sharper picture
+# ---------------------------------------------------------------------------
+
+def pip_zoom_context(screen_path: str, info: dict, rect: tuple[int, int, int, int], box: tuple[int, int, int, int], corner: str,
+                     pieces: Sequence[Any], offset_s: float) -> dict:
+    """The zoom area of a picture-in-picture video: the screen's window (the webcam card kept as it is where it sits
+    over the screen), its rounded corners, how far a zoom may go (the screen recording's own resolution) and how to
+    cut the screen recording's sharper picture for a move."""
+    from clip_engine.services import screen_zoom as sz
+    sx, sy, sw, sh = box
+    native = (int(info.get("width") or 0), int(info.get("height") or 0))
+    size = sz.clip_size(native, (sw, sh))
+    radius = max(8, round(min(sw, sh) * 0.022)) / sh
+
+    def cut(at_ms: int, end_ms: int, out: str) -> Optional[str]:
+        spans = sz.reel_spans(pieces, at_ms, end_ms, FPS, lambda p, t: (screen_path, t - offset_s))
+        return sz.cut_clip(spans, size, FPS, out) if size else None
+
+    return {"area": [round(sx / YT_W, 5), round(sy / YT_H, 5), round(sw / YT_W, 5), round(sh / YT_H, 5)],
+            "keep": pip_share_box_px(rect) if corner == "bottom_right" else None, "radius": round(radius, 4),
+            "max_scale": sz.scale_limit(min(native[0] / sw, native[1] / sh), 1.0) if size else sz.UPSCALE_SLACK,
+            "cut": cut if size else None, "kind": "pip"}
+
+
+def pip_share_box_px(rect: tuple[int, int, int, int]) -> list[float]:
+    x, y, w, h = rect
+    return [round(x / YT_W, 5), round(y / YT_H, 5), round(w / YT_W, 5), round(h / YT_H, 5)]
+
+
+def full_zoom_context(sources: Sequence[str], used: Sequence[int], pieces: Sequence[Any]) -> Optional[dict]:
+    """The zoom area of a recording fitted whole into the frame (a screen recording, maybe with the webcam in it):
+    the fitted picture; its sharper picture is the recording itself. None when the takes differ in shape."""
+    from clip_engine.services import screen_zoom as sz
+    from clip_engine.services.screen_pair import probe
+    sizes = set()
+    for src in used:
+        info = probe(sources[src])
+        if not info["width"] or not info["height"]:
+            return None
+        sizes.add((int(info["width"]), int(info["height"])))
+    if len({round(w / h, 3) for w, h in sizes}) != 1:
+        return None
+    nw, nh = min(sizes)
+    k = min(YT_W / nw, YT_H / nh)
+    fw, fh = _even(nw * k), _even(nh * k)
+    fx, fy = (YT_W - fw) // 2 // 2 * 2, (YT_H - fh) // 2 // 2 * 2
+    size = sz.clip_size((nw, nh), (fw, fh))
+
+    def cut(at_ms: int, end_ms: int, out: str) -> Optional[str]:
+        spans = sz.reel_spans(pieces, at_ms, end_ms, FPS, lambda p, t: (sources[p.src], t))
+        return sz.cut_clip(spans, size, FPS, out) if size else None
+
+    return {"area": [round(fx / YT_W, 5), round(fy / YT_H, 5), round(fw / YT_W, 5), round(fh / YT_H, 5)], "keep": None, "radius": 0,
+            "max_scale": sz.scale_limit(nw, fw) if size else sz.UPSCALE_SLACK, "cut": cut if size else None, "kind": "full"}
+
+
+# A face bigger than this share of the frame: the recording is a talking head, not a screen (no zooms on it).
+TALKING_HEAD_FACE = 0.04
+
+
+def plan_youtube_zooms(target: str, zoom: dict, graphics: Sequence[dict], timed: Sequence[Sequence[Any]], total_ms: int, root: str,
+                       face: Optional[Sequence[float]] = None, allowed: Optional[Sequence[tuple[int, int]]] = None) -> tuple[list[dict], Optional[dict]]:
+    """The zoom moves of a YouTube video and the project's zoom record ({area, keep, radius}): on the screen, where it
+    is busy and onto what is said as it shows; never under a full-screen card; paced with the graphics (a zoom
+    starts a few seconds after a graphic, the cold open's zooms closer together). Each move gets its sharper picture
+    (in the run's .zoom folder) when the source has one."""
+    import os
+    from clip_engine.services import screen_zoom as sz
+    if zoom.get("kind") == "full" and face and len(face) == 4 and (face[2] - face[0]) * (face[3] - face[1]) > TALKING_HEAD_FACE:
+        return [], None
+    windows = list(allowed) if allowed is not None else [(0, int(total_ms))]
+    blocked = [(int(g["at_ms"]), int(g["at_ms"]) + int(g["duration_ms"])) for g in graphics if g.get("size") == "stage"]
+    starts = [int(g["at_ms"]) for g in graphics if g.get("template") != "chapter"]
+    cold = cold_open_ms(total_ms)
+    lines = key_lines(timed, total_ms, 0)
+    moves = sz.plan_video(target, zoom["area"], YT_W, YT_H, windows, float(zoom["max_scale"]), blocked=blocked, graphic_starts=starts,
+                          cold_ms=cold, timed=timed, key_lines=lines, cache_dir=os.path.join(root, ".work"))
+    if not moves:
+        return [], None
+    if zoom.get("cut"):
+        sz.attach_clips(moves, os.path.join(root, ZOOM_DIR), zoom["cut"])
+    else:
+        for m in moves:
+            sz.cap_move(m, float(zoom["max_scale"]))
+    record = {"area": zoom["area"], **({"keep": zoom["keep"]} if zoom.get("keep") else {}), **({"radius": zoom["radius"]} if zoom.get("radius") else {})}
+    return moves, record
+
+
+# The run's folder for the zooms' sharper pictures (one short clip per move).
+ZOOM_DIR = ".zoom"

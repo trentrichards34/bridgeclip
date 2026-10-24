@@ -501,8 +501,20 @@ def has_content(template: str, fields: dict[str, str]) -> bool:
 
 # Templates a caller may allow on top of AUTO_TEMPLATES (Edit my recording: big words behind the speaker).
 EXTRA_TEMPLATES = ('big_words',)
-# Most graphics any one video keeps (the clip editor's MAX_GRAPHICS_PER_CLIP).
+# Most graphics any one video keeps (the clip editor's MAX_GRAPHICS_PER_CLIP). A YouTube video keeps more: about
+# GRAPHICS_PER_10_MIN per ten minutes, at most MAX_GRAPHICS_LONG (graphics_cap; src/shared/motion-graphics.ts graphicsCap).
 MAX_GRAPHICS = 60
+GRAPHICS_PER_10_MIN = 60
+MAX_GRAPHICS_LONG = 180
+
+
+def graphics_cap(total_ms: float, long_form: bool = False) -> int:
+    """How many graphics a video may keep: a reel MAX_GRAPHICS; a YouTube video GRAPHICS_PER_10_MIN per ten minutes
+    (never fewer than a reel), at most MAX_GRAPHICS_LONG."""
+    if not long_form:
+        return MAX_GRAPHICS
+    import math
+    return max(MAX_GRAPHICS, min(MAX_GRAPHICS_LONG, math.ceil(max(0.0, float(total_ms)) / 600_000 * GRAPHICS_PER_10_MIN)))
 
 
 def _options(options: Optional[dict]) -> dict:
@@ -511,7 +523,7 @@ def _options(options: Optional[dict]) -> dict:
     limit = options.get('max_cards')
     return {'headline_off': bool(options.get('headline_off')), 'cta_keyword': clean_keyword(options.get('cta_keyword')),
             'stage': bool(options.get('stage')), 'chapters': bool(options.get('chapters')), 'templates': AUTO_TEMPLATES + extra,
-            'max_cards': int(limit) if type(limit) is int and 0 < limit <= MAX_GRAPHICS else None,
+            'max_cards': int(limit) if type(limit) is int and 0 < limit <= MAX_GRAPHICS_LONG else None,
             # Variety rules (caps, spacing, conversions, looks): on unless a caller turns them off.
             'variety': options.get('variety') is not False,
             # Headline pills as cards anywhere in the video (Edit my recording), not only as the clip's hook.

@@ -16,7 +16,7 @@ import { DEFAULT_CAPTION_PRESET, isCaptionPresetId } from './caption-presets'
 import { DEFAULT_HEADLINE_LOOK, parseHeadlineLook, type HeadlineLook } from './headline-look'
 import { DEFAULT_EDIT_RECIPE, editRecipe, isEditRecipeId, recipeExtras, type EditRecipeId } from './edit-recipes'
 import { parseLookExtras, type LookExtraId } from './look-extras'
-import { MAX_EDIT_GRAPHICS, parseEditGraphics, type EditGraphic } from './reel-graphics'
+import { editGraphicsLimit, parseEditGraphics, type EditGraphic } from './reel-graphics'
 import { parseAudioSkills } from './skills'
 import { parseClipOrder, type ClipOrderMode, type EditMode, type ShotType } from './combine-clips'
 import { newGraphic } from './motion-graphics'
@@ -123,6 +123,8 @@ export interface EditPlan {
   warnings: string[]
   /** Combine clips only: the clips' order and proof graphics (words' `src` is the clip, numbered in filming order). */
   combine?: EditCombine
+  /** Planned as a YouTube video (more graphics: editGraphicsLimit). Missing: a reel. */
+  format?: EditFormat
   /** The automatic direction: the motion graphics the plan suggests, each on the word where it starts (origin 'auto'). */
   graphics?: EditGraphic[]
   /** The style the graphics were planned in (register.ts: the member's, else read from the words); the review's Style starts there. */
@@ -350,7 +352,7 @@ export function initialDecisions(plan: EditPlan, look: EditLook = DEFAULT_EDIT_L
   // The plan's graphics, then (combine clips) its proof stats on numbers said where no planned graphic starts already.
   const planned = plan.graphics ?? []
   const proof = plan.combine ? proofGraphics(plan).filter((g) => !planned.some((p) => p.word === g.word)) : []
-  const graphics = [...planned.map((g) => ({ ...g, fields: { ...g.fields } })), ...proof].sort((a, b) => a.word - b.word).slice(0, MAX_EDIT_GRAPHICS)
+  const graphics = [...planned.map((g) => ({ ...g, fields: { ...g.fields } })), ...proof].sort((a, b) => a.word - b.word).slice(0, editGraphicsLimit(plan.format))
   const combine = plan.combine ? { clipOrder: [...plan.combine.startOrder], transitions: false } : {}
   // The plan's style (one choice for graphics and sound) is where the review's Style starts.
   const direction = plan.graphics !== undefined ? { motionGraphics: true, stageLayouts: true, ...(plan.register ? { soundStyle: plan.register } : {}) } : {}
@@ -571,7 +573,7 @@ export function parseEditPlan(value: unknown, sources: number): EditPlan | null 
   let graphics: EditGraphic[] | undefined
   if (Array.isArray(value.graphics)) {
     graphics = []
-    for (const raw of value.graphics.slice(0, MAX_EDIT_GRAPHICS)) {
+    for (const raw of value.graphics.slice(0, editGraphicsLimit(value.format as string))) {
       try { graphics.push(...parseEditGraphics([raw], n).filter((g) => !graphics!.some((x) => x.id === g.id))) } catch { /* left out */ }
     }
   }
@@ -597,7 +599,7 @@ export function parseEditPlan(value: unknown, sources: number): EditPlan | null 
   return { words, hooks, hook, cta: span(value.cta), popups, sounds, planned: value.planned === 'basic' ? 'basic' : 'ai', notes: lines(value.notes, 6), warnings: lines(value.warnings, 4),
     ...(combine ? { combine } : {}), ...(graphics ? { graphics } : {}), ...(keptHook && (!keptHook.kept || keptHook.text) ? { keptHook } : {}),
     ...(isRegister(value.register) ? { register: value.register } : {}), ...(spare.length ? { spareGraphics: spare } : {}),
-    ...(logoPins.length ? { logoPins } : {}), ...(chapters.length ? { chapters } : {}) }
+    ...(logoPins.length ? { logoPins } : {}), ...(chapters.length ? { chapters } : {}), ...(value.format === 'youtube' ? { format: 'youtube' as const } : {}) }
 }
 
 /** The plan's combine part (engine: ai_order, order_why, proof; or already parsed), checked; null when it isn't one. */
@@ -697,7 +699,7 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
   if (value.soundStyle !== undefined && !isSoundRegister(value.soundStyle)) throw new Error('Choose how much sound plays.')
   if (look.grade !== undefined && !isColorGrade(look.grade)) throw new Error('Choose a color grade from the list.')
   let graphics: EditGraphic[]
-  try { graphics = parseEditGraphics(value.graphics, n) } catch (error) { throw new Error(`Check your graphics: ${(error as Error).message}`) }
+  try { graphics = parseEditGraphics(value.graphics, n, editGraphicsLimit(plan.format)) } catch (error) { throw new Error(`Check your graphics: ${(error as Error).message}`) }
   if (look.lookExtras !== undefined && !Array.isArray(look.lookExtras)) throw new Error('Choose your extras again.')
   // Extras can come from the edit style chips (decisions) or the look board (look): one list either way.
   const lookExtras = parseLookExtras([...(Array.isArray(value.lookExtras) ? value.lookExtras : []), ...(Array.isArray(look.lookExtras) ? look.lookExtras : [])])

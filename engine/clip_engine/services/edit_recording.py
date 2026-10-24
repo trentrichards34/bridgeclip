@@ -2107,8 +2107,9 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
     total_ms = int(min(round(total * 1000) + offset_ms, math.floor((probe_seconds(target) or total) * 1000)))
     progress("Placing your graphics", 76)
     # A YouTube video (longform.render_youtube): no stage scenes (16:9 has its own full-screen brand cards).
+    from clip_engine.services.auto_graphics import graphics_cap
     options = {"motion": editor.get("motion") is not False, "stage": editor.get("stage") is True and youtube is None, "chapters": editor.get("motion") is not False,
-               "cta_keyword": editor.get("cta_keyword") or ""}
+               "cta_keyword": editor.get("cta_keyword") or "", "cap": graphics_cap(total_ms - offset_ms, youtube is not None)}
     popups = [p for p in config.get("popups") or []]
     graphics, notes = ed.editor_graphics(editor.get("graphics") or [], timed, total_ms - offset_ms, options, offset_ms, popups,
                                          editor.get("pins") or [])
@@ -2127,14 +2128,21 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
                             "comment_box" in extras and bool(keyword), {g["id"] for g in graphics}, face)
         graphics = with_cta(graphics, said_cta)
     scenes: list[dict] = []
+    reel_zoom: tuple[list, Optional[dict]] = ([], None)
     if options["stage"] or (options["motion"] and graphics):
         avoid = ed.screen_windows(timed, config["words"], screens or set(), offset_ms)
         if said_cta:
             avoid.append((said_cta["at_ms"], said_cta["at_ms"] + said_cta["duration_ms"]))
         # And wherever no face shows for a while (a screen or a page filmed mid-take, b-roll).
-        avoid += await asyncio.to_thread(ed.faceless_windows, target, offset_ms, total_ms)
+        faceless = await asyncio.to_thread(ed.faceless_windows, target, offset_ms, total_ms)
+        avoid += faceless
+        filmed = ed.screen_windows(timed, config["words"], screens or set(), offset_ms) + faceless
         # Cards over a filmed screen take a darker look; with Stage layouts a long screen gets a framed moment (edit_direction).
         graphics, framed = ed.screen_aware(graphics, avoid, options["stage"])
+        if framed:
+            # A framed screen's slow push-in heads for where that screen is busy (screen_zoom).
+            from clip_engine.services.screen_zoom import aim_screen_frames
+            graphics = await asyncio.to_thread(aim_screen_frames, target, graphics, os.path.join(root, ".work"))
         if options["stage"]:
             scenes = ed.editor_scenes(graphics, total_ms, editor.get("brand_color"), avoid, framed)
             graphics = ed.size_for_scenes(graphics, scenes)
@@ -2145,6 +2153,24 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
             # only filmed screen clips count).
             demos = ed.screen_windows(timed, config["words"], screens or set(), offset_ms) if youtube.get("pip") else avoid
             graphics = pace_graphics(graphics, total_ms, (config.get("sound_design") or {}).get("register"), demos)
+        elif filmed:
+            # A reel's filmed screens: gentle zooms where the screen is busy (screen_zoom), under the graphics.
+            reel_zoom = await asyncio.to_thread(_reel_zooms, target, filmed, scenes, graphics, look, offset_ms, total_ms, root)
+    zooms, zoom_record = reel_zoom
+    if youtube is not None and youtube.get("zoom"):
+        # Zooms on the screen: where it is busy, and onto what is said as it shows (screen_zoom, longform).
+        progress("Finding where to zoom on your screen", 78)
+        from clip_engine.services.longform import plan_youtube_zooms
+        allowed = None
+        if youtube["zoom"].get("kind") == "combine":
+            allowed = [(a, b) for a, b in ed.screen_windows(timed, config["words"], screens or set(), offset_ms) if b - a >= 4000]
+        try:
+            zooms, zoom_record = await asyncio.to_thread(plan_youtube_zooms, target, youtube["zoom"], graphics, timed_list, total_ms, root,
+                                                         face, allowed)
+        except Exception as error:  # noqa: BLE001 - zooms are extras: the video stands without them
+            logger.warning(f"Zooms left out: {type(error).__name__}: {error}")
+            zooms, zoom_record = [], None
+        youtube = {**youtube, "zooms": zooms, "zoom_record": zoom_record}
     segments = ed.reel_segments(timed, offset_ms)
     preview_id = os.urandom(16).hex()
     progress("Getting the editor ready", 80)
@@ -2160,6 +2186,9 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
         from clip_engine.services.manual_editor import validate_candidate
         validate_candidate(project["candidates"][0], int(total_ms), len(segments))
         chapters = lf.youtube_chapters(timed, total_ms, youtube.get("chapters") or [], config["words"])
+    if youtube is None and zooms and zoom_record:
+        project["zoom"] = zoom_record
+        project["candidates"][0]["zooms"] = zooms
     project["candidates"][0]["sound"] = editor_sound(config, timed, look, offset_ms, total_ms, broll_windows or [])
     # The member's color grade (footage only): the editor's bake applies it under the graphics and captions.
     from clip_engine.services.color_grade import parse_grade
@@ -2182,6 +2211,35 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
             "cost_usd": round(broll_cost, 6), "editor": True, "graphics": len(graphics), "scenes": len(scenes),
             **({"format": "youtube", "chapters": chapters} if youtube is not None else {}),
             **({"face": [round(float(v), 4) for v in face]} if face and len(face) == 4 else {})}
+
+
+# A reel's filmed screen at least this long gets zooms.
+REEL_ZOOM_MIN_MS = 4000
+
+
+def _reel_zooms(target: str, windows: list, scenes: list, graphics: list, look: Look, offset_ms: int, total_ms: int,
+                root: str) -> tuple[list, Optional[dict]]:
+    """A reel's zooms on its filmed screens (`windows`, reel ms): gentle (the reel's own pixels: at most
+    UPSCALE_SLACK), never in a stage or visual scene, a framed screen or a punch-in."""
+    from clip_engine.services import screen_zoom as sz
+    allowed = [(int(a), int(b)) for a, b in windows if b - a >= REEL_ZOOM_MIN_MS]
+    if not allowed:
+        return [], None
+    blocked = [(int(s["start_ms"]), int(s["end_ms"])) for s in scenes]
+    blocked += [(int(g["at_ms"]), int(g["at_ms"]) + int(g["duration_ms"])) for g in graphics if g.get("template") == "screen_frame"]
+    blocked += [(round(a * 1000) + offset_ms, round(b * 1000) + offset_ms) for a, b in getattr(look, "punched", ()) or ()]
+    try:
+        from clip_engine.services.screen_pair import probe
+        info = probe(target)
+        width, height = int(info["width"]), int(info["height"])
+        moves = sz.plan_video(target, [0.0, 0.0, 1.0, 1.0], width, height, allowed, sz.UPSCALE_SLACK, blocked=blocked, cold_ms=total_ms,
+                              cache_dir=os.path.join(root, ".work"))
+    except Exception as error:  # noqa: BLE001 - zooms are extras
+        logger.warning(f"Zooms left out: {type(error).__name__}: {error}")
+        return [], None
+    for m in moves:
+        sz.cap_move(m, sz.UPSCALE_SLACK)
+    return (moves, {"area": [0.0, 0.0, 1.0, 1.0]}) if moves else ([], None)
 
 
 def write_project_output(root: str, clip_path: str, clip_ms: int, title: str, cost_usd: float, post_caption: str, headline: str,
