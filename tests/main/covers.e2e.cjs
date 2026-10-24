@@ -75,8 +75,7 @@ test('Make my cover: three covers from the best frames, the hook in the look, sa
   }
   if (process.env.COVER_OUT) {
     fs.mkdirSync(process.env.COVER_OUT, { recursive: true })
-    const shot = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'))
-    fs.writeFileSync(path.join(process.env.COVER_OUT, `dialog-${youtube ? 'youtube' : 'reel'}.png`), Buffer.from(shot, 'base64'))
+    await page.screenshot({ path: path.join(process.env.COVER_OUT, `dialog-${youtube ? 'youtube' : 'reel'}.png`) })
     // Each of the three as the member would save it.
     for (let i = 0; i < 3; i++) {
       const data = await page.evaluate((k) => document.querySelector(`[data-testid="cover-canvas-${k}"]`).toDataURL('image/png').split(',')[1], i)

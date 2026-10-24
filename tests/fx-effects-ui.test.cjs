@@ -18,7 +18,7 @@ const bundled = buildSync({
       export { GRAPHIC_TEMPLATES } from './src/shared/motion-graphics';
       export { REEL_GRAPHIC_TEMPLATES, REEL_CHAT_TEMPLATES } from './src/shared/reel-graphics';
       export { GraphicForm } from './src/renderer/components/ReelGraphics';
-      export { fxFit, fxAnchorShift, fxMinType, fxGlassLeft, fitStepLabels } from './src/renderer/graphics/fx/fit';
+      export { fxFit, fxAnchorShift, fxMinType, fxGlassLeft, fitStepLabels, fxBrand, BRAND_ON_DARK } from './src/renderer/graphics/fx/fit';
       export { pushOrigin, pushScale, PUSH_ZOOM } from './src/renderer/graphics/fx/media';
       export { textMinType, largestFitting, textTheme, TEXT_FILL, TEXT_MAX_FILL, CAP_RATIO } from './src/renderer/graphics/text-fit';
       export { highlightSplit, highlightLayout, highlightColors, highlightPlacement } from './src/shared/headline-look';`,
@@ -245,4 +245,13 @@ test('step labels fit one line each by shrinking within the readable floor, else
   assert.match(unit, /__ccFit\.stepLabels/)
   assert.match(unit, /textWrap = 'balance'/)
   assert.match(unit, /Every step as tall as the tallest/)
+})
+
+test('words in the brand color read on dark glass: a mid blue is lifted, a light color kept, white-card looks untouched', () => {
+  const lumOf = (css) => { const [r, g, b] = css.match(/\d+/g).map(Number); return 0.2126 * r + 0.7152 * g + 0.0722 * b }
+  const blue = m.fxBrand([37, 99, 235])
+  assert.ok(lumOf(blue) >= m.BRAND_ON_DARK - 5, blue)
+  assert.ok(/^rgb\(\d+, \d+, \d+\)$/.test(blue))
+  assert.equal(m.fxBrand([113, 245, 167]), 'rgb(113, 245, 167)')
+  assert.equal(m.fxBrand([37, 99, 235], 'light'), 'rgb(37, 99, 235)')
 })

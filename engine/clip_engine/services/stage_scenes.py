@@ -211,6 +211,7 @@ def output_scenes(source_scenes: Iterable[dict], ranges: Sequence[Sequence[float
 STAGE_LAND_MS = 330
 # A graphic's own fields that time its elements (ms from its start, one per line): its first one is when it shows.
 ELEMENT_TIMES = ("cue_ms", "item_ms", "word_ms")
+DIAGRAM_SHOWN_MS = 250
 DRAWN_AT_ONCE = ("staircase", "funnel", "journey", "growth", "idea_hub", "compare_marks")
 # An effect's step starts its entrance this much before its cue.
 CUE_LEAD_MS = 100
@@ -220,8 +221,11 @@ def first_element_ms(g: dict) -> int:
     """When a graphic's first element appears (ms from its start): 0 with a title (it shows first) or without element
     times, else its first element's time."""
     fields = g.get("fields") if isinstance(g.get("fields"), dict) else {}
-    # A diagram draws its frame and line art from its first frame (auto_graphics.DIAGRAMS).
-    if g.get("template") in DRAWN_AT_ONCE or str(fields.get("title") or "").strip():
+    # A diagram fades its frame in and draws its line art from its first frame (auto_graphics.DIAGRAMS): it reads as
+    # there about DIAGRAM_SHOWN_MS in.
+    if g.get("template") in DRAWN_AT_ONCE:
+        return DIAGRAM_SHOWN_MS
+    if str(fields.get("title") or "").strip():
         return 0
     length = g.get("duration_ms") if _number(g.get("duration_ms")) else 0
     for key in ELEMENT_TIMES:

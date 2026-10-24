@@ -13,7 +13,7 @@
  * face is one of the app's bundled fonts. The background stays transparent. Spoken word times (`cue_ms`) become the
  * unit's `cues`, or shift it so its main beat lands on the word (fxTiming).
  */
-import { FX_FIT, FX_MIN_TYPE, fitStepLabels, fxAnchorShift, fxFit, fxGlassLeft, fxMinType, type Rect } from './fit'
+import { FX_FIT, FX_MIN_TYPE, fitStepLabels, fxAnchorShift, fxBrand, fxFit, fxGlassLeft, fxMinType, type Rect } from './fit'
 import gsap from 'gsap'
 import { CustomEase } from 'gsap/CustomEase'
 import './fx.css'
@@ -84,7 +84,6 @@ function rgb(hex: string): [number, number, number] {
   const clean = /^#[0-9a-f]{6}$/i.test(hex) ? hex : '#2F5BFF'
   return [1, 3, 5].map((i) => parseInt(clean.slice(i, i + 2), 16)) as [number, number, number]
 }
-const lum = ([r, g, b]: [number, number, number]): number => 0.2126 * r + 0.7152 * g + 0.0722 * b
 const mixRgb = (a: [number, number, number], b: [number, number, number], k: number): string => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * k)).join(', ')})`
 
 const px = (n: number): string => `${Math.round(n * 10) / 10}px`
@@ -97,9 +96,7 @@ const px = (n: number): string => `${Math.round(n * 10) / 10}px`
 export function fxTokens(color: string, font: string, frame = 1080, tone: 'dark' | 'light' = 'dark'): Record<string, string> {
   const c = rgb(color)
   const light = tone === 'light'
-  // On dark glass and over video a very dark brand color is lifted so it still reads (on white, a very light one is deepened).
-  const brand = light ? (lum(c) <= 170 ? `rgb(${c.join(', ')})` : mixRgb(c, [0, 0, 0], Math.min(.5, (lum(c) - 170) / 170 + .15)))
-    : lum(c) >= 90 ? `rgb(${c.join(', ')})` : mixRgb(c, [255, 255, 255], Math.min(.55, (90 - lum(c)) / 160 + .18))
+  const brand = fxBrand(c, tone)
   const ink = light
     ? { '--fg': '#0F172A', '--muted': 'rgba(51, 65, 85, 0.78)', '--surface': 'rgba(255, 255, 255, 0.96)', '--border': 'rgba(15, 23, 42, 0.12)' }
     : { '--fg': '#F8FAFC', '--muted': 'rgba(226, 232, 240, 0.74)', '--surface': 'rgba(15, 18, 26, 0.9)', '--border': 'rgba(255, 255, 255, 0.16)' }

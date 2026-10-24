@@ -70,3 +70,18 @@ export function fitStepLabels(max: number, min: number, lines: (size: number) =>
   }
   return { size: max, balance: true }
 }
+
+/** The least luminance (0-255) a brand color keeps as is for words on dark glass; below it the color is lifted toward white. */
+export const BRAND_ON_DARK = 150
+
+/**
+ * The brand color effects draw words and accents in, for the video's look: on dark glass and over video a dark or mid
+ * color is lifted toward white so its words read on a phone (a royal blue on dark glass did not); on white, a very
+ * light one is deepened. `c` is [r, g, b]; returns a CSS rgb().
+ */
+export function fxBrand(c: [number, number, number], tone: 'dark' | 'light' = 'dark'): string {
+  const lum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+  const mix = (to: number, k: number): string => `rgb(${c.map((v) => Math.round(v + (to - v) * k)).join(', ')})`
+  if (tone === 'light') return lum <= 170 ? `rgb(${c.join(', ')})` : mix(0, Math.min(.5, (lum - 170) / 170 + .15))
+  return lum >= BRAND_ON_DARK ? `rgb(${c.join(', ')})` : mix(255, Math.min(.55, (BRAND_ON_DARK - lum) / 200 + .12))
+}
