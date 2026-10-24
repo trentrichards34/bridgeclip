@@ -948,9 +948,11 @@ def combine_of(raw: Any, words: list[Word], plan: dict, clips: list[dict]) -> di
 def _planned_graphics(raw: Any, words: list[Word], plan: dict, options: dict) -> list[dict]:
     """The plan's motion graphics, checked against the kept words (none on any failure: the edit goes ahead)."""
     from clip_engine.services.edit_direction import plan_graphics
-    avoid = [(h["start"], h["end"]) for h in plan["hooks"][:1]] + ([(plan["cta"]["start"], plan["cta"]["end"])] if plan.get("cta") else [])
+    cta = [(plan["cta"]["start"], plan["cta"]["end"])] if plan.get("cta") else []
+    avoid = [(h["start"], h["end"]) for h in plan["hooks"][:1]] + cta
     try:
-        return plan_graphics(raw, words, plan["marks"], options, avoid)
+        # (The member's logo still pops in where the call to action names it: their own product, said in the ask.)
+        return plan_graphics(raw, words, plan["marks"], options, avoid, logos_in=cta)
     except Exception as error:  # noqa: BLE001 - graphics are extras: the plan stands without them
         logger.warning(f"Planned graphics left out: {type(error).__name__}: {error}")
         return []
@@ -1872,7 +1874,7 @@ async def mix_reel_audio(assembled: str, base: str, config: dict, placements: li
     graph = sd.mix_graph(placements)
     measured = await asyncio.to_thread(measure_loudness, [*MEDIA_GUARD, "-i", assembled, *sfx_inputs], graph)
     await asyncio.to_thread(ffmpeg, [*MEDIA_GUARD, "-i", assembled, *sfx_inputs, "-filter_complex", graph + f";[mix]{loudnorm_filter(measured)}[a]",
-                                     "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                                     "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", *sd.AAC_CODER, "-b:a", "192k", "-ar", "48000",
                                      "-movflags", "+faststart", base])
     if audio is not None and audio.music is not None:
         # Music under the finished voice (and sound effects), ducking while they talk. Kept in base.mp4, so a new hook
@@ -2104,14 +2106,16 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
     warnings.extend(notes)
     # The call to action the speaker says (the plan's span, else found in the words) gets its graphic, on the face.
     said_cta = None
+    # The speaker's face in the reel: the call to action's graphic, and (in the app) every automatic card, go where they
+    # cover it least.
+    face = await asyncio.to_thread(_face_of, target) if options["motion"] else None
     if options["motion"]:
         from clip_engine.services.spoken_cta import edit_cta, with_cta
         extras = getattr(look, "look_extras", ()) or ()
         keyword = editor.get("cta_keyword") or getattr(look, "look_extras_keyword", "") or ""
         cta = config.get("cta")
         said_cta = edit_cta(timed, (cta.start, cta.end) if isinstance(cta, Span) else None, total_ms - offset_ms, offset_ms, keyword,
-                            "comment_box" in extras and bool(keyword), {g["id"] for g in graphics},
-                            await asyncio.to_thread(_face_of, target))
+                            "comment_box" in extras and bool(keyword), {g["id"] for g in graphics}, face)
         graphics = with_cta(graphics, said_cta)
     scenes: list[dict] = []
     if options["stage"] or (options["motion"] and graphics):
@@ -2151,7 +2155,8 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
     shutil.rmtree(os.path.join(root, ".edit"), ignore_errors=True)
     progress("Ready for the editor", 100)
     return {"path": final, "duration_seconds": round(total_ms / 1000, 3), "warnings": warnings[:4], "loudness": measured,
-            "cost_usd": round(broll_cost, 6), "editor": True, "graphics": len(graphics), "scenes": len(scenes)}
+            "cost_usd": round(broll_cost, 6), "editor": True, "graphics": len(graphics), "scenes": len(scenes),
+            **({"face": [round(float(v), 4) for v in face]} if face and len(face) == 4 else {})}
 
 
 def write_project_output(root: str, clip_path: str, clip_ms: int, title: str, cost_usd: float, post_caption: str, headline: str) -> None:

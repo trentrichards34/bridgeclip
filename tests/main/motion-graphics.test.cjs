@@ -487,3 +487,17 @@ test('looks: optional and backward compatible, mirrored by the engine, kept thro
   assert.deepEqual(plainCopy(mg.graphicIcons({ items: 'a\nb\nc', icons: 'gift\n\nusers' }, 'list')), ['gift', null, 'users'])
   assert.ok(mg.templateInfo('list').fields.includes('icons') && mg.templateInfo('checklist').fields.includes('icons'))
 })
+
+test('a hook that hides after a few seconds leaves the top to the graphics after it', () => {
+  const project = { aspect_ratio: '9:16', width: 1920, height: 1080 }
+  const hook = { text: 'A two line hook for this clip', look: { look: 'floating', color: '#FFFFFF', font: 'clean', textBg: 'light', hideAfterS: 2 } }
+  const early = mg.newGraphic('stat', 1500, { placement: 'top', fields: { value: '25%' } })
+  const late = mg.newGraphic('stat', 7500, { placement: 'top', fields: { value: '25%' } })
+  const c = clip({ graphics: [early, late], hook })
+  // Output time: 1500 → 0.5 s (hook up, the band goes under it); 7500 → 3.6 s (hook gone: the band starts at the top).
+  assert.ok(mg.graphicSpec(project, c, early).box.top >= .17)
+  assert.ok(mg.graphicSpec(project, c, late).box.top < .1)
+  // A hook that stays keeps its room.
+  const stays = clip({ graphics: [late], hook: { ...hook, look: { ...hook.look, hideAfterS: undefined } } })
+  assert.ok(mg.graphicSpec(project, stays, late).box.top >= .17)
+})

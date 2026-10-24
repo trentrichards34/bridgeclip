@@ -13,6 +13,7 @@
  * face is one of the app's bundled fonts. The background stays transparent. Spoken word times (`cue_ms`) become the
  * unit's `cues`, or shift it so its main beat lands on the word (fxTiming).
  */
+import { FX_FIT, fxAnchorShift, fxFit, type Rect } from './fit'
 import gsap from 'gsap'
 import { CustomEase } from 'gsap/CustomEase'
 import './fx.css'
@@ -124,7 +125,7 @@ export function fxBox(spec: Pick<GraphicRenderSpec, 'width' | 'height' | 'box' |
   return { x: Math.round((W - w) / 2), y: Math.round(top), w, h: Math.round(h) }
 }
 
-type Rect = { x: number; y: number; w: number; h: number }
+export { FX_FIT, fxAnchorShift, fxFit }
 const NONE = 'rgba(0, 0, 0, 0)'
 const SHAPES = new Set(['path', 'circle', 'ellipse', 'rect', 'line', 'polyline', 'polygon', 'text', 'image', 'use'])
 /**
@@ -169,28 +170,6 @@ export function inkBox(root: ShadowRoot, stage: HTMLElement): Rect | null {
   for (const child of root.children) visit(child, all, 1)
   if (!(x1 > x0 && y1 > y0)) return null
   return { x: (x0 - origin.left) / k, y: (y0 - origin.top) / k, w: (x1 - x0) / k, h: (y1 - y0) / k }
-}
-
-/**
- * How much of its box an effect's drawing fills (width, height shares) at each size: on the stage it fills the band
- * (the pro references: a browser window or a diagram across most of the stage's width), a card nearly as much, a
- * compact badge stays a badge.
- */
-export const FX_FIT: Record<'stage' | 'card' | 'compact', { w: number; h: number; max: number }> = {
-  stage: { w: .94, h: .9, max: 3 }, card: { w: .92, h: .86, max: 3 }, compact: { w: .62, h: .8, max: 2.6 }
-}
-/**
- * The unit's scale and shift so its drawing (`ink`, measured settled) fills its box: centered, grown to the fit's
- * share (never past FX_FIT.max), and shrunk only when it would spill out of the box.
- */
-export function fxFit(ink: Rect | null, box: { w: number; h: number }, size: 'stage' | 'card' | 'compact', fallback = 1, pad = { x: 0, y: 0 }): { scale: number; dx: number; dy: number } {
-  if (!ink || ink.w < 4 || ink.h < 4) return { scale: fallback, dx: 0, dy: 0 }
-  const fit = FX_FIT[size]
-  // `pad`: room kept around it (the glass behind it), in box pixels.
-  const s = Math.min((box.w * fit.w - 2 * pad.x) / ink.w, (box.h * fit.h - 2 * pad.y) / ink.h)
-  const spills = ink.w > box.w * 1.01 || ink.h > box.h * 1.01
-  const scale = Math.max(.4, Math.min(fit.max, spills ? s : Math.max(1, s)))
-  return { scale: Math.round(scale * 1000) / 1000, dx: Math.round(box.w / 2 - (ink.x + ink.w / 2)), dy: Math.round(box.h / 2 - (ink.y + ink.h / 2)) }
 }
 
 /** The smallest type an effect shows, as drawn on a 1080-wide frame (font px; about 0.72 of it is the cap height). */
@@ -255,7 +234,8 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
   let mark: { paths: SVGPathElement[]; lengths: number[]; at: number } | null = null
 
   const apply = (ms: number): void => {
-    const shown = ms >= 0 && ms < spec.duration_ms
+    // Nothing before the unit's own clock starts (its beat lands on the word `lead` ms in): no empty glass waiting for it.
+    const shown = ms >= timing.lead_ms && ms < spec.duration_ms
     stage.style.visibility = shown ? 'visible' : 'hidden'
     if (!shown || !timeline) return
     // The unit's own clock: it starts `lead` ms in (its beat lands on the word) and fades out at the end.
@@ -266,7 +246,9 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
     if (mark) drawMark(mark, local / 1000)
     // Leave accelerates: the last few frames shrink a little and go (units that leave on their own keep theirs).
     const out = ownExit ? 0 : easeIn(1 - (spec.duration_ms - ms) / FX_MOTION.out_ms)
-    stage.style.opacity = String(1 - out)
+    // The glass comes in with the unit (one move), not ahead of it.
+    const arrive = timing.lead_ms > 0 ? Math.min(1, (ms - timing.lead_ms) / (FX_MOTION.move_s * 1000)) : 1
+    stage.style.opacity = String(arrive * (1 - out))
     stage.style.transform = `scale(${fitted.scale * (1 - (1 - FX_MOTION.out_scale) * out)}) translate(${fitted.dx}px, ${fitted.dy}px)`
   }
   /** The unit's clock set to `local` ms (no scale, no fade: for measuring it). */
@@ -385,6 +367,8 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
       const m = Math.min(spec.width, spec.height), glass = stage.classList.contains('fx-glass')
       const pad = { x: glass ? m * .045 : 0, y: glass ? m * .035 : 0 }
       const area = { w: stage.offsetWidth, h: stage.offsetHeight }
+      // A card at the top or bottom keeps to that edge of its band (the stage and the middle stay centered).
+      const anchor = size === 'stage' ? 'center' : spec.placement === 'top' ? 'top' : spec.placement === 'bottom' ? 'bottom' : 'center'
       fitted = fxFit(ink, area, size, effect.scale ?? 1, pad)
       // Small labels (a chart's axis, a chip, a byline) are set bigger until they read on a phone, then it fits again.
       if (ink && !effect.own_type && raiseType(shadow, stage, FX_MIN_TYPE[size] * m / 1080, fitted.scale)) {
@@ -399,6 +383,9 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
         const l = ink.x + fitted.dx - padX, t = ink.y + fitted.dy - padY
         const r = stage.offsetWidth - (ink.x + ink.w + fitted.dx) - padX, b = stage.offsetHeight - (ink.y + ink.h + fitted.dy) - padY
         stage.style.setProperty('--fx-glass-inset', [t, r, b, l].map((v) => `${Math.round(v)}px`).join(' '))
+        // The whole box (the drawing and its glass) moves to its band's edge.
+        const shift = fxAnchorShift(ink.h, fitted.scale, area.h, pad.y, anchor)
+        if (shift) stage.style.top = `${box.y + shift}px`
       }
     }
     // The member's mark (a circle, an underline, an arrow or a box) on the part of their picture they pointed at.

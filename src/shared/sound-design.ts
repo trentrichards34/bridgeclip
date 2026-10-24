@@ -5,6 +5,7 @@
  * ("My sounds": files tagged with an action, used before the built-in ones).
  */
 import { graphicHasContent, graphicWindow, outputTime, type EditorGraphic } from './motion-graphics'
+import { fxEffect, fxTiming } from './fx-catalog'
 import { outputScenes, type StageScene } from './scenes'
 import { DEFAULT_REGISTER, REGISTERS, type Register } from './register'
 
@@ -100,6 +101,17 @@ export interface SoundEvent {
 
 type BakeClip = { ranges: [number, number][]; video_speed: number; graphics?: EditorGraphic[]; stage_scenes?: StageScene[]; sound?: CandidateSound }
 
+/** How far into an effect graphic its unit starts (its cues on the finished clip's clock, as graphicSpec maps them). */
+function fxLeadMs(c: BakeClip, g: EditorGraphic, w: { start_ms: number; duration_ms: number }): number {
+  const effect = fxEffect(g.fields.effect)
+  const times = (g.fields.cue_ms ?? '').split(/[\s,]+/).filter(Boolean).map(Number)
+  if (!effect || !times.length || !times.every(Number.isFinite)) return 0
+  const out = times.map((t) => outputTime(c, g.at_ms + t))
+  if (out.some((t) => t === null)) return 0
+  const cue_ms = out.map((t) => String(Math.max(0, Math.round((t as number) - w.start_ms)))).join('\n')
+  return fxTiming(effect, { ...g.fields, cue_ms }, w.duration_ms).lead_ms
+}
+
 /**
  * The events a bake sends the engine, on the finished clip's clock: the hook text (when the clip draws one), each
  * graphic with content and its window, each stage scene, and the clip's own cues mapped through its cuts (a cue in a
@@ -112,7 +124,9 @@ export function bakeSoundEvents(c: BakeClip, hook: boolean): SoundEvent[] {
     const w = graphicWindow(c, g)
     if (!w) continue
     const effect = g.fields.effect
-    events.push({ kind: 'graphic', template: g.template, at_ms: w.start_ms, end_ms: w.start_ms + w.duration_ms, size: g.size ?? 'card',
+    // An effect's unit starts `lead` ms in, so its beat lands on the word (fx-catalog fxTiming): its sound is timed from there.
+    const lead = g.template === 'fx' ? fxLeadMs(c, g, w) : 0
+    events.push({ kind: 'graphic', template: g.template, at_ms: w.start_ms + lead, end_ms: w.start_ms + w.duration_ms, size: g.size ?? 'card',
       ...(typeof effect === 'string' && /^[a-z0-9-]{1,60}$/.test(effect) ? { effect } : {}),
       ...(typeof g.fields.sound === 'string' && /^[a-z]{1,12}$/.test(g.fields.sound) ? { sound: g.fields.sound } : {}) })
   }

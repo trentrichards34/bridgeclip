@@ -207,6 +207,14 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
             cmd += ["-ss", f"{inset['from_ms'] / 1000:.3f}", "-t", f"{g['duration_ms'] / 1000 + 1:.3f}", *MEDIA_INPUT_OPTIONS, "-i", inset["path"]]
             inset_index[i] = next_input
             next_input += 1
+    # A takeover that shows the speaker smaller: the clip's frames for its window, read again from where it starts
+    # (as the mattes' windows are, never split off the clip and held back in memory).
+    room_index: dict[int, int] = {}
+    for j, (_, g) in enumerate(between):
+        if g.get("person") and g.get("layout"):
+            cmd += ["-ss", f"{g['start_ms'] / 1000:.3f}", "-t", f"{g['duration_ms'] / 1000 + 0.05:.3f}", *MEDIA_INPUT_OPTIONS, "-i", video]
+            room_index[j] = next_input
+            next_input += 1
     parts: list[str] = []
     last = "[0:v]"
     if between:
@@ -223,10 +231,9 @@ def overlay_command(video: str, graphics: Iterable[dict], output: str, width: in
             a, b = g["start_ms"] / 1000, (g["start_ms"] + g["duration_ms"]) / 1000
             sw, sh = even(width * scale), even(height * scale)
             on = f"between(t,{a:.3f},{b:.3f})"
-            parts.append(f"{source}split[rw{j}][rs{j}]")
-            parts.append(f"[rs{j}]trim=start={a:.3f}:end={b + 0.05:.3f},setpts=PTS-STARTPTS,scale={sw}:{sh}:flags=bicubic,format=yuva420p,"
+            parts.append(f"[{room_index[j]}:v]setpts=PTS-STARTPTS,scale={sw}:{sh}:flags=bicubic,format=yuva420p,"
                          f"geq=lum='p(X,Y)':a='p(X,Y)*clip(min(min(X,W-1-X),min(Y,H-1-Y))/(W*0.06),0,1)',setpts=PTS+{a:.3f}/TB[rz{j}]")
-            parts.append(f"[rw{j}]gblur=sigma=36:enable='{on}',lutyuv=y=val*0.7:enable='{on}'[rb{j}]")
+            parts.append(f"{source}gblur=sigma=36:enable='{on}',lutyuv=y=val*0.7:enable='{on}'[rb{j}]")
             parts.append(f"[rb{j}][rz{j}]overlay={x}:{y}:eof_action=pass:enable='{on}'[rr{j}]")
             source = f"[rr{j}]"
         parts.append(f"{source}{depth_fx.takeover_backdrop_chain(windows)}[room]")
@@ -471,6 +478,16 @@ def place_behind(graphics: list[dict], mattes: list[dict], width: int, height: i
     return out
 
 
+# A takeover leaves in its last 140-220 ms (takeover.ts): its lines are measured just before, once every line is in (a
+# line arrives as its first word is said, so the last one can come in late in the takeover).
+TAKEOVER_EXIT_MS = 260
+
+
+def takeover_sample_ms(duration_ms: float) -> float:
+    """When a takeover's drawn lines are measured: every line in, none leaving yet."""
+    return max(min(duration_ms * 0.6, duration_ms - 200), duration_ms - TAKEOVER_EXIT_MS)
+
+
 def place_between(graphics: list[dict], mattes: list[dict], video: str, width: int, height: int) -> list[dict]:
     """The takeovers (depth "between") with a layout (depth_fx.takeover_layout): each of their lines moved so the ones
     behind the speaker sit above the head and stay readable (checked against the speaker's matte during the takeover)
@@ -486,7 +503,7 @@ def place_between(graphics: list[dict], mattes: list[dict], video: str, width: i
         try:
             a, b = g["start_ms"] / 1000, (g["start_ms"] + g["duration_ms"]) / 1000
             face = face_boxes(video, [(a + (b - a) * 0.2, b - (b - a) * 0.2)], (width, height))[0]
-            words = _frame_alpha(g["path"], min(g["duration_ms"] * 0.6, g["duration_ms"] - 200) / 1000, width, height, alpha=True)
+            words = _frame_alpha(g["path"], takeover_sample_ms(g["duration_ms"]) / 1000, width, height, alpha=True)
             lines = text_lines(words, gap=max(4, height // 300), min_h=max(6, height // 160)) if words is not None else []
             window = next((m for m in mattes if m["start_ms"] <= g["start_ms"] < m["start_ms"] + m["duration_ms"]), None)
             frames = []
@@ -525,7 +542,8 @@ def _video_rate(video: str) -> tuple[int, int, str]:
                         "stream=width,height,r_frame_rate", "-of", "json", video], timeout=60, check=True)
     stream = json.loads(result.stdout)["streams"][0]
     rate = str(stream.get("r_frame_rate") or "30")
-    if not re.fullmatch(r"\d{1,6}(/\d{1,6})?", rate) or rate.endswith("/0") or rate.startswith("0"):
+    from clip_engine.services.depth_fx import frame_rate_ok
+    if not frame_rate_ok(rate):
         rate = "30"
     return int(stream["width"]), int(stream["height"]), rate
 

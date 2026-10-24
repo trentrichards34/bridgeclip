@@ -11,7 +11,7 @@
  * corner pushes "Bottom" up.
  */
 import { sceneAt, type CandidateEdit, type EditorProject } from './clip-editor'
-import { HEADLINE_FONTS, isHexColor } from './headline-look'
+import { HEADLINE_FONTS, headlineShownAt, isHexColor } from './headline-look'
 import { STAGE_LAYOUT, sceneAt as stageSceneAt, stageHookEndMs } from './scenes'
 import { DIAGRAM_ACCENT, graphicWindow, isDiagram, outputTime, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize } from './motion-graphics'
 
@@ -184,7 +184,9 @@ export function placementAvoidingFace(project: Pick<EditorProject, 'aspect_ratio
   if (!(span.bottom > span.top)) return graphic.placement
   const at = Math.max(graphic.at_ms, candidate.ranges[0][0])
   const top = Math.max(0, Math.min(.4, extra.top ?? 0))
-  const frame: GraphicFrame = { aspect: project.aspect_ratio, hook: Math.max(hookShare(candidate, project.aspect_ratio), top),
+  const window = graphicWindow(candidate, graphic)
+  const hook = window && !headlineShownAt(candidate.hook?.look, window.start_ms / 1000) ? 0 : hookShare(candidate, project.aspect_ratio)
+  const frame: GraphicFrame = { aspect: project.aspect_ratio, hook: Math.max(hook, top),
     captions: candidate.captions ? captionAnchorAt(project, candidate, at) : null, handle: handleEdge(project) }
   const cover = (p: GraphicPlacement): number => faceCover(graphicBox(p, frame), span)
   const height = span.bottom - span.top
@@ -203,7 +205,9 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
   const scene = stageSceneAt(candidate.stage_scenes, at)
   // The hook fades out as the first stage scene starts (stageHookEndMs): a stage graphic after that has the top too.
   const handOver = graphic.size === 'stage' && scene.scene !== 'face' ? stageHookEndMs(candidate) : null
-  const hook = handOver !== null && window.start_ms >= handOver ? 0 : hookShare(candidate, project.aspect_ratio)
+  // A hook that hides after a few seconds (a directed reel's) leaves the top to the graphics that come after it.
+  const hook = (handOver !== null && window.start_ms >= handOver) || !headlineShownAt(candidate.hook?.look, window.start_ms / 1000) ? 0
+    : hookShare(candidate, project.aspect_ratio)
   const frame: GraphicFrame = { aspect: project.aspect_ratio, hook: Math.max(hook, top, chapter ? CHAPTER_SHARE : 0),
     captions: candidate.captions ? captionAnchorAt(project, candidate, at) : null, handle: handleEdge(project) }
   const fields = { ...graphic.fields }

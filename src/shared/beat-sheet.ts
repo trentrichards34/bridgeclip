@@ -119,9 +119,9 @@ const TEMPLATE_SOUND: Partial<Record<string, SoundAction>> = {
   stat: 'pop', title: 'impact', list: 'whoosh', lower_third: 'swipe', logo: 'pop', before_after: 'whoosh', checklist: 'whoosh', quote: 'tick', highlight: 'swipe',
   statement: 'tick', sticky_notes: 'paper', strike_list: 'whoosh', browser_frame: 'whoosh', icon_pop: 'pop', headline_pill: 'tick', comment_cta: 'tick', link_cta: 'click',
   big_words: 'impact', orbit: 'pop', feature_tile: 'pop', screen_frame: 'whoosh', chapter: 'whoosh', staircase: 'whoosh', funnel: 'whoosh', journey: 'whoosh',
-  growth: 'whoosh', idea_hub: 'pop', compare_marks: 'whoosh'
+  growth: 'whoosh', idea_hub: 'pop', compare_marks: 'whoosh', takeover: 'impact'
 }
-const BIG = ['title', 'big_words', 'stat', 'statement', 'chapter', 'staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks']
+const BIG = ['title', 'big_words', 'stat', 'statement', 'chapter', 'staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks', 'takeover']
 const ASKS = ['link_cta', 'comment_cta']
 const REGISTER_RULES = {
   teaching: { groups: ['hook', 'graphic', 'scene', 'big', 'cta'], skip: [] as string[] },

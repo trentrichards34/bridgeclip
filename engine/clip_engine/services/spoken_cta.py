@@ -422,7 +422,8 @@ def _overlap(a: dict, b: dict) -> bool:
 def with_cta(graphics: Sequence[dict], cta_g: Optional[dict], min_ms: int = 800, gap_ms: int = 150) -> list[dict]:
     """`graphics` with the call to action graphic added (in time order), unless one already shows a call to action
     near it (the planner's or the member's comment prompt, a call to action the member added) or one of the member's
-    own graphics plays then. Automatic graphics in its way end just before it (when at least `min_ms` is left) or go.
+    own graphics plays then. Automatic graphics in its way end just before it (when at least `min_ms` is left) or go;
+    so does a logo pop (a short pop as a name is said, often the product named in the ask: the ask's graphic wins).
     Chapter headers stay (their own band at the top)."""
     out = [dict(g) for g in graphics or []]
     if not cta_g:
@@ -430,7 +431,7 @@ def with_cta(graphics: Sequence[dict], cta_g: Optional[dict], min_ms: int = 800,
     near = {**cta_g, 'at_ms': cta_g['at_ms'] - 1000, 'duration_ms': cta_g['duration_ms'] + 2000}
     if any(g.get('template') in CTA_TEMPLATES and _overlap(g, near) for g in out):
         return out
-    if any(g.get('origin') in ('member', 'chat') and g.get('template') != 'chapter' and _overlap(g, cta_g) for g in out):
+    if any(g.get('origin') in ('member', 'chat') and g.get('template') not in ('chapter', 'logo') and _overlap(g, cta_g) for g in out):
         return out
     kept = []
     for g in out:

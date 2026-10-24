@@ -121,6 +121,16 @@ def _in_spans(t_ms: float, spans: Sequence[tuple[int, int]], pad: int) -> int:
     return -1
 
 
+def frame_rate_ok(fps: str) -> bool:
+    """A frame rate as FFmpeg gives it ("30", "30000/1001", or a phone's variable rate averaged, like "5536000/184529"):
+    whole numbers, a non-zero denominator, between 1 and 240 frames a second."""
+    match = re.fullmatch(r"(\d{1,10})(?:/(\d{1,10}))?", fps or "")
+    if not match:
+        return False
+    num, den = int(match.group(1)), int(match.group(2) or 1)
+    return den > 0 and 1 <= num / den <= 240
+
+
 def write_span_matte(video: str, out: str, start_ms: int, duration_ms: int, fps: str, src_w: int, src_h: int,
                      spans: Sequence[tuple[int, int]], max_edge: int = ESCAPE_MATTE_EDGE, timeout: float = 1800) -> list[MatteQuality]:
     """A gray matte video (FFV1, lossless) for the render window [start, start + duration) of `video`, frame for frame
@@ -131,7 +141,7 @@ def write_span_matte(video: str, out: str, start_ms: int, duration_ms: int, fps:
     from clip_engine.services.media_process import MEDIA_INPUT_OPTIONS, MediaProcessError, media_child_env, media_process
     if not segmentation.available():
         raise MediaProcessError("Background removal is not available")
-    if not re.fullmatch(r"\d{1,6}(/\d{1,6})?", fps) or duration_ms <= 0 or start_ms < 0:
+    if not frame_rate_ok(fps) or duration_ms <= 0 or start_ms < 0:
         raise MediaProcessError("Invalid matte request")
     num, _, den = fps.partition("/")
     rate = int(num) / int(den or 1)
@@ -444,6 +454,17 @@ def punch_zoom_at(t: float, punch: CuePunch, zoom: float = CUE_ZOOM, fps: float 
     return 1 + (zoom - 1) * ease_out_cubic((t - punch.start) / max(1e-6, punch.land - punch.start))
 
 
+def on_timeline(start: float, fps: str) -> str:
+    """The tail of a branch split off the main stream and processed from `start` (seconds; its frames from 0): its frames
+    put back at their place on the `fps` frame grid. The frames before `start` are padding the overlay never shows
+    (it is enabled only in the branch's window), made up front: shifting the branch's timestamps instead would make
+    the overlay hold every main frame until the branch's first one, buffering the whole clip up to `start` in memory
+    (gigabytes at 1080x1920: the bake was killed for memory on a one-minute reel)."""
+    num, _, den = fps.partition("/")
+    rate = int(num) / int(den or 1)
+    return f"tpad=start={max(0, round(start * rate))}:color=black@0,setpts=N*{int(den or 1)}/{int(num)}/TB"
+
+
 def ramp_chain(label: str, out: str, start: float, frames: int, fps: str, width: int, height: int,
                rect: tuple[int, int, int, int], zoom: float = CUE_ZOOM) -> str:
     """The push-in frames of one punch, from [label] (a copy of the full stream) to [out] at their own time: `frames`
@@ -458,7 +479,7 @@ def ramp_chain(label: str, out: str, start: float, frames: int, fps: str, width:
     return (f"[{label}]trim=start={start:.4f}:duration={length + 0.5 / rate:.4f},setpts=PTS-STARTPTS,"
             f"scale={2 * width}:{2 * height}:flags=bicubic,"
             f"zoompan=z='{z}':x='{2 * x0}*(1-1/zoom)/{k:.6f}':y='{2 * y0}*(1-1/zoom)/{k:.6f}':d=1:s={width}x{height}:fps={fps},"
-            f"trim=end_frame={frames},setsar=1,setpts=PTS+{start:.4f}/TB[{out}]")
+            f"trim=end_frame={frames},setsar=1,{on_timeline(start, fps)}[{out}]")
 
 
 # ---------------------------------------------------------------------------
@@ -536,7 +557,7 @@ def transition_chain(label: str, out: str, tr: Transition, fps: str, width: int,
         bump = f"if(lt({p},0.5),pow({p}/0.5,2),pow(1-({p}-0.5)/0.5,2))"
         return (head + f"scale={2 * width}:{2 * height}:flags=bicubic,"
                 f"zoompan=z='1+{ZOOM_PEAK}*{bump}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={width}x{height}:fps={fps},"
-                f"trim=end_frame={frames},setsar=1,setpts=PTS+{tr.start:.4f}/TB[{out}]")
+                f"trim=end_frame={frames},setsar=1,{on_timeline(tr.start, fps)}[{out}]")
     # whip: x moves 0 -> width accelerating into the cut, then on decelerating (continuous at the cut).
     q = f"((n+0.5)/{frames})"
     x = f"if(lt({q},0.5),{width / 2}*pow({q}/0.5,2),{width}-{width / 2}*pow(1-({q}-0.5)/0.5,2))"
@@ -545,7 +566,7 @@ def transition_chain(label: str, out: str, tr: Transition, fps: str, width: int,
     return (head + f"split[{out}_a][{out}_b];[{out}_a][{out}_b]hstack=inputs=2,"
             f"crop={width}:{height}:x='min({width},max(0,{x}))':y=0,"
             f"avgblur=sizeX={blur // 3}:sizeY=1,avgblur=sizeX={blur}:sizeY=1:enable='{near}',"
-            f"trim=end_frame={frames},setsar=1,setpts=PTS+{tr.start:.4f}/TB[{out}]")
+            f"trim=end_frame={frames},setsar=1,{on_timeline(tr.start, fps)}[{out}]")
 
 
 def transitions_graph(src: str, dst: str, transitions: Sequence[Transition], fps: str, width: int, height: int, tag: str = "st") -> str:

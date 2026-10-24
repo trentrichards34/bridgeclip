@@ -177,12 +177,14 @@ TEMPLATE_SOUND = {
     "link_cta": "click", "big_words": "impact", "orbit": "pop", "feature_tile": "pop", "screen_frame": "whoosh",
     "chapter": "whoosh", "staircase": "whoosh", "funnel": "whoosh", "journey": "whoosh", "growth": "whoosh",
     "idea_hub": "pop", "compare_marks": "whoosh",
+    # The type takeover: the reel's one big line lands like big words.
+    "takeover": "impact",
     # Edit my recording's own layers: half-screen cards, number/keyword pop-ups and pinned images.
     "card": "whoosh", "popup": "pop", "pin": "pop",
 }
 # The moments that matter most (and the ones a minimal register keeps).
 BIG_TEMPLATES = frozenset({"title", "big_words", "stat", "statement", "chapter", "card", "staircase", "funnel", "journey",
-                           "growth", "idea_hub", "compare_marks"})
+                           "growth", "idea_hub", "compare_marks", "takeover"})
 CTA_TEMPLATES = frozenset({"link_cta", "comment_cta"})
 # The AI's planned sound names (edit_recording's plan): the action each stands for. No tones: a "ding" is a pop.
 AI_SOUND_ACTION = {"whoosh": "whoosh", "pop": "pop", "click": "click", "ding": "pop", "thud": "impact"}
@@ -466,16 +468,49 @@ def measure_loudness(inputs: list[str], graph: str) -> dict:
 
 
 # The AAC encode can overshoot between samples: a limiter at 4x the rate (close to true peak) keeps them under -1 dBTP.
-TRUE_PEAK_GUARD = "aresample=192000,alimiter=limit=0.75:attack=1:release=50:level=0:latency=1,aresample=48000"
+GUARD_LIMIT = 0.75
+TRUE_PEAK_GUARD = f"aresample=192000,alimiter=limit={GUARD_LIMIT}:attack=1:release=50:level=0:latency=1,aresample=48000"
+# The finished file's true peak must stay at or under this (dBTP); a sharp transient (a clipped plosive in the voice) can
+# come out of the AAC encoder well over the limiter's ceiling, so the encoded file is measured and, when over, encoded
+# again with the ceiling lowered by the excess (at most GUARD_RETRIES times, never under GUARD_FLOOR).
+TP_CEILING = -1.0
+# FFmpeg's AAC encoder with its default (two-loop) coder overshoots a limited voice by up to 3 dB on sharp transients;
+# the fast coder stays within about half a dB of the limiter (measured on real talking-head audio, 192 kb/s).
+AAC_CODER = ("-aac_coder", "fast")
+GUARD_RETRIES = 2
+GUARD_FLOOR = 0.4
 
 
-def loudnorm_filter(measured: dict) -> str:
+def true_peak_guard(limit: float = GUARD_LIMIT) -> str:
+    return f"aresample=192000,alimiter=limit={limit:.4f}:attack=1:release=50:level=0:latency=1,aresample=48000"
+
+
+def loudnorm_filter(measured: dict, limit: float = GUARD_LIMIT) -> str:
     """Pass two: one exact gain to the target (loudnorm's own second pass turns dynamic on short or peaky clips and
     misses it), then the true-peak guard for the few peaks the gain pushes up."""
     if not measured:
-        return TRUE_PEAK_GUARD
+        return true_peak_guard(limit)
     gain = max(-24.0, min(24.0, TARGET_LUFS - measured["input_i"]))
-    return f"volume={gain:.2f}dB,{TRUE_PEAK_GUARD}"
+    return f"volume={gain:.2f}dB,{true_peak_guard(limit)}"
+
+
+def encoded_true_peak(path: str) -> Optional[float]:
+    """A finished file's true peak (dBTP, ebur128), or None when it can't be measured."""
+    result = run_media(["ffmpeg", "-nostdin", "-hide_banner", "-nostats", *MEDIA_INPUT_OPTIONS, "-i", path, "-vn", "-af",
+                        "ebur128=peak=true", "-f", "null", "-"], timeout=1800)
+    text = (result.stderr or b"").decode("utf-8", "replace").split("Summary:")[-1]
+    match = re.search(r"Peak:\s+(-?[\d.]+|-inf) dBFS", text)
+    if result.returncode != 0 or not match:
+        return None
+    return float("-inf") if match.group(1) == "-inf" else float(match.group(1))
+
+
+def guarded_limit(limit: float, peak: Optional[float]) -> Optional[float]:
+    """The lower ceiling for another encode when the encoded true peak is over TP_CEILING (with a little margin), or None."""
+    if peak is None or not math.isfinite(peak) or peak <= TP_CEILING:
+        return None
+    lower = max(GUARD_FLOOR, limit * 10 ** (-(peak - TP_CEILING + 0.2) / 20))
+    return lower if lower < limit - 1e-3 else None
 
 
 def mix_into(video: str, placements: list[Placement], out: str) -> dict:
@@ -486,12 +521,19 @@ def mix_into(video: str, placements: list[Placement], out: str) -> dict:
     measured = measure_loudness(inputs, graph)
     extension = os.path.splitext(out)[1].lower()
     container = ["-movflags", "+faststart"] if extension in (".mp4", ".mov", ".m4v") else []
-    result = run_media(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", *inputs, "-filter_complex",
-                        graph + f";[mix]{loudnorm_filter(measured)}[a]", "-map", "0:v?", "-map", "[a]", "-c:v", "copy",
-                        "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-map_metadata", "0", *container, out], timeout=3600)
-    if result.returncode != 0:
-        logger.warning(f"Sound effects mix failed: {(result.stderr or b'')[-400:]!r}")
-        raise SoundDesignError("The sound effects could not be mixed")
+    limit: Optional[float] = GUARD_LIMIT
+    for attempt in range(GUARD_RETRIES + 1):
+        result = run_media(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", *inputs, "-filter_complex",
+                            graph + f";[mix]{loudnorm_filter(measured, limit)}[a]", "-map", "0:v?", "-map", "[a]", "-c:v", "copy",
+                            "-c:a", "aac", *AAC_CODER, "-b:a", "192k", "-ar", "48000", "-map_metadata", "0", *container, out], timeout=3600)
+        if result.returncode != 0:
+            logger.warning(f"Sound effects mix failed: {(result.stderr or b'')[-400:]!r}")
+            raise SoundDesignError("The sound effects could not be mixed")
+        # The encoder's overshoot on a sharp transient: measured on the file, encoded again with a lower ceiling.
+        lower = guarded_limit(limit, encoded_true_peak(out)) if attempt < GUARD_RETRIES else None
+        if lower is None:
+            break
+        limit = lower
     return measured
 
 

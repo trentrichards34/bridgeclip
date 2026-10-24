@@ -306,11 +306,12 @@ def plan_register(words: Sequence[Any], marks: Sequence[Optional[str]], options:
 
 
 def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]], options: Optional[dict] = None,
-                  avoid: Sequence[tuple[int, int]] = ()) -> list[dict]:
+                  avoid: Sequence[tuple[int, int]] = (), logos_in: Sequence[tuple[int, int]] = ()) -> list[dict]:
     """The planner's graphics, checked against the kept words, as word-anchored review graphics (origin 'auto').
 
     `words`: edit_recording.Word (text, start_ms, end_ms, src); `marks`: each word's cut reason (None: kept);
-    `avoid`: word spans (start, end) no graphic may start in (the hook, the call to action)."""
+    `avoid`: word spans (start, end) no graphic may start in (the hook, the call to action); `logos_in`: spans of those
+    where the member's logo still pops in as it is named (the call to action, where creators name their own product)."""
     options = dict(options or {})
     if not isinstance(raw, list) or not words:
         return []
@@ -329,6 +330,7 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
         options['register'] = detect_register(find_cues(segments), kept_seconds * 1000)
     limit = graphics_limit(kept_seconds, options['register'])
     blocked = {i for a, b in avoid for i in range(max(0, a), min(len(words), b + 1))}
+    logo_ok = {i for a, b in logos_in for i in range(max(0, a), min(len(words), b + 1))}
     planned = []
     for item in raw[:MAX_GRAPHICS * 2]:
         if not isinstance(item, dict) or type(item.get('word')) is not int or not 0 <= item['word'] < len(words):
@@ -352,7 +354,7 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
         if g['template'] == 'chapter':
             continue
         word = anchor_word(g['at_ms'], clock)
-        if word is None or word in blocked:
+        if word is None or (word in blocked and not (g['template'] == 'logo' and word in logo_ok)):
             continue
         fields = {k: v for k, v in g['fields'].items() if k not in ('item_ms', 'word_ms', 'cue_ms')}
         out.append({'id': ag.new_id(taken), 'template': g['template'], 'word': word, 'duration_ms': int(g['duration_ms']),
@@ -415,11 +417,41 @@ def shortened(g: dict, length: int) -> dict:
     return {**g, 'duration_ms': int(length), 'fields': fields}
 
 
+# A graphic's last beat (its last item or word coming in) stays up at least this long before the next one takes over.
+LAST_BEAT_HOLD_MS = 700
+
+
+def _beats(g: dict) -> list[int]:
+    """Its beats (ms into it): the items, words or effect cues as said."""
+    out: list[int] = []
+    for key in ('item_ms', 'word_ms', 'cue_ms'):
+        out += [int(t) for t in str(g['fields'].get(key) or '').split('\n') if t.strip().isdigit()]
+    return out
+
+
+def later_start(g: dict, shift: int) -> dict:
+    """An effect started `shift` ms later, its beats (and its end) where they were."""
+    fields = dict(g['fields'])
+    for key in ('item_ms', 'word_ms', 'cue_ms'):
+        if fields.get(key):
+            fields[key] = '\n'.join(str(max(0, int(t) - shift)) for t in fields[key].split('\n') if t.strip().isdigit())
+    return {**g, 'at_ms': g['at_ms'] + shift, 'duration_ms': g['duration_ms'] - shift, 'fields': fields}
+
+
 def settle(graphics: list[dict]) -> list[dict]:
     """Graphics in time order that never overlap: one that runs into the next ends just before it when enough is left
-    (MIN_TRIMMED_MS), else the weaker of the two goes."""
+    (MIN_TRIMMED_MS), else the weaker of the two goes. An effect that leads its beat into the one before (a count running
+    up to its number) starts later first, so the one before still shows its last item as it is said."""
     out: list[dict] = []
     for g in sorted(graphics, key=lambda g: g['at_ms']):
+        if out and g['template'] == 'fx' and _beats(out[-1]) and g['fields'].get('cue_ms'):
+            prev = out[-1]
+            needed = prev['at_ms'] + max(_beats(prev)) + LAST_BEAT_HOLD_MS + ag.GAP_MS
+            # Never past the unit's own run-up to its beat (a count needs its time to reach the number as it is said).
+            sync = float(ag.fx_catalog().get(g['fields'].get('effect') or '', {}).get('sync_s') or 0)
+            shift = min(needed - g['at_ms'], min(_beats(g)) - round(sync * 1000))
+            if shift > 0 and g['duration_ms'] - shift >= ag.EDITOR_MIN_MS:
+                g = later_start(g, shift)
         while out and g['at_ms'] < out[-1]['at_ms'] + out[-1]['duration_ms']:
             prev = out[-1]
             room = g['at_ms'] - ag.GAP_MS - prev['at_ms']

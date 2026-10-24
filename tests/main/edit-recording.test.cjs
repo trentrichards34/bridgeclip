@@ -47,6 +47,8 @@ const graphicsRender = {
 const editorCalls = []
 let editorFails = false
 const clipEditor = {
+  // (Shared code main loads asks for '../shared/clip-editor' by the same name: its real exports are here too.)
+  ...load('shared/clip-editor.ts'),
   runEditor: async (...args) => { editorCalls.push(args); if (editorFails) throw new Error('bake failed'); return {} },
   cancelEditor: (folder) => { editorCalls.push(['cancel', folder]) }
 }
@@ -773,4 +775,28 @@ test('one style for graphics and sound: the plan’s register starts the review�
   assert.ok(register.registerKeeps(auto('staircase'), 'story'))
   // The member's own graphics always stay.
   assert.ok(register.registerKeeps({ template: 'statement', fields: {}, origin: 'member' }, 'minimal'))
+})
+
+test('the reel’s automatic cards move off the speaker’s face before the bake; the member’s and stage ones stay', async () => {
+  const fixture = require('../fixtures/editor/project.json')
+  assert.deepEqual(plain(main.parseFaceBox([0.3, 0.35, 0.4, 0.2])), [0.3, 0.35, 0.4, 0.2])
+  for (const bad of [null, [0.3, 0.35, 0.4], [0.3, 0.35, 0.8, 0.2], [0.3, -1, 0.4, 0.2], ['a', 0, 0, 0], [0.1, 0.1, 0, 0.2]]) assert.equal(main.parseFaceBox(bad), null)
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'edit-face-'))
+  const project = structuredClone(fixture)
+  project.width = 1080; project.height = 1920
+  const g = (id, over) => ({ id, template: 'stat', at_ms: 1500, duration_ms: 2000, placement: 'middle', fields: { value: '25%' }, origin: 'auto', ...over })
+  project.candidates[0] = { ...project.candidates[0], id: 'edit-reel', ranges: [[0, 20000]], graphics: [
+    g('g-auto0001'), g('g-mine0001', { origin: 'member', at_ms: 5000 }), g('g-stage001', { at_ms: 9000, size: 'stage' }), g('g-take0001', { template: 'takeover', at_ms: 13000, fields: { text: 'one two three' } }),
+    g('g-logo0001', { template: 'logo', origin: 'member', at_ms: 3600, duration_ms: 1500, fields: { image: 'a'.repeat(16) + '.png' } })] }
+  fs.writeFileSync(path.join(folder, 'editor-project.json'), JSON.stringify(project))
+  // A face in the middle of the frame: the automatic card leaves the middle; nothing changes without a face.
+  assert.equal(await main.placeCardsOffTheFace(folder, null), 0)
+  assert.equal(await main.placeCardsOffTheFace(folder, [0.3, 0.38, 0.4, 0.2]), 2)
+  const saved = JSON.parse(fs.readFileSync(path.join(folder, 'editor-project.json'), 'utf8')).candidates[0].graphics
+  assert.notEqual(saved[0].placement, 'middle')
+  assert.deepEqual(saved.slice(1, 4).map((x) => x.placement), ['middle', 'middle', 'middle'])
+  // A logo pop (it has a word, not a place the member chose) moves too.
+  assert.notEqual(saved[4].placement, 'middle')
+  assert.equal(fs.existsSync(path.join(folder, 'editor-project.json.tmp')), false)
+  fs.rmSync(folder, { recursive: true, force: true })
 })

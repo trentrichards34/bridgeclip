@@ -131,7 +131,9 @@ _CONTRAST = (('instead', 'of'), ('rather', 'than'), ('not', 'but'), ('wrong', 'w
              ('it', "isn't"), ('it', 'is', 'not'), ("it's", 'not'))
 _CTA = (('comment',), ('link', 'in', 'bio'), ('the', 'link'), ('click',), ('subscribe',), ('follow', 'me'), ('follow', 'for'), ('dm', 'me'),
         ('send', 'me', 'a'), ('sign', 'up'), ('join',))
-_SCREEN = (('website',), ('this', 'page'), ('dashboard',), ('as', 'you', 'can', 'see'), ('on', 'screen'), ('right', 'here'), ('this', 'app'))
+_SCREEN = (('website',), ('this', 'page'), ('dashboard',), ('as', 'you', 'can', 'see'), ('on', 'screen'), ('right', 'here'), ('this', 'app'),
+           # A page named by what it is (the member's screenshot of it shows there).
+           ('sales', 'page'), ('landing', 'page'), ('web', 'page'), ('home', 'page'), ('checkout', 'page'))
 # Tools, apps and platforms said by name (an icon pops in; never their logo).
 BRANDS = frozenset(('claude', 'chatgpt', 'gpt', 'openai', 'instagram', 'youtube', 'tiktok', 'facebook', 'meta', 'linkedin', 'twitter',
                     'shopify', 'canva', 'notion', 'zapier', 'stripe', 'gmail', 'google', 'slack', 'discord', 'skool', 'whop',
@@ -250,6 +252,30 @@ def is_story(sentence: list[dict]) -> bool:
     return any(_has(toks, m) is not None for m in STORY_MARKERS) or any(t in EMOTION_WORDS for t in toks)
 
 
+def _said_text(sentence: list[dict], first: int = 0, count: Optional[int] = None) -> str:
+    """The words as said from token `first` on (`count`: at most that many words): one word said once, even when it reads
+    as several tokens ("$4,365" is the tokens 4 and 365, "can't-miss" two)."""
+    out: list[str] = []
+    previous = None
+    for w in sentence[first:]:
+        key = (w['start'], w['raw'])
+        if key == previous:
+            continue
+        previous = key
+        if count is not None and len(out) == count:
+            break
+        out.append(w['raw'].strip())
+    return ' '.join(out)
+
+
+def _clip_words(text: str, limit: int) -> str:
+    """`text` cut to at most `limit` characters at a word boundary (an ellipsis when cut)."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(' ', 1)[0] if ' ' in text[:limit] else text[:limit]
+    return cut.rstrip(' ,.;:') + '…'
+
+
 def find_cues(segments: Sequence) -> list[dict]:
     """What kind of moment each sentence is: [{'kind', 'at_ms', 'end_ms', 'text', 'prefer'}] in time order. A sentence
     may carry several cues (a number and a list); story stretches are merged ('story', at least 3 s)."""
@@ -261,7 +287,7 @@ def find_cues(segments: Sequence) -> list[dict]:
     for sentence in _sentences(segments):
         toks = [w['tok'] for w in sentence]
         start, end = sentence[0]['start'], sentence[-1]['end']
-        text = ' '.join(w['raw'].strip() for w in sentence)
+        text = _said_text(sentence)
 
         def add(kind: str, at: int, what: str = '') -> None:
             cues.append({'kind': kind, 'at_ms': int(at), 'end_ms': int(end), 'text': (what or text)[:90], 'prefer': CUE_VISUALS[kind]})
@@ -275,7 +301,7 @@ def find_cues(segments: Sequence) -> list[dict]:
             continue
         numbers = _number_spans(sentence)
         for pos, kind in numbers:
-            add(kind, sentence[pos]['start'], ' '.join(w['raw'].strip() for w in sentence[max(0, pos - 1):pos + 3]))
+            add(kind, sentence[pos]['start'], _said_text(sentence, max(0, pos - 1), 4))
         if len(numbers) >= 2 or (_has(toks, ('from',)) is not None and _has(toks, ('to',)) is not None and numbers):
             add('trend', sentence[numbers[0][0]]['start'] if numbers else start)
         if any(index + k in marker_at for k in range(len(sentence))) or any(t in _STEP_WORDS for t in toks):
@@ -337,7 +363,7 @@ def cue_hints(segments: Sequence, limit: int = 40, label: Any = None, media: boo
             continue
         if media and c['kind'] in MEDIA_CUES:
             where = label(c['at_ms']) if label else f"{c['at_ms'] / 1000:.1f}s"
-            lines.append(f'{where} {c["kind"]} "{c["text"][:50]}" -> the member\'s screenshot (added by the app: leave this moment free)')
+            lines.append(f'{where} {c["kind"]} "{_clip_words(c["text"], 50)}" -> the member\'s screenshot (added by the app: leave this moment free)')
             if len(lines) >= limit:
                 break
             continue
@@ -348,7 +374,7 @@ def cue_hints(segments: Sequence, limit: int = 40, label: Any = None, media: boo
         else:
             # (The picture effects are never the model's to place.)
             prefer = [p for p in c['prefer'] if effect_of(p) not in ag.MEDIA_FX]
-            lines.append(f'{where} {c["kind"]} "{c["text"][:50]}" -> {", ".join(prefer)}')
+            lines.append(f'{where} {c["kind"]} "{_clip_words(c["text"], 50)}" -> {", ".join(prefer)}')
         if len(lines) >= limit:
             break
     return '\n'.join(lines)
