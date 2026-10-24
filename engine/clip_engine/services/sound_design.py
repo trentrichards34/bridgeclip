@@ -177,12 +177,14 @@ TEMPLATE_SOUND = {
     "link_cta": "click", "big_words": "impact", "orbit": "pop", "feature_tile": "pop", "screen_frame": "whoosh",
     "chapter": "whoosh", "staircase": "whoosh", "funnel": "whoosh", "journey": "whoosh", "growth": "whoosh",
     "idea_hub": "pop", "compare_marks": "whoosh",
+    # The type takeover: the reel's one big line lands like big words.
+    "takeover": "impact",
     # Edit my recording's own layers: half-screen cards, number/keyword pop-ups and pinned images.
     "card": "whoosh", "popup": "pop", "pin": "pop",
 }
 # The moments that matter most (and the ones a minimal register keeps).
 BIG_TEMPLATES = frozenset({"title", "big_words", "stat", "statement", "chapter", "card", "staircase", "funnel", "journey",
-                           "growth", "idea_hub", "compare_marks"})
+                           "growth", "idea_hub", "compare_marks", "takeover"})
 CTA_TEMPLATES = frozenset({"link_cta", "comment_cta"})
 # The AI's planned sound names (edit_recording's plan): the action each stands for. No tones: a "ding" is a pop.
 AI_SOUND_ACTION = {"whoosh": "whoosh", "pop": "pop", "click": "click", "ding": "pop", "thud": "impact"}

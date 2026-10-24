@@ -169,3 +169,9 @@ def test_an_effect_that_leads_its_beat_waits_so_the_framework_before_shows_its_l
     # A count runs up to its number for its whole run-up: it never starts later than that allows.
     count = {**marker, 'fields': {'effect': 'count-up', 'value': '4,365', 'cue_ms': '1720'}}
     assert ed.settle([flow, count])[1]['at_ms'] == 14_000
+
+
+def test_the_type_takeover_lands_with_an_impact():
+    from clip_engine.services import sound_design as sd
+    (cue,) = sd.cues_from_events([{'kind': 'graphic', 'template': 'takeover', 'at_ms': 4800, 'end_ms': 7800, 'size': 'card'}], 20_000)
+    assert (cue.action, cue.big, cue.at_ms) == ('impact', True, 4800)
