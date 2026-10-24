@@ -380,12 +380,14 @@ def key_lines(timed: Sequence[Sequence[Any]], total_ms: int, cold_ms: int = 0) -
     return out
 
 
-def caption_quiet(timed: Sequence[Sequence[Any]], total_ms: int, mode: str = "key", cold_ms: int = 0) -> list[list[int]]:
+def caption_quiet(timed: Sequence[Sequence[Any]], total_ms: int, mode: str = "key", cold_ms: int = 0,
+                  shown: Sequence[tuple[int, int]] = ()) -> list[list[int]]:
     """Caption suppression ranges (reel ms) for key-lines-only captions: everything but the key lines (sorted, apart,
-    each at least 100 ms, at most 200 of them, as the editor checks). [] with captions on every line."""
+    each at least 100 ms, at most 200 of them, as the editor checks); a key line a words graphic already shows
+    (`shown`: its windows) stays quiet too. [] with captions on every line."""
     if mode != "key" or total_ms <= 0:
         return []
-    keep = key_lines(timed, total_ms, cold_ms)
+    keep = [(a, b) for a, b in key_lines(timed, total_ms, cold_ms) if not any(a < y and b > x for x, y in shown)]
     out: list[list[int]] = []
     at = 0
     for a, b in keep:
@@ -972,7 +974,9 @@ def youtube_project(project: dict, youtube: dict, timed: Sequence[Sequence[Any]]
                     "youtube": {"pip": youtube.get("pip"), "captions": youtube.get("captions", "key")}})
     c = project["candidates"][0]
     c["scenes"] = [{"at_ms": 0, "layout": "fill", "crops": [[0.0, 0.0, 1.0, 1.0]]}]
-    c["caption_suppression_ranges"] = caption_quiet(timed, total_ms, youtube.get("captions", "key"), cold_open_ms(total_ms))
+    # A key line a words card or a full-screen card already shows isn't captioned again.
+    shown = [(g["at_ms"], g["at_ms"] + g["duration_ms"]) for g in c.get("graphics") or [] if g.get("size") == "stage" or is_word_visual(g)]
+    c["caption_suppression_ranges"] = caption_quiet(timed, total_ms, youtube.get("captions", "key"), cold_open_ms(total_ms), shown)
     c.pop("stage_scenes", None)
     return project
 

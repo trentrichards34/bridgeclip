@@ -2141,7 +2141,10 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
         if youtube is not None:
             # Long-form pacing: a dense branded cold open, then light; nothing over long screen demos.
             from clip_engine.services.longform import pace_graphics
-            graphics = pace_graphics(graphics, total_ms, (config.get("sound_design") or {}).get("register"), avoid)
+            # Long screen demos: stretches without a face (with the webcam in its own card the face is always there, so
+            # only filmed screen clips count).
+            demos = ed.screen_windows(timed, config["words"], screens or set(), offset_ms) if youtube.get("pip") else avoid
+            graphics = pace_graphics(graphics, total_ms, (config.get("sound_design") or {}).get("register"), demos)
     segments = ed.reel_segments(timed, offset_ms)
     preview_id = os.urandom(16).hex()
     progress("Getting the editor ready", 80)

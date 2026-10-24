@@ -313,6 +313,7 @@ def test_a_twenty_minute_bake_completes_in_chunks_and_ffmpeg_memory_stays_bounde
                                 "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
         assert (frame[2] > 100) == blue, (at, list(frame))
     assert not [f for f in os.listdir(tmp_path) if ".part" in f or f.endswith(".parts.txt")]
+    print(f"FFmpeg peak {peak_mb:.0f} MB")
     assert peak_mb < 2048 or before / 1024 >= 2048, f"FFmpeg peak {peak_mb:.0f} MB"
 
 
@@ -374,3 +375,10 @@ def test_camera_plus_screen_renders_a_landscape_picture_in_picture_project(tmp_p
 def _frame(path, t, out):
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(t), "-i", path, "-frames:v", "1", out], check=True)
     return out
+
+
+def test_a_key_line_a_words_card_already_shows_is_not_captioned_again():
+    words = say("The biggest mistake is waiting too long.", 100)
+    timed = timed_of(words)
+    assert lf.caption_quiet(timed, 120_000, "key")[0] == [0, words[0].start_ms - 60]
+    assert lf.caption_quiet(timed, 120_000, "key", shown=[(words[0].start_ms, words[-1].end_ms)]) == [[0, 120_000]]
