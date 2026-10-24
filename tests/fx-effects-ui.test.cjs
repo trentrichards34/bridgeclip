@@ -17,7 +17,8 @@ const bundled = buildSync({
       export { FX_EFFECTS, FX_GROUPS } from './src/shared/fx-catalog';
       export { GRAPHIC_TEMPLATES } from './src/shared/motion-graphics';
       export { REEL_GRAPHIC_TEMPLATES, REEL_CHAT_TEMPLATES } from './src/shared/reel-graphics';
-      export { GraphicForm } from './src/renderer/components/ReelGraphics';`,
+      export { GraphicForm } from './src/renderer/components/ReelGraphics';
+      export { fxFit, fxAnchorShift } from './src/renderer/graphics/fx/fit';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
   },
@@ -156,4 +157,15 @@ test('a reel graphic form edits an effect with its own fields', () => {
   assert.match(html, /inputMode="decimal"|inputmode="decimal"/)
   // No raw "effect" text box.
   assert.doesNotMatch(html, /aria-label="Effect effect"/)
+})
+
+test('an effect card at the top or bottom keeps to that edge of its band, not out over the speaker', () => {
+  // A line of words 80 px tall drawn at 1.5x in a 518 px band, 30 px kept around it: 151 px of spare room a side.
+  assert.equal(m.fxAnchorShift(80, 1.5, 518, 30, 'top'), -169)
+  assert.equal(m.fxAnchorShift(80, 1.5, 518, 30, 'bottom'), 169)
+  assert.equal(m.fxAnchorShift(80, 1.5, 518, 30, 'center'), 0)
+  // A drawing that fills its band stays.
+  assert.equal(m.fxAnchorShift(330, 1.5, 518, 30, 'top'), 0)
+  const fit = m.fxFit({ x: 100, y: 200, w: 600, h: 80 }, { w: 972, h: 518 }, 'card', 1, { x: 40, y: 30 })
+  assert.equal(fit.dy, 518 / 2 - 240)
 })

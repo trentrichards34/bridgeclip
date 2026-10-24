@@ -25,6 +25,8 @@ import { audioForEngine } from './music'
 import { soundPaletteForEngine } from './sound-library'
 import { DEFAULT_SOUND_REGISTER } from '../shared/sound-design'
 import { drawableGraphics, editGraphicFrame, graphicDepth, reelGraphicSpec } from '../shared/reel-graphics'
+import { placementAvoidingFace } from '../shared/graphic-layout'
+import type { EditorProject } from '../shared/clip-editor'
 import type { BrandIdentity } from '../shared/remix'
 import { brandMarkForRun, isBrandId, readBrandIdentity } from './brands'
 import { referenceForRun, referencePath } from './reference-image'
@@ -684,6 +686,43 @@ export async function startEdit(value: unknown): Promise<EditStatus> {
   } finally { starting = false }
 }
 
+/** The speaker's face box from the engine (x, y, w, h shares of the reel's frame), or null. */
+export function parseFaceBox(value: unknown): [number, number, number, number] | null {
+  if (!Array.isArray(value) || value.length !== 4 || !value.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1)) return null
+  const [x, y, w, h] = value as number[]
+  return w > 0 && h > 0 && x + w <= 1.001 && y + h <= 1.001 ? [x, y, w, h] : null
+}
+
+/** Graphics with their own layout (the stage, a takeover, big words behind the speaker, a chapter, the call to action's own). */
+const FACE_PLACED_SKIP = new Set(['takeover', 'big_words', 'chapter', 'link_cta', 'comment_cta'])
+
+/**
+ * The reel's automatic cards and logo pops moved to the placement (top, bottom or middle) that covers the speaker's face
+ * least (graphic-layout.placementAvoidingFace, as Create does): the planner picks a placement without seeing the picture.
+ * The member's own graphics and stage-size ones keep theirs. The project is rewritten in place (temp file + rename).
+ */
+export async function placeCardsOffTheFace(folder: string, face: unknown): Promise<number> {
+  const box = parseFaceBox(face)
+  if (!box) return 0
+  const file = join(folder, 'editor-project.json')
+  const project = JSON.parse(await readFile(file, 'utf8')) as EditorProject
+  const candidate = project.candidates?.find((c) => c.id === EDIT_CANDIDATE)
+  if (!candidate?.graphics?.length) return 0
+  let moved = 0
+  candidate.graphics = candidate.graphics.map((g) => {
+    // A logo pop (My logos, or a picture pinned to a word) has a word, never a place the member chose: it moves too.
+    if ((g.origin !== 'auto' && g.template !== 'logo') || FACE_PLACED_SKIP.has(g.template) || g.size === 'stage' || g.depth) return g
+    const placement = placementAvoidingFace(project, candidate, g, box)
+    if (placement === g.placement) return g
+    moved++
+    return { ...g, placement }
+  })
+  if (!moved) return 0
+  await writeFile(`${file}.tmp`, JSON.stringify(project), { mode: 0o600 })
+  await rename(`${file}.tmp`, file)
+  return moved
+}
+
 /** A picture's size from its first bytes (PNG, JPEG or WebP), or null. */
 export function pictureSize(bytes: Uint8Array): { width: number; height: number } | null {
   const u16 = (i: number): number => (bytes[i] << 8) | bytes[i + 1]
@@ -1036,6 +1075,8 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
       if (editor && !current.cancelled) {
         // The clip editor's own bake: hook text, captions, motion graphics and scenes, exactly as Bake makes them later.
         publish(current, { detail: 'Adding your hook text, captions and graphics', percent: 90 })
+        // The automatic cards go where they cover the speaker's face least (the planner can't see the picture), as in Create.
+        await placeCardsOffTheFace(current.status.folder, result.face).catch((error: unknown) => logger.warn('edit.face.placement', { message: String(error).slice(0, 200) }))
         current.baking = true
         try { await runEditor(current.status.folder, 0, EDIT_CANDIDATE, 'export') } catch (error) {
           if (current.cancelled) throw error

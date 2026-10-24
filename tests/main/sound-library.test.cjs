@@ -158,3 +158,14 @@ test('a bake sends what happens on the finished clip: the hook, graphics, stage 
   // No hook drawn: no hook sound.
   assert.equal(shared.bakeSoundEvents(clip, false).some((e) => e.kind === 'hook'), false)
 })
+
+test('an effect that leads its beat is timed from where its unit starts, so its sound lands on the beat', () => {
+  // A marker whose word is said 2 s in (cue 2000, the unit's beat 0.9 s into it): the unit starts 1.1 s in.
+  const marker = { id: 'g-mark', template: 'fx', at_ms: 1000, duration_ms: 4000, placement: 'top', fields: { effect: 'marker-highlight', text: 'the part that matters', word: 'matters', cue_ms: '2000' } }
+  const clip = { ranges: [[0, 4000], [6000, 12000]], video_speed: 1, graphics: [marker], sound: { on: true, register: 'teaching', cues: [] } }
+  const [event] = plain(shared.bakeSoundEvents(clip, false))
+  assert.deepEqual([event.at_ms, event.end_ms], [1000 + 2000 - 900, 4000])
+  // No cue: from its start.
+  const plainFx = { ...marker, fields: { ...marker.fields, cue_ms: undefined } }
+  assert.equal(plain(shared.bakeSoundEvents({ ...clip, graphics: [plainFx] }, false))[0].at_ms, 1000)
+})

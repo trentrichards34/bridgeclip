@@ -417,11 +417,41 @@ def shortened(g: dict, length: int) -> dict:
     return {**g, 'duration_ms': int(length), 'fields': fields}
 
 
+# A graphic's last beat (its last item or word coming in) stays up at least this long before the next one takes over.
+LAST_BEAT_HOLD_MS = 700
+
+
+def _beats(g: dict) -> list[int]:
+    """Its beats (ms into it): the items, words or effect cues as said."""
+    out: list[int] = []
+    for key in ('item_ms', 'word_ms', 'cue_ms'):
+        out += [int(t) for t in str(g['fields'].get(key) or '').split('\n') if t.strip().isdigit()]
+    return out
+
+
+def later_start(g: dict, shift: int) -> dict:
+    """An effect started `shift` ms later, its beats (and its end) where they were."""
+    fields = dict(g['fields'])
+    for key in ('item_ms', 'word_ms', 'cue_ms'):
+        if fields.get(key):
+            fields[key] = '\n'.join(str(max(0, int(t) - shift)) for t in fields[key].split('\n') if t.strip().isdigit())
+    return {**g, 'at_ms': g['at_ms'] + shift, 'duration_ms': g['duration_ms'] - shift, 'fields': fields}
+
+
 def settle(graphics: list[dict]) -> list[dict]:
     """Graphics in time order that never overlap: one that runs into the next ends just before it when enough is left
-    (MIN_TRIMMED_MS), else the weaker of the two goes."""
+    (MIN_TRIMMED_MS), else the weaker of the two goes. An effect that leads its beat into the one before (a count running
+    up to its number) starts later first, so the one before still shows its last item as it is said."""
     out: list[dict] = []
     for g in sorted(graphics, key=lambda g: g['at_ms']):
+        if out and g['template'] == 'fx' and _beats(out[-1]) and g['fields'].get('cue_ms'):
+            prev = out[-1]
+            needed = prev['at_ms'] + max(_beats(prev)) + LAST_BEAT_HOLD_MS + ag.GAP_MS
+            # Never past the unit's own run-up to its beat (a count needs its time to reach the number as it is said).
+            sync = float(ag.fx_catalog().get(g['fields'].get('effect') or '', {}).get('sync_s') or 0)
+            shift = min(needed - g['at_ms'], min(_beats(g)) - round(sync * 1000))
+            if shift > 0 and g['duration_ms'] - shift >= ag.EDITOR_MIN_MS:
+                g = later_start(g, shift)
         while out and g['at_ms'] < out[-1]['at_ms'] + out[-1]['duration_ms']:
             prev = out[-1]
             room = g['at_ms'] - ag.GAP_MS - prev['at_ms']

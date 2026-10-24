@@ -1213,7 +1213,13 @@ def graphic_size(template: str, stage: bool, effect: Optional[str] = None) -> st
     """'stage' for the big pattern cards when Stage layouts are on; 'card' otherwise. Diagrams are always stage size: in a
     Visual scene with Stage layouts on, else over the video on their blue panel; so are the member's screenshots (a
     picture needs the room to be read)."""
-    return 'stage' if template in DIAGRAMS or (stage and template in STAGE_TEMPLATES) or (template == 'fx' and (effect in MEDIA_FX or (stage and effect == 'flanking-words'))) else 'card'
+    if template in DIAGRAMS or (stage and template in STAGE_TEMPLATES) or (template == 'fx' and effect in MEDIA_FX):
+        return 'stage'
+    # With Stage layouts on, an effect the catalog sizes for the stage (a flowchart, a hub, a chart of several numbers)
+    # gets the stage: as a card over the speaker its labels are too small to read on a phone.
+    if template == 'fx' and stage and effect and (effect == 'flanking-words' or fx_catalog().get(effect, {}).get('size') == 'stage'):
+        return 'stage'
+    return 'card'
 
 
 def new_id(taken: set[str]) -> str:
