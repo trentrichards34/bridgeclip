@@ -118,6 +118,7 @@ export function graphicPhrase(g: Pick<EditorGraphic, 'template' | 'fields'>): st
     }
     case 'fx': { const name = fxEffect(f.effect)?.label.toLowerCase() ?? 'effect'; const line = fxLine(f); return line ? `“${short(line, 24)}” ${name}` : `${name} effect` }
     case 'takeover': return f.text?.trim() ? `“${short(f.text, 24)}” type takeover` : 'type takeover'
+    case 'custom': return 'custom graphic'
   }
 }
 

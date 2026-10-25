@@ -213,6 +213,8 @@ export interface EditStatus {
   format?: EditFormat
   /** A YouTube video's chapters for its description (done screen). */
   chapters?: Chapter[]
+  /** Custom graphics being designed (the review's progress), or the last run's notes. */
+  custom?: { running: boolean; done: number; total: number; notes: string[] }
 }
 
 /** A run's screen recording (camera + screen). */
@@ -273,6 +275,8 @@ export interface EditDecisions {
   motionGraphics?: boolean
   /** Stage layouts (Skills; missing: on): big cards on a stage at the top with the speaker in a card below, diagrams full frame. */
   stageLayouts?: boolean
+  /** Custom graphics (Skills; missing: on when the member has an OpenRouter key): the key moments get a graphic their AI designs for them. */
+  customGraphics?: boolean
   /** Reduce background noise and room echo on the voice and even its level (missing: off). */
   voiceCleanup?: boolean
   /** Background music under the reel, ducking while they talk; `musicTrack` is the track (see music.ts). */
@@ -703,7 +707,7 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     return { image: raw.image, word: raw.word as number }
   })
   for (const key of ['cutoutIntro', 'rawIntro'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose how your video opens.')
-  for (const key of ['motionGraphics', 'stageLayouts', 'soundEffects'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose your skills again.')
+  for (const key of ['motionGraphics', 'stageLayouts', 'soundEffects', 'customGraphics'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose your skills again.')
   if (value.soundStyle !== undefined && !isSoundRegister(value.soundStyle)) throw new Error('Choose how much sound plays.')
   if (look.grade !== undefined && !isColorGrade(look.grade)) throw new Error('Choose a color grade from the list.')
   let graphics: EditGraphic[]
@@ -724,6 +728,7 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     cutoutIntro: value.cutoutIntro === true, rawIntro: value.rawIntro === true, graphics, ...audio,
     ...(typeof value.motionGraphics === 'boolean' ? { motionGraphics: value.motionGraphics } : {}),
     ...(typeof value.stageLayouts === 'boolean' ? { stageLayouts: value.stageLayouts } : {}),
+    ...(typeof value.customGraphics === 'boolean' ? { customGraphics: value.customGraphics } : {}),
     ...(typeof value.soundEffects === 'boolean' ? { soundEffects: value.soundEffects } : {}),
     ...(isSoundRegister(value.soundStyle) ? { soundStyle: value.soundStyle } : {}) }
   if (value.youtube !== undefined) {

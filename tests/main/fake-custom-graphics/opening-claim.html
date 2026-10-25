@@ -1,0 +1,46 @@
+<div id="cg-root" data-duration="6.55">
+  <div class="panel">
+    <div class="chip c1"><span>an influencer</span><svg class="strike" viewBox="0 0 400 40" preserveAspectRatio="none"><path d="M6 26 C120 10 280 30 394 12"/></svg></div>
+    <div class="chip c2"><span>a huge audience</span><svg class="strike" viewBox="0 0 400 40" preserveAspectRatio="none"><path d="M6 14 C140 30 260 8 394 24"/></svg></div>
+    <svg class="arrow" viewBox="0 0 90 120"><path d="M14 10 L70 60 L14 110"/></svg>
+    <div class="win">
+      <div class="lead">a lot of</div>
+      <div class="hero">money</div>
+      <svg class="swash" viewBox="0 0 380 34" preserveAspectRatio="none"><path d="M6 22 C110 6 250 30 374 10"/></svg>
+      <div class="tail">on the internet</div>
+    </div>
+  </div>
+</div>
+<style>
+#cg-root .panel{position:absolute;left:48px;right:48px;top:150px;bottom:20px;background:var(--cg-paper);border-radius:40px}
+#cg-root .chip{position:absolute;left:40px;height:88px;display:flex;align-items:center;padding:0 28px;border:4px solid rgba(14,21,37,.14);border-radius:24px;font-family:var(--cg-font-body);font-weight:800;font-size:50px;line-height:1;color:var(--cg-paper-ink);white-space:nowrap}
+#cg-root .c1{top:70px} #cg-root .c2{top:190px}
+#cg-root .strike{position:absolute;left:18px;top:30px;width:calc(100% - 36px);height:40px;overflow:visible}
+#cg-root .strike path{fill:none;stroke:var(--cg-bad);stroke-width:9;stroke-linecap:round;stroke-dasharray:420;stroke-dashoffset:420}
+#cg-root .arrow{position:absolute;left:504px;top:114px;width:54px;height:120px}
+#cg-root .arrow path{fill:none;stroke:rgba(14,21,37,.28);stroke-width:9;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:160;stroke-dashoffset:160}
+#cg-root .win{position:absolute;left:584px;right:36px;top:24px;bottom:24px;display:flex;flex-direction:column;justify-content:center}
+#cg-root .lead{font-family:var(--cg-font-body);font-weight:800;font-size:44px;line-height:1;color:rgba(14,21,37,.55)}
+#cg-root .hero{font-family:var(--cg-font-display);font-size:120px;line-height:1;margin-top:8px;color:var(--cg-accent-ink);transform-origin:0 70%}
+#cg-root .swash{width:300px;height:30px;margin-top:4px;overflow:visible}
+#cg-root .swash path{fill:none;stroke:var(--cg-accent);stroke-width:10;stroke-linecap:round;stroke-dasharray:400;stroke-dashoffset:400}
+#cg-root .tail{font-family:var(--cg-font-body);font-weight:800;font-size:44px;line-height:1;margin-top:14px;color:var(--cg-paper-ink)}
+</style>
+<script>
+const D = parseFloat(document.getElementById('cg-root').dataset.duration);
+const tl = gsap.timeline({ paused: true });
+tl.from('#cg-root .panel', { scale: 0.94, autoAlpha: 0, duration: 0.45, ease: 'expo.out' }, 1.0)
+  .from('#cg-root .c1', { y: 26, autoAlpha: 0, duration: 0.45, ease: 'expo.out' }, 1.1)
+  .to('#cg-root .c1 .strike path', { strokeDashoffset: 0, duration: 0.32, ease: 'power3.out' }, 1.55)
+  .to('#cg-root .c1 span', { opacity: 0.45, duration: 0.3, ease: 'power2.out' }, 1.6)
+  .from('#cg-root .c2', { y: 26, autoAlpha: 0, duration: 0.45, ease: 'expo.out' }, 2.38)
+  .to('#cg-root .c2 .strike path', { strokeDashoffset: 0, duration: 0.32, ease: 'power3.out' }, 2.95)
+  .to('#cg-root .c2 span', { opacity: 0.45, duration: 0.3, ease: 'power2.out' }, 3.0)
+  .to('#cg-root .arrow path', { strokeDashoffset: 0, duration: 0.4, ease: 'power3.out' }, 4.15)
+  .from('#cg-root .lead', { x: -24, autoAlpha: 0, duration: 0.45, ease: 'expo.out' }, 4.2)
+  .from('#cg-root .hero', { y: 34, scale: 0.9, autoAlpha: 0, duration: 0.6, ease: 'expo.out' }, 4.82)
+  .to('#cg-root .swash path', { strokeDashoffset: 0, duration: 0.45, ease: 'power3.out' }, 5.1)
+  .from('#cg-root .tail', { y: 20, autoAlpha: 0, duration: 0.45, ease: 'expo.out' }, 5.5)
+  .to('#cg-root .panel', { autoAlpha: 0, y: -16, duration: 0.3, ease: 'power2.in' }, D - 0.36);
+window.__timelines = [tl];
+</script>

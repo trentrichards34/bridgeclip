@@ -249,6 +249,27 @@ def test_on_the_reel_graphics_are_timed_on_the_words_and_chapters_come_from_the_
     assert [g['template'] for g in off] == ['title']
 
 
+def test_a_custom_graphic_passes_through_on_its_word_and_a_visual_one_gets_its_visual_scene():
+    words = say('We only need three things.', 0.5) + say('A product, an offer and a way to attract eyeballs.', 3.0) + say('Then we spend money on ads.', 9.0)
+    timed = reel(words)
+    total = timed[-1][2] + 400
+    comp = 'a1b2c3d4e5f6a7b8'
+    specs = [{'id': 'g-custom', 'template': 'custom', 'word': at(words, 'product,'), 'duration_ms': 13000, 'placement': 'middle', 'origin': 'auto', 'size': 'stage',
+              'fields': {'comp': comp, 'idea': 'Custom drawing: the steps', 'scene': 'visual'}}]
+    graphics, notes = ed.editor_graphics(specs, timed, total, {'motion': True, 'stage': True})
+    custom = next(g for g in graphics if g['template'] == 'custom')
+    # Placed as set (a diagram's length allowed), its composition id kept.
+    assert custom['fields']['comp'] == comp and custom['size'] == 'stage' and custom['at_ms'] == timed[at(words, 'product,')][1]
+    assert custom['duration_ms'] == min(13000, total - custom['at_ms'])
+    assert ag.editor_max_ms('custom') == ag.DIAGRAM_MAX_MS
+    # A custom graphic designed for a Visual scene (no speaker) gets one, like a diagram; a stage one gets the stage.
+    assert ag.visual_graphic(custom) and not ag.visual_graphic({**custom, 'fields': {'comp': comp, 'scene': 'stage'}})
+    scenes = ed.editor_scenes(graphics, total, None)
+    assert any(s['scene'] == 'visual' and s['start_ms'] <= custom['at_ms'] + 300 for s in scenes)
+    staged = ed.editor_scenes([{**custom, 'fields': {'comp': comp, 'scene': 'stage'}}], total, None)
+    assert any(s['scene'] == 'stage' for s in staged) and not any(s['scene'] == 'visual' for s in staged)
+
+
 def test_on_the_reel_cut_words_drop_their_graphic_and_pop_ups_cards_and_pins_become_graphics():
     words = talk()
     keep = [True] * len(words)

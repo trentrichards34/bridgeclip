@@ -26,6 +26,7 @@ import { paintOf, unionRect } from './safe-area'
 import { SAFE_EXEMPT, safeBounds, safeFallback, safeFix, type SafeRect } from '../../shared/graphic-safe-area'
 import { fxEffect } from '../../shared/fx-catalog'
 import { mountBackdrop } from './backdrop'
+import { stillTimes } from '../../shared/custom-graphics'
 import { ctaTemplate } from './cta'
 import { chapterTemplate, compareMarksTemplate, funnelTemplate, growthTemplate, ideaHubTemplate, journeyTemplate, staircaseTemplate } from './diagrams'
 import { TEXT_FILL, TEXT_MAX_FILL, largestFitting, textMinType, textTheme, wordCount } from './text-fit'
@@ -230,6 +231,8 @@ interface Build {
 }
 
 export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): MountedGraphic {
+  // A custom graphic is drawn by the sandbox at bake; the live preview shows its stills (transparent, full frame).
+  if (spec.template === 'custom') return mountCustomStills(host, spec)
   // A full-screen brand card (YouTube): the brand backdrop under the graphic, cut in and out with it.
   if (spec.backdrop) {
     const back = mountBackdrop(host, spec)
@@ -237,6 +240,32 @@ export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): Mounte
     return { ready: inner.ready, seek: (ms) => { back.seek(ms); inner.seek(ms) }, destroy: () => { inner.destroy(); back.destroy() } }
   }
   return mountSafe(host, spec)
+}
+
+/**
+ * A custom graphic in the editor's preview and the beat sheet: its three stills (transparent, full frame), the one
+ * nearest the time shown; nothing outside its window. The bake draws every frame in the sandbox (custom-render.ts).
+ */
+function mountCustomStills(host: HTMLElement, spec: GraphicRenderSpec): MountedGraphic {
+  const img = document.createElement('img')
+  img.alt = ''
+  img.decoding = 'async'
+  Object.assign(img.style, { position: 'absolute', left: '0', top: '0', width: `${spec.width}px`, height: `${spec.height}px`, pointerEvents: 'none', display: 'none' })
+  host.appendChild(img)
+  const stills = (spec.stills ?? []).filter((url) => typeof url === 'string' && url)
+  const times = stillTimes(spec.duration_ms)
+  let shown = -1
+  return {
+    ready: Promise.resolve(),
+    seek(ms) {
+      if (!stills.length || ms < 0 || ms > spec.duration_ms) { img.style.display = 'none'; return }
+      let k = 0
+      times.forEach((t, i) => { if (i < stills.length && Math.abs(ms - t) < Math.abs(ms - times[k])) k = i })
+      if (k !== shown) { img.src = stills[k]; shown = k }
+      img.style.display = 'block'
+    },
+    destroy() { img.remove() }
+  }
 }
 
 /** When a graphic is measured for the safe area: its settled frames (after it arrives, before it leaves). */
@@ -1217,7 +1246,8 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
   idea_hub(b) { ideaHubTemplate(b) },
   compare_marks(b) { compareMarksTemplate(b) },
   // Effects never get here: mountGraphic hands them to fx/mount.ts.
-  fx() { /* see mountEffect */ }
+  fx() { /* see mountEffect */ },
+  custom() { /* see mountCustomStills */ }
 }
 
 /** The badge icon for a number: money, people, a share, else a rising line (decoration: never a claim). */

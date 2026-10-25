@@ -184,7 +184,7 @@ TEMPLATE_SOUND = {
 }
 # The moments that matter most (and the ones a minimal register keeps).
 BIG_TEMPLATES = frozenset({"title", "big_words", "stat", "statement", "chapter", "card", "staircase", "funnel", "journey",
-                           "growth", "idea_hub", "compare_marks", "takeover"})
+                           "growth", "idea_hub", "compare_marks", "takeover", "custom"})
 CTA_TEMPLATES = frozenset({"link_cta", "comment_cta"})
 # The AI's planned sound names (edit_recording's plan): the action each stands for. No tones: a "ding" is a pop.
 AI_SOUND_ACTION = {"whoosh": "whoosh", "pop": "pop", "click": "click", "ding": "pop", "thud": "impact"}

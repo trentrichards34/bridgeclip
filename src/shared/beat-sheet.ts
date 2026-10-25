@@ -20,6 +20,7 @@ import { DEFAULT_SOUND_REGISTER, SOUND_ACTION_INFO, type SoundAction } from './s
 import { spokenNumber } from './graphic-prefill'
 import { DEFAULT_BEAT_SHEET_CHOICE, type BeatSheetChoice } from './member-prefs'
 import { tripleHookLabel } from './triple-hook'
+import { stillTimes } from './custom-graphics'
 
 export type BeatKind = 'hook' | 'graphic' | 'card' | 'popup' | 'pin' | 'cta'
 /** How the frame is laid out: the full video, the stage (a backdrop with the speaker in a card), or the backdrop only. */
@@ -85,6 +86,7 @@ const clip = (text: string, max = 80): string => { const clean = text.replace(/\
 /** A graphic's own words, short ("$4,215", "Three steps · Write hooks"). */
 export function graphicWords(g: Pick<EditGraphic, 'template' | 'fields'>): string {
   const f = g.fields
+  if (g.template === 'custom') return clip(f.idea ?? '')
   if (g.template === 'fx') {
     const effect = fxEffect(f.effect)
     const said = (effect?.fields ?? []).filter((field) => field.kind !== 'choice' && (f[field.key] ?? '').trim())
@@ -158,6 +160,8 @@ export function beatSound(kind: BeatKind, graphic: Pick<EditGraphic, 'template' 
 
 /** How long into a graphic it has settled (ms): an effect just after its main beat, a list once its items are in. */
 export function settledMs(g: Pick<EditGraphic, 'template' | 'fields' | 'duration_ms'>): number {
+  // A custom graphic's settled still (custom-graphics stillTimes' middle one).
+  if (g.template === 'custom') return Math.round(stillTimes(g.duration_ms)[1])
   const sync = g.template === 'fx' ? fxEffect(g.fields.effect)?.sync_s : undefined
   const ms = sync !== undefined ? sync * 1000 + 500 : ITEM_TIMED_TEMPLATES.includes(g.template) || isDiagram(g.template) ? g.duration_ms * 0.85 : Math.min(g.duration_ms * 0.6, 1500)
   return Math.round(Math.max(0, Math.min(g.duration_ms - 150, ms)))
@@ -185,7 +189,7 @@ export function deriveBeats(plan: EditPlan, d: EditDecisions, options: { include
   const motion = d.motionGraphics !== false
   const stage = motion && d.stageLayouts !== false
   const wordEnd = (i: number): number => (starts.get(i) ?? 0) + (plan.words[i].endMs - plan.words[i].startMs) / 1000
-  const sceneOf = (g: { template: string; size?: GraphicSize }): BeatScene => !stage ? 'face' : isDiagram(g.template) ? 'visual' : g.size === 'stage' ? 'stage' : 'face'
+  const sceneOf = (g: { template: string; size?: GraphicSize; fields?: Record<string, string> }): BeatScene => !stage ? 'face' : isDiagram(g.template) || (g.template === 'custom' && g.fields?.scene === 'visual') ? 'visual' : g.size === 'stage' ? 'stage' : 'face'
   const moments: Moment[] = []
 
   // The hook: its words play first, under the hook text.
@@ -380,7 +384,9 @@ export function restoreBeat(d: EditDecisions, undo: BeatUndo): EditDecisions {
 }
 
 /** Whether the beat can be swapped for another visual, moved or have its words edited. */
-export function beatActions(beat: Pick<Beat, 'kind'>): { swap: boolean; move: boolean; text: boolean } {
+export function beatActions(beat: Pick<Beat, 'kind'> & { custom?: boolean }): { swap: boolean; move: boolean; text: boolean } {
+  // A custom graphic's words are its design: it changes with a note, or goes back to its template.
+  if (beat.custom) return { swap: false, move: true, text: false }
   return { swap: beat.kind === 'graphic' || beat.kind === 'popup' || beat.kind === 'card' || beat.kind === 'pin', move: beat.kind === 'graphic' || beat.kind === 'pin', text: beat.kind !== 'pin' && beat.kind !== 'cta' }
 }
 

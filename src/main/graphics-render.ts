@@ -23,6 +23,7 @@ import { is } from '@electron-toolkit/utils'
 import { GRAPHIC_FPS, GRAPHICS_VERSION, SCREEN_FADE_MS, SCREEN_VIDEO_FILE, graphicDepth, graphicHasContent, graphicPictureFields, graphicUsesImage, graphicWindow, screenFrameLayout, screenFrom, screenZoom, type EditorGraphic, type GraphicDepth, type GraphicRenderSpec, type GraphicSize } from '../shared/motion-graphics'
 import { graphicSpec } from '../shared/graphic-layout'
 import type { EditorCandidate, EditorProject } from '../shared/clip-editor'
+import type { CustomMeta } from '../shared/custom-graphics'
 import { resolveBinary } from './tools'
 import { logger } from './logger'
 
@@ -313,8 +314,19 @@ let makeRenderer: RendererFactory = openGraphicRenderer
 /** Tests swap the offscreen window for a fake. */
 export function setGraphicRendererFactory(factory: RendererFactory | null): void { makeRenderer = factory ?? openGraphicRenderer }
 
-/** One graphic to draw: what it shows, its cache name, where it plays (output ms) and whether it sits behind the speaker. */
-export interface GraphicJob { id: string; spec: GraphicRenderSpec; key: string; start_ms: number; duration_ms: number; depth?: 'behind' | 'between'; inset?: GraphicInset }
+/** One graphic to draw: what it shows, its cache name, where it plays (output ms) and whether it sits behind the speaker. `custom`: a custom graphic's composition (drawn in the sandbox). */
+export interface GraphicJob { id: string; spec: GraphicRenderSpec; key: string; start_ms: number; duration_ms: number; depth?: 'behind' | 'between'; inset?: GraphicInset; custom?: { html: string; meta: CustomMeta } }
+
+/**
+ * Custom graphics (custom-graphics.ts) are drawn by their own sandbox, which main registers at startup (kept out of
+ * this module's imports so the template renders stay light): it makes a custom graphic's job and bakes it.
+ */
+export interface CustomGraphicProvider {
+  job: (run: string, id: string, spec: GraphicRenderSpec, window: { start_ms: number; duration_ms: number }) => GraphicJob | null
+  bake: (job: GraphicJob, out: string, cancelled: () => boolean) => Promise<void>
+}
+let customProvider: CustomGraphicProvider | null = null
+export function setCustomGraphicProvider(provider: CustomGraphicProvider | null): void { customProvider = provider }
 
 /** Renders made outside the clip editor (Edit my recording, Remix) are kept in .graphics/reel/: the editor's sweep never removes them. */
 export const REEL_GRAPHICS_DIR = 'reel'
@@ -324,6 +336,8 @@ export const REEL_GRAPHICS_DIR = 'reel'
  * null when Logo pop's is missing, or when another template's picture is missing and it has nothing else to show.
  */
 export function graphicJob(run: string, id: string, spec: GraphicRenderSpec, window: { start_ms: number; duration_ms: number }, image?: string, depth?: GraphicDepth): GraphicJob | null {
+  // A custom graphic: its composition must be in the run (else it isn't drawn: the editor offers its template back).
+  if (spec.template === 'custom') return customProvider?.job(run, id, spec, window) ?? null
   let imageHash: string | undefined
   if (spec.template === 'fx') {
     // An effect's pictures (the member's screenshots and photos): each one it needs must be there, or it isn't drawn.
@@ -360,16 +374,24 @@ export async function renderGraphicJobs(run: string, jobs: GraphicJob[], cancell
   }
   let renderer: GraphicRenderer | null = null
   const done: RenderedGraphic[] = []
+  const draw = async (job: GraphicJob, out: string): Promise<void> => {
+    if (job.custom) {
+      if (!customProvider) throw new Error('Custom graphics can’t be drawn right now.')
+      await customProvider.bake(job, out, cancelled)
+      return
+    }
+    renderer ??= await makeRenderer()
+    await renderer.render(job.spec, out, cancelled)
+  }
   try {
     for (const job of jobs) {
       if (cancelled()) throw new Error('Export canceled.')
       const file = `${job.key}.mov`, path = join(dir, file)
       if (!regularFile(path) || statSync(path).size < 64) {
-        renderer ??= await makeRenderer()
         const temporary = join(dir, `.tmp-${randomUUID()}.mov`)
         const started = Date.now()
         try {
-          await renderer.render(job.spec, temporary, cancelled)
+          await draw(job, temporary)
           renameSync(temporary, path)
         } finally { try { unlinkSync(temporary) } catch { /* moved */ } }
         logger.info('graphics.rendered', { template: job.spec.template, ms: Date.now() - started, frames: Math.ceil(job.spec.duration_ms * GRAPHIC_FPS / 1000) })
@@ -379,7 +401,7 @@ export async function renderGraphicJobs(run: string, jobs: GraphicJob[], cancell
         ...(job.depth === 'behind' ? { depth: job.depth, min_top: Math.round(job.spec.box.top * 10000) / 10000 } : job.depth === 'between' ? { depth: job.depth } : {}),
         ...(job.inset ? { inset: job.inset } : {}) })
     }
-  } finally { renderer?.close() }
+  } finally { (renderer as GraphicRenderer | null)?.close() }
   return done
 }
 

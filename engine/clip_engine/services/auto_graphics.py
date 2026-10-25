@@ -38,6 +38,11 @@ from typing import Any, Iterable, Optional, Sequence
 # picture or eye). headline_pill only when the member's own hook text is off; comment_cta only with a CTA keyword.
 # Diagrams: white line art (on a solid backdrop in a Visual scene, or a blue panel over the video) whose labels light up as said.
 DIAGRAMS = ('staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks')
+
+
+def visual_graphic(g: dict) -> bool:
+    """A graphic that fills a Visual scene (no speaker): a diagram, or a custom graphic designed for one (fields.scene)."""
+    return g.get('template') in DIAGRAMS or (g.get('template') == 'custom' and (g.get('fields') or {}).get('scene') == 'visual')
 # 'fx': an Effect (a HyperFrames unit; data/fx_catalog.json, from src/shared/fx-catalog.ts) with its own fields: the planner
 # may place the AUTO_FX ones (graphics_director.py picks and checks them).
 AUTO_TEMPLATES = ('stat', 'title', 'list', 'checklist', 'before_after', 'quote', 'lower_third',
@@ -160,7 +165,7 @@ DIAGRAM_GAP_MS = 12000
 
 def editor_max_ms(template: str) -> int:
     """The longest the editor lets a graphic of this kind last (motion-graphics.ts graphicMaxMs)."""
-    return CHAPTER_MAX_MS if template == 'chapter' else DIAGRAM_MAX_MS if template in DIAGRAMS else EDITOR_MAX_MS
+    return CHAPTER_MAX_MS if template == 'chapter' else DIAGRAM_MAX_MS if template in DIAGRAMS or template == 'custom' else EDITOR_MAX_MS
 MAX_FIELD_CHARS = 160
 MAX_ITEMS = 5
 MAX_ITEM_CHARS = 60
@@ -1930,10 +1935,10 @@ def stage_scenes_for(graphics: Sequence[dict], start_ms: int, end_ms: int, backd
     if end_ms <= start_ms:
         return []
     staged = [g for g in graphics if isinstance(g, dict) and g.get('size') == 'stage']
-    shifted = [{**g, 'at_ms': g['at_ms'] - start_ms} for g in staged if g.get('template') not in DIAGRAMS]
+    shifted = [{**g, 'at_ms': g['at_ms'] - start_ms} for g in staged if not visual_graphic(g)]
     scenes = [s for s in suggest_scenes(shifted, end_ms - start_ms, backdrop, card) if s['scene'] != 'face'] if shifted else []
     visual = []
-    for g in sorted((g for g in staged if g.get('template') in DIAGRAMS), key=lambda g: g['at_ms']):
+    for g in sorted((g for g in staged if visual_graphic(g)), key=lambda g: g['at_ms']):
         a = max(0, stage_open_ms(g) - start_ms)
         b = min(end_ms - start_ms, g['at_ms'] + g['duration_ms'] - start_ms + STAGE_PAD_AFTER_MS)
         if visual and a - visual[-1]['end_ms'] < MIN_SCENE_MS:
@@ -1955,7 +1960,7 @@ def stage_scenes_for(graphics: Sequence[dict], start_ms: int, end_ms: int, backd
 def on_stage(graphic: dict, scenes: Sequence[dict]) -> bool:
     """Most of a graphic (80%) plays during a stage scene (source time); a diagram is always drawn stage size (in its
     Visual scene, or over the video on its blue panel)."""
-    if graphic.get('template') in DIAGRAMS:
+    if visual_graphic(graphic):
         return True
     a, b = graphic['at_ms'], graphic['at_ms'] + graphic['duration_ms']
     inside = sum(max(0, min(b, s['end_ms']) - max(a, s['start_ms'])) for s in scenes if s.get('scene') in ('stage', 'visual'))

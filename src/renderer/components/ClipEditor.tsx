@@ -1225,7 +1225,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       </aside>
     </div>
     {showAudit && <EditInspector outputDir={outputDir} onClose={() => setShowAudit(false)} />}
-    {gallery !== null && <GraphicGallery templates={GRAPHIC_TEMPLATES} style={graphicStyle(candidate)} full={(candidate.graphics?.length ?? 0) >= graphicCap}
+    {gallery !== null && <GraphicGallery templates={GRAPHIC_TEMPLATES.filter((t) => t.id !== 'custom')} style={graphicStyle(candidate)} full={(candidate.graphics?.length ?? 0) >= graphicCap}
       limitNote={`A clip can have up to ${graphicCap} graphics. Remove one to add another.`}
       where={(() => { const words = clipWords.filter((w) => w.end_ms > gallery - 150).slice(0, 5).map((w) => w.word).join(' '); return `at ${clipClock(gallery)}${words ? `, on “${words}…”` : ''}` })()}
       prefill={(template) => prefillGraphic(template, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}

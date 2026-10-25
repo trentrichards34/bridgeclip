@@ -1,0 +1,324 @@
+/**
+ * Custom graphics, in main: one hero moment → the member's planning model writes a composition → the sandbox
+ * (custom-render.ts) renders three stills over a real frame → the same model grades them (image input) and our own
+ * checks run (words said, edges, type size, the face) → revise with the fixes (at most `maxRevisions`) → keep the
+ * best that passes, or none (the template graphic stays). Kept in the run's .graphics/custom/: <comp>.html (the
+ * composition as checked), <comp>.json (CustomMeta: what it replaced, its look, its grade, its cost), <comp>-<i>.png
+ * (transparent stills for the beat sheet and the editor) and <comp>-review.jpg (the stills over the video).
+ *
+ * The bake (graphics-render.ts) reads the composition back by its id (the file's name is its hash, checked again) and
+ * draws every frame in the same sandbox.
+ */
+import { createHash, randomUUID } from 'crypto'
+import { lstatSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs'
+import { join } from 'path'
+import {
+  CUSTOM_DIR, DEFAULT_PRICE, MAX_COMPOSITION_CHARS, STILL_SCALE, callCost, checkComposition, customGeometry, customIdea, customLook, saidIndex, customStillNames, extractComposition, graderSystemPrompt, graderUserPrompt,
+  isCustomComp, parseCustomMeta, parseGrade, stillTimes, unsaidOnScreen, writerSystemPrompt, writerUserPrompt,
+  type CustomFallback, type CustomGeometry, type CustomGrade, type CustomLook, type CustomMeta, type SaidIndex, type WriterBrief
+} from '../shared/custom-graphics'
+import { customSandbox, type CustomSandbox } from './custom-render'
+import type { GraphicRenderSpec, TimedWord } from '../shared/motion-graphics'
+import type { GraphicJob } from './graphics-render'
+import { app } from 'electron'
+import { readResponseText } from './http-response'
+import { loadSettings } from './settings-store'
+import { readMemberPrefs } from './member-prefs'
+import { getModelCatalog } from './openrouter-models'
+import { DEFAULT_PLANNER_MODEL, plannerModelFor } from '../shared/purpose'
+import { logger } from './logger'
+
+const GRAPHICS_DIR = '.graphics'
+const MAX_REPLY_BYTES = 400_000
+
+// ---------------------------------------------------------------------------
+// The model
+// ---------------------------------------------------------------------------
+
+export interface ModelRequest {
+  model: string
+  system: string
+  user: string
+  /** A JPEG/PNG data URL shown with the message (the grade's stills). */
+  image?: string
+  maxTokens: number
+  temperature: number
+  /** Which call this is (the fake model in tests answers by it). */
+  purpose: 'write' | 'grade'
+  signal?: AbortSignal
+}
+export interface ModelReply { text: string; costUsd: number }
+export type ModelCall = (request: ModelRequest) => Promise<ModelReply>
+
+/** The member's model through OpenRouter (their key). The system prompt is marked cacheable: it is the same for every moment. */
+export function openRouterModelCall(key: string, endpoint: string, price: { input: number; output: number }, fetchImpl: typeof fetch = fetch): ModelCall {
+  return async (request) => {
+    const user = request.image ? [{ type: 'image_url', image_url: { url: request.image } }, { type: 'text', text: request.user }] : request.user
+    let response: Response
+    try {
+      response = await fetchImpl(endpoint, {
+        method: 'POST', redirect: 'error', signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips' },
+        body: JSON.stringify({ model: request.model, max_tokens: request.maxTokens, temperature: request.temperature, usage: { include: true },
+          messages: [{ role: 'system', content: [{ type: 'text', text: request.system, cache_control: { type: 'ephemeral' } }] }, { role: 'user', content: user }] })
+      })
+    } catch (error) {
+      if (request.signal?.aborted) throw new Error('Canceled.')
+      throw new Error(`OpenRouter could not be reached (${String((error as Error)?.message ?? error).slice(0, 80)}).`)
+    }
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) throw new Error('OpenRouter rejected the API key. Check it in Settings → API keys.')
+      if (response.status === 402) throw new Error('OpenRouter reports insufficient credits.')
+      if (response.status === 429) throw new Error('OpenRouter is busy. Try again shortly.')
+      throw new Error(`OpenRouter could not design the graphic (${response.status}).`)
+    }
+    let body: { choices?: { message?: { content?: unknown } }[]; usage?: unknown }
+    try { body = JSON.parse(await readResponseText(response, MAX_REPLY_BYTES, 'OpenRouter returned too much data.')) } catch { throw new Error('OpenRouter returned an unreadable answer.') }
+    const content = body.choices?.[0]?.message?.content
+    const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((part) => (part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string' ? (part as { text: string }).text : '')).join('') : ''
+    return { text, costUsd: callCost(body.usage, price) }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The run's custom folder
+// ---------------------------------------------------------------------------
+
+function regularFile(path: string): boolean {
+  try { const s = lstatSync(path); return s.isFile() && !s.isSymbolicLink() } catch { return false }
+}
+
+/** The run's .graphics/custom/ folder (made when `create`; never a link). */
+export function customDir(run: string, create = false): string {
+  const graphics = join(run, GRAPHICS_DIR), dir = join(graphics, CUSTOM_DIR)
+  if (create) mkdirSync(dir, { recursive: true, mode: 0o700 })
+  for (const path of [graphics, dir]) if (lstatSync(path).isSymbolicLink()) throw new Error('Graphics folder is invalid')
+  return dir
+}
+
+function writeAtomic(path: string, data: string | Buffer): void {
+  const temporary = `${path}.tmp-${randomUUID()}`
+  try { writeFileSync(temporary, data, { mode: 0o600, flag: 'wx' }); renameSync(temporary, path) } finally { try { unlinkSync(temporary) } catch { /* moved */ } }
+}
+
+export const compositionId = (html: string): string => createHash('sha256').update(html, 'utf8').digest('hex').slice(0, 16)
+
+/** A kept composition and what it is, checked: its name must be its hash and it must still pass the static check. Null when missing or tampered with. */
+export function readCustomGraphic(run: string, comp: unknown): { html: string; meta: CustomMeta } | null {
+  if (!isCustomComp(comp)) return null
+  let dir: string
+  try { dir = customDir(run) } catch { return null }
+  const htmlPath = join(dir, `${comp}.html`), metaPath = join(dir, `${comp}.json`)
+  if (!regularFile(htmlPath) || !regularFile(metaPath) || statSync(htmlPath).size > MAX_COMPOSITION_CHARS * 4 || statSync(metaPath).size > 200_000) return null
+  const html = readFileSync(htmlPath, 'utf8')
+  if (compositionId(html) !== comp) return null
+  let meta: CustomMeta | null
+  try { meta = parseCustomMeta(JSON.parse(readFileSync(metaPath, 'utf8'))) } catch { return null }
+  if (!meta || meta.comp !== comp) return null
+  if (checkComposition(html, { width: meta.width, height: meta.height, durationMs: meta.durationMs }).length) return null
+  return { html, meta }
+}
+
+/** The stills' paths for a kept composition (the ones that are there). */
+export function customStillPaths(run: string, comp: string): string[] {
+  if (!isCustomComp(comp)) return []
+  let dir: string
+  try { dir = customDir(run) } catch { return [] }
+  return customStillNames(comp).map((name) => join(dir, name)).filter(regularFile)
+}
+
+function saveCustomGraphic(run: string, html: string, meta: CustomMeta, stills: Buffer[], review: Buffer): void {
+  const dir = customDir(run, true)
+  writeAtomic(join(dir, `${meta.comp}.html`), html)
+  customStillNames(meta.comp).forEach((name, i) => { if (stills[i]) writeAtomic(join(dir, name), stills[i]) })
+  writeAtomic(join(dir, `${meta.comp}-review.jpg`), review)
+  writeAtomic(join(dir, `${meta.comp}.json`), JSON.stringify(meta, null, 1))
+}
+
+// ---------------------------------------------------------------------------
+// One graphic: write, look, revise
+// ---------------------------------------------------------------------------
+
+export interface ProduceInput {
+  run: string
+  brief: WriterBrief
+  /** The moment's words in one line (for the grade and the meta). */
+  words: string
+  said: SaidIndex
+  /** The video frame at the moment (data URL), drawn behind the graded stills. */
+  frame: string | null
+  logo?: string | null
+  fallback: CustomFallback | null
+  model: string
+  maxRevisions: number
+  /** Grade the stills with the model (it can see pictures); false: only our own checks decide. */
+  grade?: boolean
+}
+
+export interface ProduceResult {
+  meta: CustomMeta | null
+  costUsd: number
+  tries: number
+  /** Why none was kept (the last problems), when none was. */
+  reason?: string
+}
+
+interface Attempt { html: string; grade: CustomGrade; stills: Buffer[]; review: Buffer }
+
+/** One custom graphic, written, rendered, graded and revised. Never throws for a bad composition: it returns no meta. */
+export async function produceCustomGraphic(input: ProduceInput, deps: { call: ModelCall; sandbox?: CustomSandbox; signal?: AbortSignal; onTry?: (n: number) => void }): Promise<ProduceResult> {
+  const sandbox = deps.sandbox ?? customSandbox()
+  const { brief } = input
+  const expect = { width: brief.geometry.root.width, height: brief.geometry.root.height, durationMs: brief.durationMs }
+  const times = stillTimes(brief.durationMs, brief.cues.filter((c) => c.at >= 0).map((c) => c.at * 1000))
+  const system = writerSystemPrompt()
+  let costUsd = 0, tries = 0
+  let best: Attempt | null = null
+  let previous: { html: string; fixes: string[] } | undefined
+  let reason = ''
+  for (let attempt = 0; attempt <= input.maxRevisions; attempt++) {
+    if (deps.signal?.aborted) throw new Error('Canceled.')
+    tries++
+    deps.onTry?.(tries)
+    const reply = await deps.call({ model: input.model, system, user: writerUserPrompt(brief, previous), maxTokens: 6000, temperature: attempt ? 0.4 : 0.7, purpose: 'write', signal: deps.signal })
+    costUsd += reply.costUsd
+    const html = extractComposition(reply.text)
+    const problems = checkComposition(html, expect)
+    if (problems.length) {
+      reason = problems.join(' ')
+      logger.info('custom.rejected', { problems: problems.slice(0, 4) })
+      previous = { html: html.slice(0, MAX_COMPOSITION_CHARS), fixes: problems }
+      continue
+    }
+    let shot
+    try {
+      shot = await sandbox.stills({ html, geometry: brief.geometry, look: brief.look, durationMs: brief.durationMs, times, frame: input.frame, logo: input.logo ?? null, scale: STILL_SCALE })
+    } catch (error) {
+      reason = String((error as Error)?.message ?? error).slice(0, 200)
+      logger.info('custom.render.failed', { message: reason })
+      previous = { html, fixes: [reason, 'Keep the script simple: build the timeline once, no loops that run long, fewer elements.'] }
+      continue
+    }
+    const unsaid = unsaidOnScreen(shot.texts, input.said)
+    const machine = [...shot.problems, ...(unsaid.length ? [`These words or numbers on screen were not said: ${unsaid.map((w) => `“${w}”`).join(', ')}. Use only words and numbers from the transcript.`] : [])]
+    let grade: CustomGrade = { pass: true, score: 7, failed: [], fixes: [] }
+    if (input.grade !== false) {
+      const graded = await deps.call({ model: input.model, system: graderSystemPrompt(), user: graderUserPrompt({ words: input.words, kind: brief.kind, frame: brief.frame, machine }),
+        image: `data:image/jpeg;base64,${shot.composite.toString('base64')}`, maxTokens: 700, temperature: 0, purpose: 'grade', signal: deps.signal })
+      costUsd += graded.costUsd
+      grade = parseGrade(graded.text)
+    }
+    // Our own checks are hard rules: any of them fails the graphic, whatever the grade says.
+    const final: CustomGrade = machine.length ? { pass: false, score: Math.min(grade.score, 6), failed: [...new Set([...grade.failed, ...(unsaid.length ? ['words' as const] : []), ...(shot.problems.length ? ['clipped' as const] : [])])], fixes: [...machine, ...grade.fixes].slice(0, 8) } : grade
+    const current: Attempt = { html, grade: final, stills: shot.transparent, review: shot.composite }
+    if (!best || (final.pass && !best.grade.pass) || (final.pass === best.grade.pass && final.score > best.grade.score)) best = current
+    if (final.pass) break
+    reason = final.fixes.join(' ')
+    previous = { html, fixes: final.fixes }
+  }
+  if (!best?.grade.pass) {
+    logger.info('custom.fallback', { tries, reason: reason.slice(0, 200) })
+    return { meta: null, costUsd, tries, reason: reason || 'It did not pass the review.' }
+  }
+  const meta: CustomMeta = {
+    comp: compositionId(best.html), kind: brief.kind, frame: brief.frame, width: expect.width, height: expect.height, durationMs: brief.durationMs, words: input.words.slice(0, 2000),
+    idea: customIdea(brief.kind), model: input.model, tries, grade: best.grade, ...(brief.note ? { note: brief.note } : {}), fallback: input.fallback, look: brief.look,
+    costUsd: Math.round(costUsd * 10000) / 10000, createdAt: new Date().toISOString()
+  }
+  saveCustomGraphic(input.run, best.html, meta, best.stills, best.review)
+  return { meta, costUsd, tries }
+}
+
+/** Run `work` over `items`, `limit` at a time, in order of results. */
+export async function inBatches<T, R>(items: readonly T[], limit: number, work: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length)
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) { const i = next++; out[i] = await work(items[i], i) }
+  }))
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// The bake: a custom graphic's scene for the sandbox
+// ---------------------------------------------------------------------------
+
+/** What the sandbox draws for a kept composition in a band (frame pixels), lasting `durationMs` on the finished clip. */
+export function bakeScene(found: { html: string; meta: CustomMeta }, frame: { width: number; height: number; aspect: '9:16' | '16:9' }, band: { x: number; y: number; width: number; height: number }, durationMs: number, backdrop?: string | null): import('./custom-render').CustomScene {
+  const { meta } = found
+  const scale = Math.min(1, band.width / meta.width, band.height / meta.height)
+  const place = { x: Math.round(band.x + (band.width - meta.width * scale) / 2), y: Math.round(band.y + (band.height - meta.height * scale) / 2), scale: Math.round(scale * 10000) / 10000 }
+  const geometry: CustomGeometry = { kind: meta.frame, aspect: frame.aspect, width: frame.width, height: frame.height, root: { x: place.x, y: place.y, width: meta.width, height: meta.height }, face: null, card: null }
+  return { html: found.html, geometry, look: meta.look as CustomLook, durationMs, place, ...(backdrop ? { backdrop } : {}), timeScale: durationMs > 0 ? meta.durationMs / durationMs : 1 }
+}
+
+// ---------------------------------------------------------------------------
+// End-to-end tests only (never in a packaged app): the sandbox and the loop, for the test's main-process evaluate.
+// ---------------------------------------------------------------------------
+
+export function installCustomGraphicsTestHook(): void {
+  const hook = {
+    shared: { customGeometry, customLook, stillTimes, checkComposition },
+    async stills(request: import('./custom-render').StillsRequest) {
+      const result = await customSandbox().stills(request)
+      return { transparent: result.transparent.map((b) => b.toString('base64')), composite: result.composite.toString('base64'), texts: result.texts, problems: result.problems }
+    },
+    async bake(scene: import('./custom-render').CustomScene, out: string) { await customSandbox().bake(scene, out) },
+    async produce(input: Omit<ProduceInput, 'said'> & { said: TimedWord[] }, endpoint: string) {
+      const call = openRouterModelCall('sk-or-test', endpoint, DEFAULT_PRICE)
+      return produceCustomGraphic({ ...input, said: saidIndex(input.said) }, { call })
+    },
+    read: readCustomGraphic
+  }
+  ;(globalThis as Record<string, unknown>).__bridgeclipCustomGraphics = hook
+}
+
+// ---------------------------------------------------------------------------
+// The bake's provider (graphics-render.ts): a custom graphic's job and its frames
+// ---------------------------------------------------------------------------
+
+/** A custom graphic's render job: its composition read back from the run, cached by what changes its pixels. */
+export function customGraphicJob(run: string, id: string, spec: GraphicRenderSpec, window: { start_ms: number; duration_ms: number }): GraphicJob | null {
+  const found = readCustomGraphic(run, spec.fields.comp)
+  if (!found) return null
+  const key = createHash('sha256').update(JSON.stringify({ v: 'custom-1', comp: found.meta.comp, w: spec.width, h: spec.height, box: spec.box, ms: spec.duration_ms, backdrop: spec.backdrop?.color ?? null })).digest('hex')
+  return { id, spec, key, start_ms: window.start_ms, duration_ms: window.duration_ms, custom: found }
+}
+
+export function customGraphicBake(job: GraphicJob, out: string, cancelled: () => boolean): Promise<void> {
+  if (!job.custom) throw new Error('Not a custom graphic')
+  const { spec } = job
+  const band = { x: Math.round((spec.box.left ?? 0) * spec.width), y: Math.round(spec.box.top * spec.height), width: Math.round(((spec.box.right ?? 1) - (spec.box.left ?? 0)) * spec.width), height: Math.round((spec.box.bottom - spec.box.top) * spec.height) }
+  const scene = bakeScene(job.custom, { width: spec.width, height: spec.height, aspect: spec.width > spec.height ? '16:9' : '9:16' }, band, spec.duration_ms, spec.backdrop?.color ?? null)
+  return customSandbox().bake(scene, out, cancelled)
+}
+
+// ---------------------------------------------------------------------------
+// The member's model for custom graphics
+// ---------------------------------------------------------------------------
+
+export interface CustomModel { model: string; price: { input: number; output: number }; vision: boolean; key: string; endpoint: string }
+
+/**
+ * The model custom graphics are designed with: the member's planning model (Create's Advanced choice, else the
+ * quality default), its list price and whether it can see pictures (from the OpenRouter catalog when it loads in a
+ * few seconds; else a frontier model's price, and seeing assumed). Null without an OpenRouter key.
+ */
+export async function customModel(): Promise<CustomModel | null> {
+  const key = loadSettings().openrouterApiKey
+  if (!key) return null
+  let model = DEFAULT_PLANNER_MODEL
+  try { const create = readMemberPrefs().create; model = plannerModelFor(create.clippingMode, create.plannerModel) } catch { /* the default */ }
+  let price: { input: number; output: number } = { ...DEFAULT_PRICE }, vision = true
+  try {
+    const catalog = await Promise.race([getModelCatalog(false), new Promise<never>((_, reject) => setTimeout(() => reject(new Error('slow')), 4000))])
+    const entry = catalog.planning.find((m) => m.id === model)
+    if (entry) {
+      if (entry.inputPrice !== null && entry.outputPrice !== null && entry.inputPrice >= 0 && entry.outputPrice >= 0) price = { input: entry.inputPrice, output: entry.outputPrice }
+      vision = entry.supportsImages
+    }
+  } catch { /* list prices */ }
+  const endpoint = app.isPackaged ? OPENROUTER_CHAT : process.env.BRIDGECLIP_E2E_OPENROUTER_URL || OPENROUTER_CHAT
+  return { model, price, vision, key, endpoint }
+}
+const OPENROUTER_CHAT = 'https://openrouter.ai/api/v1/chat/completions'

@@ -13,7 +13,7 @@ import { parseLookExtras, type LookExtraId } from './look-extras'
 import { isMusicTrackId, MUSIC_TRACKS, parseAudioChoice } from './music'
 import type { BrollSource } from './broll-library'
 
-export const SKILL_IDS = ['rough_cut', 'captions', 'motion_graphics', 'stage_layouts', 'zoom', 'broll', 'sound_effects', 'music', 'voice_cleanup'] as const
+export const SKILL_IDS = ['rough_cut', 'captions', 'motion_graphics', 'stage_layouts', 'custom_graphics', 'zoom', 'broll', 'sound_effects', 'music', 'voice_cleanup'] as const
 export type SkillId = (typeof SKILL_IDS)[number]
 export type SkillSurface = 'create' | 'edit' | 'remix'
 
@@ -31,6 +31,7 @@ export const SKILLS: Record<SkillId, SkillInfo> = {
   captions: { id: 'captions', label: 'Captions', detail: 'Word-by-word captions burned into the video.' },
   motion_graphics: { id: 'motion_graphics', label: 'Motion graphics', detail: 'Animated cards for the numbers, lists, names and key lines said in each clip.' },
   stage_layouts: { id: 'stage_layouts', label: 'Stage layouts', detail: 'Big cards go on a stage at the top, with you in a card below. Then back to full frame.', beta: true },
+  custom_graphics: { id: 'custom_graphics', label: 'Custom graphics', detail: 'For the few key moments, your AI designs a graphic for that exact idea, looks at it over your video and fixes it before it’s used.', beta: true },
   zoom: { id: 'zoom', label: 'Zoom', detail: 'Cuts between a wide and a tight shot of your face every few seconds.' },
   broll: { id: 'broll', label: 'B-roll', detail: 'Footage that matches what’s said over the speaker, after a 3-second hook: from your B-roll library, stock or AI.' },
   sound_effects: { id: 'sound_effects', label: 'Sound effects', detail: 'Soft whooshes, pops and clicks as your graphics and scenes come in, under your voice.' },
@@ -163,13 +164,21 @@ export interface EditSkillState {
   /** The plan's motion graphics and Stage layouts (missing: on). */
   motionGraphics?: boolean
   stageLayouts?: boolean
+  /** Custom graphics (missing: on when an OpenRouter key is saved). */
+  customGraphics?: boolean
   look: { includeCaptions: boolean; music?: boolean; voiceCleanup?: boolean; broll?: BrollSource | null }
 }
 
-export type EditSkillPatch = { decisions?: Partial<Pick<EditSkillState, 'cut' | 'sounds' | 'soundEffects' | 'lookExtras' | 'motionGraphics' | 'stageLayouts'>>; look?: { includeCaptions?: boolean; music?: boolean; voiceCleanup?: boolean; broll?: BrollSource | null } }
+export type EditSkillPatch = { decisions?: Partial<Pick<EditSkillState, 'cut' | 'sounds' | 'soundEffects' | 'lookExtras' | 'motionGraphics' | 'stageLayouts' | 'customGraphics'>>; look?: { includeCaptions?: boolean; music?: boolean; voiceCleanup?: boolean; broll?: BrollSource | null } }
 
 /** Edit my recording's B-roll: where it would come from when switched on (null: none can run), set by the page. */
-export interface EditSkillContext { brollSource?: BrollSource | null }
+export interface EditSkillContext {
+  brollSource?: BrollSource | null
+  /** An OpenRouter key is saved (custom graphics are designed with it). */
+  openrouter?: boolean
+  /** The estimate shown with Custom graphics ("About $0.40 for 4 key moments"), when known. */
+  customNote?: string
+}
 
 /** The words the plan cut on its own (filler words, false starts, retakes): the rough cut. */
 export function plannedCuts(plan: EditSkillPlan): number[] {
@@ -190,6 +199,8 @@ export function editSkillRows(plan: EditSkillPlan, state: EditSkillState, contex
     const motion = state.motionGraphics !== false
     rows.push(row('motion_graphics', motion, null, 'Animated graphics, chapter headers and diagrams for what you say, planned with your edit. Change any of them in the editor.'))
     rows.push(row('stage_layouts', motion && state.stageLayouts !== false, motion ? null : 'Turn on Motion graphics first. The stage holds its cards.'))
+    rows.push(row('custom_graphics', context.openrouter === true && state.customGraphics !== false,
+      context.openrouter ? null : 'Add your OpenRouter key in Settings → API keys first. Your AI designs them.', context.customNote))
   }
   rows.push(row('zoom', hasExtra(state.lookExtras, ZOOM)))
   rows.push(row('broll', Boolean(state.look.broll), !state.look.broll && !context.brollSource ? 'Add clips to your B-roll library, or a free Pexels key in Settings → API keys, first.' : null,
@@ -212,6 +223,7 @@ export function editSkillPatch(plan: EditSkillPlan, state: EditSkillState, id: S
     case 'captions': return { look: { includeCaptions: on } }
     case 'motion_graphics': return { decisions: { motionGraphics: on } }
     case 'stage_layouts': return { decisions: { stageLayouts: on } }
+    case 'custom_graphics': return { decisions: { customGraphics: on } }
     case 'zoom': return { decisions: { lookExtras: withExtra(state.lookExtras, ZOOM, on) } }
     case 'sound_effects': return { decisions: { soundEffects: on, sounds: state.sounds.map((sound) => ({ ...sound, on })) } }
     case 'music': return { look: { music: on } }

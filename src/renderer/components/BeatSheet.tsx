@@ -10,15 +10,17 @@
  */
 import { gradePreviewFilter } from '../../shared/color-grade'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Check, Loader2, MessageSquarePlus, Pencil, Play, RotateCcw, Shuffle, Trash2, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Loader2, MessageSquarePlus, Pencil, Play, RotateCcw, Shuffle, Trash2, Wand2, X } from 'lucide-react'
 import {
   beatActions, beatNoteMessage, deriveBeats, editBeatText, moveBeat, removeBeat, restoreBeat, scopeBeatPatch, swapBeatVisual, unsaidNumber, unsaidWords,
   type Beat, type BeatText, type BeatUndo
 } from '../../shared/beat-sheet'
 import { BEAT_SHEET_CHOICES, type BeatSheetChoice } from '../../shared/member-prefs'
-import { MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, MAX_CARD_ITEMS, hookTextProblem, reelOrder, reelWordStarts, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditSource } from '../../shared/edit-recording'
+import { MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, MAX_CARD_ITEMS, hookTextProblem, reelOrder, reelWordStarts, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditSource, type EditStatus } from '../../shared/edit-recording'
+import type { EditCustomInfo } from '../../shared/custom-graphics'
+import { formatSpendUsd as formatUsd } from '../../shared/spending'
 import { editPatchValues, mergeEditChatSteps, type EditChatPatch } from '../../shared/edit-chat'
-import { MAX_EDIT_GRAPHICS, REEL_GRAPHIC_TEMPLATES, editGraphicFrame, reelGraphicSpec, reelGraphicStyle } from '../../shared/reel-graphics'
+import { MAX_EDIT_GRAPHICS, REEL_GRAPHIC_TEMPLATES, editGraphicFrame, reelGraphicSpec, reelGraphicStyle, type EditGraphic } from '../../shared/reel-graphics'
 import { fxEffect } from '../../shared/fx-catalog'
 import { prefillEffect } from '../../shared/graphic-prefill'
 import { STAGE_LAYOUT, SOLID_BACKDROP_COLOR, autoSceneLook } from '../../shared/scenes'
@@ -59,9 +61,33 @@ export interface BeatSheetProps {
   choice: BeatSheetChoice
   onChoice: (choice: BeatSheetChoice) => void
   onChange: (change: (current: EditDecisions) => EditDecisions) => void
+  /** Custom graphics being designed (from the run's status). */
+  custom?: EditStatus['custom']
 }
 
-export function BeatSheet({ runId, plan, decisions, look, brand, sources, images, disabled, chatState, chatReady, choice, onChoice, onChange }: BeatSheetProps): React.JSX.Element {
+/** Custom graphics' stills already fetched this session (composition id → image paths). */
+const stillCache = new Map<string, string[]>()
+/** The stills of these compositions, as they arrive (comp → image paths). */
+export function useCustomStills(comps: readonly string[]): Record<string, string[]> {
+  const [stills, setStills] = useState<Record<string, string[]>>({})
+  const key = [...new Set(comps)].sort().join(',')
+  useEffect(() => {
+    let live = true
+    for (const comp of key ? key.split(',') : []) {
+      const cached = stillCache.get(comp)
+      if (cached) { setStills((current) => current[comp] ? current : { ...current, [comp]: cached }); continue }
+      if (typeof getApi().edit.customStills !== 'function') continue
+      void getApi().edit.customStills(comp).then((paths) => {
+        if (paths.length) stillCache.set(comp, paths)
+        if (live) setStills((current) => ({ ...current, [comp]: paths }))
+      }).catch(() => undefined)
+    }
+    return () => { live = false }
+  }, [key])
+  return stills
+}
+
+export function BeatSheet({ runId, plan, decisions, look, brand, sources, images, disabled, chatState, chatReady, choice, onChoice, onChange, custom }: BeatSheetProps): React.JSX.Element {
   const beats = useMemo(() => deriveBeats(plan, decisions, { includeCaptions: look.includeCaptions }), [plan, decisions, look.includeCaptions])
   // Removed beats stay in their place (dimmed, with Bring back) while the sheet is open, so the numbers don't move.
   const [removed, setRemoved] = useState<{ beat: Beat; undo: BeatUndo }[]>([])
@@ -74,6 +100,38 @@ export function BeatSheet({ runId, plan, decisions, look, brand, sources, images
   const [note, setNote] = useState('')
   const [notes, setNotes] = useState<Record<string, { busy: boolean; reply?: string; error?: string; before?: EditChatPatch }>>({})
   const [error, setError] = useState<string | null>(null)
+  // Custom graphics: their stills, the estimate before designing, designing now, a note on one, swapping one back.
+  const customOf = (beat: Beat): EditGraphic | null => beat.key.startsWith('g:') ? (decisions.graphics ?? []).find((g) => g.id === beat.key.slice(2) && g.template === 'custom') ?? null : null
+  const stills = useCustomStills((decisions.graphics ?? []).filter((g) => g.template === 'custom').map((g) => g.fields.comp ?? ''))
+  const [customInfo, setCustomInfo] = useState<EditCustomInfo | null>(null)
+  const [designing, setDesigning] = useState<string | null>(null)
+  const [customNotes, setCustomNotes] = useState<string[]>([])
+  const graphicsKey = (decisions.graphics ?? []).map((g) => `${g.id}:${g.template}:${g.word}`).join('|')
+  useEffect(() => {
+    let live = true
+    if (typeof getApi().edit.customInfo !== 'function') return
+    void getApi().edit.customInfo(decisions).then((info) => { if (live) setCustomInfo(info) }).catch(() => { if (live) setCustomInfo(null) })
+    return () => { live = false }
+  }, [graphicsKey, decisions.customGraphics])
+  const designCustom = async (only?: { id: string; note: string }): Promise<void> => {
+    setDesigning(only?.id ?? 'all'); setError(null)
+    try {
+      const result = await getApi().edit.customGraphics({ decisions, ...(only ? { only } : {}) })
+      onChange((current) => ({ ...current, graphics: result.graphics }))
+      setCustomNotes(result.notes)
+      if (only && !result.made) setError('The new design didn’t pass the check, so this graphic stays as it was.')
+      if (only) { setNote(''); setNoting(null) }
+    } catch (err) {
+      setError(errorMessage(err, 'Your custom graphics could not be designed.'))
+    } finally { setDesigning(null) }
+  }
+  const swapBack = async (graphic: EditGraphic): Promise<void> => {
+    try {
+      const graphics = await getApi().edit.customSwap({ decisions, id: graphic.id })
+      onChange((current) => ({ ...current, graphics }))
+    } catch (err) { setError(errorMessage(err, 'That graphic could not be swapped back.')) }
+  }
+  const customCount = (decisions.graphics ?? []).filter((g) => g.template === 'custom').length
 
   // A removed beat that comes back another way (the chat, the details view) leaves the removed list.
   useEffect(() => { setRemoved((list) => list.some((r) => beats.some((b) => b.key === r.beat.key)) ? list.filter((r) => !beats.some((b) => b.key === r.beat.key)) : list) }, [beats])
@@ -157,18 +215,37 @@ export function BeatSheet({ runId, plan, decisions, look, brand, sources, images
       </div>
     </div>
     {look.broll && <p className="text-2xs text-ink-subtle">B-roll shots are picked while your reel is made, so they aren’t on the sheet.</p>}
+    {decisions.customGraphics !== false && customInfo && (customInfo.moments.length > 0 || customCount > 0 || custom?.running) && (
+      <div className="glass-tile flex flex-wrap items-center justify-between gap-2 rounded-2xl px-3 py-2" data-testid="custom-graphics-panel">
+        <div className="min-w-0">
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-ink"><Wand2 className="h-3.5 w-3.5 text-tool" aria-hidden />Custom graphics</p>
+          <p className="text-2xs text-ink-subtle" role="status" data-testid="custom-graphics-status">{custom?.running
+            ? `Designing ${custom.total || customInfo.moments.length} custom graphic${(custom.total || customInfo.moments.length) === 1 ? '' : 's'}: ${custom.done} done. Each is drawn, checked over your video and fixed before it’s used.`
+            : customInfo.moments.length
+              ? `Your AI designs a graphic for ${customInfo.moments.length} key moment${customInfo.moments.length === 1 ? '' : 's'}. About ${formatUsd(customInfo.expectedUsd)} (at most ${formatUsd(customInfo.mostUsd)}) with ${customInfo.model}.${customCount ? ` ${customCount} already designed.` : ''}`
+              : `${customCount} custom graphic${customCount === 1 ? '' : 's'} designed. Change one with a note, or use its template instead.`}</p>
+          {customInfo.reason && <p className="text-2xs text-warning">{customInfo.reason}</p>}
+          {customNotes.map((n) => <p key={n} className="text-2xs text-ink-muted">{n}</p>)}
+        </div>
+        {customInfo.moments.length > 0 && <Button size="sm" variant="primary" icon={<Wand2 className="h-3.5 w-3.5" />} loading={designing === 'all' || custom?.running}
+          disabled={disabled || !customInfo.available || designing !== null || custom?.running} onClick={() => void designCustom()} data-testid="custom-graphics-design">Design them now</Button>}
+      </div>
+    )}
     {error && <Callout tone="warning" onDismiss={() => setError(null)}>{error}</Callout>}
 
     <ol className="grid grid-cols-[repeat(auto-fill,minmax(188px,1fr))] gap-3" aria-label="Beats">
       {shown.map(({ beat, removed: undo, number }) => {
-        const actions = beatActions(beat)
+        const actions = beatActions({ ...beat, custom: !!customOf(beat) })
         const frame = beat.frame ? frames[frameKey(beat.frame)] : undefined
         const state = notes[beat.key]
         const isKept = kept.has(beat.key)
+        const customGraphic = customOf(beat)
         return <li key={`${beat.key}${undo ? ':removed' : ''}`} aria-label={`Beat ${number}`} data-testid="beat-card" data-beat={beat.key} data-hash={beat.hash}
           className={cn('glass-tile flex min-w-0 flex-col gap-2 rounded-2xl p-2', undo && 'opacity-55', isKept && !undo && 'ring-1 ring-success/50')}>
           <div className="relative mx-auto" style={{ width: STILL_WIDTH }}>
-            <BeatStill beat={beat} frame={frame === 'error' ? null : frame ?? null} loading={!frame && Boolean(beat.frame)} look={look} brand={brand} images={images} width={STILL_WIDTH} />
+            <BeatStill beat={beat} frame={frame === 'error' ? null : frame ?? null} loading={!frame && Boolean(beat.frame)} look={look} brand={brand} images={images} width={STILL_WIDTH}
+              stills={customGraphic ? stills[customGraphic.fields.comp ?? ''] : undefined} />
+            {customGraphic && <span className="absolute bottom-7 left-1.5 flex items-center gap-1 rounded-md bg-tool px-1.5 py-px text-[10px] font-semibold text-canvas" data-testid="beat-custom-badge"><Wand2 className="h-3 w-3" aria-hidden />Custom</span>}
             <span className="absolute bottom-1.5 left-1.5 rounded-md bg-tool px-1.5 py-px font-mono text-[11px] font-semibold text-canvas" aria-hidden>{number}</span>
             <span className="absolute bottom-1.5 right-1.5 rounded bg-canvas/80 px-1.5 py-px font-mono text-[9px] tabular text-ink">{clock(beat.start)}–{clock(beat.end)}</span>
             {undo && <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 bg-canvas/85 py-1 text-center text-xs font-semibold text-ink">Removed</span>}
@@ -185,6 +262,8 @@ export function BeatSheet({ runId, plan, decisions, look, brand, sources, images
               <Button size="sm" variant={isKept ? 'primary' : 'secondary'} icon={<Check className="h-3.5 w-3.5" />} aria-pressed={isKept} aria-label={`Keep beat ${number}`} disabled={disabled}
                 onClick={() => setKept((set) => { const next = new Set(set); if (next.has(beat.key)) next.delete(beat.key); else next.add(beat.key); return next })}>{isKept ? 'Kept' : 'Keep'}</Button>
               <Button size="sm" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} aria-label={`Remove beat ${number}`} disabled={disabled} onClick={() => remove(beat)}>Remove</Button>
+              {customGraphic && <Button size="sm" variant="ghost" icon={<RotateCcw className="h-3.5 w-3.5" />} aria-label={`Use the template on beat ${number}`} disabled={disabled || designing !== null}
+                tooltip="Go back to the template graphic this custom one replaced." onClick={() => void swapBack(customGraphic)}>Use the template</Button>}
               {actions.swap && <Button size="sm" variant="ghost" icon={<Shuffle className="h-3.5 w-3.5" />} aria-label={`Swap the visual of beat ${number}`} disabled={disabled} onClick={() => setSwapping(beat)}>Swap visual</Button>}
               {actions.text && <Button size="sm" variant="ghost" icon={<Pencil className="h-3.5 w-3.5" />} aria-label={`Edit the text of beat ${number}`} disabled={disabled} onClick={() => setEditing(beat)}>Edit text</Button>}
             </div>
@@ -198,12 +277,12 @@ export function BeatSheet({ runId, plan, decisions, look, brand, sources, images
                 disabled={disabled || !chatReady} tooltip={chatReady ? 'Say what to change, like “make it smaller” or “use a chart here”.' : 'Add your OpenRouter key to send notes.'}
                 onClick={() => { setNoting(noting === beat.key ? null : beat.key); setNote('') }}>Note</Button>
             </div>
-            {noting === beat.key && <form className="space-y-1.5" onSubmit={(e) => { e.preventDefault(); void sendNote(beat, number) }}>
-              <TextArea rows={2} aria-label={`Note for beat ${number}`} placeholder="Like “use a chart here”" value={note} maxLength={400} autoFocus onChange={(e) => setNote(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendNote(beat, number) } }} />
+            {noting === beat.key && <form className="space-y-1.5" onSubmit={(e) => { e.preventDefault(); if (customGraphic) void designCustom({ id: customGraphic.id, note }); else void sendNote(beat, number) }}>
+              <TextArea rows={2} aria-label={`Note for beat ${number}`} placeholder={customGraphic ? 'Like “make it a staircase” or “use a rocket instead”' : 'Like “use a chart here”'} value={note} maxLength={customGraphic ? 300 : 400} autoFocus onChange={(e) => setNote(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (customGraphic) void designCustom({ id: customGraphic.id, note }); else void sendNote(beat, number) } }} />
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] text-ink-subtle">Uses your OpenRouter credit.</span>
-                <Button type="submit" size="sm" variant="primary" loading={state?.busy} disabled={!note.trim() || state?.busy}>Send note</Button>
+                <span className="text-[10px] text-ink-subtle">{customGraphic ? `Designs this one again. About ${formatUsd(customInfo && customInfo.moments.length ? customInfo.expectedUsd / customInfo.moments.length : 0.15)} of your OpenRouter credit.` : 'Uses your OpenRouter credit.'}</span>
+                <Button type="submit" size="sm" variant="primary" loading={state?.busy || (customGraphic !== null && designing === customGraphic.id)} disabled={!note.trim() || state?.busy || designing !== null}>{customGraphic ? 'Design again' : 'Send note'}</Button>
               </div>
             </form>}
             {state?.busy && noting !== beat.key && <p className="flex items-center gap-1 text-2xs text-ink-muted"><Loader2 className="h-3 w-3 animate-spin" aria-hidden />Working on your note…</p>}
@@ -241,13 +320,19 @@ function backdrop(scene: Beat['scene'], brand: BrandIdentity | null): React.CSSP
  * One beat's still (or, with `video`, its moving preview): the frame laid out in the beat's scene, its graphic (or
  * image) at `time` ms into it (default: settled), the hook text over the opening and the captions' words.
  */
-export function BeatStill({ beat, frame, loading, look, brand, images, width, time, video }: {
+export function BeatStill({ beat, frame, loading, look, brand, images, width, time, video, stills }: {
   beat: Beat; frame: string | null; loading?: boolean; look: EditLook; brand: BrandIdentity | null; images: EditImage[]; width: number
   time?: number | null; video?: React.ReactNode
+  /** A custom graphic's stills (image paths). */
+  stills?: string[]
 }): React.JSX.Element {
   const height = width * 16 / 9
   const graphicFrame = useMemo(() => editGraphicFrame(beat.hookText, look), [beat.hookText, look])
-  const spec = useMemo(() => beat.visual?.type === 'graphic' ? reelGraphicSpec(beat.visual.graphic, graphicFrame, beat.visual.graphic.duration_ms, look.headlineLook) : null, [beat.visual, graphicFrame, look.headlineLook])
+  const spec = useMemo(() => {
+    if (beat.visual?.type !== 'graphic') return null
+    const made = reelGraphicSpec(beat.visual.graphic, graphicFrame, beat.visual.graphic.duration_ms, look.headlineLook)
+    return made.template === 'custom' ? { ...made, stills: (stills ?? []).map((path) => localFileUrl(path)) } : made
+  }, [beat.visual, graphicFrame, look.headlineLook, stills])
   const footage = video ?? (frame ? <img src={localFileUrl(frame)} alt="" draggable={false} className="h-full w-full object-cover" data-testid="beat-frame" /> : null)
   // The color grade previews on the footage only (the graphics and text over it keep their colors).
   const grade = gradePreviewFilter(look.grade)

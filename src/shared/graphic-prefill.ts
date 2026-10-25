@@ -50,10 +50,13 @@ export function spokenNumber(words: readonly TimedWord[], i: number, allowOne = 
     return { text, count }
   }
   let total = 0, current = 0, count = 0, any = false
-  for (let k = i; k < words.length && k < i + 6; k++) {
+  for (let k = i; k < words.length && k < i + 8; k++) {
     const w = key(words[k].word)
-    if (UNITS[w] !== undefined) { current += UNITS[w]; any = true; count++ } else if (SCALES[w] && any) { current = (current || 1) * (SCALES[w] < 1000 ? SCALES[w] : 1); if (SCALES[w] >= 1000) { total += current * SCALES[w]; current = 0 } count++ }
-    else if (w === 'and' && any && UNITS[key(words[k + 1]?.word ?? '')] !== undefined) count++
+    // "eighty-eight" (one hyphenated word) is two number words.
+    const pair = words[k].word.toLowerCase().split('-').map(key)
+    if (pair.length === 2 && UNITS[pair[0]] !== undefined && UNITS[pair[1]] !== undefined) { current += UNITS[pair[0]] + UNITS[pair[1]]; any = true; count++ }
+    else if (UNITS[w] !== undefined) { current += UNITS[w]; any = true; count++ } else if (SCALES[w] && any) { current = (current || 1) * (SCALES[w] < 1000 ? SCALES[w] : 1); if (SCALES[w] >= 1000) { total += current * SCALES[w]; current = 0 } count++ }
+    else if (w === 'and' && any && UNITS[key((words[k + 1]?.word ?? '').split('-')[0])] !== undefined) count++
     else break
   }
   if (!any) return null

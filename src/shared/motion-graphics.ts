@@ -39,7 +39,9 @@ export const GRAPHIC_TEMPLATES = [
   { id: 'compare_marks', label: 'Wrong / right', detail: 'Two cards side by side, then a red ✗ on one and a green ✓ on the other.', fields: ['items', 'notes', 'wrong'] },
   { id: 'takeover', label: 'Type takeover', detail: 'Your key line in huge type over the whole frame, your head between its lines. Use it once or twice a video.', fields: ['text', 'accent'] },
   // One template for every effect: `effect` names the unit, its other fields are the unit's (fx-catalog.ts).
-  { id: 'fx', label: 'Effect', detail: 'A designed motion effect: a count up, a word rise, a chart, a marker and more.', fields: ['effect'] }
+  { id: 'fx', label: 'Effect', detail: 'A designed motion effect: a count up, a word rise, a chart, a marker and more.', fields: ['effect'] },
+  // A graphic designed for its moment by the member's AI (custom-graphics.ts): `comp` names its composition in the run.
+  { id: 'custom', label: 'Custom graphic', detail: 'A graphic your AI designed for this moment, checked against the video before it is used.', fields: ['comp', 'idea', 'scene'] }
 ] as const
 
 export type GraphicTemplateId = (typeof GRAPHIC_TEMPLATES)[number]['id']
@@ -134,7 +136,7 @@ export const DIAGRAM_TEMPLATES: readonly string[] = ['staircase', 'funnel', 'jou
 export function isDiagram(template: string): boolean { return DIAGRAM_TEMPLATES.includes(template) }
 /** The longest a graphic of this kind may last. */
 export function graphicMaxMs(template: string | undefined): number {
-  return template === 'chapter' ? CHAPTER_MAX_MS : template && isDiagram(template) ? DIAGRAM_MAX_MS : GRAPHIC_MAX_MS
+  return template === 'chapter' ? CHAPTER_MAX_MS : template === 'custom' ? DIAGRAM_MAX_MS : template && isDiagram(template) ? DIAGRAM_MAX_MS : GRAPHIC_MAX_MS
 }
 /** The light-up color diagrams use unless the graphic has its own color. */
 export const DIAGRAM_ACCENT = '#7CB82F'
@@ -171,6 +173,7 @@ export function parseGraphics(value: unknown, limit: number = MAX_GRAPHICS_PER_C
     for (const key of GRAPHIC_PICTURE_FIELDS) if (fields[key] !== undefined && fields[key] !== '' && !/^[A-Za-z0-9._-]{1,80}$/.test(fields[key])) throw new Error('A graphic’s image must be one of the clip’s images.')
     if (fields.video !== undefined && fields.video !== '' && !isScreenVideo(fields.video)) throw new Error('A graphic’s video must be one of the clip’s videos.')
     if (g.template === 'fx' && !fxEffect(fields.effect)) throw new Error('Choose one of the effects.')
+    if (g.template === 'custom' && !/^[a-f0-9]{16}$/.test(fields.comp ?? '')) throw new Error('A custom graphic is malformed.')
     const origin: EditorGraphic['origin'] = g.origin === 'auto' || g.origin === 'chat' || g.origin === 'member' ? g.origin : undefined
     const size = isGraphicSize(g.size) ? g.size : undefined
     const depth = depthFits(g.template, g.depth) ? g.depth : undefined
@@ -249,7 +252,7 @@ export const GRAPHIC_DEFAULT_MS: Record<GraphicTemplateId, number> = {
   stat: 3500, title: 2500, list: 5000, lower_third: 4000, logo: 3000, before_after: 4000, checklist: 5000, quote: 5000, highlight: 2500,
   statement: 3500, sticky_notes: 4000, strike_list: 5000, browser_frame: 5000, icon_pop: 3500, headline_pill: 3500, comment_cta: 3500, link_cta: 3500,
   big_words: 2500, orbit: 4500, feature_tile: 3500, screen_frame: 5000,
-  chapter: 15000, staircase: 9000, funnel: 8000, journey: 9000, growth: 9000, idea_hub: 8000, compare_marks: 7000, fx: 3500, takeover: 2500
+  chapter: 15000, staircase: 9000, funnel: 8000, journey: 9000, growth: 9000, idea_hub: 8000, compare_marks: 7000, fx: 3500, takeover: 2500, custom: 5000
 }
 
 /** Templates that can show a picture the member chose (Logo pop needs one; the others draw without it). */
@@ -317,6 +320,8 @@ export interface GraphicRenderSpec {
   preview_video?: { url: string; from: number }
   /** How big it is drawn (unset: 'card'). */
   size?: GraphicSize
+  /** Preview only (never in a render): a custom graphic's stills (URLs the page may load), as it comes in, settled and before it leaves. */
+  stills?: string[]
 }
 
 export function templateInfo(id: GraphicTemplateId): (typeof GRAPHIC_TEMPLATES)[number] {
@@ -757,6 +762,7 @@ export function graphicHasContent(g: Pick<EditorGraphic, 'template' | 'fields'>)
       return templateItems(g.template, f.items).length >= DIAGRAM_MIN_ITEMS[g.template]
     case 'fx': return fxHasContent(f)
     case 'takeover': return takeoverLines(f.text).length > 0
+    case 'custom': return /^[a-f0-9]{16}$/.test(f.comp ?? '')
   }
 }
 

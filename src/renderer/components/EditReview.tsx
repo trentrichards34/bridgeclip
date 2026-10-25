@@ -34,6 +34,7 @@ import { DEFAULT_SCREEN_CHOICE } from '../../shared/screen-pair'
 import { DEFAULT_YOUTUBE_CHOICE } from '../../shared/longform'
 import { YoutubeChoicePanel } from './YoutubeFormat'
 import { editSkillPatch, editSkillRows } from '../../shared/skills'
+import { formatSpendUsd } from '../../shared/spending'
 import { DEFAULT_SOUND_REGISTER, SOUND_REGISTERS } from '../../shared/sound-design'
 import { REGISTER_INFO, registerKeeps } from '../../shared/register'
 import { BrollSourcePicker, useBrollLibraryLoaded, useEffectiveBrollSource } from './BrollSourcePicker'
@@ -138,6 +139,21 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const [hooksOpen, setHooksOpen] = useState(false)
   const [lookOpen, setLookOpen] = useState(false)
   const [making, setMaking] = useState(false)
+  // Custom graphics (Skills): what they'd cost for this edit, shown under the switch before anything is spent.
+  const [customNote, setCustomNote] = useState<string | undefined>(undefined)
+  const customKey = (decisions.graphics ?? []).map((g) => `${g.id}:${g.template}:${g.word}`).join('|')
+  useEffect(() => {
+    let live = true
+    if (!openrouter || typeof getApi().edit.customInfo !== 'function') { setCustomNote(undefined); return }
+    void getApi().edit.customInfo(decisions).then((info) => {
+      if (!live) return
+      const made = (decisions.graphics ?? []).filter((g) => g.template === 'custom').length
+      setCustomNote(info.moments.length
+        ? `For ${info.moments.length} key moment${info.moments.length === 1 ? '' : 's'}, your AI designs a graphic, checks it over your video and fixes it. About ${formatSpendUsd(info.expectedUsd)} (at most ${formatSpendUsd(info.mostUsd)}), when you make the reel or from the beat sheet.`
+        : made ? `${made} custom graphic${made === 1 ? '' : 's'} designed. See them on the beat sheet.` : 'No moment in this edit needs a custom graphic.')
+    }).catch(() => { if (live) setCustomNote(undefined) })
+    return () => { live = false }
+  }, [customKey, openrouter])
   // The beat sheet: every on-screen moment as a numbered still (offered before the reel is made, as the member chose).
   const [view, setView] = useState<'edit' | 'beats'>('edit')
   const [offer, setOffer] = useState(false)
@@ -360,7 +376,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
 
         <div className="min-w-0 xl:col-start-1 xl:row-start-1">
           {view === 'beats' && !screen && <BeatSheet runId={status.id} plan={plan} decisions={decisions} look={look} brand={brand} sources={sources} images={images}
-            disabled={making} chatState={chatState} chatReady={chatReady} choice={beatChoice} onChoice={saveBeatChoice} onChange={setDecisions} />}
+            disabled={making} chatState={chatState} chatReady={chatReady} choice={beatChoice} onChoice={saveBeatChoice} onChange={setDecisions} custom={status.custom} />}
           <div className={cn(view === 'beats' && !screen && 'hidden')}>
           <section className="mt-4 space-y-2" aria-labelledby="edit-hook-title">
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -471,11 +487,11 @@ export function EditReview({ status, brand, look, onLook, onError }: {
               control={<Switch label="End on your call to action" checked={decisions.endOnCta} onChange={(endOnCta) => setDecisions((current) => ({ ...current, endOnCta }))} />} />
           )}
 
-          <SkillsPanel className="mt-5" rows={editSkillRows(plan, { ...decisions, look }, { brollSource: brollDefault }).filter((row) => !screen || (row.id !== 'broll' && row.id !== 'zoom'))}
+          <SkillsPanel className="mt-5" rows={editSkillRows(plan, { ...decisions, look }, { brollSource: brollDefault, openrouter, customNote }).filter((row) => !screen || (row.id !== 'broll' && row.id !== 'zoom'))}
             music={{ track: look.musicTrack ?? null, onChange: (track) => onLook({ ...look, musicTrack: track ?? undefined }) }}
             expand={(id) => id === 'broll' && look.broll ? <BrollSourcePicker value={look.broll} onChange={(broll) => onLook({ ...look, broll })} disabled={making} /> : undefined}
             onToggle={(id, on) => {
-              const patch = editSkillPatch(plan, { ...decisions, look }, id, on, { brollSource: brollDefault })
+              const patch = editSkillPatch(plan, { ...decisions, look }, id, on, { brollSource: brollDefault, openrouter })
               if (patch.decisions) { const next = patch.decisions; setDecisions((current) => ({ ...current, ...next })) }
               if (patch.look) onLook({ ...look, ...patch.look })
             }}

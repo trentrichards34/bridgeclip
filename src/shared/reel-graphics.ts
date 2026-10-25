@@ -24,7 +24,7 @@ import { DIAGRAM_ACCENT, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, isDiagram, 
 
 /** The templates offered on review screens (every one but Logo pop and Screen recording, which need the clip editor's files, and the chapter header, which belongs to a clip's sections). */
 // Effects (fx) are offered too: the gallery lists each effect as its own tile (the planners place them as well).
-export const REEL_GRAPHIC_TEMPLATES = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo' && t.id !== 'screen_frame' && t.id !== 'chapter')
+export const REEL_GRAPHIC_TEMPLATES = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo' && t.id !== 'screen_frame' && t.id !== 'chapter' && t.id !== 'custom')
 /** The templates the review chats can add (not effects: their fields are the effect's own, set on the page). */
 export const REEL_CHAT_TEMPLATES = REEL_GRAPHIC_TEMPLATES.filter((t) => t.id !== 'fx')
 export const MAX_REEL_GRAPHICS = 8

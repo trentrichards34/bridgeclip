@@ -12,6 +12,8 @@ import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
 import { chatEstimateUsd, chatInfo, chatModel, editorChat, readChatTranscript, resetChat } from './clip-chat'
 import { editChatInfo, editRecordingChat, resetEditChat } from './edit-chat'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { registerCustomGraphics } from './custom-graphics-ipc'
+import { EDITOR_REMAKE_ESTIMATE_USD, editorCustomInfo, editorRemakeCustom } from './editor-custom-graphics'
 import { existsSync, realpathSync } from 'fs'
 import { readFile, stat } from 'fs/promises'
 import { loadSettings, publicSettings, replaceApiKey, savePublicSettings, saveSpendLimit, type ApiKeyName, type PublicSettings } from './settings-store'
@@ -56,7 +58,8 @@ import { cancelListicleRender, LISTICLE_SCRIPT_ESTIMATE_USD, listicleRunBusy, li
 import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
   isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate, addEditImage, addEditImageFiles, removeEditImage, importClips,
-  describeScreen, previewScreen, syncScreen, editSavedHeadline, editorHeadlineSaved, editBeatFrame
+  describeScreen, previewScreen, syncScreen, editSavedHeadline, editorHeadlineSaved, editBeatFrame,
+  editCustomGraphicsInfo, editCustomGraphicsEstimate, makeEditCustomGraphicsNow, swapEditCustomGraphic, editCustomStills
 } from './edit-recording'
 import { EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGES, EDIT_MAX_SCREENSHOTS, EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
 import { COMBINE_MAX_CLIPS } from '../shared/combine-clips'
@@ -108,6 +111,7 @@ import {
 } from './zernio/posts'
 
 export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): void {
+  registerCustomGraphics()
   // Clips exported from the editor end with their call to action, like the run's.
   onEditorRunLock(withRunLock)
   // Editor AI calls (caption translation on a bake, hook ideas) join the spending ledger.
@@ -805,8 +809,24 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('edit:render', async (_event, decisions: unknown) => {
     // AI b-roll is the paid part of making the reel: the spending check first, at most its shots.
     const broll = (decisions as { look?: { broll?: unknown } } | null)?.look?.broll
-    if (isBrollSource(broll) && usesAi(broll)) await assertSpendAllowed('edit:render', 'openrouter', brollRunEstimateUsd(broll, 1))
+    // Custom graphics (on unless switched off, when none were made in the review) are designed first: their estimate too.
+    const d = decisions as { customGraphics?: unknown; graphics?: { template?: unknown }[] } | null
+    const custom = d?.customGraphics !== false && !(d?.graphics ?? []).some((g) => g?.template === 'custom') ? await editCustomGraphicsEstimate({ decisions }) : null
+    const brollUsd = isBrollSource(broll) && usesAi(broll) ? brollRunEstimateUsd(broll, 1) : null
+    if (brollUsd !== null || custom) await assertSpendAllowed('edit:render', 'openrouter', (brollUsd ?? 0) + (custom ?? 0))
     return renderEdit(decisions)
+  })
+  // Custom graphics in the review: the moments and what they cost (free), designing them (paid), a note on one, swapping one back, stills.
+  handle('edit:customInfo', (_event, decisions: unknown) => editCustomGraphicsInfo(decisions))
+  paid('edit:customGraphics', 'openrouter', (request) => editCustomGraphicsEstimate(request), (request) => makeEditCustomGraphicsNow(request))
+  handle('edit:customSwap', (_event, request: unknown) => swapEditCustomGraphic(request))
+  handle('edit:customStills', (_event, comp: unknown) => editCustomStills(comp))
+  // ...and in the clip editor: what one is, and making it again with a note (recorded in the spending ledger).
+  handle('editor:customInfo', (_event, path: unknown, comp: unknown) => editorCustomInfo(path, comp))
+  paid('editor:customGraphic', 'openrouter', () => EDITOR_REMAKE_ESTIMATE_USD, async (path, candidateId, graphic, note) => {
+    const result = await editorRemakeCustom(path, candidateId, graphic, note)
+    if (result.costUsd > 0) void recordSpend({ kind: 'edit', provider: 'openrouter', usd: result.costUsd, label: 'Custom graphic', runId: typeof path === 'string' ? path.split(/[\\/]/).pop() : undefined }).catch(() => {})
+    return result
   })
   // The review's Chat panel: one paid OpenRouter turn per message (the member's key and planning model). Main checks every
   // change the model makes; the review applies them through its own setters (Keep or Undo on each answer).

@@ -9,7 +9,7 @@ import {
   EDIT_VIDEO_EXTENSIONS, MAX_HOOK_HINT_CHARS, MAX_IDEA_MATERIAL_CHARS, MAX_IDEA_TOPIC_CHARS, SCRIBE_MODEL, SCRIBE_PRICE_PER_SECOND,
   EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGE_BYTES, EDIT_MAX_IMAGES, EDIT_MAX_SCREENSHOTS, parseScreenshotBox, CARD_MAX_SECONDS, CARD_MIN_SECONDS,
   editEstimate, livePins, parseEditDecisions, soundEffectsOn, parseEditPlan, parseFilmIdeas, FILM_IDEA_COUNT,
-  type EditImage, type EditPlan, type EditScreen, type EditSource, type EditStatus, type FilmIdea
+  type EditDecisions, type EditImage, type EditPlan, type EditScreen, type EditSource, type EditStatus, type FilmIdea
 } from '../shared/edit-recording'
 import { DEFAULT_SCREEN_CHOICE, parseScreenChoice, parseScreenOffset, parseScreenSync, screenOverlap, type ScreenSource, type ScreenSync } from '../shared/screen-pair'
 import { editRecipe, pacingForEngine } from '../shared/edit-recipes'
@@ -49,6 +49,10 @@ import { assertMediaPath, authorizeMedia } from './security'
 import { getSettingsForBridge, loadSettings, vocabularyTerms } from './settings-store'
 import { resolveBinary } from './tools'
 import { beatFrame } from './beat-stills'
+import { customModel, customStillPaths, openRouterModelCall, type CustomModel } from './custom-graphics'
+import { editCustomEstimate, editHeroMoments, makeEditCustomGraphics, swapBackCustomGraphic, type EditCustomContext, type EditCustomResult } from './edit-custom-graphics'
+import { DEFAULT_PRICE } from '../shared/custom-graphics'
+import type { EditGraphic } from '../shared/reel-graphics'
 import { DEFAULT_YOUTUBE_CHOICE, YOUTUBE_MAX_SOURCE_SECONDS, YOUTUBE_MAX_TOTAL_SECONDS, isEditFormat, parseChapters, youtubeForEngine, type EditFormat } from '../shared/longform'
 
 // ---------------------------------------------------------------------------
@@ -84,6 +88,9 @@ interface EditRun {
   headlineKey: string | null
   /** The headline these recordings were made with last time, sent to the plan to keep ('' for none, or a new one asked for). */
   keptHeadline: string
+  /** Custom graphics are being designed for this review (one pass at a time), and whether a pass ran already. */
+  customBusy?: boolean
+  customTried?: boolean
 }
 
 /** The clip editor candidate an edited reel is (engine edit_direction.CANDIDATE_ID). */
@@ -953,6 +960,105 @@ async function transcribe(current: EditRun, source: EditSource, index: number, k
   return words.flatMap((item): [string, number, number][] => Array.isArray(item) && typeof item[0] === 'string' && Number.isInteger(item[1]) && Number.isInteger(item[2]) ? [[item[0], item[1], item[2]]] : [])
 }
 
+/** The review's graphics as the engine takes them (the style's register keeps or drops the automatic ones; pictures moved into the run). */
+function editorGraphicsFor(decisions: EditDecisions, images: EditImage[], folder: string): Record<string, unknown>[] {
+  return graphicsWithPictures((decisions.graphics ?? []).filter((g) => registerKeeps(g, decisions.soundStyle)), images, folder).map(({ id, template, word, duration_ms, placement, fields, origin, size, depth }) => ({ id, template, word, duration_ms, placement, fields,
+    ...(origin ? { origin } : {}), ...(size ? { size } : {}), ...(depth ? { depth } : {}) }))
+}
+
+// ---------------------------------------------------------------------------
+// Custom graphics (the review): the hero moments, what they cost, designing them, a note on one, swapping one back
+// ---------------------------------------------------------------------------
+
+function customContext(current: EditRun, decisions: EditDecisions, m: Pick<CustomModel, 'model' | 'price' | 'vision'>): EditCustomContext {
+  return { folder: current.status.folder, plan: current.status.plan!, decisions, sources: current.status.sources, brandColor: current.brand?.look?.color ?? null,
+    model: m.model, price: m.price, vision: m.vision }
+}
+
+function customReview(): EditRun {
+  const current = run
+  if (!current?.status.plan || current.status.phase !== 'review') throw new Error('Open your edit’s review first.')
+  if (current.status.screen && current.status.format !== 'youtube') throw new Error('Camera + screen reels don’t have graphics.')
+  return current
+}
+
+/** What the review shows before designing: whether it can run, the moments it would design and what that costs. */
+export async function editCustomGraphicsInfo(value: unknown): Promise<{ available: boolean; reason: string | null; model: string; moments: { word: number; kind: string; frame: string; replaces: string | null }[]; expectedUsd: number; mostUsd: number; revisions: number; busy: boolean }> {
+  const current = customReview()
+  const decisions = parseEditDecisions(value, current.status.plan!, current.status.images ?? [])
+  const m = await customModel()
+  const ctx = customContext(current, decisions, m ?? { model: DEFAULT_PLANNER_MODEL, price: { ...DEFAULT_PRICE }, vision: true })
+  const heroes = editHeroMoments(ctx)
+  const estimate = editCustomEstimate(ctx, heroes.length)
+  return { available: !!m, reason: m ? null : 'Add your OpenRouter key in Settings → API keys to design custom graphics.', model: ctx.model,
+    moments: heroes.map((h) => ({ word: h.word, kind: h.kind, frame: h.frame, replaces: h.replaces })), expectedUsd: estimate.expectedUsd, mostUsd: estimate.mostUsd, revisions: estimate.revisions, busy: !!current.customBusy }
+}
+
+/** The spending check's estimate for designing now (the most it could cost). */
+export async function editCustomGraphicsEstimate(value: unknown): Promise<number | null> {
+  try {
+    const raw = (value ?? {}) as { decisions?: unknown; only?: unknown }
+    const info = await editCustomGraphicsInfo(raw.decisions)
+    return raw.only ? editCustomEstimateOne(info) : info.mostUsd
+  } catch { return null }
+}
+const editCustomEstimateOne = (info: { mostUsd: number; moments: unknown[] }): number => info.moments.length ? info.mostUsd / info.moments.length : 0.3
+
+async function designCustomGraphics(current: EditRun, decisions: EditDecisions, only?: { id: string; note: string }): Promise<EditCustomResult | null> {
+  const m = await customModel()
+  if (!m) return null
+  if (current.customBusy) throw new Error('Your custom graphics are being designed. Wait for them to finish.')
+  current.customBusy = true
+  const abort = new AbortController()
+  const stop = setInterval(() => { if (current.cancelled || run !== current) abort.abort() }, 500)
+  publish(current, { custom: { running: true, done: 0, total: 0, notes: [] } })
+  try {
+    const result = await makeEditCustomGraphics(customContext(current, decisions, m), {
+      call: openRouterModelCall(m.key, m.endpoint, m.price), signal: abort.signal, ...(only ? { only } : {}),
+      onProgress: (done, total) => publish(current, { custom: { running: true, done, total, notes: [] } })
+    })
+    current.customTried = true
+    spend(current, result.costUsd)
+    publish(current, { custom: { running: false, done: result.made, total: result.tried, notes: result.notes } })
+    return result
+  } catch (error) {
+    publish(current, { custom: { running: false, done: 0, total: 0, notes: [] } })
+    throw error
+  } finally { clearInterval(stop); current.customBusy = false }
+}
+
+/** Design the review's custom graphics now (or, with `only`, one again with the member's note). Returns the review's graphics with them in place. */
+export async function makeEditCustomGraphicsNow(value: unknown): Promise<EditCustomResult> {
+  const current = customReview()
+  const raw = (value && typeof value === 'object' ? value : {}) as { decisions?: unknown; only?: unknown }
+  const decisions = parseEditDecisions(raw.decisions, current.status.plan!, current.status.images ?? [])
+  let only: { id: string; note: string } | undefined
+  if (raw.only !== undefined) {
+    const o = raw.only as { id?: unknown; note?: unknown } | null
+    if (!o || typeof o.id !== 'string' || typeof o.note !== 'string' || o.note.length > 2000) throw new Error('Type what to change.')
+    only = { id: o.id, note: o.note }
+  }
+  const result = await designCustomGraphics(current, decisions, only)
+  if (!result) throw new Error('Add your OpenRouter key in Settings → API keys to design custom graphics.')
+  return result
+}
+
+/** A custom graphic back to the template graphic it replaced (the review's graphics after the swap). */
+export function swapEditCustomGraphic(value: unknown): EditGraphic[] {
+  const current = customReview()
+  const raw = (value && typeof value === 'object' ? value : {}) as { decisions?: unknown; id?: unknown }
+  if (typeof raw.id !== 'string') throw new Error('That custom graphic is no longer in your edit.')
+  const decisions = parseEditDecisions(raw.decisions, current.status.plan!, current.status.images ?? [])
+  return swapBackCustomGraphic(current.status.folder, decisions.graphics ?? [], raw.id)
+}
+
+/** A custom graphic's stills (paths the page may show) for the review's beat sheet. */
+export function editCustomStills(comp: unknown): string[] {
+  const current = run
+  if (!current?.status.plan || typeof comp !== 'string') return []
+  return customStillPaths(current.status.folder, comp).map((path) => authorizeMedia(path))
+}
+
 /** Make the reel from the reviewed edit (local; only b-roll from AI or the library planner costs anything). */
 export async function renderEdit(value: unknown): Promise<EditStatus> {
   const current = run
@@ -1075,8 +1181,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
     const color = current.brand?.look?.color
     Object.assign(config, { editor: {
       // The style: Minimal keeps only the automatic graphics on numbers, the hook and the call to action.
-      graphics: graphicsWithPictures((decisions.graphics ?? []).filter((g) => registerKeeps(g, decisions.soundStyle)), images, current.status.folder).map(({ id, template, word, duration_ms, placement, fields, origin, size, depth }) => ({ id, template, word, duration_ms, placement, fields,
-        ...(origin ? { origin } : {}), ...(size ? { size } : {}), ...(depth ? { depth } : {}) })),
+      graphics: editorGraphicsFor(decisions, images, current.status.folder),
       pins, motion, stage: motion && decisions.stageLayouts !== false,
       // The color grade (footage only): the editor's bake puts it under the captions and graphics.
       ...(decisions.look.grade && decisions.look.grade !== 'none' ? { grade: decisions.look.grade } : {}),
@@ -1088,6 +1193,21 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
   const graphics = directed ? [] : drawableGraphics(decisions.graphics ?? []).filter((g) => !cut.has(g.word))
   void (async () => {
     try {
+      // Custom graphics (Skills, on by default with a key): designed now when the review didn't make them already.
+      if (directed && decisions.customGraphics !== false && !current.customTried && !(decisions.graphics ?? []).some((g) => g.template === 'custom') && plan.graphics !== undefined) {
+        publish(current, { detail: 'Designing custom graphics', percent: 1 })
+        try {
+          const made = await designCustomGraphics(current, decisions)
+          if (made && made.made > 0) {
+            decisions.graphics = made.graphics
+            ;(config as { editor?: { graphics?: unknown } }).editor!.graphics = editorGraphicsFor(decisions, images, current.status.folder)
+          }
+        } catch (error) {
+          if (current.cancelled) throw error
+          logger.warn('edit.custom.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
+        }
+        if (current.cancelled) throw new Error('Canceled.')
+      }
       if (graphics.length) {
         publish(current, { detail: 'Drawing your graphics', percent: 2 })
         const frame = editGraphicFrame(decisions.hookText, decisions.look)

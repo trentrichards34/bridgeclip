@@ -20,7 +20,7 @@ import { SCREEN_KINDS, SCREEN_KIND_LABELS, SCREEN_SPLIT, isScreenKind, screenKin
 import { CHAT_MAX_TOOL_CALLS, chatClock, chatFail as fail, chatReason as reasonOf, chatSeconds, chatSentence as sentence, chatText as text, type ChatReplyOf } from './chat-core'
 
 /** Templates the chat may add or switch to: not the logo (it needs the member's picture), not effects yet (fx: the director that places them comes later). */
-const CHAT_TEMPLATES = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo' && t.id !== 'fx')
+const CHAT_TEMPLATES = GRAPHIC_TEMPLATES.filter((t) => t.id !== 'logo' && t.id !== 'fx' && t.id !== 'custom')
 
 export { CHAT_MAX_MESSAGE_CHARS, CHAT_MAX_TOOL_CALLS, CHAT_MAX_TURNS, ChatToolError, chatClock, chatCostNote, chatPlainText, chatSeconds, type ChatInfo } from './chat-core'
 export const CHAT_SUGGESTIONS = ['Start earlier', 'Cut the pauses', 'Punchier hook', 'Add a stat graphic'] as const
@@ -353,7 +353,7 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
     case 'add_graphic': {
       const graphics = c.graphics ?? []
       if (graphics.length >= graphicsCap(project)) fail(`A clip can have up to ${graphicsCap(project)} graphics.`)
-      if (!isGraphicTemplate(args.template) || args.template === 'fx') return fail(`template must be one of ${CHAT_TEMPLATES.map((t) => t.id).join(', ')}.`)
+      if (!isGraphicTemplate(args.template) || args.template === 'fx' || args.template === 'custom') return fail(`template must be one of ${CHAT_TEMPLATES.map((t) => t.id).join(', ')}.`)
       const template = GRAPHIC_TEMPLATES.find((t) => t.id === args.template)!
       const pin = pinArg(args, points)
       // At a pin with no time given: a little before the moment pointed at (in its section), so it is on screen there.
@@ -372,7 +372,7 @@ export function applyChatTool(c: CandidateEdit, name: string, args: Record<strin
       if (!current) return fail(`No graphic ${String(args.id).slice(0, 40)}. The clip's graphics are listed in the context.`)
       const pin = pinArg(args, points)
       // "Make this a staircase": the same graphic as another template, keeping its words (the model may give new ones).
-      if (args.template !== undefined && (!isGraphicTemplate(args.template) || args.template === 'fx')) fail(`template must be one of ${CHAT_TEMPLATES.map((t) => t.id).join(', ')}.`)
+      if (args.template !== undefined && (!isGraphicTemplate(args.template) || args.template === 'fx' || args.template === 'custom')) fail(`template must be one of ${CHAT_TEMPLATES.map((t) => t.id).join(', ')}.`)
       const switched = args.template !== undefined && args.template !== current.template ? switchGraphicTemplate(current, args.template as GraphicTemplateId) : null
       const base = switched ?? current
       const { graphic, note } = fitted(graphicFrom({ ...base, at_ms: args.at_ms ?? base.at_ms, duration_ms: args.duration_ms ?? base.duration_ms, placement: args.placement ?? base.placement }, args, c, project, pin), c)

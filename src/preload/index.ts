@@ -10,6 +10,8 @@ import type { CtaSummary } from '../shared/ctas'
 import type { LogoSummary } from '../shared/logos'
 import type { ReferenceImage, ReferenceSupport } from '../shared/purpose'
 import type { EditAudit } from '../shared/editorial'
+import type { EditCustomInfo, EditCustomOutcome, EditorCustomInfo, EditorCustomRemake } from '../shared/custom-graphics'
+import type { EditGraphic } from '../shared/reel-graphics'
 import { contextBridge, ipcRenderer } from 'electron'
 import { decodeSpendGate, type OpenRouterBalance, type SpendGate, type SpendOverview, type SpendProvider } from '../shared/spending'
 import type {
@@ -236,6 +238,10 @@ export interface BridgeClipAPI {
     /** One of My logos for a Logo pop graphic, copied into the run. Returns its name (the graphic's `image`). */
     logoImage: (path: string, logoId: string) => Promise<string>
     words: (path: string, from: number, to: number) => Promise<{ word: string; start_ms: number; end_ms: number }[]>
+    /** A custom graphic: what it is, its stills and the template it replaced. */
+    customInfo: (path: string, comp: string) => Promise<EditorCustomInfo>
+    /** Make a custom graphic again with a note (paid). `graphic`: null when the new design didn't pass (the old one stays). */
+    customGraphic: (path: string, candidateId: string, graphic: EditorGraphic, note: string) => Promise<EditorCustomRemake>
     /** What opening an Automatic run (or a project made from one) in the editor involves. */
     automaticInfo: (path: string) => Promise<AutomaticEditInfo>
     /** Make the run's editor project from its clips, or get its video back. `localFile`: a video the member chose. */
@@ -590,6 +596,14 @@ export interface BridgeClipAPI {
     savedHeadline: (request: { sources: string[]; mode?: EditMode }) => Promise<{ headline: string | null }>
     /** The beat sheet: a still of clip `src` at `ms` into it (local, free, cached in the run): the image's path. */
     beatFrame: (src: number, ms: number) => Promise<string>
+    /** Custom graphics: the moments they'd be designed for and what that costs (free). */
+    customInfo: (decisions: EditDecisions) => Promise<EditCustomInfo>
+    /** Design them now (paid; the spending check first), or one again with a note. Returns the review's graphics with them in place. */
+    customGraphics: (request: { decisions: EditDecisions; only?: { id: string; note: string } }) => Promise<EditCustomOutcome>
+    /** A custom graphic back to the template graphic it replaced: the review's graphics after the swap. */
+    customSwap: (request: { decisions: EditDecisions; id: string }) => Promise<EditGraphic[]>
+    /** A custom graphic's stills (image paths). */
+    customStills: (comp: string) => Promise<string[]>
     /** Transcribe and plan (paid); the status moves to 'review'. */
     start: (request: EditStartRequest) => Promise<EditStatus>
     /** Make the reel from the reviewed edit (local, no AI cost). */
@@ -834,6 +848,8 @@ const api: BridgeClipAPI = {
     logoImage: (path, logoId) => ipcRenderer.invoke('editor:logoImage', path, logoId),
     graphicVideo: (path) => ipcRenderer.invoke('editor:graphicVideo', path),
     words: (path, from, to) => ipcRenderer.invoke('editor:words', path, from, to),
+    customInfo: (path, comp) => ipcRenderer.invoke('editor:customInfo', path, comp),
+    customGraphic: (path, candidateId, graphic, note) => paid('editor:customGraphic', path, candidateId, graphic, note),
     automaticInfo: (path) => ipcRenderer.invoke('editor:automaticInfo', path),
     prepareAutomatic: (path, localFile) => ipcRenderer.invoke('editor:prepareAutomatic', path, localFile),
     operationStatus: (path) => ipcRenderer.invoke('editor:operationStatus', path),
@@ -1074,6 +1090,10 @@ const api: BridgeClipAPI = {
     previewScreen: (camera, screen, offsetMs, atMs) => ipcRenderer.invoke('edit:previewScreen', camera, screen, offsetMs, atMs),
     savedHeadline: (request) => ipcRenderer.invoke('edit:savedHeadline', request),
     beatFrame: (src, ms) => ipcRenderer.invoke('edit:beatFrame', src, ms),
+    customInfo: (decisions) => ipcRenderer.invoke('edit:customInfo', decisions),
+    customGraphics: (request) => paid('edit:customGraphics', request),
+    customSwap: (request) => ipcRenderer.invoke('edit:customSwap', request),
+    customStills: (comp) => ipcRenderer.invoke('edit:customStills', comp),
     start: (request) => paid('edit:start', request),
     render: (decisions) => paid('edit:render', decisions),
     chooseImages: () => ipcRenderer.invoke('edit:chooseImages'),

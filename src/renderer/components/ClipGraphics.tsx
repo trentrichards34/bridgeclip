@@ -8,11 +8,11 @@
  */
 import { LogoPickRow } from './MyLogos'
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes, Film, AudioLines, Sparkles, Bookmark, Eraser, Wand2 } from 'lucide-react'
+import { AlertTriangle, Plus, Trash2, ImagePlus, Shapes, Film, AudioLines, Sparkles, Bookmark, Eraser, RotateCcw, Wand2 } from 'lucide-react'
 import type { MountedGraphic } from '../graphics/templates'
 import {
   CHAPTER_STYLES, DIAGRAM_ACCENT, GRAPHIC_DEFAULT_MS, GRAPHIC_ICONS, GRAPHIC_ITEM_LIMITS, GRAPHIC_MIN_MS, GRAPHIC_TEMPLATES, MAX_GRAPHICS_PER_CLIP, MAX_GRAPHIC_ITEMS, graphicsCap, MAX_GRAPHIC_FIELD_CHARS,
-  ITEM_TIMED_TEMPLATES, matchFxCues, graphicVariant, graphicVariants, bigWordsOptions, chapterStyle, clampGraphicMs, duplicateGraphic, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, graphicPictureFields, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, switchGraphicTemplate, templateInfo, templateItems, updateGraphic, withGraphic,
+  ITEM_TIMED_TEMPLATES, matchFxCues, graphicVariant, graphicVariants, bigWordsOptions, chapterStyle, clampGraphicMs, duplicateGraphic, compareWrong, graphicMaxMs, growthStyle, hubIcon, isDiagram, matchItemTimes, type ChapterStyle, fitGraphicInCut, graphicCanGoBehind, graphicClashes, graphicCutFit, graphicDepth, graphicHasContent, graphicIcons, isGraphicTemplate, graphicPictureFields, graphicUsesImage, placeInFreeBand, graphicLocalMs, highlightPoint, matchCardWords, newGraphic, removeGraphic, screenFrom, screenShape, switchGraphicTemplate, templateInfo, templateItems, updateGraphic, withGraphic,
   MAX_BIG_WORDS, MAX_TAKEOVER_WORDS, SCREEN_VIDEO_FILE, ctaKind, type CtaKind, WORD_TIMED_TEMPLATES, type BigWordsMotion, type BigWordsStyle, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize, type GraphicTemplateId, type ScreenShape, type TimedWord
 } from '../../shared/motion-graphics'
 import { GRAPHIC_DEFAULT_COLOR, graphicOwnFont, graphicSpec, graphicStyle } from '../../shared/graphic-layout'
@@ -21,7 +21,8 @@ import { FX_EFFECTS, FX_GROUPS, fxEffect, fxLine, fxNeedsPicture, fxRegion, fxRe
 import { HighlightPicker } from './ClipLayoutSections'
 import type { CandidateEdit, EditorProject } from '../../shared/clip-editor'
 import { isHexColor } from '../../shared/headline-look'
-import { cn, localFileUrl } from '../lib/utils'
+import { cn, errorMessage, localFileUrl } from '../lib/utils'
+import type { EditorCustomInfo } from '../../shared/custom-graphics'
 import { getApi } from '../lib/ipc'
 import { Button } from './ui/Button'
 import { Segmented } from './ui/Segmented'
@@ -103,12 +104,14 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, s
   sourceUrl?: string
 }): React.JSX.Element | null {
   const bounds = useOutputBounds(canvas, project.aspect_ratio)
+  const stills = useEditorCustomInfo(outputDir, (candidate.graphics ?? []).filter((g) => g.template === 'custom').map((g) => g.fields.comp ?? ''))
   const shown = (candidate.graphics ?? []).flatMap((g) => {
     const local = graphicLocalMs(candidate, g, time)
     if (local === null || !graphicHasContent(g)) return []
     const spec = graphicSpec(project, candidate, g)
     if (!spec) return []
     for (const key of graphicPictureFields(g)) spec[key] = graphicImageUrl(outputDir, g.fields[key])
+    if (g.template === 'custom') spec.stills = (stills[g.fields.comp ?? '']?.stills ?? []).map((path) => localFileUrl(path))
     if (g.template === 'screen_frame') {
       // The preview plays the video in the window (the export lays it in with the engine).
       const url = g.fields.video === 'source' ? sourceUrl : graphicVideoUrl(outputDir, g.fields.video)
@@ -127,11 +130,76 @@ export function GraphicsOverlay({ canvas, project, candidate, time, outputDir, s
   </div>
 }
 
+/** Custom graphics' info (idea, grade, stills, the template they replaced), fetched once per composition. */
+const customInfoCache = new Map<string, EditorCustomInfo>()
+export function useEditorCustomInfo(outputDir: string, comps: readonly string[]): Record<string, EditorCustomInfo> {
+  const [info, setInfo] = useState<Record<string, EditorCustomInfo>>({})
+  const key = [...new Set(comps.filter(Boolean))].sort().join(',')
+  useEffect(() => {
+    let live = true
+    for (const comp of key ? key.split(',') : []) {
+      const cached = customInfoCache.get(`${outputDir}:${comp}`)
+      if (cached) { setInfo((current) => current[comp] ? current : { ...current, [comp]: cached }); continue }
+      if (typeof getApi().editor.customInfo !== 'function') continue
+      void getApi().editor.customInfo(outputDir, comp).then((found) => {
+        customInfoCache.set(`${outputDir}:${comp}`, found)
+        if (live) setInfo((current) => ({ ...current, [comp]: found }))
+      }).catch(() => undefined)
+    }
+    return () => { live = false }
+  }, [outputDir, key])
+  return info
+}
+
+/**
+ * A custom graphic in the inspector: its stills, what it shows, its grade, a note to design it again ("use a rocket
+ * instead", paid) and going back to the template graphic it replaced.
+ */
+function CustomGraphicFields({ outputDir, candidate, graphic, disabled, onChange }: {
+  outputDir: string; candidate: CandidateEdit; graphic: EditorGraphic; disabled: boolean; onChange: (graphics: EditorGraphic[]) => void
+}): React.JSX.Element {
+  const comp = graphic.fields.comp ?? ''
+  const info = useEditorCustomInfo(outputDir, [comp])[comp]
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<{ tone: 'info' | 'error'; text: string } | null>(null)
+  useEffect(() => { setNote(''); setMessage(null) }, [graphic.id])
+  const replace = (next: EditorGraphic): void => onChange((candidate.graphics ?? []).map((x) => x.id === graphic.id ? next : x))
+  const redesign = async (): Promise<void> => {
+    if (!note.trim()) return
+    setBusy(true); setMessage(null)
+    try {
+      const result = await getApi().editor.customGraphic(outputDir, candidate.id, graphic, note.trim())
+      if (result.graphic) { replace(result.graphic); setNote(''); setMessage({ tone: 'info', text: 'Designed again and checked over your video.' }) }
+      else setMessage({ tone: 'error', text: result.reason ?? 'The new design didn’t pass the check, so your graphic stays as it was.' })
+    } catch (err) { setMessage({ tone: 'error', text: errorMessage(err, 'It could not be designed again.') }) } finally { setBusy(false) }
+  }
+  const swapBack = (): void => {
+    const fb = info?.fallback
+    if (!fb || !isGraphicTemplate(fb.template)) { onChange(removeGraphic(candidate, graphic.id)); return }
+    replace({ id: graphic.id, template: fb.template, at_ms: graphic.at_ms, duration_ms: Math.min(fb.duration_ms, graphicMaxMs(fb.template)), placement: (['top', 'middle', 'bottom'] as const).find((p) => p === fb.placement) ?? 'middle',
+      fields: fb.fields, ...(fb.size === 'compact' || fb.size === 'card' || fb.size === 'stage' ? { size: fb.size } : {}), ...(fb.origin === 'auto' || fb.origin === 'member' || fb.origin === 'chat' ? { origin: fb.origin } : {}) })
+  }
+  return <div className="space-y-2" data-testid="custom-graphic-fields">
+    <p className="text-2xs text-ink-subtle">{info ? `${info.idea}. Designed by your AI for this moment and checked over your video${info.tries > 1 ? ` (fixed ${info.tries - 1} time${info.tries === 2 ? '' : 's'})` : ''}.` : 'Designed by your AI for this moment.'}</p>
+    {info?.stills.length ? <div className="grid grid-cols-3 gap-1" aria-label="Stills: coming in, settled, leaving">
+      {info.stills.map((path, i) => <img key={path} src={localFileUrl(path)} alt={['Coming in', 'Settled', 'Leaving'][i] ?? ''} className="w-full rounded-md bg-black/60" />)}</div> : null}
+    <label className="editor-label">Change it
+      <textarea rows={2} maxLength={300} value={note} disabled={disabled || busy} placeholder="Like “make it a staircase” or “use a rocket instead”" aria-label="What to change in the custom graphic" onChange={(e) => setNote(e.target.value)} /></label>
+    <div className="flex flex-wrap items-center gap-2">
+      <Button size="sm" variant="primary" icon={<Wand2 size={13} />} loading={busy} disabled={disabled || busy || !note.trim()} onClick={() => void redesign()} tooltip="Your AI designs it again with your note, then checks it over your video.">Design again</Button>
+      <Button size="sm" variant="ghost" icon={<RotateCcw size={13} />} disabled={disabled || busy} onClick={swapBack}>{info?.fallback ? 'Use the template instead' : 'Remove it'}</Button>
+    </div>
+    <p className="text-2xs text-ink-subtle">Designing again uses your OpenRouter credit (about $0.15 to $0.35). The export draws it from what’s saved in this run.</p>
+    {message && <p role={message.tone === 'error' ? 'alert' : 'status'} className={cn('text-2xs', message.tone === 'error' ? 'text-danger' : 'text-ink-subtle')}>{message.text}</p>}
+  </div>
+}
+
 export const SHORT: Record<GraphicTemplateId, string> = {
   stat: 'Stat', title: 'Title', list: 'List', lower_third: 'Name', logo: 'Logo', before_after: 'Before/after', checklist: 'Checklist', quote: 'Quote', highlight: 'Arrow/circle',
   statement: 'Statement', sticky_notes: 'Notes', strike_list: 'Crossed out', browser_frame: 'Browser', icon_pop: 'Icons', headline_pill: 'Headline', comment_cta: 'Comment', link_cta: 'Call to action',
   big_words: 'Big words', orbit: 'Orbit', feature_tile: 'Tiles', screen_frame: 'Screen',
-  chapter: 'Chapter', staircase: 'Stairs', funnel: 'Funnel', journey: 'Journey', growth: 'Growth', idea_hub: 'Idea hub', compare_marks: 'Wrong/right', fx: 'Effect', takeover: 'Takeover'
+  chapter: 'Chapter', staircase: 'Stairs', funnel: 'Funnel', journey: 'Journey', growth: 'Growth', idea_hub: 'Idea hub', compare_marks: 'Wrong/right', fx: 'Effect', takeover: 'Takeover', custom: 'Custom'
 }
 export function graphicSummary(g: Pick<EditorGraphic, 'template' | 'fields'>): string {
   const f = g.fields
@@ -279,7 +347,8 @@ export const SAMPLES: Record<GraphicTemplateId, Record<string, string>> = {
   growth: { items: 'Small\nBigger\nBiggest' }, idea_hub: { items: 'First\nSecond\nThird\nFourth' },
   compare_marks: { items: 'The old way\nThe better way', wrong: 'first' },
   fx: { effect: 'per-word-rise', text: 'Words as you say them' },
-  takeover: { text: 'This is the line that matters', accent: 'matters' }
+  takeover: { text: 'This is the line that matters', accent: 'matters' },
+  custom: {}
 }
 
 /** An effect's sample fields for the gallery's preview only (never put in a clip); a picture effect gets a sample mark. */
@@ -748,7 +817,8 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
     {!g ? <p className="text-2xs text-ink-subtle">Select a graphic on the timeline or in the list to edit it.</p> : <fieldset disabled={disabled} className="space-y-3 border-t border-white/10 pt-3">
       <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">{templateInfo(g.template).label}</p>
         <Button size="sm" variant="ghost" icon={<Trash2 size={12} />} onClick={() => { onChange(removeGraphic(candidate, g.id)); onSelect(null) }}>Remove</Button></div>
-      {g.template === 'fx' ? <div className="flex items-center justify-between gap-2 text-2xs"><span className="text-ink-muted">Effect</span>
+      {g.template === 'custom' ? <CustomGraphicFields outputDir={outputDir} candidate={candidate} graphic={g} disabled={disabled} onChange={(next) => onChange(next)} />
+        : g.template === 'fx' ? <div className="flex items-center justify-between gap-2 text-2xs"><span className="text-ink-muted">Effect</span>
         <Select size="sm" aria-label="Effect" value={g.fields.effect ?? ''} options={EFFECT_OPTIONS} searchable
           onChange={(to) => { if (to !== g.fields.effect) onChange(graphicsWithEffect(candidate, g, to, words)) }} /></div>
         : <div className="flex items-center justify-between gap-2 text-2xs"><span className="text-ink-muted">Type</span>
@@ -770,7 +840,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
       </div>}
       {g.template === 'screen_frame' && <ScreenFields fields={g.fields} outputDir={outputDir} onField={field} />}
       {g.template === 'fx' && <EffectFields fields={g.fields} onField={field} pictures={{ url: (name) => graphicImageUrl(outputDir, name), choose: () => getApi().editor.graphicImage(outputDir) }} />}
-      {templateInfo(g.template).fields.filter((k) => !['effect', 'image', 'shape', 'x', 'y', 'icons', 'style', 'vertical', 'motion', 'video', 'labels', 'dot', 'icon', 'wrong', 'kind'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
+      {templateInfo(g.template).fields.filter((k) => !['effect', 'image', 'shape', 'x', 'y', 'icons', 'style', 'vertical', 'motion', 'video', 'labels', 'dot', 'icon', 'wrong', 'kind', 'comp', 'idea', 'scene'].includes(k)).map((key) => <label key={key} className="editor-label">{fieldLabel(g.template, key)}
         {key === 'items' || key === 'text' || key === 'highlights' || key === 'notes' ? <textarea rows={key === 'items' ? GRAPHIC_ITEM_LIMITS[g.template] ?? MAX_GRAPHIC_ITEMS : key === 'highlights' || key === 'notes' ? 2 : 3} maxLength={key === 'items' ? MAX_GRAPHIC_FIELD_CHARS * 5 : MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`} />
           : <input className="editor-graphic-input" maxLength={MAX_GRAPHIC_FIELD_CHARS} value={g.fields[key] ?? ''} onChange={(e) => field(key, e.target.value)} aria-label={`${templateInfo(g.template).label} ${fieldLabel(g.template, key).toLowerCase()}`}
             placeholder={key === 'value' ? 'e.g. the number said in the clip' : key === 'domain' ? 'e.g. yoursite.com' : key === 'from' ? 'e.g. 12.5' : undefined} />}
@@ -803,7 +873,7 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
         <Segmented label="Shape" size="sm" value={highlightPoint(g.fields).shape} onChange={(shape) => field('shape', shape)} options={[{ value: 'circle', label: 'Circle' }, { value: 'arrow', label: 'Arrow' }]} />
         {(['x', 'y'] as const).map((axis) => <label key={axis} className="editor-label">{axis === 'x' ? 'Across' : 'Down'} <span className="float-right">{Math.round(highlightPoint(g.fields)[axis] * 100)}%</span>
           <input type="range" min={0} max={100} step={1} aria-label={axis === 'x' ? 'Point across' : 'Point down'} value={Math.round(highlightPoint(g.fields)[axis] * 100)} onChange={(e) => field(axis, String(Number(e.target.value) / 100))} /></label>)}
-      </div> : g.template === 'chapter' ? <p className="text-2xs text-ink-subtle">A chapter header sits at the very top. Other graphics stay under it while it shows.</p> : <div className="space-y-1">{g.template !== 'big_words' && <><p className="editor-label">Size</p>
+      </div> : g.template === 'custom' ? null : g.template === 'chapter' ? <p className="text-2xs text-ink-subtle">A chapter header sits at the very top. Other graphics stay under it while it shows.</p> : <div className="space-y-1">{g.template !== 'big_words' && <><p className="editor-label">Size</p>
         <Segmented<GraphicSize> label="Graphic size" size="sm" value={g.size ?? 'card'} onChange={(size) => onChange(updateGraphic(candidate, g.id, { size }))} options={SIZE_OPTIONS} /></>}
         {g.size === 'stage' && g.template !== 'big_words' ? <p className="text-2xs text-ink-subtle">Stage: a big card over the top half of the video. Keep it short, so the speaker shows again.</p> : <>
           <p className="editor-label pt-1">Place</p>
@@ -819,11 +889,11 @@ export function GraphicsInspector({ project, candidate, outputDir, time, selecte
       }} tooltip="Keep this header up until the next chapter header starts, or until the clip ends.">Last until the next chapter</Button>}
       <div className="flex flex-wrap items-center gap-2 text-2xs text-ink-subtle"><span>Starts {clock(g.at_ms)}</span>
         <Button size="sm" variant="ghost" disabled={time < clipStart || time > clipEnd} onClick={() => onChange(updateGraphic(candidate, g.id, { at_ms: Math.round(time) }))}>Start at playhead</Button></div>
-      <div className="flex items-center justify-between gap-2 text-xs"><span>Color</span>
+      {g.template !== 'custom' && <><div className="flex items-center justify-between gap-2 text-xs"><span>Color</span>
         <span className="flex items-center gap-2"><input type="color" className="editor-graphic-color" aria-label="Graphic color" value={(isHexColor(g.fields.color) ? g.fields.color : isDiagram(g.template) ? DIAGRAM_ACCENT : style.color).toLowerCase()}
           onChange={(e) => field('color', e.target.value.toUpperCase())} />
           {isHexColor(g.fields.color) && <Button size="sm" variant="ghost" onClick={() => onChange(updateGraphic(candidate, g.id, { fields: { color: '' } }))}>{isDiagram(g.template) ? 'Use green' : 'Use hook color'}</Button>}</span></div>
-      <p className="text-2xs text-ink-subtle">{isHexColor(g.fields.color) ? 'This graphic has its own color.' : isDiagram(g.template) ? 'Lights up in green. Pick a color to use yours.' : style.color === GRAPHIC_DEFAULT_COLOR ? 'Uses blue. Give the hook a brand color to use yours.' : 'Uses the hook’s brand color.'} {isDiagram(g.template) ? 'Over your video it sits on a blue panel; in a Visual scene with the Solid backdrop it is drawn right on the backdrop.' : 'The font follows the hook.'}</p>
+      <p className="text-2xs text-ink-subtle">{isHexColor(g.fields.color) ? 'This graphic has its own color.' : isDiagram(g.template) ? 'Lights up in green. Pick a color to use yours.' : style.color === GRAPHIC_DEFAULT_COLOR ? 'Uses blue. Give the hook a brand color to use yours.' : 'Uses the hook’s brand color.'} {isDiagram(g.template) ? 'Over your video it sits on a blue panel; in a Visual scene with the Solid backdrop it is drawn right on the backdrop.' : 'The font follows the hook.'}</p></>}
     </fieldset>}
   </section>
 }
