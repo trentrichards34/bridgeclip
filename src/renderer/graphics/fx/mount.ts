@@ -13,7 +13,7 @@
  * the brand font sets only the accent words (spec.accent_font), and every other face is one of the app's bundled fonts. The background stays transparent. Spoken word times (`cue_ms`) become the
  * unit's `cues`, or shift it so its main beat lands on the word (fxTiming).
  */
-import { FX_FIT, FX_MIN_TYPE, fitStepLabels, fxAnchorShift, fxBrand, fxFit, fxGlassLeft, fxMinType, wordMarkBox, type Rect } from './fit'
+import { FX_FIT, FX_MIN_TYPE, fitStepLabels, fxAnchorShift, fxBrand, fxFit, fxGlassLeft, fxMarkerFill, fxMinType, wordMarkBox, type Rect } from './fit'
 import gsap from 'gsap'
 import { CustomEase } from 'gsap/CustomEase'
 import './fx.css'
@@ -112,7 +112,7 @@ export function fxTokens(color: string, font: string, frame = 1080, tone: 'dark'
     : { '--fg': '#F8FAFC', '--muted': 'rgba(226, 232, 240, 0.74)', '--surface': 'rgba(15, 18, 26, 0.9)', '--border': 'rgba(255, 255, 255, 0.16)' }
   return {
     '--bg': 'transparent', ...ink,
-    '--brand': brand, '--accent': brand, '--accent-2': mixRgb(c, light ? [0, 0, 0] : [255, 255, 255], light ? .25 : .38),
+    '--brand': brand, '--brand-deep': light ? brand : fxMarkerFill(c), '--accent': brand, '--accent-2': mixRgb(c, light ? [0, 0, 0] : [255, 255, 255], light ? .25 : .38),
     '--font-display': DISPLAY[font] ?? DISPLAY.clean, '--font-body': '"MG Jakarta", sans-serif', '--font-mono': 'MG Mono, ui-monospace, monospace',
     // Spacing is measured against the whole frame, as in a HyperFrames composition (its theme packs say 1.2cqmin of a
     // 1080-high frame): inside our box `cqmin` would be the band's, and gaps between words would shrink to nothing.

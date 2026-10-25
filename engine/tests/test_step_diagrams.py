@@ -124,8 +124,9 @@ def test_one_diagram_per_section_and_chapters_ride_along():
     assert any(g['template'] == 'chapter' and g['duration_ms'] > 8000 for g in saved)
 
 
-def test_visual_scene_on_the_solid_backdrop_around_each_diagram():
-    diagram = {'template': 'staircase', 'at_ms': 31_000, 'duration_ms': 8_000, 'size': 'stage', 'fields': {}}
+def test_visual_scene_on_the_solid_backdrop_around_each_diagram_that_needs_the_whole_frame():
+    # Five steps or more need the whole frame; fewer sit on the stage with the speaker's card (test_stage_moments_keep_the_speaker).
+    diagram = {'template': 'staircase', 'at_ms': 31_000, 'duration_ms': 8_000, 'size': 'stage', 'fields': {'items': 'a\nb\nc\nd\ne'}}
     card = {'template': 'statement', 'at_ms': 12_000, 'duration_ms': 3_000, 'size': 'stage', 'fields': {}}
     scenes = stage_scenes_for([card, diagram], 4_000, 40_000, 'grid', 'arch')
     assert {s['scene'] for s in scenes} == {'stage', 'visual'}

@@ -115,6 +115,8 @@ export interface FxEffect {
 }
 
 const ACCENT = { accent: 'green' } as const
+/** A highlight marker under white words: a near-solid stroke in the brand color deep enough for white to read on it (mount.ts --brand-deep). */
+const HIGHLIGHT_RULE = (p: string): string => `${p}-em[data-marker-style="highlight"] ${p}-mark path { stroke: var(--brand-deep, var(--brand)) !important; }`
 /** Units that can leave on their own leave upward, easing in (they don't just fade). */
 const FADE = { exit: 'up' } as const
 const choice = (key: string, variable: string, label: string, options: [string, string][]): FxField =>
@@ -264,7 +266,8 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     hold_s: 2, sound: 'whoosh', scale: 1.5, default_ms: 2500, backing: 'glass', aspect: 2.6, cue: { field: 'text', unit: 'word' }, sync_s: .58, accent: '.hs-word-accent' },
   { id: 'per-word-rise', label: 'Word rise', detail: 'Each word rises into place as you say it.', group: 'words',
     fields: [text('text', 'text', 'Words', 'Words as you say them', { required: true, max: 60 }), choice('split', 'split', 'Rises by', [['word', 'Word'], ['char', 'Letter']])],
-    fixed: { ...ACCENT, ...FADE }, css_rules: '#root .pwr-stage:not(.pwr-char) { column-gap: 0; } #root .pwr-stage:not(.pwr-char) > .pwr-unit:not(:last-child) { margin-right: 0.24em; }', jobs: ['reveal'], use_when: 'A key line should land word by word, in time with the voice.', avoid_when: 'The line swaps one word for another (use Word swap).',
+    // White words on the dark glass (the unit's accent color on its words read as a faint light pill).
+    fixed: { ...ACCENT, ...FADE }, css_rules: '#root .pwr-stage { color: var(--fg) !important; } #root .pwr-stage:not(.pwr-char) { column-gap: 0; } #root .pwr-stage:not(.pwr-char) > .pwr-unit:not(:last-child) { margin-right: 0.24em; }', jobs: ['reveal'], use_when: 'A key line should land word by word, in time with the voice.', avoid_when: 'The line swaps one word for another (use Word swap).',
     hold_s: 3, sound: 'none', scale: 1.15, default_ms: 3000, backing: 'glass', aspect: 2.6, cue: { field: 'text', unit: 'word', variable: 'cues' } },
   { id: 'flanking-words', label: 'Flanking words', detail: 'Two huge words around you ("STEP" and "ONE"), each landing as you say it.', group: 'words', own: true,
     fields: [list('words', 'words', 'Two words as said (one per line)', 'Step\nOne', '|', { required: true, max: 12 }),
@@ -284,6 +287,10 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     cue: { field: 'options', unit: 'item', variable: 'cues' } },
   { id: 'text-stagger', label: 'Blur in', detail: 'Words sharpen in from a soft blur, one after another.', group: 'words',
     fields: [text('text', 'text', 'Words', 'Your words here', { required: true, max: 50 })], fixed: { tone: 'paper', accent: 'green', size: 112 },
+    // Its words wrap centered inside the box (left-aligned, the glass measured at one place and the words drew at another).
+    // Its shimmer passes and ends on the plain words (its gradient's last window held the accent: words at rest read as
+    // a faint light color).
+    css_rules: '.hf-transition-text-stagger { justify-content: center; text-align: center; max-width: 100%; margin: 0 auto; } .hf-transition-text-stagger span { background-image: linear-gradient(90deg, var(--hf-stagger-ink) 0%, var(--hf-stagger-ink) 30%, var(--hf-stagger-accent) 44%, var(--hf-stagger-ink) 56%, var(--hf-stagger-ink) 100%) !important; }',
     jobs: ['reveal'], use_when: 'A calm line or a title for a section.', avoid_when: 'The moment needs energy (use Headline slam).',
     hold_s: 2.5, sound: 'none', default_ms: 3000, backing: 'glass', aspect: 2.6 },
   { id: 'line-swap', label: 'Line swap', detail: 'One line exits up as the answer slides in, a word underlined.', group: 'words',
@@ -325,7 +332,7 @@ export const FX_EFFECTS: readonly FxEffect[] = [
   { id: 'marker-highlight', label: 'Marker', detail: 'A line with one word highlighted, circled or underlined by marker.', group: 'words',
     fields: [text('text', 'text', 'Line', 'This is the part that matters', { required: true, max: 60 }), text('word', 'emphasis_word', 'Word to mark (from the line)', 'matters', { required: true, max: 24 }),
       choice('style', 'style', 'Mark', [['highlight', 'Highlight'], ['circle', 'Circle'], ['underline', 'Underline'], ['scribble', 'Scribble']])],
-    fixed: { ...ACCENT, ...FADE }, css_rules: '.mh-text { text-wrap: balance; }', jobs: ['emphasize'], use_when: 'A line has one word that carries it.', avoid_when: 'Every word matters equally.',
+    fixed: { ...ACCENT, ...FADE }, css_rules: `.mh-text { text-wrap: balance; } ${HIGHLIGHT_RULE('.mh')}`, jobs: ['emphasize'], use_when: 'A line has one word that carries it.', avoid_when: 'Every word matters equally.',
     hold_s: 3, sound: 'none', scale: 1.2, default_ms: 3500, backing: 'glass', aspect: 2.6, cue: { field: 'word', unit: 'word' }, sync_s: .9, accent: '.mh-em-text',
     word_mark: { host: '.mh-em', word: '.mh-em-text', mark: '.mh-mark' } },
   { id: 'vox-annotate', label: 'Annotate', detail: 'A word in a line is marked, with a short note drawn beside it.', group: 'words',
@@ -336,7 +343,7 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     // The note goes under the marked word, from its first letter, in the body face at a size that reads on a phone (the
     // unit's small mono note sat above the line, where its band cut it off); nothing clips it, so the fit measures the
     // note too.
-    css_rules: '#root { --va-font-size: min(8.6cqw, 14cqh) !important; } #root, .va-clip { overflow: visible !important; } .va-text { padding-bottom: 0.62em; } .va-anno { bottom: auto !important; top: 100% !important; left: 0 !important; width: auto !important; height: auto !important; } .va-conn { display: none !important; } .va-note { position: relative !important; display: block; top: 0.12em !important; right: auto !important; left: 0 !important; bottom: auto !important; max-width: none !important; font-family: var(--font-body) !important; font-size: 0.48em !important; font-weight: 700 !important; letter-spacing: 0 !important; line-height: 1.15 !important; text-align: left !important; }',
+    css_rules: HIGHLIGHT_RULE('.va') + ' #root { --va-font-size: min(8.6cqw, 14cqh) !important; } #root, .va-clip { overflow: visible !important; } .va-text { padding-bottom: 0.62em; } .va-anno { bottom: auto !important; top: 100% !important; left: 0 !important; width: auto !important; height: auto !important; } .va-conn { display: none !important; } .va-note { position: relative !important; display: block; top: 0.12em !important; right: auto !important; left: 0 !important; bottom: auto !important; max-width: none !important; font-family: var(--font-body) !important; font-size: 0.48em !important; font-weight: 700 !important; letter-spacing: 0 !important; line-height: 1.15 !important; text-align: left !important; }',
     jobs: ['emphasize'], use_when: 'A phrase needs an aside or a short explanation.', avoid_when: 'Plain emphasis is enough (use Marker).',
     // Its sizes are set above (the note is sized against the line: raising each on its own broke the line apart).
     own_type: true, hold_s: 3.5, sound: 'none', default_ms: 4000, backing: 'glass', aspect: 2.4, cue: { field: 'word', unit: 'word' }, sync_s: .9, accent: '.va-em-text',

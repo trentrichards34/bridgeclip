@@ -626,7 +626,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       setSession(s); sessionRef.current = s; setUndo([]); setRedo([])
     } catch (e) { setError(errorMessage(e)) } finally { setBusy(null) }
   }
-  // My motion library's busy and error state (hooks stay above the early returns below).
+  // My motion library inserts (declared before the early returns: hooks keep their order).
   const [libraryBusy, setLibraryBusy] = useState<string | null>(null)
   const [libraryError, setLibraryError] = useState<string | null>(null)
   if (session?.mediaMissing) return <div className="p-8 space-y-4">{leading}

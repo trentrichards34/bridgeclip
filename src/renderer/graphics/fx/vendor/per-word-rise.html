@@ -1,7 +1,7 @@
 <!--
   Vendored from HyperFrames (https://github.com/heygen-com/hyperframes), registry/components/per-word-rise/per-word-rise.html at 2ed882c.
   Copyright 2026 HeyGen, Inc. Licensed under the Apache License, Version 2.0 (see LICENSE and NOTICE in this folder).
-  Changed by CreatorClips: the GSAP CDN <script> tags are replaced by the npm package bundled with the app. Fonts are mapped and scripts scoped at build time (src/shared/fx-html.ts).
+  Changed by CreatorClips: the GSAP CDN <script> tags are replaced by the npm package bundled with the app; each word lands in about 10 frames from a short rise and a light blur. Fonts are mapped and scripts scoped at build time (src/shared/fx-html.ts).
 -->
 <!doctype html>
 <!--
@@ -189,7 +189,8 @@
 
             var IN_BASE = 1.45;
             var OUT_BASE = exit === "none" ? 0 : 0.5;
-            var RISE_BASE = 0.74;
+            // CreatorClips: each word lands in about 10 frames (a word sitting half see-through read as ghostly).
+            var RISE_BASE = 0.3;
             var STAGGER_BASE = 0.62;
             var EXIT_STAGGER_BASE = 0.14;
             var duration = Math.max(0.001, parseFloat(root.dataset.duration || "3.5"));
@@ -260,7 +261,7 @@
             var HOLD = Math.max(0, duration - (HOLD_START + OUT));
             var OUT_START = HOLD_START + HOLD;
 
-            gsap.set(units, { opacity: 0, y: "8cqh", "--pwr-blur": "1.4cqh" });
+            gsap.set(units, { opacity: 0, y: "5cqh", "--pwr-blur": "0.4cqh" });
 
             var tl = gsap.timeline({ paused: true });
 

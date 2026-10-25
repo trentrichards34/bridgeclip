@@ -1,7 +1,7 @@
 <!--
   Vendored from HyperFrames (https://github.com/heygen-com/hyperframes), registry/components/line-swap/line-swap.html at 2ed882c.
   Copyright 2026 HeyGen, Inc. Licensed under the Apache License, Version 2.0 (see LICENSE and NOTICE in this folder).
-  Changed by CreatorClips: the GSAP CDN <script> tags are replaced by the npm package bundled with the app; the swap is clean: each line moves a short way and fades, and the second line comes in only once the first is gone (no frame shows both). Fonts are mapped and scripts scoped at build time (src/shared/fx-html.ts).
+  Changed by CreatorClips: the GSAP CDN <script> tags are replaced by the npm package bundled with the app; the swap is clean: each line moves a short way and fades, and the second line comes in only once the first is gone (no frame shows both); each line is in within about 10 frames. Fonts are mapped and scripts scoped at build time (src/shared/fx-html.ts).
 -->
 <!doctype html>
 <!--
@@ -227,11 +227,12 @@
             root.style.setProperty("--ls-font-size", "min(" + fitted.toFixed(3) + "cqw, 16cqh)");
 
             // RETIME RANGE: fixed phases; HOLD is the only elastic span.
-            var IN_A_BASE = 0.5;
+            // CreatorClips: each line is in, fully opaque, in about 10 frames.
+            var IN_A_BASE = 0.34;
             var EXIT_A_BASE = 0.3;
             // CreatorClips: line_b starts once line_a is gone (no frame shows both lines).
             var LAG_BASE = 0.3; // line_b starts this long after the beat
-            var IN_B_BASE = 0.5;
+            var IN_B_BASE = 0.34;
             var UL_BEAT_BASE = 0.15;
             var UL_BASE = underlineEl ? 0.45 : 0;
             var OUT_BASE = exit === "none" ? 0 : 0.45;
