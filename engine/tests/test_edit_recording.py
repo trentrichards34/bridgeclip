@@ -306,7 +306,8 @@ def test_a_render_cuts_on_words_frames_to_9_16_mixes_sound_effects_and_normalize
     pop_t = timed[1][1] / 1000 + 0.5
     later = timed[-3][1] / 1000
     with_card, without = frame_at(out, pop_t, str(tmp_path / "a.png")), frame_at(out, later, str(tmp_path / "b.png"))
-    region = (slice(420, 560), slice(380, 700))
+    # (Under the floating hook, which is set big whatever look was saved: rendering_service.FLOATING_FONT_SIZES.)
+    region = (slice(470, 590), slice(380, 700))
     assert with_card[region].mean() > without[region].mean() + 40
     # Saved for the Library: job_output.json, and the parts to re-make it.
     job = json.load(open(os.path.join(root, "job_output.json")))

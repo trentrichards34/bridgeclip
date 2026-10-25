@@ -9,8 +9,8 @@
  * so the offscreen render (graphics-render.ts) and the editor's preview get the same pixels for the same time.
  *
  * The member's look is mapped onto the unit's theme tokens (--brand / --accent / --fg …, themes/CONTRACT.md): the
- * brand color is the accent, ink is light over the video, the display face follows the hook's font, and every other
- * face is one of the app's bundled fonts. The background stays transparent. Spoken word times (`cue_ms`) become the
+ * brand color is the accent, ink is light over the video, the display face is a bold sans (or the graphic's own font),
+ * the brand font sets only the accent words (spec.accent_font), and every other face is one of the app's bundled fonts. The background stays transparent. Spoken word times (`cue_ms`) become the
  * unit's `cues`, or shift it so its main beat lands on the word (fxTiming).
  */
 import { FX_FIT, FX_MIN_TYPE, fitStepLabels, fxAnchorShift, fxBrand, fxFit, fxGlassLeft, fxMinType, type Rect } from './fit'
@@ -77,6 +77,16 @@ const DISPLAY: Record<string, string> = {
  * with the units' tight tracking the words ran together. This restores Inter's word space.
  */
 export const WORD_SPACING = '0.08em'
+/** The brand font for accent words (spec.accent_font): the hook's own face; the "sans + italic serif" look's italic serif. */
+const ACCENT_FACE: Record<string, { family: string; style: string }> = {
+  serif: { family: '"MG Fraunces", Georgia, serif', style: 'normal' }, condensed: { family: '"MG Anton", Impact, sans-serif', style: 'normal' },
+  marker: { family: '"MG Caveat Brush", cursive', style: 'normal' }, sans_serif_accent: { family: '"MG Instrument Serif", Georgia, serif', style: 'italic' }
+}
+/** The CSS that sets an effect's accent words (its catalog `accent` selector) in the brand font, or ''. */
+export function accentCss(selector: string | undefined, accentFont: string | undefined): string {
+  const face = accentFont ? ACCENT_FACE[accentFont] : undefined
+  return selector && face ? `${selector} { font-family: ${face.family} !important; font-style: ${face.style} !important; }` : ''
+}
 const FONT_LOADS = ['800 40px "MG Jakarta"', '600 40px "MG Jakarta"', '400 40px "MG Jakarta"', '900 40px "MG Montserrat"', '40px "MG Anton"', '40px "MG Fraunces"', '40px "MG Caveat Brush"',
   'italic 40px "MG Instrument Serif"', '40px "MG Instrument Serif"', '400 40px "MG Mono"', '700 40px "MG Mono"', '800 40px "MG Poppins"']
 
@@ -178,8 +188,8 @@ export function inkBox(root: ShadowRoot, stage: HTMLElement): Rect | null {
 }
 
 /**
- * Raises every word set smaller than `min` frame pixels (once the unit is drawn at `scale`) to `min`, at most 2.4×
- * its own size. Words in pictures and SVG drawings keep theirs. True when any changed.
+ * Raises every word set smaller than `min` frame pixels (once the unit is drawn at `scale`) to `min`, at most 3× its
+ * own size (over rounds: fxFit may draw it smaller once its words wrap, and it is raised again). Words in pictures and SVG drawings keep theirs. True when any changed.
  */
 export function raiseType(root: ShadowRoot, stage: HTMLElement, min: number, scale: number): boolean {
   const k = stage.getBoundingClientRect().width / Math.max(1, stage.offsetWidth) || 1
@@ -194,7 +204,9 @@ export function raiseType(root: ShadowRoot, stage: HTMLElement, min: number, sca
     const size = parseFloat(getComputedStyle(el).fontSize)
     // Drawn size: its font, any transform of the unit's own around it, and the fit.
     const drawn = size * (el.getBoundingClientRect().width / el.offsetWidth / k) * scale
-    if (size > 0 && drawn > 0 && drawn < min * .97) raise.push([el, size * Math.min(2.4, min / drawn)])
+    // Never past 3x the unit's own size (its first size is kept on the element across rounds).
+    const own = parseFloat(el.dataset.ccOwnFont ?? '') || size
+    if (size > 0 && drawn > 0 && drawn < min * .97 && size < own * 3 - .05) { el.dataset.ccOwnFont = String(own); raise.push([el, Math.min(own * 3, size * min / drawn)]) }
   }
   for (const [el, px] of raise) el.style.setProperty('font-size', `${px.toFixed(1)}px`, 'important')
   return raise.length > 0
@@ -291,6 +303,7 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
     shadow.innerHTML = `<style>:host, #root, [data-composition-id] { ${tokenCss} } :host { all: initial; position: absolute; inset: 0; display: block; container-type: size; }
       :where(#root, #root *) { word-spacing: ${WORD_SPACING}; }
       ${effect.css_rules ?? ''}
+      ${accentCss(effect.accent, spec.accent_font)}
       .cc-fx-snippet { position: absolute; inset: 0; display: grid; place-items: center; container-type: size; overflow: visible; font-family: var(--font-body); color: var(--fg); }
       ${unit.styles}
       .cc-media { position: absolute; inset: 0; overflow: hidden; }
@@ -371,11 +384,25 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
     // Sized to its box: measured once it has settled (most of the way through, before it leaves), the same in the
     // editor and the bake. Photo effects already take their picture's shape; full-frame ones cover the frame.
     if (effect.frame !== 'full' && !effect.fit_media) {
-      const settled = Math.max(0, Math.min(timing.unit_ms * .7, timing.unit_ms - 450))
+      const settled = Math.max(0, Math.min(timing.unit_ms * .8, timing.unit_ms - 500))
       Object.assign(stage.style, { visibility: 'visible', opacity: '0', transform: 'none' })
-      setClock(settled)
+      // Measured at two moments (mid-way and settled): a unit whose words change (a line swapped for another, a number
+      // counting) is fitted to all of them, not only to the last.
+      const measure = (): Rect | null => {
+        let out: Rect | null = null
+        for (const at of [Math.round(timing.unit_ms * .45), settled]) {
+          setClock(at)
+          const r = inkBox(shadow, stage)
+          if (!r) continue
+          if (!out) { out = r; continue }
+          const x = Math.min(out.x, r.x), y = Math.min(out.y, r.y)
+          out = { x, y, w: Math.max(out.x + out.w, r.x + r.w) - x, h: Math.max(out.y + out.h, r.y + r.h) - y }
+        }
+        setClock(settled)
+        return out
+      }
       const size = spec.size === 'stage' || spec.size === 'compact' ? spec.size : 'card'
-      let ink = inkBox(shadow, stage)
+      let ink = measure()
       const m = Math.min(spec.width, spec.height), glass = stage.classList.contains('fx-glass')
       const pad = { x: glass ? m * .045 : 0, y: glass ? m * .035 : 0 }
       const area = { w: stage.offsetWidth, h: stage.offsetHeight }
@@ -385,8 +412,11 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
       // Small labels (a chart's axis, a chip, a byline) are set bigger until they read on a phone, then it fits again.
       // Words effects read on a phone: a short line at a cap height of about 54 px (fxMinType).
       const said = (spec.fields.text ?? '').trim().split(/\s+/).filter(Boolean).length
-      if (ink && !effect.own_type && raiseType(shadow, stage, fxMinType(size, effect.group, said) * m / 1080, fitted.scale)) {
-        ink = inkBox(shadow, stage)
+      // Raised for the scale it is drawn at, fitted again (longer words wrap, and the fit may scale it down): again until
+      // the words keep their minimum as drawn (a few rounds at most; never past 3x their own size).
+      const min = fxMinType(size, effect.group, said) * m / 1080
+      for (let round = 0; round < 4 && ink && !effect.own_type && raiseType(shadow, stage, min, fitted.scale); round++) {
+        ink = measure()
         fitted = fxFit(ink, area, size, effect.scale ?? 1, pad)
       }
       setClock(0)

@@ -88,7 +88,9 @@ test('text templates read on a phone: big type, wide cards, one look, never an e
     const least = words <= 6 ? 75 : 60
     assert.ok(r.minFont >= least - 1, `${where}: type ${r.minFont}px (at least ${least})`)
     // Most of the frame: 70% as a card, 88% on the stage.
-    assert.ok(r.width >= (r.size === 'stage' ? .86 : .69), `${where}: ${Math.round(r.width * 100)}% wide`)
+    // (A Before & after's two cards stack taller than a card band: the safe-area check draws it a little smaller so it
+    // stays inside its band, never over the captions.)
+    assert.ok(r.width >= (r.template === 'before_after' ? (r.size === 'stage' ? .8 : .6) : r.size === 'stage' ? .86 : .69), `${where}: ${Math.round(r.width * 100)}% wide`)
     // Never a card on screen without its words, as it comes in or once it holds.
     assert.ok(!r.early.some(Boolean) && !r.empty, `${where}: an empty card ${JSON.stringify(r.early)}`)
     // The one look: light ink on dark glass for the white-card templates in the dark theme.

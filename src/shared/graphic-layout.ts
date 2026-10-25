@@ -46,6 +46,8 @@ export function hookShare(candidate: Pick<CandidateEdit, 'hook'>, aspect: Editor
   if (aspect !== '9:16' || !hook || hook.look.look === 'none' || hook.text.trim().split(/\s+/).length < 2) return 0
   // Key words in color is big: its lines (about 16 characters each) stand about twice as tall.
   if (hook.look.look === 'floating' && hook.look.textBg === 'highlight') return Math.min(.34, .12 + Math.min(3, Math.ceil(hook.text.length / 16)) * .068)
+  // Floating text is set big whatever look was saved (FLOATING_FONT_SIZES): about 20 characters a line, each ~6% tall.
+  if (hook.look.look === 'floating') return Math.min(.3, .09 + Math.min(3, Math.ceil(hook.text.length / 20)) * .0585)
   const lines = Math.min(3, Math.ceil(hook.text.length / 24))
   return Math.min(.3, Math.max(.17, .105 + lines * .038))
 }
@@ -80,6 +82,9 @@ export function chapterBox(frame: Pick<GraphicFrame, 'aspect' | 'handle'>): { to
   return { top, bottom: top + (wide ? .16 : frame.aspect === '1:1' ? .15 : CHAPTER_HEIGHT) }
 }
 
+/** The least height (share of the frame) a card's band gets when the frame has a free space that tall. */
+export const CARD_MIN_BAND = .22
+
 /** On a 9:16 frame a stage-size graphic ends here: the top half is the stage, the speaker sits below (scenes.ts). */
 export const STAGE_BOTTOM = STAGE_LAYOUT.stageBottom
 
@@ -110,7 +115,9 @@ export function graphicBox(placement: GraphicPlacement, frame: GraphicFrame, siz
     free = roomy(clear) || !roomy(over) ? (clear.length ? clear : over.length ? over : free) : over
   }
   if (!free.length) free = [[topSafe, Math.max(topSafe + .1, bottomSafe)]]
-  const big = free.filter(([a, b]) => b - a >= Math.min(h, .15))
+  // A card needs a band tall enough for its words at their minimum size on a phone (about 22% of a 9:16 frame): a
+  // sliver between the hook and the captions would shrink it, so a taller free space is taken instead when there is one.
+  const big = free.filter(([a, b]) => b - a >= Math.min(h, size === 'compact' ? .15 : CARD_MIN_BAND))
   const pool = big.length ? big : free
   if (size === 'stage') {
     if (frame.aspect !== '9:16') { const [a, b] = [...pool].sort((x, y) => (y[1] - y[0]) - (x[1] - x[0]))[0]; return { top: a, bottom: b } }
@@ -139,15 +146,26 @@ export function graphicBandSize(graphic: Pick<EditorGraphic, 'template' | 'size'
   return graphic.template === 'big_words' || graphic.template === 'takeover' ? 'stage' : graphic.size
 }
 
-/** A graphic's brand color and font: its own color field, else the hook's brand color, else a calm blue; the hook's font. */
-export function graphicStyle(candidate: Pick<CandidateEdit, 'hook'>, graphic?: Pick<EditorGraphic, 'fields'> & { template?: string }): { color: string; font: string } {
+/** A graphic's brand color and fonts: its own color field, else the hook's brand color, else a calm blue; fonts: graphicFonts. */
+export function graphicStyle(candidate: Pick<CandidateEdit, 'hook'>, graphic?: Pick<EditorGraphic, 'fields'> & { template?: string }): { color: string; font: string; accent_font?: string } {
   const own = graphic?.fields.color
   const look = candidate.hook?.look
   // Diagrams light up in green unless the graphic has its own color (the member can pick the brand color).
   const color = isHexColor(own) ? own.toUpperCase() : graphic?.template && isDiagram(graphic.template) ? DIAGRAM_ACCENT
     : look?.look === 'brand' && isHexColor(look.color) ? look.color.toUpperCase() : GRAPHIC_DEFAULT_COLOR
-  const font = graphicOwnFont(graphic) ?? (look && HEADLINE_FONTS.some((f) => f.id === look.font) ? look.font : 'clean')
-  return { color, font }
+  return { color, ...graphicFonts(look, graphic) }
+}
+
+/**
+ * A graphic's fonts. Its words read on a phone first: the main text is a bold sans ('clean') at a readable weight,
+ * whatever the hook's font, unless the member picked a font for this graphic (its `font` field). The brand font (the
+ * hook's, when it isn't the plain sans) is kept for accent words only (`accent_font`: a marked word, a word in color).
+ */
+export function graphicFonts(look: { font?: string } | null | undefined, graphic?: Pick<EditorGraphic, 'fields'>): { font: string; accent_font?: string } {
+  const own = graphicOwnFont(graphic)
+  if (own) return { font: own }
+  const brand = look?.font && look.font !== 'clean' && HEADLINE_FONTS.some((f) => f.id === look.font) ? look.font : null
+  return brand ? { font: 'clean', accent_font: brand } : { font: 'clean' }
 }
 
 /** A graphic's own font (its `font` field, one of the hook fonts), or null: it follows the hook. */

@@ -37,6 +37,14 @@ export function isHeadlineHideAfter(value: unknown): value is HeadlineHideAfter 
 export const DEFAULT_HEADLINE_LOOK: HeadlineLook = { look: 'white', color: '#FFFFFF', font: 'clean' }
 export const DEFAULT_BRAND_COLOR = '#2563EB'
 
+/**
+ * The hook look offered first when a member sets up a saved look: 'Key words in color' (big bold words on a white box,
+ * the key words in italic on a box in their color), the look of the reference reels' hooks.
+ */
+export function recommendedHookLook(color?: string): HeadlineLook {
+  return { look: 'floating', font: 'clean', color: isHexColor(color) && color.toUpperCase() !== '#FFFFFF' ? color.toUpperCase() : DEFAULT_BRAND_COLOR, textBg: 'highlight' }
+}
+
 export const HEADLINE_LOOKS: readonly { id: HeadlineLookStyle; label: string; hint: string }[] = [
   { id: 'white', label: 'White bar', hint: 'Black text on a white bar. The original look.' },
   { id: 'black', label: 'Black bar', hint: 'White text on a black bar.' },
@@ -208,6 +216,17 @@ export function headlineLookForEngine(look: HeadlineLook | undefined): HeadlineL
 /** The engine's sizes for the hook text (HEADLINE_FONT_SIZES at a 1080x1920 frame), largest first. */
 export const HEADLINE_FONT_SIZES = [60, 54, 48, 42]
 export const HEADLINE_MAX_LINES = 3
+/**
+ * Floating hook text (no bar) is the first thing read on a phone: whatever look the member saved (a small label on a
+ * dark box, outlined text), it is set at least this big, in the member's own font, color and box (the engine's
+ * FLOATING_FONT_SIZES). 'Key words in color' has its own, bigger sizes (HIGHLIGHT).
+ */
+export const FLOATING_FONT_SIZES = [96, 88, 80, 74, 68, 64]
+
+/** The sizes the engine tries for this look's hook text, largest first. */
+export function headlineSizes(look: Pick<HeadlineLook, 'look'>): readonly number[] {
+  return look.look === 'floating' ? FLOATING_FONT_SIZES : HEADLINE_FONT_SIZES
+}
 
 /** Greedy word wrap to maxWidth (rendering_service._headline_lines). */
 export function headlineLines(text: string, measure: (line: string) => number, maxWidth: number): string[] {

@@ -22,6 +22,9 @@ import { ICONS } from './icons'
 import { bigWordsTemplate } from './big-words'
 import { takeoverTemplate } from './takeover'
 import { mountEffect } from './fx/mount'
+import { paintOf, unionRect } from './safe-area'
+import { SAFE_EXEMPT, safeBounds, safeFallback, safeFix, type SafeRect } from '../../shared/graphic-safe-area'
+import { fxEffect } from '../../shared/fx-catalog'
 import { mountBackdrop } from './backdrop'
 import { ctaTemplate } from './cta'
 import { chapterTemplate, compareMarksTemplate, funnelTemplate, growthTemplate, ideaHubTemplate, journeyTemplate, staircaseTemplate } from './diagrams'
@@ -233,7 +236,71 @@ export function mountGraphic(host: HTMLElement, spec: GraphicRenderSpec): Mounte
     const inner = mountContent(host, spec)
     return { ready: inner.ready, seek: (ms) => { back.seek(ms); inner.seek(ms) }, destroy: () => { inner.destroy(); back.destroy() } }
   }
-  return mountContent(host, spec)
+  return mountSafe(host, spec)
+}
+
+/** When a graphic is measured for the safe area: its settled frames (after it arrives, before it leaves). */
+export function settledTimes(duration: number): number[] {
+  const last = Math.max(0, duration - 380)
+  return [.45, .62, .8].map((k) => Math.round(Math.min(last, duration * k)))
+}
+
+/**
+ * The graphic, checked against the frame's safe area and its band once it is drawn (shared/graphic-safe-area.ts):
+ * what it paints over its settled frames is measured; if it spills it is moved back in (drawn smaller only if it
+ * must, never below the minimum), and an effect that still spills, or has words cut off inside it, is swapped for
+ * a simpler graphic with the same words. The preview and the bake run the same check.
+ */
+function mountSafe(host: HTMLElement, spec: GraphicRenderSpec): MountedGraphic {
+  if (SAFE_EXEMPT.includes(spec.template) || (spec.template === 'fx' && fxEffect(spec.fields.effect)?.frame === 'full')) return mountContent(host, spec)
+  const layer = el('div', 'mg-safe', host)
+  Object.assign(layer.style, { position: 'absolute', left: '0', top: '0', width: `${spec.width}px`, height: `${spec.height}px`, transformOrigin: '0 0', pointerEvents: 'none' })
+  let inner = mountContent(layer, spec)
+  let alive = true
+  const measure = (g: MountedGraphic): { box: SafeRect | null; clipped: boolean } => {
+    const frame = layer.getBoundingClientRect()
+    const k = spec.width / Math.max(1, frame.width)
+    let box: SafeRect | null = null
+    let clipped = false
+    for (const t of settledTimes(spec.duration_ms)) {
+      g.seek(t)
+      const paint = paintOf(layer)
+      clipped ||= paint.clipped
+      if (paint.box) box = unionRect(box, { x: (paint.box.x - frame.left) * k, y: (paint.box.y - frame.top) * k, w: paint.box.w * k, h: paint.box.h * k })
+    }
+    return { box, clipped }
+  }
+  const ready = (async (): Promise<void> => {
+    await inner.ready
+    if (!alive) return
+    const bounds = safeBounds(spec)
+    let { box, clipped } = measure(inner)
+    let fix = safeFix(box, bounds)
+    if (fix.overflow || clipped) {
+      const simpler = safeFallback(spec)
+      if (simpler) {
+        // A simpler graphic with the same words (a Statement or Stat card fits its words to its band).
+        inner.destroy()
+        inner = mountContent(layer, simpler)
+        await inner.ready
+        if (!alive) return
+        ;({ box, clipped } = measure(inner))
+        fix = safeFix(box, bounds)
+      }
+    }
+    if (fix.scale !== 1 || fix.dx || fix.dy) {
+      // Scaled around the paint's center, then moved inside (frame pixels).
+      const cx = box ? box.x + box.w / 2 : 0, cy = box ? box.y + box.h / 2 : 0
+      layer.style.transform = `translate(${fix.dx + cx * (1 - fix.scale)}px, ${fix.dy + cy * (1 - fix.scale)}px) scale(${fix.scale})`
+    }
+    layer.dataset.safe = fix.overflow ? 'overflow' : fix.scale !== 1 || fix.dx || fix.dy ? 'moved' : 'ok'
+    inner.seek(-1)
+  })()
+  return {
+    ready,
+    seek: (ms) => inner.seek(ms),
+    destroy: () => { alive = false; inner.destroy(); layer.remove() }
+  }
 }
 
 function mountContent(host: HTMLElement, spec: GraphicRenderSpec): MountedGraphic {

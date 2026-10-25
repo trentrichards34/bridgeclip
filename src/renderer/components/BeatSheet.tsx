@@ -22,7 +22,7 @@ import { MAX_EDIT_GRAPHICS, REEL_GRAPHIC_TEMPLATES, editGraphicFrame, reelGraphi
 import { fxEffect } from '../../shared/fx-catalog'
 import { prefillEffect } from '../../shared/graphic-prefill'
 import { STAGE_LAYOUT, SOLID_BACKDROP_COLOR, autoSceneLook } from '../../shared/scenes'
-import { isHexColor } from '../../shared/headline-look'
+import { HEADLINE_FONTS, HIGHLIGHT_PHRASE_FAMILY, TEXT_BOX, headlineBarColor, headlineTextBox, headlineTextColor, highlightColors, highlightSplit, isHexColor, type HeadlineLook } from '../../shared/headline-look'
 import type { BrandIdentity } from '../../shared/remix'
 import { GraphicView, fieldLabel, wordsAtPlayhead } from './ClipGraphics'
 import { GraphicGallery } from './GraphicGallery'
@@ -264,9 +264,32 @@ export function BeatStill({ beat, frame, loading, look, brand, images, width, ti
     {loading && !frame && !video && <div className="absolute inset-0 flex items-center justify-center bg-white/[0.04]" aria-label="Making the still"><Loader2 className="h-4 w-4 animate-spin text-ink-subtle" aria-hidden /></div>}
     {spec && at !== null && at >= 0 && <div className="pointer-events-none absolute inset-0" aria-hidden><GraphicView spec={spec} time={at} width={width} /></div>}
     {image && at !== null && at >= 0 && <img src={localFileUrl(image.path)} alt="" className="absolute left-1/2 top-1/2 w-1/2 -translate-x-1/2 -translate-y-1/2 rounded-lg shadow-lg" />}
-    {beat.hookText && look.headlineLook.look !== 'none' && <p className="absolute inset-x-[7%] top-[5%] text-center font-display text-[11px] font-bold leading-tight text-white [text-shadow:0_1px_4px_rgb(0_0_0/0.8)]"
-      style={look.headlineLook.look === 'brand' && isHexColor(look.headlineLook.color) ? { color: look.headlineLook.color } : undefined}>{beat.hookText}</p>}
+    {beat.hookText && look.headlineLook.look !== 'none' && <StillHook text={beat.hookText} look={look.headlineLook} width={width} />}
     {beat.caption && <p className="absolute inset-x-[8%] text-center text-[10px] font-extrabold uppercase leading-tight text-white [text-shadow:0_1px_3px_rgb(0_0_0/0.9)]" style={{ top: `${(beat.scene === 'visual' ? 0.82 : 0.75) * 100}%` }}>{beat.caption}</p>}
+  </div>
+}
+
+/**
+ * The hook text on a still, at the size the engine draws it (floating text: at least the floating sizes, whatever look
+ * was saved), in the look's font, box and colors: so the beat sheet shows how big it really is.
+ */
+function StillHook({ text, look, width }: { text: string; look: HeadlineLook; width: number }): React.JSX.Element {
+  const font = HEADLINE_FONTS.find((f) => f.id === look.font) ?? HEADLINE_FONTS[0]
+  const words = font.upper ? text.toUpperCase() : text
+  const size = width * (look.look === 'floating' ? 0.08 : 0.052) * (font.scale ?? 1)
+  if (look.look === 'floating' && look.textBg === 'highlight') {
+    const colors = highlightColors(look), { lead, phrase } = highlightSplit(words)
+    return <div className="absolute inset-x-[5%] top-[5%] flex flex-col items-center text-center" style={{ lineHeight: 1.12 }} data-testid="beat-hook">
+      {lead && <span style={{ background: colors.leadBg, color: colors.leadInk, fontFamily: font.family, fontWeight: 800, fontSize: size * 0.95, padding: `0 ${size * 0.3}px`, borderRadius: size * 0.25 }}>{lead}</span>}
+      <span style={{ background: colors.phraseBg, color: colors.phraseInk, fontFamily: HIGHLIGHT_PHRASE_FAMILY, fontStyle: 'italic', fontSize: size * 1.15, padding: `0 ${size * 0.3}px`, borderRadius: size * 0.25 }}>{phrase}</span>
+    </div>
+  }
+  const bar = headlineBarColor(look), box = headlineTextBox(look)
+  const ink = headlineTextColor(look)
+  return <div className="absolute inset-x-0 top-0 text-center" style={{ background: bar ?? 'transparent', padding: `${width * 0.055}px ${width * 0.06}px ${width * 0.03}px` }} data-testid="beat-hook">
+    <span style={{ fontFamily: font.family, fontWeight: font.weight ?? 800, fontSize: size, lineHeight: 1.22, color: ink,
+      ...(box ? { background: box.opacity < 1 ? `rgb(0 0 0 / ${box.opacity})` : box.color, padding: `0 ${TEXT_BOX.padX}em`, borderRadius: `${TEXT_BOX.radius}em`, boxDecorationBreak: 'clone', WebkitBoxDecorationBreak: 'clone' }
+        : bar ? {} : { textShadow: '0 1px 4px rgb(0 0 0 / 0.8)' }) }}>{words}</span>
   </div>
 }
 

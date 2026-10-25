@@ -7,7 +7,7 @@ import {
 } from '../../shared/brand-kit'
 import { CAPTION_PRESETS, DEFAULT_CAPTION_PRESET } from '../../shared/caption-presets'
 import {
-  DEFAULT_BRAND_COLOR, DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, headlineTextBg, isHexColor,
+  DEFAULT_BRAND_COLOR, DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, headlineTextBg, isHexColor, recommendedHookLook,
   type HeadlineFont, type HeadlineLook, type HeadlineLookStyle, type HeadlineTextBg
 } from '../../shared/headline-look'
 import { IMAGE_CTA_SECONDS, type CtaSummary } from '../../shared/ctas'
@@ -328,9 +328,12 @@ function LookEditor({ brand, isDefault, firstLook, onSaved, onCancelNew, onDelet
     } catch (err) { setError(errorMessage(err, 'That logo could not be used.')) }
   }
   const setHook = (patch: Partial<HeadlineLook>): void => {
-    const base = hook ?? { ...DEFAULT_HEADLINE_LOOK }
+    // A look set up for the first time starts from the recommended hook ('Key words in color').
+    const base = hook ?? recommendedHookLook(draft.color)
     const next = { ...base, ...patch }
     if (next.look !== 'floating') delete next.textBg
+    // Floating text picked from a bar starts as 'Key words in color' (big and readable on a phone).
+    else if (patch.look === 'floating' && base.look !== 'floating') next.textBg = 'highlight'
     if (next.look === 'brand' || headlineTextBg(next) === 'brand') next.color = hookColor
     set({ hook: next, ...((next.look === 'brand' || headlineTextBg(next) === 'brand') && !draft.color ? { color: hookColor } : {}) })
   }
@@ -411,6 +414,11 @@ function LookEditor({ brand, isDefault, firstLook, onSaved, onCancelNew, onDelet
             })}
           </div>
           <p className="text-2xs text-ink-subtle">{hook ? HEADLINE_LOOKS.find((item) => item.id === hook.look)?.hint : 'Pick one to save a hook look with this look. Until then each tool keeps its own.'}</p>
+          {!(hook?.look === 'floating' && hook.textBg === 'highlight') && (
+            <button type="button" className="text-2xs font-medium text-accent hover:underline" onClick={() => set({ hook: recommendedHookLook(draft.color) })}>
+              Use the recommended hook: Key words in color
+            </button>
+          )}
           {hook?.look === 'floating' && (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold text-ink">Text background</span>

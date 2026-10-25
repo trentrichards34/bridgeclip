@@ -1,7 +1,7 @@
 import { cn } from '../lib/utils'
 import {
   DEFAULT_BRAND_COLOR, HEADLINE_FONTS, HEADLINE_LOOKS, HEADLINE_TEXT_BGS, HIGHLIGHT_PHRASE_FAMILY, TEXT_BOX, headlineBarColor, headlineTextBg, headlineTextBox, headlineTextColor,
-  highlightColors, highlightSplit, isHexColor, setHideAfter, setTextBg,
+  highlightColors, highlightSplit, isHexColor, recommendedHookLook, setHideAfter, setTextBg,
   type HeadlineLook
 } from '../../shared/headline-look'
 import { HideHookText } from './HideHookText'
@@ -89,6 +89,12 @@ export function HeadlineLookPicker({ value, onChange, compact = false }: { value
         })}
       </div>
       <p className="text-2xs text-ink-subtle">{HEADLINE_LOOKS.find((item) => item.id === value.look)?.hint}</p>
+      {!(value.look === 'floating' && value.textBg === 'highlight') && (
+        <button type="button" className="text-2xs font-medium text-accent hover:underline"
+          onClick={() => onChange(setHideAfter(recommendedHookLook(value.color), value.hideAfterS))}>
+          Use the recommended hook: Key words in color
+        </button>
+      )}
       {value.look === 'floating' && (
         <div className="space-y-1.5">
           <p className="text-xs font-medium text-ink" id="hook-text-bg-label">Text background</p>
@@ -102,6 +108,7 @@ export function HeadlineLookPicker({ value, onChange, compact = false }: { value
                   className={cn('glass-tile glass-tile-hover flex min-w-0 flex-col gap-1.5 rounded-xl p-2 text-center', selected ? 'glass-selected text-ink' : 'text-ink-muted hover:text-ink')}>
                   <LookPreview look={look} />
                   <span className="block truncate text-2xs font-medium">{option.label}</span>
+                  {option.id === 'highlight' && <span className="block text-[10px] text-ink-subtle">Recommended</span>}
                 </button>
               )
             })}

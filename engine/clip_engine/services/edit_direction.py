@@ -646,7 +646,9 @@ def screen_aware(graphics: list[dict], windows: Sequence[tuple[int, int]], stage
     for lo, hi in sorted(windows):
         if len(frames) >= MAX_FRAMES or hi - lo < FRAME_MIN_WINDOW_MS:
             continue
-        busy = sorted((g['at_ms'], g['at_ms'] + g['duration_ms']) for g in out if g['template'] != 'chapter' and g['at_ms'] < hi and g['at_ms'] + g['duration_ms'] > lo)
+        # (Frames already placed count too: two screen windows that overlap never get two frames over each other, as a
+        # real run had at 52.7 s and 52.99 s.)
+        busy = sorted((g['at_ms'], g['at_ms'] + g['duration_ms']) for g in [*out, *frames] if g['template'] != 'chapter' and g['at_ms'] < hi and g['at_ms'] + g['duration_ms'] > lo)
         start = lo + 200
         spot = None
         for a, b in [*busy, (hi, hi)]:

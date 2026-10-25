@@ -105,12 +105,13 @@ test('graphic bands stay clear of the hook and the captions', () => {
   assert.ok(wide.bottom <= 1 - 100 / 1080 - .13 && wide.top > .3)
 })
 
-test('a render spec uses the clip\'s output time, size, band, brand color and hook font', () => {
+test('a render spec uses the clip\'s output time, size, band, brand color, a bold sans and the hook font for accents', () => {
   const project = { aspect_ratio: '9:16', width: 1920, height: 1080 }
   const g = mg.newGraphic('stat', 2000, { fields: { value: '25%', color: 'nope' } })
   const c = clip({ graphics: [g], hook: { text: 'A two line hook for this clip', look: { look: 'brand', color: '#16a34a', font: 'condensed' } } })
   const spec = mg.graphicSpec(project, c, g)
-  assert.deepEqual([spec.width, spec.height, spec.duration_ms, spec.color, spec.font, spec.fields.color], [1080, 1920, 2400, '#16A34A', 'condensed', undefined])
+  // The words in a bold sans whatever the hook's font; the hook's font sets accent words only.
+  assert.deepEqual([spec.width, spec.height, spec.duration_ms, spec.color, spec.font, spec.accent_font, spec.fields.color], [1080, 1920, 2400, '#16A34A', 'clean', 'condensed', undefined])
   assert.equal(mg.graphicSpec(project, c, { ...g, at_ms: 5100, duration_ms: 1500 }), null)
   assert.equal(mg.graphicStyle(clip(), { fields: { color: '#abcdef' } }).color, '#ABCDEF')
   assert.equal(mg.graphicStyle(clip()).color, mg.GRAPHIC_DEFAULT_COLOR)
