@@ -122,3 +122,16 @@ def test_a_graphic_taken_up_onto_the_stage_stays_there_when_the_reel_is_made():
     assert off and off[0]['size'] == 'card'
     plain, _ = ed.editor_graphics([{k: v for k, v in spec.items() if k != 'size'}], timed, 8000, {'motion': True, 'stage': True})
     assert plain and plain[0]['size'] == 'card'
+
+
+def test_a_wrong_right_whose_sides_are_said_ten_seconds_apart_survives_the_render():
+    # Run 4: "organic content" (the wrong side, explained) then "ads" 9.6 s later: planned, and kept when the reel is made.
+    words = 'my organic content reaches a few people but not nearly enough to sustain a real income so we are going to do something most people are petrified of and we spend money on ads'.split()
+    timed = [(w, 3000 + i * 300, 3260 + i * 300, i) for i, w in enumerate(words)]
+    ads = words.index('ads')
+    assert 8000 < (ads - 1) * 300 <= ag.COMPARE_ITEM_GAP_MS
+    spec = {'id': 'g-1', 'template': 'compare_marks', 'word': 1, 'duration_ms': 13000, 'placement': 'middle', 'origin': 'auto', 'size': 'stage',
+            'fields': {'items': 'organic content\nads', 'wrong': 'first'}}
+    graphics, _ = ed.editor_graphics([spec], timed, len(words) * 300 + 6000, {'motion': True, 'stage': True})
+    assert [g['template'] for g in graphics] == ['compare_marks']
+    assert len(graphics[0]['fields']['item_ms'].split('\n')) == 2

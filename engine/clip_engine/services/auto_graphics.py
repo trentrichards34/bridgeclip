@@ -152,6 +152,8 @@ DIAGRAM_MIN_MS, DIAGRAM_AUTO_MAX_MS = 6000, 15000
 DIAGRAM_LEAD_MS, DIAGRAM_HOLD_MS = 700, 2600
 # A diagram's items are said at most this far apart (one after the next).
 DIAGRAM_ITEM_GAP_MS = 8000
+# A Wrong / right's two sides may be said a little further apart (the wrong one is explained before the right one).
+COMPARE_ITEM_GAP_MS = 10500
 # Without chapter headers, two diagrams are at least this far apart (one per section).
 DIAGRAM_GAP_MS = 12000
 
@@ -1154,7 +1156,8 @@ def diagram_span(graphic: dict, segments: Sequence) -> Optional[tuple[int, int]]
     if not times:
         return None
     # Items said far apart leave the diagram sitting half built (a Wrong / right with one lonely card for 15 s): left out.
-    if any(b - a > DIAGRAM_ITEM_GAP_MS for a, b in zip(times, times[1:])):
+    gap = COMPARE_ITEM_GAP_MS if graphic['template'] == 'compare_marks' else DIAGRAM_ITEM_GAP_MS
+    if any(b - a > gap for a, b in zip(times, times[1:])):
         return None
     at = max(0, times[0] - DIAGRAM_LEAD_MS)
     end = max(times[-1] + DIAGRAM_HOLD_MS, at + DIAGRAM_MIN_MS)

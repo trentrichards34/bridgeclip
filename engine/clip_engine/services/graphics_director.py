@@ -1207,7 +1207,7 @@ _LEAD_INS = frozenset(('and', 'so', 'then', 'also', 'now', 'next', 'finally', 'l
 # Sentences in a parallel run start within this long of each other.
 PARALLEL_GAP_MS = 12000
 # The second side of a contrast is said this soon after the first (a Wrong / right shows both cards).
-CONTRAST_SIDES_MS = 10500
+CONTRAST_SIDES_MS = ag.COMPARE_ITEM_GAP_MS
 # What ends a parallel item ("a product that we can sell": "a product").
 _ITEM_STOPS = frozenset(('that', 'which', 'who', 'to', 'so', 'because', 'and', 'but', 'for', 'with', 'when', 'if', 'where', 'is', 'are',
                          'will', 'can', 'we', 'you', 'i', 'they', 'it'))
