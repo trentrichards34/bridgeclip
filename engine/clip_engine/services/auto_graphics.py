@@ -1208,7 +1208,9 @@ def diagram_window(template: str, times: Sequence[float]) -> tuple[int, int]:
 
 def needs_full_frame(graphic: dict) -> bool:
     """A diagram that needs the whole frame (FULL_FRAME_ITEMS items or more): drawn in a Visual scene. Every other stage
-    moment sits on the stage with the speaker's card under it."""
+    moment sits on the stage with the speaker's card under it. A custom graphic designed for a Visual scene keeps it."""
+    if graphic.get('template') == 'custom':
+        return (graphic.get('fields') or {}).get('scene') == 'visual'
     if graphic.get('template') not in DIAGRAMS or graphic.get('template') == 'compare_marks':
         return False
     items = [i for i in str((graphic.get('fields') or {}).get('items') or '').split('\n') if i.strip()]
