@@ -51,7 +51,11 @@ const MARKS = () => {
         const boxes = words(node)
         for (let i = 1; i < boxes.length; i++) if (Math.abs(boxes[i].top - boxes[i - 1].top) < 2) others.push((boxes[i].left - boxes[i - 1].right) / em)
       }
-      const p = mark.getBoundingClientRect()
+      // The stroke as painted: its path, plus half its width (stretched with its box) each side.
+      const g = mark.getBoundingClientRect(), svg = mark.ownerSVGElement.getBoundingClientRect()
+      const half = parseFloat(mark.getAttribute('stroke-width')) / 2
+      const vb = mark.ownerSVGElement.viewBox.baseVal
+      const p = { left: g.left - half * svg.width / vb.width, right: g.right + half * svg.width / vb.width, top: g.top - half * svg.height / vb.height, bottom: g.bottom + half * svg.height / vb.height }
       out.push({ style: host.dataset.markerStyle, face: wcs.fontFamily, word: word.textContent, em, cap, base,
         ink: { left: ink.left, right: ink.right }, mark: { left: p.left, right: p.right, top: p.top, bottom: p.bottom },
         gapBefore: before && Math.abs(before.top - ink.top) < em ? (ink.left - before.right) / em : null,
@@ -81,7 +85,7 @@ function checkMark(m, label) {
   const mid = (m.mark.left + m.mark.right) / 2
   assert.ok(Math.abs(mid - (m.ink.left + m.ink.right) / 2) <= 0.08 * w + 1, `${label}: mark centered on “${m.word}” (${JSON.stringify(m)})`)
   const width = m.mark.right - m.mark.left
-  assert.ok(width >= 0.85 * w && width <= 1.4 * w, `${label}: mark as wide as “${m.word}” (${width.toFixed(1)} vs ${w.toFixed(1)})`)
+  assert.ok(width >= 0.95 * w && width <= (m.style === 'circle' ? 1.4 : 1.15) * w, `${label}: mark as wide as “${m.word}” (${width.toFixed(1)} vs ${w.toFixed(1)})`)
   const cy = (m.mark.top + m.mark.bottom) / 2
   const at = ((m.base - cy) / m.cap).toFixed(2)
   if (m.style === 'highlight' || m.style === 'scribble') {

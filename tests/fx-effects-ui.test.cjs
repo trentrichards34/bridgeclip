@@ -257,23 +257,28 @@ test('words in the brand color read on dark glass: a mid blue is lifted, a light
 })
 
 test('a word mark is placed from its word in its own face: the same mark on a tall serif, a condensed or a script word, snug for a long word', () => {
+  const painted = (style, box) => m.WORD_MARKS[style].ink.map((k) => box.x + k * box.w)
   // Three faces at the same size: different cap heights (a script face's caps are short, a condensed face's tall).
   const words = [{ left: 100, right: 300, baseline: 500, cap: 72.7 }, { left: 100, right: 300, baseline: 500, cap: 60 }, { left: 40, right: 180, baseline: 220, cap: 30 }]
   for (const w of words) {
     const u = w.cap / 0.727
     const hi = m.wordMarkBox('highlight', w, 0.3 * u)
-    // Centered on the word, as wide as it plus a small overhang; across its letters (cap top to just under the baseline).
-    assert.ok(Math.abs(hi.box.x + hi.box.w / 2 - (w.left + w.right) / 2) < 1e-6)
+    // Centered on the word; as painted (its stretched round ends too), as wide as it plus a small overhang; across its
+    // letters (cap top to just under the baseline).
+    const [a, b] = painted('highlight', hi.box)
+    assert.ok(Math.abs((a + b) / 2 - (w.left + w.right) / 2) < 1e-6)
+    assert.ok(a < w.left && a > w.left - 0.1 * u && b > w.right && b < w.right + 0.1 * u)
     assert.ok(hi.box.y < w.baseline - 0.9 * w.cap && hi.box.y + hi.box.h > w.baseline && hi.box.y + hi.box.h < w.baseline + 0.2 * w.cap)
     // A highlight needs no more room than a word space: the word keeps normal spacing.
     assert.equal(hi.margin, 0)
     const ul = m.wordMarkBox('underline', w, 0.3 * u)
     assert.ok(ul.box.y > w.baseline && ul.box.y < w.baseline + 0.4 * w.cap)
     const ring = m.wordMarkBox('circle', w, 0.3 * u)
-    assert.ok(ring.box.y < w.baseline - w.cap && ring.box.y + ring.box.h > w.baseline + 0.3 * w.cap && ring.box.x < w.left && ring.box.x + ring.box.w > w.right)
+    const [ra, rb] = painted('circle', ring.box)
+    assert.ok(ring.box.y < w.baseline - w.cap && ring.box.y + ring.box.h > w.baseline + 0.3 * w.cap && ra < w.left && rb > w.right)
   }
   // A long word's ring overhangs a fixed snug amount (not a share of the word), and asks only the room it needs.
   const long = m.wordMarkBox('circle', { left: 0, right: 1000, baseline: 500, cap: 72.7 }, 10)
-  assert.ok(Math.abs(-long.box.x - m.WORD_MARKS.circle.most * 100) < 1e-6)
+  assert.ok(Math.abs(-painted('circle', long.box)[0] - m.WORD_MARKS.circle.most * 100) < 1e-6)
   assert.ok(Math.abs(long.margin - ((m.WORD_MARKS.circle.most + 0.06) * 100 - 10)) < 1e-6)
 })

@@ -96,9 +96,11 @@ export type MarkedWord = { left: number; right: number; baseline: number; cap: n
  * most `most` u: a long word's circle stays a snug ring). The highlight runs through the letters (the x-height and the
  * lower caps), the underline sits under the descenders, the circle rings the whole word.
  */
-export const WORD_MARKS: Record<string, { from: number; to: number; x: number; most: number }> = {
-  highlight: { from: -.77, to: .1, x: .03, most: .08 }, scribble: { from: -.77, to: .1, x: .02, most: .06 },
-  underline: { from: .16, to: .41, x: .025, most: .06 }, circle: { from: -1.2, to: .53, x: .13, most: .22 }
+export const WORD_MARKS: Record<string, { from: number; to: number; x: number; most: number; ink: [number, number] }> = {
+  // `ink`: where the stroke paints across its box (shares of its width): the units' strokes are stretched into the box,
+  // so a highlight's round ends reach a tenth of the box past it each side.
+  highlight: { from: -.77, to: .1, x: .03, most: .08, ink: [-.1, 1.1] }, scribble: { from: -.77, to: .1, x: .02, most: .06, ink: [.035, .965] },
+  underline: { from: .16, to: .41, x: .025, most: .06, ink: [0, 1] }, circle: { from: -1.2, to: .53, x: .13, most: .22, ink: [.006, 1] }
 }
 const CAP_SHARE = .727
 /** The ring's clearance from the next word's letters (u). */
@@ -112,8 +114,10 @@ export function wordMarkBox(style: string, word: MarkedWord, space: number): { b
   const u = Math.max(1, word.cap) / CAP_SHARE
   const w = Math.max(1, word.right - word.left)
   const over = Math.min(w * m.x, m.most * u)
+  // The box whose painted stroke spans the word plus its overhang.
+  const bw = (w + 2 * over) / (m.ink[1] - m.ink[0])
   return {
-    box: { x: word.left - over, y: word.baseline + m.from * u, w: w + 2 * over, h: (m.to - m.from) * u },
+    box: { x: word.left - over - m.ink[0] * bw, y: word.baseline + m.from * u, w: bw, h: (m.to - m.from) * u },
     margin: Math.max(0, over + MARK_CLEAR * u - Math.max(0, space))
   }
 }
