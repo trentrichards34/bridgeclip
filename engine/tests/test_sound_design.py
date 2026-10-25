@@ -90,7 +90,8 @@ def test_an_fx_effect_uses_its_catalog_sound_on_its_main_beat(monkeypatch):
     cues = sd.cues_from_events([{"kind": "graphic", "template": "fx", "effect": "count-up", "at_ms": 2000, "end_ms": 5500},
                                 {"kind": "graphic", "template": "fx", "effect": "logo-wall", "at_ms": 6000, "end_ms": 9000},
                                 {"kind": "graphic", "template": "fx", "effect": "unknown", "at_ms": 9500, "end_ms": 11000}], 20000)
-    assert [(c.at_ms, c.action) for c in cues] == [(3720, "tick")]
+    # A number effect lands with a soft pop (numbers take turns between a pop and a tick once planned).
+    assert [(c.at_ms, c.action) for c in cues] == [(3720, "pop")] and cues[0].number
 
 
 # ---------------------------------------------------------------------------
@@ -104,10 +105,11 @@ def _graphics(times, template="stat", total=60000):
 def test_each_peak_lands_one_frame_after_its_picture():
     plan = sd.plan_sounds(sd.cues_from_events([{"kind": "graphic", "template": "list", "at_ms": 5000, "end_ms": 8000},
                                                {"kind": "graphic", "template": "stat", "at_ms": 12000, "end_ms": 14000}], 20000), 20000)
-    assert [(p.action, p.peak_at_ms) for p in plan] == [("whoosh", 5033), ("pop", 12033)]
+    # (A card that just appears gets a soft swipe: a whoosh is for real movement, a scene or a big card.)
+    assert [(p.action, p.peak_at_ms) for p in plan] == [("swipe", 5033), ("pop", 12033)]
     for p in plan:
         assert p.start_ms + p.sound.peak_ms == p.peak_at_ms and p.trim_ms == 0
-    # The whoosh starts before the card, so its rush peaks just as the card is there.
+    # The swipe starts before the card, so its rush peaks just as the card is there.
     assert plan[0].start_ms < 5000
 
 
@@ -120,7 +122,8 @@ def test_takes_rotate_so_the_same_file_never_plays_twice_in_a_row():
     plan = sd.plan_sounds(_graphics([2000, 6000, 10000, 14000, 18000, 22000]), 60000)
     files = [p.sound.path for p in plan]
     assert len(files) == 6 and all(a != b for a, b in zip(files, files[1:]))
-    assert len(set(files)) == len(sd.library()["pop"])
+    # Numbers take turns between a soft pop and a key tick, each rotating through its takes: six different files.
+    assert [p.action for p in plan] == ["pop", "tick"] * 3 and len(set(files)) == 6
 
 
 def test_sounds_keep_apart_and_under_the_average_cap():
@@ -181,9 +184,9 @@ def test_the_ais_extras_play_only_while_something_is_on_screen():
 
 def test_the_members_own_sounds_come_first_for_their_action():
     own = sd.Sound("/sounds/pop/mine.wav", "pop", 10, 200, -18.0, own=True)
-    plan = sd.plan_sounds(_graphics([2000, 6000, 10000]) + sd.cues_from_events([{"kind": "graphic", "template": "title", "at_ms": 14000}], 60000),
+    plan = sd.plan_sounds(_graphics([2000, 6000], "icon_pop") + sd.cues_from_events([{"kind": "graphic", "template": "title", "at_ms": 14000}], 60000),
                           60000, palette={"pop": (own,)})
-    assert [p.sound.own for p in plan] == [True, True, True, False]
+    assert [p.sound.own for p in plan] == [True, True, False]
     assert plan[0].start_ms == 2033 - 10
 
 
@@ -265,7 +268,7 @@ def _onsets(path, highpass=3000):
 def test_a_clip_with_graphics_gets_its_sounds_at_the_right_times_and_social_loudness(tmp_path):
     clip = str(tmp_path / "clip.mp4")
     _make_clip(clip)
-    events = [{"kind": "graphic", "template": "list", "at_ms": 2000, "end_ms": 4500},
+    events = [{"kind": "graphic", "template": "staircase", "at_ms": 2000, "end_ms": 4500},
               {"kind": "graphic", "template": "stat", "at_ms": 5500, "end_ms": 7000},
               {"kind": "scene", "at_ms": 8000, "end_ms": 11500}]
     request = sd.SoundRequest("teaching", -20.0, events, [])
@@ -316,7 +319,7 @@ def test_an_editor_bake_mixes_the_clips_sounds_where_its_graphics_land(monkeypat
     (tmp_path / "transcript.json").write_text(json.dumps({"segments": [asdict(s) for s in transcript()]}))
     (tmp_path / "job_output.json").write_text(json.dumps({"clips": [], "total_clips": 0, "editor_project": True}))
     # As main sends it (sound-design.ts bakeSoundEvents): graphics and a scene on the finished clip's clock (10 s long).
-    events = [{"kind": "graphic", "template": "list", "at_ms": 1500, "end_ms": 3500, "size": "card"},
+    events = [{"kind": "graphic", "template": "list", "at_ms": 1500, "end_ms": 3500, "size": "stage"},
               {"kind": "graphic", "template": "stat", "at_ms": 4500, "end_ms": 6000, "size": "card"},
               {"kind": "scene", "at_ms": 7000, "end_ms": 9600}]
     asyncio.run(run_editor({"run": str(tmp_path), "revision": 0, "candidate_id": c["id"], "action": "export",

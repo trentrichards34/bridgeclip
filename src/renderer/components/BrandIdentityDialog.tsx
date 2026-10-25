@@ -4,7 +4,7 @@ import {
   DEFAULT_HANDLE_POSITION, HANDLE_POSITIONS, MAX_HANDLE_CHARS, type BrandLook, type HandlePosition
 } from '../../shared/brand-kit'
 import { CAPTION_PRESETS } from '../../shared/caption-presets'
-import { DEFAULT_BRAND_COLOR, DEFAULT_HEADLINE_LOOK, headlineTextBg, isHexColor, type HeadlineLook } from '../../shared/headline-look'
+import { DEFAULT_BRAND_COLOR, headlineTextBg, isHexColor, recommendedHookLook, type HeadlineLook } from '../../shared/headline-look'
 import { BRAND_IDENTITY_TEMPLATE, MAX_BRAND_IDENTITY_CHARS, MAX_CTA_OFFER_CHARS, normalizeCtaKeyword, type BrandIdentity } from '../../shared/remix'
 import { getApi } from '../lib/ipc'
 import { errorMessage, localFileUrl } from '../lib/utils'
@@ -129,7 +129,7 @@ export function BrandIdentityDialog({ brand, onClose, onSaved, focus }: {
 
           <SettingRow title="Hook text look" description="How the headline at the top looks by default."
             control={<Switch label="Set a hook text look" checked={hookLook !== null}
-              onChange={(on) => setHookLook(on ? { ...DEFAULT_HEADLINE_LOOK, ...(color ? { look: 'brand', color } : {}) } : null)} />} />
+              onChange={(on) => setHookLook(on ? recommendedHookLook(color) : null)} />} />
           {hookLook && <HeadlineLookPicker value={{ ...hookLook, color: (hookLook.look === 'brand' || headlineTextBg(hookLook) === 'brand') && color ? color : hookLook.color }}
             onChange={(next) => { setHookLook(next); if (next.look === 'brand' || headlineTextBg(next) === 'brand') setColor(next.color) }} />}
 

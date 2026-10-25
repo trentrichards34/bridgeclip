@@ -74,7 +74,8 @@ test('a graphic can carry its own font; the render spec uses it and leaves the f
   const g = p.newGraphic('title', 1200, { fields: { text: 'Hello there', font: 'condensed' } })
   c.graphics = [g]
   assert.deepEqual(plain(p.graphicStyle(c, g)), { color: '#123456', font: 'condensed' })
-  assert.equal(p.graphicStyle(c, { fields: { font: 'nope' } }).font, 'serif')
+  // An unknown font: the bold sans (the hook's serif only for accent words).
+  assert.deepEqual(plain(p.graphicStyle(c, { fields: { font: 'nope' } })), { color: '#123456', font: 'clean', accent_font: 'serif' })
   const spec = p.graphicSpec(fixture, c, g)
   assert.equal(spec.font, 'condensed')
   assert.equal(spec.fields.font, undefined)

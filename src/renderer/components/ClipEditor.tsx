@@ -1238,7 +1238,8 @@ function previewHook(ctx: CanvasRenderingContext2D, c: CandidateEdit, width: num
   const hook = c.hook
   if (!hook || hook.look.look === 'none' || height <= width || hook.text.trim().split(/\s+/).length < 2) return null
   const font = HEADLINE_FONTS.find((f) => f.id === hook.look.font)
-  const bar = headlineBarColor(hook.look), size = Math.round(width * 0.058), family = font?.family ?? 'sans-serif'
+  // Floating text is set big whatever look was saved (headline-look FLOATING_FONT_SIZES: 96 down to 64 px of 1080).
+  const bar = headlineBarColor(hook.look), size = Math.round(width * (hook.look.look === 'floating' ? 0.08 : 0.058)), family = font?.family ?? 'sans-serif'
   ctx.font = `800 ${size}px ${family}`
   const lines: string[] = []
   for (const word of (font?.upper ? hook.text.toUpperCase() : hook.text).split(' ')) {

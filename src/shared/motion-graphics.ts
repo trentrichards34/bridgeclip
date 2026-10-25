@@ -183,7 +183,7 @@ export function parseGraphics(value: unknown, limit: number = MAX_GRAPHICS_PER_C
 // ---------------------------------------------------------------------------
 
 /** Bump when a template's look changes, so cached renders are made again. */
-export const GRAPHICS_VERSION = 6
+export const GRAPHICS_VERSION = 7
 
 /**
  * Looks: the most used templates come in two or three designs (`fields.variant`), so a video that shows a template
@@ -305,8 +305,10 @@ export interface GraphicRenderSpec {
   placement: GraphicPlacement
   /** Brand color #RRGGBB. */
   color: string
-  /** The hook's font id (headline-look HEADLINE_FONTS). */
+  /** The words' font id (headline-look HEADLINE_FONTS): a bold sans unless the member picked one for the graphic. */
   font: string
+  /** The brand font for accent words only (a marked word, a word in color): the hook's font when it isn't the plain sans. */
+  accent_font?: string
   /** Logo image as a URL the page may load (a local-file URL in the editor, a data URL offscreen). */
   image?: string
   /** An effect's second picture (Before & after's after), the same way. */

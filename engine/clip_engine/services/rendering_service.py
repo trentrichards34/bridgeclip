@@ -339,6 +339,10 @@ HEADLINE_PAD_X = 0.06
 HEADLINE_MIN_H = 0.17
 HEADLINE_MAX_H = 0.30
 HEADLINE_FONT_SIZES = (60, 54, 48, 42)
+# Floating hook text (no bar) is the first thing read on a phone: whatever look the member saved (a small label on a
+# dark box, outlined text), it is set at least this big (a cap height of about 3% of the frame at its smallest), in
+# the member's own font, color and box (mirror of FLOATING_FONT_SIZES in src/shared/headline-look.ts).
+FLOATING_FONT_SIZES = (96, 88, 80, 74, 68, 64)
 HEADLINE_MAX_LINES = 3
 # Captions inside the video panel under a headline bar (share of the panel).
 HEADLINE_CAPTION_Y = 0.70
@@ -1422,7 +1426,7 @@ class RenderingService:
         max_w = target_width - 2 * pad_x
         draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
         scale = HEADLINE_FONT_SCALE.get(style.font, 1)
-        for size in HEADLINE_FONT_SIZES:
+        for size in (FLOATING_FONT_SIZES if style.look == "floating" else HEADLINE_FONT_SIZES):
             try:
                 font = ImageFont.truetype(self._headline_font_path(style.font), round(size * scale * unit))
             except Exception:

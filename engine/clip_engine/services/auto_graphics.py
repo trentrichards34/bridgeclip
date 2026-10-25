@@ -1468,6 +1468,47 @@ def converted(g: dict, to: str) -> Optional[dict]:
 # Numbers come back sooner than the rest (a result, then the next result): their own kind waits this long.
 NUMBER_KINDS = ('stat', 'fx:count-up', 'fx:number-pop-in')
 NUMBER_GAP_MS = 12000
+# Every number graphic is ONE family for variety (a real run showed ten in four minutes, three within 15 s and one
+# value twice): at most one per NUMBER_FAMILY_SECONDS of video, never two within NUMBER_FAMILY_GAP_MS of each other
+# (and never within NUMBER_FAMILY_MIN_GAP_MS, however short the clip), and never the same value twice within
+# NUMBER_SAME_VALUE_MS. The numbers left over are said on the face (or shown as the diagram they belong to).
+NUMBER_FAMILY = frozenset(('stat', 'fx:count-up', 'fx:number-pop-in', 'fx:gauge-dial', 'fx:waffle-chart', 'fx:conic-progress-ring',
+                           'fx:star-rating-fill'))
+NUMBER_FAMILY_SECONDS = 22.0
+NUMBER_FAMILY_GAP_MS = 18000
+NUMBER_FAMILY_MIN_GAP_MS = 8000
+NUMBER_SAME_VALUE_MS = 60000
+
+
+def number_family_cap(seconds: float) -> int:
+    return max(1, math.ceil(max(0.0, seconds) / NUMBER_FAMILY_SECONDS - 1e-9))
+
+
+def number_family_gap_ms(seconds: float) -> int:
+    """How far apart two number graphics stay: NUMBER_FAMILY_GAP_MS, less in a short clip (a quarter of it), never
+    under NUMBER_FAMILY_MIN_GAP_MS."""
+    return int(max(NUMBER_FAMILY_MIN_GAP_MS, min(NUMBER_FAMILY_GAP_MS, seconds * 1000 / 4)))
+
+
+def _shown_numbers(g: dict) -> list[float]:
+    return [n for key, v in (g.get('fields') or {}).items() if key not in ('item_ms', 'word_ms', 'cue_ms', 'variant', 'theme', 'accent_word')
+            for n in _numbers(str(v))]
+
+
+def number_family_allows(g: dict, kept: Sequence[dict], seconds: float) -> bool:
+    """`g` (a number graphic) keeps the numbers balanced: under the family's cap, far enough from every other number
+    graphic, and not a value already shown in the last (or next) minute. Other graphics always pass."""
+    if kind_of(g) not in NUMBER_FAMILY:
+        return True
+    family = [k for k in kept if kind_of(k) in NUMBER_FAMILY]
+    if len(family) >= number_family_cap(seconds):
+        return False
+    gap = number_family_gap_ms(seconds)
+    if any(abs(k['at_ms'] - g['at_ms']) < gap for k in family):
+        return False
+    mine = _shown_numbers(g)
+    return not any(abs(k['at_ms'] - g['at_ms']) < NUMBER_SAME_VALUE_MS and any(abs(a - b) <= 1e-6 * max(1.0, abs(a)) for a in mine for b in _shown_numbers(k))
+                   for k in family)
 
 
 def _same_too_close(g: dict, kept: Sequence[dict], seconds: float, adjacent: bool = True) -> bool:
@@ -1494,6 +1535,8 @@ def variety_allows(g: dict, kept: Sequence[dict], seconds: float, adjacent: bool
     from clip_engine.services.graphics_director import group_allows
     kind = kind_of(g)
     if sum(1 for k in kept if kind_of(k) == kind) >= template_cap(kind, seconds) or not group_allows(kind, kept, seconds):
+        return False
+    if not number_family_allows(g, kept, seconds):
         return False
     return not _same_too_close(g, kept, seconds, adjacent)
 
@@ -1796,6 +1839,9 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
         if opts['fill_quiet']:
             kept = director.fill_quiet(kept, segments, ranges, speed, seconds, allowed, crowded, register,
                                        max(ranges[0][0], source_ms(ranges, speed, FIRST_MS) or ranges[0][0]), source_ms(ranges, speed, tail) or clip_end, fill_limit)
+        # The kinds a pro edit never leaves out when their cue is there (the takeover on the punchline).
+        kept = director.ensure_kinds(kept, segments, ranges, speed, seconds, allowed, crowded, register,
+                                     max(ranges[0][0], source_ms(ranges, speed, FIRST_MS) or ranges[0][0]), source_ms(ranges, speed, tail) or clip_end)
         kept = [with_list_icons({k: v for k, v in g.items() if k != 'converted_from'}) for g in kept]
         # One look for the whole video (the member's tone, else light ink on dark), effects themed the same way.
         kept = director.with_look(kept, director.video_look(opts))

@@ -242,7 +242,7 @@ def _rows(img):
     ("brand", (0xE1, 0x1D, 0x48, 255), (255, 255, 255)),
 ])
 def test_each_line_sits_on_a_snug_box(tmp_path, text_bg, box, ink):
-    img = _boxed(tmp_path, text_bg, "Why nobody watches your videos yet ok")
+    img = _boxed(tmp_path, text_bg, "Nobody watches your videos yet")
     rows = _rows(img)
     assert rows, "a box is drawn"
     top, bottom = rows[0][0], rows[-1][0]

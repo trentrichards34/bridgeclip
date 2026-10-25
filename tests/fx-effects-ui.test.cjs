@@ -187,10 +187,10 @@ test('a screenshot pushes in slowly and keeps the part that matters whole; words
     assert.ok(map(r.x + bx * r.w, o.x) >= -1 && map(r.x + (bx + bw) * r.w, o.x) <= slot.w + 1, JSON.stringify({ box, o }))
     assert.ok(map(r.y + by * r.h, o.y) >= -1 && map(r.y + (by + bh) * r.h, o.y) <= slot.h + 1, JSON.stringify({ box, o }))
   }
-  assert.equal(m.fxMinType('card', 'words', 4), 75)
-  assert.equal(m.fxMinType('card', 'words', 9), 60)
+  assert.equal(m.fxMinType('card', 'words', 4), 80)
+  assert.equal(m.fxMinType('card', 'words', 9), 66)
   assert.equal(m.fxMinType('stage', 'ideas', 0), 64)
-  assert.equal(m.fxMinType('card', 'numbers', 1), 36)
+  assert.equal(m.fxMinType('card', 'numbers', 1), 40)
   // A glass backing stays whole until its unit's last 460 ms, then leaves with the words (never left behind empty).
   assert.equal(m.fxGlassLeft(2000, 460), 1)
   assert.equal(m.fxGlassLeft(230, 460), 0.5)

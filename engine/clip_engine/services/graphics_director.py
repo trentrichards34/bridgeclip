@@ -109,7 +109,10 @@ CUE_VISUALS = {
 _PUNCHLINE = (('here\'s', 'the', 'thing'), ('the', 'truth', 'is'), ('the', 'secret', 'is'), ('the', 'real', 'reason'),
               ('nobody', 'tells', 'you'), ('the', 'biggest', 'mistake'), ('if', 'you', 'remember', 'one', 'thing'),
               ('that\'s', 'the', 'whole', 'game'), ('the', 'one', 'thing'), ('this', 'changed', 'everything'),
-              ('most', 'people', 'never'), ('stop', 'trying', 'to'))
+              ('most', 'people', 'never'), ('stop', 'trying', 'to'),
+              # The turn after a setup ("...but that doesn't mean I can't generate sales"), said out loud.
+              ('but', 'that', "doesn't", 'mean'), ('but', 'that', 'does', 'not', 'mean'), ('the', 'crazy', 'part'), ('the', 'craziest', 'part'),
+              ('the', 'key', 'is'), ('the', 'problem', 'is'), ('the', 'point', 'is'), ('the', 'best', 'part'))
 # A punchline line short enough for the takeover's huge type (words).
 PUNCHLINE_WORDS = (3, 9)
 # The cues whose visual is the member's own picture: offered (as hints and placements) only when they added some.
@@ -380,8 +383,9 @@ def find_cues(segments: Sequence) -> list[dict]:
             add('screen', start)
         if any(_has(toks, p) is not None for p in _CTA):
             add('cta', start)
-        if PUNCHLINE_WORDS[0] <= len(sentence) <= PUNCHLINE_WORDS[1] and any(_has(toks, p) is not None for p in _PUNCHLINE):
-            add('punchline', start)
+        punch = punch_clause(sentence)
+        if punch:
+            add('punchline', punch[0], punch[1])
         if any(_has(toks, p) is not None for p in _PROOF):
             add('proof', start)
         if any(_has(toks, p) is not None for p in _BEFORE_AFTER) and any(t in _AFTER_WORDS for t in toks):
@@ -391,6 +395,26 @@ def find_cues(segments: Sequence) -> list[dict]:
         if b - a >= STORY_MIN_MS:
             cues.append({'kind': 'story', 'at_ms': int(a), 'end_ms': int(b), 'text': '', 'prefer': ()})
     return sorted(cues, key=lambda c: (c['at_ms'], c['kind']))
+
+
+def punch_clause(sentence: list[dict]) -> Optional[tuple[int, str]]:
+    """The line a video turns on (a _PUNCHLINE phrase said), short enough for the takeover's huge type: the sentence
+    when it is PUNCHLINE_WORDS long, else the clause (between commas) the phrase starts, when that is. (start ms, words
+    as said) or None."""
+    toks = [w['tok'] for w in sentence]
+    at = min((i for i in (_has(toks, p) for p in _PUNCHLINE) if i is not None), default=None)
+    if at is None:
+        return None
+    lo, hi = PUNCHLINE_WORDS
+    if lo <= len(sentence) <= hi:
+        return sentence[0]['start'], _said_text(sentence)
+    # The clause: from the last comma before the phrase to the next comma after it.
+    first = max((i + 1 for i in range(at) if sentence[i]['raw'].rstrip().endswith((',', ';', ':'))), default=0)
+    last = next((i for i in range(at, len(sentence)) if sentence[i]['raw'].rstrip().endswith((',', ';', ':', '.', '!', '?'))), len(sentence) - 1)
+    text = _said_text(sentence[:last + 1], first).strip(' ,;:')
+    if not lo <= len(text.split()) <= hi:
+        return None
+    return sentence[first]['start'], text
 
 
 def story_spans(cues: Sequence[dict]) -> list[tuple[int, int]]:
@@ -616,6 +640,10 @@ def fx_sane(fields: dict) -> bool:
         return a is not None and b is not None and a > b
     if e == 'chart-story':
         return sum(1 for line in fields.get('data', '').split('\n') if _num(line) is not None) >= 2
+    if e in ('count-up', 'number-pop-in'):
+        # "Two ways", "three things": a small count announcing a framework is not a figure to count up (show the steps).
+        unit = ' '.join(ag._tokens(' '.join(fields.get(k, '') for k in ('unit', 'suffix')))).split()
+        return not (unit and unit[0] in _FRAMEWORK_NOUNS)
     if e in ('marker-highlight', 'vox-annotate'):
         return ag.accent_inside(fields.get('text', ''), fields.get('word', ''))
     if e in ('data-chart', 'mk-line-graph', 'animated-bar-chart'):
@@ -1107,6 +1135,50 @@ def fill_quiet(kept: list[dict], segments: Sequence, ranges: Sequence[Sequence[f
         if not placed:
             break
     return sorted(out, key=lambda g: g['at_ms'])
+
+
+# The takeover a video gets on its punchline when the planner left it out (huge type, 2.6 s: about one line said).
+ENSURE_TAKEOVER_MS = 2600
+# What a takeover may push aside to get its moment: lighter graphics only (no diagram, number proof, the member's
+# own pictures, a call to action or a logo).
+ENSURE_KEEP_PRIORITY = 7
+ENSURE_KEEP_TEMPLATES = ('comment_cta', 'link_cta', 'logo', 'chapter', 'screen_frame', 'browser_frame') + ag.DIAGRAMS
+
+
+def ensure_kinds(kept: list[dict], segments: Sequence, ranges: Sequence[Sequence[float]], speed: float, seconds: float,
+                 allowed: Sequence[str], clash: Any, register: Optional[str], lo: float, hi: float) -> list[dict]:
+    """The kinds a pro edit never leaves out when their cue is there, added when the planner didn't place them: the
+    type takeover on the line the video turns on (a punchline cue), once a video. It takes its moment from lighter
+    graphics around it (ENSURE_KEEP_*), checked like any planned graphic (every word said, the variety and group rules,
+    never over a story). Source time; `lo`/`hi`: the earliest start and latest end allowed."""
+    if register == 'minimal' or 'takeover' not in allowed or any(kind_of(g) == 'takeover' for g in kept):
+        return kept
+    cues = find_cues(segments)
+    stories = story_spans(cues)
+    out = list(kept)
+    for cue in (c for c in cues if c['kind'] == 'punchline' and lo <= c['at_ms'] <= hi):
+        text = cue['text']
+        g = {'template': 'takeover', 'at_ms': int(max(lo, cue['at_ms'] - 150)), 'duration_ms': ENSURE_TAKEOVER_MS, 'placement': 'middle',
+             'origin': 'auto', 'fields': {'text': text, **({'accent': key_word(text)} if key_word(text) else {})}}
+        g = ag._fits_words(g, segments)
+        if g is None or in_story(g, stories) or g['at_ms'] + g['duration_ms'] > hi:
+            continue
+        span = ag.window(ranges, speed, g['at_ms'], g['duration_ms'])
+        if span is None or span[1] < ag.EDITOR_MIN_MS:
+            continue
+        # Room on the timeline: lighter graphics overlapping it step aside; a heavier one keeps its moment.
+        rest = [k for k in out if not clash(g, [k])]
+        aside = [k for k in out if clash(g, [k])]
+        if any(ag._priority(k) >= ENSURE_KEEP_PRIORITY or k['template'] in ENSURE_KEEP_TEMPLATES or kind_of(k) in ag.NUMBER_FAMILY for k in aside):
+            continue
+        # The one-most-important-line group (SLAM_MAX): the weakest other slam effect makes way.
+        slams = [k for k in rest if kind_of(k) in SLAM_KINDS]
+        if len(slams) >= SLAM_MAX:
+            rest.remove(min(slams, key=lambda k: (ag._priority(k), -k['at_ms'])))
+        if not ag.variety_allows(g, rest, seconds) or clash(g, rest):
+            continue
+        return sorted(rest + [{**g, 'origin': 'auto', 'filled': True}], key=lambda k: k['at_ms'])
+    return out
 
 
 # ---------------------------------------------------------------------------

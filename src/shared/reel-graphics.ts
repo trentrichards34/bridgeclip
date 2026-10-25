@@ -18,8 +18,8 @@
  */
 import { chatFail as fail, chatPlainText } from './chat-core'
 import { checkHighlightFields } from './chat-point'
-import { graphicBandSize, graphicBox, graphicOwnFont, GRAPHIC_DEFAULT_COLOR, outputSize, type GraphicFrame } from './graphic-layout'
-import { HEADLINE_FONTS, isHexColor, type HeadlineLook } from './headline-look'
+import { graphicBandSize, graphicBox, graphicFonts, GRAPHIC_DEFAULT_COLOR, outputSize, type GraphicFrame } from './graphic-layout'
+import { isHexColor, type HeadlineLook } from './headline-look'
 import { DIAGRAM_ACCENT, GRAPHIC_TEMPLATES, MAX_GRAPHIC_FIELD_CHARS, isDiagram, graphicDepth, MAX_GRAPHICS_LONG, MAX_GRAPHICS_PER_CLIP, clampGraphicMs, templateInfo, graphicHasContent, parseGraphics, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicTemplateId } from './motion-graphics'
 
 /** The templates offered on review screens (every one but Logo pop and Screen recording, which need the clip editor's files, and the chapter header, which belongs to a clip's sections). */
@@ -45,13 +45,13 @@ export function hookShareFor(text: string, look: Pick<HeadlineLook, 'look'> | nu
   return Math.min(.3, Math.max(.17, .105 + lines * .038))
 }
 
-/** A graphic's color and font on a reel: its own color, else the brand look's color, else a calm blue; the hook's font. */
-export function reelGraphicStyle(look: HeadlineLook | null | undefined, graphic?: Pick<EditorGraphic, 'fields'> & { template?: string }): { color: string; font: string } {
+/** A graphic's color and fonts on a reel: its own color, else the brand look's color, else a calm blue; fonts: graphicFonts. */
+export function reelGraphicStyle(look: HeadlineLook | null | undefined, graphic?: Pick<EditorGraphic, 'fields'> & { template?: string }): { color: string; font: string; accent_font?: string } {
   const own = graphic?.fields.color
   // Diagrams light up in green unless they have their own color.
   const color = isHexColor(own) ? own.toUpperCase() : graphic?.template && isDiagram(graphic.template) ? DIAGRAM_ACCENT : look?.look === 'brand' && isHexColor(look.color) ? look.color.toUpperCase() : GRAPHIC_DEFAULT_COLOR
-  const font = graphicOwnFont(graphic) ?? (look && HEADLINE_FONTS.some((f) => f.id === look.font) ? look.font : 'clean')
-  return { color, font }
+  // A bold sans for the words, the brand font for accent words only (graphic-layout graphicFonts).
+  return { color, ...graphicFonts(look, graphic) }
 }
 
 /** What a reel graphic draws (1080×1920), lasting `durationMs` on screen. */

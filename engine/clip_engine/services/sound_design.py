@@ -193,6 +193,18 @@ PRIORITY = {"cta": 95, "hook": 90, "scene": 80, "big": 75, "graphic": 70, "punch
             "graphic_out": 40, "punch": 30, "extra": 20}
 # The sounds a punch-in on a cue may ask for.
 PUNCH_SOUNDS = ("whoosh", "impact")
+# Number graphics (one family for sound as for the picture): a soft pop or key tick as the number lands, taking turns,
+# a little under the other hits (a real run's back half popped on every number).
+NUMBER_TEMPLATES = frozenset({"stat"})
+NUMBER_EFFECTS = frozenset({"count-up", "number-pop-in", "gauge-dial", "waffle-chart", "conic-progress-ring", "star-rating-fill"})
+NUMBER_ACTIONS = ("pop", "tick")
+NUMBER_TRIM_DB = -3.0
+# No sound family more than this many times in a row (a real run played four whooshes back to back): the next one
+# takes its family's stand-in (a whoosh becomes a swipe, a pop a tick...) or, for a minor cue, is left out.
+MAX_SAME_IN_A_ROW = 2
+STAND_IN = {"whoosh": "swipe", "swipe": "paper", "pop": "tick", "tick": "pop", "impact": "pop", "paper": "swipe", "click": "tick"}
+# Cues that are left out rather than changed when they would repeat a family a third time.
+MINOR_KINDS = frozenset({"graphic_out", "scene_out", "extra", "punch"})
 
 
 @dataclass
@@ -203,6 +215,8 @@ class Cue:
     priority: int
     # Where the sound may cause a riser in front of it (the payoff).
     payoff: bool = False
+    # A number landing (a stat, a count-up...): a soft pop or tick, taking turns.
+    number: bool = False
     big: bool = False
     # A graphic's time on screen (extras need one around them).
     window: Optional[tuple[int, int]] = None
@@ -220,7 +234,7 @@ class Register:
 
 
 REGISTER = {
-    "teaching": Register(1200, 4.0, frozenset({"hook", "graphic", "graphic_out", "scene", "scene_out", "broll", "punch", "extra"}), 0.0, True),
+    "teaching": Register(1500, 4.0, frozenset({"hook", "graphic", "graphic_out", "scene", "scene_out", "broll", "punch", "extra"}), 0.0, True),
     # A personal story: only what the picture does, softer and sparser; no typing or clicks, no riser.
     "story": Register(2500, 8.0, frozenset({"hook", "graphic", "scene"}), -3.0, False, frozenset({"tick", "click"})),
     # Minimal: the hook, scene changes and the biggest moments.
@@ -294,14 +308,17 @@ def cues_from_events(events: Iterable[Any], total_ms: int) -> list[Cue]:
                 action = "pop"
             if action is None:
                 continue
-            if action == "whoosh" and size == "compact":
-                # A small card doesn't move a lot of air.
-                action = "swipe"
             cta = template in CTA_TEMPLATES
             big = template in BIG_TEMPLATES or size == "stage"
+            if action == "whoosh" and not big and not cta:
+                # A whoosh is for real movement (a scene change, a big card): a card that just appears gets a soft swipe.
+                action = "swipe"
+            number = template in NUMBER_TEMPLATES or (template == "fx" and event.get("effect") in NUMBER_EFFECTS)
+            if number and action in ("pop", "tick", "impact", "swipe", "whoosh") and event.get("sound") not in ACTIONS:
+                action = "pop"
             kind_ = "cta" if cta else "big" if big else "graphic"
             cues.append(Cue(land, action, "graphic", PRIORITY[kind_], payoff=cta or wants_riser, big=big or cta,
-                            window=(at, end or at + 1500)))
+                            window=(at, end or at + 1500), number=number and not cta))
             if size == "stage" and end is not None and end < total_ms - 300:
                 # A big card leaving the stage moves air too.
                 cues.append(Cue(end, "whoosh", "graphic_out", PRIORITY["graphic_out"]))
@@ -403,10 +420,11 @@ def plan_sounds(cues: list[Cue], total_ms: int, register: str = DEFAULT_REGISTER
             continue
         taken.append((peak, peak))
         chosen.append((cue, cue.action, None))
+    chosen = varied_families(sorted(chosen, key=lambda item: (item[0].at_ms, item[1] != "riser")), choose)
     # Takes rotate per action through time, so neighbors never repeat (the member's own come first when they have any).
     used: dict[str, int] = {}
     out: list[Placement] = []
-    for cue, action, fixed in sorted(chosen, key=lambda item: (item[0].at_ms, item[1] != "riser")):
+    for cue, action, fixed in chosen:
         takes = choose(action)
         if not takes:
             continue
@@ -419,8 +437,32 @@ def plan_sounds(cues: list[Cue], total_ms: int, register: str = DEFAULT_REGISTER
         if trim > sound.duration_ms * 0.6 or start >= total_ms - 100:
             continue
         out.append(Placement(sound, action, cue.kind, peak, max(0, start), trim,
-                             hit_level_db(action, cue.kind, register, music_db) - sound.level_db))
+                             hit_level_db(action, cue.kind, register, music_db) - sound.level_db + (NUMBER_TRIM_DB if cue.number else 0.0)))
     return out[:MAX_PLACEMENTS]
+
+
+def varied_families(chosen: list, choose: Any) -> list:
+    """The chosen cues (time order: (cue, action, fixed take)) with their sound families varied: numbers take turns
+    between a soft pop and a key tick, and no family plays more than MAX_SAME_IN_A_ROW times in a row; the next one
+    takes its stand-in (STAND_IN, when there is a sound for it), or a minor cue (an exit, an extra, a punch-in) is left
+    out. The riser and the payoff's impact stay as they are."""
+    out: list = []
+    numbers = 0
+    for cue, action, fixed in chosen:
+        if fixed is None and cue.number and action in NUMBER_ACTIONS:
+            action = NUMBER_ACTIONS[numbers % len(NUMBER_ACTIONS)]
+            numbers += 1
+        if fixed is None and action != "riser" and not (cue.payoff and action == "impact"):
+            tail = [a for _c, a, _f in out if a != "riser"][-MAX_SAME_IN_A_ROW:]
+            if len(tail) == MAX_SAME_IN_A_ROW and all(a == action for a in tail):
+                if cue.kind in MINOR_KINDS:
+                    continue
+                other = STAND_IN.get(action)
+                if not other or not choose(other):
+                    continue
+                action = other
+        out.append((cue, action, fixed))
+    return out
 
 
 # ---------------------------------------------------------------------------

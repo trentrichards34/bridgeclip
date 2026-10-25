@@ -3,7 +3,7 @@ import type { BrandIdentity } from '../../shared/remix'
 import { DEFAULT_HANDLE_POSITION, hasBrandMark } from '../../shared/brand-kit'
 import {
   HEADLINE_ACCENT_SCALE, HEADLINE_FONTS, HIGHLIGHT, HIGHLIGHT_PHRASE_FAMILY, accentWordIndex, headlineBarColor, headlineTextBox, headlineTextColor, highlightColors,
-  highlightPlacement, isHexColor, textBoxOutline, textBoxPath, textBoxRects, TEXT_BOX, wrapHeadline, type HeadlineLook
+  highlightPlacement, isHexColor, textBoxOutline, textBoxPath, textBoxRects, TEXT_BOX, wrapHeadline, FLOATING_FONT_SIZES, type HeadlineLook
 } from '../../shared/headline-look'
 import type { LookExtraId } from '../../shared/look-extras'
 import {
@@ -324,7 +324,8 @@ export function boxedHookLayout(text: string, fontId: HeadlineLook['font'], fram
     if (!font.accent) return measure(line, css(size), size)
     return parts.reduce((sum, word, i) => sum + measure(word, css(size, first + i === accentAt), size), 0) + measure(' ', css(size), size) * (parts.length - 1)
   }
-  const sizes = [60, 54, 48, 42].map((size) => size * (font.scale ?? 1) * scale)
+  // Floating text on a box: at least the engine's floating sizes (a saved small label still reads on a phone).
+  const sizes = FLOATING_FONT_SIZES.map((size) => size * (font.scale ?? 1) * scale)
   const maxW = frameW - 2 * Math.round(frameW * HEADLINE.padX)
   // The wrap measures whole lines in the base face (as the engine's _headline_lines does).
   const { size, lines } = wrapHeadline(words.join(' '), (line, at) => measure(line, css(at), at), maxW, sizes)

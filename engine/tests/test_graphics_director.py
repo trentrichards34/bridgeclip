@@ -361,8 +361,11 @@ def test_quiet_stretches_get_visuals_from_their_cues_never_a_story_and_never_a_n
     for a, b in zip(out, out[1:]):
         assert a['at_ms'] + a['duration_ms'] <= b['at_ms']
     assert all(ag.words_said(g, segments) for g in added)
-    numbers = [g['fields'].get('value') for g in added if g['fields'].get('effect') == 'count-up']
-    assert '8,188' in numbers and '4,365' not in numbers
+    numbers = [g for g in added if ag.kind_of(g) in ag.NUMBER_FAMILY]
+    assert all('4,365' not in g['fields'].get('value', '') for g in numbers)
+    # Numbers are one family: never closer to the one shown (or each other) than the family's gap.
+    family = sorted([33_000] + [g['at_ms'] for g in numbers])
+    assert all(b - a >= ag.number_family_gap_ms(seconds) for a, b in zip(family, family[1:]))
     # Markers show a whole clause as said (nothing dropped), on a real word.
     for g in added:
         if g['fields'].get('effect') == 'marker-highlight':
