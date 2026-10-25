@@ -133,7 +133,7 @@ _MONTHS = frozenset(('january', 'february', 'march', 'april', 'may', 'june', 'ju
 _FRAMEWORK_NOUNS = ('things', 'ways', 'steps', 'reasons', 'tips', 'rules', 'pillars', 'mistakes', 'secrets', 'parts', 'stages', 'phases',
                     'questions', 'options', 'types', 'levels', 'lessons', 'keys')
 # Opposites said a sentence apart ("a warm audience will buy anything. A cold audience...") make a contrast.
-_OPPOSITES = (('warm', 'cold'), ('old', 'new'), ('free', 'paid'), ('organic', 'paid'), ('slow', 'fast'), ('hard', 'easy'), ('before', 'after'),
+_OPPOSITES = (('warm', 'cold'), ('old', 'new'), ('free', 'paid'), ('organic', 'paid'), ('organic', 'ads'), ('slow', 'fast'), ('hard', 'easy'), ('before', 'after'),
               ('wrong', 'right'), ('manual', 'automatic'), ('cheap', 'expensive'), ('broke', 'profitable'), ('beginner', 'expert'))
 _STEP_WORDS = ('step', 'steps', 'phase', 'stage', 'process', 'framework')
 # A numbered step: one of these words then a number ("step one", "rule #2", "part three").
@@ -1178,6 +1178,294 @@ def ensure_kinds(kept: list[dict], segments: Sequence, ranges: Sequence[Sequence
         if not ag.variety_allows(g, rest, seconds) or clash(g, rest):
             continue
         return sorted(rest + [{**g, 'origin': 'auto', 'filled': True}], key=lambda k: k['at_ms'])
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Stage moments: while the speaker teaches, a diagram or a stage scene every so often (the reference reels put one on
+# every step of an explanation; the planner alone placed three in four minutes).
+# ---------------------------------------------------------------------------
+
+# A stretch of explaining this long with no stage or diagram moment gets one where its words have a cue (a list, steps,
+# a framework, a contrast); the new one keeps at least STAGE_MIN_GAP_MS to the stage moments around it.
+STAGE_EVERY_MS = 50000
+STAGE_MIN_GAP_MS = 8000
+# Graphics that already show a contrast or a list (the planner's): taken up onto the stage rather than replaced.
+STAGE_COVERS = {
+    'contrast': frozenset(('fx:line-swap', 'fx:strikethrough-replace', 'fx:caret-swap', 'fx:kinetic-type-swap', 'before_after', 'strike_list')),
+    'list': frozenset(('list', 'checklist', 'fx:state-chip-rail', 'fx:marker-checklist-card', 'fx:onboarding-stepper-flow', 'icon_pop',
+                       'feature_tile', 'sticky_notes')),
+}
+# Words that make a side of a contrast the wrong one ("organic content... not nearly enough").
+_NEGATIONS = frozenset(('not', 'never', "don't", "won't", "can't", "isn't", "doesn't", "aren't", "wasn't", "shouldn't", 'no', 'stop',
+                        'wrong', 'cannot', 'nothing', "didn't"))
+# Words a list item never starts or ends with (a clause of the sentence, not an item).
+_ITEM_OPENERS = ('which', 'who', 'that', 'where', 'when', 'what', 'how', 'why', 'if', 'because')
+# Lead-ins dropped before comparing how sentences start ("And number three, we need...").
+_LEAD_INS = frozenset(('and', 'so', 'then', 'also', 'now', 'next', 'finally', 'lastly', 'plus', 'but', 'okay', 'ok', 'first', 'second',
+                       'third', 'fourth', 'fifth', 'number', 'step', 'one', 'two', 'three', 'four', 'five'))
+# Sentences in a parallel run start within this long of each other.
+PARALLEL_GAP_MS = 12000
+# The second side of a contrast is said this soon after the first (a Wrong / right shows both cards).
+CONTRAST_SIDES_MS = 10500
+# What ends a parallel item ("a product that we can sell": "a product").
+_ITEM_STOPS = frozenset(('that', 'which', 'who', 'to', 'so', 'because', 'and', 'but', 'for', 'with', 'when', 'if', 'where', 'is', 'are',
+                         'will', 'can', 'we', 'you', 'i', 'they', 'it'))
+
+
+def _words_of(sentence: list[dict]) -> list[dict]:
+    """The sentence's words as said (a word read as several tokens once), each with its tokens."""
+    out: list[dict] = []
+    for w in sentence:
+        if out and out[-1]['start'] == w['start'] and out[-1]['raw'] == w['raw']:
+            out[-1]['toks'].append(w['tok'])
+            continue
+        out.append({'raw': w['raw'].strip(), 'tok': w['tok'], 'toks': [w['tok']], 'start': w['start'], 'end': w['end']})
+    return out
+
+
+def _clean_item(words: Sequence[dict]) -> str:
+    return ' '.join(w['raw'] for w in words).strip(' ,.!?;:"“”')
+
+
+def _phrase_after(words: list[dict], i: int, most: int = 3) -> list[dict]:
+    """The item said from word `i`: an article, then up to `most` words, ending before a clause word or after a comma."""
+    out: list[dict] = []
+    for w in words[i:]:
+        if out and (w['tok'] in _ITEM_STOPS or len([x for x in out if x['tok'] not in ('a', 'an', 'the')]) >= most):
+            break
+        out.append(w)
+        if re.search(r'[,.!?;:]$', w['raw']):
+            break
+    while out and out[-1]['tok'] in _STOP:
+        out.pop()
+    return out if any(w['tok'] not in _STOP for w in out) else []
+
+
+def parallel_runs(segments: Sequence) -> list[dict]:
+    """Items said as sentences that start the same way ("We need a product... We need an offer... We need eyeballs"):
+    [{'at_ms', 'end_ms', 'items', 'sentence'}], 3-5 items a run, each the words right after the shared start."""
+    sentences = [_words_of(s) for s in _sentences(segments)]
+
+    def stripped(words: list[dict]) -> list[dict]:
+        k = 0
+        while k < len(words) and (words[k]['tok'] in _LEAD_INS or words[k]['tok'].isdigit()):
+            k += 1
+        return words[k:]
+
+    out: list[dict] = []
+    i = 0
+    while i < len(sentences):
+        base = stripped(sentences[i])
+        best: Optional[tuple[int, int]] = None  # (prefix length, run end)
+        for n in (4, 3, 2):
+            if len(base) <= n:
+                continue
+            prefix = [w['tok'] for w in base[:n]]
+            j = i + 1
+            while j < len(sentences) and j - i < 5:
+                other = stripped(sentences[j])
+                if len(other) <= n or [w['tok'] for w in other[:n]] != prefix or other[0]['start'] - sentences[j - 1][0]['start'] > PARALLEL_GAP_MS:
+                    break
+                j += 1
+            if j - i >= 3:
+                best = (n, j)
+                break
+        if best is None:
+            i += 1
+            continue
+        n, j = best
+        items = [_phrase_after(stripped(sentences[k]), n) for k in range(i, j)]
+        if all(items):
+            out.append({'at_ms': int(items[0][0]['start']), 'end_ms': int(sentences[j - 1][-1]['end']), 'items': [_clean_item(x) for x in items],
+                        'sentence': ' '.join(w['raw'] for w in sentences[i])})
+        i = j
+    return out
+
+
+# Words that open a relative clause: a negation after one is about something else ("a cold audience, people that don't
+# know us").
+_RELATIVE = frozenset(('that', 'who', 'which', 'whom', 'whose', 'where', 'when', 'if', 'because'))
+
+
+def _negation(w: dict) -> bool:
+    return w['tok'] in _NEGATIONS or w['tok'].endswith("n't")
+
+
+def _side_negated(words: list[dict], i: int) -> bool:
+    """The side said at word `i` is said with a negation: just before it ("don't use ads"), or after it in its own clause
+    ("organic content reaches a few people, but not nearly enough"), never one inside a relative clause about it."""
+    if any(_negation(w) for w in words[max(0, i - 3):i]):
+        return True
+    for w in words[i + 1:]:
+        if w['tok'] in _RELATIVE:
+            return False
+        if _negation(w):
+            return True
+    return False
+
+
+def contrast_pairs(segments: Sequence) -> list[dict]:
+    """Opposites said close together ("organic content... not nearly enough." then "...spend money on ads"):
+    [{'at_ms', 'end_ms', 'items': [first, second], 'wrong': 'first'|'second'|None}]. `wrong` is the side said with a
+    negation when only one is."""
+    sentences = [_words_of(s) for s in _sentences(segments)]
+    out: list[dict] = []
+    for k, cur in enumerate(sentences):
+        for back in range(1, 4):
+            if k - back < 0:
+                break
+            prev = sentences[k - back]
+            hit = None
+            for a, b in _OPPOSITES:
+                for x, y in ((a, b), (b, a)):
+                    pa = next((i for i, w in enumerate(prev) if x in w['toks']), None)
+                    pb = next((i for i, w in enumerate(cur) if y in w['toks']), None)
+                    if pa is not None and pb is not None and 0 < cur[pb]['start'] - prev[pa]['start'] <= CONTRAST_SIDES_MS:
+                        hit = (pa, pb)
+                        break
+                if hit:
+                    break
+            if not hit:
+                continue
+            pa, pb = hit
+            first = _phrase_after(prev, pa, 2)
+            second = _phrase_after(cur, pb, 2)
+            if not first or not second:
+                continue
+            neg_a, neg_b = _side_negated(prev, pa), _side_negated(cur, pb)
+            out.append({'at_ms': int(first[0]['start']), 'end_ms': int(second[-1]['end']), 'items': [_clean_item(first), _clean_item(second)],
+                        'wrong': 'first' if neg_a and not neg_b else 'second' if neg_b and not neg_a else None})
+            break
+    return out
+
+
+def _steps_said(cues: Sequence[dict], at: float, end: float) -> bool:
+    """Steps or a framework is announced in or just before this stretch ("three things", "the process")."""
+    return any(c['kind'] in ('steps', 'numbered_step') and at - 8000 <= c['at_ms'] <= end for c in cues)
+
+
+def stage_candidates(segments: Sequence, stage: bool) -> list[dict]:
+    """The stage moments the words offer: [{'cue': kind, 'at_ms', 'end_ms', 'options': [graphic, ...]}] in time order.
+    A list or a parallel run climbs a staircase when steps are announced (else a checklist on the stage), a contrast
+    with one side negated is a Wrong / right; a contrast without one is a cue only (a graphic of the planner's that
+    shows it is taken up onto the stage)."""
+    cues = find_cues(segments)
+    base = {'placement': 'middle', 'origin': 'auto'}
+    out: list[dict] = []
+
+    def listed(at: int, end: int, items: list[str]) -> list[dict]:
+        joined = '\n'.join(items)
+        options = []
+        if _steps_said(cues, at, end) and 3 <= len(items) <= ag.ITEM_LIMITS['staircase']:
+            options.append({**base, 'template': 'staircase', 'at_ms': at, 'duration_ms': end - at, 'fields': {'items': joined}})
+        if stage:
+            options.append({**base, 'template': 'checklist', 'at_ms': max(0, at - 300), 'duration_ms': max(5000, end - at + 1500), 'fields': {'items': joined}})
+        return options
+
+    for c in cues:
+        if c['kind'] != 'list':
+            continue
+        items = [i.strip() for i in c['text'].split(', ') if i.strip()]
+        if len(items) < 3 or any(len(i.split()) > 3 or i.split()[0].lower() in _ITEM_OPENERS or i.split()[-1].lower() in _STOP for i in items):
+            continue
+        out.append({'cue': 'list', 'at_ms': c['at_ms'], 'end_ms': c['end_ms'], 'options': listed(c['at_ms'], c['end_ms'], items)})
+    for run in parallel_runs(segments):
+        out.append({'cue': 'list', 'at_ms': run['at_ms'], 'end_ms': run['end_ms'], 'options': listed(run['at_ms'], run['end_ms'], run['items'])})
+    for pair in contrast_pairs(segments):
+        options = []
+        if pair['wrong']:
+            options.append({**base, 'template': 'compare_marks', 'at_ms': pair['at_ms'], 'duration_ms': pair['end_ms'] - pair['at_ms'],
+                            'fields': {'items': '\n'.join(pair['items']), 'wrong': pair['wrong']}})
+        out.append({'cue': 'contrast', 'at_ms': pair['at_ms'], 'end_ms': pair['end_ms'], 'options': options})
+    return sorted(out, key=lambda c: c['at_ms'])
+
+
+def _timed_stage(g: dict, segments: Sequence) -> Optional[dict]:
+    """A stage moment on its words: a diagram from its first item to a little after its last (a Wrong / right's two
+    sides may be said CONTRAST_SIDES_MS apart), a checklist while its items are said. None when they aren't all said."""
+    if not ag.has_content(g['template'], g['fields']):
+        return None
+    g = ag.drop_unsaid_extras(g, segments)
+    if g['template'] in ag.DIAGRAMS:
+        probe = {**g, 'at_ms': g['at_ms'] - 300, 'duration_ms': g['duration_ms'] + 600}
+        times = ag.item_times(probe, segments)
+        if not times:
+            return None
+        gap = CONTRAST_SIDES_MS if g['template'] == 'compare_marks' else ag.DIAGRAM_ITEM_GAP_MS
+        if any(b - a > gap for a, b in zip(times, times[1:])):
+            return None
+        at = max(0, times[0] - ag.DIAGRAM_LEAD_MS)
+        end = max(times[-1] + ag.DIAGRAM_HOLD_MS, at + ag.DIAGRAM_MIN_MS)
+        g = {**g, 'at_ms': int(at), 'duration_ms': int(min(end - at, ag.DIAGRAM_AUTO_MAX_MS))}
+    else:
+        times = ag.item_times(g, segments)
+        if not times:
+            return None
+        at = max(0, times[0] - 300)
+        g = {**g, 'at_ms': int(at), 'duration_ms': int(min(ag.EDITOR_MAX_MS, max(5000, times[-1] + 2200 - at)))}
+    return g if ag.words_said(g, segments) else None
+
+
+def ensure_stage(kept: list[dict], segments: Sequence, ranges: Sequence[Sequence[float]], speed: float, seconds: float,
+                 allowed: Sequence[str], clash: Any, register: Optional[str], lo: float, hi: float, staged: Any, stage: bool,
+                 limit: int) -> list[dict]:
+    """While the speaker teaches, a stage or diagram moment at least every STAGE_EVERY_MS of explaining, where the words
+    have a cue for one: a graphic of the planner's that already shows the cue is taken up onto the stage ('stage_up'),
+    else a fitting diagram or stage card is added on the cue's words (its items lighting as said), taking its moment
+    from lighter graphics around it. Never in a personal story, the story or minimal register, or past the video's count
+    (`limit`); checked like any planned graphic. `staged(g)`: g shows on the stage. Source time."""
+    if register not in (None, 'teaching') or not ranges:
+        return kept
+    stories = story_spans(find_cues(segments))
+    out = list(kept)
+
+    def explaining(a: float, b: float) -> float:
+        """Teaching time between a and b (story stretches left out)."""
+        return max(0.0, b - a) - sum(max(0, min(b, s1) - max(a, s0)) for s0, s1 in stories)
+
+    def room(a: float, b: float) -> bool:
+        """[a, b] sits in a long enough stretch without a stage moment, clear of the ones around it."""
+        spans = sorted((g['at_ms'], g['at_ms'] + g['duration_ms']) for g in out if staged(g))
+        before = max((e for s, e in spans if s <= a), default=lo)
+        after = min((s for s, e in spans if s >= a), default=hi)
+        if any(s < b + STAGE_MIN_GAP_MS and e > a - STAGE_MIN_GAP_MS for s, e in spans):
+            return False
+        return explaining(before, after) >= STAGE_EVERY_MS
+
+    for cand in stage_candidates(segments, stage):
+        if not lo <= cand['at_ms'] <= hi or in_story({'at_ms': cand['at_ms'], 'duration_ms': max(1, cand['end_ms'] - cand['at_ms'])}, stories):
+            continue
+        covers = STAGE_COVERS.get(cand['cue'], frozenset())
+        mine = [g for g in out if kind_of(g) in covers and g['at_ms'] < cand['end_ms'] + 1500 and cand['at_ms'] - 1500 < g['at_ms'] + g['duration_ms']
+                and not staged(g)]
+        if stage and mine:
+            g = mine[0]
+            others = [k for k in out if k is not g]
+            if not room(g['at_ms'], g['at_ms'] + g['duration_ms']):
+                continue
+            out = sorted(others + [{**g, 'stage_up': True}], key=lambda k: k['at_ms'])
+            continue
+        for option in cand['options']:
+            if option['template'] not in allowed:
+                continue
+            g = _timed_stage(option, segments)
+            if g is None or g['at_ms'] < lo or g['at_ms'] + g['duration_ms'] > hi or in_story(g, stories):
+                continue
+            span = ag.window(ranges, speed, g['at_ms'], g['duration_ms'])
+            if span is None or span[1] < ag.EDITOR_MIN_MS or not room(g['at_ms'], g['at_ms'] + g['duration_ms']):
+                continue
+            # Its moment: lighter graphics overlapping it step aside; a heavier one (a number, a diagram, a picture, the
+            # call to action) keeps its moment.
+            rest = [k for k in out if not clash(g, [k])]
+            aside = [k for k in out if clash(g, [k])]
+            if any(ag._priority(k) >= ENSURE_KEEP_PRIORITY or k['template'] in ENSURE_KEEP_TEMPLATES or kind_of(k) in ag.NUMBER_FAMILY
+                   or k.get('stage_up') for k in aside):
+                continue
+            if len([k for k in rest if k.get('template') != 'chapter']) >= limit or not ag.variety_allows(g, rest, seconds) or clash(g, rest):
+                continue
+            out = sorted(rest + [{**g, 'origin': 'auto', 'filled': True}], key=lambda k: k['at_ms'])
+            break
     return out
 
 

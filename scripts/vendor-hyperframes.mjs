@@ -121,6 +121,19 @@ export const PATCH = {
             if (ccFirst) ccFirst.textContent = vars.first_text == null ? "" : String(vars.first_text);
             if (ccSecond) ccSecond.textContent = vars.second_text == null ? "" : String(vars.second_text);
             mountSlot("torn-paper-rip-from", fromClip);`]],
+  // The swap is clean: each line moves a short way and fades, and the second comes in once the first is gone (rolled
+  // through its tall mask, the outgoing line showed outside the words' backing for a moment).
+  'line-swap': [
+    ["            var LAG_BASE = 0.22; // line_b starts this long after the beat",
+      "            // CreatorClips: line_b starts once line_a is gone (no frame shows both lines).\n            var LAG_BASE = 0.3; // line_b starts this long after the beat"],
+    ["            var EXIT_A_BASE = 0.35;",
+      "            var EXIT_A_BASE = 0.3;"],
+    ["            gsap.set(lineBEl, { yPercent: 115 });",
+      "            // CreatorClips: each line moves a short way and fades (the mask is taller than the words, so a line rolling\n            // through it showed outside the words' backing on its way out).\n            var SHIFT = 10;\n            gsap.set(lineBEl, { yPercent: SHIFT, opacity: 0 });"],
+    ["            tl.fromTo(\n              lineAEl,\n              { yPercent: 115 },\n              { yPercent: 0, duration: IN_A, ease: \"power4.out\" },\n              0,\n            );",
+      "            tl.fromTo(lineAEl, { yPercent: SHIFT }, { yPercent: 0, duration: IN_A, ease: \"power4.out\" }, 0);\n            tl.fromTo(lineAEl, { opacity: 0 }, { opacity: 1, duration: IN_A * 0.7, ease: \"power1.in\" }, 0);"],
+    ["            tl.fromTo(\n              lineAEl,\n              { yPercent: 0 },\n              { yPercent: -115, duration: EXIT_A, ease: \"power2.in\", immediateRender: false },\n              swapAt,\n            );\n            tl.fromTo(\n              lineBEl,\n              { yPercent: 115 },\n              { yPercent: 0, duration: IN_B, ease: \"power4.out\" },\n              swapAt + LAG,\n            );",
+      "            tl.fromTo(\n              lineAEl,\n              { yPercent: 0 },\n              { yPercent: -SHIFT, duration: EXIT_A, ease: \"power2.in\", immediateRender: false },\n              swapAt,\n            );\n            tl.fromTo(\n              lineAEl,\n              { opacity: 1 },\n              { opacity: 0, duration: EXIT_A * 0.8, ease: \"power1.out\", immediateRender: false },\n              swapAt,\n            );\n            tl.set(lineAEl, { opacity: 0 }, swapAt + EXIT_A);\n            tl.fromTo(\n              lineBEl,\n              { yPercent: SHIFT },\n              { yPercent: 0, duration: IN_B, ease: \"power3.out\", immediateRender: false },\n              swapAt + LAG,\n            );\n            tl.fromTo(\n              lineBEl,\n              { opacity: 0 },\n              { opacity: 1, duration: IN_B * 0.7, ease: \"power1.in\", immediateRender: false },\n              swapAt + LAG,\n            );"]],
   'text-stagger': [['green: "#34d399"', 'green: "var(--brand, #34d399)"']],
   'gloss-sweep': [[`surface: "#123b2c",
                 surfaceBright: "#1a513c",
@@ -136,6 +149,7 @@ const NOTES = {
   'device-frame-stage': 'its screen is measured by its layout width (not its transformed box), so the screen content fills it',
   'browser-device-stage': 'its screen slot reads the member\'s picture from window.__ccSlotDoc (not the page)',
   'paper-collage-reveal': 'its content slot reads the member\'s picture from window.__ccSlotDoc (not the page); its sample word ("Revealed") is removed',
+  'line-swap': 'the swap is clean: each line moves a short way and fades, and the second line comes in only once the first is gone (no frame shows both)',
   'torn-paper-rip': 'its slots read the member\'s picture from window.__ccSlotDoc (not the page); its sample words ("Chapter one", "Chapter two") are replaced by the variables first_text and second_text'
 }
 

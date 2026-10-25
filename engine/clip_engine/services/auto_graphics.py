@@ -1234,17 +1234,41 @@ def max_cards(output_length_ms: float, register: Optional[str] = None) -> int:
     return max(1, min(MAX_PER_CLIP, by_pace, by_minute))
 
 
-def graphic_size(template: str, stage: bool, effect: Optional[str] = None) -> str:
+def graphic_size(template: str, stage: bool, effect: Optional[str] = None, fields: Optional[dict] = None) -> str:
     """'stage' for the big pattern cards when Stage layouts are on; 'card' otherwise. Diagrams are always stage size: in a
     Visual scene with Stage layouts on, else over the video on their blue panel; so are the member's screenshots (a
-    picture needs the room to be read)."""
+    picture needs the room to be read). With Stage layouts on, a visual of 3 or more items (`fields`) is a stage scene
+    (the speaker's card beside it), never a small card over the speaker."""
     if template in DIAGRAMS or (stage and template in STAGE_TEMPLATES) or (template == 'fx' and effect in MEDIA_FX):
+        return 'stage'
+    if stage and fields and stage_items(template, fields) >= STAGE_ITEMS:
         return 'stage'
     # With Stage layouts on, an effect the catalog sizes for the stage (a flowchart, a hub, a chart of several numbers)
     # gets the stage: as a card over the speaker its labels are too small to read on a phone.
     if template == 'fx' and stage and effect and (effect == 'flanking-words' or fx_catalog().get(effect, {}).get('size') == 'stage'):
         return 'stage'
     return 'card'
+
+
+# A visual with this many items or more goes on the stage (with Stage layouts on).
+STAGE_ITEMS = 3
+
+
+def stage_items(template: str, fields: dict) -> int:
+    """How many items a visual shows: its items (a list template), or its effect's list field (a chip rail's steps, a
+    hub's nodes, a checklist card's lines); 0 for a single line or number."""
+    if template == 'fx':
+        effect = fx_catalog().get(fields.get('effect')) or {}
+        if effect.get('group') == 'numbers':
+            return 0
+        lists = [f['key'] for f in effect.get('fields', []) if f['kind'] == 'list' and f.get('said')]
+        best = max((len([x for x in str(fields.get(k) or '').split('\n') if x.strip()]) for k in lists), default=0)
+        if fields.get('effect') == 'marker-checklist-card':
+            best = max(best, sum(1 for k in ('line_one', 'line_two', 'line_three') if str(fields.get(k) or '').strip()))
+        return best
+    if template in ('icon_pop', 'feature_tile', 'orbit', 'sticky_notes', 'strike_list'):
+        return len([x for x in str(fields.get('items') or '').split('\n') if x.strip()])
+    return 0
 
 
 def new_id(taken: set[str]) -> str:
@@ -1842,6 +1866,13 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
         # The kinds a pro edit never leaves out when their cue is there (the takeover on the punchline).
         kept = director.ensure_kinds(kept, segments, ranges, speed, seconds, allowed, crowded, register,
                                      max(ranges[0][0], source_ms(ranges, speed, FIRST_MS) or ranges[0][0]), source_ms(ranges, speed, tail) or clip_end)
+        # While the speaker teaches, a stage or diagram moment every so often where the words have a cue for one (with
+        # Stage layouts on: a reel with the stage).
+        if opts['fill_quiet'] and opts['stage']:
+            staged = lambda g: bool(g.get('stage_up')) or graphic_size(g['template'], opts['stage'], g['fields'].get('effect'), g['fields']) == 'stage'  # noqa: E731
+            kept = director.ensure_stage(kept, segments, ranges, speed, seconds, allowed, crowded, register,
+                                         max(ranges[0][0], source_ms(ranges, speed, FIRST_MS) or ranges[0][0]), source_ms(ranges, speed, tail) or clip_end,
+                                         staged, bool(opts['stage']), fill_limit)
         kept = [with_list_icons({k: v for k, v in g.items() if k != 'converted_from'}) for g in kept]
         # One look for the whole video (the member's tone, else light ink on dark), effects themed the same way.
         kept = director.with_look(kept, director.video_look(opts))
@@ -1875,7 +1906,7 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
             if g.get('fields', {}).get('word_ms'):
                 fields['word_ms'] = g['fields']['word_ms']
         previous_end = g['at_ms'] + g['duration_ms']
-        size = graphic_size(g['template'], opts['stage'], g['fields'].get('effect'))
+        size = 'stage' if g.get('stage_up') and opts['stage'] else graphic_size(g['template'], opts['stage'], g['fields'].get('effect'), g['fields'])
         if size == 'stage' and opts['variety'] and g['template'] not in DIAGRAMS:
             # On the (light) stage: the dark looks, so no white card sits on near-white.
             fields = director.on_light_stage({**g, 'fields': fields})['fields']

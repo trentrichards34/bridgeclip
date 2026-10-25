@@ -364,7 +364,7 @@ def plan_graphics(raw: Any, words: Sequence[Any], marks: Sequence[Optional[str]]
             continue
         fields = {k: v for k, v in g['fields'].items() if k not in ('item_ms', 'word_ms', 'cue_ms')}
         out.append({'id': ag.new_id(taken), 'template': g['template'], 'word': word, 'duration_ms': int(g['duration_ms']),
-                    'placement': g['placement'], 'fields': fields, 'origin': 'auto', **({'size': g['size']} if g.get('size') == 'stage' and g['template'] == 'fx' else {}),
+                    'placement': g['placement'], 'fields': fields, 'origin': 'auto', **({'size': g['size']} if g.get('size') == 'stage' else {}),
                     **({'depth': 'behind'} if g['template'] == 'big_words' else {})})
     return sorted(out, key=lambda g: g['word'])[:max(MAX_GRAPHICS, limit)]
 
@@ -532,7 +532,8 @@ def editor_graphics(specs: Sequence[dict], timed: Sequence[Sequence[Any]], total
              'placement': spec.get('placement') if spec.get('placement') in ag.PLACEMENTS else 'top', 'fields': fields}
         if spec.get('origin') == 'auto' and spec['template'] in EDIT_TEMPLATES:
             if options.get('motion', True):
-                auto.append(g)
+                # Taken up onto the stage at plan time (graphics_director.ensure_stage, a visual of 3+ items): it stays there.
+                auto.append({**g, 'stage_up': True} if spec.get('size') == 'stage' else g)
             continue
         member.append({**g, 'origin': 'member' if spec.get('origin') != 'chat' else 'chat',
                        **({'size': spec['size']} if spec.get('size') in ('compact', 'card', 'stage') else {}),

@@ -196,12 +196,15 @@ def test_the_hook_headline_opens_the_clip_and_the_keyword_keeps_its_last_seconds
 def test_stage_scenes_go_around_stage_cards_in_source_time():
     kept = fit_to_clip([STRIKE, ICONS], SAID, CLIP, 1.0, STAGE)
     scenes = stage_scenes_for(kept, 10_000, 40_000)
-    assert scenes == [{'scene': 'stage', 'start_ms': 13_000, 'end_ms': 17_400, 'backdrop': 'light'}]
-    assert on_stage(kept[0], scenes) and not on_stage(kept[1], scenes)
+    # (A row of three icons is a stage scene too: a visual of 3+ items never sits as a small card over the speaker.)
+    assert scenes == [{'scene': 'stage', 'start_ms': 13_070, 'end_ms': 17_400, 'backdrop': 'light'},
+                      {'scene': 'stage', 'start_ms': 24_470, 'end_ms': 27_800, 'backdrop': 'light'}]
+    assert on_stage(kept[0], scenes) and on_stage(kept[1], scenes)
     assert stage_scenes_for([{**g, 'size': 'card'} for g in kept], 10_000, 40_000) == []
     # Through a cut and the speed onto the finished clip's clock (outputScenes in scenes.ts).
     pairs = output_scenes(scenes, [(10_000, 14_000), (15_000, 40_000)], 1.25)
-    assert [out for _, out in pairs] == [{'scene': 'stage', 'start_ms': 2400, 'end_ms': 5120, 'backdrop': 'light'}]
+    assert [out for _, out in pairs] == [{'scene': 'stage', 'start_ms': 2456, 'end_ms': 5120, 'backdrop': 'light'},
+                                         {'scene': 'stage', 'start_ms': 10_776, 'end_ms': 13_440, 'backdrop': 'light'}]
 
 
 def test_saved_graphics_and_scenes_read_back_for_the_editor():
@@ -249,10 +252,11 @@ def test_pipeline_with_stage_layouts_draws_stage_scenes_and_records_them(monkeyp
     (sent,) = renders
     # No "step one… step two…" said: no chapter header, so the hook isn't handed over.
     assert sent.headline_hide_source_ms is None
-    assert sent.source_scenes == [{'scene': 'stage', 'start_ms': 13_000, 'end_ms': 17_400, 'backdrop': 'grid'}]
+    staged = [{'scene': 'stage', 'start_ms': 13_070, 'end_ms': 17_400, 'backdrop': 'grid'}, {'scene': 'stage', 'start_ms': 24_470, 'end_ms': 27_800, 'backdrop': 'grid'}]
+    assert sent.source_scenes == staged
     entry = result.output.metrics['clip_layouts'][0]
-    assert [(g['template'], g['size']) for g in entry['graphics']] == [('strike_list', 'stage'), ('icon_pop', 'card')]
-    assert entry['stage_scenes'] == [{'scene': 'stage', 'start_ms': 13_000, 'end_ms': 17_400, 'backdrop': 'grid'}]
+    assert [(g['template'], g['size']) for g in entry['graphics']] == [('strike_list', 'stage'), ('icon_pop', 'stage')]
+    assert entry['stage_scenes'] == staged
     assert result.output.metrics['requested_settings']['stage_layouts'] is True
     # The editor opens the clip with the stage scene in its Scenes row.
     plan_file = json.loads((tmp_path / 'out' / 'direction' / 'auto-graphics.json').read_text())

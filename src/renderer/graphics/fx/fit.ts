@@ -86,3 +86,34 @@ export function fxBrand(c: [number, number, number], tone: 'dark' | 'light' = 'd
   if (tone === 'light') return lum <= 170 ? `rgb(${c.join(', ')})` : mix(0, Math.min(.5, (lum - 170) / 170 + .15))
   return lum >= BRAND_ON_DARK ? `rgb(${c.join(', ')})` : mix(255, Math.min(.6, (BRAND_ON_DARK - lum) / 170 + .15))
 }
+
+/** A marked word as measured (unscaled px, relative to the box holding its mark): its ink's left and right, its baseline, its cap height. */
+export type MarkedWord = { left: number; right: number; baseline: number; cap: number }
+/**
+ * Where each hand-drawn mark sits around its word, in the word's own measure: `u` is the face's em as its cap height
+ * gives it (cap / 0.727, the units' Inter), so a condensed, script or serif accent face gets the same mark as the
+ * bundled sans: from/to are above (-) or below (+) the baseline in u; x is the overhang each side (share of the word, at
+ * most `most` u: a long word's circle stays a snug ring). The highlight runs through the letters (the x-height and the
+ * lower caps), the underline sits under the descenders, the circle rings the whole word.
+ */
+export const WORD_MARKS: Record<string, { from: number; to: number; x: number; most: number }> = {
+  highlight: { from: -.77, to: .1, x: .03, most: .08 }, scribble: { from: -.77, to: .1, x: .02, most: .06 },
+  underline: { from: .16, to: .41, x: .025, most: .06 }, circle: { from: -1.2, to: .53, x: .13, most: .22 }
+}
+const CAP_SHARE = .727
+/** The ring's clearance from the next word's letters (u). */
+const MARK_CLEAR = .06
+/**
+ * The mark's box (relative to the same origin as `word`) for a mark style, and the room the word needs each side past
+ * its word space (`space`, px) so the mark clears the next word's letters: none unless a circle's ring needs it.
+ */
+export function wordMarkBox(style: string, word: MarkedWord, space: number): { box: Rect; margin: number } {
+  const m = WORD_MARKS[style] ?? WORD_MARKS.highlight
+  const u = Math.max(1, word.cap) / CAP_SHARE
+  const w = Math.max(1, word.right - word.left)
+  const over = Math.min(w * m.x, m.most * u)
+  return {
+    box: { x: word.left - over, y: word.baseline + m.from * u, w: w + 2 * over, h: (m.to - m.from) * u },
+    margin: Math.max(0, over + MARK_CLEAR * u - Math.max(0, space))
+  }
+}

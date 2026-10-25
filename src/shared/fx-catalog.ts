@@ -80,6 +80,12 @@ export interface FxEffect {
   css_rules?: string
   /** The unit's accent words (a CSS selector: the marked word, the word in color): set in the brand font (spec.accent_font). */
   accent?: string
+  /**
+   * A hand-drawn mark on one word (selectors inside the unit): `host` holds the word (`word`) and the mark (`mark`, an svg
+   * drawn by the unit, its style on the host's data-marker-style). The runtime places the mark from the word's measured
+   * box (its ink width, baseline and cap height) once fonts are in and the unit is fitted, whatever face the word is set in.
+   */
+  word_mark?: { host: string; word: string; mark: string }
   /** CSS custom properties set on the unit (its color variables: the runtime binds those as properties). */
   css?: Readonly<Record<string, string>>
   /** A soft dark glass behind it (bare type over busy video); the member can turn it off (`backing: none`). */
@@ -285,8 +291,9 @@ export const FX_EFFECTS: readonly FxEffect[] = [
       text('underline', 'underline_word', 'Word to underline (from the second line)', 'works', { max: 20 })],
     fixed: { ...ACCENT, ...FADE },
     // Each line may take two lines at a size that reads on a phone (the unit sets one nowrap line, which shrank a long
-    // line to a sliver); its window grows to hold them.
-    css_rules: '#root { --ls-font-size: min(9.4cqw, 14cqh) !important; } .ls-mask { height: calc(var(--ls-font-size) * 2.5) !important; } .ls-line { white-space: normal !important; text-align: center; line-height: 1.1 !important; padding: 0 2cqw; } .ls-line-inner { display: block; }',
+    // line to a sliver); its window grows to hold them. Nothing is cut at the window's edge: each line moves only a
+    // short way as it fades (vendor-hyperframes.mjs PATCH), and is never shown cut off.
+    css_rules: '#root { --ls-font-size: min(9.4cqw, 14cqh) !important; } .ls-mask { height: calc(var(--ls-font-size) * 2.5) !important; overflow: visible !important; } .ls-line { white-space: normal !important; text-align: center; line-height: 1.1 !important; padding: 0 2cqw; } .ls-line-inner { display: block; }',
     own_type: true, jobs: ['emphasize'], use_when: 'A setup line is answered by a second line ("Everyone says X. The truth is Y.").',
     avoid_when: 'There is only one line.', hold_s: 3.5, sound: 'whoosh', default_ms: 4000, backing: 'glass', aspect: 2.8, cue: { field: 'second', unit: 'word' }, sync_s: 1.5 },
   { id: 'caret-swap', label: 'Caret retype', detail: 'A caret wipes one phrase away and types the replacement.', group: 'words',
@@ -318,8 +325,9 @@ export const FX_EFFECTS: readonly FxEffect[] = [
   { id: 'marker-highlight', label: 'Marker', detail: 'A line with one word highlighted, circled or underlined by marker.', group: 'words',
     fields: [text('text', 'text', 'Line', 'This is the part that matters', { required: true, max: 60 }), text('word', 'emphasis_word', 'Word to mark (from the line)', 'matters', { required: true, max: 24 }),
       choice('style', 'style', 'Mark', [['highlight', 'Highlight'], ['circle', 'Circle'], ['underline', 'Underline'], ['scribble', 'Scribble']])],
-    fixed: { ...ACCENT, ...FADE }, css_rules: '.mh-em { margin: 0 0.16em; } .mh-em[data-marker-style="circle"] { margin: 0 0.5em 0 0.4em; } .mh-text { text-wrap: balance; }', jobs: ['emphasize'], use_when: 'A line has one word that carries it.', avoid_when: 'Every word matters equally.',
-    hold_s: 3, sound: 'none', scale: 1.2, default_ms: 3500, backing: 'glass', aspect: 2.6, cue: { field: 'word', unit: 'word' }, sync_s: .9, accent: '.mh-em-text' },
+    fixed: { ...ACCENT, ...FADE }, css_rules: '.mh-text { text-wrap: balance; }', jobs: ['emphasize'], use_when: 'A line has one word that carries it.', avoid_when: 'Every word matters equally.',
+    hold_s: 3, sound: 'none', scale: 1.2, default_ms: 3500, backing: 'glass', aspect: 2.6, cue: { field: 'word', unit: 'word' }, sync_s: .9, accent: '.mh-em-text',
+    word_mark: { host: '.mh-em', word: '.mh-em-text', mark: '.mh-mark' } },
   { id: 'vox-annotate', label: 'Annotate', detail: 'A word in a line is marked, with a short note drawn beside it.', group: 'words',
     fields: [text('text', 'text', 'Line', 'Tell the story not the spec', { required: true, max: 50 }), text('word', 'keyword', 'Word to mark', 'story', { required: true, max: 20 }),
       text('note', 'note', 'Note', 'the part people remember', { max: 30 }),
@@ -328,10 +336,11 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     // The note goes under the marked word, from its first letter, in the body face at a size that reads on a phone (the
     // unit's small mono note sat above the line, where its band cut it off); nothing clips it, so the fit measures the
     // note too.
-    css_rules: '.va-em { margin: 0 0.16em; } .va-em[data-marker-style="circle"] { margin: 0 0.5em 0 0.4em; } #root { --va-font-size: min(8.6cqw, 14cqh) !important; } #root, .va-clip { overflow: visible !important; } .va-text { padding-bottom: 0.62em; } .va-anno { bottom: auto !important; top: 100% !important; left: 0 !important; width: auto !important; height: auto !important; } .va-conn { display: none !important; } .va-note { position: relative !important; display: block; top: 0.12em !important; right: auto !important; left: 0 !important; bottom: auto !important; max-width: none !important; font-family: var(--font-body) !important; font-size: 0.48em !important; font-weight: 700 !important; letter-spacing: 0 !important; line-height: 1.15 !important; text-align: left !important; }',
+    css_rules: '#root { --va-font-size: min(8.6cqw, 14cqh) !important; } #root, .va-clip { overflow: visible !important; } .va-text { padding-bottom: 0.62em; } .va-anno { bottom: auto !important; top: 100% !important; left: 0 !important; width: auto !important; height: auto !important; } .va-conn { display: none !important; } .va-note { position: relative !important; display: block; top: 0.12em !important; right: auto !important; left: 0 !important; bottom: auto !important; max-width: none !important; font-family: var(--font-body) !important; font-size: 0.48em !important; font-weight: 700 !important; letter-spacing: 0 !important; line-height: 1.15 !important; text-align: left !important; }',
     jobs: ['emphasize'], use_when: 'A phrase needs an aside or a short explanation.', avoid_when: 'Plain emphasis is enough (use Marker).',
     // Its sizes are set above (the note is sized against the line: raising each on its own broke the line apart).
-    own_type: true, hold_s: 3.5, sound: 'none', default_ms: 4000, backing: 'glass', aspect: 2.4, cue: { field: 'word', unit: 'word' }, sync_s: .9, accent: '.va-em-text' },
+    own_type: true, hold_s: 3.5, sound: 'none', default_ms: 4000, backing: 'glass', aspect: 2.4, cue: { field: 'word', unit: 'word' }, sync_s: .9, accent: '.va-em-text',
+    word_mark: { host: '.va-em', word: '.va-em-text', mark: '.va-mark' } },
   { id: 'kinetic-center-build', label: 'Word push', detail: 'Words arrive from the right and push the line until it locks in the center.', group: 'words',
     fields: [text('text', 'text', 'Words', 'Say it once', { required: true, max: 40 })], fixed: { font_size: 84, font_weight: '700', entry_offset: 88 },
     css: { '--color': 'var(--fg)' }, jobs: ['reveal'], use_when: 'A short line builds word by word with momentum.', avoid_when: 'The line is long (over six words).',

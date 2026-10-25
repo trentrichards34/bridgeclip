@@ -13,7 +13,7 @@
  * the brand font sets only the accent words (spec.accent_font), and every other face is one of the app's bundled fonts. The background stays transparent. Spoken word times (`cue_ms`) become the
  * unit's `cues`, or shift it so its main beat lands on the word (fxTiming).
  */
-import { FX_FIT, FX_MIN_TYPE, fitStepLabels, fxAnchorShift, fxBrand, fxFit, fxGlassLeft, fxMinType, type Rect } from './fit'
+import { FX_FIT, FX_MIN_TYPE, fitStepLabels, fxAnchorShift, fxBrand, fxFit, fxGlassLeft, fxMinType, wordMarkBox, type Rect } from './fit'
 import gsap from 'gsap'
 import { CustomEase } from 'gsap/CustomEase'
 import './fx.css'
@@ -212,6 +212,55 @@ export function raiseType(root: ShadowRoot, stage: HTMLElement, min: number, sca
   return raise.length > 0
 }
 
+let measureCanvas: CanvasRenderingContext2D | null = null
+/** How wide a text is, and the cap height, in a computed font (canvas metrics: the face's own, as loaded). */
+function textMetrics(cs: CSSStyleDeclaration, text: string): { width: number; cap: number } {
+  measureCanvas ??= document.createElement('canvas').getContext('2d')
+  const size = parseFloat(cs.fontSize) || 16
+  if (!measureCanvas) return { width: text.length * size * .25, cap: size * .7 }
+  measureCanvas.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`
+  const cap = measureCanvas.measureText('H').actualBoundingBoxAscent
+  return { width: measureCanvas.measureText(text).width, cap: cap > 0 ? cap : size * .7 }
+}
+/**
+ * Places each hand-drawn word mark (catalog `word_mark`) from its word as laid out now: the word's ink box from its
+ * text, its baseline from a probe set on it, its cap height from its own face (the brand's accent face included), so a
+ * highlight, underline or circle sits on the word whatever its face and size, after the fit raised or scaled it. The
+ * word keeps a normal word space either side; it gets a little more only when a circle's overhang needs it.
+ */
+export function placeWordMarks(root: ShadowRoot, effect: Pick<FxEffect, 'word_mark'>): number {
+  const spec = effect.word_mark
+  if (!spec) return 0
+  let placed = 0
+  for (const host of root.querySelectorAll<HTMLElement>(spec.host)) {
+    const word = host.querySelector<HTMLElement>(spec.word)
+    const mark = host.querySelector<SVGElement>(spec.mark)
+    if (!word || !mark || !host.offsetWidth) continue
+    const hostRect = host.getBoundingClientRect()
+    const k = hostRect.width / Math.max(1, host.offsetWidth) || 1
+    const range = document.createRange(); range.selectNodeContents(word)
+    const ink = range.getBoundingClientRect()
+    const probe = document.createElement('span')
+    probe.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline;'
+    word.appendChild(probe)
+    const baseline = (probe.getBoundingClientRect().bottom - hostRect.top) / k
+    probe.remove()
+    const wordCs = getComputedStyle(word)
+    const outer = getComputedStyle(host.parentElement ?? host)
+    const space = textMetrics(outer, ' ').width + (parseFloat(outer.wordSpacing) || 0)
+    // (Letter spacing adds after the last letter too: it is not ink.)
+    const tail = parseFloat(wordCs.letterSpacing) || 0
+    const { box, margin } = wordMarkBox(host.dataset.markerStyle ?? 'highlight', {
+      left: (ink.left - hostRect.left) / k, right: (ink.right - hostRect.left) / k - Math.max(0, tail), baseline, cap: textMetrics(wordCs, 'H').cap
+    }, space)
+    for (const [key, v] of [['left', box.x], ['top', box.y], ['width', box.w], ['height', box.h]] as const) mark.style.setProperty(key, `${v.toFixed(2)}px`, 'important')
+    mark.style.setProperty('bottom', 'auto', 'important'); mark.style.setProperty('right', 'auto', 'important')
+    host.style.setProperty('margin-left', `${margin.toFixed(2)}px`, 'important'); host.style.setProperty('margin-right', `${margin.toFixed(2)}px`, 'important')
+    placed++
+  }
+  return placed
+}
+
 /** Mounts one effect graphic in `host` (the frame, spec.width × spec.height). */
 export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): MountedEffect {
   const effect = fxEffect(spec.fields.effect)
@@ -389,6 +438,9 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
       // Measured at two moments (mid-way and settled): a unit whose words change (a line swapped for another, a number
       // counting) is fitted to all of them, not only to the last.
       const measure = (): Rect | null => {
+        // The word marks follow their word as it is now (sizes raised, faces loaded).
+        setClock(settled)
+        placeWordMarks(shadow, effect)
         let out: Rect | null = null
         for (const at of [Math.round(timing.unit_ms * .45), settled]) {
           setClock(at)
@@ -419,6 +471,8 @@ export function mountEffect(host: HTMLElement, spec: GraphicRenderSpec): Mounted
         ink = measure()
         fitted = fxFit(ink, area, size, effect.scale ?? 1, pad)
       }
+      setClock(settled)
+      placeWordMarks(shadow, effect)
       setClock(0)
       Object.assign(stage.style, { visibility: 'hidden', opacity: '' })
       // The glass backs the drawing, with a margin (in frame pixels) around it.

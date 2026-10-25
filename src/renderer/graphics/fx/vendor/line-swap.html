@@ -1,7 +1,7 @@
 <!--
   Vendored from HyperFrames (https://github.com/heygen-com/hyperframes), registry/components/line-swap/line-swap.html at 2ed882c.
   Copyright 2026 HeyGen, Inc. Licensed under the Apache License, Version 2.0 (see LICENSE and NOTICE in this folder).
-  Changed by CreatorClips: the GSAP CDN <script> tags are replaced by the npm package bundled with the app. Fonts are mapped and scripts scoped at build time (src/shared/fx-html.ts).
+  Changed by CreatorClips: the GSAP CDN <script> tags are replaced by the npm package bundled with the app; the swap is clean: each line moves a short way and fades, and the second line comes in only once the first is gone (no frame shows both). Fonts are mapped and scripts scoped at build time (src/shared/fx-html.ts).
 -->
 <!doctype html>
 <!--
@@ -228,8 +228,9 @@
 
             // RETIME RANGE: fixed phases; HOLD is the only elastic span.
             var IN_A_BASE = 0.5;
-            var EXIT_A_BASE = 0.35;
-            var LAG_BASE = 0.22; // line_b starts this long after the beat
+            var EXIT_A_BASE = 0.3;
+            // CreatorClips: line_b starts once line_a is gone (no frame shows both lines).
+            var LAG_BASE = 0.3; // line_b starts this long after the beat
             var IN_B_BASE = 0.5;
             var UL_BEAT_BASE = 0.15;
             var UL_BASE = underlineEl ? 0.45 : 0;
@@ -256,31 +257,43 @@
             swapAt = Math.max(swapAt, IN_A);
             var landB = swapAt + LAG + IN_B;
 
-            gsap.set(lineBEl, { yPercent: 115 });
+            // CreatorClips: each line moves a short way and fades (the mask is taller than the words, so a line rolling
+            // through it showed outside the words' backing on its way out).
+            var SHIFT = 10;
+            gsap.set(lineBEl, { yPercent: SHIFT, opacity: 0 });
             if (underlineEl) gsap.set(underlineEl, { scaleX: 0 });
 
             var tl = gsap.timeline({ paused: true });
 
             // IN: line_a enters bottom-up through the mask. One move.
-            tl.fromTo(
-              lineAEl,
-              { yPercent: 115 },
-              { yPercent: 0, duration: IN_A, ease: "power4.out" },
-              0,
-            );
+            tl.fromTo(lineAEl, { yPercent: SHIFT }, { yPercent: 0, duration: IN_A, ease: "power4.out" }, 0);
+            tl.fromTo(lineAEl, { opacity: 0 }, { opacity: 1, duration: IN_A * 0.7, ease: "power1.in" }, 0);
 
             // SWAP: the beat replacement. line_a exits up through the mask as
             // line_b slides in bottom-up. Single restrained slam, smooth ease.
             tl.fromTo(
               lineAEl,
               { yPercent: 0 },
-              { yPercent: -115, duration: EXIT_A, ease: "power2.in", immediateRender: false },
+              { yPercent: -SHIFT, duration: EXIT_A, ease: "power2.in", immediateRender: false },
               swapAt,
             );
             tl.fromTo(
+              lineAEl,
+              { opacity: 1 },
+              { opacity: 0, duration: EXIT_A * 0.8, ease: "power1.out", immediateRender: false },
+              swapAt,
+            );
+            tl.set(lineAEl, { opacity: 0 }, swapAt + EXIT_A);
+            tl.fromTo(
               lineBEl,
-              { yPercent: 115 },
-              { yPercent: 0, duration: IN_B, ease: "power4.out" },
+              { yPercent: SHIFT },
+              { yPercent: 0, duration: IN_B, ease: "power3.out", immediateRender: false },
+              swapAt + LAG,
+            );
+            tl.fromTo(
+              lineBEl,
+              { opacity: 0 },
+              { opacity: 1, duration: IN_B * 0.7, ease: "power1.in", immediateRender: false },
               swapAt + LAG,
             );
 

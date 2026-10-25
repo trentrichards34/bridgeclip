@@ -18,7 +18,7 @@ const bundled = buildSync({
       export { GRAPHIC_TEMPLATES } from './src/shared/motion-graphics';
       export { REEL_GRAPHIC_TEMPLATES, REEL_CHAT_TEMPLATES } from './src/shared/reel-graphics';
       export { GraphicForm } from './src/renderer/components/ReelGraphics';
-      export { fxFit, fxAnchorShift, fxMinType, fxGlassLeft, fitStepLabels, fxBrand, BRAND_ON_DARK } from './src/renderer/graphics/fx/fit';
+      export { fxFit, fxAnchorShift, fxMinType, fxGlassLeft, fitStepLabels, fxBrand, BRAND_ON_DARK, wordMarkBox, WORD_MARKS } from './src/renderer/graphics/fx/fit';
       export { pushOrigin, pushScale, PUSH_ZOOM } from './src/renderer/graphics/fx/media';
       export { textMinType, largestFitting, textTheme, TEXT_FILL, TEXT_MAX_FILL, CAP_RATIO } from './src/renderer/graphics/text-fit';
       export { highlightSplit, highlightLayout, highlightColors, highlightPlacement } from './src/shared/headline-look';`,
@@ -254,4 +254,26 @@ test('words in the brand color read on dark glass: a mid blue is lifted, a light
   assert.ok(/^rgb\(\d+, \d+, \d+\)$/.test(blue))
   assert.equal(m.fxBrand([113, 245, 167]), 'rgb(113, 245, 167)')
   assert.equal(m.fxBrand([37, 99, 235], 'light'), 'rgb(37, 99, 235)')
+})
+
+test('a word mark is placed from its word in its own face: the same mark on a tall serif, a condensed or a script word, snug for a long word', () => {
+  // Three faces at the same size: different cap heights (a script face's caps are short, a condensed face's tall).
+  const words = [{ left: 100, right: 300, baseline: 500, cap: 72.7 }, { left: 100, right: 300, baseline: 500, cap: 60 }, { left: 40, right: 180, baseline: 220, cap: 30 }]
+  for (const w of words) {
+    const u = w.cap / 0.727
+    const hi = m.wordMarkBox('highlight', w, 0.3 * u)
+    // Centered on the word, as wide as it plus a small overhang; across its letters (cap top to just under the baseline).
+    assert.ok(Math.abs(hi.box.x + hi.box.w / 2 - (w.left + w.right) / 2) < 1e-6)
+    assert.ok(hi.box.y < w.baseline - 0.9 * w.cap && hi.box.y + hi.box.h > w.baseline && hi.box.y + hi.box.h < w.baseline + 0.2 * w.cap)
+    // A highlight needs no more room than a word space: the word keeps normal spacing.
+    assert.equal(hi.margin, 0)
+    const ul = m.wordMarkBox('underline', w, 0.3 * u)
+    assert.ok(ul.box.y > w.baseline && ul.box.y < w.baseline + 0.4 * w.cap)
+    const ring = m.wordMarkBox('circle', w, 0.3 * u)
+    assert.ok(ring.box.y < w.baseline - w.cap && ring.box.y + ring.box.h > w.baseline + 0.3 * w.cap && ring.box.x < w.left && ring.box.x + ring.box.w > w.right)
+  }
+  // A long word's ring overhangs a fixed snug amount (not a share of the word), and asks only the room it needs.
+  const long = m.wordMarkBox('circle', { left: 0, right: 1000, baseline: 500, cap: 72.7 }, 10)
+  assert.ok(Math.abs(-long.box.x - m.WORD_MARKS.circle.most * 100) < 1e-6)
+  assert.ok(Math.abs(long.margin - ((m.WORD_MARKS.circle.most + 0.06) * 100 - 10)) < 1e-6)
 })
