@@ -135,3 +135,16 @@ def test_a_wrong_right_whose_sides_are_said_ten_seconds_apart_survives_the_rende
     graphics, _ = ed.editor_graphics([spec], timed, len(words) * 300 + 6000, {'motion': True, 'stage': True})
     assert [g['template'] for g in graphics] == ['compare_marks']
     assert len(graphics[0]['fields']['item_ms'].split('\n')) == 2
+
+
+def test_a_stage_scene_whose_graphic_went_back_to_a_card_is_dropped():
+    # Run 4: the line swap taken up onto the stage played mostly over a filmed screen; its scene, cut around the screen,
+    # was left with the swap drawn as a card: no empty stage.
+    swap = {'id': 'g-1', 'template': 'fx', 'at_ms': 93_200, 'duration_ms': 6800, 'placement': 'top', 'origin': 'auto', 'size': 'stage',
+            'fields': {'effect': 'line-swap', 'first': 'a', 'second': 'b'}}
+    scenes = [{'scene': 'stage', 'start_ms': 97_570, 'end_ms': 100_000, 'backdrop': 'grid'},
+              {'scene': 'visual', 'start_ms': 149_000, 'end_ms': 162_000, 'backdrop': 'solid'}]
+    sized = ed.size_for_scenes([swap], scenes)
+    assert sized[0]['size'] == 'card'
+    assert ed.scenes_in_use(scenes, sized) == scenes[1:]
+    assert ed.scenes_in_use(scenes, [{**swap, 'at_ms': 97_600, 'duration_ms': 2000}]) == scenes

@@ -703,6 +703,14 @@ def size_for_scenes(graphics: list[dict], scenes: Sequence[dict]) -> list[dict]:
     return out
 
 
+def scenes_in_use(scenes: Sequence[dict], graphics: Sequence[dict]) -> list[dict]:
+    """The stage scenes a stage-size graphic still plays in (one whose graphic went back to a card, its scene cut around a
+    filmed screen, would show an empty stage); Visual scenes (diagrams, framed screens) stay."""
+    staged = [g for g in graphics if g.get('size') == 'stage' and g['template'] not in ag.DIAGRAMS]
+    return [s for s in scenes if s.get('scene') != 'stage' or any(
+        g['at_ms'] < s['end_ms'] and s['start_ms'] < g['at_ms'] + g['duration_ms'] for g in staged)]
+
+
 # ---------------------------------------------------------------------------
 # The editor project
 # ---------------------------------------------------------------------------

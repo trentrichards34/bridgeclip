@@ -2171,6 +2171,7 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
         if options["stage"]:
             scenes = ed.editor_scenes(graphics, total_ms, editor.get("brand_color"), avoid, framed)
             graphics = ed.size_for_scenes(graphics, scenes)
+            scenes = ed.scenes_in_use(scenes, graphics)
         if youtube is not None:
             # Long-form pacing: a dense branded cold open, then light; nothing over long screen demos.
             from clip_engine.services.longform import pace_graphics
