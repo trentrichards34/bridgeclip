@@ -258,7 +258,7 @@ export const FX_EFFECTS: readonly FxEffect[] = [
     hold_s: 2, sound: 'whoosh', scale: 1.5, default_ms: 2500, backing: 'glass', aspect: 2.6, cue: { field: 'text', unit: 'word' }, sync_s: .58, accent: '.hs-word-accent' },
   { id: 'per-word-rise', label: 'Word rise', detail: 'Each word rises into place as you say it.', group: 'words',
     fields: [text('text', 'text', 'Words', 'Words as you say them', { required: true, max: 60 }), choice('split', 'split', 'Rises by', [['word', 'Word'], ['char', 'Letter']])],
-    fixed: { ...ACCENT, ...FADE }, css_rules: '#root .pwr-stage:not(.pwr-char) { column-gap: 0.24em; }', jobs: ['reveal'], use_when: 'A key line should land word by word, in time with the voice.', avoid_when: 'The line swaps one word for another (use Word swap).',
+    fixed: { ...ACCENT, ...FADE }, css_rules: '#root .pwr-stage:not(.pwr-char) { column-gap: 0; } #root .pwr-stage:not(.pwr-char) > .pwr-unit:not(:last-child) { margin-right: 0.24em; }', jobs: ['reveal'], use_when: 'A key line should land word by word, in time with the voice.', avoid_when: 'The line swaps one word for another (use Word swap).',
     hold_s: 3, sound: 'none', scale: 1.15, default_ms: 3000, backing: 'glass', aspect: 2.6, cue: { field: 'text', unit: 'word', variable: 'cues' } },
   { id: 'flanking-words', label: 'Flanking words', detail: 'Two huge words around you ("STEP" and "ONE"), each landing as you say it.', group: 'words', own: true,
     fields: [list('words', 'words', 'Two words as said (one per line)', 'Step\nOne', '|', { required: true, max: 12 }),

@@ -43,13 +43,13 @@ export function paintOf(root: Element): Paint {
       const tag = el.tagName.toLowerCase()
       if (svg ? SHAPES.has(tag) : tag === 'img' || tag === 'canvas' || tag === 'video'
         || cs.backgroundColor !== NONE || cs.backgroundImage !== 'none' || (parseFloat(cs.borderTopWidth) > 0 && cs.borderTopColor !== NONE && cs.borderTopStyle !== 'none')) add(rect, clip)
-      // A card's soft shadow paints too (about half its blur past the card, where it is still visible), with its offset.
+      // A card's soft shadow paints too (about a third of its blur past the card, where it is still visible), with its offset.
       if (!svg && cs.boxShadow && cs.boxShadow !== 'none') {
         const k = rect.width / Math.max(1, (el as HTMLElement).offsetWidth || rect.width)
         for (const shadow of cs.boxShadow.split(/,(?![^(]*\))/)) {
           if (/inset/.test(shadow) || /rgba\([^)]*,\s*0\)/.test(shadow)) continue
           const [x = 0, y = 0, blur = 0, spread = 0] = (shadow.replace(/rgba?\([^)]*\)/g, '').match(/-?[\d.]+px/g) ?? []).map((v) => parseFloat(v) * k)
-          const reach = blur * 0.5 + spread
+          const reach = blur * 0.3 + spread
           if (reach > 0 || x || y) add(new DOMRect(rect.left + x - reach, rect.top + y - reach, rect.width + 2 * reach, rect.height + 2 * reach), clip)
         }
       }

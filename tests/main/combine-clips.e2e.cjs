@@ -265,7 +265,9 @@ test('Combine clips: a .zip of three clips, put in the AI’s order, joined upri
   // Sound and picture in step: the flash and the beep start on the same frame.
   const bStart = at('Then')[1] / 1000, bEnd = at('here.')[2] / 1000
   const frames = lumas(ffmpeg, reel, '1080:300:0:800')
-  const flash = frames.findIndex((v, i) => i / 30 >= bStart && i / 30 <= bEnd && v > 200)
+  // (The flash shows inside the clip's screen frame, whose dark margin is in the measured band too: about 200 against
+  // about 80 without it.)
+  const flash = frames.findIndex((v, i) => i / 30 >= bStart && i / 30 <= bEnd && v > 180)
   assert.ok(flash > 0, 'flash found')
   const raw = execFileSync(ffmpeg, ['-nostdin', '-v', 'error', '-i', reel, '-vn', '-ac', '1', '-ar', '48000', '-af', 'highpass=f=700,highpass=f=700,highpass=f=700', '-f', 'f32le', '-'], { maxBuffer: 256 * 1024 * 1024 })
   const samples = new Float32Array(raw.buffer, raw.byteOffset, Math.floor(raw.length / 4))
