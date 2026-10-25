@@ -58,8 +58,8 @@ export const ADAPT = {
   (function () {
     ${M}
     var tl = gsap.timeline({ paused: true });
-    tl.fromTo('.hf-transition-text-stagger span', { opacity: 0, y: 48, filter: 'blur(14px)' }, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.54, stagger: M.stagger_s, ease: M.enter }, 0.35);
-    tl.to('.hf-transition-text-stagger span', { backgroundPosition: '100% 0%', duration: 0.72, stagger: 0.04, ease: 'power2.inOut' }, 1.05);
+    tl.fromTo('.hf-transition-text-stagger span', { opacity: 0, y: 28, filter: 'blur(6px)' }, { opacity: 1, y: 0, filter: 'blur(0px)', duration: M.move_s, stagger: M.stagger_s, ease: M.enter }, 0.05);
+    tl.to('.hf-transition-text-stagger span', { backgroundPosition: '100% 0%', duration: 0.72, stagger: 0.04, ease: 'power2.inOut' }, 0.75);
     window.__timelines = window.__timelines || {};
     window.__timelines['text-stagger'] = tl;
   })();`,
@@ -128,12 +128,36 @@ export const PATCH = {
       "            // CreatorClips: line_b starts once line_a is gone (no frame shows both lines).\n            var LAG_BASE = 0.3; // line_b starts this long after the beat"],
     ["            var EXIT_A_BASE = 0.35;",
       "            var EXIT_A_BASE = 0.3;"],
+    ["            var IN_A_BASE = 0.5;",
+      "            // CreatorClips: each line is in, fully opaque, in about 10 frames.\n            var IN_A_BASE = 0.34;"],
+    ["            var IN_B_BASE = 0.5;",
+      "            var IN_B_BASE = 0.34;"],
     ["            gsap.set(lineBEl, { yPercent: 115 });",
       "            // CreatorClips: each line moves a short way and fades (the mask is taller than the words, so a line rolling\n            // through it showed outside the words' backing on its way out).\n            var SHIFT = 10;\n            gsap.set(lineBEl, { yPercent: SHIFT, opacity: 0 });"],
     ["            tl.fromTo(\n              lineAEl,\n              { yPercent: 115 },\n              { yPercent: 0, duration: IN_A, ease: \"power4.out\" },\n              0,\n            );",
       "            tl.fromTo(lineAEl, { yPercent: SHIFT }, { yPercent: 0, duration: IN_A, ease: \"power4.out\" }, 0);\n            tl.fromTo(lineAEl, { opacity: 0 }, { opacity: 1, duration: IN_A * 0.7, ease: \"power1.in\" }, 0);"],
     ["            tl.fromTo(\n              lineAEl,\n              { yPercent: 0 },\n              { yPercent: -115, duration: EXIT_A, ease: \"power2.in\", immediateRender: false },\n              swapAt,\n            );\n            tl.fromTo(\n              lineBEl,\n              { yPercent: 115 },\n              { yPercent: 0, duration: IN_B, ease: \"power4.out\" },\n              swapAt + LAG,\n            );",
       "            tl.fromTo(\n              lineAEl,\n              { yPercent: 0 },\n              { yPercent: -SHIFT, duration: EXIT_A, ease: \"power2.in\", immediateRender: false },\n              swapAt,\n            );\n            tl.fromTo(\n              lineAEl,\n              { opacity: 1 },\n              { opacity: 0, duration: EXIT_A * 0.8, ease: \"power1.out\", immediateRender: false },\n              swapAt,\n            );\n            tl.set(lineAEl, { opacity: 0 }, swapAt + EXIT_A);\n            tl.fromTo(\n              lineBEl,\n              { yPercent: SHIFT },\n              { yPercent: 0, duration: IN_B, ease: \"power3.out\", immediateRender: false },\n              swapAt + LAG,\n            );\n            tl.fromTo(\n              lineBEl,\n              { opacity: 0 },\n              { opacity: 1, duration: IN_B * 0.5, ease: \"power1.in\", immediateRender: false },\n              swapAt + LAG,\n            );"]],
+  // Text effects: every entrance is in, fully opaque, in about 10 frames (a line sitting half see-through for most of a
+  // second read as ghostly on a real run); a highlight is a solid marker under white words.
+  'per-word-rise': [
+    ["            var RISE_BASE = 0.74;",
+      "            // CreatorClips: each word lands in about 10 frames (a word sitting half see-through read as ghostly).\n            var RISE_BASE = 0.3;"],
+    ["            gsap.set(units, { opacity: 0, y: \"8cqh\", \"--pwr-blur\": \"1.4cqh\" });",
+      "            gsap.set(units, { opacity: 0, y: \"5cqh\", \"--pwr-blur\": \"0.4cqh\" });"],
+  ],
+  'marker-highlight': [
+    ["            var IN_BASE = 0.55;",
+      "            // CreatorClips: the line is in, fully opaque, in about 10 frames.\n            var IN_BASE = 0.3;"],
+    ["                strokeWidth: 26,\n                opacity: 0.5,",
+      "                strokeWidth: 26,\n                opacity: 0.92,"],
+  ],
+  'vox-annotate': [
+    ["            var IN_BASE = 0.55;",
+      "            // CreatorClips: the line is in, fully opaque, in about 10 frames.\n            var IN_BASE = 0.3;"],
+    ["                strokeWidth: 26,\n                opacity: 0.5,",
+      "                strokeWidth: 26,\n                opacity: 0.92,"],
+  ],
   'text-stagger': [['green: "#34d399"', 'green: "var(--brand, #34d399)"']],
   'gloss-sweep': [[`surface: "#123b2c",
                 surfaceBright: "#1a513c",
@@ -146,10 +170,13 @@ export const PATCH = {
 
 /** What each PATCH changes, for the file's notice (default: the accent). */
 const NOTES = {
+  'per-word-rise': 'each word lands in about 10 frames from a short rise and a light blur',
+  'marker-highlight': 'the line comes in within about 10 frames; the highlight is a near-solid marker',
+  'vox-annotate': 'the line comes in within about 10 frames; the highlight is a near-solid marker',
   'device-frame-stage': 'its screen is measured by its layout width (not its transformed box), so the screen content fills it',
   'browser-device-stage': 'its screen slot reads the member\'s picture from window.__ccSlotDoc (not the page)',
   'paper-collage-reveal': 'its content slot reads the member\'s picture from window.__ccSlotDoc (not the page); its sample word ("Revealed") is removed',
-  'line-swap': 'the swap is clean: each line moves a short way and fades, and the second line comes in only once the first is gone (no frame shows both)',
+  'line-swap': 'the swap is clean: each line moves a short way and fades, and the second line comes in only once the first is gone (no frame shows both); each line is in within about 10 frames',
   'torn-paper-rip': 'its slots read the member\'s picture from window.__ccSlotDoc (not the page); its sample words ("Chapter one", "Chapter two") are replaced by the variables first_text and second_text'
 }
 

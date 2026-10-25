@@ -87,6 +87,22 @@ export function fxBrand(c: [number, number, number], tone: 'dark' | 'light' = 'd
   return lum >= BRAND_ON_DARK ? `rgb(${c.join(', ')})` : mix(255, Math.min(.6, (BRAND_ON_DARK - lum) / 170 + .15))
 }
 
+/**
+ * The color a highlight marker is drawn in under white words on the dark glass: the brand color itself when white
+ * reads on it, deepened when it is light (white on a pale marker read as a ghost), lifted a little when it is too dark
+ * to show on the glass. `c` is [r, g, b]; returns a CSS rgb().
+ */
+export function fxMarkerFill(c: [number, number, number]): string {
+  const lum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+  const mix = (to: number, k: number): string => `rgb(${c.map((v) => Math.round(v + (to - v) * k)).join(', ')})`
+  if (lum > MARKER_MAX_LUM) return mix(0, Math.min(.6, (lum - MARKER_MAX_LUM) / 255 + .2))
+  if (lum < MARKER_MIN_LUM) return mix(255, Math.min(.4, (MARKER_MIN_LUM - lum) / 255 + .1))
+  return `rgb(${c.join(', ')})`
+}
+/** The brightest and darkest a highlight marker under white words may be (luminance 0-255). */
+export const MARKER_MAX_LUM = 120
+export const MARKER_MIN_LUM = 45
+
 /** A marked word as measured (unscaled px, relative to the box holding its mark): its ink's left and right, its baseline, its cap height. */
 export type MarkedWord = { left: number; right: number; baseline: number; cap: number }
 /**

@@ -294,17 +294,21 @@
 .mg-orbit-hub { position: absolute; display: grid; place-items: center; border-radius: calc(var(--u) * 56); overflow: hidden; }
 .mg-orbit-hub img { width: 100%; height: 100%; object-fit: cover; }
 .mg-orbit-hub-svg { width: 46%; height: 46%; stroke: var(--accent-ink); stroke-width: 1.8; }
-.mg-orbit-hub-text { padding: 0 calc(var(--u) * 18); font-size: calc(var(--u) * 52); line-height: 1.02; text-align: center; color: var(--ink); text-wrap: balance; overflow-wrap: anywhere; }
+.mg-orbit-hub-text { padding: 0 calc(var(--u) * 18); font-size: calc(var(--u) * 64); line-height: 1.02; text-align: center; color: var(--ink); text-wrap: balance; overflow-wrap: anywhere; }
 .mg-orbit-node { position: absolute; display: flex; flex-direction: column; align-items: center; }
+.mg-orbit-node.above .mg-orbit-label { position: absolute; bottom: 100%; margin: 0 0 calc(var(--u) * 10); }
 .mg-orbit-dot {
   width: var(--orbit-node); height: var(--orbit-node); border-radius: 50%; display: grid; place-items: center; position: relative;
   background: var(--paper); box-shadow: 0 0 0 calc(var(--u) * 3) rgba(var(--accent-rgb), .35), var(--shadow);
 }
 .mg-orbit-svg { width: 50%; height: 50%; stroke: var(--accent-ink); stroke-width: 1.9; }
-.mg-orbit-letter { font-family: var(--serif); font-style: italic; font-size: calc(var(--orbit-node) * .55); line-height: 1; color: var(--accent-ink); }
+.mg-orbit-dot.numbered { background: var(--accent); box-shadow: 0 0 0 calc(var(--u) * 5) #fff, var(--shadow); }
+.mg-orbit-letter { font-weight: 800; font-size: calc(var(--orbit-node) * .5); line-height: 1; color: var(--on-accent, #fff); }
+/* A label at the stage's on-phone minimum (fx/fit.ts FX_MIN_TYPE.stage), on a solid white pill, two lines at most. */
 .mg-orbit-label {
-  margin-top: calc(var(--u) * 10); padding: calc(var(--u) * 6) calc(var(--u) * 14); border-radius: 999px; background: rgba(255, 255, 255, .9);
-  font-weight: 700; font-size: calc(var(--u) * 28); line-height: 1.1; color: var(--ink); white-space: nowrap; box-shadow: 0 calc(var(--u) * 4) calc(var(--u) * 14) rgba(15, 23, 42, .12);
+  margin-top: calc(var(--u) * 10); padding: calc(var(--u) * 8) calc(var(--u) * 20); border-radius: calc(var(--u) * 26); background: #fff;
+  font-weight: 750; font-size: calc(var(--u) * 48); line-height: 1.08; color: var(--ink); text-align: center; text-wrap: balance;
+  width: max-content; max-width: calc(var(--u) * 340); box-shadow: 0 calc(var(--u) * 4) calc(var(--u) * 14) rgba(15, 23, 42, .12);
 }
 
 /* Feature tile: frosted pills with an icon and a short label */
@@ -375,7 +379,8 @@
 .dg-tag {
   position: absolute; transform-origin: 50% 50%; display: flex; align-items: center; justify-content: center;
   padding: .32em .5em; border: calc(var(--fu) * 3.5) solid #fff; border-radius: calc(var(--fu) * 16);
-  background: color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 100%), transparent);
+  /* Filled (a deep navy) before it lights, so its words read at full strength on any backdrop. */
+  background: color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 100%), rgba(9, 20, 48, .82));
   border-color: color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 100%), #fff);
   box-shadow: 0 0 calc(var(--fu) * 30) color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 55%), transparent);
 }
@@ -386,16 +391,32 @@
   position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
   padding: calc(var(--fu) * 22) calc(var(--fu) * 16); border: calc(var(--fu) * 4.5) solid #fff; border-radius: calc(var(--fu) * 26);
   transform-origin: 50% 100%;
-  background: color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 100%), transparent);
+  background: color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 100%), rgba(9, 20, 48, .82));
   border-color: color-mix(in srgb, var(--accent) calc(max(var(--lit, 0), var(--passed, 0)) * 100%), #fff);
   box-shadow: 0 0 calc(var(--fu) * 40) color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 50%), transparent);
 }
 .dg-card-text { width: 100%; font-weight: 700; line-height: 1.15; overflow-wrap: normal; word-break: keep-all; text-wrap: balance; }
 .dg-card.lit .dg-card-text { color: var(--on-accent); }
-.dg-compare-card { justify-content: center; gap: calc(var(--fu) * 18); padding: calc(var(--fu) * 34) calc(var(--fu) * 26); }
-.dg-compare-title { width: 100%; font-weight: 800; line-height: 1.12; letter-spacing: -.015em; text-wrap: balance; overflow-wrap: normal; }
-.dg-compare-note { font-weight: 600; line-height: 1.25; opacity: .85; text-wrap: balance; }
-.dg-compare-card.right { box-shadow: 0 0 calc(var(--fu) * 46) color-mix(in srgb, var(--accent) calc(var(--passed, 0) * 60%), transparent); }
+/* Wrong / right: two filled white cards with dark type; the right one gets a green ring, the wrong one dims and is struck. */
+.dg-compare-card {
+  position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  gap: calc(var(--fu) * 20); padding: calc(var(--fu) * 70) calc(var(--fu) * 30) calc(var(--fu) * 40); border-radius: calc(var(--fu) * 34);
+  background: #fff; color: #0F172A; transform-origin: 50% 60%;
+  box-shadow: 0 calc(var(--fu) * 24) calc(var(--fu) * 60) rgba(4, 12, 32, .38), 0 calc(var(--fu) * 4) calc(var(--fu) * 10) rgba(4, 12, 32, .2);
+}
+.dg-compare-card.right.settled { box-shadow: 0 0 0 calc(var(--fu) * 9) #22B573, 0 0 calc(var(--fu) * 60) rgba(34, 181, 115, .55), 0 calc(var(--fu) * 24) calc(var(--fu) * 60) rgba(4, 12, 32, .38); }
+.dg-compare-card.wrong.settled { background: #CBD3E1; color: #475569; }
+.dg-compare-title { position: relative; width: 100%; font-weight: 800; line-height: 1.04; letter-spacing: -.025em; text-wrap: balance; overflow-wrap: normal; word-break: keep-all; }
+.dg-compare-strike {
+  position: absolute; inset: 0; color: transparent; text-decoration: line-through; text-decoration-color: #E5484D;
+  text-decoration-thickness: .13em; text-decoration-skip-ink: none; pointer-events: none;
+}
+.dg-compare-slot { position: absolute; border-radius: calc(var(--fu) * 34); border: calc(var(--fu) * 5) dashed rgba(255, 255, 255, .55); background: rgba(255, 255, 255, .06); }
+.dg-compare-note { font-weight: 650; line-height: 1.2; color: #334155; text-wrap: balance; }
+.dg-compare-vs {
+  position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center; border-radius: 50%;
+  background: #0F172A; color: #fff; font-weight: 800; letter-spacing: .02em; box-shadow: 0 0 0 calc(var(--fu) * 5) #fff; z-index: 1;
+}
 .dg-hub-caption { position: absolute; transform: translateX(-50%); text-align: center; font-weight: 700; letter-spacing: .02em; opacity: .9; }
 
 /*

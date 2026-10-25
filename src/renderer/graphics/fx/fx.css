@@ -9,10 +9,16 @@
 
 .fx-frame { position: absolute; left: 0; top: 0; overflow: hidden; pointer-events: none; }
 .fx-stage { position: absolute; overflow: visible; }
-/* A soft dark glass behind bare type over busy video (an effect's `backing`). */
+/*
+ * The dark glass behind bare type over busy video (an effect's `backing`): the video's one dark look, as near solid as
+ * the text cards' glass (graphics.css --glass), so the words read at full strength on any footage (a see-through gray
+ * read weak on a real run).
+ */
 .fx-stage.fx-glass::before {
   content: ''; position: absolute; inset: var(--fx-glass-inset, 4% 2%); border-radius: 28px; opacity: var(--fx-glass-o, 1);
-  background: radial-gradient(120% 140% at 50% 40%, rgba(12, 14, 20, 0.62), rgba(12, 14, 20, 0.38));
+  background: linear-gradient(160deg, rgba(30, 34, 48, 0.95), rgba(11, 13, 21, 0.93));
+  /* A hairline edge, no spread shadow (the glass stays inside its band). */
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.10);
 }
 /* The light look (the video's one look is dark ink on light): a soft white card behind the type. */
 .fx-stage.fx-light.fx-glass::before {

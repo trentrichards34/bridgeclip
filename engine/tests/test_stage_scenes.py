@@ -325,12 +325,12 @@ def test_a_stage_opens_with_its_graphics_first_element_never_empty():
     assert ss.first_element_ms({**flow, "fields": {**flow["fields"], "title": "The loop"}}) == 0
     assert ss.first_element_ms({"at_ms": 0, "duration_ms": 3000, "fields": {"item_ms": "400\n900"}}) == 400
     assert ss.first_element_ms({"at_ms": 0, "duration_ms": 3000, "fields": {}}) == 0
-    # A diagram's Visual scene opens the same way (auto_graphics.stage_scenes_for).
+    # A diagram's stage opens the same way (auto_graphics.stage_scenes_for).
     from clip_engine.services import auto_graphics as ag
     diagram = {"at_ms": 10000, "duration_ms": 4000, "size": "stage", "template": "staircase", "fields": {"item_ms": "600\n1400"}}
     assert set(ss.DRAWN_AT_ONCE) == set(ag.DIAGRAMS)  # a diagram draws its frame at once (shown ~250 ms in)
     visual = ag.stage_scenes_for([diagram], 0, 30000)
-    assert visual == [{"scene": "visual", "start_ms": 10000 + ss.DIAGRAM_SHOWN_MS - ss.STAGE_LAND_MS, "end_ms": 14000, "backdrop": "solid"}]
+    assert visual == [{"scene": "stage", "start_ms": 10000 + ss.DIAGRAM_SHOWN_MS - ss.STAGE_LAND_MS, "end_ms": 14000, "backdrop": "solid"}]
 
 
 def test_a_bad_scenes_request_is_refused_before_rendering(tmp_path):

@@ -1125,19 +1125,22 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
       img.alt = ''; img.decoding = 'sync'; img.src = spec.image
     } else if (center) el('div', 'mg-orbit-hub-text mg-display', hub, center)
     else icon(hub, 'sparkles', 'mg-orbit-hub-svg')
-    const els = nodes.map((n) => {
+    const els = nodes.map((n, i) => {
       const node = el('div', 'mg-orbit-node', push)
-      const dot = el('div', 'mg-orbit-dot', node)
+      const dot = el('div', `mg-orbit-dot${n.icon ? '' : ' numbered'}`, node)
       if (n.icon) icon(dot, n.icon, 'mg-orbit-svg')
-      else el('span', 'mg-orbit-letter', dot, n.label.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 1).toUpperCase())
+      // Without an icon: its number (a lone first letter read as a stray glyph).
+      else el('span', 'mg-orbit-letter', dot, String(i + 1))
       const label = n.label ? el('div', 'mg-orbit-label', node, n.label) : null
       return { node, dot, label }
     })
     // Sized from the band: the ring as big as the band allows (labels below the lowest nodes).
     b.fitters.push(() => {
-      const bandH = band.clientHeight, labels = nodes.some((n) => n.label) ? 60 * u : 0
-      const R = Math.max(120 * u, Math.min((bandH - labels) * .5 - 92 * u, W * .34))
-      const node = Math.round(clamp(R * .42, 96 * u, 150 * u)), hubSize = Math.round(clamp(R * .78, 170 * u, 300 * u))
+      // Labels read on a phone (two lines at most at the stage's minimum type): room for them under the lowest nodes.
+      // A node in the top half has its label above it, the others below (never over the hub): room for both.
+      const bandH = band.clientHeight, labels = nodes.some((n) => n.label) ? 120 * u : 0
+      const R = Math.max(120 * u, Math.min((bandH - 2 * labels) * .5 - 60 * u, W * .34))
+      const node = Math.round(clamp(R * .4, 96 * u, 150 * u)), hubSize = Math.round(clamp(R * .8, 180 * u, 320 * u))
       const size = 2 * R + node
       Object.assign(push.style, { width: `${size}px`, height: `${size}px` })
       ring.setAttribute('viewBox', `0 0 ${size} ${size}`)
@@ -1153,6 +1156,7 @@ const TEMPLATES: Record<GraphicRenderSpec['template'], (b: Build) => void> = {
         const a = -Math.PI / 2 + i * 2 * Math.PI / Math.max(1, nodes.length)
         const x = size / 2 + R * Math.cos(a), y = size / 2 + R * Math.sin(a)
         Object.assign(e.node.style, { left: `${x - node / 2}px`, top: `${y - node / 2}px`, width: `${node}px` })
+        e.node.classList.toggle('above', Math.sin(a) < -.3)
         const s = spokes[i]
         const inner = hubSize * .5 + 10 * u, outer = R - node * .5 - 8 * u
         s.setAttribute('x1', String(size / 2 + inner * Math.cos(a))); s.setAttribute('y1', String(size / 2 + inner * Math.sin(a)))

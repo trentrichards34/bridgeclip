@@ -153,14 +153,21 @@ function tag(f: Frame, text: string, cls = ''): HTMLElement {
   div('dg-tag-text', el, text)
   return el
 }
-function setTag(el: HTMLElement, lit: number, shown: number, dim = .6, pop = 0): void {
-  el.style.opacity = String(shown)
+/**
+ * A label's state: `lit` (0..1, the accent fill), `shown` (0..1: it pops in from slight oversize as it is said, never a
+ * long fade), `pop` (0..1, a small bump as it lights). Its words are always at full strength on a filled tag.
+ */
+function setTag(el: HTMLElement, lit: number, shown: number, pop = 0): void {
+  el.style.opacity = String(Math.min(1, shown * 2.5))
   el.style.setProperty('--lit', String(lit))
   el.classList.toggle('lit', lit > .5)
-  ;(el.firstElementChild as HTMLElement).style.opacity = String(lit > 0 ? 1 : dim)
   const bump = Math.sin(Math.PI * clamp(pop, 0, 1)) * .08
-  el.style.transform = `translate(-50%, 0) scale(${1 + bump})`
+  el.style.transform = `translate(-50%, 0) scale(${(1.1 - .1 * shown) * (1 + bump)})`
 }
+/** A label pops in as it is said (about 10 frames), so a diagram builds item by item. */
+const said = (t: number, beat: number): number => outCubic(prog(t, beat - 140, 320))
+/** The smallest diagram label (px on a 1080-wide frame): a stage graphic's on-phone minimum (fx/fit.ts FX_MIN_TYPE.stage). */
+export const DIAGRAM_MIN_LABEL = 48
 /**
  * Place a tag centered on x with its top at y (or its bottom at y), at most `width` wide; its words shrink until
  * they fit `maxLines` lines.
@@ -170,7 +177,9 @@ function placeTag(b: DiagramBuild, el: HTMLElement, x: number, y: number, width:
   b.fitters.push(() => {
     const text = el.firstElementChild as HTMLElement
     let s = size
-    while ((text.scrollHeight > s * 1.18 * maxLines + 2 || text.scrollWidth > text.clientWidth + 1) && s > size * .55) { s -= 1; el.style.fontSize = `${s}px` }
+    // Smaller only down to the on-phone minimum (a long label then takes another line).
+    const floor = Math.min(size, Math.max(size * .7, DIAGRAM_MIN_LABEL * b.spec.width / 1080 * .84))
+    while ((text.scrollHeight > s * 1.18 * maxLines + 2 && s > floor) || (text.scrollWidth > text.clientWidth + 1 && s > size * .5)) { s -= 1; el.style.fontSize = `${s}px` }
     if (anchor === 'bottom') el.style.top = `${y - el.offsetHeight}px`
   })
 }
@@ -238,14 +247,16 @@ export function staircaseTemplate(b: DiagramBuild): void {
   const icons = graphicIcons(spec.fields, 'staircase')
   const n = Math.max(1, items.length), fu = f.fu
   const w = f.x1 - f.x0, h = f.y1 - f.y0
-  const size = (n <= 3 ? 42 : n === 4 ? 38 : n === 5 ? 34 : 30) * fu
-  const tagH = size * 3.9 + 26 * fu
+  const size = (n <= 3 ? 60 : n === 4 ? 54 : n === 5 ? 48 : 44) * fu
+  const tagH = size * 2.7 + 26 * fu
   const sw = w / n, sh = clamp((h - tagH - 16 * fu) / n, 40 * fu, sw * 1.05)
   const yb = f.y1
   const ty = (i: number): number => yb - (i + 1) * sh
   let d = `M${f.x0},${yb} V${ty(0)}`
   for (let i = 0; i < n; i++) { d += ` H${f.x0 + (i + 1) * sw}`; if (i < n - 1) d += ` V${ty(i + 1)}` }
   d += ` V${yb} Z`
+  // Each step is a filled block that takes the accent as it is said.
+  const blocks = items.map((_, i) => svg('rect', { x: f.x0 + i * sw, y: ty(i), width: sw, height: yb - ty(i), fill: '#fff', opacity: 0 }, f.layer))
   const outline = line(f.layer, d, 5 * fu)
   const risers = Array.from({ length: n - 1 }, (_, k) => line(f.layer, `M${f.x0 + (k + 1) * sw},${ty(k)} V${yb}`, 3 * fu, { opacity: .7 }))
   const treads = items.map((_, i) => line(f.layer, `M${f.x0 + i * sw + 3 * fu},${ty(i)} H${f.x0 + (i + 1) * sw - 3 * fu}`, 9 * fu, { stroke: f.accent }))
@@ -261,9 +272,11 @@ export function staircaseTemplate(b: DiagramBuild): void {
     draw(outline, inOutCubic(prog(t, 120, 900)))
     risers.forEach((r, k) => draw(r, outCubic(prog(t, 500 + k * 70, 400))))
     items.forEach((_, i) => {
-      const shown = outCubic(prog(t, 420 + i * 90, 360))
       const lit = outCubic(prog(t, beats[i], 260))
-      setTag(tags[i], lit, shown, .62, prog(t, beats[i], 420))
+      const next = i + 1 < items.length ? outCubic(prog(t, beats[i + 1], 260)) : 0
+      setTag(tags[i], lit, said(t, beats[i]), prog(t, beats[i], 420))
+      blocks[i].setAttribute('fill', lit > 0 ? f.accent : '#fff')
+      blocks[i].setAttribute('opacity', String(.1 * outCubic(prog(t, 300, 500)) * (1 - lit) + lit * (.55 - .25 * next)))
       draw(treads[i], inOutCubic(prog(t, beats[i] - 60, 320)))
       const g = glyphs[i]
       if (g) {
@@ -283,8 +296,8 @@ export function funnelTemplate(b: DiagramBuild): void {
   const f = frame(b, 'dg-funnel')
   const items = templateItems('funnel', spec.fields.items)
   const n = Math.max(1, items.length), fu = f.fu
-  const size = (n <= 3 ? 40 : n === 4 ? 36 : 32) * fu
-  const labelsH = size * 3.8 + 30 * fu
+  const size = (n <= 3 ? 56 : n === 4 ? 50 : 46) * fu
+  const labelsH = size * 2.6 + 30 * fu
   const w = f.x1 - f.x0, h = f.y1 - f.y0
   const arrow = 74 * fu
   const xa = f.x0, xb = f.x1 - arrow
@@ -314,8 +327,8 @@ export function funnelTemplate(b: DiagramBuild): void {
       const lit = outCubic(prog(t, beats[i], 280))
       const next = i + 1 < items.length ? outCubic(prog(t, beats[i + 1], 280)) : 0
       // The stage being said is full; the ones before it stay a softer fill.
-      fills[i].setAttribute('opacity', String(lit * (.92 - .5 * next)))
-      setTag(tags[i], lit, outCubic(prog(t, 520 + i * 90, 360)), .62, prog(t, beats[i], 420))
+      fills[i].setAttribute('opacity', String(.1 * outCubic(prog(t, 300, 500)) * (1 - lit) + lit * (.92 - .5 * next)))
+      setTag(tags[i], lit, said(t, beats[i]), prog(t, beats[i], 420))
       draw(ticks[i], outCubic(prog(t, 700 + i * 90, 300)))
     })
   })
@@ -338,7 +351,7 @@ export function journeyTemplate(b: DiagramBuild): void {
   // Room above the cards for the goal's flag.
   const ch = clamp(h - figure - 140 * fu, 120 * fu, cw * 2.1)
   const cb = yg - figure - 40 * fu, ct = cb - ch
-  const size = clamp(cw * .19, 26 * fu, 46 * fu)
+  const size = clamp(cw * .22, 40 * fu, 58 * fu)
   const cx = (i: number): number => f.x0 + i * (cw + gap) + cw / 2
   // The ground: a long line with a hill at either end.
   const ground = line(f.layer, `M${f.x0 - 20 * fu},${yg} H${f.x1 + 20 * fu}`, 4 * fu)
@@ -386,7 +399,8 @@ export function journeyTemplate(b: DiagramBuild): void {
     legA.setAttribute('transform', `rotate(${swing} 0 ${-36 * s})`); legB.setAttribute('transform', `rotate(${-swing} 0 ${-36 * s})`)
     armA.setAttribute('transform', `rotate(${-swing * .8} 0 ${-64 * s})`); armB.setAttribute('transform', `rotate(${swing * .8} 0 ${-64 * s})`)
     cards.forEach((card, i) => {
-      const shown = outCubic(prog(t, 300 + i * 110, 380))
+      // Each milestone comes in as it is said (the walker reaches it); the ground and the flag are there from the start.
+      const shown = said(t, beats[i])
       const lit = outCubic(prog(t, beats[i], 280))
       const next = i + 1 < items.length ? outCubic(prog(t, beats[i + 1], 280)) : 0
       card.style.opacity = String(shown)
@@ -395,7 +409,6 @@ export function journeyTemplate(b: DiagramBuild): void {
       card.style.setProperty('--lit', String(lit * (1 - next)))
       card.style.setProperty('--passed', String(next))
       card.classList.toggle('lit', lit * (1 - next) > .5)
-      ;(card.firstElementChild as HTMLElement).style.opacity = String(lit > 0 ? 1 : .62)
     })
   })
 }
@@ -411,8 +424,8 @@ export function growthTemplate(b: DiagramBuild): void {
   const bars = growthStyle(spec.fields) === 'bars'
   const n = Math.max(1, items.length), fu = f.fu
   const w = f.x1 - f.x0
-  const size = (n <= 3 ? 38 : n === 4 ? 35 : n === 5 ? 31 : 28) * fu
-  const labelsH = size * 3.8 + 26 * fu
+  const size = (n <= 3 ? 54 : n === 4 ? 50 : n === 5 ? 46 : 42) * fu
+  const labelsH = size * 2.6 + 26 * fu
   const sw = w / n
   const base = f.y1 - labelsH
   const pw = Math.min(sw * .5, 120 * fu), ph = pw * .72
@@ -458,7 +471,7 @@ export function growthTemplate(b: DiagramBuild): void {
     items.forEach((_, i) => {
       const p = plants[i]
       const lit = outCubic(prog(t, beats[i], 280))
-      setTag(tags[i], lit, outCubic(prog(t, 300 + i * 90, 360)), .62, prog(t, beats[i], 420))
+      setTag(tags[i], lit, said(t, beats[i]), prog(t, beats[i], 420))
       if (p.bar && p.ghost) {
         p.ghost.setAttribute('opacity', String(.45 * outCubic(prog(t, 200 + i * 90, 360)) * (1 - lit)))
         const g = outBack(prog(t, beats[i] - 120, 520))
@@ -511,7 +524,7 @@ export function ideaHubTemplate(b: DiagramBuild): void {
   })
   const caption = center ? div('dg-hub-caption', f.box, center) : null
   if (caption) Object.assign(caption.style, { left: `${cx}px`, top: `${cy + r + 52 * fu}px`, fontSize: `${30 * fu}px`, width: `${r * 3}px` })
-  const size = (n <= 4 ? 42 : 37) * fu
+  const size = (n <= 4 ? 54 : 48) * fu
   const tagW = Math.min(310 * fu, w * .4)
   const rx = Math.min(w / 2 - tagW / 2 + 6 * fu, r + 40 * fu + tagW * .62), ry = Math.min(h / 2 - size * 1.6, r + 150 * fu)
   // Around the icon from the top-left, clockwise; three or four labels sit on the diagonals.
@@ -549,18 +562,23 @@ export function ideaHubTemplate(b: DiagramBuild): void {
       draw(arrows[i].shaft, outCubic(prog(t, beats[i] - 260, 260)))
       draw(arrows[i].head, outCubic(prog(t, beats[i] - 40, 140)))
       const next = i + 1 < items.length ? outCubic(prog(t, beats[i + 1], 300)) : 0
-      // The whole hub shows early (every label faint), so it never sits with one lonely label; each lights up as it
-      // is said, and earlier ones settle back to an outline.
-      const early = outCubic(prog(t, 650 + i * 90, 360))
-      setTag(tags[i], outCubic(appear) * (1 - next), Math.max(.5 * early, outCubic(appear)), appear > 0 ? 1 : .7, appear)
-      tags[i].style.transform = `translate(-50%, 0) scale(${(.86 + .14 * early) * (1 + Math.sin(Math.PI * clamp(appear, 0, 1)) * .08)})`
+      // Each label pops in as it is said and lights up; earlier ones settle to a filled tag (never faint).
+      setTag(tags[i], outCubic(appear) * (1 - next), said(t, beats[i]), appear)
     })
   })
 }
 
 // ---------------------------------------------------------------------------
-// Wrong / right: two cards, then a red ✗ on one and a green ✓ on the other.
+// Wrong / right: two big filled cards across the stage; each comes in as its side is said with its badge (a red ✗ on
+// the wrong one, a green ✓ on the right one), and when the right one lands the wrong one dims and is struck through.
 // ---------------------------------------------------------------------------
+
+/** The share of the frame's width the two cards fill (a stage graphic fills at least 88%: text-fit TEXT_FILL.stage). */
+export const COMPARE_FILL = .9
+/** The smallest card title (px on a 1080-wide frame): a short line's on-phone minimum (text-fit textMinType). */
+export const COMPARE_MIN_TITLE = 76
+const CROSS_RED = '#E5484D'
+const CHECK_GREEN = '#22B573'
 
 export function compareMarksTemplate(b: DiagramBuild): void {
   const { spec } = b
@@ -569,55 +587,79 @@ export function compareMarksTemplate(b: DiagramBuild): void {
   const notes = compareNotes(spec.fields)
   const wrong = compareWrong(spec.fields)
   const fu = f.fu
-  const w = f.x1 - f.x0, h = f.y1 - f.y0
-  const gap = 40 * fu
-  const cw = (w - gap) / 2, ch = Math.min(h - 60 * fu, cw * 1.45)
-  const top = f.y0 + (h - ch) / 2 + 30 * fu
+  const W = spec.width
+  const gap = 56 * fu
+  const span = Math.min(W * COMPARE_FILL, W - 2 * 24 * fu)
+  const x0 = (W - span) / 2
+  const cw = (span - gap) / 2
+  const badge = 58 * fu
+  // Room above the cards for the badges, which sit on the cards' top edge.
+  const h = f.y1 - f.y0
+  const ch = clamp(Math.min(h - badge - 16 * fu, cw * 1.3), 220 * fu, 760 * fu)
+  const top = f.y0 + badge + Math.max(0, (h - badge - ch) / 2)
+  const titleMin = COMPARE_MIN_TITLE * fu
   const cards = items.map((text, i) => {
-    const card = div(`dg-card dg-compare-card ${i === wrong ? 'wrong' : 'right'}`, f.box)
-    Object.assign(card.style, { left: `${f.x0 + i * (cw + gap)}px`, top: `${top}px`, width: `${cw}px`, height: `${ch}px` })
+    const card = div(`dg-compare-card ${i === wrong ? 'wrong' : 'right'}`, f.box)
+    Object.assign(card.style, { left: `${x0 + i * (cw + gap)}px`, top: `${top}px`, width: `${cw}px`, height: `${ch}px` })
     const head = div('dg-compare-title', card, text)
-    head.style.fontSize = `${clamp(1000 / Math.max(10, text.length), 40, 66) * fu}px`
+    head.style.fontSize = `${clamp(1700 / Math.max(8, text.length), COMPARE_MIN_TITLE, 150) * fu}px`
+    // The strike: the same words over them, struck through line by line, wiped in from the left.
+    const strike = div('dg-compare-strike', head, text)
+    // Its slot before it is said: a dashed outline, so the frame reads as two sides from its first frame.
+    const slot = div('dg-compare-slot', f.box)
+    Object.assign(slot.style, { left: `${x0 + i * (cw + gap)}px`, top: `${top}px`, width: `${cw}px`, height: `${ch}px` })
     const note = notes[i] ? div('dg-compare-note', card, notes[i]) : null
-    if (note) note.style.fontSize = `${36 * fu}px`
+    if (note) note.style.fontSize = `${44 * fu}px`
     b.fitters.push(() => {
+      // As big as the card allows, never under the on-phone minimum (a very long side may then wrap to more lines).
       let s = parseFloat(head.style.fontSize)
-      while ((card.scrollHeight > card.clientHeight + 1 || head.scrollWidth > head.clientWidth + 1) && s > 18 * fu) { s -= 1; head.style.fontSize = `${s}px` }
+      while ((card.scrollHeight > card.clientHeight + 1 || head.scrollWidth > head.clientWidth + 1) && s > titleMin) { s -= 2 * fu; head.style.fontSize = `${s}px` }
     })
-    return card
+    return { card, strike, slot }
   })
+  // A "vs" chip between the cards, so the frame reads as a comparison from its first frame.
+  const vs = div('dg-compare-vs', f.box, 'vs')
+  Object.assign(vs.style, { left: `${x0 + cw + gap / 2}px`, top: `${top + ch / 2}px`, fontSize: `${30 * fu}px`, width: `${72 * fu}px`, height: `${72 * fu}px` })
   const mark = (i: number, kind: 'cross' | 'check'): { circle: SVGElement; stroke: SVGElement } => {
-    const r = 54 * fu, x = f.x0 + i * (cw + gap) + cw - 22 * fu, y = top + 22 * fu
-    const color = kind === 'cross' ? '#E5484D' : f.accent
-    const circle = svg('circle', { cx: x, cy: y, r, fill: color, stroke: '#fff', 'stroke-width': 5 * fu, style: `transform-origin:${x}px ${y}px` }, f.layer)
-    const d = kind === 'cross' ? `M${x - r * .38},${y - r * .38} L${x + r * .38},${y + r * .38} M${x + r * .38},${y - r * .38} L${x - r * .38},${y + r * .38}` : `M${x - r * .42},${y + r * .02} L${x - r * .1},${y + r * .34} L${x + r * .44},${y - r * .3}`
-    const stroke = line(f.layer, d, 9 * fu)
+    const r = badge, x = x0 + i * (cw + gap) + cw / 2, y = top
+    const circle = svg('circle', { cx: x, cy: y, r, fill: kind === 'cross' ? CROSS_RED : CHECK_GREEN, stroke: '#fff', 'stroke-width': 7 * fu, style: `transform-origin:${x}px ${y}px` }, f.layer)
+    const d = kind === 'cross' ? `M${x - r * .36},${y - r * .36} L${x + r * .36},${y + r * .36} M${x + r * .36},${y - r * .36} L${x - r * .36},${y + r * .36}` : `M${x - r * .4},${y + r * .02} L${x - r * .1},${y + r * .32} L${x + r * .42},${y - r * .3}`
+    const stroke = line(f.layer, d, 12 * fu)
     return { circle, stroke }
   }
   const marks = items.length === 2 ? [mark(wrong, 'cross'), mark(1 - wrong, 'check')] : []
+  // The layer (badges) above the cards.
+  f.box.appendChild(f.layer)
   const said = compareTimes(spec.fields, spec.duration_ms)
-  const cardAt = said ? said.cards.map((t) => clamp(t - 60, 200, spec.duration_ms - 1200)) : [300, 900]
-  const crossAt = said ? clamp(said.cross, cardAt[1] + 200, spec.duration_ms - 800) : Math.min(spec.duration_ms - 1500, 1900)
-  const checkAt = said ? clamp(said.check, crossAt + 250, spec.duration_ms - 500) : Math.min(spec.duration_ms - 900, crossAt + 700)
-  // Both cards come in at the start (faint until said), so the frame is never one lonely card for seconds; each
-  // brightens with a small bump as it is said.
-  const enterAt = [260, 440]
+  const cardAt = said ? said.cards.map((t) => clamp(t - 60, 120, spec.duration_ms - 900)) : [200, Math.min(1400, spec.duration_ms / 3)]
+  const crossAt = said ? clamp(said.cross, 120, spec.duration_ms - 500) : cardAt[wrong] + 250
+  const checkAt = said ? clamp(said.check, 120, spec.duration_ms - 500) : cardAt[1 - wrong] + 250
+  // The verdict: once both marks are in, the wrong side dims and is struck through, the right one steps forward.
+  const verdictAt = Math.max(crossAt, checkAt)
   b.onSeek.push((t) => {
-    cards.forEach((card, i) => {
-      const p = outBack(prog(t, Math.min(enterAt[i], cardAt[i] ?? 300), 460))
-      const said = outCubic(prog(t, cardAt[i] ?? 300, 320))
-      const bump = Math.sin(Math.PI * prog(t, cardAt[i] ?? 300, 440)) * .05
-      card.style.opacity = String(clamp(p, 0, 1) * (.42 + .58 * said) * (i === wrong ? 1 - .45 * outCubic(prog(t, crossAt + 200, 400)) : 1))
-      card.style.transform = `translateY(${(1 - clamp(p, 0, 1)) * 40 * fu}px) scale(${.92 + .08 * p + bump})`
-      if (i !== wrong) card.style.setProperty('--passed', String(outCubic(prog(t, checkAt, 300))))
+    cards.forEach(({ card, strike, slot }, i) => {
+      // In on its word: from slight oversize and a little below, settled in about 10 frames (no long fade).
+      const p = outCubic(prog(t, cardAt[i] ?? 200, 320))
+      const verdict = outCubic(prog(t, verdictAt + 80, 300))
+      const isWrong = i === wrong
+      card.style.opacity = String(p > 0 ? Math.min(1, p * 3) : 0)
+      const scale = (1.08 - .08 * p) * (isWrong ? 1 - .04 * verdict : 1 + .03 * verdict)
+      card.style.transform = `translateY(${(1 - p) * 34 * fu}px) scale(${scale})`
+      card.style.setProperty('--verdict', String(verdict))
+      card.classList.toggle('settled', verdict > .5)
+      const wipe = isWrong ? inOutCubic(prog(t, verdictAt + 60, 300)) : 0
+      strike.style.clipPath = `inset(0 ${(100 * (1 - wipe)).toFixed(2)}% 0 0)`
+      strike.style.opacity = wipe > 0 ? '1' : '0'
+      slot.style.opacity = String(outCubic(prog(t, 100, 260)) * (1 - Math.min(1, p * 2)))
     })
+    vs.style.opacity = String(outCubic(prog(t, 120, 260)) * (1 - outCubic(prog(t, verdictAt, 260))))
     if (marks.length) {
       const [x, v] = marks
-      const px = outBack(prog(t, crossAt, 360)), pv = outBack(prog(t, checkAt, 360))
+      const px = outBack(prog(t, crossAt, 300)), pv = outBack(prog(t, checkAt, 300))
       x.circle.style.transform = `scale(${Math.max(0, px)})`; x.circle.style.opacity = px > 0 ? '1' : '0'
       v.circle.style.transform = `scale(${Math.max(0, pv)})`; v.circle.style.opacity = pv > 0 ? '1' : '0'
-      draw(x.stroke, outCubic(prog(t, crossAt + 120, 260)))
-      draw(v.stroke, outCubic(prog(t, checkAt + 120, 260)))
+      draw(x.stroke, outCubic(prog(t, crossAt + 90, 200)))
+      draw(v.stroke, outCubic(prog(t, checkAt + 90, 200)))
     }
   })
 }

@@ -18,7 +18,8 @@ const bundled = buildSync({
       export { GRAPHIC_TEMPLATES } from './src/shared/motion-graphics';
       export { REEL_GRAPHIC_TEMPLATES, REEL_CHAT_TEMPLATES } from './src/shared/reel-graphics';
       export { GraphicForm } from './src/renderer/components/ReelGraphics';
-      export { fxFit, fxAnchorShift, fxMinType, fxGlassLeft, fitStepLabels, fxBrand, BRAND_ON_DARK, wordMarkBox, WORD_MARKS } from './src/renderer/graphics/fx/fit';
+      export { fxFit, fxAnchorShift, fxMinType, fxGlassLeft, fitStepLabels, fxBrand, BRAND_ON_DARK, wordMarkBox, WORD_MARKS, fxMarkerFill, FX_MIN_TYPE } from './src/renderer/graphics/fx/fit';
+      export { COMPARE_FILL, COMPARE_MIN_TITLE, DIAGRAM_MIN_LABEL } from './src/renderer/graphics/diagrams';
       export { pushOrigin, pushScale, PUSH_ZOOM } from './src/renderer/graphics/fx/media';
       export { textMinType, largestFitting, textTheme, TEXT_FILL, TEXT_MAX_FILL, CAP_RATIO } from './src/renderer/graphics/text-fit';
       export { highlightSplit, highlightLayout, highlightColors, highlightPlacement } from './src/shared/headline-look';`,
@@ -254,6 +255,61 @@ test('words in the brand color read on dark glass: a mid blue is lifted, a light
   assert.ok(/^rgb\(\d+, \d+, \d+\)$/.test(blue))
   assert.equal(m.fxBrand([113, 245, 167]), 'rgb(113, 245, 167)')
   assert.equal(m.fxBrand([37, 99, 235], 'light'), 'rgb(37, 99, 235)')
+})
+
+test('text effects read at full strength: entrances in about 10 frames, near-solid dark glass, white words, solid highlights', () => {
+  const fs = require('node:fs')
+  const unit = (id) => fs.readFileSync(path.join(__dirname, `../src/renderer/graphics/fx/vendor/${id}.html`), 'utf8')
+  const num = (text, re) => { const hit = text.match(re); assert.ok(hit, String(re)); return Number(hit[1]) }
+  // At most ~10 frames (0.34 s) from see-through to fully there (a run's lines sat half see-through for most of a second).
+  const ENTER = 0.34
+  assert.ok(num(unit('per-word-rise'), /var RISE_BASE = ([\d.]+);/) <= ENTER)
+  assert.ok(num(unit('marker-highlight'), /var IN_BASE = ([\d.]+);/) <= ENTER)
+  assert.ok(num(unit('vox-annotate'), /var IN_BASE = ([\d.]+);/) <= ENTER)
+  assert.ok(num(unit('line-swap'), /var IN_A_BASE = ([\d.]+);/) <= ENTER)
+  assert.ok(num(unit('line-swap'), /var IN_B_BASE = ([\d.]+);/) <= ENTER)
+  const stagger = unit('text-stagger').split('CreatorClips adaptation')[1]
+  assert.match(stagger, /duration: M\.move_s, stagger: M\.stagger_s, ease: M\.enter \}, 0\.05\)/)
+  // A highlight is a near-solid marker (white words on a half see-through pale stroke read as a ghost).
+  for (const id of ['marker-highlight', 'vox-annotate']) assert.ok(num(unit(id), /strokeWidth: 26,\s+opacity: ([\d.]+),/) >= .9, id)
+  // The glass is the one dark look, near solid.
+  const css = fs.readFileSync(path.join(__dirname, '../src/renderer/graphics/fx/fx.css'), 'utf8')
+  const glass = css.match(/\.fx-stage\.fx-glass::before \{[^}]*\}/)[0]
+  const alphas = [...glass.matchAll(/rgba\(\s*\d+,\s*\d+,\s*\d+,\s*([\d.]+)\)/g)].slice(0, 2).map((x) => Number(x[1]))
+  assert.equal(alphas.length, 2); for (const a of alphas) assert.ok(a >= .9, glass)
+  // Word rise: white words (its accent color on every word read as a faint light pill); Blur in: its shimmer ends on the words' own color.
+  const rule = (id) => m.FX_EFFECTS.find((e) => e.id === id).css_rules ?? ''
+  assert.match(rule('per-word-rise'), /\.pwr-stage \{ color: var\(--fg\) !important; \}/)
+  assert.match(rule('text-stagger'), /var\(--hf-stagger-accent\) 44%, var\(--hf-stagger-ink\) 56%, var\(--hf-stagger-ink\) 100%/)
+  assert.match(rule('marker-highlight'), /stroke: var\(--brand-deep/)
+  assert.match(rule('vox-annotate'), /stroke: var\(--brand-deep/)
+  // Text effects have no type under the on-phone minimum.
+  assert.ok(m.fxMinType('card', 'words', 9) >= 66 && m.fxMinType('card', 'words', 4) >= 80)
+})
+
+test('a highlight marker in any brand color carries white words', () => {
+  const lum = (css) => { const [r, g, b] = css.match(/\d+/g).map(Number).map((v) => { const c = v / 255; return c <= .03928 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4 }); return .2126 * r + .7152 * g + .0722 * b }
+  const contrast = (css) => 1.05 / (lum(css) + .05)
+  for (const c of [[47, 91, 255], [113, 245, 167], [250, 204, 21], [37, 99, 235], [236, 72, 153], [124, 184, 47]]) {
+    assert.ok(contrast(m.fxMarkerFill(c)) >= 3, `${c} -> ${m.fxMarkerFill(c)}`)
+  }
+  // A near-black brand is lifted so the marker shows on the dark glass.
+  const navy = m.fxMarkerFill([15, 23, 42])
+  assert.ok(lum(navy) > lum('rgb(15, 23, 42)') * 1.5, navy)
+  // A mid brand color is kept as it is.
+  assert.equal(m.fxMarkerFill([47, 91, 255]), 'rgb(47, 91, 255)')
+})
+
+test('a Wrong / right and every diagram are drawn big: the cards fill the stage, titles and labels at the on-phone minimum or more', () => {
+  assert.ok(m.COMPARE_FILL >= m.TEXT_FILL.stage)
+  assert.ok(m.COMPARE_MIN_TITLE >= m.textMinType(2))
+  assert.ok(m.DIAGRAM_MIN_LABEL >= m.FX_MIN_TYPE.stage)
+  const diagrams = require('node:fs').readFileSync(path.join(__dirname, '../src/renderer/graphics/diagrams.ts'), 'utf8')
+  // Labels pop in as said (no faint early labels) and are filled.
+  assert.doesNotMatch(diagrams, /every label faint/)
+  const css = require('node:fs').readFileSync(path.join(__dirname, '../src/renderer/graphics/graphics.css'), 'utf8')
+  assert.match(css.match(/\.dg-tag \{[^}]*\}/)[0], /rgba\(9, 20, 48, \.82\)/)
+  assert.match(css.match(/\.dg-compare-card \{[^}]*\}/)[0], /background: #fff/)
 })
 
 test('a word mark is placed from its word in its own face: the same mark on a tall serif, a condensed or a script word, snug for a long word', () => {

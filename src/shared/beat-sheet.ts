@@ -12,7 +12,7 @@ import {
   CARD_MAX_SECONDS, CARD_MIN_SECONDS, CARD_TYPE_LABELS, RAW_INTRO_SECONDS, livePins, reelCardWindows, reelOrder, reelSeconds, reelWordStarts, soundEffectsOn,
   type EditCard, type EditDecisions, type EditPlan
 } from './edit-recording'
-import { GRAPHIC_DEFAULT_MS, ITEM_TIMED_TEMPLATES, clampGraphicMs, graphicHasContent, graphicItems, isDiagram, newGraphic, templateInfo, type GraphicSize, type GraphicTemplateId, type TimedWord } from './motion-graphics'
+import { GRAPHIC_DEFAULT_MS, ITEM_TIMED_TEMPLATES, clampGraphicMs, diagramNeedsFullFrame, graphicHasContent, graphicItems, isDiagram, newGraphic, templateInfo, type GraphicSize, type GraphicTemplateId, type TimedWord } from './motion-graphics'
 import { MAX_EDIT_GRAPHICS, newEditGraphic, patchEditGraphic, type EditGraphic } from './reel-graphics'
 import { fxEffect, fxItems } from './fx-catalog'
 import { registerKeeps } from './register'
@@ -189,7 +189,7 @@ export function deriveBeats(plan: EditPlan, d: EditDecisions, options: { include
   const motion = d.motionGraphics !== false
   const stage = motion && d.stageLayouts !== false
   const wordEnd = (i: number): number => (starts.get(i) ?? 0) + (plan.words[i].endMs - plan.words[i].startMs) / 1000
-  const sceneOf = (g: { template: string; size?: GraphicSize; fields?: Record<string, string> }): BeatScene => !stage ? 'face' : isDiagram(g.template) || (g.template === 'custom' && g.fields?.scene === 'visual') ? 'visual' : g.size === 'stage' ? 'stage' : 'face'
+  const sceneOf = (g: { template: string; size?: GraphicSize; fields?: Record<string, string> }): BeatScene => !stage ? 'face' : g.template === 'custom' && g.fields?.scene === 'visual' ? 'visual' : isDiagram(g.template) ? (diagramNeedsFullFrame({ template: g.template, fields: g.fields ?? {} }) ? 'visual' : 'stage') : g.size === 'stage' ? 'stage' : 'face'
   const moments: Moment[] = []
 
   // The hook: its words play first, under the hook text.
