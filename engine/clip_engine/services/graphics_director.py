@@ -1395,9 +1395,8 @@ def _timed_stage(g: dict, segments: Sequence) -> Optional[dict]:
         gap = CONTRAST_SIDES_MS if g['template'] == 'compare_marks' else ag.DIAGRAM_ITEM_GAP_MS
         if any(b - a > gap for a, b in zip(times, times[1:])):
             return None
-        at = max(0, times[0] - ag.DIAGRAM_LEAD_MS)
-        end = max(times[-1] + ag.DIAGRAM_HOLD_MS, at + ag.DIAGRAM_MIN_MS)
-        g = {**g, 'at_ms': int(at), 'duration_ms': int(min(end - at, ag.DIAGRAM_AUTO_MAX_MS))}
+        at, length = ag.diagram_window(g['template'], times)
+        g = {**g, 'at_ms': at, 'duration_ms': length}
     else:
         times = ag.item_times(g, segments)
         if not times:

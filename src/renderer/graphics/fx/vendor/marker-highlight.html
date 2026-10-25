@@ -1,7 +1,7 @@
 <!--
   Vendored from HyperFrames (https://github.com/heygen-com/hyperframes), registry/components/marker-highlight/marker-highlight.html at 2ed882c.
   Copyright 2026 HeyGen, Inc. Licensed under the Apache License, Version 2.0 (see LICENSE and NOTICE in this folder).
-  Changed by CreatorClips: the GSAP CDN <script> tags are replaced by the npm package bundled with the app. Fonts are mapped and scripts scoped at build time (src/shared/fx-html.ts).
+  Changed by CreatorClips: the GSAP CDN <script> tags are replaced by the npm package bundled with the app; the line comes in within about 10 frames; the highlight is a near-solid marker. Fonts are mapped and scripts scoped at build time (src/shared/fx-html.ts).
 -->
 <!doctype html>
 <!--
@@ -210,7 +210,7 @@
                 viewBox: "0 0 100 40",
                 d: "M 3 24 C 22 20.5, 47 25.5, 68 22.5 C 79 21, 90 23, 97 21.5",
                 strokeWidth: 26,
-                opacity: 0.5,
+                opacity: 0.92,
               },
               circle: {
                 viewBox: "0 0 100 40",
@@ -289,7 +289,8 @@
             root.style.setProperty("--mh-font-size", "min(" + fitted.toFixed(3) + "cqw, 16cqh)");
 
             // RETIME RANGE: fixed phases; HOLD is the only elastic span.
-            var IN_BASE = 0.55;
+            // CreatorClips: the line is in, fully opaque, in about 10 frames.
+            var IN_BASE = 0.3;
             var DRAW_BASE = 0.6;
             var POP_BASE = 0.32;
             var OUT_BASE = exit === "none" ? 0 : 0.45;

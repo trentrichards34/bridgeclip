@@ -449,8 +449,21 @@ export function compareTimes(fields: Record<string, string>, durationMs: number)
   if ((t.length !== 2 && t.length !== 4) || t.some((v, i) => !Number.isFinite(v) || v < 0 || v > durationMs || (i > 0 && v < t[i - 1]))) return null
   const cards = t.slice(0, 2).map(Math.round)
   if (t.length === 4) return { cards, cross: Math.round(t[2]), check: Math.round(t[3]) }
-  const cross = Math.min(durationMs - 1200, cards[1] + 900)
-  return { cards, cross: Math.max(cards[1] + 200, cross), check: Math.max(cards[1] + 500, cross + 650) }
+  // Each card's mark pops just after its side is said (COMPARE_MARK_MS): the ✗ on the wrong one, the ✓ on the right one.
+  const wrong = compareWrong(fields)
+  const mark = (i: number): number => Math.max(0, Math.min(durationMs - 600, cards[i] + COMPARE_MARK_MS))
+  return { cards, cross: mark(wrong), check: mark(1 - wrong) }
+}
+/** A Wrong / right card's ✗ or ✓ pops this long after its side is said. */
+export const COMPARE_MARK_MS = 250
+/** A Wrong / right is up until this long after its second side is said (engine auto_graphics.COMPARE_HOLD_MS). */
+export const COMPARE_HOLD_MS = 1700
+/** A diagram with this many items or more needs the whole frame (a Visual scene); fewer sit on the stage over the speaker (engine auto_graphics.FULL_FRAME_ITEMS). */
+export const FULL_FRAME_ITEMS = 5
+/** Whether a diagram needs the whole frame (engine auto_graphics.needs_full_frame); every other stage moment keeps the speaker's card. */
+export function diagramNeedsFullFrame(g: { template: string; fields: Record<string, string> }): boolean {
+  if (!DIAGRAM_TEMPLATES.includes(g.template) || g.template === 'compare_marks') return false
+  return (g.fields.items ?? '').split('\n').filter((line) => line.trim()).length >= FULL_FRAME_ITEMS
 }
 
 /** The finished clip's time (output ms) at which the hook text hands over to the first chapter header, or null with none. */

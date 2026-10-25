@@ -141,8 +141,8 @@
   (function () {
     var M = window.__ccMotion || { move_s: 0.333, enter: 'expo.out', exit: 'power2.in', from_scale: 1.08, stagger_s: 0.2 };
     var tl = gsap.timeline({ paused: true });
-    tl.fromTo('.hf-transition-text-stagger span', { opacity: 0, y: 48, filter: 'blur(14px)' }, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.54, stagger: M.stagger_s, ease: M.enter }, 0.35);
-    tl.to('.hf-transition-text-stagger span', { backgroundPosition: '100% 0%', duration: 0.72, stagger: 0.04, ease: 'power2.inOut' }, 1.05);
+    tl.fromTo('.hf-transition-text-stagger span', { opacity: 0, y: 28, filter: 'blur(6px)' }, { opacity: 1, y: 0, filter: 'blur(0px)', duration: M.move_s, stagger: M.stagger_s, ease: M.enter }, 0.05);
+    tl.to('.hf-transition-text-stagger span', { backgroundPosition: '100% 0%', duration: 0.72, stagger: 0.04, ease: 'power2.inOut' }, 0.75);
     window.__timelines = window.__timelines || {};
     window.__timelines['text-stagger'] = tl;
   })();

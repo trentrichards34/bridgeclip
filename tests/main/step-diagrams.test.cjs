@@ -45,7 +45,14 @@ test('the new templates are in the contract with their fields, lengths and defau
   assert.equal(mg.chapterStyle({ style: 'pill' }), 'pill'); assert.equal(mg.chapterStyle({ style: 'x' }), 'serif_caps')
   assert.equal(mg.hubIcon({ icon: 'target' }), 'target'); assert.equal(mg.hubIcon({ icon: 'brand' }), 'idea')
   assert.equal(mg.compareWrong({ wrong: 'second' }), 1); assert.equal(mg.compareWrong({}), 0)
-  assert.deepEqual(plain(mg.compareTimes({ item_ms: '100\n900' }, 6000)), { cards: [100, 900], cross: 1800, check: 2450 })
+  // Each card's mark pops just after its side is said: the ✗ on the wrong one, the ✓ on the right one.
+  assert.deepEqual(plain(mg.compareTimes({ item_ms: '100\n900' }, 6000)), { cards: [100, 900], cross: 350, check: 1150 })
+  assert.deepEqual(plain(mg.compareTimes({ item_ms: '100\n900', wrong: 'second' }, 6000)), { cards: [100, 900], cross: 1150, check: 350 })
+  // A diagram of five items or more needs the whole frame; fewer (and a Wrong / right) keep the speaker on the stage.
+  assert.equal(mg.diagramNeedsFullFrame({ template: 'staircase', fields: { items: 'a\nb\nc\nd\ne' } }), true)
+  assert.equal(mg.diagramNeedsFullFrame({ template: 'staircase', fields: { items: 'a\nb\nc' } }), false)
+  assert.equal(mg.diagramNeedsFullFrame({ template: 'compare_marks', fields: { items: 'a\nb\nc\nd\ne' } }), false)
+  assert.equal(mg.diagramNeedsFullFrame({ template: 'stat', fields: { items: 'a\nb\nc\nd\ne' } }), false)
   assert.deepEqual(plain(mg.compareTimes({ item_ms: '100\n900\n1200\n2000' }, 6000)), { cards: [100, 900], cross: 1200, check: 2000 })
   assert.equal(mg.compareTimes({ item_ms: '900\n100' }, 6000), null)
   // Only the clip editor has chapters (they belong to a clip's sections).

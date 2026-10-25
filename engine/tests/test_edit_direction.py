@@ -273,12 +273,13 @@ def test_stage_scenes_go_around_the_stage_cards_and_diagrams_but_not_over_a_film
                 {'id': 'g-2', 'template': 'staircase', 'at_ms': 12000, 'duration_ms': 9000, 'size': 'stage', 'origin': 'auto', 'fields': {}},
                 {'id': 'g-3', 'template': 'list', 'at_ms': 30000, 'duration_ms': 4000, 'size': 'stage', 'origin': 'auto', 'fields': {}}]
     scenes = ed.editor_scenes(graphics, 40000, None)
-    assert [s['scene'] for s in scenes] == ['stage', 'visual', 'stage']
-    assert scenes[1]['backdrop'] == 'solid'
+    # The diagram sits on a stage too (the speaker's card under it), on the solid backdrop.
+    assert [s['scene'] for s in scenes] == ['stage', 'stage', 'stage']
+    assert [s['backdrop'] for s in scenes] == ['grid', 'solid', 'grid']
     assert ag.checked_saved_scenes(scenes, 40000) == scenes
     # A filmed screen from 29 to 36 s: no stage there; the list there is drawn as a card.
     avoid = ed.editor_scenes(graphics, 40000, '#FF5500', [(29000, 36000)])
-    assert [s['scene'] for s in avoid] == ['stage', 'visual'] and avoid[0]['backdrop'] == 'grid'
+    assert [s['scene'] for s in avoid] == ['stage', 'stage'] and avoid[0]['backdrop'] == 'grid' and avoid[1]['card'] == 'arch'
     sized = ed.size_for_scenes(graphics, avoid)
     assert [g['size'] for g in sized] == ['stage', 'stage', 'card']
 

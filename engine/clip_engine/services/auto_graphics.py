@@ -149,11 +149,18 @@ EDITOR_MIN_MS, EDITOR_MAX_MS = 800, 8000
 DIAGRAM_MAX_MS, CHAPTER_MAX_MS = 16000, 180000
 # A diagram stays on while it is talked through: from just before its first item to a little after its last (6-15 s).
 DIAGRAM_MIN_MS, DIAGRAM_AUTO_MAX_MS = 6000, 15000
-DIAGRAM_LEAD_MS, DIAGRAM_HOLD_MS = 700, 2600
-# A diagram's items are said at most this far apart (one after the next).
-DIAGRAM_ITEM_GAP_MS = 8000
+DIAGRAM_LEAD_MS, DIAGRAM_HOLD_MS = 700, 2200
+# Nothing on screen sits still longer than this: a diagram's items are said at most this far apart (one after the next).
+STATIC_MAX_MS = 7000
+DIAGRAM_ITEM_GAP_MS = STATIC_MAX_MS
 # A Wrong / right's two sides may be said a little further apart (the wrong one is explained before the right one).
 COMPARE_ITEM_GAP_MS = 10500
+# A Wrong / right is up from its first side's word to COMPARE_HOLD_MS after its second side's word (then back to the
+# face). Sides said further apart than COMPARE_TOGETHER_MS: it comes in COMPARE_SETUP_MS before the second side, the
+# first side already said (its card and its mark land as it comes in), so it never sits waiting for seconds.
+COMPARE_TOGETHER_MS, COMPARE_SETUP_MS, COMPARE_HOLD_MS, COMPARE_MIN_MS = 5000, 2200, 1700, 3200
+# A diagram this many items or more is drawn on the full frame (a Visual scene); fewer sit on the stage above the speaker.
+FULL_FRAME_ITEMS = 5
 # Without chapter headers, two diagrams are at least this far apart (one per section).
 DIAGRAM_GAP_MS = 12000
 
@@ -691,14 +698,25 @@ def _card_lines(graphic: dict) -> list[str]:
     return lines
 
 
-def item_times(graphic: dict, segments: Sequence, window_ms: int = STRICT_WINDOW_MS) -> Optional[list[int]]:
+def item_times(graphic: dict, segments: Sequence, window_ms: int = STRICT_WINDOW_MS, since: Optional[float] = None) -> Optional[list[int]]:
     """When each item (then a crossed-out list's final line) is said, in order, as source ms; None when they
-    aren't all said in that order near the card."""
+    aren't all said in that order near the card. A Wrong / right's first side is its last mention before its second."""
     lines = _card_lines(graphic)
     if not lines:
         return []
     at, length = graphic['at_ms'], graphic['duration_ms']
-    said = _timed_words(segments, at - window_ms, at + length + window_ms)
+    if graphic.get('template') == 'compare_marks' and since is None:
+        times = item_times(graphic, segments, window_ms, at - max(window_ms, look_back_ms(graphic)))
+        while times and len(times) == 2 and times[1] - times[0] > COMPARE_ITEM_GAP_MS:
+            # Said earlier too: the mention closest before the second side is the one meant.
+            later = item_times(graphic, segments, window_ms, times[0] + 1)
+            if not later or later[0] <= times[0]:
+                break
+            times = later
+        return times
+    said = _timed_words(segments, since if since is not None else at - window_ms, at + length + window_ms)
+    if since is not None:
+        said = [w for w in said if w[1] >= since]
     times, cursor = [], 0
     for line in lines:
         words = _words(line)
@@ -806,6 +824,12 @@ def word_timed(g: dict, segments: Sequence, clip_end: float, following: Optional
     return {**g, 'at_ms': int(at), 'duration_ms': length, 'fields': {**g['fields'], 'word_ms': '\n'.join(str(int(o)) for o in offsets)}}
 
 
+def look_back_ms(graphic: dict) -> int:
+    """How long before a card its words may have been said: a Wrong / right comes in just before its second side, its
+    first side said up to COMPARE_ITEM_GAP_MS earlier (diagram_window); every other card STRICT_WINDOW_MS."""
+    return COMPARE_ITEM_GAP_MS if graphic.get('template') == 'compare_marks' else STRICT_WINDOW_MS
+
+
 def _strict_said(graphic: dict, segments: Sequence) -> bool:
     """Every word on a newer card is said near it; accents sit inside their text; items are said in order;
     an icon row's icons are generic ones; a comment prompt comes when the speaker asks for comments."""
@@ -819,7 +843,7 @@ def _strict_said(graphic: dict, segments: Sequence) -> bool:
         return False
     if t == 'icon_pop' and any(n and n not in GRAPHIC_ICONS for n in f.get('icons', '').split('\n')):
         return False
-    heard = {w for w, _ in _timed_words(segments, at - STRICT_WINDOW_MS, at + length + STRICT_WINDOW_MS)}
+    heard = {w for w, _ in _timed_words(segments, at - look_back_ms(graphic), at + length + STRICT_WINDOW_MS)}
     checked = {k: v for k, v in f.items() if k not in NON_WORD_FIELDS and k != 'accent'}
     if t == 'comment_cta':
         near = {w for w, _ in _timed_words(segments, at - NUMBER_WINDOW_MS, at + NUMBER_WINDOW_MS)}
@@ -867,7 +891,7 @@ def words_said(graphic: dict, segments: Sequence) -> bool:
                 if not any(abs(value - heard) <= 1e-6 * max(1.0, abs(value)) for heard in (along if key in lists else near_numbers)):
                     return False
     if graphic['template'] in STRICT_TEMPLATES or graphic['template'] == 'fx':
-        strict_heard = {w for w, _ in _timed_words(segments, at - STRICT_WINDOW_MS, at + length + STRICT_WINDOW_MS)}
+        strict_heard = {w for w, _ in _timed_words(segments, at - look_back_ms(graphic), at + length + STRICT_WINDOW_MS)}
         return _digits_said(graphic, strict_heard) and _strict_said(graphic, segments)
     heard = set(_tokens(_words_between(segments, at - WORD_WINDOW_MS, at + length + WORD_WINDOW_MS)))
     if not _digits_said(graphic, heard):
@@ -1159,9 +1183,31 @@ def diagram_span(graphic: dict, segments: Sequence) -> Optional[tuple[int, int]]
     gap = COMPARE_ITEM_GAP_MS if graphic['template'] == 'compare_marks' else DIAGRAM_ITEM_GAP_MS
     if any(b - a > gap for a, b in zip(times, times[1:])):
         return None
+    return diagram_window(graphic['template'], times)
+
+
+def diagram_window(template: str, times: Sequence[float]) -> tuple[int, int]:
+    """(start, length) of a diagram whose items are said at `times` (source ms): from just before its first item to a
+    little after its last (6-15 s). A Wrong / right: from its first side's word (or COMPARE_SETUP_MS before its second
+    side when the two are said far apart) to COMPARE_HOLD_MS after its second side's word."""
+    if template == 'compare_marks' and len(times) >= 2:
+        first, last = times[0], times[-1]
+        at = first - 300 if last - first <= COMPARE_TOGETHER_MS else last - COMPARE_SETUP_MS
+        at = max(0, at)
+        end = max(last + COMPARE_HOLD_MS, at + COMPARE_MIN_MS)
+        return int(at), int(end - at)
     at = max(0, times[0] - DIAGRAM_LEAD_MS)
     end = max(times[-1] + DIAGRAM_HOLD_MS, at + DIAGRAM_MIN_MS)
     return int(at), int(min(end - at, DIAGRAM_AUTO_MAX_MS))
+
+
+def needs_full_frame(graphic: dict) -> bool:
+    """A diagram that needs the whole frame (FULL_FRAME_ITEMS items or more): drawn in a Visual scene. Every other stage
+    moment sits on the stage with the speaker's card under it."""
+    if graphic.get('template') not in DIAGRAMS or graphic.get('template') == 'compare_marks':
+        return False
+    items = [i for i in str((graphic.get('fields') or {}).get('items') or '').split('\n') if i.strip()]
+    return len(items) >= FULL_FRAME_ITEMS
 
 
 # ---------------------------------------------------------------------------
@@ -1894,6 +1940,9 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
         fields = dict(g['fields'])
         if g['template'] in ITEM_TEMPLATES:
             times = item_times(g, segments)
+            if times and g['template'] == 'compare_marks':
+                # A Wrong / right whose first side was said before it came in shows that side as it comes in.
+                times = [max(g['at_ms'], t) for t in times]
             if times and all(g['at_ms'] - 300 <= t < g['at_ms'] + g['duration_ms'] - 300 for t in times):
                 # Each item comes in as it is said (ms into the card, source time).
                 fields['item_ms'] = '\n'.join(str(max(0, t - g['at_ms'])) for t in times)
@@ -1924,8 +1973,9 @@ def fit_to_clip(planned: Iterable[dict], segments: Sequence, ranges: Sequence[Se
 
 def stage_scenes_for(graphics: Sequence[dict], start_ms: int, end_ms: int, backdrop: str = 'light', card: str = 'rounded') -> list[dict]:
     """Scenes (source time, face left out) around a clip's stage-size graphics (stage_scenes.suggest_scenes): a
-    Visual scene on the solid backdrop (the brand color, else royal blue) around each diagram, so its white line art
-    fills the frame under the chapter header; a Stage scene around the other stage cards."""
+    Stage scene on the solid backdrop (the brand color, else royal blue) around each diagram, its white line art above
+    the speaker's card (a Visual scene, the whole frame, only for a diagram that needs it: needs_full_frame); a Stage
+    scene around the other stage cards."""
     from clip_engine.services.stage_scenes import MIN_SCENE_MS, STAGE_PAD_AFTER_MS, stage_open_ms, suggest_scenes
     if end_ms <= start_ms:
         return []
@@ -1939,7 +1989,8 @@ def stage_scenes_for(graphics: Sequence[dict], start_ms: int, end_ms: int, backd
         if visual and a - visual[-1]['end_ms'] < MIN_SCENE_MS:
             visual[-1]['end_ms'] = max(visual[-1]['end_ms'], b)
         elif b - a >= MIN_SCENE_MS:
-            visual.append({'scene': 'visual', 'start_ms': a, 'end_ms': b, 'backdrop': 'solid'})
+            visual.append({'scene': 'visual' if needs_full_frame(g) else 'stage', 'start_ms': a, 'end_ms': b, 'backdrop': 'solid',
+                           **({'card': card} if card != 'rounded' and not needs_full_frame(g) else {})})
     if visual:
         # The visual scenes win: stage scenes are cut around them (pieces under the minimum are dropped).
         kept = []
