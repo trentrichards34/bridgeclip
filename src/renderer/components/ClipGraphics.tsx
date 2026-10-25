@@ -182,7 +182,7 @@ function CustomGraphicFields({ outputDir, candidate, graphic, disabled, onChange
   }
   return <div className="space-y-2" data-testid="custom-graphic-fields">
     <p className="text-2xs text-ink-subtle">{info ? `${info.idea}. Designed by your AI for this moment and checked over your video${info.tries > 1 ? ` (fixed ${info.tries - 1} time${info.tries === 2 ? '' : 's'})` : ''}.` : 'Designed by your AI for this moment.'}</p>
-    {info?.stills.length ? <div className="grid grid-cols-3 gap-1" aria-label="Stills: coming in, settled, leaving">
+    {info?.stills.length ? <div className={info.stills.length > 3 ? 'grid grid-cols-4 gap-1' : 'grid grid-cols-3 gap-1'} aria-label="Stills: coming in, building, built, leaving">
       {info.stills.map((path, i) => <img key={path} src={localFileUrl(path)} alt={['Coming in', 'Settled', 'Leaving'][i] ?? ''} className="w-full rounded-md bg-black/60" />)}</div> : null}
     <label className="editor-label">Change it
       <textarea rows={2} maxLength={300} value={note} disabled={disabled || busy} placeholder="Like “make it a staircase” or “use a rocket instead”" aria-label="What to change in the custom graphic" onChange={(e) => setNote(e.target.value)} /></label>

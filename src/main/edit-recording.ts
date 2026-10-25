@@ -49,9 +49,9 @@ import { assertMediaPath, authorizeMedia } from './security'
 import { getSettingsForBridge, loadSettings, vocabularyTerms } from './settings-store'
 import { resolveBinary } from './tools'
 import { beatFrame } from './beat-stills'
-import { customModel, customStillPaths, openRouterModelCall, type CustomModel } from './custom-graphics'
-import { editCustomEstimate, editHeroMoments, makeEditCustomGraphics, swapBackCustomGraphic, type EditCustomContext, type EditCustomResult } from './edit-custom-graphics'
-import { DEFAULT_PRICE } from '../shared/custom-graphics'
+import { customModel, customStillPaths, openRouterModelCall, readCustomGraphic, type CustomModel } from './custom-graphics'
+import { editCustomEstimate, editHeroMoments, editVisualWorld, makeEditCustomGraphics, regenerateVisualWorld, setVisualWorld, swapBackCustomGraphic, type EditCustomContext, type EditCustomResult } from './edit-custom-graphics'
+import { DEFAULT_PRICE, MAX_NOTE_CHARS, type EditCustomInfo, worldCallCost, worldFromLine, worldLine, WORLD_LINE_CHARS } from '../shared/custom-graphics'
 import type { EditGraphic } from '../shared/reel-graphics'
 import { DEFAULT_YOUTUBE_CHOICE, YOUTUBE_MAX_SOURCE_SECONDS, YOUTUBE_MAX_TOTAL_SECONDS, isEditFormat, parseChapters, youtubeForEngine, type EditFormat } from '../shared/longform'
 
@@ -983,7 +983,7 @@ function customReview(): EditRun {
 }
 
 /** What the review shows before designing: whether it can run, the moments it would design and what that costs. */
-export async function editCustomGraphicsInfo(value: unknown): Promise<{ available: boolean; reason: string | null; model: string; moments: { word: number; kind: string; frame: string; replaces: string | null }[]; expectedUsd: number; mostUsd: number; revisions: number; busy: boolean }> {
+export async function editCustomGraphicsInfo(value: unknown): Promise<EditCustomInfo> {
   const current = customReview()
   const decisions = parseEditDecisions(value, current.status.plan!, current.status.images ?? [])
   const m = await customModel()
@@ -991,7 +991,8 @@ export async function editCustomGraphicsInfo(value: unknown): Promise<{ availabl
   const heroes = editHeroMoments(ctx)
   const estimate = editCustomEstimate(ctx, heroes.length)
   return { available: !!m, reason: m ? null : 'Add your OpenRouter key in Settings → API keys to design custom graphics.', model: ctx.model,
-    moments: heroes.map((h) => ({ word: h.word, kind: h.kind, frame: h.frame, replaces: h.replaces })), expectedUsd: estimate.expectedUsd, mostUsd: estimate.mostUsd, revisions: estimate.revisions, busy: !!current.customBusy }
+    moments: heroes.map((h) => ({ word: h.word, kind: h.kind, frame: h.frame, replaces: h.replaces })), expectedUsd: estimate.expectedUsd, mostUsd: estimate.mostUsd, revisions: estimate.revisions, busy: !!current.customBusy,
+    flat: Object.fromEntries((decisions.graphics ?? []).filter((g) => g.template === 'custom').flatMap((g) => { const found = readCustomGraphic(current.status.folder, g.fields.comp); return found?.meta.flat?.length ? [[found.meta.comp, found.meta.flat]] : [] })) }
 }
 
 /** The spending check's estimate for designing now (the most it could cost). */
@@ -1004,7 +1005,7 @@ export async function editCustomGraphicsEstimate(value: unknown): Promise<number
 }
 const editCustomEstimateOne = (info: { mostUsd: number; moments: unknown[] }): number => info.moments.length ? info.mostUsd / info.moments.length : 0.3
 
-async function designCustomGraphics(current: EditRun, decisions: EditDecisions, only?: { id: string; note: string }, pick?: { itemId: string; word: number; replaces?: string }): Promise<EditCustomResult | null> {
+async function designCustomGraphics(current: EditRun, decisions: EditDecisions, only?: { id: string; note: string }, pick?: { itemId: string; word: number; replaces?: string }, design?: { id: string }): Promise<EditCustomResult | null> {
   const m = await customModel()
   if (!m) return null
   if (current.customBusy) throw new Error('Your custom graphics are being designed. Wait for them to finish.')
@@ -1014,7 +1015,7 @@ async function designCustomGraphics(current: EditRun, decisions: EditDecisions, 
   publish(current, { custom: { running: true, done: 0, total: 0, notes: [] } })
   try {
     const result = await makeEditCustomGraphics(customContext(current, decisions, m), {
-      call: openRouterModelCall(m.key, m.endpoint, m.price), signal: abort.signal, ...(only ? { only } : {}), ...(pick ? { pick } : {}),
+      call: openRouterModelCall(m.key, m.endpoint, m.price), signal: abort.signal, ...(only ? { only } : {}), ...(pick ? { pick } : {}), ...(design ? { design } : {}),
       onProgress: (done, total) => publish(current, { custom: { running: true, done, total, notes: [] } })
     })
     current.customTried = true
@@ -1030,7 +1031,7 @@ async function designCustomGraphics(current: EditRun, decisions: EditDecisions, 
 /** Design the review's custom graphics now (or, with `only`, one again with the member's note). Returns the review's graphics with them in place. */
 export async function makeEditCustomGraphicsNow(value: unknown): Promise<EditCustomResult> {
   const current = customReview()
-  const raw = (value && typeof value === 'object' ? value : {}) as { decisions?: unknown; only?: unknown }
+  const raw = (value && typeof value === 'object' ? value : {}) as { decisions?: unknown; only?: unknown; design?: unknown }
   const decisions = parseEditDecisions(raw.decisions, current.status.plan!, current.status.images ?? [])
   let only: { id: string; note: string } | undefined
   if (raw.only !== undefined) {
@@ -1038,7 +1039,14 @@ export async function makeEditCustomGraphicsNow(value: unknown): Promise<EditCus
     if (!o || typeof o.id !== 'string' || typeof o.note !== 'string' || o.note.length > 2000) throw new Error('Type what to change.')
     only = { id: o.id, note: o.note }
   }
-  const result = await designCustomGraphics(current, decisions, only)
+  // One visual the member added (a flat stretch's "Design one"): designed as a custom graphic.
+  let design: { id: string } | undefined
+  if (raw.design !== undefined) {
+    const d = raw.design as { id?: unknown } | null
+    if (!d || typeof d.id !== 'string' || !(decisions.graphics ?? []).some((g) => g.id === d.id)) throw new Error('That visual is no longer in your edit.')
+    design = { id: d.id }
+  }
+  const result = await designCustomGraphics(current, decisions, only, undefined, design)
   if (!result) throw new Error('Add your OpenRouter key in Settings → API keys to design custom graphics.')
   return result
 }
@@ -1053,6 +1061,45 @@ export async function addEditLibraryGraphic(value: unknown): Promise<EditCustomR
   const result = await designCustomGraphics(current, decisions, undefined, { itemId: raw.itemId, word: raw.word, ...(replaces ? { replaces } : {}) })
   if (!result) throw new Error('Add your OpenRouter key in Settings → API keys to use your library graphics.')
   return result
+}
+
+/** The video's visual world for the beat sheet: its one line (empty: none yet). */
+export function editCustomWorld(): { line: string; edited: boolean } {
+  const current = customReview()
+  const world = editVisualWorld(current.status.folder)
+  return { line: worldLine(world), edited: !!world?.edited }
+}
+
+/** The member's own line as the video's visual world (new custom graphics are designed in it). */
+export function setEditCustomWorld(value: unknown): { line: string; edited: boolean } {
+  const current = customReview()
+  const raw = (value && typeof value === 'object' ? value : {}) as { line?: unknown }
+  if (typeof raw.line !== 'string' || raw.line.length > WORLD_LINE_CHARS * 2) throw new Error('Describe the visual world in a line.')
+  const world = worldFromLine(raw.line, editVisualWorld(current.status.folder))
+  if (!world) throw new Error('Describe the visual world in a line.')
+  setVisualWorld(current.status.folder, world)
+  return { line: worldLine(world), edited: true }
+}
+
+/** What proposing the world again costs (the spending check). */
+export async function editCustomWorldEstimate(): Promise<number> {
+  const m = await customModel().catch(() => null)
+  return Math.round(worldCallCost(m?.price ?? DEFAULT_PRICE) * 1.5 * 10000) / 10000
+}
+
+/** Propose the video's visual world again (one small call on the member's key), optionally steered by their wish. */
+export async function regenerateEditCustomWorld(value: unknown): Promise<{ line: string; edited: boolean }> {
+  const current = customReview()
+  const raw = (value && typeof value === 'object' ? value : {}) as { decisions?: unknown; note?: unknown }
+  const decisions = parseEditDecisions(raw.decisions, current.status.plan!, current.status.images ?? [])
+  const note = typeof raw.note === 'string' ? raw.note.replace(/\s+/g, ' ').trim().slice(0, MAX_NOTE_CHARS) : ''
+  const m = await customModel()
+  if (!m) throw new Error('Add your OpenRouter key in Settings → API keys to design custom graphics.')
+  if (current.customBusy) throw new Error('Your custom graphics are being designed. Wait for them to finish.')
+  const result = await regenerateVisualWorld(customContext(current, decisions, m), openRouterModelCall(m.key, m.endpoint, m.price), note || undefined)
+  spend(current, result.costUsd)
+  if (!result.world) throw new Error('Your AI didn’t come back with a usable visual world. Try again.')
+  return { line: worldLine(result.world), edited: false }
 }
 
 /** A custom graphic back to the template graphic it replaced (the review's graphics after the swap). */

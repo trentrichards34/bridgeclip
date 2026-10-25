@@ -8,7 +8,7 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import {
-  CUSTOM_MAX_MS, CUSTOM_MIN_MS, customGeometry, customGraphicsEstimate, customLook, DEFAULT_PRICE, heroDuration, isCustomComp, MAX_NOTE_CHARS, openingLineCandidate, pickHeroMoments, revisionCap, saidIndex,
+  CUSTOM_MAX_MS, CUSTOM_MIN_MS, stressedWords, type VisualWorld, customGeometry, customGraphicsEstimate, customLook, DEFAULT_PRICE, heroDuration, heroFrame, heroKindOf, REEL_HERO_MIN_MS, isCustomComp, MAX_NOTE_CHARS, openingLineCandidate, pickHeroMoments, revisionCap, saidIndex,
   type CustomFallback, type CustomFrameKind, type HeroCandidate, type HeroKind, type HeroMoment, type WriterBrief
 } from '../shared/custom-graphics'
 import { reelOrder, reelWordStarts, type EditDecisions, type EditPlan, type EditSource } from '../shared/edit-recording'
@@ -17,7 +17,7 @@ import { graphicBox } from '../shared/graphic-layout'
 import { spokenNumber } from '../shared/graphic-prefill'
 import { templateInfo, type TimedWord } from '../shared/motion-graphics'
 import { BEAT_HOOK_SECONDS, graphicName, graphicWords } from '../shared/beat-sheet'
-import { inBatches, memberLibrary, produceCustomGraphic, readCustomGraphic, type LibraryHooks, type ModelCall } from './custom-graphics'
+import { inBatches, memberLibrary, produceCustomGraphic, proposeVisualWorld, readCustomGraphic, readVisualWorld, saveVisualWorld, type LibraryHooks, type ModelCall } from './custom-graphics'
 import type { CustomSandbox } from './custom-render'
 import { readLibraryTemplate } from './motion-library'
 import { beatFrame } from './beat-stills'
@@ -93,7 +93,7 @@ function plannedLine(g: EditGraphic | null, line: string): string {
 }
 
 /** The writer's brief for one moment. */
-function briefFor(ctx: EditCustomContext, hero: HeroMoment, durationMs: number, words: (TimedWord & { index: number })[], graphic: EditGraphic | null, note?: string): { brief: WriterBrief; line: string; frameWord: number } {
+function briefFor(ctx: EditCustomContext, hero: HeroMoment, durationMs: number, words: (TimedWord & { index: number })[], graphic: EditGraphic | null, note?: string, world?: VisualWorld | null): { brief: WriterBrief; line: string; frameWord: number } {
   const from = hero.atMs - 1200, to = hero.atMs + durationMs
   const inside = words.filter((w) => w.start_ms >= from && w.start_ms < to)
   const before = words.filter((w) => w.start_ms >= hero.atMs - 9000 && w.start_ms < from).map((w) => w.word).join(' ')
@@ -113,10 +113,11 @@ function briefFor(ctx: EditCustomContext, hero: HeroMoment, durationMs: number, 
     : customGeometry(hero.frame, { hook: hookShown ? frame.hook : 0, cardBox: hero.frame === 'card' ? graphicBox(hero.placement, hookShown ? frame : { ...frame, hook: 0 }, 'card') : null })
   const settled = hero.atMs + durationMs * .55
   const frameWord = (inside.find((w) => w.start_ms >= settled) ?? inside[inside.length - 1] ?? words[0])?.index ?? 0
+  const cues = inside.map((w) => ({ word: w.word, at: Math.round((w.start_ms - hero.atMs) / 10) / 100 }))
   const brief: WriterBrief = {
-    kind: hero.kind, frame: hero.frame, durationMs, geometry, planned: plannedLine(graphic, line),
-    cues: inside.map((w) => ({ word: w.word, at: Math.round((w.start_ms - hero.atMs) / 10) / 100 })), before, after,
-    look: customLook({ kind: hero.frame, brandColor: ctx.brandColor, font: look.headlineLook.font, logo: !!ctx.logo }),
+    kind: hero.kind, frame: hero.frame, durationMs, geometry, planned: plannedLine(graphic, line), cues, before, after, stressed: stressedWords(cues, durationMs),
+    ...(world ? { world } : {}),
+    look: customLook({ kind: hero.frame, brandColor: ctx.brandColor, font: look.headlineLook.font, logo: !!ctx.logo, worldAccent: world?.accent ?? null }),
     ...(numbers.length ? { saidNumbers: numbers } : {}), ...(note ? { note } : {})
   }
   return { brief, line, frameWord }
@@ -161,7 +162,7 @@ function fallbackOf(g: EditGraphic | null): CustomFallback | null {
  * Make custom graphics for the hero moments (or, with `only`, again for one custom graphic with the member's note).
  * Two at a time; each kept one replaces its template graphic. Never throws for a graphic that fails: it stays a template.
  */
-export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { call: ModelCall; sandbox?: CustomSandbox; signal?: AbortSignal; only?: { id: string; note: string }; onProgress?: (done: number, total: number) => void; library?: LibraryHooks | null; pick?: { itemId: string; word: number; replaces?: string } }): Promise<EditCustomResult> {
+export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { call: ModelCall; sandbox?: CustomSandbox; signal?: AbortSignal; only?: { id: string; note: string }; onProgress?: (done: number, total: number) => void; library?: LibraryHooks | null; pick?: { itemId: string; word: number; replaces?: string }; design?: { id: string } }): Promise<EditCustomResult> {
   const { order, starts, endMs } = candidates(ctx)
   const words = reelWords(ctx, order, starts)
   const said = saidIndex(words)
@@ -189,14 +190,32 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
     const replaced = options.pick.replaces ? graphics.find((g) => g.id === options.pick!.replaces) ?? null : null
     heroes = [{ ref: replaced?.id ?? `line:${options.pick.word}`, word: options.pick.word, atMs: at, durationMs: found.item.durationMs, kind: found.item.kind, frame: found.item.frame,
       placement: found.item.frame === 'card' ? 'bottom' : 'middle', replaces: replaced?.id ?? null, score: 10, graphic: replaced }]
+  } else if (options.design) {
+    // "Add a visual here" then design it: that one graphic becomes the hero moment.
+    const g = graphics.find((x) => x.id === options.design!.id)
+    const at = g ? starts.get(g.word) : undefined
+    if (!g || at === undefined) throw new Error('That visual is no longer in your edit.')
+    const candidate = { ref: g.id, word: g.word, atMs: at, durationMs: g.duration_ms, template: g.template, fields: g.fields, size: g.size, placement: g.placement }
+    const kind = heroKindOf(candidate)?.kind ?? 'claim'
+    heroes = [{ ref: g.id, word: g.word, atMs: at, durationMs: Math.max(REEL_HERO_MIN_MS, g.duration_ms), kind, frame: heroFrame(candidate, kind, ctx.plan.format === 'youtube' ? 'youtube' : 'reel'),
+      placement: g.placement === 'top' || g.placement === 'bottom' ? g.placement : 'middle', replaces: g.id, score: 10, graphic: g }]
   } else heroes = editHeroMoments(ctx)
   const cap = revisionCap(Math.max(1, heroes.length), ctx.price)
   let done = 0, costUsd = 0
+  // One visual world for the whole video: the saved one (the member may have written it), else proposed now.
+  let world = readVisualWorld(ctx.folder)
+  if (!world && heroes.length && !options.pick) {
+    const proposed = await proposeVisualWorld({ transcript: words.map((w) => w.word).join(' '), moments: heroes.map((h) => ({ kind: h.kind, words: tidy(words.filter((w) => w.start_ms >= h.atMs - 200 && w.start_ms < h.atMs + h.durationMs).map((w) => w.word).join(' ')) })), model: ctx.model },
+      { call: options.call, signal: options.signal })
+    costUsd += proposed.costUsd
+    world = proposed.world
+    if (world) saveVisualWorld(ctx.folder, world)
+  }
   options.onProgress?.(0, heroes.length)
   const results = await inBatches(heroes, 2, async (hero) => {
     const next = graphics.filter((g) => g.id !== hero.replaces).map((g) => starts.get(g.word)).filter((t): t is number => t !== undefined && t > hero.atMs).sort((a, b) => a - b)[0] ?? null
-    const durationMs = options.only ? Math.min(CUSTOM_MAX_MS, hero.durationMs) : options.pick ? Math.round(Math.max(CUSTOM_MIN_MS, Math.min(hero.durationMs, (next ?? endMs) - 300 - hero.atMs, endMs - hero.atMs))) : heroDuration(hero, next, endMs)
-    const { brief, line, frameWord } = briefFor(ctx, hero, durationMs, words, hero.graphic, note)
+    const durationMs = options.only ? Math.min(CUSTOM_MAX_MS, hero.durationMs) : options.pick ? Math.round(Math.max(CUSTOM_MIN_MS, Math.min(hero.durationMs, (next ?? endMs) - 300 - hero.atMs, endMs - hero.atMs))) : heroDuration(hero, next, endMs, ctx.plan.format === 'youtube' ? 'youtube' : 'reel')
+    const { brief, line, frameWord } = briefFor(ctx, hero, durationMs, words, hero.graphic, note, world)
     const frame = await frameAt(ctx, frameWord)
     const original = graphics.find((g) => g.id === hero.replaces) ?? null
     const fallback = options.only ? (readCustomGraphic(ctx.folder, original?.fields.comp)?.meta.fallback ?? null) : original?.template === 'custom' ? (readCustomGraphic(ctx.folder, original.fields.comp)?.meta.fallback ?? null) : fallbackOf(original)
@@ -224,6 +243,25 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
   graphics.sort((a, b) => a.word - b.word)
   return { graphics, made, tried: heroes.length, costUsd, notes: notes.slice(0, 4) }
 }
+
+/** The run's visual world as the beat sheet shows it (null: none yet). */
+export function editVisualWorld(folder: string): VisualWorld | null { return readVisualWorld(folder) }
+
+/**
+ * Propose the run's visual world again (one small paid call), from the transcript and the hero moments. The member's
+ * own wish, when given, steers it. Custom graphics already designed keep their look until they are designed again.
+ */
+export async function regenerateVisualWorld(ctx: EditCustomContext, call: ModelCall, note?: string, signal?: AbortSignal): Promise<{ world: VisualWorld | null; costUsd: number }> {
+  const { order, starts } = candidates(ctx)
+  const words = reelWords(ctx, order, starts)
+  const heroes = editHeroMoments(ctx)
+  const proposed = await proposeVisualWorld({ transcript: words.map((w) => w.word).join(' '), moments: heroes.map((h) => ({ kind: h.kind, words: tidy(words.filter((w) => w.start_ms >= h.atMs - 200 && w.start_ms < h.atMs + h.durationMs).map((w) => w.word).join(' ')) })), model: ctx.model, ...(note ? { note } : {}) }, { call, signal })
+  if (proposed.world) saveVisualWorld(ctx.folder, proposed.world)
+  return proposed
+}
+
+/** Save the member's own line as the run's world (null when it is empty). */
+export function setVisualWorld(folder: string, world: VisualWorld): VisualWorld { saveVisualWorld(folder, world); return world }
 
 /** Swap a custom graphic back to the template graphic it replaced (null when there was none: it is removed). */
 export function swapBackCustomGraphic(folder: string, graphics: readonly EditGraphic[], id: string): EditGraphic[] {

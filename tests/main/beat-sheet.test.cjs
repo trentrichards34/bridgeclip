@@ -227,3 +227,65 @@ test('frames are cached by the file and the moment, made once, at most two at a 
     assert.ok(!fs.readdirSync(folder).some((name) => name.startsWith('.tmp-')))
   } finally { fs.rmSync(dir, { recursive: true, force: true }) }
 })
+
+// ---------------------------------------------------------------------------
+// Flat stretches: where nothing on the graphics layer or scene changes for too long
+// ---------------------------------------------------------------------------
+
+function flatPlan(sentences) {
+  const words = sentences.join(' ').split(' ')
+  return lib.parseEditPlan({ words: words.map((w, i) => [w, i * 300, i * 300 + 260, 0, null]), hooks: [], hook: null, cta: null, popups: [], sounds: [], planned: 'ai', notes: [], warnings: [] }, 1)
+}
+const TALK = ['We made 4365 dollars on ads yesterday.', 'The offer brings people in every single week.', 'Then the product does the selling for us.', 'Most coaches never test a paid offer at all.',
+  'They post and hope the right people see it.', 'Ads put the offer in front of buyers every day.', 'That is the whole machine in three parts.', 'Follow along and build yours this month.']
+
+test('flat stretches: a graphic that holds still, and long plain-face stretches outside personal lines', () => {
+  const plan = flatPlan(TALK)
+  const d = { ...lib.initialDecisions(plan), motionGraphics: true, stageLayouts: true, graphics: [graphic('gstatone', 'stat', 2, 6000, { value: '$4,365', label: 'on ads' })] }
+  const beats = lib.deriveBeats(plan, d)
+  const flats = plain(lib.reelFlatStretches(plan, d, beats))
+  // The stat has settled after about 1.5 s and holds still until its exit: frozen.
+  const frozen = flats.find((f) => f.why === 'frozen')
+  assert.ok(frozen, JSON.stringify(flats)); assert.equal(frozen.ref, 'g:gstatone')
+  assert.ok(frozen.from >= 2 && frozen.from < 3 && frozen.to > 6 && frozen.to < 7, JSON.stringify(frozen))
+  // After it, the face talks for many seconds with nothing new on screen: one stretch, with a word to add a visual on.
+  const nothing = flats.filter((f) => f.why === 'nothing')
+  assert.equal(nothing.length, 1); assert.ok(nothing[0].to - nothing[0].from > lib.REEL_FACE_FLAT_SECONDS)
+  assert.ok(Number.isInteger(nothing[0].word))
+  // A custom graphic counts as moving, except where its motion check measured it flat.
+  const custom = { ...d, graphics: [graphic('gcustom1', 'custom', 2, 6000, { comp: 'a'.repeat(16), idea: 'Drawn for the proof', scene: 'stage' }, { size: 'stage' })] }
+  assert.ok(!lib.reelFlatStretches(plan, custom, lib.deriveBeats(plan, custom)).some((f) => f.why === 'frozen'))
+  const measured = plain(lib.reelFlatStretches(plan, custom, lib.deriveBeats(plan, custom), { customFlat: { ['a'.repeat(16)]: [{ fromMs: 1500, toMs: 4000 }] } }))
+  assert.ok(measured.some((f) => f.why === 'frozen' && f.ref === 'g:gcustom1'), JSON.stringify(measured))
+  // Shorten a frozen template graphic: it ends soon after it settles.
+  const shorter = lib.shortenFrozen(d, 'g:gstatone')
+  assert.ok(shorter.graphics[0].duration_ms < 6000)
+  assert.equal(lib.shortenFrozen(custom, 'g:gcustom1'), null)
+})
+
+test('flat stretches: personal lines stay on the face; "Add a visual here" adds one with the words said there', () => {
+  assert.equal(lib.personalLine('I remember how scared I felt when my family had nothing.'), true)
+  assert.equal(lib.personalLine('Ads put the offer in front of buyers every day.'), false)
+  const story = ['I remember how scared I felt that first year with my family.', 'Honestly I thought I would lose everything I loved back then.', 'My kids would ask me why I worked so late every night.',
+    'I was a nobody and I felt it every single day of that year.', 'I remember my wife telling me to keep going when I was afraid.', 'And I felt that I owed it to my family to keep going.']
+  const plan = flatPlan(story)
+  const d = { ...lib.initialDecisions(plan), motionGraphics: true, graphics: [] }
+  assert.deepEqual(plain(lib.reelFlatStretches(plan, d, lib.deriveBeats(plan, d))), [], 'a personal story is left on the face')
+  const talk = flatPlan(TALK)
+  const td = { ...lib.initialDecisions(talk), motionGraphics: true, graphics: [] }
+  const flats = lib.reelFlatStretches(talk, td, lib.deriveBeats(talk, td))
+  assert.ok(flats.length >= 1)
+  const added = lib.addVisualAt(talk, td, flats[0].word)
+  assert.ok(added, 'a visual fits')
+  assert.equal(added.decisions.graphics.length, 1); assert.equal(added.graphic.origin, 'member')
+  // Only words said there (an effect the director uses, filled from the transcript).
+  const shown = Object.entries(added.graphic.fields).filter(([k]) => k !== 'effect' && k !== 'style').map(([, v]) => v).join(' ')
+  assert.ok(shown.length > 0)
+  for (const word of shown.split(/\s+/).filter((w) => /[a-z]{3,}/i.test(w))) assert.ok(TALK.join(' ').toLowerCase().includes(word.toLowerCase().replace(/[^a-z0-9']/g, '')), word)
+  // A number said soon after counts up.
+  const atNumber = lib.addVisualAt(talk, td, 0)
+  assert.equal(atNumber.graphic.fields.effect, 'count-up')
+  // With the stretch filled, it is gone (or shorter).
+  const after = lib.reelFlatStretches(talk, added.decisions, lib.deriveBeats(talk, added.decisions))
+  assert.ok(!after.some((f) => f.from === flats[0].from && f.to === flats[0].to))
+})

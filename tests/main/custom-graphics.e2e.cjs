@@ -1,8 +1,9 @@
 // Custom graphics, end to end in the real app: the owner's real run moments (run 4: the opening twist, the 3-step
 // staircase, organic content vs ads, the $8,188 proof, and the "3 million" stat) go through the whole producer loop
 // with a fake model (tests/main/fake-custom-graphics: our own compositions as its answers, a grader that fails some
-// once) — written, checked, rendered in the sandbox over a real frame, graded, revised or dropped — and the bake draws
-// one into a transparent video. Then the sandbox is attacked: compositions that reach for the network, eval code,
+// once) — first one call proposes the video's visual world, then each moment is written inside it with its stressed
+// words, checked, rendered in the sandbox over a real frame (four stills and the motion check), graded, revised or
+// dropped — and the bake draws one into a transparent video. Then the sandbox is attacked: compositions that reach for the network, eval code,
 // open frames, loop forever, draw a huge DOM or navigate are refused or timeboxed, and nothing leaves.
 //
 // CUSTOM_GRAPHICS_SHEET=<png> also saves the stills as a contact sheet (one row per moment, over the video).
@@ -23,13 +24,17 @@ const SOURCE = '/mnt/user-data/uploads/trentrichards--CreatorClips/edit-5a344dcc
 /** The owner's run 4 hero moments (reel ms), as the director picks them (pickHeroMoments on its graphics). */
 const MOMENTS = [
   { name: 'opening-claim', kind: 'claim', frame: 'card', placement: 'bottom', atMs: 53, durationMs: 6550, planned: '(none: the opening line)', still: 2.6 },
-  { name: 'staircase', kind: 'process', frame: 'visual', atMs: 35320, durationMs: 13030, planned: 'Staircase: a product / an offer / attract eyeballs (lights up as said)', still: 40 },
+  { name: 'staircase', kind: 'process', frame: 'visual', atMs: 35320, durationMs: 12000, planned: 'Staircase: a product / an offer / attract eyeballs (lights up as said)', still: 40 },
   { name: 'three-million', kind: 'proof', frame: 'stage', atMs: 71900, durationMs: 4500, planned: 'Stat counter: 3 million, people every single week', still: 72.5 },
-  { name: 'organic-vs-ads', kind: 'comparison', frame: 'visual', atMs: 149493, durationMs: 13140, planned: 'Wrong / right: organic content (wrong) vs ads', still: 152 },
+  { name: 'organic-vs-ads', kind: 'comparison', frame: 'visual', atMs: 149493, durationMs: 12000, planned: 'Wrong / right: organic content (wrong) vs ads', still: 152 },
   { name: 'proof', kind: 'proof', frame: 'stage', atMs: 196793, durationMs: 4500, planned: 'Stat counter: $8,188, generating', still: 198 }
 ]
 
-/** The fake model: compositions by moment and try; grades that fail some once (and "3 million" always: it shows an unsaid number). */
+/** The world the fake model proposes for this video (from its own words: eyeballs, reaches a few people, a virtual nobody, the three things). */
+const WORLD = { idea: 'Eyeballs as light: a nobody points a beam of attention, and people dots gather where it lands: a few with organic content, a crowd with ads, climbing the blocks of a business.',
+  elements: ['people dots', 'an eye', 'a reach beam', 'building blocks', 'the nobody figure'], style: 'flat line art, thick round 9 px strokes, lime light on what works, dots that gather and shuffle', accent: '#9BE35A' }
+
+/** The fake model: the world, compositions by moment and try; grades that fail some once (and "3 million" always: it shows an unsaid number). */
 function fakeModel() {
   const tries = new Map(), grades = new Map(), requests = []
   // The writer's brief names the planned graphic; the grade quotes the moment's words.
@@ -45,7 +50,9 @@ function fakeModel() {
       const isGrade = Array.isArray(user)
       const text = isGrade ? user.map((p) => p.text ?? '').join('\n') : String(user)
       let answer
-      if (isGrade) {
+      const system = json.messages?.[0]?.content?.[0]?.text ?? ''
+      if (/ONE visual world/.test(system)) answer = '```json\n' + JSON.stringify(WORLD) + '\n```'
+      else if (isGrade) {
         const m = graded(text)
         const n = (grades.get(m?.name) ?? 0) + 1
         grades.set(m?.name, n)
@@ -101,20 +108,24 @@ test('custom graphics: the owner\'s run moments go through write → render → 
   })
   const run = path.join(root, 'run')
   fs.mkdirSync(run, { recursive: true })
+  // One visual world for the video, before any graphic.
+  const proposed = await session.app.evaluate(async (_electron, { input, endpoint }) => globalThis.__bridgeclipCustomGraphics.world(input, endpoint),
+    { input: { transcript: RUN.map((w) => w.word).join(' '), moments: MOMENTS.map((m) => ({ kind: m.kind, words: said(m.atMs, m.atMs + m.durationMs) })), model: 'anthropic/claude-opus-5.5' }, endpoint })
+  assert.equal(proposed.world.idea, WORLD.idea)
   const results = []
   for (const m of MOMENTS) {
     const frame = framePng(root, m.still)
     const input = { run, words: said(m.atMs, m.atMs + m.durationMs), said: RUN, frame, fallback: { template: 'stat', fields: {}, duration_ms: 3000, placement: 'top' }, model: 'anthropic/claude-opus-5.5', maxRevisions: 2, m,
-      cues: cues(m), before: said(m.atMs - 9000, m.atMs - 1200), after: said(m.atMs + m.durationMs, m.atMs + m.durationMs + 5000) }
+      cues: cues(m), before: said(m.atMs - 9000, m.atMs - 1200), after: said(m.atMs + m.durationMs, m.atMs + m.durationMs + 5000), world: proposed.world }
     const result = await session.app.evaluate(async (_electron, { input, endpoint }) => {
       const h = globalThis.__bridgeclipCustomGraphics
       const m = input.m
       const geometry = h.shared.customGeometry(m.frame, { hook: m.frame === 'card' ? 0.17 : 0, cardBox: m.frame === 'card' ? { top: 0.4125, bottom: 0.6823 } : null })
-      const look = h.shared.customLook({ kind: m.frame, brandColor: null, font: 'serif' })
+      const look = h.shared.customLook({ kind: m.frame, brandColor: null, font: 'serif', worldAccent: input.world.accent })
       const brief = { kind: m.kind, frame: m.frame, cues: input.cues, before: input.before, after: input.after, planned: m.planned, durationMs: m.durationMs, geometry, look,
-        ...(m.name === 'proof' ? { saidNumbers: ['$4,365'] } : {}) }
+        world: input.world, stressed: h.shared.stressedWords(input.cues, m.durationMs), ...(m.name === 'proof' ? { saidNumbers: ['$4,365'] } : {}) }
       const rest = { ...input }
-      for (const key of ['m', 'cues', 'before', 'after']) delete rest[key]
+      for (const key of ['m', 'cues', 'before', 'after', 'world']) delete rest[key]
       return h.produce({ ...rest, brief }, endpoint)
     }, { input, endpoint })
     results.push({ m, result })
@@ -129,6 +140,20 @@ test('custom graphics: the owner\'s run moments go through write → render → 
   assert.equal(by['three-million'].meta, null)
   assert.equal(by['three-million'].tries, 3)
   assert.match(by['three-million'].reason, /not said/)
+  // Every graphic was designed inside the one world, built on its stressed words, and kept moving (no flat stretch over 1.5 s).
+  const writes = fake.requests.filter((r) => typeof r.messages[1].content === 'string' && !/ONE visual world/.test(r.messages[0].content[0].text))
+  assert.ok(writes.length >= 5 && writes.every((r) => /THE VIDEO'S VISUAL WORLD .*Eyeballs as light/.test(r.messages[1].content) && /STRESSED WORDS /.test(r.messages[1].content)))
+  for (const name of ['opening-claim', 'staircase', 'organic-vs-ads', 'proof']) assert.deepEqual(by[name].meta.flat, [], `${name} never holds still`)
+  assert.ok(by.staircase.meta.builds >= 10, `the staircase builds on ${by.staircase.meta.builds} words`)
+  // The motion check measures the real sandbox: a card that lands and then holds still is flat until it leaves.
+  const held = await session.app.evaluate(async () => {
+    const h = globalThis.__bridgeclipCustomGraphics
+    const html = '<div id="cg-root" data-duration="4.00"><div class="t">a few people</div></div><style>#cg-root .t{position:absolute;left:80px;top:200px;font-size:80px;color:#fff}</style><script>const tl = gsap.timeline({ paused: true }); tl.from(\'#cg-root .t\', { y: 30, autoAlpha: 0, duration: 0.4 }, 0.2).to(\'#cg-root .t\', { autoAlpha: 0, duration: 0.3 }, 3.6); window.__timelines = [tl];</script>'
+    const r = await h.stills({ html, geometry: h.shared.customGeometry('visual', { hook: 0 }), look: h.shared.customLook({ kind: 'visual', font: 'clean' }), durationMs: 4000, times: [300, 1000, 2000, 3500], frame: null, scale: 0.25, motionStepMs: 100 })
+    return { steps: r.motion.change.length, flats: h.shared.flatStretches(r.motion.change, r.motion.visible) }
+  })
+  assert.equal(held.steps, 41)
+  assert.equal(held.flats.length, 1); assert.ok(held.flats[0].fromMs <= 700 && held.flats[0].toMs >= 3500, JSON.stringify(held.flats))
   // The revision prompts carry the fixes.
   const revisions = fake.requests.filter((r) => typeof r.messages[1].content === 'string' && r.messages[1].content.includes('YOUR PREVIOUS COMPOSITION'))
   assert.ok(revisions.some((r) => /at least 44 px/.test(r.messages[1].content)), 'the type-size fix went back to the writer')
@@ -139,7 +164,7 @@ test('custom graphics: the owner\'s run moments go through write → render → 
   // Files kept: the composition (named by its hash), its meta, three transparent stills and the review strip.
   const comp = by.staircase.meta.comp
   const kept = fs.readdirSync(path.join(run, '.graphics', 'custom'))
-  for (const name of [`${comp}.html`, `${comp}.json`, `${comp}-0.png`, `${comp}-1.png`, `${comp}-2.png`, `${comp}-review.jpg`]) assert.ok(kept.includes(name), name)
+  for (const name of [`${comp}.html`, `${comp}.json`, `${comp}-0.png`, `${comp}-1.png`, `${comp}-2.png`, `${comp}-3.png`, `${comp}-review.jpg`]) assert.ok(kept.includes(name), name)
   assert.ok(by.staircase.costUsd > 0.15 && by.staircase.costUsd < 0.3, `cost counted (${by.staircase.costUsd})`)
 
   // The bake: the proof, every frame in the sandbox, into a transparent QuickTime (as graphics-render does).
@@ -156,24 +181,38 @@ test('custom graphics: the owner\'s run moments go through write → render → 
   assert.equal(stream.codec_name, 'qtrle'); assert.equal(stream.pix_fmt, 'argb'); assert.equal(stream.width, 1080); assert.equal(Number(stream.nb_frames), 135)
 
   if (process.env.CUSTOM_GRAPHICS_SHEET) {
-    const rows = results.filter(({ result }) => result.meta).map(({ m, result }) => ({ label: `${m.name}  ·  ${result.tries} ${result.tries === 1 ? 'try' : 'tries'}  ·  score ${result.meta.grade.score}  ·  ${m.frame}`, file: path.join(run, '.graphics', 'custom', `${result.meta.comp}-review.jpg`) }))
+    const times = (m) => { const c = cues(m).filter((x) => x.at >= 0).map((x) => x.at * 1000); const d = Math.max(600, m.durationMs), last = c.length ? Math.max(...c.filter((x) => x < d)) : 0
+      const entry = Math.min(d * .3, Math.max(250, (c[0] ?? 0) + 280)), settled = Math.max(entry + 400, Math.min(d - 700, Math.max(d * .55, last + 900))), exit = Math.max(settled + 100, d - 520)
+      const inside = c.filter((x) => x < d), middle = inside.length > 2 ? inside[Math.floor(inside.length / 2)] + 300 : (entry + settled) / 2
+      return [entry, Math.max(entry + 100, Math.min(settled - 100, middle)), settled, Math.min(d - 80, exit)].map((t) => `${(t / 1000).toFixed(1)} s`) }
+    const rows = results.filter(({ result }) => result.meta).map(({ m, result }) => ({ label: `${m.name}  ·  ${result.tries} ${result.tries === 1 ? 'try' : 'tries'}  ·  score ${result.meta.grade.score}  ·  ${m.frame}  ·  builds on ${result.meta.builds ?? 0} words  ·  flat: ${result.meta.flat?.length ? result.meta.flat.map((f) => `${(f.fromMs / 1000).toFixed(1)}-${(f.toMs / 1000).toFixed(1)} s`).join(', ') : 'none'}`,
+      times: times(m), file: path.join(run, '.graphics', 'custom', `${result.meta.comp}-review.jpg`) }))
     const py = path.join(ROOT, 'engine/.venv/bin/python')
     execFileSync(py, ['-c', `
 import json, sys
 from PIL import Image, ImageDraw, ImageFont
-rows = json.loads(sys.argv[1]); out = sys.argv[2]
+import textwrap
+rows = json.loads(sys.argv[1]); out = sys.argv[2]; world = sys.argv[4]
 ims = [Image.open(r['file']).convert('RGB') for r in rows]
-w = max(i.width for i in ims); pad = 56
-sheet = Image.new('RGB', (w + 40, sum(i.height + pad for i in ims) + 20), (18, 18, 22))
+w = max(i.width for i in ims); pad = 56; foot = 34
+try:
+    font = ImageFont.truetype(sys.argv[3], 24); small = ImageFont.truetype(sys.argv[3], 20)
+except Exception:
+    font = small = ImageFont.load_default()
+head = textwrap.wrap('Visual world: ' + world, 110)
+top = 20 + 30 * len(head) + 10
+sheet = Image.new('RGB', (w + 40, top + sum(i.height + pad + foot for i in ims) + 10), (18, 18, 22))
 d = ImageDraw.Draw(sheet)
-try: font = ImageFont.truetype(sys.argv[3], 30)
-except Exception: font = ImageFont.load_default()
-y = 10
+for k, line in enumerate(head): d.text((20, 14 + 30 * k), line, fill=(155, 227, 90), font=font)
+y = top
 for r, im in zip(rows, ims):
-    d.text((20, y + 10), r['label'], fill=(235, 235, 240), font=font)
-    sheet.paste(im, (20, y + pad - 6)); y += im.height + pad
+    d.text((20, y + 12), r['label'], fill=(235, 235, 240), font=font)
+    sheet.paste(im, (20, y + pad - 6))
+    cell = (im.width + 12) / len(r['times'])
+    for k, t in enumerate(r['times']): d.text((20 + k * cell + 6, y + pad - 6 + im.height + 6), t, fill=(170, 170, 180), font=small)
+    y += im.height + pad + foot
 sheet.save(out)
-`, JSON.stringify(rows), process.env.CUSTOM_GRAPHICS_SHEET, path.join(ROOT, 'engine/assets/fonts/PlusJakartaSans.ttf')])
+`, JSON.stringify(rows), process.env.CUSTOM_GRAPHICS_SHEET, path.join(ROOT, 'engine/assets/fonts/PlusJakartaSans.ttf'), `${WORLD.idea} · ${WORLD.elements.join(', ')}`])
   }
 })
 

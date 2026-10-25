@@ -7,7 +7,7 @@ import { copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSy
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { app } from 'electron'
-import { MAX_COMPOSITION_CHARS, customStillNames, type CustomMeta, type HeroKind, type CustomFrameKind } from '../shared/custom-graphics'
+import { MAX_COMPOSITION_CHARS, STILL_COUNT, customStillNames, type CustomMeta, type HeroKind, type CustomFrameKind } from '../shared/custom-graphics'
 import { LIBRARY_ID, MAX_LIBRARY_ITEMS, libraryCandidates, libraryTags, parameterize, parseLibraryItem, type LibraryItem, type LibraryStatus, type LibraryView } from '../shared/motion-library'
 import { authorizeMedia } from './security'
 import { logger } from './logger'
@@ -71,8 +71,8 @@ export function keepInLibrary(input: { id: string; html: string; kind: HeroKind;
       idea: input.idea, status: input.status, ...(input.reason ? { reason: input.reason.slice(0, 400) } : {}), usedIn: input.status === 'active' ? [input.runId] : [], createdAt: new Date().toISOString()
     }
     writeAtomic(join(dir, 'template.html'), template)
-    input.stills.slice(0, 3).forEach((path, i) => { if (regular(path)) copyFileSync(path, join(dir, `still-${i}.png`)) })
-    ;(input.stillData ?? []).slice(0, 3).forEach((bytes, i) => { if (bytes?.length) writeAtomic(join(dir, `still-${i}.png`), bytes) })
+    input.stills.slice(0, STILL_COUNT).forEach((path, i) => { if (regular(path)) copyFileSync(path, join(dir, `still-${i}.png`)) })
+    ;(input.stillData ?? []).slice(0, STILL_COUNT).forEach((bytes, i) => { if (bytes?.length) writeAtomic(join(dir, `still-${i}.png`), bytes) })
     writeItem(item)
   } catch (error) { logger.warn('library.keep.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) }) }
 }
@@ -99,7 +99,7 @@ export function libraryView(): LibraryView[] {
   return readLibraryItems().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((item) => {
     const dir = join(libraryRoot(), item.id)
     const stills: string[] = []
-    for (let i = 0; i < 3; i++) { const p = join(dir, `still-${i}.png`); if (regular(p)) { try { stills.push(authorizeMedia(p)) } catch { /* skipped */ } } }
+    for (let i = 0; i < STILL_COUNT; i++) { const p = join(dir, `still-${i}.png`); if (regular(p)) { try { stills.push(authorizeMedia(p)) } catch { /* skipped */ } } }
     return { id: item.id, kind: item.kind, frame: item.frame, idea: item.idea, tags: item.tags, status: item.status, reason: item.reason ?? null, uses: item.usedIn.length, stills, slots: item.slots.length, durationMs: item.durationMs, createdAt: item.createdAt }
   })
 }

@@ -626,6 +626,9 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       setSession(s); sessionRef.current = s; setUndo([]); setRedo([])
     } catch (e) { setError(errorMessage(e)) } finally { setBusy(null) }
   }
+  // My motion library's busy and error state (hooks stay above the early returns below).
+  const [libraryBusy, setLibraryBusy] = useState<string | null>(null)
+  const [libraryError, setLibraryError] = useState<string | null>(null)
   if (session?.mediaMissing) return <div className="p-8 space-y-4">{leading}
     <p role="status" className="text-sm">This run’s video was removed to save space. Your clips are unchanged. Get the video again to keep editing them.</p>
     <div className="flex gap-2">{onNeedSource && <Button variant="primary" onClick={onNeedSource}>Get the video again</Button>}<Button onClick={() => { void onExports().catch((e) => setError(errorMessage(e))) }}>View clips</Button></div>
@@ -669,8 +672,6 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
   }
   // One of My logos from the gallery: copied into the run, then a Logo pop with it at the playhead.
   // My motion library: one of the member's custom graphics here, filled with the words said at the playhead (paid, small).
-  const [libraryBusy, setLibraryBusy] = useState<string | null>(null)
-  const [libraryError, setLibraryError] = useState<string | null>(null)
   const insertLibrary = (item: LibraryView): void => {
     if (gallery === null || editingDisabled || libraryBusy) return
     const at = gallery

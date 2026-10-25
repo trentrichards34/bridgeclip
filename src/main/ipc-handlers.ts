@@ -60,7 +60,8 @@ import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
   isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate, addEditImage, addEditImageFiles, removeEditImage, importClips,
   describeScreen, previewScreen, syncScreen, editSavedHeadline, editorHeadlineSaved, editBeatFrame,
-  editCustomGraphicsInfo, editCustomGraphicsEstimate, makeEditCustomGraphicsNow, swapEditCustomGraphic, editCustomStills, addEditLibraryGraphic
+  editCustomGraphicsInfo, editCustomGraphicsEstimate, makeEditCustomGraphicsNow, swapEditCustomGraphic, editCustomStills, addEditLibraryGraphic,
+  editCustomWorld, setEditCustomWorld, editCustomWorldEstimate, regenerateEditCustomWorld
 } from './edit-recording'
 import { EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGES, EDIT_MAX_SCREENSHOTS, EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
 import { COMBINE_MAX_CLIPS } from '../shared/combine-clips'
@@ -822,6 +823,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   paid('edit:customGraphics', 'openrouter', (request) => editCustomGraphicsEstimate(request), (request) => makeEditCustomGraphicsNow(request))
   handle('edit:customSwap', (_event, request: unknown) => swapEditCustomGraphic(request))
   handle('edit:customStills', (_event, comp: unknown) => editCustomStills(comp))
+  // The video's visual world (one line on the beat sheet): read it, write it, or have it proposed again (paid, small).
+  handle('edit:customWorld', () => editCustomWorld())
+  handle('edit:customWorldSet', (_event, request: unknown) => setEditCustomWorld(request))
+  paid('edit:customWorldAgain', 'openrouter', () => editCustomWorldEstimate(), (request) => regenerateEditCustomWorld(request))
   // My motion library: the member's custom graphics that passed (and the retired ones), to reuse in later videos.
   handle('library:list', () => motionLibraryView())
   handle('library:setStatus', (_event, id: unknown, status: unknown) => setLibraryStatus(id, status))

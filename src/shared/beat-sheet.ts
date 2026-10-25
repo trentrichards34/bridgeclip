@@ -17,10 +17,10 @@ import { MAX_EDIT_GRAPHICS, newEditGraphic, patchEditGraphic, type EditGraphic }
 import { fxEffect, fxItems } from './fx-catalog'
 import { registerKeeps } from './register'
 import { DEFAULT_SOUND_REGISTER, SOUND_ACTION_INFO, type SoundAction } from './sound-design'
-import { spokenNumber } from './graphic-prefill'
+import { prefillEffect, prefillGraphic, spokenNumber } from './graphic-prefill'
 import { DEFAULT_BEAT_SHEET_CHOICE, type BeatSheetChoice } from './member-prefs'
 import { tripleHookLabel } from './triple-hook'
-import { stillTimes } from './custom-graphics'
+import { SETTLED_STILL, stillTimes } from './custom-graphics'
 
 export type BeatKind = 'hook' | 'graphic' | 'card' | 'popup' | 'pin' | 'cta'
 /** How the frame is laid out: the full video, the stage (a backdrop with the speaker in a card), or the backdrop only. */
@@ -160,8 +160,8 @@ export function beatSound(kind: BeatKind, graphic: Pick<EditGraphic, 'template' 
 
 /** How long into a graphic it has settled (ms): an effect just after its main beat, a list once its items are in. */
 export function settledMs(g: Pick<EditGraphic, 'template' | 'fields' | 'duration_ms'>): number {
-  // A custom graphic's settled still (custom-graphics stillTimes' middle one).
-  if (g.template === 'custom') return Math.round(stillTimes(g.duration_ms)[1])
+  // A custom graphic's built still (custom-graphics stillTimes' SETTLED_STILL).
+  if (g.template === 'custom') return Math.round(stillTimes(g.duration_ms)[SETTLED_STILL])
   const sync = g.template === 'fx' ? fxEffect(g.fields.effect)?.sync_s : undefined
   const ms = sync !== undefined ? sync * 1000 + 500 : ITEM_TIMED_TEMPLATES.includes(g.template) || isDiagram(g.template) ? g.duration_ms * 0.85 : Math.min(g.duration_ms * 0.6, 1500)
   return Math.round(Math.max(0, Math.min(g.duration_ms - 150, ms)))
@@ -554,4 +554,143 @@ export function beforeRender(choice: BeatSheetChoice | undefined, onSheet: boole
   if (onSheet) return 'render'
   const c = choice ?? DEFAULT_BEAT_SHEET_CHOICE
   return c === 'always' ? 'sheet' : c === 'skip' ? 'render' : 'ask'
+}
+
+// ---------------------------------------------------------------------------
+// Flat stretches: where nothing on the reel's graphics layer or scene changes for too long
+// ---------------------------------------------------------------------------
+
+/** A graphic on screen may hold still this long (seconds), as custom graphics' motion check. */
+export const REEL_FROZEN_SECONDS = 1.5
+/** The plain face (no graphic, no scene change) may hold this long outside personal lines (seconds): the face carries most of a talking-head reel. */
+export const REEL_FACE_FLAT_SECONDS = 6
+
+/** A stretch of the reel where nothing visual changes. `frozen`: a graphic holds still; `nothing`: the plain face with no visual. */
+export interface ReelFlat {
+  from: number
+  to: number
+  why: 'frozen' | 'nothing'
+  /** The word said in its middle (where a visual would be added), or null. */
+  word: number | null
+  /** The graphic that holds still (frozen), as 'g:<id>'. */
+  ref: string | null
+}
+
+const PERSON = /^(i|i'm|im|i've|ive|i'd|i'll|me|my|myself|mine)$/
+const STORY = /^(felt|feel|feeling|remember|remembered|scared|afraid|fear|honest|honestly|nobody|family|kids?|son|daughter|wife|husband|mom|dad|mother|father|cried|cry|love|loved|struggled|struggle|broke|lost|hurt|alone|ashamed|proud|dream|dreamed|grew|childhood|years|ago|sick|died|divorce|tears|heart)$/
+
+/** A personal line (a first-person story or feeling): the reel stays on the face there by design. */
+export function personalLine(text: string): boolean {
+  const words = text.toLowerCase().replace(/[’]/g, "'").split(/\s+/).map((w) => w.replace(/^[^a-z']+|[^a-z']+$/g, '')).filter(Boolean)
+  const me = words.filter((w) => PERSON.test(w)).length
+  return me >= 1 && words.some((w) => STORY.test(w)) && !/\d/.test(text)
+}
+
+/**
+ * The reel's flat stretches, from its timeline (before it is made): a graphic on screen that has finished animating
+ * and holds still longer than REEL_FROZEN_SECONDS (a custom graphic: where its motion check measured it flat), and
+ * plain-face stretches with no graphic or scene change longer than REEL_FACE_FLAT_SECONDS, except during personal
+ * lines (the face is the point there). The hook and the call to action count as changing (they carry their own motion).
+ */
+export function reelFlatStretches(plan: EditPlan, d: EditDecisions, beats: readonly Beat[], options: { customFlat?: Readonly<Record<string, readonly { fromMs: number; toMs: number }[]>> } = {}): ReelFlat[] {
+  const starts = reelWordStarts(plan, d)
+  const order = reelOrder(plan, d)
+  const total = Math.max(0.5, reelSeconds(plan, d) - (d.rawIntro ? RAW_INTRO_SECONDS : 0))
+  const step = 0.1, n = Math.ceil(total / step)
+  const onScreen = new Array<string | null>(n).fill(null), active = new Array<boolean>(n).fill(false)
+  const mark = (from: number, to: number, f: (i: number) => void): void => { for (let i = Math.max(0, Math.floor(from / step)); i < Math.min(n, Math.ceil(to / step)); i++) f(i) }
+  const graphics = new Map((d.graphics ?? []).map((g) => [`g:${g.id}`, g]))
+  for (const beat of beats) {
+    for (const part of beat.parts) {
+      if (part.kind === 'hook' || part.kind === 'cta') { mark(part.start, part.end, (i) => { active[i] = true }); continue }
+      mark(part.start, part.end, (i) => { onScreen[i] = onScreen[i] ?? part.ref })
+      mark(part.start, part.start + 0.9, (i) => { active[i] = true })
+      mark(part.end - 0.35, part.end, (i) => { active[i] = true })
+      const g = graphics.get(part.ref)
+      if (!g) continue
+      if (g.template === 'custom') {
+        // A custom graphic keeps moving (its motion check), except where it measured flat.
+        mark(part.start, part.end, (i) => { active[i] = true })
+        for (const f of options.customFlat?.[g.fields.comp ?? ''] ?? []) mark(part.start + f.fromMs / 1000 + .2, part.start + f.toMs / 1000 - .2, (i) => { active[i] = false })
+      } else mark(part.start, part.start + settledMs(g) / 1000 + .3, (i) => { active[i] = true })
+    }
+  }
+  // Personal lines: sentence by sentence, on the reel's clock.
+  const personal = new Array<boolean>(n).fill(false)
+  let sentence: number[] = []
+  const flush = (): void => {
+    if (!sentence.length) return
+    const text = sentence.map((i) => plan.words[i].text).join(' ')
+    if (personalLine(text)) {
+      const a = starts.get(sentence[0]) ?? 0, last = sentence[sentence.length - 1]
+      mark(a, (starts.get(last) ?? 0) + (plan.words[last].endMs - plan.words[last].startMs) / 1000, (i) => { personal[i] = true })
+    }
+    sentence = []
+  }
+  for (const i of order) { sentence.push(i); if (/[.!?]["”’)]*$/.test(plan.words[i].text)) flush() }
+  flush()
+  const wordAt = (t: number): number | null => {
+    let best: number | null = null, bestAt = -1
+    for (const i of order) { const s = starts.get(i) ?? 0; if (s <= t && s > bestAt) { best = i; bestAt = s } }
+    return best
+  }
+  const out: ReelFlat[] = []
+  let from = -1, kind: ReelFlat['why'] | null = null, ref: string | null = null
+  const close = (to: number): void => {
+    if (from >= 0 && kind) {
+      const a = from * step, b = to * step
+      const span = to - from
+      const mostlyPersonal = personal.slice(from, to).filter(Boolean).length > span / 2
+      if ((kind === 'frozen' && b - a > REEL_FROZEN_SECONDS) || (kind === 'nothing' && b - a > REEL_FACE_FLAT_SECONDS && !mostlyPersonal)) {
+        out.push({ from: round(a), to: round(Math.min(total, b)), why: kind, word: wordAt((a + b) / 2), ref })
+      }
+    }
+    from = -1; kind = null; ref = null
+  }
+  for (let i = 0; i < n; i++) {
+    const k: ReelFlat['why'] | null = active[i] ? null : onScreen[i] ? 'frozen' : 'nothing'
+    if (k !== kind || (k === 'frozen' && onScreen[i] !== ref)) { close(i); if (k) { from = i; kind = k; ref = k === 'frozen' ? onScreen[i] : null } }
+  }
+  close(n)
+  return out
+}
+
+/**
+ * A visual added on a flat stretch ("Add a visual here"): an effect the director uses, filled with the words said
+ * there (a number said in the next few seconds counts up; else the line with its key word marked; else a statement).
+ * Null when nothing said there fits or the reel has all the graphics it can take.
+ */
+export function addVisualAt(plan: EditPlan, d: EditDecisions, word: number): { decisions: EditDecisions; graphic: EditGraphic } | null {
+  const graphics = d.graphics ?? []
+  if (graphics.length >= MAX_EDIT_GRAPHICS) return null
+  const starts = reelWordStarts(plan, d)
+  const order = reelOrder(plan, d)
+  const at = starts.get(word)
+  if (at === undefined) return null
+  const words: TimedWord[] = order.map((i) => ({ word: plan.words[i].text, start_ms: Math.round((starts.get(i) ?? 0) * 1000), end_ms: Math.round(((starts.get(i) ?? 0) * 1000) + Math.max(40, plan.words[i].endMs - plan.words[i].startMs)) }))
+  const k = order.indexOf(word)
+  const soon = words.slice(k, k + 12).filter((w) => w.start_ms < at * 1000 + 3000)
+  const hasNumber = soon.some((_, j) => { const n = spokenNumber(words, k + j); return !!n && /\d/.test(n.text) })
+  const tries: { template: GraphicTemplateId; effect?: string }[] = [...(hasNumber ? [{ template: 'fx' as const, effect: 'count-up' }] : []), { template: 'fx', effect: 'marker-highlight' }, { template: 'statement' }]
+  for (const t of tries) {
+    const fx = t.effect ? fxEffect(t.effect) : null
+    const prefill = fx ? prefillEffect(fx.id, words, at * 1000) : prefillGraphic(t.template, words, at * 1000)
+    if (!Object.keys(prefill.fields).length) continue
+    const fields = fx ? { ...prefill.fields, effect: fx.id } : prefill.fields
+    const duration = clampGraphicMs(fx ? fx.default_ms : GRAPHIC_DEFAULT_MS[t.template], t.template)
+    const base = newGraphic(t.template, 0, { fields, duration_ms: duration, ...(fx?.size ? { size: fx.size } : {}), taken: graphics.map((g) => g.id) })
+    const graphic: EditGraphic = { ...newEditGraphic(base, word), origin: 'member' }
+    if (!graphicHasContent(graphic)) continue
+    return { decisions: { ...d, graphics: [...graphics, graphic].sort((a, b) => a.word - b.word) }, graphic }
+  }
+  return null
+}
+
+/** A template graphic that holds still too long, shortened to end soon after it has settled. */
+export function shortenFrozen(d: EditDecisions, ref: string): EditDecisions | null {
+  const g = (d.graphics ?? []).find((x) => `g:${x.id}` === ref)
+  if (!g || g.template === 'custom') return null
+  const ms = clampGraphicMs(Math.max(1500, settledMs(g) + 1200), g.template)
+  if (ms >= g.duration_ms) return null
+  return { ...d, graphics: (d.graphics ?? []).map((x) => x.id === g.id ? { ...x, duration_ms: ms } : x) }
 }

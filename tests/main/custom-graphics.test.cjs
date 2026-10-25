@@ -118,10 +118,11 @@ test('the grade: JSON (fenced or not); a pass needs every check and 7+; unreadab
 
 test('cost: about the target for a short video\'s moments, fewer revisions for an expensive model', () => {
   const e = shared.customGraphicsEstimate(4)
-  assert.ok(e.expectedUsd > 0.2 && e.expectedUsd <= 0.75, `4 moments expected ${e.expectedUsd}`)
+  // About the target (the first, uncached write and the one world call come on top).
+  assert.ok(e.expectedUsd > 0.2 && e.expectedUsd <= 0.8, `4 moments expected ${e.expectedUsd}`)
   assert.ok(e.mostUsd >= e.expectedUsd)
   assert.equal(e.revisions, 2)
-  assert.ok(shared.customGraphicsEstimate(5).expectedUsd <= 0.8)
+  assert.ok(shared.customGraphicsEstimate(5).expectedUsd <= 0.85)
   const pricey = { input: 15e-6, output: 75e-6 }
   assert.ok(shared.revisionCap(5, pricey) < 2)
   assert.equal(shared.revisionCap(3, { input: 0.3e-6, output: 1.2e-6 }), 2)
@@ -136,8 +137,10 @@ test('geometry: the band per frame kind, the fit at bake, the still times', () =
   assert.equal(stage.root.height, 806); assert.ok(stage.card.y > stage.root.y + stage.root.height)
   assert.deepEqual(plain(shared.fitRoot({ width: 1080, height: 1267 }, { x: 0, y: 154, width: 1080, height: 1267 })), { x: 0, y: 154, scale: 1 })
   assert.deepEqual(plain(shared.fitRoot({ width: 1080, height: 1267 }, { x: 0, y: 300, width: 1080, height: 1000 })), { x: 114, y: 300, scale: 0.7893 })
+  // Four stills: coming in, building (about the middle cue), built (after the last cue), leaving.
   const times = shared.stillTimes(13030, [700, 3900, 10430])
-  assert.ok(times[0] < times[1] && times[1] < times[2] && times[2] < 13030 && times[1] > 10430)
+  assert.equal(times.length, shared.STILL_COUNT)
+  assert.ok(times[0] < times[1] && times[1] < times[2] && times[2] < times[3] && times[3] < 13030 && times[2] > 10430 && times[1] > 3900 && times[1] < 10430, String(times))
 })
 
 test('a saved look keeps colors and our fonts only (its values go into the sandbox page\'s CSS)', () => {
@@ -177,11 +180,11 @@ test('the loop: a too-small first try is sent back with our fix, then kept; file
   let shots = 0
   const sandbox = { stills: async (req) => {
     shots++
-    assert.equal(req.times.length, 3); assert.equal(req.scale, 0.5)
-    return { transparent: [Buffer.from('a'), Buffer.from('b'), Buffer.from('c')], composite: Buffer.from('jpg'), texts: ['only three things', 'a product', 'an offer', 'attract', 'eyeballs'],
+    assert.equal(req.times.length, 4); assert.equal(req.scale, 0.5); assert.equal(req.motionStepMs, 100)
+    return { transparent: [Buffer.from('a'), Buffer.from('b'), Buffer.from('c'), Buffer.from('d')], composite: Buffer.from('jpg'), texts: ['only three things', 'a product', 'an offer', 'attract', 'eyeballs'],
       problems: shots === 1 ? ['Some words are only about 28 px tall; make every label at least 44 px.'] : [] }
   } }
-  const result = await m.produceCustomGraphic({ run, brief: brief('Staircase', 'process', 'visual', 13030), words: 'a product an offer attract eyeballs',
+  const result = await m.produceCustomGraphic({ run, brief: brief('Staircase', 'process', 'visual', 12000), words: 'a product an offer attract eyeballs',
     said: shared.saidIndex(RUN.words), frame: null, fallback: { template: 'staircase', fields: { items: 'a\nb\nc' }, duration_ms: 13030, placement: 'middle' }, model: 'anthropic/claude-opus-5.5', maxRevisions: 2 },
   { call, sandbox })
   assert.equal(result.tries, 2)
@@ -194,7 +197,7 @@ test('the loop: a too-small first try is sent back with our fix, then kept; file
   assert.equal(comp, require('node:crypto').createHash('sha256').update(html.trim()).digest('hex').slice(0, 16))
   const found = m.readCustomGraphic(run, comp)
   assert.equal(found.html, html.trim()); assert.equal(found.meta.fallback.template, 'staircase'); assert.equal(found.meta.tries, 2)
-  assert.deepEqual(m.customStillPaths(run, comp).map((p) => path.basename(p)), [`${comp}-0.png`, `${comp}-1.png`, `${comp}-2.png`])
+  assert.deepEqual(m.customStillPaths(run, comp).map((p) => path.basename(p)), [`${comp}-0.png`, `${comp}-1.png`, `${comp}-2.png`, `${comp}-3.png`])
   // A composition changed on disk no longer matches its name: it isn't drawn.
   fs.appendFileSync(path.join(run, '.graphics', 'custom', `${comp}.html`), '<script>fetch("x")</script>')
   assert.equal(m.readCustomGraphic(run, comp), null)
@@ -232,15 +235,15 @@ const lib = loadMain("export * from './src/shared/motion-library'")
 test('library templates: every text becomes a slot, filling escapes words and sets the length, a fill must fit', () => {
   const html = read('staircase.html')
   const { template, slots } = lib.parameterize(html)
-  assert.deepEqual(plain(slots.map((s) => s.sample)), ['only three things', 'a product', 'an offer', 'attract', 'eyeballs'])
-  assert.ok(!template.includes('>a product<') && template.includes('>{{s2}}<'))
+  assert.deepEqual(plain(slots.map((s) => s.sample)), ['only three things', '3', 'a product', 'an offer', 'attract', 'eyeballs'])
+  assert.ok(!template.includes('>a product<') && template.includes('>{{s3}}<'))
   // Style and script are left alone.
   assert.ok(template.includes("tl.from('#cg-root .title'"))
-  const filled = lib.fillTemplate(template, { s1: 'two things', s2: 'a list', s3: 'an <offer>', s4: 'get', s5: 'buyers' }, 9000)
+  const filled = lib.fillTemplate(template, { s1: 'two things', s2: '2', s3: 'a list', s4: 'an <offer>', s5: 'get', s6: 'buyers' }, 9000)
   assert.ok(filled.includes('an &lt;offer&gt;') && filled.includes('data-duration="9.00"'))
   assert.deepEqual(shared.checkComposition(filled, { width: 1080, height: 1267, durationMs: 9000 }), [])
   assert.throws(() => lib.fillTemplate(template, { s1: 'x' }, 9000), /Slot s2/)
-  const fit = lib.parseFill('{"fits": true, "values": {"s1": "two things", "s2": "a list", "s3": "an offer", "s4": "get", "s5": "buyers"}}', slots)
+  const fit = lib.parseFill('{"fits": true, "values": {"s1": "two things", "s2": "2", "s3": "a list", "s4": "an offer", "s5": "get", "s6": "buyers"}}', slots)
   assert.equal(fit.fits, true)
   assert.equal(lib.parseFill('{"fits": true, "values": {"s1": "a much much much much longer line than before"}}', slots).fits, false)
   assert.equal(lib.parseFill('{"fits": false}', slots).fits, false)
@@ -262,11 +265,11 @@ test('the library in the loop: a passed graphic is kept, the next fitting moment
   const call = async (request) => {
     purposes.push(request.purpose)
     if (request.purpose === 'grade') return { text: '{"pass": true, "score": 8, "failed": [], "fixes": []}', costUsd: 0.02 }
-    if (request.purpose === 'fill') return { text: '{"fits": true, "values": {"s1": "only three things", "s2": "a product", "s3": "an offer", "s4": "attract", "s5": "eyeballs"}}', costUsd: 0.004 }
+    if (request.purpose === 'fill') return { text: JSON.stringify({ fits: true, values: Object.fromEntries([...request.user.matchAll(/- (s\d+): "([^"]*)"/g)].map((x) => [x[1], x[2]])) }), costUsd: 0.004 }
     return { text: '```html\n' + html + '\n```', costUsd: 0.08 }
   }
   const sandbox = { stills: async () => ({ transparent: [Buffer.from('p0'), Buffer.from('p1'), Buffer.from('p2')], composite: Buffer.from('j'), texts: ['only three things', 'a product'], problems: [] }) }
-  const input = (run) => ({ run, brief: brief('Staircase', 'process', 'visual', 13030), words: 'a product an offer attract eyeballs', said: shared.saidIndex(RUN.words), frame: null, fallback: null, model: 'm/x', maxRevisions: 2 })
+  const input = (run) => ({ run, brief: brief('Staircase', 'process', 'visual', 12000), words: 'a product an offer attract eyeballs', said: shared.saidIndex(RUN.words), frame: null, fallback: null, model: 'm/x', maxRevisions: 2 })
   const runA = path.join(root, 'edit-a'), runB = path.join(root, 'edit-b')
   fs.mkdirSync(runA); fs.mkdirSync(runB)
   const first = await m.produceCustomGraphic(input(runA), { call, sandbox, library: hooks })
@@ -283,13 +286,13 @@ test('the library in the loop: a passed graphic is kept, the next fitting moment
   assert.equal(libMain.libraryView()[0].uses, 2)
   // A note asks for a change: designed again, not filled.
   purposes.length = 0
-  await m.produceCustomGraphic({ ...input(runB), brief: { ...brief('Staircase', 'process', 'visual', 13030), note: 'use a ladder' } }, { call, sandbox, library: hooks })
+  await m.produceCustomGraphic({ ...input(runB), brief: { ...brief('Staircase', 'process', 'visual', 12000), note: 'use a ladder' } }, { call, sandbox, library: hooks })
   assert.equal(purposes[0], 'write')
   // Retire it: not offered any more; restore brings it back.
   libMain.setLibraryStatus(view[0].id, 'retired')
-  assert.equal(libMain.libraryMatch('process', 'visual', 13030), null)
+  assert.equal(libMain.libraryMatch('process', 'visual', 12000), null)
   libMain.setLibraryStatus(view[0].id, 'active')
-  assert.ok(libMain.libraryMatch('process', 'visual', 13030))
+  assert.ok(libMain.libraryMatch('process', 'visual', 12000))
   // One that never passes is kept as Retired, with the reason.
   const failing = async (request) => request.purpose === 'grade' ? { text: '{"pass": false, "score": 4, "failed": ["design"], "fixes": ["Too busy."]}', costUsd: 0.02 }
     : { text: '```html\n' + read('proof.html') + '\n```', costUsd: 0.08 }
@@ -298,4 +301,123 @@ test('the library in the loop: a passed graphic is kept, the next fitting moment
   const retired = libMain.libraryView().find((i) => i.status === 'retired')
   assert.ok(retired && /Too busy/.test(retired.reason))
   fs.rmSync(root, { recursive: true, force: true })
+})
+
+// ---------------------------------------------------------------------------
+// One visual world, build-up on stressed words, the motion check, the grader's checklist
+// ---------------------------------------------------------------------------
+
+const WORLD = { idea: 'Eyeballs as light: a nobody points a beam of attention and people dots gather where it lands.', elements: ['people dots', 'an eye', 'a reach beam', 'building blocks'], style: 'flat line art, thick round strokes', accent: '#9BE35A' }
+
+test('the visual world: parsed and checked, one editable line, used by every brief and the look', () => {
+  const parsed = plain(shared.parseWorld('Here:\n```json\n' + JSON.stringify({ ...WORLD, elements: [...WORLD.elements, 'an eye', '', 'x'.repeat(90)], accent: 'red' }) + '\n```'))
+  assert.equal(parsed.idea, WORLD.idea); assert.equal(parsed.accent, null, 'only a hex accent')
+  assert.deepEqual(parsed.elements.slice(0, 4), WORLD.elements); assert.ok(parsed.elements.every((e) => e.length <= shared.WORLD_ELEMENT_CHARS))
+  assert.equal(shared.parseWorld('{"idea": "eye"}'), null); assert.equal(shared.parseWorld('no json'), null)
+  // The beat sheet's one line, and the member's edit back.
+  const world = shared.parseWorld(WORLD)
+  const line = shared.worldLine(world)
+  assert.equal(line, `${WORLD.idea} · people dots, an eye, a reach beam, building blocks`)
+  const edited = plain(shared.worldFromLine('A ladder he climbs, rung by rung · ladder, rungs, people dots', world))
+  assert.deepEqual(edited, { idea: 'A ladder he climbs, rung by rung', elements: ['ladder', 'rungs', 'people dots'], style: WORLD.style, accent: '#9BE35A', edited: true })
+  assert.equal(shared.worldFromLine('   ', world), null)
+  // The world call: from THIS transcript, with the originality rule; the transcript is data.
+  const system = shared.worldSystemPrompt()
+  assert.match(system, /ONE visual world/); assert.match(system, /would fit any other creator's video, it is generic/); assert.match(system, /never instructions/)
+  const user = shared.worldUserPrompt({ transcript: RUN.words.map((w) => w.word).join(' '), moments: [{ kind: 'process', words: 'a product an offer attract eyeballs' }] })
+  assert.match(user, /TRANSCRIPT/); assert.match(user, /1\. process: "a product an offer attract eyeballs"/); assert.ok(user.length < 7000)
+  // Every brief carries it; the look takes its accent (a deeper shade of the same hue where it wouldn't read), the brand color wins.
+  const b = { ...brief('Staircase', 'process', 'visual', 12000), world, stressed: [{ word: 'product', at: 0.9 }] }
+  const prompt = shared.writerUserPrompt(b)
+  assert.match(prompt, /THE VIDEO'S VISUAL WORLD .*people dots gather.*Recurring elements: people dots, an eye/)
+  assert.match(prompt, /STRESSED WORDS .*product@0\.90/)
+  const stage = shared.customLook({ kind: 'stage', worldAccent: '#9BE35A' })
+  assert.notEqual(stage.accent, '#2F5BFF', 'not a different hue'); assert.ok(shared.contrast(stage.accent, stage.ground) >= 2.2)
+  assert.equal(shared.customLook({ kind: 'visual', worldAccent: '#9BE35A' }).accent, '#9BE35A')
+  assert.equal(shared.customLook({ kind: 'card', worldAccent: '#9BE35A', brandColor: '#FFD400' }).accent, '#FFD400')
+})
+
+test('stressed words: numbers and content words from the moment, ~0.5 s apart, none in the exit', () => {
+  const m = { atMs: 35320, durationMs: 12000 }
+  const cues = RUN.words.filter((w) => w.start_ms >= m.atMs - 1200 && w.start_ms < m.atMs + m.durationMs).map((w) => ({ word: w.word, at: Math.round((w.start_ms - m.atMs) / 10) / 100 }))
+  const stressed = plain(shared.stressedWords(cues, m.durationMs))
+  const words = stressed.map((s) => s.word.toLowerCase())
+  for (const w of ['product', 'offer', 'attracts', 'people', 'three', 'eyeballs']) assert.ok(words.includes(w), `${w} in ${words.join(' ')}`)
+  for (const w of ['we\'re', 'gonna', 'that', 'and', 'a', 'to']) assert.ok(!words.includes(w), w)
+  for (let i = 1; i < stressed.length; i++) assert.ok(stressed[i].at - stressed[i - 1].at >= 0.45)
+  assert.ok(stressed.every((s) => s.at >= 0 && s.at < m.durationMs / 1000 - 0.4))
+  // Roughly one every 0.5–1 s of speech.
+  assert.ok(stressed.length >= 10 && stressed.length <= 24, String(stressed.length))
+  assert.ok(shared.stressScore('8,188') > shared.stressScore('product') && shared.stressScore('the') === 0)
+})
+
+test('the motion check: flat stretches over 1.5 s while drawn, and the fix names a word said there', () => {
+  // 0.1 s steps: moving for 1 s, still for 2.5 s, moving, then gone (not drawn: never flat).
+  const change = [0, ...Array(10).fill(0.01), ...Array(25).fill(0), ...Array(10).fill(0.01), ...Array(30).fill(0)]
+  const visible = change.map((_, i) => i < 46)
+  const flats = plain(shared.flatStretches(change, visible))
+  assert.deepEqual(flats, [{ fromMs: 1000, toMs: 3500 }])
+  assert.deepEqual(plain(shared.flatStretches(change, visible, { maxMs: 3000 })), [])
+  // Gentle idle motion counts as change; a tiny change below the threshold does not.
+  assert.deepEqual(plain(shared.flatStretches(change.map((c, i) => i > 10 && i < 36 ? 0.0005 : c), visible)), [])
+  assert.equal(shared.flatStretches(change.map((c, i) => i > 10 && i < 36 ? 0.00001 : c), visible).length, 1)
+  const fixes = shared.motionFixes(flats, [{ word: 'We\'re', at: 1.2 }, { word: 'offer', at: 2.3 }, { word: 'that', at: 2.9 }])
+  assert.match(fixes[0], /^Flat at 1\.0–3\.5 s: nothing changes\. Add a change on “offer” \(2\.30 s\)/)
+  assert.match(shared.motionFixes([{ fromMs: 0, toMs: 2000 }], [])[0], /gently alive/)
+})
+
+test('the grader checks focus, build-up, specificity, the world, phone readability, clipping, the face and invented words', () => {
+  const ids = shared.GRADE_CHECKS.map((c) => c.id)
+  for (const id of ['focus', 'builds', 'specific', 'world', 'readable', 'clipped', 'face', 'words']) assert.ok(ids.includes(id), id)
+  const system = shared.graderSystemPrompt()
+  assert.match(system, /four stills/); for (const c of shared.GRADE_CHECKS) assert.ok(system.includes(`- ${c.id}: `))
+  const user = shared.graderUserPrompt({ words: 'a product an offer', kind: 'process', frame: 'visual', machine: ['Flat at 4.2–6.0 s: nothing changes.'], world: shared.parseWorld(WORLD), stressed: [{ word: 'product', at: 0.9 }, { word: 'offer', at: 4.2 }] })
+  assert.match(user, /visual world: Eyeballs as light/); assert.match(user, /build on: product, offer/); assert.match(user, /Flat at 4\.2/)
+  const graded = shared.parseGrade('{"pass": false, "score": 6, "failed": ["builds", "world"], "fixes": ["Add the crowd on people."]}')
+  assert.deepEqual(plain(graded.failed), ['builds', 'world'])
+  // The rules ask for build-up, idle motion and one focus (no more "dead still").
+  assert.match(shared.DESIGN_RULES, /Build it up on the voice/); assert.match(shared.DESIGN_RULES, /Alive, never frozen/); assert.match(shared.DESIGN_RULES, /Exactly ONE focus/)
+  assert.doesNotMatch(shared.DESIGN_RULES, /dead still/)
+  // Talking-head reels: a hero holds 3–8 s (12 s for a process or comparison) and returns to the face.
+  assert.equal(shared.heroDuration({ atMs: 60000, durationMs: 15000, frame: 'stage', kind: 'proof' }, null, 300000), 8000)
+  assert.equal(shared.heroDuration({ atMs: 35320, durationMs: 13030, frame: 'visual', kind: 'process' }, null, 300000), 12000)
+  assert.equal(shared.heroDuration({ atMs: 35320, durationMs: 13030, frame: 'visual', kind: 'process' }, null, 300000, 'youtube'), 13030)
+  assert.equal(shared.heroDuration({ atMs: 53, durationMs: 2000, frame: 'card', kind: 'claim' }, null, 300000), 3000)
+})
+
+test('the loop: the world call, the world in every brief and grade; a flat stretch goes back to the writer, then a still-flat best is kept', async () => {
+  const m = mainModule()
+  const run = fs.mkdtempSync(path.join(os.tmpdir(), 'custom-world-'))
+  const calls = []
+  const call = async (request) => {
+    calls.push(request)
+    if (request.purpose === 'world') return { text: JSON.stringify(WORLD), costUsd: 0.006 }
+    if (request.purpose === 'grade') return { text: '{"pass": true, "score": 8, "failed": [], "fixes": []}', costUsd: 0.02 }
+    return { text: '```html\n' + read('staircase.html') + '\n```', costUsd: 0.08 }
+  }
+  const proposed = await m.proposeVisualWorld({ transcript: 'we need a product an offer and eyeballs', moments: [{ kind: 'process', words: 'a product an offer' }], model: 'm/x' }, { call })
+  assert.equal(proposed.world.idea, WORLD.idea); assert.equal(calls[0].purpose, 'world')
+  m.saveVisualWorld(run, proposed.world)
+  assert.deepEqual(plain(m.readVisualWorld(run)), plain(proposed.world))
+  // An unusable answer: no world (the graphics are designed without one).
+  assert.equal((await m.proposeVisualWorld({ transcript: 'x', moments: [], model: 'm/x' }, { call: async () => ({ text: 'sorry', costUsd: 0.001 }) })).world, null)
+  // The sandbox measures it flat from 4.2 s to 9.9 s every time.
+  const flatChange = Array.from({ length: 121 }, (_, i) => (i > 42 && i < 99 ? 0 : 0.01))
+  const sandbox = { stills: async () => ({ transparent: [Buffer.from('a'), Buffer.from('b'), Buffer.from('c'), Buffer.from('d')], composite: Buffer.from('j'), texts: ['only three things', 'a product'], problems: [],
+    motion: { change: flatChange, visible: flatChange.map(() => true) } }) }
+  const cues = [{ word: 'product', at: 0.9 }, { word: 'offer', at: 4.2 }, { word: 'attracts', at: 5.4 }, { word: 'people', at: 6.0 }, { word: 'eyeballs', at: 10.9 }]
+  const b = { ...brief('Staircase', 'process', 'visual', 12000), cues, world: proposed.world, stressed: shared.stressedWords(cues, 12000) }
+  calls.length = 0
+  const result = await m.produceCustomGraphic({ run, brief: b, words: 'a product an offer attract eyeballs', said: shared.saidIndex(RUN.words), frame: null, fallback: null, model: 'm/x', maxRevisions: 1 }, { call, sandbox })
+  const writes = calls.filter((c) => c.purpose === 'write'), grades = calls.filter((c) => c.purpose === 'grade')
+  assert.equal(writes.length, 2, 'revised once for the flat stretch')
+  assert.match(writes[0].user, /THE VIDEO'S VISUAL WORLD/); assert.match(writes[0].user, /STRESSED WORDS/)
+  assert.match(writes[1].user, /Flat at 4\.2–9\.8 s: nothing changes\. Add a change on “(attracts|people)”/)
+  assert.match(grades[0].user, /visual world: Eyeballs as light/); assert.match(grades[0].user, /Our automatic checks found: Flat at/)
+  // Still flat after the revision, but the review and our hard checks passed: kept, its flat stretch recorded.
+  assert.ok(result.meta, result.reason)
+  assert.deepEqual(plain(result.meta.flat), [{ fromMs: 4200, toMs: 9800 }])
+  assert.equal(result.meta.builds, b.stressed.length)
+  assert.deepEqual(plain(m.readCustomGraphic(run, result.meta.comp).meta.flat), [{ fromMs: 4200, toMs: 9800 }])
+  fs.rmSync(run, { recursive: true, force: true })
 })

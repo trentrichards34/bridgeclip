@@ -14,8 +14,8 @@ import { lstatSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, w
 import { basename, join } from 'path'
 import {
   CUSTOM_DIR, DEFAULT_PRICE, MAX_COMPOSITION_CHARS, STILL_SCALE, callCost, checkComposition, customGeometry, customIdea, customLook, saidIndex, customStillNames, extractComposition, graderSystemPrompt, graderUserPrompt,
-  isCustomComp, parseCustomMeta, parseGrade, stillTimes, unsaidOnScreen, writerSystemPrompt, writerUserPrompt,
-  type CustomFallback, type CustomFrameKind, type CustomGeometry, type CustomGrade, type CustomLook, type CustomMeta, type HeroKind, type SaidIndex, type WriterBrief
+  isCustomComp, parseCustomMeta, parseGrade, stillTimes, unsaidOnScreen, writerSystemPrompt, writerUserPrompt, flatStretches, motionFixes, MOTION_STEP_MS, stressedWords, parseWorld, worldSystemPrompt, worldUserPrompt,
+  type CustomFallback, type FlatStretch, type VisualWorld, type CustomFrameKind, type CustomGeometry, type CustomGrade, type CustomLook, type CustomMeta, type HeroKind, type SaidIndex, type WriterBrief
 } from '../shared/custom-graphics'
 import { customSandbox, type CustomSandbox } from './custom-render'
 import { keepInLibrary, libraryMatch, noteLibraryUse, readLibraryTemplate } from './motion-library'
@@ -46,7 +46,7 @@ export interface ModelRequest {
   maxTokens: number
   temperature: number
   /** Which call this is (the fake model in tests answers by it). */
-  purpose: 'write' | 'grade' | 'fill'
+  purpose: 'write' | 'grade' | 'fill' | 'world'
   signal?: AbortSignal
 }
 export interface ModelReply { text: string; costUsd: number }
@@ -169,7 +169,15 @@ export interface ProduceResult {
   reason?: string
 }
 
-interface Attempt { html: string; grade: CustomGrade; stills: Buffer[]; review: Buffer }
+/** One try: its final grade (our checks and the motion check folded in), and what decided it. */
+interface Attempt {
+  html: string; grade: CustomGrade; stills: Buffer[]; review: Buffer
+  /** Flat stretches found by the motion check (fixes for the writer). */
+  flat: FlatStretch[]
+  /** Only the motion check failed it (the grade and our hard checks passed): kept when no try passes outright. */
+  motionOnly: boolean
+}
+const attemptRank = (a: Attempt): number => (a.grade.pass ? 2 : a.motionOnly ? 1 : 0) * 100 + a.grade.score
 
 /** My motion library, as the producer uses it (motion-library.ts; tests pass their own). */
 export interface LibraryHooks {
@@ -195,12 +203,12 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
   let costUsd = 0, tries = 0
   let best: Attempt | null = null
   let reason = ''
-  const keep = (attempt: Attempt): void => { if (!best || (attempt.grade.pass && !best.grade.pass) || (attempt.grade.pass === best.grade.pass && attempt.grade.score > best.grade.score)) best = attempt }
+  const keep = (attempt: Attempt): void => { if (!best || attemptRank(attempt) > attemptRank(best)) best = attempt }
   /** Render the stills, run our checks and the grade. Null when it couldn't be drawn (`reason` says why). */
   const look = async (html: string): Promise<Attempt | null> => {
     let shot
     try {
-      shot = await sandbox.stills({ html, geometry: brief.geometry, look: brief.look, durationMs: brief.durationMs, times, frame: input.frame, logo: input.logo ?? null, scale: STILL_SCALE })
+      shot = await sandbox.stills({ html, geometry: brief.geometry, look: brief.look, durationMs: brief.durationMs, times, frame: input.frame, logo: input.logo ?? null, scale: STILL_SCALE, motionStepMs: MOTION_STEP_MS })
     } catch (error) {
       reason = String((error as Error)?.message ?? error).slice(0, 200)
       logger.info('custom.render.failed', { message: reason })
@@ -208,17 +216,23 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
     }
     const unsaid = unsaidOnScreen(shot.texts, input.said)
     const machine = [...shot.problems, ...(unsaid.length ? [`These words or numbers on screen were not said: ${unsaid.map((w) => `“${w}”`).join(', ')}. Use only words and numbers from the transcript.`] : [])]
+    // The motion check: nothing frozen for more than 1.5 s while it is on screen.
+    const flat = shot.motion ? flatStretches(shot.motion.change, shot.motion.visible) : []
+    const still = motionFixes(flat, brief.cues)
     let grade: CustomGrade = { pass: true, score: 7, failed: [], fixes: [] }
     if (input.grade !== false) {
-      const graded = await deps.call({ model: input.model, system: graderSystemPrompt(), user: graderUserPrompt({ words: input.words, kind: brief.kind, frame: brief.frame, machine }),
+      const graded = await deps.call({ model: input.model, system: graderSystemPrompt(), user: graderUserPrompt({ words: input.words, kind: brief.kind, frame: brief.frame, machine: [...machine, ...still], world: brief.world ?? null, stressed: brief.stressed }),
         image: `data:image/jpeg;base64,${shot.composite.toString('base64')}`, maxTokens: 700, temperature: 0, purpose: 'grade', signal: deps.signal })
       costUsd += graded.costUsd
       grade = parseGrade(graded.text)
     }
-    // Our own checks are hard rules: any of them fails the graphic, whatever the grade says.
-    const final: CustomGrade = machine.length ? { pass: false, score: Math.min(grade.score, 6), failed: [...new Set([...grade.failed, ...(unsaid.length ? ['words' as const] : []), ...(shot.problems.length ? ['clipped' as const] : [])])], fixes: [...machine, ...grade.fixes].slice(0, 8) } : grade
+    // Our own checks are hard rules: any of them fails the graphic, whatever the grade says. The motion check sends it
+    // back to be revised too, but a try that only fails it can still be kept when no other try passes.
+    let final: CustomGrade = grade
+    if (machine.length) final = { pass: false, score: Math.min(grade.score, 6), failed: [...new Set([...grade.failed, ...(unsaid.length ? ['words' as const] : []), ...(shot.problems.length ? ['clipped' as const] : []), ...(still.length ? ['builds' as const] : [])])], fixes: [...machine, ...still, ...grade.fixes].slice(0, 8) }
+    else if (still.length) final = { pass: false, score: Math.min(grade.score, 7), failed: [...new Set([...grade.failed, 'builds' as const])], fixes: [...still, ...grade.fixes].slice(0, 8) }
     if (!final.pass) reason = final.fixes.join(' ')
-    return { html, grade: final, stills: shot.transparent, review: shot.composite }
+    return { html, grade: final, stills: shot.transparent, review: shot.composite, flat, motionOnly: !machine.length && !!still.length && grade.pass }
   }
 
   // My motion library first: a graphic of this kind, filled with the new words (a small call), when one fits.
@@ -265,7 +279,9 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
       previous = { html, fixes: current.grade.fixes }
     }
   }
-  const kept = best as Attempt | null
+  let kept = best as Attempt | null
+  // Only the motion check failed every try: the best is kept (it passed the review and our hard checks), its flat stretches noted.
+  if (kept && !kept.grade.pass && kept.motionOnly) kept = { ...kept, grade: { ...kept.grade, pass: true, score: Math.max(7, kept.grade.score) } }
   if (!kept?.grade.pass) {
     logger.info('custom.fallback', { tries, reason: reason.slice(0, 200) })
     // The best try is kept in the library as Retired, with the check's reason (never offered again).
@@ -276,7 +292,8 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
   const meta: CustomMeta = {
     comp: compositionId(kept.html), kind: brief.kind, frame: brief.frame, width: expect.width, height: expect.height, durationMs: brief.durationMs, words: input.words.slice(0, 2000),
     idea: customIdea(brief.kind), model: input.model, tries, grade: kept.grade, ...(brief.note ? { note: brief.note } : {}), fallback: input.fallback, look: brief.look,
-    costUsd: Math.round(costUsd * 10000) / 10000, createdAt: new Date().toISOString(), ...(fromLibrary ? { library: fromLibrary } : {})
+    costUsd: Math.round(costUsd * 10000) / 10000, createdAt: new Date().toISOString(), ...(fromLibrary ? { library: fromLibrary } : {}),
+    flat: kept.flat.slice(0, 8), ...(brief.stressed?.length ? { builds: brief.stressed.length } : {})
   }
   saveCustomGraphic(input.run, kept.html, meta, kept.stills, kept.review)
   if (deps.library) {
@@ -288,6 +305,38 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
     }
   }
   return { meta, costUsd, tries, ...(fromLibrary ? { library: fromLibrary } : {}) }
+}
+
+// ---------------------------------------------------------------------------
+// The video's visual world (one call, before the hero graphics)
+// ---------------------------------------------------------------------------
+
+const WORLD_FILE = 'world.json'
+
+/** The run's saved world, or null. */
+export function readVisualWorld(run: string): VisualWorld | null {
+  try {
+    const path = join(customDir(run), WORLD_FILE)
+    if (!regularFile(path) || statSync(path).size > 20_000) return null
+    return parseWorld(JSON.parse(readFileSync(path, 'utf8')))
+  } catch { return null }
+}
+
+/** Save the run's world (null removes nothing: a world is always replaced, never cleared). */
+export function saveVisualWorld(run: string, world: VisualWorld): void {
+  writeAtomic(join(customDir(run, true), WORLD_FILE), JSON.stringify(world, null, 1))
+}
+
+/** Propose the video's world from its transcript and the moments that get a graphic. Null when the answer is unusable (the graphics are designed without one). */
+export async function proposeVisualWorld(input: { transcript: string; moments: { kind: HeroKind; words: string }[]; model: string; note?: string }, deps: { call: ModelCall; signal?: AbortSignal }): Promise<{ world: VisualWorld | null; costUsd: number }> {
+  try {
+    const reply = await deps.call({ model: input.model, system: worldSystemPrompt(), user: worldUserPrompt(input), maxTokens: 500, temperature: 0.6, purpose: 'world', signal: deps.signal })
+    return { world: parseWorld(reply.text), costUsd: reply.costUsd }
+  } catch (error) {
+    if (deps.signal?.aborted) throw error
+    logger.info('custom.world.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
+    return { world: null, costUsd: 0 }
+  }
 }
 
 /** The member's library as the producer uses it (motion-library.ts). */
@@ -324,15 +373,18 @@ export function bakeScene(found: { html: string; meta: CustomMeta }, frame: { wi
 
 export function installCustomGraphicsTestHook(): void {
   const hook = {
-    shared: { customGeometry, customLook, stillTimes, checkComposition },
+    shared: { customGeometry, customLook, stillTimes, checkComposition, stressedWords, flatStretches },
     async stills(request: import('./custom-render').StillsRequest) {
       const result = await customSandbox().stills(request)
-      return { transparent: result.transparent.map((b) => b.toString('base64')), composite: result.composite.toString('base64'), texts: result.texts, problems: result.problems }
+      return { transparent: result.transparent.map((b) => b.toString('base64')), composite: result.composite.toString('base64'), texts: result.texts, problems: result.problems, ...(result.motion ? { motion: result.motion } : {}) }
     },
     async bake(scene: import('./custom-render').CustomScene, out: string) { await customSandbox().bake(scene, out) },
     async produce(input: Omit<ProduceInput, 'said'> & { said: TimedWord[] }, endpoint: string) {
       const call = openRouterModelCall('sk-or-test', endpoint, DEFAULT_PRICE)
       return produceCustomGraphic({ ...input, said: saidIndex(input.said) }, { call })
+    },
+    async world(input: { transcript: string; moments: { kind: HeroKind; words: string }[]; model: string }, endpoint: string) {
+      return proposeVisualWorld(input, { call: openRouterModelCall('sk-or-test', endpoint, DEFAULT_PRICE) })
     },
     read: readCustomGraphic
   }

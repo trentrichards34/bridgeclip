@@ -607,11 +607,17 @@ export interface BridgeClipAPI {
     /** Custom graphics: the moments they'd be designed for and what that costs (free). */
     customInfo: (decisions: EditDecisions) => Promise<EditCustomInfo>
     /** Design them now (paid; the spending check first), or one again with a note. Returns the review's graphics with them in place. */
-    customGraphics: (request: { decisions: EditDecisions; only?: { id: string; note: string } }) => Promise<EditCustomOutcome>
+    customGraphics: (request: { decisions: EditDecisions; only?: { id: string; note: string }; design?: { id: string } }) => Promise<EditCustomOutcome>
     /** A custom graphic back to the template graphic it replaced: the review's graphics after the swap. */
     customSwap: (request: { decisions: EditDecisions; id: string }) => Promise<EditGraphic[]>
     /** A custom graphic's stills (image paths). */
     customStills: (comp: string) => Promise<string[]>
+    /** The video's visual world, in one line (empty: none yet). */
+    customWorld: () => Promise<{ line: string; edited: boolean }>
+    /** Save the member's own line as the visual world. */
+    customWorldSet: (request: { line: string }) => Promise<{ line: string; edited: boolean }>
+    /** Propose the visual world again (a small paid call). */
+    customWorldAgain: (request: { decisions: EditDecisions; note?: string }) => Promise<{ line: string; edited: boolean }>
     /** One of My motion library's graphics on a word (replacing that beat's graphic), filled with the words said there (paid). */
     libraryAdd: (request: { decisions: EditDecisions; itemId: string; word: number; replaces?: string }) => Promise<EditCustomOutcome>
     /** Transcribe and plan (paid); the status moves to 'review'. */
@@ -1108,6 +1114,9 @@ const api: BridgeClipAPI = {
     customInfo: (decisions) => ipcRenderer.invoke('edit:customInfo', decisions),
     customGraphics: (request) => paid('edit:customGraphics', request),
     customSwap: (request) => ipcRenderer.invoke('edit:customSwap', request),
+    customWorld: () => ipcRenderer.invoke('edit:customWorld'),
+    customWorldSet: (request) => ipcRenderer.invoke('edit:customWorldSet', request),
+    customWorldAgain: (request) => paid('edit:customWorldAgain', request),
     customStills: (comp) => ipcRenderer.invoke('edit:customStills', comp),
     libraryAdd: (request) => paid('edit:libraryAdd', request),
     start: (request) => paid('edit:start', request),

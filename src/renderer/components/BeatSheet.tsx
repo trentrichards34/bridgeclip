@@ -10,14 +10,14 @@
  */
 import { gradePreviewFilter } from '../../shared/color-grade'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Check, Loader2, MessageSquarePlus, Pencil, Play, RotateCcw, Shuffle, Trash2, Wand2, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Globe2, Loader2, MessageSquarePlus, Pencil, Play, Plus, RefreshCw, RotateCcw, Scissors, Shuffle, Trash2, Wand2, X } from 'lucide-react'
 import {
-  beatActions, beatNoteMessage, deriveBeats, editBeatText, moveBeat, removeBeat, restoreBeat, scopeBeatPatch, swapBeatVisual, unsaidNumber, unsaidWords,
-  type Beat, type BeatText, type BeatUndo
+  addVisualAt, beatActions, beatNoteMessage, deriveBeats, editBeatText, moveBeat, reelFlatStretches, removeBeat, restoreBeat, scopeBeatPatch, shortenFrozen, swapBeatVisual, unsaidNumber, unsaidWords,
+  type Beat, type ReelFlat, type BeatText, type BeatUndo
 } from '../../shared/beat-sheet'
 import { BEAT_SHEET_CHOICES, type BeatSheetChoice } from '../../shared/member-prefs'
 import { MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, MAX_CARD_ITEMS, hookTextProblem, reelOrder, reelWordStarts, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditSource, type EditStatus } from '../../shared/edit-recording'
-import type { EditCustomInfo } from '../../shared/custom-graphics'
+import { WORLD_LINE_CHARS, type EditCustomInfo } from '../../shared/custom-graphics'
 import type { LibraryView } from '../../shared/motion-library'
 import { formatSpendUsd as formatUsd } from '../../shared/spending'
 import { editPatchValues, mergeEditChatSteps, type EditChatPatch } from '../../shared/edit-chat'
@@ -114,10 +114,50 @@ export function BeatSheet({ runId, plan, decisions, look, brand, sources, images
     void getApi().edit.customInfo(decisions).then((info) => { if (live) setCustomInfo(info) }).catch(() => { if (live) setCustomInfo(null) })
     return () => { live = false }
   }, [graphicsKey, decisions.customGraphics])
-  const designCustom = async (only?: { id: string; note: string }): Promise<void> => {
-    setDesigning(only?.id ?? 'all'); setError(null)
+  // The video's visual world: one line every custom graphic is designed in; the member can change it or have it proposed again.
+  const [world, setWorld] = useState<{ line: string; edited: boolean } | null>(null)
+  const [worldDraft, setWorldDraft] = useState<string | null>(null)
+  const [worldBusy, setWorldBusy] = useState(false)
+  const customKey = (decisions.graphics ?? []).filter((g) => g.template === 'custom').map((g) => g.fields.comp).join('|')
+  useEffect(() => {
+    let live = true
+    if (typeof getApi().edit.customWorld !== 'function') return
+    void getApi().edit.customWorld().then((w) => { if (live) setWorld(w) }).catch(() => { if (live) setWorld(null) })
+    return () => { live = false }
+  }, [customKey, custom?.running])
+  const saveWorld = async (): Promise<void> => {
+    if (worldDraft === null || !worldDraft.trim()) return
+    setWorldBusy(true); setError(null)
+    try { setWorld(await getApi().edit.customWorldSet({ line: worldDraft })); setWorldDraft(null) } catch (err) { setError(errorMessage(err, 'The visual world could not be saved.')) } finally { setWorldBusy(false) }
+  }
+  const worldAgain = async (): Promise<void> => {
+    setWorldBusy(true); setError(null)
+    try { setWorld(await getApi().edit.customWorldAgain({ decisions })); setWorldDraft(null) } catch (err) { setError(errorMessage(err, 'A new visual world could not be proposed.')) } finally { setWorldBusy(false) }
+  }
+  // Flat stretches: where nothing on screen changes for too long (a graphic holding still, or the plain face outside personal lines).
+  const flats = useMemo(() => decisions.motionGraphics === false ? [] : reelFlatStretches(plan, decisions, beats, { customFlat: customInfo?.flat ?? {} }), [plan, decisions, beats, customInfo])
+  const addVisual = (flat: ReelFlat, design: boolean): void => {
+    if (flat.word === null) return
+    const added = addVisualAt(plan, decisions, flat.word)
+    if (!added) { setError(`Nothing said there fits a visual, or your reel has all ${MAX_EDIT_GRAPHICS} graphics it can take.`); return }
+    onChange(() => added.decisions)
+    if (design) void designCustom(undefined, { id: added.graphic.id }, added.decisions)
+  }
+  const fixFrozen = (flat: ReelFlat): void => {
+    const g = flat.ref ? (decisions.graphics ?? []).find((x) => `g:${x.id}` === flat.ref) : undefined
+    if (!g) return
+    const said = beats.find((b) => b.key === flat.ref)
+    const into = said ? `${(flat.from - said.start).toFixed(1)}–${(flat.to - said.start).toFixed(1)} s` : `${flat.from.toFixed(1)}–${flat.to.toFixed(1)} s`
+    if (g.template === 'custom') { void designCustom({ id: g.id, note: `It holds still at ${into}: add a change on a word said there and keep the earlier parts gently moving.` }); return }
+    const shorter = shortenFrozen(decisions, g.id ? `g:${g.id}` : '')
+    if (!shorter) { setError('That graphic is already as short as it can be.'); return }
+    onChange(() => shorter)
+  }
+  const designCustom = async (only?: { id: string; note: string }, design?: { id: string }, base?: EditDecisions): Promise<void> => {
+    setDesigning(only?.id ?? design?.id ?? 'all'); setError(null)
     try {
-      const result = await getApi().edit.customGraphics({ decisions, ...(only ? { only } : {}) })
+      const result = await getApi().edit.customGraphics({ decisions: base ?? decisions, ...(only ? { only } : {}), ...(design ? { design } : {}) })
+      if (design && !result.made) setError('Your AI’s design didn’t pass the check, so the visual you added stays.')
       onChange((current) => ({ ...current, graphics: result.graphics }))
       setCustomNotes(result.notes)
       if (only && !result.made) setError('The new design didn’t pass the check, so this graphic stays as it was.')
@@ -242,8 +282,42 @@ export function BeatSheet({ runId, plan, decisions, look, brand, sources, images
         </div>
         {customInfo.moments.length > 0 && <Button size="sm" variant="primary" icon={<Wand2 className="h-3.5 w-3.5" />} loading={designing === 'all' || custom?.running}
           disabled={disabled || !customInfo.available || designing !== null || custom?.running} onClick={() => void designCustom()} data-testid="custom-graphics-design">Design them now</Button>}
+        {customInfo.available && <div className="flex w-full min-w-0 flex-wrap items-center gap-2 border-t border-line/50 pt-2" data-testid="custom-world">
+          <Globe2 className="h-3.5 w-3.5 shrink-0 text-tool" aria-hidden />
+          <span className="text-2xs font-semibold text-ink">Visual world</span>
+          {worldDraft === null
+            ? <span className="min-w-0 flex-1 truncate text-2xs text-ink-muted" title={world?.line || undefined} data-testid="custom-world-line">{world?.line || 'Your AI picks one picture for the whole video when it designs your graphics, so they look like one piece.'}</span>
+            : <form className="flex min-w-0 flex-1 items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); void saveWorld() }}>
+              <TextInput aria-label="Visual world" className="h-7 min-w-0 flex-1 text-2xs" value={worldDraft} maxLength={WORLD_LINE_CHARS} autoFocus placeholder="One picture for the whole video · its recurring parts" onChange={(e) => setWorldDraft(e.target.value)} />
+              <Button type="submit" size="sm" variant="primary" loading={worldBusy} disabled={!worldDraft.trim() || worldBusy}>Save</Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setWorldDraft(null)}>Cancel</Button>
+            </form>}
+          {worldDraft === null && <>
+            <Button size="sm" variant="ghost" icon={<Pencil className="h-3.5 w-3.5" />} disabled={disabled || worldBusy} onClick={() => setWorldDraft(world?.line ?? '')} tooltip="Write the one picture your graphics share. New graphics use it.">Edit</Button>
+            <Button size="sm" variant="ghost" icon={<RefreshCw className="h-3.5 w-3.5" />} loading={worldBusy} disabled={disabled || worldBusy || custom?.running} onClick={() => void worldAgain()} tooltip="Your AI proposes a new visual world from what you say (a small charge). New graphics use it.">{world?.line ? 'Propose again' : 'Propose one'}</Button>
+          </>}
+        </div>}
       </div>
     )}
+    {flats.length > 0 && <div className="glass-tile space-y-1 rounded-2xl px-3 py-2" data-testid="flat-stretches">
+      <p className="text-xs font-semibold text-ink">Flat stretches</p>
+      <p className="text-2xs text-ink-subtle">Where nothing on screen changes for a while. Personal lines are left on your face on purpose.</p>
+      <ul className="space-y-1" aria-label="Flat stretches">
+        {flats.slice(0, 6).map((flat) => {
+          const g = flat.ref ? (decisions.graphics ?? []).find((x) => `g:${x.id}` === flat.ref) : undefined
+          return <li key={`${flat.from}-${flat.why}`} className="flex flex-wrap items-center gap-2 text-2xs text-ink-muted" data-testid="flat-stretch">
+            <span className="tabular-nums text-ink">{clock(flat.from)}–{clock(flat.to)}</span>
+            <span className="min-w-0 flex-1">{flat.why === 'frozen' ? `${g?.template === 'custom' ? 'A custom graphic' : 'A graphic'} holds still for ${(flat.to - flat.from).toFixed(1)} s` : `${(flat.to - flat.from).toFixed(1)} s with nothing new on screen`}</span>
+            {flat.why === 'nothing' && <Button size="sm" variant="ghost" icon={<Plus className="h-3.5 w-3.5" />} disabled={disabled || flat.word === null || designing !== null} onClick={() => addVisual(flat, false)}
+              tooltip="Adds a graphic with the words said here (you can swap or edit it on its beat).">Add a visual here</Button>}
+            {flat.why === 'nothing' && customInfo?.available && decisions.customGraphics !== false && <Button size="sm" variant="ghost" icon={<Wand2 className="h-3.5 w-3.5" />} disabled={disabled || flat.word === null || designing !== null}
+              onClick={() => addVisual(flat, true)} tooltip="Adds a visual here and has your AI design it as a custom graphic (uses your OpenRouter credit).">Design one</Button>}
+            {flat.why === 'frozen' && g && <Button size="sm" variant="ghost" icon={g.template === 'custom' ? <Wand2 className="h-3.5 w-3.5" /> : <Scissors className="h-3.5 w-3.5" />} disabled={disabled || designing !== null}
+              loading={designing === g.id} onClick={() => fixFrozen(flat)} tooltip={g.template === 'custom' ? 'Designs it again so it keeps building there (uses your OpenRouter credit).' : 'Ends it soon after it has settled.'}>{g.template === 'custom' ? 'Fix it' : 'Shorten it'}</Button>}
+          </li>
+        })}
+      </ul>
+    </div>}
     {error && <Callout tone="warning" onDismiss={() => setError(null)}>{error}</Callout>}
 
     <ol className="grid grid-cols-[repeat(auto-fill,minmax(188px,1fr))] gap-3" aria-label="Beats">

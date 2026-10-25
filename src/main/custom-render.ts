@@ -28,7 +28,7 @@ import { createHash, randomUUID } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { BrowserWindow, nativeImage, session, type BrowserWindowConstructorOptions, type Session } from 'electron'
-import { compositionParts, lookCss, MAX_COMPOSITION_CHARS, MAX_COMPOSITION_ELEMENTS, type CustomGeometry, type CustomLook } from '../shared/custom-graphics'
+import { compositionParts, lookCss, MAX_COMPOSITION_CHARS, MAX_COMPOSITION_ELEMENTS, SETTLED_STILL, type CustomGeometry, type CustomLook } from '../shared/custom-graphics'
 import { GRAPHIC_FPS } from '../shared/motion-graphics'
 import { GSAP_SOURCE } from './custom-graphics-assets'
 import { getEnginePath } from './pipeline-runner'
@@ -77,6 +77,8 @@ export interface StillsRequest extends CustomScene {
   frame?: string | null
   /** Size of the saved stills against the frame (0.5: half size). */
   scale: number
+  /** Also measure the motion: frame-to-frame change every this many ms over the whole graphic (absent: not measured). */
+  motionStepMs?: number
 }
 
 export interface StillsResult {
@@ -88,6 +90,25 @@ export interface StillsResult {
   texts: string[]
   /** What our checks found (empty when nothing). */
   problems: string[]
+  /** The motion measure (with motionStepMs): per step, the mean change from the step before (0–1) and whether anything is drawn. */
+  motion?: { change: number[]; visible: boolean[] }
+}
+
+/** Width the band is shrunk to for the motion measure (cheap, and still sees a few pixels of drift). */
+export const MOTION_WIDTH = 180
+
+/**
+ * How much two small BGRA bitmaps of the band differ (mean absolute change per channel, 0–1) and how much of the
+ * second is drawn at all (alpha coverage, 0–1). Plain loops over a 180 px wide thumbnail: a few ms per step.
+ */
+export function bitmapChange(previous: Buffer | null, next: Buffer): { change: number; coverage: number } {
+  let diff = 0, drawn = 0
+  const pixels = next.length >> 2
+  for (let i = 0; i < next.length; i += 4) {
+    if (next[i + 3] > 8) drawn++
+    if (previous) diff += Math.abs(next[i] - previous[i]) + Math.abs(next[i + 1] - previous[i + 1]) + Math.abs(next[i + 2] - previous[i + 2]) + Math.abs(next[i + 3] - previous[i + 3])
+  }
+  return { change: previous && previous.length === next.length ? diff / (pixels * 4 * 255) : 0, coverage: pixels ? drawn / pixels : 0 }
 }
 
 export interface CustomSandbox {
@@ -284,6 +305,12 @@ async function withPage<T>(scene: CustomScene, frame: string | null | undefined,
         if (got.width !== g.width || got.height !== g.height) image = image.resize({ width: g.width, height: g.height, quality: 'best' })
         return image
       },
+      async captureBand(rect) {
+        await timed(w.webContents.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD, [{ code: 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))' }]), FRAME_TIMEOUT_MS, 'The custom graphic stopped responding.', kill)
+        const image = await timed(w.webContents.capturePage(rect), FRAME_TIMEOUT_MS, 'The custom graphic stopped responding.', kill)
+        const small = image.resize({ width: MOTION_WIDTH, height: Math.max(1, Math.round(MOTION_WIDTH * rect.height / Math.max(1, rect.width))), quality: 'good' })
+        return small.toBitmap()
+      },
       async isolated<R>(code: string) { return await timed(w.webContents.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD, [{ code }]), FRAME_TIMEOUT_MS, 'The custom graphic stopped responding.', kill) as R }
     }
     return await work(page)
@@ -296,6 +323,8 @@ async function withPage<T>(scene: CustomScene, frame: string | null | undefined,
 interface Page {
   seek: (ms: number) => Promise<void>
   capture: () => Promise<Electron.NativeImage>
+  /** The band (frame pixels) shrunk to MOTION_WIDTH wide, as a BGRA bitmap. */
+  captureBand: (rect: { x: number; y: number; width: number; height: number }) => Promise<Buffer>
   isolated: <R>(code: string) => Promise<R>
 }
 
@@ -381,7 +410,7 @@ export function openCustomSandbox(): CustomSandbox {
         const transparent: Buffer[] = [], composite: Electron.NativeImage[] = []
         let texts: string[] = []
         const problems: string[] = []
-        const settled = request.times[Math.min(1, request.times.length - 1)]
+        const settled = request.times[Math.min(SETTLED_STILL, request.times.length - 1)]
         const scaleTo = { width: Math.round(request.geometry.width * request.scale), height: Math.round(request.geometry.height * request.scale) }
         for (const t of request.times) {
           await page.seek(t)
@@ -398,7 +427,26 @@ export function openCustomSandbox(): CustomSandbox {
         // Words that appear at other moments count too: every piece of text in the DOM is checked.
         const all = await page.isolated<string[]>(`(() => { const out = []; const w = document.createTreeWalker(document.getElementById('cg-root'), NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())) { const p = n.parentElement; if (p && p.closest('style,script,title,desc')) continue; const t = n.nodeValue.replace(/\\s+/g, ' ').trim(); if (t) out.push(t.slice(0, 200)) } return out.slice(0, 300) })()`)
         texts = [...new Set([...texts, ...(Array.isArray(all) ? all.filter((t): t is string => typeof t === 'string') : [])])]
-        return { transparent, composite: strip(composite, 640), texts, problems }
+        // The motion check: the band alone (no video behind it), every step over the whole graphic, shrunk and compared.
+        let motion: StillsResult['motion']
+        const step = request.motionStepMs
+        if (step && step >= 40) {
+          await page.isolated('(() => { const b = document.getElementById("cg-bg"); if (b) b.style.display = "none"; return true })()')
+          const g = request.geometry
+          const x = Math.max(0, Math.min(g.width - 1, g.root.x)), y = Math.max(0, Math.min(g.height - 1, g.root.y))
+          const rect = { x, y, width: Math.max(1, Math.min(g.width - x, g.root.width)), height: Math.max(1, Math.min(g.height - y, g.root.height)) }
+          const change: number[] = [], visible: boolean[] = []
+          let previous: Buffer | null = null
+          for (let t = 0; t <= request.durationMs; t += step) {
+            await page.seek(t)
+            const bitmap = await page.captureBand(rect)
+            const measured = bitmapChange(previous, bitmap)
+            change.push(measured.change); visible.push(measured.coverage > 0.002)
+            previous = bitmap
+          }
+          motion = { change, visible }
+        }
+        return { transparent, composite: strip(composite, 520), texts, problems, ...(motion ? { motion } : {}) }
       })
     },
     async bake(scene, out, cancelled = () => false) {

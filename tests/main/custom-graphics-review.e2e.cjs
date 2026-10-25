@@ -48,7 +48,14 @@ test('Edit my recording: custom graphics designed on the beat sheet, changed wit
         const user = json.messages[1].content
         const grade = Array.isArray(user)
         const fill = !grade && /fill the text slots/.test(json.messages[0].content[0].text)
-        asked.push({ grade, fill, user: grade ? user.map((p) => p.text ?? '').join('\n') : user, model: json.model })
+        const world = !grade && /ONE visual world/.test(json.messages[0].content[0].text)
+        asked.push({ grade, fill: fill || world, world, user: grade ? user.map((p) => p.text ?? '').join('\n') : user, model: json.model })
+        if (world) {
+          // The video's visual world, from its own words (coaches losing clients, messages waiting).
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ idea: 'Clients leak out of a coach\'s bucket while messages wait in a pile.', elements: ['a leaking bucket', 'message cards', 'client dots'], style: 'flat ink line art', accent: '#9BE35A' }) } }], usage: { cost: 0.004 } }))
+          return
+        }
         if (fill) {
           // My motion library: the slots filled with the same words (they are said here too).
           const values = Object.fromEntries([...user.matchAll(/- (s\d+): "([^"]*)"/g)].map((m) => [m[1], m[2]]))
@@ -136,6 +143,14 @@ test('Edit my recording: custom graphics designed on the beat sheet, changed wit
   const writes = asked.filter((a) => !a.grade && !a.fill)
   assert.equal(writes.length, 1); assert.equal(asked.filter((a) => a.grade).length, 1)
   assert.match(writes[0].user, /Most@/); assert.equal(writes[0].model, 'anthropic/claude-opus-5.5')
+  assert.match(writes[0].user, /STRESSED WORDS .*coaches@/)
+  // The beat sheet shows the video's visual world in one line; the member can write their own.
+  const worldRow = panel.getByTestId('custom-world')
+  await worldRow.getByTestId('custom-world-line').getByText(/leaking bucket/).waitFor()
+  await worldRow.getByRole('button', { name: 'Edit' }).click()
+  await worldRow.getByRole('textbox', { name: 'Visual world' }).fill('A bucket with a hole · bucket, client dots')
+  await worldRow.getByRole('button', { name: 'Save' }).click()
+  await worldRow.getByTestId('custom-world-line').getByText('A bucket with a hole · bucket, client dots').waitFor()
   if (shotPath) {
     await customCard.scrollIntoViewIfNeeded()
     await new Promise((resolve) => setTimeout(resolve, 800))
@@ -184,12 +199,16 @@ test('Edit my recording: custom graphics designed on the beat sheet, changed wit
   assert.ok(fs.readdirSync(path.join(library, run, '.graphics')).some((name) => /^[a-f0-9]{64}\.mov$/.test(name)))
   // The editor shows what it is and its stills, and the template it can go back to.
   const info = await page.evaluate(({ dir, comp }) => window.bridgeclip.editor.customInfo(dir, comp), { dir: path.join(library, run), comp: custom.fields.comp })
-  assert.equal(info.stills.length, 3); assert.ok(['statement', 'fx'].includes(info.fallback.template), info.fallback.template); assert.match(Object.values(info.fallback.fields).join(' '), /Most coaches lose clients/)
+  assert.equal(info.stills.length, 4); assert.ok(['statement', 'fx'].includes(info.fallback.template), info.fallback.template); assert.match(Object.values(info.fallback.fields).join(' '), /Most coaches lose clients/)
   // Designed twice (the first time, and with the note); the third time it came from My motion library (a fill, no new design).
   assert.equal(asked.filter((a) => !a.grade && !a.fill).length, 2)
-  assert.equal(asked.filter((a) => a.fill).length, 1)
+  assert.equal(asked.filter((a) => a.fill && !a.world).length, 1)
+  assert.equal(asked.filter((a) => a.world).length, 1, 'one visual world for the video')
+  assert.match(writes[0].user, /THE VIDEO'S VISUAL WORLD .*leaking bucket/)
+  // Designed again after the member wrote the world: the writer got theirs.
+  assert.match(asked.filter((a) => !a.grade && !a.fill).at(-1).user, /THE VIDEO'S VISUAL WORLD .*A bucket with a hole/)
   const kept = await page.evaluate(() => window.bridgeclip.library.list())
   assert.ok(kept.length >= 1 && kept.every((item) => item.status === 'active'), JSON.stringify(kept))
-  assert.ok(kept.every((item) => item.stills.length === 3), JSON.stringify(kept))
+  assert.ok(kept.every((item) => item.stills.length === 4), JSON.stringify(kept))
   assert.deepEqual(errors, [])
 })

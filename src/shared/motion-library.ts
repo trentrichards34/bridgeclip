@@ -51,7 +51,7 @@ export interface LibraryView {
   reason: string | null
   /** "Used in N videos". */
   uses: number
-  /** Its stills (image paths the page may show): coming in, settled, leaving. */
+  /** Its stills (image paths the page may show): coming in, building, built, leaving. */
   stills: string[]
   slots: number
   durationMs: number
