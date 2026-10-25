@@ -18,6 +18,7 @@ import {
 import { BEAT_SHEET_CHOICES, type BeatSheetChoice } from '../../shared/member-prefs'
 import { MAX_HOOK_TEXT_CHARS, MAX_POPUP_TEXT_CHARS, MAX_CARD_ITEMS, hookTextProblem, reelOrder, reelWordStarts, type EditDecisions, type EditImage, type EditLook, type EditPlan, type EditSource, type EditStatus } from '../../shared/edit-recording'
 import type { EditCustomInfo } from '../../shared/custom-graphics'
+import type { LibraryView } from '../../shared/motion-library'
 import { formatSpendUsd as formatUsd } from '../../shared/spending'
 import { editPatchValues, mergeEditChatSteps, type EditChatPatch } from '../../shared/edit-chat'
 import { MAX_EDIT_GRAPHICS, REEL_GRAPHIC_TEMPLATES, editGraphicFrame, reelGraphicSpec, reelGraphicStyle, type EditGraphic } from '../../shared/reel-graphics'
@@ -132,6 +133,18 @@ export function BeatSheet({ runId, plan, decisions, look, brand, sources, images
     } catch (err) { setError(errorMessage(err, 'That graphic could not be swapped back.')) }
   }
   const customCount = (decisions.graphics ?? []).filter((g) => g.template === 'custom').length
+  // My motion library on a beat ("Swap visual" → My graphics): filled with the words said there.
+  const [libraryBusy, setLibraryBusy] = useState<string | null>(null)
+  const [libraryError, setLibraryError] = useState<string | null>(null)
+  const pickLibrary = (beat: Beat, item: LibraryView): void => {
+    if (beat.word === null) return
+    setLibraryBusy(item.id); setLibraryError(null)
+    void getApi().edit.libraryAdd({ decisions, itemId: item.id, word: beat.word, ...(beat.key.startsWith('g:') ? { replaces: beat.key.slice(2) } : {}) }).then((result) => {
+      if (!result.made) { setLibraryError('It didn’t fit what you say here. Try another, or a built-in graphic.'); return }
+      onChange((current) => ({ ...current, graphics: result.graphics }))
+      setSwapping(null)
+    }).catch((err: unknown) => setLibraryError(errorMessage(err))).finally(() => setLibraryBusy(null))
+  }
 
   // A removed beat that comes back another way (the chat, the details view) leaves the removed list.
   useEffect(() => { setRemoved((list) => list.some((r) => beats.some((b) => b.key === r.beat.key)) ? list.filter((r) => !beats.some((b) => b.key === r.beat.key)) : list) }, [beats])
@@ -299,7 +312,8 @@ export function BeatSheet({ runId, plan, decisions, look, brand, sources, images
     {swapping && <GraphicGallery title="Swap the visual" templates={REEL_GRAPHIC_TEMPLATES} where={`on beat ${shown.find((s) => s.beat.key === swapping.key)?.number ?? swapping.number}, as you say “${swapping.words.split(' ').slice(0, 6).join(' ')}”`}
       style={style} full={false} limitNote="" prefill={(template) => wordsAtPlayhead(template, line(swapping))}
       prefillEffect={(effect) => prefillEffect(effect, [], 0, { line: line(swapping) }).fields}
-      onPick={(template, pick) => swap(swapping, template, template === 'fx' ? pick : undefined)} onClose={() => setSwapping(null)} />}
+      onPick={(template, pick) => swap(swapping, template, template === 'fx' ? pick : undefined)} onClose={() => { setSwapping(null); setLibraryError(null) }}
+      library={chatReady && swapping.word !== null ? { onPick: (item) => pickLibrary(swapping, item), busy: libraryBusy, error: libraryError } : undefined} />}
     {editing && <BeatTextDialog beat={editing} number={shown.find((s) => s.beat.key === editing.key)?.number ?? editing.number} plan={plan} decisions={decisions}
       onSave={(change) => { onChange((current) => editBeatText(current, editing, change)); setEditing(null) }} onClose={() => setEditing(null)} />}
     {previewing && <BeatPreview beat={previewing} number={shown.find((s) => s.beat.key === previewing.key)?.number ?? previewing.number} plan={plan} decisions={decisions} look={look} brand={brand}

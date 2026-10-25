@@ -103,7 +103,7 @@ const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8
 const escapeAttr = (text: string): string => text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 
 /** Runs before the composition: collects its errors. */
-const PRE_SCRIPT = 'window.__cgErrors=[];window.addEventListener("error",function(e){window.__cgErrors.push(String(e&&e.message||"error").slice(0,200))});'
+const PRE_SCRIPT = 'window.__cgErrors=[];window.addEventListener("error",function(e){window.__cgErrors.push(String(e&&e.message||"error").slice(0,200))});document.addEventListener("securitypolicyviolation",function(e){window.__cgErrors.push(("blocked "+e.violatedDirective+" "+(e.blockedURI||"")).slice(0,200))});'
 /** Runs after it: the seek API our main process calls (in the page's world, where the timelines are). */
 const POST_SCRIPT = `(function(){var tls=Array.isArray(window.__timelines)?window.__timelines.slice(0,8):[];
 var ok=tls.length>0&&tls.every(function(t){return t&&typeof t.seek==='function'&&typeof t.pause==='function'});
@@ -256,8 +256,16 @@ async function withPage<T>(scene: CustomScene, frame: string | null | undefined,
     w.webContents.on('will-redirect', (event) => event.preventDefault())
     w.webContents.on('will-attach-webview', (event) => event.preventDefault())
     await timed(w.loadURL(`${ORIGIN}/doc/${token}.html`), LOAD_TIMEOUT_MS, 'The custom graphic took too long to load.', kill)
-    const state = await timed(w.webContents.executeJavaScript('window.__cg ? { ok: window.__cg.ok, errors: window.__cg.errors } : { ok: false, errors: ["no runtime"] }'), FRAME_TIMEOUT_MS, 'The custom graphic stopped responding.', kill) as { ok: boolean; errors: string[] }
-    if (!state.ok) throw new Error(`The custom graphic's timeline didn't start${state.errors?.length ? ` (${String(state.errors[0]).slice(0, 160)})` : ''}.`)
+    // The load can settle before the last script ran (a blocked subresource ends loading early): wait for our runtime.
+    let state: { ok: boolean; errors: string[]; ready: boolean } = { ok: false, errors: ['no runtime'], ready: false }
+    for (let i = 0; i < 40 && !state.ready; i++) {
+      if (i) await new Promise((resolve) => setTimeout(resolve, 100))
+      state = await timed(w.webContents.executeJavaScript('window.__cg ? { ok: window.__cg.ok, errors: window.__cg.errors, ready: true } : { ok: false, errors: ["no runtime"], ready: false }'), FRAME_TIMEOUT_MS, 'The custom graphic stopped responding.', kill) as typeof state
+    }
+    if (!state.ok) {
+      const seen = state.ready ? '' : await timed(w.webContents.executeJavaScript('JSON.stringify({ state: document.readyState, pre: Array.isArray(window.__cgErrors) ? window.__cgErrors.slice(0, 3) : null, gsap: typeof window.gsap, timelines: Array.isArray(window.__timelines) })'), FRAME_TIMEOUT_MS, 'The custom graphic stopped responding.', kill).catch(() => '') as string
+      throw new Error(`The custom graphic's timeline didn't start${state.errors?.length ? ` (${String(state.errors[0]).slice(0, 160)})` : ''}.${seen ? ` ${seen.slice(0, 300)}` : ''}`)
+    }
     const count = await timed(w.webContents.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD, [{ code: 'document.getElementsByTagName("*").length' }]), FRAME_TIMEOUT_MS, 'The custom graphic stopped responding.', kill) as number
     if (typeof count !== 'number' || count > MAX_COMPOSITION_ELEMENTS) throw new Error(`The custom graphic draws too many elements (${count}).`)
     // The frame behind the composite stills (and any data: picture) is decoded before the first capture.

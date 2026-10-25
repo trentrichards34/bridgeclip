@@ -735,6 +735,8 @@ export interface CustomMeta {
   look: CustomLook
   costUsd: number
   createdAt: string
+  /** The library graphic it was filled from, if any. */
+  library?: string
 }
 
 const COLOR = /^(#[0-9a-fA-F]{6}|rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*(,\s*[\d.]+\s*)?\)|transparent)$/
@@ -775,7 +777,8 @@ export function parseCustomMeta(value: unknown): CustomMeta | null {
     grade: { pass: grade.pass === true, score: num(grade.score, 0, 10) ?? 0, failed: Array.isArray(grade.failed) ? (grade.failed as unknown[]).filter((x): x is GradeCheckId => typeof x === 'string').slice(0, 7) : [],
       fixes: Array.isArray(grade.fixes) ? (grade.fixes as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, 6) : [] },
     ...(typeof v.note === 'string' && v.note ? { note: v.note.slice(0, MAX_NOTE_CHARS) } : {}),
-    fallback, look, costUsd: num(v.costUsd, 0, 100) ?? 0, createdAt: typeof v.createdAt === 'string' ? v.createdAt.slice(0, 40) : ''
+    fallback, look, costUsd: num(v.costUsd, 0, 100) ?? 0, createdAt: typeof v.createdAt === 'string' ? v.createdAt.slice(0, 40) : '',
+    ...(typeof v.library === 'string' && CUSTOM_COMP.test(v.library) ? { library: v.library } : {})
   }
 }
 

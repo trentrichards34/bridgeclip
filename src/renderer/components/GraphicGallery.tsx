@@ -19,6 +19,9 @@ import { FX_EFFECTS, FX_GROUPS, fxEffect, fxHasContent, fxNeedsPicture, fxPictur
 import { FX_SAMPLE_PICTURES } from '../graphics/fx/samples'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
+import { Segmented } from './ui/Segmented'
+import { MotionLibraryGrid } from './MotionLibrary'
+import type { LibraryView } from '../../shared/motion-library'
 import './graphic-gallery.css'
 
 /** Each template's icon (the gallery, the timeline blocks and the preview toolbar). */
@@ -65,7 +68,7 @@ export function galleryEffects(pictures: boolean): FxEffect[] {
   return FX_EFFECTS.filter((e) => pictures || !fxNeedsPicture(e))
 }
 
-export function GraphicGallery({ templates, where, style, prefill, prefillEffect, full, limitNote, looks = false, pictures = false, title = 'Add a graphic', onPick, onLogo, onClose }: {
+export function GraphicGallery({ templates, where, style, prefill, prefillEffect, full, limitNote, looks = false, pictures = false, title = 'Add a graphic', onPick, onLogo, library, onClose }: {
   templates: readonly GalleryTemplate[]
   /** Where it goes, in words ("at 0:03.2, on “three things”"). */
   where: string
@@ -87,9 +90,12 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
   onPick: (template: GraphicTemplateId, look?: string) => void
   /** One of My logos picked (a Logo pop with it); the row shows only when the member has logos. */
   onLogo?: (logo: LogoSummary) => void
+  /** My motion library as a tab (the member's custom graphics, to add here filled with the words said). */
+  library?: { onPick: (item: LibraryView) => void; busy?: string | null; error?: string | null }
   onClose: () => void
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
+  const [tab, setTab] = useState<'builtin' | 'library'>('builtin')
   // The look a tile previews while the pointer (or focus) is on one of its look buttons.
   const [peek, setPeek] = useState<{ id: GraphicTemplateId; look: string } | null>(null)
   const search = useRef<HTMLInputElement>(null)
@@ -126,7 +132,11 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
           onKeyDown={(e) => { if (e.key === 'Enter' && (first || firstEffect) && !full) { e.preventDefault(); if (first) onPick(first.id); else if (firstEffect) onPick('fx', firstEffect.id) } }} /></label>
       <Button size="sm" variant="ghost" iconOnly icon={<X size={15} />} aria-label="Close" onClick={onClose} />
     </header>
-    <section className="graphic-gallery-body" aria-label="Choose a graphic">
+    {library && <div className="px-4 pt-2"><Segmented size="sm" label="Gallery" value={tab} onChange={setTab} options={[{ value: 'builtin', label: 'Built-in graphics and effects' }, { value: 'library', label: 'My graphics' }]} /></div>}
+    {library && tab === 'library' ? <section className="graphic-gallery-body" aria-label="My motion library">
+      {library.error && <p role="alert" className="graphic-gallery-note text-danger">{library.error}</p>}
+      <MotionLibraryGrid onPick={full ? undefined : library.onPick} busy={library.busy ?? null} />
+    </section> : <section className="graphic-gallery-body" aria-label="Choose a graphic">
       {full && <p role="note" className="graphic-gallery-note">{limitNote}</p>}
       {onLogo && !full && !query.trim() && <div className="graphic-gallery-group" role="group" aria-label="My logos"><LogoPickRow label="My logos: pops in on a white tile" onPick={onLogo} /></div>}
       {groups.map((group) => <div key={group.id} className={cn('graphic-gallery-group', `group-${group.id}`)} role="group" aria-label={group.label}>
@@ -163,7 +173,7 @@ export function GraphicGallery({ templates, where, style, prefill, prefillEffect
         })}</div>
       </div>)}
       {!groups.length && !effectGroups.length && <p className="graphic-gallery-note">No graphic matches “{query.trim()}”. Try a word like stat, list, steps, quote or words.</p>}
-    </section>
+    </section>}
   </Dialog>
 }
 

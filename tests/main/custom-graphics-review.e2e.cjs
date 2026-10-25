@@ -47,7 +47,15 @@ test('Edit my recording: custom graphics designed on the beat sheet, changed wit
         const json = JSON.parse(body)
         const user = json.messages[1].content
         const grade = Array.isArray(user)
-        asked.push({ grade, user: grade ? user.map((p) => p.text ?? '').join('\n') : user, model: json.model })
+        const fill = !grade && /fill the text slots/.test(json.messages[0].content[0].text)
+        asked.push({ grade, fill, user: grade ? user.map((p) => p.text ?? '').join('\n') : user, model: json.model })
+        if (fill) {
+          // My motion library: the slots filled with the same words (they are said here too).
+          const values = Object.fromEntries([...user.matchAll(/- (s\d+): "([^"]*)"/g)].map((m) => [m[1], m[2]]))
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ fits: true, values }) } }], usage: { cost: 0.002 } }))
+          return
+        }
         const seconds = grade ? '' : /data-duration="([\d.]+)"/.exec(user)?.[1] ?? '2.50'
         const content = grade ? '{"pass": true, "score": 8, "failed": [], "fixes": []}'
           : '```html\n' + COMPOSITION.replace(/data-duration="[\d.]+"/, `data-duration="${seconds}"`).replace('Most coaches', asked.filter((a) => !a.grade).length > 1 ? 'Most coaches  ' : 'Most coaches') + '\n```'
@@ -125,7 +133,7 @@ test('Edit my recording: custom graphics designed on the beat sheet, changed wit
   await customCard.locator('.editor-graphic-view img').first().waitFor({ state: 'attached' })
   await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="beat-card"] .editor-graphic-view img')].some((img) => img.complete && img.naturalWidth > 0 && getComputedStyle(img).display !== 'none'), null, { timeout: 30000 })
   assert.match(await customCard.getByTestId('beat-shown').innerText(), /^Custom graphic: Drawn for the key line/)
-  const writes = asked.filter((a) => !a.grade)
+  const writes = asked.filter((a) => !a.grade && !a.fill)
   assert.equal(writes.length, 1); assert.equal(asked.filter((a) => a.grade).length, 1)
   assert.match(writes[0].user, /Most@/); assert.equal(writes[0].model, 'anthropic/claude-opus-5.5')
   if (shotPath) {
@@ -142,15 +150,25 @@ test('Edit my recording: custom graphics designed on the beat sheet, changed wit
   await sheet.getByRole('button', { name: 'Design again' }).click()
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="beat-custom-badge"]').length === 1 && !document.querySelector('[data-testid="beat-sheet"] button[aria-busy="true"]'))
   await new Promise((resolve) => setTimeout(resolve, 500))
-  const second = asked.filter((a) => !a.grade).at(-1)
+  const second = asked.filter((a) => !a.grade && !a.fill).at(-1)
   assert.match(second.user, /THE CREATOR'S NOTE FOR THIS GRAPHIC.*make the words bigger/)
   // Use the template: back to the planned statement.
   await sheet.getByRole('button', { name: /^Use the template on beat / }).click()
   await badge.waitFor({ state: 'detached' })
   await sheet.getByTestId('beat-shown').getByText(/Most coaches lose clients\./).waitFor()
-  // Designed again, then the reel: its editor project carries the custom graphic, drawn in the bake.
-  await panel.getByTestId('custom-graphics-design').click()
-  await badge.waitFor({ timeout: 120000 })
+  // My motion library: the swap gallery's My graphics tab shows the kept graphics as moving tiles; Add fills one with
+  // the words said on this beat (a small call, no new design).
+  const back = (await keys()).findIndex((key) => key.startsWith('g:')) + 1
+  await sheet.getByRole('button', { name: `Swap the visual of beat ${back}`, exact: true }).click()
+  const gallery = page.getByRole('dialog', { name: 'Swap the visual' })
+  await gallery.getByRole('radio', { name: 'My graphics' }).click()
+  const tiles = gallery.getByTestId('library-tile')
+  await tiles.first().waitFor()
+  await gallery.getByText(/Used in 1 video/).first().waitFor()
+  await tiles.first().getByRole('button', { name: /^Add library graphic/ }).click()
+  await gallery.waitFor({ state: 'detached', timeout: 120000 })
+  await badge.waitFor({ timeout: 60000 })
+  // Then the reel: its editor project carries the custom graphic, drawn in the bake.
   await page.getByRole('button', { name: 'Looks good, render' }).click()
   await page.getByText('Your reel is ready').waitFor({ timeout: 300000 })
   const run = fs.readdirSync(library).find((name) => /^edit-[0-9a-f-]{36}$/.test(name))
@@ -167,7 +185,11 @@ test('Edit my recording: custom graphics designed on the beat sheet, changed wit
   // The editor shows what it is and its stills, and the template it can go back to.
   const info = await page.evaluate(({ dir, comp }) => window.bridgeclip.editor.customInfo(dir, comp), { dir: path.join(library, run), comp: custom.fields.comp })
   assert.equal(info.stills.length, 3); assert.ok(['statement', 'fx'].includes(info.fallback.template), info.fallback.template); assert.match(Object.values(info.fallback.fields).join(' '), /Most coaches lose clients/)
-  // No more designing at render: it was made in the review (one design and one grade per pass, three passes).
-  assert.equal(asked.filter((a) => !a.grade).length, 3)
+  // Designed twice (the first time, and with the note); the third time it came from My motion library (a fill, no new design).
+  assert.equal(asked.filter((a) => !a.grade && !a.fill).length, 2)
+  assert.equal(asked.filter((a) => a.fill).length, 1)
+  const kept = await page.evaluate(() => window.bridgeclip.library.list())
+  assert.ok(kept.length >= 1 && kept.every((item) => item.status === 'active'), JSON.stringify(kept))
+  assert.ok(kept.every((item) => item.stills.length === 3), JSON.stringify(kept))
   assert.deepEqual(errors, [])
 })

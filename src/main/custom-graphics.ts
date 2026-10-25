@@ -11,13 +11,15 @@
  */
 import { createHash, randomUUID } from 'crypto'
 import { lstatSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { basename, join } from 'path'
 import {
   CUSTOM_DIR, DEFAULT_PRICE, MAX_COMPOSITION_CHARS, STILL_SCALE, callCost, checkComposition, customGeometry, customIdea, customLook, saidIndex, customStillNames, extractComposition, graderSystemPrompt, graderUserPrompt,
   isCustomComp, parseCustomMeta, parseGrade, stillTimes, unsaidOnScreen, writerSystemPrompt, writerUserPrompt,
-  type CustomFallback, type CustomGeometry, type CustomGrade, type CustomLook, type CustomMeta, type SaidIndex, type WriterBrief
+  type CustomFallback, type CustomFrameKind, type CustomGeometry, type CustomGrade, type CustomLook, type CustomMeta, type HeroKind, type SaidIndex, type WriterBrief
 } from '../shared/custom-graphics'
 import { customSandbox, type CustomSandbox } from './custom-render'
+import { keepInLibrary, libraryMatch, noteLibraryUse, readLibraryTemplate } from './motion-library'
+import { fillSystemPrompt, fillTemplate, fillUserPrompt, parseFill, type LibraryItem } from '../shared/motion-library'
 import type { GraphicRenderSpec, TimedWord } from '../shared/motion-graphics'
 import type { GraphicJob } from './graphics-render'
 import { app } from 'electron'
@@ -44,7 +46,7 @@ export interface ModelRequest {
   maxTokens: number
   temperature: number
   /** Which call this is (the fake model in tests answers by it). */
-  purpose: 'write' | 'grade'
+  purpose: 'write' | 'grade' | 'fill'
   signal?: AbortSignal
 }
 export interface ModelReply { text: string; costUsd: number }
@@ -153,10 +155,14 @@ export interface ProduceInput {
   maxRevisions: number
   /** Grade the stills with the model (it can see pictures); false: only our own checks decide. */
   grade?: boolean
+  /** Use this library graphic (the member picked it): filled with these words, or nothing. */
+  libraryItem?: string
 }
 
 export interface ProduceResult {
   meta: CustomMeta | null
+  /** The library graphic it was made from (filled with these words), if any. */
+  library?: string
   costUsd: number
   tries: number
   /** Why none was kept (the last problems), when none was. */
@@ -165,39 +171,40 @@ export interface ProduceResult {
 
 interface Attempt { html: string; grade: CustomGrade; stills: Buffer[]; review: Buffer }
 
-/** One custom graphic, written, rendered, graded and revised. Never throws for a bad composition: it returns no meta. */
-export async function produceCustomGraphic(input: ProduceInput, deps: { call: ModelCall; sandbox?: CustomSandbox; signal?: AbortSignal; onTry?: (n: number) => void }): Promise<ProduceResult> {
+/** My motion library, as the producer uses it (motion-library.ts; tests pass their own). */
+export interface LibraryHooks {
+  /** The best library graphic for a moment, or null. */
+  match: (kind: HeroKind, frame: CustomFrameKind, durationMs: number) => { item: LibraryItem; template: string } | null
+  /** One library graphic by id (the member picked it in the gallery). */
+  get: (id: string) => { item: LibraryItem; template: string } | null
+  keep: (input: Parameters<typeof keepInLibrary>[0]) => void
+  used: (id: string, runId: string) => void
+}
+
+/**
+ * One custom graphic: first a library graphic filled with the new words (when one fits), else written, rendered,
+ * graded and revised. A new one that passes joins the library; one that never passes is kept there as Retired.
+ * Never throws for a bad composition: it returns no meta.
+ */
+export async function produceCustomGraphic(input: ProduceInput, deps: { call: ModelCall; sandbox?: CustomSandbox; signal?: AbortSignal; onTry?: (n: number) => void; library?: LibraryHooks }): Promise<ProduceResult> {
   const sandbox = deps.sandbox ?? customSandbox()
   const { brief } = input
   const expect = { width: brief.geometry.root.width, height: brief.geometry.root.height, durationMs: brief.durationMs }
   const times = stillTimes(brief.durationMs, brief.cues.filter((c) => c.at >= 0).map((c) => c.at * 1000))
-  const system = writerSystemPrompt()
+  const runId = basename(input.run)
   let costUsd = 0, tries = 0
   let best: Attempt | null = null
-  let previous: { html: string; fixes: string[] } | undefined
   let reason = ''
-  for (let attempt = 0; attempt <= input.maxRevisions; attempt++) {
-    if (deps.signal?.aborted) throw new Error('Canceled.')
-    tries++
-    deps.onTry?.(tries)
-    const reply = await deps.call({ model: input.model, system, user: writerUserPrompt(brief, previous), maxTokens: 6000, temperature: attempt ? 0.4 : 0.7, purpose: 'write', signal: deps.signal })
-    costUsd += reply.costUsd
-    const html = extractComposition(reply.text)
-    const problems = checkComposition(html, expect)
-    if (problems.length) {
-      reason = problems.join(' ')
-      logger.info('custom.rejected', { problems: problems.slice(0, 4) })
-      previous = { html: html.slice(0, MAX_COMPOSITION_CHARS), fixes: problems }
-      continue
-    }
+  const keep = (attempt: Attempt): void => { if (!best || (attempt.grade.pass && !best.grade.pass) || (attempt.grade.pass === best.grade.pass && attempt.grade.score > best.grade.score)) best = attempt }
+  /** Render the stills, run our checks and the grade. Null when it couldn't be drawn (`reason` says why). */
+  const look = async (html: string): Promise<Attempt | null> => {
     let shot
     try {
       shot = await sandbox.stills({ html, geometry: brief.geometry, look: brief.look, durationMs: brief.durationMs, times, frame: input.frame, logo: input.logo ?? null, scale: STILL_SCALE })
     } catch (error) {
       reason = String((error as Error)?.message ?? error).slice(0, 200)
       logger.info('custom.render.failed', { message: reason })
-      previous = { html, fixes: [reason, 'Keep the script simple: build the timeline once, no loops that run long, fewer elements.'] }
-      continue
+      return null
     }
     const unsaid = unsaidOnScreen(shot.texts, input.said)
     const machine = [...shot.problems, ...(unsaid.length ? [`These words or numbers on screen were not said: ${unsaid.map((w) => `“${w}”`).join(', ')}. Use only words and numbers from the transcript.`] : [])]
@@ -210,23 +217,82 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
     }
     // Our own checks are hard rules: any of them fails the graphic, whatever the grade says.
     const final: CustomGrade = machine.length ? { pass: false, score: Math.min(grade.score, 6), failed: [...new Set([...grade.failed, ...(unsaid.length ? ['words' as const] : []), ...(shot.problems.length ? ['clipped' as const] : [])])], fixes: [...machine, ...grade.fixes].slice(0, 8) } : grade
-    const current: Attempt = { html, grade: final, stills: shot.transparent, review: shot.composite }
-    if (!best || (final.pass && !best.grade.pass) || (final.pass === best.grade.pass && final.score > best.grade.score)) best = current
-    if (final.pass) break
-    reason = final.fixes.join(' ')
-    previous = { html, fixes: final.fixes }
+    if (!final.pass) reason = final.fixes.join(' ')
+    return { html, grade: final, stills: shot.transparent, review: shot.composite }
   }
-  if (!best?.grade.pass) {
+
+  // My motion library first: a graphic of this kind, filled with the new words (a small call), when one fits.
+  let fromLibrary: string | null = null
+  // A note asks for a change: it is designed again, not filled from the library.
+  const reuse = deps.library && (!brief.note || input.libraryItem) ? (input.libraryItem ? deps.library.get(input.libraryItem) : deps.library.match(brief.kind, brief.frame, brief.durationMs)) : null
+  if (reuse) {
+    const reply = await deps.call({ model: input.model, system: fillSystemPrompt(), user: fillUserPrompt(reuse.item, { words: input.words, before: brief.before, after: brief.after, note: brief.note }),
+      maxTokens: 700, temperature: 0, purpose: 'fill', signal: deps.signal })
+    costUsd += reply.costUsd
+    const fill = parseFill(reply.text, reuse.item.slots)
+    let html = ''
+    if (fill.fits) { try { html = fillTemplate(reuse.template, fill.values, brief.durationMs) } catch { html = '' } }
+    if (html && !checkComposition(html, expect).length) {
+      tries++
+      deps.onTry?.(tries)
+      const attempt = await look(html)
+      if (attempt?.grade.pass) { best = attempt; fromLibrary = reuse.item.id }
+    } else reason = 'Your library graphic doesn’t fit what is said here.'
+    if (!fromLibrary && input.libraryItem) return { meta: null, costUsd, tries, reason: reason || 'Your library graphic doesn’t fit what is said here.' }
+  }
+
+  if (!fromLibrary) {
+    const system = writerSystemPrompt()
+    let previous: { html: string; fixes: string[] } | undefined
+    for (let attempt = 0; attempt <= input.maxRevisions; attempt++) {
+      if (deps.signal?.aborted) throw new Error('Canceled.')
+      tries++
+      deps.onTry?.(tries)
+      const reply = await deps.call({ model: input.model, system, user: writerUserPrompt(brief, previous), maxTokens: 6000, temperature: attempt ? 0.4 : 0.7, purpose: 'write', signal: deps.signal })
+      costUsd += reply.costUsd
+      const html = extractComposition(reply.text)
+      const problems = checkComposition(html, expect)
+      if (problems.length) {
+        reason = problems.join(' ')
+        logger.info('custom.rejected', { problems: problems.slice(0, 4) })
+        previous = { html: html.slice(0, MAX_COMPOSITION_CHARS), fixes: problems }
+        continue
+      }
+      const current = await look(html)
+      if (!current) { previous = { html, fixes: [reason, 'Keep the script simple: build the timeline once, no loops that run long, fewer elements.'] }; continue }
+      keep(current)
+      if (current.grade.pass) break
+      previous = { html, fixes: current.grade.fixes }
+    }
+  }
+  const kept = best as Attempt | null
+  if (!kept?.grade.pass) {
     logger.info('custom.fallback', { tries, reason: reason.slice(0, 200) })
+    // The best try is kept in the library as Retired, with the check's reason (never offered again).
+    if (kept && deps.library) deps.library.keep({ id: compositionId(kept.html), html: kept.html, kind: brief.kind, frame: brief.frame, width: expect.width, height: expect.height, durationMs: brief.durationMs,
+      idea: customIdea(brief.kind), runId, stills: [], stillData: kept.stills, status: 'retired', reason: reason || 'It did not pass the review.' })
     return { meta: null, costUsd, tries, reason: reason || 'It did not pass the review.' }
   }
   const meta: CustomMeta = {
-    comp: compositionId(best.html), kind: brief.kind, frame: brief.frame, width: expect.width, height: expect.height, durationMs: brief.durationMs, words: input.words.slice(0, 2000),
-    idea: customIdea(brief.kind), model: input.model, tries, grade: best.grade, ...(brief.note ? { note: brief.note } : {}), fallback: input.fallback, look: brief.look,
-    costUsd: Math.round(costUsd * 10000) / 10000, createdAt: new Date().toISOString()
+    comp: compositionId(kept.html), kind: brief.kind, frame: brief.frame, width: expect.width, height: expect.height, durationMs: brief.durationMs, words: input.words.slice(0, 2000),
+    idea: customIdea(brief.kind), model: input.model, tries, grade: kept.grade, ...(brief.note ? { note: brief.note } : {}), fallback: input.fallback, look: brief.look,
+    costUsd: Math.round(costUsd * 10000) / 10000, createdAt: new Date().toISOString(), ...(fromLibrary ? { library: fromLibrary } : {})
   }
-  saveCustomGraphic(input.run, best.html, meta, best.stills, best.review)
-  return { meta, costUsd, tries }
+  saveCustomGraphic(input.run, kept.html, meta, kept.stills, kept.review)
+  if (deps.library) {
+    if (fromLibrary) deps.library.used(fromLibrary, runId)
+    else {
+      const dir = customDir(input.run)
+      deps.library.keep({ id: meta.comp, html: kept.html, kind: brief.kind, frame: brief.frame, width: expect.width, height: expect.height, durationMs: brief.durationMs, idea: meta.idea, runId,
+        stills: customStillNames(meta.comp).map((name) => join(dir, name)), status: 'active' })
+    }
+  }
+  return { meta, costUsd, tries, ...(fromLibrary ? { library: fromLibrary } : {}) }
+}
+
+/** The member's library as the producer uses it (motion-library.ts). */
+export const memberLibrary: LibraryHooks = {
+  match: libraryMatch, get: readLibraryTemplate, keep: keepInLibrary, used: noteLibraryUse
 }
 
 /** Run `work` over `items`, `limit` at a time, in order of results. */

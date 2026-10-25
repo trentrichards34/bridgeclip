@@ -222,3 +222,80 @@ test('the loop: unsaid words and refused code are fixed or dropped (the template
   assert.ok(!fs.existsSync(path.join(run, '.graphics', 'custom')))
   fs.rmSync(run, { recursive: true, force: true })
 })
+
+// ---------------------------------------------------------------------------
+// My motion library
+// ---------------------------------------------------------------------------
+
+const lib = loadMain("export * from './src/shared/motion-library'")
+
+test('library templates: every text becomes a slot, filling escapes words and sets the length, a fill must fit', () => {
+  const html = read('staircase.html')
+  const { template, slots } = lib.parameterize(html)
+  assert.deepEqual(plain(slots.map((s) => s.sample)), ['only three things', 'a product', 'an offer', 'attract', 'eyeballs'])
+  assert.ok(!template.includes('>a product<') && template.includes('>{{s2}}<'))
+  // Style and script are left alone.
+  assert.ok(template.includes("tl.from('#cg-root .title'"))
+  const filled = lib.fillTemplate(template, { s1: 'two things', s2: 'a list', s3: 'an <offer>', s4: 'get', s5: 'buyers' }, 9000)
+  assert.ok(filled.includes('an &lt;offer&gt;') && filled.includes('data-duration="9.00"'))
+  assert.deepEqual(shared.checkComposition(filled, { width: 1080, height: 1267, durationMs: 9000 }), [])
+  assert.throws(() => lib.fillTemplate(template, { s1: 'x' }, 9000), /Slot s2/)
+  const fit = lib.parseFill('{"fits": true, "values": {"s1": "two things", "s2": "a list", "s3": "an offer", "s4": "get", "s5": "buyers"}}', slots)
+  assert.equal(fit.fits, true)
+  assert.equal(lib.parseFill('{"fits": true, "values": {"s1": "a much much much much longer line than before"}}', slots).fits, false)
+  assert.equal(lib.parseFill('{"fits": false}', slots).fits, false)
+  // Candidates: active, same kind and frame, about the same length, most used first.
+  const item = (id, extra) => ({ id, kind: 'process', frame: 'visual', width: 1080, height: 1267, durationMs: 12000, tags: [], slots, idea: 'x', status: 'active', usedIn: ['r1'], createdAt: '2026-10-25', ...extra })
+  const list = [item('a'.repeat(16), { usedIn: ['r1', 'r2'] }), item('b'.repeat(16), { status: 'retired' }), item('c'.repeat(16), { frame: 'stage' }), item('d'.repeat(16), { durationMs: 4000 }), item('e'.repeat(16))]
+  assert.deepEqual(lib.libraryCandidates(list, 'process', 'visual', 13000).map((i) => i.id), ['a'.repeat(16), 'e'.repeat(16)])
+})
+
+test('the library in the loop: a passed graphic is kept, the next fitting moment fills it (no new design), a failure is retired', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'motion-library-'))
+  const electron = { app: { isPackaged: false, getPath: () => root } }
+  const libMain = loadMain("export * from './src/main/motion-library'", { electron, './security': { authorizeMedia: (p) => p }, './logger': { logger: { info() {}, warn() {} } } })
+  libMain.setLibraryRoot(path.join(root, 'motion-library'))
+  const m = mainModule()
+  const hooks = { match: libMain.libraryMatch, get: libMain.readLibraryTemplate, keep: libMain.keepInLibrary, used: libMain.noteLibraryUse }
+  const html = read('staircase.html')
+  const purposes = []
+  const call = async (request) => {
+    purposes.push(request.purpose)
+    if (request.purpose === 'grade') return { text: '{"pass": true, "score": 8, "failed": [], "fixes": []}', costUsd: 0.02 }
+    if (request.purpose === 'fill') return { text: '{"fits": true, "values": {"s1": "only three things", "s2": "a product", "s3": "an offer", "s4": "attract", "s5": "eyeballs"}}', costUsd: 0.004 }
+    return { text: '```html\n' + html + '\n```', costUsd: 0.08 }
+  }
+  const sandbox = { stills: async () => ({ transparent: [Buffer.from('p0'), Buffer.from('p1'), Buffer.from('p2')], composite: Buffer.from('j'), texts: ['only three things', 'a product'], problems: [] }) }
+  const input = (run) => ({ run, brief: brief('Staircase', 'process', 'visual', 13030), words: 'a product an offer attract eyeballs', said: shared.saidIndex(RUN.words), frame: null, fallback: null, model: 'm/x', maxRevisions: 2 })
+  const runA = path.join(root, 'edit-a'), runB = path.join(root, 'edit-b')
+  fs.mkdirSync(runA); fs.mkdirSync(runB)
+  const first = await m.produceCustomGraphic(input(runA), { call, sandbox, library: hooks })
+  assert.ok(first.meta && !first.library)
+  assert.deepEqual(purposes, ['write', 'grade'])
+  const view = libMain.libraryView()
+  assert.equal(view.length, 1); assert.equal(view[0].status, 'active'); assert.equal(view[0].uses, 1); assert.equal(view[0].stills.length, 3)
+  // The next video: the same kind of moment is filled from the library (a small call), not designed again.
+  purposes.length = 0
+  const second = await m.produceCustomGraphic(input(runB), { call, sandbox, library: hooks })
+  assert.equal(second.library, view[0].id)
+  assert.deepEqual(purposes, ['fill', 'grade'])
+  assert.ok(second.costUsd < 0.03)
+  assert.equal(libMain.libraryView()[0].uses, 2)
+  // A note asks for a change: designed again, not filled.
+  purposes.length = 0
+  await m.produceCustomGraphic({ ...input(runB), brief: { ...brief('Staircase', 'process', 'visual', 13030), note: 'use a ladder' } }, { call, sandbox, library: hooks })
+  assert.equal(purposes[0], 'write')
+  // Retire it: not offered any more; restore brings it back.
+  libMain.setLibraryStatus(view[0].id, 'retired')
+  assert.equal(libMain.libraryMatch('process', 'visual', 13030), null)
+  libMain.setLibraryStatus(view[0].id, 'active')
+  assert.ok(libMain.libraryMatch('process', 'visual', 13030))
+  // One that never passes is kept as Retired, with the reason.
+  const failing = async (request) => request.purpose === 'grade' ? { text: '{"pass": false, "score": 4, "failed": ["design"], "fixes": ["Too busy."]}', costUsd: 0.02 }
+    : { text: '```html\n' + read('proof.html') + '\n```', costUsd: 0.08 }
+  const failed = await m.produceCustomGraphic({ ...input(runB), brief: brief('Stat', 'proof', 'stage', 4500), maxRevisions: 1 }, { call: failing, sandbox, library: hooks })
+  assert.equal(failed.meta, null)
+  const retired = libMain.libraryView().find((i) => i.status === 'retired')
+  assert.ok(retired && /Too busy/.test(retired.reason))
+  fs.rmSync(root, { recursive: true, force: true })
+})

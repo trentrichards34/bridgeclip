@@ -13,7 +13,8 @@ import { chatEstimateUsd, chatInfo, chatModel, editorChat, readChatTranscript, r
 import { editChatInfo, editRecordingChat, resetEditChat } from './edit-chat'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { registerCustomGraphics } from './custom-graphics-ipc'
-import { EDITOR_REMAKE_ESTIMATE_USD, editorCustomInfo, editorRemakeCustom } from './editor-custom-graphics'
+import { EDITOR_REMAKE_ESTIMATE_USD, LIBRARY_ADD_ESTIMATE_USD, editorAddLibraryGraphic, editorCustomInfo, editorRemakeCustom } from './editor-custom-graphics'
+import { libraryView as motionLibraryView, setLibraryStatus } from './motion-library'
 import { existsSync, realpathSync } from 'fs'
 import { readFile, stat } from 'fs/promises'
 import { loadSettings, publicSettings, replaceApiKey, savePublicSettings, saveSpendLimit, type ApiKeyName, type PublicSettings } from './settings-store'
@@ -59,7 +60,7 @@ import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
   isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate, addEditImage, addEditImageFiles, removeEditImage, importClips,
   describeScreen, previewScreen, syncScreen, editSavedHeadline, editorHeadlineSaved, editBeatFrame,
-  editCustomGraphicsInfo, editCustomGraphicsEstimate, makeEditCustomGraphicsNow, swapEditCustomGraphic, editCustomStills
+  editCustomGraphicsInfo, editCustomGraphicsEstimate, makeEditCustomGraphicsNow, swapEditCustomGraphic, editCustomStills, addEditLibraryGraphic
 } from './edit-recording'
 import { EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGES, EDIT_MAX_SCREENSHOTS, EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
 import { COMBINE_MAX_CLIPS } from '../shared/combine-clips'
@@ -821,6 +822,15 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   paid('edit:customGraphics', 'openrouter', (request) => editCustomGraphicsEstimate(request), (request) => makeEditCustomGraphicsNow(request))
   handle('edit:customSwap', (_event, request: unknown) => swapEditCustomGraphic(request))
   handle('edit:customStills', (_event, comp: unknown) => editCustomStills(comp))
+  // My motion library: the member's custom graphics that passed (and the retired ones), to reuse in later videos.
+  handle('library:list', () => motionLibraryView())
+  handle('library:setStatus', (_event, id: unknown, status: unknown) => setLibraryStatus(id, status))
+  paid('edit:libraryAdd', 'openrouter', () => LIBRARY_ADD_ESTIMATE_USD, (request) => addEditLibraryGraphic(request))
+  paid('editor:libraryAdd', 'openrouter', () => LIBRARY_ADD_ESTIMATE_USD, async (path, candidateId, itemId, atMs) => {
+    const result = await editorAddLibraryGraphic(path, candidateId, itemId, atMs)
+    if (result.costUsd > 0) void recordSpend({ kind: 'edit', provider: 'openrouter', usd: result.costUsd, label: 'Library graphic', runId: typeof path === 'string' ? path.split(/[\\/]/).pop() : undefined }).catch(() => {})
+    return result
+  })
   // ...and in the clip editor: what one is, and making it again with a note (recorded in the spending ledger).
   handle('editor:customInfo', (_event, path: unknown, comp: unknown) => editorCustomInfo(path, comp))
   paid('editor:customGraphic', 'openrouter', () => EDITOR_REMAKE_ESTIMATE_USD, async (path, candidateId, graphic, note) => {

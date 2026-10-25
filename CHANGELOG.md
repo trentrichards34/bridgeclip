@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Mai
 ### Added
 
 - **Custom graphics** (Beta, in Edit my recording's Skills): for the few key moments of a video, your AI designs a graphic for that exact idea, looks at it over your video and fixes it before it's used. The beat sheet shows the cost first, designs them, and lets you change one with a note or go back to its template; the clip editor does the same. Uses your OpenRouter credit.
+- **My motion library**: every custom graphic that passes its check is kept, so later videos can use it again, filled with the words you say (cheaper, and your graphics stay consistent). Browse it as moving tiles under **My graphics** in the graphic gallery ("used in N videos"), add one at the playhead or on a beat, and retire or restore graphics. Ones that never passed are kept as Retired with the reason.
 - **What to clip** in Create → Clips: describe the moments you want, such as "every time they talk about pricing". Leave it blank to get the strongest moments as before.
 - **Show title at the top** in Create → Captions turns off the title card on Automatic clips.
 - **Review & edit** workflow: look over clip candidates before exporting. Trim, split and extend cuts, change layouts and camera changes, fix and place captions, then bake one clip or every ready clip with **Bake all**. You can also swap in a higher-quality copy of the source video.

@@ -12,6 +12,7 @@ import type { ReferenceImage, ReferenceSupport } from '../shared/purpose'
 import type { EditAudit } from '../shared/editorial'
 import type { EditCustomInfo, EditCustomOutcome, EditorCustomInfo, EditorCustomRemake } from '../shared/custom-graphics'
 import type { EditGraphic } from '../shared/reel-graphics'
+import type { LibraryView } from '../shared/motion-library'
 import { contextBridge, ipcRenderer } from 'electron'
 import { decodeSpendGate, type OpenRouterBalance, type SpendGate, type SpendOverview, type SpendProvider } from '../shared/spending'
 import type {
@@ -242,6 +243,8 @@ export interface BridgeClipAPI {
     customInfo: (path: string, comp: string) => Promise<EditorCustomInfo>
     /** Make a custom graphic again with a note (paid). `graphic`: null when the new design didn't pass (the old one stays). */
     customGraphic: (path: string, candidateId: string, graphic: EditorGraphic, note: string) => Promise<EditorCustomRemake>
+    /** One of My motion library's graphics at a time on a clip, filled with the words said there (paid). */
+    libraryAdd: (path: string, candidateId: string, itemId: string, atMs: number) => Promise<EditorCustomRemake>
     /** What opening an Automatic run (or a project made from one) in the editor involves. */
     automaticInfo: (path: string) => Promise<AutomaticEditInfo>
     /** Make the run's editor project from its clips, or get its video back. `localFile`: a video the member chose. */
@@ -576,6 +579,11 @@ export interface BridgeClipAPI {
     /** Opens a file dialog; null when cancelled. */
     uploadRecording: (draftId: number, part: RecordingPart) => Promise<RemixRecordings | null>
   }
+  /** My motion library: the member's custom graphics that passed their check (and the retired ones). */
+  library: {
+    list: () => Promise<LibraryView[]>
+    setStatus: (id: string, status: 'active' | 'retired') => Promise<LibraryView[]>
+  }
   /** Edit my recording: one raw recording (or a few takes) in, one finished vertical reel out. */
   edit: {
     status: () => Promise<EditStatus | null>
@@ -604,6 +612,8 @@ export interface BridgeClipAPI {
     customSwap: (request: { decisions: EditDecisions; id: string }) => Promise<EditGraphic[]>
     /** A custom graphic's stills (image paths). */
     customStills: (comp: string) => Promise<string[]>
+    /** One of My motion library's graphics on a word (replacing that beat's graphic), filled with the words said there (paid). */
+    libraryAdd: (request: { decisions: EditDecisions; itemId: string; word: number; replaces?: string }) => Promise<EditCustomOutcome>
     /** Transcribe and plan (paid); the status moves to 'review'. */
     start: (request: EditStartRequest) => Promise<EditStatus>
     /** Make the reel from the reviewed edit (local, no AI cost). */
@@ -850,6 +860,7 @@ const api: BridgeClipAPI = {
     words: (path, from, to) => ipcRenderer.invoke('editor:words', path, from, to),
     customInfo: (path, comp) => ipcRenderer.invoke('editor:customInfo', path, comp),
     customGraphic: (path, candidateId, graphic, note) => paid('editor:customGraphic', path, candidateId, graphic, note),
+    libraryAdd: (path, candidateId, itemId, atMs) => paid('editor:libraryAdd', path, candidateId, itemId, atMs),
     automaticInfo: (path) => ipcRenderer.invoke('editor:automaticInfo', path),
     prepareAutomatic: (path, localFile) => ipcRenderer.invoke('editor:prepareAutomatic', path, localFile),
     operationStatus: (path) => ipcRenderer.invoke('editor:operationStatus', path),
@@ -1079,6 +1090,10 @@ const api: BridgeClipAPI = {
     removeRecording: (draftId, part) => ipcRenderer.invoke('remix:removeRecording', draftId, part),
     uploadRecording: (draftId, part) => ipcRenderer.invoke('remix:uploadRecording', draftId, part)
   },
+  library: {
+    list: () => ipcRenderer.invoke('library:list'),
+    setStatus: (id, status) => ipcRenderer.invoke('library:setStatus', id, status)
+  },
   edit: {
     status: () => ipcRenderer.invoke('edit:status'),
     onStatus: (callback) => subscribe('edit:status', callback),
@@ -1094,6 +1109,7 @@ const api: BridgeClipAPI = {
     customGraphics: (request) => paid('edit:customGraphics', request),
     customSwap: (request) => ipcRenderer.invoke('edit:customSwap', request),
     customStills: (comp) => ipcRenderer.invoke('edit:customStills', comp),
+    libraryAdd: (request) => paid('edit:libraryAdd', request),
     start: (request) => paid('edit:start', request),
     render: (decisions) => paid('edit:render', decisions),
     chooseImages: () => ipcRenderer.invoke('edit:chooseImages'),

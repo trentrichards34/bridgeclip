@@ -8,7 +8,7 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import {
-  CUSTOM_MAX_MS, customGeometry, customGraphicsEstimate, customLook, DEFAULT_PRICE, heroDuration, isCustomComp, MAX_NOTE_CHARS, openingLineCandidate, pickHeroMoments, revisionCap, saidIndex,
+  CUSTOM_MAX_MS, CUSTOM_MIN_MS, customGeometry, customGraphicsEstimate, customLook, DEFAULT_PRICE, heroDuration, isCustomComp, MAX_NOTE_CHARS, openingLineCandidate, pickHeroMoments, revisionCap, saidIndex,
   type CustomFallback, type CustomFrameKind, type HeroCandidate, type HeroKind, type HeroMoment, type WriterBrief
 } from '../shared/custom-graphics'
 import { reelOrder, reelWordStarts, type EditDecisions, type EditPlan, type EditSource } from '../shared/edit-recording'
@@ -17,8 +17,9 @@ import { graphicBox } from '../shared/graphic-layout'
 import { spokenNumber } from '../shared/graphic-prefill'
 import { templateInfo, type TimedWord } from '../shared/motion-graphics'
 import { BEAT_HOOK_SECONDS, graphicName, graphicWords } from '../shared/beat-sheet'
-import { inBatches, produceCustomGraphic, readCustomGraphic, type ModelCall } from './custom-graphics'
+import { inBatches, memberLibrary, produceCustomGraphic, readCustomGraphic, type LibraryHooks, type ModelCall } from './custom-graphics'
 import type { CustomSandbox } from './custom-render'
+import { readLibraryTemplate } from './motion-library'
 import { beatFrame } from './beat-stills'
 
 export interface EditCustomContext {
@@ -160,7 +161,7 @@ function fallbackOf(g: EditGraphic | null): CustomFallback | null {
  * Make custom graphics for the hero moments (or, with `only`, again for one custom graphic with the member's note).
  * Two at a time; each kept one replaces its template graphic. Never throws for a graphic that fails: it stays a template.
  */
-export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { call: ModelCall; sandbox?: CustomSandbox; signal?: AbortSignal; only?: { id: string; note: string }; onProgress?: (done: number, total: number) => void }): Promise<EditCustomResult> {
+export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { call: ModelCall; sandbox?: CustomSandbox; signal?: AbortSignal; only?: { id: string; note: string }; onProgress?: (done: number, total: number) => void; library?: LibraryHooks | null; pick?: { itemId: string; word: number; replaces?: string } }): Promise<EditCustomResult> {
   const { order, starts, endMs } = candidates(ctx)
   const words = reelWords(ctx, order, starts)
   const said = saidIndex(words)
@@ -179,19 +180,28 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
     if (!note) throw new Error('Type what to change.')
     const replaced = found.meta.fallback ? { ...g, template: found.meta.fallback.template as EditGraphic['template'], fields: found.meta.fallback.fields } : null
     heroes = [{ ref: g.id, word: g.word, atMs: at, durationMs: g.duration_ms, kind: found.meta.kind, frame: found.meta.frame, placement: g.placement, replaces: g.id, score: 10, graphic: replaced }]
+  } else if (options.pick) {
+    // One of My motion library's graphics, picked by the member for a word (replacing that beat's graphic, if any).
+    const found = readLibraryTemplate(options.pick.itemId)
+    if (!found || found.item.status !== 'active') throw new Error('That graphic is no longer in your library.')
+    const at = starts.get(options.pick.word)
+    if (at === undefined) throw new Error('Pick a word that stays in your reel.')
+    const replaced = options.pick.replaces ? graphics.find((g) => g.id === options.pick!.replaces) ?? null : null
+    heroes = [{ ref: replaced?.id ?? `line:${options.pick.word}`, word: options.pick.word, atMs: at, durationMs: found.item.durationMs, kind: found.item.kind, frame: found.item.frame,
+      placement: found.item.frame === 'card' ? 'bottom' : 'middle', replaces: replaced?.id ?? null, score: 10, graphic: replaced }]
   } else heroes = editHeroMoments(ctx)
   const cap = revisionCap(Math.max(1, heroes.length), ctx.price)
   let done = 0, costUsd = 0
   options.onProgress?.(0, heroes.length)
   const results = await inBatches(heroes, 2, async (hero) => {
     const next = graphics.filter((g) => g.id !== hero.replaces).map((g) => starts.get(g.word)).filter((t): t is number => t !== undefined && t > hero.atMs).sort((a, b) => a - b)[0] ?? null
-    const durationMs = options.only ? Math.min(CUSTOM_MAX_MS, hero.durationMs) : heroDuration(hero, next, endMs)
+    const durationMs = options.only ? Math.min(CUSTOM_MAX_MS, hero.durationMs) : options.pick ? Math.round(Math.max(CUSTOM_MIN_MS, Math.min(hero.durationMs, (next ?? endMs) - 300 - hero.atMs, endMs - hero.atMs))) : heroDuration(hero, next, endMs)
     const { brief, line, frameWord } = briefFor(ctx, hero, durationMs, words, hero.graphic, note)
     const frame = await frameAt(ctx, frameWord)
     const original = graphics.find((g) => g.id === hero.replaces) ?? null
-    const fallback = options.only ? (readCustomGraphic(ctx.folder, original?.fields.comp)?.meta.fallback ?? null) : fallbackOf(original)
-    const result = await produceCustomGraphic({ run: ctx.folder, brief, words: line, said, frame, logo: ctx.logo ?? null, fallback, model: ctx.model, maxRevisions: options.only ? Math.max(1, cap) : cap, grade: ctx.vision },
-      { call: options.call, sandbox: options.sandbox, signal: options.signal })
+    const fallback = options.only ? (readCustomGraphic(ctx.folder, original?.fields.comp)?.meta.fallback ?? null) : original?.template === 'custom' ? (readCustomGraphic(ctx.folder, original.fields.comp)?.meta.fallback ?? null) : fallbackOf(original)
+    const result = await produceCustomGraphic({ run: ctx.folder, brief, words: line, said, frame, logo: ctx.logo ?? null, fallback, model: ctx.model, maxRevisions: options.only ? Math.max(1, cap) : cap, grade: ctx.vision, ...(options.pick ? { libraryItem: options.pick.itemId } : {}) },
+      { call: options.call, sandbox: options.sandbox, signal: options.signal, library: options.library === undefined ? memberLibrary : options.library ?? undefined })
     costUsd += result.costUsd
     options.onProgress?.(++done, heroes.length)
     return { hero, durationMs, result }

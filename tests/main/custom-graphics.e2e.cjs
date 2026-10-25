@@ -234,7 +234,8 @@ test('custom graphics: the sandbox blocks the network, eval, frames and navigati
   assert.deepEqual(evil.texts, ['safe words'])
   // Navigation and new windows are refused (and reach nothing).
   const nav = await run(attack(`try { window.open('${base}/popup') } catch (e) {} try { location.href = '${base}/navigate' } catch (e) {}`) + `<meta http-equiv="refresh" content="0;url=${base}/refresh">`)
-  assert.ok(nav.ok || /stopped|load|draw/.test(nav.error), nav.error)
+  // (A navigation that starts can stop the page before our runtime runs: then the graphic simply isn't drawn.)
+  assert.ok(nav.ok || /didn’t start|didn't start|stopped|load|draw/.test(nav.error), nav.error)
   // A hang while loading, a hang while drawing a frame: stopped within the time limits.
   const hang = await run(attack('for (;;) {}'))
   assert.equal(hang.ok, false); assert.match(hang.error, /too long|stopped responding/); assert.ok(hang.ms < 20000, `load hang stopped in ${hang.ms} ms`)

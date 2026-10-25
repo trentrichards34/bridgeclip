@@ -1,3 +1,4 @@
+import type { LibraryView } from '../../shared/motion-library'
 import type { LogoSummary } from '../../shared/logos'
 import { SavedStageTimings } from './StageBreakdown'
 import { registerNavigationCommit } from '../lib/navigation'
@@ -667,6 +668,20 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
     })()
   }
   // One of My logos from the gallery: copied into the run, then a Logo pop with it at the playhead.
+  // My motion library: one of the member's custom graphics here, filled with the words said at the playhead (paid, small).
+  const [libraryBusy, setLibraryBusy] = useState<string | null>(null)
+  const [libraryError, setLibraryError] = useState<string | null>(null)
+  const insertLibrary = (item: LibraryView): void => {
+    if (gallery === null || editingDisabled || libraryBusy) return
+    const at = gallery
+    setLibraryBusy(item.id); setLibraryError(null)
+    void getApi().editor.libraryAdd(outputDir, candidate.id, item.id, Math.round(at)).then((result) => {
+      if (!result.graphic) { setLibraryError(result.reason ?? 'It didn’t fit what you say here.'); return }
+      const g = result.graphic
+      setGraphics(withGraphic(candidate, g, graphicCap)); setGraphicId(g.id); setGallery(null); setTab('graphics')
+      showGraphic(g)
+    }).catch((e: unknown) => setLibraryError(errorMessage(e))).finally(() => setLibraryBusy(null))
+  }
   const insertLogo = (logo: LogoSummary): void => {
     if (gallery === null || editingDisabled) return
     const at = gallery
@@ -1230,7 +1245,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       where={(() => { const words = clipWords.filter((w) => w.end_ms > gallery - 150).slice(0, 5).map((w) => w.word).join(' '); return `at ${clipClock(gallery)}${words ? `, on “${words}…”` : ''}` })()}
       prefill={(template) => prefillGraphic(template, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
       prefillEffect={(effect) => prefillEffect(effect, clipWords, gallery, { line: project.transcript.find((r) => gallery >= r.start_ms && gallery < r.end_ms)?.text, until: end }).fields}
-      looks pictures onPick={insertGraphic} onLogo={insertLogo} onClose={() => setGallery(null)} />}
+      looks pictures onPick={insertGraphic} onLogo={insertLogo} library={{ onPick: insertLibrary, busy: libraryBusy, error: libraryError }} onClose={() => { setGallery(null); setLibraryError(null) }} />}
   </section>
 }
 /** Where the preview draws a clip's hook text (vertical clips with at least two words, like the export). */

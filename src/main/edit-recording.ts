@@ -1004,7 +1004,7 @@ export async function editCustomGraphicsEstimate(value: unknown): Promise<number
 }
 const editCustomEstimateOne = (info: { mostUsd: number; moments: unknown[] }): number => info.moments.length ? info.mostUsd / info.moments.length : 0.3
 
-async function designCustomGraphics(current: EditRun, decisions: EditDecisions, only?: { id: string; note: string }): Promise<EditCustomResult | null> {
+async function designCustomGraphics(current: EditRun, decisions: EditDecisions, only?: { id: string; note: string }, pick?: { itemId: string; word: number; replaces?: string }): Promise<EditCustomResult | null> {
   const m = await customModel()
   if (!m) return null
   if (current.customBusy) throw new Error('Your custom graphics are being designed. Wait for them to finish.')
@@ -1014,7 +1014,7 @@ async function designCustomGraphics(current: EditRun, decisions: EditDecisions, 
   publish(current, { custom: { running: true, done: 0, total: 0, notes: [] } })
   try {
     const result = await makeEditCustomGraphics(customContext(current, decisions, m), {
-      call: openRouterModelCall(m.key, m.endpoint, m.price), signal: abort.signal, ...(only ? { only } : {}),
+      call: openRouterModelCall(m.key, m.endpoint, m.price), signal: abort.signal, ...(only ? { only } : {}), ...(pick ? { pick } : {}),
       onProgress: (done, total) => publish(current, { custom: { running: true, done, total, notes: [] } })
     })
     current.customTried = true
@@ -1040,6 +1040,18 @@ export async function makeEditCustomGraphicsNow(value: unknown): Promise<EditCus
   }
   const result = await designCustomGraphics(current, decisions, only)
   if (!result) throw new Error('Add your OpenRouter key in Settings → API keys to design custom graphics.')
+  return result
+}
+
+/** One of My motion library's graphics on a word of the review (replacing that beat's graphic, if one is named), filled with the words said there. */
+export async function addEditLibraryGraphic(value: unknown): Promise<EditCustomResult> {
+  const current = customReview()
+  const raw = (value && typeof value === 'object' ? value : {}) as { decisions?: unknown; itemId?: unknown; word?: unknown; replaces?: unknown }
+  const decisions = parseEditDecisions(raw.decisions, current.status.plan!, current.status.images ?? [])
+  if (typeof raw.itemId !== 'string' || typeof raw.word !== 'number' || !Number.isInteger(raw.word) || raw.word < 0 || raw.word >= current.status.plan!.words.length) throw new Error('Choose a graphic and a word.')
+  const replaces = typeof raw.replaces === 'string' && (decisions.graphics ?? []).some((g) => g.id === raw.replaces) ? raw.replaces : undefined
+  const result = await designCustomGraphics(current, decisions, undefined, { itemId: raw.itemId, word: raw.word, ...(replaces ? { replaces } : {}) })
+  if (!result) throw new Error('Add your OpenRouter key in Settings → API keys to use your library graphics.')
   return result
 }
 
