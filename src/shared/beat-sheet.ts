@@ -19,6 +19,7 @@ import { registerKeeps } from './register'
 import { DEFAULT_SOUND_REGISTER, SOUND_ACTION_INFO, type SoundAction } from './sound-design'
 import { spokenNumber } from './graphic-prefill'
 import { DEFAULT_BEAT_SHEET_CHOICE, type BeatSheetChoice } from './member-prefs'
+import { tripleHookLabel } from './triple-hook'
 
 export type BeatKind = 'hook' | 'graphic' | 'card' | 'popup' | 'pin' | 'cta'
 /** How the frame is laid out: the full video, the stage (a backdrop with the speaker in a card), or the backdrop only. */
@@ -67,6 +68,8 @@ export interface Beat {
   visual: BeatVisual
   /** The hook text shows over this beat. */
   hookText: string
+  /** The hook beat: which Triple Hook elements its spoken line and headline stack (triple-hook.ts); '' for other beats. */
+  hookRole: string
   /** The captions' words at the key moment ('' with captions off). */
   caption: string
   /** Why it won't show as planned, or null. */
@@ -299,7 +302,8 @@ export function deriveBeats(plan: EditPlan, d: EditDecisions, options: { include
     const scene = main.scene
     const beat = {
       key: main.ref, number: n + 1, kind: main.kind, parts, start: round(start), end: round(end), word: main.word, words: clip(words, 140), shown, sound: beatSound(main.kind, main.graphic, scene, d),
-      scene, frame, at: round(at), visual: main.visual, hookText: hookText && at < BEAT_HOOK_SECONDS ? hookText : '', caption: clip(caption, 40), problem: group.map((m) => m.problem).find(Boolean) ?? null, hash: ''
+      scene, frame, at: round(at), visual: main.visual, hookText: hookText && at < BEAT_HOOK_SECONDS ? hookText : '',
+      hookRole: main.kind === 'hook' ? tripleHookLabel(main.said ?? '', hookText) : '', caption: clip(caption, 40), problem: group.map((m) => m.problem).find(Boolean) ?? null, hash: ''
     }
     return { ...beat, hash: beatHash(beat) }
   })

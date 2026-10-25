@@ -76,15 +76,15 @@ def test_planning_the_same_recording_again_keeps_its_headline(monkeypatch):
 
 
 def test_planning_with_a_headline_that_no_longer_fits_writes_a_new_one(monkeypatch):
-    review, sent = _run_plan(monkeypatch, "Ten secrets nobody tells you", ai_text="Coaches charge too little")
-    assert review["hooks"][0]["text"] == "Coaches charge too little"
+    review, sent = _run_plan(monkeypatch, "Ten secrets nobody tells you", ai_text="Self-doubt kept me cheap")
+    assert review["hooks"][0]["text"] == "Self-doubt kept me cheap"
     assert review["kept_hook"]["kept"] is False
     assert "LAST TIME" not in sent[0]["messages"][1]["content"]
 
 
 def test_planning_without_a_kept_headline_is_unchanged(monkeypatch):
-    review, _ = _run_plan(monkeypatch, None, ai_text="Coaches charge too little")
-    assert review["hooks"][0]["text"] == "Coaches charge too little" and "kept_hook" not in review
+    review, _ = _run_plan(monkeypatch, None, ai_text="Self-doubt kept me cheap")
+    assert review["hooks"][0]["text"] == "Self-doubt kept me cheap" and "kept_hook" not in review
 
 
 def test_the_bridge_passes_the_kept_headline_to_the_planner():

@@ -253,3 +253,24 @@ test('the review: a kept headline says so and offers the AI’s new one; one tha
   assert.match(fresh, /value="Coaches charge too little"/)
   assert.match(fresh, /Your last headline used words that aren’t in this recording, so the AI wrote a new one\./)
 })
+
+test('the review: the headline and the Triple Hook, quoted, with one-click headline options of said words', () => {
+  const look = { includeCaptions: true, captionPreset: 'pop', headlineLook: { look: 'white', color: '#FFFFFF', font: 'clean' }, showHandle: false }
+  const words = 'You do not need ads. I can’t stress this enough. I sold 40 courses last week.'.split(' ')
+  const plan = parseEditPlan({
+    words: words.map((w, i) => [w, i * 300, i * 300 + 260, 0, null]),
+    hooks: [{ id: 0, start: 0, end: 4, text: 'I sold 40 courses last week', why: '', repeated: 'You do not need ads',
+      options: [{ text: 'I can’t stress this enough: I sold 40 courses last week', adds: ['qualifier'] }] }], hook: 0,
+    cta: null, popups: [], sounds: [], planned: 'ai', notes: [], warnings: []
+  }, 1)
+  const status = { id: 'headline-1', phase: 'review', detail: '', percent: 100, folder: '/out/edit-1', plan, transcriber: 'scribe', output: null, costUsd: 0, estimateUsd: 0, error: null, warnings: [],
+    sources: [{ path: '/a/take-1.mp4', name: 'take-1.mp4', seconds: 5 }] }
+  const html = staticRender(React.createElement(EditReview, { status, brand: null, look, onLook: () => {}, onError: () => {} }))
+  assert.match(html, /data-testid="edit-headline-check"/)
+  assert.match(html, /data-testid="edit-headline-label">Triple Hook: main statement \(headline\) \+ twist · no qualifier</)
+  assert.match(html, /data-role="twist"><span[^>]*>Twist<\/span><span[^>]*>“You do not need ads\.” <span[^>]*>\(you say it\)/)
+  assert.match(html, /data-role="main_statement">.*?“I sold 40 courses last week” <span[^>]*>\(headline\)/)
+  assert.match(html, /data-role="qualifier"><span[^>]*>Qualifier<\/span><span[^>]*>Missing/)
+  assert.match(html, /The planned headline, “You do not need ads”, only repeated what you say/)
+  assert.match(html, /“I can’t stress this enough: I sold 40 courses last week”<\/p><p[^>]*>Triple Hook: qualifier \(headline\) \+ main statement \(headline\) \+ twist · all three<\/p><\/div><button[^>]*>.*?Use this headline<\/button>/)
+})

@@ -198,6 +198,12 @@ test('Combine clips: a .zip of three clips, put in the AI’s order, joined upri
   assert.equal(await order(), '213')
   // The hook from the screen clip opens the reel; the proof graphic on "$8,188" is a stat graphic the app added.
   await page.getByTestId('edit-hook').getByText('“And here is my screen.”').waitFor()
+  // The planned headline only repeated that line, so it is the member's own words that add the Triple Hook's main
+  // statement, with the exact number said in clip 3 (the opening line and the cut stay as planned).
+  assert.equal(await page.getByLabel('Hook text on screen').inputValue(), 'My dashboard says $8,188 today')
+  const check = page.getByTestId('edit-headline-check')
+  await check.locator('[data-role="main_statement"]').getByText('“My dashboard says $8,188 today”').waitFor()
+  await check.getByTestId('edit-headline-repeated').getByText(/“Here is my screen”, only repeated what you say/).waitFor()
   const log = page.getByTestId('edit-log')
   await log.getByRole('button', { name: /^What changed/ }).click()
   await log.getByText('Put 3 clips in the AI’s order: The story first, then the screen as proof.').waitFor()

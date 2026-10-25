@@ -175,6 +175,7 @@ export function BeatSheet({ runId, plan, decisions, look, brand, sources, images
           </div>
           <div className="min-w-0 space-y-1 px-0.5">
             <p className="text-xs font-medium leading-snug text-ink" data-testid="beat-shown">{beat.shown}</p>
+            {beat.hookRole && <p className="text-2xs leading-snug text-tool" data-testid="beat-hook-role">{beat.hookRole}</p>}
             {beat.words && <p className="text-2xs leading-snug text-ink-muted">“{beat.words}”</p>}
             <p className="text-[10px] text-ink-subtle">{beat.sound ? `Sound: ${beat.sound}` : 'No sound'}{beat.scene === 'stage' ? ' · Stage' : beat.scene === 'visual' ? ' · Full-screen visual' : ''}</p>
             {beat.problem && !undo && <p className="text-2xs text-warning" role="note">{beat.problem}</p>}

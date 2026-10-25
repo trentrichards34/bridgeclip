@@ -605,6 +605,17 @@ def plan_system_prompt(direction: bool = False) -> str:
     )
 
 
+# The Paid Creators Triple Hook for the headline (edit_frameworks checks it): the text completes what the hook line says.
+HEADLINE_RULE = (
+    "\n\nHOOK TEXT (Triple Hook Playbook): the on-screen text works with the hook line they say and should stack, together "
+    "with it, three elements: a QUALIFIER (a bold line that sets the tone, like \"I can't stress this enough\"), the MAIN "
+    "STATEMENT (the result, with the exact number they said: an exact \"$53,847\" beats \"over $50,000\") and the TWIST "
+    "(the false belief it breaks: \"without…\", \"you don't need…\", \"despite…\"). Write the text so it adds what the "
+    "line is missing; never just repeat the line. Use only their own words and numbers, in their own voice (I, my, you), "
+    "never about them in the third person. This is only about the text: it does not change which line opens the video."
+)
+
+
 def format_transcript(words: list[Word], marks: list[Optional[str]], names: list[str], clips: Optional[list[dict]] = None) -> str:
     out: list[str] = []
     src = -1
@@ -1040,7 +1051,7 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
         rule = direction_rule(kept_ms / 1000 * 1.25, {**direction_options, 'hints': word_hints(words, base, media=bool(direction_options.get('media')))})
     payload: dict[str, Any] = {
         "model": settings.planner_model,
-        "messages": [{"role": "system", "content": plan_system_prompt(direction) + (combine_prompt() if clips else "") + rule
+        "messages": [{"role": "system", "content": plan_system_prompt(direction) + HEADLINE_RULE + (combine_prompt() if clips else "") + rule
                       + system_rules(config.get("purpose"), bool(config.get("reference_image")))},
                      {"role": "user", "content": with_context(user, config.get("purpose"), config.get("reference_image"))}],
         "response_format": json_schema_format("recording_edit", combine_schema(direction) if clips else plan_schema(direction)),
@@ -1094,8 +1105,22 @@ async def plan_edit(config: dict, progress: Progress) -> dict:
         plan = basic_plan(words, base)
         if clips:
             plan["combine"] = combine_of(None, words, plan, clips)
+    # The headline and the Triple Hook (edit_frameworks): a headline that only repeats its hook line becomes the member's
+    # own words that add a missing element, and each hook gets headline options graded against the Triple Hook. Only the
+    # text changes: the cut and the opening stay as planned.
+    from clip_engine.services import edit_frameworks as ef
+    try:
+        ef.stack_headlines(plan, words)
+    except Exception as error:  # noqa: BLE001 - the plan stands as planned
+        logger.warning(f"Headline check left out: {type(error).__name__}: {error}")
     # The same recording again: its last headline stays (checked against these words), unless the member asked for a new one.
     keep_headline(plan, words, config.get("fixed_hook"))
+    if (plan.get("kept_hook") or {}).get("kept"):
+        # The kept headline stays; its options are worked out for it.
+        try:
+            ef.stack_headlines(plan, words, replace=False)
+        except Exception as error:  # noqa: BLE001
+            logger.warning(f"Headline options left out: {type(error).__name__}: {error}")
     review = review_of(words, plan, "ai" if not warnings else "basic", cost, warnings)
     progress("Plan ready", 100, _plan_found(review))
     return review

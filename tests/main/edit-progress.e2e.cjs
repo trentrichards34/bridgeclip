@@ -157,7 +157,7 @@ test('Combine clips progress: steps, clip strip, words heard, plan finds, the re
   // Making the reel: the steps after the review, the opening frame and what goes in it.
   await view.waitFor({ timeout: 60000 })
   await view.getByText('Your opening').waitFor({ timeout: 60000 })
-  await view.getByTestId('edit-progress-found').getByText('Opening on “Here is my screen”').waitFor()
+  await view.getByTestId('edit-progress-found').getByText('Opening on “My dashboard says $8,188 today”').waitFor()
   assert.equal(await steps.locator('li', { hasText: 'Your review' }).getAttribute('data-state'), 'done')
   await view.getByRole('list', { name: 'Your clips, in the reel’s order' }).waitFor()
   const seen = new Set()

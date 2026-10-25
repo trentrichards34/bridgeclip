@@ -21,6 +21,7 @@ import { SHOT_LABELS } from '../../shared/combine-clips'
 import { applyRestore, editRecordingLog, restoreStillApplied, undoRestore, type RestoreUndo } from '../../shared/edit-log'
 import { SkillsPanel } from './SkillsPanel'
 import { BeatSheet } from './BeatSheet'
+import { HeadlineCheck } from './HeadlineCheck'
 import { beforeRender } from '../../shared/beat-sheet'
 import { useMemberPrefsStore } from '../store/use-member-prefs-store'
 import { densityCount, densitySummary, dressItUp, keepItClean, type DensityChange } from '../../shared/edit-density'
@@ -407,6 +408,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
             ) : (
               <p className="text-2xs text-ink-muted" data-testid="edit-kept-headline">Your last headline used words that aren’t in this recording, so the AI wrote a new one.</p>
             ))}
+            <HeadlineCheck plan={plan} decisions={decisions} disabled={making} onChange={setDecisions} />
           </section>
 
           {plan.combine && decisions.clipOrder && (

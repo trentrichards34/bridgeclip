@@ -1,4 +1,5 @@
 import { isColorGrade, type ColorGrade } from './color-grade'
+import { parseHeadlineOptions, type HeadlineOption } from './triple-hook'
 import type { EditProgress } from './edit-progress'
 import { isBrollSource, type BrollSource } from './broll-library'
 /**
@@ -63,7 +64,11 @@ export const CUT_LABELS: Record<CutReason, string> = {
 
 export interface EditWord { text: string; startMs: number; endMs: number; src: number; cut: CutReason | null }
 export interface EditSpan { start: number; end: number }
-export interface EditHook extends EditSpan { id: number; text: string; why: string }
+export interface EditHook extends EditSpan { id: number; text: string; why: string
+  /** Headlines of said words that stack more of the Triple Hook with this hook's line (triple-hook.ts). */
+  options?: HeadlineOption[]
+  /** The planned headline that only repeated the line (replaced by said words that add a missing element). */
+  repeated?: string }
 /**
  * A half-screen explainer card: the top half of the frame for a few seconds (the speaker moves to the bottom half),
  * drawn from text only. list: title + 2-4 items; stat: title is the big number, items[0] what it is; compare: items are
@@ -543,7 +548,10 @@ export function parseEditPlan(value: unknown, sources: number): EditPlan | null 
   for (const raw of Array.isArray(value.hooks) ? value.hooks.slice(0, 3) : []) {
     const s = span(raw)
     if (!s || !record(raw) || !int(raw.id, 0, 10)) continue
-    hooks.push({ ...s, id: raw.id as number, text: (text(raw.text, MAX_HOOK_TEXT_CHARS) ?? '').trim(), why: (text(raw.why, 240) ?? '').trim() })
+    const options = parseHeadlineOptions(raw.options)
+    const repeated = (text(raw.repeated, MAX_HOOK_TEXT_CHARS) ?? '').replace(/\s+/g, ' ').trim()
+    hooks.push({ ...s, id: raw.id as number, text: (text(raw.text, MAX_HOOK_TEXT_CHARS) ?? '').trim(), why: (text(raw.why, 240) ?? '').trim(),
+      ...(options.length ? { options } : {}), ...(repeated && !hookTextProblem(repeated) ? { repeated } : {}) })
   }
   const popups: EditPopup[] = []
   for (const raw of Array.isArray(value.popups) ? value.popups.slice(0, 12) : []) {

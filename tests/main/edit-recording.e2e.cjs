@@ -175,6 +175,13 @@ test('Edit my recording: two takes (one chosen, one filmed from an idea), Scribe
   assert.equal(cutText, 'Most coaches lose clients. No, again. Um.')
   await page.getByTestId('edit-hook').getByText('“Fifteen billion messages wait.”').waitFor()
   assert.equal(await page.getByLabel('Hook text on screen').inputValue(), '15 billion messages wait')
+  // The headline and the Triple Hook: what the line and the headline stack, live as the headline is typed.
+  const check = page.getByTestId('edit-headline-check')
+  await check.getByTestId('edit-headline-label').getByText('Triple Hook: none of the three elements yet').waitFor()
+  await page.getByLabel('Hook text on screen').fill('I can’t stress this enough')
+  await check.getByTestId('edit-headline-label').getByText('Triple Hook: qualifier (headline) · no main statement or twist').waitFor()
+  await check.locator('[data-role="qualifier"]').getByText('“I can\'t stress this enough” (headline)').waitFor()
+  await page.getByLabel('Hook text on screen').fill('15 billion messages wait')
   // "What changed": what the plan did, each line with a Restore; "Undo restore" takes it back.
   // It is folded to one line until opened.
   const log = page.getByTestId('edit-log')
