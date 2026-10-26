@@ -80,19 +80,21 @@ test('the static check refuses what reaches out, loads, times itself, escapes or
 test('hero moments on the owner\'s run: the opening twist, the staircase, warm vs cold, organic vs ads and the $8,188 proof', () => {
   const candidates = RUN.graphics.map((g) => ({ ref: g.id, word: 0, atMs: g.at_ms, durationMs: g.duration_ms, template: g.template, fields: g.fields, size: g.size, placement: g.placement }))
   candidates.push({ ref: 'line:0', word: 0, atMs: 53, durationMs: 6550, template: 'line', fields: {} })
-  assert.equal(shared.heroCount(RUN.duration_ms), 5)
+  // About one every 20 s (a 4-minute reel: up to 12; the run's candidates and spacing give 9).
+  assert.equal(shared.heroCount(RUN.duration_ms), 12)
   const heroes = plain(shared.pickHeroMoments(candidates, { durationMs: RUN.duration_ms }))
   const by = (template) => RUN.graphics.find((g) => g.template === template && heroes.some((h) => h.ref === g.id))
-  assert.deepEqual(heroes.map((h) => h.kind), ['claim', 'process', 'comparison', 'comparison', 'proof'])
-  assert.deepEqual(heroes.map((h) => h.frame), ['card', 'visual', 'stage', 'visual', 'stage'])
-  // The warm vs cold audience line swap is a comparison too (it wins over the 3 million stat).
-  assert.equal(RUN.graphics.find((g) => g.id === heroes[2].ref).fields.effect, 'line-swap')
+  assert.deepEqual(heroes.map((h) => h.kind), ['claim', 'process', 'proof', 'comparison', 'claim', 'comparison', 'process', 'proof', 'proof'])
+  // Only the opening (under the hook) stays a card; the rest get the stage or a Visual scene.
+  assert.deepEqual(heroes.map((h) => h.frame), ['card', 'visual', 'stage', 'stage', 'stage', 'visual', 'stage', 'stage', 'stage'])
+  // The warm vs cold audience line swap is a comparison too.
+  assert.equal(RUN.graphics.find((g) => g.id === heroes[3].ref).fields.effect, 'line-swap')
   assert.equal(heroes[0].replaces, null); assert.equal(heroes[0].placement, 'bottom')
   assert.ok(by('staircase') && by('compare_marks'))
-  assert.equal(RUN.graphics.find((g) => g.id === heroes[4].ref).fields.value, '$8,188')
+  assert.equal(RUN.graphics.find((g) => g.id === heroes[7].ref).fields.value, '$8,188')
   // Never a CTA, a screen recording or a name tag; never two within the spacing.
   assert.ok(!heroes.some((h) => ['link_cta', 'screen_frame', 'lower_third'].includes(RUN.graphics.find((g) => g.id === h.ref)?.template)))
-  for (let i = 1; i < heroes.length; i++) assert.ok(heroes[i].atMs - heroes[i - 1].atMs >= 15000)
+  for (let i = 1; i < heroes.length; i++) assert.ok(heroes[i].atMs - heroes[i - 1].atMs >= 10000)
   // A YouTube video gets about one per 90 s (at least 3, at most 12); custom ones already made keep their slot.
   assert.equal(shared.heroCount(26 * 60000, 'youtube'), 12)
   const again = shared.pickHeroMoments([...candidates, { ref: 'g-made', word: 0, atMs: 36000, durationMs: 13000, template: 'custom', fields: {} }], { durationMs: RUN.duration_ms })
@@ -223,7 +225,8 @@ test('the loop: unsaid words and refused code are fixed or dropped (the template
   assert.equal(result.tries, 3)
   assert.match(writes[1], /may not use fetch/)
   assert.match(result.reason, /not said/)
-  assert.ok(!fs.existsSync(path.join(run, '.graphics', 'custom')))
+  // Nothing kept as a graphic (each try is kept for review under attempts/).
+  assert.ok(!fs.readdirSync(path.join(run, '.graphics', 'custom')).some((n) => n !== 'attempts'))
   fs.rmSync(run, { recursive: true, force: true })
 })
 

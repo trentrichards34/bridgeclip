@@ -70,7 +70,7 @@ const newId = (taken: Set<string>): string => {
 /** Ask for the hero object and the sections' labels and arcs (one call; null when the answer can't be used). */
 async function planSections(ctx: EditCustomContext, sections: readonly ExplainerSection[], said: SaidIndex, call: ModelCall, signal?: AbortSignal): Promise<{ plan: ExplainerPlan | null; costUsd: number }> {
   try {
-    const reply = await call({ model: ctx.model, system: explainerPlanSystemPrompt(), user: explainerPlanUserPrompt(sections), maxTokens: 1800, temperature: 0.5, purpose: 'plan', signal })
+    const reply = await call({ model: ctx.model, system: explainerPlanSystemPrompt(), user: explainerPlanUserPrompt(sections), maxTokens: 6000, temperature: 0.5, purpose: 'plan', signal })
     return { plan: parseExplainerPlan(reply.text, sections, said), costUsd: reply.costUsd }
   } catch (error) {
     if (signal?.aborted) throw error

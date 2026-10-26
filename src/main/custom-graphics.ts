@@ -201,6 +201,7 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
   const expect = { width: brief.geometry.root.width, height: brief.geometry.root.height, durationMs: brief.durationMs }
   const times = brief.frame === 'explainer' ? explainerStillTimes(brief.durationMs) : stillTimes(brief.durationMs, brief.cues.filter((c) => c.at >= 0).map((c) => c.at * 1000))
   const runId = basename(input.run)
+  const moment = `${brief.kind}-${Math.round((brief.cues[0]?.at ?? 0) * 1000)}-${compositionId(input.words).slice(0, 6)}`
   let costUsd = 0, tries = 0
   let best: Attempt | null = null
   let reason = ''
@@ -212,7 +213,8 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
       shot = await sandbox.stills({ html, geometry: brief.geometry, look: brief.look, durationMs: brief.durationMs, times, frame: input.frame, logo: input.logo ?? null, scale: STILL_SCALE, motionStepMs: MOTION_STEP_MS })
     } catch (error) {
       reason = String((error as Error)?.message ?? error).slice(0, 200)
-      logger.info('custom.render.failed', { message: reason })
+      logger.info('custom.render.failed', { message: plainForLog(reason) })
+      keepAttempt(input.run, moment, tries, html, { stage: 'render', reason })
       return null
     }
     const unsaid = unsaidOnScreen(shot.texts, input.said)
@@ -222,10 +224,19 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
     const still = motionFixes(flat, brief.cues)
     let grade: CustomGrade = { pass: true, score: 7, failed: [], fixes: [] }
     if (input.grade !== false) {
-      const graded = await deps.call({ model: input.model, system: graderSystemPrompt(), user: graderUserPrompt({ words: input.words, kind: brief.kind, frame: brief.frame, machine: [...machine, ...still], world: brief.world ?? null, stressed: brief.stressed, ...(brief.explainer ? { explainer: brief.explainer.grade } : {}) }),
-        image: `data:image/jpeg;base64,${shot.composite.toString('base64')}`, maxTokens: 700, temperature: 0, purpose: 'grade', signal: deps.signal })
-      costUsd += graded.costUsd
-      grade = parseGrade(graded.text)
+      // A grade the model couldn't put into words is asked once more; still unreadable, our own checks decide alone.
+      // (Two real runs had all ten Opus designs rejected because every grade came back unreadable: the answer ran out
+      // of room at 700 tokens on a model that thinks first.)
+      const userPrompt = graderUserPrompt({ words: input.words, kind: brief.kind, frame: brief.frame, machine: [...machine, ...still], world: brief.world ?? null, stressed: brief.stressed, ...(brief.explainer ? { explainer: brief.explainer.grade } : {}) })
+      let unread = true
+      for (let ask = 0; ask < 2 && unread; ask++) {
+        const graded = await deps.call({ model: input.model, system: graderSystemPrompt(), user: ask ? `${userPrompt}\n\nAnswer with the JSON object only, nothing before or after it.` : userPrompt,
+          image: `data:image/jpeg;base64,${shot.composite.toString('base64')}`, maxTokens: GRADE_MAX_TOKENS, temperature: 0, purpose: 'grade', signal: deps.signal })
+        costUsd += graded.costUsd
+        if (gradeReadable(graded.text)) { grade = parseGrade(graded.text); unread = false }
+        else logger.info('custom.grade.unreadable', { chars: graded.text.length, ask })
+      }
+      if (unread) grade = { pass: true, score: 7, failed: [], fixes: [] }
     }
     // Our own checks are hard rules: any of them fails the graphic, whatever the grade says. The motion check sends it
     // back to be revised too, but a try that only fails it can still be kept when no other try passes.
@@ -233,6 +244,7 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
     if (machine.length) final = { pass: false, score: Math.min(grade.score, 6), failed: [...new Set([...grade.failed, ...(unsaid.length ? ['words' as const] : []), ...(shot.problems.length ? ['clipped' as const] : []), ...(still.length ? ['builds' as const] : [])])], fixes: [...machine, ...still, ...grade.fixes].slice(0, 8) }
     else if (still.length) final = { pass: false, score: Math.min(grade.score, 7), failed: [...new Set([...grade.failed, 'builds' as const])], fixes: [...still, ...grade.fixes].slice(0, 8) }
     if (!final.pass) reason = final.fixes.join(' ')
+    keepAttempt(input.run, moment, tries, html, { stage: 'grade', pass: final.pass, grader: grade, machine, motion: still, final }, shot.composite)
     return { html, grade: final, stills: shot.transparent, review: shot.composite, flat, motionOnly: !machine.length && !!still.length && grade.pass }
   }
 
@@ -242,7 +254,7 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
   const reuse = deps.library && (!brief.note || input.libraryItem) ? (input.libraryItem ? deps.library.get(input.libraryItem) : deps.library.match(brief.kind, brief.frame, brief.durationMs)) : null
   if (reuse) {
     const reply = await deps.call({ model: input.model, system: fillSystemPrompt(), user: fillUserPrompt(reuse.item, { words: input.words, before: brief.before, after: brief.after, note: brief.note }),
-      maxTokens: 700, temperature: 0, purpose: 'fill', signal: deps.signal })
+      maxTokens: SMALL_MAX_TOKENS, temperature: 0, purpose: 'fill', signal: deps.signal })
     costUsd += reply.costUsd
     const fill = parseFill(reply.text, reuse.item.slots)
     let html = ''
@@ -269,6 +281,7 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
       const problems = checkComposition(html, expect)
       if (problems.length) {
         reason = problems.join(' ')
+        keepAttempt(input.run, moment, tries, html, { stage: 'composition', problems })
         logger.info('custom.rejected', { problems: plainForLog(problems.slice(0, 4).join(' | ')) })
         previous = { html: html.slice(0, MAX_COMPOSITION_CHARS), fixes: problems }
         continue
@@ -331,7 +344,7 @@ export function saveVisualWorld(run: string, world: VisualWorld): void {
 /** Propose the video's world from its transcript and the moments that get a graphic. Null when the answer is unusable (the graphics are designed without one). */
 export async function proposeVisualWorld(input: { transcript: string; moments: { kind: HeroKind; words: string }[]; model: string; note?: string }, deps: { call: ModelCall; signal?: AbortSignal }): Promise<{ world: VisualWorld | null; costUsd: number }> {
   try {
-    const reply = await deps.call({ model: input.model, system: worldSystemPrompt(), user: worldUserPrompt(input), maxTokens: 500, temperature: 0.6, purpose: 'world', signal: deps.signal })
+    const reply = await deps.call({ model: input.model, system: worldSystemPrompt(), user: worldUserPrompt(input), maxTokens: SMALL_MAX_TOKENS, temperature: 0.6, purpose: 'world', signal: deps.signal })
     return { world: parseWorld(reply.text), costUsd: reply.costUsd }
   } catch (error) {
     if (deps.signal?.aborted) throw error
@@ -441,6 +454,29 @@ export async function customModel(): Promise<CustomModel | null> {
   return { model, price, vision, key, endpoint }
 }
 const OPENROUTER_CHAT = 'https://openrouter.ai/api/v1/chat/completions'
+/**
+ * Every try is kept next to the run (.graphics/custom/attempts): the composition, what the checks said and the review
+ * sheet the grader saw. Two real runs had every Opus design rejected and nothing to look at afterwards.
+ */
+export function keepAttempt(run: string, moment: string, n: number, html: string, info: Record<string, unknown>, review?: Buffer | null): void {
+  try {
+    const dir = join(run, '.graphics', 'custom', 'attempts', `${moment.replace(/[^a-z0-9-]/gi, '').slice(0, 40) || 'moment'}-${n}`)
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    writeFileSync(join(dir, 'composition.html'), html.slice(0, MAX_COMPOSITION_CHARS * 2), { mode: 0o600 })
+    writeFileSync(join(dir, 'check.json'), JSON.stringify({ ...info, at: new Date().toISOString() }, null, 2), { mode: 0o600 })
+    if (review?.length) writeFileSync(join(dir, 'review.jpg'), review, { mode: 0o600 })
+  } catch { /* the run goes on without it */ }
+}
+/** Room for an answer from a model that thinks before it answers (its thinking counts against max_tokens). */
+const GRADE_MAX_TOKENS = 4000
+const SMALL_MAX_TOKENS = 3000
+/** A grade answer with a JSON object in it (parseGrade's own reading). */
+export function gradeReadable(text: string): boolean {
+  const body = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1] ?? text
+  const start = body.indexOf('{'), end = body.lastIndexOf('}')
+  if (start < 0 || end <= start) return false
+  try { const raw = JSON.parse(body.slice(start, end + 1)) as unknown; return !!raw && typeof raw === 'object' && 'pass' in (raw as object) } catch { return false }
+}
 /** A check's words as the log keeps them (it leaves out any value with a slash, a link or a line break). */
 export function plainForLog(text: string): string {
   return text.replace(/https?:\/\/\S+/g, '(link)').replace(/[\\/]/g, ' ').replace(/[\r\n]+/g, ' ').replace(/(token|secret|key)\s*[:=]/gi, '$1 ').slice(0, 160)

@@ -126,7 +126,9 @@ export function heroKindOf(c: Pick<HeroCandidate, 'template' | 'fields' | 'ref'>
 export function heroCount(durationMs: number, format: 'reel' | 'youtube' = 'reel'): number {
   const seconds = Math.max(0, durationMs) / 1000
   if (format === 'youtube') return Math.max(3, Math.min(12, Math.round(seconds / 90)))
-  return Math.max(seconds < 25 ? 1 : 3, Math.min(6, Math.round(seconds / 45)))
+  // About one every 20 s (the reference reels show a picture on nearly every line; a real run with one every 45 s
+  // read as mostly face and highlighted text).
+  return Math.max(seconds < 25 ? 1 : 3, Math.min(12, Math.round(seconds / 20)))
 }
 
 /** The frame a hero is drawn in: a diagram keeps its full Visual scene; a proof, list or process goes on the stage; the opening and short lines stay a card. */
@@ -135,7 +137,8 @@ export function heroFrame(c: Pick<HeroCandidate, 'template' | 'size' | 'atMs' | 
   if (DIAGRAMS.includes(c.template)) return 'visual'
   // The opening seconds keep the hook text and the face: a card under the hook.
   if (c.atMs < 6000) return 'card'
-  if (kind === 'takeover' || kind === 'claim') return c.size === 'stage' ? 'stage' : 'card'
+  // A short line too gets the stage: a card over the face left the drawing about a fifth of the frame (real run).
+  if (kind === 'takeover') return c.size === 'stage' ? 'stage' : 'card'
   return 'stage'
 }
 
@@ -146,7 +149,7 @@ export function heroFrame(c: Pick<HeroCandidate, 'template' | 'size' | 'atMs' | 
 export function pickHeroMoments(candidates: readonly HeroCandidate[], options: { durationMs: number; format?: 'reel' | 'youtube'; count?: number }): HeroMoment[] {
   const format = options.format ?? 'reel'
   const count = Math.max(0, Math.min(12, options.count ?? heroCount(options.durationMs, format)))
-  const gap = format === 'youtube' ? 45000 : Math.max(15000, Math.min(25000, options.durationMs / (count + 2)))
+  const gap = format === 'youtube' ? 45000 : Math.max(10000, Math.min(25000, options.durationMs / (count + 2)))
   const scored = candidates.flatMap((c) => {
     const k = heroKindOf(c)
     return k && k.score > 0 && c.durationMs >= 1200 ? [{ c, ...k }] : []
@@ -697,7 +700,8 @@ export const GRADE_CHECKS = [
   { id: 'builds', label: 'Builds on the words: the stills show it growing as it is said (each key word adds or changes one element; earlier ones stay), not one finished card.' },
   { id: 'specific', label: 'Specific to this video: drawn from these words; it would not fit any other creator’s video (no stock icons or generic charts).' },
   { id: 'world', label: 'Consistent with the video’s visual world: its central picture, recurring elements and look.' },
-  { id: 'design', label: 'Designed like the references: clear hierarchy, aligned, generous space, consistent strokes and radii; no generic UI or slop.' },
+  { id: 'fills', label: 'Fills its area: one large hero drawing with drawn props, bold strokes; not a small card or thin shapes floating in empty space.' },
+  { id: 'design', label: 'Designed like the references: clear hierarchy, aligned, consistent strokes and radii; no generic UI or slop.' },
   { id: 'words', label: 'Shows only words and numbers that were said (nothing invented).' },
   { id: 'accent', label: 'One accent color, used on the one thing that matters.' }
 ] as const
@@ -737,7 +741,7 @@ export const DESIGN_RULES = `DESIGN RULES
 1. One idea per graphic. Decide the single idea of this moment and SHOW it: a drawing, a diagram, a comparison, a metaphor, a number with what it means. Never set the sentence as a paragraph; the captions already carry the sentence.
 2. Words are labels on the picture: 1-4 words per label, at most about 12 words visible at once (fewer is better), at most 2 lines per label.
 3. Only what was said. Every word and number on screen must come from the moment's words or the context given. Never invent numbers, prices, dates, percentages, multipliers, names, brands, logos, quotes or claims, and don't compute new numbers from said ones. No currency sign unless it was said. A step number 1-6 on an ordered list is fine.
-4. Big and readable on a phone (frame 1080 px wide): labels at least 44 px, key words 72-150 px, one hero number 150-280 px. Display type line-height 1.0-1.12. Contrast at least 4.5:1 against what is right behind the words; over video, words sit on a solid panel (var(--cg-paper)) or a near-solid dark plate.
+4. Big and readable on a phone (frame 1080 px wide): labels at least 52 px, key words 72-150 px, one hero number 150-280 px. Display type line-height 1.0-1.12. Contrast at least 4.5:1 against what is right behind the words; over video, words sit on a solid panel (var(--cg-paper)) or a near-solid dark plate.
 5. Hierarchy: one hero element (biggest, in the accent); everything else at most half its size, in ink or muted.
 6. One accent color (var(--cg-accent), or var(--cg-accent-ink) for accent words on paper) marks the one thing that matters: the result, the right answer, the current step. var(--cg-bad) only for an explicit wrong / right.
 7. Build it up on the voice: the composition grows as the speaker talks. Each STRESSED WORD in the brief adds one element or changes one (a new shape, a label, a step lighting up, a counter ticking, a mark appearing), about every 0.5-1 s while the graphic is on screen, 0-0.1 s before its cue. Nothing important appears before it is said. Earlier elements stay on screen (dimmed to muted or smaller when the focus moves on) so the picture accumulates.
@@ -748,7 +752,8 @@ export const DESIGN_RULES = `DESIGN RULES
 12. Craft: align to a grid, consistent spacing (multiples of 8 px), optical centering, generous empty space; it should look like a senior motion designer made it for this exact sentence.
 13. One visual world: the brief gives the video's VISUAL WORLD (a central picture and its recurring elements). Design this graphic inside it: reuse its elements and look so all the video's graphics feel like one designed piece. Show this moment's idea through the world's picture when it fits; never force it where it would confuse.
 14. Original: if this frame would fit any other creator's video, it is generic. Make it specific to these words (their nouns, their numbers, their turn of phrase), not a stock icon or a chart template.
-15. Hold the moment, then give the screen back: it lives only for its length; the speaker's face carries the rest of the reel.`
+15. Hold the moment, then give the screen back: it lives only for its length; the speaker's face carries the rest of the reel.
+16. Fill the area. The drawing spans at least 75% of the area's width and 60% of its height (outside the face box): one large hero object (at least 45% of the area's width) with 3-6 drawn props around it that each carry a word or number said (a stamp, a sticky note, a tag, a counter, a coin stack, a calendar page, a crowd of small people, a arrow path). Bold ink: strokes 8-14 px, filled shapes, solid paper panels behind words. A small card floating in empty space, thin outlines, or a few tiny dots read as nothing on a phone: never.`
 
 /** The composition contract (what custom-render.ts runs). */
 export const COMPOSITION_CONTRACT = `COMPOSITION CONTRACT (follow exactly; anything else is rejected before it runs)
