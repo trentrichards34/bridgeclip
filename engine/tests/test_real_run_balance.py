@@ -235,3 +235,17 @@ def test_no_number_card_over_a_filmed_screen():
     face = {**count, 'id': 'g-cnt90', 'at_ms': 205_000}
     out, _ = ed.screen_aware([count, mine, face], [(191_800, 198_000)], stage=False)
     assert [g['id'] for g in out] == ['g-cnt89', 'g-cnt90']
+
+
+def test_back_to_back_scenes_never_overlap():
+    """Real run edit-751a0a07: three custom scenes overlapped their neighbours by 40-70 ms and the editor's check then
+    dropped every scene of the reel, so the stage graphics played over the full-frame footage (covering the screen)."""
+    from clip_engine.services import edit_direction as ed
+    def scene(at, length, card=None):
+        return {'id': f'g-sc{at}', 'template': 'custom', 'at_ms': at, 'duration_ms': length, 'placement': 'top', 'size': 'stage', 'origin': 'member',
+                'fields': {'comp': 'abcdef0123456789', 'scene': 'stage', **({'card': card} if card else {})}}
+    graphics = [scene(99_420, 14_170, 'screen'), scene(113_520, 15_370, 'screen'), scene(128_847, 15_530, 'screen'), scene(144_507, 15_670)]
+    scenes = ed.editor_scenes(graphics, 241_000, None, [], [], 'dark')
+    assert len(scenes) == 4, scenes
+    assert all(b['start_ms'] >= a['end_ms'] for a, b in zip(scenes, scenes[1:]))
+    assert [s.get('card') for s in scenes] == ['screen', 'screen', 'screen', None]

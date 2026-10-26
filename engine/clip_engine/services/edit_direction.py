@@ -756,7 +756,21 @@ def editor_scenes(graphics: Sequence[dict], total_ms: int, brand: Optional[str],
     for f in framed:
         if not any(f['start_ms'] < s['end_ms'] and s['start_ms'] < f['end_ms'] for s in scenes) and f['end_ms'] - f['start_ms'] >= MIN_SCENE_MS:
             scenes.append(dict(f))
-    return ag.checked_saved_scenes(sorted(scenes, key=lambda s: s['start_ms'])[:MAX_SCENES], int(total_ms))
+    return ag.checked_saved_scenes(no_overlaps(sorted(scenes, key=lambda s: s['start_ms']))[:MAX_SCENES], int(total_ms))
+
+
+def no_overlaps(scenes: Sequence[dict]) -> list[dict]:
+    """Scenes in time order that never overlap: one that starts inside the one before starts where it ends (left out when
+    too short). Two back-to-back custom scenes overlapped by 70 ms in a real run, and the editor's check then dropped
+    every scene of the reel, so every stage graphic played over the full-frame footage."""
+    from clip_engine.services.stage_scenes import MIN_SCENE_MS
+    out: list[dict] = []
+    for s in scenes:
+        if out and s['start_ms'] < out[-1]['end_ms']:
+            s = {**s, 'start_ms': out[-1]['end_ms']}
+        if s['end_ms'] - s['start_ms'] >= MIN_SCENE_MS:
+            out.append(s)
+    return out
 
 
 # ---------------------------------------------------------------------------
