@@ -56,12 +56,32 @@ export type ModelCall = (request: ModelRequest) => Promise<ModelReply>
 
 /** The member's model through OpenRouter (their key). The system prompt is marked cacheable: it is the same for every moment. */
 export function openRouterModelCall(key: string, endpoint: string, price: { input: number; output: number }, fetchImpl: typeof fetch = fetch): ModelCall {
+  const once = openRouterModelCallOnce(key, endpoint, price, fetchImpl)
+  // A dropped connection, an answer cut off mid-way or a busy server is tried once more after a short wait (a real run
+  // lost every scene to one unreadable answer). A rejected key, missing credits or a cancel are not.
+  return async (request) => {
+    try { return await once(request) } catch (error) {
+      const message = String((error as Error)?.message ?? error)
+      if (request.signal?.aborted || /rejected the API key|insufficient credits|Canceled/.test(message)) throw error
+      logger.info('custom.call.retry', { purpose: request.purpose, message: plainForLog(message) })
+      await new Promise((r) => setTimeout(r, 4000))
+      return once(request)
+    }
+  }
+}
+
+/** How long one answer may take: a long composition from a model that thinks first takes minutes (about 40 tokens a second). */
+export function callTimeoutMs(maxTokens: number): number {
+  return Math.max(180_000, Math.round(maxTokens / 40) * 1000 + 90_000)
+}
+
+function openRouterModelCallOnce(key: string, endpoint: string, price: { input: number; output: number }, fetchImpl: typeof fetch): ModelCall {
   return async (request) => {
     const user = request.image ? [{ type: 'image_url', image_url: { url: request.image } }, { type: 'text', text: request.user }] : request.user
     let response: Response
     try {
       response = await fetchImpl(endpoint, {
-        method: 'POST', redirect: 'error', signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
+        method: 'POST', redirect: 'error', signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(callTimeoutMs(request.maxTokens))]) : AbortSignal.timeout(callTimeoutMs(request.maxTokens)),
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/trentrichards34/bridgeclip', 'X-Title': 'CreatorClips' },
         body: JSON.stringify({ model: request.model, max_tokens: request.maxTokens, temperature: request.temperature, usage: { include: true },
           messages: [{ role: 'system', content: [{ type: 'text', text: request.system, cache_control: { type: 'ephemeral' } }] }, { role: 'user', content: user }] })

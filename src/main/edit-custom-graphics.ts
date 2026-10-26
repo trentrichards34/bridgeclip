@@ -19,7 +19,8 @@ import { templateInfo, type TimedWord } from '../shared/motion-graphics'
 import { BEAT_HOOK_SECONDS, graphicName, graphicWords } from '../shared/beat-sheet'
 import { planScenes, plannedScenes, planWorld, reelStretches, sceneBrief, usablePlan, type PlannedScene, type SceneWord } from './custom-scenes'
 import { isTextHighlight, MAX_POPUPS_WITH_SCENES, MAX_TEXT_HIGHLIGHTS, SCENE_KEEPS, sceneEligible, sectionText } from '../shared/custom-scenes'
-import { inBatches, memberLibrary, produceCustomGraphic, proposeVisualWorld, readCustomGraphic, readVisualWorld, saveVisualWorld, type LibraryHooks, type ModelCall } from './custom-graphics'
+import { inBatches, memberLibrary, plainForLog, produceCustomGraphic, proposeVisualWorld, readCustomGraphic, readVisualWorld, saveVisualWorld, type LibraryHooks, type ModelCall, type ProduceResult } from './custom-graphics'
+import { logger } from './logger'
 import type { CustomSandbox } from './custom-render'
 import { readLibraryTemplate } from './motion-library'
 import { beatFrame } from './beat-stills'
@@ -286,6 +287,13 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
   type Job = { scene: PlannedScene } | { hero: EditHero }
   const jobs: Job[] = [...scenes.map((scene) => ({ scene })), ...heroes.map((hero) => ({ hero }))]
   const library = options.library === undefined ? memberLibrary : options.library ?? undefined
+  // One moment that fails (a call that still errors after its retry) costs that moment only, never the others.
+  const failed = (error: unknown): ProduceResult => {
+    if (options.signal?.aborted) throw error
+    const reason = String((error as Error)?.message ?? error).slice(0, 300)
+    logger.warn('edit.custom.moment.failed', { message: plainForLog(reason) })
+    return { meta: null, costUsd: 0, tries: 0, reason }
+  }
   const results = await inBatches(jobs, 3, async (job) => {
     if ('scene' in job) {
       const scene = job.scene
@@ -294,7 +302,7 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
       const frame = await frameAt(ctx, inside[Math.floor(inside.length / 2)]?.index ?? scene.word)
       // A scene is designed fresh for its words (never filled from the library: it is one continuous composition for this stretch).
       const result = await produceCustomGraphic({ run: ctx.folder, brief, words: sectionText(scene.stretch), said, frame, logo: ctx.logo ?? null, fallback: null, model: ctx.model, maxRevisions: cap, grade: ctx.vision },
-        { call: options.call, sandbox: options.sandbox, signal: options.signal })
+        { call: options.call, sandbox: options.sandbox, signal: options.signal }).catch(failed)
       costUsd += result.costUsd
       options.onProgress?.(++done, total)
       return { type: 'scene' as const, scene, result }
@@ -310,7 +318,7 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
     const original = graphics.find((g) => g.id === hero.replaces) ?? null
     const fallback = options.only ? (readCustomGraphic(ctx.folder, original?.fields.comp)?.meta.fallback ?? null) : original?.template === 'custom' ? (readCustomGraphic(ctx.folder, original.fields.comp)?.meta.fallback ?? null) : fallbackOf(original)
     const result = await produceCustomGraphic({ run: ctx.folder, brief, words: line, said, frame, logo: ctx.logo ?? null, fallback, model: ctx.model, maxRevisions: cap, grade: ctx.vision, ...(options.pick ? { libraryItem: options.pick.itemId } : {}) },
-      { call: options.call, sandbox: options.sandbox, signal: options.signal, library })
+      { call: options.call, sandbox: options.sandbox, signal: options.signal, library }).catch(failed)
     costUsd += result.costUsd
     options.onProgress?.(++done, total)
     return { type: 'hero' as const, hero, durationMs, result }
