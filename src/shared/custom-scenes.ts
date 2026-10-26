@@ -40,6 +40,31 @@ export const SCENE_KEEPS = new Set(['link_cta', 'comment_cta', 'logo'])
 
 export type SceneFrame = 'stage' | 'visual'
 
+/**
+ * How many scenes the member wants (the review's Custom graphics skill, remembered in their prefs). Every scene keeps
+ * full quality (every try it needs); fewer scenes cost less. Full is the plan's own amount (today's: about 8 in a
+ * 4-minute reel, from the share and gap rules); Light and Standard are a count that scales with the reel's length.
+ */
+export type SceneAmount = 'light' | 'standard' | 'full'
+export const SCENE_AMOUNTS: readonly SceneAmount[] = ['light', 'standard', 'full']
+export const DEFAULT_SCENE_AMOUNT: SceneAmount = 'full'
+export const SCENE_AMOUNT_LABELS: Record<SceneAmount, string> = { light: 'Light', standard: 'Standard', full: 'Full' }
+/** Scenes per minute of reel (Light about 4 and Standard about 6 in a 4-minute reel; Full about 8, from the plan's rules). */
+export const SCENES_PER_MINUTE: Record<SceneAmount, number> = { light: 1, standard: 1.5, full: 2 }
+export const isSceneAmount = (value: unknown): value is SceneAmount => typeof value === 'string' && (SCENE_AMOUNTS as readonly string[]).includes(value)
+
+/** The scenes a counted amount asks for on a reel this long (at least one, at most `eligible`); null for Full (the plan's rules decide). */
+export function sceneTarget(amount: SceneAmount, reelMs: number, eligible: number): number | null {
+  if (amount === 'full') return null
+  return Math.max(Math.min(1, eligible), Math.min(eligible, Math.round(SCENES_PER_MINUTE[amount] * reelMs / 60000)))
+}
+
+/** The longest stretch without a scene for an amount: Full keeps SCENE_MAX_GAP_MS; fewer scenes are spaced evenly, so the gap grows with the spacing. */
+export function sceneMaxGapMs(amount: SceneAmount): number {
+  if (amount === 'full') return SCENE_MAX_GAP_MS
+  return Math.max(SCENE_MAX_GAP_MS, Math.round(60000 / SCENES_PER_MINUTE[amount] * 1.5))
+}
+
 /** A stretch of the reel, with how much of it is on a filmed screen (share of its words). */
 export interface SceneStretch extends ExplainerSection {
   screen: number
@@ -82,8 +107,9 @@ export function scenePlanSystemPrompt(): string {
     'Answer with JSON only: {"hero": "...", "motif": "...", "stretches": [{"scene": true, "frame": "stage", "label": "...", "idea": "...", "kind": "teaching"}, ...]} with exactly one entry per stretch.'].join('\n\n')
 }
 
-export function scenePlanUserPrompt(stretches: readonly SceneStretch[], theme: CustomTheme, note?: string): string {
+export function scenePlanUserPrompt(stretches: readonly SceneStretch[], theme: CustomTheme, note?: string, target?: number | null): string {
   return [`THE VIDEO'S THEME: ${THEME_LABELS[theme]}.`,
+    ...(target ? [`HOW MANY SCENES: the creator chose ${target} scene${target === 1 ? '' : 's'} for this video (this replaces "half or more"). Mark exactly ${target} stretch${target === 1 ? '' : 'es'} as scenes: the strongest teaching, explaining and visual stretches, spread evenly over the video through its ending.`] : []),
     `THE STRETCHES (${stretches.length}, in order, with what the creator says in each):`,
     ...stretches.map((s) => `${s.index + 1}. (${((s.endMs - s.startMs) / 1000).toFixed(0)} s)${s.index === 0 ? ' [opening]' : ''}${s.screen >= SCREEN_SHARE ? ' [filmed screen]' : ''}${s.index === stretches.length - 1 ? ' [last]' : ''} ${sectionText(s).slice(0, 1200)}`),
     ...(note ? [`THE CREATOR'S WISH (a request, follow it if it fits): ${note.slice(0, 300)}`] : []),
@@ -97,7 +123,7 @@ const FRAMES: readonly SceneFrame[] = ['stage', 'visual']
  * SCENE_MIN_SHARE of the reel (eligible stretches the planner called teaching, list, process, comparison or claim
  * first) and trimmed to SCENE_MAX_SHARE; a label not said is dropped. Null when nothing usable came back.
  */
-export function parseScenePlan(text: unknown, stretches: readonly SceneStretch[], said: SaidIndex): ScenePlan | null {
+export function parseScenePlan(text: unknown, stretches: readonly SceneStretch[], said: SaidIndex, amount: SceneAmount = DEFAULT_SCENE_AMOUNT): ScenePlan | null {
   if (typeof text !== 'string') return null
   const body = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1] ?? text
   const start = body.indexOf('{'), end = body.lastIndexOf('}')
@@ -116,12 +142,41 @@ export function parseScenePlan(text: unknown, stretches: readonly SceneStretch[]
       return { scene: s.scene === true, frame: FRAMES.includes(s.frame as SceneFrame) ? s.frame as SceneFrame : 'stage', label: said1(tidy(s.label, 40)), idea: tidy(s.idea, PLAN_TEXT_CHARS), kind: tidy(s.kind, 20).toLowerCase() }
     })
   }
-  return balancePlan(plan, stretches)
+  return amount === 'full' ? balancePlan(plan, stretches) : countedPlan(plan, stretches, amount)
 }
 
-/** A plan when the call failed: every other eligible stretch a scene (stage), from the second stretch. */
-export function fallbackScenePlan(stretches: readonly SceneStretch[]): ScenePlan {
-  return balancePlan({ hero: '', motif: '', stretches: stretches.map((s) => ({ scene: s.index % 2 === 1, frame: 'stage', label: '', idea: '', kind: '' })) }, stretches)
+/** A plan when the call failed: every other eligible stretch a scene (stage), from the second stretch (Light and Standard: their count, spread). */
+export function fallbackScenePlan(stretches: readonly SceneStretch[], amount: SceneAmount = DEFAULT_SCENE_AMOUNT): ScenePlan {
+  const plan: ScenePlan = { hero: '', motif: '', stretches: stretches.map((s) => ({ scene: s.index % 2 === 1, frame: 'stage', label: '', idea: '', kind: '' })) }
+  return amount === 'full' ? balancePlan(plan, stretches) : countedPlan(plan, stretches, amount)
+}
+
+/**
+ * Light and Standard: exactly sceneTarget scenes, spread evenly over the reel through its ending. The eligible part of
+ * the reel (after the opening) is cut into that many equal slots; each slot takes its strongest stretch (one the
+ * planner made a scene first, then teaching-like, then the longest), and a slot with none passes its scene to the
+ * strongest stretch left anywhere. The call to action never becomes a scene.
+ */
+function countedPlan(plan: ScenePlan, stretches: readonly SceneStretch[], amount: SceneAmount): ScenePlan {
+  const n = stretches.length
+  const out = plan.stretches.map((s, i) => ({ ...s, scene: false, frame: onScreen(stretches[i]) ? 'stage' as const : s.frame }))
+  const pool = out.map((_, i) => i).filter((i) => sceneEligible(stretches[i], n) && out[i].kind !== 'cta')
+  if (!pool.length) return { ...plan, stretches: out }
+  const from = stretches[pool[0]].startMs, to = stretches[pool[pool.length - 1]].endMs
+  const target = sceneTarget(amount, stretches[n - 1].endMs - stretches[0].startMs, pool.length) ?? pool.length
+  const len = (i: number): number => stretches[i].endMs - stretches[i].startMs
+  const strength = (i: number): number => (plan.stretches[i]?.scene ? 1e6 : 0) + (TEACHING.has(out[i].kind) ? 1e5 : 0) + len(i)
+  const strongest = (list: number[]): number | undefined => list.filter((i) => !out[i].scene).sort((a, b) => strength(b) - strength(a))[0]
+  const slot = (to - from) / target
+  let left = 0
+  for (let k = 0; k < target; k++) {
+    const a = from + k * slot, b = from + (k + 1) * slot
+    const pick = strongest(pool.filter((i) => { const mid = (stretches[i].startMs + stretches[i].endMs) / 2; return mid >= a && (mid < b || k === target - 1) }))
+    if (pick === undefined) left++
+    else out[pick].scene = true
+  }
+  for (; left > 0; left--) { const pick = strongest(pool); if (pick === undefined) break; out[pick].scene = true }
+  return { ...plan, stretches: limitVisuals(out) }
 }
 
 const TEACHING = new Set(['teaching', 'list', 'process', 'comparison', 'claim', 'other', ''])
@@ -164,7 +219,11 @@ function balancePlan(plan: ScenePlan, stretches: readonly SceneStretch[]): Scene
     out[i].scene = false
     if (gaps().length) out[i].scene = true
   }
-  // At most one visual (full-frame) scene in three; never two in a row.
+  return { ...plan, stretches: limitVisuals(out) }
+}
+
+/** At most one visual (full-frame) scene in three; never two in a row. */
+function limitVisuals<T extends { scene: boolean; frame: SceneFrame }>(out: T[]): T[] {
   let visuals = 0, last = false
   const count = out.filter((s) => s.scene).length
   for (const s of out) {
@@ -173,7 +232,7 @@ function balancePlan(plan: ScenePlan, stretches: readonly SceneStretch[]): Scene
     if (s.frame === 'visual') visuals++
     last = s.frame === 'visual'
   }
-  return { ...plan, stretches: out }
+  return out
 }
 
 /** The writer's brief lines for one scene (the first line replaces the moment's kind; the rest follow the area). */

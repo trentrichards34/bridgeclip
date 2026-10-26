@@ -17,7 +17,8 @@ const bundled = buildSync({
       export { GraphicForm as ReelGraphicForm } from './src/renderer/components/ReelGraphics';
       export { EditProgressView } from './src/renderer/components/EditProgressView';
       export { BeatSheet } from './src/renderer/components/BeatSheet';
-      export { initialDecisions } from './src/shared/edit-recording';`,
+      export { initialDecisions } from './src/shared/edit-recording';
+      export { SceneAmountPicker } from './src/renderer/components/SceneAmountPicker';`,
     resolveDir: path.resolve(__dirname, '..'),
     loader: 'ts'
   },
@@ -31,7 +32,7 @@ const pending = () => new Promise(() => {})
 globalThis.window = { bridgeclip: { edit: { status: pending, onStatus: () => () => {} }, brandIdentities: { list: pending }, settings: { load: pending } } }
 const mod = { exports: {} }
 new Function('module', 'exports', 'require', bundled)(mod, mod.exports, require)
-const { EditRecordingPage, EditReview, lookFromBrand, transcriptLines, parseEditPlan, useSettingsStore, useEditRecordingStore, isCreateOutput, ReelGraphicForm, EditProgressView, BeatSheet, initialDecisions } = mod.exports
+const { EditRecordingPage, EditReview, lookFromBrand, transcriptLines, parseEditPlan, useSettingsStore, useEditRecordingStore, isCreateOutput, ReelGraphicForm, EditProgressView, BeatSheet, initialDecisions, SceneAmountPicker } = mod.exports
 
 function staticRender(element) {
   const original = React.useSyncExternalStore
@@ -273,4 +274,18 @@ test('the review: the headline and the Triple Hook, quoted, with one-click headl
   assert.match(html, /data-role="qualifier"><span[^>]*>Qualifier<\/span><span[^>]*>Missing/)
   assert.match(html, /The planned headline, “You do not need ads”, only repeated what you say/)
   assert.match(html, /“I can’t stress this enough: I sold 40 courses last week”<\/p><p[^>]*>Triple Hook: qualifier \(headline\) \+ main statement \(headline\) \+ twist · all three<\/p><\/div><button[^>]*>.*?Use this headline<\/button>/)
+})
+
+test('the Scenes choice of custom graphics: Light, Standard and Full, each with its estimate for this reel, Full by default', () => {
+  const estimates = { light: { scenes: 4, expectedUsd: 5.7, mostUsd: 6.1 }, standard: { scenes: 6, expectedUsd: 7.64, mostUsd: 8.17 }, full: { scenes: 8, expectedUsd: 9.58, mostUsd: 10.25 } }
+  const html = staticRender(React.createElement(SceneAmountPicker, { value: undefined, estimates, onChange: () => {} }))
+  assert.match(html, /aria-label="Scenes"/)
+  assert.match(html, /Light · ~\$5\.70/); assert.match(html, /Standard · ~\$7\.64/); assert.match(html, /Full · ~\$9\.58/)
+  assert.match(html, /aria-checked="true"[^>]*>Full/)
+  assert.match(html, /About 8 scenes on this reel, about \$9\.58 \(at most \$10\.25\)/)
+  const light = staticRender(React.createElement(SceneAmountPicker, { value: 'light', estimates, onChange: () => {} }))
+  assert.match(light, /aria-checked="true"[^>]*>Light/); assert.match(light, /About 4 scenes on this reel, about \$5\.70 \(at most \$6\.10\)/)
+  assert.match(light, /same quality/)
+  // No estimates yet: the choices alone.
+  assert.match(staticRender(React.createElement(SceneAmountPicker, { value: 'standard', estimates: null, onChange: () => {} })), />Standard</)
 })

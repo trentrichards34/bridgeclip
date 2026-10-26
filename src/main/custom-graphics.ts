@@ -20,7 +20,8 @@ import {
 import { customSandbox, type CustomSandbox } from './custom-render'
 import { keepInLibrary, libraryMatch, noteLibraryUse, readLibraryTemplate } from './motion-library'
 import { explainerStillTimes } from '../shared/explainer'
-import { sceneStillTimes } from '../shared/custom-scenes'
+import { sceneStillTimes, type SceneAmount } from '../shared/custom-scenes'
+import { plannedScenes, planScenes, reelStretches, usablePlan, type SceneWord } from './custom-scenes'
 import { fillSystemPrompt, fillTemplate, fillUserPrompt, parseFill, type LibraryItem } from '../shared/motion-library'
 import type { GraphicRenderSpec, TimedWord } from '../shared/motion-graphics'
 import type { GraphicJob } from './graphics-render'
@@ -445,6 +446,13 @@ export function installCustomGraphicsTestHook(): void {
     },
     async world(input: { transcript: string; moments: { kind: HeroKind; words: string }[]; model: string }, endpoint: string) {
       return proposeVisualWorld(input, { call: openRouterModelCall('sk-or-test', endpoint, DEFAULT_PRICE) })
+    },
+    /** The scene plan of a reel's words for a Scenes choice: the plan call, checked, and the scenes it places. */
+    async scenes(input: { words: SceneWord[]; endMs: number; amount: SceneAmount; model: string }, endpoint: string) {
+      const stretches = reelStretches(input.words, input.endMs)
+      const result = await planScenes({ model: input.model, theme: 'dark', stretches, said: saidIndex(input.words), amount: input.amount }, openRouterModelCall('sk-or-test', endpoint, DEFAULT_PRICE))
+      const plan = usablePlan(result.plan, stretches, input.amount)
+      return { fromModel: !!result.plan, stretches: stretches.length, picked: plan.stretches.flatMap((s, i) => s.scene ? [i] : []), scenes: plannedScenes(stretches, plan, input.words, input.endMs).map((s) => ({ atMs: s.atMs, durationMs: s.durationMs })) }
     },
     read: readCustomGraphic
   }

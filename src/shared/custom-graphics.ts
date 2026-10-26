@@ -1234,6 +1234,8 @@ export interface EditCustomInfo {
   popups?: number
   /** The theme they are designed in. */
   theme?: CustomTheme
+  /** Each Scenes choice for this reel (Light, Standard, Full): how many scenes and what designing costs; null without scenes. */
+  amounts?: Record<'light' | 'standard' | 'full', { scenes: number; expectedUsd: number; mostUsd: number }> | null
   busy: boolean
   /** Custom graphics already designed: where their motion check measured them flat (by composition). */
   flat?: Record<string, FlatStretch[]>

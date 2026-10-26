@@ -52,6 +52,7 @@ import { Callout } from './ui/Callout'
 import { TextInput } from './ui/Field'
 import { Panel, PanelHeader } from './ui/Panel'
 import { onRadioKeyDown, Segmented } from './ui/Segmented'
+import { SceneAmountPicker, type SceneAmountEstimates } from './SceneAmountPicker'
 import { SettingRow } from './ui/SettingRow'
 import { Switch } from './ui/Switch'
 
@@ -114,14 +115,16 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   useEffect(() => { if (lastRestore && !restoreStillApplied(decisions, lastRestore)) setLastRestore(null) }, [decisions, lastRestore])
   const logLines = useMemo(() => editRecordingLog(plan, decisions, status.sources), [plan, decisions, status.sources])
   // Style and sound are remembered for the next video once the member changes them here.
-  const firstStyle = useRef({ soundStyle: decisions.soundStyle, soundEffects: decisions.soundEffects })
+  // (The Scenes choice of custom graphics too.)
+  const firstStyle = useRef({ soundStyle: decisions.soundStyle, soundEffects: decisions.soundEffects, sceneAmount: decisions.sceneAmount })
   useEffect(() => {
     const first = firstStyle.current
-    if (decisions.soundStyle === first.soundStyle && decisions.soundEffects === first.soundEffects) return
-    firstStyle.current = { soundStyle: decisions.soundStyle, soundEffects: decisions.soundEffects }
-    const editStyle = { ...(decisions.soundStyle ? { register: decisions.soundStyle } : {}), ...(decisions.soundEffects !== undefined ? { soundEffects: decisions.soundEffects } : {}) }
+    if (decisions.soundStyle === first.soundStyle && decisions.soundEffects === first.soundEffects && decisions.sceneAmount === first.sceneAmount) return
+    firstStyle.current = { soundStyle: decisions.soundStyle, soundEffects: decisions.soundEffects, sceneAmount: decisions.sceneAmount }
+    const editStyle = { ...(decisions.soundStyle ? { register: decisions.soundStyle } : {}), ...(decisions.soundEffects !== undefined ? { soundEffects: decisions.soundEffects } : {}),
+      ...(decisions.sceneAmount ? { sceneAmount: decisions.sceneAmount } : {}) }
     void useMemberPrefsStore.getState().saveApp({ editStyle }).catch(() => undefined)
-  }, [decisions.soundStyle, decisions.soundEffects])
+  }, [decisions.soundStyle, decisions.soundEffects, decisions.sceneAmount])
   // Quick controls: "Dress it up" / "Keep it clean" (what changed, with Undo) and "Save as my look".
   const [density, setDensity] = useState<{ change: DensityChange; before: EditDecisions } | null>(null)
   const [lookSaved, setLookSaved] = useState<string | null>(null)
@@ -143,12 +146,15 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   // Custom graphics (Skills): what they'd cost for this edit, shown under the switch before anything is spent.
   const [customNote, setCustomNote] = useState<string | undefined>(undefined)
   const [explainerNote, setExplainerNote] = useState<string | undefined>(undefined)
-  const customKey = `${(decisions.graphics ?? []).map((g) => `${g.id}:${g.template}:${g.word}`).join('|')}#${decisions.customScenes !== false}${decisions.stageLayouts !== false}${decisions.explainer === true}`
+  const [sceneEstimates, setSceneEstimates] = useState<SceneAmountEstimates | null>(null)
+  // (Again when the reel's length changes: each Scenes choice's estimate follows it.)
+  const customKey = `${(decisions.graphics ?? []).map((g) => `${g.id}:${g.template}:${g.word}`).join('|')}#${decisions.customScenes !== false}${decisions.stageLayouts !== false}${decisions.explainer === true}#${decisions.sceneAmount ?? ''}#${decisions.cut.length}:${decisions.hookId}:${decisions.endOnCta}:${(decisions.clipOrder ?? []).join(',')}`
   useEffect(() => {
     let live = true
-    if (!openrouter || typeof getApi().edit.customInfo !== 'function') { setCustomNote(undefined); setExplainerNote(undefined); return }
+    if (!openrouter || typeof getApi().edit.customInfo !== 'function') { setCustomNote(undefined); setExplainerNote(undefined); setSceneEstimates(null); return }
     void getApi().edit.customInfo(decisions).then((info) => {
       if (!live) return
+      setSceneEstimates(info.amounts ?? null)
       const ex = info.explainer
       setExplainerNote(ex && ex.sections ? `Your AI draws ${ex.sections} section${ex.sections === 1 ? '' : 's'}, each one illustration that changes on every line, checks each over your video and fixes it. About ${formatSpendUsd(ex.expectedUsd)} (at most ${formatSpendUsd(ex.mostUsd)}), when you make the reel.` : undefined)
       const made = (decisions.graphics ?? []).filter((g) => g.template === 'custom').length
@@ -502,6 +508,8 @@ export function EditReview({ status, brand, look, onLook, onError }: {
                     options={CUSTOM_THEMES.map((value) => ({ value, label: THEME_LABELS[value] }))}
                     onChange={(customTheme) => setDecisions((current) => ({ ...current, customTheme }))} />
                   <p className="text-2xs text-ink-subtle">{THEME_DETAILS[decisions.customTheme ?? DEFAULT_THEME]}</p>
+                  {sceneEstimates && <SceneAmountPicker value={decisions.sceneAmount} estimates={sceneEstimates}
+                    onChange={(sceneAmount) => setDecisions((current) => ({ ...current, sceneAmount }))} />}
                 </div>) : undefined}
             onToggle={(id, on) => {
               const patch = editSkillPatch(plan, { ...decisions, look }, id, on, { brollSource: brollDefault, openrouter })

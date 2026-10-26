@@ -132,5 +132,10 @@ test('Save as my look: the reel’s look round-trips through member prefs and st
   assert.equal(myLook.decisionsWithMyLook({ ...fresh, clipOrder: [0] }, stored.myLook).transitions, true)
   const remembered = myLook.decisionsWithEditStyle(fresh, stored.editStyle)
   assert.deepEqual([remembered.soundStyle, remembered.soundEffects], ['story', true])
+  // The Scenes choice of custom graphics is remembered too (junk dropped), and starts the next review.
+  assert.deepEqual(plain(myLook.parseEditStyle({ sceneAmount: 'light' })), { sceneAmount: 'light' })
+  assert.deepEqual(plain(myLook.parseEditStyle({ sceneAmount: 'lots' })), {})
+  assert.equal(myLook.decisionsWithEditStyle(fresh, { sceneAmount: 'standard' }).sceneAmount, 'standard')
+  assert.equal(myLook.decisionsWithEditStyle(fresh, {}).sceneAmount, undefined)
   assert.match(myLook.myLookSummary(stored.myLook), /Minimal · Captions: pop · Hook text: white · Grade: Cinematic · No sound effects/)
 })

@@ -8,8 +8,8 @@ import {
   customGeometry, customLook, stressedWords, type CustomTheme, type SaidIndex, type VisualWorld, type WriterBrief
 } from '../shared/custom-graphics'
 import {
-  fallbackScenePlan, onScreen, parseScenePlan, sceneBriefLines, sceneEligible, scenePlanSystemPrompt, scenePlanUserPrompt, sceneStretches, sectionText,
-  type SceneFrame, type ScenePlan, type SceneStretch
+  DEFAULT_SCENE_AMOUNT, fallbackScenePlan, onScreen, parseScenePlan, sceneBriefLines, sceneEligible, scenePlanSystemPrompt, scenePlanUserPrompt, sceneStretches, sceneTarget, sectionText,
+  type SceneAmount, type SceneFrame, type ScenePlan, type SceneStretch
 } from '../shared/custom-scenes'
 import { CUSTOM_SECTION_MAX_MS } from '../shared/explainer-layout'
 import type { TimedWord } from '../shared/motion-graphics'
@@ -42,10 +42,13 @@ export interface PlannedScene {
 export const SCENE_HANDOVER_MS = 1500
 
 /** The scene plan call (one per video). Null plan when the answer can't be used (the fallback plan is used instead). */
-export async function planScenes(input: { model: string; theme: CustomTheme; stretches: readonly SceneStretch[]; said: SaidIndex; note?: string }, call: ModelCall, signal?: AbortSignal): Promise<{ plan: ScenePlan | null; costUsd: number }> {
+export async function planScenes(input: { model: string; theme: CustomTheme; stretches: readonly SceneStretch[]; said: SaidIndex; note?: string; amount?: SceneAmount }, call: ModelCall, signal?: AbortSignal): Promise<{ plan: ScenePlan | null; costUsd: number }> {
+  const amount = input.amount ?? DEFAULT_SCENE_AMOUNT
+  const n = input.stretches.length
+  const target = n ? sceneTarget(amount, input.stretches[n - 1].endMs - input.stretches[0].startMs, input.stretches.filter((s) => sceneEligible(s, n)).length) : null
   try {
-    const reply = await call({ model: input.model, system: scenePlanSystemPrompt(), user: scenePlanUserPrompt(input.stretches, input.theme, input.note), maxTokens: 8000, temperature: 0.4, purpose: 'scenes', signal })
-    const plan = parseScenePlan(reply.text, input.stretches, input.said)
+    const reply = await call({ model: input.model, system: scenePlanSystemPrompt(), user: scenePlanUserPrompt(input.stretches, input.theme, input.note, target), maxTokens: 8000, temperature: 0.4, purpose: 'scenes', signal })
+    const plan = parseScenePlan(reply.text, input.stretches, input.said, amount)
     if (!plan) logger.info('scenes.plan.unreadable', { chars: reply.text.length })
     return { plan, costUsd: reply.costUsd }
   } catch (error) {
@@ -91,8 +94,8 @@ export function plannedScenes(stretches: readonly SceneStretch[], plan: ScenePla
   return out.map((s, i) => ({ ...s, order: i }))
 }
 
-/** The plan to use: the model's, else ours (every other eligible stretch). */
-export const usablePlan = (plan: ScenePlan | null, stretches: readonly SceneStretch[]): ScenePlan => plan ?? fallbackScenePlan(stretches)
+/** The plan to use: the model's, else ours (every other eligible stretch; Light and Standard: their count). */
+export const usablePlan = (plan: ScenePlan | null, stretches: readonly SceneStretch[], amount: SceneAmount = DEFAULT_SCENE_AMOUNT): ScenePlan => plan ?? fallbackScenePlan(stretches, amount)
 
 /** The plan's hero object and motif as the video's world note (what the pop-ups and the beat sheet use). */
 export function planWorld(plan: ScenePlan): VisualWorld | null {

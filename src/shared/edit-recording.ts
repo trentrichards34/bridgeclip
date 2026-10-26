@@ -283,6 +283,8 @@ export interface EditDecisions {
   customTheme?: 'dark' | 'paper' | 'brand'
   /** Custom scenes (missing: on with custom graphics): 15-20 s designed scenes over the teaching stretches instead of pop-ups (custom-scenes.ts). */
   customScenes?: boolean
+  /** How many scenes (custom-scenes SceneAmount; missing: 'full', the plan's own amount). */
+  sceneAmount?: 'light' | 'standard' | 'full'
   /** Reduce background noise and room echo on the voice and even its level (missing: off). */
   voiceCleanup?: boolean
   /** Background music under the reel, ducking while they talk; `musicTrack` is the track (see music.ts). */
@@ -726,6 +728,7 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
   })
   for (const key of ['cutoutIntro', 'rawIntro'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose how your video opens.')
   if (value.customTheme !== undefined && !['dark', 'paper', 'brand'].includes(value.customTheme as string)) throw new Error('Choose a theme for your custom graphics.')
+  if (value.sceneAmount !== undefined && !['light', 'standard', 'full'].includes(value.sceneAmount as string)) throw new Error('Choose how many scenes your AI designs.')
   for (const key of ['motionGraphics', 'stageLayouts', 'soundEffects', 'customGraphics', 'explainer', 'customScenes'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose your skills again.')
   if (value.soundStyle !== undefined && !isSoundRegister(value.soundStyle)) throw new Error('Choose how much sound plays.')
   if (look.grade !== undefined && !isColorGrade(look.grade)) throw new Error('Choose a color grade from the list.')
@@ -751,6 +754,7 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     ...(value.explainer === true ? { explainer: true } : {}),
     ...(value.customTheme === 'dark' || value.customTheme === 'paper' || value.customTheme === 'brand' ? { customTheme: value.customTheme } : {}),
     ...(value.customScenes === false ? { customScenes: false } : {}),
+    ...(value.sceneAmount === 'light' || value.sceneAmount === 'standard' || value.sceneAmount === 'full' ? { sceneAmount: value.sceneAmount } : {}),
     ...(typeof value.soundEffects === 'boolean' ? { soundEffects: value.soundEffects } : {}),
     ...(isSoundRegister(value.soundStyle) ? { soundStyle: value.soundStyle } : {}) }
   if (value.youtube !== undefined) {

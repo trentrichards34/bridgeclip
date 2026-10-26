@@ -78,6 +78,67 @@ test('the plan: checked against our rules (the opening keeps the face, screens a
   assert.match(user, /\[opening\]/); assert.match(user, /\[filmed screen\]/); assert.match(user, /\[last\]/); assert.match(user, /Dark product UI/)
 })
 
+// A synthetic talking reel of `minutes`: a ten-word sentence every 4 s.
+function talkingReel(minutes) {
+  const words = []
+  for (let t = 0, n = 0; t < minutes * 60000 - 3500; t += 4000, n++) {
+    for (let k = 0; k < 10; k++) words.push({ word: k === 9 ? `point${n}.` : `word${k}`, start_ms: t + k * 330, end_ms: t + k * 330 + 300 })
+  }
+  return { words, end: minutes * 60000 }
+}
+
+test('Scenes amount: Light, Standard and Full at 1, 4 and 10 minutes (counts, spread through the ending, strongest first)', () => {
+  const seen = {}
+  for (const minutes of [1, 4, 10]) {
+    const { words, end } = talkingReel(minutes)
+    const list = scenes.sceneStretches(words, end)
+    const said = shared.saidIndex(words)
+    const eligible = list.filter((s) => scenes.sceneEligible(s, list.length)).length
+    // The planner marks every third stretch (the strongest) and calls one a story.
+    const answer = JSON.stringify({ hero: 'h'.repeat(12), motif: '', stretches: list.map((_, i) => ({ scene: i % 3 === 1, frame: 'stage', label: '', idea: '', kind: i === 2 ? 'story' : 'teaching' })) })
+    for (const amount of scenes.SCENE_AMOUNTS) {
+      const plan = scenes.parseScenePlan(answer, list, said, amount)
+      const picked = plan.stretches.map((s, i) => s.scene ? i : -1).filter((i) => i >= 0)
+      seen[`${amount}@${minutes}`] = picked.length
+      assert.equal(plan.stretches[0].scene, false, 'the opening keeps the face')
+      if (amount === 'full') continue
+      const target = scenes.sceneTarget(amount, end, eligible)
+      assert.equal(picked.length, target, `${amount} at ${minutes} min`)
+      assert.equal(target, Math.max(1, Math.min(eligible, Math.round(scenes.SCENES_PER_MINUTE[amount] * minutes))))
+      // Spread evenly through the ending: no bare run longer than the amount's gap, and a scene in the last slot.
+      let from = null, worst = 0
+      plan.stretches.forEach((s, i) => { if (!i) return; if (!s.scene) { if (from === null) from = list[i].startMs; worst = Math.max(worst, list[i].endMs - from) } else from = null })
+      if (picked.length > 1) assert.ok(worst <= scenes.sceneMaxGapMs(amount), `${amount} at ${minutes} min: ${worst} ms bare`)
+      const slot = (end - list[1].startMs) / target
+      assert.ok(list[picked[picked.length - 1]].endMs >= end - slot - 1, `${amount} at ${minutes} min reaches the ending`)
+      // Strongest first: the planner's own picks fill the slots that have one.
+      if (target <= picked.filter((i) => i % 3 === 1).length) assert.ok(picked.every((i) => i % 3 === 1), `${amount} at ${minutes} min keeps the planner's picks`)
+      // The fallback plan (no answer) keeps the count too.
+      assert.equal(scenes.fallbackScenePlan(list, amount).stretches.filter((s) => s.scene).length, target)
+    }
+    // Light < Standard <= Full.
+    assert.ok(seen[`light@${minutes}`] <= seen[`standard@${minutes}`] && seen[`standard@${minutes}`] <= seen[`full@${minutes}`], JSON.stringify(seen))
+  }
+  assert.equal(seen['light@4'], 4); assert.equal(seen['standard@4'], 6)
+  assert.ok(seen['full@4'] >= 7 && seen['full@4'] <= 11, `Full is today's plan: ${seen['full@4']}`)
+  assert.equal(seen['light@1'], 1); assert.equal(seen['standard@1'], 2)
+  assert.equal(seen['light@10'], 10); assert.equal(seen['standard@10'], 15)
+  // The planner is told the count (Light and Standard), not for Full.
+  const { words, end } = talkingReel(4)
+  const list = scenes.sceneStretches(words, end)
+  assert.match(scenes.scenePlanUserPrompt(list, 'dark', undefined, 4), /chose 4 scenes/)
+  assert.doesNotMatch(scenes.scenePlanUserPrompt(list, 'dark'), /HOW MANY SCENES/)
+  assert.equal(scenes.sceneTarget('full', end, 10), null)
+  assert.equal(scenes.sceneMaxGapMs('full'), scenes.SCENE_MAX_GAP_MS)
+})
+
+test('Scenes amount: each choice\'s estimate (8 / 6 / 4 scenes and 3 pop-ups in 4 minutes)', () => {
+  const full = shared.customGraphicsEstimate(3, shared.DEFAULT_PRICE, 8).expectedUsd
+  const standard = shared.customGraphicsEstimate(3, shared.DEFAULT_PRICE, 6).expectedUsd
+  const light = shared.customGraphicsEstimate(3, shared.DEFAULT_PRICE, 4).expectedUsd
+  assert.ok(full > 9 && full < 10.5, String(full)); assert.ok(standard > 7 && standard < 8.2, String(standard)); assert.ok(light > 5 && light < 6.2, String(light))
+})
+
 test('a scene\'s brief: one continuous composition with beats, density, the hero object; graded as a scene', () => {
   const end = RUN.words[RUN.words.length - 1].end_ms
   const list = scenes.sceneStretches(RUN.words, end)
@@ -224,6 +285,37 @@ test('the review: scenes over half the reel or more, templates inside them repla
   // The world note is the plan's hero object and motif (no invented metaphor call).
   assert.equal(calls.filter((c) => c.purpose === 'world').length, 0)
   assert.match(JSON.stringify(m.editVisualWorld(folder)), /your digital product/)
+  fs.rmSync(folder, { recursive: true, force: true })
+})
+
+test('the review with Scenes: Light: its count planned and designed, each choice estimated, the spending check on the chosen one', async () => {
+  const m = editMain()
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'custom-scenes-light-'))
+  const full = reviewOf(folder)
+  const light = { ...full, decisions: { ...full.decisions, sceneAmount: 'light' } }
+  const amounts = m.editSceneAmounts(full)
+  assert.ok(amounts.light.scenes < amounts.standard.scenes && amounts.standard.scenes <= amounts.full.scenes, JSON.stringify(amounts))
+  assert.ok(amounts.light.expectedUsd < amounts.standard.expectedUsd && amounts.standard.expectedUsd < amounts.full.expectedUsd)
+  // The estimate the spending check uses follows the choice (Light: its count, also at most).
+  const est = m.editCustomEstimate(light)
+  assert.equal(est.scenes, amounts.light.scenes); assert.equal(est.mostUsd, amounts.light.mostUsd)
+  assert.ok(est.mostUsd < m.editCustomEstimate(full).mostUsd)
+  const calls = []
+  const call = async (request) => {
+    calls.push(request)
+    if (request.purpose === 'scenes') {
+      const n = (request.user.match(/^\d+\. \(/gm) || []).length
+      return { text: JSON.stringify({ hero: 'your digital product: an app window whose rows fill in', motif: '', stretches: Array.from({ length: n }, (_, i) => ({ scene: i > 0, frame: 'stage', label: '', idea: 'rows fill in', kind: 'teaching' })) }), costUsd: 0.05 }
+    }
+    if (request.purpose === 'grade') return { text: '{"pass": true, "score": 8, "failed": [], "fixes": []}', costUsd: 0.02 }
+    const d = /data-duration="([\d.]+)"/.exec(request.user)[1]
+    const html = fs.readFileSync(path.join(FAKE, 'staircase.html'), 'utf8').replace(/data-duration="[\d.]+"/, `data-duration="${d}"`)
+    return { text: '```html\n' + html + '\n```', costUsd: 0.2 }
+  }
+  const sandbox = { stills: async () => ({ transparent: [Buffer.from('p0'), Buffer.from('p1'), Buffer.from('p2'), Buffer.from('p3')], composite: Buffer.from('j'), texts: ['product'], problems: [] }) }
+  const result = await m.makeEditCustomGraphics(light, { call, sandbox, library: null })
+  assert.match(calls[0].user, new RegExp(`chose ${amounts.light.scenes} scenes?`))
+  assert.ok(result.scenes <= amounts.light.scenes && result.scenes >= amounts.light.scenes - 1, `${result.scenes} of ${amounts.light.scenes}`)
   fs.rmSync(folder, { recursive: true, force: true })
 })
 

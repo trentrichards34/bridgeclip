@@ -52,6 +52,11 @@ function fakeModel() {
       let answer
       const system = json.messages?.[0]?.content?.[0]?.text ?? ''
       if (/WORLD NOTE/.test(system)) answer = '```json\n' + JSON.stringify(WORLD) + '\n```'
+      // The scene plan: the planner wants a scene on every stretch (our rules keep the member's Scenes choice).
+      else if (/become designed SCENES/.test(system)) {
+        const n = (text.match(/^\d+\. \(/gm) || []).length
+        answer = JSON.stringify({ hero: 'your business: building blocks that stack up as each part is said', motif: 'people dots gathering', stretches: Array.from({ length: n }, () => ({ scene: true, frame: 'stage', label: '', idea: 'blocks stack up', kind: 'teaching' })) })
+      }
       else if (isGrade) {
         const m = graded(text)
         const n = (grades.get(m?.name) ?? 0) + 1
@@ -112,6 +117,24 @@ test('custom graphics: the owner\'s run moments go through write → render → 
   const proposed = await session.app.evaluate(async (_electron, { input, endpoint }) => globalThis.__bridgeclipCustomGraphics.world(input, endpoint),
     { input: { transcript: RUN.map((w) => w.word).join(' '), moments: MOMENTS.map((m) => ({ kind: m.kind, words: said(m.atMs, m.atMs + m.durationMs) })), model: 'anthropic/claude-opus-5.5' }, endpoint })
   assert.equal(proposed.world.idea, WORLD.idea)
+  // Scenes, Light: the planner is told the count, and the reel gets that many scenes spread to its ending (Full: today's many).
+  const sceneWords = RUN.map((w, i) => ({ ...w, index: i }))
+  const reelEnd = RUN[RUN.length - 1].end_ms
+  const plans = {}
+  for (const amount of ['light', 'full']) {
+    plans[amount] = await session.app.evaluate(async (_electron, { input, endpoint }) => globalThis.__bridgeclipCustomGraphics.scenes(input, endpoint),
+      { input: { words: sceneWords, endMs: reelEnd, amount, model: 'anthropic/claude-opus-5.5' }, endpoint })
+    assert.ok(plans[amount].fromModel, `${amount}: the model's plan was used`)
+  }
+  const lightCount = Math.round(reelEnd / 60000)
+  const planCall = fake.requests.filter((r) => /become designed SCENES/.test(r.messages[0].content[0].text ?? r.messages[0].content))
+  assert.match(String(planCall[0].messages[1].content), new RegExp(`chose ${lightCount} scenes`))
+  assert.doesNotMatch(String(planCall[1].messages[1].content), /HOW MANY SCENES/)
+  assert.equal(plans.light.picked.length, lightCount, JSON.stringify(plans.light))
+  assert.ok(plans.light.scenes.length >= lightCount - 1 && plans.light.scenes.length <= lightCount)
+  assert.ok(plans.full.picked.length > plans.light.picked.length + 2, JSON.stringify(plans.full))
+  const lastLight = plans.light.scenes[plans.light.scenes.length - 1]
+  assert.ok(lastLight.atMs >= reelEnd - reelEnd / lightCount - 20000, `Light reaches the ending (${lastLight.atMs} of ${reelEnd})`)
   const results = []
   for (const m of MOMENTS) {
     const frame = framePng(root, m.still)
@@ -141,7 +164,7 @@ test('custom graphics: the owner\'s run moments go through write → render → 
   assert.equal(by['three-million'].tries, 3)
   assert.match(by['three-million'].reason, /not said/)
   // Every graphic was designed inside the one world, built on its stressed words, and kept moving (no flat stretch over 1.5 s).
-  const writes = fake.requests.filter((r) => typeof r.messages[1].content === 'string' && !/WORLD NOTE/.test(r.messages[0].content[0].text))
+  const writes = fake.requests.filter((r) => typeof r.messages[1].content === 'string' && !/WORLD NOTE|become designed SCENES/.test(r.messages[0].content[0].text))
   assert.ok(writes.length >= 5 && writes.every((r) => /THE VIDEO'S HERO OBJECT AND MOTIF .*Eyeballs as light/.test(r.messages[1].content) && /STRESSED WORDS /.test(r.messages[1].content)))
   for (const name of ['opening-claim', 'staircase', 'organic-vs-ads', 'proof']) assert.deepEqual(by[name].meta.flat, [], `${name} never holds still`)
   assert.ok(by.staircase.meta.builds >= 10, `the staircase builds on ${by.staircase.meta.builds} words`)

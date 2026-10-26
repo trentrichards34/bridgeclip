@@ -16,7 +16,9 @@ import { COLOR_GRADE_INFO } from './color-grade'
 import type { EditDecisions, EditLook } from './edit-recording'
 
 /** The Style and sound choice from the last edited reel. */
-export interface EditStylePrefs { register?: Register; soundEffects?: boolean }
+export interface EditStylePrefs { register?: Register; soundEffects?: boolean
+  /** How many scenes custom graphics design (Light, Standard or Full). */
+  sceneAmount?: 'light' | 'standard' | 'full' }
 
 export interface MyLook {
   register?: Register
@@ -35,7 +37,8 @@ const record = (value: unknown): value is Record<string, unknown> => value !== n
 
 export function parseEditStyle(value: unknown): EditStylePrefs {
   if (!record(value)) return {}
-  return { ...(isRegister(value.register) ? { register: value.register } : {}), ...(typeof value.soundEffects === 'boolean' ? { soundEffects: value.soundEffects } : {}) }
+  return { ...(isRegister(value.register) ? { register: value.register } : {}), ...(typeof value.soundEffects === 'boolean' ? { soundEffects: value.soundEffects } : {}),
+    ...(value.sceneAmount === 'light' || value.sceneAmount === 'standard' || value.sceneAmount === 'full' ? { sceneAmount: value.sceneAmount } : {}) }
 }
 
 /** A saved look (null when there is none or it isn't one). */
@@ -93,6 +96,7 @@ export function decisionsWithEditStyle(d: EditDecisions, style: EditStylePrefs):
   return {
     ...d,
     ...(style.register ? { soundStyle: style.register } : {}),
+    ...(style.sceneAmount ? { sceneAmount: style.sceneAmount } : {}),
     ...(style.soundEffects !== undefined ? { soundEffects: style.soundEffects, sounds: d.sounds.map((s) => ({ ...s, on: style.soundEffects as boolean })) } : {})
   }
 }

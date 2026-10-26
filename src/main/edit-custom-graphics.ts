@@ -18,7 +18,7 @@ import { spokenNumber } from '../shared/graphic-prefill'
 import { templateInfo, type TimedWord } from '../shared/motion-graphics'
 import { BEAT_HOOK_SECONDS, graphicName, graphicWords } from '../shared/beat-sheet'
 import { planScenes, plannedScenes, planWorld, reelStretches, sceneBrief, usablePlan, type PlannedScene, type SceneWord } from './custom-scenes'
-import { isTextHighlight, MAX_POPUPS_WITH_SCENES, MAX_TEXT_HIGHLIGHTS, SCENE_KEEPS, sceneEligible, sectionText } from '../shared/custom-scenes'
+import { DEFAULT_SCENE_AMOUNT, isTextHighlight, MAX_POPUPS_WITH_SCENES, MAX_TEXT_HIGHLIGHTS, SCENE_AMOUNTS, SCENE_KEEPS, sceneEligible, sceneTarget, sectionText, type SceneAmount } from '../shared/custom-scenes'
 import { inBatches, memberLibrary, plainForLog, produceCustomGraphic, proposeVisualWorld, readCustomGraphic, readVisualWorld, saveVisualWorld, type LibraryHooks, type ModelCall, type ProduceResult } from './custom-graphics'
 import { logger } from './logger'
 import type { CustomSandbox } from './custom-render'
@@ -90,25 +90,43 @@ export function sceneWords(ctx: EditCustomContext): { words: SceneWord[]; endMs:
   return { words, endMs }
 }
 
-/** The stretches that could become scenes (before the plan call decides), and how many we expect it to pick. */
-export function sceneOutlook(ctx: EditCustomContext): { stretches: number; eligible: number; expected: number } {
-  if (!scenesOn(ctx)) return { stretches: 0, eligible: 0, expected: 0 }
+/** The member's Scenes choice (missing: Full). */
+export const sceneAmountOf = (d: Pick<EditDecisions, 'sceneAmount'>): SceneAmount => d.sceneAmount ?? DEFAULT_SCENE_AMOUNT
+
+/**
+ * The stretches that could become scenes (before the plan call decides), how many we expect and the most there can
+ * be. Full: the plan's rules (about 55% of the stretches, at most every eligible one); Light and Standard: their count.
+ */
+export function sceneOutlook(ctx: EditCustomContext, amount: SceneAmount = sceneAmountOf(ctx.decisions)): { stretches: number; eligible: number; expected: number; most: number } {
+  if (!scenesOn(ctx)) return { stretches: 0, eligible: 0, expected: 0, most: 0 }
   const { words, endMs } = sceneWords(ctx)
   const stretches = reelStretches(words, endMs)
   const eligible = stretches.filter((s) => sceneEligible(s, stretches.length)).length
-  return { stretches: stretches.length, eligible, expected: Math.min(eligible, Math.ceil(stretches.length * .55)) }
+  const target = stretches.length ? sceneTarget(amount, stretches[stretches.length - 1].endMs - stretches[0].startMs, eligible) : null
+  if (target !== null) return { stretches: stretches.length, eligible, expected: target, most: target }
+  return { stretches: stretches.length, eligible, expected: Math.min(eligible, Math.ceil(stretches.length * .55)), most: eligible }
 }
 
 /**
  * What making them costs (shown before running), honestly: every graphic gets every revision it needs (MIN_REVISIONS),
  * scenes are priced as scenes (about twice a pop-up's composition), the plan call included.
  */
-export function editCustomEstimate(ctx: EditCustomContext, count?: number): { moments: number; scenes: number; expectedUsd: number; mostUsd: number; revisions: number } {
-  const outlook = sceneOutlook(ctx)
+export function editCustomEstimate(ctx: EditCustomContext, count?: number, amount: SceneAmount = sceneAmountOf(ctx.decisions)): { moments: number; scenes: number; expectedUsd: number; mostUsd: number; revisions: number } {
+  const outlook = sceneOutlook(ctx, amount)
   const pops = count ?? (outlook.eligible ? Math.min(MAX_POPUPS_WITH_SCENES, editHeroMoments(ctx).length) : editHeroMoments(ctx).length)
   const expected = customGraphicsEstimate(pops, ctx.price, outlook.expected)
-  const most = customGraphicsEstimate(pops, ctx.price, outlook.eligible)
+  const most = customGraphicsEstimate(pops, ctx.price, outlook.most)
   return { moments: pops, scenes: outlook.expected, expectedUsd: expected.expectedUsd, mostUsd: most.mostUsd, revisions: expected.revisions }
+}
+
+/** Each Scenes choice's estimate for this reel (what the review shows next to it), or null when the reel has no scenes. */
+export function editSceneAmounts(ctx: EditCustomContext): Record<SceneAmount, { scenes: number; expectedUsd: number; mostUsd: number }> | null {
+  if (!sceneOutlook(ctx).eligible) return null
+  const pops = Math.min(MAX_POPUPS_WITH_SCENES, editHeroMoments(ctx).length)
+  return Object.fromEntries(SCENE_AMOUNTS.map((amount) => {
+    const e = editCustomEstimate(ctx, pops, amount)
+    return [amount, { scenes: e.scenes, expectedUsd: e.expectedUsd, mostUsd: e.mostUsd }]
+  })) as Record<SceneAmount, { scenes: number; expectedUsd: number; mostUsd: number }>
 }
 
 const tidy = (w: string): string => w.replace(/\s+/g, ' ').trim()
@@ -258,9 +276,10 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
   if (fresh && scenesOn(ctx)) {
     const stretches = reelStretches(timeline.words, timeline.endMs)
     if (stretches.some((x) => sceneEligible(x, stretches.length))) {
-      const result = await planScenes({ model: ctx.model, theme, stretches, said }, options.call, options.signal)
+      const amount = sceneAmountOf(ctx.decisions)
+      const result = await planScenes({ model: ctx.model, theme, stretches, said, amount }, options.call, options.signal)
       costUsd += result.costUsd
-      planned = usablePlan(result.plan, stretches)
+      planned = usablePlan(result.plan, stretches, amount)
       scenes = plannedScenes(stretches, planned, timeline.words, timeline.endMs)
       sceneCount = stretches.length
     }

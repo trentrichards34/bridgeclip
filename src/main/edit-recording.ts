@@ -51,7 +51,7 @@ import { resolveBinary } from './tools'
 import { beatFrame } from './beat-stills'
 import { customModel, customStillPaths, openRouterModelCall, readCustomGraphic, type CustomModel } from './custom-graphics'
 import { explainerInfo, makeExplainer } from './explainer'
-import { editCustomEstimate, editHeroMoments, editVisualWorld, makeEditCustomGraphics, regenerateVisualWorld, setVisualWorld, swapBackCustomGraphic, type EditCustomContext, type EditCustomResult } from './edit-custom-graphics'
+import { editCustomEstimate, editHeroMoments, editSceneAmounts, editVisualWorld, makeEditCustomGraphics, regenerateVisualWorld, setVisualWorld, swapBackCustomGraphic, type EditCustomContext, type EditCustomResult } from './edit-custom-graphics'
 import { DEFAULT_PRICE, DEFAULT_THEME, MAX_NOTE_CHARS, type EditCustomInfo, worldCallCost, worldFromLine, worldLine, WORLD_LINE_CHARS } from '../shared/custom-graphics'
 import type { EditGraphic } from '../shared/reel-graphics'
 import { DEFAULT_YOUTUBE_CHOICE, YOUTUBE_MAX_SOURCE_SECONDS, YOUTUBE_MAX_TOTAL_SECONDS, isEditFormat, parseChapters, youtubeForEngine, type EditFormat } from '../shared/longform'
@@ -993,7 +993,7 @@ export async function editCustomGraphicsInfo(value: unknown): Promise<EditCustom
   const estimate = editCustomEstimate(ctx)
   return { available: !!m, reason: m ? null : 'Add your OpenRouter key in Settings → API keys to design custom graphics.', model: ctx.model,
     moments: heroes.map((h) => ({ word: h.word, kind: h.kind, frame: h.frame, replaces: h.replaces })), expectedUsd: estimate.expectedUsd, mostUsd: estimate.mostUsd, revisions: estimate.revisions, busy: !!current.customBusy,
-    scenes: estimate.scenes, popups: estimate.moments, theme: decisions.customTheme ?? DEFAULT_THEME,
+    scenes: estimate.scenes, popups: estimate.moments, theme: decisions.customTheme ?? DEFAULT_THEME, amounts: editSceneAmounts(ctx),
     explainer: current.status.plan!.format === 'youtube' ? null : explainerInfo(ctx),
     flat: Object.fromEntries((decisions.graphics ?? []).filter((g) => g.template === 'custom').flatMap((g) => { const found = readCustomGraphic(current.status.folder, g.fields.comp); return found?.meta.flat?.length ? [[found.meta.comp, found.meta.flat]] : [] })) }
 }
