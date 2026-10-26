@@ -14,12 +14,12 @@ import { getBridgeRunnerPath, getEnginePath, resolvePythonPath, runtimeEnvironme
 import { resolveBinary } from './tools'
 import { logger } from './logger'
 import { importGraphicImage, importGraphicVideo, renderCandidateGraphics, sweepGraphicRenders, type RenderedGraphic } from './graphics-render'
-import { outputScenes } from '../shared/scenes'
-import { firstChapterSourceMs, graphicsCap } from '../shared/motion-graphics'
+import { outputScenes, parseScenes, type StageScene } from '../shared/scenes'
+import { firstChapterSourceMs, graphicsCap, parseGraphics } from '../shared/motion-graphics'
 import { bakeSoundEvents } from '../shared/sound-design'
 import { soundPaletteForEngine } from './sound-library'
 
-type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source' | 'suggest-hooks' | 'prepare'
+type WorkerAction = 'review' | 'export' | 'export-all' | 'scan-cameras' | 'replace-source' | 'suggest-hooks' | 'prepare' | 'fix-layout'
 interface EditorOperation { progress?: EditorSession['progress']; action: NonNullable<EditorSession['operation']>; child?: ChildProcess; cancelled?: boolean; abort?: AbortController; batch?: EditorBatch }
 const operations = new Map<string, EditorOperation>()
 
@@ -659,6 +659,35 @@ export async function suggestEditorHooks(path: unknown, revision: unknown, candi
     if (operation.cancelled) throw new Error(editorFailureMessage('suggest-hooks', 'cancelled'))
     await recordEditorCost(run, result, 'editor_hooks')
     return { hooks: parseHookIdeas(result.hooks) }
+  } finally {
+    operation.child = undefined
+    operations.delete(run)
+  }
+}
+
+/**
+ * "Fix layout" (free, local): the clip's stage scenes worked out again from its graphics (the ones in the editor now,
+ * unsaved edits included), the way the reel was laid out (edit_direction.layout_scenes: stage and Visual scenes, custom
+ * scenes on their theme, screen cards over filmed screens, never overlapping). The project is not changed: the editor
+ * applies the scenes as one edit the member can undo.
+ */
+export async function fixEditorLayout(path: unknown, revision: unknown, candidateId: unknown, graphics: unknown): Promise<{ stage_scenes: StageScene[] }> {
+  const run = runPath(path)
+  if (operations.has(run) || operations.size >= 2) throw new Error('An editor operation is already running. Try again when it finishes.')
+  const operation: EditorOperation = { action: 'fix-layout' }
+  operations.set(run, operation)
+  try {
+    const { project } = await openEditor(run)
+    if (project.media_freed) throw new Error('Editor media was freed. This project is read-only.')
+    const candidate = project.candidates.find((c) => c.id === candidateId)
+    if (revision !== project.revision || !candidate) throw new Error('Project changed. Reopen it and retry.')
+    const list = parseGraphics(graphics ?? candidate.graphics ?? [], 120)
+    const settings = loadSettings()
+    const { env, python } = workerSetup(settings)
+    const result = await runWorker(run, operation, 'fix-layout', env, python, 15 * 60 * 1000,
+      { run, library: realpathSync(settings.outputDirectory), revision, candidate_id: candidateId, action: 'fix-layout', graphics: list })
+    if (operation.cancelled) throw new Error(editorFailureMessage('fix-layout', 'cancelled'))
+    return { stage_scenes: parseScenes(result.stage_scenes ?? [], project.duration_ms) }
   } finally {
     operation.child = undefined
     operations.delete(run)

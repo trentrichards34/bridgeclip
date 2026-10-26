@@ -206,6 +206,8 @@ interface Attempt {
  * run's grade failed all ten designs and none reached the reel), then one that only failed the motion check, each by score.
  */
 const attemptRank = (a: Attempt): number => (a.grade.pass && a.clean ? 3 : a.clean ? 2 : a.motionOnly ? 1 : 0) * 100 + a.grade.score
+/** A try our own checks pass with this grade (or more) is kept without another revision (see the loop). */
+export const GOOD_ENOUGH_SCORE = 6
 /** The writer's room to answer (it thinks first, and its thinking counts): a pop-up, and a scene or an Explainer section (about twice the composition). */
 export const WRITER_MAX_TOKENS = 16000
 export const SCENE_WRITER_MAX_TOKENS = 24000
@@ -322,7 +324,10 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
       const current = await look(html)
       if (!current) { previous = { html, fixes: [reason, 'Keep the script simple: build the timeline once, no loops that run long, fewer elements.'] }; continue }
       keep(current)
-      if (current.grade.pass) break
+      // Good enough to stop early: the grade passed, or our own checks passed and the grade gave it GOOD_ENOUGH_SCORE.
+      // Calibrated on a real run the owner approved (edit-751a0a07, 11 graphics, 33 tries, grades 3-6, none passing):
+      // stopping there ships the same 11 graphics; stopping at 5 would have shipped a visibly weaker try of one.
+      if (current.grade.pass || (current.clean && current.grade.score >= GOOD_ENOUGH_SCORE)) break
       previous = { html, fixes: current.grade.fixes }
     }
   }

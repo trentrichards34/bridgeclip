@@ -147,8 +147,8 @@ export function sceneTransition(s: Pick<StageScene, 'transition'>): SceneTransit
 
 /**
  * Validates untrusted scenes (a saved edit, the renderer, the chat): a list of
- * up to MAX_SCENES scenes in time order, each at least 1.2 s, not overlapping, inside
- * [0, duration]. Throws on anything else.
+ * up to MAX_SCENES scenes, each at least 1.2 s, inside [0, duration]; returned in time order with overlaps trimmed
+ * (never fatal). Throws on anything else.
  */
 export function parseScenes(value: unknown, duration = Number.MAX_SAFE_INTEGER): StageScene[] {
   if (value === undefined) return []
@@ -161,15 +161,22 @@ export function parseScenes(value: unknown, duration = Number.MAX_SAFE_INTEGER):
     if (s.transition !== undefined && !isTransition(s.transition)) throw new Error('A scene’s transition is slide, zoom or whip.')
     if (!isKind(s.scene)) throw new Error('A scene is face, stage or visual.')
     if (s.backdrop !== undefined && !isBackdrop(s.backdrop)) throw new Error('A scene’s backdrop is light, dark, brand, grid, gradient, solid or paper.')
-    if (s.card !== undefined && !isCard(s.card)) throw new Error('A scene’s card is rounded, arch or cut-out.')
+    if (s.card !== undefined && !isCard(s.card)) throw new Error('A scene’s card is rounded, arch, cut-out or screen.')
     const start = s.start_ms, end = s.end_ms
     if (typeof start !== 'number' || typeof end !== 'number' || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > duration) throw new Error('A scene must be inside the video.')
     if (end - start < MIN_SCENE_MS - 0.5) throw new Error(`A scene lasts at least ${MIN_SCENE_MS / 1000} seconds.`)
     return clean({ scene: s.scene, start_ms: Math.round(start), end_ms: Math.round(end), ...(s.backdrop ? { backdrop: s.backdrop as SceneBackdrop } : {}), ...(s.card ? { card: s.card as SceneCard } : {}),
       ...(s.escape === false ? { escape: false as const } : {}), ...(s.transition ? { transition: s.transition as SceneTransition } : {}) })
   })
-  scenes.forEach((s, i) => { if (i > 0 && s.start_ms < scenes[i - 1].end_ms) throw new Error('Scenes can’t overlap.') })
-  return scenes
+  // Overlaps are trimmed, never fatal: one that starts inside the one before starts where it ends (left out when too
+  // short). Two back-to-back scenes overlapping by 70 ms in a real run made the check drop every scene of the reel.
+  const out: StageScene[] = []
+  for (const s of [...scenes].sort((a, b) => a.start_ms - b.start_ms)) {
+    const prev = out.at(-1)
+    const t = prev && s.start_ms < prev.end_ms ? { ...s, start_ms: prev.end_ms } : s
+    if (t.end_ms - t.start_ms >= MIN_SCENE_MS - 0.5) out.push(t)
+  }
+  return out
 }
 
 /** The scene playing at `t` (on the list's own clock): the one there, or face. */

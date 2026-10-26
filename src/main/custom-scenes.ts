@@ -33,7 +33,13 @@ export interface PlannedScene {
   order: number
   /** Over a filmed screen: the screen stays in the card under it (the card 'screen'). */
   screen?: boolean
+  /** Back to back with the scene before / after: it hands over directly (no exit, no empty stage between). */
+  follows?: boolean
+  followed?: boolean
 }
+
+/** Scenes this close hand over directly: the first runs to the second's start (a real run showed ~1 s of empty stage between two). */
+export const SCENE_HANDOVER_MS = 1500
 
 /** The scene plan call (one per video). Null plan when the answer can't be used (the fallback plan is used instead). */
 export async function planScenes(input: { model: string; theme: CustomTheme; stretches: readonly SceneStretch[]; said: SaidIndex; note?: string }, call: ModelCall, signal?: AbortSignal): Promise<{ plan: ScenePlan | null; costUsd: number }> {
@@ -73,6 +79,15 @@ export function plannedScenes(stretches: readonly SceneStretch[], plan: ScenePla
     if (durationMs < SCENE_MIN_KEPT_MS) return
     out.push({ stretch: s, word: first.index, atMs: first.start_ms, durationMs, frame: overScreen ? 'stage' : own.frame, order: 0, ...(overScreen ? { screen: true } : {}) })
   })
+  // Back to back: the first runs exactly to the second's start (never overlapping, never an empty stage between).
+  for (let i = 0; i + 1 < out.length; i++) {
+    const a = out[i], b = out[i + 1]
+    const gap = b.atMs - (a.atMs + a.durationMs)
+    if (gap < SCENE_HANDOVER_MS && b.atMs - a.atMs <= CUSTOM_SECTION_MAX_MS) {
+      out[i] = { ...a, durationMs: b.atMs - a.atMs, followed: true }
+      out[i + 1] = { ...b, follows: true }
+    }
+  }
   return out.map((s, i) => ({ ...s, order: i }))
 }
 
@@ -96,7 +111,7 @@ export function sceneBrief(input: { scene: PlannedScene; scenes: number; count: 
   const after = words.filter((w) => w.start_ms >= scene.atMs + scene.durationMs && w.start_ms < scene.atMs + scene.durationMs + 5000).map((w) => w.word).join(' ')
   const geometry = customGeometry(scene.frame, {})
   const look = customLook({ kind: scene.frame, brandColor: input.brandColor, font: input.font, logo: input.logo, theme: input.theme })
-  const lines = sceneBriefLines({ stretch: scene.stretch, count: input.count, scenes: input.scenes, order: scene.order, frame: scene.frame, plan: input.plan, theme: input.theme, durationMs: scene.durationMs, screen: scene.screen === true })
+  const lines = sceneBriefLines({ stretch: scene.stretch, count: input.count, scenes: input.scenes, order: scene.order, frame: scene.frame, plan: input.plan, theme: input.theme, durationMs: scene.durationMs, screen: scene.screen === true, follows: scene.follows === true, followed: scene.followed === true })
   return {
     kind: 'process', frame: scene.frame, durationMs: scene.durationMs, geometry, look, cues, before, after, planned: '',
     // A scene builds on more words than a pop-up: every stressed word of the stretch (stressedWords keeps one every ~0.6 s).

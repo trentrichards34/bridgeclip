@@ -133,10 +133,11 @@ test('cost: every graphic gets its two revisions whatever the budget; the estima
   assert.equal(shared.revisionCap(10, pricey), 2)
   assert.equal(shared.revisionCap(40), 2)
   assert.ok(shared.revisionCap(3, { input: 0.3e-6, output: 1.2e-6 }) >= shared.MIN_REVISIONS)
-  // A 4-minute reel: about 8 scenes and 3 pop-ups, the plan call: a few dollars expected, under ten at most.
+  // A 4-minute reel: about 8 scenes and 3 pop-ups, the plan call. Calibrated on a real run (edit-751a0a07: $10.44,
+  // 8 scenes and 3 pop-ups, every one using its three tries).
   const reel = shared.customGraphicsEstimate(3, shared.DEFAULT_PRICE, 8)
-  assert.ok(reel.expectedUsd > 2 && reel.expectedUsd < 8, JSON.stringify(reel))
-  assert.ok(reel.mostUsd > reel.expectedUsd && reel.mostUsd < 12, JSON.stringify(reel))
+  assert.ok(reel.expectedUsd > 8 && reel.expectedUsd < 11, JSON.stringify(reel))
+  assert.ok(reel.mostUsd >= reel.expectedUsd && reel.mostUsd < 12, JSON.stringify(reel))
   // A scene costs more than a pop-up (its composition is about twice as long).
   assert.ok(shared.customCallCosts(shared.DEFAULT_PRICE, true, true).write > shared.customCallCosts().write * 1.4)
   assert.equal(shared.callCost({ cost: 0.042 }), 0.042)
@@ -442,4 +443,55 @@ test('the loop: the world call, the world in every brief and grade; a flat stret
   assert.equal(result.meta.builds, b.stressed.length)
   assert.deepEqual(plain(m.readCustomGraphic(run, result.meta.comp).meta.flat), [{ fromMs: 4200, toMs: 9800 }])
   fs.rmSync(run, { recursive: true, force: true })
+})
+
+// ---------------------------------------------------------------------------
+// Stopping early, calibrated on the owner's approved run (edit-751a0a07: 11 graphics, 3 tries each, grades 3-6)
+// ---------------------------------------------------------------------------
+
+test('a clean try graded 6 is kept without another revision; a 5 is revised (the loop stops at GOOD_ENOUGH_SCORE)', async () => {
+  const m = mainModule()
+  assert.equal(m.GOOD_ENOUGH_SCORE, 6)
+  const html = read('staircase.html')
+  const sandbox = { stills: async () => ({ transparent: [Buffer.from('p0')], composite: Buffer.from('j'), texts: ['product'], problems: [] }) }
+  for (const [score, tries] of [[6, 1], [5, 3]]) {
+    const run = fs.mkdtempSync(path.join(os.tmpdir(), 'custom-stop-'))
+    let writes = 0
+    const call = async (request) => {
+      if (request.purpose === 'grade') return { text: `{"pass": false, "score": ${score}, "failed": ["fills"], "fixes": ["Bigger."]}`, costUsd: 0.02 }
+      writes++
+      return { text: '```html\n' + html + '\n```', costUsd: 0.2 }
+    }
+    const result = await m.produceCustomGraphic({ run, brief: brief('Staircase', 'process', 'visual', 12000), words: 'a product', said: shared.saidIndex(RUN.words), frame: null, fallback: null, model: 'm/x', maxRevisions: 2 }, { call, sandbox })
+    assert.ok(result.meta, `kept at ${score}`); assert.equal(result.tries, tries, `score ${score}`); assert.equal(writes, tries)
+    fs.rmSync(run, { recursive: true, force: true })
+  }
+})
+
+test('the stop rule replayed on the approved run: the same 11 graphics ship; a lower bar would change one', () => {
+  const attempts = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/run10-attempts.json'), 'utf8'))
+  // The loop's choice: the best by rank (ours passed, then the grade), stopping at the first try the rule accepts.
+  const ship = (tries, stop) => {
+    let best = null, used = 0
+    for (let i = 0; i < tries.length; i++) {
+      used++
+      const rank = (tries[i].clean ? 200 : 0) + tries[i].score
+      if (best === null || rank > best.rank) best = { rank, i }
+      if (stop(tries[i])) break
+    }
+    return { i: best.i, used }
+  }
+  const replay = (bar) => {
+    let same = 0, used = 0
+    for (const tries of Object.values(attempts)) {
+      const r = ship(tries, (t) => t.clean && t.score >= bar)
+      used += r.used
+      if (tries[r.i].kept) same++
+    }
+    return { same, used }
+  }
+  assert.equal(Object.keys(attempts).length, 11)
+  assert.deepEqual(replay(6), { same: 11, used: 32 }, 'the bar in use ships every approved graphic')
+  assert.deepEqual(replay(5), { same: 10, used: 26 }, 'a bar of 5 would ship a weaker try of one')
+  assert.deepEqual(replay(99), { same: 11, used: 33 })
 })

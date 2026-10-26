@@ -7,7 +7,7 @@
  * autosave like any other edit). Any time without a scene is Face.
  */
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { Clapperboard, Plus, Trash2 } from 'lucide-react'
+import { Clapperboard, LayoutTemplate, Plus, Trash2 } from 'lucide-react'
 import type { CandidateEdit } from '../../shared/clip-editor'
 import {
   BACKDROP_LABELS, CARD_LABELS, MAX_SCENES, SOLID_BACKDROP_COLOR, MIN_SCENE_MS, SCENE_BACKDROPS, SCENE_DETAILS, SCENE_LABELS, SCENE_TRANSITIONS, STAGE_LAYOUT, PREVIEW_CARD_SPAN, PREVIEW_CARD_TOP,
@@ -23,7 +23,7 @@ import { Select } from './ui/Select'
 import { Switch } from './ui/Switch'
 import './clip-scenes.css'
 
-export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onChange, onDrag, clock }: {
+export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onChange, onDrag, clock, onFixLayout, fixing }: {
   candidate: CandidateEdit; viewStart: number; viewEnd: number
   /** The playhead, source ms. */
   time: number; disabled: boolean
@@ -31,6 +31,9 @@ export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onC
   /** A drag starts or ends (the editor holds the timeline's zoom and autosave meanwhile). */
   onDrag: (active: boolean) => void
   clock: (ms: number) => string
+  /** "Fix layout": the scenes worked out again from the clip's graphics (free). */
+  onFixLayout?: () => void
+  fixing?: boolean
 }): React.JSX.Element {
   const scenes = candidate.stage_scenes ?? []
   const [selected, setSelected] = useState<number | null>(null)
@@ -81,7 +84,9 @@ export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onC
   return <div className="editor-scenes-row">
     <div className="editor-scenes-label editor-lane-head"><Clapperboard size={11} aria-hidden /><span className="editor-lane-name">Scenes</span>
       <Button size="sm" variant="ghost" iconOnly aria-label="Add scene at playhead" icon={<Plus size={13} />} disabled={disabled || full || !draft} onClick={add}
-        tooltip={full ? `A clip can have up to ${MAX_SCENES} scenes.` : !draft ? `There’s no room at the playhead. A scene needs ${MIN_SCENE_MS / 1000} seconds of the clip that has no other scene.` : 'Add scene at playhead: a Stage scene, a backdrop with you in a card at the bottom, so a graphic has room at the top.'} /></div>
+        tooltip={full ? `A clip can have up to ${MAX_SCENES} scenes.` : !draft ? `There’s no room at the playhead. A scene needs ${MIN_SCENE_MS / 1000} seconds of the clip that has no other scene.` : 'Add scene at playhead: a Stage scene, a backdrop with you in a card at the bottom, so a graphic has room at the top.'} />
+      {onFixLayout && <Button size="sm" variant="ghost" iconOnly aria-label="Fix layout" icon={<LayoutTemplate size={13} />} disabled={disabled} loading={fixing} onClick={onFixLayout} data-testid="scenes-fix-layout"
+        tooltip="Fix layout: the scenes worked out again from your graphics (stage behind the big graphics, your screen in the card under scenes over it, nothing overlapping). Free. Undo brings the old ones back." />}</div>
     {current && <div className="editor-scenes-tools" role="group" aria-label="Selected scene">
         <Segmented<SceneKind> label="Scene" size="sm" value={current.scene} onChange={pick}
           options={(['face', 'stage', 'visual'] as const).map((value) => ({ value, label: SCENE_LABELS[value], ...(disabled ? { disabled: 'Editing is off right now.' } : {}) }))} />

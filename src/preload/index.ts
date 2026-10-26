@@ -2,6 +2,7 @@ import type { JevThresholdSettings } from '../shared/jev-settings'
 import type { LibraryClipTarget } from '../shared/library-posting'
 import type { AutomationReviewResult } from '../shared/automations'
 import type { AutomaticEditInfo, CandidateEdit, EditorProgressSummary, EditorSession, HookIdea } from '../shared/clip-editor'
+import type { StageScene } from '../shared/scenes'
 import type { ChatInfo, ChatReply } from '../shared/clip-chat'
 import type { ChatPoint } from '../shared/chat-point'
 import type { JobOutput } from '../shared/job-output'
@@ -230,6 +231,8 @@ export interface BridgeClipAPI {
     addCandidate: (path: string, revision: number, candidate: CandidateEdit, sourceId?: string) => Promise<EditorSession>
     /** Hook ideas from the clip's own words, graded with the hook rubric. Uses the OpenRouter key. */
     suggestHooks: (path: string, revision: number, id: string) => Promise<{ hooks: HookIdea[] }>
+    /** "Fix layout": the clip's stage scenes worked out again from its graphics (free). */
+    fixLayout: (path: string, revision: number, id: string, graphics?: unknown) => Promise<{ stage_scenes: StageScene[] }>
     /** Main asks the open editor to save before a close or quit continues. */
     onSaveBeforeClose: (callback: () => void) => () => void
     closeReady: (saved: boolean) => Promise<void>
@@ -858,6 +861,7 @@ const api: BridgeClipAPI = {
     freeMedia: (path, revision) => ipcRenderer.invoke('editor:freeMedia', path, revision),
     addCandidate: (path, revision, candidate, sourceId) => ipcRenderer.invoke('editor:addCandidate', path, revision, candidate, sourceId),
     suggestHooks: (path, revision, id) => paid('editor:suggestHooks', path, revision, id),
+    fixLayout: (path, revision, id, graphics) => ipcRenderer.invoke('editor:fixLayout', path, revision, id, graphics),
     onSaveBeforeClose: (callback) => subscribe<void>('editor:saveBeforeClose', () => callback()),
     closeReady: (saved) => ipcRenderer.invoke('editor:closeReady', saved),
     graphicImage: (path) => ipcRenderer.invoke('editor:graphicImage', path),

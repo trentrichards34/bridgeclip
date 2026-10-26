@@ -94,5 +94,12 @@ test('a stage scene added in the Scenes row saves, undoes, previews and is baked
   assert.ok(Math.max(...stageTop) < 90, `dark backdrop above the card in the scene: ${stageTop.map(Math.round)}`)
   assert.ok(red(boxColor(tools.ffmpeg, video, 2.0, card)), 'the speaker card at the bottom in the scene')
   assert.ok(red(boxColor(tools.ffmpeg, video, 4.2, top)), 'full-frame video again after the scene')
+  // Fix layout (free): the scenes worked out again from the clip's graphics by the engine (none here needs a stage),
+  // applied as one edit that undo takes back.
+  await page.getByRole('button', { name: 'Fix layout', exact: true }).click()
+  await page.getByText(/^(Layout fixed|No graphic needs a stage)/).waitFor({ timeout: 60000 })
+  await savedWhen((p) => Array.isArray(p.candidates[0].stage_scenes ?? []))
+  await undo.click()
+  await savedWhen((p) => p.candidates[0].stage_scenes?.[0]?.backdrop === 'dark')
   assert.deepEqual(errors, [])
 })

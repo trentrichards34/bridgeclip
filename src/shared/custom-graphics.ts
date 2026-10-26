@@ -963,14 +963,14 @@ export function graderUserPrompt(input: { words: string; kind: HeroKind; frame: 
  * pop-up's), the previous composition when revising, the grade with its four stills, and the video's plan call.
  */
 export const CUSTOM_TOKENS = { writerSystem: 9800, writerUser: 1500, writerOut: 5000, reviseExtra: 3200, graderSystem: 760, graderUser: 320, graderImage: 2400, graderOut: 1200, worldIn: 2600, worldOut: 900,
-  sceneUser: 2200, sceneOut: 8500, sceneReviseExtra: 6000, planIn: 9000, planOut: 3500 } as const
+  sceneUser: 2200, sceneOut: 10500, sceneReviseExtra: 6000, planIn: 9000, planOut: 3500 } as const
 /** Prices when the catalog doesn't know the model (per token, USD): a frontier model's list price. */
 export const DEFAULT_PRICE = { input: 5e-6, output: 25e-6 } as const
 /** Cached prompt reads cost about a tenth of fresh input (Anthropic and Gemini via OpenRouter). */
 export const CACHE_READ_SHARE = 0.1
-/** Share of graphics we expect to need a revision, and a second one (used for the estimate). */
-export const EXPECTED_REVISION_SHARE = 0.7
-export const EXPECTED_SECOND_REVISION_SHARE = 0.6
+/** Share of graphics we expect to need a revision, and a second one (the estimate): a real run (edit-751a0a07) used all three tries on all 11. */
+export const EXPECTED_REVISION_SHARE = 0.95
+export const EXPECTED_SECOND_REVISION_SHARE = 0.9
 /** Revisions we expect per graphic when up to `cap` are allowed. */
 export function expectedRevisions(cap: number): number {
   let total = 0, p = EXPECTED_REVISION_SHARE

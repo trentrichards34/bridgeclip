@@ -627,6 +627,18 @@ async def run_editor(config, progress=None):
         transcript = [TranscriptSegment(**{**timing(s), 'words': [TranscriptWord(**timing(w)) for w in s.get('words', [])]}) for s in rows]
     action = config['action']
     usage = None
+    if action == 'fix-layout':
+        # "Fix layout": the clip's stage scenes worked out again from its graphics (free, nothing paid, the project
+        # unchanged: the editor applies them as an edit the member can undo).
+        from clip_engine.services.edit_direction import layout_scenes, run_theme
+        graphics = config.get('graphics') if isinstance(config.get('graphics'), list) else c.get('graphics') or []
+        if len(graphics) > 120:
+            raise EditorError('invalid_edit', 'Too many graphics')
+        hook = c.get('hook') or {}
+        look = hook.get('look') or {}
+        brand = look.get('color') if look.get('look') == 'brand' else None
+        scenes = await asyncio.to_thread(layout_scenes, graphics, project['duration_ms'], source, brand, run_theme(str(run), graphics))
+        return {'stage_scenes': scenes}
     if action == 'suggest-hooks':
         from clip_engine.services.hook_ideas import HooksUnavailable, clip_text, suggest_hooks
         text = clip_text(caption_transcript(transcript, c.get('caption_edits', [])), c['ranges'])

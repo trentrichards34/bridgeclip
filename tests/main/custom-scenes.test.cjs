@@ -52,7 +52,21 @@ test('the plan: checked against our rules (the opening keeps the face, screens a
   const topped = scenes.parseScenePlan(shy, list, said)
   const share = topped.stretches.reduce((sum, s, i) => sum + (s.scene ? len(i) : 0), 0) / end
   assert.ok(share >= scenes.SCENE_MIN_SHARE, String(share))
-  assert.equal(topped.stretches[4].scene, false, 'a story the planner kept on the face stays there')
+  // Spread over the whole reel: no run of stretches without a scene longer than SCENE_MAX_GAP_MS (from the opening on).
+  const bare = (p) => {
+    let worst = 0, from = null
+    p.stretches.forEach((s, i) => {
+      if (i === 0) return
+      if (!s.scene) { if (from === null) from = list[i].startMs; worst = Math.max(worst, list[i].endMs - from) } else from = null
+    })
+    return worst
+  }
+  assert.ok(bare(topped) <= scenes.SCENE_MAX_GAP_MS, String(bare(topped)))
+  // The real run's plan (edit-751a0a07): scenes only up to 3:11, none in the last 80 s nor at 1:24-1:38 (cold vs warm).
+  const early = JSON.stringify({ hero: 'h'.repeat(12), motif: '', stretches: list.map((s) => ({ scene: s.startMs > 15000 && s.endMs < 110000 && s.screen < 0.4, frame: 'stage', label: '', idea: '', kind: s.startMs > 150000 ? 'personal' : 'teaching' })) })
+  const spread = scenes.parseScenePlan(early, list, said)
+  assert.ok(bare(spread) <= scenes.SCENE_MAX_GAP_MS, String(bare(spread)))
+  assert.ok(spread.stretches.some((s, i) => s.scene && list[i].startMs >= end - 80000), 'a scene in the last 80 s')
   // Nothing usable: null (the fallback plan alternates and keeps the same rules).
   assert.equal(scenes.parseScenePlan('sorry', list, said), null)
   const fallback = scenes.fallbackScenePlan(list)
@@ -222,4 +236,19 @@ test('the review: scenes off (or the Explainer, or no Stage layouts) keeps the p
   assert.equal(m.scenesOn(reviewOf(folder, { stageLayouts: false })), false)
   assert.equal(m.editCustomEstimate(reviewOf(folder, { customScenes: false })).scenes, 0)
   fs.rmSync(folder, { recursive: true, force: true })
+})
+
+test('back-to-back scenes hand over directly: the first runs to the second\'s start and holds; the second lands at once', () => {
+  const m = loadMain("export * from './src/main/custom-scenes'", { './logger': { logger: { info() {}, warn() {} } } })
+  const words = RUN.words.map((w, i) => ({ ...w, index: i }))
+  const end = RUN.words[RUN.words.length - 1].end_ms
+  const list = m.reelStretches(words, end)
+  const plan = { hero: 'your digital product: an app window', motif: '', stretches: list.map((_, i) => ({ scene: i === 1 || i === 2, frame: 'stage', label: '', idea: '', kind: 'teaching' })) }
+  const planned = m.plannedScenes(list, plan, words, end)
+  const [a, b] = planned
+  assert.equal(a.atMs + a.durationMs, b.atMs, 'no gap, no overlap')
+  assert.equal(a.followed, true); assert.equal(b.follows, true)
+  const brief = (scene) => m.sceneBrief({ scene, scenes: 2, count: list.length, plan, words, theme: 'dark' }).scene.lines.join(' ')
+  assert.match(brief(a), /do NOT exit or fade; hold your final state to the very last frame/)
+  assert.match(brief(b), /lands at 0\.0-0\.25 s \(no empty stage between the two\)/)
 })

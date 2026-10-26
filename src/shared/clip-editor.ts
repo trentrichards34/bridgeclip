@@ -156,7 +156,7 @@ export interface EditorProject {
 }
 export type BrandMarkOrigin = NonNullable<AutomaticOrigin['brand_mark']>
 export interface EditorProgress { phase: 'scan' | 'preview' | 'download' | 'copy'; percent: number }
-export type EditorOperation = 'save' | 'review' | 'export' | 'export-all' | 'replace-source' | 'scan-cameras' | 'suggest-hooks' | 'prepare'
+export type EditorOperation = 'save' | 'review' | 'export' | 'export-all' | 'replace-source' | 'scan-cameras' | 'suggest-hooks' | 'prepare' | 'fix-layout'
 export interface EditorBatch { completed: number; total: number; failed?: number }
 export interface EditorSession {
   progress?: EditorProgress; project: EditorProject; sourcePath: string; previewPath: string
@@ -242,6 +242,11 @@ export function editorFailureMessage(action: Exclude<EditorOperation, 'save'>, c
       : code === 'cancelled' ? 'Camera scan canceled. Your edits and previous markers are saved.'
       : code && common[code] ? `${common[code]} Your edits and previous markers are saved.`
       : 'Camera scan stopped or failed. Your edits and previous markers are saved. Try scanning a shorter clip.'
+  }
+  if (action === 'fix-layout') {
+    return code === 'cancelled' ? 'Fix layout canceled. Your edits are unchanged.'
+      : code && common[code] ? `${common[code]} Your edits are unchanged.`
+      : 'Could not fix the layout. Your edits are unchanged. Try again.'
   }
   if (action === 'suggest-hooks') {
     return code === 'hooks_unavailable' ? 'Could not get hook ideas. Check your OpenRouter key and connection, then try again.'

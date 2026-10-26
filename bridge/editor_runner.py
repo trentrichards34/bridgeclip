@@ -9,7 +9,7 @@ import signal
 from bridge_runner import reserve_stdout_for_protocol, emit
 
 logger = logging.getLogger('editor_runner')
-ACTIONS = ('review', 'export', 'replace-source', 'scan-cameras', 'suggest-hooks', 'prepare')
+ACTIONS = ('review', 'export', 'replace-source', 'scan-cameras', 'suggest-hooks', 'prepare', 'fix-layout')
 # Main reads one result line of at most 16 KiB.
 MAX_RESULT_CHARS = 15000
 # One request (graphics and scenes for a long reel: up to 60 of each; sound events and the member's own sounds).
@@ -41,6 +41,10 @@ def result_message(result):
     if not isinstance(result, dict):
         return message
     message.update({key: result[key] for key in ('cost_usd', 'cost_incomplete', 'model') if key in result})
+    if isinstance(result.get('stage_scenes'), list):
+        # "Fix layout": the clip's stage scenes (at most 60 short records: well under the limit).
+        message['stage_scenes'] = result['stage_scenes'][:60]
+        return message
     hooks = [dict(idea) for idea in result.get('hooks', [])]
     message['hooks'] = hooks
     if len(json.dumps(message)) > MAX_RESULT_CHARS:

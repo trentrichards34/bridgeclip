@@ -560,6 +560,22 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       if (message.includes(EDITOR_REVISION_CONFLICT)) setConflict(true)
     } finally { setBusy(null) }
   }
+  // "Fix layout" (free): the stage scenes worked out again from this clip's graphics, applied as one edit (undo brings them back).
+  const fixLayout = async (): Promise<void> => {
+    if (!candidate || busy) return
+    if (typeof getApi().editor.fixLayout !== 'function') { setError('Restart CreatorClips to fix the layout.'); return }
+    video.current?.pause(); setError(null); setNotice(null); setBusy('fix-layout')
+    try {
+      await save()
+      const { stage_scenes } = await getApi().editor.fixLayout(outputDir, sessionRef.current!.project.revision, candidate.id, candidate.graphics ?? [])
+      change({ stage_scenes }, true)
+      setNotice(stage_scenes.length ? `Layout fixed: ${stage_scenes.length} scene${stage_scenes.length === 1 ? '' : 's'} from your graphics. Undo brings the old ones back.` : 'No graphic needs a stage here: the clip stays full frame.')
+    } catch (e) {
+      const message = errorMessage(e)
+      setError(message)
+      if (message.includes(EDITOR_REVISION_CONFLICT)) setConflict(true)
+    } finally { setBusy(null) }
+  }
   const run = async (action: 'review' | 'export' | 'export-all' | 'scan-cameras'): Promise<void> => {
     if (!candidate || busy) return
     video.current?.pause(); setError(null); setNotice(null); setBatch(undefined); setBusy(action)
@@ -1088,7 +1104,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
           {project.zoom && candidate.zooms?.length ? <ZoomsTrack zooms={candidate.zooms} viewStart={viewStart} viewEnd={viewEnd} time={time} disabled={editingDisabled} clock={clipClock}
             onChange={(zooms) => change({ zooms })} seek={(ms) => { video.current?.pause(); seek(ms) }} /> : null}
           {project.aspect_ratio === '9:16' && <ScenesTrack candidate={candidate} viewStart={viewStart} viewEnd={viewEnd} time={time} disabled={editingDisabled} clock={clipClock}
-            onChange={(stage_scenes, remember) => change({ stage_scenes }, remember)}
+            onChange={(stage_scenes, remember) => change({ stage_scenes }, remember)} onFixLayout={() => { void fixLayout() }} fixing={busy === 'fix-layout'}
             onDrag={(active) => { dragging.current = active; if (active) { video.current?.pause(); setDragWindow([viewStart, viewEnd]) } else setDragWindow(null) }} />}
           {suppressedCaptions.length > 0 && <div className="editor-lane"><span className="editor-lane-label" aria-hidden>Captions</span><div className={cn('editor-caption-track', !candidate.captions && 'opacity-40')} aria-label="Caption-free sections">
             {suppressedCaptions.map(([a, b], i) => b > viewStart && a < viewEnd && <button key={i}

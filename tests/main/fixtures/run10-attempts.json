@@ -1,0 +1,189 @@
+{
+"claim-0-4457af": [
+{
+"clean": false,
+"score": 4,
+"kept": false
+},
+{
+"clean": false,
+"score": 4,
+"kept": false
+},
+{
+"clean": true,
+"score": 3,
+"kept": true
+}
+],
+"process-0-258958": [
+{
+"clean": false,
+"score": 3,
+"kept": false
+},
+{
+"clean": true,
+"score": 5,
+"kept": true
+},
+{
+"clean": true,
+"score": 4,
+"kept": false
+}
+],
+"process-0-2cbcf9": [
+{
+"clean": true,
+"score": 4,
+"kept": true
+},
+{
+"clean": true,
+"score": 4,
+"kept": false
+},
+{
+"clean": true,
+"score": 4,
+"kept": false
+}
+],
+"process-0-571e9c": [
+{
+"clean": false,
+"score": 5,
+"kept": false
+},
+{
+"clean": true,
+"score": 6,
+"kept": true
+},
+{
+"clean": true,
+"score": 6,
+"kept": false
+}
+],
+"process-0-805f0d": [
+{
+"clean": false,
+"score": 3,
+"kept": false
+},
+{
+"clean": true,
+"score": 5,
+"kept": true
+},
+{
+"clean": false,
+"score": 4,
+"kept": false
+}
+],
+"process-0-932718": [
+{
+"clean": false,
+"score": 5,
+"kept": false
+},
+{
+"clean": true,
+"score": 5,
+"kept": false
+},
+{
+"clean": true,
+"score": 6,
+"kept": true
+}
+],
+"process-0-a5ebe0": [
+{
+"clean": false,
+"score": 4,
+"kept": false
+},
+{
+"clean": true,
+"score": 5,
+"kept": true
+},
+{
+"clean": true,
+"score": 5,
+"kept": false
+}
+],
+"process-0-c367d5": [
+{
+"clean": false,
+"score": 5,
+"kept": false
+},
+{
+"clean": true,
+"score": 5,
+"kept": true
+},
+{
+"clean": true,
+"score": 5,
+"kept": false
+}
+],
+"process-0-d4a036": [
+{
+"clean": false,
+"score": 4,
+"kept": false
+},
+{
+"clean": true,
+"score": 5,
+"kept": true
+},
+{
+"clean": false,
+"score": 5,
+"kept": false
+}
+],
+"proof--1200-5f19e4": [
+{
+"clean": false,
+"score": 4,
+"kept": false
+},
+{
+"clean": true,
+"score": 4,
+"kept": true
+},
+{
+"clean": false,
+"score": 4,
+"kept": false
+}
+],
+"proof--920-ad7760": [
+{
+"clean": false,
+"score": 4,
+"kept": false
+},
+{
+"clean": true,
+"score": 4,
+"kept": false
+},
+{
+"clean": true,
+"score": 5,
+"kept": true
+}
+]
+}

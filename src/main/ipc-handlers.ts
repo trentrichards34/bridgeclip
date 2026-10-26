@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto'
 import { RECORDING_VIDEO_EXTENSIONS, REMIX_IMAGE_EXTENSIONS } from '../shared/remix'
 import { BROLL_IMAGE_EXTENSIONS, BROLL_PLAN_ESTIMATE_USD, BROLL_VIDEO_EXTENSIONS } from '../shared/react-templates'
 import { LOGO_EXTENSIONS } from '../shared/brand-kit'
-import { addEditorCandidate, addEditorGraphicImage, addEditorLogoImage, addEditorGraphicVideo, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorHookSaved, onEditorRunLock, onEditorSpend, readEditorClips, readEditorProgress, suggestEditorHooks } from './clip-editor'
+import { addEditorCandidate, addEditorGraphicImage, addEditorLogoImage, addEditorGraphicVideo, editorCallEstimate, editorCloseReady, editorOperationStatus, editorTranslationEstimate, freeEditorMedia, onEditorExportCta, onEditorHookSaved, onEditorRunLock, onEditorSpend, readEditorClips, readEditorProgress, suggestEditorHooks, fixEditorLayout } from './clip-editor'
 import { buildLibrarySummary } from '../shared/library-summary'
 import { automaticEditInfo, prepareAutomaticEditor } from './edit-automatic'
 import { chatEstimateUsd, chatInfo, chatModel, editorChat, readChatTranscript, resetChat } from './clip-chat'
@@ -996,6 +996,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('editor:progress', (_event, path: unknown) => readEditorProgress(path))
   handle('editor:freeMedia', (_event, path: unknown, revision: unknown) => freeEditorMedia(path, revision))
   handle('editor:addCandidate', (_event, path: unknown, revision: unknown, candidate: unknown, sourceId: unknown) => addEditorCandidate(path, revision, candidate, sourceId))
+  // "Fix layout": the clip's stage scenes worked out again from its graphics (local, free).
+  handle('editor:fixLayout', (_event, path: unknown, revision: unknown, id: unknown, graphics: unknown) => fixEditorLayout(path, revision, id, graphics))
   // Hook ideas are one paid call: they pass the spending check (estimated from this run's earlier ones, if any).
   handle('editor:suggestHooks', async (_event, path: unknown, revision: unknown, id: unknown) => {
     await assertSpendAllowed('editor:suggestHooks', 'openrouter', await editorCallEstimate(path, 'suggest-hooks').catch(() => null))

@@ -22,10 +22,12 @@ test('parseScenes accepts well-formed scenes and refuses everything else', () =>
     {}, 'stage', [null], [{ scene: 'zoom', start_ms: 0, end_ms: 2000 }], [{ scene: 'stage', start_ms: 0, end_ms: 1000 }],
     [{ scene: 'stage', start_ms: -5, end_ms: 2000 }], [{ scene: 'stage', start_ms: 0, end_ms: 2000, backdrop: 'red' }],
     [{ scene: 'stage', start_ms: 0, end_ms: 2000, extra: true }], [{ scene: 'stage', start_ms: 0, end_ms: Infinity }],
-    [{ scene: 'stage', start_ms: 0, end_ms: 3000 }, { scene: 'visual', start_ms: 2000, end_ms: 4000 }],
     Array.from({ length: 61 }, (_, i) => ({ scene: 'stage', start_ms: i * 2000, end_ms: i * 2000 + 1500 }))
   ]) assert.throws(() => sc.parseScenes(bad))
   assert.throws(() => sc.parseScenes([{ scene: 'stage', start_ms: 11000, end_ms: 13000 }], 12000), /inside the video/)
+  // Overlaps are trimmed, never fatal (a real run's 70 ms overlap made the old check drop every scene of the reel).
+  assert.deepEqual(plain(sc.parseScenes([{ scene: 'stage', start_ms: 0, end_ms: 3070 }, { scene: 'visual', start_ms: 3000, end_ms: 6000 }, { scene: 'stage', start_ms: 5500, end_ms: 7000 }])),
+    [{ scene: 'stage', start_ms: 0, end_ms: 3070 }, { scene: 'visual', start_ms: 3070, end_ms: 6000 }])
 })
 
 test('sceneAt finds the scene at a time and face in the gaps', () => {

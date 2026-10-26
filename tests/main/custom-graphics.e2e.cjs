@@ -58,7 +58,7 @@ function fakeModel() {
         grades.set(m?.name, n)
         const machine = /Our automatic checks found/.test(text)
         answer = m?.name === 'organic-vs-ads' && n === 1
-          ? { pass: false, score: 6, failed: ['design'], fixes: ['Make the "vs" larger (90 px) and give the ads crowd one more row of space below the label.'] }
+          ? { pass: false, score: 5, failed: ['design'], fixes: ['Make the "vs" larger (90 px) and give the ads crowd one more row of space below the label.'] }
           : machine ? { pass: false, score: 5, failed: ['readable'], fixes: ['Fix what the automatic checks found.'] } : { pass: true, score: 8, failed: [], fixes: [] }
         answer = '```json\n' + JSON.stringify(answer) + '\n```'
       } else {

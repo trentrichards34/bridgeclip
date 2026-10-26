@@ -22,6 +22,7 @@ graphic, scene, the hook text and captions are editable there and Bake renders t
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import math
 import os
@@ -1034,3 +1035,43 @@ def overlaps(a: tuple[float, float], windows: Sequence[tuple[float, float]]) -> 
 
 def round_ms(value: float) -> int:
     return int(math.floor(value))
+
+
+# ---------------------------------------------------------------------------
+# "Fix layout" in the clip editor: the stage scenes worked out again from the clip's graphics
+# ---------------------------------------------------------------------------
+
+CTA_TEMPLATES = ('link_cta', 'comment_cta')
+
+
+def run_theme(run: Optional[str], graphics: Sequence[dict]) -> Optional[str]:
+    """The custom graphics' theme, from their saved looks (.graphics/custom/<comp>.json); None without custom graphics,
+    'dark' when a look predates themes."""
+    comps = [(g.get('fields') or {}).get('comp') for g in graphics if g.get('template') == 'custom']
+    comps = [c for c in comps if isinstance(c, str) and re.fullmatch(r'[a-f0-9]{16}', c)]
+    if not comps:
+        return None
+    for comp in comps:
+        try:
+            with open(os.path.join(run or '', '.graphics', 'custom', f'{comp}.json'), encoding='utf8') as f:
+                theme = ((json.load(f) or {}).get('look') or {}).get('theme')
+            if theme in THEME_BACKDROPS:
+                return theme
+        except (OSError, ValueError, AttributeError):
+            continue
+    return 'dark'
+
+
+def layout_scenes(graphics: Sequence[dict], total_ms: int, video: Optional[str] = None, brand: Optional[str] = None,
+                  theme: Optional[str] = None, faceless: Optional[Sequence[tuple[int, int]]] = None) -> list[dict]:
+    """A clip's stage scenes worked out again from its graphics, the way the reel was laid out (editor_scenes): stage and
+    Visual scenes around the stage graphics, custom scenes on their theme's backdrop, screen cards over filmed screens,
+    cut around the call to action and wherever no face shows (a filmed screen: found in `video`, or given), framed
+    screens on their dark Visual scene, never overlapping, and only scenes a graphic still plays in."""
+    items = [g for g in graphics if isinstance(g, dict) and type(g.get('at_ms')) in (int, float) and type(g.get('duration_ms')) in (int, float)]
+    avoid = list(faceless) if faceless is not None else (faceless_windows(video, 0, int(total_ms)) if video else [])
+    avoid += [(int(g['at_ms']), int(g['at_ms'] + g['duration_ms'])) for g in items if g.get('template') in CTA_TEMPLATES]
+    framed = [{'scene': 'visual', 'start_ms': int(g['at_ms']), 'end_ms': int(g['at_ms'] + g['duration_ms']), 'backdrop': 'dark'}
+              for g in items if g.get('template') == 'screen_frame']
+    scenes = editor_scenes(items, int(total_ms), brand, sorted(avoid), framed, theme)
+    return scenes_in_use(scenes, items)

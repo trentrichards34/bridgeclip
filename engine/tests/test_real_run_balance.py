@@ -249,3 +249,26 @@ def test_back_to_back_scenes_never_overlap():
     assert len(scenes) == 4, scenes
     assert all(b['start_ms'] >= a['end_ms'] for a, b in zip(scenes, scenes[1:]))
     assert [s.get('card') for s in scenes] == ['screen', 'screen', 'screen', None]
+
+
+def test_fix_layout_on_the_owners_approved_run_recomputes_every_scene():
+    # edit-751a0a07: its stage scenes were lost (two back-to-back scenes overlapped by 40-70 ms). "Fix layout" works them
+    # out again from the clip's graphics: every custom scene on its theme's stage, screen cards over the filmed screens,
+    # back-to-back scenes touching (never overlapping), the call to action kept off the stage.
+    import json, os
+    from clip_engine.services import edit_direction as ed
+    data = json.load(open(os.path.join(os.path.dirname(__file__), 'fixtures', 'run10-graphics.json')))
+    graphics, total = data['graphics'], data['duration_ms']
+    scenes = ed.layout_scenes(graphics, total, None, None, 'dark', faceless=[])
+    assert all(b['start_ms'] >= a['end_ms'] for a, b in zip(scenes, scenes[1:]))
+    customs = [g for g in graphics if g['template'] == 'custom' and g['fields'].get('scene') in ('stage', 'visual')]
+    for g in customs:
+        mid = g['at_ms'] + g['duration_ms'] / 2
+        hit = next((s for s in scenes if s['start_ms'] <= mid < s['end_ms']), None)
+        assert hit is not None and hit['backdrop'] == 'dark', g['at_ms']
+        assert hit['scene'] == ('visual' if g['fields']['scene'] == 'visual' else 'stage')
+        assert (hit.get('card') == 'screen') == (g['fields'].get('card') == 'screen')
+    cta = next(g for g in graphics if g['template'] == 'link_cta')
+    assert not any(s['start_ms'] < cta['at_ms'] + cta['duration_ms'] and cta['at_ms'] < s['end_ms'] for s in scenes)
+    # The editor's own check takes them as they are.
+    assert ed.ag.checked_saved_scenes(scenes, total) == scenes

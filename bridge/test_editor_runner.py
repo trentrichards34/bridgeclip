@@ -90,3 +90,10 @@ class EditorRunnerTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_fix_layout_returns_the_scenes():
+    import editor_runner
+    assert 'fix-layout' in editor_runner.ACTIONS
+    scenes = [{'scene': 'stage', 'start_ms': 0, 'end_ms': 5000, 'backdrop': 'dark', 'card': 'screen'}]
+    assert editor_runner.result_message({'stage_scenes': scenes}) == {'ok': True, 'stage_scenes': scenes}
