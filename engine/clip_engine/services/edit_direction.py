@@ -720,6 +720,42 @@ def editor_scenes(graphics: Sequence[dict], total_ms: int, brand: Optional[str],
     return ag.checked_saved_scenes(sorted(scenes, key=lambda s: s['start_ms'])[:MAX_SCENES], int(total_ms))
 
 
+# ---------------------------------------------------------------------------
+# The Explainer style: the speaker cut out on a paper page, a canvas per section above (explainer.ts)
+# ---------------------------------------------------------------------------
+
+def is_explainer_section(g: dict) -> bool:
+    return g.get('template') == 'custom' and (g.get('fields') or {}).get('scene') == 'explainer'
+
+
+# A section's canvas is cut short at a filmed screen when this much of it plays first, else it is left out there.
+EXPLAINER_KEEP_SHARE = 0.4
+
+
+def explainer_layout(graphics: list[dict], total_ms: int, screens: Sequence[tuple[int, int]] = ()) -> tuple[list[dict], list[dict]]:
+    """An Explainer reel's scenes and graphics: the paper page with the speaker cut out (stage scenes, backdrop paper,
+    card cutout) over the whole reel except its filmed screens (they stay full frame, as they are); each section's
+    canvas plays on it, cut short where a filmed screen comes in after most of it, left out where one covers its start."""
+    from clip_engine.services.stage_scenes import MIN_SCENE_MS
+    windows = joined_windows(screens)
+    pieces = [(0, int(total_ms))]
+    for a, b in windows:
+        pieces = [p for lo, hi in pieces for p in ((lo, min(hi, a - CUT_PAD_MS)), (max(lo, b + CUT_PAD_MS), hi)) if p[1] - p[0] >= MIN_SCENE_MS]
+    scenes = [{'scene': 'stage', 'start_ms': lo, 'end_ms': hi, 'backdrop': 'paper', 'card': 'cutout', 'transition': 'slide'} for lo, hi in pieces]
+    out = []
+    for g in graphics:
+        if not is_explainer_section(g):
+            out.append(g)
+            continue
+        a, b = g['at_ms'], g['at_ms'] + g['duration_ms']
+        hit = next((w for w in windows if w[0] < b and w[1] > a), None)
+        if hit is None:
+            out.append(g)
+        elif hit[0] - CUT_PAD_MS - a >= EXPLAINER_KEEP_SHARE * (b - a):
+            out.append({**g, 'duration_ms': int(hit[0] - CUT_PAD_MS - a)})
+    return out, scenes
+
+
 def size_for_scenes(graphics: list[dict], scenes: Sequence[dict]) -> list[dict]:
     """A stage card outside any stage or visual scene (cut around a screen) is drawn as a card again."""
     from clip_engine.services.graphics_director import LIGHT_BACKDROPS, on_light_stage
@@ -791,17 +827,18 @@ def candidate_look_extras(look: Any) -> Optional[dict]:
 
 def edit_project(title: str, total_ms: int, segments: Sequence[TranscriptSegment], look: Any, graphics: list[dict],
                  scenes: list[dict], brand_mark: Optional[dict], preview_id: str, width: int = 1080, height: int = 1920,
-                 directed: bool = False, accent: Optional[str] = None) -> dict:
+                 directed: bool = False, accent: Optional[str] = None, explainer: bool = False) -> dict:
     """The editor project for an edited reel: one ready clip covering the whole reel (the editor's source), with its
     hook text, captions, look extras, graphics and scenes. Baking it (main) replaces the reel in the Library (clip 0).
-    `directed`: Motion graphics on (the hook floats and hides after a few seconds: directed_hook_look)."""
+    `directed`: Motion graphics on (the hook floats and hides after a few seconds: directed_hook_look). `explainer`:
+    an Explainer reel (no hook text over it: the captions at the top and the first section's canvas carry the hook)."""
     from clip_engine.services.automatic_editor import editor_rows
     from clip_engine.services.manual_editor import default_crop, utf16_prefix, validate_candidate, validate_candidate_list
     hook_text = ' '.join((look.headline or '').split())
     hook_look = dict(look.headline_look or {'look': 'white', 'color': '#FFFFFF', 'font': 'clean'})
     if directed:
         hook_look = directed_hook_look(hook_look, accent)
-    hook = {'text': utf16_prefix(hook_text, 200), 'look': hook_look} if hook_text else None
+    hook = {'text': utf16_prefix(hook_text, 200), 'look': hook_look} if hook_text and not explainer else None
     extras = candidate_look_extras(look)
     candidate = {
         'id': CANDIDATE_ID, 'title': utf16_prefix(title, 200) or 'My recording', 'ranges': [[0, int(total_ms)]],

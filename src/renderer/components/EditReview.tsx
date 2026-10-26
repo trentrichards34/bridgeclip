@@ -141,17 +141,20 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   const [making, setMaking] = useState(false)
   // Custom graphics (Skills): what they'd cost for this edit, shown under the switch before anything is spent.
   const [customNote, setCustomNote] = useState<string | undefined>(undefined)
+  const [explainerNote, setExplainerNote] = useState<string | undefined>(undefined)
   const customKey = (decisions.graphics ?? []).map((g) => `${g.id}:${g.template}:${g.word}`).join('|')
   useEffect(() => {
     let live = true
-    if (!openrouter || typeof getApi().edit.customInfo !== 'function') { setCustomNote(undefined); return }
+    if (!openrouter || typeof getApi().edit.customInfo !== 'function') { setCustomNote(undefined); setExplainerNote(undefined); return }
     void getApi().edit.customInfo(decisions).then((info) => {
       if (!live) return
+      const ex = info.explainer
+      setExplainerNote(ex && ex.sections ? `Your AI draws ${ex.sections} section${ex.sections === 1 ? '' : 's'}, each one illustration that changes on every line, checks each over your video and fixes it. About ${formatSpendUsd(ex.expectedUsd)} (at most ${formatSpendUsd(ex.mostUsd)}), when you make the reel.` : undefined)
       const made = (decisions.graphics ?? []).filter((g) => g.template === 'custom').length
       setCustomNote(info.moments.length
         ? `For ${info.moments.length} key moment${info.moments.length === 1 ? '' : 's'}, your AI designs a graphic, checks it over your video and fixes it. About ${formatSpendUsd(info.expectedUsd)} (at most ${formatSpendUsd(info.mostUsd)}), when you make the reel or from the beat sheet.`
         : made ? `${made} custom graphic${made === 1 ? '' : 's'} designed. See them on the beat sheet.` : 'No moment in this edit needs a custom graphic.')
-    }).catch(() => { if (live) setCustomNote(undefined) })
+    }).catch(() => { if (live) { setCustomNote(undefined); setExplainerNote(undefined) } })
     return () => { live = false }
   }, [customKey, openrouter])
   // The beat sheet: every on-screen moment as a numbered still (offered before the reel is made, as the member chose).
@@ -487,7 +490,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
               control={<Switch label="End on your call to action" checked={decisions.endOnCta} onChange={(endOnCta) => setDecisions((current) => ({ ...current, endOnCta }))} />} />
           )}
 
-          <SkillsPanel className="mt-5" rows={editSkillRows(plan, { ...decisions, look }, { brollSource: brollDefault, openrouter, customNote }).filter((row) => !screen || (row.id !== 'broll' && row.id !== 'zoom'))}
+          <SkillsPanel className="mt-5" rows={editSkillRows(plan, { ...decisions, look }, { brollSource: brollDefault, openrouter, customNote, explainerNote }).filter((row) => !screen || (row.id !== 'broll' && row.id !== 'zoom'))}
             music={{ track: look.musicTrack ?? null, onChange: (track) => onLook({ ...look, musicTrack: track ?? undefined }) }}
             expand={(id) => id === 'broll' && look.broll ? <BrollSourcePicker value={look.broll} onChange={(broll) => onLook({ ...look, broll })} disabled={making} /> : undefined}
             onToggle={(id, on) => {

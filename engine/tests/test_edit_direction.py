@@ -261,7 +261,7 @@ def test_a_custom_graphic_passes_through_on_its_word_and_a_visual_one_gets_its_v
     # Placed as set (a diagram's length allowed), its composition id kept.
     assert custom['fields']['comp'] == comp and custom['size'] == 'stage' and custom['at_ms'] == timed[at(words, 'product,')][1]
     assert custom['duration_ms'] == min(13000, total - custom['at_ms'])
-    assert ag.editor_max_ms('custom') == ag.DIAGRAM_MAX_MS
+    assert ag.editor_max_ms('custom') == ag.CUSTOM_MAX_MS == 30000  # an Explainer section may last up to 30 s
     # A custom graphic designed for a Visual scene (no speaker) gets one, like a diagram; a stage one gets the stage.
     assert ag.visual_graphic(custom) and not ag.visual_graphic({**custom, 'fields': {'comp': comp, 'scene': 'stage'}})
     scenes = ed.editor_scenes(graphics, total, None)

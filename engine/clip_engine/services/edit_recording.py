@@ -2163,12 +2163,17 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
         avoid += faceless
         filmed = ed.screen_windows(timed, config["words"], screens or set(), offset_ms) + faceless
         # Cards over a filmed screen take a darker look; with Stage layouts a long screen gets a framed moment (edit_direction).
-        graphics, framed = ed.screen_aware(graphics, avoid, options["stage"])
+        explainer = options["stage"] and editor.get("explainer") is True and any(ed.is_explainer_section(g) for g in graphics)
+        graphics, framed = ed.screen_aware(graphics, avoid, options["stage"] and not explainer)
         if framed:
             # A framed screen's slow push-in heads for where that screen is busy (screen_zoom).
             from clip_engine.services.screen_zoom import aim_screen_frames
             graphics = await asyncio.to_thread(aim_screen_frames, target, graphics, os.path.join(root, ".work"))
-        if options["stage"]:
+        if explainer:
+            # The Explainer: the paper page with the speaker cut out over the whole reel (filmed screens stay as they are).
+            graphics, scenes = ed.explainer_layout(graphics, total_ms, filmed)
+            graphics = ed.size_for_scenes(graphics, scenes)
+        elif options["stage"]:
             scenes = ed.editor_scenes(graphics, total_ms, editor.get("brand_color"), avoid, framed)
             graphics = ed.size_for_scenes(graphics, scenes)
             scenes = ed.scenes_in_use(scenes, graphics)
@@ -2203,7 +2208,7 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
     await RenderingService().capture_framing_source(target, os.path.join(root, f"editor-preview-{preview_id}.mp4"), duration_ms=total_ms)
     title = config.get("title") or look.headline or "My recording"
     project = ed.edit_project(title, total_ms, segments, look, graphics, scenes, ed.saved_brand_mark(look.brand_mark, root), preview_id,
-                              directed=options["motion"], accent=editor.get("brand_color"),
+                              directed=options["motion"], accent=editor.get("brand_color"), explainer=bool(scenes) and any(ed.is_explainer_section(g) for g in graphics),
                               **({"width": 1920, "height": 1080} if youtube is not None else {}))
     chapters: list[dict] = []
     if youtube is not None:

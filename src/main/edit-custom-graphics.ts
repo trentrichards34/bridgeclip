@@ -85,6 +85,12 @@ function reelWords(ctx: EditCustomContext, order: number[], starts: Map<number, 
   })
 }
 
+/** The reel's words with reel times (and their plan index) and where the reel ends (ms): the Explainer's sections are cut from them. */
+export function editReelTimeline(ctx: EditCustomContext): { words: (TimedWord & { index: number })[]; endMs: number } {
+  const { order, starts, endMs } = candidates(ctx)
+  return { words: reelWords(ctx, order, starts), endMs }
+}
+
 /** What the planned template graphic showed, in a line (a hint for the writer). */
 function plannedLine(g: EditGraphic | null, line: string): string {
   if (!g) return `(no graphic: the line "${line.slice(0, 160)}")`
@@ -124,7 +130,7 @@ function briefFor(ctx: EditCustomContext, hero: HeroMoment, durationMs: number, 
 }
 
 /** The video frame at a word (data URL), from its source (the proxy when there is one). Null when it can't be read. */
-async function frameAt(ctx: EditCustomContext, word: number): Promise<string | null> {
+export async function frameAt(ctx: EditCustomContext, word: number): Promise<string | null> {
   const w = ctx.plan.words[word]
   const source = w ? ctx.sources[w.src] : undefined
   if (!w || !source) return null

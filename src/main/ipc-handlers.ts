@@ -60,7 +60,7 @@ import {
   abortEditRecording, appendEditRecording, beginEditRecording, cancelEdit, describeSource, discardEdit, editRunBusy, editStatus, filmIdeas, finishEditRecording,
   isEditRunFolder, onEditSpend, onEditStatus, recomposeEditRun, renderEdit, startEdit, startEstimate, addEditImage, addEditImageFiles, removeEditImage, importClips,
   describeScreen, previewScreen, syncScreen, editSavedHeadline, editorHeadlineSaved, editBeatFrame,
-  editCustomGraphicsInfo, editCustomGraphicsEstimate, makeEditCustomGraphicsNow, swapEditCustomGraphic, editCustomStills, addEditLibraryGraphic,
+  editCustomGraphicsInfo, editCustomGraphicsEstimate, editExplainerEstimate, makeEditCustomGraphicsNow, swapEditCustomGraphic, editCustomStills, addEditLibraryGraphic,
   editCustomWorld, setEditCustomWorld, editCustomWorldEstimate, regenerateEditCustomWorld
 } from './edit-recording'
 import { EDIT_IMAGE_EXTENSIONS, EDIT_MAX_IMAGES, EDIT_MAX_SCREENSHOTS, EDIT_MAX_SOURCES, EDIT_VIDEO_EXTENSIONS, IDEAS_ESTIMATE_USD } from '../shared/edit-recording'
@@ -814,8 +814,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     // Custom graphics (on unless switched off, when none were made in the review) are designed first: their estimate too.
     const d = decisions as { customGraphics?: unknown; graphics?: { template?: unknown }[] } | null
     const custom = d?.customGraphics !== false && !(d?.graphics ?? []).some((g) => g?.template === 'custom') ? await editCustomGraphicsEstimate({ decisions }) : null
+    // The Explainer style (when switched on) draws every section first: its estimate too.
+    const explainer = (decisions as { explainer?: unknown } | null)?.explainer === true ? await editExplainerEstimate(decisions) : null
     const brollUsd = isBrollSource(broll) && usesAi(broll) ? brollRunEstimateUsd(broll, 1) : null
-    if (brollUsd !== null || custom) await assertSpendAllowed('edit:render', 'openrouter', (brollUsd ?? 0) + (custom ?? 0))
+    if (brollUsd !== null || custom || explainer) await assertSpendAllowed('edit:render', 'openrouter', (brollUsd ?? 0) + (custom ?? 0) + (explainer ?? 0))
     return renderEdit(decisions)
   })
   // Custom graphics in the review: the moments and what they cost (free), designing them (paid), a note on one, swapping one back, stills.

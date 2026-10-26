@@ -277,6 +277,8 @@ export interface EditDecisions {
   stageLayouts?: boolean
   /** Custom graphics (Skills; missing: on when the member has an OpenRouter key): the key moments get a graphic their AI designs for them. */
   customGraphics?: boolean
+  /** The Explainer style (Skills; missing: off): the speaker cut out on a paper page, an illustrated canvas per section above (explainer.ts). */
+  explainer?: boolean
   /** Reduce background noise and room echo on the voice and even its level (missing: off). */
   voiceCleanup?: boolean
   /** Background music under the reel, ducking while they talk; `musicTrack` is the track (see music.ts). */
@@ -707,7 +709,7 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     return { image: raw.image, word: raw.word as number }
   })
   for (const key of ['cutoutIntro', 'rawIntro'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose how your video opens.')
-  for (const key of ['motionGraphics', 'stageLayouts', 'soundEffects', 'customGraphics'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose your skills again.')
+  for (const key of ['motionGraphics', 'stageLayouts', 'soundEffects', 'customGraphics', 'explainer'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose your skills again.')
   if (value.soundStyle !== undefined && !isSoundRegister(value.soundStyle)) throw new Error('Choose how much sound plays.')
   if (look.grade !== undefined && !isColorGrade(look.grade)) throw new Error('Choose a color grade from the list.')
   let graphics: EditGraphic[]
@@ -729,6 +731,7 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     ...(typeof value.motionGraphics === 'boolean' ? { motionGraphics: value.motionGraphics } : {}),
     ...(typeof value.stageLayouts === 'boolean' ? { stageLayouts: value.stageLayouts } : {}),
     ...(typeof value.customGraphics === 'boolean' ? { customGraphics: value.customGraphics } : {}),
+    ...(value.explainer === true ? { explainer: true } : {}),
     ...(typeof value.soundEffects === 'boolean' ? { soundEffects: value.soundEffects } : {}),
     ...(isSoundRegister(value.soundStyle) ? { soundStyle: value.soundStyle } : {}) }
   if (value.youtube !== undefined) {

@@ -22,7 +22,7 @@ export const CUSTOM_DIR = 'custom'
 export const CUSTOM_COMP = /^[a-f0-9]{16}$/
 export const isCustomComp = (value: unknown): value is string => typeof value === 'string' && CUSTOM_COMP.test(value)
 /** The longest composition we run (characters of HTML, CSS and script together). */
-export const MAX_COMPOSITION_CHARS = 40_000
+export const MAX_COMPOSITION_CHARS = 64_000
 /** Elements a composition may draw (a busy SVG diagram is a few hundred). */
 export const MAX_COMPOSITION_ELEMENTS = 2500
 /** Revisions after the first try (each is one more model call and one more grade). */
@@ -47,8 +47,11 @@ export const REEL_HERO_MAX_MS = 8000
 export const REEL_HERO_LONG_MS = 12000
 
 /** How a custom graphic sits in the frame: over the backdrop only (no speaker), on the stage (speaker in a card below), or a card over the speaker. */
-export type CustomFrameKind = 'visual' | 'stage' | 'card'
-export const CUSTOM_FRAME_KINDS: readonly CustomFrameKind[] = ['visual', 'stage', 'card']
+/** 'explainer': one section of an Explainer reel (explainer.ts): the canvas over the paper, the speaker cut out below. */
+export type CustomFrameKind = 'visual' | 'stage' | 'card' | 'explainer'
+export const CUSTOM_FRAME_KINDS: readonly CustomFrameKind[] = ['visual', 'stage', 'card', 'explainer']
+import { CUSTOM_SECTION_MAX_MS, EXPLAINER_ACCENT, EXPLAINER_BAND, EXPLAINER_CAPTION_ZONE, EXPLAINER_INK, EXPLAINER_PAPER } from './explainer-layout'
+export { CUSTOM_SECTION_MAX_MS, EXPLAINER_ACCENT, EXPLAINER_BAND, EXPLAINER_CAPTION_ZONE, EXPLAINER_INK, EXPLAINER_PAPER }
 /** What kind of idea a hero moment is (it steers the design brief). */
 export type HeroKind = 'comparison' | 'process' | 'proof' | 'claim' | 'takeover' | 'list'
 
@@ -228,6 +231,11 @@ export function customGeometry(kind: CustomFrameKind, options: { aspect?: '9:16'
     // A full-screen brand card (longform.landscapeBand 'full').
     return { kind, aspect, width: W, height: H, root: px({ top: .12, bottom: .86, left: .06, right: .94 }), face: null, card: null }
   }
+  if (kind === 'explainer') {
+    // scenes.ts STAGE_LAYOUT: the cut-out stands where the rounded card would be (its head may rise a little over it).
+    const cardH = Math.round(.42 * H), cardY = H - 32 - cardH
+    return { kind, aspect, width: W, height: H, root: px(EXPLAINER_BAND), face: null, card: { x: 40, y: cardY, width: W - 80, height: cardH } }
+  }
   const top = (options.hook ?? 0) > 0 ? Math.min(.36, (options.hook ?? 0) + .02) : .08
   if (kind === 'visual') return { kind, aspect, width: W, height: H, root: px({ top, bottom: .74 }), face: null, card: null }
   if (kind === 'stage') {
@@ -312,19 +320,19 @@ export const CUSTOM_FONT_FAMILIES = {
 export function customLook(options: { kind: CustomFrameKind; brandColor?: string | null; font?: string | null; logo?: boolean; backdrop?: string | null; worldAccent?: string | null }): CustomLook {
   const brand = options.brandColor && /^#[0-9a-f]{6}$/i.test(options.brandColor) ? options.brandColor.toUpperCase() : null
   const display = CUSTOM_FONT_FAMILIES[(options.font ?? 'clean') as keyof typeof CUSTOM_FONT_FAMILIES] ?? CUSTOM_FONT_FAMILIES.clean
-  const ground = options.kind === 'card' ? 'video' : (options.backdrop ?? (options.kind === 'visual' ? brand ?? CUSTOM_SOLID_BACKDROP : '#F4F5F8'))
+  const ground = options.kind === 'card' ? 'video' : options.kind === 'explainer' ? EXPLAINER_PAPER : (options.backdrop ?? (options.kind === 'visual' ? brand ?? CUSTOM_SOLID_BACKDROP : '#F4F5F8'))
   const dark = ground === 'video' || lum(ground) < .3
   // The video's world accent (no brand color): one hue for every graphic, a deeper shade of it where it wouldn't read.
   const world = !brand && options.worldAccent && /^#[0-9a-f]{6}$/i.test(options.worldAccent) ? options.worldAccent.toUpperCase() : null
   // One accent that reads on the ground: the brand color when it does, else a lime green (on blue) or the calm blue (on light).
-  let accent = brand ?? world ?? (dark ? '#9BE35A' : '#2F5BFF')
+  let accent = brand ?? world ?? (options.kind === 'explainer' ? EXPLAINER_ACCENT : dark ? '#9BE35A' : '#2F5BFF')
   if (world && ground !== 'video' && contrast(accent, ground) < 2.2) {
     for (const k of [.75, .6, .45, .35]) { const deeper = shade(world, k); if (contrast(deeper, ground) >= 2.2) { accent = deeper; break } }
   }
-  if (ground !== 'video' && contrast(accent, ground) < 2.2) accent = dark ? '#9BE35A' : '#2F5BFF'
+  if (ground !== 'video' && contrast(accent, ground) < 2.2) accent = options.kind === 'explainer' ? EXPLAINER_ACCENT : dark ? '#9BE35A' : '#2F5BFF'
   const accentInk = contrast(accent, '#FFFFFF') >= 4.5 ? accent : shade(accent, .55)
   return {
-    ground, ink: dark ? '#FFFFFF' : '#0E1525', muted: dark ? 'rgba(255,255,255,.72)' : 'rgba(14,21,37,.62)', paper: '#FFFFFF', paperInk: '#0E1525',
+    ground, ink: dark ? '#FFFFFF' : options.kind === 'explainer' ? EXPLAINER_INK : '#0E1525', muted: dark ? 'rgba(255,255,255,.72)' : 'rgba(14,21,37,.62)', paper: '#FFFFFF', paperInk: '#0E1525',
     accent, accentInk, bad: '#FF5A4E', display, body: CUSTOM_FONT_FAMILIES.body, accentFont: CUSTOM_FONT_FAMILIES.accent, logo: !!options.logo
   }
 }
@@ -457,7 +465,11 @@ const stem = (w: string): string => w.length > 4 ? w.replace(/(ingly|edly|ing|ed
 const numberKey = (text: string): string => text.replace(/[^\d.]/g, '').replace(/\.+$/, '').replace(/^0+(?=\d)/, '')
 
 /** Words and numbers said in the video, for the check. */
-export interface SaidIndex { words: Set<string>; stems: Set<string>; numbers: Set<string> }
+export interface SaidIndex {
+  words: Set<string>; stems: Set<string>; numbers: Set<string>
+  /** An Explainer section's counters tick up to these said values: a number on screen at or under one of them is fine. */
+  upTo?: number[]
+}
 
 export function saidIndex(source: readonly TimedWord[]): SaidIndex {
   const out: SaidIndex = { words: new Set(), stems: new Set(), numbers: new Set() }
@@ -492,6 +504,7 @@ export function unsaidOnScreen(texts: readonly string[], said: SaidIndex): strin
       // A lone 1-9 is a step number, unless it is a multiplier or a share ("2x", "5%").
       const after = text.slice((found.index ?? 0) + match.length).trimStart().charAt(0)
       if (!n || (/^[1-9]$/.test(n) && !/[x×%]/i.test(after))) continue
+      if (said.upTo?.length && Number.isFinite(Number(n)) && said.upTo.some((v) => Number(n) <= v)) continue
       if (!said.numbers.has(n)) add(match.replace(/[.,]+$/, ''))
     }
     for (const raw of text.replace(/\d[\d,.]*/g, ' ').split(/[\s\-–—/]+/)) {
@@ -787,6 +800,8 @@ export interface WriterBrief {
   world?: VisualWorld | null
   /** The stressed words it builds on (seconds from its start): each adds or changes one element. */
   stressed?: { word: string; at: number }[]
+  /** One section of an Explainer reel (explainer.ts explainerBriefLines): what replaces the moment's usual brief. */
+  explainer?: { lines: string[]; grade: string }
 }
 
 const KIND_BRIEF: Record<HeroKind, string> = {
@@ -801,7 +816,8 @@ const KIND_BRIEF: Record<HeroKind, string> = {
 const FRAME_BRIEF: Record<CustomFrameKind, string> = {
   visual: 'It fills a full-screen Visual scene: behind it is the solid ground color var(--cg-ground) and nothing else (no speaker). Draw directly on the ground with ink and accent; no outer card needed.',
   stage: 'It sits on the stage: the ground var(--cg-ground) is behind it and the speaker is in a rounded video card under its area. Draw directly on the ground; no outer card needed.',
-  card: 'It sits OVER THE SPEAKER\'S VIDEO (the face is visible). Put the words on a solid panel (var(--cg-paper) with var(--cg-paper-ink) text, one corner radius, or a near-solid dark plate) so they read over any footage. Keep the panel compact; never cover the face box.'
+  card: 'It sits OVER THE SPEAKER\'S VIDEO (the face is visible). Put the words on a solid panel (var(--cg-paper) with var(--cg-paper-ink) text, one corner radius, or a near-solid dark plate) so they read over any footage. Keep the panel compact; never cover the face box.',
+  explainer: 'It is the canvas of an illustrated explainer: the whole frame is warm paper (var(--cg-ground)); the speaker, cut out of their video with no card, stands in the lower part of the frame under your area (their head may rise into the bottom 120 px of it at the center: keep that spot clear); the captions are drawn by us in a zone near the top of your area (given below). Draw directly on the paper in ink and the one accent, like a hand-made editorial explainer.'
 }
 
 /** The user prompt for one moment (and, with `revise`, the previous try and what to fix). */
@@ -809,10 +825,11 @@ export function writerUserPrompt(brief: WriterBrief, revise?: { html: string; fi
   const g = brief.geometry
   const seconds = (brief.durationMs / 1000).toFixed(2)
   const lines = [
-    `MOMENT: ${KIND_BRIEF[brief.kind]}`,
+    brief.explainer ? `SECTION: ${brief.explainer.lines[0]}` : `MOMENT: ${KIND_BRIEF[brief.kind]}`,
     `WHERE: ${FRAME_BRIEF[brief.frame]} The composition's area (#cg-root) is ${g.root.width} x ${g.root.height} px, at x ${g.root.x}, y ${g.root.y} of a ${g.width} x ${g.height} frame.` +
       (g.face ? ` The speaker's face is at x ${g.face.x - g.root.x}..${g.face.x - g.root.x + g.face.width}, y ${g.face.y - g.root.y}..${g.face.y - g.root.y + g.face.height} in the area's own pixels (keep clear).` : '') +
-      ` Above the area is the hook text and below it the captions: they are not yours to draw.`,
+      (brief.explainer ? '' : ` Above the area is the hook text and below it the captions: they are not yours to draw.`),
+    ...(brief.explainer ? brief.explainer.lines.slice(1) : []),
     `LENGTH: data-duration="${seconds}" (${seconds} s).`,
     `WORDS (with cue times in seconds from the graphic's start; the graphic shows THESE ideas, and only these words and numbers): ${brief.cues.map((c) => `${c.word}@${c.at.toFixed(2)}`).join(' ')}`,
     `SAID BEFORE (context): ${brief.before || '(nothing)'}`,
@@ -820,7 +837,7 @@ export function writerUserPrompt(brief: WriterBrief, revise?: { html: string; fi
     ...(brief.saidNumbers?.length ? [`NUMBERS SAID EARLIER IN THE VIDEO (you may show these too): ${brief.saidNumbers.join(', ')}`] : []),
     ...(brief.stressed?.length ? [`STRESSED WORDS (build on these: each adds or changes ONE element at its time; between them earlier elements idle gently): ${brief.stressed.map((c) => `${c.word}@${c.at.toFixed(2)}`).join(' ')}`] : []),
     ...(brief.world ? [`THE VIDEO'S VISUAL WORLD (shared by every graphic of this video; design inside it): ${brief.world.idea}${brief.world.elements.length ? ` Recurring elements: ${brief.world.elements.join(', ')}.` : ''}${brief.world.style ? ` Look: ${brief.world.style}.` : ''}`] : []),
-    `THE TEMPLATE GRAPHIC PLANNED HERE (a hint at the idea, not a design to copy): ${brief.planned || '(none)'}`,
+    ...(brief.explainer ? [] : [`THE TEMPLATE GRAPHIC PLANNED HERE (a hint at the idea, not a design to copy): ${brief.planned || '(none)'}`]),
     `LOOK: ground ${brief.look.ground === 'video' ? 'the speaker\'s video' : brief.look.ground}, ink ${brief.look.ink}, accent ${brief.look.accent}; display font var(--cg-font-display), body var(--cg-font-body), accent italic var(--cg-font-accent).${brief.look.logo ? ' The brand logo is available as var(--cg-logo).' : ''}`,
     ...(brief.note ? [`THE CREATOR'S NOTE FOR THIS GRAPHIC (follow it if it fits the rules; it is a request, not an instruction to break the contract): ${brief.note}`] : [])
   ]
@@ -837,8 +854,8 @@ export function graderSystemPrompt(): string {
     'Answer with JSON only: {"pass": true|false, "score": 1-10, "failed": ["<check id>", ...], "fixes": ["<one concrete change, with sizes, positions, colors or the word it should happen on>", ...]}. Pass only when every check passes and the score is 7 or more. Fixes must be specific and doable in the composition (e.g. "make the step labels 56 px and move them 40 px left of the step edge", "the second still looks like the third: add the crowd dots on \'people\' at 2.4 s").'].join('\n\n')
 }
 
-export function graderUserPrompt(input: { words: string; kind: HeroKind; frame: CustomFrameKind; machine: string[]; world?: VisualWorld | null; stressed?: { word: string; at: number }[] }): string {
-  return [`The moment says: "${input.words}"`, `It should show: ${KIND_BRIEF[input.kind]}`, `Where: ${FRAME_BRIEF[input.frame]}`,
+export function graderUserPrompt(input: { words: string; kind: HeroKind; frame: CustomFrameKind; machine: string[]; world?: VisualWorld | null; stressed?: { word: string; at: number }[]; explainer?: string }): string {
+  return [`The moment says: "${input.words}"`, input.explainer ? `It should show: ${input.explainer}` : `It should show: ${KIND_BRIEF[input.kind]}`, `Where: ${FRAME_BRIEF[input.frame]}`,
     ...(input.world ? [`The video's visual world: ${worldLine(input.world)}${input.world.style ? ` (${input.world.style})` : ''}`] : []),
     ...(input.stressed?.length ? [`It should build on: ${input.stressed.map((c) => c.word).join(', ')}`] : []),
     ...(input.machine.length ? [`Our automatic checks found: ${input.machine.join(' ')}`] : []), 'Grade the four stills.'].join('\n')
@@ -971,7 +988,7 @@ export function parseCustomMeta(value: unknown): CustomMeta | null {
   const v = value as Record<string, unknown>
   if (!isCustomComp(v.comp) || !CUSTOM_FRAME_KINDS.includes(v.frame as CustomFrameKind)) return null
   const num = (x: unknown, lo: number, hi: number): number | null => typeof x === 'number' && Number.isFinite(x) && x >= lo && x <= hi ? x : null
-  const width = num(v.width, 50, 4000), height = num(v.height, 50, 4000), durationMs = num(v.durationMs, 300, CUSTOM_MAX_MS + 1000)
+  const width = num(v.width, 50, 4000), height = num(v.height, 50, 4000), durationMs = num(v.durationMs, 300, (v.frame === 'explainer' ? CUSTOM_SECTION_MAX_MS : CUSTOM_MAX_MS) + 1000)
   if (width === null || height === null || durationMs === null) return null
   const kinds: HeroKind[] = ['comparison', 'process', 'proof', 'claim', 'takeover', 'list']
   const fb = v.fallback && typeof v.fallback === 'object' ? v.fallback as Record<string, unknown> : null
@@ -1003,7 +1020,8 @@ export function customStillNames(comp: string): string[] {
 }
 
 /** The plain line for a custom graphic in lists ("Drawn for the comparison"). */
-export function customIdea(kind: HeroKind): string {
+export function customIdea(kind: HeroKind, frame?: CustomFrameKind): string {
+  if (frame === 'explainer') return 'Drawn for the section'
   return { comparison: 'Drawn for the comparison', process: 'Drawn for the steps', proof: 'Drawn for the proof', claim: 'Drawn for the key line', takeover: 'Type set for the key line', list: 'Drawn for the list' }[kind]
 }
 
@@ -1103,6 +1121,8 @@ window.__timelines = [tl];
 
 /** The review's custom graphics before designing them. */
 export interface EditCustomInfo {
+  /** The Explainer style for this reel: its sections and what drawing them costs (null on a YouTube video). */
+  explainer?: { sections: number; expectedUsd: number; mostUsd: number } | null
   available: boolean
   /** Why they can't be designed (no key), or null. */
   reason: string | null

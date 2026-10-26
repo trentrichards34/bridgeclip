@@ -50,6 +50,7 @@ import { getSettingsForBridge, loadSettings, vocabularyTerms } from './settings-
 import { resolveBinary } from './tools'
 import { beatFrame } from './beat-stills'
 import { customModel, customStillPaths, openRouterModelCall, readCustomGraphic, type CustomModel } from './custom-graphics'
+import { explainerInfo, makeExplainer } from './explainer'
 import { editCustomEstimate, editHeroMoments, editVisualWorld, makeEditCustomGraphics, regenerateVisualWorld, setVisualWorld, swapBackCustomGraphic, type EditCustomContext, type EditCustomResult } from './edit-custom-graphics'
 import { DEFAULT_PRICE, MAX_NOTE_CHARS, type EditCustomInfo, worldCallCost, worldFromLine, worldLine, WORLD_LINE_CHARS } from '../shared/custom-graphics'
 import type { EditGraphic } from '../shared/reel-graphics'
@@ -992,6 +993,7 @@ export async function editCustomGraphicsInfo(value: unknown): Promise<EditCustom
   const estimate = editCustomEstimate(ctx, heroes.length)
   return { available: !!m, reason: m ? null : 'Add your OpenRouter key in Settings → API keys to design custom graphics.', model: ctx.model,
     moments: heroes.map((h) => ({ word: h.word, kind: h.kind, frame: h.frame, replaces: h.replaces })), expectedUsd: estimate.expectedUsd, mostUsd: estimate.mostUsd, revisions: estimate.revisions, busy: !!current.customBusy,
+    explainer: current.status.plan!.format === 'youtube' ? null : explainerInfo(ctx),
     flat: Object.fromEntries((decisions.graphics ?? []).filter((g) => g.template === 'custom').flatMap((g) => { const found = readCustomGraphic(current.status.folder, g.fields.comp); return found?.meta.flat?.length ? [[found.meta.comp, found.meta.flat]] : [] })) }
 }
 
@@ -1001,6 +1003,13 @@ export async function editCustomGraphicsEstimate(value: unknown): Promise<number
     const raw = (value ?? {}) as { decisions?: unknown; only?: unknown }
     const info = await editCustomGraphicsInfo(raw.decisions)
     return raw.only ? editCustomEstimateOne(info) : info.mostUsd
+  } catch { return null }
+}
+/** The spending check's estimate for the Explainer style (the most its sections could cost), or null when it won't run. */
+export async function editExplainerEstimate(value: unknown): Promise<number | null> {
+  try {
+    const info = await editCustomGraphicsInfo(value)
+    return info.available && info.explainer ? info.explainer.mostUsd : null
   } catch { return null }
 }
 const editCustomEstimateOne = (info: { mostUsd: number; moments: unknown[] }): number => info.moments.length ? info.mostUsd / info.moments.length : 0.3
@@ -1256,9 +1265,41 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
       // Custom graphics (Skills, on by default with a key): designed now when the review didn't make them already. What
       // happened is told on the finished reel and kept in the run (.graphics/custom/last-run.json): a run that quietly
       // skipped them looked like the custom graphics had been tried.
+      // The Explainer style: the reel's sections drawn as one continuous illustration each (explainer.ts), before the rest.
+      let explained = 0
+      if (directed && decisions.explainer === true && decisions.motionGraphics !== false && decisions.stageLayouts !== false && plan.format !== 'youtube' && plan.graphics !== undefined) {
+        publish(current, { detail: 'Drawing your explainer', percent: 1 })
+        const m = await customModel().catch(() => null)
+        if (!m) customNotes.push('The Explainer style wasn’t drawn: add your OpenRouter key in Settings → API keys.')
+        else {
+          const abort = new AbortController()
+          const stop = setInterval(() => { if (current.cancelled || run !== current) abort.abort() }, 500)
+          try {
+            const result = await makeExplainer(customContext(current, decisions, m), { call: openRouterModelCall(m.key, m.endpoint, m.price), signal: abort.signal,
+              onProgress: (done, total) => publish(current, { detail: total ? `Drawing your explainer (${done} of ${total} sections)` : 'Drawing your explainer', percent: 1 }) })
+            spend(current, result.costUsd)
+            explained = result.made
+            if (result.made > 0) {
+              decisions.graphics = result.graphics
+              const editor = (config as { editor?: { graphics?: unknown; explainer?: boolean } }).editor!
+              editor.graphics = editorGraphicsFor(decisions, images, current.status.folder)
+              editor.explainer = true
+            }
+            if (!result.made) customNotes.push(`The Explainer style wasn’t drawn: ${(result.notes[0] ?? 'no section passed the check').replace(/\.?$/, '.')} Your reel has the normal look.`)
+            else if (result.made < result.tried) customNotes.push(`${result.tried - result.made} of ${result.tried} explainer sections kept the normal look: their drawings didn’t pass the check.`)
+          } catch (error) {
+            if (current.cancelled) throw error
+            const message = String((error as Error)?.message ?? error).slice(0, 200)
+            logger.warn('edit.explainer.failed', { message })
+            customNotes.push(`The Explainer style wasn’t drawn: ${message.replace(/\.?$/, '.')}`)
+          } finally { clearInterval(stop) }
+          if (current.cancelled) throw new Error('Canceled.')
+        }
+      }
       const already = (decisions.graphics ?? []).filter((g) => g.template === 'custom').length
       let customOutcome: { ran: boolean; made: number; tried: number; reason: string | null } = { ran: false, made: already, tried: 0, reason: null }
       if (!directed) customOutcome.reason = 'not a directed reel'
+      else if (explained) customOutcome.reason = 'designed in the review: the Explainer style drew the sections'
       else if (decisions.customGraphics === false) customOutcome.reason = 'Custom graphics were switched off in the review.'
       else if (already) customOutcome.reason = 'designed in the review'
       else if (current.customTried) customOutcome.reason = 'already tried in the review'

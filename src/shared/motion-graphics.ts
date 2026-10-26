@@ -135,8 +135,10 @@ export const MAX_GRAPHIC_FIELD_CHARS = 160
 export const DIAGRAM_TEMPLATES: readonly string[] = ['staircase', 'funnel', 'journey', 'growth', 'idea_hub', 'compare_marks']
 export function isDiagram(template: string): boolean { return DIAGRAM_TEMPLATES.includes(template) }
 /** The longest a graphic of this kind may last. */
+/** A custom graphic may last an Explainer section (custom-graphics CUSTOM_SECTION_MAX_MS). */
+export const CUSTOM_GRAPHIC_MAX_MS = 30000
 export function graphicMaxMs(template: string | undefined): number {
-  return template === 'chapter' ? CHAPTER_MAX_MS : template === 'custom' ? DIAGRAM_MAX_MS : template && isDiagram(template) ? DIAGRAM_MAX_MS : GRAPHIC_MAX_MS
+  return template === 'chapter' ? CHAPTER_MAX_MS : template === 'custom' ? CUSTOM_GRAPHIC_MAX_MS : template && isDiagram(template) ? DIAGRAM_MAX_MS : GRAPHIC_MAX_MS
 }
 /** The light-up color diagrams use unless the graphic has its own color. */
 export const DIAGRAM_ACCENT = '#7CB82F'

@@ -14,6 +14,7 @@ import { sceneAt, type CandidateEdit, type EditorProject } from './clip-editor'
 import { HEADLINE_FONTS, headlineShownAt, isHexColor } from './headline-look'
 import { STAGE_LAYOUT, sceneAt as stageSceneAt, stageHookEndMs } from './scenes'
 import { landscapeBand, landscapeKind } from './longform'
+import { EXPLAINER_BAND } from './explainer-layout'
 import { DIAGRAM_ACCENT, graphicWindow, isDiagram, outputTime, type EditorGraphic, type GraphicPlacement, type GraphicRenderSpec, type GraphicSize } from './motion-graphics'
 
 /** The editor's default brand color for graphics (the engine's cards use the same calm blue). */
@@ -246,6 +247,8 @@ export function graphicSpec(project: Pick<EditorProject, 'aspect_ratio' | 'width
     if (out.every((t) => t !== null)) fields[key] = out.map((t) => String(Math.max(0, Math.round((t as number) - window.start_ms)))).join('\n')
   }
   let box = graphic.template === 'chapter' ? chapterBox(frame) : graphicBox(graphic.placement, frame, graphicBandSize(graphic))
+  // An Explainer section's canvas: its own band, from the section line at the top to just over the speaker's head.
+  if (graphic.template === 'custom' && graphic.fields.scene === 'explainer' && project.aspect_ratio === '9:16') box = { ...EXPLAINER_BAND }
   // A stage graphic in a Visual scene (the speaker card is away) takes the frame down to just over the captions.
   if (graphic.size === 'stage' && project.aspect_ratio === '9:16' && scene.scene === 'visual') {
     box = { top: box.top, bottom: Math.max(box.bottom, STAGE_LAYOUT.visualCaptionY - .08) }

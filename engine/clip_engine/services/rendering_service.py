@@ -1769,6 +1769,8 @@ class RenderingService:
                 variants.append(("light", stage_scenes.light_backdrop_style(base_style)))
             if "box" in modes:
                 variants.append(("box", stage_scenes.box_backdrop_style(base_style, request.scene_brand_color)))
+            if "paper" in modes:
+                variants.append(("paper", stage_scenes.paper_backdrop_style(base_style, request.scene_brand_color)))
             for mode, variant_style in variants:
                 variant_path = f"{caption_path}.{mode}.ass"
                 try:

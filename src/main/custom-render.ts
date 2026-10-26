@@ -28,7 +28,7 @@ import { createHash, randomUUID } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { BrowserWindow, nativeImage, session, type BrowserWindowConstructorOptions, type Session } from 'electron'
-import { compositionParts, lookCss, MAX_COMPOSITION_CHARS, MAX_COMPOSITION_ELEMENTS, SETTLED_STILL, type CustomGeometry, type CustomLook } from '../shared/custom-graphics'
+import { compositionParts, EXPLAINER_CAPTION_ZONE, lookCss, MAX_COMPOSITION_CHARS, MAX_COMPOSITION_ELEMENTS, SETTLED_STILL, type CustomGeometry, type CustomLook } from '../shared/custom-graphics'
 import { GRAPHIC_FPS } from '../shared/motion-graphics'
 import { GSAP_SOURCE } from './custom-graphics-assets'
 import { getEnginePath } from './pipeline-runner'
@@ -153,7 +153,7 @@ export function customDocument(scene: CustomScene, options: { frame?: string | n
   if (frame || g.kind !== 'card') {
     const ground = scene.look.ground === 'video' ? '#000' : scene.look.ground
     if (g.kind === 'visual') bg = `<div id="cg-bg" style="background:${ground}"></div>`
-    else if (g.kind === 'stage' && g.card) bg = `<div id="cg-bg" style="background:${ground}">${frame ? `<img alt="" src="${frame}" style="position:absolute;left:${g.card.x}px;top:${g.card.y}px;width:${g.card.width}px;height:${g.card.height}px;object-fit:cover;object-position:50% 30%;border-radius:48px">` : ''}</div>`
+    else if ((g.kind === 'stage' || g.kind === 'explainer') && g.card) bg = `<div id="cg-bg" style="background:${ground}">${frame ? `<img alt="" src="${frame}" style="position:absolute;left:${g.card.x}px;top:${g.card.y}px;width:${g.card.width}px;height:${g.card.height}px;object-fit:cover;object-position:50% 30%;border-radius:${g.kind === 'explainer' ? 0 : 48}px">` : ''}</div>`
     else if (frame) bg = `<div id="cg-bg"><img alt="" src="${frame}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"></div>`
   }
   const shell = `html,body{margin:0;padding:0;width:${g.width}px;height:${g.height}px;overflow:hidden;background:transparent}
@@ -334,7 +334,7 @@ const READ_CODE = `(() => {
   const r = root.getBoundingClientRect()
   const hidden = (el) => { if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return true; let o = 1; for (let p = el; p && p !== root.parentElement; p = p.parentElement) o *= Number(getComputedStyle(p).opacity); return o < 0.08 }
   const skip = (el) => !!el.closest('defs,clipPath,mask,pattern,marker,symbol,style,script,title,desc')
-  const texts = [], boxes = [], clipped = []; let small = Infinity
+  const texts = [], boxes = [], clipped = []; let small = Infinity, smallTop = Infinity
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); let n
   while ((n = walker.nextNode())) {
     const p = n.parentElement; const t = n.nodeValue.replace(/\\s+/g, ' ').trim()
@@ -347,7 +347,8 @@ const READ_CODE = `(() => {
       if (b.width < 1 || b.height < 1) continue
       boxes.push([b.left, b.top, b.width, b.height])
       if (b.left < r.left - 3 || b.right > r.right + 3 || b.top < r.top - 3 || b.bottom > r.bottom + 3) out = true
-      const size = b.height / 1.25; if (size < small) small = size
+      // Type in the top 80 px of the area is counted apart (an Explainer section's small section line lives there).
+      const size = b.height / 1.25; if (b.bottom <= r.top + 80) { if (size < smallTop) smallTop = size } else if (size < small) small = size
     }
     if (out) clipped.push(t.slice(0, 40))
   }
@@ -360,17 +361,26 @@ const READ_CODE = `(() => {
     const b = el.getBoundingClientRect(); if (b.width < 1 && b.height < 1) continue
     boxes.push([b.left, b.top, Math.max(1, b.width), Math.max(1, b.height)])
   }
-  return { root: [r.left, r.top, r.width, r.height], texts, boxes: boxes.slice(0, 800), clipped: clipped.slice(0, 6), small: Number.isFinite(small) ? small : 0 }
+  return { root: [r.left, r.top, r.width, r.height], texts, boxes: boxes.slice(0, 800), clipped: clipped.slice(0, 6), small: Number.isFinite(small) ? small : 0, smallTop: Number.isFinite(smallTop) ? smallTop : 0 }
 })()`
 
-interface Reading { root: [number, number, number, number]; texts: string[]; boxes: [number, number, number, number][]; clipped: string[]; small: number }
+interface Reading { root: [number, number, number, number]; texts: string[]; boxes: [number, number, number, number][]; clipped: string[]; small: number; smallTop?: number }
 
 /** What a reading says is wrong (frame pixels; `face` in frame pixels when the graphic is over the speaker). */
-export function readingProblems(reading: Reading, face: CustomGeometry['face']): string[] {
+export function readingProblems(reading: Reading, face: CustomGeometry['face'], explainer?: { captions: { top: number; bottom: number } } | null): string[] {
   const problems: string[] = []
   if (!reading.boxes.length) return ['Nothing is visible when the graphic is settled.']
   if (reading.clipped.length) problems.push(`Words run outside the graphic's area and get cut off: ${reading.clipped.map((t) => `“${t}”`).join(', ')}.`)
-  if (reading.small && reading.small < 34) problems.push(`Some words are only about ${Math.round(reading.small)} px tall; make every label at least 44 px.`)
+  // An Explainer section's line at the top may be small (26 px and up); everywhere else every label is 34 px or more.
+  const smallest = explainer ? reading.small : Math.min(...[reading.small, reading.smallTop ?? 0].filter((v) => v > 0), Infinity)
+  if (Number.isFinite(smallest) && smallest > 0 && smallest < 34) problems.push(`Some words are only about ${Math.round(smallest)} px tall; make every label at least 44 px.`)
+  if (explainer && reading.smallTop && reading.smallTop < 24) problems.push(`The section line is only about ${Math.round(reading.smallTop)} px tall; make it 30-34 px.`)
+  if (explainer) {
+    // The captions' zone stays empty (we draw the captions there).
+    const { top, bottom } = explainer.captions
+    const inZone = reading.boxes.filter(([, y, , h]) => y < bottom - 2 && y + h > top + 2).length
+    if (inZone) problems.push(`Something is drawn in the captions' zone (y ${Math.round(top - reading.root[1])}-${Math.round(bottom - reading.root[1])} of your area); keep it completely empty.`)
+  }
   const [rx, ry, rw, rh] = reading.root
   const ink = reading.boxes.reduce((u, [x, y, w, h]) => [Math.min(u[0], x), Math.min(u[1], y), Math.max(u[2], x + w), Math.max(u[3], y + h)], [Infinity, Infinity, -Infinity, -Infinity])
   const sides = [['left', ink[0] - rx], ['right', rx + rw - ink[2]], ['top', ink[1] - ry], ['bottom', ry + rh - ink[3]]] as const
@@ -418,10 +428,24 @@ export function openCustomSandbox(): CustomSandbox {
           transparent.push((await page.capture()).resize({ ...scaleTo, quality: 'best' }).toPNG())
           await page.isolated('(() => { const b = document.getElementById("cg-bg"); if (b) b.style.display = "block"; return true })()')
           composite.push(await page.capture())
+          const g0 = request.geometry
+          if (g0.kind === 'explainer' && t !== settled) {
+            // An Explainer section moves its whole page: the captions' zone stays empty in every still, not only the settled one.
+            const glance = await page.isolated<Reading | null>(READ_CODE)
+            if (glance) {
+              const top = EXPLAINER_CAPTION_ZONE.top * g0.height, bottom = EXPLAINER_CAPTION_ZONE.bottom * g0.height
+              if (glance.boxes.some(([, y, , h]) => y < bottom - 2 && y + h > top + 2) && !problems.some((p) => p.startsWith('Something is drawn in the captions')))
+                problems.push(`Something is drawn in the captions' zone (y ${Math.round(top - g0.root.y)}-${Math.round(bottom - g0.root.y)} of your area) at ${(t / 1000).toFixed(1)} s; keep it completely empty all through.`)
+            }
+          }
           if (t === settled) {
             const reading = await page.isolated<Reading | null>(READ_CODE)
             if (!reading) problems.push('The graphic has no root.')
-            else { texts = reading.texts; problems.push(...readingProblems(reading, request.geometry.face)) }
+            else {
+              texts = reading.texts
+              const g = request.geometry
+              problems.push(...readingProblems(reading, g.face, g.kind === 'explainer' ? { captions: { top: EXPLAINER_CAPTION_ZONE.top * g.height, bottom: EXPLAINER_CAPTION_ZONE.bottom * g.height } } : null))
+            }
           }
         }
         // Words that appear at other moments count too: every piece of text in the DOM is checked.

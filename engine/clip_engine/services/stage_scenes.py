@@ -41,11 +41,13 @@ from clip_engine.services import depth_fx
 from clip_engine.services.depth_fx import DEFAULT_TRANSITION, TRANSITIONS
 
 SCENE_KINDS = ("face", "stage", "visual")
-BACKDROPS = ("light", "dark", "brand", "grid", "gradient", "solid")
+BACKDROPS = ("light", "dark", "brand", "grid", "gradient", "solid", "paper")
 # The solid backdrop without a brand color: royal blue (motion-graphics.ts DIAGRAM_PANEL), for white line-art diagrams.
 SOLID_DEFAULT = "#1F4E9C"
-# The speaker card's shape in a stage scene.
-CARDS = ("rounded", "arch")
+# The speaker card's shape in a stage scene. "cutout" (the Explainer style): no card at all, the speaker cut out of
+# their video (the frame escape's matte over the whole card) standing on the backdrop; where the cut-out isn't good
+# enough the rounded card is drawn instead.
+CARDS = ("rounded", "arch", "cutout")
 MAX_SCENES = 60
 # Shorter than this (after the cut) a scene is dropped; the editor keeps scenes 1.2 s or longer.
 MIN_RENDER_SCENE_MS = 300
@@ -70,7 +72,15 @@ DEFAULT_FACE_Y = 0.36
 BACKDROP_COLORS = {
     "light": ((0xF6, 0xF7, 0xF9), (0xE2, 0xE5, 0xEA)),
     "dark": ((0x2B, 0x2E, 0x34), (0x15, 0x17, 0x1B)),
+    # The Explainer's paper: warm off-white, barely deeper at the bottom (explainer.ts EXPLAINER_PAPER).
+    "paper": ((0xF4, 0xF1, 0xEA), (0xEC, 0xE7, 0xDC)),
 }
+# The Explainer's captions sit at the top of the frame (share of the height: the center of their block), over the
+# paper, under the section line the canvas draws (explainer.ts EXPLAINER_CAPTION_Y).
+EXPLAINER_CAPTION_Y = 0.118
+# The Explainer's ink and its accent without a brand color (explainer.ts).
+EXPLAINER_INK = "#161616"
+EXPLAINER_ACCENT = "#E8412C"
 DEFAULT_BRAND = "#3B6BFF"
 # Text on a light backdrop: bold, near-black; accent words in a readable blue.
 DARK_TEXT = "#111111"
@@ -79,7 +89,7 @@ DARK_ACCENT = "#1F5BFF"
 DEFAULT_BOX = "#2F5BFF"
 # How captions in a scene's band are drawn: dark text (light backdrops), white on a color box (grid and
 # gradient backdrops), or the member's own captions (dark backdrop).
-CAPTION_MODES = {"light": "light", "brand": "light", "grid": "box", "gradient": "box", "dark": "", "solid": ""}
+CAPTION_MODES = {"light": "light", "brand": "light", "grid": "box", "gradient": "box", "dark": "", "solid": "", "paper": "paper"}
 
 
 @dataclass(frozen=True)
@@ -390,14 +400,16 @@ def draw_backdrop(path: str, width: int, height: int, backdrop: str, brand: Opti
         column.putpixel((0, y), tuple(round(a + (b - a) * p) for a, b in zip(top, bottom)))
     img = column.resize((width, height), Image.BICUBIC)
     # A faint light pool behind the stage area, so the backdrop isn't flat.
-    glow = Image.new("L", (width, height), 0)
-    ImageDraw.Draw(glow).ellipse((-width * 0.2, -height * 0.15, width * 1.2, height * 0.55), fill=28 if backdrop == "dark" else 22 if backdrop == "solid" else 60)
-    glow = glow.filter(ImageFilter.GaussianBlur(radius=width * 0.18))
-    img = Image.composite(Image.new("RGB", (width, height), (255, 255, 255)), img, glow)
+    if backdrop != "paper":
+        glow = Image.new("L", (width, height), 0)
+        ImageDraw.Draw(glow).ellipse((-width * 0.2, -height * 0.15, width * 1.2, height * 0.55), fill=28 if backdrop == "dark" else 22 if backdrop == "solid" else 60)
+        glow = glow.filter(ImageFilter.GaussianBlur(radius=width * 0.18))
+        img = Image.composite(Image.new("RGB", (width, height), (255, 255, 255)), img, glow)
     if backdrop == "grid":
         img = _grid(img, width, height)
     noise = Image.effect_noise((width, height), 6).convert("L")
-    img = Image.blend(img, Image.merge("RGB", (noise, noise, noise)), 0.015)
+    # Paper keeps a little more grain (a printed page, not a screen).
+    img = Image.blend(img, Image.merge("RGB", (noise, noise, noise)), 0.035 if backdrop == "paper" else 0.015)
     img.save(path, optimize=False, compress_level=1)
     return path
 
@@ -416,6 +428,19 @@ def _grid(img: Image.Image, width: int, height: int) -> Image.Image:
     fade = Image.linear_gradient("L").resize((width, height)).point(lambda v: round(70 * (1 - v / 255) ** 1.2))
     alpha = Image.composite(fade, Image.new("L", (width, height), 0), lines)
     return Image.composite(Image.new("RGB", (width, height), (255, 255, 255)), img, alpha)
+
+
+# A cut-out's sides fade out over this share of the frame's width (its frames end across the shoulders).
+CUTOUT_FEATHER = 44 / 1080
+
+
+def draw_side_feather(path: str, width: int, height: int, fade: int) -> str:
+    """A gray mask: white, fading to black over `fade` pixels at the left and right edges (a cut-out's sides)."""
+    ramp = [round(255 * min(1.0, min(x, width - 1 - x) / max(1, fade)) ** 1.2) for x in range(width)]
+    row = Image.new("L", (width, 1))
+    row.putdata(ramp)
+    row.resize((width, height)).save(path, compress_level=1)
+    return path
 
 
 def draw_mask(path: str, width: int, height: int, radius: int) -> str:
@@ -1110,7 +1135,7 @@ def card_chain(label: str, out: str, crop: CardCrop, lo_ms: int, hi_ms: int, car
 
 
 def card_matte_chain(label: str, out: str, crop: CardCrop, lo_ms: int, hi_ms: int, card_w: int, card_h: int, ext_h: int,
-                     scale: tuple[float, float]) -> str:
+                     scale: tuple[float, float], feather: int = 0) -> str:
     """The escape matte's chain for one piece, from [label] (the clocked matte, `scale` = matte px per source px) to
     [out] (card_w x card_h + ext_h, gray): the same crop as the card's escape frames (card_chain); black for a crop
     with no escape."""
@@ -1128,7 +1153,9 @@ def card_matte_chain(label: str, out: str, crop: CardCrop, lo_ms: int, hi_ms: in
         y = _keys_expr(crop, lo_ms, hi_ms, 2, lambda v: (iy - v) * zoom + ext_h)
         return (f"[{label}]crop={max(2, round(iw * kx))}:{max(2, round(ih * ky))}:{round(ix * kx)}:{round(iy * ky)},split=2[{out}_b][{out}_f];"
                 f"[{out}_b]scale={card_w}:{card_h + ext_h},drawbox=c=black:t=fill[{out}_bg];"
-                f"[{out}_f]scale={fw}:{fh}:flags=bicubic[{out}_fg];"
+                f"[{out}_f]scale={fw}:{fh}:flags=bicubic"
+                # A cut-out (`feather`): the picture's own sides fade out (the speaker is cut there, across the shoulders).
+                + (f",format=gray,geq=lum='lum(X,Y)*min(1,min(X,{fw - 1}-X)/{feather})',format=gray" if feather > 0 else "") + f"[{out}_fg];"
                 f"[{out}_bg][{out}_fg]overlay=x='{x}':y='{y}':eval=frame,setsar=1[{out}]")
     w, h = min(int(bw), max(2, int(round(crop.w)))), min(int(bh), max(2, int(round(crop.h + crop.ext))))
     ext = crop.ext
@@ -1152,6 +1179,8 @@ class EscapeSource:
     ext_h: int
     path: Optional[str] = None
     escaped: list[bool] = dataclasses.field(default_factory=list)
+    # Per card run: a cut-out (card "cutout"): the speaker cut out of the whole card, framed as usual (not lower).
+    cutout: list[bool] = dataclasses.field(default_factory=list)
 
 
 def card_width(crop: CardCrop, card_w: int, card_h: int, min_w: int) -> int:
@@ -1187,6 +1216,11 @@ def card_source_graph(plan, keeps, card_w: int, card_h: int, fps: str, runs: Seq
     ext_h = 0
     if escape is not None:
         escape.escaped = [False] * len(runs)
+        # A cut-out run keeps its usual framing (the speaker low in the frame, under the canvas) with the same strip
+        # above it as an escape, so the matte covers the whole speaker and the frames stay one size.
+        for (r, i), c in list(crops.items()):
+            if r < len(escape.cutout) and escape.cutout[r]:
+                escapes[(r, i)] = dataclasses.replace(c, ext=c.h * depth_fx.ESCAPE_EXT)
         feasible = sorted({r for r, _ in escapes})
         spans = {r: edited_to_window([runs[r]], keeps) for r in feasible}
         flat = [span for r in feasible for span in spans[r]]
@@ -1251,8 +1285,9 @@ def card_source_graph(plan, keeps, card_w: int, card_h: int, fps: str, runs: Seq
         parts.append(f"[cd_c{k}]setpts=PTS-STARTPTS[cd_v{k}]")
         if ext_h:
             parts.append(f"[cm_s{k}]trim=start_frame={start}:end_frame={start + count}[cm_t{k}]")
+            cut = escape is not None and run < len(escape.cutout) and escape.cutout[run]
             parts.append(card_matte_chain(f"cm_t{k}", f"cm_c{k}", crop or CardCrop(2, 2, ((0, 0.0, 0.0),), (0, 0, 2, 2)), lo, hi,
-                                          card_w, card_h, ext_h, scale))
+                                          card_w, card_h, ext_h, scale, max(8, round(card_w * CUTOUT_FEATHER * 1.04)) if cut else 0))
             parts.append(f"[cm_c{k}]setpts=PTS-STARTPTS[cm_v{k}]")
     parts.append("".join(f"[cd_v{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=0,settb=expr=1/({fps}),setpts=N,fps={fps}[sc_card_frames]")
     if ext_h:
@@ -1507,10 +1542,11 @@ def build_scene_graph(
             tops.append(bar_h + max(0, min(panel_h - crop_h, round(cy - crop_h * CARD_FACE_Y))))
         widths: list[int] = [frame_w] * len(runs)
         if own_card:
-            wanted = [any(s.escape for s in segments if s.scene == "stage" and a - 1e-6 <= s.start < b) for a, b in runs]
+            cutout = [any(s.card == "cutout" for s in segments if s.scene == "stage" and a - 1e-6 <= s.start < b) for a, b in runs]
+            wanted = [c or any(s.escape for s in segments if s.scene == "stage" and a - 1e-6 <= s.start < b) for c, (a, b) in zip(cutout, runs)]
             extra = {"landing": landing} if _takes(card_graph, "landing") else {}
             if escape_matte is not None and matte_size is not None and any(wanted):
-                escape = EscapeSource(wanted, escape_matte, first_input + len(inputs), matte_size, even(frame_h * depth_fx.ESCAPE_EXT))
+                escape = EscapeSource(wanted, escape_matte, first_input + len(inputs), matte_size, even(frame_h * depth_fx.ESCAPE_EXT), cutout=cutout)
                 graph_text, widths = card_graph(frame_w, frame_h, runs, transition, escape=escape, **extra)
             else:
                 graph_text, widths = card_graph(frame_w, frame_h, runs, transition, **extra)
@@ -1534,7 +1570,7 @@ def build_scene_graph(
         # framing gets a narrower card (centered, the same height, corners and shadow).
         groups: list[tuple[str, int, int, list[tuple[float, float]]]] = []
         for shape in shapes:
-            full = width if shape == "arch" else geo.card_w
+            full = width if shape == "arch" else geo.card_w  # a cut-out stands where the rounded card is
             by_width: dict[int, list[tuple[float, float]]] = {}
             for a, b in card_runs(segments, shape):
                 k = next((i for i, (ra, rb) in enumerate(runs) if ra <= a + 1e-6 and b <= rb + 1e-6), 0)
@@ -1562,6 +1598,53 @@ def build_scene_graph(
             tag = ("" if shape == "rounded" else "-arch") + (f"-{w}" if narrow else "")
             mask = os.path.join(work_dir, f"scene-{stem}-mask{tag}.png")
             shadow = os.path.join(work_dir, f"scene-{stem}-shadow{tag}.png")
+            cut_runs = escaping[g_index] if shape == "cutout" else []
+            if shape == "cutout":
+                # Where the cut-out is good the speaker stands on the backdrop (no card); elsewhere the rounded card.
+                carded = [run for run in shape_runs if run not in cut_runs]
+                ch = geo.card_h
+                cx = geo.card_x + (geo.card_w - w) // 2
+                for a, b in shape_runs:
+                    r = next((i for i, (ra, rb) in enumerate(runs) if ra <= a + 1e-6 and b <= rb + 1e-6), 0)
+                    card_rects[r] = (cx, geo.card_y, w, ch, "rounded")
+                visible = card_visibility_expr(shape_runs, total, transition, segments, morphs)
+                y = f"{off}-({off - geo.card_y})*({visible})"
+                k = f"_cut_{w}"
+                if carded:
+                    draw_mask(mask, w, ch, geo.radius)
+                    draw_shadow(shadow, w, ch, geo.radius, geo.shadow_pad)
+                    if w < frame_w or ch < frame_h:
+                        parts.append(f"[{frames}]crop={w}:{ch}:{(frame_w - w) // 2}:{(frame_h - ch) // 2}[{frames}_c]")
+                        frames = f"{frames}_c"
+                    mask_index, shadow_index = first_input + len(inputs), first_input + len(inputs) + 1
+                    inputs += [mask, shadow]
+                    enable = card_enable_expr(carded, transition, segments, morphs)
+                    parts.append(f"[{mask_index}:v]format=gray[sc_mask{k}]")
+                    parts.append(f"[{frames}][sc_mask{k}]alphamerge[sc_card{k}]")
+                    parts.append(f"[{shadow_index}:v]format=yuva420p[sc_shadow{k}]")
+                    parts.append(f"[{current}][sc_shadow{k}]overlay=x={cx - geo.shadow_pad}:y='{y}-{geo.shadow_pad}':enable='{enable}'[sc_shadowed{k}]")
+                    parts.append(f"[sc_shadowed{k}][sc_card{k}]overlay=x={cx}:y='{y}':enable='{enable}'[sc_carded{k}]")
+                    current = f"sc_carded{k}"
+                else:
+                    parts.append(f"[{frames}]nullsink")
+                if cut_runs and escape is not None:
+                    e = esc_groups.index(g_index)
+                    ext = escape.ext_h
+                    # The cut-out's own width (the video's, for a close selfie), its sides fading out where the picture
+                    # ends across the shoulders (a hard vertical edge reads as a cropped photo).
+                    feather = os.path.join(work_dir, f"scene-{stem}-feather-{w}.png")
+                    draw_side_feather(feather, w, frame_h + ext, max(8, round(width * CUTOUT_FEATHER)))
+                    f_index = first_input + len(inputs)
+                    inputs.append(feather)
+                    parts.append(f"[sc_esc_{e}]crop={w}:{frame_h + ext}:{(frame_w - w) // 2}:0,split=2[sc_cut_a{k}][sc_cut_b{k}];"
+                                 f"[sc_cut_a{k}]alphaextract[sc_cut_m{k}];[{f_index}:v]format=gray,loop=loop=-1:size=1:start=0[sc_cut_f{k}];"
+                                 f"[sc_cut_m{k}][sc_cut_f{k}]blend=all_mode=multiply:shortest=1,format=gray[sc_cut_mm{k}];"
+                                 f"[sc_cut_b{k}][sc_cut_mm{k}]alphamerge[sc_cut_v{k}]")
+                    # Flush with the frame's bottom edge (no card margin under a cut-out: the body runs off the frame).
+                    parts.append(f"[{current}][sc_cut_v{k}]overlay=x={cx}:y='{y}-{ext}+{height - geo.card_y - ch}':"
+                                 f"enable='{card_enable_expr(cut_runs, transition, segments, morphs)}'[sc_cutout{k}]")
+                    current = f"sc_cutout{k}"
+                continue
             if shape == "arch":
                 ch = geo.arch_h
                 cx = (width - w) // 2
@@ -1649,6 +1732,10 @@ def caption_windows(segments: Sequence[Segment], geo: StageGeometry,
     for s in segments:
         if s.scene == "face":
             continue
+        if s.scene == "stage" and s.card == "cutout":
+            # The Explainer: the captions at the top of the frame, over the paper (dark text, accent words in serif).
+            out.append((round(s.start * 1000), round(s.end * 1000), round(geo.height * EXPLAINER_CAPTION_Y), caption_mode(s.backdrop)))
+            continue
         if s.scene == "stage" and any(a - 1e-6 <= s.start and s.end <= b + 1e-6 for a, b in escaped):
             out.append((round(s.start * 1000), round(s.end * 1000), geo.card_y + round(geo.card_h * ESCAPE_CAPTION_Y), ""))
             continue
@@ -1709,6 +1796,25 @@ def light_backdrop_style(style):
     return styled
 
 
+def paper_backdrop_style(style, brand: Optional[str] = None):
+    """The Explainer's captions on paper: sentence case in a heavy sans, near-black ink, words appearing as said, the
+    key word of each group in the italic serif in the accent (the brand color when it reads on paper, else the
+    Explainer red); no plate, glow or shadow. The member's font size is kept within a readable range."""
+    import copy
+    from clip_engine.services.look_extras import ACCENT_FONT
+    accent = brand if isinstance(brand, str) and len(brand) == 7 and brand.startswith("#") and _luma(brand) < 0.6 else EXPLAINER_ACCENT
+    styled = copy.copy(style)
+    changes = dict(font_name="Montserrat ExtraBold", font_size=max(70, min(82, int(getattr(style, "font_size", 76) or 76))), bold=False, italic=False,
+                   uppercase=False, lowercase=False, max_words_per_line=4, primary_color=EXPLAINER_INK, highlight_color=EXPLAINER_INK,
+                   outline_color="#FFFFFF", outline_width=0, shadow_opacity=0.0, glow_color=None, line_box_color=None,
+                   highlight_box_color=None, keyword_pill_color=None, karaoke_fill=False, future_words="hide", entrance_pop=False,
+                   emphasis_color=accent, accent_font=ACCENT_FONT, accent_key_color=accent)
+    for key, value in changes.items():
+        if hasattr(styled, key):
+            setattr(styled, key, value)
+    return styled
+
+
 def boxed(style) -> bool:
     """Whether captions already sit on a solid box of their own (the Highlight box look reads on any backdrop)."""
     return bool(style.line_box_color) and getattr(style, "line_box_shape", "round") == "rect" and style.line_box_opacity >= 0.9
@@ -1750,7 +1856,7 @@ def splice_caption_events(normal_ass: str, light_ass: str, windows: Sequence[tup
     kept = [line for line in events if not lit(line)]
     taken = [line for line in light_ass.split("\n") if line.startswith(prefix) and lit(line)]
     # The other version's own styles (its font, its box) go in under their own names, so both looks render.
-    tag = "Light" if mode == "light" else "Box"
+    tag = {"light": "Light", "paper": "Paper"}.get(mode, "Box") if isinstance(mode, str) else "Light"
     styles = {name: f"{tag}{name}" for name in re.findall(r"^Style: ([A-Za-z]+),", light_ass, re.M)}
     if styles and taken:
         def rename(line: str) -> str:

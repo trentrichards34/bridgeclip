@@ -20,16 +20,20 @@ export type SceneKind = 'face' | 'stage' | 'visual'
  * light: soft light gray. dark: charcoal. brand: a light tint of the brand color.
  * grid: lavender to the brand color (purple without one) with a faint square
  * grid. gradient: a soft brand gradient, no grid. solid: the brand color itself (royal blue without one), for
- * white line-art diagrams.
+ * white line-art diagrams. paper: the Explainer style's warm off-white page.
  */
-export type SceneBackdrop = 'light' | 'dark' | 'brand' | 'grid' | 'gradient' | 'solid'
-/** The speaker card in a stage scene: a rounded card with a margin, or an arch (full width, big rounded top corners, flush with the bottom). */
-export type SceneCard = 'rounded' | 'arch'
+export type SceneBackdrop = 'light' | 'dark' | 'brand' | 'grid' | 'gradient' | 'solid' | 'paper'
+/**
+ * The speaker card in a stage scene: a rounded card with a margin, an arch (full width, big rounded top corners, flush
+ * with the bottom), or a cut-out (the Explainer style: no card, the speaker cut out of the video standing on the
+ * backdrop; the export draws the rounded card where the cut-out isn't clean).
+ */
+export type SceneCard = 'rounded' | 'arch' | 'cutout'
 export const SCENE_KINDS: readonly SceneKind[] = ['face', 'stage', 'visual']
-export const SCENE_BACKDROPS: readonly SceneBackdrop[] = ['light', 'dark', 'brand', 'grid', 'gradient', 'solid']
+export const SCENE_BACKDROPS: readonly SceneBackdrop[] = ['light', 'dark', 'brand', 'grid', 'gradient', 'solid', 'paper']
 /** The Solid backdrop's color without a brand color (motion-graphics DIAGRAM_PANEL). */
 export const SOLID_BACKDROP_COLOR = '#1F4E9C'
-export const SCENE_CARDS: readonly SceneCard[] = ['rounded', 'arch']
+export const SCENE_CARDS: readonly SceneCard[] = ['rounded', 'arch', 'cutout']
 
 export interface StageScene {
   scene: SceneKind
@@ -95,8 +99,10 @@ export const SCENE_DETAILS: Record<SceneKind, string> = {
   stage: 'A backdrop with you in a card at the bottom. The top is free for graphics.',
   visual: 'Backdrop only, so a graphic can fill the frame.'
 }
-export const BACKDROP_LABELS: Record<SceneBackdrop, string> = { light: 'Light', dark: 'Dark', brand: 'Brand', grid: 'Grid', gradient: 'Gradient', solid: 'Solid' }
-export const CARD_LABELS: Record<SceneCard, string> = { rounded: 'Rounded', arch: 'Arch' }
+export const BACKDROP_LABELS: Record<SceneBackdrop, string> = { light: 'Light', dark: 'Dark', brand: 'Brand', grid: 'Grid', gradient: 'Gradient', solid: 'Solid', paper: 'Paper' }
+export const CARD_LABELS: Record<SceneCard, string> = { rounded: 'Rounded', arch: 'Arch', cutout: 'Cut-out' }
+/** The Explainer's captions: the center of their block at this share of the height (engine: stage_scenes.EXPLAINER_CAPTION_Y). */
+export const EXPLAINER_CAPTION_Y = 0.118
 
 /** The look automatic Stage layouts use: the brand grid with the arch card when there is a brand color, else the grid in the graphics' blue with the rounded card (engine: stage_scenes.auto_look). */
 export function autoSceneLook(brand: string | null | undefined): { backdrop: SceneBackdrop; card: SceneCard } {
@@ -113,7 +119,8 @@ export function sceneCaptionLook(backdrop: SceneBackdrop | undefined): 'dark_tex
 }
 
 /** Where the captions sit in a scene, as a share of the output height (null: the clip's usual place). */
-export function sceneCaptionY(scene: SceneKind): number | null {
+export function sceneCaptionY(scene: SceneKind, card?: SceneCard): number | null {
+  if (scene === 'stage' && card === 'cutout') return EXPLAINER_CAPTION_Y
   if (scene === 'stage') {
     const cardTop = 1 - STAGE_LAYOUT.cardBottom - STAGE_LAYOUT.cardHeight
     return (STAGE_LAYOUT.stageBottom + cardTop) / 2
@@ -128,7 +135,7 @@ const isTransition = (x: unknown): x is SceneTransition => (SCENE_TRANSITIONS as
 const clean = (s: StageScene): StageScene => s.scene === 'face'
   ? { scene: 'face', start_ms: s.start_ms, end_ms: s.end_ms }
   : { scene: s.scene, start_ms: s.start_ms, end_ms: s.end_ms, ...(s.backdrop && s.backdrop !== 'light' ? { backdrop: s.backdrop } : {}),
-      ...(s.scene === 'stage' && s.card === 'arch' ? { card: s.card } : {}), ...(s.scene === 'stage' && s.escape === false ? { escape: false as const } : {}),
+      ...(s.scene === 'stage' && (s.card === 'arch' || s.card === 'cutout') ? { card: s.card } : {}), ...(s.scene === 'stage' && s.escape === false ? { escape: false as const } : {}),
       ...(s.transition && s.transition !== DEFAULT_SCENE_TRANSITION ? { transition: s.transition } : {}) }
 const same = (a: StageScene, b: StageScene): boolean => a.scene === b.scene && (a.backdrop ?? 'light') === (b.backdrop ?? 'light') && (a.card ?? 'rounded') === (b.card ?? 'rounded')
   && (a.escape ?? true) === (b.escape ?? true) && (a.transition ?? DEFAULT_SCENE_TRANSITION) === (b.transition ?? DEFAULT_SCENE_TRANSITION)
@@ -152,8 +159,8 @@ export function parseScenes(value: unknown, duration = Number.MAX_SAFE_INTEGER):
     if (s.escape !== undefined && s.escape !== false && s.escape !== true) throw new Error('A scene is malformed.')
     if (s.transition !== undefined && !isTransition(s.transition)) throw new Error('A scene’s transition is slide, zoom or whip.')
     if (!isKind(s.scene)) throw new Error('A scene is face, stage or visual.')
-    if (s.backdrop !== undefined && !isBackdrop(s.backdrop)) throw new Error('A scene’s backdrop is light, dark, brand, grid, gradient or solid.')
-    if (s.card !== undefined && !isCard(s.card)) throw new Error('A scene’s card is rounded or arch.')
+    if (s.backdrop !== undefined && !isBackdrop(s.backdrop)) throw new Error('A scene’s backdrop is light, dark, brand, grid, gradient, solid or paper.')
+    if (s.card !== undefined && !isCard(s.card)) throw new Error('A scene’s card is rounded, arch or cut-out.')
     const start = s.start_ms, end = s.end_ms
     if (typeof start !== 'number' || typeof end !== 'number' || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > duration) throw new Error('A scene must be inside the video.')
     if (end - start < MIN_SCENE_MS - 0.5) throw new Error(`A scene lasts at least ${MIN_SCENE_MS / 1000} seconds.`)

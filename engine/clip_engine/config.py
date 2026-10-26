@@ -229,6 +229,8 @@ class CaptionStyle:
     # italic serif face. None disables each.
     keyword_pill_color: Optional[str] = None
     accent_font: Optional[str] = None
+    # The accent-font key word in this color (None: the word's usual color). The Explainer's captions use it.
+    accent_key_color: Optional[str] = None
 
 
 # ============================================================

@@ -717,6 +717,9 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 
     def _face_tags(self, token: _Token, style: CaptionStyle, active_ms: int) -> str:
         emphasis = self._hex_to_ass(style.emphasis_color) if token.emphasized else None
+        # The key word in the accent font, in its own color (the Explainer's captions).
+        if emphasis is None and token.key and getattr(style, "accent_key_color", None) and style.accent_font and not style.keyword_pill_color:
+            emphasis = self._hex_to_ass(style.accent_key_color)
         primary = self._hex_to_ass(style.primary_color)
         highlight = self._hex_to_ass(style.highlight_color)
         alpha = self._alpha(self._visibility(token, style))

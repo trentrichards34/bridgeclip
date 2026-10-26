@@ -90,7 +90,7 @@ export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onC
           options={SCENE_BACKDROPS.map((value) => ({ value, label: BACKDROP_LABELS[value] }))} />
         {current.scene === 'stage' && <Segmented<SceneCard> label="Card" size="sm" value={current.card ?? 'rounded'}
           onChange={(card) => onChange(updateScene(scenes, selected!, { card }, bounds), true)}
-          options={(['rounded', 'arch'] as const).map((value) => ({ value, label: CARD_LABELS[value], ...(disabled ? { disabled: 'Editing is off right now.' } : {}) }))} />}
+          options={(['rounded', 'arch', 'cutout'] as const).map((value) => ({ value, label: CARD_LABELS[value], ...(disabled ? { disabled: 'Editing is off right now.' } : {}) }))} />}
         {current.scene === 'stage' && <span className="editor-scenes-switch" title="Your head and hair rise over the card's top edge. The export checks the cut-out first and keeps you inside the card when it isn't clean.">
           <span>Head out</span>
           <Switch label="Head breaks out of the card" checked={sceneEscapes(current)} disabled={disabled}
@@ -104,7 +104,7 @@ export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onC
       {scenes.map((s, i) => {
         const a = Math.max(s.start_ms, viewStart), b = Math.min(s.end_ms, viewEnd)
         if (b <= a) return null
-        const label = `${SCENE_LABELS[s.scene]} scene${s.scene !== 'face' ? `, ${BACKDROP_LABELS[s.backdrop ?? 'light'].toLowerCase()} backdrop${s.card === 'arch' ? ', arch card' : ''},` : ''} from ${clock(s.start_ms)} to ${clock(s.end_ms)}`
+        const label = `${SCENE_LABELS[s.scene]} scene${s.scene !== 'face' ? `, ${BACKDROP_LABELS[s.backdrop ?? 'light'].toLowerCase()} backdrop${s.card === 'arch' ? ', arch card' : s.card === 'cutout' ? ', cut out' : ''},` : ''} from ${clock(s.start_ms)} to ${clock(s.end_ms)}`
         return <div key={`${i}-${s.start_ms}`} className={cn('editor-scene-block', `scene-${s.scene}`, `backdrop-${s.backdrop ?? 'light'}`, selected === i && 'selected')}
           style={{ left: `${(a - viewStart) / span * 100}%`, width: `${(b - a) / span * 100}%` }}>
           <button className="editor-scene-edge" aria-label={`Change when the ${label} starts`} disabled={disabled} onPointerDown={(e) => startDrag(e, i, 'start')} tabIndex={-1} />
@@ -138,7 +138,9 @@ const BACKDROP_CSS: Record<SceneBackdrop, (brand: string) => string> = {
   grid: (c) => `linear-gradient(rgba(255,255,255,.28) 1px, transparent 1px) 0 0 / 7.1428% 4.0179%, linear-gradient(90deg, rgba(255,255,255,.28) 1px, transparent 1px) 0 0 / 7.1428% 4.0179%, linear-gradient(color-mix(in srgb, ${c} 16%, white), color-mix(in srgb, ${c} 30%, white) 45%, color-mix(in srgb, ${c} 82%, white))`,
   gradient: (c) => `linear-gradient(color-mix(in srgb, ${c} 8%, white), color-mix(in srgb, ${c} 20%, white) 45%, color-mix(in srgb, ${c} 50%, white))`,
   // The engine's solid: the color itself, a touch deeper at the bottom.
-  solid: (c) => `radial-gradient(120% 60% at 50% 18%, color-mix(in srgb, ${c} 92%, white), transparent 70%), linear-gradient(${c}, color-mix(in srgb, ${c} 86%, black))`
+  solid: (c) => `radial-gradient(120% 60% at 50% 18%, color-mix(in srgb, ${c} 92%, white), transparent 70%), linear-gradient(${c}, color-mix(in srgb, ${c} 86%, black))`,
+  // The Explainer's paper: warm off-white, barely deeper at the bottom.
+  paper: () => 'linear-gradient(#f4f1ea, #ece7dc)'
 }
 
 /** A preview of the scenes over the Output monitor: the backdrop and the speaker card (cut from the preview's own frame). */
@@ -216,7 +218,8 @@ export function ScenesOverlay({ canvas, candidate, time }: { canvas: RefObject<H
   const rest = h * (1 - STAGE_LAYOUT.cardBottom) - h * STAGE_LAYOUT.cardHeight, off = h + 8
   const radius = arch ? `${w * STAGE_LAYOUT.archRadius}px ${w * STAGE_LAYOUT.archRadius}px 0 0` : w * STAGE_LAYOUT.cardRadius
   return <div className="editor-scenes-overlay" style={{ ...bounds, ...moveStyle }} aria-hidden data-scene={mix.card > 0.5 ? 'stage' : mix.alpha > 0.5 ? 'visual' : 'face'}>
-    {escaping && <span className="editor-graphic-depth-badge editor-scenes-badge">Head breaks out of the card in the export</span>}
+    {escaping && mix.shape !== 'cutout' && <span className="editor-graphic-depth-badge editor-scenes-badge">Head breaks out of the card in the export</span>}
+    {mix.shape === 'cutout' && mix.card > 0.5 && <span className="editor-graphic-depth-badge editor-scenes-badge">You’re cut out of your video in the export</span>}
     {mix.under && <div className="editor-scenes-backdrop" style={{ background: BACKDROP_CSS[mix.under](brandFor(mix.under)) }} />}
     {mix.backdrop && <div className="editor-scenes-backdrop" style={{ background: BACKDROP_CSS[mix.backdrop](brandFor(mix.backdrop)), opacity: mix.alpha }} />}
     <canvas ref={card} className="editor-scenes-card" data-card={mix.shape} width={Math.round(360 * cardW / fullW)} height={Math.round(360 * cardH / fullW)}

@@ -18,7 +18,8 @@ const plain = (x) => JSON.parse(JSON.stringify(x))
 test('our example and fake compositions follow the contract', () => {
   for (const e of shared.CUSTOM_EXAMPLES) assert.deepEqual(shared.checkComposition(e.html, { width: 1080, height: 800, durationMs: seconds(e.html) }), [], e.brief)
   for (const name of fs.readdirSync(FAKE).filter((f) => f.endsWith('.html'))) {
-    const html = read(name)
+    // The Explainer's stand-in is a template the e2e test fills in ({{DUR}}, {{CUES}}...): checked filled in.
+    const html = read(name).replaceAll('{{DUR}}', '12.00').replaceAll('{{N}}', '01').replaceAll('{{LABEL}}', 'product').replaceAll('{{HERO}}', 'product').replaceAll('{{STAMP}}', 'first').replaceAll('{{CUES}}', '1.2, 3.4')
     assert.deepEqual(shared.checkComposition(html, { width: 1080, height: 1267, durationMs: seconds(html) }), [], name)
   }
   // The writer's prompt carries the rules, the contract and the examples; it is the same for every moment (cacheable).

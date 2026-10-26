@@ -545,7 +545,7 @@ THEMED = ('lower_third', 'before_after', 'strike_list', 'headline_pill', 'commen
 # On a light stage (the stage backdrops are light at the top) a white card would sit white on near-white: the stage takes
 # the dark looks, and words with no card take dark ink.
 STAGE_LOOKS = {'statement': 'glass', 'quote': 'dark', 'title': 'pill', 'list': 'pills', 'checklist': 'dark', 'stat': 'gradient'}
-LIGHT_BACKDROPS = ('light', 'brand', 'grid', 'gradient')
+LIGHT_BACKDROPS = ('light', 'brand', 'grid', 'gradient', 'paper')
 
 
 def on_light_stage(g: dict) -> dict:

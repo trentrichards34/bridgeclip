@@ -19,6 +19,7 @@ import {
 } from '../shared/custom-graphics'
 import { customSandbox, type CustomSandbox } from './custom-render'
 import { keepInLibrary, libraryMatch, noteLibraryUse, readLibraryTemplate } from './motion-library'
+import { explainerStillTimes } from '../shared/explainer'
 import { fillSystemPrompt, fillTemplate, fillUserPrompt, parseFill, type LibraryItem } from '../shared/motion-library'
 import type { GraphicRenderSpec, TimedWord } from '../shared/motion-graphics'
 import type { GraphicJob } from './graphics-render'
@@ -46,7 +47,7 @@ export interface ModelRequest {
   maxTokens: number
   temperature: number
   /** Which call this is (the fake model in tests answers by it). */
-  purpose: 'write' | 'grade' | 'fill' | 'world'
+  purpose: 'write' | 'grade' | 'fill' | 'world' | 'plan'
   signal?: AbortSignal
 }
 export interface ModelReply { text: string; costUsd: number }
@@ -198,7 +199,7 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
   const sandbox = deps.sandbox ?? customSandbox()
   const { brief } = input
   const expect = { width: brief.geometry.root.width, height: brief.geometry.root.height, durationMs: brief.durationMs }
-  const times = stillTimes(brief.durationMs, brief.cues.filter((c) => c.at >= 0).map((c) => c.at * 1000))
+  const times = brief.frame === 'explainer' ? explainerStillTimes(brief.durationMs) : stillTimes(brief.durationMs, brief.cues.filter((c) => c.at >= 0).map((c) => c.at * 1000))
   const runId = basename(input.run)
   let costUsd = 0, tries = 0
   let best: Attempt | null = null
@@ -221,7 +222,7 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
     const still = motionFixes(flat, brief.cues)
     let grade: CustomGrade = { pass: true, score: 7, failed: [], fixes: [] }
     if (input.grade !== false) {
-      const graded = await deps.call({ model: input.model, system: graderSystemPrompt(), user: graderUserPrompt({ words: input.words, kind: brief.kind, frame: brief.frame, machine: [...machine, ...still], world: brief.world ?? null, stressed: brief.stressed }),
+      const graded = await deps.call({ model: input.model, system: graderSystemPrompt(), user: graderUserPrompt({ words: input.words, kind: brief.kind, frame: brief.frame, machine: [...machine, ...still], world: brief.world ?? null, stressed: brief.stressed, ...(brief.explainer ? { explainer: brief.explainer.grade } : {}) }),
         image: `data:image/jpeg;base64,${shot.composite.toString('base64')}`, maxTokens: 700, temperature: 0, purpose: 'grade', signal: deps.signal })
       costUsd += graded.costUsd
       grade = parseGrade(graded.text)
@@ -262,7 +263,7 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
       if (deps.signal?.aborted) throw new Error('Canceled.')
       tries++
       deps.onTry?.(tries)
-      const reply = await deps.call({ model: input.model, system, user: writerUserPrompt(brief, previous), maxTokens: 6000, temperature: attempt ? 0.4 : 0.7, purpose: 'write', signal: deps.signal })
+      const reply = await deps.call({ model: input.model, system, user: writerUserPrompt(brief, previous), maxTokens: brief.frame === 'explainer' ? 14000 : 6000, temperature: attempt ? 0.4 : 0.7, purpose: 'write', signal: deps.signal })
       costUsd += reply.costUsd
       const html = extractComposition(reply.text)
       const problems = checkComposition(html, expect)
@@ -286,12 +287,12 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
     logger.info('custom.fallback', { tries, reason: reason.slice(0, 200) })
     // The best try is kept in the library as Retired, with the check's reason (never offered again).
     if (kept && deps.library) deps.library.keep({ id: compositionId(kept.html), html: kept.html, kind: brief.kind, frame: brief.frame, width: expect.width, height: expect.height, durationMs: brief.durationMs,
-      idea: customIdea(brief.kind), runId, stills: [], stillData: kept.stills, status: 'retired', reason: reason || 'It did not pass the review.' })
+      idea: customIdea(brief.kind, brief.frame), runId, stills: [], stillData: kept.stills, status: 'retired', reason: reason || 'It did not pass the review.' })
     return { meta: null, costUsd, tries, reason: reason || 'It did not pass the review.' }
   }
   const meta: CustomMeta = {
     comp: compositionId(kept.html), kind: brief.kind, frame: brief.frame, width: expect.width, height: expect.height, durationMs: brief.durationMs, words: input.words.slice(0, 2000),
-    idea: customIdea(brief.kind), model: input.model, tries, grade: kept.grade, ...(brief.note ? { note: brief.note } : {}), fallback: input.fallback, look: brief.look,
+    idea: customIdea(brief.kind, brief.frame), model: input.model, tries, grade: kept.grade, ...(brief.note ? { note: brief.note } : {}), fallback: input.fallback, look: brief.look,
     costUsd: Math.round(costUsd * 10000) / 10000, createdAt: new Date().toISOString(), ...(fromLibrary ? { library: fromLibrary } : {}),
     flat: kept.flat.slice(0, 8), ...(brief.stressed?.length ? { builds: brief.stressed.length } : {})
   }

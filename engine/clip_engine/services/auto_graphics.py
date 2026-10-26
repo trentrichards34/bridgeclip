@@ -152,6 +152,8 @@ MIN_MS, MAX_MS = 1500, 7000
 # The editor's limits (motion-graphics.ts): most graphics 0.8-8 s, a diagram up to 16 s, a chapter header up to 3 minutes.
 EDITOR_MIN_MS, EDITOR_MAX_MS = 800, 8000
 DIAGRAM_MAX_MS, CHAPTER_MAX_MS = 16000, 180000
+# A custom graphic may last an Explainer section (motion-graphics.ts CUSTOM_GRAPHIC_MAX_MS).
+CUSTOM_MAX_MS = 30000
 # A diagram stays on while it is talked through: from just before its first item to a little after its last (6-15 s).
 DIAGRAM_MIN_MS, DIAGRAM_AUTO_MAX_MS = 6000, 15000
 DIAGRAM_LEAD_MS, DIAGRAM_HOLD_MS = 700, 2200
@@ -172,7 +174,7 @@ DIAGRAM_GAP_MS = 12000
 
 def editor_max_ms(template: str) -> int:
     """The longest the editor lets a graphic of this kind last (motion-graphics.ts graphicMaxMs)."""
-    return CHAPTER_MAX_MS if template == 'chapter' else DIAGRAM_MAX_MS if template in DIAGRAMS or template == 'custom' else EDITOR_MAX_MS
+    return CHAPTER_MAX_MS if template == 'chapter' else CUSTOM_MAX_MS if template == 'custom' else DIAGRAM_MAX_MS if template in DIAGRAMS else EDITOR_MAX_MS
 MAX_FIELD_CHARS = 160
 MAX_ITEMS = 5
 MAX_ITEM_CHARS = 60
@@ -2057,13 +2059,13 @@ def checked_saved_scenes(raw: Any, duration_ms: int) -> list[dict]:
     out = []
     for s in raw:
         if not isinstance(s, dict) or s.get('scene') not in ('stage', 'visual') \
-                or s.get('backdrop', 'light') not in ('light', 'dark', 'brand', 'grid', 'gradient', 'solid') or s.get('card', 'rounded') not in ('rounded', 'arch'):
+                or s.get('backdrop', 'light') not in ('light', 'dark', 'brand', 'grid', 'gradient', 'solid', 'paper') or s.get('card', 'rounded') not in ('rounded', 'arch', 'cutout'):
             return []
         a, b = s.get('start_ms'), s.get('end_ms')
         if type(a) is not int or type(b) is not int or a < 0 or b > duration_ms or b - a < 1200 or (out and a < out[-1]['end_ms']):
             return []
         out.append({'scene': s['scene'], 'start_ms': a, 'end_ms': b, **({'backdrop': s['backdrop']} if s.get('backdrop', 'light') != 'light' else {}),
-                    **({'card': 'arch'} if s['scene'] == 'stage' and s.get('card') == 'arch' else {})})
+                    **({'card': s['card']} if s['scene'] == 'stage' and s.get('card') in ('arch', 'cutout') else {})})
     return out
 
 

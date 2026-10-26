@@ -75,6 +75,17 @@ if os.environ.get("CREATORCLIPS_FAKE_AI") == "1":
             def last(word):
                 return [i for i, w in words if w == word][-1]
 
+            if any(w == "backwards." for _, w in words):
+                # The Explainer test's take: open on its first line, end on the call to action; a statement per turn.
+                plan = {
+                    "hooks": [{"start": first("Most"), "end": first("sales."), "text": "Most people never make sales", "why": "Names the problem."}],
+                    "cuts": [], "cta": {"present": True, "start": first("Comment"), "end": first("below.")}, "popups": [], "sounds": [], "cards": [],
+                }
+                if directed:
+                    plan["graphics"] = [graphic("statement", first("But"), 2.5, text="But the order is backwards.", accent="backwards"),
+                                        graphic("statement", first("Here"), 2.5, text="Here is the secret.", accent="secret")]
+                return {"choices": [{"message": {"content": json.dumps(plan)}}]}, {"cost": 0.004}
+
             plan = {
                 "hooks": [
                     {"start": first("Fifteen"), "end": first("wait."), "text": "15 billion messages wait", "why": "A number that stops the scroll."},
