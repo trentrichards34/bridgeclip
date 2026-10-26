@@ -9,7 +9,7 @@
  * and each section's label and arc), the writer's brief for a section and the cost. Written in our own words.
  */
 import { CUSTOM_SECTION_MAX_MS, EXPLAINER_BAND, EXPLAINER_CAPTION_ZONE } from './explainer-layout'
-import { customCallCosts, CUSTOM_TOKENS, DEFAULT_PRICE, expectedRevisions, type SaidIndex, unsaidOnScreen } from './custom-graphics'
+import { customCallCosts, DEFAULT_PRICE, expectedRevisions, planCallCost, type SaidIndex, unsaidOnScreen } from './custom-graphics'
 
 /** One section of the reel (reel ms). */
 export interface ExplainerSection {
@@ -26,6 +26,7 @@ export const EXPLAINER_TARGET_MS = 15000
 export const EXPLAINER_MIN_MS = 7000
 export const EXPLAINER_MIN_SECTIONS = 2
 export const EXPLAINER_MAX_SECTIONS = 10
+const TARGET_MS = EXPLAINER_TARGET_MS, MIN_MS = EXPLAINER_MIN_MS, MAX_MS = EXPLAINER_MAX_MS, MAX_SECTIONS = EXPLAINER_MAX_SECTIONS
 /** Revisions a section may get (the most a section is designed: 1 + this). */
 export const EXPLAINER_REVISIONS = 2
 
@@ -39,10 +40,13 @@ const bare = (w: string): string => w.toLowerCase().replace(/[’]/g, "'").repla
  * EXPLAINER_MAX_SECTIONS of them), never longer than EXPLAINER_MAX_MS, a cut preferring a sentence whose first word
  * turns the argument. The sections cover the reel end to end (the first from 0, the last to its end).
  */
-export function explainerSections(words: readonly { word: string; start_ms: number; end_ms: number }[], endMs: number): ExplainerSection[] {
+export function explainerSections(words: readonly { word: string; start_ms: number; end_ms: number }[], endMs: number,
+  options: { targetMs?: number; minMs?: number; maxMs?: number; maxSections?: number } = {}): ExplainerSection[] {
   if (!words.length || endMs <= 0) return []
+  const EXPLAINER_TARGET_MS = options.targetMs ?? TARGET_MS, EXPLAINER_MIN_MS = options.minMs ?? MIN_MS, EXPLAINER_MAX_MS = options.maxMs ?? MAX_MS
+  const EXPLAINER_MAX_SECTIONS = options.maxSections ?? MAX_SECTIONS
   const total = endMs
-  const count = Math.max(1, Math.min(EXPLAINER_MAX_SECTIONS, Math.max(total >= EXPLAINER_MIN_SECTIONS * EXPLAINER_MIN_MS * 1.5 ? EXPLAINER_MIN_SECTIONS : 1, Math.round(total / EXPLAINER_TARGET_MS)), Math.ceil(total / EXPLAINER_MAX_MS)))
+  const count = Math.max(1, Math.min(EXPLAINER_MAX_SECTIONS, Math.max(total >= EXPLAINER_MIN_SECTIONS * EXPLAINER_MIN_MS * 1.5 ? EXPLAINER_MIN_SECTIONS : 1, Math.round(total / EXPLAINER_TARGET_MS), Math.ceil(total / EXPLAINER_MAX_MS))))
   const target = total / count
   // Candidate cuts: the start of each sentence after the first (the gap before it is where the section changes).
   const cuts: { at: number; i: number; turn: boolean }[] = []
@@ -197,12 +201,10 @@ export function explainerStillTimes(durationMs: number): number[] {
   return [Math.min(900, d * .1), d * .38, d * .66, d - 500].map((t) => Math.round(t))
 }
 
-/** What one section costs (USD): a bigger composition than a hero graphic's. */
-const SECTION_OUT_SHARE = 2.6
+/** What one section costs (USD): a scene-sized composition, and the plan call. */
 export function explainerCosts(price: { input: number; output: number } = DEFAULT_PRICE): { write: number; revise: number; grade: number; plan: number } {
-  const c = customCallCosts(price)
-  const out = CUSTOM_TOKENS.writerOut * (SECTION_OUT_SHARE - 1) * price.output
-  return { write: c.write + out + 900 * price.input, revise: c.revise + out + CUSTOM_TOKENS.writerOut * (SECTION_OUT_SHARE - 1) * price.input, grade: c.grade, plan: 5000 * price.input + 900 * price.output }
+  const c = customCallCosts(price, true, true)
+  return { write: c.write, revise: c.revise, grade: c.grade, plan: planCallCost(price) }
 }
 
 /** The estimate shown before running: expected and most, in USD. */

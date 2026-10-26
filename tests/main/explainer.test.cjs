@@ -75,7 +75,7 @@ test('the paper backdrop and the cut-out card are scenes the editor keeps; the c
 test('the estimate: a 4-minute reel\'s sections cost a few dollars at a frontier model\'s price', () => {
   const sections = x.explainerSections(words, end).length
   const e = x.explainerEstimate(sections)
-  assert.ok(e.expectedUsd > 0.5 && e.expectedUsd < e.mostUsd && e.mostUsd < 6, JSON.stringify({ sections, e }))
+  assert.ok(e.expectedUsd > 0.5 && e.expectedUsd < e.mostUsd && e.mostUsd < 10, JSON.stringify({ sections, e }))
   assert.equal(x.explainerEstimate(10).revisions, x.EXPLAINER_REVISIONS)
   assert.deepEqual(x.explainerEstimate(0), { expectedUsd: 0, mostUsd: 0, revisions: 0 })
 })

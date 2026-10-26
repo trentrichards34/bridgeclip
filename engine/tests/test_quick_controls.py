@@ -182,3 +182,12 @@ def test_spare_graphics_are_the_teaching_plans_others_away_from_the_used_ones(mo
         raise RuntimeError("no")
     monkeypatch.setattr(er, "_planned_graphics", broken)
     assert er.spare_graphics([], [], {}, {}, used) == []
+
+
+def test_the_edit_runner_takes_the_custom_graphics_theme():
+    import edit_runner
+    assert edit_runner._editor({"theme": "dark"}, 10)["theme"] == "dark"
+    assert edit_runner._editor({"theme": "paper"}, 10)["theme"] == "paper"
+    assert "theme" not in edit_runner._editor({}, 10)
+    with pytest.raises(ValueError):
+        edit_runner._editor({"theme": "neon"}, 10)

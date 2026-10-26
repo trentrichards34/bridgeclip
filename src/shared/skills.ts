@@ -31,7 +31,7 @@ export const SKILLS: Record<SkillId, SkillInfo> = {
   captions: { id: 'captions', label: 'Captions', detail: 'Word-by-word captions burned into the video.' },
   motion_graphics: { id: 'motion_graphics', label: 'Motion graphics', detail: 'Animated cards for the numbers, lists, names and key lines said in each clip.' },
   stage_layouts: { id: 'stage_layouts', label: 'Stage layouts', detail: 'Big cards go on a stage at the top, with you in a card below. Then back to full frame.', beta: true },
-  custom_graphics: { id: 'custom_graphics', label: 'Custom graphics', detail: 'For the few key moments, your AI designs a graphic for that exact idea, looks at it over your video and fixes it before it’s used.', beta: true },
+  custom_graphics: { id: 'custom_graphics', label: 'Custom graphics', detail: 'Where you teach, your AI designs 15-20 s scenes built from what you say (app windows, dashboards, stamps), and a graphic for a few key moments; it looks at each over your video and fixes it before it’s used.', beta: true },
   explainer: { id: 'explainer', label: 'Explainer style', detail: 'You, cut out of your video, at the bottom of a paper page; above you your AI draws one continuous illustration that changes on every line you say.', beta: true },
   zoom: { id: 'zoom', label: 'Zoom', detail: 'Cuts between a wide and a tight shot of your face every few seconds.' },
   broll: { id: 'broll', label: 'B-roll', detail: 'Footage that matches what’s said over the speaker, after a 3-second hook: from your B-roll library, stock or AI.' },

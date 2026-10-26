@@ -8,7 +8,7 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import {
-  CUSTOM_MAX_MS, CUSTOM_MIN_MS, stressedWords, type VisualWorld, customGeometry, customGraphicsEstimate, customLook, DEFAULT_PRICE, heroDuration, heroFrame, heroKindOf, REEL_HERO_MIN_MS, isCustomComp, MAX_NOTE_CHARS, openingLineCandidate, pickHeroMoments, revisionCap, saidIndex,
+  CUSTOM_MAX_MS, CUSTOM_MIN_MS, CUSTOM_SECTION_MAX_MS, DEFAULT_THEME, stressedWords, type VisualWorld, customGeometry, customGraphicsEstimate, customLook, DEFAULT_PRICE, heroDuration, heroFrame, heroKindOf, REEL_HERO_MIN_MS, isCustomComp, MAX_NOTE_CHARS, openingLineCandidate, pickHeroMoments, revisionCap, saidIndex,
   type CustomFallback, type CustomFrameKind, type HeroCandidate, type HeroKind, type HeroMoment, type WriterBrief
 } from '../shared/custom-graphics'
 import { reelOrder, reelWordStarts, type EditDecisions, type EditPlan, type EditSource } from '../shared/edit-recording'
@@ -17,6 +17,8 @@ import { graphicBox } from '../shared/graphic-layout'
 import { spokenNumber } from '../shared/graphic-prefill'
 import { templateInfo, type TimedWord } from '../shared/motion-graphics'
 import { BEAT_HOOK_SECONDS, graphicName, graphicWords } from '../shared/beat-sheet'
+import { planScenes, plannedScenes, planWorld, reelStretches, sceneBrief, usablePlan, type PlannedScene, type SceneWord } from './custom-scenes'
+import { isTextHighlight, MAX_POPUPS_WITH_SCENES, MAX_TEXT_HIGHLIGHTS, SCENE_KEEPS, sceneEligible, sectionText } from '../shared/custom-scenes'
 import { inBatches, memberLibrary, produceCustomGraphic, proposeVisualWorld, readCustomGraphic, readVisualWorld, saveVisualWorld, type LibraryHooks, type ModelCall } from './custom-graphics'
 import type { CustomSandbox } from './custom-render'
 import { readLibraryTemplate } from './motion-library'
@@ -59,20 +61,53 @@ function candidates(ctx: EditCustomContext): { list: HeroCandidate[]; starts: Ma
   return { list, starts, order, endMs }
 }
 
-/** The hero moments of this review (none for a reel without words). Custom graphics already made are left as they are. */
-export function editHeroMoments(ctx: EditCustomContext): EditHero[] {
-  const { list, endMs } = candidates(ctx)
+/**
+ * The hero moments of this review (none for a reel without words). Custom graphics already made are left as they are.
+ * `avoid`: stretches taken by scenes (reel ms): no pop-up there; `count`: at most this many.
+ */
+export function editHeroMoments(ctx: EditCustomContext, avoid: readonly { atMs: number; durationMs: number }[] = [], count?: number): EditHero[] {
+  const all = candidates(ctx)
+  const endMs = all.endMs
+  const list = all.list.filter((c) => !avoid.some((a) => c.atMs < a.atMs + a.durationMs && a.atMs < c.atMs + c.durationMs))
   const format = ctx.plan.format === 'youtube' ? 'youtube' : 'reel'
   // Custom graphics already made keep their slots (they score highest), and aren't made again.
-  const picked = pickHeroMoments(list, { durationMs: endMs, format })
+  const picked = pickHeroMoments(list, { durationMs: endMs, format, ...(count !== undefined ? { count } : {}) })
   return picked.filter((m) => list.find((c) => c.ref === m.ref)?.template !== 'custom')
     .map((m) => ({ ...m, graphic: (ctx.decisions.graphics ?? []).find((g) => g.id === m.replaces) ?? null }))
 }
 
-/** What making them costs (shown before running). */
-export function editCustomEstimate(ctx: EditCustomContext, count = editHeroMoments(ctx).length): { moments: number; expectedUsd: number; mostUsd: number; revisions: number } {
-  const e = customGraphicsEstimate(count, ctx.price)
-  return { moments: count, ...e }
+/** Scenes go on this reel: custom graphics on a reel (not YouTube, not the Explainer) with Stage layouts and scenes on. */
+export function scenesOn(ctx: EditCustomContext): boolean {
+  const d = ctx.decisions
+  return ctx.plan.format !== 'youtube' && d.customScenes !== false && d.explainer !== true && d.motionGraphics !== false && d.stageLayouts !== false
+}
+
+/** The reel's words with reel times, plan index and whether each was said over a filmed screen. */
+export function sceneWords(ctx: EditCustomContext): { words: SceneWord[]; endMs: number } {
+  const { order, starts, endMs } = candidates(ctx)
+  const words = reelWords(ctx, order, starts).map((w) => ({ ...w, screen: ctx.sources[ctx.plan.words[w.index]?.src ?? -1]?.shot === 'screen' }))
+  return { words, endMs }
+}
+
+/** The stretches that could become scenes (before the plan call decides), and how many we expect it to pick. */
+export function sceneOutlook(ctx: EditCustomContext): { stretches: number; eligible: number; expected: number } {
+  if (!scenesOn(ctx)) return { stretches: 0, eligible: 0, expected: 0 }
+  const { words, endMs } = sceneWords(ctx)
+  const stretches = reelStretches(words, endMs)
+  const eligible = stretches.filter((s) => sceneEligible(s, stretches.length)).length
+  return { stretches: stretches.length, eligible, expected: Math.min(eligible, Math.ceil(stretches.length * .55)) }
+}
+
+/**
+ * What making them costs (shown before running), honestly: every graphic gets every revision it needs (MIN_REVISIONS),
+ * scenes are priced as scenes (about twice a pop-up's composition), the plan call included.
+ */
+export function editCustomEstimate(ctx: EditCustomContext, count?: number): { moments: number; scenes: number; expectedUsd: number; mostUsd: number; revisions: number } {
+  const outlook = sceneOutlook(ctx)
+  const pops = count ?? (outlook.eligible ? Math.min(MAX_POPUPS_WITH_SCENES, editHeroMoments(ctx).length) : editHeroMoments(ctx).length)
+  const expected = customGraphicsEstimate(pops, ctx.price, outlook.expected)
+  const most = customGraphicsEstimate(pops, ctx.price, outlook.eligible)
+  return { moments: pops, scenes: outlook.expected, expectedUsd: expected.expectedUsd, mostUsd: most.mostUsd, revisions: expected.revisions }
 }
 
 const tidy = (w: string): string => w.replace(/\s+/g, ' ').trim()
@@ -123,7 +158,7 @@ function briefFor(ctx: EditCustomContext, hero: HeroMoment, durationMs: number, 
   const brief: WriterBrief = {
     kind: hero.kind, frame: hero.frame, durationMs, geometry, planned: plannedLine(graphic, line), cues, before, after, stressed: stressedWords(cues, durationMs),
     ...(world ? { world } : {}),
-    look: customLook({ kind: hero.frame, brandColor: ctx.brandColor, font: look.headlineLook.font, logo: !!ctx.logo, worldAccent: world?.accent ?? null }),
+    look: customLook({ kind: hero.frame, brandColor: ctx.brandColor, font: look.headlineLook.font, logo: !!ctx.logo, worldAccent: world?.accent ?? null, theme: ctx.decisions.customTheme ?? DEFAULT_THEME }),
     ...(numbers.length ? { saidNumbers: numbers } : {}), ...(note ? { note } : {})
   }
   return { brief, line, frameWord }
@@ -158,6 +193,8 @@ export interface EditCustomResult {
   notes: string[]
   /** Why each one that didn't pass fell back (the checks' own words), kept in the run for review. */
   reasons?: { word: number; kind: string; tries: number; reason: string }[]
+  /** How many of the made ones are scenes. */
+  scenes?: number
 }
 
 /** The fallback a custom graphic keeps (its template graphic, to swap back to). */
@@ -207,11 +244,36 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
     const kind = heroKindOf(candidate)?.kind ?? 'claim'
     heroes = [{ ref: g.id, word: g.word, atMs: at, durationMs: Math.max(REEL_HERO_MIN_MS, g.duration_ms), kind, frame: heroFrame(candidate, kind, ctx.plan.format === 'youtube' ? 'youtube' : 'reel'),
       placement: g.placement === 'top' || g.placement === 'bottom' ? g.placement : 'middle', replaces: g.id, score: 10, graphic: g }]
-  } else heroes = editHeroMoments(ctx)
-  const cap = revisionCap(Math.max(1, heroes.length), ctx.price)
-  let done = 0, costUsd = 0
-  // One visual world for the whole video: the saved one (the member may have written it), else proposed now.
+  } else heroes = []
+  const theme = ctx.decisions.customTheme ?? DEFAULT_THEME
+  let costUsd = 0
+  // Scenes (a reel with Stage layouts): one plan call picks the hero object, the motif and the stretches that become
+  // 15-20 s scenes; the pop-ups go only outside them, at most MAX_POPUPS_WITH_SCENES.
+  let scenes: PlannedScene[] = []
+  let sceneCount = 0
+  let planned: ReturnType<typeof usablePlan> | null = null
+  const fresh = !options.only && !options.pick && !options.design
+  const timeline = sceneWords(ctx)
+  if (fresh && scenesOn(ctx)) {
+    const stretches = reelStretches(timeline.words, timeline.endMs)
+    if (stretches.some((x) => sceneEligible(x, stretches.length))) {
+      const result = await planScenes({ model: ctx.model, theme, stretches, said }, options.call, options.signal)
+      costUsd += result.costUsd
+      planned = usablePlan(result.plan, stretches)
+      scenes = plannedScenes(stretches, planned, timeline.words, timeline.endMs)
+      sceneCount = stretches.length
+    }
+  }
+  if (fresh) heroes = scenes.length ? editHeroMoments(ctx, scenes, MAX_POPUPS_WITH_SCENES) : editHeroMoments(ctx)
+  const cap = revisionCap(Math.max(1, heroes.length + scenes.length), ctx.price)
+  let done = 0
+  // One world note for the whole video: the saved one (the member may have written it), else the scene plan's hero
+  // object and motif, else proposed now for the pop-ups.
   let world = readVisualWorld(ctx.folder)
+  if (!world?.edited && planned) {
+    const fromPlan = planWorld(planned)
+    if (fromPlan) { world = fromPlan; saveVisualWorld(ctx.folder, fromPlan) }
+  }
   if (!world && heroes.length && !options.pick) {
     const proposed = await proposeVisualWorld({ transcript: words.map((w) => w.word).join(' '), moments: heroes.map((h) => ({ kind: h.kind, words: tidy(words.filter((w) => w.start_ms >= h.atMs - 200 && w.start_ms < h.atMs + h.durationMs).map((w) => w.word).join(' ')) })), model: ctx.model },
       { call: options.call, signal: options.signal })
@@ -219,39 +281,96 @@ export async function makeEditCustomGraphics(ctx: EditCustomContext, options: { 
     world = proposed.world
     if (world) saveVisualWorld(ctx.folder, world)
   }
-  options.onProgress?.(0, heroes.length)
-  const results = await inBatches(heroes, 2, async (hero) => {
+  const total = heroes.length + scenes.length
+  options.onProgress?.(0, total)
+  type Job = { scene: PlannedScene } | { hero: EditHero }
+  const jobs: Job[] = [...scenes.map((scene) => ({ scene })), ...heroes.map((hero) => ({ hero }))]
+  const library = options.library === undefined ? memberLibrary : options.library ?? undefined
+  const results = await inBatches(jobs, 3, async (job) => {
+    if ('scene' in job) {
+      const scene = job.scene
+      const brief = sceneBrief({ scene, scenes: scenes.length, count: sceneCount, plan: planned!, words: timeline.words, theme, brandColor: ctx.brandColor, font: ctx.decisions.look.headlineLook.font, logo: !!ctx.logo, world })
+      const inside = timeline.words.filter((w) => w.start_ms >= scene.atMs && w.start_ms < scene.atMs + scene.durationMs)
+      const frame = await frameAt(ctx, inside[Math.floor(inside.length / 2)]?.index ?? scene.word)
+      // A scene is designed fresh for its words (never filled from the library: it is one continuous composition for this stretch).
+      const result = await produceCustomGraphic({ run: ctx.folder, brief, words: sectionText(scene.stretch), said, frame, logo: ctx.logo ?? null, fallback: null, model: ctx.model, maxRevisions: cap, grade: ctx.vision },
+        { call: options.call, sandbox: options.sandbox, signal: options.signal })
+      costUsd += result.costUsd
+      options.onProgress?.(++done, total)
+      return { type: 'scene' as const, scene, result }
+    }
+    const hero = job.hero
     const next = graphics.filter((g) => g.id !== hero.replaces).map((g) => starts.get(g.word)).filter((t): t is number => t !== undefined && t > hero.atMs).sort((a, b) => a - b)[0] ?? null
-    const durationMs = options.only ? Math.min(CUSTOM_MAX_MS, hero.durationMs) : options.pick ? Math.round(Math.max(CUSTOM_MIN_MS, Math.min(hero.durationMs, (next ?? endMs) - 300 - hero.atMs, endMs - hero.atMs))) : heroDuration(hero, next, endMs, ctx.plan.format === 'youtube' ? 'youtube' : 'reel')
+    const nextScene = scenes.map((x) => x.atMs).filter((t) => t > hero.atMs).sort((a, b) => a - b)[0] ?? null
+    const upTo = next === null ? nextScene : nextScene === null ? next : Math.min(next, nextScene)
+    const remake = options.only ? readCustomGraphic(ctx.folder, graphics.find((g) => g.id === options.only!.id)?.fields.comp) : null
+    const durationMs = options.only ? Math.min(remake && remake.meta.durationMs > CUSTOM_MAX_MS ? CUSTOM_SECTION_MAX_MS : CUSTOM_MAX_MS, hero.durationMs) : options.pick ? Math.round(Math.max(CUSTOM_MIN_MS, Math.min(hero.durationMs, (next ?? endMs) - 300 - hero.atMs, endMs - hero.atMs))) : heroDuration(hero, upTo, endMs, ctx.plan.format === 'youtube' ? 'youtube' : 'reel')
     const { brief, line, frameWord } = briefFor(ctx, hero, durationMs, words, hero.graphic, note, world)
     const frame = await frameAt(ctx, frameWord)
     const original = graphics.find((g) => g.id === hero.replaces) ?? null
     const fallback = options.only ? (readCustomGraphic(ctx.folder, original?.fields.comp)?.meta.fallback ?? null) : original?.template === 'custom' ? (readCustomGraphic(ctx.folder, original.fields.comp)?.meta.fallback ?? null) : fallbackOf(original)
-    const result = await produceCustomGraphic({ run: ctx.folder, brief, words: line, said, frame, logo: ctx.logo ?? null, fallback, model: ctx.model, maxRevisions: options.only ? Math.max(1, cap) : cap, grade: ctx.vision, ...(options.pick ? { libraryItem: options.pick.itemId } : {}) },
-      { call: options.call, sandbox: options.sandbox, signal: options.signal, library: options.library === undefined ? memberLibrary : options.library ?? undefined })
+    const result = await produceCustomGraphic({ run: ctx.folder, brief, words: line, said, frame, logo: ctx.logo ?? null, fallback, model: ctx.model, maxRevisions: cap, grade: ctx.vision, ...(options.pick ? { libraryItem: options.pick.itemId } : {}) },
+      { call: options.call, sandbox: options.sandbox, signal: options.signal, library })
     costUsd += result.costUsd
-    options.onProgress?.(++done, heroes.length)
-    return { hero, durationMs, result }
+    options.onProgress?.(++done, total)
+    return { type: 'hero' as const, hero, durationMs, result }
   })
   const notes: string[] = []
   const reasons: { word: number; kind: string; tries: number; reason: string }[] = []
   let made = 0
-  for (const { hero, durationMs, result } of results) {
+  let out = graphics
+  const reelStart = new Map(timeline.words.map((w) => [w.index, w.start_ms]))
+  const madeScenes: PlannedScene[] = []
+  for (const r of results) {
+    if (r.type !== 'scene') continue
+    const { scene, result } = r
+    if (!result.meta) {
+      reasons.push({ word: scene.word, kind: 'scene', tries: result.tries, reason: (result.reason ?? '').slice(0, 1200) })
+      notes.push(`A scene at ${Math.floor(scene.atMs / 60000)}:${String(Math.floor(scene.atMs / 1000) % 60).padStart(2, '0')} keeps its graphics: its design didn’t pass our checks.`)
+      continue
+    }
+    made++
+    madeScenes.push(scene)
+    const a = scene.atMs, b = scene.atMs + scene.durationMs
+    // The template graphics (and earlier custom graphics) that start inside the scene give way to it.
+    out = out.filter((g) => { const t = reelStart.get(g.word); return t === undefined || t < a || t >= b || SCENE_KEEPS.has(g.template) })
+    out.push({ id: newId(taken), template: 'custom', word: scene.word, duration_ms: scene.durationMs, placement: 'top', size: 'stage', origin: 'auto',
+      fields: { comp: result.meta.comp, idea: 'Designed scene', scene: scene.frame, ...(scene.screen ? { card: 'screen' } : {}) } })
+  }
+  for (const r of results) {
+    if (r.type !== 'hero') continue
+    const { hero, durationMs, result } = r
     if (!result.meta) {
       reasons.push({ word: hero.word, kind: hero.kind, tries: result.tries, reason: (result.reason ?? '').slice(0, 1200) })
-      notes.push(`${hero.graphic ? `The ${graphicName(hero.graphic).toLowerCase()}` : 'The opening line'} stays as it was: its custom graphic didn’t pass the check.`)
+      notes.push(`${hero.graphic ? `The ${graphicName(hero.graphic).toLowerCase()}` : 'The opening line'} stays as it was: its custom graphic didn’t pass our checks.`)
       continue
     }
     made++
     const scene: CustomFrameKind = hero.frame
     const fields = { comp: result.meta.comp, idea: result.meta.idea, scene }
     const base: EditGraphic = { id: hero.replaces ?? newId(taken), template: 'custom', word: hero.word, duration_ms: durationMs, placement: hero.placement, fields, origin: 'auto', ...(scene === 'card' ? {} : { size: 'stage' as const }) }
-    const at = graphics.findIndex((g) => g.id === hero.replaces)
-    if (at >= 0) graphics[at] = { ...base, id: newId(taken) }
-    else graphics.push(base)
+    const at = out.findIndex((g) => g.id === hero.replaces)
+    if (at >= 0) out[at] = { ...base, id: newId(taken) }
+    else out.push(base)
   }
-  graphics.sort((a, b) => a.word - b.word)
-  return { graphics, made, tried: heroes.length, costUsd, notes: notes.slice(0, 4), reasons }
+  // With scenes in the reel, the text highlights outside them are the exception: at most MAX_TEXT_HIGHLIGHTS, spread out.
+  if (madeScenes.length) out = limitTextHighlights(out, reelStart, MAX_TEXT_HIGHLIGHTS)
+  out.sort((a, b) => a.word - b.word)
+  return { graphics: out, made, tried: total, costUsd, notes: notes.slice(0, 4), reasons, scenes: madeScenes.length }
+}
+
+/** At most `keep` automatic text highlights (the ones furthest apart stay); the member's own graphics are never removed. */
+export function limitTextHighlights(graphics: readonly EditGraphic[], starts: ReadonlyMap<number, number>, keep: number): EditGraphic[] {
+  const texts = graphics.filter((g) => g.origin === 'auto' && isTextHighlight(g)).map((g) => ({ g, at: starts.get(g.word) ?? 0 })).sort((a, b) => a.at - b.at)
+  if (texts.length <= keep) return [...graphics]
+  // Evenly spread: the first, the last and the ones nearest the even marks between them.
+  const kept = new Set<EditGraphic>()
+  for (let k = 0; k < keep; k++) {
+    const want = texts[0].at + (texts[texts.length - 1].at - texts[0].at) * (keep === 1 ? .5 : k / (keep - 1))
+    const pick = texts.filter((t) => !kept.has(t.g)).reduce((p, q) => (Math.abs(q.at - want) < Math.abs(p.at - want) ? q : p))
+    kept.add(pick.g)
+  }
+  return graphics.filter((g) => !(g.origin === 'auto' && isTextHighlight(g)) || kept.has(g))
 }
 
 /** The run's visual world as the beat sheet shows it (null: none yet). */

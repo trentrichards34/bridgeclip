@@ -20,6 +20,7 @@ import { ClipOrder } from './CombineClips'
 import { SHOT_LABELS } from '../../shared/combine-clips'
 import { applyRestore, editRecordingLog, restoreStillApplied, undoRestore, type RestoreUndo } from '../../shared/edit-log'
 import { SkillsPanel } from './SkillsPanel'
+import { CUSTOM_THEMES, DEFAULT_THEME, THEME_DETAILS, THEME_LABELS } from '../../shared/custom-graphics'
 import { BeatSheet } from './BeatSheet'
 import { HeadlineCheck } from './HeadlineCheck'
 import { beforeRender } from '../../shared/beat-sheet'
@@ -142,7 +143,7 @@ export function EditReview({ status, brand, look, onLook, onError }: {
   // Custom graphics (Skills): what they'd cost for this edit, shown under the switch before anything is spent.
   const [customNote, setCustomNote] = useState<string | undefined>(undefined)
   const [explainerNote, setExplainerNote] = useState<string | undefined>(undefined)
-  const customKey = (decisions.graphics ?? []).map((g) => `${g.id}:${g.template}:${g.word}`).join('|')
+  const customKey = `${(decisions.graphics ?? []).map((g) => `${g.id}:${g.template}:${g.word}`).join('|')}#${decisions.customScenes !== false}${decisions.stageLayouts !== false}${decisions.explainer === true}`
   useEffect(() => {
     let live = true
     if (!openrouter || typeof getApi().edit.customInfo !== 'function') { setCustomNote(undefined); setExplainerNote(undefined); return }
@@ -151,8 +152,10 @@ export function EditReview({ status, brand, look, onLook, onError }: {
       const ex = info.explainer
       setExplainerNote(ex && ex.sections ? `Your AI draws ${ex.sections} section${ex.sections === 1 ? '' : 's'}, each one illustration that changes on every line, checks each over your video and fixes it. About ${formatSpendUsd(ex.expectedUsd)} (at most ${formatSpendUsd(ex.mostUsd)}), when you make the reel.` : undefined)
       const made = (decisions.graphics ?? []).filter((g) => g.template === 'custom').length
-      setCustomNote(info.moments.length
-        ? `For ${info.moments.length} key moment${info.moments.length === 1 ? '' : 's'}, your AI designs a graphic, checks it over your video and fixes it. About ${formatSpendUsd(info.expectedUsd)} (at most ${formatSpendUsd(info.mostUsd)}), when you make the reel or from the beat sheet.`
+      setCustomNote(info.scenes
+        ? `Your AI designs about ${info.scenes} scene${info.scenes === 1 ? '' : 's'} of 15-20 s over the parts where you teach${info.popups ? `, and up to ${info.popups} graphic${info.popups === 1 ? '' : 's'} on key moments` : ''}. Each is drawn, checked over your video and fixed up to ${info.revisions} times. About ${formatSpendUsd(info.expectedUsd)} (at most ${formatSpendUsd(info.mostUsd)}), when you make the reel or from the beat sheet.`
+        : info.moments.length
+        ? `For ${info.moments.length} key moment${info.moments.length === 1 ? '' : 's'}, your AI designs a graphic, checks it over your video and fixes it up to ${info.revisions} times. About ${formatSpendUsd(info.expectedUsd)} (at most ${formatSpendUsd(info.mostUsd)}), when you make the reel or from the beat sheet.`
         : made ? `${made} custom graphic${made === 1 ? '' : 's'} designed. See them on the beat sheet.` : 'No moment in this edit needs a custom graphic.')
     }).catch(() => { if (live) { setCustomNote(undefined); setExplainerNote(undefined) } })
     return () => { live = false }
@@ -492,7 +495,14 @@ export function EditReview({ status, brand, look, onLook, onError }: {
 
           <SkillsPanel className="mt-5" rows={editSkillRows(plan, { ...decisions, look }, { brollSource: brollDefault, openrouter, customNote, explainerNote }).filter((row) => !screen || (row.id !== 'broll' && row.id !== 'zoom'))}
             music={{ track: look.musicTrack ?? null, onChange: (track) => onLook({ ...look, musicTrack: track ?? undefined }) }}
-            expand={(id) => id === 'broll' && look.broll ? <BrollSourcePicker value={look.broll} onChange={(broll) => onLook({ ...look, broll })} disabled={making} /> : undefined}
+            expand={(id) => id === 'broll' && look.broll ? <BrollSourcePicker value={look.broll} onChange={(broll) => onLook({ ...look, broll })} disabled={making} />
+              : id === 'custom_graphics' && openrouter && decisions.customGraphics !== false ? (
+                <div className="flex flex-col gap-1.5" data-testid="custom-theme">
+                  <Segmented label="Theme for your custom graphics" size="sm" value={decisions.customTheme ?? DEFAULT_THEME}
+                    options={CUSTOM_THEMES.map((value) => ({ value, label: THEME_LABELS[value] }))}
+                    onChange={(customTheme) => setDecisions((current) => ({ ...current, customTheme }))} />
+                  <p className="text-2xs text-ink-subtle">{THEME_DETAILS[decisions.customTheme ?? DEFAULT_THEME]}</p>
+                </div>) : undefined}
             onToggle={(id, on) => {
               const patch = editSkillPatch(plan, { ...decisions, look }, id, on, { brollSource: brollDefault, openrouter })
               if (patch.decisions) { const next = patch.decisions; setDecisions((current) => ({ ...current, ...next })) }

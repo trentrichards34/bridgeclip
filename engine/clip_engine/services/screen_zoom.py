@@ -1138,6 +1138,16 @@ def frame_zoom_field(video: str, from_ms: int, duration_ms: int, shape: str, cac
     return f"{zx:.3f}, {zy:.3f}, {side:.3f}, {side:.3f}"
 
 
+def busy_box(video: str, start_ms: int, end_ms: int, cache_dir: Optional[str] = None) -> Optional[tuple[float, float, float, float]]:
+    """Where a filmed screen is busiest between two times (x, y, w, h shares of the frame): the focus region with the
+    most samples that isn't spread over the whole screen. None when nothing stands out."""
+    act = read_activity(video, None, max(0, int(start_ms) - FRAME_CONTEXT_MS), int(end_ms) + FRAME_CONTEXT_MS, cache_dir=cache_dir)
+    regions = [r for r in focus_regions(act, [(int(start_ms), int(end_ms))]) if max(r.box[2], r.box[3]) <= MAX_SPREAD]
+    if not regions:
+        return None
+    return tuple(max(regions, key=lambda r: r.samples).box)  # type: ignore[return-value]
+
+
 def aim_screen_frames(video: str, graphics: Sequence[dict], cache_dir: Optional[str] = None) -> list[dict]:
     """Automatic Screen recording windows of this video's own footage, their push-in aimed at where it is busy."""
     out = []

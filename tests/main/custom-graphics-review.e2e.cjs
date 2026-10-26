@@ -48,7 +48,7 @@ test('Edit my recording: custom graphics designed on the beat sheet, changed wit
         const user = json.messages[1].content
         const grade = Array.isArray(user)
         const fill = !grade && /fill the text slots/.test(json.messages[0].content[0].text)
-        const world = !grade && /ONE visual world/.test(json.messages[0].content[0].text)
+        const world = !grade && /WORLD NOTE/.test(json.messages[0].content[0].text)
         asked.push({ grade, fill: fill || world, world, user: grade ? user.map((p) => p.text ?? '').join('\n') : user, model: json.model })
         if (world) {
           // The video's visual world, from its own words (coaches losing clients, messages waiting).
@@ -125,7 +125,7 @@ test('Edit my recording: custom graphics designed on the beat sheet, changed wit
   const sheet = page.getByTestId('beat-sheet')
   await sheet.waitFor()
   const panel = sheet.getByTestId('custom-graphics-panel')
-  await panel.getByText(/a graphic for 1 key moment\. About \$/).waitFor()
+  await panel.getByText(/a graphic for 1 key moment, each checked and fixed up to 2 times\. About \$/).waitFor()
   const cards = sheet.getByTestId('beat-card')
   const keys = async () => cards.evaluateAll((list) => list.map((li) => li.getAttribute('data-beat')))
   const before = await keys()
@@ -204,9 +204,9 @@ test('Edit my recording: custom graphics designed on the beat sheet, changed wit
   assert.equal(asked.filter((a) => !a.grade && !a.fill).length, 2)
   assert.equal(asked.filter((a) => a.fill && !a.world).length, 1)
   assert.equal(asked.filter((a) => a.world).length, 1, 'one visual world for the video')
-  assert.match(writes[0].user, /THE VIDEO'S VISUAL WORLD .*leaking bucket/)
+  assert.match(writes[0].user, /THE VIDEO'S HERO OBJECT AND MOTIF .*leaking bucket/)
   // Designed again after the member wrote the world: the writer got theirs.
-  assert.match(asked.filter((a) => !a.grade && !a.fill).at(-1).user, /THE VIDEO'S VISUAL WORLD .*A bucket with a hole/)
+  assert.match(asked.filter((a) => !a.grade && !a.fill).at(-1).user, /THE VIDEO'S HERO OBJECT AND MOTIF .*A bucket with a hole/)
   const kept = await page.evaluate(() => window.bridgeclip.library.list())
   assert.ok(kept.length >= 1 && kept.every((item) => item.status === 'active'), JSON.stringify(kept))
   assert.ok(kept.every((item) => item.stills.length === 4), JSON.stringify(kept))

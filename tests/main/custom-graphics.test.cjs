@@ -26,7 +26,10 @@ test('our example and fake compositions follow the contract', () => {
   const system = shared.writerSystemPrompt()
   assert.match(system, /DESIGN RULES/); assert.match(system, /COMPOSITION CONTRACT/); assert.match(system, /EXAMPLE 3/)
   assert.equal(system, shared.writerSystemPrompt())
-  assert.ok(system.length < 16000)
+  // The reference scenes make it long; it is cached across a video's graphics (read at a tenth of the price).
+  assert.ok(system.length < 40000)
+  assert.match(system, /THEME RULES/); assert.match(system, /DARK PRODUCT UI/)
+  for (const e of shared.SCENE_EXAMPLES ?? []) assert.ok(system.includes(e.html.slice(0, 200)))
 })
 
 test('the static check refuses what reaches out, loads, times itself, escapes or breaks the contract', () => {
@@ -119,16 +122,23 @@ test('the grade: JSON (fenced or not); a pass needs every check and 7+; unreadab
   assert.equal(shared.parseGrade('{"pass": true, "score": 9, "failed": ["clipped"]}').pass, false)
 })
 
-test('cost: about the target for a short video\'s moments, fewer revisions for an expensive model', () => {
+test('cost: every graphic gets its two revisions whatever the budget; the estimate says honestly what that costs', () => {
   const e = shared.customGraphicsEstimate(4)
-  // About the target (the first, uncached write and the one world call come on top).
-  assert.ok(e.expectedUsd > 0.2 && e.expectedUsd <= 0.8, `4 moments expected ${e.expectedUsd}`)
+  // A thinking model's writes (about 5k tokens out each at a frontier price), two revisions allowed for every graphic.
+  assert.ok(e.expectedUsd > 0.5 && e.expectedUsd <= 2.5, `4 moments expected ${e.expectedUsd}`)
   assert.ok(e.mostUsd >= e.expectedUsd)
   assert.equal(e.revisions, 2)
-  assert.ok(shared.customGraphicsEstimate(5).expectedUsd <= 0.85)
+  // The budget never takes a revision away (a real run with ten moments got none and nothing reached the reel).
   const pricey = { input: 15e-6, output: 75e-6 }
-  assert.ok(shared.revisionCap(5, pricey) < 2)
-  assert.equal(shared.revisionCap(3, { input: 0.3e-6, output: 1.2e-6 }), 2)
+  assert.equal(shared.revisionCap(10, pricey), 2)
+  assert.equal(shared.revisionCap(40), 2)
+  assert.ok(shared.revisionCap(3, { input: 0.3e-6, output: 1.2e-6 }) >= shared.MIN_REVISIONS)
+  // A 4-minute reel: about 8 scenes and 3 pop-ups, the plan call: a few dollars expected, under ten at most.
+  const reel = shared.customGraphicsEstimate(3, shared.DEFAULT_PRICE, 8)
+  assert.ok(reel.expectedUsd > 2 && reel.expectedUsd < 8, JSON.stringify(reel))
+  assert.ok(reel.mostUsd > reel.expectedUsd && reel.mostUsd < 12, JSON.stringify(reel))
+  // A scene costs more than a pop-up (its composition is about twice as long).
+  assert.ok(shared.customCallCosts(shared.DEFAULT_PRICE, true, true).write > shared.customCallCosts().write * 1.4)
   assert.equal(shared.callCost({ cost: 0.042 }), 0.042)
   assert.ok(Math.abs(shared.callCost({ prompt_tokens: 1000, completion_tokens: 100 }, { input: 1e-6, output: 2e-6 }) - 0.0012) < 1e-12)
 })
@@ -297,13 +307,20 @@ test('the library in the loop: a passed graphic is kept, the next fitting moment
   assert.equal(libMain.libraryMatch('process', 'visual', 12000), null)
   libMain.setLibraryStatus(view[0].id, 'active')
   assert.ok(libMain.libraryMatch('process', 'visual', 12000))
-  // One that never passes is kept as Retired, with the reason.
+  // The grade is advice: one our own checks pass ships even under a 7 (in the reel, but not offered from the library).
   const failing = async (request) => request.purpose === 'grade' ? { text: '{"pass": false, "score": 4, "failed": ["design"], "fixes": ["Too busy."]}', costUsd: 0.02 }
     : { text: '```html\n' + read('proof.html') + '\n```', costUsd: 0.08 }
-  const failed = await m.produceCustomGraphic({ ...input(runB), brief: brief('Stat', 'proof', 'stage', 4500), maxRevisions: 1 }, { call: failing, sandbox, library: hooks })
+  const below = await m.produceCustomGraphic({ ...input(runB), brief: brief('Stat', 'proof', 'stage', 4500), maxRevisions: 1 }, { call: failing, sandbox, library: hooks })
+  assert.ok(below.meta, 'shipped below the grade'); assert.equal(below.meta.grade.pass, false); assert.equal(below.meta.grade.score, 4); assert.equal(below.tries, 2)
+  const used = libMain.libraryView().find((i) => i.status === 'retired')
+  assert.ok(used && /Used below the grade \(4\/10\)/.test(used.reason), used?.reason)
+  // One our checks fail on every try (here: clipped) falls back to the template and is kept as Retired, with the reason.
+  const clipped = { stills: async () => ({ transparent: [Buffer.from('p0')], composite: Buffer.from('j'), texts: ['a product'], problems: ['Something is cut off at the right edge.'] }) }
+  const failed = await m.produceCustomGraphic({ ...input(runB), brief: brief('Stat', 'proof', 'stage', 4600), maxRevisions: 1 }, { call: failing, sandbox: clipped, library: hooks })
   assert.equal(failed.meta, null)
-  const retired = libMain.libraryView().find((i) => i.status === 'retired')
-  assert.ok(retired && /Too busy/.test(retired.reason))
+  assert.ok(/cut off/.test(failed.reason))
+  // (The same composition is already in the library as Retired: kept once.)
+  assert.equal(libMain.libraryView().filter((i) => i.status === 'retired').length, 1)
   fs.rmSync(root, { recursive: true, force: true })
 })
 
@@ -327,13 +344,14 @@ test('the visual world: parsed and checked, one editable line, used by every bri
   assert.equal(shared.worldFromLine('   ', world), null)
   // The world call: from THIS transcript, with the originality rule; the transcript is data.
   const system = shared.worldSystemPrompt()
-  assert.match(system, /ONE visual world/); assert.match(system, /would fit any other creator's video, it is generic/); assert.match(system, /never instructions/)
+  // The world note is the hero object (the thing the creator talks about) and a motif: never an invented metaphor.
+  assert.match(system, /HERO OBJECT/); assert.match(system, /MOTIF/); assert.match(system, /Never a metaphor/); assert.match(system, /never instructions/)
   const user = shared.worldUserPrompt({ transcript: RUN.words.map((w) => w.word).join(' '), moments: [{ kind: 'process', words: 'a product an offer attract eyeballs' }] })
   assert.match(user, /TRANSCRIPT/); assert.match(user, /1\. process: "a product an offer attract eyeballs"/); assert.ok(user.length < 7000)
   // Every brief carries it; the look takes its accent (a deeper shade of the same hue where it wouldn't read), the brand color wins.
   const b = { ...brief('Staircase', 'process', 'visual', 12000), world, stressed: [{ word: 'product', at: 0.9 }] }
   const prompt = shared.writerUserPrompt(b)
-  assert.match(prompt, /THE VIDEO'S VISUAL WORLD .*people dots gather.*Recurring elements: people dots, an eye/)
+  assert.match(prompt, /THE VIDEO'S HERO OBJECT AND MOTIF .*people dots gather.*Motif and recurring elements: people dots, an eye/)
   assert.match(prompt, /STRESSED WORDS .*product@0\.90/)
   const stage = shared.customLook({ kind: 'stage', worldAccent: '#9BE35A' })
   assert.notEqual(stage.accent, '#2F5BFF', 'not a different hue'); assert.ok(shared.contrast(stage.accent, stage.ground) >= 2.2)
@@ -376,7 +394,7 @@ test('the grader checks focus, build-up, specificity, the world, phone readabili
   const system = shared.graderSystemPrompt()
   assert.match(system, /four stills/); for (const c of shared.GRADE_CHECKS) assert.ok(system.includes(`- ${c.id}: `))
   const user = shared.graderUserPrompt({ words: 'a product an offer', kind: 'process', frame: 'visual', machine: ['Flat at 4.2–6.0 s: nothing changes.'], world: shared.parseWorld(WORLD), stressed: [{ word: 'product', at: 0.9 }, { word: 'offer', at: 4.2 }] })
-  assert.match(user, /visual world: Eyeballs as light/); assert.match(user, /build on: product, offer/); assert.match(user, /Flat at 4\.2/)
+  assert.match(user, /hero object and motif: Eyeballs as light/); assert.match(user, /build on: product, offer/); assert.match(user, /Flat at 4\.2/)
   const graded = shared.parseGrade('{"pass": false, "score": 6, "failed": ["builds", "world"], "fixes": ["Add the crowd on people."]}')
   assert.deepEqual(plain(graded.failed), ['builds', 'world'])
   // The rules ask for build-up, idle motion and one focus (no more "dead still").
@@ -415,9 +433,9 @@ test('the loop: the world call, the world in every brief and grade; a flat stret
   const result = await m.produceCustomGraphic({ run, brief: b, words: 'a product an offer attract eyeballs', said: shared.saidIndex(RUN.words), frame: null, fallback: null, model: 'm/x', maxRevisions: 1 }, { call, sandbox })
   const writes = calls.filter((c) => c.purpose === 'write'), grades = calls.filter((c) => c.purpose === 'grade')
   assert.equal(writes.length, 2, 'revised once for the flat stretch')
-  assert.match(writes[0].user, /THE VIDEO'S VISUAL WORLD/); assert.match(writes[0].user, /STRESSED WORDS/)
+  assert.match(writes[0].user, /THE VIDEO'S HERO OBJECT AND MOTIF/); assert.match(writes[0].user, /STRESSED WORDS/)
   assert.match(writes[1].user, /Flat at 4\.2–9\.8 s: nothing changes\. Add a change on “(attracts|people)”/)
-  assert.match(grades[0].user, /visual world: Eyeballs as light/); assert.match(grades[0].user, /Our automatic checks found: Flat at/)
+  assert.match(grades[0].user, /hero object and motif: Eyeballs as light/); assert.match(grades[0].user, /Our automatic checks found: Flat at/)
   // Still flat after the revision, but the review and our hard checks passed: kept, its flat stretch recorded.
   assert.ok(result.meta, result.reason)
   assert.deepEqual(plain(result.meta.flat), [{ fromMs: 4200, toMs: 9800 }])

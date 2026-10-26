@@ -20,6 +20,7 @@ import {
 import { customSandbox, type CustomSandbox } from './custom-render'
 import { keepInLibrary, libraryMatch, noteLibraryUse, readLibraryTemplate } from './motion-library'
 import { explainerStillTimes } from '../shared/explainer'
+import { sceneStillTimes } from '../shared/custom-scenes'
 import { fillSystemPrompt, fillTemplate, fillUserPrompt, parseFill, type LibraryItem } from '../shared/motion-library'
 import type { GraphicRenderSpec, TimedWord } from '../shared/motion-graphics'
 import type { GraphicJob } from './graphics-render'
@@ -47,7 +48,7 @@ export interface ModelRequest {
   maxTokens: number
   temperature: number
   /** Which call this is (the fake model in tests answers by it). */
-  purpose: 'write' | 'grade' | 'fill' | 'world' | 'plan'
+  purpose: 'write' | 'grade' | 'fill' | 'world' | 'plan' | 'scenes'
   signal?: AbortSignal
 }
 export interface ModelReply { text: string; costUsd: number }
@@ -177,8 +178,17 @@ interface Attempt {
   flat: FlatStretch[]
   /** Only the motion check failed it (the grade and our hard checks passed): kept when no try passes outright. */
   motionOnly: boolean
+  /** Our own checks all passed (words said, nothing clipped, readable sizes, never frozen), whatever the grade said. */
+  clean: boolean
 }
-const attemptRank = (a: Attempt): number => (a.grade.pass ? 2 : a.motionOnly ? 1 : 0) * 100 + a.grade.score
+/**
+ * The best try: one the grade passed and our checks passed, then one our checks passed (the grade is advice: a real
+ * run's grade failed all ten designs and none reached the reel), then one that only failed the motion check, each by score.
+ */
+const attemptRank = (a: Attempt): number => (a.grade.pass && a.clean ? 3 : a.clean ? 2 : a.motionOnly ? 1 : 0) * 100 + a.grade.score
+/** The writer's room to answer (it thinks first, and its thinking counts): a pop-up, and a scene or an Explainer section (about twice the composition). */
+export const WRITER_MAX_TOKENS = 16000
+export const SCENE_WRITER_MAX_TOKENS = 24000
 
 /** My motion library, as the producer uses it (motion-library.ts; tests pass their own). */
 export interface LibraryHooks {
@@ -199,7 +209,7 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
   const sandbox = deps.sandbox ?? customSandbox()
   const { brief } = input
   const expect = { width: brief.geometry.root.width, height: brief.geometry.root.height, durationMs: brief.durationMs }
-  const times = brief.frame === 'explainer' ? explainerStillTimes(brief.durationMs) : stillTimes(brief.durationMs, brief.cues.filter((c) => c.at >= 0).map((c) => c.at * 1000))
+  const times = brief.frame === 'explainer' ? explainerStillTimes(brief.durationMs) : brief.scene ? sceneStillTimes(brief.durationMs) : stillTimes(brief.durationMs, brief.cues.filter((c) => c.at >= 0).map((c) => c.at * 1000))
   const runId = basename(input.run)
   const moment = `${brief.kind}-${Math.round((brief.cues[0]?.at ?? 0) * 1000)}-${compositionId(input.words).slice(0, 6)}`
   let costUsd = 0, tries = 0
@@ -227,7 +237,8 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
       // A grade the model couldn't put into words is asked once more; still unreadable, our own checks decide alone.
       // (Two real runs had all ten Opus designs rejected because every grade came back unreadable: the answer ran out
       // of room at 700 tokens on a model that thinks first.)
-      const userPrompt = graderUserPrompt({ words: input.words, kind: brief.kind, frame: brief.frame, machine: [...machine, ...still], world: brief.world ?? null, stressed: brief.stressed, ...(brief.explainer ? { explainer: brief.explainer.grade } : {}) })
+      const userPrompt = graderUserPrompt({ words: input.words, kind: brief.kind, frame: brief.frame, machine: [...machine, ...still], world: brief.world ?? null, stressed: brief.stressed,
+        ...(brief.explainer ? { explainer: brief.explainer.grade } : brief.scene ? { explainer: brief.scene.grade } : {}), ...(brief.look.theme ? { theme: brief.look.theme } : {}) })
       let unread = true
       for (let ask = 0; ask < 2 && unread; ask++) {
         const graded = await deps.call({ model: input.model, system: graderSystemPrompt(), user: ask ? `${userPrompt}\n\nAnswer with the JSON object only, nothing before or after it.` : userPrompt,
@@ -245,7 +256,7 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
     else if (still.length) final = { pass: false, score: Math.min(grade.score, 7), failed: [...new Set([...grade.failed, 'builds' as const])], fixes: [...still, ...grade.fixes].slice(0, 8) }
     if (!final.pass) reason = final.fixes.join(' ')
     keepAttempt(input.run, moment, tries, html, { stage: 'grade', pass: final.pass, grader: grade, machine, motion: still, final }, shot.composite)
-    return { html, grade: final, stills: shot.transparent, review: shot.composite, flat, motionOnly: !machine.length && !!still.length && grade.pass }
+    return { html, grade: final, stills: shot.transparent, review: shot.composite, flat, motionOnly: !machine.length && !!still.length && grade.pass, clean: !machine.length && !still.length }
   }
 
   // My motion library first: a graphic of this kind, filled with the new words (a small call), when one fits.
@@ -275,11 +286,13 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
       if (deps.signal?.aborted) throw new Error('Canceled.')
       tries++
       deps.onTry?.(tries)
-      const reply = await deps.call({ model: input.model, system, user: writerUserPrompt(brief, previous), maxTokens: brief.frame === 'explainer' ? 14000 : 6000, temperature: attempt ? 0.4 : 0.7, purpose: 'write', signal: deps.signal })
+      const reply = await deps.call({ model: input.model, system, user: writerUserPrompt(brief, previous), maxTokens: brief.frame === 'explainer' || brief.scene ? SCENE_WRITER_MAX_TOKENS : WRITER_MAX_TOKENS, temperature: attempt ? 0.4 : 0.7, purpose: 'write', signal: deps.signal })
       costUsd += reply.costUsd
       const html = extractComposition(reply.text)
       const problems = checkComposition(html, expect)
       if (problems.length) {
+        // An answer that ran out of room (no closing script) is a cut-off composition, not a broken one: say so.
+        if (html && !/<\/script>\s*$/i.test(html.trim())) problems.unshift('Your answer was cut off before its end: write a tighter composition (fewer elements, shorter CSS) and finish with </script>.')
         reason = problems.join(' ')
         keepAttempt(input.run, moment, tries, html, { stage: 'composition', problems })
         logger.info('custom.rejected', { problems: plainForLog(problems.slice(0, 4).join(' | ')) })
@@ -296,7 +309,11 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
   let kept = best as Attempt | null
   // Only the motion check failed every try: the best is kept (it passed the review and our hard checks), its flat stretches noted.
   if (kept && !kept.grade.pass && kept.motionOnly) kept = { ...kept, grade: { ...kept.grade, pass: true, score: Math.max(7, kept.grade.score) } }
-  if (!kept?.grade.pass) {
+  // The grade is advice, not a veto: after every try, the best one our own checks passed ships even when the grade
+  // stayed under 7 (its grade is kept as it was). Only our checks failing on every try falls back to the template.
+  const advisory = !!kept && !kept.grade.pass && kept.clean
+  if (advisory) logger.info('custom.kept.belowGrade', { tries, score: kept!.grade.score, failed: kept!.grade.failed.join(',') })
+  if (!kept || (!kept.grade.pass && !advisory)) {
     logger.info('custom.fallback', { tries, reason: plainForLog(reason) })
     // The best try is kept in the library as Retired, with the check's reason (never offered again).
     if (kept && deps.library) deps.library.keep({ id: compositionId(kept.html), html: kept.html, kind: brief.kind, frame: brief.frame, width: expect.width, height: expect.height, durationMs: brief.durationMs,
@@ -312,7 +329,11 @@ export async function produceCustomGraphic(input: ProduceInput, deps: { call: Mo
   saveCustomGraphic(input.run, kept.html, meta, kept.stills, kept.review)
   if (deps.library) {
     if (fromLibrary) deps.library.used(fromLibrary, runId)
-    else {
+    else if (advisory) {
+      // In the reel, but not offered again from the library: only graphics the grade passed are.
+      deps.library.keep({ id: meta.comp, html: kept.html, kind: brief.kind, frame: brief.frame, width: expect.width, height: expect.height, durationMs: brief.durationMs, idea: meta.idea, runId,
+        stills: [], stillData: kept.stills, status: 'retired', reason: `Used below the grade (${kept.grade.score}/10): ${kept.grade.fixes.slice(0, 2).join(' ')}`.slice(0, 400) })
+    } else {
       const dir = customDir(input.run)
       deps.library.keep({ id: meta.comp, html: kept.html, kind: brief.kind, frame: brief.frame, width: expect.width, height: expect.height, durationMs: brief.durationMs, idea: meta.idea, runId,
         stills: customStillNames(meta.comp).map((name) => join(dir, name)), status: 'active' })

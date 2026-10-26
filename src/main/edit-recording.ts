@@ -52,7 +52,7 @@ import { beatFrame } from './beat-stills'
 import { customModel, customStillPaths, openRouterModelCall, readCustomGraphic, type CustomModel } from './custom-graphics'
 import { explainerInfo, makeExplainer } from './explainer'
 import { editCustomEstimate, editHeroMoments, editVisualWorld, makeEditCustomGraphics, regenerateVisualWorld, setVisualWorld, swapBackCustomGraphic, type EditCustomContext, type EditCustomResult } from './edit-custom-graphics'
-import { DEFAULT_PRICE, MAX_NOTE_CHARS, type EditCustomInfo, worldCallCost, worldFromLine, worldLine, WORLD_LINE_CHARS } from '../shared/custom-graphics'
+import { DEFAULT_PRICE, DEFAULT_THEME, MAX_NOTE_CHARS, type EditCustomInfo, worldCallCost, worldFromLine, worldLine, WORLD_LINE_CHARS } from '../shared/custom-graphics'
 import type { EditGraphic } from '../shared/reel-graphics'
 import { DEFAULT_YOUTUBE_CHOICE, YOUTUBE_MAX_SOURCE_SECONDS, YOUTUBE_MAX_TOTAL_SECONDS, isEditFormat, parseChapters, youtubeForEngine, type EditFormat } from '../shared/longform'
 
@@ -990,9 +990,10 @@ export async function editCustomGraphicsInfo(value: unknown): Promise<EditCustom
   const m = await customModel()
   const ctx = customContext(current, decisions, m ?? { model: DEFAULT_PLANNER_MODEL, price: { ...DEFAULT_PRICE }, vision: true })
   const heroes = editHeroMoments(ctx)
-  const estimate = editCustomEstimate(ctx, heroes.length)
+  const estimate = editCustomEstimate(ctx)
   return { available: !!m, reason: m ? null : 'Add your OpenRouter key in Settings → API keys to design custom graphics.', model: ctx.model,
     moments: heroes.map((h) => ({ word: h.word, kind: h.kind, frame: h.frame, replaces: h.replaces })), expectedUsd: estimate.expectedUsd, mostUsd: estimate.mostUsd, revisions: estimate.revisions, busy: !!current.customBusy,
+    scenes: estimate.scenes, popups: estimate.moments, theme: decisions.customTheme ?? DEFAULT_THEME,
     explainer: current.status.plan!.format === 'youtube' ? null : explainerInfo(ctx),
     flat: Object.fromEntries((decisions.graphics ?? []).filter((g) => g.template === 'custom').flatMap((g) => { const found = readCustomGraphic(current.status.folder, g.fields.comp); return found?.meta.flat?.length ? [[found.meta.comp, found.meta.flat]] : [] })) }
 }
@@ -1251,6 +1252,8 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
       // The style: Minimal keeps only the automatic graphics on numbers, the hook and the call to action.
       graphics: editorGraphicsFor(decisions, images, current.status.folder),
       pins, motion, stage: motion && decisions.stageLayouts !== false,
+      // The custom graphics' theme: the stage behind its scenes matches what they were designed on.
+      theme: decisions.customTheme ?? DEFAULT_THEME,
       // The color grade (footage only): the editor's bake puts it under the captions and graphics.
       ...(decisions.look.grade && decisions.look.grade !== 'none' ? { grade: decisions.look.grade } : {}),
       ...(typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color) ? { brand_color: color } : {}),

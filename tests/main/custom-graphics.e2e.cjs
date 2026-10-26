@@ -51,7 +51,7 @@ function fakeModel() {
       const text = isGrade ? user.map((p) => p.text ?? '').join('\n') : String(user)
       let answer
       const system = json.messages?.[0]?.content?.[0]?.text ?? ''
-      if (/ONE visual world/.test(system)) answer = '```json\n' + JSON.stringify(WORLD) + '\n```'
+      if (/WORLD NOTE/.test(system)) answer = '```json\n' + JSON.stringify(WORLD) + '\n```'
       else if (isGrade) {
         const m = graded(text)
         const n = (grades.get(m?.name) ?? 0) + 1
@@ -141,8 +141,8 @@ test('custom graphics: the owner\'s run moments go through write → render → 
   assert.equal(by['three-million'].tries, 3)
   assert.match(by['three-million'].reason, /not said/)
   // Every graphic was designed inside the one world, built on its stressed words, and kept moving (no flat stretch over 1.5 s).
-  const writes = fake.requests.filter((r) => typeof r.messages[1].content === 'string' && !/ONE visual world/.test(r.messages[0].content[0].text))
-  assert.ok(writes.length >= 5 && writes.every((r) => /THE VIDEO'S VISUAL WORLD .*Eyeballs as light/.test(r.messages[1].content) && /STRESSED WORDS /.test(r.messages[1].content)))
+  const writes = fake.requests.filter((r) => typeof r.messages[1].content === 'string' && !/WORLD NOTE/.test(r.messages[0].content[0].text))
+  assert.ok(writes.length >= 5 && writes.every((r) => /THE VIDEO'S HERO OBJECT AND MOTIF .*Eyeballs as light/.test(r.messages[1].content) && /STRESSED WORDS /.test(r.messages[1].content)))
   for (const name of ['opening-claim', 'staircase', 'organic-vs-ads', 'proof']) assert.deepEqual(by[name].meta.flat, [], `${name} never holds still`)
   assert.ok(by.staircase.meta.builds >= 10, `the staircase builds on ${by.staircase.meta.builds} words`)
   // The motion check measures the real sandbox: a card that lands and then holds still is flat until it leaves.

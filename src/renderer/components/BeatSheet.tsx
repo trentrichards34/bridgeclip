@@ -275,7 +275,7 @@ export function BeatSheet({ runId, plan, decisions, look, brand, sources, images
           <p className="text-2xs text-ink-subtle" role="status" data-testid="custom-graphics-status">{custom?.running
             ? `Designing ${custom.total || customInfo.moments.length} custom graphic${(custom.total || customInfo.moments.length) === 1 ? '' : 's'}: ${custom.done} done. Each is drawn, checked over your video and fixed before it’s used.`
             : customInfo.moments.length
-              ? `Your AI designs a graphic for ${customInfo.moments.length} key moment${customInfo.moments.length === 1 ? '' : 's'}. About ${formatUsd(customInfo.expectedUsd)} (at most ${formatUsd(customInfo.mostUsd)}) with ${customInfo.model}.${customCount ? ` ${customCount} already designed.` : ''}`
+              ? `${customInfo.scenes ? `Your AI designs about ${customInfo.scenes} scene${customInfo.scenes === 1 ? '' : 's'} over the parts where you teach and up to ${customInfo.popups ?? 0} key moment${customInfo.popups === 1 ? '' : 's'}` : `Your AI designs a graphic for ${customInfo.moments.length} key moment${customInfo.moments.length === 1 ? '' : 's'}`}, each checked and fixed up to ${customInfo.revisions} times. About ${formatUsd(customInfo.expectedUsd)} (at most ${formatUsd(customInfo.mostUsd)}) with ${customInfo.model}.${customCount ? ` ${customCount} already designed.` : ''}`
               : `${customCount} custom graphic${customCount === 1 ? '' : 's'} designed. Change one with a note, or use its template instead.`}</p>
           {customInfo.reason && <p className="text-2xs text-warning">{customInfo.reason}</p>}
           {customNotes.map((n) => <p key={n} className="text-2xs text-ink-muted">{n}</p>)}

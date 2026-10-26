@@ -434,3 +434,49 @@ def test_a_directed_reel_floats_its_hook_and_hides_it_and_keeps_the_look_extras_
     assert kept == {'look': 'floating', 'color': '#FFFFFF', 'font': 'clean', 'textBg': 'dark', 'hideAfterS': 10}
     plain = ed.edit_project('My reel', total, segments, look, [], [], None, 'a' * 32)
     assert plain['candidates'][0]['hook']['look']['look'] == 'white'
+
+
+def test_custom_scenes_take_the_themes_backdrop():
+    # A 16 s custom scene on the stage and a full-frame one: their scenes take the theme's backdrop (what they were
+    # designed on); a template's stage elsewhere keeps the automatic look.
+    scene = {'id': 'g-scene00001', 'template': 'custom', 'at_ms': 8000, 'duration_ms': 16000, 'placement': 'top', 'size': 'stage', 'origin': 'auto',
+             'fields': {'comp': 'a' * 16, 'idea': 'Designed scene', 'scene': 'stage'}}
+    full = {**scene, 'id': 'g-scene00002', 'at_ms': 40000, 'fields': {**scene['fields'], 'scene': 'visual'}}
+    stair = {'id': 'g-stair00001', 'template': 'staircase', 'at_ms': 70000, 'duration_ms': 8000, 'placement': 'middle', 'size': 'stage', 'origin': 'auto',
+             'fields': {'items': 'a\nb\nc'}}
+    scenes = ed.editor_scenes([scene, full, stair], 90000, None, theme='dark')
+    by = lambda at: next(s for s in scenes if s['start_ms'] <= at < s['end_ms'])  # noqa: E731
+    assert by(10000)['backdrop'] == 'dark' and by(10000)['scene'] == 'stage'
+    assert by(45000)['backdrop'] == 'dark' and by(45000)['scene'] == 'visual'
+    assert by(72000)['backdrop'] != 'dark'
+    assert by(10000)['end_ms'] - by(10000)['start_ms'] >= 15000
+    paper = ed.editor_scenes([scene], 90000, None, theme='paper')
+    assert paper[0]['backdrop'] == 'paper'
+    assert ed.editor_scenes([scene], 90000, '#E84BD8', theme='brand')[0]['backdrop'] == 'solid'
+    # No theme (a run made before themes): the automatic look, as before.
+    assert ed.editor_scenes([scene], 90000, None)[0]['backdrop'] == 'grid'
+    # The Dark product UI's stage is near-black (custom-graphics.ts DARK_UI_GROUND is its middle).
+    from clip_engine.services.stage_scenes import backdrop_colors
+    top, bottom = backdrop_colors('dark')
+    assert max(top) < 0x20 and max(bottom) < 0x10
+
+
+def test_a_scene_over_a_filmed_screen_keeps_the_screen_in_the_card():
+    # A custom scene designed over a filmed screen (fields.card 'screen'): its stage scene shows the screen in the card,
+    # is not cut around the screen (the screen is not covered: it is in the card), and other scenes give way to it.
+    over = {'id': 'g-scene00003', 'template': 'custom', 'at_ms': 20000, 'duration_ms': 15000, 'placement': 'top', 'size': 'stage', 'origin': 'auto',
+            'fields': {'comp': 'b' * 16, 'idea': 'Designed scene', 'scene': 'stage', 'card': 'screen'}}
+    plain = {**over, 'id': 'g-scene00004', 'at_ms': 50000, 'fields': {**over['fields'], 'card': ''}}
+    scenes = ed.editor_scenes([over, plain], 90000, None, avoid=[(18000, 40000), (52000, 60000)], theme='dark')
+    screen = [s for s in scenes if s.get('card') == 'screen']
+    assert len(screen) == 1 and screen[0]['start_ms'] == 20000 and screen[0]['end_ms'] == 35000 and screen[0]['backdrop'] == 'dark'
+    # The plain scene is still cut around its screen (the screen stays full frame there).
+    assert not any(s['start_ms'] < 60000 and s['end_ms'] > 52000 for s in scenes if s.get('card') != 'screen')
+    from clip_engine.services import stage_scenes as st
+    assert 'screen' in st.CARDS
+    # The card frames the busy part of the screen at the card's aspect, inside the frame.
+    crop = st.focus_crop((600.0, 1200.0, 300.0, 200.0), 1080, 1920, 1000 / 806, 0)
+    assert abs(crop.w / crop.h - 1000 / 806) < 1e-6 and crop.w <= 1080 and crop.h <= 1920
+    _, x, y = crop.keys[0]
+    assert x <= 600 and x + crop.w >= 900 and y <= 1200 and y + crop.h >= 1400 and x >= 0 and x + crop.w <= 1080
+    assert ag.checked_saved_scenes([{'scene': 'stage', 'start_ms': 0, 'end_ms': 5000, 'card': 'screen'}], 9000)[0]['card'] == 'screen'

@@ -1102,10 +1102,33 @@ class RenderingService:
         return stage_scenes.build_scene_graph(
             graph, scenes, width, height, time_map.output_ms, request.video_speed, fps, first_input,
             work, stem, bar_h=bar_h, zones=zones, brand=request.scene_brand_color,
-            card_graph=lambda w, h, runs, transition, escape=None, landing=None: graded_card(request.color_grade, stage_scenes.card_source_graph(
+            card_graph=lambda w, h, runs, transition, escape=None, landing=None, screens=None: graded_card(request.color_grade, stage_scenes.card_source_graph(
                 plan, time_map.keeps, w, h, fps, runs, transition, min_w=round(width * stage_scenes.MIN_CARD_SHARE), escape=escape,
-                landing=landing)),
+                landing=landing, focus=self._screen_focus(request, plan, time_map, window_start_ms, runs, transition, screens))),
             escape_matte=escape_matte, matte_size=depth_fx.matte_size(plan.source_width, plan.source_height))
+
+    @staticmethod
+    def _screen_focus(request: RenderRequest, plan, time_map: TimeMap, window_start_ms: int, runs, transition: float,
+                      screens) -> list:
+        """Per card run: where its filmed screen is busy (source pixels), for the screen cards (None elsewhere, or when
+        nothing stands out: the card then shows the screen's upper part)."""
+        if not screens or not any(screens):
+            return []
+        from clip_engine.services.screen_zoom import busy_box
+        out = []
+        for (a, b), screen in zip(runs, screens):
+            box = None
+            if screen:
+                spans = stage_scenes.edited_to_window([(a, b + transition)], time_map.keeps)
+                try:
+                    if spans:
+                        found = busy_box(request.video_path, window_start_ms + spans[0][0], window_start_ms + spans[-1][1])
+                        if found:
+                            box = (found[0] * plan.source_width, found[1] * plan.source_height, found[2] * plan.source_width, found[3] * plan.source_height)
+                except Exception as error:  # noqa: BLE001 - the card shows the screen's upper part instead
+                    logger.info(f"Screen card focus not found: {type(error).__name__}")
+            out.append(box)
+        return out
 
     @staticmethod
     def _source_scene_pairs(request: RenderRequest, time_map: TimeMap, window_start_ms: int) -> list[tuple[dict, dict]]:

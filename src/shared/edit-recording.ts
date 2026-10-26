@@ -279,6 +279,10 @@ export interface EditDecisions {
   customGraphics?: boolean
   /** The Explainer style (Skills; missing: off): the speaker cut out on a paper page, an illustrated canvas per section above (explainer.ts). */
   explainer?: boolean
+  /** The custom graphics' theme (custom-graphics CustomTheme; missing: 'dark', Dark product UI). */
+  customTheme?: 'dark' | 'paper' | 'brand'
+  /** Custom scenes (missing: on with custom graphics): 15-20 s designed scenes over the teaching stretches instead of pop-ups (custom-scenes.ts). */
+  customScenes?: boolean
   /** Reduce background noise and room echo on the voice and even its level (missing: off). */
   voiceCleanup?: boolean
   /** Background music under the reel, ducking while they talk; `musicTrack` is the track (see music.ts). */
@@ -709,7 +713,8 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     return { image: raw.image, word: raw.word as number }
   })
   for (const key of ['cutoutIntro', 'rawIntro'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose how your video opens.')
-  for (const key of ['motionGraphics', 'stageLayouts', 'soundEffects', 'customGraphics', 'explainer'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose your skills again.')
+  if (value.customTheme !== undefined && !['dark', 'paper', 'brand'].includes(value.customTheme as string)) throw new Error('Choose a theme for your custom graphics.')
+  for (const key of ['motionGraphics', 'stageLayouts', 'soundEffects', 'customGraphics', 'explainer', 'customScenes'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw new Error('Choose your skills again.')
   if (value.soundStyle !== undefined && !isSoundRegister(value.soundStyle)) throw new Error('Choose how much sound plays.')
   if (look.grade !== undefined && !isColorGrade(look.grade)) throw new Error('Choose a color grade from the list.')
   let graphics: EditGraphic[]
@@ -732,6 +737,8 @@ export function parseEditDecisions(value: unknown, plan: EditPlan, images: reado
     ...(typeof value.stageLayouts === 'boolean' ? { stageLayouts: value.stageLayouts } : {}),
     ...(typeof value.customGraphics === 'boolean' ? { customGraphics: value.customGraphics } : {}),
     ...(value.explainer === true ? { explainer: true } : {}),
+    ...(value.customTheme === 'dark' || value.customTheme === 'paper' || value.customTheme === 'brand' ? { customTheme: value.customTheme } : {}),
+    ...(value.customScenes === false ? { customScenes: false } : {}),
     ...(typeof value.soundEffects === 'boolean' ? { soundEffects: value.soundEffects } : {}),
     ...(isSoundRegister(value.soundStyle) ? { soundStyle: value.soundStyle } : {}) }
   if (value.youtube !== undefined) {

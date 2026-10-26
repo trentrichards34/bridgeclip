@@ -702,14 +702,48 @@ def screen_aware(graphics: list[dict], windows: Sequence[tuple[int, int]], stage
 CUT_PAD_MS = 300
 
 
+# The custom graphics' theme (custom-graphics.ts THEME_BACKDROP): the backdrop behind the scenes designed in it.
+THEME_BACKDROPS = {'dark': 'dark', 'paper': 'paper', 'brand': 'solid'}
+
+
+def is_custom_scene(g: dict) -> bool:
+    """A custom graphic designed on the stage or full frame (a scene or a stage pop-up): its scene's backdrop is the theme's."""
+    return g.get('template') == 'custom' and (g.get('fields') or {}).get('scene') in ('stage', 'visual')
+
+
+def themed_scenes(scenes: list[dict], graphics: Sequence[dict], theme: Optional[str]) -> list[dict]:
+    """The scenes a custom stage or visual graphic plays in take the theme's backdrop (what it was designed on)."""
+    backdrop = THEME_BACKDROPS.get(theme or '')
+    if not backdrop:
+        return scenes
+    custom = [g for g in graphics if is_custom_scene(g)]
+    return [{**s, 'backdrop': backdrop} if any(g['at_ms'] < s['end_ms'] and s['start_ms'] < g['at_ms'] + g['duration_ms'] for g in custom) else s for s in scenes]
+
+
 def editor_scenes(graphics: Sequence[dict], total_ms: int, brand: Optional[str], avoid: Sequence[tuple[int, int]] = (),
-                  framed: Sequence[dict] = ()) -> list[dict]:
+                  framed: Sequence[dict] = (), theme: Optional[str] = None) -> list[dict]:
     """Stage scenes around the stage-size graphics and Visual scenes around the diagrams (auto_graphics.stage_scenes_for),
     cut around `avoid` (reel ms: stretches that show a screen the speaker filmed, which are the visual already); `framed`:
-    the Visual scenes of the screens framed in a window (screen_aware), which sit inside those stretches."""
+    the Visual scenes of the screens framed in a window (screen_aware), which sit inside those stretches. `theme`: the
+    custom graphics' theme (the scenes of custom graphics take its backdrop)."""
     from clip_engine.services.stage_scenes import MAX_SCENES, MIN_SCENE_MS, auto_look
     backdrop, card = auto_look(brand)
-    scenes = ag.stage_scenes_for(graphics, 0, int(total_ms), backdrop, card)
+    # Scenes designed over a filmed screen: the screen stays in the card under them (never covered), framed on where it
+    # is busy (stage_scenes.focus_crop); they are not cut around the screen, and the other scenes give way to them.
+    screened = [g for g in graphics if is_custom_scene(g) and (g.get('fields') or {}).get('card') == 'screen']
+    on_screen = [{'scene': 'stage', 'start_ms': int(g['at_ms']), 'end_ms': int(min(total_ms, g['at_ms'] + g['duration_ms'])), 'backdrop': backdrop,
+                  'card': 'screen', 'transition': 'slide'} for g in screened]
+    on_screen = themed_scenes(on_screen, screened, theme)
+    rest = [g for g in graphics if g not in screened]
+    scenes = themed_scenes(ag.stage_scenes_for(rest, 0, int(total_ms), backdrop, card), rest, theme)
+    if on_screen:
+        kept = []
+        for s in scenes:
+            pieces = [(s['start_ms'], s['end_ms'])]
+            for v in on_screen:
+                pieces = [p for lo, hi in pieces for p in ((lo, min(hi, v['start_ms'])), (max(lo, v['end_ms']), hi)) if p[1] - p[0] >= MIN_SCENE_MS]
+            kept.extend({**s, 'start_ms': lo, 'end_ms': hi} for lo, hi in pieces)
+        scenes = kept
     if avoid:
         cut = []
         for s in scenes:
@@ -718,6 +752,7 @@ def editor_scenes(graphics: Sequence[dict], total_ms: int, brand: Optional[str],
                 pieces = [p for lo, hi in pieces for p in ((lo, min(hi, a - CUT_PAD_MS)), (max(lo, b + CUT_PAD_MS), hi)) if p[1] - p[0] >= MIN_SCENE_MS]
             cut.extend({**s, 'start_ms': lo, 'end_ms': hi} for lo, hi in pieces)
         scenes = cut
+    scenes = scenes + [s for s in on_screen if s['end_ms'] - s['start_ms'] >= MIN_SCENE_MS]
     for f in framed:
         if not any(f['start_ms'] < s['end_ms'] and s['start_ms'] < f['end_ms'] for s in scenes) and f['end_ms'] - f['start_ms'] >= MIN_SCENE_MS:
             scenes.append(dict(f))

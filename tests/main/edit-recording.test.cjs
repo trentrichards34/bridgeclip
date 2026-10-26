@@ -638,7 +638,7 @@ test('the plan asks for graphics, the review starts with them on, and the reel i
   await waitFor(() => edit.editStatus()?.phase === 'done', 'the reel')
   const render = state.configs.find((c) => c.mode === 'render')
   assert.deepEqual(plain(render.editor), { graphics: [{ id: 'g-plan01', template: 'statement', word: 0, duration_ms: 2500, placement: 'top', fields: { text: 'Most coaches undercharge.', accent: 'undercharge' }, origin: 'auto' }],
-    pins: [], motion: true, stage: true })
+    pins: [], motion: true, stage: true, theme: 'dark' })
   // Nothing is drawn before the engine: the editor's bake draws the graphics.
   assert.equal(render.graphics, undefined)
   assert.deepEqual(plain(editorCalls), [[edit.editStatus().folder, 0, 'edit-reel', 'export']])

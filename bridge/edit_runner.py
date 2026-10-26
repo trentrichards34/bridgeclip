@@ -164,8 +164,8 @@ def _editor(raw, n):
     images), whether the automatic graphics and Stage layouts are on, the brand color, comment keyword and color grade."""
     from clip_engine.services.auto_graphics import MAX_GRAPHICS_LONG as MAX_GRAPHICS
     from clip_engine.services.edit_direction import EDITOR_TEMPLATES
-    if not isinstance(raw, dict) or not set(raw) <= {"graphics", "pins", "motion", "stage", "brand_color", "cta_keyword", "grade", "explainer"} \
-            or not isinstance(raw.get("motion", True), bool) or not isinstance(raw.get("stage", False), bool) or not isinstance(raw.get("explainer", False), bool):
+    if not isinstance(raw, dict) or not set(raw) <= {"graphics", "pins", "motion", "stage", "brand_color", "cta_keyword", "grade", "explainer", "theme"} \
+            or raw.get("theme", "dark") not in ("dark", "paper", "brand") or not isinstance(raw.get("motion", True), bool) or not isinstance(raw.get("stage", False), bool) or not isinstance(raw.get("explainer", False), bool):
         raise ValueError("Invalid editor")
     color = raw.get("brand_color")
     if color is not None and (not isinstance(color, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", color)):
@@ -197,7 +197,9 @@ def _editor(raw, n):
     return {"graphics": clean, "pins": [dict(p) for p in pins], "motion": raw.get("motion", True), "stage": raw.get("stage", False),
             "brand_color": color, "cta_keyword": _text(raw.get("cta_keyword"), 24, "keyword"), **({"grade": grade} if grade else {}),
             # The Explainer style: the paper page with the speaker cut out (edit_direction.explainer_layout).
-            **({"explainer": True} if raw.get("explainer") is True else {})}
+            **({"explainer": True} if raw.get("explainer") is True else {}),
+            # The custom graphics' theme: their scenes' stage (edit_direction.editor_scenes).
+            **({"theme": raw["theme"]} if raw.get("theme") in ("dark", "paper", "brand") else {})}
 
 
 def _sound_design(raw, palette):

@@ -2174,7 +2174,7 @@ async def finish_as_project(config: dict, root: str, work: str, folder: str, bas
             graphics, scenes = ed.explainer_layout(graphics, total_ms, filmed)
             graphics = ed.size_for_scenes(graphics, scenes)
         elif options["stage"]:
-            scenes = ed.editor_scenes(graphics, total_ms, editor.get("brand_color"), avoid, framed)
+            scenes = ed.editor_scenes(graphics, total_ms, editor.get("brand_color"), avoid, framed, editor.get("theme"))
             graphics = ed.size_for_scenes(graphics, scenes)
             scenes = ed.scenes_in_use(scenes, graphics)
         if youtube is not None:

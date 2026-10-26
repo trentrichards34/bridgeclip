@@ -28,7 +28,7 @@ import { createHash, randomUUID } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { BrowserWindow, nativeImage, session, type BrowserWindowConstructorOptions, type Session } from 'electron'
-import { compositionParts, EXPLAINER_CAPTION_ZONE, lookCss, MAX_COMPOSITION_CHARS, MAX_COMPOSITION_ELEMENTS, SETTLED_STILL, type CustomGeometry, type CustomLook } from '../shared/custom-graphics'
+import { compositionParts, CUSTOM_MAX_MS, EXPLAINER_CAPTION_ZONE, lookCss, MAX_COMPOSITION_CHARS, MAX_COMPOSITION_ELEMENTS, SETTLED_STILL, type CustomGeometry, type CustomLook } from '../shared/custom-graphics'
 import { GRAPHIC_FPS } from '../shared/motion-graphics'
 import { GSAP_SOURCE } from './custom-graphics-assets'
 import { getEnginePath } from './pipeline-runner'
@@ -367,14 +367,17 @@ const READ_CODE = `(() => {
 interface Reading { root: [number, number, number, number]; texts: string[]; boxes: [number, number, number, number][]; clipped: string[]; small: number; smallTop?: number }
 
 /** What a reading says is wrong (frame pixels; `face` in frame pixels when the graphic is over the speaker). */
-export function readingProblems(reading: Reading, face: CustomGeometry['face'], explainer?: { captions: { top: number; bottom: number } } | null): string[] {
+export function readingProblems(reading: Reading, face: CustomGeometry['face'], explainer?: { captions: { top: number; bottom: number } } | null, stage = false): string[] {
   const problems: string[] = []
   if (!reading.boxes.length) return ['Nothing is visible when the graphic is settled.']
   if (reading.clipped.length) problems.push(`Words run outside the graphic's area and get cut off: ${reading.clipped.map((t) => `“${t}”`).join(', ')}.`)
   // An Explainer section's line at the top may be small (26 px and up); everywhere else every label is 34 px or more.
   const smallest = explainer ? reading.small : Math.min(...[reading.small, reading.smallTop ?? 0].filter((v) => v > 0), Infinity)
   // An Explainer's page is read from a phone at a glance: its words are bigger than a card's (40 px measured, 48 asked).
-  if (Number.isFinite(smallest) && smallest > 0 && smallest < (explainer ? 40 : 34)) problems.push(`Some words are only about ${Math.round(smallest)} px tall; make every label at least ${explainer ? 48 : 44} px.`)
+  // On the stage and full frame (scenes and stage pop-ups) the floor is higher: their panels hold many small labels that a
+  // phone can't read (a real proxy run had 34-36 px chips): 35 px measured is about a 44 px label (tight line height).
+  const floor = explainer ? 40 : stage ? 35 : 34
+  if (Number.isFinite(smallest) && smallest > 0 && smallest < floor) problems.push(`Some words are only about ${Math.round(smallest)} px tall; make every label at least ${explainer ? 48 : 44} px.`)
   if (explainer && reading.smallTop && reading.smallTop < 24) problems.push(`The section line is only about ${Math.round(reading.smallTop)} px tall; make it 30-34 px.`)
   if (explainer) {
     // The captions' zone stays empty (we draw the captions there).
@@ -432,6 +435,8 @@ export function openCustomSandbox(): CustomSandbox {
         let texts: string[] = []
         const problems: string[] = []
         const settled = request.times[Math.min(SETTLED_STILL, request.times.length - 1)]
+        // A scene (longer than a pop-up) keeps building after its settled still: its last still is read too.
+        const lastRead = request.geometry.kind !== 'explainer' && request.durationMs > CUSTOM_MAX_MS ? request.times[request.times.length - 1] : null
         const scaleTo = { width: Math.round(request.geometry.width * request.scale), height: Math.round(request.geometry.height * request.scale) }
         for (const t of request.times) {
           await page.seek(t)
@@ -449,13 +454,13 @@ export function openCustomSandbox(): CustomSandbox {
                 problems.push(`Something is drawn in the captions' zone (y ${Math.round(top - g0.root.y)}-${Math.round(bottom - g0.root.y)} of your area) at ${(t / 1000).toFixed(1)} s; keep it completely empty all through.`)
             }
           }
-          if (t === settled) {
+          if (t === settled || t === lastRead) {
             const reading = await page.isolated<Reading | null>(READ_CODE)
             if (!reading) problems.push('The graphic has no root.')
             else {
-              texts = reading.texts
+              texts = [...texts, ...reading.texts]
               const g = request.geometry
-              problems.push(...readingProblems(reading, g.face, g.kind === 'explainer' ? { captions: { top: EXPLAINER_CAPTION_ZONE.top * g.height, bottom: EXPLAINER_CAPTION_ZONE.bottom * g.height } } : null))
+              problems.push(...readingProblems(reading, g.face, g.kind === 'explainer' ? { captions: { top: EXPLAINER_CAPTION_ZONE.top * g.height, bottom: EXPLAINER_CAPTION_ZONE.bottom * g.height } } : null, g.kind === 'stage' || g.kind === 'visual'))
             }
           }
         }
@@ -481,7 +486,7 @@ export function openCustomSandbox(): CustomSandbox {
           }
           motion = { change, visible }
         }
-        return { transparent, composite: strip(composite, 520), texts, problems, ...(motion ? { motion } : {}) }
+        return { transparent, composite: strip(composite, 520), texts, problems: [...new Set(problems)], ...(motion ? { motion } : {}) }
       })
     },
     async bake(scene, out, cancelled = () => false) {

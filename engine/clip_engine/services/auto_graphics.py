@@ -2059,13 +2059,13 @@ def checked_saved_scenes(raw: Any, duration_ms: int) -> list[dict]:
     out = []
     for s in raw:
         if not isinstance(s, dict) or s.get('scene') not in ('stage', 'visual') \
-                or s.get('backdrop', 'light') not in ('light', 'dark', 'brand', 'grid', 'gradient', 'solid', 'paper') or s.get('card', 'rounded') not in ('rounded', 'arch', 'cutout'):
+                or s.get('backdrop', 'light') not in ('light', 'dark', 'brand', 'grid', 'gradient', 'solid', 'paper') or s.get('card', 'rounded') not in ('rounded', 'arch', 'cutout', 'screen'):
             return []
         a, b = s.get('start_ms'), s.get('end_ms')
         if type(a) is not int or type(b) is not int or a < 0 or b > duration_ms or b - a < 1200 or (out and a < out[-1]['end_ms']):
             return []
         out.append({'scene': s['scene'], 'start_ms': a, 'end_ms': b, **({'backdrop': s['backdrop']} if s.get('backdrop', 'light') != 'light' else {}),
-                    **({'card': s['card']} if s['scene'] == 'stage' and s.get('card') in ('arch', 'cutout') else {})})
+                    **({'card': s['card']} if s['scene'] == 'stage' and s.get('card') in ('arch', 'cutout', 'screen') else {})})
     return out
 
 

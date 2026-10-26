@@ -28,12 +28,13 @@ export type SceneBackdrop = 'light' | 'dark' | 'brand' | 'grid' | 'gradient' | '
  * with the bottom), or a cut-out (the Explainer style: no card, the speaker cut out of the video standing on the
  * backdrop; the export draws the rounded card where the cut-out isn't clean).
  */
-export type SceneCard = 'rounded' | 'arch' | 'cutout'
+/** 'screen': the rounded card showing a filmed screen framed on where it is busy, under a designed scene (custom-scenes.ts). */
+export type SceneCard = 'rounded' | 'arch' | 'cutout' | 'screen'
 export const SCENE_KINDS: readonly SceneKind[] = ['face', 'stage', 'visual']
 export const SCENE_BACKDROPS: readonly SceneBackdrop[] = ['light', 'dark', 'brand', 'grid', 'gradient', 'solid', 'paper']
 /** The Solid backdrop's color without a brand color (motion-graphics DIAGRAM_PANEL). */
 export const SOLID_BACKDROP_COLOR = '#1F4E9C'
-export const SCENE_CARDS: readonly SceneCard[] = ['rounded', 'arch', 'cutout']
+export const SCENE_CARDS: readonly SceneCard[] = ['rounded', 'arch', 'cutout', 'screen']
 
 export interface StageScene {
   scene: SceneKind
@@ -100,7 +101,7 @@ export const SCENE_DETAILS: Record<SceneKind, string> = {
   visual: 'Backdrop only, so a graphic can fill the frame.'
 }
 export const BACKDROP_LABELS: Record<SceneBackdrop, string> = { light: 'Light', dark: 'Dark', brand: 'Brand', grid: 'Grid', gradient: 'Gradient', solid: 'Solid', paper: 'Paper' }
-export const CARD_LABELS: Record<SceneCard, string> = { rounded: 'Rounded', arch: 'Arch', cutout: 'Cut-out' }
+export const CARD_LABELS: Record<SceneCard, string> = { rounded: 'Rounded', arch: 'Arch', cutout: 'Cut-out', screen: 'Screen' }
 /** The Explainer's captions: the center of their block at this share of the height (engine: stage_scenes.EXPLAINER_CAPTION_Y). */
 export const EXPLAINER_CAPTION_Y = 0.088
 
@@ -135,7 +136,7 @@ const isTransition = (x: unknown): x is SceneTransition => (SCENE_TRANSITIONS as
 const clean = (s: StageScene): StageScene => s.scene === 'face'
   ? { scene: 'face', start_ms: s.start_ms, end_ms: s.end_ms }
   : { scene: s.scene, start_ms: s.start_ms, end_ms: s.end_ms, ...(s.backdrop && s.backdrop !== 'light' ? { backdrop: s.backdrop } : {}),
-      ...(s.scene === 'stage' && (s.card === 'arch' || s.card === 'cutout') ? { card: s.card } : {}), ...(s.scene === 'stage' && s.escape === false ? { escape: false as const } : {}),
+      ...(s.scene === 'stage' && (s.card === 'arch' || s.card === 'cutout' || s.card === 'screen') ? { card: s.card } : {}), ...(s.scene === 'stage' && s.escape === false ? { escape: false as const } : {}),
       ...(s.transition && s.transition !== DEFAULT_SCENE_TRANSITION ? { transition: s.transition } : {}) }
 const same = (a: StageScene, b: StageScene): boolean => a.scene === b.scene && (a.backdrop ?? 'light') === (b.backdrop ?? 'light') && (a.card ?? 'rounded') === (b.card ?? 'rounded')
   && (a.escape ?? true) === (b.escape ?? true) && (a.transition ?? DEFAULT_SCENE_TRANSITION) === (b.transition ?? DEFAULT_SCENE_TRANSITION)

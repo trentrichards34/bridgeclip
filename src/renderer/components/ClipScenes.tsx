@@ -104,7 +104,7 @@ export function ScenesTrack({ candidate, viewStart, viewEnd, time, disabled, onC
       {scenes.map((s, i) => {
         const a = Math.max(s.start_ms, viewStart), b = Math.min(s.end_ms, viewEnd)
         if (b <= a) return null
-        const label = `${SCENE_LABELS[s.scene]} scene${s.scene !== 'face' ? `, ${BACKDROP_LABELS[s.backdrop ?? 'light'].toLowerCase()} backdrop${s.card === 'arch' ? ', arch card' : s.card === 'cutout' ? ', cut out' : ''},` : ''} from ${clock(s.start_ms)} to ${clock(s.end_ms)}`
+        const label = `${SCENE_LABELS[s.scene]} scene${s.scene !== 'face' ? `, ${BACKDROP_LABELS[s.backdrop ?? 'light'].toLowerCase()} backdrop${s.card === 'arch' ? ', arch card' : s.card === 'cutout' ? ', cut out' : s.card === 'screen' ? ', your screen in the card' : ''},` : ''} from ${clock(s.start_ms)} to ${clock(s.end_ms)}`
         return <div key={`${i}-${s.start_ms}`} className={cn('editor-scene-block', `scene-${s.scene}`, `backdrop-${s.backdrop ?? 'light'}`, selected === i && 'selected')}
           style={{ left: `${(a - viewStart) / span * 100}%`, width: `${(b - a) / span * 100}%` }}>
           <button className="editor-scene-edge" aria-label={`Change when the ${label} starts`} disabled={disabled} onPointerDown={(e) => startDrag(e, i, 'start')} tabIndex={-1} />
@@ -132,7 +132,7 @@ export function cameraMoveStyle(move: { kind: 'zoom' | 'whip'; p: number } | nul
 
 const BACKDROP_CSS: Record<SceneBackdrop, (brand: string) => string> = {
   light: () => 'linear-gradient(#f6f7f9, #e2e5ea)',
-  dark: () => 'linear-gradient(#2b2e34, #15171b)',
+  dark: () => 'linear-gradient(#16141c, #0a090e)',
   brand: (c) => `linear-gradient(color-mix(in srgb, ${c} 10%, white), color-mix(in srgb, ${c} 24%, white))`,
   // The engine's grid: lavender easing into the brand color low in the frame, a faint white square grid fading out.
   grid: (c) => `linear-gradient(rgba(255,255,255,.28) 1px, transparent 1px) 0 0 / 7.1428% 4.0179%, linear-gradient(90deg, rgba(255,255,255,.28) 1px, transparent 1px) 0 0 / 7.1428% 4.0179%, linear-gradient(color-mix(in srgb, ${c} 16%, white), color-mix(in srgb, ${c} 30%, white) 45%, color-mix(in srgb, ${c} 82%, white))`,
