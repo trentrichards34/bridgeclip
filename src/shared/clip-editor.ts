@@ -680,6 +680,23 @@ export function variantOf(c: CandidateEdit, candidates: CandidateEdit[]): Candid
   return { ...structuredClone(candidateEdit(c)), id: 'new', title: variantTitle(c.title, candidates.map((x) => x.title)), status: 'refining' }
 }
 
+/** The most trial reels made from one clip's hook ideas at once. */
+export const MAX_TRIAL_REELS = 5
+
+/**
+ * A trial reel (Instagram trial reels): a variant of the clip with another hook, named after it so its export is easy
+ * to find and upload. Graphics, scenes and the rest are the clip's (nothing is designed again).
+ */
+export function trialVariant(c: CandidateEdit, candidates: CandidateEdit[], hook: string): CandidateEdit {
+  const text = clampText(hook.replace(/\s+/g, ' ').trim(), MAX_HOOK_CHARS)
+  if (text.split(' ').length < 2) throw new Error('A hook needs at least two words.')
+  const titles = new Set(candidates.map((x) => x.title))
+  let title = clampText(text, 200)
+  for (let k = 2; titles.has(title) && k < 99; k++) title = `${clampText(text, 190)} (trial ${k})`
+  const base = variantOf(c, candidates)
+  return { ...base, title, hook: { text, look: c.hook?.look ?? DEFAULT_HEADLINE_LOOK } }
+}
+
 /**
  * "Use this style on every clip": captions on/off, caption preset and position,
  * the hook look (not its words), call to action and export speed go from

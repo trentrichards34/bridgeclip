@@ -233,6 +233,8 @@ export interface BridgeClipAPI {
     suggestHooks: (path: string, revision: number, id: string) => Promise<{ hooks: HookIdea[] }>
     /** "Fix layout": the clip's stage scenes worked out again from its graphics (free). */
     fixLayout: (path: string, revision: number, id: string, graphics?: unknown) => Promise<{ stage_scenes: StageScene[] }>
+    /** What one hook-ideas call cost on this run before (null: none yet). */
+    hookCost: (path: string) => Promise<number | null>
     /** Main asks the open editor to save before a close or quit continues. */
     onSaveBeforeClose: (callback: () => void) => () => void
     closeReady: (saved: boolean) => Promise<void>
@@ -862,6 +864,7 @@ const api: BridgeClipAPI = {
     addCandidate: (path, revision, candidate, sourceId) => ipcRenderer.invoke('editor:addCandidate', path, revision, candidate, sourceId),
     suggestHooks: (path, revision, id) => paid('editor:suggestHooks', path, revision, id),
     fixLayout: (path, revision, id, graphics) => ipcRenderer.invoke('editor:fixLayout', path, revision, id, graphics),
+    hookCost: (path) => ipcRenderer.invoke('editor:hookCost', path),
     onSaveBeforeClose: (callback) => subscribe<void>('editor:saveBeforeClose', () => callback()),
     closeReady: (saved) => ipcRenderer.invoke('editor:closeReady', saved),
     graphicImage: (path) => ipcRenderer.invoke('editor:graphicImage', path),

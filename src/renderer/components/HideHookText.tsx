@@ -16,17 +16,18 @@ export function HideHookText({ value, onChange, bar, compact = false, className 
   className?: string
 }): React.JSX.Element {
   const current = isHeadlineHideAfter(value) ? value : undefined
-  const choices = HEADLINE_HIDE_AFTER_S.filter((s) => SHOWN.includes(s) || s === current)
-  const options = [{ value: 'never', label: 'Never' }, ...choices.map((s) => ({ value: String(s), label: `After ${s} s` }))]
+  // The clip editor (compact) offers every length, and says "the whole video" for never.
+  const choices = HEADLINE_HIDE_AFTER_S.filter((s) => compact || SHOWN.includes(s) || s === current)
+  const options = [{ value: 'never', label: compact ? 'The whole video' : 'Never' }, ...choices.map((s) => ({ value: String(s), label: compact ? `${s} seconds` : `After ${s} s` }))]
   const picked = current === undefined ? 'never' : String(current)
   const choose = (next: string): void => onChange(next === 'never' ? undefined : Number(next) as HeadlineHideAfter)
   return (
     <div className={cn('space-y-1.5', className)} data-testid="hide-hook-text">
       <div className={cn('flex flex-wrap items-center gap-2', compact && 'gap-1.5')}>
-        <span className="text-xs font-semibold text-ink">Hide hook text</span>
+        <span className="text-xs font-semibold text-ink">{compact ? 'Hook stays on screen' : 'Hide hook text'}</span>
         {compact
           // Narrow side panels: a dropdown, never wider than the panel.
-          ? <Select size="sm" className="w-32" aria-label="Hide hook text" value={picked} options={options} onChange={choose} />
+          ? <Select size="sm" className="w-36" aria-label="Hook stays on screen" value={picked} options={options} onChange={choose} />
           : <Segmented label="Hide hook text" size="sm" value={picked} options={options} onChange={choose} />}
       </div>
       <p className="text-2xs text-ink-subtle">

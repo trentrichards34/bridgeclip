@@ -229,3 +229,34 @@ test('"Suggest hooks" needs the OpenRouter key, locks the editor, returns parsed
     assert.equal((await f.main.openEditor(f.run)).operation, null)
   } finally { f.cleanup() }
 })
+
+test('trial reels: a variant per hook, named after it, its hook set, graphics and scenes kept', () => {
+  const p = project()
+  const c = { ...p.candidates[0], hook: { text: 'The original hook', look: look('#E84BD8') } }
+  const v = schema.trialVariant(c, p.candidates, '  Most   creators quit too early ')
+  assert.equal(v.title, 'Most creators quit too early')
+  assert.deepEqual(plain(v.hook), { text: 'Most creators quit too early', look: look('#E84BD8') })
+  assert.equal(v.status, 'refining'); assert.equal(v.id, 'new')
+  assert.deepEqual(plain(v.ranges), plain(c.ranges)); assert.deepEqual(plain(v.scenes), plain(c.scenes))
+  // A second reel with the same words gets its own name; one word is not a hook.
+  assert.equal(schema.trialVariant(c, [...p.candidates, v], 'Most creators quit too early').title, 'Most creators quit too early (trial 2)')
+  assert.throws(() => schema.trialVariant(c, p.candidates, 'Hello'), /two words/)
+  assert.equal(schema.MAX_TRIAL_REELS, 5)
+})
+
+test('"Fix layout" asks the engine for the scenes from the clip\'s graphics and returns them checked (overlaps trimmed)', async () => {
+  const { workers, spawn } = hookWorker()
+  const f = setup(spawn)
+  try {
+    await assert.rejects(f.main.fixEditorLayout(f.run, 3, 'candidate-1', []), /changed/)
+    const graphics = [{ id: 'g-0001', template: 'statement', at_ms: 1000, duration_ms: 3000, placement: 'top', fields: { text: 'The event' }, size: 'stage' }]
+    const pending = f.main.fixEditorLayout(f.run, 0, 'candidate-1', graphics)
+    const worker = await nextWorker(workers, 1)
+    assert.deepEqual([worker.config.action, worker.config.candidate_id, worker.config.revision], ['fix-layout', 'candidate-1', 0])
+    assert.equal(worker.config.graphics.length, 1)
+    worker.reply({ ok: true, stage_scenes: [{ scene: 'stage', start_ms: 1000, end_ms: 4070, backdrop: 'dark' }, { scene: 'stage', start_ms: 4000, end_ms: 6000, backdrop: 'dark', card: 'screen' }] })
+    const { stage_scenes } = await pending
+    assert.deepEqual(plain(stage_scenes), [{ scene: 'stage', start_ms: 1000, end_ms: 4070, backdrop: 'dark' }, { scene: 'stage', start_ms: 4070, end_ms: 6000, backdrop: 'dark', card: 'screen' }])
+    assert.equal((await f.main.openEditor(f.run)).project.revision, 0, 'the project is not changed (the editor applies them as an edit)')
+  } finally { f.cleanup() }
+})

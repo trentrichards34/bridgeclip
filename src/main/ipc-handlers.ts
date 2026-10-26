@@ -996,6 +996,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('editor:progress', (_event, path: unknown) => readEditorProgress(path))
   handle('editor:freeMedia', (_event, path: unknown, revision: unknown) => freeEditorMedia(path, revision))
   handle('editor:addCandidate', (_event, path: unknown, revision: unknown, candidate: unknown, sourceId: unknown) => addEditorCandidate(path, revision, candidate, sourceId))
+  // What one hook-ideas call cost on this run before (null: none yet; the page says "about a cent").
+  handle('editor:hookCost', (_event, path: unknown) => editorCallEstimate(path, 'suggest-hooks').catch(() => null))
   // "Fix layout": the clip's stage scenes worked out again from its graphics (local, free).
   handle('editor:fixLayout', (_event, path: unknown, revision: unknown, id: unknown, graphics: unknown) => fixEditorLayout(path, revision, id, graphics))
   // Hook ideas are one paid call: they pass the spending check (estimated from this run's earlier ones, if any).

@@ -8,11 +8,12 @@ import { Archive, Check, ChevronLeft, ChevronRight, ChevronDown, Copy, Download,
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage, formatTimecode, localFileUrl, parseTimecode } from '../lib/utils'
 import { HeadlineLookPicker } from './HeadlineLookPicker'
+import { formatSpendUsd } from '../../shared/spending'
 import { CtaPicker } from './CtaPicker'
 import { Segmented } from './ui/Segmented'
 import { DEFAULT_HEADLINE_LOOK, HEADLINE_FONTS, HIGHLIGHT, HIGHLIGHT_PHRASE_FAMILY, TEXT_BOX, headlineBarColor, headlineShownAt, headlineTextBg, headlineTextBox, headlineTextColor, highlightColors, highlightPlacement, textBoxOutline, textBoxPath, textBoxRects } from '../../shared/headline-look'
 import { captionLanguageLabel } from '../../shared/caption-language'
-import { type AutomaticOmission, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, applyStyleToAll, runHookLook, transcriptClip, transcriptRange, variantOf, type HookIdea, MAX_HOOK_CHARS, SPLIT_RANGE, panelRows, resizeSplit, splitOf, EDITOR_REVISION_CONFLICT, cameraMarkers, snapFrame, stepFrame, candidateEdit, canAnimateScene, defaultCrop, editDuration, editSignature, editorProgress, framingAt, outputTimeAt, normalizeSceneTransitions, refineEdit, renderEditKey, resizeCrop, retimeScene, sceneAt, trimRange, type CandidateEdit, type Crop, type CropCorner, type EditorCandidate, type EditorQuestion, type EditorRange, type EditorScene, type EditorSession } from '../../shared/clip-editor'
+import { type AutomaticOmission, MAX_EDITOR_CANDIDATES, TRANSCRIPT_CLIP_MS, applyStyleToAll, runHookLook, transcriptClip, transcriptRange, variantOf, trialVariant, MAX_TRIAL_REELS, type HookIdea, MAX_HOOK_CHARS, SPLIT_RANGE, panelRows, resizeSplit, splitOf, EDITOR_REVISION_CONFLICT, cameraMarkers, snapFrame, stepFrame, candidateEdit, canAnimateScene, defaultCrop, editDuration, editSignature, editorProgress, framingAt, outputTimeAt, normalizeSceneTransitions, refineEdit, renderEditKey, resizeCrop, retimeScene, sceneAt, trimRange, type CandidateEdit, type Crop, type CropCorner, type EditorCandidate, type EditorQuestion, type EditorRange, type EditorScene, type EditorSession } from '../../shared/clip-editor'
 import { CameraChanges, CameraScanButton } from './CameraChanges'
 import { ActionMenu } from './ui/ActionMenu'
 import { Button } from './ui/Button'
@@ -152,6 +153,14 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
     return () => window.removeEventListener('pointerup', end)
   }, [])
   const [hookIdeas, setHookIdeas] = useState<{ id: string; hooks: HookIdea[] } | null>(null)
+  // Trial reels: the hook ideas the member ticked (by index), with their words as edited.
+  const [trials, setTrials] = useState<Record<number, string>>({})
+  const [hookCost, setHookCost] = useState<number | null>(null)
+  useEffect(() => {
+    let live = true
+    if (typeof getApi().editor.hookCost === 'function') void getApi().editor.hookCost(outputDir).then((usd) => { if (live) setHookCost(usd) }).catch(() => {})
+    return () => { live = false }
+  }, [outputDir])
   const [undo, setUndo] = useState<EditorCandidate[][]>([])
   const [redo, setRedo] = useState<EditorCandidate[][]>([])
   const [editingCaption, setEditingCaption] = useState<number | null>(null)
@@ -553,7 +562,7 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
     try {
       await save()
       const { hooks } = await getApi().editor.suggestHooks(outputDir, sessionRef.current!.project.revision, id)
-      setHookIdeas({ id, hooks })
+      setHookIdeas({ id, hooks }); setTrials({})
     } catch (e) {
       const message = errorMessage(e)
       setError(message)
@@ -576,12 +585,45 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
       if (message.includes(EDITOR_REVISION_CONFLICT)) setConflict(true)
     } finally { setBusy(null) }
   }
-  const run = async (action: 'review' | 'export' | 'export-all' | 'scan-cameras'): Promise<void> => {
-    if (!candidate || busy) return
+  /**
+   * Trial reels: one variant of this clip per ticked hook (its words as edited), named after its hook, marked ready
+   * and baked with the other ready clips. Graphics and scenes are the clip's own: nothing is designed again.
+   */
+  const makeTrialReels = async (): Promise<void> => {
+    const texts = Object.values(trials).map((t) => t.replace(/\s+/g, ' ').trim()).filter((t) => t.split(' ').length >= 2).slice(0, MAX_TRIAL_REELS)
+    if (!candidate || busy || !texts.length) return
+    if (typeof getApi().editor.addCandidate !== 'function') { setError('Restart CreatorClips to make trial reels.'); return }
+    video.current?.pause(); setEditingCaption(null); setError(null); setNotice(null); setBusy('save')
+    const added = new Set<string>()
+    try {
+      await save()
+      let s = sessionRef.current!
+      for (const text of texts) {
+        s = await getApi().editor.addCandidate(outputDir, s.project.revision, trialVariant(candidate, s.project.candidates, text), candidate.id)
+        added.add(s.project.candidates.at(-1)!.id)
+      }
+      const next = s.project.candidates.map((c) => added.has(c.id) ? { ...c, status: 'ready' as const } : c)
+      setUndo([]); setRedo([])
+      setSession(s); sessionRef.current = s; setEdits(next); editsRef.current = next
+      savedKey.current = JSON.stringify(s.project.candidates.map(candidateEdit)); keyRef.current = JSON.stringify(next.map(candidateEdit))
+      await save()
+      setTrials({})
+    } catch (e) {
+      const message = errorMessage(e)
+      setError(added.size ? `${message} ${added.size} trial reel${added.size === 1 ? ' was' : 's were'} added; bake them from the bake menu.` : message)
+      if (message.includes(EDITOR_REVISION_CONFLICT)) setConflict(true)
+      setBusy(null)
+      return
+    }
+    setBusy(null)
+    await run('export-all', editsRef.current.filter((c) => c.status === 'ready').length)
+  }
+  const run = async (action: 'review' | 'export' | 'export-all' | 'scan-cameras', readyNow?: number): Promise<void> => {
+    if (!candidate || (busy && readyNow === undefined)) return
     video.current?.pause(); setError(null); setNotice(null); setBatch(undefined); setBusy(action)
     setProgress(action === 'scan-cameras' ? { phase: 'scan', percent: 0 } : undefined)
     let saved = false, active = true, pollPending = false, polling: number | undefined
-    const count = edits.filter((c) => c.status === 'ready').length
+    const count = readyNow ?? edits.filter((c) => c.status === 'ready').length
     try {
       await save()
       saved = true
@@ -1176,17 +1218,29 @@ export function ClipEditor({ outputDir, leading, onExports, initialClip, initial
             <section className="space-y-2 border-t border-white/10 pt-3" aria-label="Hook ideas">
               <div className="flex items-center justify-between gap-2"><p className="text-xs">Hook ideas</p>
                 <Button size="sm" icon={<Sparkles size={13} />} disabled={editingDisabled || !spoken} onClick={() => { void suggestHooks() }}
-                  tooltip={spoken ? 'Write 5 hook options from what is said in this clip, each graded with the hook framework. Uses your OpenRouter key.' : 'Nothing is said in this clip, so there are no words to write hooks from.'}>{ideas ? 'Suggest again' : 'Suggest hooks'}</Button></div>
-              {!ideas && <p className="text-2xs text-ink-subtle">Ideas only use what the speaker says in this clip. Picking one sets the hook words.</p>}
+                  tooltip={spoken ? `Write 5 hook options from what is said in this clip, each graded with the hook framework. One small call on your OpenRouter key: about ${hookCost !== null ? formatSpendUsd(hookCost) : 'a cent'}.` : 'Nothing is said in this clip, so there are no words to write hooks from.'}>{ideas ? 'Suggest again' : 'Suggest hooks'}</Button></div>
+              {!ideas && <p className="text-2xs text-ink-subtle">Ideas only use what the speaker says in this clip. Picking one sets the hook words; ticking several makes trial reels. About {hookCost !== null ? formatSpendUsd(hookCost) : 'a cent'} a time.</p>}
               {ideas && !ideas.length && <p className="text-2xs text-ink-subtle">No ideas stuck closely enough to what is said in this clip. Try again, or write your own.</p>}
               {ideas?.map((idea, i) => <div key={i} className="editor-hook-idea">
                 <div className="flex items-start gap-2"><span className={cn('editor-hook-grade', `grade-${idea.grade.toLowerCase()}`)} title={`Hook score ${idea.score} of 10`}>{idea.grade}</span>
                   <p className="flex-1 text-xs leading-relaxed">{idea.text}</p></div>
                 <p className="text-2xs text-ink-subtle">{hookTypeLabels[idea.hook_type] ?? 'Plain'} hook · {idea.score} / 10{idea.why ? ` · ${idea.why}` : ''}</p>
                 {idea.evidence && <p className="text-2xs text-ink-subtle">From the clip: “{idea.evidence}”</p>}
-                <Button size="sm" variant={candidate.hook?.text === idea.text ? 'secondary' : 'ghost'} disabled={editingDisabled || candidate.hook?.text === idea.text}
-                  onClick={() => change({ hook: { text: idea.text, look: candidate.hook?.look ?? runHookLook(edits) } })}>{candidate.hook?.text === idea.text ? 'In use' : 'Use this hook'}</Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button size="sm" variant={candidate.hook?.text === idea.text ? 'secondary' : 'ghost'} disabled={editingDisabled || candidate.hook?.text === idea.text}
+                    onClick={() => change({ hook: { text: idea.text, look: candidate.hook?.look ?? runHookLook(edits) } })}>{candidate.hook?.text === idea.text ? 'In use' : 'Use this hook'}</Button>
+                  <label className="flex items-center gap-1.5 text-2xs"><input type="checkbox" aria-label={`Trial reel: ${idea.text}`} disabled={editingDisabled}
+                    checked={trials[i] !== undefined} onChange={(e) => setTrials((t) => { const n = { ...t }; if (e.target.checked) n[i] = idea.text; else delete n[i]; return n })} />Trial reel</label>
+                </div>
+                {trials[i] !== undefined && <input className="editor-input w-full text-xs" aria-label={`Trial reel hook ${i + 1}`} maxLength={MAX_HOOK_CHARS} value={trials[i]}
+                  onChange={(e) => { const text = e.target.value; setTrials((t) => ({ ...t, [i]: text })) }} />}
               </div>)}
+              {ideas && ideas.length > 0 && <div className="space-y-1">
+                <Button size="sm" variant="primary" disabled={editingDisabled || !!busy || !Object.keys(trials).length} onClick={() => { void makeTrialReels() }} data-testid="make-trial-reels"
+                  tooltip="For Instagram trial reels: a copy of this clip for each ticked hook, named after it, baked with the same graphics and scenes. No AI calls.">
+                  {`Make ${Object.keys(trials).length || ''} trial reel${Object.keys(trials).length === 1 ? '' : 's'}`.replace('  ', ' ')}</Button>
+                <p className="text-2xs text-ink-subtle">Tick the hooks to test, edit their words, and each becomes its own clip in your Library, named after its hook.</p>
+              </div>}
             </section>
             <section className="space-y-2 border-t border-white/10 pt-3" aria-label="Call to action">
               <p className="text-xs">Call to action at the end</p>

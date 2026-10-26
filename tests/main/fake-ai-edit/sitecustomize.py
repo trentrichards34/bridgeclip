@@ -1,4 +1,4 @@
-"""End-to-end tests only: a stand-in for Edit my recording's one paid engine call (the plan).
+"""End-to-end tests only: a stand-in for Edit my recording's one paid engine call (the plan) and the editor's hook ideas.
 
 The e2e test runs the real engine through a wrapper Python that puts this folder first on PYTHONPATH and sets
 CREATORCLIPS_FAKE_AI=1. Transcription is stood in for by the test's local OpenRouter stand-in (in the app); the
@@ -103,5 +103,17 @@ if os.environ.get("CREATORCLIPS_FAKE_AI") == "1":
             return {"choices": [{"message": {"content": json.dumps(plan)}}]}, {"cost": 0.004}
 
         edit_recording.chat_completion = chat_completion
+
+        # The clip editor's hook ideas (one small call): five fixed options from the editor fixture's words.
+        from clip_engine.services import hook_ideas
+
+        async def suggest_hooks(settings, title, text, voice="clipper"):
+            ideas = [("The event changed everything", "story"), ("That explains the result", "contrarian"), ("Why the event happened", "question"),
+                     ("The result nobody expected", "curiosity"), ("What the event explains", "question")]
+            return {"hooks": [{"text": t, "grade": "B", "score": 7, "hook_type": k, "elements": {"qualifier": None, "main_statement": t, "twist": None},
+                               "evidence": "The event happened", "why": "From the clip."} for t, k in ideas],
+                    "cost_usd": 0.004, "cost_incomplete": False, "model": "anthropic/claude-opus-5.5"}
+
+        hook_ideas.suggest_hooks = suggest_hooks
     except Exception:  # noqa: BLE001 - only the e2e test uses this; a broken stand-in shows up as a failing test
         pass
