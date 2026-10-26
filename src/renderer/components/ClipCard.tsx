@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, FolderOpen, Heading, ImageIcon, ImageOff, ListPlus, Megaphone, Play, Send, Trash2, TrendingUp, TriangleAlert, Undo2, Pencil, Clapperboard } from 'lucide-react'
+import { Check, FolderOpen, Heading, ImageIcon, ImageOff, ListPlus, Megaphone, Play, Send, Trash2, TrendingUp, TriangleAlert, Undo2, Pencil, Clapperboard, SquarePen } from 'lucide-react'
 import { cn, formatTimecode, isMac, localFileUrl } from '../lib/utils'
 import { getApi } from '../lib/ipc'
 import { clipFilePath, loadThumbnail } from '../lib/thumbnails'
@@ -53,6 +53,8 @@ interface ClipCardProps {
   onChangeCta?: () => void
   /** Remix videos with saved parts: re-make with new hook text, captions or box size. */
   onEditVideo?: () => void
+  /** Open this clip in the video editor. */
+  onOpenEditor?: () => void
   /** Open this clip in the editor on its headline (Hook & CTA). */
   onEditHeadline?: () => void
   /** Open Remix with this clip's video as the source. */
@@ -78,6 +80,7 @@ export function ClipCard({
   onDelete,
   onChangeCta,
   onEditVideo,
+  onOpenEditor,
   onEditHeadline,
   onRemix,
   onMakeCover,
@@ -245,6 +248,7 @@ export function ClipCard({
           {postingBadge}
           {!selecting && <div className="ml-auto">
             <ActionMenu label={`Actions for “${title}”`} disabled={markingPosted || actionsDisabled} actions={[
+              ...(onOpenEditor ? [{ label: 'Open in editor', icon: <SquarePen className="h-3.5 w-3.5" />, onSelect: onOpenEditor }] : []),
               ...(onPost ? [{ label: 'Post or schedule', icon: <Send className="h-3.5 w-3.5" />, onSelect: onPost }] : []),
               ...(onMakeCover ? [{ label: 'Make my cover', icon: <ImageIcon className="h-3.5 w-3.5" />, onSelect: onMakeCover }] : []),
               ...(onAddToAutomation ? [{ label: 'Add to automation', icon: <ListPlus className="h-3.5 w-3.5" />, onSelect: onAddToAutomation }] : []),

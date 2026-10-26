@@ -364,6 +364,7 @@ function GeneratedClipList({ output, outputDir: runDirectory, leading, onNewClip
               onDelete={outputDir ? () => confirmDelete([clip.clip_index]) : undefined}
               onChangeCta={outputDir ? () => setCtaClip(clip) : undefined}
               onEditVideo={outputDir && clip.editable ? () => setEditClip(clip) : undefined}
+              onOpenEditor={editor ? () => editor.onOpen({ clip: clip.clip_index }) : undefined}
               onEditHeadline={editor ? () => editor.onOpen({ clip: clip.clip_index, tab: 'hook' }) : undefined}
               onRemix={outputDir && onNavigate ? () => void remixClip(clip) : undefined}
               actionsDisabled={deleting || exporting}

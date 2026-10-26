@@ -33,7 +33,7 @@ test('Library deletes only selected clips through its icon action and refreshes 
   // Manual posting works without a connected account and survives reopening the run.
   const clipActions = page.getByRole('button', { name: 'Actions for “First clip”', exact: true })
   await clipActions.click()
-  assert.deepEqual(await page.getByRole('menuitem').allTextContents(), ['Post or schedule', 'Add to automation', 'Edit headline', 'Add call to action', 'Remix this clip', 'Mark as posted', process.platform === 'darwin' ? 'Show in Finder' : 'Show in folder', 'Delete clip'])
+  assert.deepEqual(await page.getByRole('menuitem').allTextContents(), ['Open in editor', 'Post or schedule', 'Make my cover', 'Add to automation', 'Edit headline', 'Add call to action', 'Remix this clip', 'Mark as posted', process.platform === 'darwin' ? 'Show in Finder' : 'Show in folder', 'Delete clip'])
   await page.getByRole('menuitem', { name: 'Mark as posted', exact: true }).click()
   await page.getByRole('region', { name: 'Posted 1', exact: true }).getByText('First clip', { exact: true }).waitFor()
   assert.ok(fs.existsSync(path.join(run, '.bridgeclip-posted-0')))
