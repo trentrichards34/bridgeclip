@@ -372,7 +372,7 @@ export function initialDecisions(plan: EditPlan, look: EditLook = DEFAULT_EDIT_L
   // The plan's style (one choice for graphics and sound) is where the review's Style starts.
   const direction = plan.graphics !== undefined ? { motionGraphics: true, stageLayouts: true, ...(plan.register ? { soundStyle: plan.register } : {}) } : {}
   return applyRecipe(plan, {
-    cut: plan.words.flatMap((word, i) => (word.cut ? [i] : [])),
+    cut: plan.words.flatMap((word, i) => (word.cut && !closingLine(plan, i) ? [i] : [])),
     hookId: hook?.id ?? null,
     hookText: hook?.text ?? '',
     endOnCta: plan.cta !== null,
@@ -439,6 +439,18 @@ export function toggleSpan(decisions: EditDecisions, start: number, end: number)
     else cut.add(i)
   }
   return { ...decisions, cut: [...cut].sort((a, b) => a - b) }
+}
+
+/**
+ * The closing words: from the call to action on, in the recording's last clip. The plan never cuts them as "not part of
+ * the video" (a real run lost its last line, "build a digital product with AI tonight that you can start selling by
+ * tomorrow"); the member still can.
+ */
+export function closingLine(plan: EditPlan, i: number): boolean {
+  const word = plan.words[i]
+  if (!word || word.cut !== 'off_topic' || !plan.cta) return false
+  const lastSrc = plan.words[plan.words.length - 1]?.src
+  return word.src === lastSrc && i >= plan.cta.start
 }
 
 /** Choose another hook: its words play first (kept), and its title text comes with it unless the member typed their own. */

@@ -359,6 +359,8 @@ const READ_CODE = `(() => {
     const painted = el instanceof HTMLCanvasElement || (el instanceof HTMLElement && ((cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') || cs.backgroundImage !== 'none' || parseFloat(cs.borderTopWidth) > 0 || parseFloat(cs.borderLeftWidth) > 0))
     if (!svgShape && !painted) continue
     const b = el.getBoundingClientRect(); if (b.width < 1 && b.height < 1) continue
+    // A layer across the whole area (a backdrop, a grid, a spotlight) is the ground, not the drawing: it may run to the edges.
+    if (!svgShape && b.width >= r.width * 0.9 && b.height >= r.height * 0.9 && !el.querySelector('*') && !el.textContent.trim()) continue
     boxes.push([b.left, b.top, Math.max(1, b.width), Math.max(1, b.height)])
   }
   return { root: [r.left, r.top, r.width, r.height], texts, boxes: boxes.slice(0, 800), clipped: clipped.slice(0, 6), small: Number.isFinite(small) ? small : 0, smallTop: Number.isFinite(smallTop) ? smallTop : 0 }
