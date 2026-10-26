@@ -669,6 +669,10 @@ def screen_aware(graphics: list[dict], windows: Sequence[tuple[int, int]], stage
     for g in sorted(graphics, key=lambda g: g['at_ms']):
         a, b = g['at_ms'], g['at_ms'] + g['duration_ms']
         inside = sum(max(0, min(b, hi) - max(a, lo)) for lo, hi in windows)
+        if g.get('origin') == 'auto' and ag.kind_of(g) in ag.NUMBER_FAMILY and inside >= SCREEN_SHARE * (b - a):
+            # A filmed screen is the proof already (the dashboard shows the number): no card repeats it over the screen
+            # (a real run put "$8,188" over the earnings page that said $8,188). The screen's zoom finds it instead.
+            continue
         looks = ag.SCREEN_VARIANTS.get(g['template'])
         if g.get('origin') == 'auto' and looks and inside >= SCREEN_SHARE * (b - a) and g['fields'].get('variant') not in looks:
             # A darker look, not the one the last card of this template had.
