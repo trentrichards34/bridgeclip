@@ -231,6 +231,10 @@ class CaptionStyle:
     accent_font: Optional[str] = None
     # The accent-font key word in this color (None: the word's usual color). The Explainer's captions use it.
     accent_key_color: Optional[str] = None
+    # Lines per caption group (each up to max_words_per_line words) and whether a comma ends a group: the Explainer's
+    # captions build a sentence over two lines as it is said and keep it until the next one.
+    max_lines: int = 1
+    group_at_commas: bool = True
 
 
 # ============================================================

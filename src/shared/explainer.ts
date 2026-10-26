@@ -55,7 +55,17 @@ export function explainerSections(words: readonly { word: string; start_ms: numb
   let from = 0
   for (let k = 1; k < count; k++) {
     const want = from + target
-    const room = cuts.filter((c) => c.at > from + EXPLAINER_MIN_MS && c.at < total - EXPLAINER_MIN_MS * .75 && c.at - from <= EXPLAINER_MAX_MS)
+    const reach = (at: number): boolean => at > from + EXPLAINER_MIN_MS && at < total - EXPLAINER_MIN_MS * .75 && at - from <= EXPLAINER_MAX_MS
+    let room = cuts.filter((c) => reach(c.at))
+    // No sentence end near the target (a transcript with little punctuation): the longest pause near it instead.
+    if (!room.some((c) => Math.abs(c.at - want) <= 6000)) {
+      const pauses = words.map((w, i) => ({ i, at: i ? Math.round((words[i - 1].end_ms + w.start_ms) / 2) : 0, gap: i ? w.start_ms - words[i - 1].end_ms : 0 }))
+        .filter((p) => p.i > 0 && reach(p.at) && Math.abs(p.at - want) < 6000)
+      if (pauses.length) {
+        const widest = pauses.reduce((p, q) => (q.gap > p.gap ? q : p))
+        room = [{ at: widest.at, i: widest.i, turn: false }]
+      }
+    }
     if (!room.length) break
     // Nearest to the target, a turn counting as 3 s nearer.
     const best = room.reduce((a, b) => (Math.abs(b.at - want) - (b.turn ? 3000 : 0) < Math.abs(a.at - want) - (a.turn ? 3000 : 0) ? b : a))
@@ -70,9 +80,15 @@ export function explainerSections(words: readonly { word: string; start_ms: numb
     const b = bounds[k]
     while (b - a > EXPLAINER_MAX_MS) {
       const inside = words.map((w, i) => ({ i, w })).filter(({ w, i }) => i > 0 && w.start_ms > a + EXPLAINER_MIN_MS && w.start_ms < Math.min(b - EXPLAINER_MIN_MS * .5, a + EXPLAINER_MAX_MS))
-      if (!inside.length) break
-      const gap = inside.reduce((p, q) => (q.w.start_ms - words[q.i - 1].end_ms > p.w.start_ms - words[p.i - 1].end_ms ? q : p))
-      a = Math.round((words[gap.i - 1].end_ms + gap.w.start_ms) / 2)
+      if (inside.length) {
+        const gap = inside.reduce((p, q) => (q.w.start_ms - words[q.i - 1].end_ms > p.w.start_ms - words[p.i - 1].end_ms ? q : p))
+        a = Math.round((words[gap.i - 1].end_ms + gap.w.start_ms) / 2)
+      } else {
+        // Nothing said for a long while (a filmed screen): the cut goes just before the next word, else at the longest a section lasts.
+        const next = words.find((w) => w.start_ms > a + EXPLAINER_MIN_MS && w.start_ms < b - EXPLAINER_MIN_MS * .5)
+        a = next ? Math.max(a + EXPLAINER_MIN_MS, next.start_ms - 200) : a + EXPLAINER_MAX_MS
+        if (b - a < EXPLAINER_MIN_MS * .5) break
+      }
       fixed.push(a)
     }
     fixed.push(b)
@@ -81,7 +97,7 @@ export function explainerSections(words: readonly { word: string; start_ms: numb
   for (let k = 0; k + 1 < fixed.length; k++) {
     const a = fixed[k], b = fixed[k + 1]
     const mine = words.filter((w) => w.start_ms >= a && w.start_ms < b)
-    if (!mine.length) continue
+    if (!mine.length) { if (out.length) out[out.length - 1] = { ...out[out.length - 1], endMs: b }; continue }
     out.push({ index: out.length, startMs: a, endMs: b, words: mine.map((w) => ({ word: w.word, start_ms: w.start_ms, end_ms: w.end_ms })) })
   }
   return out
@@ -163,14 +179,15 @@ export function explainerBriefLines(input: { section: ExplainerSection; count: n
   const n = String(section.index + 1).padStart(2, '0')
   const lines = [
     `section ${section.index + 1} of ${count} of an illustrated explainer. Your composition is the WHOLE section: one continuous drawing on the paper that changes on EVERY line the creator says (a new element, a transformation, a stamp, a counter ticking, a mark drawn) about every 1.5-3 s, from its first word to its last. Nothing cuts: objects move, grow, get stamped, flip, multiply or transform into the next idea, and stay on the page until the drawing moves on.`,
-    `ZONES (in your area's own pixels): (1) THE SECTION LINE, y 0-60: at the left, small (30-34 px) in var(--cg-font-body), muted ink, "// ${n} — ${label || '<1-3 words said in this section that name it>'}"; at the right, ONLY when this section says a number (${numbers.length ? numbers.join(', ') : 'none here: leave the right side empty'}), a small live counter of it (30-34 px) that ticks as it is said. (2) THE CAPTIONS' ZONE, y ${zoneTop}-${zoneBottom}: keep it completely EMPTY (we draw the captions there). (3) THE DRAWING, from y ${zoneBottom + 24} to the bottom of your area: the hero object and everything else; keep the bottom 120 px at the center (x 340-740) clear for the creator's head.`,
-    `THE HERO OBJECT of the whole video${plan?.hero.label ? ` ("${plan.hero.label}")` : ''}: ${plan?.hero.look || 'one simple flat card or box labeled with what the creator sells or makes, in their words'}. It is in this section and changes with what is said.`,
+    `ZONES (in your area's own pixels): (1) THE SECTION LINE, y 0-44: at the left, small (28-32 px) in var(--cg-font-body), muted ink, "// ${n} — ${label || '<1-3 words said in this section that name it>'}"; at the right, ONLY when this section says a number (${numbers.length ? numbers.join(', ') : 'none here: leave the right side empty'}), a small live counter of it (28-32 px) that ticks as it is said. (2) THE CAPTIONS' ZONE, y ${zoneTop}-${zoneBottom}: keep it completely EMPTY (we draw the captions there). (3) THE DRAWING, from y ${zoneBottom + 16} to the bottom of your area (about ${Math.round(input.frameHeight * (EXPLAINER_BAND.bottom - EXPLAINER_CAPTION_ZONE.bottom)) - 16} px tall): the hero object and everything else.`,
+    `SCALE AND DENSITY (this is what the reference explainers do; a sparse page fails the review): FILL the drawing zone. The ink spans at least 80% of its width and 70% of its height at every moment after the first second. The HERO OBJECT is big and central: at least 420 px wide or tall, bold ink outline 10-12 px, with real detail (its label, inner lines, a corner fold, a ribbon, a price tag). Around it 3-6 props at once: stamps (rotated outlined boxes, 64-96 px words), sticky notes, cards, counters, arrows drawn on, small people figures, calendar pages, check marks. Strokes 8-12 px, never hairlines. Words on the page 48-72 px (stamps and key words up to 110 px); the only small type is the section line.`,
+    `THE HERO OBJECT of the whole video${plan?.hero.label ? ` ("${plan.hero.label}")` : ''}: ${plan?.hero.look || 'one simple flat card or box labeled with what the creator sells or makes, in their words'}. It is ON THE PAGE THE WHOLE SECTION, large and central, and every beat happens TO it or AROUND it: it gets stamped, labeled, multiplied, crossed out, plugged in, wrapped, priced, flipped into its next form. Never a row of separate icons, one per line: one scene that keeps changing.`,
     ...(own?.idea ? [`THIS SECTION'S IDEA: ${own.idea}`] : []),
     `CONTINUITY: ${own?.starts ? `the section opens with ${own.starts}` : section.index === 0 ? 'the section opens on the hook: its first element lands within 0.4 s' : 'the section opens where the last one ended'}${input.previous ? ` (the last section ended with: ${input.previous})` : ''}; ${own?.ends ? `it ends with ${own.ends}` : 'it ends on the state the next section starts from'}${input.next ? ` (the next section starts with: ${input.next})` : ''}. ${section.index === 0 ? 'Start full: the page is never empty.' : 'Its first frame already shows that opening state (no entrance from blank: it continues the page).'} ${section.index === count - 1 ? 'At the end everything settles; the last 0.4 s may fade the drawing.' : 'Do NOT exit at the end: hold the final state to the last frame (the next section takes over from it).'}`,
     `NUMBERS said here become counters or odometers INSIDE the drawing (on the object, a dashboard, a price tag), ticking up to the value as it is said; never a floating stat card.`,
     'EXPLAINER RULES (these replace design rules 2, 11 and 15 for this section): words on the page are short labels and stamps (1-3 words, mostly said words; up to about 14 visible at once); the section line above is required; the drawing holds the whole section. Accent words may be set in var(--cg-font-accent) italic in the accent. Stamps (rotated outlined boxes with a word said), sticky notes, arrows drawn on, crossed-out marks, little people figures, ticking counters and calendar pages are all good props. Ink line drawings with one accent, no gradients or photos.'
   ]
-  const grade = `one section of an illustrated explainer: a continuous ink drawing on paper that changes on every line said (one visible change every 1.5-3 s across the four stills), the hero object present, a small "// ${n} — label" section line at the top left, an empty band for captions under it, nothing in the center bottom where the creator's head is, only words and numbers that were said.`
+  const grade = `one section of an illustrated explainer: ONE continuous ink drawing on paper built around a big central hero object${plan?.hero.label ? ` ("${plan.hero.label}")` : ''} that changes on every line said (a visible change every 1.5-3 s; the four stills must look clearly different), the drawing FILLING its zone (bold 8-12 px strokes, words 48 px or more, 3-6 props such as stamps, sticky notes, counters, cards around the hero; fail it when the page is mostly empty paper or the objects are small or thin), a small "// ${n} — label" section line at the top left, an empty band for captions under it, only words and numbers that were said.`
   return { lines, grade }
 }
 

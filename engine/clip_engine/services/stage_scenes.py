@@ -77,7 +77,7 @@ BACKDROP_COLORS = {
 }
 # The Explainer's captions sit at the top of the frame (share of the height: the center of their block), over the
 # paper, under the section line the canvas draws (explainer.ts EXPLAINER_CAPTION_Y).
-EXPLAINER_CAPTION_Y = 0.118
+EXPLAINER_CAPTION_Y = 0.088
 # The Explainer's ink and its accent without a brand color (explainer.ts).
 EXPLAINER_INK = "#161616"
 EXPLAINER_ACCENT = "#E8412C"
@@ -432,14 +432,18 @@ def _grid(img: Image.Image, width: int, height: int) -> Image.Image:
 
 # A cut-out's sides fade out over this share of the frame's width (its frames end across the shoulders).
 CUTOUT_FEATHER = 44 / 1080
+# ...and its bottom over this share of the frame's height.
+CUTOUT_BOTTOM_FADE = 90 / 1920
 
 
-def draw_side_feather(path: str, width: int, height: int, fade: int) -> str:
-    """A gray mask: white, fading to black over `fade` pixels at the left and right edges (a cut-out's sides)."""
-    ramp = [round(255 * min(1.0, min(x, width - 1 - x) / max(1, fade)) ** 1.2) for x in range(width)]
-    row = Image.new("L", (width, 1))
-    row.putdata(ramp)
-    row.resize((width, height)).save(path, compress_level=1)
+def draw_side_feather(path: str, width: int, height: int, fade: int, bottom: int = 0) -> str:
+    """A gray mask: white, fading to black over `fade` pixels at the left and right edges (a cut-out's sides) and over
+    `bottom` pixels at the bottom edge (the body fades out instead of ending on a hard line)."""
+    import numpy as np
+    xs = np.minimum(np.arange(width), width - 1 - np.arange(width)) / max(1, fade)
+    ys = (height - 1 - np.arange(height)) / max(1, bottom) if bottom else np.ones(height)
+    mask = np.clip(np.minimum.outer(np.clip(ys, 0, 1), np.clip(xs, 0, 1)), 0, 1) ** 1.2
+    Image.fromarray((mask * 255).round().astype(np.uint8), "L").save(path, compress_level=1)
     return path
 
 
@@ -1633,15 +1637,16 @@ def build_scene_graph(
                     # The cut-out's own width (the video's, for a close selfie), its sides fading out where the picture
                     # ends across the shoulders (a hard vertical edge reads as a cropped photo).
                     feather = os.path.join(work_dir, f"scene-{stem}-feather-{w}.png")
-                    draw_side_feather(feather, w, frame_h + ext, max(8, round(width * CUTOUT_FEATHER)))
+                    draw_side_feather(feather, w, frame_h + ext, max(8, round(width * CUTOUT_FEATHER)), max(8, round(height * CUTOUT_BOTTOM_FADE)))
                     f_index = first_input + len(inputs)
                     inputs.append(feather)
                     parts.append(f"[sc_esc_{e}]crop={w}:{frame_h + ext}:{(frame_w - w) // 2}:0,split=2[sc_cut_a{k}][sc_cut_b{k}];"
                                  f"[sc_cut_a{k}]alphaextract[sc_cut_m{k}];[{f_index}:v]format=gray,loop=loop=-1:size=1:start=0[sc_cut_f{k}];"
                                  f"[sc_cut_m{k}][sc_cut_f{k}]blend=all_mode=multiply:shortest=1,format=gray[sc_cut_mm{k}];"
                                  f"[sc_cut_b{k}][sc_cut_mm{k}]alphamerge[sc_cut_v{k}]")
-                    # Flush with the frame's bottom edge (no card margin under a cut-out: the body runs off the frame).
-                    parts.append(f"[{current}][sc_cut_v{k}]overlay=x={cx}:y='{y}-{ext}+{height - geo.card_y - ch}':"
+                    # Where the card would be: the face well above the bottom of the frame (the platform's buttons and
+                    # text), the head never cut at the top (the strip above the card holds it), the body fading out.
+                    parts.append(f"[{current}][sc_cut_v{k}]overlay=x={cx}:y='{y}-{ext}':"
                                  f"enable='{card_enable_expr(cut_runs, transition, segments, morphs)}'[sc_cutout{k}]")
                     current = f"sc_cutout{k}"
                 continue
@@ -1805,7 +1810,7 @@ def paper_backdrop_style(style, brand: Optional[str] = None):
     accent = brand if isinstance(brand, str) and len(brand) == 7 and brand.startswith("#") and _luma(brand) < 0.6 else EXPLAINER_ACCENT
     styled = copy.copy(style)
     changes = dict(font_name="Montserrat ExtraBold", font_size=max(70, min(82, int(getattr(style, "font_size", 76) or 76))), bold=False, italic=False,
-                   uppercase=False, lowercase=False, max_words_per_line=4, primary_color=EXPLAINER_INK, highlight_color=EXPLAINER_INK,
+                   uppercase=False, lowercase=False, max_words_per_line=4, max_lines=2, group_at_commas=False, primary_color=EXPLAINER_INK, highlight_color=EXPLAINER_INK,
                    outline_color="#FFFFFF", outline_width=0, shadow_opacity=0.0, glow_color=None, line_box_color=None,
                    highlight_box_color=None, keyword_pill_color=None, karaoke_fill=False, future_words="hide", entrance_pop=False,
                    emphasis_color=accent, accent_font=ACCENT_FONT, accent_key_color=accent)

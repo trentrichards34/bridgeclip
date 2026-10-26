@@ -102,7 +102,7 @@ export const SCENE_DETAILS: Record<SceneKind, string> = {
 export const BACKDROP_LABELS: Record<SceneBackdrop, string> = { light: 'Light', dark: 'Dark', brand: 'Brand', grid: 'Grid', gradient: 'Gradient', solid: 'Solid', paper: 'Paper' }
 export const CARD_LABELS: Record<SceneCard, string> = { rounded: 'Rounded', arch: 'Arch', cutout: 'Cut-out' }
 /** The Explainer's captions: the center of their block at this share of the height (engine: stage_scenes.EXPLAINER_CAPTION_Y). */
-export const EXPLAINER_CAPTION_Y = 0.118
+export const EXPLAINER_CAPTION_Y = 0.088
 
 /** The look automatic Stage layouts use: the brand grid with the arch card when there is a brand color, else the grid in the graphics' blue with the rounded card (engine: stage_scenes.auto_look). */
 export function autoSceneLook(brand: string | null | undefined): { backdrop: SceneBackdrop; card: SceneCard } {

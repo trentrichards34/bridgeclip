@@ -347,8 +347,8 @@ const READ_CODE = `(() => {
       if (b.width < 1 || b.height < 1) continue
       boxes.push([b.left, b.top, b.width, b.height])
       if (b.left < r.left - 3 || b.right > r.right + 3 || b.top < r.top - 3 || b.bottom > r.bottom + 3) out = true
-      // Type in the top 80 px of the area is counted apart (an Explainer section's small section line lives there).
-      const size = b.height / 1.25; if (b.bottom <= r.top + 80) { if (size < smallTop) smallTop = size } else if (size < small) small = size
+      // Type in the top 50 px of the area is counted apart (an Explainer section's small section line lives there).
+      const size = b.height / 1.25; if (b.bottom <= r.top + 50) { if (size < smallTop) smallTop = size } else if (size < small) small = size
     }
     if (out) clipped.push(t.slice(0, 40))
   }
@@ -373,19 +373,30 @@ export function readingProblems(reading: Reading, face: CustomGeometry['face'], 
   if (reading.clipped.length) problems.push(`Words run outside the graphic's area and get cut off: ${reading.clipped.map((t) => `“${t}”`).join(', ')}.`)
   // An Explainer section's line at the top may be small (26 px and up); everywhere else every label is 34 px or more.
   const smallest = explainer ? reading.small : Math.min(...[reading.small, reading.smallTop ?? 0].filter((v) => v > 0), Infinity)
-  if (Number.isFinite(smallest) && smallest > 0 && smallest < 34) problems.push(`Some words are only about ${Math.round(smallest)} px tall; make every label at least 44 px.`)
+  // An Explainer's page is read from a phone at a glance: its words are bigger than a card's (40 px measured, 48 asked).
+  if (Number.isFinite(smallest) && smallest > 0 && smallest < (explainer ? 40 : 34)) problems.push(`Some words are only about ${Math.round(smallest)} px tall; make every label at least ${explainer ? 48 : 44} px.`)
   if (explainer && reading.smallTop && reading.smallTop < 24) problems.push(`The section line is only about ${Math.round(reading.smallTop)} px tall; make it 30-34 px.`)
   if (explainer) {
     // The captions' zone stays empty (we draw the captions there).
     const { top, bottom } = explainer.captions
     const inZone = reading.boxes.filter(([, y, , h]) => y < bottom - 2 && y + h > top + 2).length
     if (inZone) problems.push(`Something is drawn in the captions' zone (y ${Math.round(top - reading.root[1])}-${Math.round(bottom - reading.root[1])} of your area); keep it completely empty.`)
+    // The drawing fills its zone (under the captions' zone): its ink spans most of the width and height.
+    const [rx, , rw] = reading.root, zoneTop = bottom, zoneH = reading.root[1] + reading.root[3] - zoneTop
+    const below = reading.boxes.filter(([, y, , h]) => y + h > zoneTop + 2)
+    if (below.length && zoneH > 100) {
+      const left = Math.min(...below.map(([x]) => x)), right = Math.max(...below.map(([x, , w]) => x + w))
+      const high = Math.min(...below.map(([, y]) => Math.max(y, zoneTop))), low = Math.max(...below.map(([, y, , h]) => y + h))
+      const wide = (right - left) / rw, tall = (low - high) / zoneH
+      if (wide < 0.72 || tall < 0.6) problems.push(`The drawing is too small for the page: its ink spans ${Math.round(wide * 100)}% of the drawing zone's width and ${Math.round(tall * 100)}% of its height. Fill it: at least 80% and 70%, the hero object 420 px or more, with 3-6 props around it.`)
+      void rx
+    } else if (!below.length) problems.push('Nothing is drawn in the drawing zone when the section is settled.')
   }
   const [rx, ry, rw, rh] = reading.root
   const ink = reading.boxes.reduce((u, [x, y, w, h]) => [Math.min(u[0], x), Math.min(u[1], y), Math.max(u[2], x + w), Math.max(u[3], y + h)], [Infinity, Infinity, -Infinity, -Infinity])
   const sides = [['left', ink[0] - rx], ['right', rx + rw - ink[2]], ['top', ink[1] - ry], ['bottom', ry + rh - ink[3]]] as const
   const tight = sides.filter(([side, gap]) => gap < (side === 'left' || side === 'right' ? 12 : 4)).map(([side]) => side)
-  if (tight.length) problems.push(`The drawing touches the ${tight.join(' and ')} edge of its area; keep 48 px from the sides and 28 px from the top and bottom.`)
+  if (tight.length) problems.push(`The drawing touches the ${tight.join(' and ')} edge of its area (${sides.filter(([side]) => tight.includes(side)).map(([side, gap]) => `${side} ${Math.round(gap)} px`).join(', ')}); keep 48 px from the sides and 28 px from the top and bottom.`)
   if (face) {
     let covered = 0
     for (const [x, y, w, h] of reading.boxes) {

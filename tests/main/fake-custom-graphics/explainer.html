@@ -1,24 +1,24 @@
 <div id="cg-root" data-duration="{{DUR}}">
   <div class="line">// {{N}} — {{LABEL}}</div>
   <svg class="art" viewBox="0 0 1080 1085">
-    <path class="ground" d="M80 900 H1000"/>
-    <g class="hero"><rect x="360" y="420" width="360" height="300" rx="18"/><path d="M400 500 H680 M400 560 H620 M400 620 H660"/></g>
-    <g class="stamp"><rect x="600" y="360" width="300" height="96" rx="10"/></g>
+    <path class="ground" d="M80 980 H1000"/>
+    <g class="hero"><rect x="320" y="400" width="440" height="360" rx="18"/><path d="M370 490 H710 M370 560 H650 M370 630 H690"/></g>
+    <g class="stamp"><rect x="620" y="290" width="300" height="96" rx="10"/></g>
     <g class="arrow"><path d="M220 760 C300 700 330 640 350 600"/><path d="M330 620 L352 596 L364 628"/></g>
   </svg>
   <div class="label">{{HERO}}</div>
   <div class="word">{{STAMP}}</div>
 </div>
 <style>
-#cg-root .line{position:absolute;left:56px;top:14px;font-family:var(--cg-font-body);font-size:32px;color:var(--cg-muted);white-space:nowrap}
+#cg-root .line{position:absolute;left:56px;top:4px;font-family:var(--cg-font-body);font-size:30px;color:var(--cg-muted);white-space:nowrap}
 #cg-root .art{position:absolute;left:0;top:0;width:1080px;height:1085px;overflow:visible}
 #cg-root .ground{stroke:var(--cg-ink);stroke-width:6;stroke-linecap:round}
 #cg-root .hero rect{fill:var(--cg-paper);stroke:var(--cg-ink);stroke-width:8}
 #cg-root .hero path{stroke:var(--cg-muted);stroke-width:8;stroke-linecap:round;fill:none}
 #cg-root .stamp rect{fill:none;stroke:var(--cg-accent);stroke-width:8}
 #cg-root .arrow path{fill:none;stroke:var(--cg-ink);stroke-width:7;stroke-linecap:round;stroke-linejoin:round}
-#cg-root .label{position:absolute;left:380px;top:735px;width:320px;text-align:center;font-family:var(--cg-font-display);font-size:56px;color:var(--cg-ink)}
-#cg-root .word{position:absolute;left:600px;top:372px;width:300px;text-align:center;font-family:var(--cg-font-accent);font-style:italic;font-size:62px;color:var(--cg-accent);transform:rotate(-6deg)}
+#cg-root .label{position:absolute;left:340px;top:780px;width:400px;text-align:center;font-family:var(--cg-font-display);font-size:56px;color:var(--cg-ink)}
+#cg-root .word{position:absolute;left:620px;top:302px;width:300px;text-align:center;font-family:var(--cg-font-accent);font-style:italic;font-size:62px;color:var(--cg-accent);transform:rotate(-6deg)}
 </style>
 <script>
 const D = parseFloat(document.getElementById('cg-root').dataset.duration);

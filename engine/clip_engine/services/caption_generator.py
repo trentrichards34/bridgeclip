@@ -389,7 +389,9 @@ class CaptionGeneratorService:
             w for w in all_words
             if w.end_time_ms > clip_start_ms and w.start_time_ms < clip_end_ms
         ])
-        word_groups = self._group_words(clip_words, style.max_words_per_line)
+        # A group is one line (or up to `max_lines` of them: the Explainer's captions build a two-line sentence as said).
+        lines = max(1, int(getattr(style, "max_lines", 1) or 1))
+        word_groups = self._group_words(clip_words, style.max_words_per_line * lines, getattr(style, "group_at_commas", True))
 
         events: list[str] = []
         for group_idx, group in enumerate(word_groups):
@@ -885,6 +887,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
         self,
         words: list[TranscriptWord],
         max_per_group: int,
+        at_commas: bool = True,
     ) -> list[WordGroup]:
         """Group words into display groups, breaking at natural pauses."""
         groups: list[WordGroup] = []
@@ -896,7 +899,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             at_limit = len(current) >= max_per_group
             stripped = word.word.strip()
             at_sentence_end = stripped and stripped[-1] in SENTENCE_END_CHARS
-            at_comma = stripped and stripped[-1] == "," and len(current) >= 2
+            at_comma = at_commas and stripped and stripped[-1] == "," and len(current) >= 2
 
             if at_limit or at_sentence_end or at_comma:
                 groups.append(WordGroup(
