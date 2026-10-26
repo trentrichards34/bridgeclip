@@ -99,7 +99,7 @@ def test_an_explainer_project_has_no_hook_text():
 def test_an_explainer_page_on_a_real_person(tmp_path):
     """The portrait fixture on the paper page: the speaker cut out (no card edge, the paper all around them) and the
     captions at the top in dark ink."""
-    from test_depth_render import H, W, frame, person_video, words
+    from .test_depth_render import H, W, frame, person_video, words
     from clip_engine.services.manual_editor import manual_plan
     from clip_engine.services.rendering_service import RenderingService, RenderRequest
     source = str(tmp_path / "person.mp4")
