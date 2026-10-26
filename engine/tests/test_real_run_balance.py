@@ -224,3 +224,14 @@ def test_number_pop_ups_keep_the_numbers_spacing():
     # At most one $4,365 in the minute, and the numbers stay apart.
     assert sum(1 for _, v in values if v and '4,365' in v) == 1, values
     assert any('number pop-up' in n for n in notes), notes
+
+
+def test_no_number_card_over_a_filmed_screen():
+    """Same run: "$8,188" counted up over the earnings page that already showed $8,188."""
+    from clip_engine.services import edit_direction as ed
+    count = {'id': 'g-cnt88', 'template': 'fx', 'at_ms': 194_853, 'duration_ms': 3000, 'placement': 'top', 'origin': 'auto',
+             'fields': {'effect': 'count-up', 'value': '8,188', 'prefix': '$'}}
+    mine = {**count, 'id': 'g-cnt89', 'origin': 'member'}
+    face = {**count, 'id': 'g-cnt90', 'at_ms': 205_000}
+    out, _ = ed.screen_aware([count, mine, face], [(191_800, 198_000)], stage=False)
+    assert [g['id'] for g in out] == ['g-cnt89', 'g-cnt90']
