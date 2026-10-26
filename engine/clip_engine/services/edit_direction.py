@@ -579,6 +579,17 @@ def editor_graphics(specs: Sequence[dict], timed: Sequence[Sequence[Any]], total
     # The member's graphics win their time: an automatic one that would play over one gives way (chapters stay: own band).
     kept = [g for g in fitted if g['template'] == 'chapter' or not any(
         g['at_ms'] < m['at_ms'] + m['duration_ms'] and m['at_ms'] < g['at_ms'] + g['duration_ms'] for m in member)]
+    # The numbers once more on the reel's own clock (the cut and the review can bring two closer than the plan had them):
+    # an automatic number graphic too close to another number, or showing one already on screen within the minute, goes.
+    numbers: list[dict] = [m for m in member if ag.kind_of(m) in ag.NUMBER_FAMILY]
+    spaced = []
+    for g in sorted(kept, key=lambda g: g['at_ms']):
+        if g['template'] != 'chapter' and ag.kind_of(g) in ag.NUMBER_FAMILY:
+            if not ag.number_family_allows(g, numbers, (end_ms - offset_ms) / 1000):
+                continue
+            numbers.append(g)
+        spaced.append(g)
+    kept = spaced
     # Pop-ups, cards and pinned images give way to a graphic at their time (as they always have): one that a graphic
     # starts into ends just before it when enough of it is left, else it is left out.
     def fit(x: dict, others: Sequence[dict]) -> Optional[dict]:
@@ -591,12 +602,21 @@ def editor_graphics(specs: Sequence[dict], timed: Sequence[Sequence[Any]], total
             x = {**x, 'duration_ms': room}
         return x
     shown: list[dict] = []
+    numbers_left = 0
     for x in sorted(extras, key=lambda x: x['at_ms']):
+        # A number pop-up is a number graphic like the rest: it keeps the numbers' spacing and never shows a value already
+        # on screen within the minute (a real run showed $4,365 three times in 15 s and $8,188 twice in 2 s).
+        if not ag.number_family_allows(x, [g for g in [*kept, *member, *shown] if g['template'] != 'chapter'], (end_ms - offset_ms) / 1000):
+            numbers_left += 1
+            continue
         placed_x = fit(x, [*kept, *member, *shown])
         if placed_x:
             shown.append(placed_x)
-    if len(shown) < len(extras):
-        gave = len(extras) - len(shown)
+    if numbers_left:
+        warnings.append(f"{numbers_left} number pop-up{'s' if numbers_left != 1 else ''} left out: "
+                        f"{'they' if numbers_left != 1 else 'it'} came too close to another number on screen.")
+    if len(shown) < len(extras) - numbers_left:
+        gave = len(extras) - numbers_left - len(shown)
         warnings.append(f"{gave} pop-up{'s' if gave != 1 else ''} or pinned image{'s' if gave != 1 else ''} left out: "
                         f"{'they' if gave != 1 else 'it'} came during a graphic.")
     placed = []
@@ -613,20 +633,37 @@ def editor_graphics(specs: Sequence[dict], timed: Sequence[Sequence[Any]], total
     return placed, warnings
 
 
-# A filmed screen (a stretch without a face) this long gets one framed moment: the same footage in a Screen recording
-# window on a dark Visual scene (like the target reels' browser frame), at most FRAME_MAX_MS, at most MAX_FRAMES a reel.
-FRAME_MIN_WINDOW_MS = 4500
-FRAME_MIN_MS, FRAME_MAX_MS = 3500, 6000
+# A filmed screen (a stretch without a face) gets framed as a whole: the same footage in a Screen recording window on a
+# dark Visual scene (like the target reels' browser frame), from its first frame to its last, so the frame is the shot
+# change (face to framed screen). Never part of one: a real run went full screen, framed, framed again 0.15 s later and
+# back to full screen on the same footage, which reads as needless transitions into the same thing. Longer screens stay
+# full frame (gentle zooms where they're busy, screen_zoom). At most MAX_FRAMES a reel.
+FRAME_MIN_WINDOW_MS = 3500
+FRAME_WHOLE_MAX_MS = 8000  # the longest a Screen recording window lasts (ag.EDITOR_MAX_MS)
+FRAME_MIN_MS, FRAME_MAX_MS = FRAME_MIN_WINDOW_MS, FRAME_WHOLE_MAX_MS
 MAX_FRAMES = 3
+# Screen stretches closer than this are one stretch (the face check and the words see one screen as two).
+SCREEN_JOIN_MS = 1000
 # Cards that read as a white slab over a busy page; over a filmed screen they take a darker look (SCREEN_VARIANTS).
 SCREEN_SHARE = 0.5
 
 
+def joined_windows(windows: Sequence[tuple[int, int]], gap: int = SCREEN_JOIN_MS) -> list[tuple[int, int]]:
+    """Overlapping (or nearly touching) screen stretches as one."""
+    out: list[list[int]] = []
+    for lo, hi in sorted((int(a), int(b)) for a, b in windows if b > a):
+        if out and lo - out[-1][1] < gap:
+            out[-1][1] = max(out[-1][1], hi)
+        else:
+            out.append([lo, hi])
+    return [(a, b) for a, b in out]
+
+
 def screen_aware(graphics: list[dict], windows: Sequence[tuple[int, int]], stage: bool) -> tuple[list[dict], list[dict]]:
     """Graphics made for a reel's filmed screens (`windows`, reel ms): an automatic card mostly over a screen takes its
-    darker look, so no white slab sits on a busy page; and with Stage layouts on, the first free stretch of each long
-    screen window is framed: that very footage in a Screen recording window on a dark Visual scene. Returns
-    (graphics, the Visual scenes for the frames)."""
+    darker look, so no white slab sits on a busy page; and with Stage layouts on, a screen stretch short enough to frame
+    whole (FRAME_WHOLE_MAX_MS) with nothing else over it is framed from its first frame to its last: that very footage in
+    a Screen recording window on a dark Visual scene. Returns (graphics, the Visual scenes for the frames)."""
     out = []
     last: dict[str, str] = {}
     for g in sorted(graphics, key=lambda g: g['at_ms']):
@@ -644,26 +681,21 @@ def screen_aware(graphics: list[dict], windows: Sequence[tuple[int, int]], stage
         return out, []
     frames, scenes = [], []
     taken = {g['id'] for g in out}
-    for lo, hi in sorted(windows):
-        if len(frames) >= MAX_FRAMES or hi - lo < FRAME_MIN_WINDOW_MS:
+    for lo, hi in joined_windows(windows):
+        if len(frames) >= MAX_FRAMES or not FRAME_MIN_WINDOW_MS <= hi - lo <= FRAME_WHOLE_MAX_MS:
             continue
-        # (Frames already placed count too: two screen windows that overlap never get two frames over each other, as a
-        # real run had at 52.7 s and 52.99 s.)
-        busy = sorted((g['at_ms'], g['at_ms'] + g['duration_ms']) for g in [*out, *frames] if g['template'] != 'chapter' and g['at_ms'] < hi and g['at_ms'] + g['duration_ms'] > lo)
-        start = lo + 200
-        spot = None
-        for a, b in [*busy, (hi, hi)]:
-            if min(a, hi - 200) - start >= FRAME_MIN_MS:
-                spot = (start, min(a - ag.GAP_MS, hi - 200, start + FRAME_MAX_MS))
-                break
-            start = max(start, b + ag.GAP_MS)
-        if spot is None or spot[1] - spot[0] < FRAME_MIN_MS:
+        # Nothing else over that screen (a card on a framed screen would sit on the frame's window).
+        if any(g['template'] != 'chapter' and g['at_ms'] < hi and g['at_ms'] + g['duration_ms'] > lo for g in out):
             continue
-        a, b = int(spot[0]), int(spot[1])
-        frames.append({'id': ag.new_id(taken), 'template': 'screen_frame', 'at_ms': a, 'duration_ms': b - a, 'placement': 'top',
-                       'fields': {'video': 'source', 'from': f'{a / 1000:.3f}', 'shape': 'square'}, 'origin': 'auto', 'size': 'stage'})
-        scenes.append({'scene': 'visual', 'start_ms': a, 'end_ms': b, 'backdrop': 'dark'})
+        frames.append({'id': ag.new_id(taken), 'template': 'screen_frame', 'at_ms': lo, 'duration_ms': hi - lo, 'placement': 'top',
+                       'fields': {'video': 'source', 'from': f'{lo / 1000:.3f}', 'shape': 'square'}, 'origin': 'auto', 'size': 'stage'})
+        scenes.append({'scene': 'visual', 'start_ms': lo, 'end_ms': hi, 'backdrop': 'dark'})
     return sorted(out + frames, key=lambda g: g['at_ms']), scenes
+
+
+# A stage scene stops this far short of a filmed screen (and starts this far after one): the stage's move back to the
+# face lands before the cut, never on the screen.
+CUT_PAD_MS = 300
 
 
 def editor_scenes(graphics: Sequence[dict], total_ms: int, brand: Optional[str], avoid: Sequence[tuple[int, int]] = (),
@@ -679,7 +711,7 @@ def editor_scenes(graphics: Sequence[dict], total_ms: int, brand: Optional[str],
         for s in scenes:
             pieces = [(s['start_ms'], s['end_ms'])]
             for a, b in avoid:
-                pieces = [p for lo, hi in pieces for p in ((lo, min(hi, a)), (max(lo, b), hi)) if p[1] - p[0] >= MIN_SCENE_MS]
+                pieces = [p for lo, hi in pieces for p in ((lo, min(hi, a - CUT_PAD_MS)), (max(lo, b + CUT_PAD_MS), hi)) if p[1] - p[0] >= MIN_SCENE_MS]
             cut.extend({**s, 'start_ms': lo, 'end_ms': hi} for lo, hi in pieces)
         scenes = cut
     for f in framed:
@@ -866,9 +898,44 @@ def faceless_windows(video: str, start_ms: int, end_ms: int) -> list[tuple[int, 
         while j < len(seen) and not seen[j]:
             j += 1
         if j - k >= FACELESS_RUN:
-            out.append((int(start_ms + k * FACE_STEP_MS), int(min(end_ms, start_ms + j * FACE_STEP_MS))))
+            lo, hi = int(start_ms + k * FACE_STEP_MS), int(min(end_ms, start_ms + j * FACE_STEP_MS))
+            # The coarse samples put the edges up to FACE_STEP_MS late: found again to the cut (a stage that ran on past
+            # the cut showed the screen inside the speaker's card, then jumped it to full frame).
+            if k > 0:
+                lo = _faceless_edge(video, detector, max(start_ms, lo - FACE_STEP_MS), lo, w, h, first=True) or lo
+            if j < len(seen):
+                hi = _faceless_edge(video, detector, hi - FACE_STEP_MS, min(end_ms, hi), w, h, first=False) or hi
+            out.append((lo, hi))
         k = j
     return out
+
+
+# The edges of a faceless stretch are found again this finely (the cut into and out of the screen).
+EDGE_STEP_MS = 100
+
+
+def _faceless_edge(video: str, detector: Any, a: float, b: float, w: int, h: int, first: bool) -> Optional[int]:
+    """Between `a` and `b` (ms): the first faceless moment (`first`: where a faceless stretch starts) or the first moment
+    the face is back (where it ends), to EDGE_STEP_MS. None when it can't be told."""
+    try:
+        import numpy as np
+        from clip_engine.services.media_process import run_media
+        result = run_media(["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{a / 1000:.3f}", "-i", video, "-t", f"{(b - a) / 1000:.3f}",
+                            "-an", "-vf", f"fps=1000/{EDGE_STEP_MS},scale={w}:{h}", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"], timeout=120,
+                           max_output=(math.ceil((b - a) / EDGE_STEP_MS) + 4) * w * h * 3)
+        data = result.stdout or b""
+        frames = len(data) // (w * h * 3)
+        if result.returncode != 0 or not frames:
+            return None
+        for k in range(frames):
+            frame = np.frombuffer(data, dtype=np.uint8, count=w * h * 3, offset=k * w * h * 3).reshape(h, w, 3)
+            _, faces = detector.detect(frame)
+            face = faces is not None and len(faces) > 0
+            if face != first:
+                return int(a + k * EDGE_STEP_MS)
+    except Exception:  # noqa: BLE001 - the coarse edge stands
+        return None
+    return None
 
 
 def overlaps(a: tuple[float, float], windows: Sequence[tuple[float, float]]) -> bool:

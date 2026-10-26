@@ -157,7 +157,7 @@ def test_a_diagram_whose_items_are_said_far_apart_is_left_out():
     assert ag.diagram_span(g, near) is not None
 
 
-def test_cards_over_a_filmed_screen_take_a_dark_look_and_a_long_screen_gets_framed():
+def test_cards_over_a_filmed_screen_take_a_dark_look_and_a_short_screen_is_framed_whole():
     graphics = [
         {'id': 'g-aaaa1', 'template': 'statement', 'at_ms': 10000, 'duration_ms': 3000, 'placement': 'top', 'fields': {'text': 'x y', 'variant': 'card'}, 'origin': 'auto'},
         {'id': 'g-aaaa2', 'template': 'stat', 'at_ms': 30000, 'duration_ms': 3000, 'placement': 'top', 'fields': {'value': '$5', 'variant': 'card'}, 'origin': 'auto'},
@@ -172,10 +172,13 @@ def test_cards_over_a_filmed_screen_take_a_dark_look_and_a_long_screen_gets_fram
     looks = [g['fields']['variant'] for g in ed.screen_aware(two, [(9000, 30000)], stage=False)[0]]
     assert looks == ['glass', 'bold', 'bold'], looks
     assert 'variant' not in by['g-aaaa3']['fields']  # the member's own stays as set
+    # A screen with a card over it, or too long to frame whole, stays full frame (never framed part way through).
+    assert not any(g['template'] == 'screen_frame' for g in out) and scenes == []
+    # A short screen with nothing over it is framed from its first frame to its last.
+    out, scenes = ed.screen_aware(graphics, [(40000, 46000)], stage=True)
     frames = [g for g in out if g['template'] == 'screen_frame']
-    assert len(frames) == 1 and frames[0]['at_ms'] >= 13000 and frames[0]['duration_ms'] <= ed.FRAME_MAX_MS
-    assert frames[0]['fields']['video'] == 'source' and scenes == [{'scene': 'visual', 'start_ms': frames[0]['at_ms'],
-                                                                   'end_ms': frames[0]['at_ms'] + frames[0]['duration_ms'], 'backdrop': 'dark'}]
+    assert len(frames) == 1 and (frames[0]['at_ms'], frames[0]['duration_ms']) == (40000, 6000)
+    assert frames[0]['fields']['video'] == 'source' and scenes == [{'scene': 'visual', 'start_ms': 40000, 'end_ms': 46000, 'backdrop': 'dark'}]
     # Without Stage layouts: only the darker looks.
     out, scenes = ed.screen_aware(graphics, [(9000, 20000)], stage=False)
     assert scenes == [] and not any(g['template'] == 'screen_frame' for g in out)

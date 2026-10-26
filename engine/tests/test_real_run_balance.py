@@ -189,9 +189,38 @@ def test_a_saved_small_floating_hook_renders_at_the_minimum_size_in_its_own_font
 
 # --- one screen frame per stretch of screen ------------------------------------------
 
-def test_two_overlapping_screen_windows_never_get_two_frames_over_each_other():
+def test_a_screen_is_framed_whole_or_not_at_all():
+    """The owner's run (edit-06ad5467): a screen from 52.5 s was framed at 52.7 s, framed again at 58.85 s and went back
+    to full frame at 64.85 s, three transitions into the same footage."""
     from clip_engine.services import edit_direction as ed
     out, scenes = ed.screen_aware([], [(52_500, 70_000), (52_787, 66_000)], stage=True)
-    frames = sorted((g['at_ms'], g['at_ms'] + g['duration_ms']) for g in out if g['template'] == 'screen_frame')
-    assert frames and all(b[0] >= a[1] for a, b in zip(frames, frames[1:])), frames
-    assert len(scenes) == len(frames)
+    assert not any(g['template'] == 'screen_frame' for g in out) and scenes == []
+    # Two stretches of one screen (the face check and the words saw it twice) are one: framed once, whole.
+    out, scenes = ed.screen_aware([], [(52_500, 56_000), (56_400, 59_000)], stage=True)
+    frames = [(g['at_ms'], g['at_ms'] + g['duration_ms']) for g in out if g['template'] == 'screen_frame']
+    assert frames == [(52_500, 59_000)] and [(s['start_ms'], s['end_ms']) for s in scenes] == frames
+
+
+def test_a_stage_stops_short_of_a_filmed_screen():
+    """Same run: the stage for the 'going viral' card ran 0.3 s past the cut to the Stripe chart, so the chart showed
+    inside the speaker's card and then jumped to full frame."""
+    from clip_engine.services import edit_direction as ed
+    g = {'id': 'g-strk1', 'template': 'strike_list', 'at_ms': 15_639, 'duration_ms': 4_500, 'placement': 'top', 'size': 'stage',
+         'fields': {'items': 'going viral\npeople sharing my content', 'final': 'the blueprint'}, 'origin': 'auto'}
+    scenes = ed.editor_scenes([g], 60_000, None, [(20_200, 27_600)])
+    assert scenes and all(s['end_ms'] <= 20_200 - ed.CUT_PAD_MS for s in scenes if s['start_ms'] < 20_200), scenes
+
+
+def test_number_pop_ups_keep_the_numbers_spacing():
+    """Same run: $4,365 three times in 15 s (a pop-up, then the plan's count-up) and $8,188 twice in 2 s."""
+    from clip_engine.services import edit_direction as ed
+    words = 'yesterday I spent 4,365 on ads and then we made 8,188 and honestly yesterday I spent 4,365 on ads again'.split()
+    timed = [(w, i * 1500, i * 1500 + 1200, i) for i, w in enumerate(words)]
+    spec = {'id': 'g-cnt01', 'template': 'stat', 'word': 13, 'duration_ms': 3000, 'placement': 'top', 'origin': 'member',
+            'fields': {'value': '$4,365', 'label': 'on ads'}}
+    popups = [{'word': 3, 'text': '$4,365', 'kind': 'number'}, {'word': 9, 'text': '$8,188', 'kind': 'number'}]
+    placed, notes = ed.editor_graphics([spec], timed, len(words) * 1500, {'motion': True}, popups=popups)
+    values = [(g['at_ms'], g['fields'].get('value')) for g in placed if g['template'] in ('stat', 'fx')]
+    # At most one $4,365 in the minute, and the numbers stay apart.
+    assert sum(1 for _, v in values if v and '4,365' in v) == 1, values
+    assert any('number pop-up' in n for n in notes), notes

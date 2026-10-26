@@ -371,18 +371,15 @@ def test_a_render_with_the_direction_makes_an_editor_project_with_its_graphics_a
               'editor': {'graphics': planned, 'pins': [], 'motion': True, 'stage': True, 'brand_color': None, 'cta_keyword': ''}}
     result = asyncio.run(er.render_edit(config, lambda *_: None))
     # The test picture has no face (like a filmed screen): no stage over it, the big cards drawn as cards in their darker
-    # look; one stretch of the screen is framed in a window on a dark Visual scene.
-    assert result['editor'] is True and result['graphics'] >= 3 and result['scenes'] == 1
+    # look. The screen runs the whole 40 s: too long to frame whole, so it stays full frame (never framed part way through).
+    assert result['editor'] is True and result['graphics'] >= 2 and result['scenes'] == 0
     project = json.load(open(os.path.join(root, 'editor-project.json')))
     c = project['candidates'][0]
     # Its sound effects are mixed by the bake, from the clip's own graphics (on, teaching, no music, no extra cues here).
     assert c['sound'] == {'on': True, 'register': 'teaching', 'cues': []}
     kinds = {g['template'] for g in c['graphics']}
-    assert kinds >= {'stat', 'strike_list', 'screen_frame'}, kinds
-    frame = next(g for g in c['graphics'] if g['template'] == 'screen_frame')
-    assert frame['fields']['video'] == 'source' and abs(float(frame['fields']['from']) * 1000 - frame['at_ms']) < 2 and frame['size'] == 'stage'
-    assert [(s['scene'], s['start_ms'], s['end_ms'], s.get('backdrop')) for s in c['stage_scenes']] == [('visual', frame['at_ms'], frame['at_ms'] + frame['duration_ms'], 'dark')]
-    assert all(g.get('size') != 'stage' for g in c['graphics'] if g['template'] != 'screen_frame')
+    assert kinds >= {'stat', 'strike_list'} and 'screen_frame' not in kinds, kinds
+    assert not c.get('stage_scenes') and all(g.get('size') != 'stage' for g in c['graphics'])
     stat = next(g for g in c['graphics'] if g['template'] == 'stat')
     assert stat['fields']['variant'] in ag.SCREEN_VARIANTS['stat']
     assert os.path.isfile(os.path.join(root, 'editor-source.mp4')) and os.path.isfile(os.path.join(root, f"editor-preview-{project['preview_id']}.mp4"))

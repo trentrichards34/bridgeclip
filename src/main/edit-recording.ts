@@ -1250,22 +1250,43 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
   }
   // Camera + screen (no graphics there today): any graphics are drawn here (offscreen, cached in the run), layered by the engine.
   const graphics = directed ? [] : drawableGraphics(decisions.graphics ?? []).filter((g) => !cut.has(g.word))
+  const customNotes: string[] = []
   void (async () => {
     try {
-      // Custom graphics (Skills, on by default with a key): designed now when the review didn't make them already.
-      if (directed && decisions.customGraphics !== false && !current.customTried && !(decisions.graphics ?? []).some((g) => g.template === 'custom') && plan.graphics !== undefined) {
+      // Custom graphics (Skills, on by default with a key): designed now when the review didn't make them already. What
+      // happened is told on the finished reel and kept in the run (.graphics/custom/last-run.json): a run that quietly
+      // skipped them looked like the custom graphics had been tried.
+      const already = (decisions.graphics ?? []).filter((g) => g.template === 'custom').length
+      let customOutcome: { ran: boolean; made: number; tried: number; reason: string | null } = { ran: false, made: already, tried: 0, reason: null }
+      if (!directed) customOutcome.reason = 'not a directed reel'
+      else if (decisions.customGraphics === false) customOutcome.reason = 'Custom graphics were switched off in the review.'
+      else if (already) customOutcome.reason = 'designed in the review'
+      else if (current.customTried) customOutcome.reason = 'already tried in the review'
+      else if (plan.graphics === undefined) customOutcome.reason = 'the plan had no graphics'
+      else {
         publish(current, { detail: 'Designing custom graphics', percent: 1 })
         try {
           const made = await designCustomGraphics(current, decisions)
-          if (made && made.made > 0) {
-            decisions.graphics = made.graphics
-            ;(config as { editor?: { graphics?: unknown } }).editor!.graphics = editorGraphicsFor(decisions, images, current.status.folder)
+          if (!made) customOutcome.reason = 'Add your OpenRouter key in Settings → API keys to design custom graphics.'
+          else {
+            customOutcome = { ran: true, made: made.made, tried: made.tried, reason: made.made ? null : (made.notes[0] ?? 'No key moment needed one.') }
+            if (made.made > 0) {
+              decisions.graphics = made.graphics
+              ;(config as { editor?: { graphics?: unknown } }).editor!.graphics = editorGraphicsFor(decisions, images, current.status.folder)
+            }
           }
         } catch (error) {
           if (current.cancelled) throw error
-          logger.warn('edit.custom.failed', { message: String((error as Error)?.message ?? error).slice(0, 200) })
+          const message = String((error as Error)?.message ?? error).slice(0, 200)
+          logger.warn('edit.custom.failed', { message })
+          customOutcome = { ran: true, made: 0, tried: 0, reason: message }
         }
         if (current.cancelled) throw new Error('Canceled.')
+      }
+      await mkdir(join(current.status.folder, '.graphics', 'custom'), { recursive: true }).then(() => writeFile(join(current.status.folder, '.graphics', 'custom', 'last-run.json'),
+        JSON.stringify({ ...customOutcome, at: new Date().toISOString() }, null, 2), { mode: 0o600 })).catch(() => undefined)
+      if (directed && !customOutcome.made && customOutcome.reason && !/^(designed in|already tried|not a directed)/.test(customOutcome.reason)) {
+        customNotes.push(`Custom graphics weren’t added: ${customOutcome.reason.replace(/\.?$/, '.')}`)
       }
       if (graphics.length) {
         publish(current, { detail: 'Drawing your graphics', percent: 2 })
@@ -1291,6 +1312,7 @@ export async function renderEdit(value: unknown): Promise<EditStatus> {
       const warnings = Array.isArray(result.warnings) ? result.warnings.filter((item): item is string => typeof item === 'string').map((item) => item.slice(0, 300)).slice(0, 4) : []
       const editor = result.editor === true
       warnings.push(...youtubeNotes)
+      warnings.unshift(...customNotes)
       if (editor && !current.cancelled) {
         // The clip editor's own bake: hook text, captions, motion graphics and scenes, exactly as Bake makes them later.
         publish(current, { detail: 'Adding your hook text, captions and graphics', percent: 90 })
